@@ -136,7 +136,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   connectors: ['add', 'list', 'remove', 'show', 'import', 'run', '--json', '--help'],
   channels: ['add', 'status', 'slack', 'map', 'probe', 'run', '--seconds', '--json', '--help'],
   stack: ['status', 'list', 'providers', 'recommend', 'scan', 'doctor', 'add', 'apply'],
-  ecosystem: ['doctor'],
+  ecosystem: ['doctor', 'changelog'],
   roadmap: ['run', 'resume', 'status'],
   seams: ['status'],
   completions: ['zsh', 'bash'],

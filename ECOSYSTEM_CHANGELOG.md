@@ -1,0 +1,4267 @@
+# Ashlr.AI ecosystem changelog
+
+> 7 repositories, 2680 changes (2308 merged pull requests, 175 published releases, 197 changelog entries; 49 cross-repo). Generated 2026-10-28T15:38:04.559Z by `phm ecosystem changelog`; deterministic for the same inputs. Machine-readable form: [docs/ecosystem-changelog.json](docs/ecosystem-changelog.json) (`ecosystem-changelog.v1`).
+
+## Last 14 days
+
+Activity since 2026-10-14T15:38:04.559Z: 1484 changes across 7 repositories (1471 pull requests, 6 releases, 7 changelog entries).
+
+### ashlrai/ashlr-md (core-fleet)
+
+- [#227 bridge: RQ-FULLSUITE-SHARD-MD](https://github.com/ashlrai/ashlr-md/pull/227): pull-request; 2026-10-28
+- [#226 bridge: RQ-MR-CONFLICT-DRIVERS-ashlr-md](https://github.com/ashlrai/ashlr-md/pull/226): pull-request; 2026-10-28
+- [#208 bridge: RQ-MD-MCP-HANDLER-TESTS](https://github.com/ashlrai/ashlr-md/pull/208): pull-request; 2026-10-28
+- [#205 bridge: RQ-FRESH-DOCS-SWEEP-MD](https://github.com/ashlrai/ashlr-md/pull/205): pull-request; 2026-10-28
+- [#225 bridge: RQ-DAILY-15-ASHLR-MD](https://github.com/ashlrai/ashlr-md/pull/225): pull-request; 2026-10-28
+- [#200 bridge: RQ-PL-MD-COVERAGE](https://github.com/ashlrai/ashlr-md/pull/200): pull-request; 2026-10-28
+- [#224 bridge: RQ-CI-SECONDS-ASHLR-MD](https://github.com/ashlrai/ashlr-md/pull/224): pull-request; 2026-10-28
+- [#213 bridge: RQ-PERF-12-MD](https://github.com/ashlrai/ashlr-md/pull/213): pull-request; 2026-10-28
+- [#223 bridge: RQ-FAST-GATE-MD-2](https://github.com/ashlrai/ashlr-md/pull/223): pull-request; 2026-10-27
+- [#206 bridge: RQ-DISC-MCP-MANIFEST-MD](https://github.com/ashlrai/ashlr-md/pull/206): pull-request; 2026-10-27
+- [#201 bridge: RQ-FRESH-GEN-MD](https://github.com/ashlrai/ashlr-md/pull/201): pull-request; 2026-10-27
+- [#222 fix: Activity keeps heard notes in time order; busy index batches retried; folder edge cases](https://github.com/ashlrai/ashlr-md/pull/222): pull-request; 2026-10-27
+- [#221 fix: semantic index forgets deleted notes; Activity lists folders moved in; palette highlight reset](https://github.com/ashlrai/ashlr-md/pull/221): pull-request; 2026-10-27
+- [#220 fix: tabs and Activity match files by identity; same-name tab folders; theme picker keys; folder removals](https://github.com/ashlrai/ashlr-md/pull/220): pull-request; 2026-10-27
+- [#210 bridge: RQ-MD-MDOPENER-MEM](https://github.com/ashlrai/ashlr-md/pull/210): pull-request; 2026-10-27
+- [#212 bridge: RQ-N26-MD-CONTRACT-SCHEMA](https://github.com/ashlrai/ashlr-md/pull/212): pull-request; 2026-10-27
+- [#211 bridge: RQ-N26-DV-MD-LINKS](https://github.com/ashlrai/ashlr-md/pull/211): pull-request; 2026-10-27
+- [#217 bridge: RQ-N26B-079](https://github.com/ashlrai/ashlr-md/pull/217): pull-request; 2026-10-27
+- [#215 ci: security floor, Check (Linux) requires Classify changes; audits on PR (G1, draft)](https://github.com/ashlrai/ashlr-md/pull/215): pull-request; 2026-10-27
+- [#216 fix: stale Activity, embeds, scroll and session restore after on-disk changes](https://github.com/ashlrai/ashlr-md/pull/216): pull-request; 2026-10-27
+- [#218 bridge: RQ-N26B-075](https://github.com/ashlrai/ashlr-md/pull/218): pull-request; 2026-10-27
+- [#207 ci: SHA-pin all GitHub Actions (Security review 2026-10-26)](https://github.com/ashlrai/ashlr-md/pull/207): pull-request; 2026-10-26
+- [#198 bridge: RQ-DEADCODE-ashlr-md](https://github.com/ashlrai/ashlr-md/pull/198): pull-request; 2026-10-26
+- [#195 bridge: RQ-TESTDIET-ashlr-md](https://github.com/ashlrai/ashlr-md/pull/195): pull-request; 2026-10-26
+- [#194 bridge: RQ-MD-AGENT-EDIT](https://github.com/ashlrai/ashlr-md/pull/194): pull-request; 2026-10-26
+- [#192 bridge: rq-li-4](https://github.com/ashlrai/ashlr-md/pull/192): pull-request; 2026-10-26
+- [#188 ci: CodeQL, Scorecard, Renovate, and Codecov off the PR path](https://github.com/ashlrai/ashlr-md/pull/188): pull-request; 2026-10-26; cross-repo ashlrai/locus#164
+- [#191 feat(ai): opt-in localInference.offline for cloud and remote hosts](https://github.com/ashlrai/ashlr-md/pull/191): pull-request; 2026-10-26
+- [#189 ci: run cargo test (workspace) in merge_group, nightly and pre-flip PRs; ci-local too](https://github.com/ashlrai/ashlr-md/pull/189): pull-request; 2026-10-26; cross-repo ashlrai/locus#164, ashlrai/phantom#917, ashlrai/phantom#920
+- [#187 docs(contributing): refresh measured test counts](https://github.com/ashlrai/ashlr-md/pull/187): pull-request; 2026-10-26
+- [#184 chore: remove 3 unused JS dependencies](https://github.com/ashlrai/ashlr-md/pull/184): pull-request; 2026-10-26; cross-repo ashlrai/phantom#920
+- [#190 ci: SonarCloud, CodeRabbit, and Socket config](https://github.com/ashlrai/ashlr-md/pull/190): pull-request; 2026-10-26
+- [#185 fix(security): no redirects and localhost pinned for model, embedding and Anthropic clients (one shared builder)](https://github.com/ashlrai/ashlr-md/pull/185): pull-request; 2026-10-26; cross-repo ashlrai/phantom#917, ashlrai/phantom#920
+- [#186 ci: merge-queue pilot (fast PR lane, selected suite in merge_group, nightly full matrix, ci-local)](https://github.com/ashlrai/ashlr-md/pull/186): pull-request; 2026-10-26; cross-repo ashlrai/locus#164
+- [#180 feat(mdopener-mcp): ashlr.doctor v1 wrapper on doctor --fix --json](https://github.com/ashlrai/ashlr-md/pull/180): pull-request; 2026-10-26; cross-repo ashlrai/phantom#917
+- [#183 chore(security): growth-only CODEOWNERS for workflows and keyed/network paths](https://github.com/ashlrai/ashlr-md/pull/183): pull-request; 2026-10-26; cross-repo ashlrai/phantom#920
+- [#182 ci(release): pin third-party actions to commit SHAs](https://github.com/ashlrai/ashlr-md/pull/182): pull-request; 2026-10-26
+- [#181 feat(mcp): doctor local-inference probe + local-inference-probe handshake capability (mirrors phantom #920/#921)](https://github.com/ashlrai/ashlr-md/pull/181): pull-request; 2026-10-26; cross-repo ashlrai/phantom#917, ashlrai/phantom#920
+- [#179 feat(ai): localInference loopback-only local models; gate OLLAMA_HOST (mirrors phantom #917)](https://github.com/ashlrai/ashlr-md/pull/179): pull-request; 2026-10-25; cross-repo ashlrai/phantom#917
+- [#178 test(mdopener-mcp): handshake v1 conformance test against the vendored contract](https://github.com/ashlrai/ashlr-md/pull/178): pull-request; 2026-10-25
+- [#177 docs(readme): mdopener-mcp doctor --fix section](https://github.com/ashlrai/ashlr-md/pull/177): pull-request; 2026-10-25
+- [#176 feat(mcp): mdopener-mcp doctor --fix \[--apply\]; doctor-fix capability](https://github.com/ashlrai/ashlr-md/pull/176): pull-request; 2026-10-25
+- [#175 chore(rust): Linux clippy clean (cfg-gate AFM), rustfmt src-tauri, clippy step in Check (Linux)](https://github.com/ashlrai/ashlr-md/pull/175): pull-request; 2026-10-25
+- [#174 feat(mcp): persist review verdicts; get_user_annotations falls back with stale flag](https://github.com/ashlrai/ashlr-md/pull/174): pull-request; 2026-10-25
+- [#173 feat(mcp): mdopener-mcp --ashlr-handshake (Ashlr companion handshake v1)](https://github.com/ashlrai/ashlr-md/pull/173): pull-request; 2026-10-25
+- [#172 feat: in-app keyboard shortcut cheat sheet (⌘/ / Ctrl+/)](https://github.com/ashlrai/ashlr-md/pull/172): pull-request; 2026-10-25
+- [#171 docs(readme): one canonical name, command and link per Ashlr tool](https://github.com/ashlrai/ashlr-md/pull/171): pull-request; 2026-10-24
+- [#170 fix(a11y): labelled section for the linter toast; enforce the two a11y rules now at zero (part of #27)](https://github.com/ashlrai/ashlr-md/pull/170): pull-request; 2026-10-24
+- [#169 fix(a11y): settings captions are not orphan labels; name the notifications switch (part of #27)](https://github.com/ashlrai/ashlr-md/pull/169): pull-request; 2026-10-24
+- [#168 test(viewer): GFM tables and task lists through the real Renderer (#36)](https://github.com/ashlrai/ashlr-md/pull/168): pull-request; 2026-10-24
+- [#167 fix(a11y): give ARIA labels an element that supports them (part of #27)](https://github.com/ashlrai/ashlr-md/pull/167): pull-request; 2026-10-24
+- [#166 md round 91: async search, open hits at their line, find and link fixes](https://github.com/ashlrai/ashlr-md/pull/166): pull-request; 2026-10-24
+- [#165 Find, links and wikilinks work in more documents, and the MCP server bounds requests and reports skipped files](https://github.com/ashlrai/ashlr-md/pull/165): pull-request; 2026-10-24
+- [#164 List callouts and table column edits keep their markdown, lighter math exports, and mdopen/MCP handle odd paths and launchers](https://github.com/ashlrai/ashlr-md/pull/164): pull-request; 2026-10-24
+- [#163 Edited code blocks, tables, callouts and nested lists keep their markdown; renames are followed; exports keep fonts, diagrams and names](https://github.com/ashlrai/ashlr-md/pull/163): pull-request; 2026-10-24
+- [#162 WYSIWYG edits keep the file's own markdown style, the table menu works in built apps, and unsaved text is never dropped](https://github.com/ashlrai/ashlr-md/pull/162): pull-request; 2026-10-24
+- [#161 Guard unsaved edits on close, keep WYSIWYG saves to the edited blocks, and fix settings, a11y, export and copy gaps](https://github.com/ashlrai/ashlr-md/pull/161): pull-request; 2026-10-24
+- [#160 Safer, faster exports; sturdier settings and session restore; keyboard and focus fixes](https://github.com/ashlrai/ashlr-md/pull/160): pull-request; 2026-10-24
+- [#159 One link rule, a remote-images setting, and safer exports](https://github.com/ashlrai/ashlr-md/pull/159): pull-request; 2026-10-24
+- [#158 Round 83: save conflict guard, missing-file tabs, wikilinks confined to the vault, working anchors and relative images](https://github.com/ashlrai/ashlr-md/pull/158): pull-request; 2026-10-24
+- [#157 Round 82: lone CR line breaks, mdast-matching heading slugs, safer saves through symlinks and read-only files](https://github.com/ashlrai/ashlr-md/pull/157): pull-request; 2026-10-24
+- [#156 Round 81: inline math read as remark-math, CRLF and BOM kept on agent edits, table and list editor fixes](https://github.com/ashlrai/ashlr-md/pull/156): pull-request; 2026-10-24
+- [#155 fix: editing commands respect code, CRLF and GFM tables; math blocks and code spans follow the renderer (round 80)](https://github.com/ashlrai/ashlr-md/pull/155): pull-request; 2026-10-24
+- [#154 fix: HTML blocks and footnotes in the line rule; outline-adjacent features stop reading raw lines (round 79)](https://github.com/ashlrai/ashlr-md/pull/154): pull-request; 2026-10-24
+- [#153 fix: task counts follow the page rule; export_text reads links like the page (round 78)](https://github.com/ashlrai/ashlr-md/pull/153): pull-request; 2026-10-24
+- [#152 fix: task checkboxes in the preview toggle the document again (round 77)](https://github.com/ashlrai/ashlr-md/pull/152): pull-request; 2026-10-24
+- [#151 fix: tasks, front matter and setext headings follow the renderer (round 76)](https://github.com/ashlrai/ashlr-md/pull/151): pull-request; 2026-10-24
+- [#150 fix: headings, export text and anchors follow the renderer inside quotes and lists (round 75)](https://github.com/ashlrai/ashlr-md/pull/150): pull-request; 2026-10-24
+- [#149 fix: headings and indented code in lists and quotes read as the page does; MCP descriptions match the tools (round 74)](https://github.com/ashlrai/ashlr-md/pull/149): pull-request; 2026-10-24
+- [#148 fix: read fences in nested lists and quotes as the preview does; inline AI keeps the selection on failure (round 73)](https://github.com/ashlrai/ashlr-md/pull/148): pull-request; 2026-10-24
+- [#147 fix: outline and lint read quoted and list-item code as code; AI shows why it can't help and how to fix it (rounds 70-72)](https://github.com/ashlrai/ashlr-md/pull/147): pull-request; 2026-10-24
+- [#146 fix: read headings, wikilinks and code the same way in the app and the MCP server (rounds 68-69)](https://github.com/ashlrai/ashlr-md/pull/146): pull-request; 2026-10-24
+- [#145 MCP round 67: one line rule for front matter and fences across headings, links, text and tasks; -32000 documented](https://github.com/ashlrai/ashlr-md/pull/145): pull-request; 2026-10-23
+- [#144 docs(install): Linux troubleshooting checked against the v0.4.0 packages](https://github.com/ashlrai/ashlr-md/pull/144): pull-request; 2026-10-19
+- [#143 test(ai): LiteLLM-shaped loopback proxy checks for the Anthropic path](https://github.com/ashlrai/ashlr-md/pull/143): pull-request; 2026-10-19
+- [#142 fix: keep keys, proxy tokens and URL credentials out of AI and embedding errors](https://github.com/ashlrai/ashlr-md/pull/142): pull-request; 2026-10-19
+- [#141 test(embed): cover the autoEmbedIndex switch, startup gate and manual reindex](https://github.com/ashlrai/ashlr-md/pull/141): pull-request; 2026-10-19
+- [#140 feat(ai): opt-in Anthropic key from ANTHROPIC_API_KEY (phm_ placeholder under phantom exec)](https://github.com/ashlrai/ashlr-md/pull/140): pull-request; 2026-10-19
+- [#139 docs(phantom): running Ashlr MD under phantom exec](https://github.com/ashlrai/ashlr-md/pull/139): pull-request; 2026-10-19
+- [#138 feat(mcp): sidecar speaks https to Ollama; OLLAMA_HOST follows the base URL rules](https://github.com/ashlrai/ashlr-md/pull/138): pull-request; 2026-10-19
+- [#137 fix(ai): ANTHROPIC_BASE_URL must be https, or http only for 127.0.0.1 and \[::1\]](https://github.com/ashlrai/ashlr-md/pull/137): pull-request; 2026-10-19
+- [#136 feat: opt-in setting for automatic semantic re-indexing (autoEmbedIndex)](https://github.com/ashlrai/ashlr-md/pull/136): pull-request; 2026-10-19
+- [#135 feat(install): metadata-only Phantom installed check](https://github.com/ashlrai/ashlr-md/pull/135): pull-request; 2026-10-18
+- [#134 test: cover remark-callouts and syncScroll](https://github.com/ashlrai/ashlr-md/pull/134): pull-request; 2026-10-18
+- [#132 docs(readme): state what Phantom integration exists today, link PQ readiness](https://github.com/ashlrai/ashlr-md/pull/132): pull-request; 2026-10-18
+- [#131 feat(ai): honor ANTHROPIC_BASE_URL and OLLAMA_HOST (defaults unchanged)](https://github.com/ashlrai/ashlr-md/pull/131): pull-request; 2026-10-18
+- [#130 MCP round 66: stream_edit checks the path without fetching the document; titles skip front matter; file:// URIs encoded](https://github.com/ashlrai/ashlr-md/pull/130): pull-request; 2026-10-18
+- [#129 MCP round 65: resources, prompts and instructions match the code; Explain doc says what it explains](https://github.com/ashlrai/ashlr-md/pull/129): pull-request; 2026-10-18
+- [#128 MCP rounds 63-64: reads refuse a null path, honest match counts, every path form documented, lint clean](https://github.com/ashlrai/ashlr-md/pull/128): pull-request; 2026-10-18
+- [#127 MCP: find/replace edits refuse a buffer with no file, refused stream_edit keeps its match count](https://github.com/ashlrai/ashlr-md/pull/127): pull-request; 2026-10-18
+- [#119 fix: search snippet survives length-changing lowercase; AI streams keep characters split across chunks](https://github.com/ashlrai/ashlr-md/pull/119): pull-request; 2026-10-18
+- [#126 MCP: open_file reports failed re-reads, real stream_edit match counts, honest set_content and export errors](https://github.com/ashlrai/ashlr-md/pull/126): pull-request; 2026-10-18
+- [#125 Round 60: the app's search and reindex name files they could not read; a missed edit find says what to do](https://github.com/ashlrai/ashlr-md/pull/125): pull-request; 2026-10-18
+- [#124 Round 59: search_vault names files it could not read, the app explains non-UTF-8 files, edit_canvas takes any-case .canvas](https://github.com/ashlrai/ashlr-md/pull/124): pull-request; 2026-10-18
+- [#123 Round 58: `~/` paths work, non-UTF-8 files say what to do, oversized requests are refused before sending](https://github.com/ashlrai/ashlr-md/pull/123): pull-request; 2026-10-18
+- [#122 Round 57: stream_edit_apply refuses a stale preview; refused-token hints for search_vault and mdopen](https://github.com/ashlrai/ashlr-md/pull/122): pull-request; 2026-10-18
+- [#121 Round 56: open_file, search_vault and mdopen explain a refused token; stream_edit_apply asks for a fresh preview](https://github.com/ashlrai/ashlr-md/pull/121): pull-request; 2026-10-18
+- [#120 Round 55: agent tools explain a refused token, name the exact open_file call, and say when a file does not exist](https://github.com/ashlrai/ashlr-md/pull/120): pull-request; 2026-10-18
+- [#118 Round 54: agent tool audit fixes (export without the app, annotations on a refused token), Explain changes stops like a chat turn](https://github.com/ashlrai/ashlr-md/pull/118): pull-request; 2026-10-18
+- [#117 Round 53: get_user_annotations reads tasks from disk without the app, setup panel shows Explain changes and detection failures](https://github.com/ashlrai/ashlr-md/pull/117): pull-request; 2026-10-18
+- [#116 docs: post-quantum readiness notes and classical-only crypto check](https://github.com/ashlrai/ashlr-md/pull/116): pull-request; 2026-10-18
+- [#115 Round 52: no-provider text that is true per platform, popover message on the setup panel, edit_canvas lists the ids that exist](https://github.com/ashlrai/ashlr-md/pull/115): pull-request; 2026-10-18
+- [#114 Round 51: escape model output in the AI sidebar, hide the hosted token, popover no-provider message](https://github.com/ashlrai/ashlr-md/pull/114): pull-request; 2026-10-18
+- [#113 Round 50: change a saved Anthropic key, AI errors that name the next step, honest Stop and Retry](https://github.com/ashlrai/ashlr-md/pull/113): pull-request; 2026-10-18
+- [#112 Round 49: Connect re-run docs, home directory errors with a next step, AI Stop and first-run fixes](https://github.com/ashlrai/ashlr-md/pull/112): pull-request; 2026-10-18
+- [#111 Round 48: AppImage Connect registers a stable path, Connect and config errors that say what to do](https://github.com/ashlrai/ashlr-md/pull/111): pull-request; 2026-10-18
+- [#110 Round 47: real release asset names, a stable AppImage MCP path, stream edits and timeouts that say what to do](https://github.com/ashlrai/ashlr-md/pull/110): pull-request; 2026-10-18
+- [#109 Round 46: destructive MCP tools listed last, edit_document with no document says so, download links and first-run docs that work](https://github.com/ashlrai/ashlr-md/pull/109): pull-request; 2026-10-18
+- [#108 Round 45: the real Windows install folder, MCP first-run instructions, mdopen --help that matches the docs](https://github.com/ashlrai/ashlr-md/pull/108): pull-request; 2026-10-18
+- [#107 Round 44: IME Enter no longer acts early, Option shortcuts on macOS, shortcut hints and tables that match the keymap](https://github.com/ashlrai/ashlr-md/pull/107): pull-request; 2026-10-18
+- [#106 Round 43: IME Escape no longer closes dialogs, labelled review countdown, launch and path errors that say what to do](https://github.com/ashlrai/ashlr-md/pull/106): pull-request; 2026-10-18
+- [#105 Round 42: VS Code and Obsidian errors that say what happened, review survives IME Escape, clearer MCP startup messages](https://github.com/ashlrai/ashlr-md/pull/105): pull-request; 2026-10-18
+- [#104 Round 41: MCP errors that name the file and the next step, no --help panic, tool descriptions that say what comes back](https://github.com/ashlrai/ashlr-md/pull/104): pull-request; 2026-10-18
+- [#103 Round 40: hook skips failed edits and refuses stray arguments, MCP errors that name a next step, no panic on a closed stdout](https://github.com/ashlrai/ashlr-md/pull/103): pull-request; 2026-10-18
+- [#102 Round 39: hook opens only what an edit tool wrote, better argument and flag hints, install docs that match the app](https://github.com/ashlrai/ashlr-md/pull/102): pull-request; 2026-10-18
+- [#101 Round 38: no dropped or skipped opens, VS Code edit mode and .mdx button, Obsidian platform docs](https://github.com/ashlrai/ashlr-md/pull/101): pull-request; 2026-10-18
+- [#100 Round 37: export links wait for the file, pending files stop growing, integrations hand off only openable files](https://github.com/ashlrai/ashlr-md/pull/100): pull-request; 2026-10-18
+- [#99 Round 36: deep links honour mode and known export formats, prompt and resource descriptions](https://github.com/ashlrai/ashlr-md/pull/99): pull-request; 2026-10-17
+- [#98 Round 35: edit, export and conversation tools name their results; match_index maximum](https://github.com/ashlrai/ashlr-md/pull/98): pull-request; 2026-10-17
+- [#97 Round 34: open/present/review refusal wording, tool result shapes, docs dashes](https://github.com/ashlrai/ashlr-md/pull/97): pull-request; 2026-10-17
+- [#96 Round 33: clear missing-file and nothing-open errors, top-level doc dashes](https://github.com/ashlrai/ashlr-md/pull/96): pull-request; 2026-10-17
+- [#95 Round 32: non-UTF-8 launch args, mdopen -- -, landing and AGENTS dashes, get_current_content docs](https://github.com/ashlrai/ashlr-md/pull/95): pull-request; 2026-10-17
+- [#94 fix: blank paths refused, set_content marked destructive, no panics on non-UTF-8 arguments, wider dash guard (round 31)](https://github.com/ashlrai/ashlr-md/pull/94): pull-request; 2026-10-17
+- [#93 fix: no dashes in UI strings, blank ids refused, nested schema bounds enforced, app saves cited paths once (round 30)](https://github.com/ashlrai/ashlr-md/pull/93): pull-request; 2026-10-17
+- [#92 fix(mcp): no dashes in agent-facing text, cited_docs saved once, integer canvas coordinates, empty ids refused (round 29)](https://github.com/ashlrai/ashlr-md/pull/92): pull-request; 2026-10-17
+- [#91 fix(mcp): stray canvas fields and edge values, app-down file reads, vault-search params, prompt arguments (round 28)](https://github.com/ashlrai/ashlr-md/pull/91): pull-request; 2026-10-17
+- [#90 fix(mcp): preview_lines limit, empty edit_canvas ops, absolute cited_docs, blank review content (round 27)](https://github.com/ashlrai/ashlr-md/pull/90): pull-request; 2026-10-17
+- [#89 fix(mcp): empty optional paths, search and diff limits refused, changelog for rounds 22 to 26 (round 26)](https://github.com/ashlrai/ashlr-md/pull/89): pull-request; 2026-10-17
+- [#88 fix: hook path match, empty-path refusals, consistent limits, inline review content shown (round 25)](https://github.com/ashlrai/ashlr-md/pull/88): pull-request; 2026-10-17
+- [#87 fix(mcp): argument limits, empty-string schemas, review_id, same-program registrations (round 24)](https://github.com/ashlrai/ashlr-md/pull/87): pull-request; 2026-10-17
+- [#86 fix: stable recentDocs, local empty-argument refusals, stale Claude/Codex registrations repointed (round 23)](https://github.com/ashlrai/ashlr-md/pull/86): pull-request; 2026-10-17
+- [#85 fix: agent-facing correctness in MCP previews, stdio, AI actions and agent setup (round 22)](https://github.com/ashlrai/ashlr-md/pull/85): pull-request; 2026-10-17
+- [#84 fix(security): agent reads take only the file the path check saw; regular-file, capped reads across the app](https://github.com/ashlrai/ashlr-md/pull/84): pull-request; 2026-10-17
+- [#83 fix(security): Markdown-only search and deep links, symlink-safe atomic saves that keep permissions, safer apply_file_patch](https://github.com/ashlrai/ashlr-md/pull/83): pull-request; 2026-10-17
+- [#82 fix(mcp,install): JSON-RPC envelope checks, open_file annotations, installer fallbacks, wiring docs that match the app](https://github.com/ashlrai/ashlr-md/pull/82): pull-request; 2026-10-17
+- [#81 fix(mcp,mdopen,ipc): capped annotation and hook reads, 405 with Allow, resources/templates/list, cut-short vault listing marked, docs match](https://github.com/ashlrai/ashlr-md/pull/81): pull-request; 2026-10-17
+- [#80 fix(mcp,mdopen,ipc,vault): depthCut apart from scanCut, capped IPC and session reads, visible resources/list and recents gaps, JSON 404](https://github.com/ashlrai/ashlr-md/pull/80): pull-request; 2026-10-17
+- [#79 fix(mcp,mdopen,vault): bounded stdin, session files and HTTP answers; deep folders reported; blank search refused; honest current and recent resources](https://github.com/ashlrai/ashlr-md/pull/79): pull-request; 2026-10-17
+- [#78 fix(mcp,vault,ipc): true newest files, real vault cap in notices, export slot of its own, search_vault limits, 16 MiB document cap](https://github.com/ashlrai/ashlr-md/pull/78): pull-request; 2026-10-17
+- [#72 fix(mcp): resources read the path they checked; hostile front matter no longer aborts the server](https://github.com/ashlrai/ashlr-md/pull/72): pull-request; 2026-10-17
+- [#77 fix(mcp,canvas,vault): enum-checked args, JSON Canvas colours, instant non-blocking resume, vault truncation reported, clear file:// errors](https://github.com/ashlrai/ashlr-md/pull/77): pull-request; 2026-10-17
+- [#76 fix(mcp,canvas,vault): schema-enforced required args, strict canvas ops, resumed reviews checked, honest canvas/vault/recents](https://github.com/ashlrai/ashlr-md/pull/76): pull-request; 2026-10-17
+- [#70 fix(mcp,ipc,mdopen): headless vault search, clean export_text, full front matter, IPC requests that tell the truth](https://github.com/ashlrai/ashlr-md/pull/70): pull-request; 2026-10-17
+- [#73 docs: say agent opens are Markdown-only after #64](https://github.com/ashlrai/ashlr-md/pull/73): pull-request; 2026-10-17
+- [#75 MCP: diff sees line endings, private session files, bounded session_id, resources refuse symlinks out, BOM front-matter](https://github.com/ashlrai/ashlr-md/pull/75): pull-request; 2026-10-17
+- [#74 fix(settings): label the manual setup command as Claude Code only](https://github.com/ashlrai/ashlr-md/pull/74): pull-request; 2026-10-17
+- [#71 MCP: refuse negative integers, suggest prompt/resource names, warn on unknown flags; mdopen failure names the next step](https://github.com/ashlrai/ashlr-md/pull/71): pull-request; 2026-10-17
+- [#39 fix: quote MCP setup paths and build declared Mac sidecars](https://github.com/ashlrai/ashlr-md/pull/39): pull-request; 2026-10-17
+- [#67 MCP: refuse undeclared and mistyped arguments, suggest tool names; mdopen --edit/--read conflict](https://github.com/ashlrai/ashlr-md/pull/67): pull-request; 2026-10-17
+- [#69 fix(ipc,mcp,mdopen,editor): review reports open failures; front-matter lists parse; pasted images render; agent end-to-end test](https://github.com/ashlrai/ashlr-md/pull/69): pull-request; 2026-10-17
+- [#65 ci: skip the macOS check and landing deploys when their inputs are unchanged](https://github.com/ashlrai/ashlr-md/pull/65): pull-request; 2026-10-17
+- [#68 fix(mdopen,mcp): opens that did not happen are no longer reported as done](https://github.com/ashlrai/ashlr-md/pull/68): pull-request; 2026-10-17
+- [#64 fix(ipc,mcp,mdopen): agents open only Markdown; shared session files; MCP results that tell the truth; broken paste and canvas saves](https://github.com/ashlrai/ashlr-md/pull/64): pull-request; 2026-10-17
+- [#66 test(docs): pin agent-facing doc facts to the MCP and mdopen sources](https://github.com/ashlrai/ashlr-md/pull/66): pull-request; 2026-10-17
+- [#63 fix(mcp): three regressions from #57 and #61 (stream_edit path, resumed review never times out, session log rewrite race)](https://github.com/ashlrai/ashlr-md/pull/63): pull-request; 2026-10-17
+- [#62 fix(mcp): FIFOs no longer hang disk reads; sessions stop colliding; failed saves, canvas data, unclosed front-matter and encoded file:// URIs](https://github.com/ashlrai/ashlr-md/pull/62): pull-request; 2026-10-17
+- [#60 fix(setup): drop --transport from the Codex MCP command](https://github.com/ashlrai/ashlr-md/pull/60): pull-request; 2026-10-17
+- [#61 fix(mcp,mdopen,ipc): requests keep their id, mdopen opens through the app, request_review stops outliving client timeouts, plus five MCP data fixes](https://github.com/ashlrai/ashlr-md/pull/61): pull-request; 2026-10-17
+- [#59 fix(windows): agent setup, sidecar lookup and mdopen install work on Windows; quoted hook path](https://github.com/ashlrai/ashlr-md/pull/59): pull-request; 2026-10-17
+- [#57 fix(mcp): export writes output_path and confirms it; resolve path args like open_file](https://github.com/ashlrai/ashlr-md/pull/57): pull-request; 2026-10-17
+- [#56 docs(agents): document --version and the Markdown-only disk reads](https://github.com/ashlrai/ashlr-md/pull/56): pull-request; 2026-10-17
+- [#55 MCP file tools only read Markdown; --version on both shipped binaries; packaging asset names match the release](https://github.com/ashlrai/ashlr-md/pull/55): pull-request; 2026-10-16
+- [#54 fix(mcp): point macOS setup at Contents/Resources/mdopener-mcp (replaces #38)](https://github.com/ashlrai/ashlr-md/pull/54): pull-request; 2026-10-16
+- [#41 fix: label the manual Claude Code setup command accurately](https://github.com/ashlrai/ashlr-md/pull/41): pull-request; 2026-10-16
+- [#53 fix(mcp): search_vault errors when the app is down; mdopen accepts --; AGENTS.md matches the server](https://github.com/ashlrai/ashlr-md/pull/53): pull-request; 2026-10-16
+- [#51 docs: add Ashlr ecosystem section to the README](https://github.com/ashlrai/ashlr-md/pull/51): pull-request; 2026-10-16
+- [#52 fix(mcp): refuse unknown export formats; report the app version in serverInfo](https://github.com/ashlrai/ashlr-md/pull/52): pull-request; 2026-10-16
+- [#50 test(mcp): fix 209 unhandled errors in bridge tests; document frontend-only checks](https://github.com/ashlrai/ashlr-md/pull/50): pull-request; 2026-10-15
+- [#49 refactor(export): remove the unimplemented archive and canvas-graph export path](https://github.com/ashlrai/ashlr-md/pull/49): pull-request; 2026-10-15
+- [#48 fix(mcp): stop advertising export tools the app never implemented](https://github.com/ashlrai/ashlr-md/pull/48): pull-request; 2026-10-15
+- [#47 docs(mcp): correct mdopener-mcp tool descriptions that misstate behavior](https://github.com/ashlrai/ashlr-md/pull/47): pull-request; 2026-10-15
+- [#46 Linux: single-instance opens and AppImage mdopener:// registration](https://github.com/ashlrai/ashlr-md/pull/46): pull-request; 2026-10-15
+- [#45 fix(mcp): return tool failures as isError results, not JSON-RPC errors](https://github.com/ashlrai/ashlr-md/pull/45): pull-request; 2026-10-15
+- [#44 Linux opens reach the app; safer mdopen; bounded MCP diff; conversations survive restarts](https://github.com/ashlrai/ashlr-md/pull/44): pull-request; 2026-10-15
+- [#43 fix(mdopen, mcp): bounded, honest file opening on headless and non-macOS hosts](https://github.com/ashlrai/ashlr-md/pull/43): pull-request; 2026-10-15
+
+### ashlrai/ashlr-plugin (core-fleet)
+
+- [#279 bridge: RQ-README-BRAND-PLUGIN](https://github.com/ashlrai/ashlr-plugin/pull/279): pull-request; 2026-10-28
+- [#278 bridge: RQ-MR-CONFLICT-DRIVERS-ashlr-plugin](https://github.com/ashlrai/ashlr-plugin/pull/278): pull-request; 2026-10-28
+- [#272 bridge: RQ-N26B-091](https://github.com/ashlrai/ashlr-plugin/pull/272): pull-request; 2026-10-28
+- [#274 bridge: RQ-N26B-093](https://github.com/ashlrai/ashlr-plugin/pull/274): pull-request; 2026-10-28
+- [#275 bridge: RQ-N26B-099](https://github.com/ashlrai/ashlr-plugin/pull/275): pull-request; 2026-10-28
+- [#271 bridge: RQ-N26B-089](https://github.com/ashlrai/ashlr-plugin/pull/271): pull-request; 2026-10-28
+- [#276 bridge: RQ-N26B-098](https://github.com/ashlrai/ashlr-plugin/pull/276): pull-request; 2026-10-28
+- [#273 bridge: RQ-N26B-092](https://github.com/ashlrai/ashlr-plugin/pull/273): pull-request; 2026-10-28
+- [#277 bridge: RQ-REFILL-2026102703-LAND-006](https://github.com/ashlrai/ashlr-plugin/pull/277): pull-request; 2026-10-28
+- [#249 bridge: RQ-FRESH-GEN-PLUG](https://github.com/ashlrai/ashlr-plugin/pull/249): pull-request; 2026-10-28
+- [#243 bridge: RQ-PARITY-CC-PLUGIN](https://github.com/ashlrai/ashlr-plugin/pull/243): pull-request; 2026-10-28
+- [#270 bridge: RQ-CI-SECONDS-ASHLR-PLUGIN-2](https://github.com/ashlrai/ashlr-plugin/pull/270): pull-request; 2026-10-28
+- [#264 ci: concurrency cancels superseded PR runs only, never merge_group or main pushes](https://github.com/ashlrai/ashlr-plugin/pull/264): pull-request; 2026-10-27
+- [#260 ci: merge_group trigger for merge queue (G1, draft)](https://github.com/ashlrai/ashlr-plugin/pull/260): pull-request; 2026-10-27
+- [#269 bridge: RQ-REFILL-2026102703-SALVA-032](https://github.com/ashlrai/ashlr-plugin/pull/269): pull-request; 2026-10-27
+- [#246 bridge: RQ-PLUG-TELEMETRY-OFF](https://github.com/ashlrai/ashlr-plugin/pull/246): pull-request; 2026-10-27
+- [#257 bridge: RQ-PLUG-HOOK-PERF](https://github.com/ashlrai/ashlr-plugin/pull/257): pull-request; 2026-10-27
+- [#237 fix(tuning): safe concurrent repo-savings writes, n/a net without savings](https://github.com/ashlrai/ashlr-plugin/pull/237): pull-request; 2026-10-27
+- [#258 bridge: RQ-PLUG-BASH-SUMMARIZER-TESTS](https://github.com/ashlrai/ashlr-plugin/pull/258): pull-request; 2026-10-27
+- [#262 bridge: RQ-N26B-095](https://github.com/ashlrai/ashlr-plugin/pull/262): pull-request; 2026-10-27
+- [#255 bridge: RQ-DV-PLUG-SPLIT-EFFICIENCY](https://github.com/ashlrai/ashlr-plugin/pull/255): pull-request; 2026-10-27
+- [#247 bridge: RQ-PL-PLUGIN-DOCS](https://github.com/ashlrai/ashlr-plugin/pull/247): pull-request; 2026-10-27
+- [#253 bridge: RQ-FRESH-SITE-PLUG](https://github.com/ashlrai/ashlr-plugin/pull/253): pull-request; 2026-10-27
+- [#265 ci(release): workflow_dispatch trigger with validated tag input (G1)](https://github.com/ashlrai/ashlr-plugin/pull/265): pull-request; 2026-10-27
+- [#266 ci(release): npm trusted publish on validated tag dispatch (G1)](https://github.com/ashlrai/ashlr-plugin/pull/266): pull-request; 2026-10-27
+- [#256 bridge: RQ-N26-PLUGIN-CONTRACT-TESTS](https://github.com/ashlrai/ashlr-plugin/pull/256): pull-request; 2026-10-27
+- [#233 chore(deps): raise MCP SDK floor to ^1.32.2](https://github.com/ashlrai/ashlr-plugin/pull/233): pull-request; 2026-10-27
+- [#245 bridge: RQ-PLUG-DOCS](https://github.com/ashlrai/ashlr-plugin/pull/245): pull-request; 2026-10-26
+- [#236 chore(deps): TypeScript 7.0.2 for server/ and vscode/](https://github.com/ashlrai/ashlr-plugin/pull/236): pull-request; 2026-10-26
+- [#244 bridge: RQ-TESTDIET-ashlr-plugin](https://github.com/ashlrai/ashlr-plugin/pull/244): pull-request; 2026-10-26
+- [#241 bridge: LAND-ashlr-plugin-232](https://github.com/ashlrai/ashlr-plugin/pull/241): pull-request; 2026-10-26
+- [#232 chore(deps): TypeScript 7.0.2 for root typecheck](https://github.com/ashlrai/ashlr-plugin/pull/232): pull-request; 2026-10-26
+- [#240 chore: dedupe PR template for case-insensitive disks](https://github.com/ashlrai/ashlr-plugin/pull/240): pull-request; 2026-10-26
+- [#239 bridge: RQ-ADOPT-3-plugin-r2](https://github.com/ashlrai/ashlr-plugin/pull/239): pull-request; 2026-10-26
+- [#235 feat(commands): add /ashlr-legend](https://github.com/ashlrai/ashlr-plugin/pull/235): pull-request; 2026-10-26
+- [#234 chore(cleanup): remove unreferenced scripts](https://github.com/ashlrai/ashlr-plugin/pull/234): pull-request; 2026-10-26
+- [#231 ci(security): scope Vercel token to deploy steps in deploy-site](https://github.com/ashlrai/ashlr-plugin/pull/231): pull-request; 2026-10-26
+- [#230 feat(tuning): per-repo savings and net tokens (est.) in /ashlr savings](https://github.com/ashlrai/ashlr-plugin/pull/230): pull-request; 2026-10-26
+- [#229 ci(coverage): run coverage in isolated workers](https://github.com/ashlrai/ashlr-plugin/pull/229): pull-request; 2026-10-26
+- [#226 perf(mcp): defer tool modules until the first tools/call](https://github.com/ashlrai/ashlr-plugin/pull/226): pull-request; 2026-10-26
+- [#227 ci: add CodeQL, Scorecard, Renovate, Codecov, Sonar, CodeRabbit, and Socket](https://github.com/ashlrai/ashlr-plugin/pull/227): pull-request; 2026-10-26
+- [#228 feat(tuning): tuner detail level sets ashlr__read summarize threshold](https://github.com/ashlrai/ashlr-plugin/pull/228): pull-request; 2026-10-26
+- [#225 feat(tuning): bounded per-repo self-tuning + net savings in /ashlr savings](https://github.com/ashlrai/ashlr-plugin/pull/225): pull-request; 2026-10-26
+- [v1.37.1](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.37.1): release; 2026-10-26
+- [#224 chore(security): growth-only CODEOWNERS for workflows and keyed/network paths](https://github.com/ashlrai/ashlr-plugin/pull/224): pull-request; 2026-10-26
+- [#223 feat(tuning): track compression misses (self-tuning P1)](https://github.com/ashlrai/ashlr-plugin/pull/223): pull-request; 2026-10-26
+- [#222 feat(doctor): ashlr.doctor v1 wrapper on ashlr doctor --json](https://github.com/ashlrai/ashlr-plugin/pull/222): pull-request; 2026-10-26
+- [#221 test(spawn-warmup): assert exit on a warm spawn (macOS main flake)](https://github.com/ashlrai/ashlr-plugin/pull/221): pull-request; 2026-10-25
+- [#220 test(handshake): v1 conformance test against the vendored ashlr-stack contract](https://github.com/ashlrai/ashlr-plugin/pull/220): pull-request; 2026-10-25
+- [#219 feat(doctor): suggest lexicon and mdopener-mcp doctor --fix when they advertise doctor-fix](https://github.com/ashlrai/ashlr-plugin/pull/219): pull-request; 2026-10-25
+- [#218 feat(doctor): companions show health and suggest locus doctor --fix when locus supports it](https://github.com/ashlrai/ashlr-plugin/pull/218): pull-request; 2026-10-25
+- [#217 feat(doctor): companions section via --ashlr-handshake, plus --json](https://github.com/ashlrai/ashlr-plugin/pull/217): pull-request; 2026-10-25
+- [#216 feat: ashlr-plugin --ashlr-handshake (Ashlr companion handshake v1)](https://github.com/ashlrai/ashlr-plugin/pull/216): pull-request; 2026-10-25
+- [#215 ci(deploy-site): cancel superseded PR runs only; cache the site's bun install](https://github.com/ashlrai/ashlr-plugin/pull/215): pull-request; 2026-10-25
+- [#214 release: 1.37.1 (first OIDC npm publish); pin npm 11.6.2 in npm-publish](https://github.com/ashlrai/ashlr-plugin/pull/214): pull-request; 2026-10-25
+- [#213 feat(doctor): opt-in Phantom agent preflight line](https://github.com/ashlrai/ashlr-plugin/pull/213): pull-request; 2026-10-25
+- [#212 feat(pro): keep ASHLR_PRO_TOKEN in the OS keychain](https://github.com/ashlrai/ashlr-plugin/pull/212): pull-request; 2026-10-25
+- [\[1.37.1\] - 2026-10-25](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-10-25
+- [#211 ci(release): npm publish via trusted publishing (OIDC) on v* tags](https://github.com/ashlrai/ashlr-plugin/pull/211): pull-request; 2026-10-24
+- [#210 test(router-cold-start): assert child CPU time on POSIX so host load cannot fail it](https://github.com/ashlrai/ashlr-plugin/pull/210): pull-request; 2026-10-24
+- [#209 test: spend the first spawn in test-server.test.ts on a warm-up child](https://github.com/ashlrai/ashlr-plugin/pull/209): pull-request; 2026-10-19
+- [#208 fix(codex-doctor): say when ashlr-mcp is not on PATH and how to fix it (report-only)](https://github.com/ashlrai/ashlr-plugin/pull/208): pull-request; 2026-10-19
+- [#207 fix(anthropic): never send the Claude Code OAuth token to a custom ANTHROPIC_BASE_URL; LiteLLM compat tests](https://github.com/ashlrai/ashlr-plugin/pull/207): pull-request; 2026-10-19
+- [#206 test(integration): wait for the backend's SQLite lock in billing-stripe-flow](https://github.com/ashlrai/ashlr-plugin/pull/206): pull-request; 2026-10-19
+- [#205 docs(bench): refresh benchmarks-v2.json from main 364a403](https://github.com/ashlrai/ashlr-plugin/pull/205): pull-request; 2026-10-19
+- [#204 test: warm-up spawn for the macOS first-spawn exit loss in pulse-emit and runWithTimeout tests](https://github.com/ashlrai/ashlr-plugin/pull/204): pull-request; 2026-10-19
+- [#203 fix: redact key material from endpoint error bodies; add key-redaction test](https://github.com/ashlrai/ashlr-plugin/pull/203): pull-request; 2026-10-19
+- [#202 docs: using ashlr-plugin with Phantom](https://github.com/ashlrai/ashlr-plugin/pull/202): pull-request; 2026-10-19
+- [#201 fix(security): deploy-smoke sends the bearer token to curl on stdin](https://github.com/ashlrai/ashlr-plugin/pull/201): pull-request; 2026-10-19
+- [#200 fix(security): cap-check reads the user API token from stdin](https://github.com/ashlrai/ashlr-plugin/pull/200): pull-request; 2026-10-19
+- [#199 fix(security): genome-key import reads the team key from stdin](https://github.com/ashlrai/ashlr-plugin/pull/199): pull-request; 2026-10-19
+- [#198 feat: opt-in OpenAI-compatible embeddings (LiteLLM) under gateway rules](https://github.com/ashlrai/ashlr-plugin/pull/198): pull-request; 2026-10-19
+- [#197 test: scale runWithTimeout happy-path budget on CI runners](https://github.com/ashlrai/ashlr-plugin/pull/197): pull-request; 2026-10-19
+- [#196 fix(security): local LLM unreachable warning names scheme://host:port only](https://github.com/ashlrai/ashlr-plugin/pull/196): pull-request; 2026-10-19
+- [#195 fix(security): default-path gateway rules for cloud and local LLM providers](https://github.com/ashlrai/ashlr-plugin/pull/195): pull-request; 2026-10-19
+- [#194 fix(security): default-path gateway rules for keyed Anthropic and OpenAI calls](https://github.com/ashlrai/ashlr-plugin/pull/194): pull-request; 2026-10-19
+- [#193 fix(security): genome consolidate endpoint comes from user config only](https://github.com/ashlrai/ashlr-plugin/pull/193): pull-request; 2026-10-19
+- [#192 fix(security): ashlr__orient no longer lets the model choose its LLM endpoint](https://github.com/ashlrai/ashlr-plugin/pull/192): pull-request; 2026-10-19
+- [#191 feat: opt-in strict gateway targets for keyed model calls (off by default)](https://github.com/ashlrai/ashlr-plugin/pull/191): pull-request; 2026-10-19
+- [#190 test(pulse-emit): per-test capture server, harness that cannot hang (refs #138)](https://github.com/ashlrai/ashlr-plugin/pull/190): pull-request; 2026-10-19
+- [#189 feat(bench): report-only recommended read thresholds in bench-read-real](https://github.com/ashlrai/ashlr-plugin/pull/189): pull-request; 2026-10-19
+- [#188 fix(doctor): MCP probe kills its whole process group so no bun outlives it](https://github.com/ashlrai/ashlr-plugin/pull/188): pull-request; 2026-10-19
+- [#187 feat: doctor and bench recognise phantom exec sessions (value-free, no reveal)](https://github.com/ashlrai/ashlr-plugin/pull/187): pull-request; 2026-10-19
+- [#186 fix: runWithTimeout always settles; benchmark PR step no longer fails main](https://github.com/ashlrai/ashlr-plugin/pull/186): pull-request; 2026-10-19
+- [#185 test: deflake orchestrate parallel-wave tests (overlap and ordering, not wall-clock)](https://github.com/ashlrai/ashlr-plugin/pull/185): pull-request; 2026-10-19
+- [#184 feat(doctor): metadata-only Phantom installed check](https://github.com/ashlrai/ashlr-plugin/pull/184): pull-request; 2026-10-18
+- [#182 test: cover _text-helpers and _edit-validate (JSON and skip paths)](https://github.com/ashlrai/ashlr-plugin/pull/182): pull-request; 2026-10-18
+- [#181 test(pulse-emit): more timeout headroom, kill stalled child, clean teardown](https://github.com/ashlrai/ashlr-plugin/pull/181): pull-request; 2026-10-18
+- [#180 feat: honor ANTHROPIC_BASE_URL, OPENAI_BASE_URL and OLLAMA_HOST (defaults unchanged)](https://github.com/ashlrai/ashlr-plugin/pull/180): pull-request; 2026-10-18
+- [#179 docs: CONTRIBUTING smoke step uses smoke:tools; competitive page command count](https://github.com/ashlrai/ashlr-plugin/pull/179): pull-request; 2026-10-18
+- [v1.37.0](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.37.0): release; 2026-10-17
+- [#164 docs: fix dead links, drop unverified figures](https://github.com/ashlrai/ashlr-plugin/pull/164): pull-request; 2026-10-17
+- [#176 fix(edit,bootstrap): overlapping matches are ambiguous; fuzzy window keeps its line ending; Bun install stays off MCP stdout](https://github.com/ashlrai/ashlr-plugin/pull/176): pull-request; 2026-10-17; cross-repo ashlrai/phantom#824
+- [#178 fix(tools): flag path refusals as errors, ashlr__write accepts path, right hook-mode setting, real serverInfo version](https://github.com/ashlrai/ashlr-plugin/pull/178): pull-request; 2026-10-17
+- [#177 chore(release): 1.37.0](https://github.com/ashlrai/ashlr-plugin/pull/177): pull-request; 2026-10-17
+- [#174 fix(hosts): tools use the project folder, Claude Code hook detection, faster hooks, CLI fixes](https://github.com/ashlrai/ashlr-plugin/pull/174): pull-request; 2026-10-17
+- [#171 docs: fix telemetry env var, Cursor host id, and setup paths in quickstarts](https://github.com/ashlrai/ashlr-plugin/pull/171): pull-request; 2026-10-17
+- [#165 scripts: bench-read-real measures the real ashlrRead handler by file size](https://github.com/ashlrai/ashlr-plugin/pull/165): pull-request; 2026-10-17
+- [#170 npm bins start under node, so a missing Bun is explained instead of crashing](https://github.com/ashlrai/ashlr-plugin/pull/170): pull-request; 2026-10-17; cross-repo ashlrai/phantom#824
+- [#175 fix(grep): say when ripgrep stopped early instead of stating a partial total](https://github.com/ashlrai/ashlr-plugin/pull/175): pull-request; 2026-10-17
+- [#169 edit: header-only summary for any exact unique match](https://github.com/ashlrai/ashlr-plugin/pull/169): pull-request; 2026-10-17
+- [#173 chore: remove stray test artifact from #167 and drop its unbacked overhead figure](https://github.com/ashlrai/ashlr-plugin/pull/173): pull-request; 2026-10-17
+- [#172 fix(grep): readable rg fallback output; re-measure grep savings against plain rg](https://github.com/ashlrai/ashlr-plugin/pull/172): pull-request; 2026-10-17
+- [#167 docs: line-number overhead note for small files](https://github.com/ashlrai/ashlr-plugin/pull/167): pull-request; 2026-10-17
+- [#168 ci: one Linux job; fix the SQLite migration race and zombie PID checks](https://github.com/ashlrai/ashlr-plugin/pull/168): pull-request; 2026-10-17; cross-repo ashlrai/phantom#820
+- [#166 feat(hosts): Gemini CLI and Cursor host ids, Gemini setup docs](https://github.com/ashlrai/ashlr-plugin/pull/166): pull-request; 2026-10-17
+- [\[1.37.0\] - 2026-10-17](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-10-17
+- [v1.36.5](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.36.5): release; 2026-10-16
+- [#160 docs(contributing): point new contributors at good first issues](https://github.com/ashlrai/ashlr-plugin/pull/160): pull-request; 2026-10-16
+- [#163 chore(release): 1.36.5](https://github.com/ashlrai/ashlr-plugin/pull/163): pull-request; 2026-10-16
+- [#156 docs: correct legal entity to Virginia C-Corp](https://github.com/ashlrai/ashlr-plugin/pull/156): pull-request; 2026-10-16
+- [#162 perf(edit): header-only summary for tiny edits](https://github.com/ashlrai/ashlr-plugin/pull/162): pull-request; 2026-10-16
+- [#153 fix(deps): install @ashlr/core-efficiency from npm, not GitHub](https://github.com/ashlrai/ashlr-plugin/pull/153): pull-request; 2026-10-16
+- [#145 feat(mcp): list ashlr-plugin on the official MCP Registry](https://github.com/ashlrai/ashlr-plugin/pull/145): pull-request; 2026-10-16
+- [#161 docs(readme): add one-line tagline](https://github.com/ashlrai/ashlr-plugin/pull/161): pull-request; 2026-10-16
+- [#148 docs: launch readiness - ecosystem section, contributing, PR template](https://github.com/ashlrai/ashlr-plugin/pull/148): pull-request; 2026-10-16
+- [#159 Replace 57% headline with honest per-call figures](https://github.com/ashlrai/ashlr-plugin/pull/159): pull-request; 2026-10-16
+- [\[1.36.5\] - 2026-10-16](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-10-16
+- [#158 docs(readme): per-call figures instead of -57% headline](https://github.com/ashlrai/ashlr-plugin/pull/158): pull-request; 2026-10-15
+
+### ashlrai/ashlr-stack (core-fleet)
+
+- [#123 bridge: RQ-STACK-DOCTOR-JSON-SNAPSHOT](https://github.com/ashlrai/ashlr-stack/pull/123): pull-request; 2026-10-28
+- [#121 bridge: RQ-STACK-MCP-TOOLS-TESTS](https://github.com/ashlrai/ashlr-stack/pull/121): pull-request; 2026-10-28
+- [#126 bridge: RQ-FRESH-GEN-STACK](https://github.com/ashlrai/ashlr-stack/pull/126): pull-request; 2026-10-28
+- [#143 bridge: RQ-GEN-2026102622-132](https://github.com/ashlrai/ashlr-stack/pull/143): pull-request; 2026-10-28
+- [#142 bridge: RQ-GEN-2026102622-117](https://github.com/ashlrai/ashlr-stack/pull/142): pull-request; 2026-10-28
+- [#139 bridge: RQ-DEL-ASHLR-STACK](https://github.com/ashlrai/ashlr-stack/pull/139): pull-request; 2026-10-28
+- [#141 bridge: RQ-GEN-2026102621-019](https://github.com/ashlrai/ashlr-stack/pull/141): pull-request; 2026-10-28
+- [#138 bridge: RQ-CI-SECONDS-ASHLR-STACK](https://github.com/ashlrai/ashlr-stack/pull/138): pull-request; 2026-10-28
+- [#135 bridge: RQ-FAST-GATE-STACK](https://github.com/ashlrai/ashlr-stack/pull/135): pull-request; 2026-10-28
+- [#137 bridge: stack-release-dispatch](https://github.com/ashlrai/ashlr-stack/pull/137): pull-request; 2026-10-27
+- [#136 bridge: RQ-REFILL-2026102703-SALVA-001](https://github.com/ashlrai/ashlr-stack/pull/136): pull-request; 2026-10-27
+- [#129 bridge: RQ-PERF-12-STACK](https://github.com/ashlrai/ashlr-stack/pull/129): pull-request; 2026-10-27
+- [#131 bridge: RQ-SEO-STACK](https://github.com/ashlrai/ashlr-stack/pull/131): pull-request; 2026-10-27
+- [#134 bridge: RQ-N26B-085](https://github.com/ashlrai/ashlr-stack/pull/134): pull-request; 2026-10-27
+- [#133 ci: merge_group trigger + aggregate CI Gate for merge queue (G1)](https://github.com/ashlrai/ashlr-stack/pull/133): pull-request; 2026-10-27
+- [#130 bridge: RQ-STACK-CLI-COLDSTART](https://github.com/ashlrai/ashlr-stack/pull/130): pull-request; 2026-10-27
+- [#128 bridge: RQ-N26-STACK-CONTRACT-DOC](https://github.com/ashlrai/ashlr-stack/pull/128): pull-request; 2026-10-27
+- [#127 bridge: RQ-FRESH-SITE-STACK](https://github.com/ashlrai/ashlr-stack/pull/127): pull-request; 2026-10-27
+- [#125 bridge: RQ-DV-STACK-CORE-COVERAGE](https://github.com/ashlrai/ashlr-stack/pull/125): pull-request; 2026-10-26
+- [#122 ci(release): deploy-key-only Homebrew tap, SHA-pin actions, least-privilege perms](https://github.com/ashlrai/ashlr-stack/pull/122): pull-request; 2026-10-26
+- [#118 bridge: RQ-DISC-SITE-STACK](https://github.com/ashlrai/ashlr-stack/pull/118): pull-request; 2026-10-26
+- [#117 ci: draft PRs skip heavy steps, required names still report (G1)](https://github.com/ashlrai/ashlr-stack/pull/117): pull-request; 2026-10-26
+- [#116 bridge: RQ-PL-STACK-STALE-PRS](https://github.com/ashlrai/ashlr-stack/pull/116): pull-request; 2026-10-26
+- [#115 chore: remove case-colliding duplicate PR template](https://github.com/ashlrai/ashlr-stack/pull/115): pull-request; 2026-10-26
+- [#113 ci: CodeQL, Scorecard, Renovate, Codecov, Sonar, CodeRabbit, and Socket](https://github.com/ashlrai/ashlr-stack/pull/113): pull-request; 2026-10-26
+- [#111 perf(cli): run stack status probes concurrently](https://github.com/ashlrai/ashlr-stack/pull/111): pull-request; 2026-10-26
+- [v0.2.2](https://github.com/ashlrai/ashlr-stack/releases/tag/v0.2.2): release; 2026-10-26
+- [#110 release: publish npm via OIDC only, ship Unreleased as 0.2.2](https://github.com/ashlrai/ashlr-stack/pull/110): pull-request; 2026-10-26
+- [#109 feat(doctor): stack doctor --ecosystem --install prints companion install commands; --apply <tools> runs them (S2)](https://github.com/ashlrai/ashlr-stack/pull/109): pull-request; 2026-10-26
+- [#107 ci(release): pin third-party actions to commit SHAs](https://github.com/ashlrai/ashlr-stack/pull/107): pull-request; 2026-10-26
+- [#108 chore(site): remove 6 unused dependencies](https://github.com/ashlrai/ashlr-stack/pull/108): pull-request; 2026-10-26
+- [#106 docs(readme): stack onboard is source-only; fix source version](https://github.com/ashlrai/ashlr-stack/pull/106): pull-request; 2026-10-26
+- [#105 feat(doctor): shared ashlr.doctor v1 wrapper for doctor --json (contract + stack)](https://github.com/ashlrai/ashlr-stack/pull/105): pull-request; 2026-10-26
+- [#104 feat(doctor): flag companions whose handshake drifts from the v1 contract](https://github.com/ashlrai/ashlr-stack/pull/104): pull-request; 2026-10-25
+- [#103 feat(handshake): conformance kit, canonical v1 contract + reference checker](https://github.com/ashlrai/ashlr-stack/pull/103): pull-request; 2026-10-25
+- [#102 fix(doctor): locus apply is manual in stack doctor --ecosystem --fix (never forward its control capability)](https://github.com/ashlrai/ashlr-stack/pull/102): pull-request; 2026-10-25
+- [#101 docs(getting-started): Repair everything section](https://github.com/ashlrai/ashlr-stack/pull/101): pull-request; 2026-10-25
+- [#100 feat(doctor): --ecosystem --fix covers lexicon and ashlr-md (mdopener-mcp)](https://github.com/ashlrai/ashlr-stack/pull/100): pull-request; 2026-10-25
+- [#98 feat(doctor): --ecosystem --fix previews companions' own doctor --fix; --apply <tools> runs them, opted in per tool](https://github.com/ashlrai/ashlr-stack/pull/98): pull-request; 2026-10-25
+- [#99 docs: cross-tool getting-started guide (phantom, locus, stack, plugin)](https://github.com/ashlrai/ashlr-stack/pull/99): pull-request; 2026-10-25
+- [#97 docs(readme): note registry 0.1.1 lags source, list stack doctor --ecosystem](https://github.com/ashlrai/ashlr-stack/pull/97): pull-request; 2026-10-25
+- [#96 feat(exec): --as <alias> refuses before Phantom or the command starts unless Locus has that alias pinned](https://github.com/ashlrai/ashlr-stack/pull/96): pull-request; 2026-10-25
+- [#95 feat(doctor): --ecosystem suggests locus doctor --fix when locus is degraded and supports it](https://github.com/ashlrai/ashlr-stack/pull/95): pull-request; 2026-10-25
+- [#94 feat(doctor): --ecosystem lists installed Ashlr tools via --ashlr-handshake](https://github.com/ashlrai/ashlr-stack/pull/94): pull-request; 2026-10-25
+- [#93 ci(deploy-site): concurrency group that never cancels main; cache bun install](https://github.com/ashlrai/ashlr-stack/pull/93): pull-request; 2026-10-25
+- [#92 feat(cli): stack --ashlr-handshake (Ashlr companion handshake v1)](https://github.com/ashlrai/ashlr-stack/pull/92): pull-request; 2026-10-25
+- [#91 feat(doctor): opt-in Phantom agent preflight (STACK_PHANTOM_PREFLIGHT)](https://github.com/ashlrai/ashlr-stack/pull/91): pull-request; 2026-10-25
+- [#83 feat(templates): temporal-worker-phantom](https://github.com/ashlrai/ashlr-stack/pull/83): pull-request; 2026-10-25
+- [#82 feat(templates): litellm-gateway](https://github.com/ashlrai/ashlr-stack/pull/82): pull-request; 2026-10-25
+- [#84 feat(core): honor ANTHROPIC_BASE_URL, OPENAI_BASE_URL and OLLAMA_HOST (defaults unchanged)](https://github.com/ashlrai/ashlr-stack/pull/84): pull-request; 2026-10-25
+- [#90 fix(cli): look up user-named services as own properties](https://github.com/ashlrai/ashlr-stack/pull/90): pull-request; 2026-10-25
+- [#89 feat(exec): opt-in Phantom agent preflight (STACK_PHANTOM_PREFLIGHT)](https://github.com/ashlrai/ashlr-stack/pull/89): pull-request; 2026-10-25
+- [0.2.2 (2026-10-25)](https://github.com/ashlrai/ashlr-stack/blob/HEAD/CHANGELOG.md): changelog; 2026-10-25
+- [#22 Preserve prototype-named services in Stack configuration](https://github.com/ashlrai/ashlr-stack/pull/22): pull-request; 2026-10-24
+- [#88 ci: docs-only PRs skip the test and lint steps; every job still reports](https://github.com/ashlrai/ashlr-stack/pull/88): pull-request; 2026-10-24
+- [#86 ci: cancel superseded PR runs only, cache Bun installs](https://github.com/ashlrai/ashlr-stack/pull/86): pull-request; 2026-10-24
+- [#87 test: unset env vars by deleting them, not assigning undefined](https://github.com/ashlrai/ashlr-stack/pull/87): pull-request; 2026-10-24
+- [#85 fix: Use portable fetch declaration types](https://github.com/ashlrai/ashlr-stack/pull/85): pull-request; 2026-10-22
+- [#81 feat(cli): stack providers --category; stack_providers takes category](https://github.com/ashlrai/ashlr-stack/pull/81): pull-request; 2026-10-18
+- [#80 feat(cli): stack upgrade --json; stack_upgrade passes --json](https://github.com/ashlrai/ashlr-stack/pull/80): pull-request; 2026-10-18
+- [#79 docs: post-quantum readiness notes and classical-only crypto check](https://github.com/ashlrai/ashlr-stack/pull/79): pull-request; 2026-10-18
+- [#78 stack import --json names what was stored and skipped](https://github.com/ashlrai/ashlr-stack/pull/78): pull-request; 2026-10-17
+- [#77 stack env diff --json; stack_env_diff takes json](https://github.com/ashlrai/ashlr-stack/pull/77): pull-request; 2026-10-17
+- [#61 chore(release): 0.2.2](https://github.com/ashlrai/ashlr-stack/pull/61): pull-request; 2026-10-17
+- [#76 stack remove --json reports the secrets Phantom kept](https://github.com/ashlrai/ashlr-stack/pull/76): pull-request; 2026-10-17
+- [#75 fix(cli): refuse extra positional arguments instead of dropping them](https://github.com/ashlrai/ashlr-stack/pull/75): pull-request; 2026-10-17
+- [#73 fix(cli): `stack env --env prod` works; pin stack_status cwd and the cwd refusal](https://github.com/ashlrai/ashlr-stack/pull/73): pull-request; 2026-10-17
+- [#74 fix(cli,mcp): usage errors an agent can act on; stack_status takes cwd](https://github.com/ashlrai/ashlr-stack/pull/74): pull-request; 2026-10-17
+- [#70 fix(cli,mcp): refuse unknown flags, headless scan report, clean env export --stdout, stricter MCP args](https://github.com/ashlrai/ashlr-stack/pull/70): pull-request; 2026-10-17
+- [#68 feat(mcp): project-scoped tools take an optional absolute cwd](https://github.com/ashlrai/ashlr-stack/pull/68): pull-request; 2026-10-17
+- [#69 fix(cli): stack exec does not relay a terminal's Ctrl-C a second time](https://github.com/ashlrai/ashlr-stack/pull/69): pull-request; 2026-10-17
+- [#67 fix(cli,mcp): headless login hint, templates/projects list --json, MCP refuses undeclared arguments](https://github.com/ashlrai/ashlr-stack/pull/67): pull-request; 2026-10-17
+- [#66 ci(release): pack-and-install preflight on PRs; npm no longer waits for macOS](https://github.com/ashlrai/ashlr-stack/pull/66): pull-request; 2026-10-17
+- [#62 fix(cli,mcp): stack exec reports killed commands and forwards signals; --json for projects/templates list](https://github.com/ashlrai/ashlr-stack/pull/62): pull-request; 2026-10-17
+- [#64 fix(cli): stack ci says what to do instead; swap validates providers before asking for Phantom](https://github.com/ashlrai/ashlr-stack/pull/64): pull-request; 2026-10-17
+- [#65 fix: green main doc facts; rollback names the resources it leaves; info --json for unknown providers](https://github.com/ashlrai/ashlr-stack/pull/65): pull-request; 2026-10-17
+- [#63 fix(cli): recommend/remove/open/projects remove fail on bad input and name the next step](https://github.com/ashlrai/ashlr-stack/pull/63): pull-request; 2026-10-17
+- [#59 test(site): pin agent-facing doc facts to their sources of truth](https://github.com/ashlrai/ashlr-stack/pull/59): pull-request; 2026-10-17
+- [#58 fix(cli): keep piped output when outroError exits; doctor with 0 services; info/env --json; headless stack_add guidance](https://github.com/ashlrai/ashlr-stack/pull/58): pull-request; 2026-10-17
+- [#60 fix(core): keep user-written Cursor/Gemini MCP entries on stack add, remove and rollback](https://github.com/ashlrai/ashlr-stack/pull/60): pull-request; 2026-10-17
+- [#56 fix(apply): stack apply / init --template keep going past a failed provider; wrong recipe ids list the saved ones](https://github.com/ashlrai/ashlr-stack/pull/56): pull-request; 2026-10-17
+- [#57 cli: real --json for `stack list`, `providers` and `deps`; MCP tools take `json: true`](https://github.com/ashlrai/ashlr-stack/pull/57): pull-request; 2026-10-17
+- [#51 feat(core): mirror MCP entries into Cursor and Gemini CLI project configs](https://github.com/ashlrai/ashlr-stack/pull/51): pull-request; 2026-10-17
+- [#55 docs: agent-facing docs for stack onboard, status --json and the MCP CLI lookup](https://github.com/ashlrai/ashlr-stack/pull/55): pull-request; 2026-10-17; cross-repo ashlrai/phantom#751
+- [#54 ci(release): build stack-darwin-x64 on Linux so a release waits on one macOS job, not two](https://github.com/ashlrai/ashlr-stack/pull/54): pull-request; 2026-10-17
+- [#53 mcp: validate tool input before building argv; apply: resolve recipe before auto-init](https://github.com/ashlrai/ashlr-stack/pull/53): pull-request; 2026-10-17
+- [#52 feat: stack onboard, one command to wire the Phantom gateway into every installed agent](https://github.com/ashlrai/ashlr-stack/pull/52): pull-request; 2026-10-16
+- [#50 docs(mcp): point Phantom Secrets link at phm.dev/secrets](https://github.com/ashlrai/ashlr-stack/pull/50): pull-request; 2026-10-16
+- [#49 Packed tarballs ship their bins; installers state the real provider count and how to get the MCP](https://github.com/ashlrai/ashlr-stack/pull/49): pull-request; 2026-10-16
+- [#48 chore(release): date 0.2.1 changelog](https://github.com/ashlrai/ashlr-stack/pull/48): pull-request; 2026-10-16
+- [#41 docs(contributing): point new contributors at good first issues](https://github.com/ashlrai/ashlr-stack/pull/41): pull-request; 2026-10-16
+- [#25 docs: qualify published MCP runtime and transport](https://github.com/ashlrai/ashlr-stack/pull/25): pull-request; 2026-10-16
+- [#47 site: commit `stack status --json` in the CLI reference; CI fails on drift](https://github.com/ashlrai/ashlr-stack/pull/47): pull-request; 2026-10-16; cross-repo ashlrai/phantom#751
+- [#46 cli: bare `stack projects`/`stack telemetry` run their default; `stack add <typo>` names the provider first](https://github.com/ashlrai/ashlr-stack/pull/46): pull-request; 2026-10-16
+- [#30 feat(status): `stack status --json` so Phantom can see wired services](https://github.com/ashlrai/ashlr-stack/pull/30): pull-request; 2026-10-16; cross-repo ashlrai/phantom#751
+- [#45 fix(cli): doctor fails without .stack.toml, open survives a missing opener, scan rejects bad args; site lists all 26 commands](https://github.com/ashlrai/ashlr-stack/pull/45): pull-request; 2026-10-16
+- [#44 docs(changelog): fold unreleased work into 0.2.1 for the first npm publish since 0.1.1](https://github.com/ashlrai/ashlr-stack/pull/44): pull-request; 2026-10-16
+- [#43 Agent-facing fixes: recommend --category in any case, sync rejects unknown platforms first, real MCP error in docs](https://github.com/ashlrai/ashlr-stack/pull/43): pull-request; 2026-10-16
+- [#42 fix(apply): check the Phantom vault instead of writing placeholder secrets](https://github.com/ashlrai/ashlr-stack/pull/42): pull-request; 2026-10-16
+- [#29 fix(doctor): stored Phantom tokens read as unchecked, not "missing from vault"](https://github.com/ashlrai/ashlr-stack/pull/29): pull-request; 2026-10-16
+- [0.2.1 (2026-10-16)](https://github.com/ashlrai/ashlr-stack/blob/HEAD/CHANGELOG.md): changelog; 2026-10-16
+- [#40 docs: adding-a-provider guide, plus a registry/catalog/matrix parity test](https://github.com/ashlrai/ashlr-stack/pull/40): pull-request; 2026-10-15
+- [#39 fix(cli): one-line command errors instead of a stack trace](https://github.com/ashlrai/ashlr-stack/pull/39): pull-request; 2026-10-15
+- [#31 Agent-facing fixes: MCP runs its own stack CLI, stack_scan JSON, clean piped output](https://github.com/ashlrai/ashlr-stack/pull/31): pull-request; 2026-10-15
+- [#38 Guard Stack release inputs and downstream jobs](https://github.com/ashlrai/ashlr-stack/pull/38): pull-request; 2026-10-15
+- [#37 Remove nested link from Mechanics tab label](https://github.com/ashlrai/ashlr-stack/pull/37): pull-request; 2026-10-15
+- [#36 Clarify Mechanics scope and fit mobile step cards](https://github.com/ashlrai/ashlr-stack/pull/36): pull-request; 2026-10-15
+- [#35 Clarify ecosystem examples and fit homepage cards on narrow screens](https://github.com/ashlrai/ashlr-stack/pull/35): pull-request; 2026-10-15
+- [#34 Fix homepage wrapping and FAQ answer clipping](https://github.com/ashlrai/ashlr-stack/pull/34): pull-request; 2026-10-15
+- [#23 docs: make the npx and MCP quickstarts work as written; add an agent quickstart](https://github.com/ashlrai/ashlr-stack/pull/23): pull-request; 2026-10-15
+- [#24 Make Stack work with Phantom Secrets 0.7.9](https://github.com/ashlrai/ashlr-stack/pull/24): pull-request; 2026-10-15
+- [#28 fix: stage Stack credentials during setup](https://github.com/ashlrai/ashlr-stack/pull/28): pull-request; 2026-10-15
+- [#32 docs: correct stale agent-facing claims against real CLI behavior](https://github.com/ashlrai/ashlr-stack/pull/32): pull-request; 2026-10-15; cross-repo ashlrai/phantom#751
+
+### ashlrai/lexicon (core-fleet)
+
+- [#281 bridge: RQ-README-BRAND-LEXICON](https://github.com/ashlrai/lexicon/pull/281): pull-request; 2026-10-28
+- [#280 bridge: RQ-MR-CONFLICT-DRIVERS-lexicon](https://github.com/ashlrai/lexicon/pull/280): pull-request; 2026-10-28
+- [#275 bridge: RQ-N26B-070](https://github.com/ashlrai/lexicon/pull/275): pull-request; 2026-10-28
+- [#271 bridge: RQ-N26B-068](https://github.com/ashlrai/lexicon/pull/271): pull-request; 2026-10-28
+- [#272 bridge: RQ-N26-LEX-BIND-TESTS](https://github.com/ashlrai/lexicon/pull/272): pull-request; 2026-10-28
+- [#276 bridge: RQ-N26B-073](https://github.com/ashlrai/lexicon/pull/276): pull-request; 2026-10-28
+- [#279 bridge: RQ-N26B-071](https://github.com/ashlrai/lexicon/pull/279): pull-request; 2026-10-28
+- [#277 bridge: RQ-N26B-074](https://github.com/ashlrai/lexicon/pull/277): pull-request; 2026-10-28
+- [#278 bridge: RQ-N26B-072](https://github.com/ashlrai/lexicon/pull/278): pull-request; 2026-10-28
+- [#244 bridge: RQ-LEX-MCP-CONFORMANCE](https://github.com/ashlrai/lexicon/pull/244): pull-request; 2026-10-28
+- [#268 bridge: RQ-GEN-2026102622-111](https://github.com/ashlrai/lexicon/pull/268): pull-request; 2026-10-28
+- [#267 bridge: RQ-GEN-2026102621-014](https://github.com/ashlrai/lexicon/pull/267): pull-request; 2026-10-28
+- [#269 bridge: RQ-GEN-2026102621-395](https://github.com/ashlrai/lexicon/pull/269): pull-request; 2026-10-28
+- [#266 bridge: RQ-GEN-2026102621-015](https://github.com/ashlrai/lexicon/pull/266): pull-request; 2026-10-28
+- [#270 bridge: RQ-GEN-2026102621-394](https://github.com/ashlrai/lexicon/pull/270): pull-request; 2026-10-28
+- [#241 bridge: RQ-DEADCODE-lexicon](https://github.com/ashlrai/lexicon/pull/241): pull-request; 2026-10-28
+- [#265 bridge: RQ-DAILY-15-LEXICON](https://github.com/ashlrai/lexicon/pull/265): pull-request; 2026-10-28
+- [#264 bridge: RQ-CI-SECONDS-LEXICON](https://github.com/ashlrai/lexicon/pull/264): pull-request; 2026-10-28
+- [#237 bridge: RQ-PL-LEX-INTEGRATION-TESTS](https://github.com/ashlrai/lexicon/pull/237): pull-request; 2026-10-28
+- [#236 bridge: RQ-PL-RADAR-ANTH-LEXICON-SCAN](https://github.com/ashlrai/lexicon/pull/236): pull-request; 2026-10-28
+- [#263 bridge: THROUGHPUT-LEXICON-CANCEL-2](https://github.com/ashlrai/lexicon/pull/263): pull-request; 2026-10-28
+- [#262 bridge: RQ-FAST-GATE-LEXICON-2](https://github.com/ashlrai/lexicon/pull/262): pull-request; 2026-10-28
+- [#246 security: Tier-1 CODEOWNERS for serve option parsing (program.ts, args.ts)](https://github.com/ashlrai/lexicon/pull/246): pull-request; 2026-10-27
+- [#254 bridge: RQ-N26-LEX-CONTRACT-SCHEMA](https://github.com/ashlrai/lexicon/pull/254): pull-request; 2026-10-27
+- [#258 ci: merge_group + CI Gate; macOS/Windows off PR unless labelled (G1)](https://github.com/ashlrai/lexicon/pull/258): pull-request; 2026-10-27
+- [#243 bridge: RQ-FRESH-GEN-LEX](https://github.com/ashlrai/lexicon/pull/243): pull-request; 2026-10-27
+- [#253 bridge: RQ-N26-DV-LEX-TYPES](https://github.com/ashlrai/lexicon/pull/253): pull-request; 2026-10-27
+- [#250 bridge: RQ-LEX-IMPORTERS-FUZZ](https://github.com/ashlrai/lexicon/pull/250): pull-request; 2026-10-27
+- [#256 bridge: RQ-SEO-LEX](https://github.com/ashlrai/lexicon/pull/256): pull-request; 2026-10-27
+- [#259 bridge: RQ-SALVAGE-LEXICON-ENGINES](https://github.com/ashlrai/lexicon/pull/259): pull-request; 2026-10-27
+- [#252 bridge: RQ-LEX-EXPORTERS-SNAPSHOT](https://github.com/ashlrai/lexicon/pull/252): pull-request; 2026-10-27
+- [#255 bridge: RQ-PERF-12-LEX](https://github.com/ashlrai/lexicon/pull/255): pull-request; 2026-10-27
+- [#238 ci: skip CI on draft PRs; macOS/Windows rows off push (G1)](https://github.com/ashlrai/lexicon/pull/238): pull-request; 2026-10-26
+- [#234 bridge: RQ-REBASE-D4](https://github.com/ashlrai/lexicon/pull/234): pull-request; 2026-10-26
+- [#229 G1 ci: Windows row on PRs only for Windows-relevant changes or ci:full (RQ-CI-FANOUT)](https://github.com/ashlrai/lexicon/pull/229): pull-request; 2026-10-26
+- [#227 bridge: LAND-lexicon-224-bundle](https://github.com/ashlrai/lexicon/pull/227): pull-request; 2026-10-26
+- [#228 bridge: RQ-BUNDLE-DIFF](https://github.com/ashlrai/lexicon/pull/228): pull-request; 2026-10-26
+- [#230 test: fix red main, long-path fixture under 130 chars on Linux](https://github.com/ashlrai/lexicon/pull/230): pull-request; 2026-10-26
+- [#225 bridge: RQ-LEX-DAEMON](https://github.com/ashlrai/lexicon/pull/225): pull-request; 2026-10-26
+- [#226 bridge: RQ-TESTDIET-lexicon](https://github.com/ashlrai/lexicon/pull/226): pull-request; 2026-10-26
+- [#223 bridge: rq-mod-2-lexicon](https://github.com/ashlrai/lexicon/pull/223): pull-request; 2026-10-26
+- [#214 Measure first run and compare espanso and whisper.cpp](https://github.com/ashlrai/lexicon/pull/214): pull-request; 2026-10-26
+- [#216 fix(trust): off a terminal, require --yes before pinning a project lexicon](https://github.com/ashlrai/lexicon/pull/216): pull-request; 2026-10-26
+- [#213 feat(pending): remember rejected corrections so the hook does not queue them again](https://github.com/ashlrai/lexicon/pull/213): pull-request; 2026-10-26
+- [#210 chore(security): growth-only CODEOWNERS for workflows and keyed/network paths](https://github.com/ashlrai/lexicon/pull/210): pull-request; 2026-10-26
+- [#211 feat(suggest): list pending hook captures first, labeled with their source](https://github.com/ashlrai/lexicon/pull/211): pull-request; 2026-10-26
+- [#209 feat(doctor): ashlr.doctor v1 wrapper on lexicon doctor --json](https://github.com/ashlrai/lexicon/pull/209): pull-request; 2026-10-26
+- [#208 test(handshake): v1 conformance test against the vendored ashlr-stack contract](https://github.com/ashlrai/lexicon/pull/208): pull-request; 2026-10-25
+- [#207 docs(readme): lexicon doctor --fix section](https://github.com/ashlrai/lexicon/pull/207): pull-request; 2026-10-25
+- [#206 feat(doctor): suggest mdopener-mcp doctor --fix when ashlr-md advertises doctor-fix](https://github.com/ashlrai/lexicon/pull/206): pull-request; 2026-10-25
+- [#205 docs(readme): npm version lag note and lexicon export format suggestion](https://github.com/ashlrai/lexicon/pull/205): pull-request; 2026-10-25
+- [#204 ci: test jobs time out after 20 minutes instead of 360](https://github.com/ashlrai/lexicon/pull/204): pull-request; 2026-10-25
+- [#203 feat(doctor): lexicon doctor --fix \[--apply\] with backups; doctor-fix capability](https://github.com/ashlrai/lexicon/pull/203): pull-request; 2026-10-25
+- [#202 feat(doctor): read locus and ashlr-md handshakes, suggest locus doctor --fix when supported](https://github.com/ashlrai/lexicon/pull/202): pull-request; 2026-10-25
+- [#201 feat(export): suggest the closest format for a mistyped lexicon export](https://github.com/ashlrai/lexicon/pull/201): pull-request; 2026-10-25
+- [#200 docs(contributing): opting a PR into the macOS CI row](https://github.com/ashlrai/lexicon/pull/200): pull-request; 2026-10-25
+- [#199 chore(ci): only ci:macos affects CI; drop the labeled trigger, plan reads labels live](https://github.com/ashlrai/lexicon/pull/199): pull-request; 2026-10-25
+- [#198 chore(ci): macOS row on PRs only for timing-sensitive paths or the ci:macos label](https://github.com/ashlrai/lexicon/pull/198): pull-request; 2026-10-25
+- [#197 fix(hook): a short prompt's corrections no longer depend on machine speed (macOS main red)](https://github.com/ashlrai/lexicon/pull/197): pull-request; 2026-10-25
+- [#196 feat(export): speechmatics additional_vocab exporter](https://github.com/ashlrai/lexicon/pull/196): pull-request; 2026-10-25
+- [#195 fix(suggest): report kept pronunciation hints on --apply; real-store tests](https://github.com/ashlrai/lexicon/pull/195): pull-request; 2026-10-25
+- [#194 feat(cli): lexicon --ashlr-handshake (Ashlr companion handshake v1)](https://github.com/ashlrai/lexicon/pull/194): pull-request; 2026-10-25
+- [#193 feat(suggest): propose pronunciation hints for terms the matcher keeps guessing at](https://github.com/ashlrai/lexicon/pull/193): pull-request; 2026-10-25
+- [#192 ci: cache SwiftPM and NuGet in the macOS and Windows app workflows](https://github.com/ashlrai/lexicon/pull/192): pull-request; 2026-10-25
+- [#191 docs(readme): one canonical name, command and link per Ashlr tool](https://github.com/ashlrai/lexicon/pull/191): pull-request; 2026-10-24
+- [#166 build(deps-dev): bump the dev-dependencies group with 3 updates](https://github.com/ashlrai/lexicon/pull/166): pull-request; 2026-10-24
+- [#189 ci: docs-only PRs skip the heavy steps; every row still reports](https://github.com/ashlrai/lexicon/pull/189): pull-request; 2026-10-24
+- [#190 Lexicon rounds 107 - 109: CLI category/alias/export fixes, app XDG paths, docs and benchmark figures](https://github.com/ashlrai/lexicon/pull/190): pull-request; 2026-10-24
+- [#188 fix(voice): make claimStop exclusive on Windows (double delivery of one capture)](https://github.com/ashlrai/lexicon/pull/188): pull-request; 2026-10-24
+- [#187 ci: cancel superseded PR runs of the macOS and Windows app workflows](https://github.com/ashlrai/lexicon/pull/187): pull-request; 2026-10-24
+- [#186 Lexicon rounds 105 - 106: export notes, extension robustness, category "other", hook and MCP fixes](https://github.com/ashlrai/lexicon/pull/186): pull-request; 2026-10-24
+- [#185 Lexicon round 104: broken trust.json refused up front, uninstall/install scope messages, MCP fixes](https://github.com/ashlrai/lexicon/pull/185): pull-request; 2026-10-24
+- [#184 Lexicon round 103: review safety, honest clipboard messages, install/trust/learn/setup fixes](https://github.com/ashlrai/lexicon/pull/184): pull-request; 2026-10-24
+- [#179 ci: full test suite on PRs touching serve/install/setup code](https://github.com/ashlrai/lexicon/pull/179): pull-request; 2026-10-24
+- [#183 Lexicon round 102: hits.json safety, voice history bounds, toggle pid check, review trust race](https://github.com/ashlrai/lexicon/pull/183): pull-request; 2026-10-24
+- [#181 Lexicon round 101: list paging, doctor file checks, serve config errors, suggest and stats fixes](https://github.com/ashlrai/lexicon/pull/181): pull-request; 2026-10-24
+- [#180 Lexicon rounds 99 - 100: bounded service log, hook budget, pairing origin, editors, doctor and MCP fixes](https://github.com/ashlrai/lexicon/pull/180): pull-request; 2026-10-24
+- [#178 Lexicon round 98: compressed model downloads, bounded voice history, SessionStart keeps top terms, hits.json safety](https://github.com/ashlrai/lexicon/pull/178): pull-request; 2026-10-24
+- [#177 test(serve): fix --install temp file test on macOS and Windows](https://github.com/ashlrai/lexicon/pull/177): pull-request; 2026-10-24
+- [#176 Lexicon round 97: serve token handling, private voice temp files, whole setup output](https://github.com/ashlrai/lexicon/pull/176): pull-request; 2026-10-24
+- [#175 Lexicon round 96: Codex uninstall, settings and hook checks, Windows and macOS service fixes](https://github.com/ashlrai/lexicon/pull/175): pull-request; 2026-10-24
+- [#174 Lexicon round 95: trust.json guard, Codex TOML, serve units, and main's macOS/Windows tests](https://github.com/ashlrai/lexicon/pull/174): pull-request; 2026-10-24
+- [#173 Lexicon round 94: whole paths, install writes, export dedupe, macOS fixes](https://github.com/ashlrai/lexicon/pull/173): pull-request; 2026-10-24
+- [#172 Doctor and MCP explain an unreadable lexicon, serve never swaps a token silently, and the daemon exits by signal](https://github.com/ashlrai/lexicon/pull/172): pull-request; 2026-10-24
+- [#171 Full paths in output, clear unreadable-lexicon errors, safer edit and add, and a sturdier clipboard daemon and pairing](https://github.com/ashlrai/lexicon/pull/171): pull-request; 2026-10-24
+- [#170 Voice picks the device you asked for and explains model failures, packs keep shared terms and safe output, setup reports a failed step](https://github.com/ashlrai/lexicon/pull/170): pull-request; 2026-10-24
+- [#169 Local API timeouts and Private Network Access, MCP tool hints and input limits, and a hook that stays within its caps](https://github.com/ashlrai/lexicon/pull/169): pull-request; 2026-10-24
+- [#168 Extension covers iframes and SPA navigation and keeps undo, learn takes names said by sound, and the local API answers bad requests properly](https://github.com/ashlrai/lexicon/pull/168): pull-request; 2026-10-24
+- [#167 Learn only plausible corrections, report reversed and truncated runs, fix main's Windows run, and harden the extension](https://github.com/ashlrai/lexicon/pull/167): pull-request; 2026-10-24
+- [#165 Learning that doesn't overreach, harvest honours .gitignore, clipboard and setup fixes](https://github.com/ashlrai/lexicon/pull/165): pull-request; 2026-10-24
+- [#164 Exports stay within each tool's limits and say what they leave out; setup and clipboard fixes](https://github.com/ashlrai/lexicon/pull/164): pull-request; 2026-10-24
+- [#163 Extension pairing resilience, edit-check verdicts, safer exports](https://github.com/ashlrai/lexicon/pull/163): pull-request; 2026-10-24
+- [#162 Hook stays in budget after hand edits, voice hardening, extension pairing fixes](https://github.com/ashlrai/lexicon/pull/162): pull-request; 2026-10-24
+- [#161 Round 81: faster hook after lexicon edits, safer hook input, voice recording and model download fixes](https://github.com/ashlrai/lexicon/pull/161): pull-request; 2026-10-24
+- [#160 Round 80: NFC-aware aliases, bounded MCP inputs, code-aware correction hook, doctor sees local settings](https://github.com/ashlrai/lexicon/pull/160): pull-request; 2026-10-24
+- [#159 Round 79: MCP uninstall_client, doctor sees project-scope hooks, local API race and path fixes, CHANGELOG repair](https://github.com/ashlrai/lexicon/pull/159): pull-request; 2026-10-24
+- [#158 Round 78: lexicon uninstall, project-scope hooks, stale registration refresh, local API and clipboard fixes](https://github.com/ashlrai/lexicon/pull/158): pull-request; 2026-10-24
+- [#157 Round 77: schema refuses noncharacters, exporter cell and escape fixes, safer reinstall and config edits](https://github.com/ashlrai/lexicon/pull/157): pull-request; 2026-10-24
+- [#156 fix: empty YAML keys load; agent context capped; code masked in chat composers; exporter round-trips (round 76)](https://github.com/ashlrai/lexicon/pull/156): pull-request; 2026-10-24
+- [#155 fix: extension skips oversized text and code editors, pairs any port; bounded schema errors (round 75)](https://github.com/ashlrai/lexicon/pull/155): pull-request; 2026-10-24
+- [#154 fix: hook context cap, large clipboards, empty HOME everywhere, extension undo and login fields (round 74)](https://github.com/ashlrai/lexicon/pull/154): pull-request; 2026-10-24
+- [#153 fix: hook and clipboard hardening; accept lock order; empty HOME (round 73)](https://github.com/ashlrai/lexicon/pull/153): pull-request; 2026-10-24
+- [#152 fix: loaded terms keep their real shape; singular counts; no dashes (round 72)](https://github.com/ashlrai/lexicon/pull/152): pull-request; 2026-10-24
+- [#151 fix: blank words refused everywhere; --json honoured on pending, voice and install (round 71)](https://github.com/ashlrai/lexicon/pull/151): pull-request; 2026-10-24
+- [#150 fix: local API POST routes refuse query strings; docs match behaviour (round 70)](https://github.com/ashlrai/lexicon/pull/150): pull-request; 2026-10-24
+- [#149 fix: MCP tool descriptions match behaviour; voice, hook and installer next steps (round 69)](https://github.com/ashlrai/lexicon/pull/149): pull-request; 2026-10-24
+- [#148 fix: next steps in serve, pack, voice, installer and menu bar errors (round 68)](https://github.com/ashlrai/lexicon/pull/148): pull-request; 2026-10-24
+- [#147 fix: next steps in extension, menu bar app and CLI messages (rounds 66-67)](https://github.com/ashlrai/lexicon/pull/147): pull-request; 2026-10-24
+- [#146 fix: one source for empty-result notes across CLI, MCP and the local API (round 65)](https://github.com/ashlrai/lexicon/pull/146): pull-request; 2026-10-24
+- [#145 fix: setup, export, remove and the local API explain empty and refused results (rounds 63-64)](https://github.com/ashlrai/lexicon/pull/145): pull-request; 2026-10-24
+- [#144 fix: every empty, no-op or refused result names the next step (rounds 56-62)](https://github.com/ashlrai/lexicon/pull/144): pull-request; 2026-10-24
+- [#143 fix(serve, packs, extension): say what happened and how to retry (rounds 54-55)](https://github.com/ashlrai/lexicon/pull/143): pull-request; 2026-10-24
+- [#142 Rounds 52-53: every first-run dead end names its next step; no-op adds, trusts and pack installs say nothing changed](https://github.com/ashlrai/lexicon/pull/142): pull-request; 2026-10-24
+- [#141 Round 51: skip reading project lexicons the registry never trusted; suggest, voice and index refresh stop re-parsing](https://github.com/ashlrai/lexicon/pull/141): pull-request; 2026-10-23
+- [#140 feat(doctor): value-free, report-only Phantom presence check](https://github.com/ashlrai/lexicon/pull/140): pull-request; 2026-10-19
+- [#139 fix: keep tokens and URL credentials out of upstream error text](https://github.com/ashlrai/lexicon/pull/139): pull-request; 2026-10-19
+- [#138 docs: using Lexicon with Phantom](https://github.com/ashlrai/lexicon/pull/138): pull-request; 2026-10-19
+- [#137 test(plugin): settle bundle helpers only after the child exits (Windows EBUSY flake)](https://github.com/ashlrai/lexicon/pull/137): pull-request; 2026-10-19
+- [#136 feat: queue corrections noticed by the prompt hook for review (lexicon pending), never applied automatically](https://github.com/ashlrai/lexicon/pull/136): pull-request; 2026-10-19
+- [#135 ci: benchmark regression gate over the synthetic corpus](https://github.com/ashlrai/lexicon/pull/135): pull-request; 2026-10-19
+- [#134 test: direct coverage for the bounded regular-file reader](https://github.com/ashlrai/lexicon/pull/134): pull-request; 2026-10-18
+- [#133 chore(release): roll Unreleased into 0.5.6](https://github.com/ashlrai/lexicon/pull/133): pull-request; 2026-10-18
+- [#64 test: isolate e2e installs from ambient client config overrides](https://github.com/ashlrai/lexicon/pull/64): pull-request; 2026-10-18
+- [#62 test: cover apostrophes in explicit matcher aliases](https://github.com/ashlrai/lexicon/pull/62): pull-request; 2026-10-18
+- [#132 docs(readme): state the Phantom integration sketch and link PQ readiness](https://github.com/ashlrai/lexicon/pull/132): pull-request; 2026-10-18
+- [#131 test: recordHits and parseSkipped:false must not parse a changed project file](https://github.com/ashlrai/lexicon/pull/131): pull-request; 2026-10-18
+- [#124 fix(trust): project writes re-check trust on the bytes they merge](https://github.com/ashlrai/lexicon/pull/124): pull-request; 2026-10-18
+- [#130 Round 50: daemon, voice, setup and recordHits skip parsing untrusted repo lexicons](https://github.com/ashlrai/lexicon/pull/130): pull-request; 2026-10-18
+- [#129 Round 49: CLI read-only commands skip parsing untrusted repo lexicons, serve invalidates only what a write touched, /aliases refuses control characters](https://github.com/ashlrai/lexicon/pull/129): pull-request; 2026-10-18
+- [#128 Round 48: MCP read-only tools skip parsing untrusted repo lexicons, /normalize keeps other cached loads, clearer /aliases and learn errors](https://github.com/ashlrai/lexicon/pull/128): pull-request; 2026-10-18
+- [#127 Round 47: serve and MCP skip parsing untrusted repo lexicons, /normalize names a skipped file, add names the field it refuses](https://github.com/ashlrai/lexicon/pull/127): pull-request; 2026-10-18
+- [#126 Round 46: hook skips parsing untrusted repo lexicons, 4-entry parse and index caches, small trusted files cached](https://github.com/ashlrai/lexicon/pull/126): pull-request; 2026-10-18
+- [#125 Round 45: hook under 200 ms with a trusted project, fresh index cache after every project write, faster `lexicon add`](https://github.com/ashlrai/lexicon/pull/125): pull-request; 2026-10-18
+- [#123 Round 44: hermetic e2e cwd and temp cleanup, batched MCP apply_suggestion, warm index cache for a trusted project](https://github.com/ashlrai/lexicon/pull/123): pull-request; 2026-10-18
+- [#121 docs: post-quantum readiness notes and classical-only crypto check](https://github.com/ashlrai/lexicon/pull/121): pull-request; 2026-10-18
+- [#122 test(e2e): CI runs the journeys on the built dist (no tsx per spawn)](https://github.com/ashlrai/lexicon/pull/122): pull-request; 2026-10-18
+- [#120 Round 43: hook stays under budget after a write, e2e trust journey in parallel stages, batched suggest and harvest adds](https://github.com/ashlrai/lexicon/pull/120): pull-request; 2026-10-18
+- [#119 Round 42: harvest adds in one write, every correction in a prompt flagged, honest Test connection, repo lexicon edit hint](https://github.com/ashlrai/lexicon/pull/119): pull-request; 2026-10-18
+- [#118 Round 41: pack installs 14x faster, quicker suggest, a setup preview that says what it installs, extension next steps](https://github.com/ashlrai/lexicon/pull/118): pull-request; 2026-10-18
+- [#117 Round 40: add prints aliases once, doctor stops looping back to setup, installer lines that match, a Windows test cleanup race](https://github.com/ashlrai/lexicon/pull/117): pull-request; 2026-10-18
+- [#116 Round 39: honest installer setup claims, a real terminal check, a fallback toast that says why, first-run CLI hints](https://github.com/ashlrai/lexicon/pull/116): pull-request; 2026-10-18
+- [#115 Round 38: extension Learn falls back like Normalize, commands shown as code, extension typecheck, Homebrew and installer fixes](https://github.com/ashlrai/lexicon/pull/115): pull-request; 2026-10-18
+- [#114 Round 37: extension names a stopped server and the pairing command, install --apply without a client refuses, MCP docs held to the live schema](https://github.com/ashlrai/lexicon/pull/114): pull-request; 2026-10-18
+- [#113 Round 36: export --json, specific next steps for unknown categories, packs and formats, MCP inputs that state their defaults and caps](https://github.com/ashlrai/lexicon/pull/113): pull-request; 2026-10-18
+- [#112 Round 35: suggest --yes --json really applies, every --json failure names a next step, hook and serve flag clarity](https://github.com/ashlrai/lexicon/pull/112): pull-request; 2026-10-18
+- [#111 Round 34: serve and hook errors that say what to do, huge-prompt cap, plugin docs match the tools](https://github.com/ashlrai/lexicon/pull/111): pull-request; 2026-10-18
+- [0.5.6 (2026-10-18)](https://github.com/ashlrai/lexicon/blob/HEAD/CHANGELOG.md): changelog; 2026-10-18
+- [#110 Round 33: refuse flags that do nothing, shared conflict wording in the extension, serve /stats and /export clarity](https://github.com/ashlrai/lexicon/pull/110): pull-request; 2026-10-17
+- [#109 Round 32: voice refuses bad input up front, conflict notes name the remove step, remove --json nextStep](https://github.com/ashlrai/lexicon/pull/109): pull-request; 2026-10-17
+- [#108 Round 31: serve HEAD and /health strictness, shared conflict note, strict prompt args, extension conflict notice](https://github.com/ashlrai/lexicon/pull/108): pull-request; 2026-10-17
+- [#107 fix: learn conflict note, doctor check hints for agents, --json for install-claude/serve install/init, blocked lock dir (round 30)](https://github.com/ashlrai/lexicon/pull/107): pull-request; 2026-10-17
+- [#106 fix: doctor next steps for agents, onboard prompt, explicit empty aliases, install --json (round 29)](https://github.com/ashlrai/lexicon/pull/106): pull-request; 2026-10-17
+- [#105 fix: whitespace-tolerant hook spans, export notes, import and serve refuse ignored options, remove scope hints (round 28)](https://github.com/ashlrai/lexicon/pull/105): pull-request; 2026-10-17
+- [#103 fix: hook correction spans keep offsets, SessionStart cap holds, add_pack and import_vocabulary refuse stray parameters (round 27)](https://github.com/ashlrai/lexicon/pull/103): pull-request; 2026-10-17
+- [#104 test(import): give applyImportCandidates a fresh temp dir and remove it](https://github.com/ashlrai/lexicon/pull/104): pull-request; 2026-10-17
+- [#102 fix: trusted harvest writes stay trusted, untrusted-file leaks closed, text-format escapes, kbd/samp/script/style protected (round 26)](https://github.com/ashlrai/lexicon/pull/102): pull-request; 2026-10-17
+- [#101 fix: importer skip notes, text-format URL and # round trip, HTML code elements protected (round 25)](https://github.com/ashlrai/lexicon/pull/101): pull-request; 2026-10-17
+- [#100 fix(mcp): MCP writes never create or trust a project file; trust_project and import_dictionary held to roots (round 24)](https://github.com/ashlrai/lexicon/pull/100): pull-request; 2026-10-17
+- [#98 fix(mcp): model can't trust project files via harvest, reads held to allowed roots (round 23)](https://github.com/ashlrai/lexicon/pull/98): pull-request; 2026-10-17
+- [#99 fix(matcher, import): tilde fences and multi-backtick spans skipped; malformed imports refused or survived](https://github.com/ashlrai/lexicon/pull/99): pull-request; 2026-10-17
+- [#97 fix(mcp): user-registered pack registries only, plugin-friendly hints, honest serve preview (round 22)](https://github.com/ashlrai/lexicon/pull/97): pull-request; 2026-10-17
+- [#96 fix(security): harden lexicon text handed to the model (round 21)](https://github.com/ashlrai/lexicon/pull/96): pull-request; 2026-10-17
+- [#75 test: run the e2e journeys concurrently; ci: smoke the packed tarball](https://github.com/ashlrai/lexicon/pull/75): pull-request; 2026-10-17
+- [#85 build(deps): bump zod from 4.6.5 to 4.6.7](https://github.com/ashlrai/lexicon/pull/85): pull-request; 2026-10-17
+- [#95 fix(security): bounded regular-file lexicon reads, trust pins the parsed bytes, safer pack registry, serve.json back to 0600](https://github.com/ashlrai/lexicon/pull/95): pull-request; 2026-10-17
+- [#94 fix: plugin installs find their models, survive plugin updates, don't double-register; hook answers --version and --help](https://github.com/ashlrai/lexicon/pull/94): pull-request; 2026-10-17
+- [#93 fix: --full JSON failures, learn refuses option-like words, hook cwd and correction-list cap, Allow on 405](https://github.com/ashlrai/lexicon/pull/93): pull-request; 2026-10-17
+- [#92 fix: voice --json prints a failure document on stdout; apply_suggestion refuses a scope that does not hold the term](https://github.com/ashlrai/lexicon/pull/92): pull-request; 2026-10-17
+- [#83 build(deps-dev): bump vitest from 5.0.3 to 5.0.4 in the dev-dependencies group across 1 directory](https://github.com/ashlrai/lexicon/pull/83): pull-request; 2026-10-17
+- [#90 fix: ok on trust, normalize and serve --status JSON; pack add reports every ref and honours globalPath; export ./package.json](https://github.com/ashlrai/lexicon/pull/90): pull-request; 2026-10-17
+- [#91 test: run the 20 ms matcher timing case in its own isolated vitest project](https://github.com/ashlrai/lexicon/pull/91): pull-request; 2026-10-17
+- [#89 fix: no dangling source maps in the npm package, packed-file and plugin-manifest tests, --json success leads with ok, one document from pack add](https://github.com/ashlrai/lexicon/pull/89): pull-request; 2026-10-17
+- [#77 fix: trust pins only the previewed bytes; strict DELETE query; Enter does not submit multi-field forms; normalize and the paragraph quote anchor stay linear](https://github.com/ashlrai/lexicon/pull/77): pull-request; 2026-10-17
+- [#88 fix: usage errors as JSON, one JSON document from harvest --add, read-only serve --pair, POST /add conflicts, honest harvest_repo and apply_suggestion](https://github.com/ashlrai/lexicon/pull/88): pull-request; 2026-10-17
+- [#87 fix: JSON errors for every --json command, read-only serve --status, MCP broken-file fixes, GET /packs parity, harvest --full](https://github.com/ashlrai/lexicon/pull/87): pull-request; 2026-10-17
+- [#86 fix: JSON errors for trust/setup/harvest, registryMismatch everywhere, honest serve status, hook and serve log what they drop](https://github.com/ashlrai/lexicon/pull/86): pull-request; 2026-10-17
+- [#81 fix: removals name every copy left; remove --global; skipped project reported everywhere; trust --json/--yes; strict local API; hook survives EPIPE](https://github.com/ashlrai/lexicon/pull/81): pull-request; 2026-10-17
+- [#82 fix: paragraph-wide quote guard, path --json, normalize --diff/--dry-run summaries, trust hint, blank import_dictionary refused](https://github.com/ashlrai/lexicon/pull/82): pull-request; 2026-10-17
+- [#79 fix(mcp,cli): strict tool arguments, refuse blank strings, doctor --json, next step for an unparseable lexicon](https://github.com/ashlrai/lexicon/pull/79): pull-request; 2026-10-17
+- [#80 fix: case-only learn runs conflict checks; stale removal names the other copy; extension shows early stops; agent journey e2e](https://github.com/ashlrai/lexicon/pull/80): pull-request; 2026-10-17
+- [#78 fix: serve Host check and 400/500 errors; MCP normalize limits; learn_correction conflicts; apply_suggestion scope; clean dist builds](https://github.com/ashlrai/lexicon/pull/78): pull-request; 2026-10-17
+- [#76 fix: one-line alias diffs, hook under 200ms with an index cache, extension Enter/Undo/caret, serve pairing token, piped CLI](https://github.com/ashlrai/lexicon/pull/76): pull-request; 2026-10-17
+- [#72 release: roll #67 and #68 into 0.5.6 changelog](https://github.com/ashlrai/lexicon/pull/72): pull-request; 2026-10-17
+- [#74 fix: agent-facing workflow bugs, plus single-alias removal and remove_term hints](https://github.com/ashlrai/lexicon/pull/74): pull-request; 2026-10-17
+- [#73 ci: run e2e in the same vitest invocation as the other tests](https://github.com/ashlrai/lexicon/pull/73): pull-request; 2026-10-17
+- [#71 fix: explicit setup names always seed; adding to an existing term appends no generated aliases](https://github.com/ashlrai/lexicon/pull/71): pull-request; 2026-10-17
+- [#70 docs: align agent docs with the plugin MCP entry, serve_status port, plurals and lexicon-mcp --version](https://github.com/ashlrai/lexicon/pull/70): pull-request; 2026-10-17
+- [#69 ci: four runners per PR instead of eight, e2e once, main runs never queue behind each other](https://github.com/ashlrai/lexicon/pull/69): pull-request; 2026-10-17
+- [#68 matcher: a plural keeps its s](https://github.com/ashlrai/lexicon/pull/68): pull-request; 2026-10-16
+- [#67 Plugin MCP server connects after `claude plugin install`; `lexicon-mcp --version` answers](https://github.com/ashlrai/lexicon/pull/67): pull-request; 2026-10-16
+- [#66 release: roll unreleased fixes into 0.5.6 and date it](https://github.com/ashlrai/lexicon/pull/66): pull-request; 2026-10-16
+- [#30 docs(readme): launch polish - MCP snippets, ecosystem link](https://github.com/ashlrai/lexicon/pull/30): pull-request; 2026-10-16
+- [#65 docs(readme): add one-line tagline](https://github.com/ashlrai/lexicon/pull/65): pull-request; 2026-10-16
+- [#45 fix(mcp): serve_status checks the port lexicon serve actually uses](https://github.com/ashlrai/lexicon/pull/45): pull-request; 2026-10-16
+- [#61 fix: keep comma aliases whole in markdown/claude-md exports; /health answers 405 to wrong methods](https://github.com/ashlrai/lexicon/pull/61): pull-request; 2026-10-16
+- [#59 docs: explain Cursor setup on Windows (from #37 by @KeuqS)](https://github.com/ashlrai/lexicon/pull/59): pull-request; 2026-10-15
+- [#56 docs: held-out unseen-voice results with whisper --prompt caveat](https://github.com/ashlrai/lexicon/pull/56): pull-request; 2026-10-15
+- [#19 build(deps): bump actions/upload-artifact from 4 to 7](https://github.com/ashlrai/lexicon/pull/19): pull-request; 2026-10-15
+- [#60 docs: call the whisper benchmark audio synthesized (TTS), not real audio](https://github.com/ashlrai/lexicon/pull/60): pull-request; 2026-10-15
+- [#57 release: 0.5.6 (fix-forward for the unpublished 0.5.5)](https://github.com/ashlrai/lexicon/pull/57): pull-request; 2026-10-15
+- [#58 build(deps): MCP SDK 1.32.1 with a rebuilt plugin bundle](https://github.com/ashlrai/lexicon/pull/58): pull-request; 2026-10-15
+- [#55 docs: record #35, #48 and #49 in CHANGELOG and CONTRACT.md](https://github.com/ashlrai/lexicon/pull/55): pull-request; 2026-10-15; cross-repo ashlrai/phantom#772
+- [#54 fix(setup): a dry run demonstrates on the terms it would seed](https://github.com/ashlrai/lexicon/pull/54): pull-request; 2026-10-15
+- [#53 fix(harvest): skip everyday English words a README capitalises](https://github.com/ashlrai/lexicon/pull/53): pull-request; 2026-10-15
+- [#52 fix(matcher): a dotted initialism keeps its own period out of the rewrite](https://github.com/ashlrai/lexicon/pull/52): pull-request; 2026-10-15
+- [#51 fix(matcher): "ashlar ai" becomes Ashlr.AI, not "Ashlr.AI ai"](https://github.com/ashlrai/lexicon/pull/51): pull-request; 2026-10-15
+- [#49 fix: lexicon trust and untrust accept a project directory](https://github.com/ashlrai/lexicon/pull/49): pull-request; 2026-10-15; cross-repo ashlrai/phantom#772
+- [#48 perf(hook): faster prompt hook; fixes across serve, extension, daemon, voice and setup](https://github.com/ashlrai/lexicon/pull/48): pull-request; 2026-10-15
+- [#47 docs: align agent-facing docs with current tools, packs and release state](https://github.com/ashlrai/lexicon/pull/47): pull-request; 2026-10-15
+- [#50 fix(harvest): stop proposing module paths, build artifacts and README labels as names](https://github.com/ashlrai/lexicon/pull/50): pull-request; 2026-10-15
+- [#46 Daily-use fixes: faster hook without lexicon rewrites, install env, MCP roots, learn/export/setup gaps](https://github.com/ashlrai/lexicon/pull/46): pull-request; 2026-10-15
+- [#44 fix(mcp): trust_project asks the user instead of trusting on the agent's call](https://github.com/ashlrai/lexicon/pull/44): pull-request; 2026-10-15
+- [#35 fix(deps): pin commander ^14 so Node 20 is supported](https://github.com/ashlrai/lexicon/pull/35): pull-request; 2026-10-15
+- [#39 Pin the serve API contract Phantom's desktop voice client reads](https://github.com/ashlrai/lexicon/pull/39): pull-request; 2026-10-14
+
+### ashlrai/locus (core-fleet)
+
+- [#278 bridge: RQ-README-BRAND-LOCUS](https://github.com/ashlrai/locus/pull/278): pull-request; 2026-10-28
+- [#277 bridge: RQ-MR-CONFLICT-DRIVERS-locus](https://github.com/ashlrai/locus/pull/277): pull-request; 2026-10-28
+- [#275 bridge: RQ-REFILL-2026102801-CONSO-007](https://github.com/ashlrai/locus/pull/275): pull-request; 2026-10-28
+- [#262 bridge: RQ-GEN-2026102707-081](https://github.com/ashlrai/locus/pull/262): pull-request; 2026-10-28
+- [#263 bridge: RQ-GEN-2026102722-003](https://github.com/ashlrai/locus/pull/263): pull-request; 2026-10-28
+- [#264 bridge: RQ-GEN-2026102722-011](https://github.com/ashlrai/locus/pull/264): pull-request; 2026-10-28
+- [#267 bridge: RQ-GEN-2026102722-012](https://github.com/ashlrai/locus/pull/267): pull-request; 2026-10-28
+- [#270 bridge: RQ-REFILL-2026102719-LAND-001](https://github.com/ashlrai/locus/pull/270): pull-request; 2026-10-28
+- [#265 bridge: RQ-GEN-2026102722-014](https://github.com/ashlrai/locus/pull/265): pull-request; 2026-10-28
+- [#232 bridge: RQ-PL-LOCUS-MCP-PROTO-TESTS](https://github.com/ashlrai/locus/pull/232): pull-request; 2026-10-28
+- [#260 bridge: RQ-CI-SECONDS-LOCUS-2](https://github.com/ashlrai/locus/pull/260): pull-request; 2026-10-28
+- [#259 bridge: RQ-CI-SECONDS-LOCUS](https://github.com/ashlrai/locus/pull/259): pull-request; 2026-10-28
+- [#229 bridge: RQ-PL-RADAR-ANTH-LOCUS-SCAN](https://github.com/ashlrai/locus/pull/229): pull-request; 2026-10-28
+- [#226 bridge: RQ-LOCUS-AUTOPIN-HARDEN](https://github.com/ashlrai/locus/pull/226): pull-request; 2026-10-28
+- [#228 bridge: RQ-TESTDIET-locus](https://github.com/ashlrai/locus/pull/228): pull-request; 2026-10-28
+- [#222 bridge: RQ-LOCUS-PHM](https://github.com/ashlrai/locus/pull/222): pull-request; 2026-10-28
+- [#216 bridge: RQ-LOCUS-NPM-DOWNGRADE](https://github.com/ashlrai/locus/pull/216): pull-request; 2026-10-28
+- [#200 bridge: RQ-LOCUS-SAMPLE-WARN](https://github.com/ashlrai/locus/pull/200): pull-request; 2026-10-28
+- [#199 bridge: RQ-LOCUS-WHOAMI-PRESENT](https://github.com/ashlrai/locus/pull/199): pull-request; 2026-10-28
+- [#215 bridge: RQ-LOCUS-INSTALLER](https://github.com/ashlrai/locus/pull/215): pull-request; 2026-10-28
+- [#257 bridge: RQ-MERGE-WAIT-LOCUS-2](https://github.com/ashlrai/locus/pull/257): pull-request; 2026-10-28
+- [#212 bridge: RQ-LOCUS-INHERIT-ENV-TEST](https://github.com/ashlrai/locus/pull/212): pull-request; 2026-10-27
+- [#206 bridge: RQ-LOCUS-EXIT-CODES](https://github.com/ashlrai/locus/pull/206): pull-request; 2026-10-27
+- [#204 bridge: RQ-DV-LOCUS-ADAPTER-GITHUB-TEST](https://github.com/ashlrai/locus/pull/204): pull-request; 2026-10-27
+- [#205 bridge: RQ-DV-LOCUS-CANARY-FAILCLOSED](https://github.com/ashlrai/locus/pull/205): pull-request; 2026-10-27
+- [#195 bridge: RQ-DV-LOCUS-RECOVERY-HINT](https://github.com/ashlrai/locus/pull/195): pull-request; 2026-10-27
+- [#207 bridge: RQ-LOCUS-CRED-DIAG-REDACT](https://github.com/ashlrai/locus/pull/207): pull-request; 2026-10-27
+- [#221 bridge: RQ-LOCUS-CHILD-RSS-CAP](https://github.com/ashlrai/locus/pull/221): pull-request; 2026-10-27
+- [#234 bridge: RQ-FRESH-GEN-LOCUS](https://github.com/ashlrai/locus/pull/234): pull-request; 2026-10-27
+- [#244 bridge: RQ-LOCUS-POLICY-PROPTEST](https://github.com/ashlrai/locus/pull/244): pull-request; 2026-10-27
+- [#247 bridge: RQ-N26-LOCUS-CONTRACT-SCHEMA](https://github.com/ashlrai/locus/pull/247): pull-request; 2026-10-27
+- [#248 bridge: RQ-PARITY-LOCUS-PEERS](https://github.com/ashlrai/locus/pull/248): pull-request; 2026-10-27
+- [#249 bridge: RQ-PLAN-LOCUS](https://github.com/ashlrai/locus/pull/249): pull-request; 2026-10-27
+- [#196 bridge: RQ-LOCUS-BINDING-IDEMP](https://github.com/ashlrai/locus/pull/196): pull-request; 2026-10-27
+- [#238 bridge: RQ-DISC-MCP-MANIFEST-LOCUS](https://github.com/ashlrai/locus/pull/238): pull-request; 2026-10-27
+- [#189 fix(security): post-merge lows from #183/#185; --json never prompts (#188)](https://github.com/ashlrai/locus/pull/189): pull-request; 2026-10-27
+- [#245 bridge: RQ-LOCUS-SPAWN-LEAK-CONFIG](https://github.com/ashlrai/locus/pull/245): pull-request; 2026-10-27
+- [#191 chore: remove case-duplicate PR template (RQ-CASE-DUP)](https://github.com/ashlrai/locus/pull/191): pull-request; 2026-10-27
+- [#246 bridge: RQ-N26-DV-LOCUS-README](https://github.com/ashlrai/locus/pull/246): pull-request; 2026-10-27
+- [#240 bridge: RQ-DISC-SITE-LOCUS](https://github.com/ashlrai/locus/pull/240): pull-request; 2026-10-27
+- [#213 fix(session): renew must not undo a concurrent leave or enter (post-merge review of #193)](https://github.com/ashlrai/locus/pull/213): pull-request; 2026-10-27
+- [#243 bridge: RQ-LOCUS-GATEWAY-BENCH](https://github.com/ashlrai/locus/pull/243): pull-request; 2026-10-27
+- [#253 ci: concurrency cancels superseded PR runs only, never merge_group or main pushes](https://github.com/ashlrai/locus/pull/253): pull-request; 2026-10-27
+- [#231 ci: skip PR CI on draft PRs, run on ready_for_review (G1)](https://github.com/ashlrai/locus/pull/231): pull-request; 2026-10-27
+- [#252 ci(integration): Classify changes on every PR and merge_group (G1, draft)](https://github.com/ashlrai/locus/pull/252): pull-request; 2026-10-27
+- [#214 bridge: RQ-LOCUS-HANDSHAKE-JSON](https://github.com/ashlrai/locus/pull/214): pull-request; 2026-10-26
+- [#219 bridge: RQ-LOCUS-BROKER](https://github.com/ashlrai/locus/pull/219): pull-request; 2026-10-26
+- [#194 bridge: RQ-MOD-2-locus-r2](https://github.com/ashlrai/locus/pull/194): pull-request; 2026-10-26
+- [#210 bridge: RQ-LOCUS-GATEWAY-ROUTE-CLI](https://github.com/ashlrai/locus/pull/210): pull-request; 2026-10-26
+- [v0.5.2](https://github.com/ashlrai/locus/releases/tag/v0.5.2): release; 2026-10-26; cross-repo ashlrai/ashlr-md#186
+- [#211 bridge: RQ-DV-LOCUS-POLICY-TEST](https://github.com/ashlrai/locus/pull/211): pull-request; 2026-10-26
+- [#208 chore(release): 0.5.2](https://github.com/ashlrai/locus/pull/208): pull-request; 2026-10-26
+- [#193 feat(session): locus renew (opt-in, lifetime-bounded) + expired-pin leave/enter (RQ-LOCUS-PIN-TTL)](https://github.com/ashlrai/locus/pull/193): pull-request; 2026-10-26
+- [#203 bridge: RQ-LOCUS-EXEC-PERF](https://github.com/ashlrai/locus/pull/203): pull-request; 2026-10-26
+- [#198 bridge: RQ-LOCUS-DOCTOR-FRESH](https://github.com/ashlrai/locus/pull/198): pull-request; 2026-10-26
+- [#185 fix(marketplace): refuse userinfo and redact query in index URL output](https://github.com/ashlrai/locus/pull/185): pull-request; 2026-10-26
+- [#183 bridge: RQ-CLI-1](https://github.com/ashlrai/locus/pull/183): pull-request; 2026-10-26
+- [#187 fix(loopback): allow plain HTTP only to exact 127.0.0.1 and ::1; refuse localhost](https://github.com/ashlrai/locus/pull/187): pull-request; 2026-10-26
+- [#184 bridge: RQ-DEADCODE-locus](https://github.com/ashlrai/locus/pull/184): pull-request; 2026-10-26
+- [#180 perf(exec): drop the broker accept sleep (0.051 s to 0.004 s)](https://github.com/ashlrai/locus/pull/180): pull-request; 2026-10-26
+- [#179 build: declare rust-version (MSRV) for cargo install path](https://github.com/ashlrai/locus/pull/179): pull-request; 2026-10-26
+- [#164 test(ci): phantom+locus merge-queue integration test](https://github.com/ashlrai/locus/pull/164): pull-request; 2026-10-26; cross-repo ashlrai/ashlr-md#186
+- [#178 Add CodeQL, Scorecard, and coverage tooling](https://github.com/ashlrai/locus/pull/178): pull-request; 2026-10-26; cross-repo ashlrai/ashlr-md#186
+- [#176 fix(recovery): dead-broker hint says locus enter first](https://github.com/ashlrai/locus/pull/176): pull-request; 2026-10-26
+- [#163 feat(cli): locus autopin suggest (L2)](https://github.com/ashlrai/locus/pull/163): pull-request; 2026-10-26
+- [#165 docs: first-run benchmarks and install corrections](https://github.com/ashlrai/locus/pull/165): pull-request; 2026-10-26
+- [#162 fix(core): enforce 0700 on LOCUS_HOME at Store::open](https://github.com/ashlrai/locus/pull/162): pull-request; 2026-10-26
+- [#161 docs(readme): drop npm 0.5.0 caveat now that 0.5.1 is live](https://github.com/ashlrai/locus/pull/161): pull-request; 2026-10-26
+- [#160 fix(security): session temp 0600 + dir fsync, race-safe history key, locked leave read (Tier-1)](https://github.com/ashlrai/locus/pull/160): pull-request; 2026-10-26
+- [v0.5.1](https://github.com/ashlrai/locus/releases/tag/v0.5.1): release; 2026-10-26
+- [#159 docs(readme): drop the leave --force first-run step (fixed by #156)](https://github.com/ashlrai/locus/pull/159): pull-request; 2026-10-26
+- [#158 release: fold Unreleased into 0.5.1 (re-dated 2026-10-25)](https://github.com/ashlrai/locus/pull/158): pull-request; 2026-10-26
+- [#155 feat(history): local pin history (L1): on by default, off switch, capped, remotes hashed](https://github.com/ashlrai/locus/pull/155): pull-request; 2026-10-26
+- [#156 fix(enter): a pin whose broker died with its shell no longer blocks its own replacement (quickstart then enter)](https://github.com/ashlrai/locus/pull/156): pull-request; 2026-10-26
+- [#154 chore(security): growth-only CODEOWNERS for workflows and keyed/network paths](https://github.com/ashlrai/locus/pull/154): pull-request; 2026-10-26
+- [#153 docs(readme): first-run order that works today, Rust prerequisite](https://github.com/ashlrai/locus/pull/153): pull-request; 2026-10-26
+- [#152 ci(release): pin third-party actions to commit SHAs](https://github.com/ashlrai/locus/pull/152): pull-request; 2026-10-26
+- [#151 feat(doctor): ashlr.doctor v1 wrapper on locus doctor --json](https://github.com/ashlrai/locus/pull/151): pull-request; 2026-10-26
+- [#150 test(handshake): v1 conformance test; doctor --fix preview no longer initializes a missing LOCUS_HOME](https://github.com/ashlrai/locus/pull/150): pull-request; 2026-10-25
+- [#149 docs(readme): first-run sequence after locus quickstart](https://github.com/ashlrai/locus/pull/149): pull-request; 2026-10-25
+- [#148 feat(exec): --expect <alias> refuses before the child starts unless that alias is pinned](https://github.com/ashlrai/locus/pull/148): pull-request; 2026-10-25
+- [#147 fix(doctor): empty phantom list with phm refs reads as unavailable (empty_list)](https://github.com/ashlrai/locus/pull/147): pull-request; 2026-10-25
+- [#146 feat(doctor): --fix checks phm refs against phantom list --json in a Phantom project](https://github.com/ashlrai/locus/pull/146): pull-request; 2026-10-25
+- [#145 feat(handshake): advertise doctor-fix capability](https://github.com/ashlrai/locus/pull/145): pull-request; 2026-10-25
+- [#144 feat(doctor): locus doctor --fix previews safe repairs, --apply makes them](https://github.com/ashlrai/locus/pull/144): pull-request; 2026-10-25
+- [#143 test(status): pin expiry on a real pinned session](https://github.com/ashlrai/locus/pull/143): pull-request; 2026-10-25
+- [#142 feat(status): show how long the pin has left; --json adds expires_at and expires_in_secs](https://github.com/ashlrai/locus/pull/142): pull-request; 2026-10-25
+- [#141 feat(cli): locus --ashlr-handshake (Ashlr companion handshake v1)](https://github.com/ashlrai/locus/pull/141): pull-request; 2026-10-25
+- [#140 ci(npm-wrapper-macos): cancel superseded PR runs only, never main](https://github.com/ashlrai/locus/pull/140): pull-request; 2026-10-25
+- [#139 ci(release): pin npm 11.6.2 for trusted publishing and refuse NPM_TOKEN](https://github.com/ashlrai/locus/pull/139): pull-request; 2026-10-25
+- [#138 feat(doctor): opt-in Phantom agent preflight (LOCUS_PHANTOM_PREFLIGHT)](https://github.com/ashlrai/locus/pull/138): pull-request; 2026-10-25
+- [#137 docs(readme): one canonical name, command and link per Ashlr tool](https://github.com/ashlrai/locus/pull/137): pull-request; 2026-10-25
+- [#54 Verify npm release installs and fail closed on unsupported Phantom credentials](https://github.com/ashlrai/locus/pull/54): pull-request; 2026-10-25
+- [#136 ci: macOS smoke for the npm wrapper (no self-exec loop)](https://github.com/ashlrai/locus/pull/136): pull-request; 2026-10-25
+- [\[0.5.1\] - 2026-10-25](https://github.com/ashlrai/locus/blob/HEAD/CHANGELOG.md): changelog; 2026-10-25
+- [#135 ci(conformance): docs-only PRs skip the heavy steps; the job still reports](https://github.com/ashlrai/locus/pull/135): pull-request; 2026-10-24
+- [#134 ci(release): npm publish via trusted publishing (OIDC) on v* tags](https://github.com/ashlrai/locus/pull/134): pull-request; 2026-10-24
+- [#133 docs: point ashlr-hub PR links at ashlrai/phantom](https://github.com/ashlrai/locus/pull/133): pull-request; 2026-10-24
+- [#132 release: roll Unreleased into 0.5.1 (2026-10-24)](https://github.com/ashlrai/locus/pull/132): pull-request; 2026-10-24
+- [#131 test(npm): regression test for the 0.5.0 locus --version self-exec loop](https://github.com/ashlrai/locus/pull/131): pull-request; 2026-10-24
+- [#130 test(gateway): LiteLLM-shaped loopback proxy check for the isolated exec child](https://github.com/ashlrai/locus/pull/130): pull-request; 2026-10-19
+- [#129 test(setup): per-client shape parity matrix for setup --client](https://github.com/ashlrai/locus/pull/129): pull-request; 2026-10-19
+- [#128 fix: keep the webhook URL out of audit webhook errors](https://github.com/ashlrai/locus/pull/128): pull-request; 2026-10-19
+- [#127 feat(exec): opt-in \[exec\] inherit_env for the isolated child (exact names; key names only as phm_ placeholders)](https://github.com/ashlrai/locus/pull/127): pull-request; 2026-10-19
+- [#126 docs: using Locus with Phantom](https://github.com/ashlrai/locus/pull/126): pull-request; 2026-10-19
+- [#125 fix(security): dashboard opens the plain URL, never ?token=](https://github.com/ashlrai/locus/pull/125): pull-request; 2026-10-19
+- [#124 feat(core): doctor --fix core module, dry run by default (unwired)](https://github.com/ashlrai/locus/pull/124): pull-request; 2026-10-19
+- [#123 feat(exec): opt-in gateway base URL for the isolated child, off by default](https://github.com/ashlrai/locus/pull/123): pull-request; 2026-10-19
+- [#122 feat: opt-in signed, value-free credential injection audit (off by default)](https://github.com/ashlrai/locus/pull/122): pull-request; 2026-10-19
+- [#121 feat: opt-in session budget caps (max_actions, max_minutes), off by default](https://github.com/ashlrai/locus/pull/121): pull-request; 2026-10-19
+- [#120 test: pin that gateway and proxy env vars never reach the isolated child](https://github.com/ashlrai/locus/pull/120): pull-request; 2026-10-18
+- [#119 chore(release): roll Unreleased into 0.5.1](https://github.com/ashlrai/locus/pull/119): pull-request; 2026-10-18
+- [#118 docs(readme): link gateway base-URL note and PQ readiness note](https://github.com/ashlrai/locus/pull/118): pull-request; 2026-10-18
+- [#117 docs: set a gateway URL inside locus exec's isolated environment](https://github.com/ashlrai/locus/pull/117): pull-request; 2026-10-18
+- [#116 docs: audit note on provider base URLs and model gateways](https://github.com/ashlrai/locus/pull/116): pull-request; 2026-10-18
+- [#115 fix(cli): --json usage errors print one JSON line; events --limit](https://github.com/ashlrai/locus/pull/115): pull-request; 2026-10-18
+- [#114 docs: post-quantum readiness notes and classical-only crypto check](https://github.com/ashlrai/locus/pull/114): pull-request; 2026-10-18
+- [#92 ci(release): build both macOS targets in one job, so a tag waits on one macOS slot](https://github.com/ashlrai/locus/pull/92): pull-request; 2026-10-17
+- [#113 fix(mcp,core): mistyped control tool/argument names the nearest match; unpinned error says locus enter](https://github.com/ashlrai/locus/pull/113): pull-request; 2026-10-17
+- [#112 fix(cli): events with a no-match filter names the ops/bindings in the log](https://github.com/ashlrai/locus/pull/112): pull-request; 2026-10-17
+- [#107 fix(cli,core): workspace and binding writes never follow a symlink; duration overflows refused instead of panicking](https://github.com/ashlrai/locus/pull/107): pull-request; 2026-10-17
+- [#111 fix(cli): exec/run/ci run refuse an option in the command position](https://github.com/ashlrai/locus/pull/111): pull-request; 2026-10-17
+- [#110 fix(mcp,core): request_pin/enter_hint suggest the mistyped alias; tighter typo threshold](https://github.com/ashlrai/locus/pull/110): pull-request; 2026-10-17
+- [#105 fix(cli,mcp): exec exit codes tell not-found from failure; unstartable children audited and cleaned up; control-tool type errors](https://github.com/ashlrai/locus/pull/105): pull-request; 2026-10-17
+- [#108 fix(cli): binding add refuses to replace an existing alias without --force; show/rm suggest aliases](https://github.com/ashlrai/locus/pull/108): pull-request; 2026-10-17
+- [#109 fix(cli): stale-pin hints name a real binding, hook hints follow $SHELL, bounded approve TTL, clearer watch output](https://github.com/ashlrai/locus/pull/109): pull-request; 2026-10-17
+- [#106 fix(cli,mcp): closed control-tool schemas, bounded mint TTLs, provider typo warning, setup --json](https://github.com/ashlrai/locus/pull/106): pull-request; 2026-10-17
+- [#100 docs: say phm: refs do not resolve with Phantom Secrets 0.7.9](https://github.com/ashlrai/locus/pull/100): pull-request; 2026-10-17
+- [#101 test(cli): pin agent-facing doc facts to the CLI, MCP catalog and setup clients](https://github.com/ashlrai/locus/pull/101): pull-request; 2026-10-17
+- [#103 fix(cli,mcp): engagement init creates nothing on conflict; workspace --json; errors name the next step](https://github.com/ashlrai/locus/pull/103): pull-request; 2026-10-17
+- [#99 fix: refuse undeclared tool args, -32602 for unknown tools, duration --timeout, no 10s stale-pin wait](https://github.com/ashlrai/locus/pull/99): pull-request; 2026-10-17
+- [#102 fix(mcp,cli): locus://doctor reports a malformed binding; bounded reveal probe; framed parse errors](https://github.com/ashlrai/locus/pull/102): pull-request; 2026-10-17
+- [#96 fix: scope pending-approval readiness to the pinned binding](https://github.com/ashlrai/locus/pull/96): pull-request; 2026-10-17
+- [#104 test: isolate env-mutating tests, make force-leave failure root-proof, cut 25s of sleeps](https://github.com/ashlrai/locus/pull/104): pull-request; 2026-10-17
+- [#98 fix(cli): make unresolved phm: credential refs visible in doctor and exec](https://github.com/ashlrai/locus/pull/98): pull-request; 2026-10-17
+- [#97 cli/mcp: JSON errors under --json; locus-mcp answers unparseable input with -32700; warn on workspace aliases with no binding](https://github.com/ashlrai/locus/pull/97): pull-request; 2026-10-17
+- [#94 docs: sync agent-facing docs with main (onboard, supervised MCP, Gemini, request_pin)](https://github.com/ashlrai/locus/pull/94): pull-request; 2026-10-17
+- [#95 release: roll Unreleased into 0.5.1 changelog](https://github.com/ashlrai/locus/pull/95): pull-request; 2026-10-17
+- [#93 cli: name the stale-pin recovery on every control command; doctor reports a malformed binding instead of aborting](https://github.com/ashlrai/locus/pull/93): pull-request; 2026-10-17
+- [#91 feat(setup): Gemini CLI client support](https://github.com/ashlrai/locus/pull/91): pull-request; 2026-10-16
+- [#89 docs: fix broken onboarding link and local path in PLAN](https://github.com/ashlrai/locus/pull/89): pull-request; 2026-10-16
+- [#88 docs(readme): don't claim npm 0.5.1 is published; warn off npm 0.5.0](https://github.com/ashlrai/locus/pull/88): pull-request; 2026-10-16
+- [#87 fix: root npm installs work for other users; locus-mcp --version; quick-start and MCP docs](https://github.com/ashlrai/locus/pull/87): pull-request; 2026-10-16
+- [#86 release: 0.5.1 changelog dated, include onboarding and marketplace](https://github.com/ashlrai/locus/pull/86): pull-request; 2026-10-16
+- [#85 feat: onboard wizard + community adapter marketplace (replaces #56)](https://github.com/ashlrai/locus/pull/85): pull-request; 2026-10-16
+- [#84 docs: Phantom integration drop-in, hub rename, design proposals (replaces #55)](https://github.com/ashlrai/locus/pull/84): pull-request; 2026-10-16
+- [#70 Return errors for malformed Unicode TTL values](https://github.com/ashlrai/locus/pull/70): pull-request; 2026-10-16
+- [#65 docs(readme): front-door rewrite with demo GIF](https://github.com/ashlrai/locus/pull/65): pull-request; 2026-10-16
+- [#83 Bash prompt hook, watch interval floor, complete help groups, honest unknown-alias pin requests](https://github.com/ashlrai/locus/pull/83): pull-request; 2026-10-16
+- [#82 Name the next step in expired-session and workspace-allowlist errors](https://github.com/ashlrai/locus/pull/82): pull-request; 2026-10-16
+- [#81 setup: say how to get provider tools (locus mcp --supervised)](https://github.com/ashlrai/locus/pull/81): pull-request; 2026-10-16
+- [#78 docs: measured wrong-client credential reachability (with not-a-sandbox caveat)](https://github.com/ashlrai/locus/pull/78): pull-request; 2026-10-15
+- [#79 release: ship a .sha256 per archive and verify it before publishing](https://github.com/ashlrai/locus/pull/79): pull-request; 2026-10-15
+- [#80 docs: shell completion install guide, Homebrew completions, Codex config snippet](https://github.com/ashlrai/locus/pull/80): pull-request; 2026-10-15
+- [#77 docs(changelog): add #76 to 0.5.1](https://github.com/ashlrai/locus/pull/77): pull-request; 2026-10-15
+- [#76 fix(cli): stale-pin recovery in enter/status/agent report; no panic on closed stdout](https://github.com/ashlrai/locus/pull/76): pull-request; 2026-10-15
+- [#75 release: v0.5.1 (with the npm quickstart -> enter fix)](https://github.com/ashlrai/locus/pull/75): pull-request; 2026-10-15
+- [#74 docs: correct stale MCP, CLI and layout claims in design and reference docs](https://github.com/ashlrai/locus/pull/74): pull-request; 2026-10-15
+- [#73 fix(mcp): negotiate protocol version; honest messages when the plain entry can't see the pin](https://github.com/ashlrai/locus/pull/73): pull-request; 2026-10-15
+- [#72 Honest readiness and whoami when the control capability isn't exported](https://github.com/ashlrai/locus/pull/72): pull-request; 2026-10-15
+- [#71 feat(cli): locus mcp --supervised serves the pinned binding's provider tools](https://github.com/ashlrai/locus/pull/71): pull-request; 2026-10-14
+- [#69 docs: make the agent smoke tests runnable and state the locus-mcp launch limit](https://github.com/ashlrai/locus/pull/69): pull-request; 2026-10-14
+
+### ashlrai/phantom (core-fleet)
+
+- [#1358 bridge: RQ-DFPHANTOMQ7](https://github.com/ashlrai/phantom/pull/1358): pull-request; 2026-10-28
+- [#1362 bridge: RQ-V4-LOOP-LEASES-FENCE-1](https://github.com/ashlrai/phantom/pull/1362): pull-request; 2026-10-28
+- [#1359 bridge: RQ-V4ASKFANOUT2Q7](https://github.com/ashlrai/phantom/pull/1359): pull-request; 2026-10-28
+- [#1346 bridge: RQ-RELEASE-PHANTOM-1028](https://github.com/ashlrai/phantom/pull/1346): pull-request; 2026-10-28
+- [#1349 bridge: RQ-V4-LAND-FIRST-1](https://github.com/ashlrai/phantom/pull/1349): pull-request; 2026-10-28
+- [#1322 bridge: RQ-RELTRAIN-1-RETIRE](https://github.com/ashlrai/phantom/pull/1322): pull-request; 2026-10-28
+- [#1340 bridge: RQ-DRAIN-phantom-965](https://github.com/ashlrai/phantom/pull/1340): pull-request; 2026-10-28
+- [#1333 bridge: RQ-DRAIN-phantom-1229](https://github.com/ashlrai/phantom/pull/1333): pull-request; 2026-10-28
+- [#1331 bridge: RQ-MR-3-CLASSIFY-TREE-FIX](https://github.com/ashlrai/phantom/pull/1331): pull-request; 2026-10-28
+- [#958 bridge: RQ-QUEUE-AUTOFILL](https://github.com/ashlrai/phantom/pull/958): pull-request; 2026-10-28
+- [#1237 bridge: RQ-FIXUP-CONF-1035](https://github.com/ashlrai/phantom/pull/1237): pull-request; 2026-10-28
+- [#1242 bridge: RQ-FIXUP-CONF-1117](https://github.com/ashlrai/phantom/pull/1242): pull-request; 2026-10-28
+- [#1241 bridge: RQ-FIXUP-CONF-1153](https://github.com/ashlrai/phantom/pull/1241): pull-request; 2026-10-28
+- [#1244 bridge: RQ-FIXUP-CONF-1190](https://github.com/ashlrai/phantom/pull/1244): pull-request; 2026-10-28
+- [#1247 bridge: RQ-FIXUP-CONF-1225](https://github.com/ashlrai/phantom/pull/1247): pull-request; 2026-10-28
+- [#1246 bridge: RQ-FIXUP-CONF-1195](https://github.com/ashlrai/phantom/pull/1246): pull-request; 2026-10-28
+- [#1251 fix: clear the daily full-run drift (CLI registry, docs links, spawn-gate assertion, web typecheck)](https://github.com/ashlrai/phantom/pull/1251): pull-request; 2026-10-28
+- [#1235 Memory: optional local meaning signal, measured on the benchmark](https://github.com/ashlrai/phantom/pull/1235): pull-request; 2026-10-28
+- [#786 Memory: land the reviewed memory foundation, its fixes and the benchmark gate on master](https://github.com/ashlrai/phantom/pull/786): pull-request; 2026-10-28
+- [#1250 fix(autopilot): keep operator credentials out of fixer and verify children](https://github.com/ashlrai/phantom/pull/1250): pull-request; 2026-10-28
+- [#1249 bridge: RQ-DAILY-15-PHANTOM-2](https://github.com/ashlrai/phantom/pull/1249): pull-request; 2026-10-28
+- [#764 phm autopilot: drive Phantom's own PRs to green (fix CI, address review, merge base, stop when it isn't ours)](https://github.com/ashlrai/phantom/pull/764): pull-request; 2026-10-28
+- [#1115 bridge: RQ-ROUTER-REPLAY-HARNESS](https://github.com/ashlrai/phantom/pull/1115): pull-request; 2026-10-28
+- [#1118 bridge: RQ-PH-DEAD-CODE-FLEET](https://github.com/ashlrai/phantom/pull/1118): pull-request; 2026-10-28
+- [#754 Scrub: stop flagging prose, code references and public digests as secrets](https://github.com/ashlrai/phantom/pull/754): pull-request; 2026-10-28
+- [#1107 bridge: RQ-DESKTOP-VOICE](https://github.com/ashlrai/phantom/pull/1107): pull-request; 2026-10-28
+- [#1105 bridge: RQ-DESKTOP-THEMES](https://github.com/ashlrai/phantom/pull/1105): pull-request; 2026-10-28
+- [#1106 bridge: RADAR-OPENAI-CACHE-TIERS](https://github.com/ashlrai/phantom/pull/1106): pull-request; 2026-10-28
+- [#1094 bridge: RQ-TESTDIET-phantom](https://github.com/ashlrai/phantom/pull/1094): pull-request; 2026-10-28
+- [#1101 bridge: RQ-DESKTOP-TEMPLATES](https://github.com/ashlrai/phantom/pull/1101): pull-request; 2026-10-28
+- [#1102 bridge: RQ-DESKTOP-INBOX](https://github.com/ashlrai/phantom/pull/1102): pull-request; 2026-10-28
+- [#1104 bridge: RQ-DESKTOP-ROOMS](https://github.com/ashlrai/phantom/pull/1104): pull-request; 2026-10-28
+- [#1131 chore(codeowners): own gitleaks config files](https://github.com/ashlrai/phantom/pull/1131): pull-request; 2026-10-28
+- [#1154 bridge: RQ-ECON-RESOURCE-VIEW](https://github.com/ashlrai/phantom/pull/1154): pull-request; 2026-10-28
+- [#1231 bridge: RQ-CONSOLIDATE-PHANTOM-CLUSTERS](https://github.com/ashlrai/phantom/pull/1231): pull-request; 2026-10-28
+- [#1092 bridge: RQ-SCHEMA-REG](https://github.com/ashlrai/phantom/pull/1092): pull-request; 2026-10-28
+- [#1077 bridge: RQ-PL-PH-CLI-HELP-DRIFT](https://github.com/ashlrai/phantom/pull/1077): pull-request; 2026-10-28
+- [#1080 bridge: RQ-DEADCODE-phantom](https://github.com/ashlrai/phantom/pull/1080): pull-request; 2026-10-28
+- [#1065 bridge: RQ-PL-PEERS-ADAPT-CODEX](https://github.com/ashlrai/phantom/pull/1065): pull-request; 2026-10-28
+- [#1063 bridge: RQ-PHANTOM-DRIVER-2-DAEMON](https://github.com/ashlrai/phantom/pull/1063): pull-request; 2026-10-28
+- [#1075 bridge: RQ-XREPO-CONTRACT](https://github.com/ashlrai/phantom/pull/1075): pull-request; 2026-10-28
+- [#1204 bridge: RQ-N26B-002](https://github.com/ashlrai/phantom/pull/1204): pull-request; 2026-10-28
+- [#1207 bridge: RQ-N26B-035](https://github.com/ashlrai/phantom/pull/1207): pull-request; 2026-10-28
+- [#1211 bridge: RQ-N26B-033](https://github.com/ashlrai/phantom/pull/1211): pull-request; 2026-10-28
+- [#1216 bridge: RQ-N26B-039](https://github.com/ashlrai/phantom/pull/1216): pull-request; 2026-10-28
+- [#1221 bridge: THROUGHPUT-REAPER-REFRESH](https://github.com/ashlrai/phantom/pull/1221): pull-request; 2026-10-28
+- [#1167 bridge: RQ-N26-PH-WT-AGE-REPORT](https://github.com/ashlrai/phantom/pull/1167): pull-request; 2026-10-28
+- [#1174 bridge: RQ-OT-P4-EVAL-HARNESS](https://github.com/ashlrai/phantom/pull/1174): pull-request; 2026-10-28
+- [#1178 bridge: RQ-PERF-12-PH](https://github.com/ashlrai/phantom/pull/1178): pull-request; 2026-10-28
+- [#1193 bridge: RQ-VERIFY-PR1088](https://github.com/ashlrai/phantom/pull/1193): pull-request; 2026-10-28
+- [#1203 bridge: RQ-N26B-018](https://github.com/ashlrai/phantom/pull/1203): pull-request; 2026-10-28
+- [#1168 bridge: RQ-N26-PH-ROUTER-CALIB-TESTS](https://github.com/ashlrai/phantom/pull/1168): pull-request; 2026-10-28
+- [#1148 bridge: RQ-DV-SPLIT-PROD-LEDGER](https://github.com/ashlrai/phantom/pull/1148): pull-request; 2026-10-28
+- [#1159 bridge: RQ-N26-CON-PROMPT-RULES](https://github.com/ashlrai/phantom/pull/1159): pull-request; 2026-10-28
+- [#1160 bridge: RQ-N26-AFFECTED-MAP-AUDIT](https://github.com/ashlrai/phantom/pull/1160): pull-request; 2026-10-28
+- [#1163 bridge: RQ-N26-ECON-POOL-RESET-PARSER](https://github.com/ashlrai/phantom/pull/1163): pull-request; 2026-10-28
+- [#1134 bridge: RQ-BUS-2](https://github.com/ashlrai/phantom/pull/1134): pull-request; 2026-10-28
+- [#1137 bridge: RQ-BUDGET-RESET-CALENDAR](https://github.com/ashlrai/phantom/pull/1137): pull-request; 2026-10-28
+- [#1138 bridge: RQ-CODEX-USAGE-SOURCE](https://github.com/ashlrai/phantom/pull/1138): pull-request; 2026-10-28
+- [#1140 bridge: RQ-CON-DESKTOP-COMMAND](https://github.com/ashlrai/phantom/pull/1140): pull-request; 2026-10-28
+- [#1142 bridge: RQ-DESKTOP-P1-4](https://github.com/ashlrai/phantom/pull/1142): pull-request; 2026-10-28
+- [#1147 bridge: RQ-DV-DRIVER-SIM-HARNESS](https://github.com/ashlrai/phantom/pull/1147): pull-request; 2026-10-28
+- [#1125 bridge: RQ-OT-P1-CALIBRATION](https://github.com/ashlrai/phantom/pull/1125): pull-request; 2026-10-28
+- [#1119 bridge: RQ-PHANTOM-REVIVE](https://github.com/ashlrai/phantom/pull/1119): pull-request; 2026-10-28
+- [#1088 bridge: RQ-MEM-JOB-ACCOUNTING](https://github.com/ashlrai/phantom/pull/1088): pull-request; 2026-10-28
+- [#1095 bridge: RQ-DRIVER-NODES-1-LEASE](https://github.com/ashlrai/phantom/pull/1095): pull-request; 2026-10-28
+- [#1096 bridge: RQ-DRIVER-NODES-2-STATE](https://github.com/ashlrai/phantom/pull/1096): pull-request; 2026-10-28
+- [#698 feat(website): qualify source on required green CI when ashlr/verify is not required](https://github.com/ashlrai/phantom/pull/698): pull-request; 2026-10-28
+- [#675 Attribute artifact installation time](https://github.com/ashlrai/phantom/pull/675): pull-request; 2026-10-28
+- [#973 bridge: LAND-phantom-926](https://github.com/ashlrai/phantom/pull/973): pull-request; 2026-10-28
+- [#978 bridge: RQ-PH-QUEUE-LITTLE-TEST](https://github.com/ashlrai/phantom/pull/978): pull-request; 2026-10-28
+- [#991 bridge: RQ-PH-QUEUE-CONTROLLER-SIM](https://github.com/ashlrai/phantom/pull/991): pull-request; 2026-10-28
+- [#1038 bridge: RADAR-ANTH-APIVER](https://github.com/ashlrai/phantom/pull/1038): pull-request; 2026-10-28
+- [#1011 bridge: RQ-BUS-1A](https://github.com/ashlrai/phantom/pull/1011): pull-request; 2026-10-28
+- [#1018 bridge: RQ-PH-QUEUE-SPOOL-REPLAY](https://github.com/ashlrai/phantom/pull/1018): pull-request; 2026-10-28
+- [#1030 bridge: RQ-NS-ROUTINES](https://github.com/ashlrai/phantom/pull/1030): pull-request; 2026-10-28
+- [#1033 bridge: RQ-PARITY-CODEX-ADAPTER](https://github.com/ashlrai/phantom/pull/1033): pull-request; 2026-10-28
+- [#1039 bridge: RQ-PLAN-OTEL-COST-A](https://github.com/ashlrai/phantom/pull/1039): pull-request; 2026-10-28
+- [#1040 bridge: RQ-PLAN-ECOCL-A](https://github.com/ashlrai/phantom/pull/1040): pull-request; 2026-10-28
+- [#1029 bridge: RQ-NS-PROVIDERS](https://github.com/ashlrai/phantom/pull/1029): pull-request; 2026-10-28
+- [#1042 bridge: RADAR-CC-MINVER](https://github.com/ashlrai/phantom/pull/1042): pull-request; 2026-10-28
+- [#1046 bridge: RQ-BUDGET-LEDGER](https://github.com/ashlrai/phantom/pull/1046): pull-request; 2026-10-28
+- [#1052 bridge: RQ-INT-2-r2](https://github.com/ashlrai/phantom/pull/1052): pull-request; 2026-10-28
+- [#1023 bridge: RQ-BUS-3A](https://github.com/ashlrai/phantom/pull/1023): pull-request; 2026-10-28
+- [#1024 bridge: RQ-BUS-1B](https://github.com/ashlrai/phantom/pull/1024): pull-request; 2026-10-28
+- [#1055 bridge: RQ-PL-BUS-COVERAGE](https://github.com/ashlrai/phantom/pull/1055): pull-request; 2026-10-28
+- [#1062 bridge: RQ-REPLAY-1](https://github.com/ashlrai/phantom/pull/1062): pull-request; 2026-10-28
+- [#1059 bridge: RQ-PHANTOM-DRIVER-6-GROKBOT-LANE](https://github.com/ashlrai/phantom/pull/1059): pull-request; 2026-10-28
+- [#1060 bridge: RQ-PHM-MCP-1](https://github.com/ashlrai/phantom/pull/1060): pull-request; 2026-10-28
+- [#1020 bridge: RQ-BUS-5A](https://github.com/ashlrai/phantom/pull/1020): pull-request; 2026-10-28
+- [#1009 bridge: RQ-QUEUE-6](https://github.com/ashlrai/phantom/pull/1009): pull-request; 2026-10-28
+- [#1005 bridge: RQ-MAC-DISK](https://github.com/ashlrai/phantom/pull/1005): pull-request; 2026-10-28
+- [#1006 bridge: RQ-PH-TEST-SPEED](https://github.com/ashlrai/phantom/pull/1006): pull-request; 2026-10-28
+- [#1067 bridge: RQ-PL-PEERS-ADAPT-GROK](https://github.com/ashlrai/phantom/pull/1067): pull-request; 2026-10-28
+- [#1068 bridge: RQ-CYCLE-4](https://github.com/ashlrai/phantom/pull/1068): pull-request; 2026-10-28
+- [#1004 bridge: RQ-GRAPH-2A](https://github.com/ashlrai/phantom/pull/1004): pull-request; 2026-10-28
+- [#1001 bridge: RQ-DV-PH-TUI-SNAP](https://github.com/ashlrai/phantom/pull/1001): pull-request; 2026-10-28
+- [#1002 bridge: RQ-GRAPH-1A](https://github.com/ashlrai/phantom/pull/1002): pull-request; 2026-10-28
+- [#1003 bridge: RQ-GRAPH-1B](https://github.com/ashlrai/phantom/pull/1003): pull-request; 2026-10-28
+- [#1069 bridge: RQ-FLAKE-DB-1](https://github.com/ashlrai/phantom/pull/1069): pull-request; 2026-10-28
+- [#1070 bridge: RQ-DIFFRISK-1](https://github.com/ashlrai/phantom/pull/1070): pull-request; 2026-10-28
+- [#1071 bridge: RQ-PL-RADAR-SONNET45-SWEEP](https://github.com/ashlrai/phantom/pull/1071): pull-request; 2026-10-28
+- [#1000 bridge: RQ-DV-PH-PLANNING-TEST](https://github.com/ashlrai/phantom/pull/1000): pull-request; 2026-10-28
+- [#1079 bridge: RQ-FRESH-GEN-PH](https://github.com/ashlrai/phantom/pull/1079): pull-request; 2026-10-28
+- [#1083 bridge: RQ-METRICS-MERGED-FIX](https://github.com/ashlrai/phantom/pull/1083): pull-request; 2026-10-28
+- [#1084 bridge: RQ-MEMGUARD-PRESSURE-RULE](https://github.com/ashlrai/phantom/pull/1084): pull-request; 2026-10-28
+- [#1086 bridge: RQ-DISC-MCP-MANIFEST-PH](https://github.com/ashlrai/phantom/pull/1086): pull-request; 2026-10-28
+- [#998 bridge: LAND-phantom-942-fix](https://github.com/ashlrai/phantom/pull/998): pull-request; 2026-10-28
+- [#1087 bridge: RQ-DISC-AGENTS-MD-AUDIT](https://github.com/ashlrai/phantom/pull/1087): pull-request; 2026-10-28
+- [#1089 bridge: RQ-DRIVER-QUEUE-CONTRACT-TESTS](https://github.com/ashlrai/phantom/pull/1089): pull-request; 2026-10-28
+- [#987 bridge: RQ-PH-SPAWN-REAPER](https://github.com/ashlrai/phantom/pull/987): pull-request; 2026-10-28
+- [#995 bridge: LAND-RECUT-phantom-836](https://github.com/ashlrai/phantom/pull/995): pull-request; 2026-10-28
+- [#986 bridge: RQ-PH-WORKTREE-DISK-GUARD](https://github.com/ashlrai/phantom/pull/986): pull-request; 2026-10-28
+- [#990 bridge: RQ-PH-LOCUS-PARSER-0_5_1](https://github.com/ashlrai/phantom/pull/990): pull-request; 2026-10-28
+- [#1076 bridge: RQ-DRIVER-NODES-5-PEER-RESEARCH](https://github.com/ashlrai/phantom/pull/1076): pull-request; 2026-10-28
+- [#1091 bridge: RQ-DEVIN-LANE-ADAPTER-TESTS](https://github.com/ashlrai/phantom/pull/1091): pull-request; 2026-10-28
+- [#964 bridge: RQ-CYCLE-1-r2](https://github.com/ashlrai/phantom/pull/964): pull-request; 2026-10-28
+- [#982 bridge: RQ-PH-EXEC-PHANTOM](https://github.com/ashlrai/phantom/pull/982): pull-request; 2026-10-28
+- [#983 bridge: LAND-RECUT-phantom-693](https://github.com/ashlrai/phantom/pull/983): pull-request; 2026-10-28
+- [#969 bridge: RQ-BRIDGE-CI](https://github.com/ashlrai/phantom/pull/969): pull-request; 2026-10-28
+- [#959 bridge: RQ-VISION-2](https://github.com/ashlrai/phantom/pull/959): pull-request; 2026-10-28
+- [#955 bridge: RQ-XREVIEW](https://github.com/ashlrai/phantom/pull/955): pull-request; 2026-10-28
+- [#940 bridge: rq-vision-1](https://github.com/ashlrai/phantom/pull/940): pull-request; 2026-10-28
+- [#953 bridge: RQ-INT-3](https://github.com/ashlrai/phantom/pull/953): pull-request; 2026-10-28
+- [#944 bridge: RQ-BACKLOG-GEN](https://github.com/ashlrai/phantom/pull/944): pull-request; 2026-10-28
+- [#946 bridge: RQ-DESKTOP-P1-1](https://github.com/ashlrai/phantom/pull/946): pull-request; 2026-10-28
+- [#1187 bridge: RQ-REL-VERIFY-POLL](https://github.com/ashlrai/phantom/pull/1187): pull-request; 2026-10-28
+- [#1220 bridge: THROUGHPUT-PHANTOM-CANCEL](https://github.com/ashlrai/phantom/pull/1220): pull-request; 2026-10-28
+- [#1015 bridge: RQ-REBASE-D1](https://github.com/ashlrai/phantom/pull/1015): pull-request; 2026-10-28; cross-repo ashlrai/ashlr-md#181
+- [#1021 bridge: RQ-BUS-3B](https://github.com/ashlrai/phantom/pull/1021): pull-request; 2026-10-28
+- [#1186 bridge: RQ-RESEARCH-SWARMS](https://github.com/ashlrai/phantom/pull/1186): pull-request; 2026-10-28
+- [#1215 bridge: RQ-N26B-027](https://github.com/ashlrai/phantom/pull/1215): pull-request; 2026-10-28
+- [#988 bridge: RQ-MAC-TESTENV](https://github.com/ashlrai/phantom/pull/988): pull-request; 2026-10-28
+- [#992 bridge: RQ-PH-QUEUE-REPORT-CLI](https://github.com/ashlrai/phantom/pull/992): pull-request; 2026-10-28
+- [#993 bridge: LAND-RECUT-phantom-937](https://github.com/ashlrai/phantom/pull/993): pull-request; 2026-10-28
+- [#994 bridge: LAND-RECUT-phantom-687](https://github.com/ashlrai/phantom/pull/994): pull-request; 2026-10-28
+- [#996 bridge: LAND-RECUT-phantom-837](https://github.com/ashlrai/phantom/pull/996): pull-request; 2026-10-28
+- [#984 bridge: LAND-RECUT-phantom-697](https://github.com/ashlrai/phantom/pull/984): pull-request; 2026-10-28
+- [#781 Make the self-improvement gate and PR autopilot Tier-1](https://github.com/ashlrai/phantom/pull/781): pull-request; 2026-10-28
+- [#1170 bridge: RQ-OPS-CODEX-CMP-USAGE-READER](https://github.com/ashlrai/phantom/pull/1170): pull-request; 2026-10-28
+- [#1182 bridge: RQ-PLAN-NORTHSTAR](https://github.com/ashlrai/phantom/pull/1182): pull-request; 2026-10-28
+- [#1205 bridge: RQ-N26B-007](https://github.com/ashlrai/phantom/pull/1205): pull-request; 2026-10-28
+- [#1208 bridge: RQ-N26B-001](https://github.com/ashlrai/phantom/pull/1208): pull-request; 2026-10-28
+- [#1210 bridge: RQ-N26B-041](https://github.com/ashlrai/phantom/pull/1210): pull-request; 2026-10-28
+- [#1224 bridge: RQ-LAND-METRICS-MERGED](https://github.com/ashlrai/phantom/pull/1224): pull-request; 2026-10-28
+- [#945 bridge: RQ-DESKTOP-P1-2](https://github.com/ashlrai/phantom/pull/945): pull-request; 2026-10-28
+- [#968 bridge: LAND-RECUT-phantom-938](https://github.com/ashlrai/phantom/pull/968): pull-request; 2026-10-28
+- [#1206 bridge: RQ-N26B-024](https://github.com/ashlrai/phantom/pull/1206): pull-request; 2026-10-28
+- [#727 Check Phantom's Locus parsers against real Locus 0.5.0 output](https://github.com/ashlrai/phantom/pull/727): pull-request; 2026-10-28
+- [#1200 bridge: RQ-N26B-006](https://github.com/ashlrai/phantom/pull/1200): pull-request; 2026-10-28
+- [#1202 bridge: RQ-N26B-022](https://github.com/ashlrai/phantom/pull/1202): pull-request; 2026-10-28
+- [#951 feat(observability): queue.v1 fleet_hop emitter for station exits](https://github.com/ashlrai/phantom/pull/951): pull-request; 2026-10-28
+- [#1197 bridge: RQ-N26B-005](https://github.com/ashlrai/phantom/pull/1197): pull-request; 2026-10-28
+- [#1201 bridge: RQ-N26B-010](https://github.com/ashlrai/phantom/pull/1201): pull-request; 2026-10-28
+- [#1165 bridge: RQ-N26-OPS-READER-SCHEMA](https://github.com/ashlrai/phantom/pull/1165): pull-request; 2026-10-28
+- [#1173 bridge: RQ-OPS-USAGE-SIGNAL-WRITER](https://github.com/ashlrai/phantom/pull/1173): pull-request; 2026-10-28
+- [#1191 bridge: RQ-VERIFY-PR1081](https://github.com/ashlrai/phantom/pull/1191): pull-request; 2026-10-28
+- [#1209 bridge: RQ-N26B-037](https://github.com/ashlrai/phantom/pull/1209): pull-request; 2026-10-28
+- [#1143 bridge: RQ-DESKTOP-GRAPH](https://github.com/ashlrai/phantom/pull/1143): pull-request; 2026-10-28
+- [#1180 bridge: RQ-PLAN-GRAPHBUS](https://github.com/ashlrai/phantom/pull/1180): pull-request; 2026-10-28
+- [#1177 bridge: RQ-OT-P4-RETRO-NIGHTLY](https://github.com/ashlrai/phantom/pull/1177): pull-request; 2026-10-28
+- [#1213 bridge: RQ-N26B-043](https://github.com/ashlrai/phantom/pull/1213): pull-request; 2026-10-28
+- [#1162 bridge: RQ-N26-DV-PH-DOCS-CLI](https://github.com/ashlrai/phantom/pull/1162): pull-request; 2026-10-28
+- [#1139 bridge: RQ-CON-DELETION-SWEEP](https://github.com/ashlrai/phantom/pull/1139): pull-request; 2026-10-28
+- [#1217 bridge: RQ-N26B-044](https://github.com/ashlrai/phantom/pull/1217): pull-request; 2026-10-28
+- [#1169 bridge: RQ-OPS-CODEX-PERSONAL-USAGE-READER](https://github.com/ashlrai/phantom/pull/1169): pull-request; 2026-10-28
+- [#1179 bridge: RQ-PL-RADAR-MODELCAPS-FIXTURES](https://github.com/ashlrai/phantom/pull/1179): pull-request; 2026-10-28
+- [#1171 bridge: RQ-OPS-GROK-USAGE-READER](https://github.com/ashlrai/phantom/pull/1171): pull-request; 2026-10-28
+- [#937 docs: inner-loop research for a sub-5s edit loop](https://github.com/ashlrai/phantom/pull/937): pull-request; 2026-10-28
+- [#1199 bridge: RQ-N26B-004](https://github.com/ashlrai/phantom/pull/1199): pull-request; 2026-10-28
+- [#936 feat(router): spend work Codex, then Devin, SuperGrok, and oMLX](https://github.com/ashlrai/phantom/pull/936): pull-request; 2026-10-28
+- [#1172 bridge: RQ-OT-P2-SIGNALS](https://github.com/ashlrai/phantom/pull/1172): pull-request; 2026-10-28
+- [#1196 bridge: RQ-N26B-054](https://github.com/ashlrai/phantom/pull/1196): pull-request; 2026-10-28
+- [#1183 bridge: RQ-PLAN-QUEUE](https://github.com/ashlrai/phantom/pull/1183): pull-request; 2026-10-28
+- [#1198 bridge: RQ-N26B-012](https://github.com/ashlrai/phantom/pull/1198): pull-request; 2026-10-28
+- [#1184 bridge: RQ-RESEARCH-SPEC-MEMORY](https://github.com/ashlrai/phantom/pull/1184): pull-request; 2026-10-28
+- [#1189 bridge: RQ-ROUTER-TERRA-ARM](https://github.com/ashlrai/phantom/pull/1189): pull-request; 2026-10-28
+- [#1151 bridge: RQ-ECON-DEVIN-USAGE](https://github.com/ashlrai/phantom/pull/1151): pull-request; 2026-10-28
+- [#1155 bridge: RQ-FRESH-SITE-PH](https://github.com/ashlrai/phantom/pull/1155): pull-request; 2026-10-28
+- [#1150 bridge: RQ-DV-SPLIT-CORE-TYPES](https://github.com/ashlrai/phantom/pull/1150): pull-request; 2026-10-28
+- [#961 bridge: RQ-CI-SHARD-1](https://github.com/ashlrai/phantom/pull/961): pull-request; 2026-10-28
+- [#1145 bridge: RQ-DV-PH-API-ERRORS](https://github.com/ashlrai/phantom/pull/1145): pull-request; 2026-10-28
+- [#922 docs(local-inference): localInference config, loopback gate, /models probe](https://github.com/ashlrai/phantom/pull/922): pull-request; 2026-10-28; cross-repo ashlrai/ashlr-md#179, ashlrai/ashlr-md#181
+- [#1144 bridge: RQ-DISC-READINESS-SCORER](https://github.com/ashlrai/phantom/pull/1144): pull-request; 2026-10-28
+- [#1212 bridge: RQ-N26B-026](https://github.com/ashlrai/phantom/pull/1212): pull-request; 2026-10-28
+- [#1232 bridge: RQ-CI-SECONDS-PHANTOM](https://github.com/ashlrai/phantom/pull/1232): pull-request; 2026-10-28
+- [#1226 Fix automations dedupe pruning against the wall clock (master red since 10-27)](https://github.com/ashlrai/phantom/pull/1226): pull-request; 2026-10-28
+- [#985 feat(routing): per-run routing accounting + doctor routing row (flagship slice 3)](https://github.com/ashlrai/phantom/pull/985): pull-request; 2026-10-27
+- [#967 fix(local-inference): refuse redirects and pin localhost on local probes (Security #952 L1-L3)](https://github.com/ashlrai/phantom/pull/967): pull-request; 2026-10-26
+- [#690 feat: aggregated Phantom ecosystem stars + commits (daily)](https://github.com/ashlrai/phantom/pull/690): pull-request; 2026-10-26
+- [#960 feat(routing): local-first bandit lane scored on merged PRs per $ and per hour (RQ-AUTO-LOCAL-1, Tier-1, stacked on #926)](https://github.com/ashlrai/phantom/pull/960): pull-request; 2026-10-26
+- [#952 feat(routing): hybrid local/frontier routing live in fleet dispatch (slice 2, Tier-1, stacked on #926)](https://github.com/ashlrai/phantom/pull/952): pull-request; 2026-10-26
+- [#688 feat: Ashlr MD as the out-of-box Markdown opener](https://github.com/ashlrai/phantom/pull/688): pull-request; 2026-10-26; cross-repo ashlrai/ashlr-md#28
+- [#730 Normalize Locus capture countdowns and bound isolated probes](https://github.com/ashlrai/phantom/pull/730): pull-request; 2026-10-26
+- [#943 feat(routing): enable local inference escalation policy in seat routing (Tier-1, stacked on #926)](https://github.com/ashlrai/phantom/pull/943): pull-request; 2026-10-26
+- [#930 fix(ci): skip dist-backed Markdown tests in the docs lane](https://github.com/ashlrai/phantom/pull/930): pull-request; 2026-10-26
+- [#923 chore(deps): declare esbuild and @eslint/js devDependencies](https://github.com/ashlrai/phantom/pull/923): pull-request; 2026-10-26
+- [#880 feat(run): route governed clients through an opted-in gateway (slice B, for Mason review)](https://github.com/ashlrai/phantom/pull/880): pull-request; 2026-10-26
+- [#847 ci: run the published companion smoke on a schedule](https://github.com/ashlrai/phantom/pull/847): pull-request; 2026-10-26; cross-repo ashlrai/ashlr-stack#30, ashlrai/phantom-secrets#191
+- [#921 fix(local-inference): stream /models body, abort past 256 KiB](https://github.com/ashlrai/phantom/pull/921): pull-request; 2026-10-26; cross-repo ashlrai/ashlr-md#181
+- [#846 Lessons: show what a lesson cites, withhold lessons whose PRs were reverted](https://github.com/ashlrai/phantom/pull/846): pull-request; 2026-10-25
+- [#920 feat(local-inference): doctor and status probe of GET /models; phm --ashlr-handshake (P3)](https://github.com/ashlrai/phantom/pull/920): pull-request; 2026-10-25; cross-repo ashlrai/ashlr-md#179, ashlrai/ashlr-md#181
+- [#811 ci: docs-only PRs take a docs lane (skip Ubuntu/Windows/Mac matrix; Merge Gate still reports)](https://github.com/ashlrai/phantom/pull/811): pull-request; 2026-10-25
+- [#917 feat(local-inference): loopback-only openai-compat and localInference config (P2)](https://github.com/ashlrai/phantom/pull/917): pull-request; 2026-10-25; cross-repo ashlrai/ashlr-md#179
+- [#918 docs(readme): run receipts section (phm fleet receipt, source only)](https://github.com/ashlrai/phantom/pull/918): pull-request; 2026-10-25
+- [#919 Label crash-orphaned runs as stale in phm runs and run show](https://github.com/ashlrai/phantom/pull/919): pull-request; 2026-10-25
+- [#914 feat(status): show the strict phantom preflight in phm status; spawn preflight --vault opt-in](https://github.com/ashlrai/phantom/pull/914): pull-request; 2026-10-25
+- [#872 Count benchmark diffs without a final newline as applied](https://github.com/ashlrai/phantom/pull/872): pull-request; 2026-10-25
+- [#916 docs: local inference guide (Ollama, oMLX, mlx-lm via local-coder and openai-compat)](https://github.com/ashlrai/phantom/pull/916): pull-request; 2026-10-25
+- [#845 Learn from matched outcomes: cited lessons, a lessons holdout, and outcome-ranked self-improvement](https://github.com/ashlrai/phantom/pull/845): pull-request; 2026-10-25
+- [#913 feat(custody): record every unwrapped spawn (incl. phantom-disabled), status by reason, pin no .phantom.toml copy](https://github.com/ashlrai/phantom/pull/913): pull-request; 2026-10-25; cross-repo ashlrai/phantom-secrets#367
+- [#912 feat(receipt): wire later\[\] appenders to ledger events (ci, merge, survival, revert)](https://github.com/ashlrai/phantom/pull/912): pull-request; 2026-10-25
+- [#911 feat(receipt): signed later\[\] appenders for ci, merge, survival, revert (receipt.v1 R6)](https://github.com/ashlrai/phantom/pull/911): pull-request; 2026-10-25
+- [#910 fix(receipt): write run receipts for real dispatches (local path to owner/name) + end-to-end test](https://github.com/ashlrai/phantom/pull/910): pull-request; 2026-10-25
+- [#909 receipt: phm receipt timeline <run>, and a doctor line for the newest receipt](https://github.com/ashlrai/phantom/pull/909): pull-request; 2026-10-25
+- [#908 canary: fail-safe mid-cancel race in the cancel path](https://github.com/ashlrai/phantom/pull/908): pull-request; 2026-10-25
+- [#907 canary: set HOST_CANCELLATION_PROVEN on unit + live proof (#906)](https://github.com/ashlrai/phantom/pull/907): pull-request; 2026-10-25
+- [#905 custody: harden the spawn ledger (no symlinks, write-time validation, bounded reads)](https://github.com/ashlrai/phantom/pull/905): pull-request; 2026-10-25
+- [#904 status: show receipt.v1 and custody counts in phm status](https://github.com/ashlrai/phantom/pull/904): pull-request; 2026-10-25
+- [#903 feat(fleet): canary enforce ladder state machine; enforce unreachable while cancellation is unproven](https://github.com/ashlrai/phantom/pull/903): pull-request; 2026-10-25
+- [#902 test(fleet): canary host auto-merge cancellation proof (not wired, enforce off)](https://github.com/ashlrai/phantom/pull/902): pull-request; 2026-10-25
+- [#901 feat(doctor): phantom strict preflight check; drop key-shaped preflight check ids](https://github.com/ashlrai/phantom/pull/901): pull-request; 2026-10-25
+- [#900 feat(daemon): opt-in receipt.v1 at run close (ASHLR_RUN_RECEIPTS=1)](https://github.com/ashlrai/phantom/pull/900): pull-request; 2026-10-25
+- [#899 feat(run): fleet custody ledger, read by the Shadow Report](https://github.com/ashlrai/phantom/pull/899): pull-request; 2026-10-25
+- [#898 feat(receipt): receipt key, local store and ashlr fleet receipt (receipt.v1 R2-R4)](https://github.com/ashlrai/phantom/pull/898): pull-request; 2026-10-25
+- [#897 feat(receipt): receipt.v1 core: closed shape, canonical digest, Ed25519 sign and verify](https://github.com/ashlrai/phantom/pull/897): pull-request; 2026-10-25
+- [#881 feat(config): validate the gateways block at config load (slice A2)](https://github.com/ashlrai/phantom/pull/881): pull-request; 2026-10-25
+- [#890 feat(canary): read-only Shadow Report (automerge-canary report \[--json\])](https://github.com/ashlrai/phantom/pull/890): pull-request; 2026-10-25
+- [#889 feat(run): strict phantom preflight consumer (agent doctor --json --strict)](https://github.com/ashlrai/phantom/pull/889): pull-request; 2026-10-25
+- [#896 test(run): spawnEngine emits one value-free custody record per spawn](https://github.com/ashlrai/phantom/pull/896): pull-request; 2026-10-25; cross-repo ashlrai/phantom-secrets#367
+- [#888 feat(run): value-free phantom custody record per engine spawn (unwrapped, reason)](https://github.com/ashlrai/phantom/pull/888): pull-request; 2026-10-25; cross-repo ashlrai/phantom-secrets#367
+- [#895 fix(resources): retry transient transport failures on mission console reads, bounded](https://github.com/ashlrai/phantom/pull/895): pull-request; 2026-10-25
+- [#891 ci: skip macOS and Windows service lanes on master push, run them nightly](https://github.com/ashlrai/phantom/pull/891): pull-request; 2026-10-25
+- [#894 test(mac): fix three Mac-only test failures (universe fixture anchor, zombie detection, confinement owner marker)](https://github.com/ashlrai/phantom/pull/894): pull-request; 2026-10-24
+- [#892 test(reaper): compare a registered worktree by the path git lists (macOS /private)](https://github.com/ashlrai/phantom/pull/892): pull-request; 2026-10-24
+- [#885 test(custody): check /usr/bin/true's real path in the root-owned binary case](https://github.com/ashlrai/phantom/pull/885): pull-request; 2026-10-24
+- [#884 fix(errors): redact the sent key from provider error bodies that echo it](https://github.com/ashlrai/phantom/pull/884): pull-request; 2026-10-19
+- [#883 fix(pulse): hidden prompt and --token-stdin for the Pulse PAT; warn on --token <pat>](https://github.com/ashlrai/phantom/pull/883): pull-request; 2026-10-19
+- [#882 fix(pulse): store the PAT with phantom add --stdin, never as an argument](https://github.com/ashlrai/phantom/pull/882): pull-request; 2026-10-19
+- [#879 feat(run): governed-client gateway target validator (slice A, not wired)](https://github.com/ashlrai/phantom/pull/879): pull-request; 2026-10-19
+- [#877 feat: honor OLLAMA_HOST (loopback only) in the knowledge indexer and model-manager probe](https://github.com/ashlrai/phantom/pull/877): pull-request; 2026-10-19
+- [#694 docs(companions): Locus, Lexicon, Ashlr Stack](https://github.com/ashlrai/phantom/pull/694): pull-request; 2026-10-18
+- [#876 new --stack warns once, companions refuses missing paths, wiki names the enroll step](https://github.com/ashlrai/phantom/pull/876): pull-request; 2026-10-18
+- [#875 \[ashlr-cloud\] cloud stats: measure how cloud tasks end and the merged rate](https://github.com/ashlrai/phantom/pull/875): pull-request; 2026-10-18
+- [#873 phm status counts a repo that has no commits yet](https://github.com/ashlrai/phantom/pull/873): pull-request; 2026-10-18
+- [#874 npm runtime scan: say how far it got when the deadline fires](https://github.com/ashlrai/phantom/pull/874): pull-request; 2026-10-18
+- [#848 test(m315,m419): template repo per file and in-process canary observer](https://github.com/ashlrai/phantom/pull/848): pull-request; 2026-10-18
+- [#871 \[ashlr-cloud\] plugins init: the name after --capability is the plugin name](https://github.com/ashlrai/phantom/pull/871): pull-request; 2026-10-18
+- [#860 fix(cli): ship refuses a missing project path; steward and pulse-test honor --help](https://github.com/ashlrai/phantom/pull/860): pull-request; 2026-10-18
+- [#870 Doctor: one MCP warning, not two, on a fresh install](https://github.com/ashlrai/phantom/pull/870): pull-request; 2026-10-18
+- [#868 test: doc-facts check for CLI commands, verbs and flags in agent docs](https://github.com/ashlrai/phantom/pull/868): pull-request; 2026-10-18
+- [#869 Apply captured agent diffs that end without a newline](https://github.com/ashlrai/phantom/pull/869): pull-request; 2026-10-18
+- [#867 \[ashlr-cloud\] Refuse unknown options before side effects in wiki, stack, plugins and demo](https://github.com/ashlrai/phantom/pull/867): pull-request; 2026-10-18
+- [#866 ci: run the isolated Mac suites two at a time, longest first](https://github.com/ashlrai/phantom/pull/866): pull-request; 2026-10-18
+- [#864 phm init builds the repo index on first run](https://github.com/ashlrai/phantom/pull/864): pull-request; 2026-10-18
+- [#863 Run the promote gate's metric in the verification sandbox under a standing grant](https://github.com/ashlrai/phantom/pull/863): pull-request; 2026-10-18
+- [#862 Check a sandbox cleanup lock's change time before removing it](https://github.com/ashlrai/phantom/pull/862): pull-request; 2026-10-18
+- [#861 docs: goal needs --project; goals status takes an id](https://github.com/ashlrai/phantom/pull/861): pull-request; 2026-10-18
+- [#833 \[ashlr-cloud\] Refuse unknown options before side effects (sandbox, enroll, comms, release-articles, devin message, leader say, improve, manager, fleet)](https://github.com/ashlrai/phantom/pull/833): pull-request; 2026-10-18
+- [#865 perf(web): re-render only the live turn's block of the transcript per streamed token](https://github.com/ashlrai/phantom/pull/865): pull-request; 2026-10-18
+- [#844 ci: skip Mac checks on draft PRs until they are marked ready](https://github.com/ashlrai/phantom/pull/844): pull-request; 2026-10-18
+- [#849 Reclaim scratch dirs and apply worktrees a killed run leaves in ~/.ashlr/tmp](https://github.com/ashlrai/phantom/pull/849): pull-request; 2026-10-18
+- [#858 fix(goal-loop): return the roadmap index's real file name on case-insensitive filesystems (master Mac 4/4)](https://github.com/ashlrai/phantom/pull/858): pull-request; 2026-10-18
+- [#857 Rollback refuses a never-enrolled path; doctor --fix links phm as well as ashlr](https://github.com/ashlrai/phantom/pull/857): pull-request; 2026-10-17
+- [#856 fix(goals): goals plan stops printing provider-failure noise; local drafting kept](https://github.com/ashlrai/phantom/pull/856): pull-request; 2026-10-17
+- [#855 fix(cli): first-task readiness for phm goal / phm goals (no-project refusal, not-found JSON, next steps, usage errors on stderr)](https://github.com/ashlrai/phantom/pull/855): pull-request; 2026-10-17
+- [#831 First run: no doctor warnings for an empty genome or being signed out, and an aligned onboard steps table](https://github.com/ashlrai/phantom/pull/831): pull-request; 2026-10-17; cross-repo ashlrai/ashlr-plugin#170
+- [#853 fix(cli): playbook --file refusal, inbox next step, vision show --json, benchmark compare --json, automations templates --json](https://github.com/ashlrai/phantom/pull/853): pull-request; 2026-10-17
+- [#852 fix(cli,mcp): goals status <id>, swarm show --json, health --json refusal, blank ashlr_learn refused, ROADMAP.md found](https://github.com/ashlrai/phantom/pull/852): pull-request; 2026-10-17
+- [#830 fix(mcp): unknown gateway tool is -32602, health refusal names `ashlr enroll add`, ecosystem skip lines say why](https://github.com/ashlrai/phantom/pull/830): pull-request; 2026-10-17
+- [#851 test: stop the zombie-group fixture's leader from being reaped before its parent execs](https://github.com/ashlrai/phantom/pull/851): pull-request; 2026-10-17
+- [#809 wire: add Gemini CLI as a status-only target](https://github.com/ashlrai/phantom/pull/809): pull-request; 2026-10-17
+- [#827 fix(mcp): flag native refusals as errors, point bare tool names at the routed tool, name the bad profile field](https://github.com/ashlrai/phantom/pull/827): pull-request; 2026-10-17
+- [#850 fix(tools): detect Claude Code marketplace installs of ashlr-plugin](https://github.com/ashlrai/phantom/pull/850): pull-request; 2026-10-17; cross-repo ashlrai/ashlr-plugin#168
+- [#843 docs: one-gateway quickstart for Claude Code, Codex and Cursor](https://github.com/ashlrai/phantom/pull/843): pull-request; 2026-10-17
+- [#825 The Ashlr.AI Plugin can read the project: repo sessions and confined runs](https://github.com/ashlrai/phantom/pull/825): pull-request; 2026-10-17; cross-repo ashlrai/lexicon#49, ashlrai/phantom-secrets#191, ashlrai/phantom-secrets#206
+- [#841 Treat renaming a test out of the suite as deleting it](https://github.com/ashlrai/phantom/pull/841): pull-request; 2026-10-17
+- [#840 test(m21): Windows DACL checks through the semantic harness; one template repo per file](https://github.com/ashlrai/phantom/pull/840): pull-request; 2026-10-17
+- [#842 Report stale git lock files in doctor and at daemon start](https://github.com/ashlrai/phantom/pull/842): pull-request; 2026-10-17
+- [#839 Phantom app: a running chat no longer wakes the page for its pulses](https://github.com/ashlrai/phantom/pull/839): pull-request; 2026-10-17
+- [#751 Make the Stack and Ashlr MD seams honest, and add a cross-tool smoke against real binaries](https://github.com/ashlrai/phantom/pull/751): pull-request; 2026-10-17; cross-repo ashlrai/ashlr-stack#30, ashlrai/phantom-secrets#191
+- [#747 Score self-improvement proposals by measured outcomes and gate promotion on evidence](https://github.com/ashlrai/phantom/pull/747): pull-request; 2026-10-17
+- [#819 docs: bring agent docs up to date with #740-#808](https://github.com/ashlrai/phantom/pull/819): pull-request; 2026-10-17
+- [#822 ci: run master's Mac lanes one push at a time](https://github.com/ashlrai/phantom/pull/822): pull-request; 2026-10-17
+- [#832 Lessons: inject only the lessons that are about the task](https://github.com/ashlrai/phantom/pull/832): pull-request; 2026-10-17
+- [#780 Call the product Phantom, not Verse, in user-facing text](https://github.com/ashlrai/phantom/pull/780): pull-request; 2026-10-17
+- [#829 Recover cleanly from agents killed mid-run, shorten the sandbox lock hold, and make loop --watch wait for the engine reset](https://github.com/ashlrai/phantom/pull/829): pull-request; 2026-10-17
+- [#826 fix(authority): open the trust-root PR through the GitHub API, not a local checkout](https://github.com/ashlrai/phantom/pull/826): pull-request; 2026-10-17
+- [#838 \[ashlr-cloud\] Honor --help before side effects in stack, swarms, vercel, inbox, wiki, plugins, playbook, jev, recovery, website and the auto-merge canary](https://github.com/ashlrai/phantom/pull/838): pull-request; 2026-10-17
+- [#834 Register Ashlr MD's MCP server in `phm mcp ecosystem`, so Phantom's gateway serves it](https://github.com/ashlrai/phantom/pull/834): pull-request; 2026-10-17; cross-repo ashlrai/ashlr-stack#30, ashlrai/phantom-secrets#191
+- [#792 fix: zombie-only process groups, stale keep-alive worker sockets, and CI cold-start flakes](https://github.com/ashlrai/phantom/pull/792): pull-request; 2026-10-17
+- [#835 Pin the local auto-merge to the staged commit and keep protected paths out of it](https://github.com/ashlrai/phantom/pull/835): pull-request; 2026-10-17
+- [#787 Phantom app: no idle repaint while a chat runs, half the paint per streamed token, smooth typing with 500 chats, faster first ⌘K and first section visits](https://github.com/ashlrai/phantom/pull/787): pull-request; 2026-10-17
+- [#800 \[ashlr-cloud\] Guard every command against acting on --help; fix spec, genome, automations, models, cloud and devin](https://github.com/ashlrai/phantom/pull/800): pull-request; 2026-10-17; cross-repo ashlrai/ashlr-stack#30, ashlrai/phantom-secrets#191
+- [#824 Doctor: one warning, not four, when no local model is running](https://github.com/ashlrai/phantom/pull/824): pull-request; 2026-10-17; cross-repo ashlrai/ashlr-plugin#168, ashlrai/ashlr-plugin#170
+- [#796 fix(sandbox): null repository filter drivers on daemon git](https://github.com/ashlrai/phantom/pull/796): pull-request; 2026-10-17
+- [#820 fix: ashlr-plugin detection and lifetime savings](https://github.com/ashlrai/phantom/pull/820): pull-request; 2026-10-17; cross-repo ashlrai/ashlr-plugin#168
+- [#818 Sweep temp worktrees at daemon start, size the sandbox cap to the machine, defer tasks when no engine has capacity](https://github.com/ashlrai/phantom/pull/818): pull-request; 2026-10-17
+- [#817 fix(desktop): drop the updater's zip feature to clear three zip advisories](https://github.com/ashlrai/phantom/pull/817): pull-request; 2026-10-17; cross-repo ashlrai/ashlr-stack#30, ashlrai/phantom-secrets#191
+- [#794 \[ashlr-cloud\] Keep --json output machine-readable on refusals (stack, mirror, playbook, roadmap, inbox, improve)](https://github.com/ashlrai/phantom/pull/794): pull-request; 2026-10-17
+- [#740 Connect companion discovery to reviewed setup guides](https://github.com/ashlrai/phantom/pull/740): pull-request; 2026-10-16
+- [#798 feat(wire): read-only 'wire status' report](https://github.com/ashlrai/phantom/pull/798): pull-request; 2026-10-16
+- [#797 docs(readme): add one-line tagline](https://github.com/ashlrai/phantom/pull/797): pull-request; 2026-10-16
+- [#808 Hold the sandbox creation locks only for worktree registration](https://github.com/ashlrai/phantom/pull/808): pull-request; 2026-10-16
+- [#807 First-run hints that lead somewhere: doctor, init, status](https://github.com/ashlrai/phantom/pull/807): pull-request; 2026-10-16
+- [#802 NO_COLOR for the CLI lines that bypass makeColors](https://github.com/ashlrai/phantom/pull/802): pull-request; 2026-10-16
+- [#806 phm upgrade runs phm update](https://github.com/ashlrai/phantom/pull/806): pull-request; 2026-10-16
+- [#788 First run on any machine: portable default roots, and --json on onboard, enroll add, mcp ecosystem and docs](https://github.com/ashlrai/phantom/pull/788): pull-request; 2026-10-16
+- [#804 Bound the fabric run cache and make its rewrites crash-safe](https://github.com/ashlrai/phantom/pull/804): pull-request; 2026-10-16
+- [#795 First-run: plain guidance for `phm setup` and `phm authority setup` off macOS](https://github.com/ashlrai/phantom/pull/795): pull-request; 2026-10-16
+- [#803 Show which companion tools a cloud session says it called](https://github.com/ashlrai/phantom/pull/803): pull-request; 2026-10-16; cross-repo ashlrai/lexicon#49, ashlrai/phantom-secrets#191
+- [#789 fix(fleet): keep the post-merge watch open while CI is still running](https://github.com/ashlrai/phantom/pull/789): pull-request; 2026-10-16
+- [#791 fix(cli): `authority stop --json` prints only JSON; fix ECOSYSTEM-MAP anchor and local-runtime usage](https://github.com/ashlrai/phantom/pull/791): pull-request; 2026-10-16
+- [#760 test: faster Mac shards (two workers), 16 slow suites cut up to 16x, m361 flake fix](https://github.com/ashlrai/phantom/pull/760): pull-request; 2026-10-16
+- [#799 Reap verify/merge worktrees leaked by a killed daemon; keep the activity journal writable all day](https://github.com/ashlrai/phantom/pull/799): pull-request; 2026-10-16
+- [#769 Harden self-improvement promotion against forged metrics, weakened tests and Stop bypass](https://github.com/ashlrai/phantom/pull/769): pull-request; 2026-10-16
+- [#793 fix(cloud): refuse Land on test tampering, not only show the chip](https://github.com/ashlrai/phantom/pull/793): pull-request; 2026-10-16
+- [#782 \[ashlr-cloud\] Fix the dead kill-switch hint and three "1 runs / 1 days / 1 repos" summaries](https://github.com/ashlrai/phantom/pull/782): pull-request; 2026-10-16
+- [#772 Give agents working on Phantom its companion tools and its own task context](https://github.com/ashlrai/phantom/pull/772): pull-request; 2026-10-16; cross-repo ashlrai/lexicon#49, ashlrai/phantom-secrets#191
+- [#777 Fix first-run CLI gaps: status --json, port errors, help exit codes, one MCP entry, headless open, doctor/init, NO_COLOR](https://github.com/ashlrai/phantom/pull/777): pull-request; 2026-10-16
+- [#779 Mark project-memory lines that cite paths that are gone](https://github.com/ashlrai/phantom/pull/779): pull-request; 2026-10-16
+- [#785 \[ashlr-cloud\] --help never acts: fleet pause/resume, vision approve, leader say, notify test, gh pr create, swarm approve](https://github.com/ashlrai/phantom/pull/785): pull-request; 2026-10-16
+- [#753 Document today's merges, correct agent-facing MCP descriptions, add CLAUDE.md](https://github.com/ashlrai/phantom/pull/753): pull-request; 2026-10-16
+- [#745 Recover unattended runs from crashes, hangs, leaks and clock skew; lift concurrent-agent throughput](https://github.com/ashlrai/phantom/pull/745): pull-request; 2026-10-16
+- [#783 \[ashlr-cloud\] --help never runs setup or the Goal Loop; fix dead `ashlr impact` hints, mirror flags and tab completion](https://github.com/ashlrai/phantom/pull/783): pull-request; 2026-10-16
+- [#774 \[ashlr-cloud\] Pluralise runtime slot counts on the server](https://github.com/ashlrai/phantom/pull/774): pull-request; 2026-10-16
+- [#757 fix(run): actionable refusals for sandboxed claude runs (root, host-managed sign-in, unenrolled repo)](https://github.com/ashlrai/phantom/pull/757): pull-request; 2026-10-16
+- [#752 test: fix environment-dependent and flaky tests (sandbox git config, root, dist race, midnight, timing)](https://github.com/ashlrai/phantom/pull/752): pull-request; 2026-10-16
+- [#768 fix(cloud): retire no-change backlog items and the stale 3.10.1 backlog](https://github.com/ashlrai/phantom/pull/768): pull-request; 2026-10-16
+- [#766 \[ashlr-cloud\] Apply the one percent rule to the shared Meter](https://github.com/ashlrai/phantom/pull/766): pull-request; 2026-10-16
+- [#778 Phantom app: faster cold load, long chats and first ⌘K; half the work per agent update](https://github.com/ashlrai/phantom/pull/778): pull-request; 2026-10-16
+- [#775 \[ashlr-cloud\] Stop saying "on this Mac" when the Claude cloud seat is missing on Linux or Windows](https://github.com/ashlrai/phantom/pull/775): pull-request; 2026-10-15
+- [#701 ci: defer Mac exhaustive (4 shards) from PRs to master pushes - ~90% CI cost cut](https://github.com/ashlrai/phantom/pull/701): pull-request; 2026-10-15
+- [#739 Add bounded diagnostics for retained-history test failures](https://github.com/ashlrai/phantom/pull/739): pull-request; 2026-10-15
+- [#732 Isolate doctor metadata and report early engine fixture refusal](https://github.com/ashlrai/phantom/pull/732): pull-request; 2026-10-15
+- [#731 Wait for command palette focus to settle in VerseApp test](https://github.com/ashlrai/phantom/pull/731): pull-request; 2026-10-15
+- [#726 docs: name the exact review target before generating a Grok Bot brief](https://github.com/ashlrai/phantom/pull/726): pull-request; 2026-10-15
+- [#723 Document Automatic routing research and staged evaluation plan](https://github.com/ashlrai/phantom/pull/723): pull-request; 2026-10-15
+- [#722 Hold autonomous routing on future or invalid quota timestamps](https://github.com/ashlrai/phantom/pull/722): pull-request; 2026-10-15
+- [#718 Keep gate snapshots clear of automatic Git maintenance](https://github.com/ashlrai/phantom/pull/718): pull-request; 2026-10-15
+- [#771 Close per-agent Auto-merge gaps: self-repo detection, exact-diff gate, Stop/Pause, merge prompt injection](https://github.com/ashlrai/phantom/pull/771): pull-request; 2026-10-15
+- [#759 Stop giving Linux and Windows users macOS-only setup steps](https://github.com/ashlrai/phantom/pull/759): pull-request; 2026-10-15
+- [#756 Detect Claude Code, Codex and Cursor from their CLI on PATH](https://github.com/ashlrai/phantom/pull/756): pull-request; 2026-10-15
+- [#749 Stop shipping personal names in the default config](https://github.com/ashlrai/phantom/pull/749): pull-request; 2026-10-15
+- [#758 Say why `resources profile prepare` refused the executable](https://github.com/ashlrai/phantom/pull/758): pull-request; 2026-10-15
+- [#750 docs: align repo docs with master and add an agent operations guide](https://github.com/ashlrai/phantom/pull/750): pull-request; 2026-10-15
+- [#755 Scrubber: catch the 15 missed credentials (Basic auth, Go :=, key names, prose disclosures)](https://github.com/ashlrai/phantom/pull/755): pull-request; 2026-10-15
+- [#711 test: deflake grok capacity e2e pending-marker read](https://github.com/ashlrai/phantom/pull/711): pull-request; 2026-10-14
+
+### ashlrai/phantom-secrets (core-fleet)
+
+- [#606 bridge: RQ-README-BRAND-PS](https://github.com/ashlrai/phantom-secrets/pull/606): pull-request; 2026-10-28
+- [#605 bridge: RQ-V4-DEAD-DEPS-1](https://github.com/ashlrai/phantom-secrets/pull/605): pull-request; 2026-10-28
+- [#604 bridge: RQ-FULLSUITE-QUEUE-PS](https://github.com/ashlrai/phantom-secrets/pull/604): pull-request; 2026-10-28
+- [#603 bridge: RQ-MR-CONFLICT-DRIVERS-phantom-secrets](https://github.com/ashlrai/phantom-secrets/pull/603): pull-request; 2026-10-28
+- [#602 bridge: RQ-FIXUP-SHAPE-PS-535](https://github.com/ashlrai/phantom-secrets/pull/602): pull-request; 2026-10-28
+- [#546 ci: auto-tag releases via ashlr-release App on green version bumps (G1, draft)](https://github.com/ashlrai/phantom-secrets/pull/546): pull-request; 2026-10-28
+- [#599 bridge: RQ-DRAIN-PHANTOM-SECRETS-514](https://github.com/ashlrai/phantom-secrets/pull/599): pull-request; 2026-10-28
+- [#597 bridge: RQ-DRAIN-PHANTOM-SECRETS-531](https://github.com/ashlrai/phantom-secrets/pull/597): pull-request; 2026-10-28
+- [#594 bridge: RQ-DRAIN-PHANTOM-SECRETS-532](https://github.com/ashlrai/phantom-secrets/pull/594): pull-request; 2026-10-28
+- [#595 bridge: RQ-DRAIN-PHANTOM-SECRETS-528](https://github.com/ashlrai/phantom-secrets/pull/595): pull-request; 2026-10-28
+- [#596 bridge: RQ-DRAIN-PHANTOM-SECRETS-525](https://github.com/ashlrai/phantom-secrets/pull/596): pull-request; 2026-10-28
+- [#591 bridge: RQ-REFILL-2026102801-LAND-001](https://github.com/ashlrai/phantom-secrets/pull/591): pull-request; 2026-10-28
+- [#592 bridge: RQ-REFILL-2026102801-CONSO-005](https://github.com/ashlrai/phantom-secrets/pull/592): pull-request; 2026-10-28
+- [#508 bridge: LAND-phantom-secrets-482](https://github.com/ashlrai/phantom-secrets/pull/508): pull-request; 2026-10-28
+- [#540 bridge: RQ-DEADCODE-phantom-secrets](https://github.com/ashlrai/phantom-secrets/pull/540): pull-request; 2026-10-28
+- [#541 bridge: RQ-PL-FRESH-DOCS-DRIFT-PS](https://github.com/ashlrai/phantom-secrets/pull/541): pull-request; 2026-10-28
+- [#583 fix(doctor): name the managed dotenv file in doctor's dotenv lines](https://github.com/ashlrai/phantom-secrets/pull/583): pull-request; 2026-10-28
+- [#571 bridge: RQ-REFILL-2026102703-FIXUP-066](https://github.com/ashlrai/phantom-secrets/pull/571): pull-request; 2026-10-28
+- [#582 bridge: RQ-N26-PS-ERROR-REDACT](https://github.com/ashlrai/phantom-secrets/pull/582): pull-request; 2026-10-28
+- [#584 bridge: RQ-REFILL-2026102703-FIXUP-067](https://github.com/ashlrai/phantom-secrets/pull/584): pull-request; 2026-10-28
+- [#543 bridge: RQ-PL-PS-ENV-SCOPE-DESIGN](https://github.com/ashlrai/phantom-secrets/pull/543): pull-request; 2026-10-28
+- [#542 bridge: RQ-FRESH-DOCS-SWEEP-PS](https://github.com/ashlrai/phantom-secrets/pull/542): pull-request; 2026-10-28
+- [#476 ci: pair-secrets merge_group integration test (phantom-secrets side, inert draft)](https://github.com/ashlrai/phantom-secrets/pull/476): pull-request; 2026-10-28
+- [#499 fix(cli): expiry enforce text names every failing secret](https://github.com/ashlrai/phantom-secrets/pull/499): pull-request; 2026-10-28
+- [#509 Expiry check at 0 days lists only expired secrets](https://github.com/ashlrai/phantom-secrets/pull/509): pull-request; 2026-10-28
+- [#510 Record validation runs in history; fix schedule --json shape](https://github.com/ashlrai/phantom-secrets/pull/510): pull-request; 2026-10-28
+- [#511 MCP rotation schedule: judge age by the vault rotation anchor](https://github.com/ashlrai/phantom-secrets/pull/511): pull-request; 2026-10-28
+- [#544 bridge: RQ-FRESH-GEN-PS](https://github.com/ashlrai/phantom-secrets/pull/544): pull-request; 2026-10-28
+- [#580 bridge: RQ-CIDIET-AFFECTED-phantom-secrets](https://github.com/ashlrai/phantom-secrets/pull/580): pull-request; 2026-10-28
+- [#579 bridge: RQ-FIXUP-SHAPE-PS-500](https://github.com/ashlrai/phantom-secrets/pull/579): pull-request; 2026-10-28
+- [#491 fix(cli): audit show --output, rotate --batch expiry dates, validate history](https://github.com/ashlrai/phantom-secrets/pull/491): pull-request; 2026-10-28
+- [#578 bridge: RQ-FIXUP-CONF-PS-568](https://github.com/ashlrai/phantom-secrets/pull/578): pull-request; 2026-10-28
+- [#577 bridge: RQ-DAILY-15-PHANTOM-SECRETS](https://github.com/ashlrai/phantom-secrets/pull/577): pull-request; 2026-10-28
+- [#523 bridge: RQ-PS-ENV-SCOPE-TEST](https://github.com/ashlrai/phantom-secrets/pull/523): pull-request; 2026-10-28
+- [#538 bridge: RQ-PS-GH-CLIENT](https://github.com/ashlrai/phantom-secrets/pull/538): pull-request; 2026-10-28
+- [#520 Doctor: judge .gitignore by Git's rules, not one literal line](https://github.com/ashlrai/phantom-secrets/pull/520): pull-request; 2026-10-28
+- [#559 bridge: RQ-PS-PROXY-SCRUB-FUZZ](https://github.com/ashlrai/phantom-secrets/pull/559): pull-request; 2026-10-28
+- [#104 feat: secure dormant Vercel OAuth foundation](https://github.com/ashlrai/phantom-secrets/pull/104): pull-request; 2026-10-28
+- [#498 fix(cli): audit alerts total, rotate --batch --json stdout, analytics daily average](https://github.com/ashlrai/phantom-secrets/pull/498): pull-request; 2026-10-28
+- [#527 bridge: RQ-TESTDIET-phantom-secrets-r2](https://github.com/ashlrai/phantom-secrets/pull/527): pull-request; 2026-10-28
+- [#522 bridge: RQ-MOD-2-phantom-secrets-r3](https://github.com/ashlrai/phantom-secrets/pull/522): pull-request; 2026-10-28
+- [#489 fix(import): --from skips existing secrets unless --force](https://github.com/ashlrai/phantom-secrets/pull/489): pull-request; 2026-10-28
+- [#505 bridge: LAND-RECUT-phantom-secrets-163](https://github.com/ashlrai/phantom-secrets/pull/505): pull-request; 2026-10-28
+- [#521 bridge: LAND-RECUT-phantom-secrets-136](https://github.com/ashlrai/phantom-secrets/pull/521): pull-request; 2026-10-28
+- [#517 bridge: RQ-PS-WHY-JSON](https://github.com/ashlrai/phantom-secrets/pull/517): pull-request; 2026-10-28
+- [#506 bridge: RQ-PS-EXEC-COVERAGE](https://github.com/ashlrai/phantom-secrets/pull/506): pull-request; 2026-10-28
+- [#556 bridge: RQ-PS-EXEC-RS-TESTS](https://github.com/ashlrai/phantom-secrets/pull/556): pull-request; 2026-10-28
+- [#507 bridge: LAND-phantom-secrets-475](https://github.com/ashlrai/phantom-secrets/pull/507): pull-request; 2026-10-28
+- [#555 bridge: RQ-PLAN-SECRETS](https://github.com/ashlrai/phantom-secrets/pull/555): pull-request; 2026-10-28
+- [#526 bridge: RQ-PS-REDACT-LIB](https://github.com/ashlrai/phantom-secrets/pull/526): pull-request; 2026-10-28
+- [#515 bridge: RQ-PS-ERR-REDACT-r2](https://github.com/ashlrai/phantom-secrets/pull/515): pull-request; 2026-10-28
+- [#530 bridge: RQ-PS-EXEC-API](https://github.com/ashlrai/phantom-secrets/pull/530): pull-request; 2026-10-28
+- [#495 bridge: LAND-phantom-secrets-480](https://github.com/ashlrai/phantom-secrets/pull/495): pull-request; 2026-10-28
+- [#576 bridge: RQ-CI-SECONDS-PHANTOM-SECRETS](https://github.com/ashlrai/phantom-secrets/pull/576): pull-request; 2026-10-28
+- [#552 bridge: RQ-N26-AFFECTED-SECRETS-RUST](https://github.com/ashlrai/phantom-secrets/pull/552): pull-request; 2026-10-28
+- [#496 bridge: LAND-phantom-secrets-481](https://github.com/ashlrai/phantom-secrets/pull/496): pull-request; 2026-10-28
+- [#566 bridge: THROUGHPUT-PHANTOM-SECRETS-CANCEL](https://github.com/ashlrai/phantom-secrets/pull/566): pull-request; 2026-10-28
+- [#563 docs: changelog fragments (changelog.d/) with a deterministic fold script](https://github.com/ashlrai/phantom-secrets/pull/563): pull-request; 2026-10-28
+- [#492 bridge: RQ-PS-GITCRED](https://github.com/ashlrai/phantom-secrets/pull/492): pull-request; 2026-10-28
+- [#553 bridge: RQ-N26-DV-PS-CHANGELOG](https://github.com/ashlrai/phantom-secrets/pull/553): pull-request; 2026-10-27
+- [#463 chore(security): growth-only CODEOWNERS for workflows and keyed/network paths](https://github.com/ashlrai/phantom-secrets/pull/463): pull-request; 2026-10-27
+- [#497 G1 ci(codeql): analyze only the languages a PR changes (RQ-CI-FANOUT)](https://github.com/ashlrai/phantom-secrets/pull/497): pull-request; 2026-10-27
+- [#545 chore(security): add CODEOWNERS for .github and release/publish paths](https://github.com/ashlrai/phantom-secrets/pull/545): pull-request; 2026-10-27
+- [#518 Rotation: monthly schedules follow calendar months](https://github.com/ashlrai/phantom-secrets/pull/518): pull-request; 2026-10-26
+- [#494 chore: dedupe PR template (case collision on case-insensitive disks)](https://github.com/ashlrai/phantom-secrets/pull/494): pull-request; 2026-10-26
+- [#493 bridge: RQ-PS-POSTHOG-ROUTE](https://github.com/ashlrai/phantom-secrets/pull/493): pull-request; 2026-10-26
+- [#468 chore(deps): drop unused colored, rand (mcp), thiserror (proxy), tracing (cli)](https://github.com/ashlrai/phantom-secrets/pull/468): pull-request; 2026-10-26
+- [#486 fix(dotenv): ignore docs placeholders and see quoted PEM headers in commented secrets](https://github.com/ashlrai/phantom-secrets/pull/486): pull-request; 2026-10-26
+- [#477 fix(web): bump brace-expansion in apps/web lockfile (Dependabot #43, #44)](https://github.com/ashlrai/phantom-secrets/pull/477): pull-request; 2026-10-26
+- [#487 fix(ci): admit #483 dry-run fixture fingerprint (unblocks Source secret scan)](https://github.com/ashlrai/phantom-secrets/pull/487): pull-request; 2026-10-26
+- [#478 ci: replace CodeQL default setup with advanced setup (PR cancel-in-progress, Rust build-mode none)](https://github.com/ashlrai/phantom-secrets/pull/478): pull-request; 2026-10-26
+- [#473 fix(doctor,init): report commented-out secrets left as plaintext in .env](https://github.com/ashlrai/phantom-secrets/pull/473): pull-request; 2026-10-26
+- [#479 fix(core): always mask config-declared secrets in .env.example](https://github.com/ashlrai/phantom-secrets/pull/479): pull-request; 2026-10-26
+- [#462 docs: fold PLAN.md and codex.md into ROADMAP and AGENTS, delete both](https://github.com/ashlrai/phantom-secrets/pull/462): pull-request; 2026-10-26
+- [#472 docs(agents): portable cargo PATH note](https://github.com/ashlrai/phantom-secrets/pull/472): pull-request; 2026-10-26
+- [#471 fix(dotenv): drop credentials from full-line prose comments in .env.example](https://github.com/ashlrai/phantom-secrets/pull/471): pull-request; 2026-10-26
+- [#470 fix(validate): report refused secrets and validate the rest](https://github.com/ashlrai/phantom-secrets/pull/470): pull-request; 2026-10-26
+- [#467 fix(core): .env.example drops inline comments that hold credentials](https://github.com/ashlrai/phantom-secrets/pull/467): pull-request; 2026-10-26
+- [#464 ci: run macOS/Windows legs on PRs only for platform changes (ci:full-os label to force)](https://github.com/ashlrai/phantom-secrets/pull/464): pull-request; 2026-10-26
+- [#461 fix(core): .env.example masks commented-out secret assignments](https://github.com/ashlrai/phantom-secrets/pull/461): pull-request; 2026-10-26
+- [#460 fix(check): read every .envrc assignment in the staged scan](https://github.com/ashlrai/phantom-secrets/pull/460): pull-request; 2026-10-25
+- [#459 fix(wrap): skip only scripts that already run through phantom exec](https://github.com/ashlrai/phantom-secrets/pull/459): pull-request; 2026-10-25
+- [#458 fix(mcp): phantom_why summary names the deciding rule](https://github.com/ashlrai/phantom-secrets/pull/458): pull-request; 2026-10-25
+- [#457 fix(agent): package-scripts-not-wrapped uses the phantom wrap decision](https://github.com/ashlrai/phantom-secrets/pull/457): pull-request; 2026-10-25
+- [#456 fix(validate): apply exec's lifecycle gates before sending values to providers](https://github.com/ashlrai/phantom-secrets/pull/456): pull-request; 2026-10-25
+- [#452 fix(why): report the rule the classifier decided by](https://github.com/ashlrai/phantom-secrets/pull/452): pull-request; 2026-10-25
+- [#453 fix(wrap): one shared script selection for phantom wrap and MCP phantom_wrap](https://github.com/ashlrai/phantom-secrets/pull/453): pull-request; 2026-10-25
+- [#454 fix(check): scan staged direnv .envrc assignments like .env](https://github.com/ashlrai/phantom-secrets/pull/454): pull-request; 2026-10-25
+- [#455 docs: tested hybrid quickstart (local Qwen on Ollama behind LiteLLM)](https://github.com/ashlrai/phantom-secrets/pull/455): pull-request; 2026-10-25
+- [#451 fix(check): scan staged files git calls binary, and non-UTF-8 text](https://github.com/ashlrai/phantom-secrets/pull/451): pull-request; 2026-10-25
+- [#450 fix(wrap): edit package.json scripts in place instead of re-serializing](https://github.com/ashlrai/phantom-secrets/pull/450): pull-request; 2026-10-25
+- [#447 fix(core): one hardened active-environment reader; working remedy for a bad selector](https://github.com/ashlrai/phantom-secrets/pull/447): pull-request; 2026-10-25
+- [#449 docs(litellm): loopback recipe for a local Ollama model behind LiteLLM](https://github.com/ashlrai/phantom-secrets/pull/449): pull-request; 2026-10-25
+- [#448 fix(cli): refuse a locked vault before cloud/team push consent](https://github.com/ashlrai/phantom-secrets/pull/448): pull-request; 2026-10-25
+- [#446 fix(cloud,team): refuse read-only secrets on cloud push; gate team push before consent](https://github.com/ashlrai/phantom-secrets/pull/446): pull-request; 2026-10-25
+- [#445 fix(cli): make `phantom start` serve the active environment like `phantom exec`](https://github.com/ashlrai/phantom-secrets/pull/445): pull-request; 2026-10-25
+- [#444 fix(wrap): leave shell command-line scripts unwrapped instead of breaking them](https://github.com/ashlrai/phantom-secrets/pull/444): pull-request; 2026-10-25
+- [#443 fix(cli,mcp): sync dry run reports the live lifecycle gate's refusal](https://github.com/ashlrai/phantom-secrets/pull/443): pull-request; 2026-10-25
+- [#442 fix(mcp,cli): keep still-expired secrets read-only; refuse team push of read-only secrets](https://github.com/ashlrai/phantom-secrets/pull/442): pull-request; 2026-10-25
+- [#441 fix(cli): refuse to sync a secret demoted to read-only](https://github.com/ashlrai/phantom-secrets/pull/441): pull-request; 2026-10-25
+- [#440 fix(vault): hold the source project's lock across a cross-project copy](https://github.com/ashlrai/phantom-secrets/pull/440): pull-request; 2026-10-25
+- [#439 fix(core,evidence): resolve verification, approval, workspace-request and report state through a retained directory](https://github.com/ashlrai/phantom-secrets/pull/439): pull-request; 2026-10-25
+- [#437 fix(vault): refuse a copy whose source changes before the commit](https://github.com/ashlrai/phantom-secrets/pull/437): pull-request; 2026-10-25
+- [#438 fix(core,session,evidence): keep session and evidence state in a retained private directory](https://github.com/ashlrai/phantom-secrets/pull/438): pull-request; 2026-10-25
+- [#436 fix(cli,core,workspace): open the proxy lifecycle lock through a verified directory descriptor](https://github.com/ashlrai/phantom-secrets/pull/436): pull-request; 2026-10-25
+- [#435 fix(vault): copies keep their source's protective metadata](https://github.com/ashlrai/phantom-secrets/pull/435): pull-request; 2026-10-25
+- [#434 fix(cli,workspace): never follow a planted symlink for proxy and setup locks](https://github.com/ashlrai/phantom-secrets/pull/434): pull-request; 2026-10-25
+- [#433 fix(audit): refuse symlinked audit log and ~/.phantom in tail and readers](https://github.com/ashlrai/phantom-secrets/pull/433): pull-request; 2026-10-25
+- [#432 fix(vault): copies inherit the source's rotation anchor](https://github.com/ashlrai/phantom-secrets/pull/432): pull-request; 2026-10-25
+- [#431 fix(core): workspace-request/approval state dirs use ensure_private_dir; .env.example presence never followed](https://github.com/ashlrai/phantom-secrets/pull/431): pull-request; 2026-10-25
+- [#430 fix(rotation): gate team, provider and competitor imports as restores](https://github.com/ashlrai/phantom-secrets/pull/430): pull-request; 2026-10-25
+- [#429 fix(fs): tighten existing loose Phantom state directories to 0700](https://github.com/ashlrai/phantom-secrets/pull/429): pull-request; 2026-10-25
+- [#428 fix(proxy): resolve upstream relative references before scoping them to the route](https://github.com/ashlrai/phantom-secrets/pull/428): pull-request; 2026-10-25
+- [#427 fix(rotation): gate cloud push/pull and backup export/restore; copy gates before the challenge](https://github.com/ashlrai/phantom-secrets/pull/427): pull-request; 2026-10-25
+- [#426 fix(core,workspace): create Phantom state ancestors 0700; discovery requires a regular .phantom.toml](https://github.com/ashlrai/phantom-secrets/pull/426): pull-request; 2026-10-25
+- [#425 fix(core,vault): keep audit/hotspot/shadow state private; read regular files only](https://github.com/ashlrai/phantom-secrets/pull/425): pull-request; 2026-10-25
+- [#424 fix(core,cli): read .env as a regular file only; agree on .phantom.toml presence](https://github.com/ashlrai/phantom-secrets/pull/424): pull-request; 2026-10-25
+- [#423 fix(cli,core): create setup backups exclusively; keep leak profiles private](https://github.com/ashlrai/phantom-secrets/pull/423): pull-request; 2026-10-25
+- [#422 fix(proxy): keep the path-auth base on mapped redirects; map Content-Location and Link](https://github.com/ashlrai/phantom-secrets/pull/422): pull-request; 2026-10-25
+- [#419 fix(import): name UTF-16/32 exports; state the 1Password format in --help](https://github.com/ashlrai/phantom-secrets/pull/419): pull-request; 2026-10-25
+- [#421 fix(core): atomic, symlink-refusing PhantomConfig::save and exact-before write_phantomized](https://github.com/ashlrai/phantom-secrets/pull/421): pull-request; 2026-10-25
+- [#420 fix: apply enforce_rotation_on_access to every value-exposing path (gap121)](https://github.com/ashlrai/phantom-secrets/pull/420): pull-request; 2026-10-25
+- [#417 fix(audit): create audit log owner-only and refuse symlinked log/lock](https://github.com/ashlrai/phantom-secrets/pull/417): pull-request; 2026-10-25
+- [#416 fix(cli): read .phantom.toml only as a regular file in every remaining command](https://github.com/ashlrai/phantom-secrets/pull/416): pull-request; 2026-10-25
+- [#412 fix(core): share one URL param parser; decode names, split fragments](https://github.com/ashlrai/phantom-secrets/pull/412): pull-request; 2026-10-25
+- [#415 fix(proxy): keep the route prefix on upstream redirects and the upstream length on HEAD](https://github.com/ashlrai/phantom-secrets/pull/415): pull-request; 2026-10-25
+- [#413 fix: enforce enforce_rotation_on_access in exec and start](https://github.com/ashlrai/phantom-secrets/pull/413): pull-request; 2026-10-25
+- [#411 fix(import): accept BOM-prefixed JSON exports; list every invalid name with a rename](https://github.com/ashlrai/phantom-secrets/pull/411): pull-request; 2026-10-25
+- [#410 fix(mcp): read .phantom.toml only as a regular, non-symlink file](https://github.com/ashlrai/phantom-secrets/pull/410): pull-request; 2026-10-25
+- [#409 fix(cli): read .phantom.toml only as a regular file in exec, start, sync, doctor and why](https://github.com/ashlrai/phantom-secrets/pull/409): pull-request; 2026-10-25
+- [#408 fix(vault): scrub the encrypted-file fallback passphrase in memory](https://github.com/ashlrai/phantom-secrets/pull/408): pull-request; 2026-10-25
+- [#407 fix(proxy): scope upstream Set-Cookie to its route prefix](https://github.com/ashlrai/phantom-secrets/pull/407): pull-request; 2026-10-25
+- [#406 fix(vault): scrub decrypted file-vault secrets on drop and redact Debug](https://github.com/ashlrai/phantom-secrets/pull/406): pull-request; 2026-10-25
+- [#404 fix(core): classify public-prefixed URLs with a query credential as secrets](https://github.com/ashlrai/phantom-secrets/pull/404): pull-request; 2026-10-25
+- [#402 fix(rotation): keep rotate_every intervals exact; reject unparseable values](https://github.com/ashlrai/phantom-secrets/pull/402): pull-request; 2026-10-25
+- [#405 fix(import): refuse JSON export names that are not environment keys](https://github.com/ashlrai/phantom-secrets/pull/405): pull-request; 2026-10-25
+- [#403 fix(check): read .phantom.toml in the worktree scan only as a regular file](https://github.com/ashlrai/phantom-secrets/pull/403): pull-request; 2026-10-25
+- [#401 fix(pull): select Vercel variables by the configured environments](https://github.com/ashlrai/phantom-secrets/pull/401): pull-request; 2026-10-25
+- [#400 fix(core): classify a private key or URL password under a public prefix as a secret](https://github.com/ashlrai/phantom-secrets/pull/400): pull-request; 2026-10-25
+- [#399 fix(check): scan staged entries by their staged mode](https://github.com/ashlrai/phantom-secrets/pull/399): pull-request; 2026-10-25
+- [#398 fix(import): refuse JSON exports that repeat a secret name](https://github.com/ashlrai/phantom-secrets/pull/398): pull-request; 2026-10-25
+- [#397 fix(sync): match Vercel variables by key and target, not key alone](https://github.com/ashlrai/phantom-secrets/pull/397): pull-request; 2026-10-25
+- [#396 fix(check): read the staged code diff as plain text whatever git config says](https://github.com/ashlrai/phantom-secrets/pull/396): pull-request; 2026-10-25
+- [#395 fix(audit): fsync log lines before the head, write the chain key atomically, cut reasons on a char boundary](https://github.com/ashlrai/phantom-secrets/pull/395): pull-request; 2026-10-25
+- [#394 fix(cli): refuse a locked file vault in init and workspace apply](https://github.com/ashlrai/phantom-secrets/pull/394): pull-request; 2026-10-25
+- [#393 fix(mcp): check value-blind preconditions before consuming a one-use approval](https://github.com/ashlrai/phantom-secrets/pull/393): pull-request; 2026-10-25
+- [#392 fix(audit): keep events after a torn log tail on their own line and chained](https://github.com/ashlrai/phantom-secrets/pull/392): pull-request; 2026-10-25
+- [#391 fix(cli,mcp): name a locked file vault in single-name rotate, remove, copy and validate lookups](https://github.com/ashlrai/phantom-secrets/pull/391): pull-request; 2026-10-25
+- [#390 fix(cli): refuse a locked file vault in add, copy, pull, reveal, remove, expiry set/rotate and why](https://github.com/ashlrai/phantom-secrets/pull/390): pull-request; 2026-10-25
+- [#389 fix(proxy): accept path auth only after the route prefix; refuse multiply encoded dot segments](https://github.com/ashlrai/phantom-secrets/pull/389): pull-request; 2026-10-25
+- [#388 fix(cli): refuse a cloud or team pull into a partial vault inventory](https://github.com/ashlrai/phantom-secrets/pull/388): pull-request; 2026-10-25
+- [#386 fix(cli): refuse a locked file vault in import, env views/copy, exec and start](https://github.com/ashlrai/phantom-secrets/pull/386): pull-request; 2026-10-25
+- [#387 fix(mcp): refuse partial inventories for copy, env and pulls](https://github.com/ashlrai/phantom-secrets/pull/387): pull-request; 2026-10-25
+- [#382 fix(vault): drop a stale validation verdict when a secret's value changes](https://github.com/ashlrai/phantom-secrets/pull/382): pull-request; 2026-10-25
+- [#385 fix(cli): refuse a token remap from a partial vault inventory](https://github.com/ashlrai/phantom-secrets/pull/385): pull-request; 2026-10-25
+- [#384 fix(proxy): refuse dot-segment paths and strip hop-by-hop headers](https://github.com/ashlrai/phantom-secrets/pull/384): pull-request; 2026-10-25
+- [#383 fix(mcp): refuse a locked file vault in sync, validate_all and rotate](https://github.com/ashlrai/phantom-secrets/pull/383): pull-request; 2026-10-25
+- [#381 fix(proxy): redact echoes of the injected Basic credential pair](https://github.com/ashlrai/phantom-secrets/pull/381): pull-request; 2026-10-25
+- [#380 fix(mcp): phantom_sync reports each target's only-filtered secret set](https://github.com/ashlrai/phantom-secrets/pull/380): pull-request; 2026-10-25
+- [#379 fix(cloud): identical local values no longer block push after a pull](https://github.com/ashlrai/phantom-secrets/pull/379): pull-request; 2026-10-25
+- [#378 fix(init): refuse dotenvx in-place ciphertext instead of vaulting it](https://github.com/ashlrai/phantom-secrets/pull/378): pull-request; 2026-10-25
+- [#377 fix(import): env and Infisical dotenv refuse dotenvx in-place ciphertext](https://github.com/ashlrai/phantom-secrets/pull/377): pull-request; 2026-10-25
+- [#376 fix(import): refuse dotenvx in-place encrypted values instead of storing ciphertext](https://github.com/ashlrai/phantom-secrets/pull/376): pull-request; 2026-10-25
+- [#323 fix(import): import Doppler's resolved computed value, not the raw reference](https://github.com/ashlrai/phantom-secrets/pull/323): pull-request; 2026-10-24
+- [#332 chore(deps): bump fast-uri from 3.1.8 to 3.1.9 in /video](https://github.com/ashlrai/phantom-secrets/pull/332): pull-request; 2026-10-24
+- [#167 docs(readme): Homebrew tap and npm latest are now v0.7.9](https://github.com/ashlrai/phantom-secrets/pull/167): pull-request; 2026-10-24
+- [#367 feat(exec): opt-in --bind-source linked-checkout custody for git worktrees](https://github.com/ashlrai/phantom-secrets/pull/367): pull-request; 2026-10-24; cross-repo ashlrai/phantom#888
+- [#369 feat(web): bring the live phm.dev site into main](https://github.com/ashlrai/phantom-secrets/pull/369): pull-request; 2026-10-24
+- [#370 ci(release): publish phantom-secrets and phantom-secrets-mcp to npm via OIDC trusted publishing](https://github.com/ashlrai/phantom-secrets/pull/370): pull-request; 2026-10-24
+- [#372 ci: run Linux only on push to main, full matrix nightly](https://github.com/ashlrai/phantom-secrets/pull/372): pull-request; 2026-10-24
+- [#374 feat(cli): agent doctor --json value-free preflight with --vault opt-in and --strict](https://github.com/ashlrai/phantom-secrets/pull/374): pull-request; 2026-10-24
+- [#373 docs: status --json stability rules and README link](https://github.com/ashlrai/phantom-secrets/pull/373): pull-request; 2026-10-24
+- [#371 test(cli): pin status --json schema v1 exact documents and canary leaks](https://github.com/ashlrai/phantom-secrets/pull/371): pull-request; 2026-10-24
+- [#368 test(core): MCP approval storage refuses symlinks and tightens permissions](https://github.com/ashlrai/phantom-secrets/pull/368): pull-request; 2026-10-24
+- [#365 test(core): pending approval list excludes approved records](https://github.com/ashlrai/phantom-secrets/pull/365): pull-request; 2026-10-24
+- [#366 test(cli): keep audit incidents leak events in one hour bucket](https://github.com/ashlrai/phantom-secrets/pull/366): pull-request; 2026-10-24
+- [#364 test(core): reject empty or truncated MCP approval tokens](https://github.com/ashlrai/phantom-secrets/pull/364): pull-request; 2026-10-24
+- [#362 test(core): pin MCP approval input limits, identifier checks and inspect refusals](https://github.com/ashlrai/phantom-secrets/pull/362): pull-request; 2026-10-24
+- [#361 test(mcp): pin confirm and approval gates for setup_workspace request_apply and init confirm](https://github.com/ashlrai/phantom-secrets/pull/361): pull-request; 2026-10-24
+- [#360 test(mcp): require confirm before minting an approval nonce for 21 effectful tools](https://github.com/ashlrai/phantom-secrets/pull/360): pull-request; 2026-10-24
+- [#359 test(mcp): pin out-of-band approval gate for 21 more effectful tools](https://github.com/ashlrai/phantom-secrets/pull/359): pull-request; 2026-10-24
+- [#358 test(workspace): pin canonical apply root and journal recovery path containment](https://github.com/ashlrai/phantom-secrets/pull/358): pull-request; 2026-10-24
+- [#357 test(workspace): refuse a target hard-linked after sealing at apply time](https://github.com/ashlrai/phantom-secrets/pull/357): pull-request; 2026-10-24
+- [#356 test(workspace): pin journal recovery drift refusal and before-image restore](https://github.com/ashlrai/phantom-secrets/pull/356): pull-request; 2026-10-24
+- [#355 test(workspace): pin durable journal header, schema/request id and recovery id binding](https://github.com/ashlrai/phantom-secrets/pull/355): pull-request; 2026-10-24
+- [#354 test(workspace): pin apply-time plan id check and participant completed-action binding](https://github.com/ashlrai/phantom-secrets/pull/354): pull-request; 2026-10-24
+- [#353 test(workspace): pin setup plan id binding, approval flag, warning and multi-place blockers](https://github.com/ashlrai/phantom-secrets/pull/353): pull-request; 2026-10-24
+- [#352 test(mcp): pin approval gate for setup_workspace propose seal-key provisioning](https://github.com/ashlrai/phantom-secrets/pull/352): pull-request; 2026-10-24
+- [#351 test(mcp): pin out-of-band approval gate for add/remove secret and cloud push/pull](https://github.com/ashlrai/phantom-secrets/pull/351): pull-request; 2026-10-24
+- [#350 test(authority): pin environment, ports, methods and path-boundary narrowing](https://github.com/ashlrai/phantom-secrets/pull/350): pull-request; 2026-10-24
+- [#349 test(authority): pin every check in the sealed VerifiedGrant constructor](https://github.com/ashlrai/phantom-secrets/pull/349): pull-request; 2026-10-24
+- [#348 test(core): team share v0 is rejected; a keypair with one short half errors](https://github.com/ashlrai/phantom-secrets/pull/348): pull-request; 2026-10-24
+- [#347 test(vault): a tagged blob never decrypts through the legacy KDF](https://github.com/ashlrai/phantom-secrets/pull/347): pull-request; 2026-10-24
+- [#346 test(core): audit verify flags a broken prev_hmac link on unsequenced lines](https://github.com/ashlrai/phantom-secrets/pull/346): pull-request; 2026-10-24
+- [#345 test(core): legacy approved records fail closed; re-approval is refused](https://github.com/ashlrai/phantom-secrets/pull/345): pull-request; 2026-10-24
+- [#344 test(core): MCP approval is bound to its project and needs the approve step](https://github.com/ashlrai/phantom-secrets/pull/344): pull-request; 2026-10-24
+- [#343 fix(core): warn on IPv6 private, link-local and IPv4-mapped route hosts](https://github.com/ashlrai/phantom-secrets/pull/343): pull-request; 2026-10-24
+- [#342 test(core): flag each risky service route pattern form on its own](https://github.com/ashlrai/phantom-secrets/pull/342): pull-request; 2026-10-24
+- [#341 test(proxy): partial runs of base64-alphabet keys are redacted](https://github.com/ashlrai/phantom-secrets/pull/341): pull-request; 2026-10-24
+- [#340 test(proxy): reject a wrong, empty or truncated query token in compatibility mode](https://github.com/ashlrai/phantom-secrets/pull/340): pull-request; 2026-10-24
+- [#339 test(proxy): pin that the query proxy token is stripped before the upstream](https://github.com/ashlrai/phantom-secrets/pull/339): pull-request; 2026-10-24
+- [#338 test(proxy): pin that the header proxy token is never forwarded upstream](https://github.com/ashlrai/phantom-secrets/pull/338): pull-request; 2026-10-24
+- [#336 feat(cli): optional --output <path> for doctor and audit show](https://github.com/ashlrai/phantom-secrets/pull/336): pull-request; 2026-10-24
+- [#337 test(proxy): pin that a non-UTF-8 response header echoing the key is dropped](https://github.com/ashlrai/phantom-secrets/pull/337): pull-request; 2026-10-24
+- [#335 docs(litellm): quickstart, and doctor recognizes the shipped config](https://github.com/ashlrai/phantom-secrets/pull/335): pull-request; 2026-10-24
+- [#334 test(proxy): skip only the DNS case of the upstream-failure test without NXDOMAIN](https://github.com/ashlrai/phantom-secrets/pull/334): pull-request; 2026-10-24
+- [#333 docs: Phantom with agents guide (every claim names a merged test)](https://github.com/ashlrai/phantom-secrets/pull/333): pull-request; 2026-10-24
+- [#331 test(core): keep uncorrelated-incidents test events in one hour bucket (Windows flake)](https://github.com/ashlrai/phantom-secrets/pull/331): pull-request; 2026-10-24
+- [#330 test(proxy): hermetic agent -> LiteLLM -> proxy -> provider chain](https://github.com/ashlrai/phantom-secrets/pull/330): pull-request; 2026-10-24
+- [#329 feat(doctor): report-only LiteLLM check](https://github.com/ashlrai/phantom-secrets/pull/329): pull-request; 2026-10-24
+- [#327 feat(vault): read v3 blobs with stored Argon2id params; writers unchanged](https://github.com/ashlrai/phantom-secrets/pull/327): pull-request; 2026-10-24
+- [#326 chore(web): bump next to 15.5.28 (lockfile only) for new advisories](https://github.com/ashlrai/phantom-secrets/pull/326): pull-request; 2026-10-24
+- [#325 feat(audit): read v2 encrypted_context (HKDF-SHA256 key); writer unchanged](https://github.com/ashlrai/phantom-secrets/pull/325): pull-request; 2026-10-24
+- [#324 chore(deps): lockfile-only bump for new RUSTSEC advisories](https://github.com/ashlrai/phantom-secrets/pull/324): pull-request; 2026-10-24
+- [#322 feat(audit): read sidecar sig_alg, fail closed (Ed25519 bytes unchanged)](https://github.com/ashlrai/phantom-secrets/pull/322): pull-request; 2026-10-19
+- [#321 feat(team): read classic share alg label (writers unchanged)](https://github.com/ashlrai/phantom-secrets/pull/321): pull-request; 2026-10-19
+- [#320 test: PHMB-colliding legacy blobs still fall back](https://github.com/ashlrai/phantom-secrets/pull/320): pull-request; 2026-10-19
+- [#319 test(pq): X-Wing draft 11 encapsulation vectors](https://github.com/ashlrai/phantom-secrets/pull/319): pull-request; 2026-10-19
+- [#318 ci: run pq-hybrid feature tests](https://github.com/ashlrai/phantom-secrets/pull/318): pull-request; 2026-10-19
+- [#317 test(proxy): LiteLLM upstream SSE key-echo scrub](https://github.com/ashlrai/phantom-secrets/pull/317): pull-request; 2026-10-19
+- [#316 fix(seo-observer): release drift checks the Phantom Secrets app](https://github.com/ashlrai/phantom-secrets/pull/316): pull-request; 2026-10-19
+- [#315 fix(seo-observer): skip non-HTML sitemap entries](https://github.com/ashlrai/phantom-secrets/pull/315): pull-request; 2026-10-19
+- [#314 test(exec): pin custom-route refusal + document exec/start split](https://github.com/ashlrai/phantom-secrets/pull/314): pull-request; 2026-10-19
+- [#313 test(proxy): LiteLLM upstream key headers + docs](https://github.com/ashlrai/phantom-secrets/pull/313): pull-request; 2026-10-19
+- [#312 fix(proxy): redact partial echoes of a managed key in responses](https://github.com/ashlrai/phantom-secrets/pull/312): pull-request; 2026-10-19
+- [#311 test(proxy): echo of the swapped real key never reaches the child](https://github.com/ashlrai/phantom-secrets/pull/311): pull-request; 2026-10-19
+- [#310 fix(rotation): withhold non-structural values in vendor error summaries](https://github.com/ashlrai/phantom-secrets/pull/310): pull-request; 2026-10-19
+- [#309 ci: run the docs command check on docs-only and web-only PRs](https://github.com/ashlrai/phantom-secrets/pull/309): pull-request; 2026-10-19
+- [#308 docs(temporal): why the CLI reports context deadline exceeded on a codec refusal](https://github.com/ashlrai/phantom-secrets/pull/308): pull-request; 2026-10-19
+- [#307 ci: run the Temporal codec example tests (hash-pinned deps, part of CI Gate)](https://github.com/ashlrai/phantom-secrets/pull/307): pull-request; 2026-10-19
+- [#306 examples(temporal-codec): route Web UI query-string calls; record local e2e run](https://github.com/ashlrai/phantom-secrets/pull/306): pull-request; 2026-10-19
+- [#305 examples(temporal-codec): exact-origin CORS allowlist and inherited-fd key delivery](https://github.com/ashlrai/phantom-secrets/pull/305): pull-request; 2026-10-19
+- [#304 docs(temporal): authorizer, server pin v1.32.1+, codec server, placeholders in history](https://github.com/ashlrai/phantom-secrets/pull/304): pull-request; 2026-10-19
+- [#303 test+doctor: prove the proxy negotiates X25519MLKEM768; report offered TLS groups](https://github.com/ashlrai/phantom-secrets/pull/303): pull-request; 2026-10-19
+- [#302 docs+test: one LiteLLM guide and a hermetic proxy test for the gateway flow](https://github.com/ashlrai/phantom-secrets/pull/302): pull-request; 2026-10-19
+- [#301 test: check phantom commands in web sources and llms.txt against --help](https://github.com/ashlrai/phantom-secrets/pull/301): pull-request; 2026-10-19
+- [#300 docs: use phantom copy --rename (not --as); test documented flags against --help](https://github.com/ashlrai/phantom-secrets/pull/300): pull-request; 2026-10-19
+- [#299 test(broker): rotation-ordering fault-injection harness for the lease store key (#230)](https://github.com/ashlrai/phantom-secrets/pull/299): pull-request; 2026-10-19
+- [#298 fix(web): self-host Inter Tight and JetBrains Mono with next/font/local (vercel/next.js#99114)](https://github.com/ashlrai/phantom-secrets/pull/298): pull-request; 2026-10-19
+- [#297 feat(broker): value-free lease status classification and epoch-free stored_generation (#230 slice 2)](https://github.com/ashlrai/phantom-secrets/pull/297): pull-request; 2026-10-19
+- [#296 docs(templates): ask for phantom doctor --all --json in bug reports (#173)](https://github.com/ashlrai/phantom-secrets/pull/296): pull-request; 2026-10-19
+- [#295 feat(vault,broker): lease store key provisioning and value-free list_leases (#230 slice 1)](https://github.com/ashlrai/phantom-secrets/pull/295): pull-request; 2026-10-19
+- [#159 docs: separate personal, company, and client keys across projects](https://github.com/ashlrai/phantom-secrets/pull/159): pull-request; 2026-10-19
+- [#175 docs: terminal demo GIF in README](https://github.com/ashlrai/phantom-secrets/pull/175): pull-request; 2026-10-19
+- [#171 docs: launch readiness - ecosystem section, contributing, PR template](https://github.com/ashlrai/phantom-secrets/pull/171): pull-request; 2026-10-19
+- [#294 feat(setup): phantom setup --undo from the manifest (dry run by default)](https://github.com/ashlrai/phantom-secrets/pull/294): pull-request; 2026-10-19
+- [#293 feat(setup): refuse a differing client entry, add --replace, back up and record a manifest](https://github.com/ashlrai/phantom-secrets/pull/293): pull-request; 2026-10-19
+- [#291 docs(design): agent claims and status for cross-session coordination (proposal)](https://github.com/ashlrai/phantom-secrets/pull/291): pull-request; 2026-10-19
+- [#292 fix(audit): reject HMAC key files that are not exactly 32 bytes](https://github.com/ashlrai/phantom-secrets/pull/292): pull-request; 2026-10-19
+- [#290 feat(setup): --dry-run plans client changes without writing](https://github.com/ashlrai/phantom-secrets/pull/290): pull-request; 2026-10-19
+- [#288 feat(cli): phantom doctor --all (one value-free report)](https://github.com/ashlrai/phantom-secrets/pull/288): pull-request; 2026-10-19
+- [#287 docs(design): agent onboarding with dry-run diff, backups and undo](https://github.com/ashlrai/phantom-secrets/pull/287): pull-request; 2026-10-19
+- [#289 feat(leaks): plan shows static manual rotation location and live-disabled status](https://github.com/ashlrai/phantom-secrets/pull/289): pull-request; 2026-10-19
+- [#286 docs(design): autonomous leak response and rotation flow on leases (proposal)](https://github.com/ashlrai/phantom-secrets/pull/286): pull-request; 2026-10-18
+- [#285 docs(design): keyring 4 migration scoping (#242)](https://github.com/ashlrai/phantom-secrets/pull/285): pull-request; 2026-10-18
+- [#166 chore(deps): bump source-map-js from 1.2.1 to 1.2.2 in /video](https://github.com/ashlrai/phantom-secrets/pull/166): pull-request; 2026-10-18
+- [#165 chore(deps): bump postcss-selector-parser from 7.1.5 to 7.1.6 in /video](https://github.com/ashlrai/phantom-secrets/pull/165): pull-request; 2026-10-18
+- [#189 fix(cli): headless-friendly errors and JSON; exec reroutes only vaulted services](https://github.com/ashlrai/phantom-secrets/pull/189): pull-request; 2026-10-18
+- [#281 docs(design): large MCP tool outputs as file path plus summary (proposal only)](https://github.com/ashlrai/phantom-secrets/pull/281): pull-request; 2026-10-18
+- [#236 Refuse partial-inventory paths (pushes, rotate, export, MCP expiry gate); agent status refuses symlinked storage; leaks plan reports suppressed incidents](https://github.com/ashlrai/phantom-secrets/pull/236): pull-request; 2026-10-18
+- [#268 Report non-auth failures in phantom cloud status instead of an expired login](https://github.com/ashlrai/phantom-secrets/pull/268): pull-request; 2026-10-18
+- [#263 Never replace the cloud vault key or team keypair on a keychain read failure](https://github.com/ashlrai/phantom-secrets/pull/263): pull-request; 2026-10-18
+- [#269 ci: link Windows test builds with rust-lld](https://github.com/ashlrai/phantom-secrets/pull/269): pull-request; 2026-10-18
+- [#283 Add phantom crypto inventory (--format text|json) from the crypto-agility registry](https://github.com/ashlrai/phantom-secrets/pull/283): pull-request; 2026-10-18
+- [#280 docs(examples): Temporal payload codec sketch (untested design)](https://github.com/ashlrai/phantom-secrets/pull/280): pull-request; 2026-10-18
+- [#279 test(mcp): guard that untrusted project text and secret values never reach tool results](https://github.com/ashlrai/phantom-secrets/pull/279): pull-request; 2026-10-18
+- [#278 docs: optional Temporal guidance (no secrets on disk)](https://github.com/ashlrai/phantom-secrets/pull/278): pull-request; 2026-10-18
+- [#282 Proxy upstream TLS: offer X25519MLKEM768 via aws-lc-rs provider](https://github.com/ashlrai/phantom-secrets/pull/282): pull-request; 2026-10-18
+- [#275 check: label LiteLLM-shaped virtual keys in the staged-code gate](https://github.com/ashlrai/phantom-secrets/pull/275): pull-request; 2026-10-18
+- [#274 docs: LiteLLM gateway-mode notes for Claude Code, Codex and Cursor](https://github.com/ashlrai/phantom-secrets/pull/274): pull-request; 2026-10-18
+- [#273 docs: LiteLLM as an optional gateway behind Phantom, with a mock-upstream check](https://github.com/ashlrai/phantom-secrets/pull/273): pull-request; 2026-10-18
+- [#271 pq: pin X-Wing to draft 11 test vectors and record draft status](https://github.com/ashlrai/phantom-secrets/pull/271): pull-request; 2026-10-18
+- [#267 Add crypto-agility registry for algorithms and format tags](https://github.com/ashlrai/phantom-secrets/pull/267): pull-request; 2026-10-18
+- [#266 Add phantom doctor --pq post-quantum readiness report](https://github.com/ashlrai/phantom-secrets/pull/266): pull-request; 2026-10-18
+- [#265 Add Grover 256-bit symmetric key length checks](https://github.com/ashlrai/phantom-secrets/pull/265): pull-request; 2026-10-18
+- [#277 ci: allowlist cipher name flagged by gitleaks in pq report prose](https://github.com/ashlrai/phantom-secrets/pull/277): pull-request; 2026-10-18
+- [#264 Report broken config and non-auth failures in MCP phantom_cloud_status](https://github.com/ashlrai/phantom-secrets/pull/264): pull-request; 2026-10-18
+- [#262 Report an unparseable .claude/settings.local.json in phantom doctor](https://github.com/ashlrai/phantom-secrets/pull/262): pull-request; 2026-10-18
+- [#260 phantom cloud status: report an unreadable or malformed .phantom.toml instead of hiding it](https://github.com/ashlrai/phantom-secrets/pull/260): pull-request; 2026-10-18
+- [#261 Keep `phantom audit show --json` stdout machine-readable with no events](https://github.com/ashlrai/phantom-secrets/pull/261): pull-request; 2026-10-18
+- [#259 Fail `phantom audit show` when the audit log cannot be read](https://github.com/ashlrai/phantom-secrets/pull/259): pull-request; 2026-10-18
+- [#258 phantom import: refuse JSON entries an importer cannot interpret instead of dropping them](https://github.com/ashlrai/phantom-secrets/pull/258): pull-request; 2026-10-18
+- [#257 Report a broken .phantom.toml instead of treating it as uninitialized (doctor, agent setup, env)](https://github.com/ashlrai/phantom-secrets/pull/257): pull-request; 2026-10-18
+- [#256 phantom why: refuse an unreadable or malformed .phantom.toml instead of treating it as uninitialized](https://github.com/ashlrai/phantom-secrets/pull/256): pull-request; 2026-10-18
+- [#255 phantom list --min-anomaly-score: fail on unreadable audit log, filter by documented level](https://github.com/ashlrai/phantom-secrets/pull/255): pull-request; 2026-10-18
+- [#254 MCP audit list tools: bound findings, alerts and incidents](https://github.com/ashlrai/phantom-secrets/pull/254): pull-request; 2026-10-18
+- [#253 phantom_audit_alerts: clamp last, fit 1 MiB, report exact counts](https://github.com/ashlrai/phantom-secrets/pull/253): pull-request; 2026-10-18
+- [#252 MCP audit report: bound inline lists like export/analytics](https://github.com/ashlrai/phantom-secrets/pull/252): pull-request; 2026-10-18
+- [#218 feat(crypto): experimental pq-hybrid feature, X-Wing team key share and benchmark (stacked on #217)](https://github.com/ashlrai/phantom-secrets/pull/218): pull-request; 2026-10-18
+- [#251 MCP audit export: bound rows like analytics; empty match is \[\] / header CSV](https://github.com/ashlrai/phantom-secrets/pull/251): pull-request; 2026-10-18
+- [#249 Agent-facing wrong answers: compliance badge over a locked vault, expiry enforce MCP/CLI drift, validation read errors as never_checked](https://github.com/ashlrai/phantom-secrets/pull/249): pull-request; 2026-10-17
+- [#250 Audit CSV: quote bare CR; export-range empty JSON prints \[\]](https://github.com/ashlrai/phantom-secrets/pull/250): pull-request; 2026-10-17
+- [#248 Audit analytics: exact window, bounded MCP records, one score rule, one clock reading](https://github.com/ashlrai/phantom-secrets/pull/248): pull-request; 2026-10-17
+- [#247 Expiry: negative days once expired; an expiry without a policy counts as a TTL](https://github.com/ashlrai/phantom-secrets/pull/247): pull-request; 2026-10-17
+- [#246 Incident queries: report leak events no backfill has persisted](https://github.com/ashlrai/phantom-secrets/pull/246): pull-request; 2026-10-17
+- [#245 audit recent/show: read a bounded tail and count skipped lines](https://github.com/ashlrai/phantom-secrets/pull/245): pull-request; 2026-10-17
+- [#243 check --runtime: scan every variable, and recognise a proxy session](https://github.com/ashlrai/phantom-secrets/pull/243): pull-request; 2026-10-17
+- [#238 exec: forward SIGTERM/SIGINT/SIGHUP to the child and exit with its status; why: refuse a blank key](https://github.com/ashlrai/phantom-secrets/pull/238): pull-request; 2026-10-17
+- [#240 fix(cli): quiet exit when the reader of stdout goes away](https://github.com/ashlrai/phantom-secrets/pull/240): pull-request; 2026-10-17
+- [#234 fix(cli): why fails on unknown keys, doctor checks Gemini, init names the real vault, subdir errors point at the project root](https://github.com/ashlrai/phantom-secrets/pull/234): pull-request; 2026-10-17
+- [#217 feat(crypto): backward compatible format version tag for vault blobs and team shares](https://github.com/ashlrai/phantom-secrets/pull/217): pull-request; 2026-10-17
+- [#233 exec/proxy: actionable, value-free failures for agents; validate deprecated add_secret name](https://github.com/ashlrai/phantom-secrets/pull/233): pull-request; 2026-10-17
+- [#228 add --stdin: bounded read; refuse multi-line input unless --multiline or --first-line](https://github.com/ashlrai/phantom-secrets/pull/228): pull-request; 2026-10-17
+- [#232 ci: line-tables-only debug info for test builds; cache the Windows ARM64 check](https://github.com/ashlrai/phantom-secrets/pull/232): pull-request; 2026-10-17
+- [#239 test(cli): pin agent-facing doc facts to the code](https://github.com/ashlrai/phantom-secrets/pull/239): pull-request; 2026-10-17
+- [#231 fix(agent): doctor reports when phantom exec is blocked (connection-string key)](https://github.com/ashlrai/phantom-secrets/pull/231): pull-request; 2026-10-17
+- [#224 Add on_leak policy (off/plan/revoke) read by phantom leaks plan](https://github.com/ashlrai/phantom-secrets/pull/224): pull-request; 2026-10-17
+- [#241 ci(deny): record the zbus 4 unmaintained advisories pulled in by keyring 3](https://github.com/ashlrai/phantom-secrets/pull/241): pull-request; 2026-10-17
+- [#237 fix(audit): verify fails when audit.log is deleted; verify --json; reject bad dates and confidence; exec names `phantom add`](https://github.com/ashlrai/phantom-secrets/pull/237): pull-request; 2026-10-17; cross-repo ashlrai/phantom#751, ashlrai/phantom#772
+- [#227 fix(mcp,cli): expiry gate reads vault TTLs, sync rejects unknown platforms, setup --client gemini](https://github.com/ashlrai/phantom-secrets/pull/227): pull-request; 2026-10-17
+- [#191 fix: check --staged stops flagging every "sk-"](https://github.com/ashlrai/phantom-secrets/pull/191): pull-request; 2026-10-17; cross-repo ashlrai/phantom#751, ashlrai/phantom#772, ashlrai/phantom#825
+- [#235 mcp: accurate phantom_why values; refuse unknown phantom_sync platform](https://github.com/ashlrai/phantom-secrets/pull/235): pull-request; 2026-10-17
+- [#229 agent status: read-only, value-free view of MCP approval state](https://github.com/ashlrai/phantom-secrets/pull/229): pull-request; 2026-10-17
+- [#181 docs: fix public text that drifted from 0.7.9 behavior](https://github.com/ashlrai/phantom-secrets/pull/181): pull-request; 2026-10-17
+- [#179 docs: match client MCP snippets and tool parameters to the 0.7.9 runtime](https://github.com/ashlrai/phantom-secrets/pull/179): pull-request; 2026-10-17
+- [#223 docs: bring agent docs in line with recent merged behavior](https://github.com/ashlrai/phantom-secrets/pull/223): pull-request; 2026-10-17
+- [#225 web: agent preview check for phm.dev on the live site line, plus public text fixes](https://github.com/ashlrai/phantom-secrets/pull/225): pull-request; 2026-10-17
+- [#222 agent report: an unrelated dotenv parse error no longer hides an unresolved managed dotenv](https://github.com/ashlrai/phantom-secrets/pull/222): pull-request; 2026-10-17
+- [#221 Locked-vault follow-ups: exec wording, agent dotenv finding, honest notice](https://github.com/ashlrai/phantom-secrets/pull/221): pull-request; 2026-10-17
+- [#220 CLI: refuse a locked vault instead of answering empty; doctor reports a missing dotenv](https://github.com/ashlrai/phantom-secrets/pull/220): pull-request; 2026-10-17
+- [#215 feat(cli): read-only phantom leaks plan](https://github.com/ashlrai/phantom-secrets/pull/215): pull-request; 2026-10-17
+- [#219 Read the remaining dotenvs on the opened handle, not by following the path](https://github.com/ashlrai/phantom-secrets/pull/219): pull-request; 2026-10-16
+- [#212 MCP: refuse a locked vault instead of answering empty; name the fix, not -32603](https://github.com/ashlrai/phantom-secrets/pull/212): pull-request; 2026-10-16
+- [#216 feat(cli): read-only setup --status for wired AI clients (incl. Gemini CLI)](https://github.com/ashlrai/phantom-secrets/pull/216): pull-request; 2026-10-16
+- [#211 Dotenv reads refuse symlinks on the opened handle, not a prior lookup](https://github.com/ashlrai/phantom-secrets/pull/211): pull-request; 2026-10-16
+- [#214 docs: drop the stale v0.7.5 release snapshot from CONTRIBUTING, version-neutral brew test text](https://github.com/ashlrai/phantom-secrets/pull/214): pull-request; 2026-10-16
+- [#210 feat(web): add /ecosystem page on top of the deployed agent-docs build](https://github.com/ashlrai/phantom-secrets/pull/210): pull-request; 2026-10-16
+- [#213 test(runtime): stop RLIMIT_NPROC from failing the timeout test on busy runners](https://github.com/ashlrai/phantom-secrets/pull/213): pull-request; 2026-10-16
+- [#208 init keeps an existing .env.example; MCP listing and compliance answer before init](https://github.com/ashlrai/phantom-secrets/pull/208): pull-request; 2026-10-16
+- [#209 ci: check the MCP Registry catalog against tools/list on every PR](https://github.com/ashlrai/phantom-secrets/pull/209): pull-request; 2026-10-16
+- [#204 bench: response scrubber throughput example](https://github.com/ashlrai/phantom-secrets/pull/204): pull-request; 2026-10-16
+- [#203 docs(readme): add one-line tagline](https://github.com/ashlrai/phantom-secrets/pull/203): pull-request; 2026-10-16
+- [#207 MCP phantom_why: answer before init and without opening the vault](https://github.com/ashlrai/phantom-secrets/pull/207): pull-request; 2026-10-16
+- [#206 Install as root: extract release archives without keeping the archive owner](https://github.com/ashlrai/phantom-secrets/pull/206): pull-request; 2026-10-16; cross-repo ashlrai/phantom#825
+- [#170 ci: single CI Gate + path filters, cargo-nextest, crate contract stops re-running tests](https://github.com/ashlrai/phantom-secrets/pull/170): pull-request; 2026-10-16
+- [#205 fix(exec,why): say when a protected key has no proxy route](https://github.com/ashlrai/phantom-secrets/pull/205): pull-request; 2026-10-16; cross-repo ashlrai/phantom#751, ashlrai/phantom#772
+- [#190 fix: report a locked encrypted-file vault instead of "No secrets stored"; redact exec session token](https://github.com/ashlrai/phantom-secrets/pull/190): pull-request; 2026-10-16
+- [#195 Example: Next.js under phantom exec (#174)](https://github.com/ashlrai/phantom-secrets/pull/195): pull-request; 2026-10-16
+- [#194 Docs and tests: proxy port behavior (#172)](https://github.com/ashlrai/phantom-secrets/pull/194): pull-request; 2026-10-16
+- [#199 fix(proxy): Wrangler and Cloudflare SDKs reach the API under `phantom exec`](https://github.com/ashlrai/phantom-secrets/pull/199): pull-request; 2026-10-16
+- [#193 eval: leak-rate harness (scripted adversary, canary keys, with/without phantom init)](https://github.com/ashlrai/phantom-secrets/pull/193): pull-request; 2026-10-16
+- [#201 fix: valid JSON from empty audit stats/export and `why --json`; MCP audit tools reject unknown formats](https://github.com/ashlrai/phantom-secrets/pull/201): pull-request; 2026-10-16
+- [#200 fix(mcp): make phantom_add_secret_interactive effect-free and document approval gates](https://github.com/ashlrai/phantom-secrets/pull/200): pull-request; 2026-10-16
+- [#202 fix(upgrade): drop yanked zip 8 by extracting Windows assets with zip 9](https://github.com/ashlrai/phantom-secrets/pull/202): pull-request; 2026-10-16
+- [#196 ci: run CI and CI Gate on merge_group events](https://github.com/ashlrai/phantom-secrets/pull/196): pull-request; 2026-10-16
+- [#198 fix(proxy): valid Basic auth for Twilio and route-owned Gemini key slots](https://github.com/ashlrai/phantom-secrets/pull/198): pull-request; 2026-10-16
+- [#186 fix(proxy): SDKs for OpenAI and OpenAI-compatible routes reach the /v1 API under `phantom exec`](https://github.com/ashlrai/phantom-secrets/pull/186): pull-request; 2026-10-15
+- [#188 feat(mcp): structured value-blind JSON across read-only tools; errors name the next step](https://github.com/ashlrai/phantom-secrets/pull/188): pull-request; 2026-10-15
+- [#192 fix(proxy): long streams, truncation signalling, SDK base-URL vars, unsized streams, 32 MiB cap](https://github.com/ashlrai/phantom-secrets/pull/192): pull-request; 2026-10-15
+- [#185 feat(mcp): structured value-blind JSON for phantom_check and phantom_doctor](https://github.com/ashlrai/phantom-secrets/pull/185): pull-request; 2026-10-15
+- [#187 fix(doctor): give the missing-.gitignore warning its own fix hint](https://github.com/ashlrai/phantom-secrets/pull/187): pull-request; 2026-10-15
+- [#184 feat(cli): structured `phantom doctor --json` for agents and CI](https://github.com/ashlrai/phantom-secrets/pull/184): pull-request; 2026-10-15
+- [#182 Agent fidelity: real MCP server identity and a names-only `phantom check --json`](https://github.com/ashlrai/phantom-secrets/pull/182): pull-request; 2026-10-14
+
+## Pending release notes
+
+Changelog sections without a release date.
+
+### ashlrai/ashlr-md (core-fleet)
+
+- [\[0.4.1\] - Unreleased](https://github.com/ashlrai/ashlr-md/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+
+### ashlrai/ashlr-plugin (core-fleet)
+
+- [\[1.20.2\]](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; undated
+- [\[1.21.0\]](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; undated
+- [\[Unreleased\]](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+
+### ashlrai/ashlr-stack (core-fleet)
+
+- [Unreleased](https://github.com/ashlrai/ashlr-stack/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+
+### ashlrai/lexicon (core-fleet)
+
+- [Unreleased](https://github.com/ashlrai/lexicon/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+
+### ashlrai/locus (core-fleet)
+
+- [\[Unreleased\]](https://github.com/ashlrai/locus/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+
+### ashlrai/phantom (core-fleet)
+
+- [\[3.29.14\] - Unreleased](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[3.29.15\] - Unreleased](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M30: Cloud-Ready Seams v2 + Polish (CAPSTONE)](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M17: Verified Orchestration](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M16: Compounding Genome](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M15: Cost-Optimal Local-First Routing](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M14: Surfaces II (Local Web Dashboard)](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M13: Surfaces I (Interactive TUI + Real-Time Raycast)](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M12: Spec-Driven Swarms](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M11: Watchable, Robust Runs](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M10: Ecosystem Cohesion](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M25: Portfolio Intelligence (`ashlr knowledge` · `ashlr ask` · `ashlr impact`)](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M24: The Autonomous Daemon (`ashlr daemon`)](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M23: Approval Inbox (Single Outward Gate)](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M22: Work Discovery (`ashlr backlog`)](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M21: Safety Foundation (Sandboxed Execution, Audit Trail, Enrollment + Kill Switch)](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M20: One-Command Onboarding + Self-Healing (CAPSTONE)](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M19: Real Telemetry (OTLP) + Spend Governance](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M18: Deep Integrations](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+
+### ashlrai/phantom-secrets (core-fleet)
+
+- [\[Unreleased\]](https://github.com/ashlrai/phantom-secrets/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+
+## Repositories
+
+### ashlrai/ashlr-md (core-fleet)
+
+- [#227 bridge: RQ-FULLSUITE-SHARD-MD](https://github.com/ashlrai/ashlr-md/pull/227): pull-request; 2026-10-28
+- [#226 bridge: RQ-MR-CONFLICT-DRIVERS-ashlr-md](https://github.com/ashlrai/ashlr-md/pull/226): pull-request; 2026-10-28
+- [#208 bridge: RQ-MD-MCP-HANDLER-TESTS](https://github.com/ashlrai/ashlr-md/pull/208): pull-request; 2026-10-28
+- [#205 bridge: RQ-FRESH-DOCS-SWEEP-MD](https://github.com/ashlrai/ashlr-md/pull/205): pull-request; 2026-10-28
+- [#225 bridge: RQ-DAILY-15-ASHLR-MD](https://github.com/ashlrai/ashlr-md/pull/225): pull-request; 2026-10-28
+- [#200 bridge: RQ-PL-MD-COVERAGE](https://github.com/ashlrai/ashlr-md/pull/200): pull-request; 2026-10-28
+- [#224 bridge: RQ-CI-SECONDS-ASHLR-MD](https://github.com/ashlrai/ashlr-md/pull/224): pull-request; 2026-10-28
+- [#213 bridge: RQ-PERF-12-MD](https://github.com/ashlrai/ashlr-md/pull/213): pull-request; 2026-10-28
+- [#223 bridge: RQ-FAST-GATE-MD-2](https://github.com/ashlrai/ashlr-md/pull/223): pull-request; 2026-10-27
+- [#206 bridge: RQ-DISC-MCP-MANIFEST-MD](https://github.com/ashlrai/ashlr-md/pull/206): pull-request; 2026-10-27
+- [#201 bridge: RQ-FRESH-GEN-MD](https://github.com/ashlrai/ashlr-md/pull/201): pull-request; 2026-10-27
+- [#222 fix: Activity keeps heard notes in time order; busy index batches retried; folder edge cases](https://github.com/ashlrai/ashlr-md/pull/222): pull-request; 2026-10-27
+- [#221 fix: semantic index forgets deleted notes; Activity lists folders moved in; palette highlight reset](https://github.com/ashlrai/ashlr-md/pull/221): pull-request; 2026-10-27
+- [#220 fix: tabs and Activity match files by identity; same-name tab folders; theme picker keys; folder removals](https://github.com/ashlrai/ashlr-md/pull/220): pull-request; 2026-10-27
+- [#210 bridge: RQ-MD-MDOPENER-MEM](https://github.com/ashlrai/ashlr-md/pull/210): pull-request; 2026-10-27
+- [#212 bridge: RQ-N26-MD-CONTRACT-SCHEMA](https://github.com/ashlrai/ashlr-md/pull/212): pull-request; 2026-10-27
+- [#211 bridge: RQ-N26-DV-MD-LINKS](https://github.com/ashlrai/ashlr-md/pull/211): pull-request; 2026-10-27
+- [#217 bridge: RQ-N26B-079](https://github.com/ashlrai/ashlr-md/pull/217): pull-request; 2026-10-27
+- [#215 ci: security floor, Check (Linux) requires Classify changes; audits on PR (G1, draft)](https://github.com/ashlrai/ashlr-md/pull/215): pull-request; 2026-10-27
+- [#216 fix: stale Activity, embeds, scroll and session restore after on-disk changes](https://github.com/ashlrai/ashlr-md/pull/216): pull-request; 2026-10-27
+- [#218 bridge: RQ-N26B-075](https://github.com/ashlrai/ashlr-md/pull/218): pull-request; 2026-10-27
+- [#207 ci: SHA-pin all GitHub Actions (Security review 2026-10-26)](https://github.com/ashlrai/ashlr-md/pull/207): pull-request; 2026-10-26
+- [#198 bridge: RQ-DEADCODE-ashlr-md](https://github.com/ashlrai/ashlr-md/pull/198): pull-request; 2026-10-26
+- [#195 bridge: RQ-TESTDIET-ashlr-md](https://github.com/ashlrai/ashlr-md/pull/195): pull-request; 2026-10-26
+- [#194 bridge: RQ-MD-AGENT-EDIT](https://github.com/ashlrai/ashlr-md/pull/194): pull-request; 2026-10-26
+- [#192 bridge: rq-li-4](https://github.com/ashlrai/ashlr-md/pull/192): pull-request; 2026-10-26
+- [#188 ci: CodeQL, Scorecard, Renovate, and Codecov off the PR path](https://github.com/ashlrai/ashlr-md/pull/188): pull-request; 2026-10-26; cross-repo ashlrai/locus#164
+- [#191 feat(ai): opt-in localInference.offline for cloud and remote hosts](https://github.com/ashlrai/ashlr-md/pull/191): pull-request; 2026-10-26
+- [#189 ci: run cargo test (workspace) in merge_group, nightly and pre-flip PRs; ci-local too](https://github.com/ashlrai/ashlr-md/pull/189): pull-request; 2026-10-26; cross-repo ashlrai/locus#164, ashlrai/phantom#917, ashlrai/phantom#920
+- [#187 docs(contributing): refresh measured test counts](https://github.com/ashlrai/ashlr-md/pull/187): pull-request; 2026-10-26
+- [#184 chore: remove 3 unused JS dependencies](https://github.com/ashlrai/ashlr-md/pull/184): pull-request; 2026-10-26; cross-repo ashlrai/phantom#920
+- [#190 ci: SonarCloud, CodeRabbit, and Socket config](https://github.com/ashlrai/ashlr-md/pull/190): pull-request; 2026-10-26
+- [#185 fix(security): no redirects and localhost pinned for model, embedding and Anthropic clients (one shared builder)](https://github.com/ashlrai/ashlr-md/pull/185): pull-request; 2026-10-26; cross-repo ashlrai/phantom#917, ashlrai/phantom#920
+- [#186 ci: merge-queue pilot (fast PR lane, selected suite in merge_group, nightly full matrix, ci-local)](https://github.com/ashlrai/ashlr-md/pull/186): pull-request; 2026-10-26; cross-repo ashlrai/locus#164
+- [#180 feat(mdopener-mcp): ashlr.doctor v1 wrapper on doctor --fix --json](https://github.com/ashlrai/ashlr-md/pull/180): pull-request; 2026-10-26; cross-repo ashlrai/phantom#917
+- [#183 chore(security): growth-only CODEOWNERS for workflows and keyed/network paths](https://github.com/ashlrai/ashlr-md/pull/183): pull-request; 2026-10-26; cross-repo ashlrai/phantom#920
+- [#182 ci(release): pin third-party actions to commit SHAs](https://github.com/ashlrai/ashlr-md/pull/182): pull-request; 2026-10-26
+- [#181 feat(mcp): doctor local-inference probe + local-inference-probe handshake capability (mirrors phantom #920/#921)](https://github.com/ashlrai/ashlr-md/pull/181): pull-request; 2026-10-26; cross-repo ashlrai/phantom#917, ashlrai/phantom#920
+- [#179 feat(ai): localInference loopback-only local models; gate OLLAMA_HOST (mirrors phantom #917)](https://github.com/ashlrai/ashlr-md/pull/179): pull-request; 2026-10-25; cross-repo ashlrai/phantom#917
+- [#178 test(mdopener-mcp): handshake v1 conformance test against the vendored contract](https://github.com/ashlrai/ashlr-md/pull/178): pull-request; 2026-10-25
+- [#177 docs(readme): mdopener-mcp doctor --fix section](https://github.com/ashlrai/ashlr-md/pull/177): pull-request; 2026-10-25
+- [#176 feat(mcp): mdopener-mcp doctor --fix \[--apply\]; doctor-fix capability](https://github.com/ashlrai/ashlr-md/pull/176): pull-request; 2026-10-25
+- [#175 chore(rust): Linux clippy clean (cfg-gate AFM), rustfmt src-tauri, clippy step in Check (Linux)](https://github.com/ashlrai/ashlr-md/pull/175): pull-request; 2026-10-25
+- [#174 feat(mcp): persist review verdicts; get_user_annotations falls back with stale flag](https://github.com/ashlrai/ashlr-md/pull/174): pull-request; 2026-10-25
+- [#173 feat(mcp): mdopener-mcp --ashlr-handshake (Ashlr companion handshake v1)](https://github.com/ashlrai/ashlr-md/pull/173): pull-request; 2026-10-25
+- [#172 feat: in-app keyboard shortcut cheat sheet (⌘/ / Ctrl+/)](https://github.com/ashlrai/ashlr-md/pull/172): pull-request; 2026-10-25
+- [#171 docs(readme): one canonical name, command and link per Ashlr tool](https://github.com/ashlrai/ashlr-md/pull/171): pull-request; 2026-10-24
+- [#170 fix(a11y): labelled section for the linter toast; enforce the two a11y rules now at zero (part of #27)](https://github.com/ashlrai/ashlr-md/pull/170): pull-request; 2026-10-24
+- [#169 fix(a11y): settings captions are not orphan labels; name the notifications switch (part of #27)](https://github.com/ashlrai/ashlr-md/pull/169): pull-request; 2026-10-24
+- [#168 test(viewer): GFM tables and task lists through the real Renderer (#36)](https://github.com/ashlrai/ashlr-md/pull/168): pull-request; 2026-10-24
+- [#167 fix(a11y): give ARIA labels an element that supports them (part of #27)](https://github.com/ashlrai/ashlr-md/pull/167): pull-request; 2026-10-24
+- [#166 md round 91: async search, open hits at their line, find and link fixes](https://github.com/ashlrai/ashlr-md/pull/166): pull-request; 2026-10-24
+- [#165 Find, links and wikilinks work in more documents, and the MCP server bounds requests and reports skipped files](https://github.com/ashlrai/ashlr-md/pull/165): pull-request; 2026-10-24
+- [#164 List callouts and table column edits keep their markdown, lighter math exports, and mdopen/MCP handle odd paths and launchers](https://github.com/ashlrai/ashlr-md/pull/164): pull-request; 2026-10-24
+- [#163 Edited code blocks, tables, callouts and nested lists keep their markdown; renames are followed; exports keep fonts, diagrams and names](https://github.com/ashlrai/ashlr-md/pull/163): pull-request; 2026-10-24
+- [#162 WYSIWYG edits keep the file's own markdown style, the table menu works in built apps, and unsaved text is never dropped](https://github.com/ashlrai/ashlr-md/pull/162): pull-request; 2026-10-24
+- [#161 Guard unsaved edits on close, keep WYSIWYG saves to the edited blocks, and fix settings, a11y, export and copy gaps](https://github.com/ashlrai/ashlr-md/pull/161): pull-request; 2026-10-24
+- [#160 Safer, faster exports; sturdier settings and session restore; keyboard and focus fixes](https://github.com/ashlrai/ashlr-md/pull/160): pull-request; 2026-10-24
+- [#159 One link rule, a remote-images setting, and safer exports](https://github.com/ashlrai/ashlr-md/pull/159): pull-request; 2026-10-24
+- [#158 Round 83: save conflict guard, missing-file tabs, wikilinks confined to the vault, working anchors and relative images](https://github.com/ashlrai/ashlr-md/pull/158): pull-request; 2026-10-24
+- [#157 Round 82: lone CR line breaks, mdast-matching heading slugs, safer saves through symlinks and read-only files](https://github.com/ashlrai/ashlr-md/pull/157): pull-request; 2026-10-24
+- [#156 Round 81: inline math read as remark-math, CRLF and BOM kept on agent edits, table and list editor fixes](https://github.com/ashlrai/ashlr-md/pull/156): pull-request; 2026-10-24
+- [#155 fix: editing commands respect code, CRLF and GFM tables; math blocks and code spans follow the renderer (round 80)](https://github.com/ashlrai/ashlr-md/pull/155): pull-request; 2026-10-24
+- [#154 fix: HTML blocks and footnotes in the line rule; outline-adjacent features stop reading raw lines (round 79)](https://github.com/ashlrai/ashlr-md/pull/154): pull-request; 2026-10-24
+- [#153 fix: task counts follow the page rule; export_text reads links like the page (round 78)](https://github.com/ashlrai/ashlr-md/pull/153): pull-request; 2026-10-24
+- [#152 fix: task checkboxes in the preview toggle the document again (round 77)](https://github.com/ashlrai/ashlr-md/pull/152): pull-request; 2026-10-24
+- [#151 fix: tasks, front matter and setext headings follow the renderer (round 76)](https://github.com/ashlrai/ashlr-md/pull/151): pull-request; 2026-10-24
+- [#150 fix: headings, export text and anchors follow the renderer inside quotes and lists (round 75)](https://github.com/ashlrai/ashlr-md/pull/150): pull-request; 2026-10-24
+- [#149 fix: headings and indented code in lists and quotes read as the page does; MCP descriptions match the tools (round 74)](https://github.com/ashlrai/ashlr-md/pull/149): pull-request; 2026-10-24
+- [#148 fix: read fences in nested lists and quotes as the preview does; inline AI keeps the selection on failure (round 73)](https://github.com/ashlrai/ashlr-md/pull/148): pull-request; 2026-10-24
+- [#147 fix: outline and lint read quoted and list-item code as code; AI shows why it can't help and how to fix it (rounds 70-72)](https://github.com/ashlrai/ashlr-md/pull/147): pull-request; 2026-10-24
+- [#146 fix: read headings, wikilinks and code the same way in the app and the MCP server (rounds 68-69)](https://github.com/ashlrai/ashlr-md/pull/146): pull-request; 2026-10-24
+- [#145 MCP round 67: one line rule for front matter and fences across headings, links, text and tasks; -32000 documented](https://github.com/ashlrai/ashlr-md/pull/145): pull-request; 2026-10-23
+- [#144 docs(install): Linux troubleshooting checked against the v0.4.0 packages](https://github.com/ashlrai/ashlr-md/pull/144): pull-request; 2026-10-19
+- [#143 test(ai): LiteLLM-shaped loopback proxy checks for the Anthropic path](https://github.com/ashlrai/ashlr-md/pull/143): pull-request; 2026-10-19
+- [#142 fix: keep keys, proxy tokens and URL credentials out of AI and embedding errors](https://github.com/ashlrai/ashlr-md/pull/142): pull-request; 2026-10-19
+- [#141 test(embed): cover the autoEmbedIndex switch, startup gate and manual reindex](https://github.com/ashlrai/ashlr-md/pull/141): pull-request; 2026-10-19
+- [#140 feat(ai): opt-in Anthropic key from ANTHROPIC_API_KEY (phm_ placeholder under phantom exec)](https://github.com/ashlrai/ashlr-md/pull/140): pull-request; 2026-10-19
+- [#139 docs(phantom): running Ashlr MD under phantom exec](https://github.com/ashlrai/ashlr-md/pull/139): pull-request; 2026-10-19
+- [#138 feat(mcp): sidecar speaks https to Ollama; OLLAMA_HOST follows the base URL rules](https://github.com/ashlrai/ashlr-md/pull/138): pull-request; 2026-10-19
+- [#137 fix(ai): ANTHROPIC_BASE_URL must be https, or http only for 127.0.0.1 and \[::1\]](https://github.com/ashlrai/ashlr-md/pull/137): pull-request; 2026-10-19
+- [#136 feat: opt-in setting for automatic semantic re-indexing (autoEmbedIndex)](https://github.com/ashlrai/ashlr-md/pull/136): pull-request; 2026-10-19
+- [#135 feat(install): metadata-only Phantom installed check](https://github.com/ashlrai/ashlr-md/pull/135): pull-request; 2026-10-18
+- [#134 test: cover remark-callouts and syncScroll](https://github.com/ashlrai/ashlr-md/pull/134): pull-request; 2026-10-18
+- [#132 docs(readme): state what Phantom integration exists today, link PQ readiness](https://github.com/ashlrai/ashlr-md/pull/132): pull-request; 2026-10-18
+- [#131 feat(ai): honor ANTHROPIC_BASE_URL and OLLAMA_HOST (defaults unchanged)](https://github.com/ashlrai/ashlr-md/pull/131): pull-request; 2026-10-18
+- [#130 MCP round 66: stream_edit checks the path without fetching the document; titles skip front matter; file:// URIs encoded](https://github.com/ashlrai/ashlr-md/pull/130): pull-request; 2026-10-18
+- [#129 MCP round 65: resources, prompts and instructions match the code; Explain doc says what it explains](https://github.com/ashlrai/ashlr-md/pull/129): pull-request; 2026-10-18
+- [#128 MCP rounds 63-64: reads refuse a null path, honest match counts, every path form documented, lint clean](https://github.com/ashlrai/ashlr-md/pull/128): pull-request; 2026-10-18
+- [#127 MCP: find/replace edits refuse a buffer with no file, refused stream_edit keeps its match count](https://github.com/ashlrai/ashlr-md/pull/127): pull-request; 2026-10-18
+- [#119 fix: search snippet survives length-changing lowercase; AI streams keep characters split across chunks](https://github.com/ashlrai/ashlr-md/pull/119): pull-request; 2026-10-18
+- [#126 MCP: open_file reports failed re-reads, real stream_edit match counts, honest set_content and export errors](https://github.com/ashlrai/ashlr-md/pull/126): pull-request; 2026-10-18
+- [#125 Round 60: the app's search and reindex name files they could not read; a missed edit find says what to do](https://github.com/ashlrai/ashlr-md/pull/125): pull-request; 2026-10-18
+- [#124 Round 59: search_vault names files it could not read, the app explains non-UTF-8 files, edit_canvas takes any-case .canvas](https://github.com/ashlrai/ashlr-md/pull/124): pull-request; 2026-10-18
+- [#123 Round 58: `~/` paths work, non-UTF-8 files say what to do, oversized requests are refused before sending](https://github.com/ashlrai/ashlr-md/pull/123): pull-request; 2026-10-18
+- [#122 Round 57: stream_edit_apply refuses a stale preview; refused-token hints for search_vault and mdopen](https://github.com/ashlrai/ashlr-md/pull/122): pull-request; 2026-10-18
+- [#121 Round 56: open_file, search_vault and mdopen explain a refused token; stream_edit_apply asks for a fresh preview](https://github.com/ashlrai/ashlr-md/pull/121): pull-request; 2026-10-18
+- [#120 Round 55: agent tools explain a refused token, name the exact open_file call, and say when a file does not exist](https://github.com/ashlrai/ashlr-md/pull/120): pull-request; 2026-10-18
+- [#118 Round 54: agent tool audit fixes (export without the app, annotations on a refused token), Explain changes stops like a chat turn](https://github.com/ashlrai/ashlr-md/pull/118): pull-request; 2026-10-18
+- [#117 Round 53: get_user_annotations reads tasks from disk without the app, setup panel shows Explain changes and detection failures](https://github.com/ashlrai/ashlr-md/pull/117): pull-request; 2026-10-18
+- [#116 docs: post-quantum readiness notes and classical-only crypto check](https://github.com/ashlrai/ashlr-md/pull/116): pull-request; 2026-10-18
+- [#115 Round 52: no-provider text that is true per platform, popover message on the setup panel, edit_canvas lists the ids that exist](https://github.com/ashlrai/ashlr-md/pull/115): pull-request; 2026-10-18
+- [#114 Round 51: escape model output in the AI sidebar, hide the hosted token, popover no-provider message](https://github.com/ashlrai/ashlr-md/pull/114): pull-request; 2026-10-18
+- [#113 Round 50: change a saved Anthropic key, AI errors that name the next step, honest Stop and Retry](https://github.com/ashlrai/ashlr-md/pull/113): pull-request; 2026-10-18
+- [#112 Round 49: Connect re-run docs, home directory errors with a next step, AI Stop and first-run fixes](https://github.com/ashlrai/ashlr-md/pull/112): pull-request; 2026-10-18
+- [#111 Round 48: AppImage Connect registers a stable path, Connect and config errors that say what to do](https://github.com/ashlrai/ashlr-md/pull/111): pull-request; 2026-10-18
+- [#110 Round 47: real release asset names, a stable AppImage MCP path, stream edits and timeouts that say what to do](https://github.com/ashlrai/ashlr-md/pull/110): pull-request; 2026-10-18
+- [#109 Round 46: destructive MCP tools listed last, edit_document with no document says so, download links and first-run docs that work](https://github.com/ashlrai/ashlr-md/pull/109): pull-request; 2026-10-18
+- [#108 Round 45: the real Windows install folder, MCP first-run instructions, mdopen --help that matches the docs](https://github.com/ashlrai/ashlr-md/pull/108): pull-request; 2026-10-18
+- [#107 Round 44: IME Enter no longer acts early, Option shortcuts on macOS, shortcut hints and tables that match the keymap](https://github.com/ashlrai/ashlr-md/pull/107): pull-request; 2026-10-18
+- [#106 Round 43: IME Escape no longer closes dialogs, labelled review countdown, launch and path errors that say what to do](https://github.com/ashlrai/ashlr-md/pull/106): pull-request; 2026-10-18
+- [#105 Round 42: VS Code and Obsidian errors that say what happened, review survives IME Escape, clearer MCP startup messages](https://github.com/ashlrai/ashlr-md/pull/105): pull-request; 2026-10-18
+- [#104 Round 41: MCP errors that name the file and the next step, no --help panic, tool descriptions that say what comes back](https://github.com/ashlrai/ashlr-md/pull/104): pull-request; 2026-10-18
+- [#103 Round 40: hook skips failed edits and refuses stray arguments, MCP errors that name a next step, no panic on a closed stdout](https://github.com/ashlrai/ashlr-md/pull/103): pull-request; 2026-10-18
+- [#102 Round 39: hook opens only what an edit tool wrote, better argument and flag hints, install docs that match the app](https://github.com/ashlrai/ashlr-md/pull/102): pull-request; 2026-10-18
+- [#101 Round 38: no dropped or skipped opens, VS Code edit mode and .mdx button, Obsidian platform docs](https://github.com/ashlrai/ashlr-md/pull/101): pull-request; 2026-10-18
+- [#100 Round 37: export links wait for the file, pending files stop growing, integrations hand off only openable files](https://github.com/ashlrai/ashlr-md/pull/100): pull-request; 2026-10-18
+- [#99 Round 36: deep links honour mode and known export formats, prompt and resource descriptions](https://github.com/ashlrai/ashlr-md/pull/99): pull-request; 2026-10-17
+- [#98 Round 35: edit, export and conversation tools name their results; match_index maximum](https://github.com/ashlrai/ashlr-md/pull/98): pull-request; 2026-10-17
+- [#97 Round 34: open/present/review refusal wording, tool result shapes, docs dashes](https://github.com/ashlrai/ashlr-md/pull/97): pull-request; 2026-10-17
+- [#96 Round 33: clear missing-file and nothing-open errors, top-level doc dashes](https://github.com/ashlrai/ashlr-md/pull/96): pull-request; 2026-10-17
+- [#95 Round 32: non-UTF-8 launch args, mdopen -- -, landing and AGENTS dashes, get_current_content docs](https://github.com/ashlrai/ashlr-md/pull/95): pull-request; 2026-10-17
+- [#94 fix: blank paths refused, set_content marked destructive, no panics on non-UTF-8 arguments, wider dash guard (round 31)](https://github.com/ashlrai/ashlr-md/pull/94): pull-request; 2026-10-17
+- [#93 fix: no dashes in UI strings, blank ids refused, nested schema bounds enforced, app saves cited paths once (round 30)](https://github.com/ashlrai/ashlr-md/pull/93): pull-request; 2026-10-17
+- [#92 fix(mcp): no dashes in agent-facing text, cited_docs saved once, integer canvas coordinates, empty ids refused (round 29)](https://github.com/ashlrai/ashlr-md/pull/92): pull-request; 2026-10-17
+- [#91 fix(mcp): stray canvas fields and edge values, app-down file reads, vault-search params, prompt arguments (round 28)](https://github.com/ashlrai/ashlr-md/pull/91): pull-request; 2026-10-17
+- [#90 fix(mcp): preview_lines limit, empty edit_canvas ops, absolute cited_docs, blank review content (round 27)](https://github.com/ashlrai/ashlr-md/pull/90): pull-request; 2026-10-17
+- [#89 fix(mcp): empty optional paths, search and diff limits refused, changelog for rounds 22 to 26 (round 26)](https://github.com/ashlrai/ashlr-md/pull/89): pull-request; 2026-10-17
+- [#88 fix: hook path match, empty-path refusals, consistent limits, inline review content shown (round 25)](https://github.com/ashlrai/ashlr-md/pull/88): pull-request; 2026-10-17
+- [#87 fix(mcp): argument limits, empty-string schemas, review_id, same-program registrations (round 24)](https://github.com/ashlrai/ashlr-md/pull/87): pull-request; 2026-10-17
+- [#86 fix: stable recentDocs, local empty-argument refusals, stale Claude/Codex registrations repointed (round 23)](https://github.com/ashlrai/ashlr-md/pull/86): pull-request; 2026-10-17
+- [#85 fix: agent-facing correctness in MCP previews, stdio, AI actions and agent setup (round 22)](https://github.com/ashlrai/ashlr-md/pull/85): pull-request; 2026-10-17
+- [#84 fix(security): agent reads take only the file the path check saw; regular-file, capped reads across the app](https://github.com/ashlrai/ashlr-md/pull/84): pull-request; 2026-10-17
+- [#83 fix(security): Markdown-only search and deep links, symlink-safe atomic saves that keep permissions, safer apply_file_patch](https://github.com/ashlrai/ashlr-md/pull/83): pull-request; 2026-10-17
+- [#82 fix(mcp,install): JSON-RPC envelope checks, open_file annotations, installer fallbacks, wiring docs that match the app](https://github.com/ashlrai/ashlr-md/pull/82): pull-request; 2026-10-17
+- [#81 fix(mcp,mdopen,ipc): capped annotation and hook reads, 405 with Allow, resources/templates/list, cut-short vault listing marked, docs match](https://github.com/ashlrai/ashlr-md/pull/81): pull-request; 2026-10-17
+- [#80 fix(mcp,mdopen,ipc,vault): depthCut apart from scanCut, capped IPC and session reads, visible resources/list and recents gaps, JSON 404](https://github.com/ashlrai/ashlr-md/pull/80): pull-request; 2026-10-17
+- [#79 fix(mcp,mdopen,vault): bounded stdin, session files and HTTP answers; deep folders reported; blank search refused; honest current and recent resources](https://github.com/ashlrai/ashlr-md/pull/79): pull-request; 2026-10-17
+- [#78 fix(mcp,vault,ipc): true newest files, real vault cap in notices, export slot of its own, search_vault limits, 16 MiB document cap](https://github.com/ashlrai/ashlr-md/pull/78): pull-request; 2026-10-17
+- [#72 fix(mcp): resources read the path they checked; hostile front matter no longer aborts the server](https://github.com/ashlrai/ashlr-md/pull/72): pull-request; 2026-10-17
+- [#77 fix(mcp,canvas,vault): enum-checked args, JSON Canvas colours, instant non-blocking resume, vault truncation reported, clear file:// errors](https://github.com/ashlrai/ashlr-md/pull/77): pull-request; 2026-10-17
+- [#76 fix(mcp,canvas,vault): schema-enforced required args, strict canvas ops, resumed reviews checked, honest canvas/vault/recents](https://github.com/ashlrai/ashlr-md/pull/76): pull-request; 2026-10-17
+- [#70 fix(mcp,ipc,mdopen): headless vault search, clean export_text, full front matter, IPC requests that tell the truth](https://github.com/ashlrai/ashlr-md/pull/70): pull-request; 2026-10-17
+- [#73 docs: say agent opens are Markdown-only after #64](https://github.com/ashlrai/ashlr-md/pull/73): pull-request; 2026-10-17
+- [#75 MCP: diff sees line endings, private session files, bounded session_id, resources refuse symlinks out, BOM front-matter](https://github.com/ashlrai/ashlr-md/pull/75): pull-request; 2026-10-17
+- [#74 fix(settings): label the manual setup command as Claude Code only](https://github.com/ashlrai/ashlr-md/pull/74): pull-request; 2026-10-17
+- [#71 MCP: refuse negative integers, suggest prompt/resource names, warn on unknown flags; mdopen failure names the next step](https://github.com/ashlrai/ashlr-md/pull/71): pull-request; 2026-10-17
+- [#39 fix: quote MCP setup paths and build declared Mac sidecars](https://github.com/ashlrai/ashlr-md/pull/39): pull-request; 2026-10-17
+- [#67 MCP: refuse undeclared and mistyped arguments, suggest tool names; mdopen --edit/--read conflict](https://github.com/ashlrai/ashlr-md/pull/67): pull-request; 2026-10-17
+- [#69 fix(ipc,mcp,mdopen,editor): review reports open failures; front-matter lists parse; pasted images render; agent end-to-end test](https://github.com/ashlrai/ashlr-md/pull/69): pull-request; 2026-10-17
+- [#65 ci: skip the macOS check and landing deploys when their inputs are unchanged](https://github.com/ashlrai/ashlr-md/pull/65): pull-request; 2026-10-17
+- [#68 fix(mdopen,mcp): opens that did not happen are no longer reported as done](https://github.com/ashlrai/ashlr-md/pull/68): pull-request; 2026-10-17
+- [#64 fix(ipc,mcp,mdopen): agents open only Markdown; shared session files; MCP results that tell the truth; broken paste and canvas saves](https://github.com/ashlrai/ashlr-md/pull/64): pull-request; 2026-10-17
+- [#66 test(docs): pin agent-facing doc facts to the MCP and mdopen sources](https://github.com/ashlrai/ashlr-md/pull/66): pull-request; 2026-10-17
+- [#63 fix(mcp): three regressions from #57 and #61 (stream_edit path, resumed review never times out, session log rewrite race)](https://github.com/ashlrai/ashlr-md/pull/63): pull-request; 2026-10-17
+- [#62 fix(mcp): FIFOs no longer hang disk reads; sessions stop colliding; failed saves, canvas data, unclosed front-matter and encoded file:// URIs](https://github.com/ashlrai/ashlr-md/pull/62): pull-request; 2026-10-17
+- [#60 fix(setup): drop --transport from the Codex MCP command](https://github.com/ashlrai/ashlr-md/pull/60): pull-request; 2026-10-17
+- [#61 fix(mcp,mdopen,ipc): requests keep their id, mdopen opens through the app, request_review stops outliving client timeouts, plus five MCP data fixes](https://github.com/ashlrai/ashlr-md/pull/61): pull-request; 2026-10-17
+- [#59 fix(windows): agent setup, sidecar lookup and mdopen install work on Windows; quoted hook path](https://github.com/ashlrai/ashlr-md/pull/59): pull-request; 2026-10-17
+- [#57 fix(mcp): export writes output_path and confirms it; resolve path args like open_file](https://github.com/ashlrai/ashlr-md/pull/57): pull-request; 2026-10-17
+- [#56 docs(agents): document --version and the Markdown-only disk reads](https://github.com/ashlrai/ashlr-md/pull/56): pull-request; 2026-10-17
+- [#55 MCP file tools only read Markdown; --version on both shipped binaries; packaging asset names match the release](https://github.com/ashlrai/ashlr-md/pull/55): pull-request; 2026-10-16
+- [#54 fix(mcp): point macOS setup at Contents/Resources/mdopener-mcp (replaces #38)](https://github.com/ashlrai/ashlr-md/pull/54): pull-request; 2026-10-16
+- [#41 fix: label the manual Claude Code setup command accurately](https://github.com/ashlrai/ashlr-md/pull/41): pull-request; 2026-10-16
+- [#53 fix(mcp): search_vault errors when the app is down; mdopen accepts --; AGENTS.md matches the server](https://github.com/ashlrai/ashlr-md/pull/53): pull-request; 2026-10-16
+- [#51 docs: add Ashlr ecosystem section to the README](https://github.com/ashlrai/ashlr-md/pull/51): pull-request; 2026-10-16
+- [#52 fix(mcp): refuse unknown export formats; report the app version in serverInfo](https://github.com/ashlrai/ashlr-md/pull/52): pull-request; 2026-10-16
+- [#50 test(mcp): fix 209 unhandled errors in bridge tests; document frontend-only checks](https://github.com/ashlrai/ashlr-md/pull/50): pull-request; 2026-10-15
+- [#49 refactor(export): remove the unimplemented archive and canvas-graph export path](https://github.com/ashlrai/ashlr-md/pull/49): pull-request; 2026-10-15
+- [#48 fix(mcp): stop advertising export tools the app never implemented](https://github.com/ashlrai/ashlr-md/pull/48): pull-request; 2026-10-15
+- [#47 docs(mcp): correct mdopener-mcp tool descriptions that misstate behavior](https://github.com/ashlrai/ashlr-md/pull/47): pull-request; 2026-10-15
+- [#46 Linux: single-instance opens and AppImage mdopener:// registration](https://github.com/ashlrai/ashlr-md/pull/46): pull-request; 2026-10-15
+- [#45 fix(mcp): return tool failures as isError results, not JSON-RPC errors](https://github.com/ashlrai/ashlr-md/pull/45): pull-request; 2026-10-15
+- [#44 Linux opens reach the app; safer mdopen; bounded MCP diff; conversations survive restarts](https://github.com/ashlrai/ashlr-md/pull/44): pull-request; 2026-10-15
+- [#43 fix(mdopen, mcp): bounded, honest file opening on headless and non-macOS hosts](https://github.com/ashlrai/ashlr-md/pull/43): pull-request; 2026-10-15
+- [#37 docs(readme): front door with 30s start + MCP snippets; fix Linux MCP path](https://github.com/ashlrai/ashlr-md/pull/37): pull-request; 2026-10-13
+- [#31 ci: faster, cheaper CI (JS gates on Linux, Rust target cache, concurrency)](https://github.com/ashlrai/ashlr-md/pull/31): pull-request; 2026-10-13
+- [#32 chore(lint): clear Biome debt - main CI green again](https://github.com/ashlrai/ashlr-md/pull/32): pull-request; 2026-10-13
+- [#30 docs: add AGENTS.md agent constitution](https://github.com/ashlrai/ashlr-md/pull/30): pull-request; 2026-10-13
+- [#29 docs: fix Phantom source path in PHANTOM.md](https://github.com/ashlrai/ashlr-md/pull/29): pull-request; 2026-10-13; cross-repo ashlrai/phantom#688
+- [#28 docs: Ashlr MD as Phantom's out-of-box Markdown opener](https://github.com/ashlrai/ashlr-md/pull/28): pull-request; 2026-10-13; cross-repo ashlrai/phantom#688
+- [#25 fix: refresh bun.lock (unbreaks CI install); make install docs match v0.4.0 assets](https://github.com/ashlrai/ashlr-md/pull/25): pull-request; 2026-09-28
+- [#24 Bespoke summary card for agent review/findings documents](https://github.com/ashlrai/ashlr-md/pull/24): pull-request; 2026-06-09
+- [#23 Copy as rich text](https://github.com/ashlrai/ashlr-md/pull/23): pull-request; 2026-06-09
+- [#22 feat(vscode): add "Open in Ashlr MD" VS Code extension](https://github.com/ashlrai/ashlr-md/pull/22): pull-request; 2026-06-09
+- [#21 fix(mcp): apply /edit against the LIVE document, not the stale 200ms mirror](https://github.com/ashlrai/ashlr-md/pull/21): pull-request; 2026-06-08
+- [#20 a11y: focus trapping, contrast, reduced-motion, and inert docks](https://github.com/ashlrai/ashlr-md/pull/20): pull-request; 2026-06-08
+- [#19 feat(editor): paste image → save next to doc, insert relative embed](https://github.com/ashlrai/ashlr-md/pull/19): pull-request; 2026-06-08
+- [#18 refactor(settings): split 1,091-line SettingsPanel into per-section files](https://github.com/ashlrai/ashlr-md/pull/18): pull-request; 2026-06-08
+- [#17 fix(quality): prevent dirty-tab data loss, fix AI chat rendering, export & find robustness](https://github.com/ashlrai/ashlr-md/pull/17): pull-request; 2026-06-08
+- [#16 feat: live diff-review UI - apply/copy hunks from ```diff blocks](https://github.com/ashlrai/ashlr-md/pull/16): pull-request; 2026-06-08
+- [#15 fix(0.4.1): IPC worker pool + write timeout, Canvas marker/subpath, review dismiss scoping](https://github.com/ashlrai/ashlr-md/pull/15): pull-request; 2026-06-08
+- [#14 docs(changelog): mark 0.4.0 released (2026-06-06)](https://github.com/ashlrai/ashlr-md/pull/14): pull-request; 2026-06-06
+- [Ashlr MD v0.4.0](https://github.com/ashlrai/ashlr-md/releases/tag/v0.4.0): release; 2026-06-06
+- [#13 fix(release): skip notarization on unsigned macOS build + correct setdefault SDK gate](https://github.com/ashlrai/ashlr-md/pull/13): pull-request; 2026-06-06
+- [#12 fix(release): unblock macOS bundle - ad-hoc codesign + setdefault Swift on Xcode 16](https://github.com/ashlrai/ashlr-md/pull/12): pull-request; 2026-06-06
+- [#11 chore(release): v0.4.0 prep - version bump, CHANGELOG, bundle code-split, release-doc fixes](https://github.com/ashlrai/ashlr-md/pull/11): pull-request; 2026-06-06
+- [#9 docs + hardening: agent/Obsidian guides, trust model, cross-stack audit fixes](https://github.com/ashlrai/ashlr-md/pull/9): pull-request; 2026-06-06
+- [#8 feat: read-only JSON Canvas viewer (PR B2)](https://github.com/ashlrai/ashlr-md/pull/8): pull-request; 2026-06-06
+- [#7 feat: Obsidian vault fidelity - vault-wide resolution, full grammar, highlights/comments (PR B1)](https://github.com/ashlrai/ashlr-md/pull/7): pull-request; 2026-06-06
+- [#10 feat(mcp): vault resources, prompts, protocol negotiation + edit/search/present tools (PR A3, re-targeted)](https://github.com/ashlrai/ashlr-md/pull/10): pull-request; 2026-06-06
+- [#5 feat: agent integration - auto-open hook, one-click Codex, + human review loop (token-auth IPC)](https://github.com/ashlrai/ashlr-md/pull/5): pull-request; 2026-06-06
+- [#4 Semantic search: on-device embeddings RAG + v0.3.0 changelog](https://github.com/ashlrai/ashlr-md/pull/4): pull-request; 2026-06-06
+- [#3 Second brain: local AI memory, chat-with-your-library & related notes](https://github.com/ashlrai/ashlr-md/pull/3): pull-request; 2026-06-06
+- [#1 Elite upgrade: reliable default-handler, security hardening & power features](https://github.com/ashlrai/ashlr-md/pull/1): pull-request; 2026-06-06
+- [\[0.4.1\] - Unreleased](https://github.com/ashlrai/ashlr-md/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+
+### ashlrai/ashlr-plugin (core-fleet)
+
+- [#279 bridge: RQ-README-BRAND-PLUGIN](https://github.com/ashlrai/ashlr-plugin/pull/279): pull-request; 2026-10-28
+- [#278 bridge: RQ-MR-CONFLICT-DRIVERS-ashlr-plugin](https://github.com/ashlrai/ashlr-plugin/pull/278): pull-request; 2026-10-28
+- [#272 bridge: RQ-N26B-091](https://github.com/ashlrai/ashlr-plugin/pull/272): pull-request; 2026-10-28
+- [#274 bridge: RQ-N26B-093](https://github.com/ashlrai/ashlr-plugin/pull/274): pull-request; 2026-10-28
+- [#275 bridge: RQ-N26B-099](https://github.com/ashlrai/ashlr-plugin/pull/275): pull-request; 2026-10-28
+- [#271 bridge: RQ-N26B-089](https://github.com/ashlrai/ashlr-plugin/pull/271): pull-request; 2026-10-28
+- [#276 bridge: RQ-N26B-098](https://github.com/ashlrai/ashlr-plugin/pull/276): pull-request; 2026-10-28
+- [#273 bridge: RQ-N26B-092](https://github.com/ashlrai/ashlr-plugin/pull/273): pull-request; 2026-10-28
+- [#277 bridge: RQ-REFILL-2026102703-LAND-006](https://github.com/ashlrai/ashlr-plugin/pull/277): pull-request; 2026-10-28
+- [#249 bridge: RQ-FRESH-GEN-PLUG](https://github.com/ashlrai/ashlr-plugin/pull/249): pull-request; 2026-10-28
+- [#243 bridge: RQ-PARITY-CC-PLUGIN](https://github.com/ashlrai/ashlr-plugin/pull/243): pull-request; 2026-10-28
+- [#270 bridge: RQ-CI-SECONDS-ASHLR-PLUGIN-2](https://github.com/ashlrai/ashlr-plugin/pull/270): pull-request; 2026-10-28
+- [#264 ci: concurrency cancels superseded PR runs only, never merge_group or main pushes](https://github.com/ashlrai/ashlr-plugin/pull/264): pull-request; 2026-10-27
+- [#260 ci: merge_group trigger for merge queue (G1, draft)](https://github.com/ashlrai/ashlr-plugin/pull/260): pull-request; 2026-10-27
+- [#269 bridge: RQ-REFILL-2026102703-SALVA-032](https://github.com/ashlrai/ashlr-plugin/pull/269): pull-request; 2026-10-27
+- [#246 bridge: RQ-PLUG-TELEMETRY-OFF](https://github.com/ashlrai/ashlr-plugin/pull/246): pull-request; 2026-10-27
+- [#257 bridge: RQ-PLUG-HOOK-PERF](https://github.com/ashlrai/ashlr-plugin/pull/257): pull-request; 2026-10-27
+- [#237 fix(tuning): safe concurrent repo-savings writes, n/a net without savings](https://github.com/ashlrai/ashlr-plugin/pull/237): pull-request; 2026-10-27
+- [#258 bridge: RQ-PLUG-BASH-SUMMARIZER-TESTS](https://github.com/ashlrai/ashlr-plugin/pull/258): pull-request; 2026-10-27
+- [#262 bridge: RQ-N26B-095](https://github.com/ashlrai/ashlr-plugin/pull/262): pull-request; 2026-10-27
+- [#255 bridge: RQ-DV-PLUG-SPLIT-EFFICIENCY](https://github.com/ashlrai/ashlr-plugin/pull/255): pull-request; 2026-10-27
+- [#247 bridge: RQ-PL-PLUGIN-DOCS](https://github.com/ashlrai/ashlr-plugin/pull/247): pull-request; 2026-10-27
+- [#253 bridge: RQ-FRESH-SITE-PLUG](https://github.com/ashlrai/ashlr-plugin/pull/253): pull-request; 2026-10-27
+- [#265 ci(release): workflow_dispatch trigger with validated tag input (G1)](https://github.com/ashlrai/ashlr-plugin/pull/265): pull-request; 2026-10-27
+- [#266 ci(release): npm trusted publish on validated tag dispatch (G1)](https://github.com/ashlrai/ashlr-plugin/pull/266): pull-request; 2026-10-27
+- [#256 bridge: RQ-N26-PLUGIN-CONTRACT-TESTS](https://github.com/ashlrai/ashlr-plugin/pull/256): pull-request; 2026-10-27
+- [#233 chore(deps): raise MCP SDK floor to ^1.32.2](https://github.com/ashlrai/ashlr-plugin/pull/233): pull-request; 2026-10-27
+- [#245 bridge: RQ-PLUG-DOCS](https://github.com/ashlrai/ashlr-plugin/pull/245): pull-request; 2026-10-26
+- [#236 chore(deps): TypeScript 7.0.2 for server/ and vscode/](https://github.com/ashlrai/ashlr-plugin/pull/236): pull-request; 2026-10-26
+- [#244 bridge: RQ-TESTDIET-ashlr-plugin](https://github.com/ashlrai/ashlr-plugin/pull/244): pull-request; 2026-10-26
+- [#241 bridge: LAND-ashlr-plugin-232](https://github.com/ashlrai/ashlr-plugin/pull/241): pull-request; 2026-10-26
+- [#232 chore(deps): TypeScript 7.0.2 for root typecheck](https://github.com/ashlrai/ashlr-plugin/pull/232): pull-request; 2026-10-26
+- [#240 chore: dedupe PR template for case-insensitive disks](https://github.com/ashlrai/ashlr-plugin/pull/240): pull-request; 2026-10-26
+- [#239 bridge: RQ-ADOPT-3-plugin-r2](https://github.com/ashlrai/ashlr-plugin/pull/239): pull-request; 2026-10-26
+- [#235 feat(commands): add /ashlr-legend](https://github.com/ashlrai/ashlr-plugin/pull/235): pull-request; 2026-10-26
+- [#234 chore(cleanup): remove unreferenced scripts](https://github.com/ashlrai/ashlr-plugin/pull/234): pull-request; 2026-10-26
+- [#231 ci(security): scope Vercel token to deploy steps in deploy-site](https://github.com/ashlrai/ashlr-plugin/pull/231): pull-request; 2026-10-26
+- [#230 feat(tuning): per-repo savings and net tokens (est.) in /ashlr savings](https://github.com/ashlrai/ashlr-plugin/pull/230): pull-request; 2026-10-26
+- [#229 ci(coverage): run coverage in isolated workers](https://github.com/ashlrai/ashlr-plugin/pull/229): pull-request; 2026-10-26
+- [#226 perf(mcp): defer tool modules until the first tools/call](https://github.com/ashlrai/ashlr-plugin/pull/226): pull-request; 2026-10-26
+- [#227 ci: add CodeQL, Scorecard, Renovate, Codecov, Sonar, CodeRabbit, and Socket](https://github.com/ashlrai/ashlr-plugin/pull/227): pull-request; 2026-10-26
+- [#228 feat(tuning): tuner detail level sets ashlr__read summarize threshold](https://github.com/ashlrai/ashlr-plugin/pull/228): pull-request; 2026-10-26
+- [#225 feat(tuning): bounded per-repo self-tuning + net savings in /ashlr savings](https://github.com/ashlrai/ashlr-plugin/pull/225): pull-request; 2026-10-26
+- [v1.37.1](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.37.1): release; 2026-10-26
+- [#224 chore(security): growth-only CODEOWNERS for workflows and keyed/network paths](https://github.com/ashlrai/ashlr-plugin/pull/224): pull-request; 2026-10-26
+- [#223 feat(tuning): track compression misses (self-tuning P1)](https://github.com/ashlrai/ashlr-plugin/pull/223): pull-request; 2026-10-26
+- [#222 feat(doctor): ashlr.doctor v1 wrapper on ashlr doctor --json](https://github.com/ashlrai/ashlr-plugin/pull/222): pull-request; 2026-10-26
+- [#221 test(spawn-warmup): assert exit on a warm spawn (macOS main flake)](https://github.com/ashlrai/ashlr-plugin/pull/221): pull-request; 2026-10-25
+- [#220 test(handshake): v1 conformance test against the vendored ashlr-stack contract](https://github.com/ashlrai/ashlr-plugin/pull/220): pull-request; 2026-10-25
+- [#219 feat(doctor): suggest lexicon and mdopener-mcp doctor --fix when they advertise doctor-fix](https://github.com/ashlrai/ashlr-plugin/pull/219): pull-request; 2026-10-25
+- [#218 feat(doctor): companions show health and suggest locus doctor --fix when locus supports it](https://github.com/ashlrai/ashlr-plugin/pull/218): pull-request; 2026-10-25
+- [#217 feat(doctor): companions section via --ashlr-handshake, plus --json](https://github.com/ashlrai/ashlr-plugin/pull/217): pull-request; 2026-10-25
+- [#216 feat: ashlr-plugin --ashlr-handshake (Ashlr companion handshake v1)](https://github.com/ashlrai/ashlr-plugin/pull/216): pull-request; 2026-10-25
+- [#215 ci(deploy-site): cancel superseded PR runs only; cache the site's bun install](https://github.com/ashlrai/ashlr-plugin/pull/215): pull-request; 2026-10-25
+- [#214 release: 1.37.1 (first OIDC npm publish); pin npm 11.6.2 in npm-publish](https://github.com/ashlrai/ashlr-plugin/pull/214): pull-request; 2026-10-25
+- [#213 feat(doctor): opt-in Phantom agent preflight line](https://github.com/ashlrai/ashlr-plugin/pull/213): pull-request; 2026-10-25
+- [#212 feat(pro): keep ASHLR_PRO_TOKEN in the OS keychain](https://github.com/ashlrai/ashlr-plugin/pull/212): pull-request; 2026-10-25
+- [\[1.37.1\] - 2026-10-25](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-10-25
+- [#211 ci(release): npm publish via trusted publishing (OIDC) on v* tags](https://github.com/ashlrai/ashlr-plugin/pull/211): pull-request; 2026-10-24
+- [#210 test(router-cold-start): assert child CPU time on POSIX so host load cannot fail it](https://github.com/ashlrai/ashlr-plugin/pull/210): pull-request; 2026-10-24
+- [#209 test: spend the first spawn in test-server.test.ts on a warm-up child](https://github.com/ashlrai/ashlr-plugin/pull/209): pull-request; 2026-10-19
+- [#208 fix(codex-doctor): say when ashlr-mcp is not on PATH and how to fix it (report-only)](https://github.com/ashlrai/ashlr-plugin/pull/208): pull-request; 2026-10-19
+- [#207 fix(anthropic): never send the Claude Code OAuth token to a custom ANTHROPIC_BASE_URL; LiteLLM compat tests](https://github.com/ashlrai/ashlr-plugin/pull/207): pull-request; 2026-10-19
+- [#206 test(integration): wait for the backend's SQLite lock in billing-stripe-flow](https://github.com/ashlrai/ashlr-plugin/pull/206): pull-request; 2026-10-19
+- [#205 docs(bench): refresh benchmarks-v2.json from main 364a403](https://github.com/ashlrai/ashlr-plugin/pull/205): pull-request; 2026-10-19
+- [#204 test: warm-up spawn for the macOS first-spawn exit loss in pulse-emit and runWithTimeout tests](https://github.com/ashlrai/ashlr-plugin/pull/204): pull-request; 2026-10-19
+- [#203 fix: redact key material from endpoint error bodies; add key-redaction test](https://github.com/ashlrai/ashlr-plugin/pull/203): pull-request; 2026-10-19
+- [#202 docs: using ashlr-plugin with Phantom](https://github.com/ashlrai/ashlr-plugin/pull/202): pull-request; 2026-10-19
+- [#201 fix(security): deploy-smoke sends the bearer token to curl on stdin](https://github.com/ashlrai/ashlr-plugin/pull/201): pull-request; 2026-10-19
+- [#200 fix(security): cap-check reads the user API token from stdin](https://github.com/ashlrai/ashlr-plugin/pull/200): pull-request; 2026-10-19
+- [#199 fix(security): genome-key import reads the team key from stdin](https://github.com/ashlrai/ashlr-plugin/pull/199): pull-request; 2026-10-19
+- [#198 feat: opt-in OpenAI-compatible embeddings (LiteLLM) under gateway rules](https://github.com/ashlrai/ashlr-plugin/pull/198): pull-request; 2026-10-19
+- [#197 test: scale runWithTimeout happy-path budget on CI runners](https://github.com/ashlrai/ashlr-plugin/pull/197): pull-request; 2026-10-19
+- [#196 fix(security): local LLM unreachable warning names scheme://host:port only](https://github.com/ashlrai/ashlr-plugin/pull/196): pull-request; 2026-10-19
+- [#195 fix(security): default-path gateway rules for cloud and local LLM providers](https://github.com/ashlrai/ashlr-plugin/pull/195): pull-request; 2026-10-19
+- [#194 fix(security): default-path gateway rules for keyed Anthropic and OpenAI calls](https://github.com/ashlrai/ashlr-plugin/pull/194): pull-request; 2026-10-19
+- [#193 fix(security): genome consolidate endpoint comes from user config only](https://github.com/ashlrai/ashlr-plugin/pull/193): pull-request; 2026-10-19
+- [#192 fix(security): ashlr__orient no longer lets the model choose its LLM endpoint](https://github.com/ashlrai/ashlr-plugin/pull/192): pull-request; 2026-10-19
+- [#191 feat: opt-in strict gateway targets for keyed model calls (off by default)](https://github.com/ashlrai/ashlr-plugin/pull/191): pull-request; 2026-10-19
+- [#190 test(pulse-emit): per-test capture server, harness that cannot hang (refs #138)](https://github.com/ashlrai/ashlr-plugin/pull/190): pull-request; 2026-10-19
+- [#189 feat(bench): report-only recommended read thresholds in bench-read-real](https://github.com/ashlrai/ashlr-plugin/pull/189): pull-request; 2026-10-19
+- [#188 fix(doctor): MCP probe kills its whole process group so no bun outlives it](https://github.com/ashlrai/ashlr-plugin/pull/188): pull-request; 2026-10-19
+- [#187 feat: doctor and bench recognise phantom exec sessions (value-free, no reveal)](https://github.com/ashlrai/ashlr-plugin/pull/187): pull-request; 2026-10-19
+- [#186 fix: runWithTimeout always settles; benchmark PR step no longer fails main](https://github.com/ashlrai/ashlr-plugin/pull/186): pull-request; 2026-10-19
+- [#185 test: deflake orchestrate parallel-wave tests (overlap and ordering, not wall-clock)](https://github.com/ashlrai/ashlr-plugin/pull/185): pull-request; 2026-10-19
+- [#184 feat(doctor): metadata-only Phantom installed check](https://github.com/ashlrai/ashlr-plugin/pull/184): pull-request; 2026-10-18
+- [#182 test: cover _text-helpers and _edit-validate (JSON and skip paths)](https://github.com/ashlrai/ashlr-plugin/pull/182): pull-request; 2026-10-18
+- [#181 test(pulse-emit): more timeout headroom, kill stalled child, clean teardown](https://github.com/ashlrai/ashlr-plugin/pull/181): pull-request; 2026-10-18
+- [#180 feat: honor ANTHROPIC_BASE_URL, OPENAI_BASE_URL and OLLAMA_HOST (defaults unchanged)](https://github.com/ashlrai/ashlr-plugin/pull/180): pull-request; 2026-10-18
+- [#179 docs: CONTRIBUTING smoke step uses smoke:tools; competitive page command count](https://github.com/ashlrai/ashlr-plugin/pull/179): pull-request; 2026-10-18
+- [v1.37.0](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.37.0): release; 2026-10-17
+- [#164 docs: fix dead links, drop unverified figures](https://github.com/ashlrai/ashlr-plugin/pull/164): pull-request; 2026-10-17
+- [#176 fix(edit,bootstrap): overlapping matches are ambiguous; fuzzy window keeps its line ending; Bun install stays off MCP stdout](https://github.com/ashlrai/ashlr-plugin/pull/176): pull-request; 2026-10-17; cross-repo ashlrai/phantom#824
+- [#178 fix(tools): flag path refusals as errors, ashlr__write accepts path, right hook-mode setting, real serverInfo version](https://github.com/ashlrai/ashlr-plugin/pull/178): pull-request; 2026-10-17
+- [#177 chore(release): 1.37.0](https://github.com/ashlrai/ashlr-plugin/pull/177): pull-request; 2026-10-17
+- [#174 fix(hosts): tools use the project folder, Claude Code hook detection, faster hooks, CLI fixes](https://github.com/ashlrai/ashlr-plugin/pull/174): pull-request; 2026-10-17
+- [#171 docs: fix telemetry env var, Cursor host id, and setup paths in quickstarts](https://github.com/ashlrai/ashlr-plugin/pull/171): pull-request; 2026-10-17
+- [#165 scripts: bench-read-real measures the real ashlrRead handler by file size](https://github.com/ashlrai/ashlr-plugin/pull/165): pull-request; 2026-10-17
+- [#170 npm bins start under node, so a missing Bun is explained instead of crashing](https://github.com/ashlrai/ashlr-plugin/pull/170): pull-request; 2026-10-17; cross-repo ashlrai/phantom#824
+- [#175 fix(grep): say when ripgrep stopped early instead of stating a partial total](https://github.com/ashlrai/ashlr-plugin/pull/175): pull-request; 2026-10-17
+- [#169 edit: header-only summary for any exact unique match](https://github.com/ashlrai/ashlr-plugin/pull/169): pull-request; 2026-10-17
+- [#173 chore: remove stray test artifact from #167 and drop its unbacked overhead figure](https://github.com/ashlrai/ashlr-plugin/pull/173): pull-request; 2026-10-17
+- [#172 fix(grep): readable rg fallback output; re-measure grep savings against plain rg](https://github.com/ashlrai/ashlr-plugin/pull/172): pull-request; 2026-10-17
+- [#167 docs: line-number overhead note for small files](https://github.com/ashlrai/ashlr-plugin/pull/167): pull-request; 2026-10-17
+- [#168 ci: one Linux job; fix the SQLite migration race and zombie PID checks](https://github.com/ashlrai/ashlr-plugin/pull/168): pull-request; 2026-10-17; cross-repo ashlrai/phantom#820
+- [#166 feat(hosts): Gemini CLI and Cursor host ids, Gemini setup docs](https://github.com/ashlrai/ashlr-plugin/pull/166): pull-request; 2026-10-17
+- [\[1.37.0\] - 2026-10-17](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-10-17
+- [v1.36.5](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.36.5): release; 2026-10-16
+- [#160 docs(contributing): point new contributors at good first issues](https://github.com/ashlrai/ashlr-plugin/pull/160): pull-request; 2026-10-16
+- [#163 chore(release): 1.36.5](https://github.com/ashlrai/ashlr-plugin/pull/163): pull-request; 2026-10-16
+- [#156 docs: correct legal entity to Virginia C-Corp](https://github.com/ashlrai/ashlr-plugin/pull/156): pull-request; 2026-10-16
+- [#162 perf(edit): header-only summary for tiny edits](https://github.com/ashlrai/ashlr-plugin/pull/162): pull-request; 2026-10-16
+- [#153 fix(deps): install @ashlr/core-efficiency from npm, not GitHub](https://github.com/ashlrai/ashlr-plugin/pull/153): pull-request; 2026-10-16
+- [#145 feat(mcp): list ashlr-plugin on the official MCP Registry](https://github.com/ashlrai/ashlr-plugin/pull/145): pull-request; 2026-10-16
+- [#161 docs(readme): add one-line tagline](https://github.com/ashlrai/ashlr-plugin/pull/161): pull-request; 2026-10-16
+- [#148 docs: launch readiness - ecosystem section, contributing, PR template](https://github.com/ashlrai/ashlr-plugin/pull/148): pull-request; 2026-10-16
+- [#159 Replace 57% headline with honest per-call figures](https://github.com/ashlrai/ashlr-plugin/pull/159): pull-request; 2026-10-16
+- [\[1.36.5\] - 2026-10-16](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-10-16
+- [#158 docs(readme): per-call figures instead of -57% headline](https://github.com/ashlrai/ashlr-plugin/pull/158): pull-request; 2026-10-15
+- [#154 ci: PRs gate on Linux; macOS/Windows on main (or ci:full-os)](https://github.com/ashlrai/ashlr-plugin/pull/154): pull-request; 2026-10-13
+- [#147 ci: single CI Gate check + docs-only path filter](https://github.com/ashlrai/ashlr-plugin/pull/147): pull-request; 2026-10-13
+- [#146 docs: add AGENTS.md agent constitution](https://github.com/ashlrai/ashlr-plugin/pull/146): pull-request; 2026-10-13
+- [#144 fix: Return success for explicit CLI help](https://github.com/ashlrai/ashlr-plugin/pull/144): pull-request; 2026-10-02
+- [v1.36.4](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.36.4): release; 2026-09-30
+- [#143 Fix Plugin CLI coexistence and hoisted MCP startup (1.36.4)](https://github.com/ashlrai/ashlr-plugin/pull/143): pull-request; 2026-09-30
+- [v1.36.3](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.36.3): release; 2026-09-30
+- [#142 Add portable MCP guidance across agent hosts (1.36.3)](https://github.com/ashlrai/ashlr-plugin/pull/142): pull-request; 2026-09-30
+- [\[1.36.4\] - 2026-09-30](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-09-30
+- [#141 docs(examples): runnable MCP client recipe + PR template](https://github.com/ashlrai/ashlr-plugin/pull/141): pull-request; 2026-09-29
+- [#140 test: tolerate slow CI runners in timing assertions (keep local perf bounds)](https://github.com/ashlrai/ashlr-plugin/pull/140): pull-request; 2026-09-29
+- [#137 chore(github): add issue templates](https://github.com/ashlrai/ashlr-plugin/pull/137): pull-request; 2026-09-29
+- [#136 docs: replace per-OS CI badges with a single real CI badge; standardize license holder](https://github.com/ashlrai/ashlr-plugin/pull/136): pull-request; 2026-09-29
+- [#139 test(pulse-emit): fix EPIPE flake that fails test (ubuntu/macos) on every PR](https://github.com/ashlrai/ashlr-plugin/pull/139): pull-request; 2026-09-29
+- [\[1.36.3\] - 2026-09-29](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-09-29
+- [v1.36.2](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.36.2): release; 2026-07-11
+- [\[1.36.2\] - 2026-07-11](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-07-11
+- [#134 fix(site): make next dev work on Node 25 + unpin vercel CLI](https://github.com/ashlrai/ashlr-plugin/pull/134): pull-request; 2026-06-02
+- [#133 feat(site): redesign /community - lead with proven savings, not $0.00](https://github.com/ashlrai/ashlr-plugin/pull/133): pull-request; 2026-06-02
+- [#132 chore: polish community ledger + leaderboard (review/simplify follow-up)](https://github.com/ashlrai/ashlr-plugin/pull/132): pull-request; 2026-06-01
+- [v1.36.0](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.36.0): release; 2026-06-01
+- [#131 feat: public leaderboard opt-in + frontend table (v1.36.0)](https://github.com/ashlrai/ashlr-plugin/pull/131): pull-request; 2026-06-01
+- [#130 feat(server): opt-in public leaderboard endpoint (GET /public/leaderboard)](https://github.com/ashlrai/ashlr-plugin/pull/130): pull-request; 2026-06-01
+- [#129 feat(site): cumulative savings graph on /community](https://github.com/ashlrai/ashlr-plugin/pull/129): pull-request; 2026-06-01
+- [#128 feat(server): GET /public/stats/time-series - global daily savings (graph data)](https://github.com/ashlrai/ashlr-plugin/pull/128): pull-request; 2026-06-01
+- [#127 feat(site): public Community Ledger - total tokens & $ saved for everyone](https://github.com/ashlrai/ashlr-plugin/pull/127): pull-request; 2026-06-01
+- [v1.35.4](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.35.4): release; 2026-06-01
+- [#126 fix(hooks): stop lifecycle hooks emitting invalid output schema (v1.35.4)](https://github.com/ashlrai/ashlr-plugin/pull/126): pull-request; 2026-06-01
+- [#125 feat(eval): open-model→ashlr MCP bridge ($0 leaderboard foundation)](https://github.com/ashlrai/ashlr-plugin/pull/125): pull-request; 2026-06-01
+- [#124 fix(site): hero spacing/overlap + correct install count](https://github.com/ashlrai/ashlr-plugin/pull/124): pull-request; 2026-06-01
+- [v1.35.3](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.35.3): release; 2026-06-01
+- [#123 fix(v1.35.3): chunk abstract classes (were missing from skeletons + genome)](https://github.com/ashlrai/ashlr-plugin/pull/123): pull-request; 2026-06-01
+- [#122 test(integration): retry issueToken spawn (de-flake cloud-sync-flow)](https://github.com/ashlrai/ashlr-plugin/pull/122): pull-request; 2026-06-01
+- [#121 fix(hooks): hook-timings batcher captures path at enqueue (CI flake root cause)](https://github.com/ashlrai/ashlr-plugin/pull/121): pull-request; 2026-06-01
+- [v1.35.2](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.35.2): release; 2026-06-01
+- [#120 feat(v1.35.2): AST skeleton class member signatures](https://github.com/ashlrai/ashlr-plugin/pull/120): pull-request; 2026-06-01
+- [#119 test: safety unit tests for findFuzzyMatch](https://github.com/ashlrai/ashlr-plugin/pull/119): pull-request; 2026-06-01
+- [#118 feat(site): per-post OG cards for blog posts](https://github.com/ashlrai/ashlr-plugin/pull/118): pull-request; 2026-06-01
+- [#117 test: harden the frequent hook-timings-async flake (test-only)](https://github.com/ashlrai/ashlr-plugin/pull/117): pull-request; 2026-06-01
+- [#116 feat(site): per-page OG cards for marketing pages](https://github.com/ashlrai/ashlr-plugin/pull/116): pull-request; 2026-06-01
+- [#115 feat(site): per-page OG images for docs](https://github.com/ashlrai/ashlr-plugin/pull/115): pull-request; 2026-06-01
+- [v1.35.1](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.35.1): release; 2026-06-01
+- [#114 feat(v1.35.1): AST skeleton covers enums](https://github.com/ashlrai/ashlr-plugin/pull/114): pull-request; 2026-06-01
+- [#113 test(ci): de-flake bench-orchestrate perf bounds](https://github.com/ashlrai/ashlr-plugin/pull/113): pull-request; 2026-06-01
+- [v1.35.0](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.35.0): release; 2026-06-01
+- [#112 feat(v1.35): WozCode token mechanics - AST-truncated reads, fuzzy edits, post-edit validation](https://github.com/ashlrai/ashlr-plugin/pull/112): pull-request; 2026-06-01
+- [#111 docs+seo: AI-crawlable docs, sitemap/llms.txt/JSON-LD, dead-link + accuracy fixes, install.sh, WozCode learnings](https://github.com/ashlrai/ashlr-plugin/pull/111): pull-request; 2026-06-01
+- [v1.34.1](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.34.1): release; 2026-06-01
+- [#110 chore(v1.34.1): hardening - backend security fixes, pipe gating, honest labeling, docs](https://github.com/ashlrai/ashlr-plugin/pull/110): pull-request; 2026-06-01
+- [v1.34.0](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.34.0): release; 2026-06-01
+- [#109 feat(v1.34): "Elite" - code-exec pipe, measured savings, parity hooks/skills + landing-page revamp](https://github.com/ashlrai/ashlr-plugin/pull/109): pull-request; 2026-06-01
+- [\[1.34.1\] - 2026-06-01](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-06-01
+- [\[1.35.0\] - 2026-06-01](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-06-01
+- [\[1.35.1\] - 2026-06-01](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-06-01
+- [\[1.35.2\] - 2026-06-01](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-06-01
+- [\[1.35.3\] - 2026-06-01](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-06-01
+- [\[1.35.4\] - 2026-06-01](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-06-01
+- [\[1.36.0\] - 2026-06-01](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-06-01
+- [\[1.34.0\] - 2026-05-31](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-05-31
+- [#108 chore(v1.33): greenify CI - slashCommands 31→33 + bench bounds](https://github.com/ashlrai/ashlr-plugin/pull/108): pull-request; 2026-05-26
+- [#107 chore(v1.33): tsc sweep + ops runbook covers multi-host + first-call + restart](https://github.com/ashlrai/ashlr-plugin/pull/107): pull-request; 2026-05-26
+- [#106 docs(v1.33): release notes - audit-driven polish + multi-host](https://github.com/ashlrai/ashlr-plugin/pull/106): pull-request; 2026-05-26
+- [v1.33 - Audit-driven polish + multi-host portability](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.33.0): release; 2026-05-26
+- [#105 UX: wizard restart enforcement + SessionStart missed-restart warning](https://github.com/ashlrai/ashlr-plugin/pull/105): pull-request; 2026-05-26
+- [#104 docs(ux): bold Bun ≥ 1.3 prereq before install one-liner](https://github.com/ashlrai/ashlr-plugin/pull/104): pull-request; 2026-05-26
+- [#103 feat(multi-host): MCP server runs in Cline, Claude Desktop, Codex CLI](https://github.com/ashlrai/ashlr-plugin/pull/103): pull-request; 2026-05-26
+- [#102 feat(ux): first-call savings projection - close drop-off cliff](https://github.com/ashlrai/ashlr-plugin/pull/102): pull-request; 2026-05-26
+- [\[1.33.0\] - 2026-05-26](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-05-26
+- [#101 feat(q1-27): retry-with-backoff + handoff context budget (8KB cap)](https://github.com/ashlrai/ashlr-plugin/pull/101): pull-request; 2026-05-23
+- [#100 docs(v1.32): README hero refresh + CHANGELOG entry](https://github.com/ashlrai/ashlr-plugin/pull/100): pull-request; 2026-05-23
+- [#99 feat(q1-27): orchestration central quota accounting (table + endpoint + aggregator)](https://github.com/ashlrai/ashlr-plugin/pull/99): pull-request; 2026-05-23
+- [#98 feat(q1-27): /ashlr-orchestrate-status CLI + result persistence](https://github.com/ashlrai/ashlr-plugin/pull/98): pull-request; 2026-05-23
+- [#97 feat(q1-27): orchestrator overhead bench (stub-mode, 5 shapes)](https://github.com/ashlrai/ashlr-plugin/pull/97): pull-request; 2026-05-23
+- [#96 chore: fix pre-existing tsc errors + permanent date-drift fix + ast-chunker skip](https://github.com/ashlrai/ashlr-plugin/pull/96): pull-request; 2026-05-23
+- [#95 feat(q1-27): wire orchestration executor dispatch + dashboard activity panel](https://github.com/ashlrai/ashlr-plugin/pull/95): pull-request; 2026-05-23
+- [#94 feat(q1-27): orchestration telemetry - runs table + ingest + admin read endpoint](https://github.com/ashlrai/ashlr-plugin/pull/94): pull-request; 2026-05-23
+- [#93 feat(q1-27): orchestration executor module - stub + LLM executors](https://github.com/ashlrai/ashlr-plugin/pull/93): pull-request; 2026-05-23
+- [#92 feat(q1-27): parallel branch execution in orchestrate-run (Q1 wk 4-6)](https://github.com/ashlrai/ashlr-plugin/pull/92): pull-request; 2026-05-23
+- [#91 test(q1-27): end-to-end orchestration smoke test](https://github.com/ashlrai/ashlr-plugin/pull/91): pull-request; 2026-05-23
+- [#90 feat(q1-27): rich orchestration renderer + sequential runner (Track B v2)](https://github.com/ashlrai/ashlr-plugin/pull/90): pull-request; 2026-05-23
+- [#89 feat(q1-27): /ashlr-orchestrate slash command + integration glue (Track C)](https://github.com/ashlrai/ashlr-plugin/pull/89): pull-request; 2026-05-23
+- [#88 feat(q1-27): orchestration schema + auto-expander (Track A)](https://github.com/ashlrai/ashlr-plugin/pull/88): pull-request; 2026-05-23
+- [v1.32 - Northstar Q1-Q4 shipped (33-agent, 17-PR build cycle)](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.32.0): release; 2026-05-23
+- [#87 docs(ops): operational runbook for v1.32 northstar surfaces](https://github.com/ashlrai/ashlr-plugin/pull/87): pull-request; 2026-05-23
+- [#83 feat(q4): cross-session discovery propagation aggregator + dashboard surface](https://github.com/ashlrai/ashlr-plugin/pull/83): pull-request; 2026-05-23
+- [#82 feat(q4): session replay UI v0 - read side of session-graph surface](https://github.com/ashlrai/ashlr-plugin/pull/82): pull-request; 2026-05-23
+- [#81 feat(q4): WAD-D historical drilldown - date-range + 6-indicator sparklines](https://github.com/ashlrai/ashlr-plugin/pull/81): pull-request; 2026-05-23
+- [#80 feat(q3): PR + issue retrieval in ashlr__grep with query DSL](https://github.com/ashlrai/ashlr-plugin/pull/80): pull-request; 2026-05-23
+- [#79 feat(q4): session graph capture foundation - ingest path only](https://github.com/ashlrai/ashlr-plugin/pull/79): pull-request; 2026-05-23
+- [#78 feat(q4): multiplayer DNA dashboard - per-segment breakdown + movers](https://github.com/ashlrai/ashlr-plugin/pull/78): pull-request; 2026-05-23
+- [#77 feat(q3): predictive prefetch MVP - anticipate file reads via import graph](https://github.com/ashlrai/ashlr-plugin/pull/77): pull-request; 2026-05-23
+- [#76 feat(wad-d): real lead indicators replace stub values](https://github.com/ashlrai/ashlr-plugin/pull/76): pull-request; 2026-05-23
+- [#75 feat(q2): cloud delta sync - GitHub webhooks → plugin puller (Pro/Team)](https://github.com/ashlrai/ashlr-plugin/pull/75): pull-request; 2026-05-23
+- [#72 feat(q2): AI-Native Synthesis MVP - discovery sections from commits + statics](https://github.com/ashlrai/ashlr-plugin/pull/72): pull-request; 2026-05-23
+- [#70 feat(wad-d): wire daily aggregator into GitHub Actions (workflow_dispatch only)](https://github.com/ashlrai/ashlr-plugin/pull/70): pull-request; 2026-05-23
+- [#74 feat(wad-d): founder dashboard v0 (read endpoint + Next.js page)](https://github.com/ashlrai/ashlr-plugin/pull/74): pull-request; 2026-05-23
+- [#73 feat(wad-d): unblock daily cron via Railway-side HTTP trigger](https://github.com/ashlrai/ashlr-plugin/pull/73): pull-request; 2026-05-23
+- [#71 feat(q2-prep): freshness badges in ashlr__grep output](https://github.com/ashlrai/ashlr-plugin/pull/71): pull-request; 2026-05-23
+- [#68 fix(server): mock Stripe SDK module in billing tests to unblock Railway deploy](https://github.com/ashlrai/ashlr-plugin/pull/68): pull-request; 2026-05-23
+- [v1.31.0](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.31.0): release; 2026-05-23
+- [#67 Phase 1 Q1 - Genome 2.0 MVP + WAD-D instrumentation (client + backend)](https://github.com/ashlrai/ashlr-plugin/pull/67): pull-request; 2026-05-23
+- [#66 Ship v1.31 Phase 0 - $0 fix + SessionEnd nudges + onboarding hero](https://github.com/ashlrai/ashlr-plugin/pull/66): pull-request; 2026-05-23
+- [\[1.32.0\] - 2026-05-23](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-05-23
+- [#65 v1.29 + v1.30 - hook ergonomics, observability, retrieval kill-switch](https://github.com/ashlrai/ashlr-plugin/pull/65): pull-request; 2026-05-12
+- [\[1.29.0\] - 2026-05-08](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-05-08
+- [#64 v1.28 "Pro Has Teeth" - /ashlr-brief + tier-aware delegation + bash summarizers](https://github.com/ashlrai/ashlr-plugin/pull/64): pull-request; 2026-05-07
+- [v1.27.1 - patch (genome-grep wire-in + 6 .skip removals)](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.27.1): release; 2026-05-04
+- [#63 patch: v1.27.1 - close #60 + #61, bump version](https://github.com/ashlrai/ashlr-plugin/pull/63): pull-request; 2026-05-04
+- [v1.27.0 - Delegate Hard, Save Harder](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.27.0): release; 2026-05-04
+- [#59 release: v1.27.0 - "Delegate Hard, Save Harder"](https://github.com/ashlrai/ashlr-plugin/pull/59): pull-request; 2026-05-04
+- [#58 fix(deploy): pin Railway CLI to v4.27.5](https://github.com/ashlrai/ashlr-plugin/pull/58): pull-request; 2026-05-02
+- [#57 fix(deploy): install pinned Railway CLI binary, not legacy npm package](https://github.com/ashlrai/ashlr-plugin/pull/57): pull-request; 2026-05-02
+- [#56 fix(docs): landing pages for all 5 section folders](https://github.com/ashlrai/ashlr-plugin/pull/56): pull-request; 2026-05-02
+- [#55 fix(deploy): install Railway CLI via npm](https://github.com/ashlrai/ashlr-plugin/pull/55): pull-request; 2026-05-02
+- [#53 fix(docs): /docs landing page (was 404)](https://github.com/ashlrai/ashlr-plugin/pull/53): pull-request; 2026-05-02
+- [#51 polish(site): mobile density on landing page](https://github.com/ashlrai/ashlr-plugin/pull/51): pull-request; 2026-05-02
+- [#54 fix(deploy): unblock both deploy workflows](https://github.com/ashlrai/ashlr-plugin/pull/54): pull-request; 2026-05-02
+- [#52 feat(llm): switch hosted summarizer Anthropic Haiku → xAI Grok (~75% cheaper)](https://github.com/ashlrai/ashlr-plugin/pull/52): pull-request; 2026-05-02
+- [#50 chore(deploy): migrate server from Fly.io to Railway](https://github.com/ashlrai/ashlr-plugin/pull/50): pull-request; 2026-05-01
+- [#49 fix(test/win): platform-specific cold-start target (router)](https://github.com/ashlrai/ashlr-plugin/pull/49): pull-request; 2026-04-29
+- [#27 feat(pulse): Bearer PAT auth for pulse-emit hook](https://github.com/ashlrai/ashlr-plugin/pull/27): pull-request; 2026-04-29
+- [v1.25.1](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.25.1): release; 2026-04-29
+- [v1.25.0](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.25.0): release; 2026-04-29
+- [#48 release: v1.25.1 - multi-turn wiring hotfix + Windows test hardening](https://github.com/ashlrai/ashlr-plugin/pull/48): pull-request; 2026-04-29
+- [#47 hotfix(v1.25.1): wire multi-turn hook + accept new telemetry kind](https://github.com/ashlrai/ashlr-plugin/pull/47): pull-request; 2026-04-29
+- [#46 release(v1.25.0): "Multi-Turn + Closing Loops"](https://github.com/ashlrai/ashlr-plugin/pull/46): pull-request; 2026-04-29
+- [v1.24.0](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.24.0): release; 2026-04-29
+- [#43 feat(telemetry): Sprint 1 - POST /v1/events endpoint](https://github.com/ashlrai/ashlr-plugin/pull/43): pull-request; 2026-04-29
+- [#44 feat(pro): Sprint 2 - Pro backend client wiring (P1+P2+P3+P4)](https://github.com/ashlrai/ashlr-plugin/pull/44): pull-request; 2026-04-29
+- [#45 release(v1.24.0): "Foundation" - three-sprint roadmap](https://github.com/ashlrai/ashlr-plugin/pull/45): pull-request; 2026-04-29
+- [\[1.25.0\] - 2026-04-29](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-29
+- [\[1.25.1\] - 2026-04-29](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-29
+- [\[1.24.0\] - 2026-04-28](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-28
+- [v1.23.0](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.23.0): release; 2026-04-26
+- [#42 release(v1.23.0): "Fully Functional + Great" - 10-track sprint](https://github.com/ashlrai/ashlr-plugin/pull/42): pull-request; 2026-04-26
+- [v1.22.0](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.22.0): release; 2026-04-26
+- [#41 release(v1.22.0): "Consistency" - 8-track sprint (Tier 0 trust + 5 new tools + LLM hybrid + adoption polish + visibility + bench refresh)](https://github.com/ashlrai/ashlr-plugin/pull/41): pull-request; 2026-04-26
+- [\[1.23.0\] - 2026-04-26](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-26
+- [#40 fix(banners): cyberpunk 5-row block-letter hero with proper lowercase + per-row gradient](https://github.com/ashlrai/ashlr-plugin/pull/40): pull-request; 2026-04-25
+- [#39 fix(banners): replace broken ASCII logos in /ashlr-savings + /ashlr-dashboard](https://github.com/ashlrai/ashlr-plugin/pull/39): pull-request; 2026-04-25
+- [#37 docs(concepts): add 'How session savings are counted' + FAQ Q8.5](https://github.com/ashlrai/ashlr-plugin/pull/37): pull-request; 2026-04-25
+- [#38 test(sql): skip file-based SQLite tests on Windows (matches sibling pattern, fixes recurring flake)](https://github.com/ashlrai/ashlr-plugin/pull/38): pull-request; 2026-04-25
+- [#36 chore: retire stale /ashlr-coach docs (skill was deleted in v1.18)](https://github.com/ashlrai/ashlr-plugin/pull/36): pull-request; 2026-04-25
+- [#35 chore: close remaining punch-list (CRDT, hook hardening, counts, macOS flake)](https://github.com/ashlrai/ashlr-plugin/pull/35): pull-request; 2026-04-25
+- [#34 chore: polish post-merge - spawn errors, ESM import hygiene, stale counts](https://github.com/ashlrai/ashlr-plugin/pull/34): pull-request; 2026-04-25
+- [#33 test(efficiency-server): direct unit tests for ashlrRead/Grep/Edit (Track 4 - descoped)](https://github.com/ashlrai/ashlr-plugin/pull/33): pull-request; 2026-04-25
+- [#32 feat(team-genome): /ashlr-genome-rewrap + real /ashlr-handoff + CRDT wording reconciliation](https://github.com/ashlrai/ashlr-plugin/pull/32): pull-request; 2026-04-25
+- [#31 feat(onboarding): polish first-run wizard (live-demo timeout + warm-up hint + small-repo genome offer)](https://github.com/ashlrai/ashlr-plugin/pull/31): pull-request; 2026-04-25
+- [#30 chore: register 10 missing skill docs + fix .tmp-ashlr-watch leak](https://github.com/ashlrai/ashlr-plugin/pull/30): pull-request; 2026-04-25
+- [#29 fix(site): bump Next.js to 15.3.9 (CVE patch)](https://github.com/ashlrai/ashlr-plugin/pull/29): pull-request; 2026-04-25
+- [#28 fix(site): set vercel.json installCommand to bun](https://github.com/ashlrai/ashlr-plugin/pull/28): pull-request; 2026-04-25
+- [#26 fix(ci): replace stale amondnet/vercel-action with npx vercel@latest](https://github.com/ashlrai/ashlr-plugin/pull/26): pull-request; 2026-04-25
+- [#25 fix(ci): gate production Vercel deploy on secret availability](https://github.com/ashlrai/ashlr-plugin/pull/25): pull-request; 2026-04-25
+- [#24 fix(site): pin fumadocs-mdx to ^11.10.1 (unblock Vercel deploy)](https://github.com/ashlrai/ashlr-plugin/pull/24): pull-request; 2026-04-25
+- [v1.21.1 - Windows hardening](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.21.1): release; 2026-04-25
+- [#23 fix: kill remaining Windows test flakes](https://github.com/ashlrai/ashlr-plugin/pull/23): pull-request; 2026-04-25
+- [#22 chore: bump @ashlr/core-efficiency to v0.3.0 (cross-platform hardening)](https://github.com/ashlrai/ashlr-plugin/pull/22): pull-request; 2026-04-25
+- [v1.21.0 - 6-track sprint](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.21.0): release; 2026-04-25
+- [#21 release: v1.21.0 - 6-track sprint (hooks rewrite + efficiency-server decomp + async I/O + capability polish + Windows + UX)](https://github.com/ashlrai/ashlr-plugin/pull/21): pull-request; 2026-04-25
+- [#20 release: v1.20.2 - status-line session counter (real fix) + bench methodology](https://github.com/ashlrai/ashlr-plugin/pull/20): pull-request; 2026-04-25
+- [\[1.22.0\] - 2026-04-25](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-25
+- [#19 feat(redirect): widen Edit/Write/MultiEdit + Bash nudge + ~/.claude allow](https://github.com/ashlrai/ashlr-plugin/pull/19): pull-request; 2026-04-24
+- [v1.20.1 - session counter fix](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.20.1): release; 2026-04-24
+- [#18 release: v1.20.1 - session-id hint fixes status-line session=0](https://github.com/ashlrai/ashlr-plugin/pull/18): pull-request; 2026-04-24
+- [v1.20.0 - search_replace_regex + test watch mode](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.20.0): release; 2026-04-24
+- [#17 release: v1.20.0 - search_replace_regex + test watch mode](https://github.com/ashlrai/ashlr-plugin/pull/17): pull-request; 2026-04-24
+- [v1.19.1 - cwd-clamp hotfix](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.19.1): release; 2026-04-24
+- [#16 release: v1.19.1 - cwd-clamp hotfix (absolute-path dead-end)](https://github.com/ashlrai/ashlr-plugin/pull/16): pull-request; 2026-04-24
+- [v1.19.0 - Windows unblock + rename_file + tool-redirect retired](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.19.0): release; 2026-04-24
+- [#15 release: v1.19.0 - Windows unblock + rename_file + tool-redirect retired](https://github.com/ashlrai/ashlr-plugin/pull/15): pull-request; 2026-04-24
+- [#14 feat(bun-install): seamless first-run hook trampoline + doctor PATH-gap](https://github.com/ashlrai/ashlr-plugin/pull/14): pull-request; 2026-04-24
+- [v1.18.0 - Trust, Reach, Delight](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.18.0): release; 2026-04-24
+- [#13 release: v1.18.0 - Trust, Reach, Delight](https://github.com/ashlrai/ashlr-plugin/pull/13): pull-request; 2026-04-24
+- [\[1.19.0\] - 2026-04-24](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-24
+- [\[1.19.1\] - 2026-04-24](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-24
+- [\[1.20.0\] - 2026-04-24](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-24
+- [\[1.20.1\] - 2026-04-24](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-24
+- [v1.17.0 - team-cloud genome end-to-end (push + bootstrap)](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.17.0): release; 2026-04-23
+- [#12 release: v1.17.0 - team-cloud genome end-to-end (push + bootstrap)](https://github.com/ashlrai/ashlr-plugin/pull/12): pull-request; 2026-04-23
+- [#11 feat(team-genome): T3 - /ashlr-genome-team-init bootstrap](https://github.com/ashlrai/ashlr-plugin/pull/11): pull-request; 2026-04-23
+- [#10 feat(team-genome): T2.5 - client push path + SessionEnd wiring](https://github.com/ashlrai/ashlr-plugin/pull/10): pull-request; 2026-04-23
+- [#9 feat(team-genome): T2 - client-side v2 crypto + /ashlr-genome-keygen](https://github.com/ashlrai/ashlr-plugin/pull/9): pull-request; 2026-04-23
+- [#8 feat(team-genome): T1 - server-side v2 envelope encryption](https://github.com/ashlrai/ashlr-plugin/pull/8): pull-request; 2026-04-23
+- [v1.16.0](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.16.0): release; 2026-04-23
+- [#7 release: v1.16.0 - pulse OTel emitter (opt-in)](https://github.com/ashlrai/ashlr-plugin/pull/7): pull-request; 2026-04-23
+- [#6 feat(pulse): opt-in OTel emitter via ASHLR_PULSE_OTLP_ENDPOINT](https://github.com/ashlrai/ashlr-plugin/pull/6): pull-request; 2026-04-23
+- [v1.15.0 - windows hardening, crash-dump upload, stats SQLite](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.15.0): release; 2026-04-23
+- [#5 chore(ci): fix 4 env-specific test flakes so the test gate is meaningful](https://github.com/ashlrai/ashlr-plugin/pull/5): pull-request; 2026-04-23
+- [#4 feat(stats): opt-in SQLite backend via ASHLR_STATS_BACKEND=sqlite](https://github.com/ashlrai/ashlr-plugin/pull/4): pull-request; 2026-04-23
+- [#3 feat(crash-report): opt-in crash-dump upload via /ashlr-report-crash](https://github.com/ashlrai/ashlr-plugin/pull/3): pull-request; 2026-04-23
+- [#2 fix(windows): close the path-separator debt loop](https://github.com/ashlrai/ashlr-plugin/pull/2): pull-request; 2026-04-23
+- [\[1.17.0\] - 2026-04-23](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-23
+- [\[1.18.0\] - 2026-04-23](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-23
+- [v1.14.1 - make the promise real](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.14.1): release; 2026-04-22
+- [v1.14.0 - Windows parity + token-savings escape hatch](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.14.0): release; 2026-04-22
+- [\[1.14.1\] - 2026-04-22](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-22
+- [\[1.15.0\] - 2026-04-22](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-22
+- [\[1.16.0\] - 2026-04-22](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-22
+- [\[1.13.0\] - 2026-04-21](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-21
+- [\[1.14.0\] - 2026-04-21](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-21
+- [v1.12.0 - Architectural Foundation](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.12.0): release; 2026-04-19
+- [v1.11.1 - security patch: genome ownership + webhook TOCTOU](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.11.1): release; 2026-04-19
+- [v1.11.0 - hero demo, landing overhaul, team invites, Grafana, CLI](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.11.0): release; 2026-04-19
+- [v1.10.2 - /ashlr-update path resolution fix](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.10.2): release; 2026-04-19
+- [v1.10.1 - polish: security, correctness, cross-platform](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.10.1): release; 2026-04-19
+- [\[1.10.1\] - 2026-04-19](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-19
+- [\[1.10.2\] - 2026-04-19](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-19
+- [\[1.11.0\] - 2026-04-19](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-19
+- [\[1.11.1\] - 2026-04-19](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-19
+- [\[1.11.2\] - 2026-04-19](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-19
+- [\[1.12.0\] - 2026-04-19](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-19
+- [v1.10.0 - /roadmap + /blog + auto-update + typecheck cleanup](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.10.0): release; 2026-04-18
+- [v1.9.0 - Windows/macOS/Linux + /ashlr-upgrade terminal flow](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.9.0): release; 2026-04-18
+- [v1.8.2 - swap Resend for SendGrid](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.8.2): release; 2026-04-18
+- [v1.8.1 - entity + email launch config (AshlrAI Inc, support@ashlr.ai)](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.8.1): release; 2026-04-18
+- [v1.8.0 - genome encryption, admin dashboard, status page](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.8.0): release; 2026-04-18
+- [v1.7.0 - HTML emails, onboarding wizard, flaky tests killed](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.7.0): release; 2026-04-18
+- [v1.6.0 - team tier: CRDT genome + policy packs + audit log + e2e tests](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.6.0): release; 2026-04-18
+- [v1.5.0 - VS Code extension + backend observability + launch content kit](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.5.0): release; 2026-04-18
+- [v1.4.0 - magic-link auth, legal pages, reproducible benchmarks](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.4.0): release; 2026-04-18
+- [v1.3.0 - docs site, Stripe billing, web dashboard](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.3.0): release; 2026-04-18
+- [v1.2.0 - cloud LLM summarizer, auto-deploy CI, site production polish](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.2.0): release; 2026-04-18
+- [v1.1.0 - Phase 1 pro backend + cloud stats sync + animated landing](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.1.0): release; 2026-04-18
+- [v1.0.2 - landing page v2, pro tier strategy, backend spec](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.0.2): release; 2026-04-18
+- [v1.0.1 - session +0 fix for zombie pre-v0.8.0 processes](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.0.1): release; 2026-04-18
+- [v1.0.0 - production-ready: 15 MCP tools, 23 skills, 794 tests green](https://github.com/ashlrai/ashlr-plugin/releases/tag/v1.0.0): release; 2026-04-18
+- [v0.9.3 - fix: session counter stuck at 0](https://github.com/ashlrai/ashlr-plugin/releases/tag/v0.9.3): release; 2026-04-18
+- [v0.9.2 - SSRF-safe fetch, multi_edit $ bug, stats race, ANSI truncation](https://github.com/ashlrai/ashlr-plugin/releases/tag/v0.9.2): release; 2026-04-18
+- [v0.9.1 - real-time counters, activity indicator, ASCII dashboard](https://github.com/ashlrai/ashlr-plugin/releases/tag/v0.9.1): release; 2026-04-18
+- [v0.9.0 - Atomic edits, meta-router, savings badge](https://github.com/ashlrai/ashlr-plugin/releases/tag/v0.9.0): release; 2026-04-18
+- [v0.8.0 - per-session counters, animated status line, two new MCP tools](https://github.com/ashlrai/ashlr-plugin/releases/tag/v0.8.0): release; 2026-04-18
+- [\[1.0.2\] - 2026-04-18](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-18
+- [\[1.1.0\] - 2026-04-18](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-18
+- [\[1.10.0\] - 2026-04-18](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-18
+- [\[1.2.0\] - 2026-04-18](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-18
+- [\[1.3.0\] - 2026-04-18](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-18
+- [\[1.4.0\] - 2026-04-18](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-18
+- [\[1.5.0\] - 2026-04-18](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-18
+- [\[1.6.0\] - 2026-04-18](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-18
+- [\[1.7.0\] - 2026-04-18](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-18
+- [\[1.8.0\] - 2026-04-18](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-18
+- [\[1.8.1\] - 2026-04-18](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-18
+- [\[1.8.2\] - 2026-04-18](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-18
+- [\[1.9.0\] - 2026-04-18](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-18
+- [\[0.8.0\] - 2026-04-17](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-17
+- [\[0.9.0\] - 2026-04-17](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-17
+- [\[0.9.1\] - 2026-04-17](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-17
+- [\[0.9.2\] - 2026-04-17](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-17
+- [\[0.9.3\] - 2026-04-17](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-17
+- [\[1.0.0\] - 2026-04-17](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-17
+- [\[1.0.1\] - 2026-04-17](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-17
+- [v0.7.0 - orient + pr/issue + orient-nudge hook](https://github.com/ashlrai/ashlr-plugin/releases/tag/v0.7.0): release; 2026-04-16
+- [v0.6.2 - self-healing MCP entrypoint + 9-server doctor](https://github.com/ashlrai/ashlr-plugin/releases/tag/v0.6.2): release; 2026-04-15
+- [v0.6.1 - ashlrai org rename + README rewrite](https://github.com/ashlrai/ashlr-plugin/releases/tag/v0.6.1): release; 2026-04-15
+- [v0.6.0 - real summarization · setup polish · hero animation](https://github.com/ashlrai/ashlr-plugin/releases/tag/v0.6.0): release; 2026-04-15
+- [v0.5.0 - 9 tools, genome scribe loop, real tokenizer](https://github.com/ashlrai/ashlr-plugin/releases/tag/v0.5.0): release; 2026-04-15
+- [v0.4.0 - MCP fix + ashlr__tree + real tokenizer + landing overhaul](https://github.com/ashlrai/ashlr-plugin/releases/tag/v0.4.0): release; 2026-04-15
+- [v0.3.0 - beyond parity · SQL · Bash · baseline scanner](https://github.com/ashlrai/ashlr-plugin/releases/tag/v0.3.0): release; 2026-04-15
+- [v0.2.0 - WOZCODE feature parity](https://github.com/ashlrai/ashlr-plugin/releases/tag/v0.2.0): release; 2026-04-15
+- [v0.1.0 - Initial public release](https://github.com/ashlrai/ashlr-plugin/releases/tag/v0.1.0): release; 2026-04-15
+- [\[0.1.0\] - 2026-04-15](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-15
+- [\[0.2.0\] - 2026-04-15](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-15
+- [\[0.3.0\] - 2026-04-15](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-15
+- [\[0.6.0\] - 2026-04-15](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; 2026-04-15
+- [\[1.20.2\]](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; undated
+- [\[1.21.0\]](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; undated
+- [\[Unreleased\]](https://github.com/ashlrai/ashlr-plugin/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+
+### ashlrai/ashlr-stack (core-fleet)
+
+- [#123 bridge: RQ-STACK-DOCTOR-JSON-SNAPSHOT](https://github.com/ashlrai/ashlr-stack/pull/123): pull-request; 2026-10-28
+- [#121 bridge: RQ-STACK-MCP-TOOLS-TESTS](https://github.com/ashlrai/ashlr-stack/pull/121): pull-request; 2026-10-28
+- [#126 bridge: RQ-FRESH-GEN-STACK](https://github.com/ashlrai/ashlr-stack/pull/126): pull-request; 2026-10-28
+- [#143 bridge: RQ-GEN-2026102622-132](https://github.com/ashlrai/ashlr-stack/pull/143): pull-request; 2026-10-28
+- [#142 bridge: RQ-GEN-2026102622-117](https://github.com/ashlrai/ashlr-stack/pull/142): pull-request; 2026-10-28
+- [#139 bridge: RQ-DEL-ASHLR-STACK](https://github.com/ashlrai/ashlr-stack/pull/139): pull-request; 2026-10-28
+- [#141 bridge: RQ-GEN-2026102621-019](https://github.com/ashlrai/ashlr-stack/pull/141): pull-request; 2026-10-28
+- [#138 bridge: RQ-CI-SECONDS-ASHLR-STACK](https://github.com/ashlrai/ashlr-stack/pull/138): pull-request; 2026-10-28
+- [#135 bridge: RQ-FAST-GATE-STACK](https://github.com/ashlrai/ashlr-stack/pull/135): pull-request; 2026-10-28
+- [#137 bridge: stack-release-dispatch](https://github.com/ashlrai/ashlr-stack/pull/137): pull-request; 2026-10-27
+- [#136 bridge: RQ-REFILL-2026102703-SALVA-001](https://github.com/ashlrai/ashlr-stack/pull/136): pull-request; 2026-10-27
+- [#129 bridge: RQ-PERF-12-STACK](https://github.com/ashlrai/ashlr-stack/pull/129): pull-request; 2026-10-27
+- [#131 bridge: RQ-SEO-STACK](https://github.com/ashlrai/ashlr-stack/pull/131): pull-request; 2026-10-27
+- [#134 bridge: RQ-N26B-085](https://github.com/ashlrai/ashlr-stack/pull/134): pull-request; 2026-10-27
+- [#133 ci: merge_group trigger + aggregate CI Gate for merge queue (G1)](https://github.com/ashlrai/ashlr-stack/pull/133): pull-request; 2026-10-27
+- [#130 bridge: RQ-STACK-CLI-COLDSTART](https://github.com/ashlrai/ashlr-stack/pull/130): pull-request; 2026-10-27
+- [#128 bridge: RQ-N26-STACK-CONTRACT-DOC](https://github.com/ashlrai/ashlr-stack/pull/128): pull-request; 2026-10-27
+- [#127 bridge: RQ-FRESH-SITE-STACK](https://github.com/ashlrai/ashlr-stack/pull/127): pull-request; 2026-10-27
+- [#125 bridge: RQ-DV-STACK-CORE-COVERAGE](https://github.com/ashlrai/ashlr-stack/pull/125): pull-request; 2026-10-26
+- [#122 ci(release): deploy-key-only Homebrew tap, SHA-pin actions, least-privilege perms](https://github.com/ashlrai/ashlr-stack/pull/122): pull-request; 2026-10-26
+- [#118 bridge: RQ-DISC-SITE-STACK](https://github.com/ashlrai/ashlr-stack/pull/118): pull-request; 2026-10-26
+- [#117 ci: draft PRs skip heavy steps, required names still report (G1)](https://github.com/ashlrai/ashlr-stack/pull/117): pull-request; 2026-10-26
+- [#116 bridge: RQ-PL-STACK-STALE-PRS](https://github.com/ashlrai/ashlr-stack/pull/116): pull-request; 2026-10-26
+- [#115 chore: remove case-colliding duplicate PR template](https://github.com/ashlrai/ashlr-stack/pull/115): pull-request; 2026-10-26
+- [#113 ci: CodeQL, Scorecard, Renovate, Codecov, Sonar, CodeRabbit, and Socket](https://github.com/ashlrai/ashlr-stack/pull/113): pull-request; 2026-10-26
+- [#111 perf(cli): run stack status probes concurrently](https://github.com/ashlrai/ashlr-stack/pull/111): pull-request; 2026-10-26
+- [v0.2.2](https://github.com/ashlrai/ashlr-stack/releases/tag/v0.2.2): release; 2026-10-26
+- [#110 release: publish npm via OIDC only, ship Unreleased as 0.2.2](https://github.com/ashlrai/ashlr-stack/pull/110): pull-request; 2026-10-26
+- [#109 feat(doctor): stack doctor --ecosystem --install prints companion install commands; --apply <tools> runs them (S2)](https://github.com/ashlrai/ashlr-stack/pull/109): pull-request; 2026-10-26
+- [#107 ci(release): pin third-party actions to commit SHAs](https://github.com/ashlrai/ashlr-stack/pull/107): pull-request; 2026-10-26
+- [#108 chore(site): remove 6 unused dependencies](https://github.com/ashlrai/ashlr-stack/pull/108): pull-request; 2026-10-26
+- [#106 docs(readme): stack onboard is source-only; fix source version](https://github.com/ashlrai/ashlr-stack/pull/106): pull-request; 2026-10-26
+- [#105 feat(doctor): shared ashlr.doctor v1 wrapper for doctor --json (contract + stack)](https://github.com/ashlrai/ashlr-stack/pull/105): pull-request; 2026-10-26
+- [#104 feat(doctor): flag companions whose handshake drifts from the v1 contract](https://github.com/ashlrai/ashlr-stack/pull/104): pull-request; 2026-10-25
+- [#103 feat(handshake): conformance kit, canonical v1 contract + reference checker](https://github.com/ashlrai/ashlr-stack/pull/103): pull-request; 2026-10-25
+- [#102 fix(doctor): locus apply is manual in stack doctor --ecosystem --fix (never forward its control capability)](https://github.com/ashlrai/ashlr-stack/pull/102): pull-request; 2026-10-25
+- [#101 docs(getting-started): Repair everything section](https://github.com/ashlrai/ashlr-stack/pull/101): pull-request; 2026-10-25
+- [#100 feat(doctor): --ecosystem --fix covers lexicon and ashlr-md (mdopener-mcp)](https://github.com/ashlrai/ashlr-stack/pull/100): pull-request; 2026-10-25
+- [#98 feat(doctor): --ecosystem --fix previews companions' own doctor --fix; --apply <tools> runs them, opted in per tool](https://github.com/ashlrai/ashlr-stack/pull/98): pull-request; 2026-10-25
+- [#99 docs: cross-tool getting-started guide (phantom, locus, stack, plugin)](https://github.com/ashlrai/ashlr-stack/pull/99): pull-request; 2026-10-25
+- [#97 docs(readme): note registry 0.1.1 lags source, list stack doctor --ecosystem](https://github.com/ashlrai/ashlr-stack/pull/97): pull-request; 2026-10-25
+- [#96 feat(exec): --as <alias> refuses before Phantom or the command starts unless Locus has that alias pinned](https://github.com/ashlrai/ashlr-stack/pull/96): pull-request; 2026-10-25
+- [#95 feat(doctor): --ecosystem suggests locus doctor --fix when locus is degraded and supports it](https://github.com/ashlrai/ashlr-stack/pull/95): pull-request; 2026-10-25
+- [#94 feat(doctor): --ecosystem lists installed Ashlr tools via --ashlr-handshake](https://github.com/ashlrai/ashlr-stack/pull/94): pull-request; 2026-10-25
+- [#93 ci(deploy-site): concurrency group that never cancels main; cache bun install](https://github.com/ashlrai/ashlr-stack/pull/93): pull-request; 2026-10-25
+- [#92 feat(cli): stack --ashlr-handshake (Ashlr companion handshake v1)](https://github.com/ashlrai/ashlr-stack/pull/92): pull-request; 2026-10-25
+- [#91 feat(doctor): opt-in Phantom agent preflight (STACK_PHANTOM_PREFLIGHT)](https://github.com/ashlrai/ashlr-stack/pull/91): pull-request; 2026-10-25
+- [#83 feat(templates): temporal-worker-phantom](https://github.com/ashlrai/ashlr-stack/pull/83): pull-request; 2026-10-25
+- [#82 feat(templates): litellm-gateway](https://github.com/ashlrai/ashlr-stack/pull/82): pull-request; 2026-10-25
+- [#84 feat(core): honor ANTHROPIC_BASE_URL, OPENAI_BASE_URL and OLLAMA_HOST (defaults unchanged)](https://github.com/ashlrai/ashlr-stack/pull/84): pull-request; 2026-10-25
+- [#90 fix(cli): look up user-named services as own properties](https://github.com/ashlrai/ashlr-stack/pull/90): pull-request; 2026-10-25
+- [#89 feat(exec): opt-in Phantom agent preflight (STACK_PHANTOM_PREFLIGHT)](https://github.com/ashlrai/ashlr-stack/pull/89): pull-request; 2026-10-25
+- [0.2.2 (2026-10-25)](https://github.com/ashlrai/ashlr-stack/blob/HEAD/CHANGELOG.md): changelog; 2026-10-25
+- [#22 Preserve prototype-named services in Stack configuration](https://github.com/ashlrai/ashlr-stack/pull/22): pull-request; 2026-10-24
+- [#88 ci: docs-only PRs skip the test and lint steps; every job still reports](https://github.com/ashlrai/ashlr-stack/pull/88): pull-request; 2026-10-24
+- [#86 ci: cancel superseded PR runs only, cache Bun installs](https://github.com/ashlrai/ashlr-stack/pull/86): pull-request; 2026-10-24
+- [#87 test: unset env vars by deleting them, not assigning undefined](https://github.com/ashlrai/ashlr-stack/pull/87): pull-request; 2026-10-24
+- [#85 fix: Use portable fetch declaration types](https://github.com/ashlrai/ashlr-stack/pull/85): pull-request; 2026-10-22
+- [#81 feat(cli): stack providers --category; stack_providers takes category](https://github.com/ashlrai/ashlr-stack/pull/81): pull-request; 2026-10-18
+- [#80 feat(cli): stack upgrade --json; stack_upgrade passes --json](https://github.com/ashlrai/ashlr-stack/pull/80): pull-request; 2026-10-18
+- [#79 docs: post-quantum readiness notes and classical-only crypto check](https://github.com/ashlrai/ashlr-stack/pull/79): pull-request; 2026-10-18
+- [#78 stack import --json names what was stored and skipped](https://github.com/ashlrai/ashlr-stack/pull/78): pull-request; 2026-10-17
+- [#77 stack env diff --json; stack_env_diff takes json](https://github.com/ashlrai/ashlr-stack/pull/77): pull-request; 2026-10-17
+- [#61 chore(release): 0.2.2](https://github.com/ashlrai/ashlr-stack/pull/61): pull-request; 2026-10-17
+- [#76 stack remove --json reports the secrets Phantom kept](https://github.com/ashlrai/ashlr-stack/pull/76): pull-request; 2026-10-17
+- [#75 fix(cli): refuse extra positional arguments instead of dropping them](https://github.com/ashlrai/ashlr-stack/pull/75): pull-request; 2026-10-17
+- [#73 fix(cli): `stack env --env prod` works; pin stack_status cwd and the cwd refusal](https://github.com/ashlrai/ashlr-stack/pull/73): pull-request; 2026-10-17
+- [#74 fix(cli,mcp): usage errors an agent can act on; stack_status takes cwd](https://github.com/ashlrai/ashlr-stack/pull/74): pull-request; 2026-10-17
+- [#70 fix(cli,mcp): refuse unknown flags, headless scan report, clean env export --stdout, stricter MCP args](https://github.com/ashlrai/ashlr-stack/pull/70): pull-request; 2026-10-17
+- [#68 feat(mcp): project-scoped tools take an optional absolute cwd](https://github.com/ashlrai/ashlr-stack/pull/68): pull-request; 2026-10-17
+- [#69 fix(cli): stack exec does not relay a terminal's Ctrl-C a second time](https://github.com/ashlrai/ashlr-stack/pull/69): pull-request; 2026-10-17
+- [#67 fix(cli,mcp): headless login hint, templates/projects list --json, MCP refuses undeclared arguments](https://github.com/ashlrai/ashlr-stack/pull/67): pull-request; 2026-10-17
+- [#66 ci(release): pack-and-install preflight on PRs; npm no longer waits for macOS](https://github.com/ashlrai/ashlr-stack/pull/66): pull-request; 2026-10-17
+- [#62 fix(cli,mcp): stack exec reports killed commands and forwards signals; --json for projects/templates list](https://github.com/ashlrai/ashlr-stack/pull/62): pull-request; 2026-10-17
+- [#64 fix(cli): stack ci says what to do instead; swap validates providers before asking for Phantom](https://github.com/ashlrai/ashlr-stack/pull/64): pull-request; 2026-10-17
+- [#65 fix: green main doc facts; rollback names the resources it leaves; info --json for unknown providers](https://github.com/ashlrai/ashlr-stack/pull/65): pull-request; 2026-10-17
+- [#63 fix(cli): recommend/remove/open/projects remove fail on bad input and name the next step](https://github.com/ashlrai/ashlr-stack/pull/63): pull-request; 2026-10-17
+- [#59 test(site): pin agent-facing doc facts to their sources of truth](https://github.com/ashlrai/ashlr-stack/pull/59): pull-request; 2026-10-17
+- [#58 fix(cli): keep piped output when outroError exits; doctor with 0 services; info/env --json; headless stack_add guidance](https://github.com/ashlrai/ashlr-stack/pull/58): pull-request; 2026-10-17
+- [#60 fix(core): keep user-written Cursor/Gemini MCP entries on stack add, remove and rollback](https://github.com/ashlrai/ashlr-stack/pull/60): pull-request; 2026-10-17
+- [#56 fix(apply): stack apply / init --template keep going past a failed provider; wrong recipe ids list the saved ones](https://github.com/ashlrai/ashlr-stack/pull/56): pull-request; 2026-10-17
+- [#57 cli: real --json for `stack list`, `providers` and `deps`; MCP tools take `json: true`](https://github.com/ashlrai/ashlr-stack/pull/57): pull-request; 2026-10-17
+- [#51 feat(core): mirror MCP entries into Cursor and Gemini CLI project configs](https://github.com/ashlrai/ashlr-stack/pull/51): pull-request; 2026-10-17
+- [#55 docs: agent-facing docs for stack onboard, status --json and the MCP CLI lookup](https://github.com/ashlrai/ashlr-stack/pull/55): pull-request; 2026-10-17; cross-repo ashlrai/phantom#751
+- [#54 ci(release): build stack-darwin-x64 on Linux so a release waits on one macOS job, not two](https://github.com/ashlrai/ashlr-stack/pull/54): pull-request; 2026-10-17
+- [#53 mcp: validate tool input before building argv; apply: resolve recipe before auto-init](https://github.com/ashlrai/ashlr-stack/pull/53): pull-request; 2026-10-17
+- [#52 feat: stack onboard, one command to wire the Phantom gateway into every installed agent](https://github.com/ashlrai/ashlr-stack/pull/52): pull-request; 2026-10-16
+- [#50 docs(mcp): point Phantom Secrets link at phm.dev/secrets](https://github.com/ashlrai/ashlr-stack/pull/50): pull-request; 2026-10-16
+- [#49 Packed tarballs ship their bins; installers state the real provider count and how to get the MCP](https://github.com/ashlrai/ashlr-stack/pull/49): pull-request; 2026-10-16
+- [#48 chore(release): date 0.2.1 changelog](https://github.com/ashlrai/ashlr-stack/pull/48): pull-request; 2026-10-16
+- [#41 docs(contributing): point new contributors at good first issues](https://github.com/ashlrai/ashlr-stack/pull/41): pull-request; 2026-10-16
+- [#25 docs: qualify published MCP runtime and transport](https://github.com/ashlrai/ashlr-stack/pull/25): pull-request; 2026-10-16
+- [#47 site: commit `stack status --json` in the CLI reference; CI fails on drift](https://github.com/ashlrai/ashlr-stack/pull/47): pull-request; 2026-10-16; cross-repo ashlrai/phantom#751
+- [#46 cli: bare `stack projects`/`stack telemetry` run their default; `stack add <typo>` names the provider first](https://github.com/ashlrai/ashlr-stack/pull/46): pull-request; 2026-10-16
+- [#30 feat(status): `stack status --json` so Phantom can see wired services](https://github.com/ashlrai/ashlr-stack/pull/30): pull-request; 2026-10-16; cross-repo ashlrai/phantom#751
+- [#45 fix(cli): doctor fails without .stack.toml, open survives a missing opener, scan rejects bad args; site lists all 26 commands](https://github.com/ashlrai/ashlr-stack/pull/45): pull-request; 2026-10-16
+- [#44 docs(changelog): fold unreleased work into 0.2.1 for the first npm publish since 0.1.1](https://github.com/ashlrai/ashlr-stack/pull/44): pull-request; 2026-10-16
+- [#43 Agent-facing fixes: recommend --category in any case, sync rejects unknown platforms first, real MCP error in docs](https://github.com/ashlrai/ashlr-stack/pull/43): pull-request; 2026-10-16
+- [#42 fix(apply): check the Phantom vault instead of writing placeholder secrets](https://github.com/ashlrai/ashlr-stack/pull/42): pull-request; 2026-10-16
+- [#29 fix(doctor): stored Phantom tokens read as unchecked, not "missing from vault"](https://github.com/ashlrai/ashlr-stack/pull/29): pull-request; 2026-10-16
+- [0.2.1 (2026-10-16)](https://github.com/ashlrai/ashlr-stack/blob/HEAD/CHANGELOG.md): changelog; 2026-10-16
+- [#40 docs: adding-a-provider guide, plus a registry/catalog/matrix parity test](https://github.com/ashlrai/ashlr-stack/pull/40): pull-request; 2026-10-15
+- [#39 fix(cli): one-line command errors instead of a stack trace](https://github.com/ashlrai/ashlr-stack/pull/39): pull-request; 2026-10-15
+- [#31 Agent-facing fixes: MCP runs its own stack CLI, stack_scan JSON, clean piped output](https://github.com/ashlrai/ashlr-stack/pull/31): pull-request; 2026-10-15
+- [#38 Guard Stack release inputs and downstream jobs](https://github.com/ashlrai/ashlr-stack/pull/38): pull-request; 2026-10-15
+- [#37 Remove nested link from Mechanics tab label](https://github.com/ashlrai/ashlr-stack/pull/37): pull-request; 2026-10-15
+- [#36 Clarify Mechanics scope and fit mobile step cards](https://github.com/ashlrai/ashlr-stack/pull/36): pull-request; 2026-10-15
+- [#35 Clarify ecosystem examples and fit homepage cards on narrow screens](https://github.com/ashlrai/ashlr-stack/pull/35): pull-request; 2026-10-15
+- [#34 Fix homepage wrapping and FAQ answer clipping](https://github.com/ashlrai/ashlr-stack/pull/34): pull-request; 2026-10-15
+- [#23 docs: make the npx and MCP quickstarts work as written; add an agent quickstart](https://github.com/ashlrai/ashlr-stack/pull/23): pull-request; 2026-10-15
+- [#24 Make Stack work with Phantom Secrets 0.7.9](https://github.com/ashlrai/ashlr-stack/pull/24): pull-request; 2026-10-15
+- [#28 fix: stage Stack credentials during setup](https://github.com/ashlrai/ashlr-stack/pull/28): pull-request; 2026-10-15
+- [#32 docs: correct stale agent-facing claims against real CLI behavior](https://github.com/ashlrai/ashlr-stack/pull/32): pull-request; 2026-10-15; cross-repo ashlrai/phantom#751
+- [#21 docs(readme): front-door rewrite; fix broken bunx quickstart](https://github.com/ashlrai/ashlr-stack/pull/21): pull-request; 2026-10-13
+- [#17 docs: launch readiness - ecosystem section, contributing, PR template](https://github.com/ashlrai/ashlr-stack/pull/17): pull-request; 2026-10-13
+- [#16 release: tokenless npm trusted publishing (OIDC)](https://github.com/ashlrai/ashlr-stack/pull/16): pull-request; 2026-10-13
+- [#15 docs: add AGENTS.md agent constitution](https://github.com/ashlrai/ashlr-stack/pull/15): pull-request; 2026-10-13
+- [#14 feat(mcp): list ashlr-stack-mcp on the official MCP Registry](https://github.com/ashlrai/ashlr-stack/pull/14): pull-request; 2026-10-13
+- [#13 fix(release): repair release.yml + Phantom Secrets/Locus docs (v0.2.1)](https://github.com/ashlrai/ashlr-stack/pull/13): pull-request; 2026-10-13
+- [#11 docs(readme): add verified 30-second quickstart and Why section](https://github.com/ashlrai/ashlr-stack/pull/11): pull-request; 2026-09-29
+- [#10 docs: remove brew install paths that don't work publicly; fix phantom brew formula](https://github.com/ashlrai/ashlr-stack/pull/10): pull-request; 2026-09-28
+- [#8 fix(add): stop interactive auth from hanging behind the spinner](https://github.com/ashlrai/ashlr-stack/pull/8): pull-request; 2026-06-20
+- [#6 fix(cli): parse kebab-case flags (--dry-run) instead of silently ignoring them](https://github.com/ashlrai/ashlr-stack/pull/6): pull-request; 2026-06-20
+- [#2 fix(install): hand off Phantom install to phantom's own one-liner](https://github.com/ashlrai/ashlr-stack/pull/2): pull-request; 2026-04-27
+- [#1 fix(install): set user PATH automatically instead of printing the command](https://github.com/ashlrai/ashlr-stack/pull/1): pull-request; 2026-04-26
+- [v0.2.0](https://github.com/ashlrai/ashlr-stack/releases/tag/v0.2.0): release; 2026-04-24
+- [\[0.2.0\] - 2026-04-23](https://github.com/ashlrai/ashlr-stack/blob/HEAD/CHANGELOG.md): changelog; 2026-04-23
+- [v0.1.1](https://github.com/ashlrai/ashlr-stack/releases/tag/v0.1.1): release; 2026-04-19
+- [0.1.0 - 2026-04-19 (superseded by 0.1.1)](https://github.com/ashlrai/ashlr-stack/blob/HEAD/CHANGELOG.md): changelog; 2026-04-19
+- [0.1.1 - 2026-04-19](https://github.com/ashlrai/ashlr-stack/blob/HEAD/CHANGELOG.md): changelog; 2026-04-19
+- [Unreleased](https://github.com/ashlrai/ashlr-stack/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+
+### ashlrai/lexicon (core-fleet)
+
+- [#281 bridge: RQ-README-BRAND-LEXICON](https://github.com/ashlrai/lexicon/pull/281): pull-request; 2026-10-28
+- [#280 bridge: RQ-MR-CONFLICT-DRIVERS-lexicon](https://github.com/ashlrai/lexicon/pull/280): pull-request; 2026-10-28
+- [#275 bridge: RQ-N26B-070](https://github.com/ashlrai/lexicon/pull/275): pull-request; 2026-10-28
+- [#271 bridge: RQ-N26B-068](https://github.com/ashlrai/lexicon/pull/271): pull-request; 2026-10-28
+- [#272 bridge: RQ-N26-LEX-BIND-TESTS](https://github.com/ashlrai/lexicon/pull/272): pull-request; 2026-10-28
+- [#276 bridge: RQ-N26B-073](https://github.com/ashlrai/lexicon/pull/276): pull-request; 2026-10-28
+- [#279 bridge: RQ-N26B-071](https://github.com/ashlrai/lexicon/pull/279): pull-request; 2026-10-28
+- [#277 bridge: RQ-N26B-074](https://github.com/ashlrai/lexicon/pull/277): pull-request; 2026-10-28
+- [#278 bridge: RQ-N26B-072](https://github.com/ashlrai/lexicon/pull/278): pull-request; 2026-10-28
+- [#244 bridge: RQ-LEX-MCP-CONFORMANCE](https://github.com/ashlrai/lexicon/pull/244): pull-request; 2026-10-28
+- [#268 bridge: RQ-GEN-2026102622-111](https://github.com/ashlrai/lexicon/pull/268): pull-request; 2026-10-28
+- [#267 bridge: RQ-GEN-2026102621-014](https://github.com/ashlrai/lexicon/pull/267): pull-request; 2026-10-28
+- [#269 bridge: RQ-GEN-2026102621-395](https://github.com/ashlrai/lexicon/pull/269): pull-request; 2026-10-28
+- [#266 bridge: RQ-GEN-2026102621-015](https://github.com/ashlrai/lexicon/pull/266): pull-request; 2026-10-28
+- [#270 bridge: RQ-GEN-2026102621-394](https://github.com/ashlrai/lexicon/pull/270): pull-request; 2026-10-28
+- [#241 bridge: RQ-DEADCODE-lexicon](https://github.com/ashlrai/lexicon/pull/241): pull-request; 2026-10-28
+- [#265 bridge: RQ-DAILY-15-LEXICON](https://github.com/ashlrai/lexicon/pull/265): pull-request; 2026-10-28
+- [#264 bridge: RQ-CI-SECONDS-LEXICON](https://github.com/ashlrai/lexicon/pull/264): pull-request; 2026-10-28
+- [#237 bridge: RQ-PL-LEX-INTEGRATION-TESTS](https://github.com/ashlrai/lexicon/pull/237): pull-request; 2026-10-28
+- [#236 bridge: RQ-PL-RADAR-ANTH-LEXICON-SCAN](https://github.com/ashlrai/lexicon/pull/236): pull-request; 2026-10-28
+- [#263 bridge: THROUGHPUT-LEXICON-CANCEL-2](https://github.com/ashlrai/lexicon/pull/263): pull-request; 2026-10-28
+- [#262 bridge: RQ-FAST-GATE-LEXICON-2](https://github.com/ashlrai/lexicon/pull/262): pull-request; 2026-10-28
+- [#246 security: Tier-1 CODEOWNERS for serve option parsing (program.ts, args.ts)](https://github.com/ashlrai/lexicon/pull/246): pull-request; 2026-10-27
+- [#254 bridge: RQ-N26-LEX-CONTRACT-SCHEMA](https://github.com/ashlrai/lexicon/pull/254): pull-request; 2026-10-27
+- [#258 ci: merge_group + CI Gate; macOS/Windows off PR unless labelled (G1)](https://github.com/ashlrai/lexicon/pull/258): pull-request; 2026-10-27
+- [#243 bridge: RQ-FRESH-GEN-LEX](https://github.com/ashlrai/lexicon/pull/243): pull-request; 2026-10-27
+- [#253 bridge: RQ-N26-DV-LEX-TYPES](https://github.com/ashlrai/lexicon/pull/253): pull-request; 2026-10-27
+- [#250 bridge: RQ-LEX-IMPORTERS-FUZZ](https://github.com/ashlrai/lexicon/pull/250): pull-request; 2026-10-27
+- [#256 bridge: RQ-SEO-LEX](https://github.com/ashlrai/lexicon/pull/256): pull-request; 2026-10-27
+- [#259 bridge: RQ-SALVAGE-LEXICON-ENGINES](https://github.com/ashlrai/lexicon/pull/259): pull-request; 2026-10-27
+- [#252 bridge: RQ-LEX-EXPORTERS-SNAPSHOT](https://github.com/ashlrai/lexicon/pull/252): pull-request; 2026-10-27
+- [#255 bridge: RQ-PERF-12-LEX](https://github.com/ashlrai/lexicon/pull/255): pull-request; 2026-10-27
+- [#238 ci: skip CI on draft PRs; macOS/Windows rows off push (G1)](https://github.com/ashlrai/lexicon/pull/238): pull-request; 2026-10-26
+- [#234 bridge: RQ-REBASE-D4](https://github.com/ashlrai/lexicon/pull/234): pull-request; 2026-10-26
+- [#229 G1 ci: Windows row on PRs only for Windows-relevant changes or ci:full (RQ-CI-FANOUT)](https://github.com/ashlrai/lexicon/pull/229): pull-request; 2026-10-26
+- [#227 bridge: LAND-lexicon-224-bundle](https://github.com/ashlrai/lexicon/pull/227): pull-request; 2026-10-26
+- [#228 bridge: RQ-BUNDLE-DIFF](https://github.com/ashlrai/lexicon/pull/228): pull-request; 2026-10-26
+- [#230 test: fix red main, long-path fixture under 130 chars on Linux](https://github.com/ashlrai/lexicon/pull/230): pull-request; 2026-10-26
+- [#225 bridge: RQ-LEX-DAEMON](https://github.com/ashlrai/lexicon/pull/225): pull-request; 2026-10-26
+- [#226 bridge: RQ-TESTDIET-lexicon](https://github.com/ashlrai/lexicon/pull/226): pull-request; 2026-10-26
+- [#223 bridge: rq-mod-2-lexicon](https://github.com/ashlrai/lexicon/pull/223): pull-request; 2026-10-26
+- [#214 Measure first run and compare espanso and whisper.cpp](https://github.com/ashlrai/lexicon/pull/214): pull-request; 2026-10-26
+- [#216 fix(trust): off a terminal, require --yes before pinning a project lexicon](https://github.com/ashlrai/lexicon/pull/216): pull-request; 2026-10-26
+- [#213 feat(pending): remember rejected corrections so the hook does not queue them again](https://github.com/ashlrai/lexicon/pull/213): pull-request; 2026-10-26
+- [#210 chore(security): growth-only CODEOWNERS for workflows and keyed/network paths](https://github.com/ashlrai/lexicon/pull/210): pull-request; 2026-10-26
+- [#211 feat(suggest): list pending hook captures first, labeled with their source](https://github.com/ashlrai/lexicon/pull/211): pull-request; 2026-10-26
+- [#209 feat(doctor): ashlr.doctor v1 wrapper on lexicon doctor --json](https://github.com/ashlrai/lexicon/pull/209): pull-request; 2026-10-26
+- [#208 test(handshake): v1 conformance test against the vendored ashlr-stack contract](https://github.com/ashlrai/lexicon/pull/208): pull-request; 2026-10-25
+- [#207 docs(readme): lexicon doctor --fix section](https://github.com/ashlrai/lexicon/pull/207): pull-request; 2026-10-25
+- [#206 feat(doctor): suggest mdopener-mcp doctor --fix when ashlr-md advertises doctor-fix](https://github.com/ashlrai/lexicon/pull/206): pull-request; 2026-10-25
+- [#205 docs(readme): npm version lag note and lexicon export format suggestion](https://github.com/ashlrai/lexicon/pull/205): pull-request; 2026-10-25
+- [#204 ci: test jobs time out after 20 minutes instead of 360](https://github.com/ashlrai/lexicon/pull/204): pull-request; 2026-10-25
+- [#203 feat(doctor): lexicon doctor --fix \[--apply\] with backups; doctor-fix capability](https://github.com/ashlrai/lexicon/pull/203): pull-request; 2026-10-25
+- [#202 feat(doctor): read locus and ashlr-md handshakes, suggest locus doctor --fix when supported](https://github.com/ashlrai/lexicon/pull/202): pull-request; 2026-10-25
+- [#201 feat(export): suggest the closest format for a mistyped lexicon export](https://github.com/ashlrai/lexicon/pull/201): pull-request; 2026-10-25
+- [#200 docs(contributing): opting a PR into the macOS CI row](https://github.com/ashlrai/lexicon/pull/200): pull-request; 2026-10-25
+- [#199 chore(ci): only ci:macos affects CI; drop the labeled trigger, plan reads labels live](https://github.com/ashlrai/lexicon/pull/199): pull-request; 2026-10-25
+- [#198 chore(ci): macOS row on PRs only for timing-sensitive paths or the ci:macos label](https://github.com/ashlrai/lexicon/pull/198): pull-request; 2026-10-25
+- [#197 fix(hook): a short prompt's corrections no longer depend on machine speed (macOS main red)](https://github.com/ashlrai/lexicon/pull/197): pull-request; 2026-10-25
+- [#196 feat(export): speechmatics additional_vocab exporter](https://github.com/ashlrai/lexicon/pull/196): pull-request; 2026-10-25
+- [#195 fix(suggest): report kept pronunciation hints on --apply; real-store tests](https://github.com/ashlrai/lexicon/pull/195): pull-request; 2026-10-25
+- [#194 feat(cli): lexicon --ashlr-handshake (Ashlr companion handshake v1)](https://github.com/ashlrai/lexicon/pull/194): pull-request; 2026-10-25
+- [#193 feat(suggest): propose pronunciation hints for terms the matcher keeps guessing at](https://github.com/ashlrai/lexicon/pull/193): pull-request; 2026-10-25
+- [#192 ci: cache SwiftPM and NuGet in the macOS and Windows app workflows](https://github.com/ashlrai/lexicon/pull/192): pull-request; 2026-10-25
+- [#191 docs(readme): one canonical name, command and link per Ashlr tool](https://github.com/ashlrai/lexicon/pull/191): pull-request; 2026-10-24
+- [#166 build(deps-dev): bump the dev-dependencies group with 3 updates](https://github.com/ashlrai/lexicon/pull/166): pull-request; 2026-10-24
+- [#189 ci: docs-only PRs skip the heavy steps; every row still reports](https://github.com/ashlrai/lexicon/pull/189): pull-request; 2026-10-24
+- [#190 Lexicon rounds 107 - 109: CLI category/alias/export fixes, app XDG paths, docs and benchmark figures](https://github.com/ashlrai/lexicon/pull/190): pull-request; 2026-10-24
+- [#188 fix(voice): make claimStop exclusive on Windows (double delivery of one capture)](https://github.com/ashlrai/lexicon/pull/188): pull-request; 2026-10-24
+- [#187 ci: cancel superseded PR runs of the macOS and Windows app workflows](https://github.com/ashlrai/lexicon/pull/187): pull-request; 2026-10-24
+- [#186 Lexicon rounds 105 - 106: export notes, extension robustness, category "other", hook and MCP fixes](https://github.com/ashlrai/lexicon/pull/186): pull-request; 2026-10-24
+- [#185 Lexicon round 104: broken trust.json refused up front, uninstall/install scope messages, MCP fixes](https://github.com/ashlrai/lexicon/pull/185): pull-request; 2026-10-24
+- [#184 Lexicon round 103: review safety, honest clipboard messages, install/trust/learn/setup fixes](https://github.com/ashlrai/lexicon/pull/184): pull-request; 2026-10-24
+- [#179 ci: full test suite on PRs touching serve/install/setup code](https://github.com/ashlrai/lexicon/pull/179): pull-request; 2026-10-24
+- [#183 Lexicon round 102: hits.json safety, voice history bounds, toggle pid check, review trust race](https://github.com/ashlrai/lexicon/pull/183): pull-request; 2026-10-24
+- [#181 Lexicon round 101: list paging, doctor file checks, serve config errors, suggest and stats fixes](https://github.com/ashlrai/lexicon/pull/181): pull-request; 2026-10-24
+- [#180 Lexicon rounds 99 - 100: bounded service log, hook budget, pairing origin, editors, doctor and MCP fixes](https://github.com/ashlrai/lexicon/pull/180): pull-request; 2026-10-24
+- [#178 Lexicon round 98: compressed model downloads, bounded voice history, SessionStart keeps top terms, hits.json safety](https://github.com/ashlrai/lexicon/pull/178): pull-request; 2026-10-24
+- [#177 test(serve): fix --install temp file test on macOS and Windows](https://github.com/ashlrai/lexicon/pull/177): pull-request; 2026-10-24
+- [#176 Lexicon round 97: serve token handling, private voice temp files, whole setup output](https://github.com/ashlrai/lexicon/pull/176): pull-request; 2026-10-24
+- [#175 Lexicon round 96: Codex uninstall, settings and hook checks, Windows and macOS service fixes](https://github.com/ashlrai/lexicon/pull/175): pull-request; 2026-10-24
+- [#174 Lexicon round 95: trust.json guard, Codex TOML, serve units, and main's macOS/Windows tests](https://github.com/ashlrai/lexicon/pull/174): pull-request; 2026-10-24
+- [#173 Lexicon round 94: whole paths, install writes, export dedupe, macOS fixes](https://github.com/ashlrai/lexicon/pull/173): pull-request; 2026-10-24
+- [#172 Doctor and MCP explain an unreadable lexicon, serve never swaps a token silently, and the daemon exits by signal](https://github.com/ashlrai/lexicon/pull/172): pull-request; 2026-10-24
+- [#171 Full paths in output, clear unreadable-lexicon errors, safer edit and add, and a sturdier clipboard daemon and pairing](https://github.com/ashlrai/lexicon/pull/171): pull-request; 2026-10-24
+- [#170 Voice picks the device you asked for and explains model failures, packs keep shared terms and safe output, setup reports a failed step](https://github.com/ashlrai/lexicon/pull/170): pull-request; 2026-10-24
+- [#169 Local API timeouts and Private Network Access, MCP tool hints and input limits, and a hook that stays within its caps](https://github.com/ashlrai/lexicon/pull/169): pull-request; 2026-10-24
+- [#168 Extension covers iframes and SPA navigation and keeps undo, learn takes names said by sound, and the local API answers bad requests properly](https://github.com/ashlrai/lexicon/pull/168): pull-request; 2026-10-24
+- [#167 Learn only plausible corrections, report reversed and truncated runs, fix main's Windows run, and harden the extension](https://github.com/ashlrai/lexicon/pull/167): pull-request; 2026-10-24
+- [#165 Learning that doesn't overreach, harvest honours .gitignore, clipboard and setup fixes](https://github.com/ashlrai/lexicon/pull/165): pull-request; 2026-10-24
+- [#164 Exports stay within each tool's limits and say what they leave out; setup and clipboard fixes](https://github.com/ashlrai/lexicon/pull/164): pull-request; 2026-10-24
+- [#163 Extension pairing resilience, edit-check verdicts, safer exports](https://github.com/ashlrai/lexicon/pull/163): pull-request; 2026-10-24
+- [#162 Hook stays in budget after hand edits, voice hardening, extension pairing fixes](https://github.com/ashlrai/lexicon/pull/162): pull-request; 2026-10-24
+- [#161 Round 81: faster hook after lexicon edits, safer hook input, voice recording and model download fixes](https://github.com/ashlrai/lexicon/pull/161): pull-request; 2026-10-24
+- [#160 Round 80: NFC-aware aliases, bounded MCP inputs, code-aware correction hook, doctor sees local settings](https://github.com/ashlrai/lexicon/pull/160): pull-request; 2026-10-24
+- [#159 Round 79: MCP uninstall_client, doctor sees project-scope hooks, local API race and path fixes, CHANGELOG repair](https://github.com/ashlrai/lexicon/pull/159): pull-request; 2026-10-24
+- [#158 Round 78: lexicon uninstall, project-scope hooks, stale registration refresh, local API and clipboard fixes](https://github.com/ashlrai/lexicon/pull/158): pull-request; 2026-10-24
+- [#157 Round 77: schema refuses noncharacters, exporter cell and escape fixes, safer reinstall and config edits](https://github.com/ashlrai/lexicon/pull/157): pull-request; 2026-10-24
+- [#156 fix: empty YAML keys load; agent context capped; code masked in chat composers; exporter round-trips (round 76)](https://github.com/ashlrai/lexicon/pull/156): pull-request; 2026-10-24
+- [#155 fix: extension skips oversized text and code editors, pairs any port; bounded schema errors (round 75)](https://github.com/ashlrai/lexicon/pull/155): pull-request; 2026-10-24
+- [#154 fix: hook context cap, large clipboards, empty HOME everywhere, extension undo and login fields (round 74)](https://github.com/ashlrai/lexicon/pull/154): pull-request; 2026-10-24
+- [#153 fix: hook and clipboard hardening; accept lock order; empty HOME (round 73)](https://github.com/ashlrai/lexicon/pull/153): pull-request; 2026-10-24
+- [#152 fix: loaded terms keep their real shape; singular counts; no dashes (round 72)](https://github.com/ashlrai/lexicon/pull/152): pull-request; 2026-10-24
+- [#151 fix: blank words refused everywhere; --json honoured on pending, voice and install (round 71)](https://github.com/ashlrai/lexicon/pull/151): pull-request; 2026-10-24
+- [#150 fix: local API POST routes refuse query strings; docs match behaviour (round 70)](https://github.com/ashlrai/lexicon/pull/150): pull-request; 2026-10-24
+- [#149 fix: MCP tool descriptions match behaviour; voice, hook and installer next steps (round 69)](https://github.com/ashlrai/lexicon/pull/149): pull-request; 2026-10-24
+- [#148 fix: next steps in serve, pack, voice, installer and menu bar errors (round 68)](https://github.com/ashlrai/lexicon/pull/148): pull-request; 2026-10-24
+- [#147 fix: next steps in extension, menu bar app and CLI messages (rounds 66-67)](https://github.com/ashlrai/lexicon/pull/147): pull-request; 2026-10-24
+- [#146 fix: one source for empty-result notes across CLI, MCP and the local API (round 65)](https://github.com/ashlrai/lexicon/pull/146): pull-request; 2026-10-24
+- [#145 fix: setup, export, remove and the local API explain empty and refused results (rounds 63-64)](https://github.com/ashlrai/lexicon/pull/145): pull-request; 2026-10-24
+- [#144 fix: every empty, no-op or refused result names the next step (rounds 56-62)](https://github.com/ashlrai/lexicon/pull/144): pull-request; 2026-10-24
+- [#143 fix(serve, packs, extension): say what happened and how to retry (rounds 54-55)](https://github.com/ashlrai/lexicon/pull/143): pull-request; 2026-10-24
+- [#142 Rounds 52-53: every first-run dead end names its next step; no-op adds, trusts and pack installs say nothing changed](https://github.com/ashlrai/lexicon/pull/142): pull-request; 2026-10-24
+- [#141 Round 51: skip reading project lexicons the registry never trusted; suggest, voice and index refresh stop re-parsing](https://github.com/ashlrai/lexicon/pull/141): pull-request; 2026-10-23
+- [#140 feat(doctor): value-free, report-only Phantom presence check](https://github.com/ashlrai/lexicon/pull/140): pull-request; 2026-10-19
+- [#139 fix: keep tokens and URL credentials out of upstream error text](https://github.com/ashlrai/lexicon/pull/139): pull-request; 2026-10-19
+- [#138 docs: using Lexicon with Phantom](https://github.com/ashlrai/lexicon/pull/138): pull-request; 2026-10-19
+- [#137 test(plugin): settle bundle helpers only after the child exits (Windows EBUSY flake)](https://github.com/ashlrai/lexicon/pull/137): pull-request; 2026-10-19
+- [#136 feat: queue corrections noticed by the prompt hook for review (lexicon pending), never applied automatically](https://github.com/ashlrai/lexicon/pull/136): pull-request; 2026-10-19
+- [#135 ci: benchmark regression gate over the synthetic corpus](https://github.com/ashlrai/lexicon/pull/135): pull-request; 2026-10-19
+- [#134 test: direct coverage for the bounded regular-file reader](https://github.com/ashlrai/lexicon/pull/134): pull-request; 2026-10-18
+- [#133 chore(release): roll Unreleased into 0.5.6](https://github.com/ashlrai/lexicon/pull/133): pull-request; 2026-10-18
+- [#64 test: isolate e2e installs from ambient client config overrides](https://github.com/ashlrai/lexicon/pull/64): pull-request; 2026-10-18
+- [#62 test: cover apostrophes in explicit matcher aliases](https://github.com/ashlrai/lexicon/pull/62): pull-request; 2026-10-18
+- [#132 docs(readme): state the Phantom integration sketch and link PQ readiness](https://github.com/ashlrai/lexicon/pull/132): pull-request; 2026-10-18
+- [#131 test: recordHits and parseSkipped:false must not parse a changed project file](https://github.com/ashlrai/lexicon/pull/131): pull-request; 2026-10-18
+- [#124 fix(trust): project writes re-check trust on the bytes they merge](https://github.com/ashlrai/lexicon/pull/124): pull-request; 2026-10-18
+- [#130 Round 50: daemon, voice, setup and recordHits skip parsing untrusted repo lexicons](https://github.com/ashlrai/lexicon/pull/130): pull-request; 2026-10-18
+- [#129 Round 49: CLI read-only commands skip parsing untrusted repo lexicons, serve invalidates only what a write touched, /aliases refuses control characters](https://github.com/ashlrai/lexicon/pull/129): pull-request; 2026-10-18
+- [#128 Round 48: MCP read-only tools skip parsing untrusted repo lexicons, /normalize keeps other cached loads, clearer /aliases and learn errors](https://github.com/ashlrai/lexicon/pull/128): pull-request; 2026-10-18
+- [#127 Round 47: serve and MCP skip parsing untrusted repo lexicons, /normalize names a skipped file, add names the field it refuses](https://github.com/ashlrai/lexicon/pull/127): pull-request; 2026-10-18
+- [#126 Round 46: hook skips parsing untrusted repo lexicons, 4-entry parse and index caches, small trusted files cached](https://github.com/ashlrai/lexicon/pull/126): pull-request; 2026-10-18
+- [#125 Round 45: hook under 200 ms with a trusted project, fresh index cache after every project write, faster `lexicon add`](https://github.com/ashlrai/lexicon/pull/125): pull-request; 2026-10-18
+- [#123 Round 44: hermetic e2e cwd and temp cleanup, batched MCP apply_suggestion, warm index cache for a trusted project](https://github.com/ashlrai/lexicon/pull/123): pull-request; 2026-10-18
+- [#121 docs: post-quantum readiness notes and classical-only crypto check](https://github.com/ashlrai/lexicon/pull/121): pull-request; 2026-10-18
+- [#122 test(e2e): CI runs the journeys on the built dist (no tsx per spawn)](https://github.com/ashlrai/lexicon/pull/122): pull-request; 2026-10-18
+- [#120 Round 43: hook stays under budget after a write, e2e trust journey in parallel stages, batched suggest and harvest adds](https://github.com/ashlrai/lexicon/pull/120): pull-request; 2026-10-18
+- [#119 Round 42: harvest adds in one write, every correction in a prompt flagged, honest Test connection, repo lexicon edit hint](https://github.com/ashlrai/lexicon/pull/119): pull-request; 2026-10-18
+- [#118 Round 41: pack installs 14x faster, quicker suggest, a setup preview that says what it installs, extension next steps](https://github.com/ashlrai/lexicon/pull/118): pull-request; 2026-10-18
+- [#117 Round 40: add prints aliases once, doctor stops looping back to setup, installer lines that match, a Windows test cleanup race](https://github.com/ashlrai/lexicon/pull/117): pull-request; 2026-10-18
+- [#116 Round 39: honest installer setup claims, a real terminal check, a fallback toast that says why, first-run CLI hints](https://github.com/ashlrai/lexicon/pull/116): pull-request; 2026-10-18
+- [#115 Round 38: extension Learn falls back like Normalize, commands shown as code, extension typecheck, Homebrew and installer fixes](https://github.com/ashlrai/lexicon/pull/115): pull-request; 2026-10-18
+- [#114 Round 37: extension names a stopped server and the pairing command, install --apply without a client refuses, MCP docs held to the live schema](https://github.com/ashlrai/lexicon/pull/114): pull-request; 2026-10-18
+- [#113 Round 36: export --json, specific next steps for unknown categories, packs and formats, MCP inputs that state their defaults and caps](https://github.com/ashlrai/lexicon/pull/113): pull-request; 2026-10-18
+- [#112 Round 35: suggest --yes --json really applies, every --json failure names a next step, hook and serve flag clarity](https://github.com/ashlrai/lexicon/pull/112): pull-request; 2026-10-18
+- [#111 Round 34: serve and hook errors that say what to do, huge-prompt cap, plugin docs match the tools](https://github.com/ashlrai/lexicon/pull/111): pull-request; 2026-10-18
+- [0.5.6 (2026-10-18)](https://github.com/ashlrai/lexicon/blob/HEAD/CHANGELOG.md): changelog; 2026-10-18
+- [#110 Round 33: refuse flags that do nothing, shared conflict wording in the extension, serve /stats and /export clarity](https://github.com/ashlrai/lexicon/pull/110): pull-request; 2026-10-17
+- [#109 Round 32: voice refuses bad input up front, conflict notes name the remove step, remove --json nextStep](https://github.com/ashlrai/lexicon/pull/109): pull-request; 2026-10-17
+- [#108 Round 31: serve HEAD and /health strictness, shared conflict note, strict prompt args, extension conflict notice](https://github.com/ashlrai/lexicon/pull/108): pull-request; 2026-10-17
+- [#107 fix: learn conflict note, doctor check hints for agents, --json for install-claude/serve install/init, blocked lock dir (round 30)](https://github.com/ashlrai/lexicon/pull/107): pull-request; 2026-10-17
+- [#106 fix: doctor next steps for agents, onboard prompt, explicit empty aliases, install --json (round 29)](https://github.com/ashlrai/lexicon/pull/106): pull-request; 2026-10-17
+- [#105 fix: whitespace-tolerant hook spans, export notes, import and serve refuse ignored options, remove scope hints (round 28)](https://github.com/ashlrai/lexicon/pull/105): pull-request; 2026-10-17
+- [#103 fix: hook correction spans keep offsets, SessionStart cap holds, add_pack and import_vocabulary refuse stray parameters (round 27)](https://github.com/ashlrai/lexicon/pull/103): pull-request; 2026-10-17
+- [#104 test(import): give applyImportCandidates a fresh temp dir and remove it](https://github.com/ashlrai/lexicon/pull/104): pull-request; 2026-10-17
+- [#102 fix: trusted harvest writes stay trusted, untrusted-file leaks closed, text-format escapes, kbd/samp/script/style protected (round 26)](https://github.com/ashlrai/lexicon/pull/102): pull-request; 2026-10-17
+- [#101 fix: importer skip notes, text-format URL and # round trip, HTML code elements protected (round 25)](https://github.com/ashlrai/lexicon/pull/101): pull-request; 2026-10-17
+- [#100 fix(mcp): MCP writes never create or trust a project file; trust_project and import_dictionary held to roots (round 24)](https://github.com/ashlrai/lexicon/pull/100): pull-request; 2026-10-17
+- [#98 fix(mcp): model can't trust project files via harvest, reads held to allowed roots (round 23)](https://github.com/ashlrai/lexicon/pull/98): pull-request; 2026-10-17
+- [#99 fix(matcher, import): tilde fences and multi-backtick spans skipped; malformed imports refused or survived](https://github.com/ashlrai/lexicon/pull/99): pull-request; 2026-10-17
+- [#97 fix(mcp): user-registered pack registries only, plugin-friendly hints, honest serve preview (round 22)](https://github.com/ashlrai/lexicon/pull/97): pull-request; 2026-10-17
+- [#96 fix(security): harden lexicon text handed to the model (round 21)](https://github.com/ashlrai/lexicon/pull/96): pull-request; 2026-10-17
+- [#75 test: run the e2e journeys concurrently; ci: smoke the packed tarball](https://github.com/ashlrai/lexicon/pull/75): pull-request; 2026-10-17
+- [#85 build(deps): bump zod from 4.6.5 to 4.6.7](https://github.com/ashlrai/lexicon/pull/85): pull-request; 2026-10-17
+- [#95 fix(security): bounded regular-file lexicon reads, trust pins the parsed bytes, safer pack registry, serve.json back to 0600](https://github.com/ashlrai/lexicon/pull/95): pull-request; 2026-10-17
+- [#94 fix: plugin installs find their models, survive plugin updates, don't double-register; hook answers --version and --help](https://github.com/ashlrai/lexicon/pull/94): pull-request; 2026-10-17
+- [#93 fix: --full JSON failures, learn refuses option-like words, hook cwd and correction-list cap, Allow on 405](https://github.com/ashlrai/lexicon/pull/93): pull-request; 2026-10-17
+- [#92 fix: voice --json prints a failure document on stdout; apply_suggestion refuses a scope that does not hold the term](https://github.com/ashlrai/lexicon/pull/92): pull-request; 2026-10-17
+- [#83 build(deps-dev): bump vitest from 5.0.3 to 5.0.4 in the dev-dependencies group across 1 directory](https://github.com/ashlrai/lexicon/pull/83): pull-request; 2026-10-17
+- [#90 fix: ok on trust, normalize and serve --status JSON; pack add reports every ref and honours globalPath; export ./package.json](https://github.com/ashlrai/lexicon/pull/90): pull-request; 2026-10-17
+- [#91 test: run the 20 ms matcher timing case in its own isolated vitest project](https://github.com/ashlrai/lexicon/pull/91): pull-request; 2026-10-17
+- [#89 fix: no dangling source maps in the npm package, packed-file and plugin-manifest tests, --json success leads with ok, one document from pack add](https://github.com/ashlrai/lexicon/pull/89): pull-request; 2026-10-17
+- [#77 fix: trust pins only the previewed bytes; strict DELETE query; Enter does not submit multi-field forms; normalize and the paragraph quote anchor stay linear](https://github.com/ashlrai/lexicon/pull/77): pull-request; 2026-10-17
+- [#88 fix: usage errors as JSON, one JSON document from harvest --add, read-only serve --pair, POST /add conflicts, honest harvest_repo and apply_suggestion](https://github.com/ashlrai/lexicon/pull/88): pull-request; 2026-10-17
+- [#87 fix: JSON errors for every --json command, read-only serve --status, MCP broken-file fixes, GET /packs parity, harvest --full](https://github.com/ashlrai/lexicon/pull/87): pull-request; 2026-10-17
+- [#86 fix: JSON errors for trust/setup/harvest, registryMismatch everywhere, honest serve status, hook and serve log what they drop](https://github.com/ashlrai/lexicon/pull/86): pull-request; 2026-10-17
+- [#81 fix: removals name every copy left; remove --global; skipped project reported everywhere; trust --json/--yes; strict local API; hook survives EPIPE](https://github.com/ashlrai/lexicon/pull/81): pull-request; 2026-10-17
+- [#82 fix: paragraph-wide quote guard, path --json, normalize --diff/--dry-run summaries, trust hint, blank import_dictionary refused](https://github.com/ashlrai/lexicon/pull/82): pull-request; 2026-10-17
+- [#79 fix(mcp,cli): strict tool arguments, refuse blank strings, doctor --json, next step for an unparseable lexicon](https://github.com/ashlrai/lexicon/pull/79): pull-request; 2026-10-17
+- [#80 fix: case-only learn runs conflict checks; stale removal names the other copy; extension shows early stops; agent journey e2e](https://github.com/ashlrai/lexicon/pull/80): pull-request; 2026-10-17
+- [#78 fix: serve Host check and 400/500 errors; MCP normalize limits; learn_correction conflicts; apply_suggestion scope; clean dist builds](https://github.com/ashlrai/lexicon/pull/78): pull-request; 2026-10-17
+- [#76 fix: one-line alias diffs, hook under 200ms with an index cache, extension Enter/Undo/caret, serve pairing token, piped CLI](https://github.com/ashlrai/lexicon/pull/76): pull-request; 2026-10-17
+- [#72 release: roll #67 and #68 into 0.5.6 changelog](https://github.com/ashlrai/lexicon/pull/72): pull-request; 2026-10-17
+- [#74 fix: agent-facing workflow bugs, plus single-alias removal and remove_term hints](https://github.com/ashlrai/lexicon/pull/74): pull-request; 2026-10-17
+- [#73 ci: run e2e in the same vitest invocation as the other tests](https://github.com/ashlrai/lexicon/pull/73): pull-request; 2026-10-17
+- [#71 fix: explicit setup names always seed; adding to an existing term appends no generated aliases](https://github.com/ashlrai/lexicon/pull/71): pull-request; 2026-10-17
+- [#70 docs: align agent docs with the plugin MCP entry, serve_status port, plurals and lexicon-mcp --version](https://github.com/ashlrai/lexicon/pull/70): pull-request; 2026-10-17
+- [#69 ci: four runners per PR instead of eight, e2e once, main runs never queue behind each other](https://github.com/ashlrai/lexicon/pull/69): pull-request; 2026-10-17
+- [#68 matcher: a plural keeps its s](https://github.com/ashlrai/lexicon/pull/68): pull-request; 2026-10-16
+- [#67 Plugin MCP server connects after `claude plugin install`; `lexicon-mcp --version` answers](https://github.com/ashlrai/lexicon/pull/67): pull-request; 2026-10-16
+- [#66 release: roll unreleased fixes into 0.5.6 and date it](https://github.com/ashlrai/lexicon/pull/66): pull-request; 2026-10-16
+- [#30 docs(readme): launch polish - MCP snippets, ecosystem link](https://github.com/ashlrai/lexicon/pull/30): pull-request; 2026-10-16
+- [#65 docs(readme): add one-line tagline](https://github.com/ashlrai/lexicon/pull/65): pull-request; 2026-10-16
+- [#45 fix(mcp): serve_status checks the port lexicon serve actually uses](https://github.com/ashlrai/lexicon/pull/45): pull-request; 2026-10-16
+- [#61 fix: keep comma aliases whole in markdown/claude-md exports; /health answers 405 to wrong methods](https://github.com/ashlrai/lexicon/pull/61): pull-request; 2026-10-16
+- [#59 docs: explain Cursor setup on Windows (from #37 by @KeuqS)](https://github.com/ashlrai/lexicon/pull/59): pull-request; 2026-10-15
+- [#56 docs: held-out unseen-voice results with whisper --prompt caveat](https://github.com/ashlrai/lexicon/pull/56): pull-request; 2026-10-15
+- [#19 build(deps): bump actions/upload-artifact from 4 to 7](https://github.com/ashlrai/lexicon/pull/19): pull-request; 2026-10-15
+- [#60 docs: call the whisper benchmark audio synthesized (TTS), not real audio](https://github.com/ashlrai/lexicon/pull/60): pull-request; 2026-10-15
+- [#57 release: 0.5.6 (fix-forward for the unpublished 0.5.5)](https://github.com/ashlrai/lexicon/pull/57): pull-request; 2026-10-15
+- [#58 build(deps): MCP SDK 1.32.1 with a rebuilt plugin bundle](https://github.com/ashlrai/lexicon/pull/58): pull-request; 2026-10-15
+- [#55 docs: record #35, #48 and #49 in CHANGELOG and CONTRACT.md](https://github.com/ashlrai/lexicon/pull/55): pull-request; 2026-10-15; cross-repo ashlrai/phantom#772
+- [#54 fix(setup): a dry run demonstrates on the terms it would seed](https://github.com/ashlrai/lexicon/pull/54): pull-request; 2026-10-15
+- [#53 fix(harvest): skip everyday English words a README capitalises](https://github.com/ashlrai/lexicon/pull/53): pull-request; 2026-10-15
+- [#52 fix(matcher): a dotted initialism keeps its own period out of the rewrite](https://github.com/ashlrai/lexicon/pull/52): pull-request; 2026-10-15
+- [#51 fix(matcher): "ashlar ai" becomes Ashlr.AI, not "Ashlr.AI ai"](https://github.com/ashlrai/lexicon/pull/51): pull-request; 2026-10-15
+- [#49 fix: lexicon trust and untrust accept a project directory](https://github.com/ashlrai/lexicon/pull/49): pull-request; 2026-10-15; cross-repo ashlrai/phantom#772
+- [#48 perf(hook): faster prompt hook; fixes across serve, extension, daemon, voice and setup](https://github.com/ashlrai/lexicon/pull/48): pull-request; 2026-10-15
+- [#47 docs: align agent-facing docs with current tools, packs and release state](https://github.com/ashlrai/lexicon/pull/47): pull-request; 2026-10-15
+- [#50 fix(harvest): stop proposing module paths, build artifacts and README labels as names](https://github.com/ashlrai/lexicon/pull/50): pull-request; 2026-10-15
+- [#46 Daily-use fixes: faster hook without lexicon rewrites, install env, MCP roots, learn/export/setup gaps](https://github.com/ashlrai/lexicon/pull/46): pull-request; 2026-10-15
+- [#44 fix(mcp): trust_project asks the user instead of trusting on the agent's call](https://github.com/ashlrai/lexicon/pull/44): pull-request; 2026-10-15
+- [#35 fix(deps): pin commander ^14 so Node 20 is supported](https://github.com/ashlrai/lexicon/pull/35): pull-request; 2026-10-15
+- [#39 Pin the serve API contract Phantom's desktop voice client reads](https://github.com/ashlrai/lexicon/pull/39): pull-request; 2026-10-14
+- [#43 fix: Reject incomplete UTF-16 imports and finalize 0.5.5 notes](https://github.com/ashlrai/lexicon/pull/43): pull-request; 2026-10-14
+- [#41 fix: Qualify doctor declarations and preserve release assets](https://github.com/ashlrai/lexicon/pull/41): pull-request; 2026-10-14
+- [0.5.5 (2026-10-14)](https://github.com/ashlrai/lexicon/blob/HEAD/CHANGELOG.md): changelog; 2026-10-14
+- [#36 ci: affected-only vitest on PRs (--changed)](https://github.com/ashlrai/lexicon/pull/36): pull-request; 2026-10-13
+- [#21 build(deps-dev): bump the dev-dependencies group across 1 directory with 5 updates](https://github.com/ashlrai/lexicon/pull/21): pull-request; 2026-10-13
+- [#18 build(deps): bump actions/setup-dotnet from 4 to 6](https://github.com/ashlrai/lexicon/pull/18): pull-request; 2026-10-13
+- [#29 ci: tokenless npm trusted publishing + faster PR gate](https://github.com/ashlrai/lexicon/pull/29): pull-request; 2026-10-13
+- [#25 Qualify 0.5.5 metadata on current main with accurate guided-import documentation](https://github.com/ashlrai/lexicon/pull/25): pull-request; 2026-10-13
+- [#27 Document guided import privacy and stabilize lock-holder test setup](https://github.com/ashlrai/lexicon/pull/27): pull-request; 2026-10-09
+- [#26 Document guided GitHub import privacy and approval contracts](https://github.com/ashlrai/lexicon/pull/26): pull-request; 2026-10-09
+- [#24 Preserve MCP client settings and pin stable installer releases](https://github.com/ashlrai/lexicon/pull/24): pull-request; 2026-10-09
+- [#23 Guided vocabulary import + community pack registry](https://github.com/ashlrai/lexicon/pull/23): pull-request; 2026-10-09
+- [#22 Fix flaky voice test, expand starter packs](https://github.com/ashlrai/lexicon/pull/22): pull-request; 2026-10-09
+- [#17 test(examples): run every file in examples/ in CI](https://github.com/ashlrai/lexicon/pull/17): pull-request; 2026-09-30
+- [#16 feat(import): markdown importer for the claude-md table and markdown bullets](https://github.com/ashlrai/lexicon/pull/16): pull-request; 2026-09-29
+- [#15 docs: warn that plain `brew install lexicon` is dns-lexicon; standardize copyright](https://github.com/ashlrai/lexicon/pull/15): pull-request; 2026-09-28
+- [#2 Bump actions/setup-node from 5 to 7](https://github.com/ashlrai/lexicon/pull/2): pull-request; 2026-09-22
+- [#1 Bump actions/checkout from 5 to 7](https://github.com/ashlrai/lexicon/pull/1): pull-request; 2026-09-22
+- [#3 Bump typescript from 5.9.3 to 7.0.2 in the dev-dependencies group across 1 directory](https://github.com/ashlrai/lexicon/pull/3): pull-request; 2026-09-21
+- [v0.5.4](https://github.com/ashlrai/lexicon/releases/tag/v0.5.4): release; 2026-09-21
+- [v0.5.3](https://github.com/ashlrai/lexicon/releases/tag/v0.5.3): release; 2026-09-21
+- [0.5.4 (2026-09-21)](https://github.com/ashlrai/lexicon/blob/HEAD/CHANGELOG.md): changelog; 2026-09-21
+- [v0.5.2](https://github.com/ashlrai/lexicon/releases/tag/v0.5.2): release; 2026-09-20
+- [v0.5.1](https://github.com/ashlrai/lexicon/releases/tag/v0.5.1): release; 2026-09-20
+- [v0.5.0](https://github.com/ashlrai/lexicon/releases/tag/v0.5.0): release; 2026-09-20
+- [v0.4.0](https://github.com/ashlrai/lexicon/releases/tag/v0.4.0): release; 2026-09-20
+- [v0.3.2](https://github.com/ashlrai/lexicon/releases/tag/v0.3.2): release; 2026-09-20
+- [v0.3.1](https://github.com/ashlrai/lexicon/releases/tag/v0.3.1): release; 2026-09-20
+- [0.3.2 (2026-09-20)](https://github.com/ashlrai/lexicon/blob/HEAD/CHANGELOG.md): changelog; 2026-09-20
+- [0.4.0 (2026-09-20)](https://github.com/ashlrai/lexicon/blob/HEAD/CHANGELOG.md): changelog; 2026-09-20
+- [0.5.0 (2026-09-20)](https://github.com/ashlrai/lexicon/blob/HEAD/CHANGELOG.md): changelog; 2026-09-20
+- [0.5.1 (2026-09-20)](https://github.com/ashlrai/lexicon/blob/HEAD/CHANGELOG.md): changelog; 2026-09-20
+- [0.5.2 (2026-09-20)](https://github.com/ashlrai/lexicon/blob/HEAD/CHANGELOG.md): changelog; 2026-09-20
+- [0.5.3 (2026-09-20)](https://github.com/ashlrai/lexicon/blob/HEAD/CHANGELOG.md): changelog; 2026-09-20
+- [v0.3.0](https://github.com/ashlrai/lexicon/releases/tag/v0.3.0): release; 2026-09-19
+- [v0.2.0](https://github.com/ashlrai/lexicon/releases/tag/v0.2.0): release; 2026-09-19
+- [v0.1.0](https://github.com/ashlrai/lexicon/releases/tag/v0.1.0): release; 2026-09-19
+- [0.1.0 (2026-09-19)](https://github.com/ashlrai/lexicon/blob/HEAD/CHANGELOG.md): changelog; 2026-09-19
+- [0.2.0 (2026-09-19)](https://github.com/ashlrai/lexicon/blob/HEAD/CHANGELOG.md): changelog; 2026-09-19
+- [0.3.0 (2026-09-19)](https://github.com/ashlrai/lexicon/blob/HEAD/CHANGELOG.md): changelog; 2026-09-19
+- [0.3.1 (2026-09-19)](https://github.com/ashlrai/lexicon/blob/HEAD/CHANGELOG.md): changelog; 2026-09-19
+- [Unreleased](https://github.com/ashlrai/lexicon/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+
+### ashlrai/locus (core-fleet)
+
+- [#278 bridge: RQ-README-BRAND-LOCUS](https://github.com/ashlrai/locus/pull/278): pull-request; 2026-10-28
+- [#277 bridge: RQ-MR-CONFLICT-DRIVERS-locus](https://github.com/ashlrai/locus/pull/277): pull-request; 2026-10-28
+- [#275 bridge: RQ-REFILL-2026102801-CONSO-007](https://github.com/ashlrai/locus/pull/275): pull-request; 2026-10-28
+- [#262 bridge: RQ-GEN-2026102707-081](https://github.com/ashlrai/locus/pull/262): pull-request; 2026-10-28
+- [#263 bridge: RQ-GEN-2026102722-003](https://github.com/ashlrai/locus/pull/263): pull-request; 2026-10-28
+- [#264 bridge: RQ-GEN-2026102722-011](https://github.com/ashlrai/locus/pull/264): pull-request; 2026-10-28
+- [#267 bridge: RQ-GEN-2026102722-012](https://github.com/ashlrai/locus/pull/267): pull-request; 2026-10-28
+- [#270 bridge: RQ-REFILL-2026102719-LAND-001](https://github.com/ashlrai/locus/pull/270): pull-request; 2026-10-28
+- [#265 bridge: RQ-GEN-2026102722-014](https://github.com/ashlrai/locus/pull/265): pull-request; 2026-10-28
+- [#232 bridge: RQ-PL-LOCUS-MCP-PROTO-TESTS](https://github.com/ashlrai/locus/pull/232): pull-request; 2026-10-28
+- [#260 bridge: RQ-CI-SECONDS-LOCUS-2](https://github.com/ashlrai/locus/pull/260): pull-request; 2026-10-28
+- [#259 bridge: RQ-CI-SECONDS-LOCUS](https://github.com/ashlrai/locus/pull/259): pull-request; 2026-10-28
+- [#229 bridge: RQ-PL-RADAR-ANTH-LOCUS-SCAN](https://github.com/ashlrai/locus/pull/229): pull-request; 2026-10-28
+- [#226 bridge: RQ-LOCUS-AUTOPIN-HARDEN](https://github.com/ashlrai/locus/pull/226): pull-request; 2026-10-28
+- [#228 bridge: RQ-TESTDIET-locus](https://github.com/ashlrai/locus/pull/228): pull-request; 2026-10-28
+- [#222 bridge: RQ-LOCUS-PHM](https://github.com/ashlrai/locus/pull/222): pull-request; 2026-10-28
+- [#216 bridge: RQ-LOCUS-NPM-DOWNGRADE](https://github.com/ashlrai/locus/pull/216): pull-request; 2026-10-28
+- [#200 bridge: RQ-LOCUS-SAMPLE-WARN](https://github.com/ashlrai/locus/pull/200): pull-request; 2026-10-28
+- [#199 bridge: RQ-LOCUS-WHOAMI-PRESENT](https://github.com/ashlrai/locus/pull/199): pull-request; 2026-10-28
+- [#215 bridge: RQ-LOCUS-INSTALLER](https://github.com/ashlrai/locus/pull/215): pull-request; 2026-10-28
+- [#257 bridge: RQ-MERGE-WAIT-LOCUS-2](https://github.com/ashlrai/locus/pull/257): pull-request; 2026-10-28
+- [#212 bridge: RQ-LOCUS-INHERIT-ENV-TEST](https://github.com/ashlrai/locus/pull/212): pull-request; 2026-10-27
+- [#206 bridge: RQ-LOCUS-EXIT-CODES](https://github.com/ashlrai/locus/pull/206): pull-request; 2026-10-27
+- [#204 bridge: RQ-DV-LOCUS-ADAPTER-GITHUB-TEST](https://github.com/ashlrai/locus/pull/204): pull-request; 2026-10-27
+- [#205 bridge: RQ-DV-LOCUS-CANARY-FAILCLOSED](https://github.com/ashlrai/locus/pull/205): pull-request; 2026-10-27
+- [#195 bridge: RQ-DV-LOCUS-RECOVERY-HINT](https://github.com/ashlrai/locus/pull/195): pull-request; 2026-10-27
+- [#207 bridge: RQ-LOCUS-CRED-DIAG-REDACT](https://github.com/ashlrai/locus/pull/207): pull-request; 2026-10-27
+- [#221 bridge: RQ-LOCUS-CHILD-RSS-CAP](https://github.com/ashlrai/locus/pull/221): pull-request; 2026-10-27
+- [#234 bridge: RQ-FRESH-GEN-LOCUS](https://github.com/ashlrai/locus/pull/234): pull-request; 2026-10-27
+- [#244 bridge: RQ-LOCUS-POLICY-PROPTEST](https://github.com/ashlrai/locus/pull/244): pull-request; 2026-10-27
+- [#247 bridge: RQ-N26-LOCUS-CONTRACT-SCHEMA](https://github.com/ashlrai/locus/pull/247): pull-request; 2026-10-27
+- [#248 bridge: RQ-PARITY-LOCUS-PEERS](https://github.com/ashlrai/locus/pull/248): pull-request; 2026-10-27
+- [#249 bridge: RQ-PLAN-LOCUS](https://github.com/ashlrai/locus/pull/249): pull-request; 2026-10-27
+- [#196 bridge: RQ-LOCUS-BINDING-IDEMP](https://github.com/ashlrai/locus/pull/196): pull-request; 2026-10-27
+- [#238 bridge: RQ-DISC-MCP-MANIFEST-LOCUS](https://github.com/ashlrai/locus/pull/238): pull-request; 2026-10-27
+- [#189 fix(security): post-merge lows from #183/#185; --json never prompts (#188)](https://github.com/ashlrai/locus/pull/189): pull-request; 2026-10-27
+- [#245 bridge: RQ-LOCUS-SPAWN-LEAK-CONFIG](https://github.com/ashlrai/locus/pull/245): pull-request; 2026-10-27
+- [#191 chore: remove case-duplicate PR template (RQ-CASE-DUP)](https://github.com/ashlrai/locus/pull/191): pull-request; 2026-10-27
+- [#246 bridge: RQ-N26-DV-LOCUS-README](https://github.com/ashlrai/locus/pull/246): pull-request; 2026-10-27
+- [#240 bridge: RQ-DISC-SITE-LOCUS](https://github.com/ashlrai/locus/pull/240): pull-request; 2026-10-27
+- [#213 fix(session): renew must not undo a concurrent leave or enter (post-merge review of #193)](https://github.com/ashlrai/locus/pull/213): pull-request; 2026-10-27
+- [#243 bridge: RQ-LOCUS-GATEWAY-BENCH](https://github.com/ashlrai/locus/pull/243): pull-request; 2026-10-27
+- [#253 ci: concurrency cancels superseded PR runs only, never merge_group or main pushes](https://github.com/ashlrai/locus/pull/253): pull-request; 2026-10-27
+- [#231 ci: skip PR CI on draft PRs, run on ready_for_review (G1)](https://github.com/ashlrai/locus/pull/231): pull-request; 2026-10-27
+- [#252 ci(integration): Classify changes on every PR and merge_group (G1, draft)](https://github.com/ashlrai/locus/pull/252): pull-request; 2026-10-27
+- [#214 bridge: RQ-LOCUS-HANDSHAKE-JSON](https://github.com/ashlrai/locus/pull/214): pull-request; 2026-10-26
+- [#219 bridge: RQ-LOCUS-BROKER](https://github.com/ashlrai/locus/pull/219): pull-request; 2026-10-26
+- [#194 bridge: RQ-MOD-2-locus-r2](https://github.com/ashlrai/locus/pull/194): pull-request; 2026-10-26
+- [#210 bridge: RQ-LOCUS-GATEWAY-ROUTE-CLI](https://github.com/ashlrai/locus/pull/210): pull-request; 2026-10-26
+- [v0.5.2](https://github.com/ashlrai/locus/releases/tag/v0.5.2): release; 2026-10-26; cross-repo ashlrai/ashlr-md#186
+- [#211 bridge: RQ-DV-LOCUS-POLICY-TEST](https://github.com/ashlrai/locus/pull/211): pull-request; 2026-10-26
+- [#208 chore(release): 0.5.2](https://github.com/ashlrai/locus/pull/208): pull-request; 2026-10-26
+- [#193 feat(session): locus renew (opt-in, lifetime-bounded) + expired-pin leave/enter (RQ-LOCUS-PIN-TTL)](https://github.com/ashlrai/locus/pull/193): pull-request; 2026-10-26
+- [#203 bridge: RQ-LOCUS-EXEC-PERF](https://github.com/ashlrai/locus/pull/203): pull-request; 2026-10-26
+- [#198 bridge: RQ-LOCUS-DOCTOR-FRESH](https://github.com/ashlrai/locus/pull/198): pull-request; 2026-10-26
+- [#185 fix(marketplace): refuse userinfo and redact query in index URL output](https://github.com/ashlrai/locus/pull/185): pull-request; 2026-10-26
+- [#183 bridge: RQ-CLI-1](https://github.com/ashlrai/locus/pull/183): pull-request; 2026-10-26
+- [#187 fix(loopback): allow plain HTTP only to exact 127.0.0.1 and ::1; refuse localhost](https://github.com/ashlrai/locus/pull/187): pull-request; 2026-10-26
+- [#184 bridge: RQ-DEADCODE-locus](https://github.com/ashlrai/locus/pull/184): pull-request; 2026-10-26
+- [#180 perf(exec): drop the broker accept sleep (0.051 s to 0.004 s)](https://github.com/ashlrai/locus/pull/180): pull-request; 2026-10-26
+- [#179 build: declare rust-version (MSRV) for cargo install path](https://github.com/ashlrai/locus/pull/179): pull-request; 2026-10-26
+- [#164 test(ci): phantom+locus merge-queue integration test](https://github.com/ashlrai/locus/pull/164): pull-request; 2026-10-26; cross-repo ashlrai/ashlr-md#186
+- [#178 Add CodeQL, Scorecard, and coverage tooling](https://github.com/ashlrai/locus/pull/178): pull-request; 2026-10-26; cross-repo ashlrai/ashlr-md#186
+- [#176 fix(recovery): dead-broker hint says locus enter first](https://github.com/ashlrai/locus/pull/176): pull-request; 2026-10-26
+- [#163 feat(cli): locus autopin suggest (L2)](https://github.com/ashlrai/locus/pull/163): pull-request; 2026-10-26
+- [#165 docs: first-run benchmarks and install corrections](https://github.com/ashlrai/locus/pull/165): pull-request; 2026-10-26
+- [#162 fix(core): enforce 0700 on LOCUS_HOME at Store::open](https://github.com/ashlrai/locus/pull/162): pull-request; 2026-10-26
+- [#161 docs(readme): drop npm 0.5.0 caveat now that 0.5.1 is live](https://github.com/ashlrai/locus/pull/161): pull-request; 2026-10-26
+- [#160 fix(security): session temp 0600 + dir fsync, race-safe history key, locked leave read (Tier-1)](https://github.com/ashlrai/locus/pull/160): pull-request; 2026-10-26
+- [v0.5.1](https://github.com/ashlrai/locus/releases/tag/v0.5.1): release; 2026-10-26
+- [#159 docs(readme): drop the leave --force first-run step (fixed by #156)](https://github.com/ashlrai/locus/pull/159): pull-request; 2026-10-26
+- [#158 release: fold Unreleased into 0.5.1 (re-dated 2026-10-25)](https://github.com/ashlrai/locus/pull/158): pull-request; 2026-10-26
+- [#155 feat(history): local pin history (L1): on by default, off switch, capped, remotes hashed](https://github.com/ashlrai/locus/pull/155): pull-request; 2026-10-26
+- [#156 fix(enter): a pin whose broker died with its shell no longer blocks its own replacement (quickstart then enter)](https://github.com/ashlrai/locus/pull/156): pull-request; 2026-10-26
+- [#154 chore(security): growth-only CODEOWNERS for workflows and keyed/network paths](https://github.com/ashlrai/locus/pull/154): pull-request; 2026-10-26
+- [#153 docs(readme): first-run order that works today, Rust prerequisite](https://github.com/ashlrai/locus/pull/153): pull-request; 2026-10-26
+- [#152 ci(release): pin third-party actions to commit SHAs](https://github.com/ashlrai/locus/pull/152): pull-request; 2026-10-26
+- [#151 feat(doctor): ashlr.doctor v1 wrapper on locus doctor --json](https://github.com/ashlrai/locus/pull/151): pull-request; 2026-10-26
+- [#150 test(handshake): v1 conformance test; doctor --fix preview no longer initializes a missing LOCUS_HOME](https://github.com/ashlrai/locus/pull/150): pull-request; 2026-10-25
+- [#149 docs(readme): first-run sequence after locus quickstart](https://github.com/ashlrai/locus/pull/149): pull-request; 2026-10-25
+- [#148 feat(exec): --expect <alias> refuses before the child starts unless that alias is pinned](https://github.com/ashlrai/locus/pull/148): pull-request; 2026-10-25
+- [#147 fix(doctor): empty phantom list with phm refs reads as unavailable (empty_list)](https://github.com/ashlrai/locus/pull/147): pull-request; 2026-10-25
+- [#146 feat(doctor): --fix checks phm refs against phantom list --json in a Phantom project](https://github.com/ashlrai/locus/pull/146): pull-request; 2026-10-25
+- [#145 feat(handshake): advertise doctor-fix capability](https://github.com/ashlrai/locus/pull/145): pull-request; 2026-10-25
+- [#144 feat(doctor): locus doctor --fix previews safe repairs, --apply makes them](https://github.com/ashlrai/locus/pull/144): pull-request; 2026-10-25
+- [#143 test(status): pin expiry on a real pinned session](https://github.com/ashlrai/locus/pull/143): pull-request; 2026-10-25
+- [#142 feat(status): show how long the pin has left; --json adds expires_at and expires_in_secs](https://github.com/ashlrai/locus/pull/142): pull-request; 2026-10-25
+- [#141 feat(cli): locus --ashlr-handshake (Ashlr companion handshake v1)](https://github.com/ashlrai/locus/pull/141): pull-request; 2026-10-25
+- [#140 ci(npm-wrapper-macos): cancel superseded PR runs only, never main](https://github.com/ashlrai/locus/pull/140): pull-request; 2026-10-25
+- [#139 ci(release): pin npm 11.6.2 for trusted publishing and refuse NPM_TOKEN](https://github.com/ashlrai/locus/pull/139): pull-request; 2026-10-25
+- [#138 feat(doctor): opt-in Phantom agent preflight (LOCUS_PHANTOM_PREFLIGHT)](https://github.com/ashlrai/locus/pull/138): pull-request; 2026-10-25
+- [#137 docs(readme): one canonical name, command and link per Ashlr tool](https://github.com/ashlrai/locus/pull/137): pull-request; 2026-10-25
+- [#54 Verify npm release installs and fail closed on unsupported Phantom credentials](https://github.com/ashlrai/locus/pull/54): pull-request; 2026-10-25
+- [#136 ci: macOS smoke for the npm wrapper (no self-exec loop)](https://github.com/ashlrai/locus/pull/136): pull-request; 2026-10-25
+- [\[0.5.1\] - 2026-10-25](https://github.com/ashlrai/locus/blob/HEAD/CHANGELOG.md): changelog; 2026-10-25
+- [#135 ci(conformance): docs-only PRs skip the heavy steps; the job still reports](https://github.com/ashlrai/locus/pull/135): pull-request; 2026-10-24
+- [#134 ci(release): npm publish via trusted publishing (OIDC) on v* tags](https://github.com/ashlrai/locus/pull/134): pull-request; 2026-10-24
+- [#133 docs: point ashlr-hub PR links at ashlrai/phantom](https://github.com/ashlrai/locus/pull/133): pull-request; 2026-10-24
+- [#132 release: roll Unreleased into 0.5.1 (2026-10-24)](https://github.com/ashlrai/locus/pull/132): pull-request; 2026-10-24
+- [#131 test(npm): regression test for the 0.5.0 locus --version self-exec loop](https://github.com/ashlrai/locus/pull/131): pull-request; 2026-10-24
+- [#130 test(gateway): LiteLLM-shaped loopback proxy check for the isolated exec child](https://github.com/ashlrai/locus/pull/130): pull-request; 2026-10-19
+- [#129 test(setup): per-client shape parity matrix for setup --client](https://github.com/ashlrai/locus/pull/129): pull-request; 2026-10-19
+- [#128 fix: keep the webhook URL out of audit webhook errors](https://github.com/ashlrai/locus/pull/128): pull-request; 2026-10-19
+- [#127 feat(exec): opt-in \[exec\] inherit_env for the isolated child (exact names; key names only as phm_ placeholders)](https://github.com/ashlrai/locus/pull/127): pull-request; 2026-10-19
+- [#126 docs: using Locus with Phantom](https://github.com/ashlrai/locus/pull/126): pull-request; 2026-10-19
+- [#125 fix(security): dashboard opens the plain URL, never ?token=](https://github.com/ashlrai/locus/pull/125): pull-request; 2026-10-19
+- [#124 feat(core): doctor --fix core module, dry run by default (unwired)](https://github.com/ashlrai/locus/pull/124): pull-request; 2026-10-19
+- [#123 feat(exec): opt-in gateway base URL for the isolated child, off by default](https://github.com/ashlrai/locus/pull/123): pull-request; 2026-10-19
+- [#122 feat: opt-in signed, value-free credential injection audit (off by default)](https://github.com/ashlrai/locus/pull/122): pull-request; 2026-10-19
+- [#121 feat: opt-in session budget caps (max_actions, max_minutes), off by default](https://github.com/ashlrai/locus/pull/121): pull-request; 2026-10-19
+- [#120 test: pin that gateway and proxy env vars never reach the isolated child](https://github.com/ashlrai/locus/pull/120): pull-request; 2026-10-18
+- [#119 chore(release): roll Unreleased into 0.5.1](https://github.com/ashlrai/locus/pull/119): pull-request; 2026-10-18
+- [#118 docs(readme): link gateway base-URL note and PQ readiness note](https://github.com/ashlrai/locus/pull/118): pull-request; 2026-10-18
+- [#117 docs: set a gateway URL inside locus exec's isolated environment](https://github.com/ashlrai/locus/pull/117): pull-request; 2026-10-18
+- [#116 docs: audit note on provider base URLs and model gateways](https://github.com/ashlrai/locus/pull/116): pull-request; 2026-10-18
+- [#115 fix(cli): --json usage errors print one JSON line; events --limit](https://github.com/ashlrai/locus/pull/115): pull-request; 2026-10-18
+- [#114 docs: post-quantum readiness notes and classical-only crypto check](https://github.com/ashlrai/locus/pull/114): pull-request; 2026-10-18
+- [#92 ci(release): build both macOS targets in one job, so a tag waits on one macOS slot](https://github.com/ashlrai/locus/pull/92): pull-request; 2026-10-17
+- [#113 fix(mcp,core): mistyped control tool/argument names the nearest match; unpinned error says locus enter](https://github.com/ashlrai/locus/pull/113): pull-request; 2026-10-17
+- [#112 fix(cli): events with a no-match filter names the ops/bindings in the log](https://github.com/ashlrai/locus/pull/112): pull-request; 2026-10-17
+- [#107 fix(cli,core): workspace and binding writes never follow a symlink; duration overflows refused instead of panicking](https://github.com/ashlrai/locus/pull/107): pull-request; 2026-10-17
+- [#111 fix(cli): exec/run/ci run refuse an option in the command position](https://github.com/ashlrai/locus/pull/111): pull-request; 2026-10-17
+- [#110 fix(mcp,core): request_pin/enter_hint suggest the mistyped alias; tighter typo threshold](https://github.com/ashlrai/locus/pull/110): pull-request; 2026-10-17
+- [#105 fix(cli,mcp): exec exit codes tell not-found from failure; unstartable children audited and cleaned up; control-tool type errors](https://github.com/ashlrai/locus/pull/105): pull-request; 2026-10-17
+- [#108 fix(cli): binding add refuses to replace an existing alias without --force; show/rm suggest aliases](https://github.com/ashlrai/locus/pull/108): pull-request; 2026-10-17
+- [#109 fix(cli): stale-pin hints name a real binding, hook hints follow $SHELL, bounded approve TTL, clearer watch output](https://github.com/ashlrai/locus/pull/109): pull-request; 2026-10-17
+- [#106 fix(cli,mcp): closed control-tool schemas, bounded mint TTLs, provider typo warning, setup --json](https://github.com/ashlrai/locus/pull/106): pull-request; 2026-10-17
+- [#100 docs: say phm: refs do not resolve with Phantom Secrets 0.7.9](https://github.com/ashlrai/locus/pull/100): pull-request; 2026-10-17
+- [#101 test(cli): pin agent-facing doc facts to the CLI, MCP catalog and setup clients](https://github.com/ashlrai/locus/pull/101): pull-request; 2026-10-17
+- [#103 fix(cli,mcp): engagement init creates nothing on conflict; workspace --json; errors name the next step](https://github.com/ashlrai/locus/pull/103): pull-request; 2026-10-17
+- [#99 fix: refuse undeclared tool args, -32602 for unknown tools, duration --timeout, no 10s stale-pin wait](https://github.com/ashlrai/locus/pull/99): pull-request; 2026-10-17
+- [#102 fix(mcp,cli): locus://doctor reports a malformed binding; bounded reveal probe; framed parse errors](https://github.com/ashlrai/locus/pull/102): pull-request; 2026-10-17
+- [#96 fix: scope pending-approval readiness to the pinned binding](https://github.com/ashlrai/locus/pull/96): pull-request; 2026-10-17
+- [#104 test: isolate env-mutating tests, make force-leave failure root-proof, cut 25s of sleeps](https://github.com/ashlrai/locus/pull/104): pull-request; 2026-10-17
+- [#98 fix(cli): make unresolved phm: credential refs visible in doctor and exec](https://github.com/ashlrai/locus/pull/98): pull-request; 2026-10-17
+- [#97 cli/mcp: JSON errors under --json; locus-mcp answers unparseable input with -32700; warn on workspace aliases with no binding](https://github.com/ashlrai/locus/pull/97): pull-request; 2026-10-17
+- [#94 docs: sync agent-facing docs with main (onboard, supervised MCP, Gemini, request_pin)](https://github.com/ashlrai/locus/pull/94): pull-request; 2026-10-17
+- [#95 release: roll Unreleased into 0.5.1 changelog](https://github.com/ashlrai/locus/pull/95): pull-request; 2026-10-17
+- [#93 cli: name the stale-pin recovery on every control command; doctor reports a malformed binding instead of aborting](https://github.com/ashlrai/locus/pull/93): pull-request; 2026-10-17
+- [#91 feat(setup): Gemini CLI client support](https://github.com/ashlrai/locus/pull/91): pull-request; 2026-10-16
+- [#89 docs: fix broken onboarding link and local path in PLAN](https://github.com/ashlrai/locus/pull/89): pull-request; 2026-10-16
+- [#88 docs(readme): don't claim npm 0.5.1 is published; warn off npm 0.5.0](https://github.com/ashlrai/locus/pull/88): pull-request; 2026-10-16
+- [#87 fix: root npm installs work for other users; locus-mcp --version; quick-start and MCP docs](https://github.com/ashlrai/locus/pull/87): pull-request; 2026-10-16
+- [#86 release: 0.5.1 changelog dated, include onboarding and marketplace](https://github.com/ashlrai/locus/pull/86): pull-request; 2026-10-16
+- [#85 feat: onboard wizard + community adapter marketplace (replaces #56)](https://github.com/ashlrai/locus/pull/85): pull-request; 2026-10-16
+- [#84 docs: Phantom integration drop-in, hub rename, design proposals (replaces #55)](https://github.com/ashlrai/locus/pull/84): pull-request; 2026-10-16
+- [#70 Return errors for malformed Unicode TTL values](https://github.com/ashlrai/locus/pull/70): pull-request; 2026-10-16
+- [#65 docs(readme): front-door rewrite with demo GIF](https://github.com/ashlrai/locus/pull/65): pull-request; 2026-10-16
+- [#83 Bash prompt hook, watch interval floor, complete help groups, honest unknown-alias pin requests](https://github.com/ashlrai/locus/pull/83): pull-request; 2026-10-16
+- [#82 Name the next step in expired-session and workspace-allowlist errors](https://github.com/ashlrai/locus/pull/82): pull-request; 2026-10-16
+- [#81 setup: say how to get provider tools (locus mcp --supervised)](https://github.com/ashlrai/locus/pull/81): pull-request; 2026-10-16
+- [#78 docs: measured wrong-client credential reachability (with not-a-sandbox caveat)](https://github.com/ashlrai/locus/pull/78): pull-request; 2026-10-15
+- [#79 release: ship a .sha256 per archive and verify it before publishing](https://github.com/ashlrai/locus/pull/79): pull-request; 2026-10-15
+- [#80 docs: shell completion install guide, Homebrew completions, Codex config snippet](https://github.com/ashlrai/locus/pull/80): pull-request; 2026-10-15
+- [#77 docs(changelog): add #76 to 0.5.1](https://github.com/ashlrai/locus/pull/77): pull-request; 2026-10-15
+- [#76 fix(cli): stale-pin recovery in enter/status/agent report; no panic on closed stdout](https://github.com/ashlrai/locus/pull/76): pull-request; 2026-10-15
+- [#75 release: v0.5.1 (with the npm quickstart -> enter fix)](https://github.com/ashlrai/locus/pull/75): pull-request; 2026-10-15
+- [#74 docs: correct stale MCP, CLI and layout claims in design and reference docs](https://github.com/ashlrai/locus/pull/74): pull-request; 2026-10-15
+- [#73 fix(mcp): negotiate protocol version; honest messages when the plain entry can't see the pin](https://github.com/ashlrai/locus/pull/73): pull-request; 2026-10-15
+- [#72 Honest readiness and whoami when the control capability isn't exported](https://github.com/ashlrai/locus/pull/72): pull-request; 2026-10-15
+- [#71 feat(cli): locus mcp --supervised serves the pinned binding's provider tools](https://github.com/ashlrai/locus/pull/71): pull-request; 2026-10-14
+- [#69 docs: make the agent smoke tests runnable and state the locus-mcp launch limit](https://github.com/ashlrai/locus/pull/69): pull-request; 2026-10-14
+- [#68 ci: affected-only tests on PRs (nextest rdeps)](https://github.com/ashlrai/locus/pull/68): pull-request; 2026-10-13
+- [#64 fix(npm): locus/locus-mcp npm wrappers hang forever after npm i -g](https://github.com/ashlrai/locus/pull/64): pull-request; 2026-10-13
+- [#60 docs: launch readiness - ecosystem section, contributing, PR template](https://github.com/ashlrai/locus/pull/60): pull-request; 2026-10-13
+- [#59 ci: cargo-nextest for test, invariants and MCP suites](https://github.com/ashlrai/locus/pull/59): pull-request; 2026-10-13
+- [#58 ci: ~6x faster tests (optimized crypto deps in test profile) + cancel superseded PR runs](https://github.com/ashlrai/locus/pull/58): pull-request; 2026-10-13
+- [#57 docs: Locus for Phantom-enrolled repos (scope bindings)](https://github.com/ashlrai/locus/pull/57): pull-request; 2026-10-13
+- [#53 chore(github): add pull request template](https://github.com/ashlrai/locus/pull/53): pull-request; 2026-09-29
+- [#52 docs(examples): executable multi-client recipes + comparison table](https://github.com/ashlrai/locus/pull/52): pull-request; 2026-09-29
+- [#51 fix(npm): explain the cargo fallback, and fix the invalid `cargo install --package` command](https://github.com/ashlrai/locus/pull/51): pull-request; 2026-09-29
+- [#48 chore(github): add issue templates](https://github.com/ashlrai/locus/pull/48): pull-request; 2026-09-29
+- [#47 chore(license): standardize copyright holder to AshlrAI, Inc.; fix clippy on Rust 1.98](https://github.com/ashlrai/locus/pull/47): pull-request; 2026-09-28
+- [#46 fix(hook): strict-mode (set -u) safe shell hook output](https://github.com/ashlrai/locus/pull/46): pull-request; 2026-08-16
+- [#45 fix: register anthropic/openai in adapter-registry catalog + drift guard](https://github.com/ashlrai/locus/pull/45): pull-request; 2026-08-16
+- [#44 release: v0.5.0 digests](https://github.com/ashlrai/locus/pull/44): pull-request; 2026-08-16
+- [v0.5.0](https://github.com/ashlrai/locus/releases/tag/v0.5.0): release; 2026-08-16
+- [#43 release: v0.5.0](https://github.com/ashlrai/locus/pull/43): pull-request; 2026-08-16
+- [#42 feat: hub MT drop-in, signed registry manifests, transport hardening, MT conformance](https://github.com/ashlrai/locus/pull/42): pull-request; 2026-08-16
+- [#41 release: v0.4.0 digests](https://github.com/ashlrai/locus/pull/41): pull-request; 2026-08-16
+- [v0.4.0](https://github.com/ashlrai/locus/releases/tag/v0.4.0): release; 2026-08-16
+- [#40 release: v0.4.0](https://github.com/ashlrai/locus/pull/40): pull-request; 2026-08-16
+- [#39 feat: multi-tenant remote multiplexor, Anthropic/OpenAI adapters, locus switch](https://github.com/ashlrai/locus/pull/39): pull-request; 2026-08-16
+- [#38 docs: mark v0.3.0 npm publish complete](https://github.com/ashlrai/locus/pull/38): pull-request; 2026-08-16
+- [#37 feat: leave --force recovery, policy-aware catalog + read_only call-time deny, doctor polish](https://github.com/ashlrai/locus/pull/37): pull-request; 2026-08-16
+- [\[0.4.0\] - 2026-08-16](https://github.com/ashlrai/locus/blob/HEAD/CHANGELOG.md): changelog; 2026-08-16
+- [\[0.5.0\] - 2026-08-16](https://github.com/ashlrai/locus/blob/HEAD/CHANGELOG.md): changelog; 2026-08-16
+- [#36 fix(locus-core): phantom probe honors LOCUS_PHANTOM_PROJECT + parses bulleted phantom list output](https://github.com/ashlrai/locus/pull/36): pull-request; 2026-08-15
+- [#35 release: v0.3.0 digests (Homebrew formula + checklist)](https://github.com/ashlrai/locus/pull/35): pull-request; 2026-08-15
+- [v0.3.0](https://github.com/ashlrai/locus/releases/tag/v0.3.0): release; 2026-08-15
+- [#34 release: v0.3.0](https://github.com/ashlrai/locus/pull/34): pull-request; 2026-08-15
+- [#33 feat: cross-process pin-swap anchoring, hardened setup, TTL, client add, Grok/Claude wiring](https://github.com/ashlrai/locus/pull/33): pull-request; 2026-08-15
+- [\[0.3.0\] - 2026-08-15](https://github.com/ashlrai/locus/blob/HEAD/CHANGELOG.md): changelog; 2026-08-15
+- [#31 feat(locus-mcp): cross-process Mcp-Session-Id resume (file-backed)](https://github.com/ashlrai/locus/pull/31): pull-request; 2026-08-11
+- [#30 sync: hub drop-in watch/verify session heartbeat (hub #273)](https://github.com/ashlrai/locus/pull/30): pull-request; 2026-08-11
+- [#32 feat: production adapter trust store under ~/.locus/trust/](https://github.com/ashlrai/locus/pull/32): pull-request; 2026-08-11
+- [#29 feat: dual-IDE dogfood matrix without secrets (M3)](https://github.com/ashlrai/locus/pull/29): pull-request; 2026-08-11
+- [#28 test(e2e): feature-detect HTTP MCP session + SSE probes](https://github.com/ashlrai/locus/pull/28): pull-request; 2026-08-11
+- [#24 feat: multi-message SSE + GET /mcp/sse session ticks (M5 partial)](https://github.com/ashlrai/locus/pull/24): pull-request; 2026-08-11
+- [#23 feat: ed25519 adapter registry signatures (+ HMAC backcompat)](https://github.com/ashlrai/locus/pull/23): pull-request; 2026-08-11
+- [#26 feat: opt-in sandbox network deny for workers](https://github.com/ashlrai/locus/pull/26): pull-request; 2026-08-11
+- [#25 feat(locus-mcp): Mcp-Session-Id for streamable HTTP](https://github.com/ashlrai/locus/pull/25): pull-request; 2026-08-11
+- [#27 fix: stabilize supervisor identity test under CI load](https://github.com/ashlrai/locus/pull/27): pull-request; 2026-08-11
+- [#22 docs: multi-account dogfood playbook + pin walk script (M3)](https://github.com/ashlrai/locus/pull/22): pull-request; 2026-08-11
+- [#21 docs: mark hub #256/#257 session mint paths done](https://github.com/ashlrai/locus/pull/21): pull-request; 2026-08-10
+- [#19 sync: hub drop-in locus.firm → enforce (hub #258)](https://github.com/ashlrai/locus/pull/19): pull-request; 2026-08-10
+- [#20 feat: Linux worker sandbox partial (bwrap / path) - M5](https://github.com/ashlrai/locus/pull/20): pull-request; 2026-08-10
+- [#18 docs: update GOALS M4 for hub firm profile + session mint landings](https://github.com/ashlrai/locus/pull/18): pull-request; 2026-08-10
+- [#15 feat: multi-client dogfood install probe (M3)](https://github.com/ashlrai/locus/pull/15): pull-request; 2026-08-10
+- [#17 feat: streamable-HTTP-lite MCP polish (M5 partial)](https://github.com/ashlrai/locus/pull/17): pull-request; 2026-08-10
+- [#16 feat: adapter registry v0 (catalog list/verify + signed roadmap)](https://github.com/ashlrai/locus/pull/16): pull-request; 2026-08-10
+- [#14 sync: hub drop-in firm config.locus.enforce + runTask call sites](https://github.com/ashlrai/locus/pull/14): pull-request; 2026-08-10
+- [#12 feat: audit export webhook sink (M5 SIEM partial)](https://github.com/ashlrai/locus/pull/12): pull-request; 2026-08-10
+- [#13 feat: locus watch session heartbeat for hub (M5)](https://github.com/ashlrai/locus/pull/13): pull-request; 2026-08-10
+- [#11 test: composite top-adapter upstream recipes + exclusive catalog](https://github.com/ashlrai/locus/pull/11): pull-request; 2026-08-10
+- [#10 feat: integrate approval authority and sandbox readiness](https://github.com/ashlrai/locus/pull/10): pull-request; 2026-08-10
+- [#9 docs: mark hub Locus gate PRs landed on GOALS M4](https://github.com/ashlrai/locus/pull/9): pull-request; 2026-08-10
+- [#8 sync: hub drop-in LOCUS_ENFORCE pre-mutate + scrubbed mint env](https://github.com/ashlrai/locus/pull/8): pull-request; 2026-08-10
+- [#7 feat: harden top adapter upstream MCP recipes](https://github.com/ashlrai/locus/pull/7): pull-request; 2026-08-10
+- [#6 feat: partial dual-control notify for second principal](https://github.com/ashlrai/locus/pull/6): pull-request; 2026-08-10
+- [#5 feat: dual-control UX, sandbox workers, verify session](https://github.com/ashlrai/locus/pull/5): pull-request; 2026-08-10
+- [#4 fix: publish Locus v0.2.0 Homebrew checksum](https://github.com/ashlrai/locus/pull/4): pull-request; 2026-08-10
+- [#2 fix: fail closed on credential refs and workspace policy](https://github.com/ashlrai/locus/pull/2): pull-request; 2026-08-10
+- [v0.2.0](https://github.com/ashlrai/locus/releases/tag/v0.2.0): release; 2026-08-09
+- [#1 ci: add explicit Hub verification contract](https://github.com/ashlrai/locus/pull/1): pull-request; 2026-08-09
+- [v0.1.1](https://github.com/ashlrai/locus/releases/tag/v0.1.1): release; 2026-08-09
+- [\[0.1.1\] - 2026-08-09](https://github.com/ashlrai/locus/blob/HEAD/CHANGELOG.md): changelog; 2026-08-09
+- [\[0.2.0\] - 2026-08-09](https://github.com/ashlrai/locus/blob/HEAD/CHANGELOG.md): changelog; 2026-08-09
+- [v0.1.0](https://github.com/ashlrai/locus/releases/tag/v0.1.0): release; 2026-08-07
+- [\[0.1.0\] - 2026-08-06](https://github.com/ashlrai/locus/blob/HEAD/CHANGELOG.md): changelog; 2026-08-06
+- [\[Unreleased\]](https://github.com/ashlrai/locus/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+
+### ashlrai/phantom (core-fleet)
+
+- [#1358 bridge: RQ-DFPHANTOMQ7](https://github.com/ashlrai/phantom/pull/1358): pull-request; 2026-10-28
+- [#1362 bridge: RQ-V4-LOOP-LEASES-FENCE-1](https://github.com/ashlrai/phantom/pull/1362): pull-request; 2026-10-28
+- [#1359 bridge: RQ-V4ASKFANOUT2Q7](https://github.com/ashlrai/phantom/pull/1359): pull-request; 2026-10-28
+- [#1346 bridge: RQ-RELEASE-PHANTOM-1028](https://github.com/ashlrai/phantom/pull/1346): pull-request; 2026-10-28
+- [#1349 bridge: RQ-V4-LAND-FIRST-1](https://github.com/ashlrai/phantom/pull/1349): pull-request; 2026-10-28
+- [#1322 bridge: RQ-RELTRAIN-1-RETIRE](https://github.com/ashlrai/phantom/pull/1322): pull-request; 2026-10-28
+- [#1340 bridge: RQ-DRAIN-phantom-965](https://github.com/ashlrai/phantom/pull/1340): pull-request; 2026-10-28
+- [#1333 bridge: RQ-DRAIN-phantom-1229](https://github.com/ashlrai/phantom/pull/1333): pull-request; 2026-10-28
+- [#1331 bridge: RQ-MR-3-CLASSIFY-TREE-FIX](https://github.com/ashlrai/phantom/pull/1331): pull-request; 2026-10-28
+- [#958 bridge: RQ-QUEUE-AUTOFILL](https://github.com/ashlrai/phantom/pull/958): pull-request; 2026-10-28
+- [#1237 bridge: RQ-FIXUP-CONF-1035](https://github.com/ashlrai/phantom/pull/1237): pull-request; 2026-10-28
+- [#1242 bridge: RQ-FIXUP-CONF-1117](https://github.com/ashlrai/phantom/pull/1242): pull-request; 2026-10-28
+- [#1241 bridge: RQ-FIXUP-CONF-1153](https://github.com/ashlrai/phantom/pull/1241): pull-request; 2026-10-28
+- [#1244 bridge: RQ-FIXUP-CONF-1190](https://github.com/ashlrai/phantom/pull/1244): pull-request; 2026-10-28
+- [#1247 bridge: RQ-FIXUP-CONF-1225](https://github.com/ashlrai/phantom/pull/1247): pull-request; 2026-10-28
+- [#1246 bridge: RQ-FIXUP-CONF-1195](https://github.com/ashlrai/phantom/pull/1246): pull-request; 2026-10-28
+- [#1251 fix: clear the daily full-run drift (CLI registry, docs links, spawn-gate assertion, web typecheck)](https://github.com/ashlrai/phantom/pull/1251): pull-request; 2026-10-28
+- [#1235 Memory: optional local meaning signal, measured on the benchmark](https://github.com/ashlrai/phantom/pull/1235): pull-request; 2026-10-28
+- [#786 Memory: land the reviewed memory foundation, its fixes and the benchmark gate on master](https://github.com/ashlrai/phantom/pull/786): pull-request; 2026-10-28
+- [#1250 fix(autopilot): keep operator credentials out of fixer and verify children](https://github.com/ashlrai/phantom/pull/1250): pull-request; 2026-10-28
+- [#1249 bridge: RQ-DAILY-15-PHANTOM-2](https://github.com/ashlrai/phantom/pull/1249): pull-request; 2026-10-28
+- [#764 phm autopilot: drive Phantom's own PRs to green (fix CI, address review, merge base, stop when it isn't ours)](https://github.com/ashlrai/phantom/pull/764): pull-request; 2026-10-28
+- [#1115 bridge: RQ-ROUTER-REPLAY-HARNESS](https://github.com/ashlrai/phantom/pull/1115): pull-request; 2026-10-28
+- [#1118 bridge: RQ-PH-DEAD-CODE-FLEET](https://github.com/ashlrai/phantom/pull/1118): pull-request; 2026-10-28
+- [#754 Scrub: stop flagging prose, code references and public digests as secrets](https://github.com/ashlrai/phantom/pull/754): pull-request; 2026-10-28
+- [#1107 bridge: RQ-DESKTOP-VOICE](https://github.com/ashlrai/phantom/pull/1107): pull-request; 2026-10-28
+- [#1105 bridge: RQ-DESKTOP-THEMES](https://github.com/ashlrai/phantom/pull/1105): pull-request; 2026-10-28
+- [#1106 bridge: RADAR-OPENAI-CACHE-TIERS](https://github.com/ashlrai/phantom/pull/1106): pull-request; 2026-10-28
+- [#1094 bridge: RQ-TESTDIET-phantom](https://github.com/ashlrai/phantom/pull/1094): pull-request; 2026-10-28
+- [#1101 bridge: RQ-DESKTOP-TEMPLATES](https://github.com/ashlrai/phantom/pull/1101): pull-request; 2026-10-28
+- [#1102 bridge: RQ-DESKTOP-INBOX](https://github.com/ashlrai/phantom/pull/1102): pull-request; 2026-10-28
+- [#1104 bridge: RQ-DESKTOP-ROOMS](https://github.com/ashlrai/phantom/pull/1104): pull-request; 2026-10-28
+- [#1131 chore(codeowners): own gitleaks config files](https://github.com/ashlrai/phantom/pull/1131): pull-request; 2026-10-28
+- [#1154 bridge: RQ-ECON-RESOURCE-VIEW](https://github.com/ashlrai/phantom/pull/1154): pull-request; 2026-10-28
+- [#1231 bridge: RQ-CONSOLIDATE-PHANTOM-CLUSTERS](https://github.com/ashlrai/phantom/pull/1231): pull-request; 2026-10-28
+- [#1092 bridge: RQ-SCHEMA-REG](https://github.com/ashlrai/phantom/pull/1092): pull-request; 2026-10-28
+- [#1077 bridge: RQ-PL-PH-CLI-HELP-DRIFT](https://github.com/ashlrai/phantom/pull/1077): pull-request; 2026-10-28
+- [#1080 bridge: RQ-DEADCODE-phantom](https://github.com/ashlrai/phantom/pull/1080): pull-request; 2026-10-28
+- [#1065 bridge: RQ-PL-PEERS-ADAPT-CODEX](https://github.com/ashlrai/phantom/pull/1065): pull-request; 2026-10-28
+- [#1063 bridge: RQ-PHANTOM-DRIVER-2-DAEMON](https://github.com/ashlrai/phantom/pull/1063): pull-request; 2026-10-28
+- [#1075 bridge: RQ-XREPO-CONTRACT](https://github.com/ashlrai/phantom/pull/1075): pull-request; 2026-10-28
+- [#1204 bridge: RQ-N26B-002](https://github.com/ashlrai/phantom/pull/1204): pull-request; 2026-10-28
+- [#1207 bridge: RQ-N26B-035](https://github.com/ashlrai/phantom/pull/1207): pull-request; 2026-10-28
+- [#1211 bridge: RQ-N26B-033](https://github.com/ashlrai/phantom/pull/1211): pull-request; 2026-10-28
+- [#1216 bridge: RQ-N26B-039](https://github.com/ashlrai/phantom/pull/1216): pull-request; 2026-10-28
+- [#1221 bridge: THROUGHPUT-REAPER-REFRESH](https://github.com/ashlrai/phantom/pull/1221): pull-request; 2026-10-28
+- [#1167 bridge: RQ-N26-PH-WT-AGE-REPORT](https://github.com/ashlrai/phantom/pull/1167): pull-request; 2026-10-28
+- [#1174 bridge: RQ-OT-P4-EVAL-HARNESS](https://github.com/ashlrai/phantom/pull/1174): pull-request; 2026-10-28
+- [#1178 bridge: RQ-PERF-12-PH](https://github.com/ashlrai/phantom/pull/1178): pull-request; 2026-10-28
+- [#1193 bridge: RQ-VERIFY-PR1088](https://github.com/ashlrai/phantom/pull/1193): pull-request; 2026-10-28
+- [#1203 bridge: RQ-N26B-018](https://github.com/ashlrai/phantom/pull/1203): pull-request; 2026-10-28
+- [#1168 bridge: RQ-N26-PH-ROUTER-CALIB-TESTS](https://github.com/ashlrai/phantom/pull/1168): pull-request; 2026-10-28
+- [#1148 bridge: RQ-DV-SPLIT-PROD-LEDGER](https://github.com/ashlrai/phantom/pull/1148): pull-request; 2026-10-28
+- [#1159 bridge: RQ-N26-CON-PROMPT-RULES](https://github.com/ashlrai/phantom/pull/1159): pull-request; 2026-10-28
+- [#1160 bridge: RQ-N26-AFFECTED-MAP-AUDIT](https://github.com/ashlrai/phantom/pull/1160): pull-request; 2026-10-28
+- [#1163 bridge: RQ-N26-ECON-POOL-RESET-PARSER](https://github.com/ashlrai/phantom/pull/1163): pull-request; 2026-10-28
+- [#1134 bridge: RQ-BUS-2](https://github.com/ashlrai/phantom/pull/1134): pull-request; 2026-10-28
+- [#1137 bridge: RQ-BUDGET-RESET-CALENDAR](https://github.com/ashlrai/phantom/pull/1137): pull-request; 2026-10-28
+- [#1138 bridge: RQ-CODEX-USAGE-SOURCE](https://github.com/ashlrai/phantom/pull/1138): pull-request; 2026-10-28
+- [#1140 bridge: RQ-CON-DESKTOP-COMMAND](https://github.com/ashlrai/phantom/pull/1140): pull-request; 2026-10-28
+- [#1142 bridge: RQ-DESKTOP-P1-4](https://github.com/ashlrai/phantom/pull/1142): pull-request; 2026-10-28
+- [#1147 bridge: RQ-DV-DRIVER-SIM-HARNESS](https://github.com/ashlrai/phantom/pull/1147): pull-request; 2026-10-28
+- [#1125 bridge: RQ-OT-P1-CALIBRATION](https://github.com/ashlrai/phantom/pull/1125): pull-request; 2026-10-28
+- [#1119 bridge: RQ-PHANTOM-REVIVE](https://github.com/ashlrai/phantom/pull/1119): pull-request; 2026-10-28
+- [#1088 bridge: RQ-MEM-JOB-ACCOUNTING](https://github.com/ashlrai/phantom/pull/1088): pull-request; 2026-10-28
+- [#1095 bridge: RQ-DRIVER-NODES-1-LEASE](https://github.com/ashlrai/phantom/pull/1095): pull-request; 2026-10-28
+- [#1096 bridge: RQ-DRIVER-NODES-2-STATE](https://github.com/ashlrai/phantom/pull/1096): pull-request; 2026-10-28
+- [#698 feat(website): qualify source on required green CI when ashlr/verify is not required](https://github.com/ashlrai/phantom/pull/698): pull-request; 2026-10-28
+- [#675 Attribute artifact installation time](https://github.com/ashlrai/phantom/pull/675): pull-request; 2026-10-28
+- [#973 bridge: LAND-phantom-926](https://github.com/ashlrai/phantom/pull/973): pull-request; 2026-10-28
+- [#978 bridge: RQ-PH-QUEUE-LITTLE-TEST](https://github.com/ashlrai/phantom/pull/978): pull-request; 2026-10-28
+- [#991 bridge: RQ-PH-QUEUE-CONTROLLER-SIM](https://github.com/ashlrai/phantom/pull/991): pull-request; 2026-10-28
+- [#1038 bridge: RADAR-ANTH-APIVER](https://github.com/ashlrai/phantom/pull/1038): pull-request; 2026-10-28
+- [#1011 bridge: RQ-BUS-1A](https://github.com/ashlrai/phantom/pull/1011): pull-request; 2026-10-28
+- [#1018 bridge: RQ-PH-QUEUE-SPOOL-REPLAY](https://github.com/ashlrai/phantom/pull/1018): pull-request; 2026-10-28
+- [#1030 bridge: RQ-NS-ROUTINES](https://github.com/ashlrai/phantom/pull/1030): pull-request; 2026-10-28
+- [#1033 bridge: RQ-PARITY-CODEX-ADAPTER](https://github.com/ashlrai/phantom/pull/1033): pull-request; 2026-10-28
+- [#1039 bridge: RQ-PLAN-OTEL-COST-A](https://github.com/ashlrai/phantom/pull/1039): pull-request; 2026-10-28
+- [#1040 bridge: RQ-PLAN-ECOCL-A](https://github.com/ashlrai/phantom/pull/1040): pull-request; 2026-10-28
+- [#1029 bridge: RQ-NS-PROVIDERS](https://github.com/ashlrai/phantom/pull/1029): pull-request; 2026-10-28
+- [#1042 bridge: RADAR-CC-MINVER](https://github.com/ashlrai/phantom/pull/1042): pull-request; 2026-10-28
+- [#1046 bridge: RQ-BUDGET-LEDGER](https://github.com/ashlrai/phantom/pull/1046): pull-request; 2026-10-28
+- [#1052 bridge: RQ-INT-2-r2](https://github.com/ashlrai/phantom/pull/1052): pull-request; 2026-10-28
+- [#1023 bridge: RQ-BUS-3A](https://github.com/ashlrai/phantom/pull/1023): pull-request; 2026-10-28
+- [#1024 bridge: RQ-BUS-1B](https://github.com/ashlrai/phantom/pull/1024): pull-request; 2026-10-28
+- [#1055 bridge: RQ-PL-BUS-COVERAGE](https://github.com/ashlrai/phantom/pull/1055): pull-request; 2026-10-28
+- [#1062 bridge: RQ-REPLAY-1](https://github.com/ashlrai/phantom/pull/1062): pull-request; 2026-10-28
+- [#1059 bridge: RQ-PHANTOM-DRIVER-6-GROKBOT-LANE](https://github.com/ashlrai/phantom/pull/1059): pull-request; 2026-10-28
+- [#1060 bridge: RQ-PHM-MCP-1](https://github.com/ashlrai/phantom/pull/1060): pull-request; 2026-10-28
+- [#1020 bridge: RQ-BUS-5A](https://github.com/ashlrai/phantom/pull/1020): pull-request; 2026-10-28
+- [#1009 bridge: RQ-QUEUE-6](https://github.com/ashlrai/phantom/pull/1009): pull-request; 2026-10-28
+- [#1005 bridge: RQ-MAC-DISK](https://github.com/ashlrai/phantom/pull/1005): pull-request; 2026-10-28
+- [#1006 bridge: RQ-PH-TEST-SPEED](https://github.com/ashlrai/phantom/pull/1006): pull-request; 2026-10-28
+- [#1067 bridge: RQ-PL-PEERS-ADAPT-GROK](https://github.com/ashlrai/phantom/pull/1067): pull-request; 2026-10-28
+- [#1068 bridge: RQ-CYCLE-4](https://github.com/ashlrai/phantom/pull/1068): pull-request; 2026-10-28
+- [#1004 bridge: RQ-GRAPH-2A](https://github.com/ashlrai/phantom/pull/1004): pull-request; 2026-10-28
+- [#1001 bridge: RQ-DV-PH-TUI-SNAP](https://github.com/ashlrai/phantom/pull/1001): pull-request; 2026-10-28
+- [#1002 bridge: RQ-GRAPH-1A](https://github.com/ashlrai/phantom/pull/1002): pull-request; 2026-10-28
+- [#1003 bridge: RQ-GRAPH-1B](https://github.com/ashlrai/phantom/pull/1003): pull-request; 2026-10-28
+- [#1069 bridge: RQ-FLAKE-DB-1](https://github.com/ashlrai/phantom/pull/1069): pull-request; 2026-10-28
+- [#1070 bridge: RQ-DIFFRISK-1](https://github.com/ashlrai/phantom/pull/1070): pull-request; 2026-10-28
+- [#1071 bridge: RQ-PL-RADAR-SONNET45-SWEEP](https://github.com/ashlrai/phantom/pull/1071): pull-request; 2026-10-28
+- [#1000 bridge: RQ-DV-PH-PLANNING-TEST](https://github.com/ashlrai/phantom/pull/1000): pull-request; 2026-10-28
+- [#1079 bridge: RQ-FRESH-GEN-PH](https://github.com/ashlrai/phantom/pull/1079): pull-request; 2026-10-28
+- [#1083 bridge: RQ-METRICS-MERGED-FIX](https://github.com/ashlrai/phantom/pull/1083): pull-request; 2026-10-28
+- [#1084 bridge: RQ-MEMGUARD-PRESSURE-RULE](https://github.com/ashlrai/phantom/pull/1084): pull-request; 2026-10-28
+- [#1086 bridge: RQ-DISC-MCP-MANIFEST-PH](https://github.com/ashlrai/phantom/pull/1086): pull-request; 2026-10-28
+- [#998 bridge: LAND-phantom-942-fix](https://github.com/ashlrai/phantom/pull/998): pull-request; 2026-10-28
+- [#1087 bridge: RQ-DISC-AGENTS-MD-AUDIT](https://github.com/ashlrai/phantom/pull/1087): pull-request; 2026-10-28
+- [#1089 bridge: RQ-DRIVER-QUEUE-CONTRACT-TESTS](https://github.com/ashlrai/phantom/pull/1089): pull-request; 2026-10-28
+- [#987 bridge: RQ-PH-SPAWN-REAPER](https://github.com/ashlrai/phantom/pull/987): pull-request; 2026-10-28
+- [#995 bridge: LAND-RECUT-phantom-836](https://github.com/ashlrai/phantom/pull/995): pull-request; 2026-10-28
+- [#986 bridge: RQ-PH-WORKTREE-DISK-GUARD](https://github.com/ashlrai/phantom/pull/986): pull-request; 2026-10-28
+- [#990 bridge: RQ-PH-LOCUS-PARSER-0_5_1](https://github.com/ashlrai/phantom/pull/990): pull-request; 2026-10-28
+- [#1076 bridge: RQ-DRIVER-NODES-5-PEER-RESEARCH](https://github.com/ashlrai/phantom/pull/1076): pull-request; 2026-10-28
+- [#1091 bridge: RQ-DEVIN-LANE-ADAPTER-TESTS](https://github.com/ashlrai/phantom/pull/1091): pull-request; 2026-10-28
+- [#964 bridge: RQ-CYCLE-1-r2](https://github.com/ashlrai/phantom/pull/964): pull-request; 2026-10-28
+- [#982 bridge: RQ-PH-EXEC-PHANTOM](https://github.com/ashlrai/phantom/pull/982): pull-request; 2026-10-28
+- [#983 bridge: LAND-RECUT-phantom-693](https://github.com/ashlrai/phantom/pull/983): pull-request; 2026-10-28
+- [#969 bridge: RQ-BRIDGE-CI](https://github.com/ashlrai/phantom/pull/969): pull-request; 2026-10-28
+- [#959 bridge: RQ-VISION-2](https://github.com/ashlrai/phantom/pull/959): pull-request; 2026-10-28
+- [#955 bridge: RQ-XREVIEW](https://github.com/ashlrai/phantom/pull/955): pull-request; 2026-10-28
+- [#940 bridge: rq-vision-1](https://github.com/ashlrai/phantom/pull/940): pull-request; 2026-10-28
+- [#953 bridge: RQ-INT-3](https://github.com/ashlrai/phantom/pull/953): pull-request; 2026-10-28
+- [#944 bridge: RQ-BACKLOG-GEN](https://github.com/ashlrai/phantom/pull/944): pull-request; 2026-10-28
+- [#946 bridge: RQ-DESKTOP-P1-1](https://github.com/ashlrai/phantom/pull/946): pull-request; 2026-10-28
+- [#1187 bridge: RQ-REL-VERIFY-POLL](https://github.com/ashlrai/phantom/pull/1187): pull-request; 2026-10-28
+- [#1220 bridge: THROUGHPUT-PHANTOM-CANCEL](https://github.com/ashlrai/phantom/pull/1220): pull-request; 2026-10-28
+- [#1015 bridge: RQ-REBASE-D1](https://github.com/ashlrai/phantom/pull/1015): pull-request; 2026-10-28; cross-repo ashlrai/ashlr-md#181
+- [#1021 bridge: RQ-BUS-3B](https://github.com/ashlrai/phantom/pull/1021): pull-request; 2026-10-28
+- [#1186 bridge: RQ-RESEARCH-SWARMS](https://github.com/ashlrai/phantom/pull/1186): pull-request; 2026-10-28
+- [#1215 bridge: RQ-N26B-027](https://github.com/ashlrai/phantom/pull/1215): pull-request; 2026-10-28
+- [#988 bridge: RQ-MAC-TESTENV](https://github.com/ashlrai/phantom/pull/988): pull-request; 2026-10-28
+- [#992 bridge: RQ-PH-QUEUE-REPORT-CLI](https://github.com/ashlrai/phantom/pull/992): pull-request; 2026-10-28
+- [#993 bridge: LAND-RECUT-phantom-937](https://github.com/ashlrai/phantom/pull/993): pull-request; 2026-10-28
+- [#994 bridge: LAND-RECUT-phantom-687](https://github.com/ashlrai/phantom/pull/994): pull-request; 2026-10-28
+- [#996 bridge: LAND-RECUT-phantom-837](https://github.com/ashlrai/phantom/pull/996): pull-request; 2026-10-28
+- [#984 bridge: LAND-RECUT-phantom-697](https://github.com/ashlrai/phantom/pull/984): pull-request; 2026-10-28
+- [#781 Make the self-improvement gate and PR autopilot Tier-1](https://github.com/ashlrai/phantom/pull/781): pull-request; 2026-10-28
+- [#1170 bridge: RQ-OPS-CODEX-CMP-USAGE-READER](https://github.com/ashlrai/phantom/pull/1170): pull-request; 2026-10-28
+- [#1182 bridge: RQ-PLAN-NORTHSTAR](https://github.com/ashlrai/phantom/pull/1182): pull-request; 2026-10-28
+- [#1205 bridge: RQ-N26B-007](https://github.com/ashlrai/phantom/pull/1205): pull-request; 2026-10-28
+- [#1208 bridge: RQ-N26B-001](https://github.com/ashlrai/phantom/pull/1208): pull-request; 2026-10-28
+- [#1210 bridge: RQ-N26B-041](https://github.com/ashlrai/phantom/pull/1210): pull-request; 2026-10-28
+- [#1224 bridge: RQ-LAND-METRICS-MERGED](https://github.com/ashlrai/phantom/pull/1224): pull-request; 2026-10-28
+- [#945 bridge: RQ-DESKTOP-P1-2](https://github.com/ashlrai/phantom/pull/945): pull-request; 2026-10-28
+- [#968 bridge: LAND-RECUT-phantom-938](https://github.com/ashlrai/phantom/pull/968): pull-request; 2026-10-28
+- [#1206 bridge: RQ-N26B-024](https://github.com/ashlrai/phantom/pull/1206): pull-request; 2026-10-28
+- [#727 Check Phantom's Locus parsers against real Locus 0.5.0 output](https://github.com/ashlrai/phantom/pull/727): pull-request; 2026-10-28
+- [#1200 bridge: RQ-N26B-006](https://github.com/ashlrai/phantom/pull/1200): pull-request; 2026-10-28
+- [#1202 bridge: RQ-N26B-022](https://github.com/ashlrai/phantom/pull/1202): pull-request; 2026-10-28
+- [#951 feat(observability): queue.v1 fleet_hop emitter for station exits](https://github.com/ashlrai/phantom/pull/951): pull-request; 2026-10-28
+- [#1197 bridge: RQ-N26B-005](https://github.com/ashlrai/phantom/pull/1197): pull-request; 2026-10-28
+- [#1201 bridge: RQ-N26B-010](https://github.com/ashlrai/phantom/pull/1201): pull-request; 2026-10-28
+- [#1165 bridge: RQ-N26-OPS-READER-SCHEMA](https://github.com/ashlrai/phantom/pull/1165): pull-request; 2026-10-28
+- [#1173 bridge: RQ-OPS-USAGE-SIGNAL-WRITER](https://github.com/ashlrai/phantom/pull/1173): pull-request; 2026-10-28
+- [#1191 bridge: RQ-VERIFY-PR1081](https://github.com/ashlrai/phantom/pull/1191): pull-request; 2026-10-28
+- [#1209 bridge: RQ-N26B-037](https://github.com/ashlrai/phantom/pull/1209): pull-request; 2026-10-28
+- [#1143 bridge: RQ-DESKTOP-GRAPH](https://github.com/ashlrai/phantom/pull/1143): pull-request; 2026-10-28
+- [#1180 bridge: RQ-PLAN-GRAPHBUS](https://github.com/ashlrai/phantom/pull/1180): pull-request; 2026-10-28
+- [#1177 bridge: RQ-OT-P4-RETRO-NIGHTLY](https://github.com/ashlrai/phantom/pull/1177): pull-request; 2026-10-28
+- [#1213 bridge: RQ-N26B-043](https://github.com/ashlrai/phantom/pull/1213): pull-request; 2026-10-28
+- [#1162 bridge: RQ-N26-DV-PH-DOCS-CLI](https://github.com/ashlrai/phantom/pull/1162): pull-request; 2026-10-28
+- [#1139 bridge: RQ-CON-DELETION-SWEEP](https://github.com/ashlrai/phantom/pull/1139): pull-request; 2026-10-28
+- [#1217 bridge: RQ-N26B-044](https://github.com/ashlrai/phantom/pull/1217): pull-request; 2026-10-28
+- [#1169 bridge: RQ-OPS-CODEX-PERSONAL-USAGE-READER](https://github.com/ashlrai/phantom/pull/1169): pull-request; 2026-10-28
+- [#1179 bridge: RQ-PL-RADAR-MODELCAPS-FIXTURES](https://github.com/ashlrai/phantom/pull/1179): pull-request; 2026-10-28
+- [#1171 bridge: RQ-OPS-GROK-USAGE-READER](https://github.com/ashlrai/phantom/pull/1171): pull-request; 2026-10-28
+- [#937 docs: inner-loop research for a sub-5s edit loop](https://github.com/ashlrai/phantom/pull/937): pull-request; 2026-10-28
+- [#1199 bridge: RQ-N26B-004](https://github.com/ashlrai/phantom/pull/1199): pull-request; 2026-10-28
+- [#936 feat(router): spend work Codex, then Devin, SuperGrok, and oMLX](https://github.com/ashlrai/phantom/pull/936): pull-request; 2026-10-28
+- [#1172 bridge: RQ-OT-P2-SIGNALS](https://github.com/ashlrai/phantom/pull/1172): pull-request; 2026-10-28
+- [#1196 bridge: RQ-N26B-054](https://github.com/ashlrai/phantom/pull/1196): pull-request; 2026-10-28
+- [#1183 bridge: RQ-PLAN-QUEUE](https://github.com/ashlrai/phantom/pull/1183): pull-request; 2026-10-28
+- [#1198 bridge: RQ-N26B-012](https://github.com/ashlrai/phantom/pull/1198): pull-request; 2026-10-28
+- [#1184 bridge: RQ-RESEARCH-SPEC-MEMORY](https://github.com/ashlrai/phantom/pull/1184): pull-request; 2026-10-28
+- [#1189 bridge: RQ-ROUTER-TERRA-ARM](https://github.com/ashlrai/phantom/pull/1189): pull-request; 2026-10-28
+- [#1151 bridge: RQ-ECON-DEVIN-USAGE](https://github.com/ashlrai/phantom/pull/1151): pull-request; 2026-10-28
+- [#1155 bridge: RQ-FRESH-SITE-PH](https://github.com/ashlrai/phantom/pull/1155): pull-request; 2026-10-28
+- [#1150 bridge: RQ-DV-SPLIT-CORE-TYPES](https://github.com/ashlrai/phantom/pull/1150): pull-request; 2026-10-28
+- [#961 bridge: RQ-CI-SHARD-1](https://github.com/ashlrai/phantom/pull/961): pull-request; 2026-10-28
+- [#1145 bridge: RQ-DV-PH-API-ERRORS](https://github.com/ashlrai/phantom/pull/1145): pull-request; 2026-10-28
+- [#922 docs(local-inference): localInference config, loopback gate, /models probe](https://github.com/ashlrai/phantom/pull/922): pull-request; 2026-10-28; cross-repo ashlrai/ashlr-md#179, ashlrai/ashlr-md#181
+- [#1144 bridge: RQ-DISC-READINESS-SCORER](https://github.com/ashlrai/phantom/pull/1144): pull-request; 2026-10-28
+- [#1212 bridge: RQ-N26B-026](https://github.com/ashlrai/phantom/pull/1212): pull-request; 2026-10-28
+- [#1232 bridge: RQ-CI-SECONDS-PHANTOM](https://github.com/ashlrai/phantom/pull/1232): pull-request; 2026-10-28
+- [#1226 Fix automations dedupe pruning against the wall clock (master red since 10-27)](https://github.com/ashlrai/phantom/pull/1226): pull-request; 2026-10-28
+- [#985 feat(routing): per-run routing accounting + doctor routing row (flagship slice 3)](https://github.com/ashlrai/phantom/pull/985): pull-request; 2026-10-27
+- [#967 fix(local-inference): refuse redirects and pin localhost on local probes (Security #952 L1-L3)](https://github.com/ashlrai/phantom/pull/967): pull-request; 2026-10-26
+- [#690 feat: aggregated Phantom ecosystem stars + commits (daily)](https://github.com/ashlrai/phantom/pull/690): pull-request; 2026-10-26
+- [#960 feat(routing): local-first bandit lane scored on merged PRs per $ and per hour (RQ-AUTO-LOCAL-1, Tier-1, stacked on #926)](https://github.com/ashlrai/phantom/pull/960): pull-request; 2026-10-26
+- [#952 feat(routing): hybrid local/frontier routing live in fleet dispatch (slice 2, Tier-1, stacked on #926)](https://github.com/ashlrai/phantom/pull/952): pull-request; 2026-10-26
+- [#688 feat: Ashlr MD as the out-of-box Markdown opener](https://github.com/ashlrai/phantom/pull/688): pull-request; 2026-10-26; cross-repo ashlrai/ashlr-md#28
+- [#730 Normalize Locus capture countdowns and bound isolated probes](https://github.com/ashlrai/phantom/pull/730): pull-request; 2026-10-26
+- [#943 feat(routing): enable local inference escalation policy in seat routing (Tier-1, stacked on #926)](https://github.com/ashlrai/phantom/pull/943): pull-request; 2026-10-26
+- [#930 fix(ci): skip dist-backed Markdown tests in the docs lane](https://github.com/ashlrai/phantom/pull/930): pull-request; 2026-10-26
+- [#923 chore(deps): declare esbuild and @eslint/js devDependencies](https://github.com/ashlrai/phantom/pull/923): pull-request; 2026-10-26
+- [#880 feat(run): route governed clients through an opted-in gateway (slice B, for Mason review)](https://github.com/ashlrai/phantom/pull/880): pull-request; 2026-10-26
+- [#847 ci: run the published companion smoke on a schedule](https://github.com/ashlrai/phantom/pull/847): pull-request; 2026-10-26; cross-repo ashlrai/ashlr-stack#30, ashlrai/phantom-secrets#191
+- [#921 fix(local-inference): stream /models body, abort past 256 KiB](https://github.com/ashlrai/phantom/pull/921): pull-request; 2026-10-26; cross-repo ashlrai/ashlr-md#181
+- [#846 Lessons: show what a lesson cites, withhold lessons whose PRs were reverted](https://github.com/ashlrai/phantom/pull/846): pull-request; 2026-10-25
+- [#920 feat(local-inference): doctor and status probe of GET /models; phm --ashlr-handshake (P3)](https://github.com/ashlrai/phantom/pull/920): pull-request; 2026-10-25; cross-repo ashlrai/ashlr-md#179, ashlrai/ashlr-md#181
+- [#811 ci: docs-only PRs take a docs lane (skip Ubuntu/Windows/Mac matrix; Merge Gate still reports)](https://github.com/ashlrai/phantom/pull/811): pull-request; 2026-10-25
+- [#917 feat(local-inference): loopback-only openai-compat and localInference config (P2)](https://github.com/ashlrai/phantom/pull/917): pull-request; 2026-10-25; cross-repo ashlrai/ashlr-md#179
+- [#918 docs(readme): run receipts section (phm fleet receipt, source only)](https://github.com/ashlrai/phantom/pull/918): pull-request; 2026-10-25
+- [#919 Label crash-orphaned runs as stale in phm runs and run show](https://github.com/ashlrai/phantom/pull/919): pull-request; 2026-10-25
+- [#914 feat(status): show the strict phantom preflight in phm status; spawn preflight --vault opt-in](https://github.com/ashlrai/phantom/pull/914): pull-request; 2026-10-25
+- [#872 Count benchmark diffs without a final newline as applied](https://github.com/ashlrai/phantom/pull/872): pull-request; 2026-10-25
+- [#916 docs: local inference guide (Ollama, oMLX, mlx-lm via local-coder and openai-compat)](https://github.com/ashlrai/phantom/pull/916): pull-request; 2026-10-25
+- [#845 Learn from matched outcomes: cited lessons, a lessons holdout, and outcome-ranked self-improvement](https://github.com/ashlrai/phantom/pull/845): pull-request; 2026-10-25
+- [#913 feat(custody): record every unwrapped spawn (incl. phantom-disabled), status by reason, pin no .phantom.toml copy](https://github.com/ashlrai/phantom/pull/913): pull-request; 2026-10-25; cross-repo ashlrai/phantom-secrets#367
+- [#912 feat(receipt): wire later\[\] appenders to ledger events (ci, merge, survival, revert)](https://github.com/ashlrai/phantom/pull/912): pull-request; 2026-10-25
+- [#911 feat(receipt): signed later\[\] appenders for ci, merge, survival, revert (receipt.v1 R6)](https://github.com/ashlrai/phantom/pull/911): pull-request; 2026-10-25
+- [#910 fix(receipt): write run receipts for real dispatches (local path to owner/name) + end-to-end test](https://github.com/ashlrai/phantom/pull/910): pull-request; 2026-10-25
+- [#909 receipt: phm receipt timeline <run>, and a doctor line for the newest receipt](https://github.com/ashlrai/phantom/pull/909): pull-request; 2026-10-25
+- [#908 canary: fail-safe mid-cancel race in the cancel path](https://github.com/ashlrai/phantom/pull/908): pull-request; 2026-10-25
+- [#907 canary: set HOST_CANCELLATION_PROVEN on unit + live proof (#906)](https://github.com/ashlrai/phantom/pull/907): pull-request; 2026-10-25
+- [#905 custody: harden the spawn ledger (no symlinks, write-time validation, bounded reads)](https://github.com/ashlrai/phantom/pull/905): pull-request; 2026-10-25
+- [#904 status: show receipt.v1 and custody counts in phm status](https://github.com/ashlrai/phantom/pull/904): pull-request; 2026-10-25
+- [#903 feat(fleet): canary enforce ladder state machine; enforce unreachable while cancellation is unproven](https://github.com/ashlrai/phantom/pull/903): pull-request; 2026-10-25
+- [#902 test(fleet): canary host auto-merge cancellation proof (not wired, enforce off)](https://github.com/ashlrai/phantom/pull/902): pull-request; 2026-10-25
+- [#901 feat(doctor): phantom strict preflight check; drop key-shaped preflight check ids](https://github.com/ashlrai/phantom/pull/901): pull-request; 2026-10-25
+- [#900 feat(daemon): opt-in receipt.v1 at run close (ASHLR_RUN_RECEIPTS=1)](https://github.com/ashlrai/phantom/pull/900): pull-request; 2026-10-25
+- [#899 feat(run): fleet custody ledger, read by the Shadow Report](https://github.com/ashlrai/phantom/pull/899): pull-request; 2026-10-25
+- [#898 feat(receipt): receipt key, local store and ashlr fleet receipt (receipt.v1 R2-R4)](https://github.com/ashlrai/phantom/pull/898): pull-request; 2026-10-25
+- [#897 feat(receipt): receipt.v1 core: closed shape, canonical digest, Ed25519 sign and verify](https://github.com/ashlrai/phantom/pull/897): pull-request; 2026-10-25
+- [#881 feat(config): validate the gateways block at config load (slice A2)](https://github.com/ashlrai/phantom/pull/881): pull-request; 2026-10-25
+- [#890 feat(canary): read-only Shadow Report (automerge-canary report \[--json\])](https://github.com/ashlrai/phantom/pull/890): pull-request; 2026-10-25
+- [#889 feat(run): strict phantom preflight consumer (agent doctor --json --strict)](https://github.com/ashlrai/phantom/pull/889): pull-request; 2026-10-25
+- [#896 test(run): spawnEngine emits one value-free custody record per spawn](https://github.com/ashlrai/phantom/pull/896): pull-request; 2026-10-25; cross-repo ashlrai/phantom-secrets#367
+- [#888 feat(run): value-free phantom custody record per engine spawn (unwrapped, reason)](https://github.com/ashlrai/phantom/pull/888): pull-request; 2026-10-25; cross-repo ashlrai/phantom-secrets#367
+- [#895 fix(resources): retry transient transport failures on mission console reads, bounded](https://github.com/ashlrai/phantom/pull/895): pull-request; 2026-10-25
+- [#891 ci: skip macOS and Windows service lanes on master push, run them nightly](https://github.com/ashlrai/phantom/pull/891): pull-request; 2026-10-25
+- [#894 test(mac): fix three Mac-only test failures (universe fixture anchor, zombie detection, confinement owner marker)](https://github.com/ashlrai/phantom/pull/894): pull-request; 2026-10-24
+- [#892 test(reaper): compare a registered worktree by the path git lists (macOS /private)](https://github.com/ashlrai/phantom/pull/892): pull-request; 2026-10-24
+- [#885 test(custody): check /usr/bin/true's real path in the root-owned binary case](https://github.com/ashlrai/phantom/pull/885): pull-request; 2026-10-24
+- [#884 fix(errors): redact the sent key from provider error bodies that echo it](https://github.com/ashlrai/phantom/pull/884): pull-request; 2026-10-19
+- [#883 fix(pulse): hidden prompt and --token-stdin for the Pulse PAT; warn on --token <pat>](https://github.com/ashlrai/phantom/pull/883): pull-request; 2026-10-19
+- [#882 fix(pulse): store the PAT with phantom add --stdin, never as an argument](https://github.com/ashlrai/phantom/pull/882): pull-request; 2026-10-19
+- [#879 feat(run): governed-client gateway target validator (slice A, not wired)](https://github.com/ashlrai/phantom/pull/879): pull-request; 2026-10-19
+- [#877 feat: honor OLLAMA_HOST (loopback only) in the knowledge indexer and model-manager probe](https://github.com/ashlrai/phantom/pull/877): pull-request; 2026-10-19
+- [#694 docs(companions): Locus, Lexicon, Ashlr Stack](https://github.com/ashlrai/phantom/pull/694): pull-request; 2026-10-18
+- [#876 new --stack warns once, companions refuses missing paths, wiki names the enroll step](https://github.com/ashlrai/phantom/pull/876): pull-request; 2026-10-18
+- [#875 \[ashlr-cloud\] cloud stats: measure how cloud tasks end and the merged rate](https://github.com/ashlrai/phantom/pull/875): pull-request; 2026-10-18
+- [#873 phm status counts a repo that has no commits yet](https://github.com/ashlrai/phantom/pull/873): pull-request; 2026-10-18
+- [#874 npm runtime scan: say how far it got when the deadline fires](https://github.com/ashlrai/phantom/pull/874): pull-request; 2026-10-18
+- [#848 test(m315,m419): template repo per file and in-process canary observer](https://github.com/ashlrai/phantom/pull/848): pull-request; 2026-10-18
+- [#871 \[ashlr-cloud\] plugins init: the name after --capability is the plugin name](https://github.com/ashlrai/phantom/pull/871): pull-request; 2026-10-18
+- [#860 fix(cli): ship refuses a missing project path; steward and pulse-test honor --help](https://github.com/ashlrai/phantom/pull/860): pull-request; 2026-10-18
+- [#870 Doctor: one MCP warning, not two, on a fresh install](https://github.com/ashlrai/phantom/pull/870): pull-request; 2026-10-18
+- [#868 test: doc-facts check for CLI commands, verbs and flags in agent docs](https://github.com/ashlrai/phantom/pull/868): pull-request; 2026-10-18
+- [#869 Apply captured agent diffs that end without a newline](https://github.com/ashlrai/phantom/pull/869): pull-request; 2026-10-18
+- [#867 \[ashlr-cloud\] Refuse unknown options before side effects in wiki, stack, plugins and demo](https://github.com/ashlrai/phantom/pull/867): pull-request; 2026-10-18
+- [#866 ci: run the isolated Mac suites two at a time, longest first](https://github.com/ashlrai/phantom/pull/866): pull-request; 2026-10-18
+- [#864 phm init builds the repo index on first run](https://github.com/ashlrai/phantom/pull/864): pull-request; 2026-10-18
+- [#863 Run the promote gate's metric in the verification sandbox under a standing grant](https://github.com/ashlrai/phantom/pull/863): pull-request; 2026-10-18
+- [#862 Check a sandbox cleanup lock's change time before removing it](https://github.com/ashlrai/phantom/pull/862): pull-request; 2026-10-18
+- [#861 docs: goal needs --project; goals status takes an id](https://github.com/ashlrai/phantom/pull/861): pull-request; 2026-10-18
+- [#833 \[ashlr-cloud\] Refuse unknown options before side effects (sandbox, enroll, comms, release-articles, devin message, leader say, improve, manager, fleet)](https://github.com/ashlrai/phantom/pull/833): pull-request; 2026-10-18
+- [#865 perf(web): re-render only the live turn's block of the transcript per streamed token](https://github.com/ashlrai/phantom/pull/865): pull-request; 2026-10-18
+- [#844 ci: skip Mac checks on draft PRs until they are marked ready](https://github.com/ashlrai/phantom/pull/844): pull-request; 2026-10-18
+- [#849 Reclaim scratch dirs and apply worktrees a killed run leaves in ~/.ashlr/tmp](https://github.com/ashlrai/phantom/pull/849): pull-request; 2026-10-18
+- [#858 fix(goal-loop): return the roadmap index's real file name on case-insensitive filesystems (master Mac 4/4)](https://github.com/ashlrai/phantom/pull/858): pull-request; 2026-10-18
+- [#857 Rollback refuses a never-enrolled path; doctor --fix links phm as well as ashlr](https://github.com/ashlrai/phantom/pull/857): pull-request; 2026-10-17
+- [#856 fix(goals): goals plan stops printing provider-failure noise; local drafting kept](https://github.com/ashlrai/phantom/pull/856): pull-request; 2026-10-17
+- [#855 fix(cli): first-task readiness for phm goal / phm goals (no-project refusal, not-found JSON, next steps, usage errors on stderr)](https://github.com/ashlrai/phantom/pull/855): pull-request; 2026-10-17
+- [#831 First run: no doctor warnings for an empty genome or being signed out, and an aligned onboard steps table](https://github.com/ashlrai/phantom/pull/831): pull-request; 2026-10-17; cross-repo ashlrai/ashlr-plugin#170
+- [#853 fix(cli): playbook --file refusal, inbox next step, vision show --json, benchmark compare --json, automations templates --json](https://github.com/ashlrai/phantom/pull/853): pull-request; 2026-10-17
+- [#852 fix(cli,mcp): goals status <id>, swarm show --json, health --json refusal, blank ashlr_learn refused, ROADMAP.md found](https://github.com/ashlrai/phantom/pull/852): pull-request; 2026-10-17
+- [#830 fix(mcp): unknown gateway tool is -32602, health refusal names `ashlr enroll add`, ecosystem skip lines say why](https://github.com/ashlrai/phantom/pull/830): pull-request; 2026-10-17
+- [#851 test: stop the zombie-group fixture's leader from being reaped before its parent execs](https://github.com/ashlrai/phantom/pull/851): pull-request; 2026-10-17
+- [#809 wire: add Gemini CLI as a status-only target](https://github.com/ashlrai/phantom/pull/809): pull-request; 2026-10-17
+- [#827 fix(mcp): flag native refusals as errors, point bare tool names at the routed tool, name the bad profile field](https://github.com/ashlrai/phantom/pull/827): pull-request; 2026-10-17
+- [#850 fix(tools): detect Claude Code marketplace installs of ashlr-plugin](https://github.com/ashlrai/phantom/pull/850): pull-request; 2026-10-17; cross-repo ashlrai/ashlr-plugin#168
+- [#843 docs: one-gateway quickstart for Claude Code, Codex and Cursor](https://github.com/ashlrai/phantom/pull/843): pull-request; 2026-10-17
+- [#825 The Ashlr.AI Plugin can read the project: repo sessions and confined runs](https://github.com/ashlrai/phantom/pull/825): pull-request; 2026-10-17; cross-repo ashlrai/lexicon#49, ashlrai/phantom-secrets#191, ashlrai/phantom-secrets#206
+- [#841 Treat renaming a test out of the suite as deleting it](https://github.com/ashlrai/phantom/pull/841): pull-request; 2026-10-17
+- [#840 test(m21): Windows DACL checks through the semantic harness; one template repo per file](https://github.com/ashlrai/phantom/pull/840): pull-request; 2026-10-17
+- [#842 Report stale git lock files in doctor and at daemon start](https://github.com/ashlrai/phantom/pull/842): pull-request; 2026-10-17
+- [#839 Phantom app: a running chat no longer wakes the page for its pulses](https://github.com/ashlrai/phantom/pull/839): pull-request; 2026-10-17
+- [#751 Make the Stack and Ashlr MD seams honest, and add a cross-tool smoke against real binaries](https://github.com/ashlrai/phantom/pull/751): pull-request; 2026-10-17; cross-repo ashlrai/ashlr-stack#30, ashlrai/phantom-secrets#191
+- [#747 Score self-improvement proposals by measured outcomes and gate promotion on evidence](https://github.com/ashlrai/phantom/pull/747): pull-request; 2026-10-17
+- [#819 docs: bring agent docs up to date with #740-#808](https://github.com/ashlrai/phantom/pull/819): pull-request; 2026-10-17
+- [#822 ci: run master's Mac lanes one push at a time](https://github.com/ashlrai/phantom/pull/822): pull-request; 2026-10-17
+- [#832 Lessons: inject only the lessons that are about the task](https://github.com/ashlrai/phantom/pull/832): pull-request; 2026-10-17
+- [#780 Call the product Phantom, not Verse, in user-facing text](https://github.com/ashlrai/phantom/pull/780): pull-request; 2026-10-17
+- [#829 Recover cleanly from agents killed mid-run, shorten the sandbox lock hold, and make loop --watch wait for the engine reset](https://github.com/ashlrai/phantom/pull/829): pull-request; 2026-10-17
+- [#826 fix(authority): open the trust-root PR through the GitHub API, not a local checkout](https://github.com/ashlrai/phantom/pull/826): pull-request; 2026-10-17
+- [#838 \[ashlr-cloud\] Honor --help before side effects in stack, swarms, vercel, inbox, wiki, plugins, playbook, jev, recovery, website and the auto-merge canary](https://github.com/ashlrai/phantom/pull/838): pull-request; 2026-10-17
+- [#834 Register Ashlr MD's MCP server in `phm mcp ecosystem`, so Phantom's gateway serves it](https://github.com/ashlrai/phantom/pull/834): pull-request; 2026-10-17; cross-repo ashlrai/ashlr-stack#30, ashlrai/phantom-secrets#191
+- [#792 fix: zombie-only process groups, stale keep-alive worker sockets, and CI cold-start flakes](https://github.com/ashlrai/phantom/pull/792): pull-request; 2026-10-17
+- [#835 Pin the local auto-merge to the staged commit and keep protected paths out of it](https://github.com/ashlrai/phantom/pull/835): pull-request; 2026-10-17
+- [#787 Phantom app: no idle repaint while a chat runs, half the paint per streamed token, smooth typing with 500 chats, faster first ⌘K and first section visits](https://github.com/ashlrai/phantom/pull/787): pull-request; 2026-10-17
+- [#800 \[ashlr-cloud\] Guard every command against acting on --help; fix spec, genome, automations, models, cloud and devin](https://github.com/ashlrai/phantom/pull/800): pull-request; 2026-10-17; cross-repo ashlrai/ashlr-stack#30, ashlrai/phantom-secrets#191
+- [#824 Doctor: one warning, not four, when no local model is running](https://github.com/ashlrai/phantom/pull/824): pull-request; 2026-10-17; cross-repo ashlrai/ashlr-plugin#168, ashlrai/ashlr-plugin#170
+- [#796 fix(sandbox): null repository filter drivers on daemon git](https://github.com/ashlrai/phantom/pull/796): pull-request; 2026-10-17
+- [#820 fix: ashlr-plugin detection and lifetime savings](https://github.com/ashlrai/phantom/pull/820): pull-request; 2026-10-17; cross-repo ashlrai/ashlr-plugin#168
+- [#818 Sweep temp worktrees at daemon start, size the sandbox cap to the machine, defer tasks when no engine has capacity](https://github.com/ashlrai/phantom/pull/818): pull-request; 2026-10-17
+- [#817 fix(desktop): drop the updater's zip feature to clear three zip advisories](https://github.com/ashlrai/phantom/pull/817): pull-request; 2026-10-17; cross-repo ashlrai/ashlr-stack#30, ashlrai/phantom-secrets#191
+- [#794 \[ashlr-cloud\] Keep --json output machine-readable on refusals (stack, mirror, playbook, roadmap, inbox, improve)](https://github.com/ashlrai/phantom/pull/794): pull-request; 2026-10-17
+- [#740 Connect companion discovery to reviewed setup guides](https://github.com/ashlrai/phantom/pull/740): pull-request; 2026-10-16
+- [#798 feat(wire): read-only 'wire status' report](https://github.com/ashlrai/phantom/pull/798): pull-request; 2026-10-16
+- [#797 docs(readme): add one-line tagline](https://github.com/ashlrai/phantom/pull/797): pull-request; 2026-10-16
+- [#808 Hold the sandbox creation locks only for worktree registration](https://github.com/ashlrai/phantom/pull/808): pull-request; 2026-10-16
+- [#807 First-run hints that lead somewhere: doctor, init, status](https://github.com/ashlrai/phantom/pull/807): pull-request; 2026-10-16
+- [#802 NO_COLOR for the CLI lines that bypass makeColors](https://github.com/ashlrai/phantom/pull/802): pull-request; 2026-10-16
+- [#806 phm upgrade runs phm update](https://github.com/ashlrai/phantom/pull/806): pull-request; 2026-10-16
+- [#788 First run on any machine: portable default roots, and --json on onboard, enroll add, mcp ecosystem and docs](https://github.com/ashlrai/phantom/pull/788): pull-request; 2026-10-16
+- [#804 Bound the fabric run cache and make its rewrites crash-safe](https://github.com/ashlrai/phantom/pull/804): pull-request; 2026-10-16
+- [#795 First-run: plain guidance for `phm setup` and `phm authority setup` off macOS](https://github.com/ashlrai/phantom/pull/795): pull-request; 2026-10-16
+- [#803 Show which companion tools a cloud session says it called](https://github.com/ashlrai/phantom/pull/803): pull-request; 2026-10-16; cross-repo ashlrai/lexicon#49, ashlrai/phantom-secrets#191
+- [#789 fix(fleet): keep the post-merge watch open while CI is still running](https://github.com/ashlrai/phantom/pull/789): pull-request; 2026-10-16
+- [#791 fix(cli): `authority stop --json` prints only JSON; fix ECOSYSTEM-MAP anchor and local-runtime usage](https://github.com/ashlrai/phantom/pull/791): pull-request; 2026-10-16
+- [#760 test: faster Mac shards (two workers), 16 slow suites cut up to 16x, m361 flake fix](https://github.com/ashlrai/phantom/pull/760): pull-request; 2026-10-16
+- [#799 Reap verify/merge worktrees leaked by a killed daemon; keep the activity journal writable all day](https://github.com/ashlrai/phantom/pull/799): pull-request; 2026-10-16
+- [#769 Harden self-improvement promotion against forged metrics, weakened tests and Stop bypass](https://github.com/ashlrai/phantom/pull/769): pull-request; 2026-10-16
+- [#793 fix(cloud): refuse Land on test tampering, not only show the chip](https://github.com/ashlrai/phantom/pull/793): pull-request; 2026-10-16
+- [#782 \[ashlr-cloud\] Fix the dead kill-switch hint and three "1 runs / 1 days / 1 repos" summaries](https://github.com/ashlrai/phantom/pull/782): pull-request; 2026-10-16
+- [#772 Give agents working on Phantom its companion tools and its own task context](https://github.com/ashlrai/phantom/pull/772): pull-request; 2026-10-16; cross-repo ashlrai/lexicon#49, ashlrai/phantom-secrets#191
+- [#777 Fix first-run CLI gaps: status --json, port errors, help exit codes, one MCP entry, headless open, doctor/init, NO_COLOR](https://github.com/ashlrai/phantom/pull/777): pull-request; 2026-10-16
+- [#779 Mark project-memory lines that cite paths that are gone](https://github.com/ashlrai/phantom/pull/779): pull-request; 2026-10-16
+- [#785 \[ashlr-cloud\] --help never acts: fleet pause/resume, vision approve, leader say, notify test, gh pr create, swarm approve](https://github.com/ashlrai/phantom/pull/785): pull-request; 2026-10-16
+- [#753 Document today's merges, correct agent-facing MCP descriptions, add CLAUDE.md](https://github.com/ashlrai/phantom/pull/753): pull-request; 2026-10-16
+- [#745 Recover unattended runs from crashes, hangs, leaks and clock skew; lift concurrent-agent throughput](https://github.com/ashlrai/phantom/pull/745): pull-request; 2026-10-16
+- [#783 \[ashlr-cloud\] --help never runs setup or the Goal Loop; fix dead `ashlr impact` hints, mirror flags and tab completion](https://github.com/ashlrai/phantom/pull/783): pull-request; 2026-10-16
+- [#774 \[ashlr-cloud\] Pluralise runtime slot counts on the server](https://github.com/ashlrai/phantom/pull/774): pull-request; 2026-10-16
+- [#757 fix(run): actionable refusals for sandboxed claude runs (root, host-managed sign-in, unenrolled repo)](https://github.com/ashlrai/phantom/pull/757): pull-request; 2026-10-16
+- [#752 test: fix environment-dependent and flaky tests (sandbox git config, root, dist race, midnight, timing)](https://github.com/ashlrai/phantom/pull/752): pull-request; 2026-10-16
+- [#768 fix(cloud): retire no-change backlog items and the stale 3.10.1 backlog](https://github.com/ashlrai/phantom/pull/768): pull-request; 2026-10-16
+- [#766 \[ashlr-cloud\] Apply the one percent rule to the shared Meter](https://github.com/ashlrai/phantom/pull/766): pull-request; 2026-10-16
+- [#778 Phantom app: faster cold load, long chats and first ⌘K; half the work per agent update](https://github.com/ashlrai/phantom/pull/778): pull-request; 2026-10-16
+- [#775 \[ashlr-cloud\] Stop saying "on this Mac" when the Claude cloud seat is missing on Linux or Windows](https://github.com/ashlrai/phantom/pull/775): pull-request; 2026-10-15
+- [#701 ci: defer Mac exhaustive (4 shards) from PRs to master pushes - ~90% CI cost cut](https://github.com/ashlrai/phantom/pull/701): pull-request; 2026-10-15
+- [#739 Add bounded diagnostics for retained-history test failures](https://github.com/ashlrai/phantom/pull/739): pull-request; 2026-10-15
+- [#732 Isolate doctor metadata and report early engine fixture refusal](https://github.com/ashlrai/phantom/pull/732): pull-request; 2026-10-15
+- [#731 Wait for command palette focus to settle in VerseApp test](https://github.com/ashlrai/phantom/pull/731): pull-request; 2026-10-15
+- [#726 docs: name the exact review target before generating a Grok Bot brief](https://github.com/ashlrai/phantom/pull/726): pull-request; 2026-10-15
+- [#723 Document Automatic routing research and staged evaluation plan](https://github.com/ashlrai/phantom/pull/723): pull-request; 2026-10-15
+- [#722 Hold autonomous routing on future or invalid quota timestamps](https://github.com/ashlrai/phantom/pull/722): pull-request; 2026-10-15
+- [#718 Keep gate snapshots clear of automatic Git maintenance](https://github.com/ashlrai/phantom/pull/718): pull-request; 2026-10-15
+- [#771 Close per-agent Auto-merge gaps: self-repo detection, exact-diff gate, Stop/Pause, merge prompt injection](https://github.com/ashlrai/phantom/pull/771): pull-request; 2026-10-15
+- [#759 Stop giving Linux and Windows users macOS-only setup steps](https://github.com/ashlrai/phantom/pull/759): pull-request; 2026-10-15
+- [#756 Detect Claude Code, Codex and Cursor from their CLI on PATH](https://github.com/ashlrai/phantom/pull/756): pull-request; 2026-10-15
+- [#749 Stop shipping personal names in the default config](https://github.com/ashlrai/phantom/pull/749): pull-request; 2026-10-15
+- [#758 Say why `resources profile prepare` refused the executable](https://github.com/ashlrai/phantom/pull/758): pull-request; 2026-10-15
+- [#750 docs: align repo docs with master and add an agent operations guide](https://github.com/ashlrai/phantom/pull/750): pull-request; 2026-10-15
+- [#755 Scrubber: catch the 15 missed credentials (Basic auth, Go :=, key names, prose disclosures)](https://github.com/ashlrai/phantom/pull/755): pull-request; 2026-10-15
+- [#711 test: deflake grok capacity e2e pending-marker read](https://github.com/ashlrai/phantom/pull/711): pull-request; 2026-10-14
+- [#709 settings: edit webhooks and the model list (agents may only narrow)](https://github.com/ashlrai/phantom/pull/709): pull-request; 2026-10-14
+- [#708 ux: move older console pages onto shared empty/error states](https://github.com/ashlrai/phantom/pull/708): pull-request; 2026-10-14
+- [#707 perf: cache ecosystem checks so Today loads instantly](https://github.com/ashlrai/phantom/pull/707): pull-request; 2026-10-14
+- [#706 test: UI ⇄ CLI ⇄ MCP parity registry and tests](https://github.com/ashlrai/phantom/pull/706): pull-request; 2026-10-14
+- [#705 ux: first-run wizard, palette actions, empty/error states](https://github.com/ashlrai/phantom/pull/705): pull-request; 2026-10-14
+- [#704 settings: one settings core - ashlr settings / ashlr_settings_* / console Settings](https://github.com/ashlrai/phantom/pull/704): pull-request; 2026-10-14
+- [#703 home: daily dashboard - ashlr home / ashlr_home / console Today](https://github.com/ashlrai/phantom/pull/703): pull-request; 2026-10-14
+- [#700 docs: add AGENTS.md agent constitution](https://github.com/ashlrai/phantom/pull/700): pull-request; 2026-10-14
+- [#699 ecosystem: add lexicon and locus to the core fleet](https://github.com/ashlrai/phantom/pull/699): pull-request; 2026-10-14
+- [#689 chore: update author contact from retired evero domain to mason@ashlr.ai](https://github.com/ashlrai/phantom/pull/689): pull-request; 2026-10-14
+- [Phantom 3.29.15](https://github.com/ashlrai/phantom/releases/tag/v3.29.15): release; 2026-10-14
+- [#712 Prepare Phantom 3.29.15 resource UI and boundary repairs](https://github.com/ashlrai/phantom/pull/712): pull-request; 2026-10-13
+- [#696 feat: CONSTITUTION.md, evidence-scored task context compiler, draft-PR self-improvement loop](https://github.com/ashlrai/phantom/pull/696): pull-request; 2026-10-13
+- [Phantom 3.29.14](https://github.com/ashlrai/phantom/releases/tag/v3.29.14): release; 2026-10-13
+- [#686 Release candidate: Phantom 3.29.14 shared workbench, Devin and Ash awake](https://github.com/ashlrai/phantom/pull/686): pull-request; 2026-10-13
+- [Phantom 3.29.13](https://github.com/ashlrai/phantom/releases/tag/v3.29.13): release; 2026-10-12
+- [#685 Release Phantom 3.29.13: reliable Leader and measured resource use](https://github.com/ashlrai/phantom/pull/685): pull-request; 2026-10-12
+- [Phantom 3.29.12](https://github.com/ashlrai/phantom/releases/tag/v3.29.12): release; 2026-10-12
+- [#681 release: prepare Phantom 3.29.12 quota diagnostics](https://github.com/ashlrai/phantom/pull/681): pull-request; 2026-10-12
+- [#680 Explain missing Claude quota readings in Verse](https://github.com/ashlrai/phantom/pull/680): pull-request; 2026-10-12
+- [Phantom 3.29.11](https://github.com/ashlrai/phantom/releases/tag/v3.29.11): release; 2026-10-12
+- [#678 Make new native profiles resilient to macOS device renumbering](https://github.com/ashlrai/phantom/pull/678): pull-request; 2026-10-12
+- [\[3.29.12\] - 2026-10-12](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-12
+- [\[3.29.13\] - 2026-10-12](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-12
+- [#677 ci: add stable fail-closed merge gate](https://github.com/ashlrai/phantom/pull/677): pull-request; 2026-10-11
+- [\[3.29.11\] - 2026-10-11](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-11
+- [Phantom 3.29.10](https://github.com/ashlrai/phantom/releases/tag/v3.29.10): release; 2026-10-10
+- [#673 Fix fleet judge launch accounting and keyless local readiness](https://github.com/ashlrai/phantom/pull/673): pull-request; 2026-10-10
+- [Phantom 3.29.9](https://github.com/ashlrai/phantom/releases/tag/v3.29.9): release; 2026-10-10
+- [#672 Speed up CLI startup, test setup and release verification](https://github.com/ashlrai/phantom/pull/672): pull-request; 2026-10-10
+- [#670 ci: fast lane for exact ecosystem-only PRs](https://github.com/ashlrai/phantom/pull/670): pull-request; 2026-10-10
+- [Phantom 3.29.8](https://github.com/ashlrai/phantom/releases/tag/v3.29.8): release; 2026-10-10
+- [#669 Keep Phantom ecosystem chart on canonical repository](https://github.com/ashlrai/phantom/pull/669): pull-request; 2026-10-10
+- [#668 Ship Phantom 3.29.8 signed desktop install and stable chat lifecycle](https://github.com/ashlrai/phantom/pull/668): pull-request; 2026-10-10
+- [#667 Keep resource signals accurate and maintain website release metadata](https://github.com/ashlrai/phantom/pull/667): pull-request; 2026-10-10
+- [Phantom 3.29.7](https://github.com/ashlrai/phantom/releases/tag/v3.29.7): release; 2026-10-10
+- [#666 Prepare Phantom 3.29.7 resource and release improvements](https://github.com/ashlrai/phantom/pull/666): pull-request; 2026-10-10
+- [Phantom 3.29.6](https://github.com/ashlrai/phantom/releases/tag/v3.29.6): release; 2026-10-10
+- [#665 Ship Phantom 3.29.6 resource clarity and runtime recovery](https://github.com/ashlrai/phantom/pull/665): pull-request; 2026-10-10
+- [\[3.29.10\] - 2026-10-10](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-10
+- [\[3.29.7\] - 2026-10-10](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-10
+- [\[3.29.8\] - 2026-10-10](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-10
+- [\[3.29.9\] - 2026-10-10](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-10
+- [Phantom 3.29.5](https://github.com/ashlrai/phantom/releases/tag/v3.29.5): release; 2026-10-09
+- [#663 Ship Phantom 3.29.5 with stable Fleet refresh and clearer resource setup](https://github.com/ashlrai/phantom/pull/663): pull-request; 2026-10-09
+- [Phantom 3.29.4](https://github.com/ashlrai/phantom/releases/tag/v3.29.4): release; 2026-10-09
+- [#662 Ship Phantom 3.29.4 with neutral routing and capable local workers](https://github.com/ashlrai/phantom/pull/662): pull-request; 2026-10-09
+- [Phantom 3.29.3](https://github.com/ashlrai/phantom/releases/tag/v3.29.3): release; 2026-10-09
+- [#661 Ship Phantom 3.29.3 resource scheduling, local context and traces](https://github.com/ashlrai/phantom/pull/661): pull-request; 2026-10-09
+- [Phantom 3.29.2](https://github.com/ashlrai/phantom/releases/tag/v3.29.2): release; 2026-10-09
+- [#660 Fix resource evidence and local transcripts for Phantom 3.29.2](https://github.com/ashlrai/phantom/pull/660): pull-request; 2026-10-09
+- [#658 Repair local Leader transport and resource evidence](https://github.com/ashlrai/phantom/pull/658): pull-request; 2026-10-09
+- [Phantom 3.29.0](https://github.com/ashlrai/phantom/releases/tag/v3.29.0): release; 2026-10-09
+- [#657 Prepare Phantom 3.29: neutral routing and resource visibility](https://github.com/ashlrai/phantom/pull/657): pull-request; 2026-10-09
+- [Phantom 3.28.0](https://github.com/ashlrai/phantom/releases/tag/v3.28.0): release; 2026-10-09
+- [#655 Enable provider-neutral Phantom roles and qualified publishing](https://github.com/ashlrai/phantom/pull/655): pull-request; 2026-10-09
+- [#654 Integrate standalone companions with verified job-scoped authority](https://github.com/ashlrai/phantom/pull/654): pull-request; 2026-10-09
+- [Phantom 3.27.0](https://github.com/ashlrai/phantom/releases/tag/v3.27.0): release; 2026-10-09
+- [#653 Separate Claude API promotion resources and held execution](https://github.com/ashlrai/phantom/pull/653): pull-request; 2026-10-09
+- [#652 Polish Phantom guidance and preserve account alert timing](https://github.com/ashlrai/phantom/pull/652): pull-request; 2026-10-09
+- [Phantom 3.26.1](https://github.com/ashlrai/phantom/releases/tag/v3.26.1): release; 2026-10-09
+- [#650 Prepare Phantom 3.26.1: fleet reliability and unified guidance](https://github.com/ashlrai/phantom/pull/650): pull-request; 2026-10-09
+- [\[3.27.0\] - 2026-10-09](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-09
+- [\[3.28.0\] - 2026-10-09](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-09
+- [\[3.29.0\] - 2026-10-09](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-09
+- [\[3.29.2\] - 2026-10-09](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-09
+- [\[3.29.3\] - 2026-10-09](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-09
+- [\[3.29.4\] - 2026-10-09](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-09
+- [\[3.29.5\] - 2026-10-09](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-09
+- [\[3.29.6\] - 2026-10-09](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-09
+- [#643 Explain Phantom resources, routing and work modes](https://github.com/ashlrai/phantom/pull/643): pull-request; 2026-10-08
+- [#642 Explain Phantom resources, routing and work modes in onboarding](https://github.com/ashlrai/phantom/pull/642): pull-request; 2026-10-08
+- [#641 docs: repair desktop signing contract after 3.26 publication](https://github.com/ashlrai/phantom/pull/641): pull-request; 2026-10-08
+- [#640 docs: update install guides for published Phantom 3.26](https://github.com/ashlrai/phantom/pull/640): pull-request; 2026-10-08
+- [Phantom 3.26.0](https://github.com/ashlrai/phantom/releases/tag/v3.26.0): release; 2026-10-08
+- [#639 Reduce nonexecuting preparation fixture hashing](https://github.com/ashlrai/phantom/pull/639): pull-request; 2026-10-08
+- [#638 Ship canonical Phantom package and repository identity](https://github.com/ashlrai/phantom/pull/638): pull-request; 2026-10-08
+- [Phantom 3.25.3](https://github.com/ashlrai/phantom/releases/tag/v3.25.3): release; 2026-10-08
+- [#637 Ship Phantom 3.25.3 startup fix and identity compatibility bridge](https://github.com/ashlrai/phantom/pull/637): pull-request; 2026-10-08
+- [Phantom 3.25.2](https://github.com/ashlrai/phantom/releases/tag/v3.25.2): release; 2026-10-08
+- [#636 Improve Phantom release feedback, routing clarity and Leader messages](https://github.com/ashlrai/phantom/pull/636): pull-request; 2026-10-08
+- [#635 Add signed idle Phantom updates](https://github.com/ashlrai/phantom/pull/635): pull-request; 2026-10-08
+- [\[3.25.2\] - 2026-10-08](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-08
+- [\[3.25.3\] - 2026-10-08](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-08
+- [\[3.26.0\] - 2026-10-08](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-08
+- [\[3.26.1\] - 2026-10-08](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-08
+- [Phantom 3.25.1](https://github.com/ashlrai/phantom/releases/tag/v3.25.1): release; 2026-10-07
+- [#634 Unify Phantom app and compatible workbench CLI](https://github.com/ashlrai/phantom/pull/634): pull-request; 2026-10-07
+- [#632 Ship Phantom 3.25.1 accounting fidelity and faster preflights](https://github.com/ashlrai/phantom/pull/632): pull-request; 2026-10-07
+- [#633 Ship Phantom 3.25.1 reliability and efficiency](https://github.com/ashlrai/phantom/pull/633): pull-request; 2026-10-07
+- [Phantom 3.25 - shared Manager and faster qualification](https://github.com/ashlrai/phantom/releases/tag/v3.25.0): release; 2026-10-07
+- [#631 Ship Phantom 3.25 shared Manager and faster qualification](https://github.com/ashlrai/phantom/pull/631): pull-request; 2026-10-07
+- [Phantom 3.24.4](https://github.com/ashlrai/phantom/releases/tag/v3.24.4): release; 2026-10-07
+- [#630 Ship Phantom 3.24.4 reliable fleet status and faster engineering feedback](https://github.com/ashlrai/phantom/pull/630): pull-request; 2026-10-07
+- [Phantom 3.24.3](https://github.com/ashlrai/phantom/releases/tag/v3.24.3): release; 2026-10-07
+- [#626 Improve resource readiness and structured Leader questions](https://github.com/ashlrai/phantom/pull/626): pull-request; 2026-10-07
+- [#628 Ship Phantom workbench presentation, resource controls and faster verified releases](https://github.com/ashlrai/phantom/pull/628): pull-request; 2026-10-07
+- [\[3.24.4\] - 2026-10-07](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-07
+- [\[3.25.0\] - 2026-10-07](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-07
+- [\[3.25.1\] - 2026-10-07](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-07
+- [\[3.24.3\] - 2026-10-06](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-06
+- [#613 Release Verse 3.24.1 resident-fleet reliability fixes](https://github.com/ashlrai/phantom/pull/613): pull-request; 2026-10-05
+- [#620 Ship resource refresh and native coding adapters in Verse 3.24.2](https://github.com/ashlrai/phantom/pull/620): pull-request; 2026-10-05
+- [Verse 3.24.2 - connected resources and native tools](https://github.com/ashlrai/phantom/releases/tag/v3.24.2): release; 2026-10-05
+- [#610 Publish verified Phantom MCP metadata through owner OIDC](https://github.com/ashlrai/phantom/pull/610): pull-request; 2026-10-05
+- [#611 Keep resident fleet alive through maintenance and refresh its state](https://github.com/ashlrai/phantom/pull/611): pull-request; 2026-10-05
+- [#605 Ship Verse 3.24 resource controls, automatic awake and Growth analytics](https://github.com/ashlrai/phantom/pull/605): pull-request; 2026-10-05
+- [Ashlr Verse 3.24.0](https://github.com/ashlrai/phantom/releases/tag/v3.24.0): release; 2026-10-05
+- [#604 Ship Verse 3.23 Automatic chat and outcome-driven fleet](https://github.com/ashlrai/phantom/pull/604): pull-request; 2026-10-05
+- [Ashlrverse 3.23.0 - Automatic chat and outcome-driven Fleet](https://github.com/ashlrai/phantom/releases/tag/v3.23.0): release; 2026-10-05
+- [\[3.24.0\] - 2026-10-05](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-05
+- [\[3.24.1\] - 2026-10-05](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-05
+- [\[3.24.2\] - 2026-10-05](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-05
+- [#603 Start chats and follow-up turns with Automatic resource routing](https://github.com/ashlrai/phantom/pull/603): pull-request; 2026-10-02
+- [#601 Retain Claude usage history across settings rewrites](https://github.com/ashlrai/phantom/pull/601): pull-request; 2026-10-02
+- [#600 Retain producer timing across retries and proposal capture](https://github.com/ashlrai/phantom/pull/600): pull-request; 2026-10-02
+- [#598 Preserve configured concurrency preferences across identity projections](https://github.com/ashlrai/phantom/pull/598): pull-request; 2026-10-02
+- [#597 Refresh resource usage, reconcile Devin sessions, and ship Verse 3.22.2](https://github.com/ashlrai/phantom/pull/597): pull-request; 2026-10-02
+- [Ashlrverse 3.22.2 - faster resources and fleet reconciliation](https://github.com/ashlrai/phantom/releases/tag/v3.22.2): release; 2026-10-02
+- [Custody helper 1.2.0: reauthorize existing credentials](https://github.com/ashlrai/phantom/releases/tag/custody-v1.2.0): release; 2026-10-02
+- [#596 Repair existing custody credential access after helper updates](https://github.com/ashlrai/phantom/pull/596): pull-request; 2026-10-02
+- [#594 Improve fleet clarity and runtime efficiency for 3.22.1](https://github.com/ashlrai/phantom/pull/594): pull-request; 2026-10-02
+- [Ashlr Verse 3.22.1 - clear resource usage and a stronger workbench](https://github.com/ashlrai/phantom/releases/tag/v3.22.1): release; 2026-10-02
+- [\[3.22.2\] - 2026-10-02](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-02
+- [\[3.23.0\] - 2026-10-02](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-02
+- [Ashlrverse 3.22 - faster resources and execution evidence](https://github.com/ashlrai/phantom/releases/tag/v3.22.0): release; 2026-10-01
+- [#593 Release 3.22: fast resource startup and GitHub execution timelines](https://github.com/ashlrai/phantom/pull/593): pull-request; 2026-10-01
+- [#589 Unify interactive and autonomous workspaces](https://github.com/ashlrai/phantom/pull/589): pull-request; 2026-10-01
+- [Ashlr Verse 3.18.0](https://github.com/ashlrai/phantom/releases/tag/v3.18.0): release; 2026-10-01
+- [\[3.22.0\] - 2026-10-01](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-01
+- [\[3.22.1\] - 2026-10-01](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-10-01
+- [#588 feat: inspect chat resources and cite module dependencies](https://github.com/ashlrai/phantom/pull/588): pull-request; 2026-09-30
+- [Ashlr Verse 3.17.2](https://github.com/ashlrai/phantom/releases/tag/v3.17.2): release; 2026-09-30
+- [#587 Preserve ruleset policy options and prepare 3.17.1](https://github.com/ashlrai/phantom/pull/587): pull-request; 2026-09-30
+- [Verse 3.17.1 - preserve repository policy and current onboarding](https://github.com/ashlrai/phantom/releases/tag/v3.17.1): release; 2026-09-30
+- [Ashlr Verse 3.17.0](https://github.com/ashlrai/phantom/releases/tag/v3.17.0): release; 2026-09-30
+- [#586 docs: Pin Verse 3.17 install and correct skill research](https://github.com/ashlrai/phantom/pull/586): pull-request; 2026-09-30
+- [#585 Ship Verse 3.17 scalable fleet workbench, module maps and reliable phone control](https://github.com/ashlrai/phantom/pull/585): pull-request; 2026-09-30
+- [#583 chore(lint): fix 25 no-undef errors from the new static site assets (#580)](https://github.com/ashlrai/phantom/pull/583): pull-request; 2026-09-30
+- [\[3.17.1\] - 2026-09-30](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-30
+- [\[3.17.2\] - 2026-09-30](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-30
+- [\[3.18.0\] - 2026-09-30](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-30
+- [#582 Fix Universe site Undici security advisory](https://github.com/ashlrai/phantom/pull/582): pull-request; 2026-09-29
+- [#581 Index Verse ecosystem page](https://github.com/ashlrai/phantom/pull/581): pull-request; 2026-09-29
+- [#580 Publish Ashlr ecosystem page and current Verse onboarding](https://github.com/ashlrai/phantom/pull/580): pull-request; 2026-09-29
+- [Ashlr Verse 3.16.1](https://github.com/ashlrai/phantom/releases/tag/v3.16.1): release; 2026-09-29
+- [#579 fix(verse): keep paired phone Needs You feed live](https://github.com/ashlrai/phantom/pull/579): pull-request; 2026-09-29
+- [\[3.17.0\] - 2026-09-29](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-29
+- [Ashlr Verse 3.16.0](https://github.com/ashlrai/phantom/releases/tag/v3.16.0): release; 2026-09-28
+- [#563 feat(fleet): Devin CLI engine - SWE-2 as a free fleet producer](https://github.com/ashlrai/phantom/pull/563): pull-request; 2026-09-28
+- [#564 feat(fleet): run the fleet from the Fleet tab - start, pause, stop, steer, no Terminal](https://github.com/ashlrai/phantom/pull/564): pull-request; 2026-09-28
+- [#565 feat(verse): one MCP server for every seat - agents drive the terminal](https://github.com/ashlrai/phantom/pull/565): pull-request; 2026-09-28
+- [#566 Verse 3.16.0 integrated release candidate](https://github.com/ashlrai/phantom/pull/566): pull-request; 2026-09-28
+- [#576 Verse 3.16.0 integrated desktop and phone release](https://github.com/ashlrai/phantom/pull/576): pull-request; 2026-09-28
+- [#578 docs: install-first README; move long reference sections into docs/](https://github.com/ashlrai/phantom/pull/578): pull-request; 2026-09-28
+- [\[3.16.0\] - 2026-09-28](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-28
+- [\[3.16.1\] - 2026-09-28](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-28
+- [#561 feat(verse): dictation everywhere - local, fast, lexicon-aware](https://github.com/ashlrai/phantom/pull/561): pull-request; 2026-09-27
+- [#560 test(resources): Grok capacity is observed and published by whichever process holds the lease](https://github.com/ashlrai/phantom/pull/560): pull-request; 2026-09-27
+- [#558 fix(resources): Grok shows its usage again](https://github.com/ashlrai/phantom/pull/558): pull-request; 2026-09-27
+- [#539 docs: 3.15 - the Leader, Devin, the wiki and lessons](https://github.com/ashlrai/phantom/pull/539): pull-request; 2026-09-27
+- [#542 fix(leader): /directives shows your directives, accurate Approve help, 300-char directives, retired director help, replies never use Claude](https://github.com/ashlrai/phantom/pull/542): pull-request; 2026-09-27
+- [#557 fix(3.15): retro sweep on a timer, Jev action-class advice wired, gate builds web assets](https://github.com/ashlrai/phantom/pull/557): pull-request; 2026-09-27
+- [#556 feat(verse): playbook macros in every chat, a Devin CLI seat that checks before it runs, Esc closes restored panels](https://github.com/ashlrai/phantom/pull/556): pull-request; 2026-09-27
+- [#555 fix: 3.15 integration - everything wired end to end](https://github.com/ashlrai/phantom/pull/555): pull-request; 2026-09-27
+- [#545 feat(verse): Devin is a chat seat like Claude Code, Codex and Grok](https://github.com/ashlrai/phantom/pull/545): pull-request; 2026-09-27
+- [#554 test: register verse-sources-api in the real-io lane](https://github.com/ashlrai/phantom/pull/554): pull-request; 2026-09-27
+- [#553 feat(verse): see the reasoning, every action, and every source](https://github.com/ashlrai/phantom/pull/553): pull-request; 2026-09-27
+- [#551 feat(verse): a Warp-grade terminal with command blocks, shared with the agents](https://github.com/ashlrai/phantom/pull/551): pull-request; 2026-09-27
+- [#552 fix(leader): load Jev with a literal import](https://github.com/ashlrai/phantom/pull/552): pull-request; 2026-09-27
+- [#548 feat: Jev decides - one fast, typed decision layer across Verse](https://github.com/ashlrai/phantom/pull/548): pull-request; 2026-09-27
+- [#549 feat(verse): checkpoints, a real diff review, and undo for every turn](https://github.com/ashlrai/phantom/pull/549): pull-request; 2026-09-27
+- [#547 feat(verse): every model working together - auto seat, compare, escalate, hand off](https://github.com/ashlrai/phantom/pull/547): pull-request; 2026-09-27
+- [#550 feat(leader): a founder-mode Leader with real power and a Telegram line worth reading](https://github.com/ashlrai/phantom/pull/550): pull-request; 2026-09-27
+- [#541 feat(verse): a world-class workbench - panes for terminal, browser, diff, files, sources, reasoning](https://github.com/ashlrai/phantom/pull/541): pull-request; 2026-09-27
+- [#546 feat(verse): an integrated browser the agents can see and use](https://github.com/ashlrai/phantom/pull/546): pull-request; 2026-09-27
+- [#544 feat: automations - issues, red builds, schedules and webhooks become work](https://github.com/ashlrai/phantom/pull/544): pull-request; 2026-09-27
+- [#543 feat: versioned playbooks for every lane](https://github.com/ashlrai/phantom/pull/543): pull-request; 2026-09-27
+- [#540 feat(devin): its own engine identity, fleet launches under the grant, full UI parity](https://github.com/ashlrai/phantom/pull/540): pull-request; 2026-09-27
+- [#538 test: register devin-api-315 in the real-io lane](https://github.com/ashlrai/phantom/pull/538): pull-request; 2026-09-27
+- [#537 feat(verse): a private repo wiki and Ask, on your own models](https://github.com/ashlrai/phantom/pull/537): pull-request; 2026-09-27
+- [#536 feat: Devin as a Verse resource - sessions, budget, PRs through the gates](https://github.com/ashlrai/phantom/pull/536): pull-request; 2026-09-27
+- [#535 feat: every finished task teaches the fleet - retros and approved knowledge](https://github.com/ashlrai/phantom/pull/535): pull-request; 2026-09-27
+- [3.14.0 - talk to the Leader anywhere, and a fleet that actually runs](https://github.com/ashlrai/phantom/releases/tag/v3.14.0): release; 2026-09-27
+- [#533 release: 3.14.0](https://github.com/ashlrai/phantom/pull/533): pull-request; 2026-09-27
+- [#532 feat(fleet): repos with file:../ sibling dependencies can be worked on](https://github.com/ashlrai/phantom/pull/532): pull-request; 2026-09-27
+- [#531 fix(verse): every account connected, accurate, and ready for chat and the fleet](https://github.com/ashlrai/phantom/pull/531): pull-request; 2026-09-27
+- [#530 test(design): fix the duplicate allowlist key from #529](https://github.com/ashlrai/phantom/pull/530): pull-request; 2026-09-27
+- [#529 test(design): allow the AutonomyStatus placeholder height](https://github.com/ashlrai/phantom/pull/529): pull-request; 2026-09-27
+- [#528 polish(verse): charts that are beautiful, legible and alive](https://github.com/ashlrai/phantom/pull/528): pull-request; 2026-09-27
+- [#527 fix(daemon): a hung dependency install can't stall the tick](https://github.com/ashlrai/phantom/pull/527): pull-request; 2026-09-27
+- [#526 chore: CODEOWNERS covers the autonomy ladder test](https://github.com/ashlrai/phantom/pull/526): pull-request; 2026-09-27
+- [#525 feat(verse): see the autonomy ladder and every shadow decision](https://github.com/ashlrai/phantom/pull/525): pull-request; 2026-09-27
+- [#524 fix(authority): private repos without rulesets use local enforcement with ashlr/verify](https://github.com/ashlrai/phantom/pull/524): pull-request; 2026-09-27
+- [#519 feat(verse): talk to the Leader in Mind](https://github.com/ashlrai/phantom/pull/519): pull-request; 2026-09-27
+- [#523 fix(verse): no request can freeze the sidecar behind a macOS privacy prompt](https://github.com/ashlrai/phantom/pull/523): pull-request; 2026-09-27
+- [#520 feat(comms): Telegram becomes a real two-way line to the Leader](https://github.com/ashlrai/phantom/pull/520): pull-request; 2026-09-27
+- [#521 fix(leader): accurate evidence, a fallback seat, health and useful cadence](https://github.com/ashlrai/phantom/pull/521): pull-request; 2026-09-27
+- [\[3.14.0\] - 2026-09-27 UTC - talk to the Leader anywhere, and a fleet that actually runs](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-27
+- [#522 feat(leader): talk to the Leader - one brain, a thread, directives, answers and approvals](https://github.com/ashlrai/phantom/pull/522): pull-request; 2026-09-26
+- [#518 fix(verse): the sidecar answers at startup even when the login shell hangs](https://github.com/ashlrai/phantom/pull/518): pull-request; 2026-09-26
+- [3.13.0 - autonomy you can actually turn on](https://github.com/ashlrai/phantom/releases/tag/v3.13.0): release; 2026-09-26
+- [#517 release: 3.13.0](https://github.com/ashlrai/phantom/pull/517): pull-request; 2026-09-26
+- [#505 \[ashlr-cloud\] Bucket Pulse days by the viewer's local calendar day](https://github.com/ashlrai/phantom/pull/505): pull-request; 2026-09-26
+- [#504 \[ashlr-cloud\] Write lane and seat reasons in plain words on the server](https://github.com/ashlrai/phantom/pull/504): pull-request; 2026-09-26
+- [#501 \[ashlr-cloud\] Forward budget and activity API errors instead of swallowing them](https://github.com/ashlrai/phantom/pull/501): pull-request; 2026-09-26
+- [#499 \[ashlr-cloud\] Pick the latest spent window server-side in account health](https://github.com/ashlrai/phantom/pull/499): pull-request; 2026-09-26
+- [#509 feat(autonomy): rerun-safe setup and a live setup checklist in Verse](https://github.com/ashlrai/phantom/pull/509): pull-request; 2026-09-26
+- [3.12.0 - your key is the trust root, and Verse says one clear next step](https://github.com/ashlrai/phantom/releases/tag/v3.12.0): release; 2026-09-26
+- [#516 release: 3.12.0](https://github.com/ashlrai/phantom/pull/516): pull-request; 2026-09-26
+- [#515 test: register cloud-pr-actions in the real-io lane](https://github.com/ashlrai/phantom/pull/515): pull-request; 2026-09-26
+- [#514 feat(fleet): cloud and self-improvement PRs land through the standing gates](https://github.com/ashlrai/phantom/pull/514): pull-request; 2026-09-26
+- [#512 feat(authority): resident runtime under the operator's standing grant](https://github.com/ashlrai/phantom/pull/512): pull-request; 2026-09-26
+- [#511 feat(authority): host-verified ashlr/verify check so G7 can pass without CI](https://github.com/ashlrai/phantom/pull/511): pull-request; 2026-09-26
+- [#508 feat(verse): land, close or update cloud PRs from Needs-you; self-improvement waits for review](https://github.com/ashlrai/phantom/pull/508): pull-request; 2026-09-26
+- [#510 chore: CODEOWNERS covers the cloud timeline test](https://github.com/ashlrai/phantom/pull/510): pull-request; 2026-09-26
+- [#507 feat(verse): an evidence timeline for every cloud task](https://github.com/ashlrai/phantom/pull/507): pull-request; 2026-09-26
+- [#506 authority: trust custody key se-p256-9c1330e3bd72cf3e](https://github.com/ashlrai/phantom/pull/506): pull-request; 2026-09-26
+- [Ashlr Verse 3.11.5](https://github.com/ashlrai/phantom/releases/tag/v3.11.5): release; 2026-09-26
+- [#503 Review transient Verse event Tier-1 closure](https://github.com/ashlrai/phantom/pull/503): pull-request; 2026-09-26
+- [#491 Fix Verse account freshness after Codex probe faults](https://github.com/ashlrai/phantom/pull/491): pull-request; 2026-09-26
+- [#502 perf(verse): win back first-paint headroom](https://github.com/ashlrai/phantom/pull/502): pull-request; 2026-09-26
+- [#500 fix(verse): honest cloud credits, one context-window unit, clean model names, fast apps](https://github.com/ashlrai/phantom/pull/500): pull-request; 2026-09-26
+- [#486 \[ashlr-cloud\] Use the router's λ weights](https://github.com/ashlrai/phantom/pull/486): pull-request; 2026-09-26
+- [#484 \[ashlr-cloud\] Apply harness effort and sampling at dispatch](https://github.com/ashlrai/phantom/pull/484): pull-request; 2026-09-26
+- [#481 \[ashlr-cloud\] Remove the runtime-probe event-loop stall](https://github.com/ashlrai/phantom/pull/481): pull-request; 2026-09-26
+- [#498 fix(verse): end-to-end functional fixes](https://github.com/ashlrai/phantom/pull/498): pull-request; 2026-09-26
+- [#497 fix(verse): charts keep their size at any width; day labels in local time](https://github.com/ashlrai/phantom/pull/497): pull-request; 2026-09-26
+- [#496 Report resident setup as blocked until runtime admission exists](https://github.com/ashlrai/phantom/pull/496): pull-request; 2026-09-26
+- [#492 fix(ops): unblock the comms queue; resumable authority setup with --json checklist](https://github.com/ashlrai/phantom/pull/492): pull-request; 2026-09-26
+- [#495 fix(verse): rail hover says "resets" once](https://github.com/ashlrai/phantom/pull/495): pull-request; 2026-09-26
+- [#494 feat(verse): quiet onboarding chip and the actions that matter in ⌘K](https://github.com/ashlrai/phantom/pull/494): pull-request; 2026-09-26
+- [#493 polish(verse): one compact seat strip on Command, even grid at every width](https://github.com/ashlrai/phantom/pull/493): pull-request; 2026-09-26
+- [#490 feat(verse): one clear Autonomy-is-off state instead of empty cards](https://github.com/ashlrai/phantom/pull/490): pull-request; 2026-09-26
+- [#489 polish(verse): plain, short copy everywhere](https://github.com/ashlrai/phantom/pull/489): pull-request; 2026-09-26
+- [Ashlr Verse 3.11.4](https://github.com/ashlrai/phantom/releases/tag/v3.11.4): release; 2026-09-26
+- [#488 Release Verse 3.11.4 cloud delivery hardening and accurate site](https://github.com/ashlrai/phantom/pull/488): pull-request; 2026-09-26
+- [\[3.11.4\] - 2026-09-26 UTC - verify cloud deliveries before showing them](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-26
+- [\[3.11.5\] - 2026-09-26 UTC - keep account evidence honest through probe faults](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-26
+- [\[3.12.0\] - 2026-09-26 UTC - your key is the trust root, and Verse says one clear next step](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-26
+- [\[3.13.0\] - 2026-09-26 UTC - autonomy you can actually turn on](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-26
+- [#487 docs: bring README, VERSE.md and verse.ashlr.ai up to 3.11.3](https://github.com/ashlrai/phantom/pull/487): pull-request; 2026-09-25
+- [3.11.3 - ship:local installs the app icon too](https://github.com/ashlrai/phantom/releases/tag/v3.11.3): release; 2026-09-25
+- [#485 3.11.3: ship:local installs the app icon too](https://github.com/ashlrai/phantom/pull/485): pull-request; 2026-09-25
+- [3.11.2 - the Ashlr.AI mark, a lighter first paint, and a release loop measured in minutes](https://github.com/ashlrai/phantom/releases/tag/v3.11.2): release; 2026-09-25
+- [#477 \[ashlr-cloud\] Fix the open moderate Dependabot alert](https://github.com/ashlrai/phantom/pull/477): pull-request; 2026-09-25
+- [#478 \[ashlr-cloud\] Get chat first-paint JavaScript to 350 KB](https://github.com/ashlrai/phantom/pull/478): pull-request; 2026-09-25
+- [#480 \[ashlr-cloud\] Make the local production gate robust to Tauri build output](https://github.com/ashlrai/phantom/pull/480): pull-request; 2026-09-25
+- [#483 3.11.2: Ashlr.AI mark, 349 KB first paint, fast gate + ship:local](https://github.com/ashlrai/phantom/pull/483): pull-request; 2026-09-25
+- [3.11.1 - you can see who you're running on, all the time](https://github.com/ashlrai/phantom/releases/tag/v3.11.1): release; 2026-09-25
+- [#475 \[ashlr-cloud\] Fix the 8 long-failing Universe campaign-recovery tests](https://github.com/ashlrai/phantom/pull/475): pull-request; 2026-09-25
+- [#476 \[ashlr-cloud\] Bring the release-policy pin tests up to the current release line](https://github.com/ashlrai/phantom/pull/476): pull-request; 2026-09-25
+- [#479 3.11.1: provider logos, always-on resource bar, background-safe window](https://github.com/ashlrai/phantom/pull/479): pull-request; 2026-09-25
+- [3.11.0 - the cloud lane, and every resource one keystroke away](https://github.com/ashlrai/phantom/releases/tag/v3.11.0): release; 2026-09-25
+- [#474 3.11.0: the cloud lane, and every resource one keystroke away](https://github.com/ashlrai/phantom/pull/474): pull-request; 2026-09-25
+- [#467 \[ashlr-cloud\] 3.11 C5: Leader code-change actions become cloud backlog suggestions](https://github.com/ashlrai/phantom/pull/467): pull-request; 2026-09-25
+- [#468 \[ashlr-cloud\] 3.11 C2: cloud API routes, scheduler, Needs-you items and `ashlr cloud` CLI](https://github.com/ashlrai/phantom/pull/468): pull-request; 2026-09-25
+- [#469 \[ashlr-cloud\] 3.11 C1: implement cloud lane core (store, launcher, checkout, tracker, budget, backlog, service)](https://github.com/ashlrai/phantom/pull/469): pull-request; 2026-09-25
+- [#470 \[ashlr-cloud\] 3.11 C4: refresh site, README and Verse docs for 3.9 - 3.11; add docs/CLOUD.md](https://github.com/ashlrai/phantom/pull/470): pull-request; 2026-09-25
+- [#471 \[ashlr-cloud\] 3.11 C3: cloud lane web UI - Command card, Run in cloud, Usage panel, Fleet chip](https://github.com/ashlrai/phantom/pull/471): pull-request; 2026-09-25
+- [#473 \[ashlr-cloud\] 3.11 C6: resources drawer](https://github.com/ashlrai/phantom/pull/473): pull-request; 2026-09-25
+- [3.10.1 - the workbench reads cleanly, and the charts tell the truth](https://github.com/ashlrai/phantom/releases/tag/v3.10.1): release; 2026-09-25
+- [#466 3.10.1: the workbench reads cleanly, and the charts tell the truth](https://github.com/ashlrai/phantom/pull/466): pull-request; 2026-09-25
+- [\[3.11.0\] - 2026-09-25 UTC - the cloud lane, and every resource one keystroke away](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-25
+- [\[3.11.1\] - 2026-09-25 UTC - you can see who you're running on, all the time](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-25
+- [\[3.11.2\] - 2026-09-25 UTC - the Ashlr.AI mark, a lighter first paint, and a release loop measured in minutes](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-25
+- [\[3.11.3\] - 2026-09-25 UTC - ship:local installs the app icon too](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-25
+- [3.10.0 - autonomy with custody, and a workbench you can live in](https://github.com/ashlrai/phantom/releases/tag/v3.10.0): release; 2026-09-24
+- [#465 3.10.0: autonomy with custody, and a workbench you can live in](https://github.com/ashlrai/phantom/pull/465): pull-request; 2026-09-24
+- [v3.9.1 - Claude usage stays visible after a re-pin](https://github.com/ashlrai/phantom/releases/tag/v3.9.1): release; 2026-09-24
+- [#464 3.9.1 - keep Claude usage visible after a CLI re-pin](https://github.com/ashlrai/phantom/pull/464): pull-request; 2026-09-24
+- [v3.9.0 - the context meter tells the truth, and long sessions have somewhere to go](https://github.com/ashlrai/phantom/releases/tag/v3.9.0): release; 2026-09-24
+- [#463 Verse 3.9 - accurate per-model context windows + context orchestration](https://github.com/ashlrai/phantom/pull/463): pull-request; 2026-09-24
+- [\[3.10.0\] - 2026-09-24 UTC - autonomy with custody, and a workbench you can live in](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-24
+- [\[3.10.1\] - 2026-09-24 UTC - the workbench reads cleanly, and the charts tell the truth](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-24
+- [\[3.9.0\] - 2026-09-24 UTC - the context meter tells the truth, and long sessions have somewhere to go](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-24
+- [\[3.9.1\] - 2026-09-24 UTC - Claude usage stays visible after a re-pin](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-24
+- [v3.8.0 - local-only actually prevents spend](https://github.com/ashlrai/phantom/releases/tag/v3.8.0): release; 2026-09-23
+- [#462 release: 3.8.0 - local-only actually prevents spend](https://github.com/ashlrai/phantom/pull/462): pull-request; 2026-09-23
+- [#461 Split meteredness from locality: local-only now refuses ashlrcode](https://github.com/ashlrai/phantom/pull/461): pull-request; 2026-09-23
+- [#460 docs: separate locality from spend (recommendation, no behaviour change)](https://github.com/ashlrai/phantom/pull/460): pull-request; 2026-09-23
+- [#459 Make local-only true for Verse chats, not just for the daemon](https://github.com/ashlrai/phantom/pull/459): pull-request; 2026-09-23
+- [v3.7.0 - the console you can navigate, and a fleet that can be bounded](https://github.com/ashlrai/phantom/releases/tag/v3.7.0): release; 2026-09-23
+- [#458 release: 3.7.0](https://github.com/ashlrai/phantom/pull/458): pull-request; 2026-09-23
+- [#457 test(local-only): classify the anthropic shim as non-transport](https://github.com/ashlrai/phantom/pull/457): pull-request; 2026-09-23
+- [#456 Autonomy: a bounded run window, and the post-merge halt that was missing](https://github.com/ashlrai/phantom/pull/456): pull-request; 2026-09-23
+- [#455 Verse: the Overnight panel, and a latent test-isolation bug it exposed](https://github.com/ashlrai/phantom/pull/455): pull-request; 2026-09-23
+- [#454 Verse: a Display size setting, so the whole app can be read from further away](https://github.com/ashlrai/phantom/pull/454): pull-request; 2026-09-23
+- [#453 Verse: panel resizing that survives a real drag](https://github.com/ashlrai/phantom/pull/453): pull-request; 2026-09-23
+- [#452 docs(site): show the console, with the account names edited out](https://github.com/ashlrai/phantom/pull/452): pull-request; 2026-09-23
+- [#451 Verse: the title sweep, integrated with the portalled Tooltip](https://github.com/ashlrai/phantom/pull/451): pull-request; 2026-09-23
+- [#450 Verse: make the workspace header earn its height](https://github.com/ashlrai/phantom/pull/450): pull-request; 2026-09-23
+- [#449 Verse: an expandable rail, and tooltips that actually work](https://github.com/ashlrai/phantom/pull/449): pull-request; 2026-09-23
+- [v3.6.0 - open any project, from a real picker](https://github.com/ashlrai/phantom/releases/tag/v3.6.0): release; 2026-09-23
+- [#448 release: 3.6.0 - the Verse work reaches npm, and a typecheck gate that was lying](https://github.com/ashlrai/phantom/pull/448): pull-request; 2026-09-23
+- [#447 Verse: mount the MCP section - a finished feature the app could not reach](https://github.com/ashlrai/phantom/pull/447): pull-request; 2026-09-23
+- [#446 Verse: saved projects - keep a folder without starting a chat on it](https://github.com/ashlrai/phantom/pull/446): pull-request; 2026-09-23
+- [#445 Verse: a native folder picker for the desktop shell](https://github.com/ashlrai/phantom/pull/445): pull-request; 2026-09-23
+- [#444 docs(release): the two npm publish failure modes that cost real time](https://github.com/ashlrai/phantom/pull/444): pull-request; 2026-09-23
+- [#443 docs(desktop): say why the glib advisory stays open](https://github.com/ashlrai/phantom/pull/443): pull-request; 2026-09-23
+- [v3.5.1 - the dependency backlog, landed](https://github.com/ashlrai/phantom/releases/tag/v3.5.1): release; 2026-09-23
+- [#442 release: 3.5.1](https://github.com/ashlrai/phantom/pull/442): pull-request; 2026-09-23
+- [#441 Settle reasoning effort on multi-step work](https://github.com/ashlrai/phantom/pull/441): pull-request; 2026-09-23
+- [#440 deps(raycast): @raycast/api 2, eslint-config 2, and the flat-config migration they require](https://github.com/ashlrai/phantom/pull/440): pull-request; 2026-09-23
+- [#406 build(deps-dev): bump the development-dependencies group across 1 directory with 18 updates](https://github.com/ashlrai/phantom/pull/406): pull-request; 2026-09-23
+- [#439 deps(dev): take the group that can land, hold the three that cannot](https://github.com/ashlrai/phantom/pull/439): pull-request; 2026-09-23
+- [#438 deps: marked 17 → 18, and move the audit policy digest with it](https://github.com/ashlrai/phantom/pull/438): pull-request; 2026-09-23
+- [v3.5.0 - Verse as the operator console](https://github.com/ashlrai/phantom/releases/tag/v3.5.0): release; 2026-09-23
+- [#437 release: 3.5.0](https://github.com/ashlrai/phantom/pull/437): pull-request; 2026-09-23
+- [#436 Make a timed-out local-eval trial say why it timed out](https://github.com/ashlrai/phantom/pull/436): pull-request; 2026-09-23
+- [#435 Record the open-PR triage](https://github.com/ashlrai/phantom/pull/435): pull-request; 2026-09-23
+- [#293 chore(deps): bump serde from 1.0.228 to 1.0.229 in /desktop/src-tauri](https://github.com/ashlrai/phantom/pull/293): pull-request; 2026-09-23
+- [#292 chore(deps): bump serde_json from 1.0.150 to 1.0.151 in /desktop/src-tauri](https://github.com/ashlrai/phantom/pull/292): pull-request; 2026-09-23
+- [#291 chore(deps): bump tauri from 2.11.3 to 2.11.5 in /desktop/src-tauri](https://github.com/ashlrai/phantom/pull/291): pull-request; 2026-09-23
+- [#433 Link verse.ashlr.ai from the README](https://github.com/ashlrai/phantom/pull/433): pull-request; 2026-09-23
+- [#432 Make the committed proxy actually serve the lane, and close CORS](https://github.com/ashlrai/phantom/pull/432): pull-request; 2026-09-23
+- [\[3.5.1\] - 2026-09-23 UTC - The dependency backlog, landed rather than deferred](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-23
+- [\[3.6.0\] - 2026-09-23 UTC - Open any project, from a real picker](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-23
+- [\[3.7.0\] - 2026-09-23 UTC - The console you can actually navigate, and a fleet that can be bounded](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-23
+- [\[3.8.0\] - 2026-09-23 UTC - local-only actually prevents spend](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-23
+- [#431 Record the 2026-09-22 local baseline](https://github.com/ashlrai/phantom/pull/431): pull-request; 2026-09-22
+- [#430 Local eval harness: measure whether a harness change helped](https://github.com/ashlrai/phantom/pull/430): pull-request; 2026-09-22
+- [#429 Fix: the model is Q8_0, not four-bit](https://github.com/ashlrai/phantom/pull/429): pull-request; 2026-09-22
+- [#428 Local serving: metrics, reasoning effort, and three corrections](https://github.com/ashlrai/phantom/pull/428): pull-request; 2026-09-22
+- [#427 Multi-folder workspaces with enrollment priority (merge resolved)](https://github.com/ashlrai/phantom/pull/427): pull-request; 2026-09-22
+- [#425 fix(verse): do not let mounting the GitHub panel block the server on g](https://github.com/ashlrai/phantom/pull/425): pull-request; 2026-09-22
+- [#426 GitHub surfacing (merge resolved against MCP)](https://github.com/ashlrai/phantom/pull/426): pull-request; 2026-09-22
+- [#424 feat(verse): show which MCP servers each seat would actually load](https://github.com/ashlrai/phantom/pull/424): pull-request; 2026-09-22
+- [#422 Retract the 'context costs no memory' claim](https://github.com/ashlrai/phantom/pull/422): pull-request; 2026-09-22
+- [#421 Fix: verse-api test pinned a model id](https://github.com/ashlrai/phantom/pull/421): pull-request; 2026-09-22
+- [#420 Resources panel: collapsible groups, one bar per real limit](https://github.com/ashlrai/phantom/pull/420): pull-request; 2026-09-22
+- [#419 Add Opus 5.5](https://github.com/ashlrai/phantom/pull/419): pull-request; 2026-09-22
+- [#418 chore: ignore Vercel's local link directory](https://github.com/ashlrai/phantom/pull/418): pull-request; 2026-09-22
+- [#417 Fix: traffic lights overlapping the chat search field](https://github.com/ashlrai/phantom/pull/417): pull-request; 2026-09-22
+- [#416 Fix: verse.ashlr.ai 404 on every merge](https://github.com/ashlrai/phantom/pull/416): pull-request; 2026-09-22
+- [#415 Site: the real Grok mark](https://github.com/ashlrai/phantom/pull/415): pull-request; 2026-09-22
+- [#414 Site: provider marks and current model lists](https://github.com/ashlrai/phantom/pull/414): pull-request; 2026-09-22
+- [#413 Verified model catalogs for Claude and Codex](https://github.com/ashlrai/phantom/pull/413): pull-request; 2026-09-22
+- [#412 Site: remove the four-agent ceiling framing](https://github.com/ashlrai/phantom/pull/412): pull-request; 2026-09-22
+- [v3.4.0 - local agents get fast, Grok gets fixed](https://github.com/ashlrai/phantom/releases/tag/v3.4.0): release; 2026-09-22
+- [#411 Ashlr branding on the landing page](https://github.com/ashlrai/phantom/pull/411): pull-request; 2026-09-22
+- [#410 Docs discoverability and site/ README](https://github.com/ashlrai/phantom/pull/410): pull-request; 2026-09-22
+- [#409 Local release gate, provenance removed](https://github.com/ashlrai/phantom/pull/409): pull-request; 2026-09-22
+- [#408 Gate automerge on claim integrity](https://github.com/ashlrai/phantom/pull/408): pull-request; 2026-09-22
+- [#407 reshape, the diff parser for claim checking, and the build fixes](https://github.com/ashlrai/phantom/pull/407): pull-request; 2026-09-22
+- [#405 Ashlr Verse: local agent fast path, Grok seats, landing page](https://github.com/ashlrai/phantom/pull/405): pull-request; 2026-09-22
+- [\[3.4.0\] - 2026-09-22 UTC - Governed agent-native engineering OS](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-22
+- [\[3.5.0\] - 2026-09-22 UTC - Ashlr Verse: the operator console, and a local model that keeps working](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-22
+- [#404 fix: preflight resource campaign admission](https://github.com/ashlrai/phantom/pull/404): pull-request; 2026-09-10
+- [#403 feat: compare controller observations](https://github.com/ashlrai/phantom/pull/403): pull-request; 2026-09-10
+- [#402 feat: add mission graph navigation](https://github.com/ashlrai/phantom/pull/402): pull-request; 2026-09-10
+- [#401 feat: add recorded mission topology](https://github.com/ashlrai/phantom/pull/401): pull-request; 2026-09-10
+- [#400 fix: settle verified unstarted dispatches](https://github.com/ashlrai/phantom/pull/400): pull-request; 2026-09-10
+- [#399 fix: recheck controller admission after waits](https://github.com/ashlrai/phantom/pull/399): pull-request; 2026-09-10
+- [#398 feat: add scoped controller inspector](https://github.com/ashlrai/phantom/pull/398): pull-request; 2026-09-10
+- [#397 feat: add durable controller drain and resume](https://github.com/ashlrai/phantom/pull/397): pull-request; 2026-09-10
+- [#396 fix: preserve controller hold reasons](https://github.com/ashlrai/phantom/pull/396): pull-request; 2026-09-10
+- [#395 feat: expose controller recovery diagnostics](https://github.com/ashlrai/phantom/pull/395): pull-request; 2026-09-09
+- [#394 fix: recover abandoned controller writer locks](https://github.com/ashlrai/phantom/pull/394): pull-request; 2026-09-09
+- [#393 fix: wait for campaign execution ownership](https://github.com/ashlrai/phantom/pull/393): pull-request; 2026-09-09
+- [#392 feat: recover attributed campaign completion](https://github.com/ashlrai/phantom/pull/392): pull-request; 2026-09-09
+- [#391 feat: checkpoint portfolio execution](https://github.com/ashlrai/phantom/pull/391): pull-request; 2026-09-09
+- [#390 feat: register verified downstream experiments](https://github.com/ashlrai/phantom/pull/390): pull-request; 2026-09-09
+- [#389 feat: deliver verified integration candidates](https://github.com/ashlrai/phantom/pull/389): pull-request; 2026-09-09
+- [#388 feat: evaluate verified combined candidates](https://github.com/ashlrai/phantom/pull/388): pull-request; 2026-09-09
+- [#387 Plan verified delivery composition without execution](https://github.com/ashlrai/phantom/pull/387): pull-request; 2026-09-09
+- [#386 Expose portfolio graph frontier and downstream impact](https://github.com/ashlrai/phantom/pull/386): pull-request; 2026-09-09
+- [#385 Explain Universe resource eligibility and policy holds](https://github.com/ashlrai/phantom/pull/385): pull-request; 2026-09-09
+- [#384 feat: gate autonomous portfolio work on verified local delivery](https://github.com/ashlrai/phantom/pull/384): pull-request; 2026-09-09
+- [#383 feat: add flightpath replay and final deadline reconciliation](https://github.com/ashlrai/phantom/pull/383): pull-request; 2026-09-09
+- [#382 feat: improve agent discovery and public docs](https://github.com/ashlrai/phantom/pull/382): pull-request; 2026-09-09
+- [#381 feat: introduce Ashlrverse and supervised delivery recovery](https://github.com/ashlrai/phantom/pull/381): pull-request; 2026-09-09
+- [#379 Integrate Universe resource control room](https://github.com/ashlrai/phantom/pull/379): pull-request; 2026-09-09
+- [#378 feat: Add isolated native account profiles](https://github.com/ashlrai/phantom/pull/378): pull-request; 2026-09-08
+- [#377 feat: Add account commissioning checks](https://github.com/ashlrai/phantom/pull/377): pull-request; 2026-09-08
+- [#376 feat: Supervise explicit Universe campaign queues](https://github.com/ashlrai/phantom/pull/376): pull-request; 2026-09-08
+- [#375 feat: Add Universe operational readiness](https://github.com/ashlrai/phantom/pull/375): pull-request; 2026-09-08
+- [#374 feat: Wait for bounded Universe capacity](https://github.com/ashlrai/phantom/pull/374): pull-request; 2026-09-08
+- [#373 feat: Refresh Universe quota before generation](https://github.com/ashlrai/phantom/pull/373): pull-request; 2026-09-08
+- [#372 feat: Route portfolio campaigns through pools](https://github.com/ashlrai/phantom/pull/372): pull-request; 2026-09-08
+- [#371 feat: Connect Universe to resource workers](https://github.com/ashlrai/phantom/pull/371): pull-request; 2026-09-07
+- [#370 fix: Harden native worker reliability](https://github.com/ashlrai/phantom/pull/370): pull-request; 2026-09-07
+- [#369 fix: Preserve occupancy and verify operator docs](https://github.com/ashlrai/phantom/pull/369): pull-request; 2026-09-07
+- [#368 feat: Add interactive resource fleet map](https://github.com/ashlrai/phantom/pull/368): pull-request; 2026-09-07
+- [#367 feat: Add native quota commissioning and refresh](https://github.com/ashlrai/phantom/pull/367): pull-request; 2026-09-07
+- [#366 feat: Resource performance and model calibration](https://github.com/ashlrai/phantom/pull/366): pull-request; 2026-09-07
+- [#365 Add resource pool operations console](https://github.com/ashlrai/phantom/pull/365): pull-request; 2026-09-07
+- [#364 feat: Add account-aware resource pools](https://github.com/ashlrai/phantom/pull/364): pull-request; 2026-09-07
+- [#363 feat: Add scoped Universe console](https://github.com/ashlrai/phantom/pull/363): pull-request; 2026-09-07
+- [#362 feat: Add pinned local Universe runtimes](https://github.com/ashlrai/phantom/pull/362): pull-request; 2026-09-07
+- [#361 Enable Universe multi-file engineering](https://github.com/ashlrai/phantom/pull/361): pull-request; 2026-09-07
+- [#360 feat: Add measured Universe campaign comparisons](https://github.com/ashlrai/phantom/pull/360): pull-request; 2026-09-07
+- [#359 feat: Add measured Universe search context](https://github.com/ashlrai/phantom/pull/359): pull-request; 2026-09-07
+- [#358 feat: Orchestrate Universe campaign portfolios](https://github.com/ashlrai/phantom/pull/358): pull-request; 2026-09-07
+- [#357 feat: Add Universe evidence graph](https://github.com/ashlrai/phantom/pull/357): pull-request; 2026-09-07
+- [#356 feat: Deliver evaluated Universe artifacts to Git](https://github.com/ashlrai/phantom/pull/356): pull-request; 2026-09-06
+- [#355 feat: Add autonomous Universe campaigns](https://github.com/ashlrai/phantom/pull/355): pull-request; 2026-09-06
+- [#354 Add measured local-model generation to Universe](https://github.com/ashlrai/phantom/pull/354): pull-request; 2026-09-06
+- [#353 fix: Keep Universe console responsive during fleet reads](https://github.com/ashlrai/phantom/pull/353): pull-request; 2026-09-06
+- [#352 Add Ashlr Universe local experiment kernel](https://github.com/ashlrai/phantom/pull/352): pull-request; 2026-09-06
+- [#351 fix(gate): make native verification hermetic](https://github.com/ashlrai/phantom/pull/351): pull-request; 2026-09-05
+- [#350 fix: admit and pin local pack evidence](https://github.com/ashlrai/phantom/pull/350): pull-request; 2026-09-05
+- [#349 test: keep release gate custody fixture private](https://github.com/ashlrai/phantom/pull/349): pull-request; 2026-09-05
+- [#348 fix: complete local production gate compatibility](https://github.com/ashlrai/phantom/pull/348): pull-request; 2026-09-05
+- [#347 fix: shorten local gate temp roots](https://github.com/ashlrai/phantom/pull/347): pull-request; 2026-09-05
+- [#346 fix: attest mixed local gate confinement](https://github.com/ashlrai/phantom/pull/346): pull-request; 2026-09-05
+- [#345 fix: make the local 3.4.0 production gate complete](https://github.com/ashlrai/phantom/pull/345): pull-request; 2026-09-05
+- [#344 release: make local 3.4.0 package reproducible](https://github.com/ashlrai/phantom/pull/344): pull-request; 2026-09-05
+- [#343 release: close 3.4.0 local gate classification](https://github.com/ashlrai/phantom/pull/343): pull-request; 2026-09-05
+- [#342 release: bind local verification policy for 3.4.0](https://github.com/ashlrai/phantom/pull/342): pull-request; 2026-09-05
+- [#341 ci: add local-only production verification gate](https://github.com/ashlrai/phantom/pull/341): pull-request; 2026-09-05
+- [#338 feat(macos): add dormant native broker foundation](https://github.com/ashlrai/phantom/pull/338): pull-request; 2026-09-05
+- [#336 feat: add release successor policy schema](https://github.com/ashlrai/phantom/pull/336): pull-request; 2026-09-05
+- [#335 feat(daemon): define dormant stopped selector v2](https://github.com/ashlrai/phantom/pull/335): pull-request; 2026-09-05
+- [#334 feat(agent-os): add default-off local container broker](https://github.com/ashlrai/phantom/pull/334): pull-request; 2026-09-05
+- [#332 feat(agent-os): integrate governed engineering fleet](https://github.com/ashlrai/phantom/pull/332): pull-request; 2026-09-05
+- [#340 ci: gate GitHub v3.3.2 stable release finalization](https://github.com/ashlrai/phantom/pull/340): pull-request; 2026-09-05
+- [v3.3.2](https://github.com/ashlrai/phantom/releases/tag/v3.3.2): release; 2026-09-05
+- [#337 fix: secure 3.3.2 candidate bridge](https://github.com/ashlrai/phantom/pull/337): pull-request; 2026-09-05
+- [\[3.3.2\] - 2026-09-05 UTC - Safe successor after the failed immutable 3.3.1 release attempt](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-09-05
+- [#327 release: prepare safe 3.3.2 successor](https://github.com/ashlrai/phantom/pull/327): pull-request; 2026-08-20
+- [#326 test: pin trajectory fixture clock](https://github.com/ashlrai/phantom/pull/326): pull-request; 2026-08-20
+- [#323 Release: prepare quarantined 3.3.1 successor](https://github.com/ashlrai/phantom/pull/323): pull-request; 2026-08-18
+- [#322 fix(security): neutralize unsafe 3.3.0 authority](https://github.com/ashlrai/phantom/pull/322): pull-request; 2026-08-18
+- [v3.3.0](https://github.com/ashlrai/phantom/releases/tag/v3.3.0): release; 2026-08-18; prerelease
+- [#314 Turn the fleet on: gated activation, autonomous merge, closed learning loop, new operator console](https://github.com/ashlrai/phantom/pull/314): pull-request; 2026-08-18
+- [#319 feat: define dormant resident start protocol](https://github.com/ashlrai/phantom/pull/319): pull-request; 2026-08-18
+- [\[3.3.1\] - 2026-08-18 - Fail-closed runtime boundaries and emergency neutralization of the quarantined 3.3.0 candidate](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-08-18
+- [#318 feat: add stopped runtime selector](https://github.com/ashlrai/phantom/pull/318): pull-request; 2026-08-17
+- [v3.2.7](https://github.com/ashlrai/phantom/releases/tag/v3.2.7): release; 2026-08-17; prerelease
+- [#317 chore: prepare v3.2.7 candidate](https://github.com/ashlrai/phantom/pull/317): pull-request; 2026-08-17
+- [#316 feat: add dormant conductor permit operator](https://github.com/ashlrai/phantom/pull/316): pull-request; 2026-08-17
+- [\[3.3.0\] - 2026-08-17 - Fleet activation, autonomous merge, and the operator console](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-08-17
+- [#315 fix: add safe goal timestamp repair](https://github.com/ashlrai/phantom/pull/315): pull-request; 2026-08-16
+- [#313 feat(goals): enforce provider quota tickets](https://github.com/ashlrai/phantom/pull/313): pull-request; 2026-08-16
+- [#312 feat(goals): add signed one-shot conductor permit](https://github.com/ashlrai/phantom/pull/312): pull-request; 2026-08-16
+- [#311 Add exception-first TUI operator briefing](https://github.com/ashlrai/phantom/pull/311): pull-request; 2026-08-16
+- [#310 feat(fleet): enforce durable provider quota reservations](https://github.com/ashlrai/phantom/pull/310): pull-request; 2026-08-16
+- [v3.2.6](https://github.com/ashlrai/phantom/releases/tag/v3.2.6): release; 2026-08-16; prerelease
+- [#309 chore: prepare 3.2.6 candidate](https://github.com/ashlrai/phantom/pull/309): pull-request; 2026-08-16
+- [#308 fix: canonicalize prepared release tarball](https://github.com/ashlrai/phantom/pull/308): pull-request; 2026-08-16
+- [#307 chore: prepare 3.2.5 candidate lane](https://github.com/ashlrai/phantom/pull/307): pull-request; 2026-08-16
+- [#306 fix: bind npm pack report array root](https://github.com/ashlrai/phantom/pull/306): pull-request; 2026-08-16
+- [#305 chore: prepare 3.2.4 candidate lane](https://github.com/ashlrai/phantom/pull/305): pull-request; 2026-08-16
+- [#304 fix: consume sharded release verification](https://github.com/ashlrai/phantom/pull/304): pull-request; 2026-08-16
+- [#303 chore: prepare 3.2.3 candidate release](https://github.com/ashlrai/phantom/pull/303): pull-request; 2026-08-16
+- [#302 fix: use supported GitHub API admission calls](https://github.com/ashlrai/phantom/pull/302): pull-request; 2026-08-16
+- [#301 chore: prepare 3.2.2 candidate release](https://github.com/ashlrai/phantom/pull/301): pull-request; 2026-08-16
+- [#300 fix: normalize release canary archive modes](https://github.com/ashlrai/phantom/pull/300): pull-request; 2026-08-16
+- [#299 chore: stage 3.2.1 candidate release](https://github.com/ashlrai/phantom/pull/299): pull-request; 2026-08-16
+- [#298 fix: normalize pinned npm runtime](https://github.com/ashlrai/phantom/pull/298): pull-request; 2026-08-16
+- [\[3.2.3\] - 2026-08-16 - GitHub API admission compatibility recovery](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-08-16
+- [\[3.2.4\] - 2026-08-16 - Bounded release-prepare recovery](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-08-16
+- [\[3.2.5\] - 2026-08-16 - Pack-report root recovery](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-08-16
+- [\[3.2.6\] - 2026-08-16 - Canonical publisher-path recovery](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-08-16
+- [\[3.2.7\] - 2026-08-16 - Immutable candidate supersession](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-08-16
+- [#296 feat(daemon): add dormant activation handoff proof](https://github.com/ashlrai/phantom/pull/296): pull-request; 2026-08-15
+- [#297 feat(fleet): expose bounded dispatch evidence reasons](https://github.com/ashlrai/phantom/pull/297): pull-request; 2026-08-15
+- [#295 ci: isolate npm publish authority](https://github.com/ashlrai/phantom/pull/295): pull-request; 2026-08-15
+- [#294 ci: gate npm publication on signed canary](https://github.com/ashlrai/phantom/pull/294): pull-request; 2026-08-15
+- [#290 Harden dependency updates and audit desktop Cargo](https://github.com/ashlrai/phantom/pull/290): pull-request; 2026-08-15
+- [#289 Add mutation-disabled native runtime activation admission](https://github.com/ashlrai/phantom/pull/289): pull-request; 2026-08-15
+- [#288 ci: publish 3.2.0 as candidate](https://github.com/ashlrai/phantom/pull/288): pull-request; 2026-08-15
+- [#270 security: quarantine vulnerable Linux desktop releases](https://github.com/ashlrai/phantom/pull/270): pull-request; 2026-08-15
+- [#285 feat(run): enforce preventive model call reservations](https://github.com/ashlrai/phantom/pull/285): pull-request; 2026-08-15
+- [#286 feat(release): add signed local canary self-check](https://github.com/ashlrai/phantom/pull/286): pull-request; 2026-08-15
+- [\[3.2.1\] - 2026-08-15 - Verified candidate release recovery](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-08-15
+- [\[3.2.2\] - 2026-08-15 - Portable signed-canary recovery](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-08-15
+- [#284 feat(inbox): add verified protected PR submission](https://github.com/ashlrai/phantom/pull/284): pull-request; 2026-08-14
+- [#287 fix(deps): override nanoid 3.3.18](https://github.com/ashlrai/phantom/pull/287): pull-request; 2026-08-14
+- [#283 test(ci): bound deep merge reconciliation on Windows](https://github.com/ashlrai/phantom/pull/283): pull-request; 2026-08-12
+- [#282 feat(foundry): add digest-bound Nemotron shadow evaluation](https://github.com/ashlrai/phantom/pull/282): pull-request; 2026-08-12
+- [#281 feat(goal): add durable direct proposal JSON contract](https://github.com/ashlrai/phantom/pull/281): pull-request; 2026-08-12
+- [#279 test(ci): pin M380 reconciliation fixture clock](https://github.com/ashlrai/phantom/pull/279): pull-request; 2026-08-12
+- [#277 feat(locus): production fleet checklist + firm soft-warn in doctor/readiness](https://github.com/ashlrai/phantom/pull/277): pull-request; 2026-08-11
+- [#273 feat(locus): fleet heartbeat via watch / verify session](https://github.com/ashlrai/phantom/pull/273): pull-request; 2026-08-11
+- [#275 test(ci): anchor reclaim assurance fixture](https://github.com/ashlrai/phantom/pull/275): pull-request; 2026-08-11
+- [#276 test(ci): tolerate M466 stable-read race](https://github.com/ashlrai/phantom/pull/276): pull-request; 2026-08-11
+- [#274 feat(locus): soft-offer firm profile during onboard/first enroll](https://github.com/ashlrai/phantom/pull/274): pull-request; 2026-08-11
+- [#253 Migrate npm release to trusted publishing](https://github.com/ashlrai/phantom/pull/253): pull-request; 2026-08-11
+- [#271 test(ci): stabilize Windows live-owner observation](https://github.com/ashlrai/phantom/pull/271): pull-request; 2026-08-11
+- [#259 feat(web): authenticate dashboard read surfaces](https://github.com/ashlrai/phantom/pull/259): pull-request; 2026-08-10
+- [#264 fix(ci): enforce installable dependency graphs](https://github.com/ashlrai/phantom/pull/264): pull-request; 2026-08-10
+- [#256 feat(locus): mint CI session around simple-conductor task dispatch](https://github.com/ashlrai/phantom/pull/256): pull-request; 2026-08-10
+- [#257 feat(locus): mint CI session around runBestOfN sandboxed fan-out](https://github.com/ashlrai/phantom/pull/257): pull-request; 2026-08-10
+- [#262 fix(vision): detach mission capture evidence](https://github.com/ashlrai/phantom/pull/262): pull-request; 2026-08-10
+- [#255 Add privacy-safe Mission Outcome Room shadow](https://github.com/ashlrai/phantom/pull/255): pull-request; 2026-08-10
+- [#258 feat(locus): explicit firm profile enables enforce for production fleets](https://github.com/ashlrai/phantom/pull/258): pull-request; 2026-08-10
+- [#250 fix(ci): bound Windows snapshot adapter retries](https://github.com/ashlrai/phantom/pull/250): pull-request; 2026-08-10
+- [#254 feat(locus): firm-mode LOCUS_ENFORCE via ~/.ashlr/config.json](https://github.com/ashlrai/phantom/pull/254): pull-request; 2026-08-10
+- [#252 feat(locus): mint CI session around runTask for single-task paths](https://github.com/ashlrai/phantom/pull/252): pull-request; 2026-08-10
+- [#251 feat(preflight): Locus readiness facet next to Phantom](https://github.com/ashlrai/phantom/pull/251): pull-request; 2026-08-10
+- [#248 test: preserve Darwin custody probe in scanner harness](https://github.com/ashlrai/phantom/pull/248): pull-request; 2026-08-10
+- [#246 feat(daemon): add evidence-bound state resolution](https://github.com/ashlrai/phantom/pull/246): pull-request; 2026-08-10
+- [#245 test: preserve ACL subprocesses in H4 harness](https://github.com/ashlrai/phantom/pull/245): pull-request; 2026-08-10
+- [#244 fix: allow safe macOS home anchors in daemon recovery](https://github.com/ashlrai/phantom/pull/244): pull-request; 2026-08-10
+- [#243 Mission OS V1.1: authenticated shadow evidence](https://github.com/ashlrai/phantom/pull/243): pull-request; 2026-08-10
+- [#238 Ecosystem Mission OS: governed cross-repo autonomy](https://github.com/ashlrai/phantom/pull/238): pull-request; 2026-08-10
+- [#242 fix(verify): shard root merge contract](https://github.com/ashlrai/phantom/pull/242): pull-request; 2026-08-10
+- [#241 feat(locus): scrub mint env + opt-in pre-mutate gate](https://github.com/ashlrai/phantom/pull/241): pull-request; 2026-08-10
+- [#239 feat: integrate Locus identity plane into doctor and MCP required servers](https://github.com/ashlrai/phantom/pull/239): pull-request; 2026-08-10
+- [#237 feat(daemon): add authorized state quarantine protocol](https://github.com/ashlrai/phantom/pull/237): pull-request; 2026-08-10
+- [#228 feat(release): attest canary rollback evidence](https://github.com/ashlrai/phantom/pull/228): pull-request; 2026-08-10
+- [#231 fix(inbox): settle rewritten remote PR heads](https://github.com/ashlrai/phantom/pull/231): pull-request; 2026-08-09
+- [#232 fix(fleet): preserve file-once proposal settlement](https://github.com/ashlrai/phantom/pull/232): pull-request; 2026-08-09
+- [#227 fix(daemon): diagnose malformed state without mutation](https://github.com/ashlrai/phantom/pull/227): pull-request; 2026-08-09
+- [#230 test(ci): report bounded Vitest progress](https://github.com/ashlrai/phantom/pull/230): pull-request; 2026-08-09
+- [#236 fix: pin patched dependency resolutions](https://github.com/ashlrai/phantom/pull/236): pull-request; 2026-08-09
+- [\[3.2.0\] - 2026-08-09 - Mission OS and bounded agent efficiency](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-08-09
+- [#225 feat: Add ambitious fleet operating system](https://github.com/ashlrai/phantom/pull/225): pull-request; 2026-08-06
+- [#210 feat: add shadow topology and autonomy lane board](https://github.com/ashlrai/phantom/pull/210): pull-request; 2026-08-06
+- [#223 fix(authority): preserve exact Windows file identities](https://github.com/ashlrai/phantom/pull/223): pull-request; 2026-08-05
+- [#222 ci: isolate Windows ACL enrollment tests](https://github.com/ashlrai/phantom/pull/222): pull-request; 2026-08-05
+- [#220 Contain automerge pass exceptions](https://github.com/ashlrai/phantom/pull/220): pull-request; 2026-08-05
+- [#209 Harden release artifact portability admission](https://github.com/ashlrai/phantom/pull/209): pull-request; 2026-08-05
+- [#170 feat(fleet): converge evidence-bound autonomous runtime](https://github.com/ashlrai/phantom/pull/170): pull-request; 2026-08-05
+- [#208 merge: converge autonomous fleet evidence v4](https://github.com/ashlrai/phantom/pull/208): pull-request; 2026-08-05
+- [#197 fix(fleet): separate candidate proposal identity](https://github.com/ashlrai/phantom/pull/197): pull-request; 2026-08-02
+- [#196 merge: sync hardened master into convergence](https://github.com/ashlrai/phantom/pull/196): pull-request; 2026-08-02
+- [#191 ci: add bounded dependency audit lane](https://github.com/ashlrai/phantom/pull/191): pull-request; 2026-08-02
+- [#194 test: harden M119 Windows provenance fixture](https://github.com/ashlrai/phantom/pull/194): pull-request; 2026-08-02
+- [#195 test: stabilize protected CI authority fixtures](https://github.com/ashlrai/phantom/pull/195): pull-request; 2026-08-02
+- [#192 fix(fleet): bind automerge to canonical bounded scope](https://github.com/ashlrai/phantom/pull/192): pull-request; 2026-08-02
+- [#181 feat(fleet): expose causal proposal funnel observability](https://github.com/ashlrai/phantom/pull/181): pull-request; 2026-08-02
+- [#189 fix(deps): patch master dependency advisories](https://github.com/ashlrai/phantom/pull/189): pull-request; 2026-08-02
+- [#190 test: freeze autonomous drain fixture clocks](https://github.com/ashlrai/phantom/pull/190): pull-request; 2026-08-02
+- [#188 feat(daemon): verify resident service environment](https://github.com/ashlrai/phantom/pull/188): pull-request; 2026-08-02
+- [#180 feat(release): add immutable launch observation admission](https://github.com/ashlrai/phantom/pull/180): pull-request; 2026-08-02
+- [#186 docs: define dormant projection authority boundary](https://github.com/ashlrai/phantom/pull/186): pull-request; 2026-08-02
+- [#187 test(ci): isolate coordinator authority semantics](https://github.com/ashlrai/phantom/pull/187): pull-request; 2026-08-02
+- [#173 fix(fleet): recover unfiled best-of-n diffs](https://github.com/ashlrai/phantom/pull/173): pull-request; 2026-08-02
+- [#185 test: stabilize Windows authority fixtures](https://github.com/ashlrai/phantom/pull/185): pull-request; 2026-08-01
+- [#184 test(ci): stabilize Windows cutoff fixture bootstrap](https://github.com/ashlrai/phantom/pull/184): pull-request; 2026-08-01
+- [#178 ci: pin desktop release supply chain](https://github.com/ashlrai/phantom/pull/178): pull-request; 2026-08-01
+- [#183 test(ci): amortize Windows authority setup](https://github.com/ashlrai/phantom/pull/183): pull-request; 2026-08-01
+- [#174 fix(fleet): harden protected rollback proposal generation](https://github.com/ashlrai/phantom/pull/174): pull-request; 2026-08-01
+- [#171 fix(deps): clear production dependency advisories](https://github.com/ashlrai/phantom/pull/171): pull-request; 2026-08-01
+- [#182 test(ci): fail close Windows semantic fixtures](https://github.com/ashlrai/phantom/pull/182): pull-request; 2026-07-31
+- [#177 test(ci): remove Windows time and cold-start flakes](https://github.com/ashlrai/phantom/pull/177): pull-request; 2026-07-31
+- [#116 fix(fleet): recover historical dispatch outcomes](https://github.com/ashlrai/phantom/pull/116): pull-request; 2026-07-22
+- [#118 test: apply platform budget to fixture hooks](https://github.com/ashlrai/phantom/pull/118): pull-request; 2026-07-22
+- [#117 fix(cli): make daemon help fail safe](https://github.com/ashlrai/phantom/pull/117): pull-request; 2026-07-22
+- [#115 fix(deps): patch URI and YAML denial risks](https://github.com/ashlrai/phantom/pull/115): pull-request; 2026-07-21
+- [#113 fix(deps): patch brace-expansion CPU denial of service](https://github.com/ashlrai/phantom/pull/113): pull-request; 2026-07-21
+- [#93 fix(fleet): withhold incomplete activity evidence](https://github.com/ashlrai/phantom/pull/93): pull-request; 2026-07-21
+- [#110 feat(verify): declare verifier authority inputs](https://github.com/ashlrai/phantom/pull/110): pull-request; 2026-07-21
+- [#111 ci: shard Ubuntu authority suite](https://github.com/ashlrai/phantom/pull/111): pull-request; 2026-07-21
+- [#94 fix(fleet): require tracked verifier contracts](https://github.com/ashlrai/phantom/pull/94): pull-request; 2026-07-21
+- [#90 Fail closed API proposal capture](https://github.com/ashlrai/phantom/pull/90): pull-request; 2026-07-21
+- [#109 fix(fleet): fence self verification authority](https://github.com/ashlrai/phantom/pull/109): pull-request; 2026-07-21
+- [#104 fix(fleet): bind agent run summary metadata](https://github.com/ashlrai/phantom/pull/104): pull-request; 2026-07-21
+- [#101 fix(fleet): retain terminal trajectory trace events](https://github.com/ashlrai/phantom/pull/101): pull-request; 2026-07-21
+- [#106 fix: harden verifier executable paths](https://github.com/ashlrai/phantom/pull/106): pull-request; 2026-07-21
+- [#107 test: budget hermetic fixture startup](https://github.com/ashlrai/phantom/pull/107): pull-request; 2026-07-21
+- [#105 test: budget Windows failure receipt materialization](https://github.com/ashlrai/phantom/pull/105): pull-request; 2026-07-21
+- [#102 fix(inbox): scope proposal dedup authority](https://github.com/ashlrai/phantom/pull/102): pull-request; 2026-07-21
+- [#96 fix: contain verifier contract cwd](https://github.com/ashlrai/phantom/pull/96): pull-request; 2026-07-21
+- [#99 ci: supersede redundant PR runs](https://github.com/ashlrai/phantom/pull/99): pull-request; 2026-07-21
+- [#91 Expose bounded fleet trajectory traces](https://github.com/ashlrai/phantom/pull/91): pull-request; 2026-07-21
+- [#53 Verify Best-of-N drafts before winner capture](https://github.com/ashlrai/phantom/pull/53): pull-request; 2026-07-19
+- [#52 Emit run-bound agent work-state events](https://github.com/ashlrai/phantom/pull/52): pull-request; 2026-07-19
+- [#51 Replace durable judge rationale with reason codes](https://github.com/ashlrai/phantom/pull/51): pull-request; 2026-07-19
+- [#50 Stop persisting judge reasoning](https://github.com/ashlrai/phantom/pull/50): pull-request; 2026-07-19
+- [#49 Project recursive learning eligibility](https://github.com/ashlrai/phantom/pull/49): pull-request; 2026-07-19
+- [#48 Quarantine post-merge learning credit](https://github.com/ashlrai/phantom/pull/48): pull-request; 2026-07-19
+- [#47 Enforce independent reviewer-family authority](https://github.com/ashlrai/phantom/pull/47): pull-request; 2026-07-19
+- [#46 feat: add bounded agent semantic events](https://github.com/ashlrai/phantom/pull/46): pull-request; 2026-07-18
+- [#45 feat: add projection replay ledger coordinator](https://github.com/ashlrai/phantom/pull/45): pull-request; 2026-07-18
+- [#44 feat: add projection transaction crash journal](https://github.com/ashlrai/phantom/pull/44): pull-request; 2026-07-18
+- [#43 feat: add bounded operational proposal projection](https://github.com/ashlrai/phantom/pull/43): pull-request; 2026-07-18
+- [#42 fix: bind proposal causal identity](https://github.com/ashlrai/phantom/pull/42): pull-request; 2026-07-18
+- [#41 feat: expose signed evidence authority health](https://github.com/ashlrai/phantom/pull/41): pull-request; 2026-07-18
+- [#40 feat: activate signed evidence authority](https://github.com/ashlrai/phantom/pull/40): pull-request; 2026-07-17
+- [#39 feat: add signed evidence pack v3](https://github.com/ashlrai/phantom/pull/39): pull-request; 2026-07-17
+- [#38 feat: Enforce safe protected-remote policy](https://github.com/ashlrai/phantom/pull/38): pull-request; 2026-07-17
+- [#36 feat: Make branch policy evidence source-complete](https://github.com/ashlrai/phantom/pull/36): pull-request; 2026-07-17
+- [#34 test: Budget Windows reservation sweep variance](https://github.com/ashlrai/phantom/pull/34): pull-request; 2026-07-17
+- [#33 feat: Bind repair attempt lifecycle authority](https://github.com/ashlrai/phantom/pull/33): pull-request; 2026-07-17
+- [#32 feat: Prove dispatch attempt authority](https://github.com/ashlrai/phantom/pull/32): pull-request; 2026-07-17
+- [#31 Reuse the native CI matrix for releases](https://github.com/ashlrai/phantom/pull/31): pull-request; 2026-07-17
+- [#56 test: Make master autonomy fixtures time-stable](https://github.com/ashlrai/phantom/pull/56): pull-request; 2026-07-17
+- [#30 feat: fence autonomous outward mutations](https://github.com/ashlrai/phantom/pull/30): pull-request; 2026-07-17
+- [#29 feat: add shadow auto-merge authority](https://github.com/ashlrai/phantom/pull/29): pull-request; 2026-07-14
+- [#28 fix: Bind remote merge authority to live protection](https://github.com/ashlrai/phantom/pull/28): pull-request; 2026-07-14
+- [#26 build: upgrade Vitest to 4.1.10](https://github.com/ashlrai/phantom/pull/26): pull-request; 2026-07-14
+- [#23 test: stabilize Windows retention coverage](https://github.com/ashlrai/phantom/pull/23): pull-request; 2026-07-14
+- [#22 docs: record terminal retention rollout](https://github.com/ashlrai/phantom/pull/22): pull-request; 2026-07-14
+- [#21 Retain authenticated effect terminal history](https://github.com/ashlrai/phantom/pull/21): pull-request; 2026-07-14
+- [#20 docs: Record effect authority release proof](https://github.com/ashlrai/phantom/pull/20): pull-request; 2026-07-13
+- [#19 feat: Add prepared tool effect authority](https://github.com/ashlrai/phantom/pull/19): pull-request; 2026-07-13
+- [#18 docs: Record queue epoch release proof](https://github.com/ashlrai/phantom/pull/18): pull-request; 2026-07-13
+- [#17 test: Stabilize Windows worktree timing](https://github.com/ashlrai/phantom/pull/17): pull-request; 2026-07-13
+- [#16 fix: Fence shared queue execution epochs](https://github.com/ashlrai/phantom/pull/16): pull-request; 2026-07-13
+- [#15 docs: Record execution authority release proof](https://github.com/ashlrai/phantom/pull/15): pull-request; 2026-07-13
+- [#14 fix: Fence pre-execution lifecycle authority](https://github.com/ashlrai/phantom/pull/14): pull-request; 2026-07-13
+- [\[3.1.0\] - 2026-07-06 - v5.1 Claude 5 Model Intelligence · v6 Verification-First (M320 - M340)](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-07-06
+- [#11 feat(notify): `notify session` hook subcommand + toast deep-link](https://github.com/ashlrai/phantom/pull/11): pull-request; 2026-06-30
+- [#12 fix(lint): clear pre-existing eslint debt so CI Lint is green](https://github.com/ashlrai/phantom/pull/12): pull-request; 2026-06-30
+- [#10 docs: forward roadmap (M83-M88)](https://github.com/ashlrai/phantom/pull/10): pull-request; 2026-06-24
+- [#8 Windows support: launch fix, 0-repos guidance, fully green suite](https://github.com/ashlrai/phantom/pull/8): pull-request; 2026-06-23
+- [@ashlr/hub v3.0.0 - Open Fleet + unifying harness](https://github.com/ashlrai/phantom/releases/tag/v3.0.0): release; 2026-06-17
+- [#7 Phantom-vault provider-key resolution (M65)](https://github.com/ashlrai/phantom/pull/7): pull-request; 2026-06-17
+- [#6 Codex usage + real subscription rate-limits (M64)](https://github.com/ashlrai/phantom/pull/6): pull-request; 2026-06-17
+- [#5 Dashboard integrations - pulse bridge + real usage/limit ingestion (M62, M63)](https://github.com/ashlrai/phantom/pull/5): pull-request; 2026-06-17
+- [#4 Mission Control - live control-room dashboard (M61)](https://github.com/ashlrai/phantom/pull/4): pull-request; 2026-06-17
+- [#3 v5 Open Fleet - polyglot, self-improving, conducted fleet (M50-M57, incl. v4)](https://github.com/ashlrai/phantom/pull/3): pull-request; 2026-06-17
+- [\[3.0.0\] - 2026-06-17 - v3-Weapon · v4-Foundry · v5-Open-Fleet (M41 - M60)](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-06-17
+- [\[3.0.1\] - 2026-06-17 - presentation + polish](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-06-17
+- [v2.2.0 - Agent-Native Ecosystem](https://github.com/ashlrai/phantom/releases/tag/v2.2.0): release; 2026-06-12
+- [\[2.2.0\] - 2026-06-12 - v2.2 "Agent-Native Ecosystem" (M31 - M33)](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-06-12
+- [v2.1.0 - Harden & Prove (H1 - H8)](https://github.com/ashlrai/phantom/releases/tag/v2.1.0): release; 2026-06-11
+- [\[2.1.0\] - 2026-06-11 - v2.1 "Harden & Prove" (H1 - H8)](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; 2026-06-11
+- [\[3.29.14\] - Unreleased](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[3.29.15\] - Unreleased](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M30: Cloud-Ready Seams v2 + Polish (CAPSTONE)](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M17: Verified Orchestration](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M16: Compounding Genome](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M15: Cost-Optimal Local-First Routing](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M14: Surfaces II (Local Web Dashboard)](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M13: Surfaces I (Interactive TUI + Real-Time Raycast)](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M12: Spec-Driven Swarms](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M11: Watchable, Robust Runs](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M10: Ecosystem Cohesion](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M25: Portfolio Intelligence (`ashlr knowledge` · `ashlr ask` · `ashlr impact`)](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M24: The Autonomous Daemon (`ashlr daemon`)](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M23: Approval Inbox (Single Outward Gate)](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M22: Work Discovery (`ashlr backlog`)](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M21: Safety Foundation (Sandboxed Execution, Audit Trail, Enrollment + Kill Switch)](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M20: One-Command Onboarding + Self-Healing (CAPSTONE)](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M19: Real Telemetry (OTLP) + Spend Governance](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [\[Unreleased\] - M18: Deep Integrations](https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+
+### ashlrai/phantom-secrets (core-fleet)
+
+- [#606 bridge: RQ-README-BRAND-PS](https://github.com/ashlrai/phantom-secrets/pull/606): pull-request; 2026-10-28
+- [#605 bridge: RQ-V4-DEAD-DEPS-1](https://github.com/ashlrai/phantom-secrets/pull/605): pull-request; 2026-10-28
+- [#604 bridge: RQ-FULLSUITE-QUEUE-PS](https://github.com/ashlrai/phantom-secrets/pull/604): pull-request; 2026-10-28
+- [#603 bridge: RQ-MR-CONFLICT-DRIVERS-phantom-secrets](https://github.com/ashlrai/phantom-secrets/pull/603): pull-request; 2026-10-28
+- [#602 bridge: RQ-FIXUP-SHAPE-PS-535](https://github.com/ashlrai/phantom-secrets/pull/602): pull-request; 2026-10-28
+- [#546 ci: auto-tag releases via ashlr-release App on green version bumps (G1, draft)](https://github.com/ashlrai/phantom-secrets/pull/546): pull-request; 2026-10-28
+- [#599 bridge: RQ-DRAIN-PHANTOM-SECRETS-514](https://github.com/ashlrai/phantom-secrets/pull/599): pull-request; 2026-10-28
+- [#597 bridge: RQ-DRAIN-PHANTOM-SECRETS-531](https://github.com/ashlrai/phantom-secrets/pull/597): pull-request; 2026-10-28
+- [#594 bridge: RQ-DRAIN-PHANTOM-SECRETS-532](https://github.com/ashlrai/phantom-secrets/pull/594): pull-request; 2026-10-28
+- [#595 bridge: RQ-DRAIN-PHANTOM-SECRETS-528](https://github.com/ashlrai/phantom-secrets/pull/595): pull-request; 2026-10-28
+- [#596 bridge: RQ-DRAIN-PHANTOM-SECRETS-525](https://github.com/ashlrai/phantom-secrets/pull/596): pull-request; 2026-10-28
+- [#591 bridge: RQ-REFILL-2026102801-LAND-001](https://github.com/ashlrai/phantom-secrets/pull/591): pull-request; 2026-10-28
+- [#592 bridge: RQ-REFILL-2026102801-CONSO-005](https://github.com/ashlrai/phantom-secrets/pull/592): pull-request; 2026-10-28
+- [#508 bridge: LAND-phantom-secrets-482](https://github.com/ashlrai/phantom-secrets/pull/508): pull-request; 2026-10-28
+- [#540 bridge: RQ-DEADCODE-phantom-secrets](https://github.com/ashlrai/phantom-secrets/pull/540): pull-request; 2026-10-28
+- [#541 bridge: RQ-PL-FRESH-DOCS-DRIFT-PS](https://github.com/ashlrai/phantom-secrets/pull/541): pull-request; 2026-10-28
+- [#583 fix(doctor): name the managed dotenv file in doctor's dotenv lines](https://github.com/ashlrai/phantom-secrets/pull/583): pull-request; 2026-10-28
+- [#571 bridge: RQ-REFILL-2026102703-FIXUP-066](https://github.com/ashlrai/phantom-secrets/pull/571): pull-request; 2026-10-28
+- [#582 bridge: RQ-N26-PS-ERROR-REDACT](https://github.com/ashlrai/phantom-secrets/pull/582): pull-request; 2026-10-28
+- [#584 bridge: RQ-REFILL-2026102703-FIXUP-067](https://github.com/ashlrai/phantom-secrets/pull/584): pull-request; 2026-10-28
+- [#543 bridge: RQ-PL-PS-ENV-SCOPE-DESIGN](https://github.com/ashlrai/phantom-secrets/pull/543): pull-request; 2026-10-28
+- [#542 bridge: RQ-FRESH-DOCS-SWEEP-PS](https://github.com/ashlrai/phantom-secrets/pull/542): pull-request; 2026-10-28
+- [#476 ci: pair-secrets merge_group integration test (phantom-secrets side, inert draft)](https://github.com/ashlrai/phantom-secrets/pull/476): pull-request; 2026-10-28
+- [#499 fix(cli): expiry enforce text names every failing secret](https://github.com/ashlrai/phantom-secrets/pull/499): pull-request; 2026-10-28
+- [#509 Expiry check at 0 days lists only expired secrets](https://github.com/ashlrai/phantom-secrets/pull/509): pull-request; 2026-10-28
+- [#510 Record validation runs in history; fix schedule --json shape](https://github.com/ashlrai/phantom-secrets/pull/510): pull-request; 2026-10-28
+- [#511 MCP rotation schedule: judge age by the vault rotation anchor](https://github.com/ashlrai/phantom-secrets/pull/511): pull-request; 2026-10-28
+- [#544 bridge: RQ-FRESH-GEN-PS](https://github.com/ashlrai/phantom-secrets/pull/544): pull-request; 2026-10-28
+- [#580 bridge: RQ-CIDIET-AFFECTED-phantom-secrets](https://github.com/ashlrai/phantom-secrets/pull/580): pull-request; 2026-10-28
+- [#579 bridge: RQ-FIXUP-SHAPE-PS-500](https://github.com/ashlrai/phantom-secrets/pull/579): pull-request; 2026-10-28
+- [#491 fix(cli): audit show --output, rotate --batch expiry dates, validate history](https://github.com/ashlrai/phantom-secrets/pull/491): pull-request; 2026-10-28
+- [#578 bridge: RQ-FIXUP-CONF-PS-568](https://github.com/ashlrai/phantom-secrets/pull/578): pull-request; 2026-10-28
+- [#577 bridge: RQ-DAILY-15-PHANTOM-SECRETS](https://github.com/ashlrai/phantom-secrets/pull/577): pull-request; 2026-10-28
+- [#523 bridge: RQ-PS-ENV-SCOPE-TEST](https://github.com/ashlrai/phantom-secrets/pull/523): pull-request; 2026-10-28
+- [#538 bridge: RQ-PS-GH-CLIENT](https://github.com/ashlrai/phantom-secrets/pull/538): pull-request; 2026-10-28
+- [#520 Doctor: judge .gitignore by Git's rules, not one literal line](https://github.com/ashlrai/phantom-secrets/pull/520): pull-request; 2026-10-28
+- [#559 bridge: RQ-PS-PROXY-SCRUB-FUZZ](https://github.com/ashlrai/phantom-secrets/pull/559): pull-request; 2026-10-28
+- [#104 feat: secure dormant Vercel OAuth foundation](https://github.com/ashlrai/phantom-secrets/pull/104): pull-request; 2026-10-28
+- [#498 fix(cli): audit alerts total, rotate --batch --json stdout, analytics daily average](https://github.com/ashlrai/phantom-secrets/pull/498): pull-request; 2026-10-28
+- [#527 bridge: RQ-TESTDIET-phantom-secrets-r2](https://github.com/ashlrai/phantom-secrets/pull/527): pull-request; 2026-10-28
+- [#522 bridge: RQ-MOD-2-phantom-secrets-r3](https://github.com/ashlrai/phantom-secrets/pull/522): pull-request; 2026-10-28
+- [#489 fix(import): --from skips existing secrets unless --force](https://github.com/ashlrai/phantom-secrets/pull/489): pull-request; 2026-10-28
+- [#505 bridge: LAND-RECUT-phantom-secrets-163](https://github.com/ashlrai/phantom-secrets/pull/505): pull-request; 2026-10-28
+- [#521 bridge: LAND-RECUT-phantom-secrets-136](https://github.com/ashlrai/phantom-secrets/pull/521): pull-request; 2026-10-28
+- [#517 bridge: RQ-PS-WHY-JSON](https://github.com/ashlrai/phantom-secrets/pull/517): pull-request; 2026-10-28
+- [#506 bridge: RQ-PS-EXEC-COVERAGE](https://github.com/ashlrai/phantom-secrets/pull/506): pull-request; 2026-10-28
+- [#556 bridge: RQ-PS-EXEC-RS-TESTS](https://github.com/ashlrai/phantom-secrets/pull/556): pull-request; 2026-10-28
+- [#507 bridge: LAND-phantom-secrets-475](https://github.com/ashlrai/phantom-secrets/pull/507): pull-request; 2026-10-28
+- [#555 bridge: RQ-PLAN-SECRETS](https://github.com/ashlrai/phantom-secrets/pull/555): pull-request; 2026-10-28
+- [#526 bridge: RQ-PS-REDACT-LIB](https://github.com/ashlrai/phantom-secrets/pull/526): pull-request; 2026-10-28
+- [#515 bridge: RQ-PS-ERR-REDACT-r2](https://github.com/ashlrai/phantom-secrets/pull/515): pull-request; 2026-10-28
+- [#530 bridge: RQ-PS-EXEC-API](https://github.com/ashlrai/phantom-secrets/pull/530): pull-request; 2026-10-28
+- [#495 bridge: LAND-phantom-secrets-480](https://github.com/ashlrai/phantom-secrets/pull/495): pull-request; 2026-10-28
+- [#576 bridge: RQ-CI-SECONDS-PHANTOM-SECRETS](https://github.com/ashlrai/phantom-secrets/pull/576): pull-request; 2026-10-28
+- [#552 bridge: RQ-N26-AFFECTED-SECRETS-RUST](https://github.com/ashlrai/phantom-secrets/pull/552): pull-request; 2026-10-28
+- [#496 bridge: LAND-phantom-secrets-481](https://github.com/ashlrai/phantom-secrets/pull/496): pull-request; 2026-10-28
+- [#566 bridge: THROUGHPUT-PHANTOM-SECRETS-CANCEL](https://github.com/ashlrai/phantom-secrets/pull/566): pull-request; 2026-10-28
+- [#563 docs: changelog fragments (changelog.d/) with a deterministic fold script](https://github.com/ashlrai/phantom-secrets/pull/563): pull-request; 2026-10-28
+- [#492 bridge: RQ-PS-GITCRED](https://github.com/ashlrai/phantom-secrets/pull/492): pull-request; 2026-10-28
+- [#553 bridge: RQ-N26-DV-PS-CHANGELOG](https://github.com/ashlrai/phantom-secrets/pull/553): pull-request; 2026-10-27
+- [#463 chore(security): growth-only CODEOWNERS for workflows and keyed/network paths](https://github.com/ashlrai/phantom-secrets/pull/463): pull-request; 2026-10-27
+- [#497 G1 ci(codeql): analyze only the languages a PR changes (RQ-CI-FANOUT)](https://github.com/ashlrai/phantom-secrets/pull/497): pull-request; 2026-10-27
+- [#545 chore(security): add CODEOWNERS for .github and release/publish paths](https://github.com/ashlrai/phantom-secrets/pull/545): pull-request; 2026-10-27
+- [#518 Rotation: monthly schedules follow calendar months](https://github.com/ashlrai/phantom-secrets/pull/518): pull-request; 2026-10-26
+- [#494 chore: dedupe PR template (case collision on case-insensitive disks)](https://github.com/ashlrai/phantom-secrets/pull/494): pull-request; 2026-10-26
+- [#493 bridge: RQ-PS-POSTHOG-ROUTE](https://github.com/ashlrai/phantom-secrets/pull/493): pull-request; 2026-10-26
+- [#468 chore(deps): drop unused colored, rand (mcp), thiserror (proxy), tracing (cli)](https://github.com/ashlrai/phantom-secrets/pull/468): pull-request; 2026-10-26
+- [#486 fix(dotenv): ignore docs placeholders and see quoted PEM headers in commented secrets](https://github.com/ashlrai/phantom-secrets/pull/486): pull-request; 2026-10-26
+- [#477 fix(web): bump brace-expansion in apps/web lockfile (Dependabot #43, #44)](https://github.com/ashlrai/phantom-secrets/pull/477): pull-request; 2026-10-26
+- [#487 fix(ci): admit #483 dry-run fixture fingerprint (unblocks Source secret scan)](https://github.com/ashlrai/phantom-secrets/pull/487): pull-request; 2026-10-26
+- [#478 ci: replace CodeQL default setup with advanced setup (PR cancel-in-progress, Rust build-mode none)](https://github.com/ashlrai/phantom-secrets/pull/478): pull-request; 2026-10-26
+- [#473 fix(doctor,init): report commented-out secrets left as plaintext in .env](https://github.com/ashlrai/phantom-secrets/pull/473): pull-request; 2026-10-26
+- [#479 fix(core): always mask config-declared secrets in .env.example](https://github.com/ashlrai/phantom-secrets/pull/479): pull-request; 2026-10-26
+- [#462 docs: fold PLAN.md and codex.md into ROADMAP and AGENTS, delete both](https://github.com/ashlrai/phantom-secrets/pull/462): pull-request; 2026-10-26
+- [#472 docs(agents): portable cargo PATH note](https://github.com/ashlrai/phantom-secrets/pull/472): pull-request; 2026-10-26
+- [#471 fix(dotenv): drop credentials from full-line prose comments in .env.example](https://github.com/ashlrai/phantom-secrets/pull/471): pull-request; 2026-10-26
+- [#470 fix(validate): report refused secrets and validate the rest](https://github.com/ashlrai/phantom-secrets/pull/470): pull-request; 2026-10-26
+- [#467 fix(core): .env.example drops inline comments that hold credentials](https://github.com/ashlrai/phantom-secrets/pull/467): pull-request; 2026-10-26
+- [#464 ci: run macOS/Windows legs on PRs only for platform changes (ci:full-os label to force)](https://github.com/ashlrai/phantom-secrets/pull/464): pull-request; 2026-10-26
+- [#461 fix(core): .env.example masks commented-out secret assignments](https://github.com/ashlrai/phantom-secrets/pull/461): pull-request; 2026-10-26
+- [#460 fix(check): read every .envrc assignment in the staged scan](https://github.com/ashlrai/phantom-secrets/pull/460): pull-request; 2026-10-25
+- [#459 fix(wrap): skip only scripts that already run through phantom exec](https://github.com/ashlrai/phantom-secrets/pull/459): pull-request; 2026-10-25
+- [#458 fix(mcp): phantom_why summary names the deciding rule](https://github.com/ashlrai/phantom-secrets/pull/458): pull-request; 2026-10-25
+- [#457 fix(agent): package-scripts-not-wrapped uses the phantom wrap decision](https://github.com/ashlrai/phantom-secrets/pull/457): pull-request; 2026-10-25
+- [#456 fix(validate): apply exec's lifecycle gates before sending values to providers](https://github.com/ashlrai/phantom-secrets/pull/456): pull-request; 2026-10-25
+- [#452 fix(why): report the rule the classifier decided by](https://github.com/ashlrai/phantom-secrets/pull/452): pull-request; 2026-10-25
+- [#453 fix(wrap): one shared script selection for phantom wrap and MCP phantom_wrap](https://github.com/ashlrai/phantom-secrets/pull/453): pull-request; 2026-10-25
+- [#454 fix(check): scan staged direnv .envrc assignments like .env](https://github.com/ashlrai/phantom-secrets/pull/454): pull-request; 2026-10-25
+- [#455 docs: tested hybrid quickstart (local Qwen on Ollama behind LiteLLM)](https://github.com/ashlrai/phantom-secrets/pull/455): pull-request; 2026-10-25
+- [#451 fix(check): scan staged files git calls binary, and non-UTF-8 text](https://github.com/ashlrai/phantom-secrets/pull/451): pull-request; 2026-10-25
+- [#450 fix(wrap): edit package.json scripts in place instead of re-serializing](https://github.com/ashlrai/phantom-secrets/pull/450): pull-request; 2026-10-25
+- [#447 fix(core): one hardened active-environment reader; working remedy for a bad selector](https://github.com/ashlrai/phantom-secrets/pull/447): pull-request; 2026-10-25
+- [#449 docs(litellm): loopback recipe for a local Ollama model behind LiteLLM](https://github.com/ashlrai/phantom-secrets/pull/449): pull-request; 2026-10-25
+- [#448 fix(cli): refuse a locked vault before cloud/team push consent](https://github.com/ashlrai/phantom-secrets/pull/448): pull-request; 2026-10-25
+- [#446 fix(cloud,team): refuse read-only secrets on cloud push; gate team push before consent](https://github.com/ashlrai/phantom-secrets/pull/446): pull-request; 2026-10-25
+- [#445 fix(cli): make `phantom start` serve the active environment like `phantom exec`](https://github.com/ashlrai/phantom-secrets/pull/445): pull-request; 2026-10-25
+- [#444 fix(wrap): leave shell command-line scripts unwrapped instead of breaking them](https://github.com/ashlrai/phantom-secrets/pull/444): pull-request; 2026-10-25
+- [#443 fix(cli,mcp): sync dry run reports the live lifecycle gate's refusal](https://github.com/ashlrai/phantom-secrets/pull/443): pull-request; 2026-10-25
+- [#442 fix(mcp,cli): keep still-expired secrets read-only; refuse team push of read-only secrets](https://github.com/ashlrai/phantom-secrets/pull/442): pull-request; 2026-10-25
+- [#441 fix(cli): refuse to sync a secret demoted to read-only](https://github.com/ashlrai/phantom-secrets/pull/441): pull-request; 2026-10-25
+- [#440 fix(vault): hold the source project's lock across a cross-project copy](https://github.com/ashlrai/phantom-secrets/pull/440): pull-request; 2026-10-25
+- [#439 fix(core,evidence): resolve verification, approval, workspace-request and report state through a retained directory](https://github.com/ashlrai/phantom-secrets/pull/439): pull-request; 2026-10-25
+- [#437 fix(vault): refuse a copy whose source changes before the commit](https://github.com/ashlrai/phantom-secrets/pull/437): pull-request; 2026-10-25
+- [#438 fix(core,session,evidence): keep session and evidence state in a retained private directory](https://github.com/ashlrai/phantom-secrets/pull/438): pull-request; 2026-10-25
+- [#436 fix(cli,core,workspace): open the proxy lifecycle lock through a verified directory descriptor](https://github.com/ashlrai/phantom-secrets/pull/436): pull-request; 2026-10-25
+- [#435 fix(vault): copies keep their source's protective metadata](https://github.com/ashlrai/phantom-secrets/pull/435): pull-request; 2026-10-25
+- [#434 fix(cli,workspace): never follow a planted symlink for proxy and setup locks](https://github.com/ashlrai/phantom-secrets/pull/434): pull-request; 2026-10-25
+- [#433 fix(audit): refuse symlinked audit log and ~/.phantom in tail and readers](https://github.com/ashlrai/phantom-secrets/pull/433): pull-request; 2026-10-25
+- [#432 fix(vault): copies inherit the source's rotation anchor](https://github.com/ashlrai/phantom-secrets/pull/432): pull-request; 2026-10-25
+- [#431 fix(core): workspace-request/approval state dirs use ensure_private_dir; .env.example presence never followed](https://github.com/ashlrai/phantom-secrets/pull/431): pull-request; 2026-10-25
+- [#430 fix(rotation): gate team, provider and competitor imports as restores](https://github.com/ashlrai/phantom-secrets/pull/430): pull-request; 2026-10-25
+- [#429 fix(fs): tighten existing loose Phantom state directories to 0700](https://github.com/ashlrai/phantom-secrets/pull/429): pull-request; 2026-10-25
+- [#428 fix(proxy): resolve upstream relative references before scoping them to the route](https://github.com/ashlrai/phantom-secrets/pull/428): pull-request; 2026-10-25
+- [#427 fix(rotation): gate cloud push/pull and backup export/restore; copy gates before the challenge](https://github.com/ashlrai/phantom-secrets/pull/427): pull-request; 2026-10-25
+- [#426 fix(core,workspace): create Phantom state ancestors 0700; discovery requires a regular .phantom.toml](https://github.com/ashlrai/phantom-secrets/pull/426): pull-request; 2026-10-25
+- [#425 fix(core,vault): keep audit/hotspot/shadow state private; read regular files only](https://github.com/ashlrai/phantom-secrets/pull/425): pull-request; 2026-10-25
+- [#424 fix(core,cli): read .env as a regular file only; agree on .phantom.toml presence](https://github.com/ashlrai/phantom-secrets/pull/424): pull-request; 2026-10-25
+- [#423 fix(cli,core): create setup backups exclusively; keep leak profiles private](https://github.com/ashlrai/phantom-secrets/pull/423): pull-request; 2026-10-25
+- [#422 fix(proxy): keep the path-auth base on mapped redirects; map Content-Location and Link](https://github.com/ashlrai/phantom-secrets/pull/422): pull-request; 2026-10-25
+- [#419 fix(import): name UTF-16/32 exports; state the 1Password format in --help](https://github.com/ashlrai/phantom-secrets/pull/419): pull-request; 2026-10-25
+- [#421 fix(core): atomic, symlink-refusing PhantomConfig::save and exact-before write_phantomized](https://github.com/ashlrai/phantom-secrets/pull/421): pull-request; 2026-10-25
+- [#420 fix: apply enforce_rotation_on_access to every value-exposing path (gap121)](https://github.com/ashlrai/phantom-secrets/pull/420): pull-request; 2026-10-25
+- [#417 fix(audit): create audit log owner-only and refuse symlinked log/lock](https://github.com/ashlrai/phantom-secrets/pull/417): pull-request; 2026-10-25
+- [#416 fix(cli): read .phantom.toml only as a regular file in every remaining command](https://github.com/ashlrai/phantom-secrets/pull/416): pull-request; 2026-10-25
+- [#412 fix(core): share one URL param parser; decode names, split fragments](https://github.com/ashlrai/phantom-secrets/pull/412): pull-request; 2026-10-25
+- [#415 fix(proxy): keep the route prefix on upstream redirects and the upstream length on HEAD](https://github.com/ashlrai/phantom-secrets/pull/415): pull-request; 2026-10-25
+- [#413 fix: enforce enforce_rotation_on_access in exec and start](https://github.com/ashlrai/phantom-secrets/pull/413): pull-request; 2026-10-25
+- [#411 fix(import): accept BOM-prefixed JSON exports; list every invalid name with a rename](https://github.com/ashlrai/phantom-secrets/pull/411): pull-request; 2026-10-25
+- [#410 fix(mcp): read .phantom.toml only as a regular, non-symlink file](https://github.com/ashlrai/phantom-secrets/pull/410): pull-request; 2026-10-25
+- [#409 fix(cli): read .phantom.toml only as a regular file in exec, start, sync, doctor and why](https://github.com/ashlrai/phantom-secrets/pull/409): pull-request; 2026-10-25
+- [#408 fix(vault): scrub the encrypted-file fallback passphrase in memory](https://github.com/ashlrai/phantom-secrets/pull/408): pull-request; 2026-10-25
+- [#407 fix(proxy): scope upstream Set-Cookie to its route prefix](https://github.com/ashlrai/phantom-secrets/pull/407): pull-request; 2026-10-25
+- [#406 fix(vault): scrub decrypted file-vault secrets on drop and redact Debug](https://github.com/ashlrai/phantom-secrets/pull/406): pull-request; 2026-10-25
+- [#404 fix(core): classify public-prefixed URLs with a query credential as secrets](https://github.com/ashlrai/phantom-secrets/pull/404): pull-request; 2026-10-25
+- [#402 fix(rotation): keep rotate_every intervals exact; reject unparseable values](https://github.com/ashlrai/phantom-secrets/pull/402): pull-request; 2026-10-25
+- [#405 fix(import): refuse JSON export names that are not environment keys](https://github.com/ashlrai/phantom-secrets/pull/405): pull-request; 2026-10-25
+- [#403 fix(check): read .phantom.toml in the worktree scan only as a regular file](https://github.com/ashlrai/phantom-secrets/pull/403): pull-request; 2026-10-25
+- [#401 fix(pull): select Vercel variables by the configured environments](https://github.com/ashlrai/phantom-secrets/pull/401): pull-request; 2026-10-25
+- [#400 fix(core): classify a private key or URL password under a public prefix as a secret](https://github.com/ashlrai/phantom-secrets/pull/400): pull-request; 2026-10-25
+- [#399 fix(check): scan staged entries by their staged mode](https://github.com/ashlrai/phantom-secrets/pull/399): pull-request; 2026-10-25
+- [#398 fix(import): refuse JSON exports that repeat a secret name](https://github.com/ashlrai/phantom-secrets/pull/398): pull-request; 2026-10-25
+- [#397 fix(sync): match Vercel variables by key and target, not key alone](https://github.com/ashlrai/phantom-secrets/pull/397): pull-request; 2026-10-25
+- [#396 fix(check): read the staged code diff as plain text whatever git config says](https://github.com/ashlrai/phantom-secrets/pull/396): pull-request; 2026-10-25
+- [#395 fix(audit): fsync log lines before the head, write the chain key atomically, cut reasons on a char boundary](https://github.com/ashlrai/phantom-secrets/pull/395): pull-request; 2026-10-25
+- [#394 fix(cli): refuse a locked file vault in init and workspace apply](https://github.com/ashlrai/phantom-secrets/pull/394): pull-request; 2026-10-25
+- [#393 fix(mcp): check value-blind preconditions before consuming a one-use approval](https://github.com/ashlrai/phantom-secrets/pull/393): pull-request; 2026-10-25
+- [#392 fix(audit): keep events after a torn log tail on their own line and chained](https://github.com/ashlrai/phantom-secrets/pull/392): pull-request; 2026-10-25
+- [#391 fix(cli,mcp): name a locked file vault in single-name rotate, remove, copy and validate lookups](https://github.com/ashlrai/phantom-secrets/pull/391): pull-request; 2026-10-25
+- [#390 fix(cli): refuse a locked file vault in add, copy, pull, reveal, remove, expiry set/rotate and why](https://github.com/ashlrai/phantom-secrets/pull/390): pull-request; 2026-10-25
+- [#389 fix(proxy): accept path auth only after the route prefix; refuse multiply encoded dot segments](https://github.com/ashlrai/phantom-secrets/pull/389): pull-request; 2026-10-25
+- [#388 fix(cli): refuse a cloud or team pull into a partial vault inventory](https://github.com/ashlrai/phantom-secrets/pull/388): pull-request; 2026-10-25
+- [#386 fix(cli): refuse a locked file vault in import, env views/copy, exec and start](https://github.com/ashlrai/phantom-secrets/pull/386): pull-request; 2026-10-25
+- [#387 fix(mcp): refuse partial inventories for copy, env and pulls](https://github.com/ashlrai/phantom-secrets/pull/387): pull-request; 2026-10-25
+- [#382 fix(vault): drop a stale validation verdict when a secret's value changes](https://github.com/ashlrai/phantom-secrets/pull/382): pull-request; 2026-10-25
+- [#385 fix(cli): refuse a token remap from a partial vault inventory](https://github.com/ashlrai/phantom-secrets/pull/385): pull-request; 2026-10-25
+- [#384 fix(proxy): refuse dot-segment paths and strip hop-by-hop headers](https://github.com/ashlrai/phantom-secrets/pull/384): pull-request; 2026-10-25
+- [#383 fix(mcp): refuse a locked file vault in sync, validate_all and rotate](https://github.com/ashlrai/phantom-secrets/pull/383): pull-request; 2026-10-25
+- [#381 fix(proxy): redact echoes of the injected Basic credential pair](https://github.com/ashlrai/phantom-secrets/pull/381): pull-request; 2026-10-25
+- [#380 fix(mcp): phantom_sync reports each target's only-filtered secret set](https://github.com/ashlrai/phantom-secrets/pull/380): pull-request; 2026-10-25
+- [#379 fix(cloud): identical local values no longer block push after a pull](https://github.com/ashlrai/phantom-secrets/pull/379): pull-request; 2026-10-25
+- [#378 fix(init): refuse dotenvx in-place ciphertext instead of vaulting it](https://github.com/ashlrai/phantom-secrets/pull/378): pull-request; 2026-10-25
+- [#377 fix(import): env and Infisical dotenv refuse dotenvx in-place ciphertext](https://github.com/ashlrai/phantom-secrets/pull/377): pull-request; 2026-10-25
+- [#376 fix(import): refuse dotenvx in-place encrypted values instead of storing ciphertext](https://github.com/ashlrai/phantom-secrets/pull/376): pull-request; 2026-10-25
+- [#323 fix(import): import Doppler's resolved computed value, not the raw reference](https://github.com/ashlrai/phantom-secrets/pull/323): pull-request; 2026-10-24
+- [#332 chore(deps): bump fast-uri from 3.1.8 to 3.1.9 in /video](https://github.com/ashlrai/phantom-secrets/pull/332): pull-request; 2026-10-24
+- [#167 docs(readme): Homebrew tap and npm latest are now v0.7.9](https://github.com/ashlrai/phantom-secrets/pull/167): pull-request; 2026-10-24
+- [#367 feat(exec): opt-in --bind-source linked-checkout custody for git worktrees](https://github.com/ashlrai/phantom-secrets/pull/367): pull-request; 2026-10-24; cross-repo ashlrai/phantom#888
+- [#369 feat(web): bring the live phm.dev site into main](https://github.com/ashlrai/phantom-secrets/pull/369): pull-request; 2026-10-24
+- [#370 ci(release): publish phantom-secrets and phantom-secrets-mcp to npm via OIDC trusted publishing](https://github.com/ashlrai/phantom-secrets/pull/370): pull-request; 2026-10-24
+- [#372 ci: run Linux only on push to main, full matrix nightly](https://github.com/ashlrai/phantom-secrets/pull/372): pull-request; 2026-10-24
+- [#374 feat(cli): agent doctor --json value-free preflight with --vault opt-in and --strict](https://github.com/ashlrai/phantom-secrets/pull/374): pull-request; 2026-10-24
+- [#373 docs: status --json stability rules and README link](https://github.com/ashlrai/phantom-secrets/pull/373): pull-request; 2026-10-24
+- [#371 test(cli): pin status --json schema v1 exact documents and canary leaks](https://github.com/ashlrai/phantom-secrets/pull/371): pull-request; 2026-10-24
+- [#368 test(core): MCP approval storage refuses symlinks and tightens permissions](https://github.com/ashlrai/phantom-secrets/pull/368): pull-request; 2026-10-24
+- [#365 test(core): pending approval list excludes approved records](https://github.com/ashlrai/phantom-secrets/pull/365): pull-request; 2026-10-24
+- [#366 test(cli): keep audit incidents leak events in one hour bucket](https://github.com/ashlrai/phantom-secrets/pull/366): pull-request; 2026-10-24
+- [#364 test(core): reject empty or truncated MCP approval tokens](https://github.com/ashlrai/phantom-secrets/pull/364): pull-request; 2026-10-24
+- [#362 test(core): pin MCP approval input limits, identifier checks and inspect refusals](https://github.com/ashlrai/phantom-secrets/pull/362): pull-request; 2026-10-24
+- [#361 test(mcp): pin confirm and approval gates for setup_workspace request_apply and init confirm](https://github.com/ashlrai/phantom-secrets/pull/361): pull-request; 2026-10-24
+- [#360 test(mcp): require confirm before minting an approval nonce for 21 effectful tools](https://github.com/ashlrai/phantom-secrets/pull/360): pull-request; 2026-10-24
+- [#359 test(mcp): pin out-of-band approval gate for 21 more effectful tools](https://github.com/ashlrai/phantom-secrets/pull/359): pull-request; 2026-10-24
+- [#358 test(workspace): pin canonical apply root and journal recovery path containment](https://github.com/ashlrai/phantom-secrets/pull/358): pull-request; 2026-10-24
+- [#357 test(workspace): refuse a target hard-linked after sealing at apply time](https://github.com/ashlrai/phantom-secrets/pull/357): pull-request; 2026-10-24
+- [#356 test(workspace): pin journal recovery drift refusal and before-image restore](https://github.com/ashlrai/phantom-secrets/pull/356): pull-request; 2026-10-24
+- [#355 test(workspace): pin durable journal header, schema/request id and recovery id binding](https://github.com/ashlrai/phantom-secrets/pull/355): pull-request; 2026-10-24
+- [#354 test(workspace): pin apply-time plan id check and participant completed-action binding](https://github.com/ashlrai/phantom-secrets/pull/354): pull-request; 2026-10-24
+- [#353 test(workspace): pin setup plan id binding, approval flag, warning and multi-place blockers](https://github.com/ashlrai/phantom-secrets/pull/353): pull-request; 2026-10-24
+- [#352 test(mcp): pin approval gate for setup_workspace propose seal-key provisioning](https://github.com/ashlrai/phantom-secrets/pull/352): pull-request; 2026-10-24
+- [#351 test(mcp): pin out-of-band approval gate for add/remove secret and cloud push/pull](https://github.com/ashlrai/phantom-secrets/pull/351): pull-request; 2026-10-24
+- [#350 test(authority): pin environment, ports, methods and path-boundary narrowing](https://github.com/ashlrai/phantom-secrets/pull/350): pull-request; 2026-10-24
+- [#349 test(authority): pin every check in the sealed VerifiedGrant constructor](https://github.com/ashlrai/phantom-secrets/pull/349): pull-request; 2026-10-24
+- [#348 test(core): team share v0 is rejected; a keypair with one short half errors](https://github.com/ashlrai/phantom-secrets/pull/348): pull-request; 2026-10-24
+- [#347 test(vault): a tagged blob never decrypts through the legacy KDF](https://github.com/ashlrai/phantom-secrets/pull/347): pull-request; 2026-10-24
+- [#346 test(core): audit verify flags a broken prev_hmac link on unsequenced lines](https://github.com/ashlrai/phantom-secrets/pull/346): pull-request; 2026-10-24
+- [#345 test(core): legacy approved records fail closed; re-approval is refused](https://github.com/ashlrai/phantom-secrets/pull/345): pull-request; 2026-10-24
+- [#344 test(core): MCP approval is bound to its project and needs the approve step](https://github.com/ashlrai/phantom-secrets/pull/344): pull-request; 2026-10-24
+- [#343 fix(core): warn on IPv6 private, link-local and IPv4-mapped route hosts](https://github.com/ashlrai/phantom-secrets/pull/343): pull-request; 2026-10-24
+- [#342 test(core): flag each risky service route pattern form on its own](https://github.com/ashlrai/phantom-secrets/pull/342): pull-request; 2026-10-24
+- [#341 test(proxy): partial runs of base64-alphabet keys are redacted](https://github.com/ashlrai/phantom-secrets/pull/341): pull-request; 2026-10-24
+- [#340 test(proxy): reject a wrong, empty or truncated query token in compatibility mode](https://github.com/ashlrai/phantom-secrets/pull/340): pull-request; 2026-10-24
+- [#339 test(proxy): pin that the query proxy token is stripped before the upstream](https://github.com/ashlrai/phantom-secrets/pull/339): pull-request; 2026-10-24
+- [#338 test(proxy): pin that the header proxy token is never forwarded upstream](https://github.com/ashlrai/phantom-secrets/pull/338): pull-request; 2026-10-24
+- [#336 feat(cli): optional --output <path> for doctor and audit show](https://github.com/ashlrai/phantom-secrets/pull/336): pull-request; 2026-10-24
+- [#337 test(proxy): pin that a non-UTF-8 response header echoing the key is dropped](https://github.com/ashlrai/phantom-secrets/pull/337): pull-request; 2026-10-24
+- [#335 docs(litellm): quickstart, and doctor recognizes the shipped config](https://github.com/ashlrai/phantom-secrets/pull/335): pull-request; 2026-10-24
+- [#334 test(proxy): skip only the DNS case of the upstream-failure test without NXDOMAIN](https://github.com/ashlrai/phantom-secrets/pull/334): pull-request; 2026-10-24
+- [#333 docs: Phantom with agents guide (every claim names a merged test)](https://github.com/ashlrai/phantom-secrets/pull/333): pull-request; 2026-10-24
+- [#331 test(core): keep uncorrelated-incidents test events in one hour bucket (Windows flake)](https://github.com/ashlrai/phantom-secrets/pull/331): pull-request; 2026-10-24
+- [#330 test(proxy): hermetic agent -> LiteLLM -> proxy -> provider chain](https://github.com/ashlrai/phantom-secrets/pull/330): pull-request; 2026-10-24
+- [#329 feat(doctor): report-only LiteLLM check](https://github.com/ashlrai/phantom-secrets/pull/329): pull-request; 2026-10-24
+- [#327 feat(vault): read v3 blobs with stored Argon2id params; writers unchanged](https://github.com/ashlrai/phantom-secrets/pull/327): pull-request; 2026-10-24
+- [#326 chore(web): bump next to 15.5.28 (lockfile only) for new advisories](https://github.com/ashlrai/phantom-secrets/pull/326): pull-request; 2026-10-24
+- [#325 feat(audit): read v2 encrypted_context (HKDF-SHA256 key); writer unchanged](https://github.com/ashlrai/phantom-secrets/pull/325): pull-request; 2026-10-24
+- [#324 chore(deps): lockfile-only bump for new RUSTSEC advisories](https://github.com/ashlrai/phantom-secrets/pull/324): pull-request; 2026-10-24
+- [#322 feat(audit): read sidecar sig_alg, fail closed (Ed25519 bytes unchanged)](https://github.com/ashlrai/phantom-secrets/pull/322): pull-request; 2026-10-19
+- [#321 feat(team): read classic share alg label (writers unchanged)](https://github.com/ashlrai/phantom-secrets/pull/321): pull-request; 2026-10-19
+- [#320 test: PHMB-colliding legacy blobs still fall back](https://github.com/ashlrai/phantom-secrets/pull/320): pull-request; 2026-10-19
+- [#319 test(pq): X-Wing draft 11 encapsulation vectors](https://github.com/ashlrai/phantom-secrets/pull/319): pull-request; 2026-10-19
+- [#318 ci: run pq-hybrid feature tests](https://github.com/ashlrai/phantom-secrets/pull/318): pull-request; 2026-10-19
+- [#317 test(proxy): LiteLLM upstream SSE key-echo scrub](https://github.com/ashlrai/phantom-secrets/pull/317): pull-request; 2026-10-19
+- [#316 fix(seo-observer): release drift checks the Phantom Secrets app](https://github.com/ashlrai/phantom-secrets/pull/316): pull-request; 2026-10-19
+- [#315 fix(seo-observer): skip non-HTML sitemap entries](https://github.com/ashlrai/phantom-secrets/pull/315): pull-request; 2026-10-19
+- [#314 test(exec): pin custom-route refusal + document exec/start split](https://github.com/ashlrai/phantom-secrets/pull/314): pull-request; 2026-10-19
+- [#313 test(proxy): LiteLLM upstream key headers + docs](https://github.com/ashlrai/phantom-secrets/pull/313): pull-request; 2026-10-19
+- [#312 fix(proxy): redact partial echoes of a managed key in responses](https://github.com/ashlrai/phantom-secrets/pull/312): pull-request; 2026-10-19
+- [#311 test(proxy): echo of the swapped real key never reaches the child](https://github.com/ashlrai/phantom-secrets/pull/311): pull-request; 2026-10-19
+- [#310 fix(rotation): withhold non-structural values in vendor error summaries](https://github.com/ashlrai/phantom-secrets/pull/310): pull-request; 2026-10-19
+- [#309 ci: run the docs command check on docs-only and web-only PRs](https://github.com/ashlrai/phantom-secrets/pull/309): pull-request; 2026-10-19
+- [#308 docs(temporal): why the CLI reports context deadline exceeded on a codec refusal](https://github.com/ashlrai/phantom-secrets/pull/308): pull-request; 2026-10-19
+- [#307 ci: run the Temporal codec example tests (hash-pinned deps, part of CI Gate)](https://github.com/ashlrai/phantom-secrets/pull/307): pull-request; 2026-10-19
+- [#306 examples(temporal-codec): route Web UI query-string calls; record local e2e run](https://github.com/ashlrai/phantom-secrets/pull/306): pull-request; 2026-10-19
+- [#305 examples(temporal-codec): exact-origin CORS allowlist and inherited-fd key delivery](https://github.com/ashlrai/phantom-secrets/pull/305): pull-request; 2026-10-19
+- [#304 docs(temporal): authorizer, server pin v1.32.1+, codec server, placeholders in history](https://github.com/ashlrai/phantom-secrets/pull/304): pull-request; 2026-10-19
+- [#303 test+doctor: prove the proxy negotiates X25519MLKEM768; report offered TLS groups](https://github.com/ashlrai/phantom-secrets/pull/303): pull-request; 2026-10-19
+- [#302 docs+test: one LiteLLM guide and a hermetic proxy test for the gateway flow](https://github.com/ashlrai/phantom-secrets/pull/302): pull-request; 2026-10-19
+- [#301 test: check phantom commands in web sources and llms.txt against --help](https://github.com/ashlrai/phantom-secrets/pull/301): pull-request; 2026-10-19
+- [#300 docs: use phantom copy --rename (not --as); test documented flags against --help](https://github.com/ashlrai/phantom-secrets/pull/300): pull-request; 2026-10-19
+- [#299 test(broker): rotation-ordering fault-injection harness for the lease store key (#230)](https://github.com/ashlrai/phantom-secrets/pull/299): pull-request; 2026-10-19
+- [#298 fix(web): self-host Inter Tight and JetBrains Mono with next/font/local (vercel/next.js#99114)](https://github.com/ashlrai/phantom-secrets/pull/298): pull-request; 2026-10-19
+- [#297 feat(broker): value-free lease status classification and epoch-free stored_generation (#230 slice 2)](https://github.com/ashlrai/phantom-secrets/pull/297): pull-request; 2026-10-19
+- [#296 docs(templates): ask for phantom doctor --all --json in bug reports (#173)](https://github.com/ashlrai/phantom-secrets/pull/296): pull-request; 2026-10-19
+- [#295 feat(vault,broker): lease store key provisioning and value-free list_leases (#230 slice 1)](https://github.com/ashlrai/phantom-secrets/pull/295): pull-request; 2026-10-19
+- [#159 docs: separate personal, company, and client keys across projects](https://github.com/ashlrai/phantom-secrets/pull/159): pull-request; 2026-10-19
+- [#175 docs: terminal demo GIF in README](https://github.com/ashlrai/phantom-secrets/pull/175): pull-request; 2026-10-19
+- [#171 docs: launch readiness - ecosystem section, contributing, PR template](https://github.com/ashlrai/phantom-secrets/pull/171): pull-request; 2026-10-19
+- [#294 feat(setup): phantom setup --undo from the manifest (dry run by default)](https://github.com/ashlrai/phantom-secrets/pull/294): pull-request; 2026-10-19
+- [#293 feat(setup): refuse a differing client entry, add --replace, back up and record a manifest](https://github.com/ashlrai/phantom-secrets/pull/293): pull-request; 2026-10-19
+- [#291 docs(design): agent claims and status for cross-session coordination (proposal)](https://github.com/ashlrai/phantom-secrets/pull/291): pull-request; 2026-10-19
+- [#292 fix(audit): reject HMAC key files that are not exactly 32 bytes](https://github.com/ashlrai/phantom-secrets/pull/292): pull-request; 2026-10-19
+- [#290 feat(setup): --dry-run plans client changes without writing](https://github.com/ashlrai/phantom-secrets/pull/290): pull-request; 2026-10-19
+- [#288 feat(cli): phantom doctor --all (one value-free report)](https://github.com/ashlrai/phantom-secrets/pull/288): pull-request; 2026-10-19
+- [#287 docs(design): agent onboarding with dry-run diff, backups and undo](https://github.com/ashlrai/phantom-secrets/pull/287): pull-request; 2026-10-19
+- [#289 feat(leaks): plan shows static manual rotation location and live-disabled status](https://github.com/ashlrai/phantom-secrets/pull/289): pull-request; 2026-10-19
+- [#286 docs(design): autonomous leak response and rotation flow on leases (proposal)](https://github.com/ashlrai/phantom-secrets/pull/286): pull-request; 2026-10-18
+- [#285 docs(design): keyring 4 migration scoping (#242)](https://github.com/ashlrai/phantom-secrets/pull/285): pull-request; 2026-10-18
+- [#166 chore(deps): bump source-map-js from 1.2.1 to 1.2.2 in /video](https://github.com/ashlrai/phantom-secrets/pull/166): pull-request; 2026-10-18
+- [#165 chore(deps): bump postcss-selector-parser from 7.1.5 to 7.1.6 in /video](https://github.com/ashlrai/phantom-secrets/pull/165): pull-request; 2026-10-18
+- [#189 fix(cli): headless-friendly errors and JSON; exec reroutes only vaulted services](https://github.com/ashlrai/phantom-secrets/pull/189): pull-request; 2026-10-18
+- [#281 docs(design): large MCP tool outputs as file path plus summary (proposal only)](https://github.com/ashlrai/phantom-secrets/pull/281): pull-request; 2026-10-18
+- [#236 Refuse partial-inventory paths (pushes, rotate, export, MCP expiry gate); agent status refuses symlinked storage; leaks plan reports suppressed incidents](https://github.com/ashlrai/phantom-secrets/pull/236): pull-request; 2026-10-18
+- [#268 Report non-auth failures in phantom cloud status instead of an expired login](https://github.com/ashlrai/phantom-secrets/pull/268): pull-request; 2026-10-18
+- [#263 Never replace the cloud vault key or team keypair on a keychain read failure](https://github.com/ashlrai/phantom-secrets/pull/263): pull-request; 2026-10-18
+- [#269 ci: link Windows test builds with rust-lld](https://github.com/ashlrai/phantom-secrets/pull/269): pull-request; 2026-10-18
+- [#283 Add phantom crypto inventory (--format text|json) from the crypto-agility registry](https://github.com/ashlrai/phantom-secrets/pull/283): pull-request; 2026-10-18
+- [#280 docs(examples): Temporal payload codec sketch (untested design)](https://github.com/ashlrai/phantom-secrets/pull/280): pull-request; 2026-10-18
+- [#279 test(mcp): guard that untrusted project text and secret values never reach tool results](https://github.com/ashlrai/phantom-secrets/pull/279): pull-request; 2026-10-18
+- [#278 docs: optional Temporal guidance (no secrets on disk)](https://github.com/ashlrai/phantom-secrets/pull/278): pull-request; 2026-10-18
+- [#282 Proxy upstream TLS: offer X25519MLKEM768 via aws-lc-rs provider](https://github.com/ashlrai/phantom-secrets/pull/282): pull-request; 2026-10-18
+- [#275 check: label LiteLLM-shaped virtual keys in the staged-code gate](https://github.com/ashlrai/phantom-secrets/pull/275): pull-request; 2026-10-18
+- [#274 docs: LiteLLM gateway-mode notes for Claude Code, Codex and Cursor](https://github.com/ashlrai/phantom-secrets/pull/274): pull-request; 2026-10-18
+- [#273 docs: LiteLLM as an optional gateway behind Phantom, with a mock-upstream check](https://github.com/ashlrai/phantom-secrets/pull/273): pull-request; 2026-10-18
+- [#271 pq: pin X-Wing to draft 11 test vectors and record draft status](https://github.com/ashlrai/phantom-secrets/pull/271): pull-request; 2026-10-18
+- [#267 Add crypto-agility registry for algorithms and format tags](https://github.com/ashlrai/phantom-secrets/pull/267): pull-request; 2026-10-18
+- [#266 Add phantom doctor --pq post-quantum readiness report](https://github.com/ashlrai/phantom-secrets/pull/266): pull-request; 2026-10-18
+- [#265 Add Grover 256-bit symmetric key length checks](https://github.com/ashlrai/phantom-secrets/pull/265): pull-request; 2026-10-18
+- [#277 ci: allowlist cipher name flagged by gitleaks in pq report prose](https://github.com/ashlrai/phantom-secrets/pull/277): pull-request; 2026-10-18
+- [#264 Report broken config and non-auth failures in MCP phantom_cloud_status](https://github.com/ashlrai/phantom-secrets/pull/264): pull-request; 2026-10-18
+- [#262 Report an unparseable .claude/settings.local.json in phantom doctor](https://github.com/ashlrai/phantom-secrets/pull/262): pull-request; 2026-10-18
+- [#260 phantom cloud status: report an unreadable or malformed .phantom.toml instead of hiding it](https://github.com/ashlrai/phantom-secrets/pull/260): pull-request; 2026-10-18
+- [#261 Keep `phantom audit show --json` stdout machine-readable with no events](https://github.com/ashlrai/phantom-secrets/pull/261): pull-request; 2026-10-18
+- [#259 Fail `phantom audit show` when the audit log cannot be read](https://github.com/ashlrai/phantom-secrets/pull/259): pull-request; 2026-10-18
+- [#258 phantom import: refuse JSON entries an importer cannot interpret instead of dropping them](https://github.com/ashlrai/phantom-secrets/pull/258): pull-request; 2026-10-18
+- [#257 Report a broken .phantom.toml instead of treating it as uninitialized (doctor, agent setup, env)](https://github.com/ashlrai/phantom-secrets/pull/257): pull-request; 2026-10-18
+- [#256 phantom why: refuse an unreadable or malformed .phantom.toml instead of treating it as uninitialized](https://github.com/ashlrai/phantom-secrets/pull/256): pull-request; 2026-10-18
+- [#255 phantom list --min-anomaly-score: fail on unreadable audit log, filter by documented level](https://github.com/ashlrai/phantom-secrets/pull/255): pull-request; 2026-10-18
+- [#254 MCP audit list tools: bound findings, alerts and incidents](https://github.com/ashlrai/phantom-secrets/pull/254): pull-request; 2026-10-18
+- [#253 phantom_audit_alerts: clamp last, fit 1 MiB, report exact counts](https://github.com/ashlrai/phantom-secrets/pull/253): pull-request; 2026-10-18
+- [#252 MCP audit report: bound inline lists like export/analytics](https://github.com/ashlrai/phantom-secrets/pull/252): pull-request; 2026-10-18
+- [#218 feat(crypto): experimental pq-hybrid feature, X-Wing team key share and benchmark (stacked on #217)](https://github.com/ashlrai/phantom-secrets/pull/218): pull-request; 2026-10-18
+- [#251 MCP audit export: bound rows like analytics; empty match is \[\] / header CSV](https://github.com/ashlrai/phantom-secrets/pull/251): pull-request; 2026-10-18
+- [#249 Agent-facing wrong answers: compliance badge over a locked vault, expiry enforce MCP/CLI drift, validation read errors as never_checked](https://github.com/ashlrai/phantom-secrets/pull/249): pull-request; 2026-10-17
+- [#250 Audit CSV: quote bare CR; export-range empty JSON prints \[\]](https://github.com/ashlrai/phantom-secrets/pull/250): pull-request; 2026-10-17
+- [#248 Audit analytics: exact window, bounded MCP records, one score rule, one clock reading](https://github.com/ashlrai/phantom-secrets/pull/248): pull-request; 2026-10-17
+- [#247 Expiry: negative days once expired; an expiry without a policy counts as a TTL](https://github.com/ashlrai/phantom-secrets/pull/247): pull-request; 2026-10-17
+- [#246 Incident queries: report leak events no backfill has persisted](https://github.com/ashlrai/phantom-secrets/pull/246): pull-request; 2026-10-17
+- [#245 audit recent/show: read a bounded tail and count skipped lines](https://github.com/ashlrai/phantom-secrets/pull/245): pull-request; 2026-10-17
+- [#243 check --runtime: scan every variable, and recognise a proxy session](https://github.com/ashlrai/phantom-secrets/pull/243): pull-request; 2026-10-17
+- [#238 exec: forward SIGTERM/SIGINT/SIGHUP to the child and exit with its status; why: refuse a blank key](https://github.com/ashlrai/phantom-secrets/pull/238): pull-request; 2026-10-17
+- [#240 fix(cli): quiet exit when the reader of stdout goes away](https://github.com/ashlrai/phantom-secrets/pull/240): pull-request; 2026-10-17
+- [#234 fix(cli): why fails on unknown keys, doctor checks Gemini, init names the real vault, subdir errors point at the project root](https://github.com/ashlrai/phantom-secrets/pull/234): pull-request; 2026-10-17
+- [#217 feat(crypto): backward compatible format version tag for vault blobs and team shares](https://github.com/ashlrai/phantom-secrets/pull/217): pull-request; 2026-10-17
+- [#233 exec/proxy: actionable, value-free failures for agents; validate deprecated add_secret name](https://github.com/ashlrai/phantom-secrets/pull/233): pull-request; 2026-10-17
+- [#228 add --stdin: bounded read; refuse multi-line input unless --multiline or --first-line](https://github.com/ashlrai/phantom-secrets/pull/228): pull-request; 2026-10-17
+- [#232 ci: line-tables-only debug info for test builds; cache the Windows ARM64 check](https://github.com/ashlrai/phantom-secrets/pull/232): pull-request; 2026-10-17
+- [#239 test(cli): pin agent-facing doc facts to the code](https://github.com/ashlrai/phantom-secrets/pull/239): pull-request; 2026-10-17
+- [#231 fix(agent): doctor reports when phantom exec is blocked (connection-string key)](https://github.com/ashlrai/phantom-secrets/pull/231): pull-request; 2026-10-17
+- [#224 Add on_leak policy (off/plan/revoke) read by phantom leaks plan](https://github.com/ashlrai/phantom-secrets/pull/224): pull-request; 2026-10-17
+- [#241 ci(deny): record the zbus 4 unmaintained advisories pulled in by keyring 3](https://github.com/ashlrai/phantom-secrets/pull/241): pull-request; 2026-10-17
+- [#237 fix(audit): verify fails when audit.log is deleted; verify --json; reject bad dates and confidence; exec names `phantom add`](https://github.com/ashlrai/phantom-secrets/pull/237): pull-request; 2026-10-17; cross-repo ashlrai/phantom#751, ashlrai/phantom#772
+- [#227 fix(mcp,cli): expiry gate reads vault TTLs, sync rejects unknown platforms, setup --client gemini](https://github.com/ashlrai/phantom-secrets/pull/227): pull-request; 2026-10-17
+- [#191 fix: check --staged stops flagging every "sk-"](https://github.com/ashlrai/phantom-secrets/pull/191): pull-request; 2026-10-17; cross-repo ashlrai/phantom#751, ashlrai/phantom#772, ashlrai/phantom#825
+- [#235 mcp: accurate phantom_why values; refuse unknown phantom_sync platform](https://github.com/ashlrai/phantom-secrets/pull/235): pull-request; 2026-10-17
+- [#229 agent status: read-only, value-free view of MCP approval state](https://github.com/ashlrai/phantom-secrets/pull/229): pull-request; 2026-10-17
+- [#181 docs: fix public text that drifted from 0.7.9 behavior](https://github.com/ashlrai/phantom-secrets/pull/181): pull-request; 2026-10-17
+- [#179 docs: match client MCP snippets and tool parameters to the 0.7.9 runtime](https://github.com/ashlrai/phantom-secrets/pull/179): pull-request; 2026-10-17
+- [#223 docs: bring agent docs in line with recent merged behavior](https://github.com/ashlrai/phantom-secrets/pull/223): pull-request; 2026-10-17
+- [#225 web: agent preview check for phm.dev on the live site line, plus public text fixes](https://github.com/ashlrai/phantom-secrets/pull/225): pull-request; 2026-10-17
+- [#222 agent report: an unrelated dotenv parse error no longer hides an unresolved managed dotenv](https://github.com/ashlrai/phantom-secrets/pull/222): pull-request; 2026-10-17
+- [#221 Locked-vault follow-ups: exec wording, agent dotenv finding, honest notice](https://github.com/ashlrai/phantom-secrets/pull/221): pull-request; 2026-10-17
+- [#220 CLI: refuse a locked vault instead of answering empty; doctor reports a missing dotenv](https://github.com/ashlrai/phantom-secrets/pull/220): pull-request; 2026-10-17
+- [#215 feat(cli): read-only phantom leaks plan](https://github.com/ashlrai/phantom-secrets/pull/215): pull-request; 2026-10-17
+- [#219 Read the remaining dotenvs on the opened handle, not by following the path](https://github.com/ashlrai/phantom-secrets/pull/219): pull-request; 2026-10-16
+- [#212 MCP: refuse a locked vault instead of answering empty; name the fix, not -32603](https://github.com/ashlrai/phantom-secrets/pull/212): pull-request; 2026-10-16
+- [#216 feat(cli): read-only setup --status for wired AI clients (incl. Gemini CLI)](https://github.com/ashlrai/phantom-secrets/pull/216): pull-request; 2026-10-16
+- [#211 Dotenv reads refuse symlinks on the opened handle, not a prior lookup](https://github.com/ashlrai/phantom-secrets/pull/211): pull-request; 2026-10-16
+- [#214 docs: drop the stale v0.7.5 release snapshot from CONTRIBUTING, version-neutral brew test text](https://github.com/ashlrai/phantom-secrets/pull/214): pull-request; 2026-10-16
+- [#210 feat(web): add /ecosystem page on top of the deployed agent-docs build](https://github.com/ashlrai/phantom-secrets/pull/210): pull-request; 2026-10-16
+- [#213 test(runtime): stop RLIMIT_NPROC from failing the timeout test on busy runners](https://github.com/ashlrai/phantom-secrets/pull/213): pull-request; 2026-10-16
+- [#208 init keeps an existing .env.example; MCP listing and compliance answer before init](https://github.com/ashlrai/phantom-secrets/pull/208): pull-request; 2026-10-16
+- [#209 ci: check the MCP Registry catalog against tools/list on every PR](https://github.com/ashlrai/phantom-secrets/pull/209): pull-request; 2026-10-16
+- [#204 bench: response scrubber throughput example](https://github.com/ashlrai/phantom-secrets/pull/204): pull-request; 2026-10-16
+- [#203 docs(readme): add one-line tagline](https://github.com/ashlrai/phantom-secrets/pull/203): pull-request; 2026-10-16
+- [#207 MCP phantom_why: answer before init and without opening the vault](https://github.com/ashlrai/phantom-secrets/pull/207): pull-request; 2026-10-16
+- [#206 Install as root: extract release archives without keeping the archive owner](https://github.com/ashlrai/phantom-secrets/pull/206): pull-request; 2026-10-16; cross-repo ashlrai/phantom#825
+- [#170 ci: single CI Gate + path filters, cargo-nextest, crate contract stops re-running tests](https://github.com/ashlrai/phantom-secrets/pull/170): pull-request; 2026-10-16
+- [#205 fix(exec,why): say when a protected key has no proxy route](https://github.com/ashlrai/phantom-secrets/pull/205): pull-request; 2026-10-16; cross-repo ashlrai/phantom#751, ashlrai/phantom#772
+- [#190 fix: report a locked encrypted-file vault instead of "No secrets stored"; redact exec session token](https://github.com/ashlrai/phantom-secrets/pull/190): pull-request; 2026-10-16
+- [#195 Example: Next.js under phantom exec (#174)](https://github.com/ashlrai/phantom-secrets/pull/195): pull-request; 2026-10-16
+- [#194 Docs and tests: proxy port behavior (#172)](https://github.com/ashlrai/phantom-secrets/pull/194): pull-request; 2026-10-16
+- [#199 fix(proxy): Wrangler and Cloudflare SDKs reach the API under `phantom exec`](https://github.com/ashlrai/phantom-secrets/pull/199): pull-request; 2026-10-16
+- [#193 eval: leak-rate harness (scripted adversary, canary keys, with/without phantom init)](https://github.com/ashlrai/phantom-secrets/pull/193): pull-request; 2026-10-16
+- [#201 fix: valid JSON from empty audit stats/export and `why --json`; MCP audit tools reject unknown formats](https://github.com/ashlrai/phantom-secrets/pull/201): pull-request; 2026-10-16
+- [#200 fix(mcp): make phantom_add_secret_interactive effect-free and document approval gates](https://github.com/ashlrai/phantom-secrets/pull/200): pull-request; 2026-10-16
+- [#202 fix(upgrade): drop yanked zip 8 by extracting Windows assets with zip 9](https://github.com/ashlrai/phantom-secrets/pull/202): pull-request; 2026-10-16
+- [#196 ci: run CI and CI Gate on merge_group events](https://github.com/ashlrai/phantom-secrets/pull/196): pull-request; 2026-10-16
+- [#198 fix(proxy): valid Basic auth for Twilio and route-owned Gemini key slots](https://github.com/ashlrai/phantom-secrets/pull/198): pull-request; 2026-10-16
+- [#186 fix(proxy): SDKs for OpenAI and OpenAI-compatible routes reach the /v1 API under `phantom exec`](https://github.com/ashlrai/phantom-secrets/pull/186): pull-request; 2026-10-15
+- [#188 feat(mcp): structured value-blind JSON across read-only tools; errors name the next step](https://github.com/ashlrai/phantom-secrets/pull/188): pull-request; 2026-10-15
+- [#192 fix(proxy): long streams, truncation signalling, SDK base-URL vars, unsized streams, 32 MiB cap](https://github.com/ashlrai/phantom-secrets/pull/192): pull-request; 2026-10-15
+- [#185 feat(mcp): structured value-blind JSON for phantom_check and phantom_doctor](https://github.com/ashlrai/phantom-secrets/pull/185): pull-request; 2026-10-15
+- [#187 fix(doctor): give the missing-.gitignore warning its own fix hint](https://github.com/ashlrai/phantom-secrets/pull/187): pull-request; 2026-10-15
+- [#184 feat(cli): structured `phantom doctor --json` for agents and CI](https://github.com/ashlrai/phantom-secrets/pull/184): pull-request; 2026-10-15
+- [#182 Agent fidelity: real MCP server identity and a names-only `phantom check --json`](https://github.com/ashlrai/phantom-secrets/pull/182): pull-request; 2026-10-14
+- [#176 ci: affected-only tests on PRs (nextest rdeps filterset)](https://github.com/ashlrai/phantom-secrets/pull/176): pull-request; 2026-10-13
+- [#169 ci: 10x faster test suite (optimized crypto deps in test profile) + cancel superseded PR runs](https://github.com/ashlrai/phantom-secrets/pull/169): pull-request; 2026-10-13
+- [#161 fix(seo): scheduled SEO observation fails after phm.dev became the umbrella homepage](https://github.com/ashlrai/phantom-secrets/pull/161): pull-request; 2026-10-13
+- [#160 deps(web): fix npm audit advisories blocking CI](https://github.com/ashlrai/phantom-secrets/pull/160): pull-request; 2026-10-13
+- [#158 fix: close device authorization expiry race at database mutation](https://github.com/ashlrai/phantom-secrets/pull/158): pull-request; 2026-10-12
+- [#157 docs(web): publish verified Phantom 3.29.12 site metadata](https://github.com/ashlrai/phantom-secrets/pull/157): pull-request; 2026-10-12
+- [#156 docs(web): publish verified Phantom 3.29.10](https://github.com/ashlrai/phantom-secrets/pull/156): pull-request; 2026-10-10
+- [#155 Publish verified Phantom 3.29.9 website metadata](https://github.com/ashlrai/phantom-secrets/pull/155): pull-request; 2026-10-10
+- [#154 Publish verified Phantom 3.29.8 website metadata](https://github.com/ashlrai/phantom-secrets/pull/154): pull-request; 2026-10-10
+- [#153 Fix account selection and recovery after failed GitHub sign-in](https://github.com/ashlrai/phantom-secrets/pull/153): pull-request; 2026-10-10
+- [#152 test: make approval token tampering deterministic](https://github.com/ashlrai/phantom-secrets/pull/152): pull-request; 2026-10-10
+- [#151 docs(web): refresh verified Phantom 3.29.7 release and Mac download](https://github.com/ashlrai/phantom-secrets/pull/151): pull-request; 2026-10-10
+- [#150 Fix dashboard sign-in and device claim error recovery](https://github.com/ashlrai/phantom-secrets/pull/150): pull-request; 2026-10-10
+- [#149 fix(web): display verified Phantom 3.29.6 release](https://github.com/ashlrai/phantom-secrets/pull/149): pull-request; 2026-10-10
+- [#148 Restore GitHub device sign-in before callback cleanup and polish branding](https://github.com/ashlrai/phantom-secrets/pull/148): pull-request; 2026-10-09
+- [#147 Restrict browser database roles to RLS dashboard reads](https://github.com/ashlrai/phantom-secrets/pull/147): pull-request; 2026-10-09
+- [#146 Evaluate personal Cloud admission at runtime and report read failures](https://github.com/ashlrai/phantom-secrets/pull/146): pull-request; 2026-10-09
+- [#144 Serialize personal Cloud backup quota and version updates](https://github.com/ashlrai/phantom-secrets/pull/144): pull-request; 2026-10-09
+- [#143 Refresh live Phantom metadata and finish umbrella branding](https://github.com/ashlrai/phantom-secrets/pull/143): pull-request; 2026-10-09
+- [#133 docs(examples): tested Claude Code, Cursor and GitHub Actions recipes](https://github.com/ashlrai/phantom-secrets/pull/133): pull-request; 2026-09-30
+- [#116 docs: add top-of-README install block, move release snapshot, relocate internal notes](https://github.com/ashlrai/phantom-secrets/pull/116): pull-request; 2026-09-29
+- [#132 deps(mcp): upgrade rmcp 1.5 → 3.5 (fixes Dependabot #31 - #36)](https://github.com/ashlrai/phantom-secrets/pull/132): pull-request; 2026-09-29
+- [#131 test(workspace): widen vault-authority contender bound (fix flaky lock-order test)](https://github.com/ashlrai/phantom-secrets/pull/131): pull-request; 2026-09-29
+- [#130 fix(exec): keep the child's stdout clean and honor --quiet](https://github.com/ashlrai/phantom-secrets/pull/130): pull-request; 2026-09-29
+- [#129 chore(deps): bump fast-uri to 3.1.8 in video/ (Dependabot #37)](https://github.com/ashlrai/phantom-secrets/pull/129): pull-request; 2026-09-29
+- [#127 test(core): fix ETXTBSY flake in precommit hook tests](https://github.com/ashlrai/phantom-secrets/pull/127): pull-request; 2026-09-29
+- [#119 fix(check): let the pre-commit hook accept phantom init's .env.example; drop README star asks](https://github.com/ashlrai/phantom-secrets/pull/119): pull-request; 2026-09-29
+- [#126 fix(cli): add a quick start to --help and list every command by task](https://github.com/ashlrai/phantom-secrets/pull/126): pull-request; 2026-09-29
+- [#125 fix(init): warn about volatile Linux keyutils; point next steps at local checks](https://github.com/ashlrai/phantom-secrets/pull/125): pull-request; 2026-09-29
+- [#124 fix(init,exec): stop duplicating DATABASE_URL and explain the connection-string block](https://github.com/ashlrai/phantom-secrets/pull/124): pull-request; 2026-09-29
+- [#123 feat(web): replace 'Star Phantom' asks with neutral 'View on GitHub' links](https://github.com/ashlrai/phantom-secrets/pull/123): pull-request; 2026-09-29
+- [#128 test(web): fix timeout flake in two-build readiness test](https://github.com/ashlrai/phantom-secrets/pull/128): pull-request; 2026-09-29
+- [#122 docs: treat v0.7.9 as the current release (README, CHANGELOG, install docs, phm.dev binding)](https://github.com/ashlrai/phantom-secrets/pull/122): pull-request; 2026-09-29
+- [#120 chore(deps): bump rustls to 0.23.45 for RUSTSEC-2026-0285](https://github.com/ashlrai/phantom-secrets/pull/120): pull-request; 2026-09-29
+- [#112 feat(web): expand Codex workflow demo](https://github.com/ashlrai/phantom-secrets/pull/112): pull-request; 2026-09-09
+- [v0.7.9](https://github.com/ashlrai/phantom-secrets/releases/tag/v0.7.9): release; 2026-09-07
+- [#111 chore: prepare v0.7.9 release candidate](https://github.com/ashlrai/phantom-secrets/pull/111): pull-request; 2026-09-06
+- [#110 fix: repair agent onboarding and Hub status](https://github.com/ashlrai/phantom-secrets/pull/110): pull-request; 2026-09-06
+- [#109 Publish v0.7.8 adoption site and SEO observation loop](https://github.com/ashlrai/phantom-secrets/pull/109): pull-request; 2026-09-06
+- [\[0.7.9\] - 2026-09-06](https://github.com/ashlrai/phantom-secrets/blob/HEAD/CHANGELOG.md): changelog; 2026-09-06
+- [v0.7.8](https://github.com/ashlrai/phantom-secrets/releases/tag/v0.7.8): release; 2026-09-05
+- [#108 fix: harden Windows npm wrapper release path](https://github.com/ashlrai/phantom-secrets/pull/108): pull-request; 2026-09-05
+- [v0.7.7](https://github.com/ashlrai/phantom-secrets/releases/tag/v0.7.7): release; 2026-09-05
+- [\[0.7.8\] - 2026-09-05](https://github.com/ashlrai/phantom-secrets/blob/HEAD/CHANGELOG.md): changelog; 2026-09-05
+- [#107 Restore evidence-led Phantom adoption site](https://github.com/ashlrai/phantom-secrets/pull/107): pull-request; 2026-09-04
+- [#103 fix: filter npm stage reservations by version](https://github.com/ashlrai/phantom-secrets/pull/103): pull-request; 2026-09-03
+- [#102 Rebuild public adoption experience and prepare v0.7.6](https://github.com/ashlrai/phantom-secrets/pull/102): pull-request; 2026-09-03
+- [v0.7.5](https://github.com/ashlrai/phantom-secrets/releases/tag/v0.7.5): release; 2026-09-03
+- [#101 fix: harden v0.7.5 release candidate](https://github.com/ashlrai/phantom-secrets/pull/101): pull-request; 2026-09-03
+- [\[0.7.5\] - 2026-09-03](https://github.com/ashlrai/phantom-secrets/blob/HEAD/CHANGELOG.md): changelog; 2026-09-03
+- [\[0.7.6\] - 2026-09-03](https://github.com/ashlrai/phantom-secrets/blob/HEAD/CHANGELOG.md): changelog; 2026-09-03
+- [\[0.7.7\] - 2026-09-03](https://github.com/ashlrai/phantom-secrets/blob/HEAD/CHANGELOG.md): changelog; 2026-09-03
+- [v0.7.4](https://github.com/ashlrai/phantom-secrets/releases/tag/v0.7.4): release; 2026-09-02
+- [#100 docs: add fail-closed signing readiness contracts](https://github.com/ashlrai/phantom-secrets/pull/100): pull-request; 2026-09-02
+- [#98 docs: harden npm and MCP publication](https://github.com/ashlrai/phantom-secrets/pull/98): pull-request; 2026-09-02
+- [#99 ci: exercise Windows installer in normal builds](https://github.com/ashlrai/phantom-secrets/pull/99): pull-request; 2026-09-02
+- [#97 fix: stabilize Windows release acceptance](https://github.com/ashlrai/phantom-secrets/pull/97): pull-request; 2026-09-02
+- [#96 fix: sync MCP registry doctor contract](https://github.com/ashlrai/phantom-secrets/pull/96): pull-request; 2026-09-02
+- [#95 fix: preserve dotenv fidelity and fail closed](https://github.com/ashlrai/phantom-secrets/pull/95): pull-request; 2026-09-02
+- [#94 fix: close streaming credential boundary gaps](https://github.com/ashlrai/phantom-secrets/pull/94): pull-request; 2026-09-02
+- [#93 Harden adoption and production-readiness gates](https://github.com/ashlrai/phantom-secrets/pull/93): pull-request; 2026-09-02
+- [#92 Harden release rehearsal and hosted readiness](https://github.com/ashlrai/phantom-secrets/pull/92): pull-request; 2026-09-02
+- [\[0.7.4\] - 2026-09-02](https://github.com/ashlrai/phantom-secrets/blob/HEAD/CHANGELOG.md): changelog; 2026-09-02
+- [#91 test: isolate approval ceremony orchestration](https://github.com/ashlrai/phantom-secrets/pull/91): pull-request; 2026-09-01
+- [#90 fix: harden approval nonces and metadata output](https://github.com/ashlrai/phantom-secrets/pull/90): pull-request; 2026-09-01
+- [#89 feat: harden Phantom for safe agentic engineering](https://github.com/ashlrai/phantom-secrets/pull/89): pull-request; 2026-09-01
+- [#88 chore: mirror Homebrew v0.7.3](https://github.com/ashlrai/phantom-secrets/pull/88): pull-request; 2026-08-31
+- [#87 docs: add safe delegation and enterprise adoption guides](https://github.com/ashlrai/phantom-secrets/pull/87): pull-request; 2026-08-31
+- [v0.7.3](https://github.com/ashlrai/phantom-secrets/releases/tag/v0.7.3): release; 2026-08-31
+- [#86 release: bind artifacts to immutable tags](https://github.com/ashlrai/phantom-secrets/pull/86): pull-request; 2026-08-31
+- [#85 release: make v0.7.3 proxy tests hermetic](https://github.com/ashlrai/phantom-secrets/pull/85): pull-request; 2026-08-31
+- [#84 release: fix forward Phantom v0.7.2](https://github.com/ashlrai/phantom-secrets/pull/84): pull-request; 2026-08-31
+- [#83 fix(security): v0.7.1 credential-boundary hardening](https://github.com/ashlrai/phantom-secrets/pull/83): pull-request; 2026-08-31
+- [v0.7.0](https://github.com/ashlrai/phantom-secrets/releases/tag/v0.7.0): release; 2026-08-31
+- [#76 feat: harden agentic workflows for v0.7.0](https://github.com/ashlrai/phantom-secrets/pull/76): pull-request; 2026-08-31
+- [\[0.7.0\] - 2026-08-31](https://github.com/ashlrai/phantom-secrets/blob/HEAD/CHANGELOG.md): changelog; 2026-08-31
+- [\[0.7.1\] - 2026-08-31](https://github.com/ashlrai/phantom-secrets/blob/HEAD/CHANGELOG.md): changelog; 2026-08-31
+- [\[0.7.2\] - 2026-08-31](https://github.com/ashlrai/phantom-secrets/blob/HEAD/CHANGELOG.md): changelog; 2026-08-31
+- [\[0.7.3\] - 2026-08-31](https://github.com/ashlrai/phantom-secrets/blob/HEAD/CHANGELOG.md): changelog; 2026-08-31
+- [#75 feat(issuance): Vercel, Supabase, Sentry, Stripe issuers - complete the sanctioned-issuance suite](https://github.com/ashlrai/phantom-secrets/pull/75): pull-request; 2026-08-19
+- [#74 feat(issuance): credential issuance - loopback-PKCE + device-flow consent engines + GitHub App bootstrap](https://github.com/ashlrai/phantom-secrets/pull/74): pull-request; 2026-08-18
+- [#73 docs: Phantom Grants - one human consent, perpetual agent-safe credential lifecycle](https://github.com/ashlrai/phantom-secrets/pull/73): pull-request; 2026-08-17
+- [#72 feat(rotation): real vendor credential rotation - provider dispatch-by-identity, Vercel minting, security hardening](https://github.com/ashlrai/phantom-secrets/pull/72): pull-request; 2026-08-17
+- [#71 ci: add portable Ashlr verification contract](https://github.com/ashlrai/phantom-secrets/pull/71): pull-request; 2026-07-22
+- [v0.6.0](https://github.com/ashlrai/phantom-secrets/releases/tag/v0.6.0): release; 2026-05-04
+- [#66 docs: refresh for PRs #52 - #64 (audit, import, streaming, threat model, doctor)](https://github.com/ashlrai/phantom-secrets/pull/66): pull-request; 2026-05-04
+- [#65 feat: phantom mcp serve bundles MCP server into main binary](https://github.com/ashlrai/phantom-secrets/pull/65): pull-request; 2026-05-04
+- [#64 feat(import): --from doppler|infisical|dotenvx|1password|env](https://github.com/ashlrai/phantom-secrets/pull/64): pull-request; 2026-05-04
+- [#61 feat(proxy): stream token replacement for text/json/form bodies](https://github.com/ashlrai/phantom-secrets/pull/61): pull-request; 2026-05-04
+- [#62 feat(audit): HMAC-SHA256 chain for tamper-evident logs + phantom audit verify](https://github.com/ashlrai/phantom-secrets/pull/62): pull-request; 2026-05-04
+- [#60 docs: threat model (assets, actors, mitigations, known gaps)](https://github.com/ashlrai/phantom-secrets/pull/60): pull-request; 2026-05-04
+- [#54 ci: run --ignored OS-keychain tests on each platform (non-blocking)](https://github.com/ashlrai/phantom-secrets/pull/54): pull-request; 2026-05-04
+- [#55 docs: per-client setup pages + sync/login explainers](https://github.com/ashlrai/phantom-secrets/pull/55): pull-request; 2026-05-04
+- [#53 docs: refresh after PR #52 (multi-client setup, init --all, audit log)](https://github.com/ashlrai/phantom-secrets/pull/53): pull-request; 2026-05-04
+- [#59 feat(cli): phantom audit show/tail/path for the JSONL audit log](https://github.com/ashlrai/phantom-secrets/pull/59): pull-request; 2026-05-04
+- [#56 feat(doctor): show install source, vault backend, audit status, Argon2 params, MCP wiring](https://github.com/ashlrai/phantom-secrets/pull/56): pull-request; 2026-05-04
+- [#57 feat(export): --json emits plaintext to stdout (gated by --allow-plaintext)](https://github.com/ashlrai/phantom-secrets/pull/57): pull-request; 2026-05-04
+- [#58 feat(init): parallel --all with progress bar (--jobs/-j flag)](https://github.com/ashlrai/phantom-secrets/pull/58): pull-request; 2026-05-04
+- [#52 feat: UX polish + multi-project init + cheap security wins](https://github.com/ashlrai/phantom-secrets/pull/52): pull-request; 2026-05-04
+- [\[0.6.0\] - 2026-05-04](https://github.com/ashlrai/phantom-secrets/blob/HEAD/CHANGELOG.md): changelog; 2026-05-04
+- [#51 docs: refresh after PRs #46 - #50 (counts, new flags, full MCP tool list)](https://github.com/ashlrai/phantom-secrets/pull/51): pull-request; 2026-05-02
+- [#50 feat(core): preserve quotes/indent/export prefix when phantom-tokenizing .env](https://github.com/ashlrai/phantom-secrets/pull/50): pull-request; 2026-05-02
+- [#49 feat: stdin/sync filters + MCP plaintext refusal + named-secret header injection + check --staged .env scan](https://github.com/ashlrai/phantom-secrets/pull/49): pull-request; 2026-05-02
+- [#48 feat(list): add --json flag to phantom list](https://github.com/ashlrai/phantom-secrets/pull/48): pull-request; 2026-05-02
+- [#47 feat(cli): add `phantom completion <shell>` for shell completions](https://github.com/ashlrai/phantom-secrets/pull/47): pull-request; 2026-05-02
+- [#46 fix(install): wire ~/.bashrc on Windows for Git Bash / Claude Code](https://github.com/ashlrai/phantom-secrets/pull/46): pull-request; 2026-05-02
+- [#45 feat(install): standalone curl/irm one-liner installers](https://github.com/ashlrai/phantom-secrets/pull/45): pull-request; 2026-04-27
+- [#44 fix(cli): Windows final-mile cleanup - clipboard auto-clear + hook docs (closes #9, #10)](https://github.com/ashlrai/phantom-secrets/pull/44): pull-request; 2026-04-26
+- [#35 fix(audit): batched low-severity cleanup (F11, F12, F13, F14, F15)](https://github.com/ashlrai/phantom-secrets/pull/35): pull-request; 2026-04-26
+- [#34 fix(proxy): scope phm-token substitution to safe locations (audit F9)](https://github.com/ashlrai/phantom-secrets/pull/34): pull-request; 2026-04-26
+- [v0.5.1 - Security audit (F1 - F10) + vault hardening + landing rebuild](https://github.com/ashlrai/phantom-secrets/releases/tag/v0.5.1): release; 2026-04-26
+- [#33 ci: pin third-party Actions to commit SHAs + scope GITHUB_TOKEN (audit F10)](https://github.com/ashlrai/phantom-secrets/pull/33): pull-request; 2026-04-24
+- [#32 fix(cli): write .phantom.pid with 0o600 from creation (audit F8)](https://github.com/ashlrai/phantom-secrets/pull/32): pull-request; 2026-04-24
+- [#31 fix(vault): zeroize plaintext JSON in FileVault (audit F7)](https://github.com/ashlrai/phantom-secrets/pull/31): pull-request; 2026-04-24
+- [#30 fix(proxy): constant-time compare for proxy auth token (audit F6)](https://github.com/ashlrai/phantom-secrets/pull/30): pull-request; 2026-04-24
+- [#29 fix(core): enforce HTTPS on PHANTOM_API_URL (audit F5)](https://github.com/ashlrai/phantom-secrets/pull/29): pull-request; 2026-04-24
+- [#28 fix(mcp): harden phantom_copy_secret target-dir (audit F3)](https://github.com/ashlrai/phantom-secrets/pull/28): pull-request; 2026-04-24
+- [#27 fix(core): write .env phantomize atomically (audit F4)](https://github.com/ashlrai/phantom-secrets/pull/27): pull-request; 2026-04-24
+- [#25 fix(mcp): gate destructive vault tools behind confirm:true (audit F2)](https://github.com/ashlrai/phantom-secrets/pull/25): pull-request; 2026-04-24
+- [#24 fix(npm): verify release binary SHA-256 before extracting (audit F1)](https://github.com/ashlrai/phantom-secrets/pull/24): pull-request; 2026-04-24
+- [#23 fix(cli): silence dead_code for ShellSyntax::Cmd on non-Windows](https://github.com/ashlrai/phantom-secrets/pull/23): pull-request; 2026-04-24
+- [#22 v0.5.1: Windows polish (shell syntax, README)](https://github.com/ashlrai/phantom-secrets/pull/22): pull-request; 2026-04-22
+- [#20 fix(mcp): allow dead_code on tool_router](https://github.com/ashlrai/phantom-secrets/pull/20): pull-request; 2026-04-22
+- [v0.5.0](https://github.com/ashlrai/phantom-secrets/releases/tag/v0.5.0): release; 2026-04-22
+- [#19 chore: release v0.5.0 (Windows support)](https://github.com/ashlrai/phantom-secrets/pull/19): pull-request; 2026-04-22
+- [#18 npm: unblock Windows install path in wrapper (#15)](https://github.com/ashlrai/phantom-secrets/pull/18): pull-request; 2026-04-22
+- [#17 Windows: cross-platform clipboard + daemon spawn (#6, #7)](https://github.com/ashlrai/phantom-secrets/pull/17): pull-request; 2026-04-22
+- [#16 Windows: cross-platform home_dir lookup (#8, #13)](https://github.com/ashlrai/phantom-secrets/pull/16): pull-request; 2026-04-22
+- [#14 Windows support: blockers to compile (#2-#5)](https://github.com/ashlrai/phantom-secrets/pull/14): pull-request; 2026-04-21
+- [v0.4.0 - DX Overhaul + Response Scrubbing](https://github.com/ashlrai/phantom-secrets/releases/tag/v0.4.0): release; 2026-04-04
+- [v0.3.3](https://github.com/ashlrai/phantom-secrets/releases/tag/v0.3.3): release; 2026-03-31
+- [v0.3.2](https://github.com/ashlrai/phantom-secrets/releases/tag/v0.3.2): release; 2026-03-31
+- [v0.3.1](https://github.com/ashlrai/phantom-secrets/releases/tag/v0.3.1): release; 2026-03-31
+- [v0.3.0](https://github.com/ashlrai/phantom-secrets/releases/tag/v0.3.0): release; 2026-03-29
+- [v0.2.1](https://github.com/ashlrai/phantom-secrets/releases/tag/v0.2.1): release; 2026-03-29
+- [Phantom v0.2.0 - Delegate everything to AI](https://github.com/ashlrai/phantom-secrets/releases/tag/v0.2.0): release; 2026-03-29
+- [Phantom Secrets v0.1.0](https://github.com/ashlrai/phantom-secrets/releases/tag/v0.1.0): release; 2026-03-27
+- [\[Unreleased\]](https://github.com/ashlrai/phantom-secrets/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased

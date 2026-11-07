@@ -872,6 +872,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'notify test',                  desc: 'Send a test ping to the configured webhook(s); no-op if none are set.', topic: 'integrations' },
   { cmd: 'stack [status|list|providers|recommend|scan|doctor|add|apply]', desc: 'Ecosystem `stack` tool surface: read-only status/list/recommend, confirm-gated add/apply (real provisioning).', topic: 'integrations' },
   { cmd: 'ecosystem doctor [--json] [--deep]', desc: 'Read-only sibling-repository health scan across the ecosystem.', topic: 'integrations' },
+  { cmd: 'ecosystem changelog [--json] [--since <window>] [--as-of <instant>] [--root <path>] [--max-pages <n>] [--write]', desc: 'Render the ecosystem changelog from public sources.', topic: 'integrations' },
 
   { cmd: 'worktrees report [--dir <path>] [--json]', desc: 'Report worktree age, size, last log time and job state.', topic: 'safety' },
   { cmd: 'disk [--wt-dir <abs>] [--json]', desc: 'Read-only disk report for agent worktrees: sizes, lifecycle state, and the bytes safe to reclaim.', topic: 'safety' },
