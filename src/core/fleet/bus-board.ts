@@ -311,12 +311,14 @@ export class BusBoard {
     return { delivered: deliveries.length, envelopeIds: deliveries.map((d) => d.id), unlogged };
   }
 
-  readThread(actor: string, threadId: string): BusBoardDelivery[] {
+  readThread(actor: string, threadId: string, pendingOnly = false): BusBoardDelivery[] {
     actor = this.peer(actor);
     return this.transaction(false, (state) => {
       this.member(state, threadId, actor);
+      const acknowledged = new Set((state.receipts ?? []).map((receipt) => receipt.deliveryId));
       return state.deliveries
-        .filter((delivery) => delivery.threadId === threadId && delivery.recipient === actor)
+        .filter((delivery) => delivery.threadId === threadId && delivery.recipient === actor &&
+          (!pendingOnly || !acknowledged.has(delivery.id)))
         .map((delivery) => ({
           ...delivery,
           content: { trust: 'untrusted' as const, text: presentBusBoardText(delivery.content.text) },
