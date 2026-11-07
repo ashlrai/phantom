@@ -55,3 +55,18 @@ Needs you approvals and the comms inbox, the leader order box, and the recent
 merge list together. These links open the existing screens and preserve their
 permissions and confirmation flows. The merge list uses the live fleet runs
 read and shows unknown or unavailable data as such.
+
+## Fleet telemetry and Show Mode
+
+The Fleet screen includes a Resource & activity board. It refreshes lane and
+activity projections every four seconds while visible. Lane rows show quota
+remaining when observed, live jobs, queue depth and the source observation
+time. The activity panel shows up to eight recent actions and five recent
+merges. A failed refresh can leave the last reading visible; source state and
+timestamps help distinguish recorded data from current evidence.
+
+Choose **Show Mode** in the console navigation for an auto-advancing story of
+recent activity and a merge ticker. Pause the story or advance it manually.
+The underlying sources refresh every 15 seconds while visible; unavailable
+sources are reported and activity may be incomplete or stale. Neither view
+starts work or establishes that an outcome was shipped.

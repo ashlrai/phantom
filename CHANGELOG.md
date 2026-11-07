@@ -18,6 +18,19 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ## [Unreleased]
 
+### Added
+
+- Add a Fleet resource and activity board with lane quota observations, recent actions and merges, refreshed while visible ([#3939](https://github.com/ashlrai/phantom/pull/3939)).
+- Add Show Mode for browsing recent fleet activity and a merge ticker ([#3934](https://github.com/ashlrai/phantom/pull/3934)).
+- Add validated agent checkpoint handoffs and the read-only `phm checkpoint resume` command ([#3921](https://github.com/ashlrai/phantom/pull/3921)).
+- Add explicit local delivery acknowledgments and receipt metadata to bus threads ([#3912](https://github.com/ashlrai/phantom/pull/3912)).
+- Add a read-only fleet status API projection through `phm fleet status-api --json` ([#3870](https://github.com/ashlrai/phantom/pull/3870)).
+
+### Changed
+
+- Add fleet links and recent merges to phone Home, preserving unknown and unavailable states ([#3932](https://github.com/ashlrai/phantom/pull/3932)).
+- Show per-lane observability details and resource usage information in the console ([#3910](https://github.com/ashlrai/phantom/pull/3910), [#3936](https://github.com/ashlrai/phantom/pull/3936)).
+
 ## [3.30.24] — 2026-11-07
 
 
