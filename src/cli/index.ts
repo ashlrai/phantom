@@ -19,6 +19,7 @@
  *   run show <id>              Print a past run in detail.
  *   runs [--json]              List past runs.
  *   signals [--json]          Real repository adoption signals; missing sources stay explicit.
+ *   ci-metrics [--json]          Per-repo daily turn-time (red→green) metrics; writes ~/.ashlr/ci-metrics.json.
  *   friction [--json]         Dispatch→merge friction ledger: 7d counts, evidence, scores, before/after.
  *   pulse [--json] [--window]  Local observability dashboard: tokens, cost, activity.
  *   skills list [--json]       List skills learned from merged PRs (read-only).
@@ -401,6 +402,14 @@ const loadUsageCmd = lazyCmd(
   () => import('./usage.js' as unknown as string),
   (m) => m.cmdUsage as Cmd,
   'usage command requires src/cli/usage.ts (M194 module not yet built).',
+);
+
+// ─── CI metrics command loader ──────────────────────────────────────────
+
+const loadCiMetricsCmd = lazyCmd(
+  () => import('./ci-metrics.js' as unknown as string),
+  (m) => m.cmdCiMetrics as Cmd,
+  "ci-metrics command requires src/cli/ci-metrics.ts (CI-Metrics module not yet built).",
 );
 
 // ─── M211 dashboard command loader ──────────────────────────────────────────
@@ -2847,6 +2856,12 @@ async function main(): Promise<void> {
       case 'budget': {
         const { cmdBudget } = await import('./budget.js');
         process.exitCode = await cmdBudget(rest);
+        break;
+      }
+
+      case 'ci-metrics': {
+        const cmdCiMetrics = await loadCiMetricsCmd();
+        process.exitCode = await cmdCiMetrics(rest);
         break;
       }
 
