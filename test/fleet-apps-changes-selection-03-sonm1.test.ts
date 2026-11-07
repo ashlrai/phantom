@@ -34,7 +34,7 @@ describe('fleet apps-changes selection', () => {
       ['baseline', a, 'stopped'], ['transition', a, 'running'], ['summary', undefined, undefined],
     ]);
     expect(result.events.at(-1)).toMatchObject({ outcome: 'complete', transitions: 1 });
-    expect(deps.runChild).toHaveBeenCalledWith(['fleet', 'apps-status', '--json'], expect.anything());
+    expect(deps.runChild).toHaveBeenCalledWith(['fleet', 'apps-status', '--json', '--app', a], expect.anything());
   });
   it('orders two selected apps canonically regardless of flag order', async () => {
     const result = await capture([...args, '--app', b, '--app', a], sequence([snapshot([row(a, true), row(b, false)])]));
