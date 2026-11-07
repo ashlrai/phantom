@@ -251,3 +251,12 @@ production dispatchd cutover or runner installation is performed. See
 [Agent network](docs/AGENT-NETWORK.md) and [Nodes](docs/NODES.md).
 
 Agent network channels: `phm agents bus channels list --json` and `phm agents bus channels test email --json` are offline dry runs. See [agent network channels](docs/AGENT-NETWORK-CHANNELS.md) for the default-deny policy and adapter contract.
+
+Repository ranking: `phm repos rank --json` blends seed priority with local merged
+PR recency and autonomy leverage, at most daily. `phm repos rank --recompute --json`
+honors the same ceiling. `phm repos rank proposals --json` reads suggestions only;
+enrollment remains a manual config change. See [repo ranking](docs/REPO-RANK.md).
+
+## Import scheduled routines
+
+Preview a local routines JSON array with `ashlr automations import --from routines.json --dry-run --json`, then import with `ashlr automations import --from routines.json --json`. Imports start disabled and skip existing names. See [Automations](docs/VERSE.md#automations-315) for the format and schedule restrictions.
