@@ -21,7 +21,7 @@ export interface WtReapDeps {
 export interface WtReapReport {
   schema: 'fleet.wt-reap.v1';
   readOnly: boolean;
-  removals?: Array<{ id: string; status: 'removed' | 'refused' | 'failed' }>;
+  removals?: Array<{ id: string; status: 'removed' | 'refused' | 'failed'; reason?: string }>;
   sources: { worktrees: boolean; jobs: boolean };
   worktrees: Array<{ id: string; ageHours: number | null; state: State; reapable: boolean }>;
   totals: Record<State | 'worktrees' | 'reapable', number>;
@@ -32,7 +32,7 @@ const defaults: WtReapReaders = {
 };
 const usage = 'Usage: ashlr fleet wt-reap [--apply] [--json]';
 
-/** Folder names are job ids. Last means last recorded row in the append-only log.
+/** Folder names are job ids. A launch starts a new attempt in the append-only log.
  * Age is time since the last finish, without rounding across the one-hour boundary.
  * An outcome takes precedence over an empty finish, so open work stays protected.
  */
@@ -48,7 +48,9 @@ export async function readFleetWtReap(deps: WtReapDeps = {}): Promise<WtReapRepo
       const r = JSON.parse(line) as Record<string, unknown> | null;
       if (!r || typeof r !== 'object' || Array.isArray(r)) continue;
       const id = r.job ?? r.job_id ?? r.id;
-      if (typeof id !== 'string' || (r.event !== 'outcome' && r.event !== 'finish')) continue;
+      if (typeof id !== 'string') continue;
+      if (r.event === 'launch') { latest.delete(id); continue; }
+      if (r.event !== 'outcome' && r.event !== 'finish') continue;
       const entry = latest.get(id) ?? {};
       entry[r.event] = r;
       latest.set(id, entry);
@@ -77,7 +79,7 @@ export async function readFleetWtReap(deps: WtReapDeps = {}): Promise<WtReapRepo
 export async function cmdFleetWtReap(args: string[], deps: WtReapDeps = {}): Promise<number> {
   const out = deps.output ?? { log: console.log, error: console.error };
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    out.log(`${usage}\nList job folders in ~/.ashlr-runs/wt. Age is hours since the last finish.\nMerged or empty jobs older than one hour are reapable. Unknown ages stay protected.\nDry run is the default. Use --apply to remove reapable worktrees with Git.`);
+    out.log(`${usage}\nList job folders in ~/.ashlr-runs/wt. Age is hours since the last finish.\nMerged or empty jobs older than one hour are reapable. Unknown ages stay protected.\nDry run is the default. Use --apply to remove reapable worktrees with Git.\nFailed removals include a reason; fix the cause and run the command again.`);
     return 0;
   }
   if (new Set(args).size !== args.length || args.some(arg => !['--json', '--apply'].includes(arg))) { out.error(usage); return 2; }
@@ -92,17 +94,24 @@ export async function cmdFleetWtReap(args: string[], deps: WtReapDeps = {}): Pro
       try {
         if (dirname(path) !== wtRoot || !(await lstat(path)).isDirectory()
           || dirname(await realpath(path)) !== await realpath(wtRoot)) {
-          r.removals.push({ id: w.id, status: 'refused' });
+          r.removals.push({ id: w.id, status: 'refused', reason: 'unsafe-path' });
           continue;
         }
       } catch {
-        r.removals.push({ id: w.id, status: 'refused' });
+        r.removals.push({ id: w.id, status: 'refused', reason: 'path-unavailable' });
         continue;
       }
       try {
         await runner('git', ['-C', path, 'worktree', 'remove', '--', path]);
         r.removals.push({ id: w.id, status: 'removed' });
-      } catch { r.removals.push({ id: w.id, status: 'failed' }); }
+      } catch (error) {
+        // Git output can contain private paths or file names; expose only fixed codes.
+        const e = error as { stderr?: unknown; code?: unknown; killed?: unknown };
+        const stderr = typeof e?.stderr === 'string' ? e.stderr : '';
+        const reason = e?.killed ? 'git-timeout' : /contains modified or untracked files/i.test(stderr) ? 'uncommitted-files'
+          : /is locked/i.test(stderr) ? 'worktree-locked' : e?.code === 'ENOENT' ? 'git-unavailable' : 'git-remove-failed';
+        r.removals.push({ id: w.id, status: 'failed', reason });
+      }
     }
   }
   if (args.includes('--json')) out.log(JSON.stringify(r));
@@ -110,7 +119,7 @@ export async function cmdFleetWtReap(args: string[], deps: WtReapDeps = {}): Pro
     out.log(r.readOnly ? 'Worktree cleanup report. Deletes nothing.' : 'Worktree cleanup results.');
     if (!r.sources.worktrees || !r.sources.jobs) out.log('Some records could not be read.');
     for (const w of r.worktrees) out.log(`${w.id}: ${w.ageHours === null ? 'unknown age' : `${w.ageHours.toFixed(2)} hours old`}, ${w.state}, reapable: ${w.reapable ? 'yes' : 'no'}`);
-    for (const removal of r.removals ?? []) out.log(`${removal.id}: ${removal.status}.`);
+    for (const removal of r.removals ?? []) out.log(`${removal.id}: ${removal.status}${removal.reason ? ` (${removal.reason})` : ''}.`);
     out.log(`Totals: ${r.totals.worktrees} worktrees, ${r.totals.merged} merged, ${r.totals.empty} empty, ${r.totals.open} open, ${r.totals.none} none, ${r.totals.reapable} reapable.`);
   }
   return r.sources.worktrees && r.sources.jobs && (r.removals ?? []).every(item => item.status === 'removed') ? 0 : 1;
