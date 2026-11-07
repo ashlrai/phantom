@@ -178,8 +178,15 @@ export async function verifyManualDesktopSource(input,manifest,transport,envelop
   const auditInput={root:input.candidateRoot,repository:manifest.repository.nameWithOwner,revision:manifest.source.revision,
     runId:manifest.qualification.audit.runId,runAttempt:manifest.qualification.audit.runAttempt,read:transport.githubRead};
   const historicalAudit=input.publishedRelease?verifyUpdateAudit(auditInput):null;
+  const scope=timingScope.getStore();
+  const onObservationTiming=scope?value=>{try {
+    const emitted=scope.tracer.emit({schemaVersion:1,kind:'artifact-publication-observation-timing',sequence:++scope.tracer.sequence,
+      parentSpanId:scope.parentSpanId,outcome:value.outcome,mode:value.mode,durationMs:value.durationMs===null?null:Math.round(value.durationMs*1000)/1000});
+    if(emitted && typeof emitted.then==='function')Promise.resolve(emitted).catch(()=>{});
+  }catch{/* diagnostics cannot change admission */}}:undefined;
   const receipt=input.publishedRelease?verifyPublishedManualArtifact(proofInput(input,manifest,transport),
-    await inspectCommissionedManualPublication({...envelope,githubRead:transport.githubRead,downloadRead:transport.downloadRead})):
+    await inspectCommissionedManualPublication({...envelope,githubRead:transport.githubRead,downloadRead:transport.downloadRead,
+      ...(transport.githubReadMany?{githubReadMany:transport.githubReadMany}:{}),...(onObservationTiming?{onObservationTiming}:{})})):
     verifyArtifact(proofInput(input,manifest,transport));
   const audit=historicalAudit??verifyUpdateAudit(auditInput);
   assertPairedHostedProof(manifest,receipt,audit);
@@ -376,7 +383,7 @@ export async function productionInstallerDependencies() {
   assert.deepEqual(await implementationSnapshot(),initial,'implementation changed before imports completed');
   const github=desktopPublisherGithub(ROOT,tools);
   return {home:tools.home,environment,implementationSnapshot,initialImplementation:initial,
-    transport:{githubRead:github.read,attestRun:github.attestRun},
+    transport:{githubRead:github.read,githubReadMany:github.readMany,attestRun:github.attestRun},
     primitives:{...manifest,...qualified,...archive,...authority,trust:trust.getDesktopUpdateTrust(),appleSigner:tools.appleSigner}};
 }
 
