@@ -389,6 +389,7 @@ def mem():
         m = re.search(r"used = ([\d.]+)M", out); swap = float(m.group(1)) / 1024 if m else None
     except Exception: pass
     return free, swap
+machine_sample_started_ms = int(time.time() * 1000)
 free, swap = mem()
 
 # ---- liveness: map processes to jobs by cmdline and cwd
@@ -1041,6 +1042,8 @@ pubs.sort(reverse=True)
 evs = rd(EV).splitlines()[-25:]
 st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "paused": pause or None,
       "mem_free_pct": free, "swap_gb": round(swap, 2) if swap is not None else None,
+      "machine_sample": {"schema": "dispatchd.machine-sample.v1", "startedAtMs": machine_sample_started_ms,
+                         "memoryPressureFreePct": free, "swapUsedGiB": swap},
       "autopilot": AP,
       "lanes": {l: {"running": running[l], "target": slots[l]["target"], "floor": slots[l]["floor"],
                     "ceiling": slots[l]["ceiling"], "hard_cap": slots[l]["hard_cap"], "held": bool(slots[l].get("held") or l in hold),
