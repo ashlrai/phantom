@@ -121,6 +121,7 @@ describe('native MCP tool surface lock', () => {
       'phantom_fleet_apps_recovery_check:read',
       'phantom_fleet_apps_recovery_wait:read',
       'phantom_fleet_apps_status:read',
+      'phantom_fleet_doctor:read',
       'phantom_fleet_drop_job:append',
       'phantom_fleet_graph:read',
       'phantom_fleet_job_reassign:append',

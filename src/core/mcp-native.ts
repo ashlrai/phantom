@@ -424,6 +424,13 @@ const TOOLS: NativeToolImpl[] = [
     handler: async () => (await import('../cli/fleet-apps-status.js')).readFleetAppsStatus(),
   },
   {
+    name: 'phantom_fleet_doctor',
+    description: 'Read-only fleet health: one ok/warn/red check each for leader, heartbeat, stuck-prs, slow-prs, waste, kept, worktrees and lanes, with the reason. Never writes or removes anything.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => (await import('../cli/fleet-doctor.js')).runFleetDoctor(),
+  },
+  {
     name: 'phantom_fleet_apps_await',
     description: 'Wait for an explicit group of managed apps to reach a stated state (running or stopped) under a shared wall deadline. Read-only; never launch, quit, or restart.',
     get inputSchema() { return { type: 'object', properties: {
@@ -1444,7 +1451,7 @@ function auditNativeCall(summary: string, result: 'ok' | 'refused' | 'error'): v
  * surface as isError text results. Every outcome is audited.
  */
 export async function callNativeTool(name: string, rawArgs: unknown): Promise<NativeToolResult> {
-  const noArgumentObservation = ['phantom_fleet_graph', 'phantom_fleet_session', 'phantom_fleet_apps_status'].includes(name);
+  const noArgumentObservation = ['phantom_fleet_graph', 'phantom_fleet_session', 'phantom_fleet_apps_status', 'phantom_fleet_doctor'].includes(name);
   const fleetObservation = noArgumentObservation || ['phantom_fleet_apps_changes', 'phantom_fleet_apps_history', 'phantom_fleet_apps_recovery_wait'].includes(name);
   const tool = TOOLS.find((t) => t.name === name);
   const args: Record<string, unknown> =
@@ -1454,7 +1461,8 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
   const argKeys = Object.keys(args).sort().join(',') || '(none)';
 
   if (noArgumentObservation && (Object.keys(args).length > 0 ||
-    (name === 'phantom_fleet_apps_status' && (rawArgs === null || typeof rawArgs !== 'object' || Array.isArray(rawArgs))))) {
+    ((name === 'phantom_fleet_apps_status' || name === 'phantom_fleet_doctor') &&
+      (rawArgs === null || typeof rawArgs !== 'object' || Array.isArray(rawArgs))))) {
     auditNativeCall(`${name} — invalid observation arguments`, 'error');
     return textResult({ error: 'Fleet observation tools accept no arguments' }, true);
   }
