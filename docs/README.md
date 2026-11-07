@@ -307,3 +307,5 @@ canonical release guide for required hosted qualification and publication.
 - [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references only.
 
 - [Verify a worktree change](https://github.com/ashlrai/phantom/blob/master/docs/VERIFY-CHANGE.md): local toolchain checks and safe verdicts.
+
+- [Agent output evaluation](OUTPUT-EVAL.md): record privacy-limited job outcomes and report merge rates by lane and model.
