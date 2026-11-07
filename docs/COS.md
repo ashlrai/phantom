@@ -68,9 +68,9 @@ Approval binds to the draft digest; changed text cannot reuse an earlier approva
   in the thread map.
 - **Email:** writes the reply to the email outbox drop directory with
   In-Reply-To and References headers. The mail transport stays external.
-- **desktop and cli origins:** approval only records the claim; the reply is
-  already on screen.
-- **No transport yet:** mobile, page and iMessage. The API answers
+- **desktop, cli and mobile origins:** approval only records the claim; the
+  reply is already on screen (mobile reads it through `cos/status`).
+- **No transport yet:** page and iMessage. The API answers
   `COS_NO_TRANSPORT`. Email with no outbox configured is the same.
 
 There is no CLI approval command.

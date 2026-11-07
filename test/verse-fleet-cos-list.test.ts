@@ -55,11 +55,12 @@ beforeEach(() => { runsDir = mkdtempSync(join(tmpdir(), 'cos-list-')); });
 afterEach(() => { rmSync(runsDir, { recursive: true, force: true }); });
 
 describe('fleet cos list api', () => {
-  it('stays in the fleet-cos family and off the remote gateway', () => {
+  it('stays in the fleet-cos family and reaches the remote gateway as bounded reads only', () => {
     expect(LIST).toBe('/api/verse/fleet/cos/list');
     expect(workbenchFamilyFor(LIST)?.id).toBe('fleet-cos');
-    expect(classifyRemoteRoute('GET', LIST)).toEqual({ kind: 'deny' });
-    expect(classifyRemoteRoute('GET', `${LIST}?limit=5`)).toEqual({ kind: 'deny' });
+    expect(classifyRemoteRoute('GET', LIST)).toEqual({ kind: 'read', path: LIST });
+    expect(classifyRemoteRoute('GET', `${LIST}?limit=5`)).toEqual({ kind: 'read', path: LIST });
+    expect(classifyRemoteRoute('GET', `${LIST}?limit=51`)).toEqual({ kind: 'deny' });
     expect(classifyRemoteRoute('POST', LIST)).toEqual({ kind: 'deny' });
   });
 

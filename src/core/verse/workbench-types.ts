@@ -1651,6 +1651,7 @@ export const WORKBENCH_ROUTE_FAMILIES = [
   },
   { id: 'fleet-runs', owner: 'desktop-command', module: 'src/core/verse/fleet-runs-api.ts', handler: 'handleFleetRunsApi', prefixes: ['/api/verse/fleet/runs'] },
   { id: 'fleet-cos', owner: 'desktop-command', module: 'src/core/verse/fleet-cos-api.ts', handler: 'handleFleetCosApi', prefixes: ['/api/verse/fleet/cos'] },
+  { id: 'app-update', owner: 'desktop-command', module: 'src/core/verse/app-update-api.ts', handler: 'handleAppUpdateApi', prefixes: ['/api/verse/app/update-status'] },
   { id: 'cos-memory', owner: 'desktop-command', module: 'src/core/verse/cos-memory-api.ts', handler: 'handleCosMemoryApi', prefixes: ['/api/verse/cos/memory'] },
   { id: 'team', owner: 'desktop-command', module: 'src/core/verse/team-api.ts', handler: 'handleTeamApi', prefixes: ['/api/verse/team'] },
   { id: 'fleet-comms-status', owner: 'desktop-command', module: 'src/core/verse/fleet-comms-status-api.ts', handler: 'handleFleetCommsStatusApi', prefixes: ['/api/verse/fleet/comms-status'] },

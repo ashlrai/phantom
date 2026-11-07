@@ -184,7 +184,7 @@ describe('fleet cos api', () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
-  it('approve sends an email-origin draft through the injected outbox and refuses page/mobile', async () => {
+  it('approve sends an email-origin draft through the injected outbox, records mobile like desktop and refuses page', async () => {
     const eid = await seed('email', 3, 'email:mason@example.com', 'msg123@example.com');
     const edraft = await draftCosResult(eid, 'Email reply.', runsDir);
     const deliverEmail = vi.fn(async () => {});
@@ -194,13 +194,19 @@ describe('fleet cos api', () => {
     expect(ok.status).toBe(200);
     expect(deliverEmail).toHaveBeenCalledWith(eid, edraft.digest, { runsDir, outboxDir: join(runsDir, 'outbox') });
 
-    for (const [n, channel] of [[4, 'mobile'], [5, 'page']] as const) {
-      const id = await seed(channel, n, 'verse-operator@mobile');
-      const d = await draftCosResult(id, 'Reply.', runsDir);
-      const r = await call(api, { path: APPROVE, body: { id, digest: `sha256:${d.digest.slice(0, 24)}` } });
-      expect(r.status).toBe(422);
-      expect(r.wire).toEqual({ code: 'COS_NO_TRANSPORT', channel });
-    }
+    // A mobile-origin draft is read on screen through status like desktop/cli:
+    // claiming the delivery records the approval and sends nothing.
+    const mid = await seed('mobile', 4, 'verse-operator@mobile');
+    const md = await draftCosResult(mid, 'Reply.', runsDir);
+    const mr = await call(api, { path: APPROVE, body: { id: mid, digest: `sha256:${md.digest.slice(0, 24)}` } });
+    expect(mr.status).toBe(200);
+    expect(mr.wire).toEqual({ v: 1, id: mid, delivery: 'sent' });
+
+    const pid = await seed('page', 5, 'verse-operator@mobile');
+    const pd = await draftCosResult(pid, 'Reply.', runsDir);
+    const pr = await call(api, { path: APPROVE, body: { id: pid, digest: `sha256:${pd.digest.slice(0, 24)}` } });
+    expect(pr.status).toBe(422);
+    expect(pr.wire).toEqual({ code: 'COS_NO_TRANSPORT', channel: 'page' });
   });
 
   it('maps an existing delivery claim race to COS_ALREADY_CLAIMED', async () => {
