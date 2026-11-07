@@ -13,6 +13,8 @@
 
 import type { DashboardSnapshot, TuiTab } from '../core/types.js';
 import type { FleetNextAction, FleetStatus } from '../core/fleet/status.js';
+import type { FleetSession } from '../core/fleet/runs-sessions.js';
+import { isFleetSessionActive } from '../core/fleet/runs-sessions.js';
 import { C, stripAnsi, pad, makeColors } from '../cli/ui.js';
 
 // ---------------------------------------------------------------------------
@@ -73,6 +75,8 @@ const TABS: { id: TuiTab; label: string; key: string }[] = [
   { id: 'inbox',    label: 'Inbox',    key: '6' },
   // M29: read-only org-level portfolio tab.
   { id: 'portfolio', label: 'Portfolio', key: '7' },
+  // Dispatcher agent sessions from ~/.ashlr-runs queue/run markers (read-only).
+  { id: 'sessions', label: 'Sessions', key: '8' },
 ];
 
 function buildHeader(
@@ -126,6 +130,7 @@ function buildBody(
     case 'inbox':    return bodyInbox(snap, cols, bodyRows, col);
     // M29: read-only org-level portfolio view (health/goals/backlog/cost/today).
     case 'portfolio': return bodyPortfolio(snap, cols, bodyRows, col);
+    case 'sessions': return bodySessions(snap, selected, cols, bodyRows, col, nowMs);
   }
 }
 
@@ -819,12 +824,170 @@ function bodyInbox(
 }
 
 // ---------------------------------------------------------------------------
+// Tab: Sessions — dispatcher agent jobs (READ-ONLY, value-blind)
+// ---------------------------------------------------------------------------
+
+/**
+ * Render the dispatcher session list from `snap.sessions` — agent jobs claimed
+ * under the fleet runs dir (~/.ashlr-runs queue/run markers + status.json).
+ * Shows job id, repo, lane, status and elapsed only; the snapshot carries no
+ * prompt paths, worktree paths, logs or env values by construction. Pure:
+ * same inputs → same output, never throws at any width.
+ */
+function bodySessions(
+  snap: DashboardSnapshot,
+  selected: number,
+  cols: number,
+  bodyRows: number,
+  col: ReturnType<typeof makeColors>,
+  nowMs?: number,
+): string[] {
+  const lines: string[] = [];
+  const add = (s: string) => lines.push(fitLine(s, cols));
+  const blank = () => add('');
+
+  blank();
+  add(col.bold(col.blue(' ◆ Sessions — dispatcher')));
+
+  const view = snap.sessions;
+  if (!view) {
+    blank();
+    add(col.dim('   No session data in this snapshot.'));
+    return padToRows(lines, bodyRows, cols);
+  }
+
+  // ── Dispatcher summary line (status.json projection) ────────────────────
+  const parts: string[] = [];
+  if (view.paused === true) parts.push(col.yellow('PAUSED'));
+  else if (view.paused === false) parts.push(col.dim('running'));
+  if (view.queueDepth !== null) parts.push(`queue ${col.cyan(String(view.queueDepth))}`);
+  if (view.lastTick !== null) {
+    const tickMs = Date.parse(view.lastTick);
+    const age = Number.isFinite(tickMs) && typeof nowMs === 'number' ? nowMs - tickMs : null;
+    parts.push(age !== null && age >= 0 ? `tick ${fmtElapsed(age)} ago` : `tick ${view.lastTick}`);
+  }
+  if (parts.length > 0) add(`   ${parts.join(col.dim(' · '))}`);
+
+  // Lane roll-up: lane running/target (+held marker), bounded to fit.
+  if (view.lanes.length > 0) {
+    const laneBits = view.lanes.map(l =>
+      `${l.lane} ${col.cyan(`${l.running}/${l.target}`)}${l.held ? col.yellow(' held') : ''}${l.queued > 0 ? col.dim(` q${l.queued}`) : ''}`,
+    );
+    add(`   ${col.dim('lanes: ')}${laneBits.join(col.dim('  '))}`);
+  }
+
+  if (view.sourceState !== 'healthy') {
+    blank();
+    add(col.yellow(view.sourceState === 'missing'
+      ? '   No dispatcher session state found.'
+      : '   Partial session data — some sources degraded.'));
+  }
+  blank();
+
+  if (view.sessions.length === 0) {
+    add(col.dim(view.runsDirPresent ? '   (no agent sessions)' : '   (no sessions — runs dir absent)'));
+    return padToRows(lines, bodyRows, cols);
+  }
+
+  // ── Session table ────────────────────────────────────────────────────────
+  // Two layouts: full columns when wide enough, compact (no repo/tier) below.
+  const statusW = 12;
+  const elapsedW = 9;
+  const sep = '  ';
+  const full = cols >= 72;
+  const repoW = full ? 13 : 0;
+  const laneW = full ? 17 : 22;
+  const tierW = full ? 9 : 0;
+  const jobW = Math.max(8, cols - statusW - elapsedW - repoW - laneW - tierW - sep.length * (full ? 5 : 3) - 1);
+
+  const head =
+    pad(' JOB', jobW) + sep +
+    (full ? pad('REPO', repoW) + sep : '') +
+    pad('LANE', laneW) + sep +
+    (full ? pad('TIER', tierW) + sep : '') +
+    pad('STATUS', statusW) + sep +
+    pad('ELAPSED', elapsedW, 'right');
+  add(col.bold(head));
+  add(fitLine(col.dim('─'.repeat(cols)), cols));
+
+  view.sessions.forEach((s, i) => {
+    const isSelected = i === selected;
+    const elapsed = sessionElapsedText(s, nowMs);
+    const statusTxt = s.status + (s.kept ? '*' : '');
+    const rowText =
+      pad(trunc(s.job, jobW), jobW) + sep +
+      (full ? pad(trunc(s.repo ?? '—', repoW), repoW) + sep : '') +
+      pad(trunc(s.lane ?? '—', laneW), laneW) + sep +
+      (full ? pad(col.dim(trunc(s.tier ?? '—', tierW)), tierW) + sep : '') +
+      pad(sessionStatusColorize(s.status, col)(trunc(statusTxt, statusW)), statusW) + sep +
+      pad(col.dim(elapsed), elapsedW, 'right');
+    lines.push(fitLine(
+      isSelected ? `\x1b[7m${rowText}${C.reset}` : rowText,
+      cols,
+    ));
+  });
+
+  if (view.sessions.some(s => s.kept)) {
+    add(col.dim('   * worktree kept for supervisor'));
+  }
+  if (view.truncated) {
+    add(col.dim('   … list truncated (bounded scan)'));
+  }
+
+  return padToRows(lines, bodyRows, cols);
+}
+
+/** ms a session has been live (active) or ran (terminal); null when unknown. */
+function sessionElapsedMs(s: FleetSession, nowMs?: number): number | null {
+  if (s.startedAtMs === null || !Number.isFinite(s.startedAtMs)) return null;
+  if (isFleetSessionActive(s.status)) {
+    if (typeof nowMs !== 'number' || !Number.isFinite(nowMs)) return null;
+    return Math.max(0, nowMs - s.startedAtMs);
+  }
+  if (s.endedAtMs === null || !Number.isFinite(s.endedAtMs)) return null;
+  return Math.max(0, s.endedAtMs - s.startedAtMs);
+}
+
+function sessionElapsedText(s: FleetSession, nowMs?: number): string {
+  const ms = sessionElapsedMs(s, nowMs);
+  return ms === null ? '—' : fmtElapsed(ms);
+}
+
+/** Compact duration: 42s / 12m / 3h12m / 2d5h. */
+function fmtElapsed(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '—';
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return m % 60 === 0 ? `${h}h` : `${h}h${String(m % 60).padStart(2, '0')}m`;
+  const d = Math.floor(h / 24);
+  return h % 24 === 0 ? `${d}d` : `${d}d${h % 24}h`;
+}
+
+function sessionStatusColorize(
+  status: string,
+  col: ReturnType<typeof makeColors>,
+): (s: string) => string {
+  switch (status) {
+    case 'running':    return col.cyan;
+    case 'launching':  return col.blue;
+    case 'publishing': return col.yellow;
+    case 'done':       return col.green;
+    case 'failed':     return col.red;
+    case 'timeout':    return col.magenta;
+    default:           return col.dim; // finished / exited / unknown
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Footer
 // ---------------------------------------------------------------------------
 
 function buildFooter(cols: number, col: ReturnType<typeof makeColors>): string {
   const hints = [
-    '1-7 tabs',
+    '1-8 tabs',
     'j/k move',
     'r refresh',
     'enter detail',
