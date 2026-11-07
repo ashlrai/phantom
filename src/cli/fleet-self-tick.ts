@@ -1,8 +1,8 @@
 /**
  * `ashlr fleet self-tick` — one locked pass of Phantom's self-management for
- * a host timer or an agent with no desktop app open. It calls the eight
+ * a host timer or an agent with no desktop app open. It calls the nine
  * existing one-shot verbs in the fixed order reset-release → lane-autohold
- * → stray-stop → meter-incident → planner-tick → inbox-acks → order-notices → landed-sweep, each with --json (plus --apply and --runs-dir when given),
+ * → stray-stop → meter-incident → waste-incident → planner-tick → inbox-acks → order-notices → landed-sweep, each with --json (plus --apply and --runs-dir when given),
  * and folds their parsed reports into one run report. Only one self-tick runs
  * per runs dir; a step that fails or throws never stops the later ones.
  */
@@ -24,12 +24,15 @@ import type { StrayStopDeps } from '../core/fleet/stray-stop.js';
 import { defaultLaneTruthReaders, type LaneTruthReaders } from '../core/fleet/lane-truth.js';
 import { readMeterDrop } from './fleet-meter-drop.js';
 import { postMeterIncidents } from '../core/fleet/meter-incident.js';
+import { postWasteIncidents } from '../core/fleet/waste-incident.js';
+import { projectWasteRisk } from '../core/resources/waste-risk.js';
+import { readWasteRiskInputs } from '../core/resources/waste-risk-read.js';
 
 const usage = `Usage: ashlr fleet self-tick [--json] [--runs-dir <abs>] [--apply] [--last]
 One locked pass of Phantom's self-management: reset-release first (a lane it
 frees counts as a free slot for the planner step), then lane-autohold, then
 stray-stop (bounded guarded recovery), then meter-incident (deduped flat-meter
-notices), then planner-tick, then inbox-acks (sends pending same-channel acks), then order-notices
+notices), then waste-incident (deduped high-waste lane notices), then planner-tick, then inbox-acks (sends pending same-channel acks), then order-notices
 (tells Mason when a merged job served one of his orders), then landed-sweep (closes DIRTY PRs whose work already landed;
 last because it is the slowest). Without --apply nothing is released, held, spawned, acknowledged or notified — the
 planner step still appends its observational PLANNER_TICK line to
@@ -47,6 +50,8 @@ interface Dependencies {
   /** Recovery evidence and signal seams; the guarded stop path owns all signals. */
   stray?: Partial<Pick<StrayStopDeps, 'readStraySlots' | 'kill'>>;
   meterReaders?: LaneTruthReaders;
+  /** waste-incident evidence reader for tests; production defaults are unchanged. */
+  wasteRead?: typeof readWasteRiskInputs;
   /** Isolated bus store for fixtures or explicit configured intent. Never derived
    * from the runs dir; unset, the ordinary default bus is used on the canonical
    * runs root only. */
@@ -121,7 +126,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
   // --last is a read-only report of the last recorded pass: nothing runs,
   // no lock is taken, so --apply has no meaning beside it.
   if (last && apply) return invalid();
-  // One root for the lock and all eight steps: the verbs' own fallbacks
+  // One root for the lock and all nine steps: the verbs' own fallbacks
   // (ASHLR_RUNS_DIR, ~/.ashlr-runs) resolve here once, so the lock domain
   // and the released slots can never drift to different dirs.
   const home = deps.home ?? homedir();
@@ -186,6 +191,23 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       }) : [];
       return { exitCode: posted.some(row => !['posted', 'duplicate'].includes(row.status)) ? 1 : 0,
         output: JSON.stringify({ report, posted, reason: apply ? 'observed' : 'dry-run' }) };
+    },
+    'waste-incident': async () => {
+      if (!deps.wasteRead && root !== join(home, '.ashlr-runs')) {
+        return { exitCode: 0, output: JSON.stringify({ reason: 'custom-runs-dir-no-waste-reader' }) };
+      }
+      const rows = (await (deps.wasteRead ?? readWasteRiskInputs)(root, new Date(now()).toISOString()))
+        .map(projectWasteRisk);
+      // A custom runs root never reaches the ordinary production bus: posting
+      // there needs an explicit bus root beside the injected waste reader.
+      if (apply && !deps.busRoot && root !== join(home, '.ashlr-runs')) {
+        return { exitCode: 0, output: JSON.stringify({ report: rows, posted: [], reason: 'custom-runs-dir-no-bus-root' }) };
+      }
+      const posted = apply ? postWasteIncidents(rows, now(), undefined, {
+        now, ...(deps.busRoot === undefined ? {} : { root: resolve(deps.busRoot) }),
+      }) : [];
+      return { exitCode: posted.some(row => !['posted', 'duplicate'].includes(row.status)) ? 1 : 0,
+        output: JSON.stringify({ report: rows, posted, reason: apply ? 'observed' : 'dry-run' }) };
     },
     'planner-tick': bind(cmdFleetPlannerTick, { now, spawn: deps.spawn }),
     'inbox-acks': bind(cmdFleetInboxAcks, { now: () => new Date(now()), senders: deps.senders }),

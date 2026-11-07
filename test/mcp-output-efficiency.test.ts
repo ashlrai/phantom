@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { dirname } from 'node:path';
 import { listNativeTools } from '../src/core/mcp-native.js';
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 
 const OLD_NATIVE_NAMES = [
   'phm_proactive_agents_list',
@@ -86,6 +87,8 @@ function schemaContract(value: unknown): unknown {
     key, key === 'description' && typeof child === 'string' ? '<description>' : schemaContract(child),
   ]));
 }
+
+registerFleetNativeTools();
 
 describe('native MCP tool inventory', () => {
   it('preserves the complete input schema contract for every listed tool', () => {

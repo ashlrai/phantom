@@ -64,6 +64,11 @@ async function importToolsRegistry() {
   }>;
 }
 
+async function registerFleetTools(): Promise<void> {
+  const { registerFleetNativeTools } = await import('../core/mcp-native-fleet.js');
+  registerFleetNativeTools();
+}
+
 // ---------------------------------------------------------------------------
 // Redaction — env values MUST never be printed
 // ---------------------------------------------------------------------------
@@ -117,6 +122,7 @@ function discoverRegistryForMcpHost(discoverMcpServers: () => McpRegistry): McpR
 // ---------------------------------------------------------------------------
 
 async function cmdMcpRun(): Promise<number> {
+  await registerFleetTools();
   // Pure stdio — log only to stderr, never stdout
   try {
     const { discoverMcpServers } = await importRegistry();
@@ -139,6 +145,7 @@ async function cmdMcpRun(): Promise<number> {
 // ---------------------------------------------------------------------------
 
 async function cmdMcpList(args: string[]): Promise<number> {
+  await registerFleetTools();
   const jsonMode = args.includes('--json');
 
   const { discoverMcpServers } = await importRegistry();
@@ -262,6 +269,7 @@ async function cmdMcpList(args: string[]): Promise<number> {
 const REQUIRED_SERVERS = new Set(['ashlr', 'phantom-secrets', 'locus']);
 
 async function cmdMcpDoctor(args: string[]): Promise<number> {
+  await registerFleetTools();
   const jsonMode  = args.includes('--json');
   const timeoutMs = 8000;
 

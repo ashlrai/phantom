@@ -17,6 +17,7 @@ import { buildOrientation } from '../src/core/orient.js';
 import { estimateRun } from '../src/core/observability/estimate.js';
 import { nativeToolDefs, callNativeTool } from '../src/core/mcp-native.js';
 import { AGENT_COMMANDS } from '../src/cli/help.js';
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 
 let fx: H1Fixture;
 
@@ -28,6 +29,8 @@ beforeEach(() => {
 afterEach(() => {
   fx.cleanup();
 });
+
+registerFleetNativeTools();
 
 describe('OrientResult shape lock', () => {
   it('top-level keys are exactly the contracted set', async () => {

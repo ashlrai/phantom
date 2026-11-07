@@ -29,7 +29,23 @@ export function listNativeTools(): { name; description; inputSchema }[];
 export function isNativeTool(name: string): boolean;
 export function callNativeTool(name: string, args: unknown):
   Promise<{ content: { type: 'text'; text: string }[]; isError?: boolean }>;
+
+// RQ-TIER1-APPS-CUT-1 — additive. Entry-point-only extension seam: the CLI
+// entry (`src/cli/mcp.ts`) calls `registerFleetNativeTools()`
+// (`src/core/mcp-native-fleet.ts`) before serving `mcp run|list|doctor`, which
+// registers the fleet apps tools here without `src/core` importing fleet apps
+// implementation modules (keeps them outside the Tier-1 authority closure).
+export interface NativeToolImpl extends NativeToolDef { handler: … }
+export function registerNativeTools(
+  tools: readonly NativeToolImpl[], anchor?: string,
+): void; // dup-name guard; `anchor` inserts before that existing tool to
+         // preserve tools/list order; absent anchor appends.
 ```
+
+Tools registered this way flow through the identical `callNativeTool`
+pipeline below — same schema validation, safety gate, `scrubSecrets()`, 32 KB
+cap and `mcp:native-call` audit; in-process callers that never invoke the MCP
+entry point do not see them.
 
 `callNativeTool` pipeline (every call, no exceptions):
 

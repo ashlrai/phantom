@@ -1,6 +1,7 @@
 /** Read-only: is this draft job already on a git ref? */
 import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
+import { basename } from 'node:path';
 import { promisify } from 'node:util';
 import { precheckJob, type JobPrecheckGit, type PrecheckFact } from '../core/fleet/job-precheck.js';
 import {
@@ -15,7 +16,7 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const execFileAsync = promisify(execFile);
 const usage = 'Usage: ashlr fleet job-precheck <file.md|-> [--ref origin/master] [--job-id RQ-ID] [--json]\n' +
-  '       ashlr fleet job-precheck --batch <file.md>...|- [--ref origin/master] [--json]';
+  '       ashlr fleet job-precheck --batch <file.md>...|- [--ref origin/master] [--identity-from-filename] [--json]';
 const STDIN_MAX_BYTES = 8000;
 const BATCH_STDIN_MAX_BYTES = 200_000;
 const LABEL_MAX_BYTES = 200;
@@ -131,11 +132,18 @@ async function runPrecheckBatch(
   resolvedRef: string | null,
   git: JobPrecheckGit,
   deps: JobPrecheckCliDeps,
+  identityFromFilename: boolean,
   log: (line: string) => void,
 ): Promise<number> {
   const result = await precheckJobBatch(files, {
     readFile: deps.readFile ?? ((path: string) => readFile(path, 'utf8')),
     git,
+    ...(identityFromFilename ? { jobIdForFile: (file: string) => {
+      const name = basename(file);
+      const jobId = name.endsWith('.md') ? name.slice(0, -3) : '';
+      if (!validJobId(jobId)) throw new Error('invalid job ID filename');
+      return jobId;
+    } } : {}),
   });
   const results = result.entries.map((entry) =>
     entry.report ? { file: entry.file, ...entry.report } : { file: entry.file, error: entry.error });
@@ -173,12 +181,14 @@ export async function cmdFleetJobPrecheck(args: string[], deps: JobPrecheckCliDe
     log(`${usage}\nNames src, test, docs, schema and scripts files in the draft, skipping Do not edit and Never touch lines. Exit 3 when every non-test src file is already on the ref and its last commit subject contains bridge(RQ-...). Exit 0 when the draft is fresh or only partly on the ref. Exit 2 on a read or git failure.\n` +
       `Use - for one UTF-8 draft on stdin (maximum 8000 bytes; nonempty). With --batch -, stdin is a UTF-8 JSON array of 1-20 objects {"label": string, "markdown": string}; labels must be unique, nonempty and at most 200 UTF-8 bytes, markdown nonempty and at most 8000 UTF-8 bytes per draft, and the entire input at most 200000 bytes. Do not mix - with paths.\n` +
       `--job-id requires an exact parsed identity in each non-test source path’s last commit. Unknown or unmatched evidence does not rule out earlier commits; a match does not establish semantic correctness. Cannot combine with --batch.\n` +
+      `--identity-from-filename is batch-only: each basename (or stdin label) must be a valid job ID followed by .md. It checks exact identity in last-commit subjects only; earlier commits may be missed and a match does not establish correctness. Invalid filenames are per-draft errors.\n` +
       `--batch takes 1-${JOB_PRECHECK_BATCH_MAX} draft paths and reports each in input order over a shared fact cache, so a path several drafts name is probed once. A draft that cannot be read or whose git probe fails is reported as an error for that draft and the batch continues; errors are never called fresh. Collisions list paths shared by successful drafts and their filenames as evidence only; JSON includes a collisions array. Collisions do not change the exit status. After the per-draft reports a count line tallies fresh, partly-on-master, likely-done and errors. Batch exits 2 when any draft errored, else 3 when any draft is likely-done, else 0. Read-only: never deletes files, launches jobs or writes queue state.`);
     return 0;
   }
   let ref = 'origin/master';
   let json = false;
   let batch = false;
+  let identityFromFilename = false;
   const files: string[] = [];
   let sawRef = false;
   let jobId: string | undefined;
@@ -192,6 +202,11 @@ export async function cmdFleetJobPrecheck(args: string[], deps: JobPrecheckCliDe
     if (arg === '--batch') {
       if (batch) { error(usage); return 2; }
       batch = true;
+      continue;
+    }
+    if (arg === '--identity-from-filename') {
+      if (identityFromFilename) { error(usage); return 2; }
+      identityFromFilename = true;
       continue;
     }
     if (arg === '--job-id') {
@@ -210,6 +225,7 @@ export async function cmdFleetJobPrecheck(args: string[], deps: JobPrecheckCliDe
     if ((arg !== '-' && arg.startsWith('-')) || arg.trim() === '' || (!batch && files.length > 0)) { error(usage); return 2; }
     files.push(arg);
   }
+  if (!batch && identityFromFilename) { error(usage); return 2; }
   if (batch) {
     if (jobId !== undefined || (files.includes('-') && files.length !== 1)) { error(usage); return 2; }
     if (files.length === 0 || files.length > JOB_PRECHECK_BATCH_MAX) { error(usage); return 2; }
@@ -239,7 +255,7 @@ export async function cmdFleetJobPrecheck(args: string[], deps: JobPrecheckCliDe
   const git = deps.git ?? gitJobProbe(resolvedRef!, deps.cwd);
   if (batch) {
     const batchDeps = batchDrafts ? { ...deps, readFile: async (label: string) => batchDrafts!.get(label)! } : deps;
-    return runPrecheckBatch(batchDrafts ? [...batchDrafts.keys()] : files, ref, json, resolvedRef, git, batchDeps, log);
+    return runPrecheckBatch(batchDrafts ? [...batchDrafts.keys()] : files, ref, json, resolvedRef, git, batchDeps, identityFromFilename, log);
   }
   let markdown: string;
   try {

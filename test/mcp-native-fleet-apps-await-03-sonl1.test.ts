@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as awaitModule from '../src/cli/fleet-apps-await.js';
 import { callNativeTool, listNativeTools, nativeToolSafety } from '../src/core/mcp-native.js';
 import { FLEET_APPS } from '../src/core/verse/fleet-apps-api.js';
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 
 const name = 'phantom_fleet_apps_await';
 const realAwait = awaitModule.awaitFleetApps;
@@ -20,6 +21,8 @@ afterEach(() => { vi.restoreAllMocks(); });
 // ---------------------------------------------------------------------------
 // Registration + read safety
 // ---------------------------------------------------------------------------
+
+registerFleetNativeTools();
 
 describe('native fleet apps await registration', () => {
   it('advertises a closed read schema and rejects arguments before discovery', async () => {

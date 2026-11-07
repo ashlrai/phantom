@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { callNativeTool, listNativeTools } from '../src/core/mcp-native.js';
 import * as recoveryInvocations from '../src/core/fleet/apps-recovery-invocations.js';
 import * as recoveryVerdict from '../src/core/fleet/apps-recovery-verdict.js';
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 
 const name = 'phantom_fleet_apps_recovery_check';
 const validUuid = '550e8400-e29b-41d4-a716-446655440000';
@@ -39,6 +40,8 @@ function fakeProjection(invocations: ReturnType<typeof recoveryInvocations.readA
   return { v: 1, availability: opts.availability ?? 'available', truncated: opts.truncated ?? false,
     scanCursor: 100, scannedEvents: 10, invocations };
 }
+
+registerFleetNativeTools();
 
 describe('phantom_fleet_apps_recovery_check', () => {
   // ── 1. Tool discovery ─────────────────────────────────────────────────

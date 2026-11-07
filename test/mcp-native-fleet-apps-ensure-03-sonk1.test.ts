@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as recovery from '../src/cli/fleet-apps-ensure.js';
 import { callNativeTool, listNativeTools, nativeToolSafety } from '../src/core/mcp-native.js';
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 
 const name = 'phantom_fleet_apps_ensure';
 const realEnsure = recovery.ensureFleetApps;
@@ -9,6 +10,8 @@ const result = (app: string, outcome: string, running = false, launched = false)
 });
 const payload = (value: Awaited<ReturnType<typeof callNativeTool>>) => JSON.parse(value.content[0]!.text);
 afterEach(() => vi.restoreAllMocks());
+
+registerFleetNativeTools();
 
 describe('native fleet apps ensure', () => {
   it('advertises a closed mutation schema and rejects invalid input before recovery', async () => {

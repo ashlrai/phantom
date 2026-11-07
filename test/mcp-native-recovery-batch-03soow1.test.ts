@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as batch from '../src/cli/fleet-apps-recovery-batch.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { callNativeTool, listNativeTools, nativeToolSafety } from '../src/core/mcp-native.js';
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 
 const name = 'phantom_fleet_apps_recovery_batch';
 const a = 'abcdef12-1234-4123-8123-123456789abc';
@@ -12,6 +13,8 @@ const b = '22345678-1234-4123-8123-123456789abc';
 const args = { invocationIds: [a, b], maxAgeMs: 1000, durationMs: 500, intervalMs: 100 };
 const parse = (result: Awaited<ReturnType<typeof callNativeTool>>) => JSON.parse(result.content[0]!.text);
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+
+registerFleetNativeTools();
 
 describe('native recovery batch', () => {
   it('advertises a closed read schema', () => {

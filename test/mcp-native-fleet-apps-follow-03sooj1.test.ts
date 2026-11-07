@@ -5,6 +5,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { callNativeTool, listNativeTools, nativeToolSafety } from '../src/core/mcp-native.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import * as follow from '../src/cli/fleet-apps-follow.js';
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
+registerFleetNativeTools();
 
 vi.mock('../src/core/config.js', () => ({ loadConfig: () => ({}) }));
 const name = 'phantom_fleet_apps_follow';

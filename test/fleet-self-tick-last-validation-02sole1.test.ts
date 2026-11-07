@@ -36,6 +36,7 @@ const steps = (codes: Partial<Record<string, number>> = {}): SelfTickSteps => {
     'lane-autohold': run('lane-autohold'),
     'stray-stop': run('stray-stop'),
     'meter-incident': run('meter-incident'),
+    'waste-incident': run('waste-incident'),
     'planner-tick': run('planner-tick'),
     'inbox-acks': run('inbox-acks'),
     'order-notices': run('order-notices'),

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as history from '../src/core/fleet/apps-recovery-history.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { callNativeTool, listNativeTools, nativeToolSafety } from '../src/core/mcp-native.js';
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 
 const name = 'phantom_fleet_apps_history';
 const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -27,6 +28,8 @@ afterEach(() => {
   else process.env.ASHLR_RUNS_DIR = originalRoot;
   for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
+
+registerFleetNativeTools();
 
 describe('native app recovery history', () => {
   it('advertises a closed read-only schema and rejects invalid input before reading', async () => {
