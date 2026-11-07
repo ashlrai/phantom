@@ -3,8 +3,8 @@
 J=${1:-}
 [[ "$J" =~ ^[A-Za-z0-9._-]+$ ]] && [[ "$J" != *..* ]] || { echo "RESULT ABORT bad-job-id"; exit 1; }
 R=~/.ashlr-runs; OUT=$R/$J.publish; exec >"$OUT" 2>&1; set -o pipefail
-IM=0; IMLOCK=""
-case "${2:-}" in "") ;; --integrated-merge) IM=1;; *) echo "RESULT ABORT unknown-mode"; exit 1;; esac
+IM=0; IU=0; IMLOCK=""
+case "${2:-}" in "") ;; --integrated-merge) IM=1;; --integrated-upstream-original157|--integrated-upstream-feature) IM=1; IU=1;; *) echo "RESULT ABORT unknown-mode"; exit 1;; esac
 [ "$#" -le 2 ] || { echo "RESULT ABORT extra-arguments"; exit 1; }
 # RQ-SEC-RUNLOG-SCRUB: scrub this run log on exit; install/test logs are piped through scrub.pl
 SCRUB="perl $R/bin/scrub.pl"; trap '[ -z "$IMLOCK" ] || rmdir "$IMLOCK" 2>/dev/null; $SCRUB < "$OUT" > "$OUT.s" && mv "$OUT.s" "$OUT"' EXIT
@@ -46,15 +46,61 @@ CMN=$(cd -P -- "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pw
 # No new delta is accepted: the authored two-parent merge must equal pinned main.
 # Both proof checks run through the same pinned Git helper and literal GitHub repos.
 if [ "$IM" = 1 ]; then
-  IMHELP="$R/bin/integrated-merge.py"; IMHELP_SHA=3b54e7fc02d75ea247bbce8edc791c8fb3320552977d2d011d709a5bb008bd28
+  IMHELP="$R/bin/integrated-merge.py"; IMHELP_SHA=804929cb30a12555b809fbfcfa8e8133bfc23a8fdcd67341c4cbc1c14de818c2
   [ -f "$IMHELP" ] && [ ! -L "$IMHELP" ] && [ "$(/usr/bin/shasum -a 256 "$IMHELP" | awk '{print $1}')" = "$IMHELP_SHA" ] || { echo "RESULT ABORT integrated-helper-pin"; exit 1; }
-  IMLOCK="$R/integrated-merge/$J.publish-lock"
-  mkdir "$IMLOCK" 2>/dev/null || { IMLOCK=""; echo "RESULT HOLD integrated-publisher-owned"; exit 1; }
-  im_verify(){ /usr/bin/python3 -I -B "$IMHELP" --job "$J" --base "$BASE" --worktree "$WT"; }
+  if [ "$IU" = 0 ]; then
+    IMLOCK="$R/integrated-merge/$J.publish-lock"
+    mkdir "$IMLOCK" 2>/dev/null || { IMLOCK=""; echo "RESULT HOLD integrated-publisher-owned"; exit 1; }
+  fi
+  im_verify(){ /usr/bin/python3 -I -B "$IMHELP" --job "$J" --base "$BASE" --worktree "$WT" $( [ "$IU" = 1 ] && printf %s "--upstream-feature --prepare" ); }
   IMPROOF=$(im_verify) || { echo "RESULT ABORT integrated-proof"; exit 1; }
   read IMPR IMMAIN IMOLD IMSHA IMTREE IMEXTRA <<< "$IMPROOF"
   [[ "$IMPR" =~ ^[0-9]+$ ]] && [ "$BASE" = "$IMMAIN" ] && [[ "$IMOLD$IMSHA$IMTREE" =~ ^[0-9a-f]{120}$ ]] && [ -z "$IMEXTRA" ] || { echo "RESULT ABORT integrated-proof-shape"; exit 1; }
   echo "NOTE verified original PR $IMPR already integrated; preserve reviewed merge $IMSHA"
+fi
+# This closed profile exits before the legacy classifier's index staging,
+# worktree cleanup, reset, or commit. A tuple-wide durable marker is a one-shot
+# fence even when the push result or the process itself is lost.
+if [ "$IU" = 1 ]; then
+  verify_dependency_links || { echo "RESULT ABORT dependency-directory-link-or-index-unavailable"; exit 1; }
+  git diff --no-ext-diff --no-textconv "$BASE"...HEAD | perl "$R/bin/scrub.pl" --check --allow-fixtures >/dev/null || { echo "RESULT ABORT secret-shape"; exit 1; }
+  if [ -f BRIDGE_NOTES.md ]; then
+    perl "$R/bin/scrub.pl" --check < BRIDGE_NOTES.md >/dev/null || { echo "RESULT ABORT secret-shape-notes"; exit 1; }
+  fi
+  [ "$(im_verify)" = "$IMPROOF" ] || { echo "RESULT ABORT integrated-proof-changed"; exit 1; }
+  GSWHY=$(gs_check "$WT") || { echo "RESULT ABORT git-unsafe $GSWHY"; exit 1; }
+  im_phase(){ /usr/bin/python3 -I -B "$IMHELP" --job "$J" --base "$BASE" --worktree "$WT" --upstream-feature "$@"; }
+  ATTEMPT=$(im_phase --attempt) || { echo "RESULT HOLD upstream-attempt-unsafe"; exit 1; }
+  read ATTEMPT_KIND ATTEMPT_TOKEN ATTEMPT_EXTRA <<< "$ATTEMPT"
+  case "$ATTEMPT_KIND" in
+    CREATED) [[ "$ATTEMPT_TOKEN" =~ ^[0-9a-f]{64}$ ]] && [ -z "$ATTEMPT_EXTRA" ] || { echo "RESULT HOLD upstream-attempt-invalid"; exit 1; }; im_phase --push --token "$ATTEMPT_TOKEN" || echo "NOTE upstream push uncertain; reconciling"; unset ATTEMPT_TOKEN ATTEMPT ;;
+    EXISTING) [ -z "$ATTEMPT_TOKEN$ATTEMPT_EXTRA" ] || { echo "RESULT HOLD upstream-attempt-invalid"; exit 1; }; echo "NOTE prior upstream attempt; reconciling without retry" ;;
+    *) echo "RESULT HOLD upstream-attempt-invalid"; exit 1 ;;
+  esac
+  record_outcome(){ im_phase --record-outcome "$1" >/dev/null; }
+  OUTCOME=$(im_phase --outcome) || OUTCOME=HELD
+  case "$OUTCOME" in
+    MERGED|QUEUED) record_outcome "$OUTCOME" || { echo "RESULT HOLD upstream-journal-error"; exit 1; }; echo "RESULT $OUTCOME original157"; exit 0 ;;
+    REQUESTED) record_outcome "$OUTCOME" || { echo "RESULT HOLD upstream-journal-error"; exit 1; }; echo "RESULT HOLD upstream-auto-requested"; exit 1 ;;
+    READY) ;;
+    HELD) record_outcome HELD || :; echo "RESULT HOLD upstream-outcome-unknown"; exit 1 ;;
+    *) echo "RESULT HOLD upstream-outcome-invalid"; exit 1 ;;
+  esac
+  [ "$(im_phase --admission)" = "$IMPROOF" ] || { record_outcome HELD || :; echo "RESULT HOLD upstream-admission-unproven"; exit 1; }
+  # Server-enforced protected merge only; a request is not a merge. A timeout
+  # is reconciled by fresh independent observations, never retried as a push.
+  IMMETHOD=--merge
+  case "$REPO:$IMPR" in ashlrai/lexicon:479|ashlrai/lexicon:480) IMMETHOD=--squash;; esac
+  perl -e 'alarm shift; exec @ARGV' 30 gh pr merge "https://github.com/$REPO/pull/$IMPR" --repo "$REPO" "$IMMETHOD" --auto --match-head-commit "$IMSHA" || echo "NOTE upstream merge request uncertain; reconciling"
+  OUTCOME=$(im_phase --outcome) || OUTCOME=HELD
+  case "$OUTCOME" in MERGED|QUEUED|REQUESTED|HELD) ;; *) OUTCOME=HELD ;; esac
+  record_outcome "$OUTCOME" || { echo "RESULT HOLD upstream-journal-error"; exit 1; }
+  case "$OUTCOME" in
+    MERGED|QUEUED) echo "RESULT $OUTCOME original157" ;;
+    REQUESTED) echo "RESULT HOLD upstream-auto-requested"; exit 1 ;;
+    *) echo "RESULT HOLD upstream-merge-unconfirmed"; exit 1 ;;
+  esac
+  exit 0
 fi
 # >>> G1CLASSIFY (GATES v4, Mason Nov 4 2026; PUBLISH-CLASSIFIER rev1c): .github/ and release*.yml need a G1 pass ONLY for
 # category-3 triggers: a new secrets reference (secrets.X, secrets[...], secrets: inherit), id-token other than none/read
@@ -169,7 +215,7 @@ fi
 # case-sensitive full_name, fork true, parent ashlrai/$NAME; any API error or timeout fails closed before push.
 fg_check(){ local o; o=$(perl -e 'alarm shift; exec @ARGV' 30 gh api "repos/masonwyatt23/$1" --jq '[.full_name,.fork,.parent.full_name]' 2>/dev/null) || return 1
   [ "$o" = "[\"masonwyatt23/$1\",true,\"ashlrai/$1\"]" ]; }
-fg_check "$NAME" || { echo "RESULT ABORT fork-target-invalid"; exit 1; }
+[ "$IU" = 1 ] || fg_check "$NAME" || { echo "RESULT ABORT fork-target-invalid"; exit 1; }
 git diff --no-ext-diff --no-textconv "$BASE"...HEAD | perl "$R/bin/scrub.pl" --check --allow-fixtures >/dev/null || { echo "RESULT ABORT PUBLISH-ABORT secret-shape in diff ($J)"; exit 1; }
 printf '%s\n' "$NOTES" | perl "$R/bin/scrub.pl" --check >/dev/null || { echo "RESULT ABORT PUBLISH-ABORT secret-shape in notes ($J)"; exit 1; }
 # Recheck original PR/ref/head and exact current main immediately before any push.
