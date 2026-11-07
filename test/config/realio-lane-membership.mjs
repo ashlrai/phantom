@@ -100,6 +100,7 @@ export const REAL_IO_TEST_FILES = [
   'test/agentbootreport31ak1.test.ts', // spawnSync and spawn run the agent-boot-report script as real children
   'test/agentcapacitywatchcli31ak4.test.ts', // spawn runs the agent-wait-capacity script as a real child
   'test/artifactpackcli31ak3.test.ts', // spawnSync and spawn run the agent-artifact-pack script as real children
+  'test/bin-ashlr-entry.test.ts', // spawnSync runs `node bin/ashlr --version` as a real child
   'test/channel-ack-replay-31za.test.ts', // spawnSync runs the channel-ack-replay example as a real child
   'test/cli-legacy-exit-codes.test.ts', // spawnSync runs real CLI children to check exit codes
   'test/composer-commands-doc-31.test.ts', // execSync runs git show against origin/master as a real child
@@ -121,6 +122,7 @@ export const REAL_IO_TEST_FILES = [
   'test/mcp-gateway-stdin-eof.test.ts', // spawn runs a real Node child for the gateway stdin lifecycle
   'test/no-orig-files-31.test.ts', // execSync runs git ls-files and grep as real children
   'test/perf-budget.test.ts', // spawnSync runs scripts/perf-budget.mjs as a real child
+  'test/perf-mcp-tools-list.test.ts', // spawnSync runs the MCP tools/list harness (real `phm mcp` gateway child)
   'test/phx-agentbusresume31j3.test.ts', // spawnSync runs the bus-resume example as a real child
   'test/phx-agentbusroundtask31k2.test.ts', // execFileSync runs the bus-task-roundtrip example as real children
   'test/phx-agentchangessnap31j2.test.ts', // spawnSync runs the job-changes example as a real child

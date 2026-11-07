@@ -90,8 +90,10 @@ import type { AshlrConfig, AshlrIndex, IndexedItem, GitStatus, ToolsRegistry, Mc
 // exits 1. The fallback message format is identical across every command.
 
 type Cmd = (args: string[]) => Promise<number>;
-type GetToolsRegistryFn = () => ToolsRegistry;
-type DiscoverMcpServersFn = () => McpRegistry;
+// Probe invokers may return the registry or a promise of it; `await` unwraps
+// either so status stays agnostic about which variant the module offered.
+type GetToolsRegistryFn = () => Promise<ToolsRegistry> | ToolsRegistry;
+type DiscoverMcpServersFn = () => Promise<McpRegistry> | McpRegistry;
 
 /**
  * Build a lazy loader for a CLI command export.
@@ -143,8 +145,12 @@ let _discoverMcpServers: DiscoverMcpServersFn | null | undefined = undefined;
 async function tryGetToolsRegistry(): Promise<GetToolsRegistryFn | null> {
   if (_getToolsRegistry === undefined) {
     try {
-      const mod = await import('../core/tools-registry.js') as { getToolsRegistry: GetToolsRegistryFn };
-      _getToolsRegistry = mod.getToolsRegistry;
+      const mod = await import('../core/tools-registry.js') as {
+        getToolsRegistry: (opts: { parallel: true }) => Promise<ToolsRegistry>;
+      };
+      // The parallel variant overlaps every tool's which + --version probes;
+      // the serial variant made status wait on each probe in turn.
+      _getToolsRegistry = () => mod.getToolsRegistry({ parallel: true });
     } catch {
       _getToolsRegistry = null;
     }
@@ -155,8 +161,10 @@ async function tryGetToolsRegistry(): Promise<GetToolsRegistryFn | null> {
 async function tryDiscoverMcpServers(): Promise<DiscoverMcpServersFn | null> {
   if (_discoverMcpServers === undefined) {
     try {
-      const mod = await import('../core/mcp-registry.js') as { discoverMcpServers: DiscoverMcpServersFn };
-      _discoverMcpServers = mod.discoverMcpServers;
+      const mod = await import('../core/mcp-registry.js') as {
+        discoverMcpServersAsync: () => Promise<McpRegistry>;
+      };
+      _discoverMcpServers = () => mod.discoverMcpServersAsync();
     } catch {
       _discoverMcpServers = null;
     }
@@ -1341,25 +1349,44 @@ async function cmdStatus(args: string[]): Promise<void> {
   );
   console.log('');
 
+  // Launch every best-effort probe and lazy import up front so module
+  // compilation and spawned children overlap the serial sections below.
+  // Printed order is unchanged — each promise is awaited at its own section
+  // and every failure resolves to null (status never breaks on a probe).
+  const toolsRegP = (async () => {
+    const fn = await tryGetToolsRegistry();
+    return fn ? await fn() : null;
+  })().catch(() => null);
+  const mcpRegP = (async () => {
+    const fn = await tryDiscoverMcpServers();
+    return fn ? await fn() : null;
+  })().catch(() => null);
+  const rollupFnP = tryBuildRollup();
+  const genomeModP = import('../core/genome/store.js' as unknown as string).catch(() => null);
+  const ghFnP = tryGithubStatus();
+  const vcFnP = tryVercelStatus();
+  const identityFnP = tryGetIdentity();
+  const custodyP = import('./status-custody.js').catch(() => null);
+  const preflightP = import('./status-preflight.js').catch(() => null);
+  const resourcesP = import('./resources.js' as unknown as string)
+    .then((m) => (m as { resourceStatusLine: (c: unknown) => Promise<string | null> }).resourceStatusLine(cfg))
+    .catch(() => null);
+
   // ── M3 Ecosystem summary (graceful degradation if modules not yet built) ──
-  const [getToolsRegistryFn, discoverMcpServersFn] = await Promise.all([
-    tryGetToolsRegistry(),
-    tryDiscoverMcpServers(),
-  ]);
+  const [toolsReg, mcpReg] = await Promise.all([toolsRegP, mcpRegP]);
 
   const ecosystemParts: string[] = [];
 
-  if (getToolsRegistryFn) {
+  if (toolsReg) {
     try {
-      const reg = getToolsRegistryFn();
-      const installedNames = reg.tools
+      const installedNames = toolsReg.tools
         .filter(t => t.installed)
         .map(t => t.id)
         .slice(0, 5); // show up to 5 names; remainder implied by count
-      const moreCount = reg.installedCount - installedNames.length;
+      const moreCount = toolsReg.installedCount - installedNames.length;
       const nameList = installedNames.join(', ') + (moreCount > 0 ? `, +${moreCount}` : '');
       ecosystemParts.push(
-        `${bold('Tools:')} ${cyan(`${reg.installedCount}/${reg.tools.length} installed`)}` +
+        `${bold('Tools:')} ${cyan(`${toolsReg.installedCount}/${toolsReg.tools.length} installed`)}` +
         (installedNames.length > 0 ? ` ${dim('—')} ${gray(nameList)}` : '')
       );
     } catch {
@@ -1367,15 +1394,10 @@ async function cmdStatus(args: string[]): Promise<void> {
     }
   }
 
-  if (discoverMcpServersFn) {
-    try {
-      const mcpReg = discoverMcpServersFn();
-      ecosystemParts.push(
-        `${bold('MCP servers:')} ${cyan(`${mcpReg.servers.length} discovered`)}`
-      );
-    } catch {
-      // silently skip on error
-    }
+  if (mcpReg) {
+    ecosystemParts.push(
+      `${bold('MCP servers:')} ${cyan(`${mcpReg.servers.length} discovered`)}`
+    );
   }
 
   if (ecosystemParts.length > 0) {
@@ -1385,7 +1407,7 @@ async function cmdStatus(args: string[]): Promise<void> {
 
   // ── M5 Activity summary (best-effort; silently skipped on error) ──────────
   try {
-    const buildRollupFn = await tryBuildRollup();
+    const buildRollupFn = await rollupFnP;
     if (buildRollupFn) {
       const rollup = buildRollupFn('7d', cfg);
       const t = rollup.totals;
@@ -1411,16 +1433,18 @@ async function cmdStatus(args: string[]): Promise<void> {
 
   // ── M7 Genome summary (best-effort; silently omitted on error) ────────────
   try {
-    const genomeMod = await import('../core/genome/store.js' as unknown as string) as {
+    const genomeMod = await genomeModP;
+    const health = (genomeMod as {
       genomeHealth: (cfg: AshlrConfig) => import('../core/types.js').GenomeHealth;
-    };
-    const health = genomeMod.genomeHealth(cfg);
-    console.log(
-      `  ${bold('Memory:')} ${cyan(`${health.totalEntries} genome entries`)} across ` +
-      `${cyan(`${health.projects} project${health.projects !== 1 ? 's' : ''}`)}` +
-      (health.embeddingsAvailable ? `  ${dim('·')}  ${gray('embeddings available')}` : '')
-    );
-    console.log('');
+    } | null)?.genomeHealth(cfg);
+    if (health) {
+      console.log(
+        `  ${bold('Memory:')} ${cyan(`${health.totalEntries} genome entries`)} across ` +
+        `${cyan(`${health.projects} project${health.projects !== 1 ? 's' : ''}`)}` +
+        (health.embeddingsAvailable ? `  ${dim('·')}  ${gray('embeddings available')}` : '')
+      );
+      console.log('');
+    }
   } catch {
     // silently omit — genome may not be built yet; never break status
   }
@@ -1432,7 +1456,7 @@ async function cmdStatus(args: string[]): Promise<void> {
 
   // GitHub: only surface when cwd is a gh repo
   try {
-    const ghStatusFn = await tryGithubStatus();
+    const ghStatusFn = await ghFnP;
     if (ghStatusFn) {
       const gs = ghStatusFn(cwd);
       if (gs.isRepo) {
@@ -1462,7 +1486,7 @@ async function cmdStatus(args: string[]): Promise<void> {
 
   // Vercel: only surface when a project is linked
   try {
-    const vcStatusFn = await tryVercelStatus();
+    const vcStatusFn = await vcFnP;
     if (vcStatusFn) {
       const vs = vcStatusFn(cwd);
       if (vs.linked) {
@@ -1480,7 +1504,7 @@ async function cmdStatus(args: string[]): Promise<void> {
 
   // Identity: only surface when phantom is logged in
   try {
-    const identityFn = await tryGetIdentity();
+    const identityFn = await identityFnP;
     if (identityFn) {
       const id = identityFn();
       if (id.loggedIn && id.user) {
@@ -1496,10 +1520,10 @@ async function cmdStatus(args: string[]): Promise<void> {
 
   // Custody: receipt.v1 and spawn custody counts (value-free; quiet when unused)
   try {
-    const { gatherCustodyStatus, formatCustodyStatusLine } = await import('./status-custody.js');
-    const custody = gatherCustodyStatus();
-    if (custody) {
-      console.log(`  ${bold('Custody:')} ${formatCustodyStatusLine(custody)}`);
+    const custodyMod = await custodyP;
+    const custody = custodyMod?.gatherCustodyStatus();
+    if (custodyMod && custody) {
+      console.log(`  ${bold('Custody:')} ${custodyMod.formatCustodyStatusLine(custody)}`);
       console.log('');
     }
   } catch {
@@ -1508,10 +1532,10 @@ async function cmdStatus(args: string[]): Promise<void> {
 
   // Phantom strict preflight: only when the spawn gate is on (value-free)
   try {
-    const { gatherPreflightStatus, formatPreflightStatusLine } = await import('./status-preflight.js');
-    const pre = gatherPreflightStatus();
-    if (pre) {
-      console.log(`  ${bold('Preflight:')} ${formatPreflightStatusLine(pre)}`);
+    const preMod = await preflightP;
+    const pre = preMod?.gatherPreflightStatus();
+    if (preMod && pre) {
+      console.log(`  ${bold('Preflight:')} ${preMod.formatPreflightStatusLine(pre)}`);
       console.log('');
     }
   } catch {
@@ -1519,17 +1543,10 @@ async function cmdStatus(args: string[]): Promise<void> {
   }
 
   // ── M253 Resource Control Plane summary (best-effort; never break status) ──
-  try {
-    const resourcesMod = await import('./resources.js' as unknown as string) as {
-      resourceStatusLine: (cfg: unknown) => Promise<string | null>;
-    };
-    const line = await resourcesMod.resourceStatusLine(cfg);
-    if (line) {
-      console.log(`  ${line}`);
-      console.log('');
-    }
-  } catch {
-    // silently omit — resource sensing never breaks the status command
+  const line = await resourcesP;
+  if (line) {
+    console.log(`  ${line}`);
+    console.log('');
   }
 }
 
