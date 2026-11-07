@@ -204,6 +204,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'needs-wait-group': () => import('./fleet-needs-wait-group.js'),
   'order-notices': () => import('./fleet-order-notices.js'),
   'outcomes': () => import('./fleet-outcomes.js'),
+  'park-audit': () => import('./fleet-park-audit.js'),
   'path-batch': () => import('./fleet-path-batch.js'),
   'path-cochanges': () => import('./fleet-path-cochanges.js'),
   'path-history': () => import('./fleet-path-history.js'),
