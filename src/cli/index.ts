@@ -55,6 +55,7 @@
  *   vercel <ls|logs>           Read Vercel deployments / latest logs (read-only via vercel CLI).
  *   wire [claude|codex|cursor|all]  Wire ashlr MCP gateway into editor config(s).
  *   notify test                Send a test ping to the configured webhook (no-op if unconfigured).
+ *   estates [--json] [--repo <repo-id>]  Per-repo estate cards: health, CI, security.
  *   help                       Show this help.
  *
  * Exit codes: 0 success, 1 error/not-found, 2 bad usage.
@@ -2838,6 +2839,12 @@ async function main(): Promise<void> {
       case 'capacity': {
         const { cmdCapacity } = await import('./capacity.js');
         process.exitCode = await cmdCapacity(rest);
+        break;
+      }
+
+      case 'estates': {
+        const { cmdEstates } = await import('./estates.js');
+        process.exitCode = await cmdEstates(rest);
         break;
       }
 
