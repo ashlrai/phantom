@@ -1,4 +1,4 @@
-/* global Buffer, URL */
+/* global AbortController, Buffer, DOMException, URL */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
@@ -127,6 +127,32 @@ test('persistent transient failure stops after three reads and retains the origi
   assert.deepEqual(f.waits, [250, 500]);
   assert.equal(f.reports.length, 1);
   assert.match(f.reports[0], /504/);
+});
+
+test('fetch and body timeouts retry within the shared budget without masking other errors', async () => {
+  for (const body of [false, true]) {
+    let calls = 0, clock = 0;
+    const budgets = [], reports = [];
+    const read = createPublicMetadataReader({ now: () => clock, sleep: async ms => { clock += ms; },
+      report: message => reports.push(message), timeoutSignal: ms => {
+        budgets.push(ms);
+        const controller = new AbortController();
+        if (calls === 0) controller.abort(new DOMException('timed out', 'TimeoutError'));
+        return controller.signal;
+      }, fetchImpl: async (_url, { signal }) => {
+        calls++;
+        if (calls === 1) {
+          clock += 5_000;
+          if (!body) throw signal.reason;
+          return { status: 200, text: async () => { throw new DOMException('aborted', 'AbortError'); } };
+        }
+        return { status: 200, text: async () => JSON.stringify(repo) };
+      } });
+    assert.deepEqual(await read('repos/ashlrai/phantom'), repo);
+    assert.equal(calls, 2);
+    assert.deepEqual(budgets, [5_000, 5_000]);
+    assert.match(reports[0], /timeout at repos\/ashlrai\/phantom/);
+  }
 });
 
 test('the fixed thirty-second deadline is shared across endpoints, backoff and body reads', async () => {

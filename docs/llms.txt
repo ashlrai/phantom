@@ -14,6 +14,7 @@ Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent
 - [Agent network channels](AGENT-NETWORK-CHANNELS.md): Offline channel inspection, envelope metadata, loop guard and default-deny send policy.
 - [Slack bridge](AGENT-NETWORK.md#slack-bridge): Socket Mode mapping of bus topics/threads to Slack channels/threads; `phm channels slack status --json` and dry-run `phm channels slack map --json` are read-only.
 - [Agent Bus v2 contract](AGENT-BUS.md#v2): Participants, body kinds, claim keys with overlap rules, and the work feed for every provider. Print it with `ashlr agents bus contract --json`.
+- [Bus threads and task board](BUS-THREADS.md): `phm bus thread|task` shared local board; task claims are real fenced SharedStore queue claims with atomic pre-execution handoff. Cooperative routing labels only, no execution authority.
 - [Agent operations](AGENT-OPERATIONS.md): Cold-start checklist for building and operating Phantom from source.
 - [Automatic work](AUTOMATIC-OUTCOMES.md): Chat routing and fleet outcomes.
 - [Autonomy setup](AUTONOMY-SETUP.md): Dormant macOS autonomy. Status is not activation.

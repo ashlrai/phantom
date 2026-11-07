@@ -40,6 +40,7 @@ import type { AshlrConfig } from '../types.js';
 import { randomUUID } from 'node:crypto';
 import { frameUntrusted } from '../verse/browser-act-policy.js';
 import { validateBusEnvelope, type BusEnvelope } from './bus-envelope.js';
+import type { BusBoardDelivery } from './bus-delivery.js';
 import type { BusHop } from './bus-hoplog.js';
 
 // ---------------------------------------------------------------------------
@@ -52,7 +53,8 @@ export type FleetBusEventKind =
   | 'merge:shipped'
   | 'regression:detected'
   | 'goal:done'
-  | 'anomaly';
+  | 'anomaly'
+  | 'bus:delivery';
 
 /** Per-kind payload shapes. */
 export interface FleetBusPayloadMap {
@@ -82,6 +84,13 @@ export interface FleetBusPayloadMap {
   'anomaly': {
     detail?: string;
     source?: string;
+  };
+  'bus:delivery': {
+    /**
+     * One durable shared task board delivery (docs/BUS-THREADS.md). The record
+     * is frozen at post time; `content` is untrusted data, never instructions.
+     */
+    delivery: Readonly<BusBoardDelivery>;
   };
 }
 

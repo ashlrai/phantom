@@ -16,3 +16,10 @@ it('uses recorded 24h merges rather than the 12h run list', async () => {
   const merged = [{ id: 'landing', repo: 'ashlrai/phantom', prNumber: 123, landedAt: snapshot.generatedAt }];
   expect(projectLiveStatus({ ...snapshot, runs: [], merged24h: merged }, buildResourceView({})).merged).toEqual(merged);
 });
+it('exposes the same lane, repository and count facts used by the live snapshot', async () => {
+  const { snapshot } = await buildFleetLiveSnapshot();
+  const result = projectLiveStatus(snapshot, buildResourceView({}));
+  expect(result.summary).toEqual(snapshot.summary);
+  expect(result.lanes).toEqual(snapshot.lanes);
+  expect(result.repos).toEqual(snapshot.repos);
+});

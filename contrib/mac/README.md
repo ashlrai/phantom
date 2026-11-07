@@ -733,3 +733,39 @@ current-host patches. Immutable helper closure, exact current-input comparison,
 existing controller/ready locks, backups and post-adoption checks must be
 reviewed separately. Source tests and a synthetic locked-tick measurement do
 not by themselves establish live adoption or worst-case host latency.
+
+
+## Host release observer source
+
+`release-autorun.sh` is the reviewable source mirror for the existing
+`ai.ashlr.release-autorun` LaunchAgent and fixed stock signing wrapper. It
+selects immutable proof using the existing `gh` authentication; it
+does not create credentials, version PRs, tags, qualification runs or npm
+dispatches. The unchanged stock signer independently verifies the selected
+source, run attempts, original artifacts, audit and signing/publication guards.
+Selection metadata is not a reusable qualification grant.
+
+The observer considers at most 20 newest successful attestors on current master.
+A missing handoff does not hide an older ready attestor or create new permanent
+seen state. Complete bounded artifact inventories must contain one exact
+current-attempt handoff and build with matching run, source and repository.
+Every completed per-source rc remains final. A started record without a
+completion is uncertain and blocks before network or signing; no automatic
+replay or legacy-state migration occurs. Existing seen records are preserved.
+
+`RELEASE_AUTORUN_OFF`, the existing observer/signer locks and keychain gate remain
+unchanged. `install.sh` intentionally does not install this observer. Adoption
+requires review of the exact merged source and current host input, an unchanged
+owned OFF marker, private backup/journal, existing observer exclusion, a
+single-file compare-and-swap replacement and readback. It must not overwrite
+legacy outcomes or replace/restart launchd, the dispatcher, signer, keys or
+other host controls. Clearing OFF is a separate explicit operator action.
+
+The original rev1 input is retained only as an inert counterfactual fixture.
+The following tests use fake GET-only GitHub and fake Bash signing processes
+inside private temporary roots; they never contact a real publisher or keychain:
+
+```sh
+python3 -I contrib/mac/tests/test_release_autorun.py
+bash -n contrib/mac/release-autorun.sh
+```

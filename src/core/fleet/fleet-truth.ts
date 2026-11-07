@@ -11,18 +11,18 @@
  * from the runs dir.
  *
  * Honesty rule: when GitHub cannot be read, `mergeCountState` is
- * 'unavailable' and callers say "merge count unavailable", never "nothing
- * merged". Never throws. No tokens are read or logged; gh authenticates itself.
+ * 'unavailable' when the credential-visible search is incomplete or stale;
+ * callers never turn that into an empty result. No tokens are read or logged.
  */
 import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { performance } from 'node:perf_hooks';
 
 export const FLEET_OWNER = 'ashlrai';
 export const FLEET_TIME_ZONE = 'America/New_York';
 const CACHE_MS = 120_000;
-const GH_LIMIT = 1000;
 const GH_TIMEOUT_MS = 30_000;
 const GH_MAX_BUFFER = 8 * 1024 * 1024;
 const ADMISSION_MAX_AGE_MS = 15 * 60_000;
@@ -41,7 +41,7 @@ export interface FleetTruth {
   windowEndMs: number;
   /** Newest first, deduped by repo#number. */
   merged: FleetMergedPr[];
-  /** 'ok' = GitHub answered; 'unavailable' = it did not (merged may then hold ledger merges only). */
+  /** 'ok' = complete, current credential-visible search; otherwise incomplete or unavailable. */
   mergeCountState: 'ok' | 'unavailable';
   /** GitHub search caps at 1000; true means the count is a floor. */
   truncated: boolean;
@@ -59,7 +59,7 @@ export interface LedgerMerge {
   atMs: number;
 }
 
-export type GhRunner = (args: string[]) => Promise<string>;
+export type GhRunner = (args: string[], options?: { timeoutMs: number }) => Promise<string>;
 
 export interface FleetTruthOptions {
   nowMs?: number;
@@ -74,6 +74,8 @@ export interface FleetTruthOptions {
   fresh?: boolean;
   /** Use only GitHub merges, without unioning local observations. */
   githubOnly?: boolean;
+  /** Monotonic deadline seam for tests; not a wall-clock observation. */
+  monotonicNow?: () => number;
 }
 
 // ---------------------------------------------------------------------------
@@ -109,12 +111,13 @@ export function startOfDayInZone(nowMs: number, timeZone: string = FLEET_TIME_ZO
 // GitHub
 // ---------------------------------------------------------------------------
 
-const realGh: GhRunner = (args) =>
+const realGh: GhRunner = (args, options) =>
   new Promise((resolve, reject) => {
     try {
       execFile('gh', args, {
         cwd: homedir(),
-        timeout: GH_TIMEOUT_MS,
+        timeout: options?.timeoutMs ?? GH_TIMEOUT_MS,
+        killSignal: 'SIGKILL',
         encoding: 'utf8',
         maxBuffer: GH_MAX_BUFFER,
         windowsHide: true,
@@ -133,52 +136,59 @@ interface GhRow {
   mergedAtMs: number;
 }
 
-function parseGhRows(stdout: string): GhRow[] {
-  const raw: unknown = JSON.parse(stdout);
-  if (!Array.isArray(raw)) throw new Error('unexpected gh output');
-  const rows: GhRow[] = [];
-  for (const r of raw) {
-    if (typeof r !== 'object' || r === null) continue;
-    const row = r as Record<string, unknown>;
-    const repo = (row['repository'] as Record<string, unknown> | undefined)?.['nameWithOwner'];
-    const closed = typeof row['closedAt'] === 'string' ? Date.parse(row['closedAt']) : NaN;
-    if (typeof repo !== 'string' || typeof row['number'] !== 'number' || !Number.isFinite(closed)) continue;
-    rows.push({
-      repo,
-      number: row['number'],
-      title: typeof row['title'] === 'string' ? row['title'] : '',
-      url: typeof row['url'] === 'string' ? row['url'] : `https://github.com/${repo}/pull/${row['number']}`,
-      mergedAtMs: closed,
-    });
-  }
-  return rows;
-}
-
-const ghCache = new Map<string, { at: number; rows: GhRow[]; truncated: boolean }>();
+const ghCache = new Map<string, { at: number; rows: GhRow[]; truncated: boolean; complete: boolean }>();
 
 /** Test hook: drop the 120s gh cache. */
-export function resetFleetTruthCache(): void {
-  ghCache.clear();
-}
+export function resetFleetTruthCache(): void { ghCache.clear(); }
 
-async function readGhMerges(sinceMs: number, nowMs: number, gh: GhRunner, fresh: boolean): Promise<{ rows: GhRow[]; truncated: boolean } | null> {
-  // Open-ended on the right so one cached read serves every window that starts here.
+/** Bounded GitHub search; each page must prove its count and source identity.
+ * Partial results remain useful observations, never proof of an empty window. */
+async function readGhMerges(sinceMs: number, nowMs: number, gh: GhRunner, fresh: boolean, monotonicNow: () => number): Promise<{ at: number; rows: GhRow[]; truncated: boolean; complete: boolean } | null> {
   const key = new Date(sinceMs).toISOString();
   const hit = ghCache.get(key);
-  if (!fresh && hit && nowMs >= hit.at && nowMs - hit.at < CACHE_MS) return hit;
+  if (!fresh && hit && nowMs >= hit.at && nowMs - hit.at < CACHE_MS) return { ...hit, complete: false };
+  const rows: GhRow[] = []; const seen = new Set<string>(); let total: number | undefined; let received = 0;
+  let complete = true; let truncated = false;
+  const deadline = monotonicNow() + GH_TIMEOUT_MS;
   try {
-    const stdout = await gh([
-      'search', 'prs', '--owner', FLEET_OWNER, '--merged', '--merged-at', fresh ? `${key}..${new Date(nowMs).toISOString()}` : `>=${key.replace(/\.\d{3}Z$/, 'Z')}`,
-      '--json', 'repository,number,title,url,closedAt', '--limit', String(GH_LIMIT),
-    ]);
-    const rows = parseGhRows(stdout);
-    const entry = { at: nowMs, rows, truncated: rows.length >= GH_LIMIT };
-    // A bounded fresh read must not populate the open-ended shared cache.
-    if (!fresh) ghCache.set(key, entry);
+    for (let page = 1; page <= 10; page++) {
+      const remaining = Math.floor(deadline - monotonicNow());
+      if (!Number.isFinite(remaining) || remaining < 1) throw new Error('merge search deadline');
+      const raw: unknown = JSON.parse(await gh(['api', 'search/issues', '-X', 'GET', '-f',
+        `q=user:${FLEET_OWNER} is:pr is:merged merged:${key}..${new Date(nowMs).toISOString()}`,
+        '-f', 'per_page=100', '-f', `page=${page}`], { timeoutMs: Math.min(GH_TIMEOUT_MS, remaining) }));
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('invalid merge search');
+      const result = raw as Record<string, unknown>;
+      if (!Number.isSafeInteger(result['total_count']) || Number(result['total_count']) < 0 ||
+          typeof result['incomplete_results'] !== 'boolean' || !Array.isArray(result['items']) || result['items'].length > 100) throw new Error('invalid merge page');
+      const count = Number(result['total_count']);
+      if (total === undefined) total = count; else if (total !== count) throw new Error('merge count moved');
+      if (result['incomplete_results']) complete = false;
+      received += result['items'].length; if (received > count) throw new Error('merge count invalid');
+      for (const value of result['items']) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid merge row');
+        const row = value as Record<string, unknown>; const pr = row['pull_request'];
+        const match = typeof row['repository_url'] === 'string' ? /^https:\/\/api\.github\.com\/repos\/ashlrai\/([A-Za-z0-9_.-]+)$/i.exec(row['repository_url']) : null;
+        if (!match || !Number.isSafeInteger(row['number']) || Number(row['number']) <= 0 || typeof row['title'] !== 'string' ||
+            !pr || typeof pr !== 'object' || Array.isArray(pr)) throw new Error('invalid merge row');
+        const mergedAt = (pr as Record<string, unknown>)['merged_at'];
+        if (typeof mergedAt !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z$/.test(mergedAt)) throw new Error('invalid merge time');
+        const time = Date.parse(mergedAt); if (!Number.isFinite(time) || new Date(time).toISOString().slice(0,19) !== mergedAt.slice(0,19)) throw new Error('invalid merge time');
+        const repo = `${FLEET_OWNER}/${match[1]}`; const number = Number(row['number']); const id = `${repo.toLowerCase()}#${number}`;
+        if (seen.has(id)) throw new Error('duplicate merge row'); seen.add(id);
+        if (time >= sinceMs && time <= nowMs) rows.push({ repo, number, title: row['title'], url: `https://github.com/${repo}/pull/${number}`, mergedAtMs: time });
+      }
+      if (monotonicNow() >= deadline) { complete = false; break; }
+      if (received === count) break;
+      if (result['items'].length !== 100) { complete = false; break; }
+      if (page === 10) { truncated = true; complete = false; }
+    }
+    const entry = { at: nowMs, rows, truncated, complete: complete && received === total };
+    if (!fresh && entry.complete) ghCache.set(key, entry);
     return entry;
   } catch {
     ghCache.delete(key);
-    return null;
+    return rows.length ? { at: nowMs, rows, truncated, complete: false } : null;
   }
 }
 
@@ -249,7 +259,7 @@ export async function getFleetTruth(sinceMs: number, opts: FleetTruthOptions = {
   const gh = opts.gh ?? (process.env['ASHLR_FLEET_TRUTH_GH'] === 'off' ? null : realGh);
 
   const [ghRead, ledger, queue, running] = await Promise.all([
-    gh ? readGhMerges(sinceMs, nowMs, gh, opts.fresh === true) : Promise.resolve(null),
+    gh ? readGhMerges(sinceMs, nowMs, gh, opts.fresh === true, opts.monotonicNow ?? (() => performance.now())) : Promise.resolve(null),
     (async () => {
       try {
         if (opts.githubOnly) return [];
@@ -292,9 +302,9 @@ export async function getFleetTruth(sinceMs: number, opts: FleetTruthOptions = {
   }
   return {
     windowStartMs: sinceMs,
-    windowEndMs: nowMs,
+    windowEndMs: ghRead?.at ?? nowMs,
     merged,
-    mergeCountState: ghRead ? 'ok' : 'unavailable',
+    mergeCountState: ghRead?.complete ? 'ok' : 'unavailable',
     truncated: ghRead?.truncated ?? false,
     running,
     queued: queue?.ready ?? null,
