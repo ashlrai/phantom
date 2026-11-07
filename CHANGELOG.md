@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.21 |
-| Latest dated changelog release (2026-11-06) | 3.30.21 |
+| Source package | 3.30.22 |
+| Latest dated changelog release (2026-11-07) | 3.30.22 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -17,6 +17,20 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ---
 
 ## [Unreleased]
+
+## [3.30.22] — 2026-11-07
+
+### Fixes
+
+- Connect the provider-neutral Leader to admitted native Devin CLI models, preserving exact account, Free-catalog, context and grant checks ([#3801](https://github.com/ashlrai/phantom/pull/3801)).
+- Add explicit local operator pairing for the already-configured Telegram owner, with private exclusive secret setup and no synthetic inbound updates ([#3802](https://github.com/ashlrai/phantom/pull/3802)).
+- Publish opt-in machine telemetry with verified process attribution and preserve host/session pressure and launch-admission evidence ([#1152](https://github.com/ashlrai/phantom/pull/1152), [#3280](https://github.com/ashlrai/phantom/pull/3280)).
+- Restore durable wake hints only after accepted channel publication ([#3260](https://github.com/ashlrai/phantom/pull/3260)).
+
+### Build and verification
+
+- Reuse verified compiler state for exact protected-source checks while keeping actual type and authority checks ([#3805](https://github.com/ashlrai/phantom/pull/3805)).
+- Bound exhaustive Mac audit concurrency with four stable runner pools, keeping release capacity separate, and restore failure-first test ordering ([#3803](https://github.com/ashlrai/phantom/pull/3803), [#3804](https://github.com/ashlrai/phantom/pull/3804)).
 
 ## [3.30.21] — 2026-11-06
 
