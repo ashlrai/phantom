@@ -25,13 +25,19 @@ function report(initialized = true) {
   };
 }
 
+// Exact metadata captured from the published v0.8.7 binary in an empty project.
+// The legacy seven fields retain their values and strict nested contract.
+function report087(initialized = false) {
+  return { ...report(initialized), schemaVersion: 1, kind: 'phantom.status' };
+}
+
 function result(stdout: string, status: number | null = 0, stderr = '', error?: Error): SpawnSyncReturns<string> {
   return { pid: 1, output: [], stdout, stderr, status, signal: null, error };
 }
 
-function installMock(statusResult = result(JSON.stringify(report())), names: unknown = ['OPENAI_API_KEY']) {
+function installMock(statusResult = result(JSON.stringify(report())), names: unknown = ['OPENAI_API_KEY'], version = '0.7.9') {
   spawnSync.mockImplementation((_bin: string, args: string[]) => {
-    if (args[0] === '--version') return result('phantom 0.7.9\n');
+    if (args[0] === '--version') return result(`phantom ${version}\n`);
     if (args[0] === 'status') return statusResult;
     if (args[0] === 'list') return result(JSON.stringify(names));
     if (args[0] === '--help') return result('Commands:\n  status\n  list\n  exec\n  mcp\n\nOptions:\n');
@@ -51,6 +57,48 @@ afterEach(() => {
 });
 
 describe('Secrets schema v1 observations', () => {
+  it('accepts the exact published 0.8.7 uninitialized metadata without listing a vault', () => {
+    installMock(result(JSON.stringify(report087())), [], '0.8.7');
+    const observed = getPhantomStatus();
+    expect(observed).toMatchObject({ version: '0.8.7', initialized: false, secretNames: [] });
+    expect(observed.error).toBeUndefined();
+    expect(observed.capability.modes.childEnvInjectionAvailable).toBe(false);
+    expect(spawnSync.mock.calls.map((call) => call[1])).not.toContainEqual(['list', '--json']);
+  });
+
+  it('accepts configured identified metadata without inferring injection or listener readiness', () => {
+    installMock(result(JSON.stringify(report087(true))), ['OPENAI_API_KEY'], '0.8.7');
+    const observed = getPhantomStatus();
+    expect(observed).toMatchObject({ initialized: true, secretNames: ['OPENAI_API_KEY'] });
+    expect(observed.error).toBeUndefined();
+    expect(observed.capability.modes.childEnvInjectionAvailable).toBe(false);
+  });
+
+  it.each([
+    ['incoherent camel schema', { ...report087(), schemaVersion: 2 }],
+    ['string camel schema', { ...report087(), schemaVersion: '1' }],
+    ['incoherent snake schema', { ...report087(), schema_version: 2 }],
+    ['wrong kind', { ...report087(), kind: 'phantom.agent.preflight' }],
+    ['nonprimitive kind', { ...report087(), kind: ['phantom.status'] }],
+    ['missing camel schema', { ...report087(), schemaVersion: undefined }],
+    ['missing kind', { ...report087(), kind: undefined }],
+    ['missing legacy schema', { ...report087(), schema_version: undefined }],
+    ['unknown extra top-level key', { ...report087(), token: 'SECRET_OBSERVATION_SENTINEL' }],
+    ['extra vault key', { ...report087(), vault: { inspected: false, token: 'SECRET_OBSERVATION_SENTINEL' } }],
+    ['inspected vault', { ...report087(), vault: { inspected: true } }],
+    ['inspected dotenv', { ...report087(), managed_dotenv: { inspected: true } }],
+    ['authenticated listener', { ...report087(), proxy: { lifecycle_lock: 'held', listener_authenticated: true } }],
+    ['unknown lock', { ...report087(), proxy: { lifecycle_lock: 'running', listener_authenticated: false } }],
+    ['extra proxy key', { ...report087(), proxy: { lifecycle_lock: 'missing', listener_authenticated: false, token: 'SECRET_OBSERVATION_SENTINEL' } }],
+    ['unknown issue', { ...report087(), issues: ['SECRET_OBSERVATION_SENTINEL'] }],
+  ])('rejects identified metadata with %s without listing or leaking observations', (_label, fixture) => {
+    installMock(result(JSON.stringify(fixture)), [], '0.8.7');
+    const observed = getPhantomStatus();
+    expect(observed).toMatchObject({ initialized: false, error: 'status-contract-unsupported', secretNames: [] });
+    expect(JSON.stringify(observed)).not.toContain('SECRET_OBSERVATION_SENTINEL');
+    expect(spawnSync.mock.calls.map((call) => call[1])).not.toContainEqual(['list', '--json']);
+  });
+
   it('accepts configured metadata without inventing injection or listener readiness', () => {
     const observed = getPhantomStatus();
     expect(observed.initialized).toBe(true);

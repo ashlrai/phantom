@@ -21,6 +21,8 @@ export const LEADER_AWAY_MS = 72 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_RECORD_BYTES = 8 * 1024 * 1024;
 const MAX_RECEIPTS = 10_000;
+// Match the existing Leader reply batch; slow helpers cannot monopolize all receipts.
+const INBOX_RECOVERY_BATCH = 5;
 // Match the existing Mail transport's bounded send window; an acknowledgement
 // timeout must not classify an ordinary multi-second channel send as interrupted.
 const DELIVERY_TIMEOUT_MS = 30_000;
@@ -48,12 +50,14 @@ export function routeLeaderMessage(message: BusEnvelope, verifiedSender: TeamIde
 }
 
 interface Route { channel: ChannelId; recipient: string; channelRef: string; receivedAt: number; inbox: boolean; bus: boolean; fingerprint: string; message: BusEnvelope; reply?: { text: string; fingerprint: string; at: number; recorded: boolean; published: boolean; delivered: boolean; attempted: boolean } }
-interface NetworkState { version: 1; startedAt: number; lastMasonAt: number | null; routes: Record<string, Route>; digests: Record<string, { at: number; sent: boolean; attempted: boolean; envelope: BusEnvelope }> }
+interface NetworkState { version: 1; inboxRetryCursor?: number; startedAt: number; lastMasonAt: number | null; routes: Record<string, Route>; digests: Record<string, { at: number; sent: boolean; attempted: boolean; envelope: BusEnvelope }> }
 export interface LeaderNetworkOptions {
   runsDir: string;
   busRoot?: string;
   configSource: string;
   commsSource: string;
+  /** Trusted runtime reader only; never serialized or selected by an envelope. */
+  readCurrentPolicy?: () => { configSource: string; commsSource: string };
   deliver?: (identity: TeamIdentity, message: BusEnvelope) => Promise<DeliverResult>;
   adapters?: Partial<Record<ChannelId, ChannelAdapter>>;
   /** Trusted host dependency, never supplied by an envelope or model. */
@@ -98,6 +102,7 @@ export function createLeaderNetwork(options: LeaderNetworkOptions) {
       const state: NetworkState = raw === null ? { version: 1, startedAt: at, lastMasonAt: null, routes: {}, digests: {} } : JSON.parse(raw) as NetworkState;
       if (state.version !== 1 || !Number.isSafeInteger(state.startedAt) || state.startedAt < 0 || state.startedAt > at || (state.lastMasonAt !== null && (!Number.isSafeInteger(state.lastMasonAt) || state.lastMasonAt < 0 || state.lastMasonAt > at)) || !state.routes || typeof state.routes !== 'object' || Array.isArray(state.routes) || !state.digests || typeof state.digests !== 'object' || Array.isArray(state.digests)) throw new Error('Invalid leader state');
       if (Object.keys(state.routes).length > MAX_RECEIPTS) throw new Error('Leader receipts full');
+      if (state.inboxRetryCursor !== undefined && (!Number.isSafeInteger(state.inboxRetryCursor) || state.inboxRetryCursor < 0 || state.inboxRetryCursor >= MAX_RECEIPTS)) throw new Error('Invalid inbox recovery cursor');
       for (const [key, route] of Object.entries(state.routes)) {
         if (!/^[a-f0-9]{64}$/.test(key) || !route || typeof route !== 'object' ||
             typeof route.recipient !== 'string' || typeof route.channelRef !== 'string' ||
@@ -143,6 +148,30 @@ export function createLeaderNetwork(options: LeaderNetworkOptions) {
     if (typeof text !== 'string' || !text.trim() || text.length > INBOX_MAX_CHARS || scrubSecrets(text) !== text) return null;
     return text.replace(/\r\n?/g, '\n').trim();
   }
+  function currentPolicy(): { configSource: string; commsSource: string } | null {
+    try {
+      const value = options.readCurrentPolicy ? options.readCurrentPolicy() : { configSource: options.configSource, commsSource: options.commsSource };
+      return value && typeof value.configSource === 'string' && typeof value.commsSource === 'string' ? value : null;
+    } catch { return null; }
+  }
+  function currentOwner(route: Pick<Route, 'channel' | 'recipient'>, policy = currentPolicy()): boolean {
+    return policy !== null && owner({ channel: route.channel, id: route.recipient }, policy.configSource);
+  }
+  function inputText(envelope: BusEnvelope): string | null {
+    const body = envelope.body;
+    return cleanText(typeof body === 'string' ? body : body !== null && typeof body === 'object' && !Array.isArray(body) && typeof body.text === 'string' ? body.text : '');
+  }
+  async function appendInbox(requestId: string, route: Route, text: string): Promise<void> {
+    // Preserve the planner/ack consumers' existing wall-clock ET heading.
+    const heading = formatInboxEntry('', route.channel, new Date(route.receivedAt)).trim().replace(/\([^,]+, /, '(Operator, ');
+    if (route.channel === 'slack' && options.appendInbox) {
+      const request: LeaderInboxRequest = { requestId, channel: 'slack', ownerId: route.recipient, receivedAt: route.receivedAt, text };
+      const receipt = await options.appendInbox(request);
+      if (!validLeaderInboxReceipt(receipt, request)) throw new Error('Leader inbox receipt is invalid');
+    } else {
+      appendRecord(join(leaderDir, 'MASON-INBOX.md'), requestId, `${heading} [leader-network:${requestId}]\n${text.split('\n').map(escapeInboxContinuation).join('\n')}`);
+    }
+  }
   function publish(envelope: BusEnvelope, receivedAt?: number): boolean {
     // Preserve original transport age instead of restarting TTL at this bridge.
     const post = appendBusInbox(envelope, { root: options.busRoot, now: receivedAt === undefined ? clock : () => receivedAt });
@@ -172,18 +201,45 @@ export function createLeaderNetwork(options: LeaderNetworkOptions) {
   return {
     async pending(): Promise<{ requestId: string; envelope: BusEnvelope; replyText?: string }[]> {
       try { return await transaction(async (state, at) => {
+        // A failed sole-writer append retained the authenticated input before
+        // it became inbox-durable. Retry only that exact current-owner receipt,
+        // through the trusted idempotent helper; never fall back to direct IO.
+        const retryPolicy = currentPolicy();
+        const recoverable = options.appendInbox ? Object.entries(state.routes).filter(([, route]) =>
+          route.channel === 'slack' && !route.inbox && !route.bus && !route.reply && route.message.to === 'leader' &&
+          at - route.receivedAt < route.message.ttl && currentOwner(route, retryPolicy)) : [];
+        const start = recoverable.length ? (state.inboxRetryCursor ?? 0) % recoverable.length : 0;
+        const batch = [...recoverable.slice(start), ...recoverable.slice(0, start)].slice(0, INBOX_RECOVERY_BATCH);
+        state.inboxRetryCursor = recoverable.length ? (start + batch.length) % recoverable.length : 0;
+        if (batch.length) save(state); // crash-safe scheduling only, never durability
+        for (const [requestId, route] of batch) {
+          try {
+            const fresh = now();
+            const verified = { channel: route.channel, id: route.recipient };
+            const policy = currentPolicy();
+            const envelope = policy ? routeLeaderMessage(route.message, verified, policy.configSource) : null;
+            const text = envelope ? inputText(envelope) : null;
+            if (!text || !envelope || hash([envelope, route.recipient]) !== route.fingerprint || fresh < route.receivedAt || fresh - route.receivedAt >= envelope.ttl) continue;
+            await appendInbox(requestId, route, text);
+            const acceptedAt = now();
+            if (!currentOwner(route) || acceptedAt < route.receivedAt || acceptedAt - route.receivedAt >= envelope.ttl) continue;
+            route.inbox = true; save(state);
+          } catch { /* Missing/uncertain proof stays retained; later routes still get a turn. */ }
+        }
         // Durable inbox acceptance survives a full or unavailable bus. Recover
         // its pending mirror from the authenticated saved route, never raw bus
         // labels, and keep the original receipt time and envelope identity.
         for (const route of Object.values(state.routes)) {
+          const mirrorAt = now();
           if (route.inbox && !route.bus && route.message.to === 'leader' &&
-              at - route.receivedAt < route.message.ttl &&
-              owner({ channel: route.channel, id: route.recipient }, options.configSource)) {
+              mirrorAt >= route.receivedAt && mirrorAt - route.receivedAt < route.message.ttl &&
+              currentOwner(route)) {
             route.bus = publish({ ...route.message, origin_bridge: LEADER_BRIDGE_ID }, route.receivedAt);
           }
         }
+        const readyPolicy = currentPolicy();
         return Object.entries(state.routes).flatMap(([requestId, route]) =>
-          route.inbox && route.bus && route.message.to === 'leader' && !route.reply?.delivered && !route.reply?.attempted && owner({ channel: route.channel, id: route.recipient }, options.configSource)
+          route.inbox && route.bus && route.message.to === 'leader' && !route.reply?.delivered && !route.reply?.attempted && currentOwner(route, readyPolicy)
             ? [{ requestId, envelope: route.message, ...(route.reply ? { replyText: route.reply.text } : {}) }] : []);
       }); } catch { return []; }
     },
@@ -191,8 +247,7 @@ export function createLeaderNetwork(options: LeaderNetworkOptions) {
       const envelope = routeLeaderMessage(input.message, input.verifiedSender, options.configSource, input.addressedAgent);
       if (!envelope) return { status: 'ignored' };
 
-      const body = envelope.body;
-      const text = cleanText(typeof body === 'string' ? body : body !== null && typeof body === 'object' && !Array.isArray(body) && typeof body.text === 'string' ? body.text : '');
+      const text = inputText(envelope);
       if (!text || !envelope.channel_ref) return { status: 'refused', reason: 'Invalid leader input.' };
       const requestId = hash([envelope.channel, envelope.id]);
       try { return await transaction(async (state, at) => {
@@ -215,16 +270,7 @@ export function createLeaderNetwork(options: LeaderNetworkOptions) {
           return { status: route.bus ? 'accepted' : 'unavailable', requestId, envelope };
         }
         if (!route.inbox) {
-          // Preserve the planner/ack consumers' existing wall-clock ET heading
-          // contract. ISO headings are treated as foreign fragments by them.
-          const heading = formatInboxEntry('', route.channel, new Date(route.receivedAt)).trim().replace(/\([^,]+, /, '(Operator, ');
-          if (route.channel === 'slack' && options.appendInbox) {
-            const request: LeaderInboxRequest = { requestId, channel: 'slack', ownerId: route.recipient, receivedAt: route.receivedAt, text };
-            const receipt = await options.appendInbox(request);
-            if (!validLeaderInboxReceipt(receipt, request)) throw new Error('Leader inbox receipt is invalid');
-          } else {
-            appendRecord(join(leaderDir, 'MASON-INBOX.md'), requestId, `${heading} [leader-network:${requestId}]\n${text.split('\n').map(escapeInboxContinuation).join('\n')}`);
-          }
+          await appendInbox(requestId, route, text);
           route.inbox = true; save(state);
         }
         if (!route.bus) {

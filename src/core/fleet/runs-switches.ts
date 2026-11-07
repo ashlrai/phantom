@@ -5,8 +5,8 @@ import { isAbsolute, join } from 'node:path';
 
 export const VERSE_FLEET_CONTROL_SWITCHES_PATH = '/api/verse/fleet/control/switches';
 export const RUNS_SWITCHES = [
-  { id: 'ORCH_OFF', file: 'ORCH_OFF', effect: 'Stops new Claude and Sol leader passes. Workers keep running.' },
-  { id: 'OPUS_LEADER_OFF', file: 'OPUS_LEADER_OFF', effect: 'Stops the hourly Opus leader.' },
+  { id: 'ORCH_OFF', file: 'ORCH_OFF', effect: 'Stops scheduled Claude and Sol planning passes. Workers keep running; the Leader uses its own schedule.' },
+  { id: 'OPUS_LEADER_OFF', file: 'OPUS_LEADER_OFF', effect: 'Stops the supplementary hourly Claude Opus planning loop. The Leader can use any available provider.' },
   { id: 'PAUSE', file: 'PAUSE', effect: 'No new jobs launch. Running jobs finish.' },
   { id: 'PUBLISH_HOLD', file: 'PUBLISH_HOLD', effect: 'Finished jobs are not published as pull requests.' },
   { id: 'HOLD', file: 'HOLD', effect: 'Saved individual lane holds. Use Queue to pause all new launches.' },
