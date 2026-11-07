@@ -508,7 +508,7 @@ describe('M30 CI workflow', () => {
     const isolated = workflowJob('mac-isolated');
     expect(general).toContain('name: Mac exhaustive (${{ matrix.shard }}/4)');
     expect(general).toContain('shard: [1, 2, 3, 4]');
-    expect(general).toContain('max-parallel: 4');
+    expect(general).toContain('max-parallel: 2');
     expect(general).toContain('fail-fast: false');
     expect(general).toContain('run: node .github/scripts/ci-qualification-lane.mjs mac-general-${{ matrix.shard }}');
     expect(isolated).toContain('name: Mac exhaustive (isolated)');
@@ -682,7 +682,7 @@ describe('M30 CI workflow', () => {
     }
     expect((parse(ciYml) as { on: { schedule: unknown } }).on.schedule).toEqual([{ cron: '17 */6 * * *' }, { cron: '0,30 * * * *' }]);
     expect(jobs['mac-general']!.strategy!.matrix.shard).toEqual([1, 2, 3, 4]);
-    expect(jobs['mac-general']!.strategy!['max-parallel']).toBe(4);
+    expect(jobs['mac-general']!.strategy!['max-parallel']).toBe(2);
     // Daily Mac rotation (RQ-DAILY-15-PHANTOM-2): only the scheduled or a sliced
     // dispatch run rotates; the complete qualification steps run otherwise.
     expect(ciYml).toContain("exclude: ${{ fromJSON(needs.classify.outputs.mac_general_exclude || '[]') }}");
@@ -1387,4 +1387,47 @@ describe('combined Ubuntu authority runtime envelope', () => {
     expect(readFileSync(resolve(repoRoot, 'scripts/test-ci.mjs'), 'utf8')).toContain('const DEFAULT_HARD_TIMEOUT_MS = 30 * 60_000;');
     expect(workflowJob('mac-isolated')).toContain('timeout-minutes: 30');
   });
+});
+
+describe('full Mac runner capacity shared across workflow runs', () => {
+  type ReservedJob = {
+    concurrency: { group: string; queue?: string; 'cancel-in-progress': boolean };
+    strategy: { 'max-parallel': number; 'fail-fast': boolean; matrix: { shard: number[] } };
+  };
+  const reservationJobs = () => (parse(ciYml) as { jobs: Record<string, ReservedJob> }).jobs;
+  const checkReservation = (jobs: Record<string, ReservedJob>) => {
+    const general = jobs['mac-general']!;
+    expect(general.strategy['max-parallel']).toBe(2);
+    expect(general.strategy['fail-fast']).toBe(false);
+    expect(general.strategy.matrix.shard).toEqual([1, 2, 3, 4]);
+    const groups: Record<string, string> = {
+      'mac-general': "ci-full-mac-general-${{ contains(fromJSON('[1,3]'), matrix.shard) && 'odd' || 'even' }}",
+      'mac-isolated': 'ci-full-mac-isolated',
+      'ci-shared-macos': 'ci-full-mac-shared-and-broker',
+      'native-macos-broker-foundation': 'ci-full-mac-shared-and-broker',
+    };
+    for (const [name, group] of Object.entries(groups)) {
+      expect(jobs[name]!.concurrency).toEqual({ group, queue: 'max', 'cancel-in-progress': false });
+      expect(group).not.toMatch(/run_id|github\.ref/);
+    }
+    const generalPools = general.strategy.matrix.shard.map(shard => shard % 2 ? 'general-odd' : 'general-even');
+    expect(new Set([...generalPools, groups['mac-isolated'], groups['ci-shared-macos'], groups['native-macos-broker-foundation']]).size).toBe(4);
+  };
+  it('keeps all four shards and every existing body in four bounded FIFO pools', () => {
+    checkReservation(reservationJobs());
+  });
+  it.each(['missing queue', 'single pending', 'cancel pending', 'per-run group', 'fifth pool', 'missing shard', 'duplicate shard', 'four parallel'])(
+    'refuses capacity drift: %s', mutation => {
+      const jobs = reservationJobs();
+      if (mutation === 'missing queue') delete jobs['mac-general']!.concurrency.queue;
+      if (mutation === 'single pending') jobs['mac-isolated']!.concurrency.queue = 'single';
+      if (mutation === 'cancel pending') jobs['mac-isolated']!.concurrency['cancel-in-progress'] = true;
+      if (mutation === 'per-run group') jobs['mac-general']!.concurrency.group += '-${{ github.run_id }}';
+      if (mutation === 'fifth pool') jobs['native-macos-broker-foundation']!.concurrency.group += '-separate';
+      if (mutation === 'missing shard') jobs['mac-general']!.strategy.matrix.shard.pop();
+      if (mutation === 'duplicate shard') jobs['mac-general']!.strategy.matrix.shard[3] = 3;
+      if (mutation === 'four parallel') jobs['mac-general']!.strategy['max-parallel'] = 4;
+      expect(() => checkReservation(jobs)).toThrow();
+    },
+  );
 });
