@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { promisify } from 'node:util';
-import { FLEET_APPS } from '../core/verse/fleet-apps-api.js';
+import { FLEET_APPS } from '../core/fleet/app-await.js';
 
 const execFileAsync = promisify(execFile);
 const usage = 'Usage: ashlr fleet apps-ensure <app>... [--root <dir>] [--timeout-ms <n>] [--interval-ms <n>] [--json]';
