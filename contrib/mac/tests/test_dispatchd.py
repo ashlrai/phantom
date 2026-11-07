@@ -875,6 +875,45 @@ class DispatchPriorityTests(unittest.TestCase):
         self.assertNotIn('REAP ', result.stdout)
         self.assertFalse((home / '.ashlr-runs/publish-order').exists())
 
+    def test_merged_job_is_not_republished_when_base_survives(self):
+        home, env = self.fixture(())
+        self.publish_stubs(home)
+        job = 'RQ-LOCUSMCPLEAKQ7'
+        self.finished_worktree(home, job)
+        ledger = home / '.ashlr-runs/metrics/jobs.jsonl'
+        url = f'https://example.invalid/{job}'
+        with ledger.open('a') as f:
+            for row in [fin(job), pub(job), {'event': 'outcome', 'url': url, 'state': 'MERGED'}]:
+                f.write(json.dumps(row) + '\n')
+        for _ in range(2):
+            self.assertNotIn('REAP ' + job, self.run_tick(home, env).stdout)
+        rows = [json.loads(line) for line in ledger.read_text().splitlines()]
+        self.assertEqual(sum(r.get('event') == 'finish' and r.get('job') == job for r in rows), 1)
+        self.assertEqual(sum(r.get('event') == 'outcome' and r.get('state') == 'MERGED' for r in rows), 1)
+        self.assertFalse((home / '.ashlr-runs/publish-order').exists())
+
+    def test_retry_records_finish_once_and_new_launch_resets_attempt(self):
+        home, env = self.fixture(())
+        self.publish_stubs(home)
+        job = 'RQ-RETRY'
+        self.finished_worktree(home, job)
+        root = home / '.ashlr-runs'
+        reap = root / 'bin/reap-one.sh'
+        reap.write_text('#!/bin/sh\nrmdir "$HOME/.ashlr-runs/queue/run/$1.reaping"\n')
+        for _ in range(2):
+            self.assertIn('REAP ' + job, self.run_tick(home, env).stdout)
+            deadline = time.monotonic() + 3
+            while (root / 'queue/run' / f'{job}.reaping').exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+        ledger = root / 'metrics/jobs.jsonl'
+        rows = [json.loads(line) for line in ledger.read_text().splitlines()]
+        self.assertEqual(sum(r.get('event') == 'finish' and r.get('job') == job for r in rows), 1)
+        with ledger.open('a') as f:
+            f.write(json.dumps({'event': 'launch', 'job': job}) + '\n')
+        self.assertIn('REAP ' + job, self.run_tick(home, env).stdout)
+        rows = [json.loads(line) for line in ledger.read_text().splitlines()]
+        self.assertEqual(sum(r.get('event') == 'finish' and r.get('job') == job for r in rows), 2)
+
     def test_stale_orphan_reap_marker_does_not_block_other_publishers(self):
         home, env = self.fixture(())
         self.publish_stubs(home)
