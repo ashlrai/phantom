@@ -138,8 +138,8 @@ export function defaultLeaderDelivery(cfg: AshlrConfig, options: LeaderRuntimeOp
     if (!text) return { status: 'refused', reason: 'Missing reply text.' };
     if (identity.channel === 'bus' && identity.id === LOCAL_LEADER_IDENTITY.id) return { status: 'sent', reason: 'Recorded in the local Leader outbox.' };
     if (identity.channel === 'slack') {
-      const { deliverSlackLeaderMessage } = await import('./slack-leader.js');
-      return deliverSlackLeaderMessage(identity, message, { ...options, call: options.slackCall });
+      const { createSlackLeaderAdapter } = await import('./slack-leader.js');
+      return createSlackLeaderAdapter({ ...options, call: options.slackCall }).deliver(identity, message);
     }
     if (identity.channel === 'telegram') {
       const { sendTelegramMessage } = await import('../integrations/telegram.js');

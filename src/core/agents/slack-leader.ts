@@ -8,8 +8,21 @@ import { createLeaderNetwork, parseMasonIdentities } from './leader-network.js';
 import { loadAgentNetworkConfig, isSlackUserId, parseSlackThreadRef } from './slack-network.js';
 import { createSlackApi, deliverSlackEnvelope, type SlackCall, type SlackDeliveryPolicy } from './slack-transport.js';
 import { parseCommsConfirmation, type DeliverResult, type TeamIdentity } from './channel-policy.js';
+import { slackEventToBus, type SlackInboundDecision, type SlackIngestContext } from './slack-inbound.js';
+import type { LeaderChannelAdapter } from './leader-channel-adapter.js';
 
 export interface SlackLeaderOptions extends LeaderRuntimeOptions { call?: SlackCall; signal?: AbortSignal }
+
+/** Compose the existing authenticated Slack mapper, durable Leader routing and
+ * journaled same-thread delivery without putting credentials in the adapter. */
+export function createSlackLeaderAdapter(options: SlackLeaderOptions = {}): LeaderChannelAdapter<unknown, SlackIngestContext, SlackInboundDecision> {
+  return {
+    id: 'slack',
+    normalize: slackEventToBus,
+    route: message => ingestSlackLeaderEnvelope(message, options),
+    deliver: (identity, message) => deliverSlackLeaderMessage(identity, message, options),
+  };
+}
 
 /** Config is trusted host state, never an identity field supplied in a Slack message. */
 export function readSlackDeliveryPolicy(options: LeaderRuntimeOptions = {}): SlackDeliveryPolicy | undefined {
