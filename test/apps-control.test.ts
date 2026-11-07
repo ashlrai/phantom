@@ -52,9 +52,9 @@ function fakeDesktop(tree: Array<Record<string, unknown>> | 'error' | 'ungranted
 describe('parseRunningApps / detectUnsavedState', () => {
   it('reads name, bundle id and frontmost from computer_list_apps lines', () => {
     expect(parseRunningApps(APPS)).toEqual([
-      { name: 'Notes', bundleId: 'com.apple.Notes', frontmost: false },
-      { name: 'Pages', bundleId: 'com.apple.iWork.Pages', frontmost: true },
-      { name: 'Phantom', bundleId: 'ai.ashlr.desktop', frontmost: false },
+      { name: 'Notes', bundleId: 'com.apple.Notes', frontmost: false, heldTier: 'full' },
+      { name: 'Pages', bundleId: 'com.apple.iWork.Pages', frontmost: true, heldTier: null },
+      { name: 'Phantom', bundleId: 'ai.ashlr.desktop', frontmost: false, heldTier: null },
     ]);
   });
 

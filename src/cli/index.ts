@@ -357,6 +357,11 @@ const loadAppsCmd = lazyCmd(
   'apps command requires src/cli/apps-control.ts.',
 );
 
+const loadDesktopctlCmd = lazyCmd(
+  () => import('./desktopctl.js'), (m) => m.cmdDesktopctl as Cmd,
+  'desktopctl command requires src/cli/desktopctl.ts.',
+);
+
 const loadDesktopUpdateCmd = lazyCmd(
   () => import('./desktop-update.js'), (m) => m.cmdDesktopUpdate as Cmd,
   'desktop-update command requires the installed compiled update consumer.',
@@ -2289,6 +2294,10 @@ async function main(): Promise<void> {
         process.exitCode = await (await loadAppsCmd())(rest);
         break;
       }
+      case 'desktopctl': {
+        process.exitCode = await (await loadDesktopctlCmd())(rest);
+        break;
+      }
       case 'desktop-update': {
         process.exitCode = await (await loadDesktopUpdateCmd())(rest);
         break;
@@ -2470,6 +2479,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'repos': {
+        const { cmdReposRank } = await import('./repos-rank.js');
+        process.exitCode = cmdReposRank(rest);
+        break;
+      }
+
       case 'fleet': {
         // M49: fleet control plane + observability — read-only `status`,
         // plus `pause`/`resume` (kill-switch only).
@@ -2613,6 +2628,12 @@ async function main(): Promise<void> {
       case 'verify': {
         const { cmdVerify } = await import('./verify.js');
         process.exitCode = await cmdVerify(rest);
+        break;
+      }
+
+      case 'engineering-receipt': {
+        const { cmdReceipt } = await import('./engineering-receipt.js');
+        process.exitCode = await cmdReceipt(rest);
         break;
       }
 

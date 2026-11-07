@@ -34,6 +34,13 @@ describe('fleet wt-reap', () => {
     expect(r.worktrees.every(w => !w.reapable)).toBe(true);
     expect(r.worktrees.at(-1)?.state).toBe('none');
   });
+  it('does not reuse an earlier attempt after a new launch', async () => {
+    const r = await readFleetWtReap(deps([
+      finish('A', 4), outcome('A', 'MERGED'), { event: 'launch', job: 'A' },
+      finish('B', 4, true), { event: 'launch', job: 'B' }, finish('B', 2),
+    ], ['A', 'B']));
+    expect(r.worktrees.map(w => [w.state, w.reapable])).toEqual([['none', false], ['none', false]]);
+  });
   it('reports unread sources and rejects invalid CLI options', async () => {
     const logs: string[] = [];
     const d = { readers: { listDirs: async () => { throw Error('private'); }, readJobs: async () => { throw Error('private'); } }, output: { log: (s: string) => logs.push(s), error: (s: string) => logs.push(s) } };

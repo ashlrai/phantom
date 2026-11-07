@@ -143,3 +143,20 @@ absence of a suitable official CLI require verification in the later line.
 Official JSON-output references: [GitHub](https://cli.github.com/manual/gh_repo_list),
 [Vercel](https://github.com/vercel/vercel/blob/main/skills/vercel-cli/references/monitoring-and-debugging.md),
 and [Supabase](https://supabase.com/docs/reference/cli/global-flags).
+
+## Tool mesh
+
+`phm connectors mesh --json` combines the gateway's native tool descriptions,
+input schemas and safety classes with connector profile metadata. Connector
+descriptions are optional user-supplied metadata (`--description` on add);
+`tools` are agent selectors, not a remotely discovered tool list. Scope, agent and lane selectors and credential binding names describe
+requirements, not grants. The output omits executable arguments, endpoints and
+vault names. Executable availability checks PATH presence only; an HTTP endpoint
+and the gateway remain unknown until separately tested. No connector is started.
+
+The existing `phm wire claude|cursor|codex --json` commands register the gateway
+with clients. Use `phm connectors import --json` to import supported client
+metadata; profile entries are not automatically installed in a client or gateway.
+Native tools are invoked through the gateway and retain its authorization checks.
+Connector CLI execution remains denied pending Security review; plugin and MCP
+entries need their respective hosts. This registry does not create permissions.

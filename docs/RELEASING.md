@@ -158,6 +158,29 @@ packaging and toolchain procedure.
 
 ## Complete publication and installation
 
+### Orchestration and evidence boundaries
+
+The current release pipeline is not yet an end-to-end autonomous orchestrator.
+The release PR and auto-tag lanes prepare a candidate; hosted CI, Dependency
+Audit and the attestor qualify its exact source and original artifact. The
+canonical npm publisher then admits that evidence, publishes the original
+archive and verifies registry bytes, integrity, provenance, an isolated
+consumer and the `latest` tag. Its successful run is evidence for npm only.
+Desktop signing and publication have separate requirements, including any
+owner-reserved keychain interaction; an npm result does not prove a signed
+desktop feed, a Homebrew update or an installed application.
+
+The release dispatch dry run in `scripts/release-dispatch-dry-run.ts` sequences
+reported observations only. It does not independently authenticate them or
+dispatch a workflow. The release candidate planner likewise provides recovery
+guidance, not permission to publish. A future executor must obtain and recheck
+the exact candidate, CI, audit, attestor and immutable artifact identities from
+fresh authoritative reads, invoke only the commissioned workflow with those
+inputs, and reconcile uncertain dispatch or publication outcomes before any
+retry. It must report verification per distribution and preserve unknown or
+failed checks as such. Do not infer checksums, attestations, npm, Homebrew or
+desktop acceptance from the existence of a GitHub release record.
+
 The commissioned [canonical npm publisher](../.github/workflows/publish-canonical-npm.yml)
 publishes the original archive once, reconciles public bytes and provenance,
 validates an isolated installed consumer, then promotes and reads back `latest`.

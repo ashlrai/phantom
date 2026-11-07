@@ -369,6 +369,7 @@
 /test/fixtures/m518/visionquality-gate-robustness-false-positive-mer-c9c62c.json.b64 @masonwyatt23
 /test/fixtures/queue/router-queue-live.md @masonwyatt23
 /test/fixtures/queue/router-queue.md @masonwyatt23
+/test/fixtures/radar-local-bench/routing.json @masonwyatt23
 /test/fixtures/top-pools/capacity.ts @masonwyatt23
 /test/fleet-apps-ensure-wall-budget-03.test.ts @masonwyatt23
 /test/fleet-apps-watch-attempt-budget-03-sonz1.test.ts @masonwyatt23
@@ -413,6 +414,7 @@
 /test/fleet-merge-pace-core-02.test.ts @masonwyatt23
 /test/fleet-merge-pace.test.ts @masonwyatt23
 /test/fleet-merge-queue-age.test.ts @masonwyatt23
+/test/fleet-merge-recover.test.ts @masonwyatt23
 /test/fleet-merge-state-class.test.ts @masonwyatt23
 /test/fleet-post-merge-verify-31.test.ts @masonwyatt23
 /test/fleet-self-loop-02soly1.test.ts @masonwyatt23
