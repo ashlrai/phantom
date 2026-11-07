@@ -168,6 +168,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'lane-share': () => import('./fleet-lane-share.js'),
   'lane-slots': () => import('./fleet-lane-slots.js'),
   'lane-stall': () => import('./fleet-lane-stall.js'),
+  'lane-starve': () => import('./fleet-lane-starve.js'),
   'lane-streaks': () => import('./fleet-lane-streaks.js'),
   'lane-target': () => import('./fleet-lane-target.js'),
   'lane-truth': () => import('./fleet-lane-truth.js'),
