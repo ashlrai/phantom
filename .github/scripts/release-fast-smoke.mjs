@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url';
 import { requireProducerEnvironment, requireRepositoryMetadata, requireRepositoryReference } from './github-repository-binding.mjs';
 import { captureBuild, packBuild } from './ci-pack-smoke.mjs';
 import { captureArtifact, inspectTar, sourceBinding, verifyPushCi } from '../../scripts/hosted-build-artifact.mjs';
+import { retainFreshDist, verifyLocalInput } from './release-local-input.mjs';
 
 const api = endpoint => JSON.parse(execFileSync('gh', ['api', endpoint], { encoding: 'utf8', timeout: 15000, maxBuffer: 16 * 1024 * 1024 }));
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8', timeout: 15000 }).trim();
@@ -52,8 +53,10 @@ export function selectRun({ kind, repository, revision, read = api, excludeRunId
       if (jobs.length === total) break;
       assert.ok(page < 10 && result.jobs.length === 100 && jobs.length < total, 'incomplete release jobs');
     }
-    const nameOfJob = kind === 'build' ? 'Prepare unsigned desktop release' : 'Desktop release smoke';
-    const matchingJobs = jobs.filter(job => job.name === nameOfJob);
+    // Older immutable producers used a separate preparation job. A combined
+    // producer retains the canonical smoke role and all original input steps.
+    const legacyBuild = kind === 'build' ? jobs.filter(job => job.name === 'Prepare unsigned desktop release') : [];
+    const matchingJobs = legacyBuild.length ? legacyBuild : jobs.filter(job => job.name === 'Desktop release smoke');
     assert.ok(matchingJobs.length <= 1, 'release job ambiguous');
     // The same workflow retains the nightly exhaustive suite. Its missing or
     // explicitly skipped release job is not a newer release candidate.
@@ -270,10 +273,17 @@ async function smoke() {
   const pushCi = { runId: Number(process.env.PUSH_CI_RUN), runAttempt: Number(process.env.PUSH_CI_ATTEMPT) };
   verifyPushCi({ repository, revision, ...pushCi, read: api });
   const prepared = realpathSync(process.env.PREPARED_DIRECTORY);
+  verifyLocalInput(process.env, root);
   const prebuilt = JSON.parse(readFileSync(join(prepared, 'build-manifest.json')));
   assert.deepEqual(prebuilt.source, sourceBinding(root, revision), 'prepared artifact source differs');
-  // download-artifact checks the immutable artifact's digest before this step.
-  // These are output paths from a successful trusted master build, never PR caches.
+  assert.ok(['true', 'false'].includes(process.env.FRESH_RELEASE_BUILD));
+  if (process.env.FRESH_RELEASE_BUILD === 'true') {
+    const backup = mkdtempSync(join(realpathSync(process.env.RUNNER_TEMP), 'release-original-dist-')); chmodSync(backup, 0o700);
+    retainFreshDist({ root, prepared, backup });
+  }
+  // Same-runner reuse checks the exact pinned upload's immutable API identity
+  // and unchanged local input. Restoration and all native/feed checks stay real.
+  verifyLocalInput(process.env, root);
   restorePreparedDist({ root, prepared, manifest: prebuilt });
   const version = JSON.parse(readFileSync(join(root, 'package.json'))).version;
   const binary = join(prepared, 'desktop-smoke-bin'); const stat = lstatSync(binary);
