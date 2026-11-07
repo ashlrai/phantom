@@ -287,6 +287,7 @@
 /test/build-sea-worker.test.ts @masonwyatt23
 /test/bus-loop-active-control-01sole2.test.ts @masonwyatt23
 /test/bus-mirror-dispatch.test.ts @masonwyatt23
+/test/bus-wake-queue-custody.test.ts @masonwyatt23
 /test/channel-mirror-deadline-soln1.test.ts @masonwyatt23
 /test/channel-mirror-recovery-solu1.test.ts @masonwyatt23
 /test/claude-api-grant.test.ts @masonwyatt23
