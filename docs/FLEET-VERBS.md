@@ -35,6 +35,7 @@
 | launch-proof | `src/cli/fleet-launch-proof.ts` | Read one status snapshot and one live process table; never dispatch work | no |
 | memory | `src/cli/fleet-memory.ts` | Read-only host memory view: memstat.json free/swap/disk plus .memguard2.json level and stopped ids | no |
 | meter-drop | `src/cli/fleet-meter-drop.ts` | Read-only meter drop verdict from lane state and meter samples | no |
+| orders | `src/cli/fleet-orders.ts` | Read-only order coverage and job states, with optional age and uncovered filters; omits order bodies | no |
 | real-supply | `src/cli/fleet-real-supply.ts` | Read-only live supply for the planner: Dependabot alerts, red scheduled suites and open issues across the seven repos, plus local registry↔docs drift signals | no |
 | red-merges | `src/cli/fleet-red-merges.ts` | Read-only per-hour rollup of merges landed on red vs green checks per lane, from metrics/jobs.jsonl outcome rows joined to launches by job id; unread ledger prints unknown | no |
 | resources | `src/cli/fleet-resources.ts` | Read-only per-lane resource window from queue/slots.json and queue/resources.json: one line per lane with target, used_frac (or "unset, router assumes 0.5") and reset time; marks `skipped` at used_frac 1 or more and `unseen` when a lane with target above 0 has no entry; exit 1 on any unseen lane | no |
