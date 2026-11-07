@@ -137,6 +137,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'heartbeat': () => import('./fleet-heartbeat.js'),
   'hold-check': () => import('./fleet-hold-check.js'),
   'idle-lanes': () => import('./fleet-idle-lanes.js'),
+  'idle-slots': () => import('./fleet-idle-slots.js'),
   'imessage-acks': () => import('./fleet-imessage-acks.js'),
   'imessage-path': () => import('./fleet-imessage-path.js'),
   'inbox-acks': () => import('./fleet-inbox-acks.js'),
