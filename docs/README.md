@@ -213,6 +213,8 @@ canonical release guide for required hosted qualification and publication.
 
 - [Local model inventory](https://github.com/ashlrai/phantom/blob/master/docs/MODEL-INVENTORY.md): opt-in Mac benchmarks, admission and fleet schema.
 
+- [Routines](https://github.com/ashlrai/phantom/blob/master/docs/ROUTINES.md): UTC-cron YAML schedules with executor failover, learned local-first placement runs, and a portable provider placement registry.
+
 ## All documents
 
 - [Agent network channels](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-NETWORK-CHANNELS.md)

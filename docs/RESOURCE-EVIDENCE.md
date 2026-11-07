@@ -197,3 +197,21 @@ and check every minute outside tick dispatch, sampling at most every five minute
 ```sh
 phm capacity publish --json
 ```
+
+## Outcomes, selection and performance
+
+`phm telemetry feedback --json` separates observed terminal outcomes, sample
+coverage, selection rationale and inferred performance. See the [CLI evidence
+guide and regression examples](EXECUTION-FEEDBACK.md#inspect-routing-evidence-in-the-cli).
+Resource readings explain available inputs to selection; they do not measure
+quality. This feedback projection has no per-attempt decision trace and reports
+selection rationale as unavailable rather than reconstructing it from results.
+
+For example, one produced proposal establishes one observed producer outcome,
+not a 100% model success prediction. A dated reading or old task observation
+retains its original age; inspecting it today does not make it current. Two
+conflicting terminal records leave that attempt unresolved and reduce coverage;
+neither record establishes a winner. Even fresh, complete counts within a bounded
+window lack a comparable account/model/task denominator and counterfactual.
+Current headroom, explicit preferences or a configured-order tie-break can explain
+selection without establishing superior performance or a causal routing benefit.
