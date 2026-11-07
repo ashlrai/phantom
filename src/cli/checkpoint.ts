@@ -3,7 +3,7 @@ import { AgentCheckpointError, readAgentCheckpoint, saveAgentCheckpoint } from '
 const USAGE = 'Usage: phm checkpoint resume <file> [--json] | save <source> <destination> <worktree> [--json]';
 
 export async function cmdCheckpoint(args: string[]): Promise<number> {
-  if (args.length === 1 && ['help', '--help', '-h'].includes(args[0]!)) { console.log(USAGE); return 0; }
+  if (args[0] === 'help' || args.includes('--help') || args.includes('-h')) { console.log(USAGE); return 0; }
   const json = args.includes('--json');
   const rest = args.filter(arg => arg !== '--json');
   if (args.length !== rest.length + Number(json) || !((rest.length === 2 && rest[0] === 'resume') || (rest.length === 4 && rest[0] === 'save')) || rest.slice(1).some(arg => arg.startsWith('-'))) {

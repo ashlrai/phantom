@@ -740,6 +740,9 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'daemon recover-state --dry-run|--execute', desc: 'Preview or explicitly execute one exact quarantine of a malformed daemon state (the fix when `daemon status` shows a state issue).', topic: 'autonomy' },
   { cmd: 'daemon resolve-state --dry-run|--execute', desc: 'Preview or explicitly resolve one exact quarantine, restoring daemon state after `daemon recover-state`.', topic: 'autonomy' },
   { cmd: 'worker setup',                 desc: 'Temporarily unavailable and fail-closed before config, enrollment, queue, wizard, or service mutation.', topic: 'autonomy' },
+  { cmd: 'worker --dry-run',             desc: 'Print a draft-PR plan for route-labelled issues. Spawns nothing.', topic: 'autonomy' },
+  { cmd: 'worker plan',                  desc: 'Print a draft-PR plan for route-labelled issues. Spawns nothing.', topic: 'autonomy' },
+  { cmd: 'worker drain',                 desc: 'Reserved. This slice refuses execution and tells you to re-run with --dry-run.', topic: 'autonomy' },
   { cmd: 'fleet status [--json]',        desc: 'Read-only fleet snapshot: daemon, per-backend dispatches+quota, queue, proposals, merges, paused state.', topic: 'autonomy' },
   { cmd: 'fleet evidence doctor <source>', desc: 'Bounded read-only diagnosis for one decisions, judge, action, dispatch, manifest, or candidate ledger.', topic: 'autonomy' },
   { cmd: 'fleet direction [--json]',     desc: 'Read-only autonomous direction report: mode, resource posture, guard blocks, and next actions.', topic: 'autonomy' },
@@ -915,6 +918,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'demo [--no-cleanup] [--json]', desc: 'Watch the FULL autonomous chain run on a DISPOSABLE tmp repo (isolated tmp ~/.ashlr; proposal-only; auto-cleans). NEVER touches your portfolio or applies anything.', topic: 'safety' },
 
   { cmd: 'top [--once] [--json]', desc: 'Read-only per-pool capacity and reset pressure snapshot.', topic: 'web' },
+  { cmd: 'top --v1 [--fleet <path>]', desc: 'Read-only top.v1 fleet, pool usage and required reset pace snapshot (schema/top.v1.schema.json).', topic: 'web' },
   { cmd: 'tui [--once]',                 desc: 'Interactive terminal dashboard (alias: dash). --once renders one frame and exits.', topic: 'web' },
   { cmd: 'dash [--once]',                desc: 'Alias of `tui` — interactive terminal dashboard.', topic: 'web' },
   { cmd: 'dashboard [--stop|--status]',  desc: 'Open the persistent fleet dashboard service (ai.ashlr.serve); --status/--stop inspect or unload it (no install/repair — resident mutation is withheld).', topic: 'web' },
