@@ -57,7 +57,7 @@ const recordingSteps = () => {
     return { exitCode: 0, output: JSON.stringify({ ok: name }) };
   };
   return { order, argvs, steps: {
-    'reset-release': stub('reset-release'),
+    'claude-quota': async () => ({ exitCode: 0, output: '' }), 'reset-release': stub('reset-release'),
     'lane-autohold': stub('lane-autohold'),
     'stray-stop': stub('stray-stop'),
     'meter-incident': stub('meter-incident'),
@@ -292,7 +292,7 @@ describe('fleet self-loop', () => {
     expect(outLines.length).toBe(1);
     expect(summary).toMatchObject({ ticks: 3, failures: 0, busy: 0, termination: 'duration' });
     expect(summary!.lastReport).toMatchObject({ mode: 'apply', state: 'ran' });
-    expect(summary!.lastReport!['steps']).toHaveLength(8);
+    expect(summary!.lastReport!['steps']).toHaveLength(9);
   });
 
   it('dry-run is the default: no --apply is forwarded and nothing is applied', async () => {

@@ -1,18 +1,21 @@
 /**
  * self-tick.ts — one locked pass of Phantom's self-management, runnable by an
- * agent or a host timer with no desktop app open. Eight one-shot stages run
- * together, including same-channel inbox acknowledgements and merged-order notices.
- * runSelfTick is the single pass, each step injected as a seam in fixed order:
+ * agent or a host timer with no desktop app open. Nine stages run together,
+ * including the Claude weekly-quota refresh, same-channel inbox acknowledgements
+ * and merged-order notices. runSelfTick is the single pass, each step injected
+ * as a seam in fixed order:
  *
- *   1. reset-release  — first, so a lane it frees counts as a free slot for
- *      the planner step's decision in the same pass.
- *   2. lane-autohold  — places the bounded burning-lane holds.
- *   3. stray-stop    — recover slots left behind by finished jobs.
- *   4. meter-incident — deduped flat-meter notices.
- *   5. planner-tick   — the autorun decision over the post-release picture.
- *   6. inbox-acks     — send pending same-channel acknowledgements.
- *   7. order-notices  — tell Mason when a merged job served one of his orders.
- *   8. landed-sweep   — close DIRTY PRs whose work already landed on master.
+ *   1. claude-quota  — first, so reset detection and the planner see a fresh
+ *      Claude weekly reading in the resource ledger.
+ *   2. reset-release  — a lane it frees counts as a free slot for the planner
+ *      step's decision in the same pass.
+ *   3. lane-autohold  — places the bounded burning-lane holds.
+ *   4. stray-stop    — recover slots left behind by finished jobs.
+ *   5. meter-incident — deduped flat-meter notices.
+ *   6. planner-tick   — the autorun decision over the post-release picture.
+ *   7. inbox-acks     — send pending same-channel acknowledgements.
+ *   8. order-notices  — tell Mason when a merged job served one of his orders.
+ *   9. landed-sweep   — close DIRTY PRs whose work already landed on master.
  *
  * A step that exits nonzero or throws is recorded 'failed'; later steps still
  * run. A hold a person placed is never released — that rule stays inside the
@@ -31,9 +34,14 @@ import {
 } from './local-store-lock.js';
 import { writeSelfTickLast } from './self-tick-last.js';
 
-export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick' | 'inbox-acks' | 'order-notices' | 'landed-sweep' | 'stray-stop' | 'meter-incident';
-/** Fixed execution order — release first so the planner sees freed slots; landed-sweep last. */
+export type SelfTickStepName = 'claude-quota' | 'reset-release' | 'lane-autohold' | 'planner-tick' | 'inbox-acks' | 'order-notices' | 'landed-sweep' | 'stray-stop' | 'meter-incident';
+/**
+ * Fixed execution order — quota first so reset detection and the planner see a
+ * fresh Claude weekly reading; release next so the planner sees freed slots;
+ * landed-sweep last.
+ */
 export const SELF_TICK_STEP_ORDER: readonly SelfTickStepName[] = [
+  'claude-quota',
   'reset-release',
   'lane-autohold',
   'stray-stop',

@@ -2,12 +2,15 @@
 import { accessSync, constants, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
-import { toClaudeQuotaReading, writeClaudeQuotaReading, type ClaudeQuotaReadingV1 } from '../core/fleet/claude-quota-reading.js';
+import {
+  readClaudeQuotaReading, toClaudeQuotaReading, writeClaudeQuotaReading,
+  type ClaudeQuotaReadingV1,
+} from '../core/fleet/claude-quota-reading.js';
 import { probeClaudeAccountUsage, type ClaudeAccountUsageResult } from '../core/resources/claude-account-usage.js';
 import type { ClaudeAccountStatusOptions } from '../core/resources/claude-account-status.js';
 
 const usage = 'Usage: ashlr fleet claude-quota [--root <dir>] [--write] [--json]';
-type Probe = (options: ClaudeAccountStatusOptions) => Promise<ClaudeAccountUsageResult>;
+export type Probe = (options: ClaudeAccountStatusOptions) => Promise<ClaudeAccountUsageResult>;
 
 function findClaude(pathEnv = process.env.PATH ?? ''): string | null {
   for (const dir of pathEnv.split(delimiter)) {
@@ -21,6 +24,46 @@ function findClaude(pathEnv = process.env.PATH ?? ''): string | null {
 export function formatClaudeQuota(reading: ClaudeQuotaReadingV1): string {
   if (!reading.windows.length) return `claude quota unavailable: ${reading.reason}`;
   return reading.windows.map(w => `${w.id}: ${w.usedPct}% resets ${w.resetAt ?? 'unknown'}`).join('\n');
+}
+
+/**
+ * One bounded refresh of the stored Claude weekly reading. With minAgeMs > 0 a
+ * stored reading observed within that window — and not in the future — is
+ * returned 'skipped-fresh' without spawning the probe, which bounds how often
+ * the claude CLI runs when a caller (self-tick) fires on a timer. write persists
+ * the reading; a write failure throws so the caller can mark the step failed.
+ */
+export async function refreshClaudeQuota(opts: {
+  root: string;
+  write: boolean;
+  probe?: Probe;
+  now?: () => Date;
+  findCommand?: () => string | null;
+  minAgeMs?: number;
+}): Promise<{ state: 'probed' | 'skipped-fresh'; reading: ClaudeQuotaReadingV1 }> {
+  const now = opts.now ?? (() => new Date());
+  const minAgeMs = opts.minAgeMs ?? 0;
+  if (minAgeMs > 0) {
+    const existing = await readClaudeQuotaReading(opts.root);
+    if (existing !== null) {
+      const at = Date.parse(existing.observedAt);
+      const nowMs = now().getTime();
+      if (Number.isFinite(at) && at <= nowMs && nowMs - at <= minAgeMs) {
+        return { state: 'skipped-fresh', reading: existing };
+      }
+    }
+  }
+  const observedAt = now().toISOString();
+  let reading: ClaudeQuotaReadingV1;
+  const command = (opts.findCommand ?? findClaude)();
+  if (!command) reading = { v: 1, observedAt, reason: 'claude-not-found', fresh: false, windows: [] };
+  else {
+    const probe = opts.probe ?? probeClaudeAccountUsage;
+    try { reading = toClaudeQuotaReading(await probe({ command: [command], cwd: opts.root, timeoutMs: 20_000 }), observedAt); }
+    catch { reading = { v: 1, observedAt, reason: 'probe-failed', fresh: false, windows: [] }; }
+  }
+  if (opts.write) await writeClaudeQuotaReading(opts.root, reading);
+  return { state: 'probed', reading };
 }
 
 export async function cmdFleetClaudeQuota(args: string[], probe: Probe = probeClaudeAccountUsage, now = () => new Date()): Promise<number> {
@@ -43,17 +86,12 @@ export async function cmdFleetClaudeQuota(args: string[], probe: Probe = probeCl
       root = value;
     }
   }
-  const observedAt = now().toISOString();
   let reading: ClaudeQuotaReadingV1;
-  const command = findClaude();
-  if (!command) reading = { v: 1, observedAt, reason: 'claude-not-found', fresh: false, windows: [] };
-  else {
-    try { reading = toClaudeQuotaReading(await probe({ command: [command], cwd: root, timeoutMs: 20_000 }), observedAt); }
-    catch { reading = { v: 1, observedAt, reason: 'probe-failed', fresh: false, windows: [] }; }
-  }
-  if (write) {
-    try { await writeClaudeQuotaReading(root, reading); }
-    catch { console.error('fleet claude-quota: could not write reading'); return 1; }
+  try {
+    ({ reading } = await refreshClaudeQuota({ root, write, probe, now }));
+  } catch {
+    console.error('fleet claude-quota: could not write reading');
+    return 1;
   }
   console.log(json ? JSON.stringify(reading) : formatClaudeQuota(reading));
   return 0;
