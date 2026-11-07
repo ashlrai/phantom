@@ -219,6 +219,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'queue-shape': () => import('./fleet-queue-shape.js'),
   'ready-supply': () => import('./fleet-ready-supply.js'),
   'real-supply': () => import('./fleet-real-supply.js'),
+  'reap-marks': () => import('./fleet-reap-marks.js'),
   'reassign': () => import('./fleet-reassign.js'),
   'reassign-stdin': () => import('./fleet-reassign-stdin.js'),
   'recut-sweep': () => import('./fleet-recut-sweep.js'),
