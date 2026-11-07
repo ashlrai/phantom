@@ -137,11 +137,13 @@ jobs:
         if: steps.history.outputs.equal != 'true'
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Restore protected-branch compiler state
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        # Read the protected base's incremental graph; tsc still validates the
+        # candidate below. Only a successful master push saves compiler state.
+        if: steps.history.outputs.equal != 'true'
         uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
           path: node_modules/.cache/phantom-backend.tsbuildinfo
-          key: master-typecheck-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json') }}-${{ github.sha }}
+          key: master-typecheck-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json') }}-${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
           restore-keys: master-typecheck-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json') }}-
       - name: Core no-emit type check
         if: steps.history.outputs.equal != 'true'
