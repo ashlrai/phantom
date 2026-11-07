@@ -1,6 +1,7 @@
 import { changeHandoff, checkNames, verifyChange, type CheckName } from '../core/verify-change.js';
 
 export async function cmdVerify(args: string[]): Promise<number> {
+  if (args.includes('--help') || args.includes('-h')) { console.log(USAGE); return 0; }
   let worktree: string | undefined;
   let checks: CheckName[] | undefined;
   if (args[0] !== 'change') return usage();
@@ -28,7 +29,8 @@ export async function cmdVerify(args: string[]): Promise<number> {
     return 1;
   }
 }
+const USAGE = 'Usage: phantom verify change --worktree <path> [--checks typecheck,unit,lint,secrets]';
 function usage(): number {
-  console.error('Usage: phantom verify change --worktree <path> [--checks typecheck,unit,lint,secrets]');
+  console.error(USAGE);
   return 2;
 }

@@ -2470,6 +2470,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'repos': {
+        const { cmdReposRank } = await import('./repos-rank.js');
+        process.exitCode = cmdReposRank(rest);
+        break;
+      }
+
       case 'fleet': {
         // M49: fleet control plane + observability — read-only `status`,
         // plus `pause`/`resume` (kill-switch only).
@@ -2613,6 +2619,12 @@ async function main(): Promise<void> {
       case 'verify': {
         const { cmdVerify } = await import('./verify.js');
         process.exitCode = await cmdVerify(rest);
+        break;
+      }
+
+      case 'engineering-receipt': {
+        const { cmdReceipt } = await import('./engineering-receipt.js');
+        process.exitCode = await cmdReceipt(rest);
         break;
       }
 
