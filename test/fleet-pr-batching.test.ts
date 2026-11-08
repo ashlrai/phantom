@@ -15,6 +15,7 @@ const pr = (number: number, overrides: Partial<MergeBatchPr> = {}): MergeBatchPr
   number,
   title: `PR ${number}`,
   headRef: `bridge/job-${number}`,
+  headSha: null,
   isDraft: false,
   mergeable: 'MERGEABLE',
   mergeStateStatus: 'CLEAN',
