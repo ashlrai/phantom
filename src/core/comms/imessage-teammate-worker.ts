@@ -13,6 +13,7 @@ import { readStableRegularFile } from '../util/stable-file-read.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { markTeammateTextsAnswered, readTeammateTexts } from './imessage-teammate-inbox.js';
+import { isPatchFrameText } from './imessage-patch-transfer.js';
 import { approvedTeammateHandle, reconcileTeammateMessage, sendApprovedTeammateMessage, type TeamMessageReceipt, type TeamTransportOptions } from './imessage-teammate-transport.js';
 
 interface Reply { rowid: number; senderId: string; state: 'claimed' | 'drafted' | 'sending' | 'sent' | 'suppressed'; at: number; claimUntil: number; text?: string; attemptedAt?: number; receipt?: TeamMessageReceipt }
@@ -33,6 +34,8 @@ const CLAIM_MS = 120000;
 export function teammateNeedsReply(text: string): boolean {
   // Code chunks often contain question marks/requests as source literals. They are
   // artifacts to retain, never conversation requests to answer once per chunk.
+  // PATCH-BEGIN/PART/END frames are transfer protocol, never conversation.
+  if (isPatchFrameText(text)) return false;
   if (/^.{0,80}\b(?:patch|artifact|chunk)\s+\d+\/\d+\b/i.test(text) || /^(?:diff --git |--- [ab/] |```)/.test(text)) return false;
   return !/^\s*(ack(?:nowledged)?|thanks|thank you|received|noted|got it|ok(?:ay)?|👍)[.!\s]*$/i.test(text)
     && /\?|\b(?:please|can you|could you|request(?:ing)?|need you|probe)\b/i.test(text);

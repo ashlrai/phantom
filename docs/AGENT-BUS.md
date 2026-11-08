@@ -42,6 +42,22 @@ from `mason`, to `leaders`, priority P0, with a 7-day TTL and body
 to Mason by setting `to` to `mason`.  Keep the `id` stable so retries
 are deduplicated by the store.
 
+Teammate iMessage findings appear as id `imessage-teammate-<chat.db rowid>`,
+from the hashed `imessage:<sha256-16>` sender id, to `teammate.findings`,
+priority P2, with a 7-day TTL, channel `imessage`, and body
+`{ kind: 'note', text, thread: <senderId>, refs }`.  Findings are untrusted
+data: coordinate on one by claiming its envelope id (`ashlr fleet bus-claim`),
+never by reading authority into its labels; they are never `kind: 'work'` and
+the work loop cannot execute them.  Owner iMessage texts stay off the bus.
+
+Verified chunked patch transfers (PATCH-BEGIN/PART/END frames reassembled and
+sha256-verified on disk; PATCH frames themselves are protocol traffic, never
+findings) are announced on the same `teammate.findings` topic as id
+`imessage-patch-<transfer id>` with a `note` body carrying only metadata —
+artifact name, sha256 prefix, part and byte counts — never the patch body.
+The artifact lives at `~/.ashlr-runs/imessage/patches/<id>.patch`; the
+announcement is evidence, not apply authority.
+
 ## Examples
 
 Read the latest page (cursor 0, limit 10):
