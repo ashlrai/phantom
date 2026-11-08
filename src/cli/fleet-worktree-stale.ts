@@ -54,8 +54,13 @@ const defaultFs: FleetWorktreeStaleFs = {
     return (await readdir(root, { withFileTypes: true })).filter(e => e.isDirectory()).map(e => e.name);
   },
   async mtimeMs(path) {
-    const s = await stat(path);
-    return s.isDirectory() ? s.mtimeMs : null;
+    try {
+      const s = await stat(path);
+      return s.isDirectory() ? s.mtimeMs : null;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
   },
 };
 
@@ -171,6 +176,9 @@ export async function cmdFleetWorktreeStale(args: string[], deps: FleetWorktreeS
         const common = (await git(['-C', item.path, 'rev-parse', '--path-format=absolute', '--git-common-dir'])).trim();
         const repo = common.endsWith('/.git') ? common.slice(0, -'/.git'.length) : common;
         await git(['-C', repo, 'worktree', 'remove', item.path]);
+        if (await (deps.fs ?? defaultFs).mtimeMs(item.path) !== null) {
+          throw new Error('worktree remains after Git removal');
+        }
         item.removed = true;
       } catch (error) {
         item.removed = false;

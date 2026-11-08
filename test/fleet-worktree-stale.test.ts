@@ -8,7 +8,13 @@ const ROOT = '/wt';
 const row = (job: string, hoursAgo: number, extra: Record<string, unknown> = {}) =>
   JSON.stringify({ job, ts: new Date(NOW - hoursAgo * H).toISOString(), event: 'launch', ...extra });
 
-function setup(dirs: Record<string, number>, jobs: string[], git = vi.fn(async (argv: string[]) => (argv.includes('rev-parse') ? '/repo/.git\n' : ''))) {
+function setup(initialDirs: Record<string, number>, jobs: string[], git?: ReturnType<typeof vi.fn<(argv: string[]) => Promise<string>>>) {
+  const dirs = { ...initialDirs };
+  git ??= vi.fn(async (argv: string[]) => {
+    if (argv.includes('rev-parse')) return '/repo/.git\n';
+    if (argv.includes('remove')) delete dirs[argv.at(-1)!.slice(ROOT.length + 1)];
+    return '';
+  });
   const deps: FleetWorktreeStaleDeps = {
     now: () => NOW,
     fs: {
@@ -18,7 +24,7 @@ function setup(dirs: Record<string, number>, jobs: string[], git = vi.fn(async (
     readJobs: async () => jobs.join('\n'),
     git,
   };
-  return { deps, git };
+  return { deps, git, dirs };
 }
 
 async function run(args: string[], deps: FleetWorktreeStaleDeps) {
@@ -132,4 +138,26 @@ it('does not remove a retry when an older PR merges after the new launch', async
   const { view } = await run(['--apply'], deps);
   expect(view.stale).toEqual([]);
   expect(git).not.toHaveBeenCalled();
+});
+
+it('reports an incomplete Git cleanup and converges on a later retry', async () => {
+  const job = 'RQ-LOCUSMCPLEAKQ7';
+  const url = 'https://github.com/ashlrai/locus/pull/101';
+  let removeWorks = false;
+  const git = vi.fn(async (argv: string[]) => {
+    if (argv.includes('rev-parse')) return '/repo/.git\n';
+    if (removeWorks) delete fixture.dirs[job];
+    return '';
+  });
+  const fixture = setup({ [job]: 5 }, [row(job, 5), JSON.stringify({ jobId: job, prUrl: url, outcome: 'PUBLISHED' }),
+    JSON.stringify({ event: 'outcome', url, state: 'MERGED' })], git);
+  const { deps } = fixture;
+  const first = await run(['--apply'], deps);
+  expect(first.code).toBe(1);
+  expect(first.view.stale[0]).toMatchObject({ job, removed: false, error: 'worktree remains after Git removal' });
+  removeWorks = true;
+  const retry = await run(['--apply'], deps);
+  expect(retry.code).toBe(0);
+  expect(retry.view.stale[0]).toMatchObject({ job, removed: true });
+  expect((await run(['--apply'], deps)).view.stale).toEqual([]);
 });
