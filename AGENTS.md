@@ -140,6 +140,15 @@ phm fleet parked --json
 `unmetDeps` lists parked rows whose gate ids are still unmet. Restock.py changes
 need a Security re-pin before live `bin/` install; do not install yourself.
 
+Fleet autopilot (RQ-SWE3-AUTOPILOT-1): `phm fleet autopilot --once --json` runs
+one bounded read-only planning cycle: it reads queue/slots/admission state,
+computes lane utilization vs targets, picks the single highest-leverage gap
+(uncovered conflicting PRs, a starved lane, stale parked deps, missing
+restock) and emits one proposed action — `enqueue` N jobs of a type,
+`hold-lane`, or `no-op`. `--repo <owner/name>` repeats to include the
+read-only `gh pr list` rebase-coverage read. It never mutates; the proposal
+is advisory for the leader loop.
+
 Durable memory: `phm memory add|list|search|forget --json` stores Mason's
 preferences, doctrine and facts as markdown under `~/.phantom/memory/`; see
 [memory](docs/MEMORY.md). Secret-shaped text is refused, never store values.
