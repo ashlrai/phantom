@@ -375,7 +375,8 @@ if not DRY:
     # A separate state file avoids racing dispatch's launch retry ledger.
     ready_ids = {r[1] for r in recs}
     park_state = {j: e for j, e in park_state.items() if j in ready_ids}
-    open(PARKF + ".tmp", "w").write(json.dumps(park_state)); os.replace(PARKF + ".tmp", PARKF)
+    park_tmp = PARKF + ".%d.tmp" % os.getpid()
+    open(park_tmp, "w").write(json.dumps(park_state)); os.replace(park_tmp, PARKF)
 if DRY or (not out and not seclist and not done and not unparks and not dep_out and not rate_candidates): sys.exit(0)
 for j, repo, l, tier, pf, p, i in out: open(pf, "w").write(p)
 for j, repo, l, tier, pf, p, i, deps in dep_out: open(pf, "w").write(p)

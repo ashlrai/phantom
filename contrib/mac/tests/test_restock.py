@@ -669,6 +669,30 @@ if __name__ == '__main__':
     unittest.main()
 
 class MergeRateRecoveryTests(unittest.TestCase):
+    def test_concurrent_recovery_obeys_shared_cooldown(self):
+        import time
+        tmp = build('# empty\n')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs/queue'
+        rows = []
+        for n in range(22):
+            pf = q / 'prompts' / f'RQ-RACE-{n}.md'
+            pf.write_text('Required checks and merge queue rules apply.\n')
+            rows.append(f'PARKED-MERGERATE.devin\tRQ-RACE-{n}\tdevin\twork\tphantom\t{pf}')
+        (q / 'ready.tsv').write_text('\n'.join(rows) + '\n')
+        (home / '.ashlr-runs/phantom-open-prs').write_text(f'{time.time()} 20\n')
+        env = {'HOME': str(home), 'PATH': os.environ.get('PATH', '/usr/bin:/bin')}
+        processes = [subprocess.Popen([sys.executable, '-B', str(SCRIPT), '--per-lane', '0'],
+                                      env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                     for _ in range(4)]
+        for process in processes:
+            _, err = process.communicate(timeout=60)
+            self.assertEqual(process.returncode, 0, err)
+        result = (q / 'ready.tsv').read_text()
+        self.assertEqual(result.count('PARKED-MERGERATE.'), 21)
+        self.assertEqual(result.count('\tphantom\tdevin\twork\t'), 1)
+
     def test_duplicate_and_active_jobs_do_not_block_fair_recovery(self):
         import time
         tmp = build('# empty\n')

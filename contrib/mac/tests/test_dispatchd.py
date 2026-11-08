@@ -319,6 +319,42 @@ class RestockTriggerTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue(called.exists(), 'restock.sh was not invoked for a starved devin lane')
 
+    def test_parked_backlog_refreshes_evidence_and_wakes_restock(self):
+        slots = held_lanes()
+        slots['devin'] = devin_slot(last_change=int(1e15))
+        rows = [f'PARKED-MERGERATE.devin\tRQ-PARK-{n}\tdevin\twork\tphantom\tunused' for n in range(22)]
+        tmp = build(slots=slots, ready=rows, queue_md='# queue\n')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        called = self._stub(home)
+        gh = home / 'stubbin/gh'
+        gh.write_text('#!/bin/sh\necho 20\n')
+        gh.chmod(0o755)
+        r = tick(home)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(called.exists())
+        self.assertEqual((home / '.ashlr-runs/phantom-open-prs').read_text().split()[1], '20')
+        self.assertEqual(ready_lines(home), rows)
+
+    def test_concurrent_unpark_survives_dispatcher_rewrite(self):
+        from unittest.mock import patch
+        for status_first in (True, False):
+            with self.subTest(status_first=status_first):
+                old = ('PARKED-MERGERATE.devin\tRQ-RACE\tdevin\twork\tphantom\tprompt' if status_first
+                       else 'RQ-RACE\tphantom\tPARKED-MERGERATE.devin\twork\tprompt')
+                new = 'RQ-RACE\tphantom\tdevin\twork\tprompt'
+                tmp = build(slots=held_lanes(), ready=[old], queue_md='# queue\n')
+                self.addCleanup(tmp.cleanup)
+                home = Path(tmp.name)
+                script = home / 'dispatchd-test.py'
+                injection = f'open(Q + "/ready.tsv", "w").write({(new + chr(10))!r})\n'
+                script.write_text(SCRIPT.read_text().replace('# Reconcile concurrent parked-row rewrites', injection + '# Reconcile concurrent parked-row rewrites'))
+                module_path = str(SCRIPT.parent)
+                with patch(__name__ + '.SCRIPT', script):
+                    result = tick(home, {'PYTHONPATH': module_path})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(ready_lines(home), [new])
+
     def test_held_devin_never_triggers(self):
         slots = held_lanes()
         slots['devin'] = devin_slot(held=True, last_change=int(1e15))
