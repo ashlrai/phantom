@@ -1,6 +1,6 @@
 # Fleet Verbs
 
-`ashlr fleet <verb>` dispatches by file name: a verb is a `src/cli/fleet-<verb>.ts` exporting `cmdFleet<Verb>` (camel case via `resolveFleetSubcommand`). Never edit `src/cli/fleet.ts`, `src/cli/index.ts`, completions or help to add one — the convention resolves it automatically.
+`ashlr fleet <verb>` supports convention-based verbs in `src/cli/fleet-<verb>.ts` exporting `cmdFleet<Verb>`. The dispatcher resolves safe names and loads them through the generated registry. Built-in verbs have separate dispatch paths. The table is a selection, not a complete command list.
 
 | Verb | File | Reads or does | Writes anything? |
 |------|------|---------------|------------------|
@@ -56,6 +56,6 @@
 | workers | `src/cli/fleet-workers.ts` | Lists live workers, filterable by lane, repo and age; watch mode | no |
 | wt-audit | `src/cli/fleet-wt-audit.ts` | Read-only per-worktree audit of the job worktree root: lifecycle state (running/reaping/publishing/held/archived/merged/open/ended/published/empty/finished/recorded/orphaned/unknown/invalid/excluded), measured size and evidence signals from `queue/run/`, `.base`/`.publish`/`.rc` files, status.json, keep lists, pins, `ps` and the jobs ledger. `--reap-plan` lists only worktrees the sanctioned `reap-one.sh` or a plain `git worktree remove` could already take — never running, publishing, held, archived, fresh, degraded or uncertain ones. `--json` for machines; supports `ASHLR_RUNS_DIR` / `ASHLR_WT_DIR` overrides | no |
 
-**Convention for adding a new verb.** Create `src/cli/fleet-<verb>.ts` exporting `cmdFleet<Verb>` (each dash-separated part title-cased and concatenated). The dispatcher in `resolveFleetSubcommand` resolves it automatically; no edits to `fleet.ts`, `index.ts`, completions or help are needed. Update this doc to keep it in sync.
+**Convention for adding a new verb.** Create `src/cli/fleet-<verb>.ts` exporting `cmdFleet<Verb>` (each dash-separated part title-cased and concatenated), then run `node scripts/gen-fleet-registry.mjs` and include the generated registry change. Update this document and, when appropriate, help and completions. The dispatcher cannot load a convention verb absent from the registry.
 
 `dirty-landed --json` includes `diffAnomaly` for a complete PR diff of at least 1,000 files with zero added or deleted text lines in every file. Causes distinguish unchanged-content mode changes, generated-looking paths (a naming heuristic), and other zero-line changes. Binary, incomplete, and ordinary large text diffs are not classified as zero-line anomalies. The recut loop and recut sweep skip confirmed anomalies; inspect them before deciding what to do. The existing landed class remains independent of this diagnostic.

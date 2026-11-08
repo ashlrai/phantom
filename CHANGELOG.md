@@ -20,6 +20,11 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ### Added
 
+- Add a prioritized read-only unified inbox for pending needs-you items, teammate texts, drafts and unclaimed bus work ([#4080](https://github.com/ashlrai/phantom/pull/4080)).
+- Add `phm fleet wt-audit` to inspect worktree lifecycle evidence and preview conservative reap candidates ([#4076](https://github.com/ashlrai/phantom/pull/4076)).
+- Add `phm fleet eval-report` for evidence-based post-merge durability and fleet outcome metrics ([#4077](https://github.com/ashlrai/phantom/pull/4077)).
+- Add the read-only `phm fleet merge-batch` planner for ordering overlapping pull requests ([#4072](https://github.com/ashlrai/phantom/pull/4072)).
+- Add opt-in desktop control for Claude, Codex and Devin, with capability and permission status ([#4000](https://github.com/ashlrai/phantom/pull/4000)).
 - Add a Fleet resource and activity board with lane quota observations, recent actions and merges, refreshed while visible ([#3939](https://github.com/ashlrai/phantom/pull/3939)).
 - Add Show Mode for browsing recent fleet activity and a merge ticker ([#3934](https://github.com/ashlrai/phantom/pull/3934)).
 - Add validated agent checkpoint handoffs and the read-only `phm checkpoint resume` command ([#3921](https://github.com/ashlrai/phantom/pull/3921)).
