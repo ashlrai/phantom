@@ -23,7 +23,7 @@ DEFAULT = {"codex-cmp": {"target": 10, "floor": 10, "ceiling": 32, "hard_cap": 3
            "devin": {"target": 6, "floor": 3, "ceiling": 10, "hard_cap": 10},   # DEVIN-LEVERAGE-20261026
            "claude-api": {"target": 4, "floor": 0, "ceiling": 8, "hard_cap": 8},   # target is re-paced every tick by claude-api.py
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
-import concurrency, batcher
+import concurrency, batcher, rebase_order
 # Starvation thresholds; load, process count and live worktree count only warn.
 def gate_limit(name, default):
     try:
@@ -1049,6 +1049,9 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     def form_batch(f):   # -> (members, lane, size target) or None to launch f on its own
         if not (BATCHING and member_ok(f, lead=True)): return None
         pool = [task_info(c) for c in cand if c[1] == f[1] and c[3] == f[3] and c[0] != f[0] and member_ok(c)]
+        # RQ-SWE3-REBASEORDER-1: RQ-REBASE tasks batch by file-overlap cluster (rebase:clu-<pr>),
+        # not by dominant directory — siblings share one session, disjoint PRs never co-batch.
+        rebase_order.assign_areas([task_info(f)] + pool)
         size = batcher.size_for(batch_tuning, f[2])
         picked = batcher.pick_members(task_info(f), pool, size)
         if not picked: return None

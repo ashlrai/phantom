@@ -325,3 +325,4 @@ canonical release guide for required hosted qualification and publication.
 - [Local model tuning data and evaluation](https://github.com/ashlrai/phantom/blob/master/docs/TUNE.md) — offline dataset preparation and paired evaluation.
 
 - [Rebase-wave status](FLEET-REBASE-STATUS.md) — read-only conflict and queue coverage snapshot.
+- [Rebase batch ordering](REBASE-ORDERING.md) — file-overlap clusters keep sibling rebase jobs in one batch and spread disjoint ones.

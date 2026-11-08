@@ -24,6 +24,8 @@ import os
 import re
 import time
 
+import rebase_order
+
 SCHEMA = "dispatchd.batch.v1"
 TUNING_SCHEMA = "dispatchd.batch-tuning.v1"
 BATCH_PREFIX = "RQ-BATCH-"
@@ -34,6 +36,10 @@ BATCH_LANES = ("codex-cmp", "codex-personal", "claude", "devin", "claude-api")
 SOLO_PREFIXES = ("RQ-FIX-MAIN-", "RQ-REL-", "RQ-DESK-", BATCH_PREFIX)
 SOLO_KINDS = re.compile(r"(?:RQ-)?(?:LAND|FIXUP|RECUT|SALVAGE|CONSOLIDATE|CLOSE)(?:[-_]|$)")
 MIN_BATCH = 3            # fewer related tasks than this launch individually
+# RQ-SWE3-REBASEORDER-1: a rebase file-overlap cluster batches at 2 — even a pair of
+# sibling PRs wins, because one session rebases them in order instead of each
+# re-dirtying the other mid-flight.
+MIN_REBASE_BATCH = 2
 MIN_SIZE, DEFAULT_SIZE, MAX_SIZE = 4, 16, 64
 MAX_PROMPT_CHARS = 200_000
 MAX_ATTEMPTS = 2
@@ -87,13 +93,20 @@ def pick_members(lead, pool, size):
     first; a lead whose area is too small for a batch absorbs other small-area orphans of its repo and
     tier, never members of an area big enough to batch on its own. Batches are evened out (n tasks over
     ceil(n / size) batches) and bounded by MAX_PROMPT_CHARS. Returns [] when fewer than MIN_BATCH fit.
+
+    Rebase cluster areas (`rebase:` prefix, set by rebase_order.assign_areas) are closed
+    both ways: a cluster never absorbs orphans, orphans never absorb cluster members, and
+    the floor is MIN_REBASE_BATCH instead of MIN_BATCH.
     """
     peers = [c for c in pool if c["repo"] == lead["repo"] and c["tier"] == lead["tier"]]
+    rebase = lead["area"].startswith(rebase_order.AREA_PREFIX)
+    floor = MIN_REBASE_BATCH if rebase else MIN_BATCH
     area_n = Counter(c["area"] for c in peers + [lead])
     group = [lead] + [c for c in peers if c["area"] == lead["area"]]
-    if len(group) < MIN_BATCH:
-        group += [c for c in peers if c["area"] != lead["area"] and area_n[c["area"]] < MIN_BATCH]
-    if len(group) < MIN_BATCH:
+    if not rebase and len(group) < MIN_BATCH:
+        group += [c for c in peers if c["area"] != lead["area"] and area_n[c["area"]] < MIN_BATCH
+                  and not c["area"].startswith(rebase_order.AREA_PREFIX)]
+    if len(group) < floor:
         return []
     take = math.ceil(len(group) / math.ceil(len(group) / max(MIN_SIZE, size)))
     out, chars = [], 0
@@ -104,7 +117,7 @@ def pick_members(lead, pool, size):
             continue
         out.append(c)
         chars += c["chars"]
-    return out if len(out) >= MIN_BATCH else []
+    return out if len(out) >= floor else []
 
 
 def render(bid, repo, area, members):

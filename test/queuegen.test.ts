@@ -205,6 +205,48 @@ describe('queuegen DIRTY -> REBASE', () => {
     expect(line).toMatch(/acceptance="[^"]+"/);
   });
 
+  it('stamps a shared cluster= key on sibling REBASE lines and a distinct key on disjoint ones', () => {
+    const prs = [
+      pr({ number: 1, mergeState: 'DIRTY', files: ['src/a.ts'] }),
+      pr({ number: 2, mergeState: 'DIRTY', headSha: sha('c'), files: ['src/a.ts', 'src/b.ts'] }),
+      pr({ number: 3, mergeState: 'DIRTY', headSha: sha('d'), files: ['docs/z.md'] }),
+    ];
+    const { lines, io } = makeIo(oneOptions({
+      prs: new Map([['ashlrai/phantom', prs]]),
+      conflicts: new Map([
+        ['ashlrai/phantom#1', ['src/a.ts']],
+        ['ashlrai/phantom#2', ['src/b.ts']],
+        ['ashlrai/phantom#3', ['docs/z.md']],
+      ]),
+    }));
+    expect(runQueuegenCycle(io).emitted).toBe(3);
+    const key = (line: string) => /cluster=(clu-\d+)/.exec(line)?.[1];
+    expect(key(lines[0]!)).toBe('clu-1');
+    expect(key(lines[1]!)).toBe('clu-1');   // shares src/a.ts with #1
+    expect(key(lines[2]!)).toBe('clu-3');   // disjoint file set: its own cluster
+    expect(lines[0]).toMatch(/repo=phantom, cluster=clu-1, after none/);
+  });
+
+  it('clusters transitively through a clean sibling: same files, same key', () => {
+    const prs = [
+      pr({ number: 1, mergeState: 'DIRTY', files: ['src/a.ts'] }),
+      pr({ number: 2, mergeState: 'UNSTABLE', headSha: sha('c'), files: ['src/a.ts', 'src/b.ts'] }),
+      pr({ number: 3, mergeState: 'DIRTY', headSha: sha('d'), files: ['src/b.ts'] }),
+    ];
+    const { lines, io } = makeIo(oneOptions({
+      prs: new Map([['ashlrai/phantom', prs]]),
+      conflicts: new Map([
+        ['ashlrai/phantom#1', ['src/a.ts']],
+        ['ashlrai/phantom#3', ['src/b.ts']],
+      ]),
+    }));
+    // #2 emits nothing (no failing required check) but still bridges #1 and #3.
+    expect(runQueuegenCycle(io).emitted).toBe(2);
+    const key = (line: string) => /cluster=(clu-\d+)/.exec(line)?.[1];
+    expect(key(lines[0]!)).toBe('clu-1');
+    expect(key(lines[1]!)).toBe('clu-1');
+  });
+
   it('skips DIRTY with empty conflicts and on merge-tree failure', () => {
     const clean = makeIo(oneOptions({
       prs: new Map([['ashlrai/phantom', [pr({ mergeState: 'DIRTY' })]]]),

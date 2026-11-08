@@ -140,6 +140,11 @@ phm fleet parked --json
 `unmetDeps` lists parked rows whose gate ids are still unmet. Restock.py changes
 need a Security re-pin before live `bin/` install; do not install yourself.
 
+Rebase batch ordering (RQ-SWE3-REBASEORDER-1): queuegen stamps REBASE lines
+with `cluster=clu-<PR>` (`src/core/fleet/rebase-order.ts`); dispatchd batches
+each file-overlap cluster via `contrib/mac/rebase_order.py` (same session,
+disjoint PRs spread). See [rebase ordering](docs/REBASE-ORDERING.md).
+
 Durable memory: `phm memory add|list|search|forget --json` stores Mason's
 preferences, doctrine and facts as markdown under `~/.phantom/memory/`; see
 [memory](docs/MEMORY.md). Secret-shaped text is refused, never store values.
@@ -193,7 +198,7 @@ phm desktopctl run claude --task "summarise this repo" --json
 
 `capabilities` (the doctor) always runs and reports the connection, each macOS
 TCC grant and per-resource reasons for what is blocked. `run` needs a `full`
-grant and returns untrusted screen text. `browser` is read-only — act on the
+grant and returns untrusted screen text. `browser` is read-only; act on the
 web through the Phantom Browser pane. Nothing prompts for or changes TCC
 grants; every action is feed-logged and refuses to run unlogged.
 

@@ -163,7 +163,7 @@ def prompt_body(j, repo, l, tier, attrs, text, gate=None):
             "that meets every acceptance item above, with new or updated tests that you run. Never print environment variables, secrets or tokens; "
             "solve any secrets need through Phantom Secrets and any MCP/CLI access need through Locus. Do not commit or push, and do not edit .github/."
             f"{pin_line}")
-noops = load_noops(); seen_pr = set(); seen_file = set()   # seen_*: PRs / target files already picked this pass
+noops = load_noops(); seen_pr = set(); seen_file = {}   # seen_*: PRs / target files (fkey -> first claiming job) already picked this pass
 skips = {}; picks = {l: [] for l in CODEX}; dep_parks = []; done = []; checked = set(); task_keys = {}; ts = int(time.time())   # after-unlanded -> PARKED-DEP rows this pass
 # Bound network prechecks while allowing skipped rows to backfill lane demand.
 pc_left = max(20, sum(need.values()))
@@ -296,10 +296,13 @@ for i, j, attrs, text, raw in ranked_records(recs):
     key = park_key(raw, ""); task_keys[j] = key
     if noop_parked(noops, j, key, ts): skip(j, "noop-streak"); continue
     if precheck_parked(park_state, j, key, ts): skip(j, "precheck-parked"); continue
-    # dedupe by target PR and target file: sibling lines for the same PR or file would retire as NOOP together
+    # dedupe by target PR and target file: sibling lines for the same PR or file would retire as NOOP together.
+    # RQ-SWE3-REBASEORDER-1: two RQ-REBASE jobs may share the file — they are cluster siblings meant to land
+    # in the SAME batch (rebase_order.assign_areas), so claiming both here is the point, not a race.
     fm = re.search(r"\bfile=(\S+)", attrs + " " + text); fkey = (rm.group(1), fm.group(1)) if fm else None
     if prp & seen_pr: skip(j, "dup-pr"); continue
-    if fkey and fkey in seen_file: skip(j, "dup-file"); continue
+    if fkey and fkey in seen_file and not (j.startswith("RQ-REBASE-") and seen_file[fkey].startswith("RQ-REBASE-")):
+        skip(j, "dup-file"); continue
     if j in checked: skip(j, "dup-line"); continue
     # balance codex lanes: line pool first, else the lane with more unmet need (cmp wins ties)
     lane = pool if len(picks[pool]) < need[pool] or pool == "codex-local" else max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
@@ -316,7 +319,7 @@ for i, j, attrs, text, raw in ranked_records(recs):
         done.append((i, j, pc)); skip(j, "done-noop"); continue
     picks[lane].append((j, rm.group(1), lane, tier, attrs, text, i))
     seen_pr |= prp
-    if fkey: seen_file.add(fkey)
+    if fkey: seen_file.setdefault(fkey, j)
 out = []
 for lane in CODEX:
     for j, repo, l, tier, attrs, text, i in picks[lane]:

@@ -532,6 +532,26 @@ class NoopCutTests(unittest.TestCase):
         self.assertEqual(skips(r.stdout).get('dup-pr'), 1)
         self.assertEqual(skips(r.stdout).get('dup-file'), 1)
 
+    def test_rebase_siblings_may_share_a_target_file(self):
+        # RQ-SWE3-REBASEORDER-1: RQ-REBASE jobs naming the same file= are cluster
+        # siblings meant for one batch; both claim. A non-rebase job on the same
+        # file is still a dup-file skip.
+        home = self.make([
+            line('RQ-REBASE-phantom-41-aaaaaaa', P=1, pool='devin', repo='phantom',
+                 text='REBASE phantom#41 file=src/a.ts conflicts="src/a.ts" fix'),
+            line('RQ-REBASE-phantom-42-bbbbbbb', P=1, pool='devin', repo='phantom',
+                 text='REBASE phantom#42 file=src/a.ts conflicts="src/a.ts" fix'),
+            line('RQ-REBASE-phantom-43-ccccccc', P=1, pool='devin', repo='phantom',
+                 text='REBASE phantom#43 file=src/b.ts conflicts="src/b.ts" fix'),
+            line('RQ-X-9', P=1, pool='devin', repo='phantom',
+                 text='FIXUP phantom#99 file=src/a.ts fix'),
+        ])
+        r = restock(home, '--dry-run')
+        self.assertEqual(sorted(dry_ids(r.stdout)),
+                         ['RQ-REBASE-phantom-41-aaaaaaa', 'RQ-REBASE-phantom-42-bbbbbbb',
+                          'RQ-REBASE-phantom-43-ccccccc'], r.stdout)
+        self.assertEqual(skips(r.stdout).get('dup-file'), 1)
+
     def test_two_noops_park_the_line_for_24h(self):
         row = line('RQ-N', P=1, pool='devin', repo='phantom', text='stale work')
         home = self.make([row], precheck_code=10)

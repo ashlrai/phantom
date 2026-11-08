@@ -196,6 +196,19 @@ characters. These never batch: release (`RQ-REL-`), desktop (`RQ-DESK-`), main-r
 (`RQ-FIX-MAIN-`) and PR-maintenance kinds (`LAND`, `FIXUP`, `RECUT`, `SALVAGE`,
 `CONSOLIDATE`, `CLOSE`), plus `codex-local`, parked, kept and retired jobs.
 
+Rebase jobs are the exception to directory grouping (RQ-SWE3-REBASEORDER-1):
+queuegen stamps each REBASE line with `cluster=clu-<lowest PR>`, the
+touched-file-overlap cluster of the repo's open PRs
+(`src/core/fleet/rebase-order.ts`), and `rebase_order.assign_areas` replaces
+each `RQ-REBASE-*` task's area with that `rebase:<key>` — falling back to the
+line's `conflicts="…"`/`file=` file set when no stamp is present. Cluster
+siblings land in one session — one batch resolves the cluster instead of each
+merge re-dirtying the next — while disjoint PRs spread: `rebase:` areas never
+absorb orphans and orphans never absorb them, so a singleton rebase launches
+solo. A cluster batches at 2 members (`MIN_REBASE_BATCH`); restock likewise
+lets two rebase lines claim the same `file=` target in one pass. See
+[docs/REBASE-ORDERING.md](../../docs/REBASE-ORDERING.md).
+
 The batch prompt (`queue/prompts/<batch>.md`) tells the session to fan out
 subagents. It also carries a per-task checklist that the session keeps in
 `BRIDGE_NOTES.md`, one line per task:
@@ -225,7 +238,7 @@ switch.
 
 ## Installing the dispatcher
 
-`install.sh` diffs `dispatchd.py`, `concurrency.py`, `batcher.py`, `install-gate.py` and `launch-gate.sh` against
+`install.sh` diffs `dispatchd.py`, `concurrency.py`, `batcher.py`, `rebase_order.py`, `install-gate.py` and `launch-gate.sh` against
 `~/.ashlr-runs/bin` (or `$ASHLR_RUNS_BIN`, or `--bin DIR`) and installs the ones that
 differ, copying each replaced file to `<file>.bak-macdispatch-<YYYYmmdd-HHMMSS>`
 first. It prints the new sha256 of every file for Security to pin, refuses symlink
