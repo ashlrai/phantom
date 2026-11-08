@@ -351,6 +351,8 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     const f = fixture(fixerBody);
     git(f.clone, 'checkout', '-q', '-b', 'side', f.head);
     writeFileSync(join(f.clone, 'sum.js'), 'module.exports = (a, b) => b - a;\n');
+    writeFileSync(join(f.clone, 'main-only.js'), 'module.exports = 42;\n');
+    git(f.clone, 'add', 'main-only.js');
     git(f.clone, 'commit', '-qam', 'base change');
     git(f.clone, 'push', '-q', 'origin', 'HEAD:main');
     const base = git(f.clone, 'rev-parse', 'HEAD');
@@ -385,6 +387,12 @@ describe('autopilot tick (real git, fake GitHub)', () => {
 
   it('recuts a conflicting lane onto the current base, waits on the replacement, then closes the old PR once it merges', async () => {
     const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`);
+    git(f.clone, 'checkout', '-q', '--detach', f.base);
+    writeFileSync(join(f.clone, 'later-main.js'), 'module.exports = 99;\n');
+    git(f.clone, 'add', 'later-main.js');
+    git(f.clone, 'commit', '-qm', 'main advanced after observation');
+    git(f.clone, 'push', '-q', 'origin', 'HEAD:main');
+    const currentBase = git(f.clone, 'rev-parse', 'HEAD');
     const opts = { repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [] as string[][], ownedPrefixes: ['improve/'], gh: f.gh as Gh, guards: () => ({ killSwitch: false, paused: false }) };
 
     const r = await tick(opts);
@@ -393,9 +401,12 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     const recutSha = git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut').split('\t')[0];
     expect(recutSha).toBe(r.newHead);
     git(f.clone, 'fetch', '-q', 'origin', 'refs/heads/improve/sum-recut:refs/remotes/origin/improve/sum-recut');
-    expect(git(f.clone, 'rev-parse', 'origin/improve/sum-recut^')).toBe(f.base);
+    expect(git(f.clone, 'rev-parse', 'origin/improve/sum-recut^')).toBe(currentBase);
     expect(git(f.clone, 'show', 'origin/improve/sum-recut:sum.js')).toContain('a + b');
     expect(git(f.clone, 'show', 'origin/improve/sum-recut:other.js')).toContain('module.exports = 1');
+    expect(git(f.clone, 'show', 'origin/improve/sum-recut:main-only.js')).toContain('module.exports = 42');
+    expect(git(f.clone, 'show', 'origin/improve/sum-recut:later-main.js')).toContain('module.exports = 99');
+    expect(git(f.clone, 'diff', '--name-only', currentBase, 'origin/improve/sum-recut').split('\n').sort()).toEqual(['other.js', 'sum.js']);
     // The old head is untouched, and the opened PR carries the fresh branch and the provenance.
     expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum').split('\t')[0]).toBe(f.head);
     expect(f.calls.some((c) => c.includes('POST repos/o/r/pulls') && c.includes('head=improve/sum-recut') && c.includes('base=main'))).toBe(true);
@@ -413,6 +424,16 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     expect(f.closed7()).toBe(true);
     // The next tick sees the PR closed and reports done — nothing re-opens it.
     expect((await tick(opts)).plan).toBe('done');
+  });
+
+  it('explains how to retry an unresolved recut without pushing a branch', async () => {
+    const f = conflicting('exit 99');
+    const opts = { repo: 'o/r', number: 7, checkout: f.clone, apply: true, verify: [] as string[][], ownedPrefixes: ['improve/'], gh: f.gh, guards: () => ({ killSwitch: false, paused: false }) };
+    const result = await tick(opts);
+    expect(result).toMatchObject({ result: 'refused', detail: expect.arrayContaining([expect.stringContaining('resolve them on improve/sum and push the updated head')]) });
+    expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut')).toBe('');
+    const retry = await tick(opts);
+    expect(retry).toMatchObject({ plan: 'stop', reason: expect.stringContaining('push an updated head to retry') });
   });
 
   it('opens the recut PR next tick when the branch was pushed but the open call failed', async () => {
