@@ -44,6 +44,9 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  */
 export const REAL_IO_TEST_FILES = [
   'test/company-context-store.test.ts', // concurrent context writer processes
+  'test/episodic-memory.test.ts', // Real Git revisions and persistent JSONL acceptance fixtures.
+  'test/agent-checkpoints.test.ts', // Restarts a real Node process and observes fresh Git state.
+  'test/queue-autounpark.test.ts', // Runs real Python/gh fixtures and contends on a real flock.
   'test/fleet-wt-reap-apply.test.ts', // real Git worktree removal
   'test/check-publish.test.ts', // Real temporary Git repositories and preflight subprocesses.
   'test/fleet-resource-session-writer.test.ts', // Runs the actual Python session tick against real private files and reads its output.

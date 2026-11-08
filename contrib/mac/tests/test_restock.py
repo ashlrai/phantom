@@ -18,6 +18,9 @@ import sys
 import tempfile
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from queue_capacity_fixture import install_capacity_gh
+
 SCRIPT = Path(__file__).resolve().parents[1] / 'restock.py'
 LANES = ['codex-cmp', 'codex-personal', 'devin', 'codex-local', 'claude-api']
 
@@ -46,7 +49,9 @@ def build(md, repos=('phantom',), running=0, queued=0, slots=None, lanes_status=
 
 
 def restock(home, *args):
-    env = {'HOME': str(home), 'PATH': os.environ.get('PATH', '/usr/bin:/bin')}
+    fakebin = Path(home) / 'capacity-bin'
+    install_capacity_gh(fakebin)
+    env = {'HOME': str(home), 'PATH': str(fakebin) + ':' + os.environ.get('PATH', '/usr/bin:/bin')}
     return subprocess.run([sys.executable, '-B', str(SCRIPT), *args],
                           env=env, capture_output=True, text=True, timeout=60)
 
@@ -441,9 +446,10 @@ class AutoUnparkTests(unittest.TestCase):
         out = json.loads(r.stdout)
         self.assertEqual(out['parked_dep'], [{'job': 'RQ-NEED', 'deps': ['RQ-UPSTREAM']}])
         ready = (home / '.ashlr-runs' / 'queue' / 'ready.tsv').read_text()
-        self.assertIn('PARKED-DEP.devin\tRQ-NEED\t', ready)
+        self.assertNotIn('RQ-NEED', ready)
+        self.assertIn('RQ-NEED\tphantom\tdevin\twork\t', (home / '.ashlr-runs' / 'queue' / 'parked.tsv').read_text())
         prompt = (home / '.ashlr-runs' / 'queue' / 'prompts' / 'RQ-NEED.md').read_text()
-        self.assertIn('DEPENDENCY GATE: RQ-UPSTREAM', prompt)
+        self.assertIn('DEPENDENCY GATE: RQ-UPSTREAM MERGED', prompt)
         md = (home / '.ashlr-runs' / 'queue' / 'router-queue.md').read_text()
         self.assertIn('CLAIMED', md)
         self.assertIn('RQ-NEED', md)

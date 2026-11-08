@@ -61,6 +61,7 @@ Every command, grouped by topic.
     desktopctl capabilities|status|run <resource> [--json]                                                         Drive Claude, Codex, Devin and a browser as interchangeable desktop resources. Flag-gated by ~/.ashlr/desktopctl.json; reports missing TCC grants, never prompts. Logged to the feed.
     desktop-update inspect|apply --stage <32hex> --json                                                            Verify signed paired updates; apply after native exit, Stop/drain and unchanged active grant. Never resumes the resident.
     app update status [--json]                                                                                     Inspect local desktop update status without downloading or installing. Read-only: reports current stage, available version, deferred reason, running job counts. Exit 0 success, 2 bad usage.
+    app restart --json                                                                                             Report a held restart while the native UI owns live runtime state; does not quit or update the app.
     update [--check] [--json]                                                                                      Self-update; mutation requires service registration proven absent and not running. --check remains read-only.
     self-swap [--plan | --apply --supervised] [--json]                                                             Plan a versioned install swap; apply builds, probes, flips current and drains the old supervised process.
     upgrade [--check] [--json]                                                                                     Same as update.
@@ -76,6 +77,7 @@ Every command, grouped by topic.
     version                                                                                                        Print the installed ashlr version (aliases: --version, -v).
     setup                                                                                                          Temporarily unavailable: refuses before config or wizard effects; use owner-invoked run/swarm or daemon dry-run while compiled runtime roots are empty.
     app update status [--json]                                                                                     Read the local signed desktop-update stage and deferral counts; never downloads or installs.
+    app restart --json                                                                                             Report a held restart while the native UI owns live runtime state; does not quit or update the app.
 
   Run - local-first agent runs
     run "<goal>" [opts]                                                   Decompose goal into tasks; execute via local model (Ollama/LM Studio).
