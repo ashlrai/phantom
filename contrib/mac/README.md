@@ -22,6 +22,9 @@ not a merge. `phm fleet parked --json` lists the same parked rows and reports
 still-unmet gate ids under `unmetDeps`. Merge-rate parked Phantom rows recover at most one per hour when the dispatcher’s
 open-PR count is less than 150 and less than 10 minutes old. Missing, stale or
 invalid counts leave rows parked; the count measures backlog, not merge rate.
+Rows are considered in queue order. Duplicate identities, active claims,
+worktrees, published jobs and recorded merges stay parked while later eligible
+rows can recover. Resolve duplicate rows before retrying that job.
 Recovery keeps the prompt and normal checks intact, and logs `UNPARK <job>
 reason=MERGERATE`. The restocker needs a Security re-pin before live installation.
 `dispatchd.py` is the per-tick

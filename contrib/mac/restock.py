@@ -405,8 +405,16 @@ if out or unparks or dep_out or rate_candidates:
         except ValueError: last = 0
         now = time.time()
         if rate_recovered(now) and 0 <= last <= now - 3600:
+            # Recheck identities under the queue lock: a parked duplicate, an
+            # active claim or an already completed attempt must never launch.
+            current_claimed = {x.split("\t")[0] for x in rd(Q + "/claimed.tsv").splitlines() if x}
             for j, old, new in rate_candidates:
-                if old in snap and not any(x.split("\t")[0] == j for x in snap):
+                occurrences = sum(ready_job_id(x) == j for x in snap)
+                if (old in snap and occurrences == 1 and j not in current_claimed
+                        and ("phantom", j) not in completed and (None, j) not in completed
+                        and not os.path.isdir(H + "/Projects/ashlrai/wt/" + j)
+                        and not os.path.exists(Q + "/run/" + j + ".reaping")
+                        and "RESULT PR" not in rd("%s/%s.publish" % (R, j))):
                     # Write the cooldown first: interruption can delay, never accelerate, recovery.
                     open(cooldown + ".tmp", "w").write(str(now)); os.replace(cooldown + ".tmp", cooldown)
                     repl[old] = new; rate_unpark.append(j); break
