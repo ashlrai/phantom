@@ -20,6 +20,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { probeServer } from '../src/core/mcp-gateway.js';
 import { listNativeTools } from '../src/core/mcp-native.js';
 import type { McpServerSpec } from '../src/core/types.js';
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..');
@@ -66,6 +67,8 @@ function gatewayEnv(): Record<string, string> {
     PATH: process.env.PATH ?? '',
   };
 }
+
+registerFleetNativeTools();
 
 describe('gateway serves native tools', () => {
   it('persists private proactive profiles through the built CLI protocol without provider calls', async () => {

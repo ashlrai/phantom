@@ -39,6 +39,7 @@
  * separate untrusted router handoff and its read audit; status remains read-only.
  */
 
+import { formatFleetMetrics } from '../core/fleet/metrics-feed.js';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -52,7 +53,6 @@ import type { ResourceStrategyReport } from '../core/autonomy/resource-strategy.
 import { makeColors, isTty } from './ui.js';
 import { rejectUnknownOptions, type AllowedOptions } from './args.js';
 import { resolveFleetSubcommand, isModuleNotFound } from './fleet-subcommand-resolve.js';
-import { FLEET_SUBCOMMAND_LOADERS } from './fleet-subcommand-registry.js';
 
 const { bold, dim, green, red, yellow, cyan } = makeColors(isTty());
 
@@ -119,6 +119,7 @@ export function formatFleetStatus(s: FleetStatus): string {
     lines.push(`  free: ${memory.freeMemoryPercent === null ? 'unknown' : `${memory.freeMemoryPercent}%`}; swap used: ${memory.swapUsedBytes === null ? 'unknown' : `${memory.swapUsedBytes} bytes`}`);
     lines.push(`  admission waits: ${memory.admissionWaitsByPool === null ? 'unknown' : JSON.stringify(memory.admissionWaitsByPool)}`);
   }
+  if (s.metrics) lines.push(...formatFleetMetrics(s.metrics));
   if (s.buildIdentity) {
     const version = s.buildIdentity.packageVersion ?? 'unknown';
     const revision = s.buildIdentity.revision?.slice(0, 12) ?? 'unknown';
@@ -1998,7 +1999,7 @@ export async function cmdFleetWatch(jsonMode: boolean): Promise<number> {
   // 2. Recent audit actions (last 8).
   let recentActions: AuditEntry[] = [];
   try {
-    const { readAudit } = await import('../core/sandbox/audit.js' as unknown as string) as {
+    const { readAudit } = await import('../core/sandbox/audit.js') as {
       readAudit: (limit?: number) => AuditEntry[];
     };
     recentActions = readAudit(8);
@@ -2519,7 +2520,8 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
   backlog:        { allowed: { flags: ['--json'], values: ['--repo', '--limit', '--pr', '--exclude-pr', '--merges', '--recuts', '--recut-job'] }, usage: 'ashlr fleet backlog [--repo <owner/name>] [--limit <n>] [--pr <n>]... (up to 20 distinct) [--exclude-pr <n>]... [--merges <n>] [--recuts <n>] [--json] [--recut-job <n>]' },
 };
 
-export async function cmdFleet(args: string[]): Promise<number> {
+/** Core dispatcher; executable callers use fleet-entry.ts to supply convention loaders. */
+export async function cmdFleet(args: string[], loaders: Readonly<Record<string, () => Promise<Record<string, unknown>>>> = {}): Promise<number> {
   if (args[0] === 'act') {
     const { cmdFleetAct } = await import('./fleet-act.js');
     return cmdFleetAct(args.slice(1));
@@ -2555,7 +2557,7 @@ export async function cmdFleet(args: string[]): Promise<number> {
     // src/cli/fleet-<name>.ts exporting
     // cmdFleet<PascalName>(args: string[]): Promise<number>.
     const resolved = resolveFleetSubcommand(sub);
-    const loader = resolved ? FLEET_SUBCOMMAND_LOADERS[sub] : undefined;
+    const loader = resolved ? loaders[sub] : undefined;
     if (resolved && loader) {
       let loaded: Record<string, unknown> | undefined;
       try {

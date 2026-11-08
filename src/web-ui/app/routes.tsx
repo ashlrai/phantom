@@ -24,18 +24,21 @@ import { lazy } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { Shell } from '../components/layout/Shell.js';
 import { PlaceholderView } from '../routes/PlaceholderView.js';
+
 import { NAV_GROUPS, ALL_NAV_LEAVES } from './nav-config.js';
 
 const DecisionInbox = lazy(() => import('../routes/verse/inbox/DecisionInbox.js').then((module) => ({ default: module.DecisionInbox })));
 const FleetDashboardView = lazy(() => import('../routes/fleet-dashboard/FleetDashboardView.js').then((module) => ({ default: module.FleetDashboardView })));
 const ShowView = lazy(() => import('../routes/show/ShowView.js').then((module) => ({ default: module.ShowView })));
 const JournalView = lazy(() => import('../routes/journal/JournalView.js').then((module) => ({ default: module.JournalView })));
+const PagesView = lazy(() => import('../routes/pages/PagesView.js').then((module) => ({ default: module.PagesView })));
 const PulseView = lazy(() => import('../routes/intelligence/pulse/PulseView.js').then((module) => ({ default: module.PulseView })));
 const GenomeView = lazy(() => import('../routes/intelligence/genome/GenomeView.js').then((module) => ({ default: module.GenomeView })));
 const ProductionView = lazy(() => import('../routes/intelligence/production/ProductionView.js').then((module) => ({ default: module.ProductionView })));
 const PortfolioView = lazy(() => import('../routes/portfolio/PortfolioView.js').then((module) => ({ default: module.PortfolioView })));
 const RunsView = lazy(() => import('../routes/work/runs/RunsView.js').then((module) => ({ default: module.RunsView })));
 const RunDetailView = lazy(() => import('../routes/work/runs/RunDetailView.js').then((module) => ({ default: module.RunDetailView })));
+const SessionsView = lazy(() => import('../routes/work/sessions/SessionsView.js').then((module) => ({ default: module.SessionsView })));
 const SwarmsView = lazy(() => import('../routes/work/swarms/SwarmsView.js').then((module) => ({ default: module.SwarmsView })));
 const SwarmDetailView = lazy(() => import('../routes/work/swarms/SwarmDetailView.js').then((module) => ({ default: module.SwarmDetailView })));
 const DaemonView = lazy(() => import('../routes/control/daemon/DaemonView.js').then((module) => ({ default: module.DaemonView })));
@@ -43,6 +46,7 @@ const FleetView = lazy(() => import('../routes/control/fleet/FleetView.js').then
 const SecurityView = lazy(() => import('../routes/control/security/SecurityView.js').then((module) => ({ default: module.SecurityView })));
 const GoalsView = lazy(() => import('../routes/goals/GoalsView.js').then((module) => ({ default: module.GoalsView })));
 const InboxView = lazy(() => import('../routes/inbox/InboxView.js').then((module) => ({ default: module.InboxView })));
+const PendingApprovalsView = lazy(() => import('../routes/approvals/PendingApprovalsView.js').then((module) => ({ default: module.PendingApprovalsView })));
 const AgentOsView = lazy(() => import('../routes/agent-os/AgentOsView.js').then((module) => ({ default: module.AgentOsView })));
 const ConnectView = lazy(() => import('../routes/connect/ConnectView.js').then((module) => ({ default: module.ConnectView })));
 const UniverseView = lazy(() => import('../routes/universe/UniverseView.js').then((module) => ({ default: module.UniverseView })));
@@ -69,12 +73,15 @@ export function AppRoutes() {
         <Route path="/universe" element={<UniverseView />} />
         <Route path="/show" element={<ShowView />} />
         <Route path="/journal" element={<JournalView />} />
+        <Route path="/pages" element={<PagesView />} />
+        <Route path="/pages/:slug" element={<PagesView />} />
         <Route path="/intelligence/pulse" element={<PulseView />} />
         <Route path="/intelligence/genome" element={<GenomeView />} />
         <Route path="/intelligence/production" element={<ProductionView />} />
         <Route path="/portfolio" element={<PortfolioView />} />
         <Route path="/work/runs" element={<RunsView />} />
         <Route path="/work/runs/:id" element={<RunDetailView />} />
+        <Route path="/work/sessions" element={<SessionsView />} />
         <Route path="/work/swarms" element={<SwarmsView />} />
         <Route path="/work/swarms/:id" element={<SwarmDetailView />} />
         <Route path="/control/daemon" element={<DaemonView />} />
@@ -82,6 +89,7 @@ export function AppRoutes() {
         <Route path="/control/security" element={<SecurityView />} />
         <Route path="/goals" element={<GoalsView />} />
         <Route path="/verse/inbox" element={<DecisionInbox />} />
+        <Route path="/approvals" element={<PendingApprovalsView />} />
         <Route path="/inbox" element={<InboxView />} />
         <Route path="/inbox/:id" element={<InboxView />} />
         <Route path="*" element={<Navigate to="/overview" replace />} />

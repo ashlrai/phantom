@@ -63,6 +63,12 @@ export const NAV_GROUPS: NavGroup[] = [
           'Chronological, filterable, scrubable record of runs, merges, judge verdicts, and daemon ticks — with live streaming into any in-progress run.',
         implemented: true,
       },
+      {
+        path: '/pages',
+        label: 'Pages',
+        description: 'Published report pages (phm pages publish) rendered in this console.',
+        implemented: true,
+      },
     ],
   },
   {
@@ -73,6 +79,12 @@ export const NAV_GROUPS: NavGroup[] = [
         path: '/work/runs',
         label: 'Runs',
         description: 'Dispatched goal runs and their token burn.',
+        implemented: true,
+      },
+      {
+        path: '/work/sessions',
+        label: 'Sessions',
+        description: 'Live dispatchd agent sessions — queued, running, publishing and recently finished.',
         implemented: true,
       },
       {
@@ -87,6 +99,13 @@ export const NAV_GROUPS: NavGroup[] = [
     id: 'inbox',
     label: 'Inbox',
     leaves: [
+      {
+        path: '/approvals',
+        label: 'Pending approvals',
+        description:
+          'Every consent request waiting on you — proposals, email drafts, team approvals — value-blind, oldest first, with safe approve/deny where the backend allows it.',
+        implemented: true,
+      },
       {
         path: '/inbox',
         label: 'Proposals',

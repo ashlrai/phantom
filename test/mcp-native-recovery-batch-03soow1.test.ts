@@ -1,3 +1,4 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +13,8 @@ const b = '22345678-1234-4123-8123-123456789abc';
 const args = { invocationIds: [a, b], maxAgeMs: 1000, durationMs: 500, intervalMs: 100 };
 const parse = (result: Awaited<ReturnType<typeof callNativeTool>>) => JSON.parse(result.content[0]!.text);
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+
+registerFleetNativeTools();
 
 describe('native recovery batch', () => {
   it('advertises a closed read schema', () => {
@@ -62,3 +65,5 @@ describe('native recovery batch', () => {
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });
+
+registerFleetNativeTools();

@@ -98,7 +98,7 @@ export function extractVerbSummary(source: string, verb: string): { usage: strin
   return { usage, summary: sentence ? sentence.slice(0, 160) : null };
 }
 
-export function buildFleetVerbCatalog(verbs: string[], readSource: (verb: string) => string | null): FleetVerbEntry[] {
+export function buildFleetVerbCatalog(verbs: readonly string[], readSource: (verb: string) => string | null): FleetVerbEntry[] {
   return [...verbs].sort().map(verb => {
     const source = readSource(verb);
     const effect = inferVerbEffect(source);

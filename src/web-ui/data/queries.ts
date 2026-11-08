@@ -16,6 +16,7 @@ import type {
   DecisionEntry,
   FleetActivitySnapshot,
   FleetLaneSnapshot,
+  FleetSessionsV1,
   FleetStatus,
   ApprovalRequest,
   Proposal,
@@ -28,6 +29,7 @@ import type {
   RecallHit,
   PortfolioSummary,
   ModelStatsReadResult,
+  PendingApprovalsResponse,
 } from './api-types.js';
 import type { SourceQuality } from './api-types.js';
 
@@ -136,6 +138,17 @@ export const fleetLanesQuery: QueryDef<FleetLaneSnapshot> = {
 };
 
 /**
+ * fleet.sessions.v1 — unified dispatchd agent-session list: queued/parked/
+ * launching/running/publishing/exited/stale sessions plus a bounded finished
+ * tail, read-only from the runs dir (GET /api/fleet/sessions →
+ * getFleetSessions()). Value-blind: no prompt paths, env or secrets.
+ */
+export const fleetSessionsQuery: QueryDef<FleetSessionsV1> = {
+  key: 'fleet-sessions',
+  fetch: (signal) => apiGet<FleetSessionsV1>('/api/fleet/sessions', signal),
+};
+
+/**
  * GET /api/goals returns a bare array of ad-hoc per-goal projections built
  * inline in src/core/web/api.ts (`path === '/api/goals'`, ~line 1654) — there
  * is no exported backend type for this shape (unlike every other resource
@@ -212,6 +225,18 @@ export interface InboxProposal {
 export const inboxQuery: QueryDef<{ pending: number; proposals: InboxProposal[] }> = {
   key: 'inbox',
   fetch: (signal) => apiGet('/api/inbox', signal),
+};
+
+/**
+ * GET /api/approvals — every pending consent request across proposals,
+ * outbound email drafts and team approvals, value-blind (src/core/web/
+ * pending-approvals.ts). The 'inbox' SSE event invalidates this key too
+ * (data/sse.ts) so proposal decisions refresh it live; draft/team sources
+ * have no push channel and rely on the freshness window + mount refetch.
+ */
+export const pendingApprovalsQuery: QueryDef<PendingApprovalsResponse> = {
+  key: 'pending-approvals',
+  fetch: (signal) => apiGet<PendingApprovalsResponse>('/api/approvals', signal),
 };
 
 /**

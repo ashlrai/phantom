@@ -27,7 +27,7 @@ Use the JSON registry for commands, verbs, and flags. This page only shows the c
 
 ## 3. Commands that print JSON
 
-These read local state. They do not start a fleet and they do not spend credits.
+These inspect local state. `phm mcp doctor` may start configured MCP servers to probe their health; use trusted executables. These commands do not start a fleet or spend credits.
 
 ```sh
 phm mcp list --json

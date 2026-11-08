@@ -32,6 +32,7 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 - This repo's `.mcp.json` declares five companion MCP servers: `phantom-secrets`, `locus`, `lexicon`, `stack`, `ashlr` (Ashlr.AI Plugin). What each is for, its limits, and how to approve it: [docs/AGENT-TOOLCHAIN.md](docs/AGENT-TOOLCHAIN.md).
 - In a Phantom cloud task, list the companion tools you actually called in the report's `toolsUsed` field (an empty list if none); `phm cloud list` shows it as the session's claim.
 - Team membership: `phm team invite <gh-user>`, `phm team join <invite>` and `phm team remove <gh-user>` are human-terminal commands for owners/admins and invitees (agent processes are refused); an invite grants membership only and never credentials. See [docs/TEAM.md](docs/TEAM.md#invite-join-and-remove-a-teammate).
+- Check provider capacity before launching work: `phm resource --cards --json` (usage numbers only, shown as unknown when unread). Guide: [docs/PROVIDER-CARDS.md](docs/PROVIDER-CARDS.md).
 
 ## Agents may
 - Create branches, commit, and open pull requests.
@@ -63,6 +64,7 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 - Slack bridge: `phm channels slack status --json` reads the `[slack]` section of `~/.ashlr/agent-network.toml`, token `phm_` reference names (never values) and journal counts; `phm channels slack map --json` dry-runs the topic/channel mapping and, with `--snapshot <file>`, the team-only audience gates. Read-only; the socket, token injection and post path are the separately reviewed `-sec` change. See [docs/AGENT-NETWORK.md](docs/AGENT-NETWORK.md#slack-bridge).
 - iMessage intake: `phm imessage doctor --json` reports permission and config state (no handles printed); `phm imessage poll --json` is a counts-only dry run and `--apply` receipts allowlisted messages as channel `imessage`. Acks are recorded, never sent, until RQ-IMSG-REPLY-1 lands. Never read or print message text or handles. See [docs/IMESSAGE.md](docs/IMESSAGE.md).
 - Briefs: the fleet brief-send verb (dry run by default, `--json` for the plan) plans the morning (7:30 ET) or overnight (22:30 ET) brief with a needs-you list of at most 5 items; `--apply` sends to your own channels, one per slot per local day. See [docs/BRIEF-SEND.md](docs/BRIEF-SEND.md).
+- Tenancy: `phm whoami --json` shows your person, teams, orgs and scopes; `phm org list --json` lists your orgs. Nodes, jobs, leases, forum threads and context packs are owner-scoped, and identity comes only from this machine's local auth ([docs/TENANCY.md](docs/TENANCY.md)).
 - Read next: [docs/AGENT-OPERATIONS.md](docs/AGENT-OPERATIONS.md) (setup and operation), [CONSTITUTION.md](CONSTITUTION.md), [CONTRIBUTING.md](CONTRIBUTING.md), [docs/CONSOLE-LAYOUT.md](docs/CONSOLE-LAYOUT.md) (web console width breakpoints).
 - Resident daemon ticks are phased and bounded: every awaited stage has a deadline, an AbortSignal and a status record; `phm daemon status --json | jq .tick.phases` shows the last tick's ledger. See [docs/daemon-tick-phases.md](docs/daemon-tick-phases.md).
 
@@ -75,6 +77,8 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 
 Node router: `phm node join|beat|enqueue|plan|pull|renew|complete|status|leave --json` joins this computer to the router. A job's owner scope decides which nodes see it; a lease and fencing token keep it from running twice; auth stays local and jobs carry secret names only. See [Add a computer in 60 seconds](docs/add-a-computer.md) and the [node router](docs/NODE-ROUTER.md).
 
+Job cost: `phm job cost <id> --json` and loopback `GET /api/fleet/job/cost?id=<id>` read the runs metrics ledgers and report per-model-call tokens in/out, model and cost — real numbers or 'unknown', never fabricated. See [job cost](docs/JOB-COST.md).
+
 Lane health: `phm lanes health --json` prints calls, error rate, p50 latency and
 deployed commit per lane over 12 h, and flags runs stuck past their phase
 timeout; unmeasured figures are `null`. See [lane health](docs/LANE-HEALTH.md).
@@ -83,6 +87,11 @@ Standing lane freshness: `phm fleet lane-slots --json` reads the Fleet screen's
 API projection. Mirror prep publishes observations every minute; each repo has
 a three-minute prep deadline. See [lane freshness](docs/FLEET-LANE-FRESHNESS.md).
 
+Report pages: `phm pages publish <file.md|file.json> --json` renders a report
+into the loopback console at `/pages/<slug>`; `phm pages list --json` lists
+published pages. Store is `~/.ashlr/pages`; nothing leaves the machine. See
+[report pages](docs/PAGES.md).
+
 Disk maintenance: `phm disk-maint` is a dry run that reports reclaimable bytes
 per class; `--apply` rotates, compresses and deletes rebuildable leftovers and
 reaps finished worktrees. `phm disk-maint schedule [--install]` prints or
@@ -90,6 +99,11 @@ installs the daily per-user job. The protect-list (`~/.codex*`, model weights,
 Docker, client trees, `~/Documents`, git internals, auth, secrets) applies at
 plan and apply time; gated classes (`venvs`, `hub-claude`) need `--allow`.
 See [DISK-MAINT](docs/DISK-MAINT.md).
+
+Report pages: `phm pages publish <file.md|file.json> --json` renders a report
+into the loopback console at `/pages/<slug>`; `phm pages list --json` lists
+published pages. Store is `~/.ashlr/pages`; nothing leaves the machine. See
+[report pages](docs/PAGES.md).
 
 ## Publish subscription capacity
 
@@ -280,3 +294,17 @@ enrollment remains a manual config change. See [repo ranking](docs/REPO-RANK.md)
 ## Import scheduled routines
 
 Preview a local routines JSON array with `ashlr automations import --from routines.json --dry-run --json`, then import with `ashlr automations import --from routines.json --json`. Imports start disabled and skip existing names. See [Automations](docs/VERSE.md#automations-315) for the format and schedule restrictions.
+
+## Portable agent profiles
+
+See [agent profiles](docs/AGENT-PROFILES.md) for strict TOML metadata, version
+pins, doctrine paths and restrictive send policy. Command contract:
+`phm agents list --json`, `phm agents show helper --json`,
+`phm agents validate helper --json`, `phm agents versions helper --json`.
+Outside email recipients stay drafts while `limitsTodo` is true. Profiles never grant transport or spending authority.
+
+## Article 2: Agent-native app control
+
+Use `phm app steer pause|resume --json` and `phm app prefs '<update-json>' --json` for existing app controls. The same actions use `app.control.v1` over the existing loopback console and `phm_app_control` in the existing stdio MCP bridge. See [app control](docs/APP-CONTROL.md). Unknown usage stays unknown. RQ-AGENTNATIVE-phantom-DESKTOPPREFS is done for Verse preferences; RQ-MACCU-1 owns computer automation.
+
+Tier-1 import diagnosis: `npx tsx scripts/tier1-why.ts <file> [--json]` prints a shortest runtime chain or unreachable. See [Tier-1 why](docs/TIER1-WHY.md). Keep fleet apps outside Tier-1; run `test/tier1-apps-boundary.test.ts`. Snapshot regeneration remains Mason-only.

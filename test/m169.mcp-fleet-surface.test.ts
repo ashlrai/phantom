@@ -15,6 +15,7 @@
  * ~/.ashlr is ever touched, no network, no downstream MCP servers.
  */
 
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { contractedNativeToolNames } from './helpers/native-tool-contract.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
@@ -118,7 +119,7 @@ vi.mock('../src/core/comms/requests.js', () => ({
 }));
 
 // Import AFTER mocks are registered.
-import { makeFixture, makeCfg, type H1Fixture } from './helpers/h1-fixture.js';
+import { makeFixture, type H1Fixture } from './helpers/h1-fixture.js';
 import { nativeToolDefs, callNativeTool } from '../src/core/mcp-native.js';
 
 // ---------------------------------------------------------------------------
@@ -468,3 +469,5 @@ describe('existing M129/M131 tools still present and read-only', () => {
     expect('goals' in payload).toBe(true);
   });
 });
+
+registerFleetNativeTools();

@@ -100,6 +100,18 @@ export type {
   JudgeDecisionReasonCode,
 } from '../../core/types.js';
 export type { PublicDaemonObservation, DaemonSourceQuality } from '../../core/daemon/public-observation.js';
+/**
+ * GET /api/approvals contract — the pending-approvals surface
+ * (routes/approvals/). Value-blind by construction on the backend; the UI
+ * renders `decide` verbatim and never invents an action path.
+ */
+export type {
+  PendingApprovalDecide,
+  PendingApprovalItem,
+  PendingApprovalSource,
+  PendingApprovalSourceQuality,
+  PendingApprovalsResponse,
+} from '../../core/web/pending-approvals.js';
 
 /**
  * Journal / notification centre additions (M416): `FleetStatus.nextActions`
@@ -119,6 +131,16 @@ export type { FleetLaneCreditView } from '../../core/fleet/lane-console.js';
 /** `slotTarget` is optional here so a response from an older server still type-checks. */
 export type FleetLaneView = Omit<CoreFleetLaneView, 'slotTarget'> & { slotTarget?: number | null };
 export type FleetLaneSnapshot = Omit<CoreFleetLaneSnapshot, 'lanes'> & { lanes: FleetLaneView[] };
+/** fleet.sessions.v1 — unified dispatchd session list behind GET /api/fleet/sessions. */
+export type {
+  FleetSessionsV1,
+  FleetSessionV1,
+  FleetSessionStatus,
+  FleetSessionSourceState,
+  FleetSessionLive,
+  FleetSessionOutcome,
+  FleetSessionsDispatcherV1,
+} from '../../core/fleet/runs-sessions.js';
 
 /**
  * Structural shape shared by every "we might not actually know this"

@@ -11,7 +11,8 @@ let runsDir: string;
 const now = () => Date.parse('2026-11-02T06:00:00Z');
 const ok: SelfTickStep = async () => ({ exitCode: 0, output: '{}' });
 const otherSteps: Partial<SelfTickSteps> = {
-  'reset-release': ok, 'lane-autohold': ok, 'planner-tick': ok, 'inbox-acks': ok, 'landed-sweep': ok,
+  'reset-release': ok, 'lane-autohold': ok, 'stray-stop': ok, 'meter-incident': ok,
+  'waste-incident': ok, 'planner-tick': ok, 'inbox-acks': ok, 'landed-sweep': ok,
 };
 const ledger = () => join(runsDir, 'queue', 'order-notices.jsonl');
 beforeEach(() => {
@@ -28,7 +29,7 @@ afterEach(() => { rmSync(home, { recursive: true, force: true }); });
 
 it('orders order-notices after inbox-acks and before landed-sweep', () => {
   expect(SELF_TICK_STEP_ORDER).toEqual([
-    'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'landed-sweep',
+    'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'waste-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'landed-sweep',
   ]);
 });
 

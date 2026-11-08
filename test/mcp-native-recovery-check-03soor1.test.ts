@@ -1,3 +1,4 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { callNativeTool, listNativeTools } from '../src/core/mcp-native.js';
 import * as recoveryInvocations from '../src/core/fleet/apps-recovery-invocations.js';
@@ -39,6 +40,8 @@ function fakeProjection(invocations: ReturnType<typeof recoveryInvocations.readA
   return { v: 1, availability: opts.availability ?? 'available', truncated: opts.truncated ?? false,
     scanCursor: 100, scannedEvents: 10, invocations };
 }
+
+registerFleetNativeTools();
 
 describe('phantom_fleet_apps_recovery_check', () => {
   // ── 1. Tool discovery ─────────────────────────────────────────────────
@@ -159,3 +162,5 @@ describe('phantom_fleet_apps_recovery_check', () => {
     expect(result).toHaveProperty('terminalOutcome');
   });
 });
+
+registerFleetNativeTools();

@@ -1,9 +1,11 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { callNativeTool, nativeToolSafety, listNativeTools } from '../src/core/mcp-native.js';
+registerFleetNativeTools();
 
 const id = '12345678-1234-4123-8123-123456789abc';
 const other = '12345678-1234-4123-8123-123456789abd';
@@ -46,3 +48,5 @@ it('rejects invalid arguments before reading and hides unavailable paths', async
   const result = await call(); expect(payload(result)).toMatchObject({ outcome: 'unavailable' });
   expect(JSON.stringify(result)).not.toContain(f.root);
 });
+
+registerFleetNativeTools();

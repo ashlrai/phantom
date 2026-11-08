@@ -1,13 +1,12 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as awaitModule from '../src/cli/fleet-apps-await.js';
 import { callNativeTool, listNativeTools, nativeToolSafety } from '../src/core/mcp-native.js';
-import { FLEET_APPS } from '../src/core/verse/fleet-apps-api.js';
 
 const name = 'phantom_fleet_apps_await';
 const realAwait = awaitModule.awaitFleetApps;
 const realCli = awaitModule.cmdFleetAppsAwait;
 const reply = (running: boolean | null) => ({ stdout: JSON.stringify({ ok: true, running }), stderr: '' });
-const view = (raw: string) => JSON.parse(raw) as Awaited<ReturnType<typeof awaitModule.awaitFleetApps>>;
 
 let output: string;
 beforeEach(() => {
@@ -20,6 +19,8 @@ afterEach(() => { vi.restoreAllMocks(); });
 // ---------------------------------------------------------------------------
 // Registration + read safety
 // ---------------------------------------------------------------------------
+
+registerFleetNativeTools();
 
 describe('native fleet apps await registration', () => {
   it('advertises a closed read schema and rejects arguments before discovery', async () => {
@@ -96,7 +97,7 @@ describe('structured helper: successful running observation', () => {
     });
     const result = await realAwait(
       { apps: ['Codex', 'Safari'], timeoutMs: 300, intervalMs: 50 },
-      { exec, locateScript: () => '/fake/app_control.py', now: () => 0, sleep: async ms => {} },
+      { exec, locateScript: () => '/fake/app_control.py', now: () => 0, sleep: async () => {} },
     );
     expect(result.outcome).toBe('ready');
     expect(calls).toBeGreaterThanOrEqual(3);
@@ -129,7 +130,7 @@ describe('structured helper: unknown not satisfying stopped', () => {
     const exec = vi.fn(async () => reply(null));
     const result = await realAwait(
       { apps: ['Codex'], target: 'stopped', timeoutMs: 300, intervalMs: 100 },
-      { exec, locateScript: () => '/fake/app_control.py', now: () => 0, sleep: async ms => {} },
+      { exec, locateScript: () => '/fake/app_control.py', now: () => 0, sleep: async () => {} },
     );
     expect(result.outcome).toBe('unavailable');
     expect(result.apps[0].running).toBe(null);
@@ -196,7 +197,6 @@ describe('CLI structured output parity', () => {
 
 describe('structured helper: missing script and unavailable', () => {
   it('returns unavailable when no script found', async () => {
-    const exec = vi.fn();
     const result = await realAwait(
       { apps: ['Codex'], timeoutMs: 300, intervalMs: 100 },
       { locateScript: () => null, locateInstalledScript: () => null },
@@ -264,3 +264,5 @@ describe('MCP tool through callNativeTool', () => {
     expect(nativeToolSafety(name)).toBe('read');
   });
 });
+
+registerFleetNativeTools();

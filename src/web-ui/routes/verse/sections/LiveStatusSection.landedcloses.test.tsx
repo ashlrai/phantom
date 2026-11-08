@@ -45,6 +45,6 @@ it('shows Unknown when the fetch rejects and keeps the rest of the page', async 
   render(<LiveStatusSection />);
   await waitFor(() => expect(screen.getByText('example/one: Job · build')).toBeTruthy());
   expect(screen.getByRole('heading', { name: 'Stale PRs cleared (24h)' })).toBeTruthy();
-  expect(screen.getByText('Unknown')).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Stale PRs cleared (24h)' }).nextElementSibling?.textContent).toBe('Unknown');
   expect(screen.getByRole('heading', { name: 'Merged (24h)' })).toBeTruthy();
 });

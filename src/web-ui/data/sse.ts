@@ -32,7 +32,10 @@ export type SseEventName = (typeof SSE_EVENT_NAMES)[number];
 const EVENT_TO_CACHE_KEYS: Record<SseEventName, string[]> = {
   runs: ['runs'],
   swarms: ['swarms'],
-  inbox: ['inbox'],
+  // 'pending-approvals' rides the same signal: proposal consent decisions
+  // change both lists, and the approvals surface must not keep showing a
+  // request the operator just decided.
+  inbox: ['inbox', 'pending-approvals'],
   // 'daemon' was previously mapped but nothing subscribed to a 'daemon'-keyed
   // query (control/daemon didn't exist yet) — now daemonObservationQuery
   // (data/queries.ts) does. Also refreshing 'control-snapshot' here so
@@ -55,8 +58,8 @@ const EVENT_TO_CACHE_KEYS: Record<SseEventName, string[]> = {
   // 'fleet' (fleetStatusQuery, /control/fleet's queue depth + lease health)
   // has no dedicated SSE event of its own, so it rides these instead of only
   // refreshing on mount.
-  'fleet-activity-ping': ['fleet-activity', 'fleet'],
-  'fleet-activity-observation': ['fleet-activity', 'fleet'],
+  'fleet-activity-ping': ['fleet-activity', 'fleet', 'fleet-sessions'],
+  'fleet-activity-observation': ['fleet-activity', 'fleet', 'fleet-sessions'],
   // Agent OS snapshots are immutable records but their current authenticated
   // projection advances alongside the server's general snapshot signal.
   snapshot: ['dashboard-snapshot', 'agent-os-snapshot'],

@@ -1,3 +1,4 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as recovery from '../src/cli/fleet-apps-ensure.js';
 import { callNativeTool, listNativeTools, nativeToolSafety } from '../src/core/mcp-native.js';
@@ -9,6 +10,8 @@ const result = (app: string, outcome: string, running = false, launched = false)
 });
 const payload = (value: Awaited<ReturnType<typeof callNativeTool>>) => JSON.parse(value.content[0]!.text);
 afterEach(() => vi.restoreAllMocks());
+
+registerFleetNativeTools();
 
 describe('native fleet apps ensure', () => {
   it('advertises a closed mutation schema and rejects invalid input before recovery', async () => {
@@ -64,3 +67,5 @@ describe('native fleet apps ensure', () => {
     expect(JSON.parse(String(stdout.mock.calls[0]![0]))).toMatchObject({ ok: true, apps: [{ app: 'Cursor', observedRunning: true }] });
   });
 });
+
+registerFleetNativeTools();

@@ -143,6 +143,7 @@ These do not merge by themselves. See [CLOUD.md](CLOUD.md) and [DEVIN.md](DEVIN.
 - [AUTOMATIC-OUTCOMES.md](AUTOMATIC-OUTCOMES.md): chat routing and fleet outcomes
 - [AUTONOMY-SETUP.md](AUTONOMY-SETUP.md): dormant autonomy commissioning
 - [FLEET-MCP-ONRAMP.md](FLEET-MCP-ONRAMP.md): read-only fleet MCP
+- [JOB-COST.md](JOB-COST.md): per-job cost breakdown by model call
 - [Repository README](../README.md): agent quickstart
 
 Route hysteresis: see docs/ROUTE-HYSTERESIS.md. Dispatcher pool proposals keep a
@@ -157,3 +158,7 @@ Multi-Mac node pool: see docs/AGENT-NETWORK.md and docs/NODES.md. Configure expl
 Agent network channels: see AGENT-NETWORK-CHANNELS.md for channel metadata, default-deny policy, and offline CLI examples.
 
 Small-Mac oMLX lanes: see docs/OMLX-SMALL-MACS.md. Enable with ~/.ashlr/local-lanes.json {"schemaVersion":1,"enabled":true}; phm node lanes --json prints the evidence-picked model, slots, backoff and suggested caps, and phm node join/worker advertise the omlx/omlx-work caps automatically. HF/oMLX weight caches under protected model roots are never deleted by disk maintenance by default; sharded inference stays off until a measured comparison beats per-node.
+
+Tier-1 import diagnosis: npx tsx scripts/tier1-why.ts <file> [--json]
+Prints a shortest runtime import chain from a Tier-1 root, or unreachable.
+Guide: docs/TIER1-WHY.md. The ordinary test/tier1-apps-boundary.test.ts guards fleet apps isolation. Do not regenerate the protected snapshot.

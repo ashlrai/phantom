@@ -1,3 +1,4 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,6 +28,8 @@ afterEach(() => {
   else process.env.ASHLR_RUNS_DIR = originalRoot;
   for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
+
+registerFleetNativeTools();
 
 describe('native app recovery history', () => {
   it('advertises a closed read-only schema and rejects invalid input before reading', async () => {
@@ -86,3 +89,5 @@ describe('native app recovery history', () => {
     expect(data).toEqual({ error: 'Fleet observation unavailable' });
   });
 });
+
+registerFleetNativeTools();

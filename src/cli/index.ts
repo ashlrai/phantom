@@ -49,6 +49,8 @@
  *   swarms [--json]            List past swarm runs.
  *   tui [--once]               Interactive terminal dashboard (alias: dash).
  *   serve [--port N] [--open]  Local web dashboard + JSON API on 127.0.0.1 (default port 7777).
+ *   pages publish <file> [opts]  Publish a Markdown/JSON report into the local dashboard (/pages/<slug>).
+ *   pages list [--json]          List published report pages.
  *   verse [--port N] [--no-open]  Ashlr Verse console (serve with dispatch on) at /verse/.
  *   issues [--retry] [--json]  Group failed queue jobs by error; --retry queues READY retries.
  *   gh <pr|issue|ci>           Read GitHub PRs / issues / CI status (read-only via gh CLI).
@@ -221,7 +223,7 @@ const loadSkillsAuditWorkerCmd = lazyCmd(
 // ─── M49 fleet control plane + observability ──────────────────────────────────
 
 const loadFleetCmd = lazyCmd(
-  () => import('./fleet.js' as unknown as string),
+  () => import('./fleet-entry.js'),
   (m) => m.cmdFleet as Cmd,
   'fleet command requires src/cli/fleet.ts (M49 module not yet built).',
 );
@@ -439,6 +441,14 @@ const loadDashboardCmd = lazyCmd(
   () => import('./dashboard.js' as unknown as string),
   (m) => m.cmdDashboard as Cmd,
   'dashboard command requires src/cli/dashboard.ts (M211 module not yet built).',
+);
+
+// ─── COS report pages command loader ────────────────────────────────
+
+const loadPagesCmd = lazyCmd(
+  () => import('./pages.js' as unknown as string),
+  (m) => m.cmdPages as Cmd,
+  'pages command requires src/cli/pages.ts.',
 );
 
 // ─── M14 command loader ────────────────────────────────────────────
@@ -2113,6 +2123,13 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'pr': {
+        if (rest[0] !== 'cockpit') { console.error('Usage: phm pr cockpit --repo owner/name [--json]'); process.exitCode = 2; break; }
+        const { cmdPrCockpit } = await import('./pr-cockpit.js');
+        process.exitCode = await cmdPrCockpit(rest.slice(1));
+        break;
+      }
+
       case 'autopilot': {
         const { cmdAutopilot } = await import('./autopilot.js');
         process.exitCode = await cmdAutopilot(rest);
@@ -2150,6 +2167,18 @@ async function main(): Promise<void> {
       case 'team': {
         const { cmdTeam } = await import('./team.js');
         process.exitCode = await cmdTeam(rest);
+        break;
+      }
+
+      case 'whoami': {
+        const { cmdWhoami } = await import('./tenancy.js');
+        process.exitCode = await cmdWhoami(rest);
+        break;
+      }
+
+      case 'org': {
+        const { cmdOrg } = await import('./tenancy.js');
+        process.exitCode = await cmdOrg(rest);
         break;
       }
 
@@ -2228,6 +2257,11 @@ async function main(): Promise<void> {
 
       case 'select': {
         process.exitCode = await (await import('./select.js')).cmdSelect(rest);
+        break;
+      }
+
+      case 'job': {
+        process.exitCode = await (await import('./job.js')).cmdJob(rest);
         break;
       }
 
@@ -2381,6 +2415,14 @@ async function main(): Promise<void> {
         // opens browser. `--stop` / `--status` subcommands also supported.
         const cmdDashboard = await loadDashboardCmd();
         process.exitCode = await cmdDashboard(rest);
+        break;
+      }
+
+      case 'pages': {
+        // COS report pages: publish a .md/.json report into the loopback
+        // dashboard at /pages/<slug>, or list published pages.
+        const cmdPages = await loadPagesCmd();
+        process.exitCode = await cmdPages(rest);
         break;
       }
 
@@ -2888,6 +2930,12 @@ async function main(): Promise<void> {
         // Agent Bus v2 contract (docs/AGENT-BUS.md "v2"); read-only, no bus access.
         const cmdAgents = await loadAgentsCmd();
         process.exitCode = await cmdAgents(rest);
+        break;
+      }
+
+      case 'routines': {
+        const { runRoutinesCli } = await import('./routines.js');
+        process.exitCode = await runRoutinesCli(rest);
         break;
       }
 

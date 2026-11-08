@@ -1,3 +1,4 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { describe, expect, it, vi } from 'vitest';
 import { dirname } from 'node:path';
 import { listNativeTools } from '../src/core/mcp-native.js';
@@ -60,6 +61,7 @@ const ADDED_NATIVE_NAMES = [
   'phantom_fleet_orders',
   'phantom_fleet_graph',
   'phantom_fleet_session',
+  'phantom_fleet_verbs',
 ] as const;
 
 function classifyNativeNames(names: readonly string[]): { old: string[]; added: string[]; unallocated: string[] } {
@@ -87,6 +89,8 @@ function schemaContract(value: unknown): unknown {
   ]));
 }
 
+registerFleetNativeTools();
+
 describe('native MCP tool inventory', () => {
   it('preserves the complete input schema contract for every listed tool', () => {
     const tools = listNativeTools();
@@ -98,12 +102,12 @@ describe('native MCP tool inventory', () => {
     const tools = listNativeTools();
     const names = tools.map(tool => tool.name);
     const classified = classifyNativeNames(names);
-    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(54);
+    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(55);
     expect(new Set(names).size).toBe(names.length);
     expect(classified.old).toEqual([...OLD_NATIVE_NAMES]);
     expect(classified.added).toEqual([...ADDED_NATIVE_NAMES]);
     expect(classified.unallocated).toEqual([]);
-    expect(classifyNativeNames([...names, 'unallocated_55th_tool']).unallocated).toEqual(['unallocated_55th_tool']);
+    expect(classifyNativeNames([...names, 'unallocated_56th_tool']).unallocated).toEqual(['unallocated_56th_tool']);
 
     const addedNames = new Set<string>(ADDED_NATIVE_NAMES);
     const oldTools = tools.filter(tool => !addedNames.has(tool.name));
@@ -111,15 +115,15 @@ describe('native MCP tool inventory', () => {
     // The historical 35-tool response measured 23,547 bytes; retain its strict
     // pre-audit 24,205-byte ceiling and its 658 bytes of measured headroom.
     expect(responseBytes(oldTools)).toBeLessThan(24205);
-    // The 18 legitimate additions measured 9,177 object bytes plus 18 commas.
-    // Their fixed 9,195-byte allowance has no unmeasured growth headroom.
+    // The 19 legitimate additions measured 9,297 object bytes plus 19 commas.
+    // Their fixed 9,316-byte allowance has no unmeasured growth headroom.
     const doctor = addedTools.find(tool => tool.name === 'phantom_fleet_doctor')!;
     const doctorBytes = Buffer.byteLength(JSON.stringify(doctor)) + 1;
     expect(doctorBytes).toBeLessThanOrEqual(250);
     const addedBytes = addedTools.filter(tool => tool !== doctor).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
-    expect(addedBytes).toBeLessThanOrEqual(9195);
-    // 24,205 + 9,195 preserves only the historical headroom for all 53 tools.
-    expect(responseBytes(tools)).toBeLessThan(33400 + doctorBytes);
+    expect(addedBytes).toBeLessThanOrEqual(9316);
+    // 24,205 + 9,316 preserves only the historical headroom for all 54 non-doctor tools.
+    expect(responseBytes(tools)).toBeLessThan(33521 + doctorBytes);
   });
 });
 
@@ -146,3 +150,5 @@ describe('MCP CLI JSON inventory', () => {
     expect({ fields: Object.keys(parsed), registryFields: Object.keys(parsed.tools), toolFields: Object.keys(parsed.tools.tools[0]!), native: parsed.native }).toMatchSnapshot();
   });
 });
+
+registerFleetNativeTools();

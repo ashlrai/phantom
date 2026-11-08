@@ -1,3 +1,4 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,6 +7,7 @@ import * as config from '../src/core/config.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { waitAppsRecovery } from '../src/core/fleet/apps-recovery-wait.js';
 import { callNativeTool } from '../src/core/mcp-native.js';
+registerFleetNativeTools();
 
 const id = '12345678-1234-4123-8123-123456789abc';
 const roots: string[] = [];
@@ -81,3 +83,5 @@ it('groups mixed-case UUID observations into the latest retained verdict', async
   const result = await callNativeTool('phantom_fleet_apps_recovery_check', { invocationId: id, maxAgeMs: 60000 });
   expect(JSON.parse(result.content[0]!.text)).toMatchObject({ verdict: 'healthy', latestCursor: 2 });
 });
+
+registerFleetNativeTools();

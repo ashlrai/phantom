@@ -44,8 +44,11 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  */
 export const REAL_IO_TEST_FILES = [
   'test/company-context-store.test.ts', // concurrent context writer processes
+  'test/ecosystem-changelog-generator.test.ts', // offline CLI subprocesses and fixture filesystem I/O
   'test/fleet-wt-reap-apply.test.ts', // real Git worktree removal
+  'test/episodic-memory.test.ts', // Uses real Git revisions and persistent JSONL fixtures.
   'test/check-publish.test.ts', // Real temporary Git repositories and preflight subprocesses.
+  'test/routines.test.ts', // Real CLI adapter subprocesses and private ledger files.
   'test/fleet-resource-session-writer.test.ts', // Runs the actual Python session tick against real private files and reads its output.
   'test/desktop-artifact-installer.test.ts', // Real private files/Git/signature/attestation proofs; hosted signature refusal took 6.803s, with no elapsed-performance assertion.
   'test/repo-rank.test.ts', // Creates local Git evidence and runs the Python restock rank consumer.
@@ -80,7 +83,11 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-path-cochanges-04-spv2.test.ts', // Creates real git history for path cochange ranking.
   'test/mcp/fleet-path-history-04-spm1.test.ts', // Creates real git history for MCP path lookup.
   'test/mcp/fleet-path-history-snapshot-04-spt2.test.ts', // Creates real git history and moves refs during MCP reads.
+  'test/mcp/fleet-path-cochanges-04-sqd1.test.ts', // Creates real git history for MCP cochange reads.
+  'test/mcp/fleet-job-current-snapshot-04-sqc1.test.ts', // Creates and advances real git history for snapshot replay.
   'test/mcp/fleet-job-patch-04-sqb1.test.ts', // Creates real git history for MCP job patch reads.
+  'test/mcp/fleet-job-current-snapshot-04-sqc1.test.ts', // Creates real git history for MCP job current-snapshot replay reads.
+  'test/mcp/fleet-path-cochanges-04-sqd1.test.ts', // Creates real git history for MCP path cochange ranking.
   'test/mcp/fleet-path-history-pinned-04-sps2.test.ts', // Creates real git history and moves refs during pinned MCP path history reads.
   'test/verify-change.test.ts',
   'test/remote-reassign-e2e.test.ts', // Binds a real loopback HTTP server for remote reassignment.
