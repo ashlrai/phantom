@@ -522,6 +522,65 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     expect(f.calls.filter((c) => c.startsWith('pr merge'))).toEqual([`pr merge 42 --repo o/r --squash --auto --match-head-commit ${recutSha}`]);
   });
 
+  it('refuses an oversized conflict resolution before pushing a recut', async () => {
+    const f = conflicting(`node -e "require('fs').writeFileSync('sum.js', 'const value = 1;\\n'.repeat(2100))"`);
+    const r = await tick({ repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [], ownedPrefixes: ['improve/'], gh: f.gh, guards: () => ({ killSwitch: false, paused: false }) });
+    expect(r).toMatchObject({ result: 'refused', detail: expect.arrayContaining([expect.stringContaining('2000 changed lines')]) });
+    expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut')).toBe('');
+  });
+
+  it.each(['merge', 'oversized'] as const)('refuses %s source history before resolving conflicts', async (kind) => {
+    const f = conflicting(`exit 99`);
+    git(f.clone, 'checkout', '-q', '--detach', f.head);
+    if (kind === 'merge') {
+      git(f.clone, 'checkout', '-q', '-b', 'unrelated-work');
+      writeFileSync(join(f.clone, 'unrelated.js'), 'module.exports = 42;\n');
+      git(f.clone, 'add', 'unrelated.js');
+      git(f.clone, 'commit', '-qm', 'unrelated work');
+      git(f.clone, 'checkout', '-q', '--detach', f.head);
+      git(f.clone, 'merge', '--no-ff', '-qm', 'merge unrelated work', 'unrelated-work');
+    } else {
+      writeFileSync(join(f.clone, 'large.js'), 'const value = 1;\n'.repeat(2100));
+      git(f.clone, 'add', 'large.js');
+      git(f.clone, 'commit', '-qm', 'oversized source');
+    }
+    const head = git(f.clone, 'rev-parse', 'HEAD');
+    git(f.clone, 'push', '-q', 'origin', 'HEAD:improve/sum');
+    const gh: Gh = async (args) => {
+      const raw = await f.gh(args);
+      if (!args.at(-1)?.endsWith('/pulls/7')) return raw;
+      const pr = JSON.parse(raw);
+      return JSON.stringify({ ...pr, head: { ...pr.head, sha: head } });
+    };
+    const r = await tick({ repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [], ownedPrefixes: ['improve/'], gh, guards: () => ({ killSwitch: false, paused: false }) });
+    expect(r).toMatchObject({ result: 'refused', detail: expect.arrayContaining([expect.stringContaining(kind === 'merge' ? 'without merge commits' : '2000 changed lines')]) });
+    expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut')).toBe('');
+  });
+
+  it('refuses when the fetched base absorbed the head after observation', async () => {
+    const f = conflicting(`exit 99`);
+    git(f.clone, 'checkout', '-q', '--detach', f.base);
+    git(f.clone, 'merge', '-s', 'ours', '--no-ff', '-qm', 'absorb lane', f.head);
+    git(f.clone, 'push', '-q', 'origin', 'HEAD:main');
+    const r = await tick({ repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [], ownedPrefixes: ['improve/'], gh: f.gh, guards: () => ({ killSwitch: false, paused: false }) });
+    expect(r).toMatchObject({ result: 'refused', detail: expect.arrayContaining([expect.stringContaining('PR merge base changed')]) });
+    expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut')).toBe('');
+  });
+
+  it('refuses a rewritten base history rather than replaying unrelated changes', async () => {
+    const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`);
+    git(f.clone, 'checkout', '-q', '--orphan', 'unrelated');
+    git(f.clone, 'commit', '-qm', 'unrelated root');
+    const unrelated = git(f.clone, 'rev-parse', 'HEAD');
+    const gh: Gh = async (args) => {
+      const raw = await f.gh(args);
+      return args.at(-1)?.endsWith('/pulls/7') ? JSON.stringify({ ...JSON.parse(raw), base: { ref: 'main', sha: unrelated } }) : raw;
+    };
+    const r = await tick({ repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [], ownedPrefixes: ['improve/'], gh, guards: () => ({ killSwitch: false, paused: false }) });
+    expect(r).toMatchObject({ result: 'refused', detail: expect.arrayContaining([expect.stringContaining('base history diverged')]) });
+    expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut')).toBe('');
+  });
+
   it('pushes a conflict resolution that touches only the conflicted files', async () => {
     const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`);
     const r = await tick({ repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [], ownedPrefixes: ['improve/'], gh: f.gh, guards: () => ({ killSwitch: false, paused: false }) });
