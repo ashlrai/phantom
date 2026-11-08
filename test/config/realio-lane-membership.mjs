@@ -50,6 +50,7 @@ export const REAL_IO_TEST_FILES = [
   'test/desktop-artifact-installer.test.ts', // Real private files/Git/signature/attestation proofs; hosted signature refusal took 6.803s, with no elapsed-performance assertion.
   'test/repo-rank.test.ts', // Creates local Git evidence and runs the Python restock rank consumer.
   'test/changelog-sync-bridge-04.test.ts', // Runs the changelog script in real child processes.
+  'test/recut-paths.test.ts', // Creates diverged git histories and runs the recut path verifier.
   'test/fleet-job-precheck-cli.test.ts', // Creates real git commits for precheck CLI coverage.
   'test/fleet-job-precheck-batch-nov04-spb1.test.ts', // Builds real git history for batch precheck coverage.
   'test/fleet-job-path-history-nov04-spb2.test.ts', // Creates and renames real git history for exact job lookup.
