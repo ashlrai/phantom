@@ -504,11 +504,45 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
     await must(opts.checkout, ['fetch', '--no-tags', 'origin', `+refs/heads/${pr.headRef}:refs/remotes/origin/${pr.headRef}`, `+refs/heads/${pr.baseRef}:refs/remotes/origin/${pr.baseRef}`]);
     const remoteHead = await must(opts.checkout, ['rev-parse', `refs/remotes/origin/${pr.headRef}`]);
     if (remoteHead !== pr.headSha) return { result: 'refused', detail: [`the branch moved to ${remoteHead.slice(0, 8)} since GitHub was read; next tick re-reads`], newHead: null };
+    let recutPaths: Set<string> | null = null;
+    let recutBase = pr.baseSha;
+    const recutBounds = async (cwd: string, range: string[]) => {
+      const names = await git(cwd, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-only', '-z', ...range]);
+      if (names.code !== 0) throw new Error('could not measure recut paths');
+      const paths = names.stdout.split('\0').filter(Boolean);
+      const stats = await must(cwd, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--numstat', ...range]);
+      let lines = 0;
+      for (const row of stats.split('\n').filter(Boolean)) {
+        const [added, deleted] = row.split('\t');
+        if (!/^\d+$/.test(added!) || !/^\d+$/.test(deleted!)) return { paths, refusal: 'binary or unmeasured recut diff' };
+        lines += Number(added) + Number(deleted);
+      }
+      return { paths, refusal: paths.length > 100 || lines > 2000 ? 'recut exceeds 100 files or 2000 changed lines' : null };
+    };
+    if (p.action === 'recut') {
+      const fetchedBase = await must(opts.checkout, ['rev-parse', `refs/remotes/origin/${pr.baseRef}`]);
+      recutBase = fetchedBase;
+      if ((await git(opts.checkout, ['merge-base', '--is-ancestor', pr.baseSha, fetchedBase])).code !== 0)
+        return { result: 'refused', detail: ['the base history diverged since observation; next tick re-reads'], newHead: null };
+      const originalFork = await git(opts.checkout, ['merge-base', '--all', pr.baseSha, pr.headSha]);
+      if (originalFork.code !== 0) return { result: 'refused', detail: ['the PR has no shared base history'], newHead: null };
+      const forks = originalFork.stdout.trim().split('\n');
+      const currentForks = (await must(opts.checkout, ['merge-base', '--all', fetchedBase, pr.headSha])).split('\n');
+      if (forks.length !== 1 || currentForks.length !== 1 || forks[0] !== currentForks[0])
+        return { result: 'refused', detail: ['the PR merge base changed or is ambiguous; next tick re-reads'], newHead: null };
+      const commits = (await must(opts.checkout, ['rev-list', '--max-count=101', `${forks[0]}..${pr.headSha}`])).split('\n').filter(Boolean);
+      const merges = await must(opts.checkout, ['rev-list', '--merges', '--max-count=1', `${forks[0]}..${pr.headSha}`]);
+      if (!commits.length || commits.length > 100 || merges)
+        return { result: 'refused', detail: ['recut requires 1–100 original PR commits without merge commits'], newHead: null };
+      const original = await recutBounds(opts.checkout, [forks[0]!, pr.headSha]);
+      if (original.refusal) return { result: 'refused', detail: [original.refusal], newHead: null };
+      recutPaths = new Set(original.paths);
+    }
     // Captured before any untrusted code runs: the push goes here, not to whatever `origin` says later.
     const pushUrl = await must(opts.checkout, ['remote', 'get-url', '--push', 'origin']);
     // A recut starts from the current base, not the PR head: the lane's changes
     // are replayed on top, which is exactly what `merge --squash <head>` stages.
-    await must(opts.checkout, ['worktree', 'add', '--detach', wt, p.action === 'recut' ? `refs/remotes/origin/${pr.baseRef}` : pr.headSha]);
+    await must(opts.checkout, ['worktree', 'add', '--detach', wt, p.action === 'recut' ? recutBase : pr.headSha]);
     added = true;
     // The worktree's start commit: the pre-merge head, or the fetched base for a recut.
     const startSha = await must(wt, ['rev-parse', 'HEAD']);
@@ -568,6 +602,9 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
         // protected paths, and a recut may never smuggle one into a fresh PR.
         const staged = (await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--cached', '--name-only', startSha])).split('\n').filter(Boolean);
         if (!staged.length) return { result: 'no-change', detail: [...detail, `the PR's changes are already in ${pr.baseRef}; there is nothing to recut`], newHead: null };
+        const bounded = await recutBounds(wt, ['--cached', startSha]);
+        if (bounded.refusal || bounded.paths.some((path) => !recutPaths?.has(path)))
+          return { result: 'refused', detail: [...detail, bounded.refusal ?? 'recut changed files outside the original PR'], newHead: null };
         const protectedHits = protectedPathHits(staged, { selfRepo: isHubRepositoryLabel(opts.repo) });
         if (protectedHits.length) return { result: 'refused', detail: [...detail, ...protectedHits.map((h) => `${h.path}: protected path (${h.why})`)], newHead: null };
         await must(wt, ['commit', '--no-verify', '-m', `${(pr.title || `recut of ${pr.headRef}`).slice(0, 120)}\n\nSquashed recut of #${pr.number} (${pr.headRef} @ ${pr.headSha.slice(0, 8)}) onto ${pr.baseRef}.\n\nPhantom-Autopilot: recut`]);
