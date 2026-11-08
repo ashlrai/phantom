@@ -325,3 +325,5 @@ canonical release guide for required hosted qualification and publication.
 - [Local model tuning data and evaluation](https://github.com/ashlrai/phantom/blob/master/docs/TUNE.md) — offline dataset preparation and paired evaluation.
 
 - [Rebase-wave status](FLEET-REBASE-STATUS.md) — read-only conflict and queue coverage snapshot.
+
+- [Merge cockpit](FLEET-MERGE-COCKPIT.md) — the rebase treadmill from local runs state: open conflicts, rebase coverage, triage→close latency, merge rate.
