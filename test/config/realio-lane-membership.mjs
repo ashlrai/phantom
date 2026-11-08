@@ -285,6 +285,7 @@ export const REAL_IO_TEST_FILES = [
   'test/resource-pool-commissioning-recovery.test.ts', // private inert stores and journal recovery
   'test/resource-pool-commissioning-collector.test.ts', // real durable lifecycle lease, inert probe ports
   'test/resource-native-profile.test.ts', // exclusive profile preparation and inert native execve
+  'test/resource-volume-polling.test.ts', // real bounded sysctl/df/diskutil storage identity against the host volume
   'test/resource-claude-account-status.test.ts', // native auth status with inert private process fixtures
   'test/resource-claude-account-usage.test.ts', // private scratch and bounded native usage mocks
   'test/resource-grok-account-probe.test.ts', // native metadata protocol with inert ACP fixtures
