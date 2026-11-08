@@ -26,6 +26,8 @@ const wire = (slowPrs: () => Promise<unknown>) => get.mockImplementation(async (
   if (path === '/api/resource') return {};
   if (path === '/api/verse/fleet/merge-pace') return { schema: 'fleet.merge-pace.v1', known: true, window_hours: 6, rows: [] };
   if (path === '/api/verse/fleet/landed-closes') return { v: 1, known: true, closed: 0, skipped: 0, failed: 0, rows: [] };
+  if (path === '/api/verse/fleet/merge-cockpit') return { schema: 'fleet.merge-cockpit.v1', known: true, hours: 24, repos: [],
+    totals: { conflictsOpen: 0, rebase: { ready: 0, running: 0, parked: 0 }, merges: { count: 0 } } };
   return slowPrs();
 });
 
