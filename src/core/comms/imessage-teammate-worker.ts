@@ -16,7 +16,7 @@ import { classifyTeammateIntent, markTeammateTextsAnswered, readTeammateTexts } 
 import { approvedTeammateHandle, reconcileTeammateMessage, sendApprovedTeammateMessage, type TeamMessageReceipt, type TeamTransportOptions } from './imessage-teammate-transport.js';
 
 interface Reply { rowid: number; senderId: string; state: 'claimed' | 'drafted' | 'sending' | 'sent' | 'suppressed'; at: number; claimUntil: number; text?: string; attemptedAt?: number; receipt?: TeamMessageReceipt }
-interface Store { v: 1; replies: Reply[] }
+interface Store { v: 1; replies: Reply[]; scanAfter?: number; scanCeiling?: number }
 export interface TeammateWorkerOptions extends TeamTransportOptions {
   runsDir?: string;
   now?: () => number;
@@ -81,7 +81,7 @@ export async function runTeammateResponder(cfg: AshlrConfig, options: TeammateWo
     const path = join(dir, 'teammate-replies.json');
     const raw = read(path, dir, MAX_BYTES);
     const store = raw === null ? { v: 1 as const, replies: [] } : JSON.parse(raw) as Store;
-    if (store.v !== 1 || !Array.isArray(store.replies) || store.replies.length > 256 || store.replies.some(row => !Number.isSafeInteger(row.rowid) || row.rowid < 1 || !/^imessage:[a-f0-9]{16}$/.test(row.senderId) || !['claimed', 'drafted', 'sending', 'sent', 'suppressed'].includes(row.state) || !Number.isFinite(row.at) || !Number.isFinite(row.claimUntil) || row.text !== undefined && (typeof row.text !== 'string' || row.text.length > 4000) || row.attemptedAt !== undefined && !Number.isFinite(row.attemptedAt))) return report;
+    if (store.v !== 1 || !Array.isArray(store.replies) || store.replies.length > 256 || store.replies.some(row => !Number.isSafeInteger(row.rowid) || row.rowid < 1 || !/^imessage:[a-f0-9]{16}$/.test(row.senderId) || !['claimed', 'drafted', 'sending', 'sent', 'suppressed'].includes(row.state) || !Number.isFinite(row.at) || !Number.isFinite(row.claimUntil) || row.text !== undefined && (typeof row.text !== 'string' || row.text.length > 4000) || row.attemptedAt !== undefined && !Number.isFinite(row.attemptedAt)) || store.scanAfter !== undefined && (!Number.isSafeInteger(store.scanAfter) || store.scanAfter < 0) || store.scanCeiling !== undefined && (!Number.isSafeInteger(store.scanCeiling) || store.scanCeiling < 1)) return report;
     const save = (): void => {
       const value = JSON.stringify(store);
       if (Buffer.byteLength(value) > MAX_BYTES || store.replies.length > 256) throw new Error('Teammate receipts full');
@@ -90,16 +90,31 @@ export async function runTeammateResponder(cfg: AshlrConfig, options: TeammateWo
     const inbox = readTeammateTexts({ runsDir: runs, now });
     if (inbox.sourceState === 'degraded') return report;
     store.replies = store.replies.filter(row => !(['sent', 'suppressed'].includes(row.state) && now() - row.at > 7 * 86400000));
+    // Fair scan rounds: each round sweeps every unanswered text at or below the
+    // rowid ceiling frozen when the round opened, oldest rowid first, across as
+    // many passes as the per-pass bounds take. Fresh arrivals rank after the
+    // frozen bound, so they cannot indefinitely defer an old receipt whose late
+    // record time pushed it behind them in the at-ordered first-256 slice.
+    let scanCeiling = store.scanCeiling ?? 0;
+    let scanned = store.scanAfter ?? 0;
+    if (scanCeiling < 1 || scanned >= scanCeiling) {
+      scanCeiling = inbox.texts.reduce((upper, text) => Math.max(upper, text.rowid), 0);
+      scanned = 0;
+    }
+    const range = inbox.texts.filter(text => text.rowid > scanned && text.rowid <= scanCeiling).sort((a, b) => a.rowid - b.rowid);
+    const rangeEnd = range.length === 0 ? scanned : range[range.length - 1].rowid;
     let processed = 0;
-    for (const message of inbox.texts.slice(0, 256)) {
+    for (const message of range.slice(0, 256)) {
       if (options.signal?.aborted) break;
+      const checkpoint = scanned;
+      scanned = message.rowid;
       report.examined++;
       let row = store.replies.find(value => value.rowid === message.rowid);
       if (row && row.senderId !== message.senderId) throw new Error('Teammate identity changed');
       if (row?.state === 'sent' || row?.state === 'suppressed') { markTeammateTextsAnswered([message.rowid], runs); continue; }
       if (!(options.approved ?? approvedTeammateHandle)(message.senderId, cfg, options)) { report.pending++; continue; }
       if (row?.state === 'sending') {
-        if (processed++ >= 3) { report.examined--; break; }
+        if (processed++ >= 3) { report.examined--; scanned = checkpoint; break; }
         const receipt = row.text && row.attemptedAt !== undefined ? await (options.reconcile ?? reconcileTeammateMessage)(row.text, row.senderId, row.attemptedAt, cfg, options) : null;
         if (receipt?.sent && receipt.error === 0) { row.state = 'sent'; row.receipt = receipt; save(); markTeammateTextsAnswered([message.rowid], runs); report.sent++; }
         else report.pending++;
@@ -108,7 +123,7 @@ export async function runTeammateResponder(cfg: AshlrConfig, options: TeammateWo
       const intent = classifyTeammateIntent(message.text);
       // Keep leader requests visible without allowing them to starve later replies.
       if (intent === 'leader') { report.leader++; report.pending++; continue; }
-      if (processed++ >= 3) { report.examined--; break; }
+      if (processed++ >= 3) { report.examined--; scanned = checkpoint; break; }
       if (row?.state === 'claimed' && row.claimUntil > now()) { report.pending++; continue; }
       if (!row) {
         if (store.replies.length >= 256) { report.pending++; continue; }
@@ -134,6 +149,10 @@ export async function runTeammateResponder(cfg: AshlrConfig, options: TeammateWo
       if (receipt?.sent && receipt.error === 0) { row.state = 'sent'; row.receipt = receipt; save(); markTeammateTextsAnswered([message.rowid], runs); report.sent++; }
       else report.pending++;
     }
+    // Persist the sweep: an unfinished round keeps its frozen ceiling and cursor,
+    // a finished round clears both so the next pass opens a fresh bound.
+    store.scanAfter = scanned;
+    store.scanCeiling = scanned < rangeEnd ? scanCeiling : undefined;
     save();
     return { ...report, state: report.pending > 0 ? 'pending' : 'healthy' };
   } catch { return report; }
