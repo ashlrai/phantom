@@ -109,3 +109,28 @@ it('uses Git to retain dirty work and converges after it is cleaned', async () =
   expect(await cmdFleetWtReap(['--apply', '--json'], deps)).toBe(0);
   expect(JSON.parse(logs.pop()!).removals).toEqual([]);
 });
+it('converges when another cleanup removes a merged worktree after the scan', async () => {
+  const { root, deps, logs, calls } = await fixture();
+  const readJobs = () => import('node:fs/promises').then(fs => fs.readFile(join(root, 'metrics', 'jobs.jsonl'), 'utf8'));
+  deps.readers = { listDirs: async () => { await rm(join(root, 'wt', 'merged'), { recursive: true }); return ['merged']; }, readJobs };
+  expect(await cmdFleetWtReap(['--apply', '--json'], deps)).toBe(0);
+  expect(JSON.parse(logs.pop()!).removals).toEqual([{ id: 'merged', status: 'already-removed' }]);
+  expect(calls).toEqual([]);
+});
+it('treats a missing worktree root as an empty inventory on repeated cleanup', async () => {
+  const { root, deps, logs, calls } = await fixture();
+  await rm(join(root, 'wt'), { recursive: true });
+  for (let i = 0; i < 2; i++) {
+    expect(await cmdFleetWtReap(['--apply', '--json'], deps)).toBe(0);
+    expect(JSON.parse(logs.pop()!).removals).toEqual([]);
+  }
+  expect(calls).toEqual([]);
+});
+it('keeps cleanup disabled when the job ledger is missing', async () => {
+  const { root, deps, logs, calls } = await fixture();
+  await rm(join(root, 'metrics', 'jobs.jsonl'));
+  expect(await cmdFleetWtReap(['--apply', '--json'], deps)).toBe(1);
+  expect(JSON.parse(logs.pop()!).sources.jobs).toBe(false);
+  expect(await readdir(join(root, 'wt'))).toContain('merged');
+  expect(calls).toEqual([]);
+});
