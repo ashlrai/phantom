@@ -34,6 +34,13 @@ describe('backlog recut job rules (verbatim)', () => {
     expect(BODY).toContain('git fetch origin pull/2523/head');
   });
 
+  it('uses a unique merge base and excludes base-only history', () => {
+    expect(BODY).toContain('git merge-base --all origin/master abc123');
+    expect(BODY).toContain('git diff <merge-base> abc123 --');
+    expect(BODY).toContain('Stop if there is not exactly one merge base');
+    expect(BODY).toContain('never apply it or copy whole old files');
+  });
+
   it('body is under 4000 bytes with 120-char title', () => {
     const bytes = Buffer.byteLength(BODY, 'utf-8');
     expect(bytes).toBeLessThan(4000);

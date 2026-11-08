@@ -22,6 +22,9 @@ Check that FETCH_HEAD is exactly ${headSha}; stop and re-observe if it differs.
 ${opts.unionSafe ? `The fleet union preview marks this PR fully union-safe, so the recut is a mechanical apply: run
   ashlr fleet union-apply --pr ${number} --out <dir>
 to write the resolved files plus a patch into a directory you name, then apply that output instead of re-deriving the merge.\n` : ''}
+Identify the original change with a unique merge base, not a two-tip diff:
+  git merge-base --all origin/master ${headSha}
+Stop if there is not exactly one merge base. Inspect git diff <merge-base> ${headSha} -- and plan only the PR's own paths and hunks. A two-tip diff from origin/master to the old head includes unrelated base history; never apply it or copy whole old files over current files.
 Inspect the original change and replay its completed behavior onto fresh
 origin/master, resolving the conflict without losing already completed work.
 Apply only the hunks that belong to this PR's own concern. Before stopping, git diff --stat origin/master must list only the files you planned for this concern (write that list in BRIDGE_NOTES.md first); if it lists more, you started from a stale base: git checkout origin/master -- <extra files> and continue.
