@@ -619,6 +619,19 @@ describe('Codex credits are independent of the quota battery', () => {
     expect(projected[1]!.detail.join(' ')).not.toContain('Estimated credit value');
   });
 
+  it('does not color expired or untimed Codex usage as current capacity', () => {
+    for (const patch of [
+      { usageObservedAt: new Date(NOW - 60 * 60_000).toISOString() },
+      { usageObservedAt: null },
+      { quotaExpiresAt: new Date(NOW - 1).toISOString() },
+    ]) {
+      const result = barRows([row({ engine: 'codex', ...patch })], { healthRead: true, now: NOW })[0]!;
+      expect(result).toMatchObject({ level: 'unknown', value: '28% used · last' });
+      expect(result.display!.usage.current).toBe(false);
+      expect(result.summary).toContain('unconfirmed');
+    }
+  });
+
   it('never invents measured percentages from limit flags or an exhausted connection', () => {
     const projected = barRows([
       row({ seatId: 'current-limit-unmeasured', engine: 'codex', windows: [win({ usedPercent: null, limitReached: true })] }),

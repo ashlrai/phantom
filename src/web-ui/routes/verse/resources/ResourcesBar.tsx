@@ -178,17 +178,17 @@ export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolea
       ? `${usedPercentText(subscriptionUsed)} used${binding?.limitReached && subscriptionUsed < 100 ? ' · limit reached' : ''}`
       : binding?.limitReached ? 'limit reached' : null;
     // Credit availability/holds do not change the subscription battery's state.
-    const level = row.quotaCurrent === false ? 'unknown' : row.engine === 'codex' && !row.lastReading && !row.signedOut
+    const level = row.kind === 'subscription' && !display.usage.current && !row.signedOut ? 'unknown' : row.engine === 'codex' && !row.lastReading && !row.signedOut
       ? left === null ? 'unknown' : left === 0 ? 'out' : left < 20 ? 'low' : 'ok' : LEVEL_OF_STATUS[status.kind] ?? 'unknown';
-    const value = row.quotaCurrent === false && subscriptionValue !== null ? `${subscriptionValue} · last` : row.engine === 'codex' && subscriptionValue !== null && !row.signedOut
+    const value = !display.usage.current && subscriptionValue !== null && !row.signedOut ? `${subscriptionValue} · last` : row.engine === 'codex' && subscriptionValue !== null && !row.signedOut
       ? `${subscriptionValue}${row.lastReading || row.quotaCurrent === false ? ' · last' : ''}`
       : level === 'out' ? (status.kind === 'spent' ? 'spent' : status.label.toLowerCase())
-      : left === null ? (opts.pendingSeatIds?.includes(row.seatId) ? 'reading…' : status.kind === 'unavailable' ? 'unavailable' : 'no usage') : `${usedPercentText(left)} left${row.lastReading || row.quotaCurrent === false ? ' · last' : ''}`;
+      : left === null ? (opts.pendingSeatIds?.includes(row.seatId) ? 'reading…' : status.kind === 'unavailable' ? 'unavailable' : 'no usage') : `${usedPercentText(left)} left${!display.usage.current ? ' · last' : ''}`;
     const detail = row.windows.map((w) => {
       const used = w.limitReached ? 'limit reached' : w.usedPercent === null ? 'no reading' : `${usedPercentText(w.usedPercent)} used`;
       // The accounts model already words it "resets Fri 2:25 PM"; don't say it twice.
       const reset = w.resetText ? w.resetText.replace(/^resets\s+/i, '') : '';
-      return `${w.label.charAt(0).toUpperCase()}${w.label.slice(1)}: ${used}${reset ? ` · ${row.quotaCurrent === false ? 'recorded reset' : 'resets'} ${reset}` : ''}`;
+      return `${w.label.charAt(0).toUpperCase()}${w.label.slice(1)}: ${used}${reset ? ` · ${!display.usage.current ? 'recorded reset' : 'resets'} ${reset}` : ''}`;
     });
     detail.push(...creditDetail);
     if (row.engine === 'grok') detail.push('Grok Build · native CLI; Grok Bot has a separate allowance.');
