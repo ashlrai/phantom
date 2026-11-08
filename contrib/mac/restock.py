@@ -208,7 +208,7 @@ for line in ready_raw:
         j, repo, lane, tier, pf = f[0], f[1], m2.group(1), f[3], f[4]
     else: continue
     if (repo == "phantom" and lane in CODEX and not slots.get(lane, {}).get("held") and lane not in hold
-            and re.fullmatch(r"[A-Za-z0-9._-]+", j) and j not in claimed and j not in parked_seen
+            and re.fullmatch(r"[A-Za-z0-9._-]+", j) and j not in parked_seen
             and tier in ("frontier", "work", "mid", "fast") and os.path.isdir(H + "/Projects/ashlrai/phantom")
             and os.path.realpath(pf).startswith(os.path.realpath(Q + "/prompts") + "/")
             and os.path.isfile(pf) and rd(pf).strip()):
@@ -422,15 +422,16 @@ if out or unparks or dep_out or rate_candidates:
         previous = observed.get("count")
         capacity_increased = isinstance(previous, int) and count is not None and count < previous
         if count is not None and ((count < 150 and capacity_increased) or 0 <= last <= now - 3600):
-            # Recheck identities under the queue lock: a parked duplicate, an
-            # active claim or an already completed attempt must never launch.
-            current_claimed = {x.split("\t")[0] for x in rd(Q + "/claimed.tsv").splitlines() if x}
+            # claimed.tsv is an enqueue history, not an active lease: parked
+            # jobs normally already appear there. Check live dispatch evidence.
             for j, old, new in rate_candidates:
                 occurrences = sum(ready_job_id(x) == j for x in snap)
-                if (old in snap and occurrences == 1 and j not in current_claimed
+                if (old in snap and occurrences == 1
                         and ("phantom", j) not in completed and (None, j) not in completed
                         and not os.path.isdir(H + "/Projects/ashlrai/wt/" + j)
                         and not os.path.exists(Q + "/run/" + j + ".reaping")
+                        and not os.path.exists(Q + "/run/" + j + ".dispatched")
+                        and not os.path.exists(Q + "/run/" + j + ".batched")
                         and "RESULT PR" not in rd("%s/%s.publish" % (R, j))):
                     # Write the cooldown first: interruption can delay, never accelerate, recovery.
                     open(cooldown + ".tmp", "w").write(str(now)); os.replace(cooldown + ".tmp", cooldown)

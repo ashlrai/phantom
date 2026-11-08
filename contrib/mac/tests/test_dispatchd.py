@@ -356,6 +356,9 @@ class RestockTriggerTests(unittest.TestCase):
             prompt.write_text(f'RQ-PROBE-{n} (repo=phantom): Required checks apply; no merge without Security pin\n')
             rows.append(f'PARKED-MERGERATE.devin\tRQ-PROBE-{n}\tdevin\twork\tphantom\t{prompt}')
         (q / 'ready.tsv').write_text('\n'.join(rows) + '\n')
+        # Restock records every enqueue in this durable history before the
+        # supervisor can park it; those records are not active dispatches.
+        (q / 'claimed.tsv').write_text(''.join(f'RQ-PROBE-{n}\tdevin\twork\t12:00\t1\n' for n in range(22)))
         (home / '.ashlr-runs/phantom-open-prs').write_text(f'{time.time()} 150\n')
         precheck = home / '.ashlr-runs/bin/precheck.sh'
         precheck.write_text('#!/bin/sh\necho checked >> "$HOME/prechecked"\nexit 13\n')
@@ -385,6 +388,9 @@ class RestockTriggerTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue((q / 'run/RQ-PROBE-0.dispatched').exists())
         self.assertIn('passed', (home / 'prechecked').read_text())
+        self.assertEqual(tick(home).returncode, 0)
+        metrics = [json.loads(row) for row in (home / '.ashlr-runs/metrics/jobs.jsonl').read_text().splitlines()]
+        self.assertEqual(sum(m.get('event') == 'launch' and m.get('job') == 'RQ-PROBE-0' for m in metrics), 1)
 
     def test_concurrent_unpark_survives_dispatcher_rewrite(self):
         from unittest.mock import patch

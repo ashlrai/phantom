@@ -747,7 +747,7 @@ class MergeRateRecoveryTests(unittest.TestCase):
             pf.write_text('Required checks must pass; no merge without Security pin\n')
             rows.append(f'PARKED-MERGERATE.devin\t{job}\tdevin\twork\tphantom\t{pf}')
         (q / 'ready.tsv').write_text('\n'.join([rows[0], rows[0], *rows[1:]]) + '\n')
-        (q / 'claimed.tsv').write_text('RQ-ACTIVE\tdevin\n')
+        (q / 'run/RQ-ACTIVE.dispatched').write_text('1')
         (home / '.ashlr-runs/phantom-open-prs').write_text(f'{time.time()} 20\n')
         self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
         result = (q / 'ready.tsv').read_text()
