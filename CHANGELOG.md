@@ -16,6 +16,27 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
+## [3.30.26](https://github.com/ashlrai/phantom/compare/v3.30.25...v3.30.26) (2026-11-08)
+
+
+### Changes
+
+* **RQ-DEVINFAILQ8:** RQ-DEVINFAILQ8 handoff ([#4113](https://github.com/ashlrai/phantom/issues/4113)) ([79f8cc0](https://github.com/ashlrai/phantom/commit/79f8cc0930f70d6040e148fa6cacf374779f80eb))
+* **RQ-MERGEAGEQ8Q8:** RQ-MERGEAGEQ8Q8 handoff ([#4100](https://github.com/ashlrai/phantom/issues/4100)) ([88e1667](https://github.com/ashlrai/phantom/commit/88e166731c3bcc3fdab990902db7e08a6ef6d03f))
+* **RQ-MERGELATENCY8Q8:** Bridge notes ([#4103](https://github.com/ashlrai/phantom/issues/4103)) ([6e1fcc4](https://github.com/ashlrai/phantom/commit/6e1fcc4b6f0353fb112d0bd7acf66d4f6cd735b7))
+* **RQ-MERGEPARK8Q8:** RQ-MERGEPARK8Q8 handoff ([#4105](https://github.com/ashlrai/phantom/issues/4105)) ([818fe78](https://github.com/ashlrai/phantom/commit/818fe7861cffeb537ea7ca554ecc4646968f1e0d))
+* **RQ-MERGEPARKQ8Q8:** RQ-MERGEPARKQ8Q8 handoff ([#4102](https://github.com/ashlrai/phantom/issues/4102)) ([72161c9](https://github.com/ashlrai/phantom/commit/72161c9e45ab87af4d80b0a1fe395261bcb1b064))
+* **RQ-MERGEQUEUEQ8:** RQ-MERGEQUEUEQ8 handoff ([#4099](https://github.com/ashlrai/phantom/issues/4099)) ([6f430fe](https://github.com/ashlrai/phantom/commit/6f430fe552e082351edfe9ac9627dabe46dbe9ae))
+* **RQ-MERGEWAKE8Q8:** RQ-MERGEWAKE8Q8 handoff ([#4104](https://github.com/ashlrai/phantom/issues/4104)) ([c089039](https://github.com/ashlrai/phantom/commit/c0890391939cf69f87f7a36ee473604f0d2e1f1c))
+* **RQ-PARKLATENCYQ8:** RQ-PARKLATENCYQ8 ([#4114](https://github.com/ashlrai/phantom/issues/4114)) ([f6c706d](https://github.com/ashlrai/phantom/commit/f6c706dd95e324e71174a22ddd13bc2fd3a4d0bf))
+* **RQ-PARKWAKEQ8:** RQ-PARKWAKEQ8 handoff ([#4109](https://github.com/ashlrai/phantom/issues/4109)) ([26d1e88](https://github.com/ashlrai/phantom/commit/26d1e88ec359665dd6c98a6b7ebad7361a63c4a7))
+* **RQ-REAPCONVERGEQ8Q8:** Bridge notes ([#4101](https://github.com/ashlrai/phantom/issues/4101)) ([31ad6ee](https://github.com/ashlrai/phantom/commit/31ad6eeb98e51cc1c49cc3ad632b5811281a469a))
+* **RQ-SWE3-FAIRROUND-1:** BRIDGE_NOTES — RQ-SWE3-FAIRROUND-1 ([#4108](https://github.com/ashlrai/phantom/issues/4108)) ([59bba03](https://github.com/ashlrai/phantom/commit/59bba0341c8015a5754e4e27f471c11e633ab765))
+* **RQ-SWE3-MERGE-ACCEL-1:** BRIDGE_NOTES — RQ-SWE3-MERGE-ACCEL-1 ([#4112](https://github.com/ashlrai/phantom/issues/4112)) ([e26351a](https://github.com/ashlrai/phantom/commit/e26351a0cf727c02dc7b9bf594b339244c0afb1d))
+* **RQ-SWE3-PRTRIAGE-1:** BRIDGE_NOTES — RQ-SWE3-PRTRIAGE-1 ([#4111](https://github.com/ashlrai/phantom/issues/4111)) ([9aa58a2](https://github.com/ashlrai/phantom/commit/9aa58a2a83488cd0820980f306702f049b7438d2))
+* **RQ-SWE3-REDIRECT-FIX-1:** BRIDGE_NOTES — RQ-SWE3-REDIRECT-FIX-1 ([#4106](https://github.com/ashlrai/phantom/issues/4106)) ([35f2650](https://github.com/ashlrai/phantom/commit/35f265092bf56b37f843af3a26d8047b8b9ab1d9))
+* **RQ-SWE3-SESS-REAPER-1:** BRIDGE_NOTES — RQ-SWE3-SESS-REAPER-1 `phm fleet session-audi ([#4110](https://github.com/ashlrai/phantom/issues/4110)) ([4b57b00](https://github.com/ashlrai/phantom/commit/4b57b00d8e33144a04b2657d15530a46a6c2ca3b))
+
 ## [Unreleased]
 
 ## [3.30.25] - 2026-11-08
