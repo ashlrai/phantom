@@ -268,6 +268,85 @@ export async function reconcileLatest(record) {
   }
 }
 
+// npm resolution (ETARGET) can lag the reconciled install catalog: the
+// version endpoint and npm's own packument read can sit on different
+// registry replicas. The no-scripts install retries a small bounded number
+// of times with backoff — ETARGET only. Integrity, provenance, auth and
+// every other failure hold immediately; this never republishes.
+export const INSTALL_ETARGET_ATTEMPTS = 4;
+export const INSTALL_ETARGET_DELAY_MS = 5_000;
+const INSTALL_TIMEOUT_MS = 120_000;
+const INSTALL_OUTPUT_TAIL = 4_000;
+const INSTALL_NEVER_RETRY = /\b(?:EINTEGRITY|EPROVENANCE|E401|E403|ENEEDAUTH)\b/;
+
+/** True only for a transient ETARGET resolution miss; never for a mixed or hard failure. */
+export function installFailureIsTransient(output) {
+  return /\bETARGET\b/.test(output) && !INSTALL_NEVER_RETRY.test(output);
+}
+
+/** The exact-version no-scripts consumer install. --prefer-online forces each
+ * attempt to revalidate the packument over the network, so a retry reads the
+ * install catalog freshly instead of replaying a locally cached response. */
+export function installPublishedArgs(version) {
+  return ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--save-exact', '--prefer-online',
+    '--registry=https://registry.npmjs.org', `${PACKAGE}@${version}`];
+}
+
+function runInstall(argv, cwd, timeoutMs) {
+  try {
+    const stdout = execFileSync('npm', argv, {cwd, env: process.env, encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 8 * 1024 * 1024, timeout: timeoutMs});
+    return {ok: true, output: stdout ?? ''};
+  } catch (error) {
+    return {ok: false, code: error.status ?? null, signal: error.signal ?? null,
+      output: `${error.stdout ?? ''}\n${error.stderr ?? ''}`.trim()};
+  }
+}
+
+/**
+ * The no-scripts consumer install of the admitted version, bounded-retried on
+ * ETARGET only, then proven to be the admitted package: the installed
+ * package.json identity and the hidden lockfile's resolved archive integrity
+ * must equal the record exactly. A substituted or downgraded tree holds.
+ */
+export async function installPublishedPackage(record, directory, deps = {}) {
+  assert.equal(typeof directory, 'string'); assert.ok(directory.length > 0);
+  const exec = deps.exec ?? runInstall;
+  const sleep = deps.sleep ?? (ms => new Promise(done => setTimeout(done, ms)));
+  const timeoutMs = deps.timeoutMs ?? INSTALL_TIMEOUT_MS;
+  fs.mkdirSync(directory, {recursive: true, mode: 0o700});
+  const manifest = join(directory, 'package.json');
+  if (!fs.existsSync(manifest)) {
+    fs.writeFileSync(manifest, `${JSON.stringify({name: 'phantom-install-check', version: '0.0.0', private: true})}\n`, {mode: 0o600, flag: 'wx'});
+  }
+  const argv = installPublishedArgs(record.version);
+  let delay = INSTALL_ETARGET_DELAY_MS;
+  for (let attempt = 1; ; attempt++) {
+    const run = await exec(argv, directory, timeoutMs);
+    if (run.ok) {
+      console.log(`npm install attempt ${attempt} accepted ${PACKAGE}@${record.version}`);
+      break;
+    }
+    const output = String(run.output ?? '');
+    const status = run.code !== null && run.code !== undefined ? `exited with code ${run.code}`
+      : run.signal ? `was killed on ${run.signal}` : 'failed';
+    const tail = output ? `; last output: ${output.slice(-INSTALL_OUTPUT_TAIL)}` : '';
+    if (attempt >= INSTALL_ETARGET_ATTEMPTS || !installFailureIsTransient(output)) {
+      throw new Error(`npm install ${status} while reading ${PACKAGE}@${record.version}${tail}`);
+    }
+    console.log(`npm install attempt ${attempt} could not resolve ${PACKAGE}@${record.version} (ETARGET); retrying in ${delay}ms`);
+    await sleep(delay);
+    delay = Math.min(delay * 2, 30_000);
+  }
+  const installed = readBoundedJson(join(directory, 'node_modules', '@ashlr', 'phantom', 'package.json'));
+  assert.equal(installed.name, PACKAGE);
+  assert.equal(installed.version, record.version);
+  const lock = readBoundedJson(join(directory, 'node_modules', '.package-lock.json'));
+  assert.equal(lock.packages?.[`node_modules/${PACKAGE}`]?.integrity, record.integrity,
+    'installed package resolved a different archive than the admitted record');
+  return argv;
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [command, directory] = process.argv.slice(2);
   if (command === 'prepare') prepare();
@@ -278,6 +357,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   } else if (command === 'registry') {
     const record = verifyHandoff(directory, process.env.ADMISSION_SHA256, process.env.PACKAGE_SHA256);
     await reconcileRegistry(record, process.env.RUNNER_TEMP);
+  } else if (command === 'install') {
+    const record = verifyHandoff(directory, process.env.ADMISSION_SHA256, process.env.PACKAGE_SHA256);
+    await installPublishedPackage(record, process.argv[4]);
   } else if (command === 'provenance') {
     const record = verifyHandoff(directory, process.env.ADMISSION_SHA256, process.env.PACKAGE_SHA256);
     console.log(JSON.stringify(verifyCanonicalProvenance(record, readBoundedJson(join(process.env.RUNNER_TEMP, 'phantom-signatures.json')), process.env.GITHUB_SHA, process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT)));
