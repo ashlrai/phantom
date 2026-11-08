@@ -421,11 +421,13 @@ def _ph_open_prs():
     cp = R + "/phantom-open-prs"; n = None
     try:
         t, v = rd(cp).split()[:2]
-        if time.time() - float(t) < 600: n = int(v)
+        age = time.time() - float(t); count = int(v)
+        if 0 <= age < 600 and count >= 0: n = count
     except Exception: n = None
     if n is None:
         try:
             n = int(_run(["gh", "api", "search/issues?q=repo:ashlrai/phantom+is:pr+is:open&per_page=1", "--jq", ".total_count"], 20).stdout.strip())
+            if n < 0: raise ValueError("invalid PR count")
             open(cp + ".tmp", "w").write("%d %d\n" % (int(time.time()), n)); os.replace(cp + ".tmp", cp)
         except Exception: n = None
     _ph_open.append(n); return n
@@ -1168,22 +1170,37 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         running[lane] += 1; local_mid += lane == "codex-local" and tier == "mid"; launched.append(j); ev("LAUNCH %s %s %s %s" % (j, repo, lane, tier))
 else:
     rest = lines
-# Rewrite under the lock, re-reading first: lines appended since the snapshot (the file is append-only for
-# every other writer) ride through after this tick's survivors so the whole-file replace never erases them.
+# Reconcile concurrent parked-row rewrites as well as appended rows.
 lk = qlock("dispatchd-write", 30)
 if lk is None: log("ready.lock busy; ready.tsv rewrite skipped (launched jobs stay guarded by alive/worktree checks)"); raise SystemExit(0)
-rest = rest + [l for l in rd(Q + "/ready.tsv").splitlines()[len(_raw):] if l.strip() and not l.startswith("#")]
+from collections import Counter
+current = rd(Q + "/ready.tsv").splitlines()
+old_counts, current_counts = Counter(_raw), Counter(current)
+removed = old_counts - current_counts
+survivors = []
+for l in rest:
+    fields = l.split("\t")
+    parked = fields[0].startswith("PARKED-") or (len(fields) > 2 and fields[2].startswith("PARKED-"))
+    if parked and removed[l]: removed[l] -= 1
+    else: survivors.append(l)
+rest = survivors
+added = current_counts - old_counts
+for l in current:
+    if added[l] and l.strip() and not l.startswith("#"):
+        rest.append(l); added[l] -= 1
 t = Q + "/ready.tsv.tmp"; open(t, "w").write("".join(l + "\n" for l in rest)); os.replace(t, Q + "/ready.tsv")
 lk.close()
 jsave(Q + "/slots.json", slots)
 concurrency.save(CONC_PATH, CONC)
 
 # ---- restock trigger: a codex lane's queue below 3x its free slots -> Mac-side deterministic restocker (no LLM)
+rate_parked = any("PARKED-MERGERATE." in l for l in rest)
+if rate_parked: _ph_open_prs()
 for lane in ("codex-cmp", "codex-personal", "devin", "claude-api", "codex-local"):
     sl = slots[lane]
     if sl.get("held") or lane in hold: continue
-    qn = sum(1 for l in rest if l.split("\t")[2:3] == [lane])
-    if qn < 3 * max(sl["target"] - running[lane], 4) and os.path.exists(Q + "/router-queue.md") and not os.path.exists(Q + "/RESTOCK_OFF"):
+    qn = sum(1 for l in rest if not l.startswith("PARKED-") and l.split("\t")[2:3] == [lane])
+    if (rate_parked or qn < 3 * max(sl["target"] - running[lane], 4)) and os.path.exists(Q + "/router-queue.md") and not os.path.exists(Q + "/RESTOCK_OFF"):
         subprocess.Popen(["/bin/bash", R + "/bin/restock.sh"], stdin=subprocess.DEVNULL, stdout=open(Q + "/restock.log", "a"),
                          stderr=subprocess.STDOUT, start_new_session=True)
         break

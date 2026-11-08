@@ -22,6 +22,9 @@ not a merge. `phm fleet parked --json` lists the same parked rows and reports
 still-unmet gate ids under `unmetDeps`. Merge-rate parked Phantom rows recover at most one per hour when the dispatcher’s
 open-PR count is less than 150 and less than 10 minutes old. Missing, stale or
 invalid counts leave rows parked; the count measures backlog, not merge rate.
+The dispatcher refreshes that count and wakes the restocker while such rows
+remain, even when normal lane queues are full. Concurrent queue rewrites preserve
+recovered rows; recovery still observes the shared hourly cooldown.
 Rows are considered in queue order. Duplicate identities, active claims,
 worktrees, published jobs and recorded merges stay parked while later eligible
 rows can recover. Resolve duplicate rows before retrying that job.
