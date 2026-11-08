@@ -31,7 +31,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms',
   'channels', 'context', 'connectors', 'imessage', 'memory', 'route', 'radar', 'drafts',
   'director', 'best-of-n', 'invent', 'resource', 'resources', 'repos', 'usage', 'version', 'help',
-  'skills', 'universe', 'runtime',
+  'skills', 'universe', 'runtime', 'tune',
   // Dispatched by index.ts but previously missing here, so completion and
   // "did you mean" were blind to them (caught by cli-registry-drift).
   'verse', 'local-runtime',
