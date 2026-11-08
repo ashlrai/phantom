@@ -221,6 +221,7 @@ export function buildMemoryContextPack(snapshotInput: unknown, queryInput: unkno
     return { event, score, rarity: matched.reduce((sum, word) => sum + 1 / frequency.get(word)!, 0),
       exact: matched.filter(word => set.has(word)).length, meaning: meaning ?? -1 };
   }).sort((a, b) => b.score - a.score || b.rarity - a.rarity || b.exact - a.exact || b.meaning - a.meaning
+    || (b.event.observedAt ?? b.event.recordedAt).localeCompare(a.event.observedAt ?? a.event.recordedAt)
     || (a.event.eventId < b.event.eventId ? -1 : a.event.eventId > b.event.eventId ? 1 : 0));
   const chunks: string[] = [];
   const head = header(query);

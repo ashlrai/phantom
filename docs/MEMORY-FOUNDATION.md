@@ -1,9 +1,9 @@
 # Memory foundation
 
-The source-only memory foundation selects bounded, cited project evidence from a
-supplied snapshot. It is a pure local kernel: no store, HTTP route, session
-injection, recall worker, model call, filesystem access or execution grant is
-wired to it. It does not migrate the existing shared `MEMORY.md`, team context,
+The memory foundation selects bounded, cited project evidence from a supplied
+snapshot. Its selection kernel is pure and local. An explicit active-memory
+adapter stores snapshots and checks worktree sources for checkpoint resumption;
+there is no HTTP route, automatic session injection, model call or execution grant. It does not migrate the existing shared `MEMORY.md`, team context,
 lessons or genome stores.
 
 Use [Offline memory evaluations](https://github.com/ashlrai/phantom/blob/master/docs/MEMORY-EVALUATION.md)
@@ -280,3 +280,24 @@ A structured persistence adapter, live authorization, actual source integrity,
 concurrent append protocol, session integration and bounded active recall remain
 future work. See the offline evaluation guide for what is and is not measured
 before increasing automation.
+
+## Active checkpoint evidence
+
+`src/core/memory/active.ts` adds an explicit local adapter over the kernel.
+`saveActiveMemory(path, snapshot)` creates a private, immutable snapshot file;
+it refuses invalid or secret-shaped data and never replaces an existing file.
+Callers choose a new path for each revision. `readActiveMemory` validates it
+again. The existing review and provenance fields remain caller claims.
+
+`resumeAgentCheckpointWithMemory(checkpointPath, memoryPath, query, worktree)`
+returns the authored checkpoint and a separate evidence pack. The caller must
+supply the correct repository, owner and agent audience IDs and trusted paths;
+these identifiers are scope selectors, not authentication. The adapter supports
+current queries only. Before ranking, it hashes each in-scope relative `file:`
+source against its recorded `sha256_` digest. Missing, changed, oversized,
+non-file, unsupported or repository-escaping sources invalidate their facts.
+File contents are not stored by this check. Freshness is a point-in-time
+observation: files can change again after retrieval, and agents must recheck
+before acting. This adapter is an explicit integration API; it does not silently
+inject memory into existing sessions. Shared screening detects known patterns,
+not every possible secret, so callers must still avoid putting secrets in facts.
