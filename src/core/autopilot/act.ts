@@ -573,7 +573,7 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
       if (merged.code !== 0) {
         const conflicted = (await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--name-only', '--diff-filter=U'])).split('\n').filter(Boolean);
         if (!conflicted.length) return { result: 'error', detail: [`merge failed without conflicts: ${merged.stderr.trim().slice(0, 200)}`], newHead: null };
-        if (!opts.fixer) { await git(wt, p.action === 'recut' ? ['reset', '--hard', 'HEAD'] : ['merge', '--abort']); return { result: 'refused', detail: [`conflicts in ${conflicted.join(', ')} and no fixer is configured`], newHead: null }; }
+        if (!opts.fixer) { await git(wt, p.action === 'recut' ? ['reset', '--hard', 'HEAD'] : ['merge', '--abort']); return { result: 'refused', detail: [`conflicts in ${conflicted.join(', ')}; resolve them on ${pr.headRef} and push the updated head to retry`], newHead: null }; }
         // The commit takes the whole index, but only the conflicted files are the fixer's to change.
         const stagedOutside = async () => {
           const raw = await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--cached', '--raw', '--abbrev=40', startSha]);
