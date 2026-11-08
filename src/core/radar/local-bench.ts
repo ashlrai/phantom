@@ -9,7 +9,9 @@
  * THE ONE RULE: the bench only ever talks to a loopback endpoint. The base URL
  * is validated before any fetch and before any file is written; a non-loopback
  * endpoint is refused outright (same predicate the local-only spend guard
- * uses). Loopback inference is provably free, so "dollars saved" is computed
+ * uses), and redirects are refused rather than followed — a validated endpoint
+ * cannot bounce the request body to an unvalidated origin. Loopback inference
+ * is provably free, so "dollars saved" is computed
  * against the repository's standard would-be-cloud reference price
  * (`estCostUsd` on 'anthropic', the same figure forecast.ts reports as
  * localSavingsUsd), scaled to 100 jobs at the measured accuracy. It is an
@@ -256,6 +258,9 @@ async function chatCompletion(
   const res = await fetchImpl(`${baseUrl}/v1/chat/completions`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
+    // Never forward the body to a redirect target: a 307/308 from the validated
+    // endpoint would otherwise re-POST it to an unvalidated origin.
+    redirect: 'error',
     body: JSON.stringify({
       model,
       messages: [
@@ -464,7 +469,7 @@ export function buildReport(
     },
     transportErrors,
     notes: [
-      'Loopback-only: the endpoint hostname is validated before any request and before the results file is written.',
+      'Loopback-only: the endpoint hostname is validated before any request and before the results file is written; redirects are refused, never followed.',
       'Scores are exact-label matches; a model never grades a model.',
       'Dollars saved per 100 jobs is an estimate at the repo\'s would-be-cloud reference price (estCostUsd on anthropic), accuracy-weighted. Local inference is $0; savings are what the same correct jobs would have cost on metered cloud.',
       'No capability, quality or billing claim is made beyond these fixtures.',
