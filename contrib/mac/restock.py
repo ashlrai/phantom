@@ -81,6 +81,7 @@ for i, l in enumerate(lines):
 claimed = {x.split("\t")[0] for x in rd(Q + "/claimed.tsv").splitlines() if x}
 ready_raw = [x for x in rd(Q + "/ready.tsv").splitlines() if x.strip() and not x.strip().startswith("#")]
 # RQ-QUEUE-AUTOUNPARK-1: PARKED-DEP[.lane] may lead the row (fleet parked status-first) or sit in the lane column.
+PARK_RATE = re.compile(r"^PARKED-MERGERATE\.([A-Za-z0-9][A-Za-z0-9._@-]{0,63})$", re.I)
 PARK_DEP = re.compile(r"^PARKED-(?:DEP|DEPENDENCY)(?:\.([A-Za-z0-9][A-Za-z0-9._@-]{0,63}))?$", re.I)
 GATE = re.compile(r"(?i)DEPENDENCY\s+GATE[:\s]+([^\n]+)")
 JID_TOK = re.compile(r"\b([A-Za-z0-9][A-Za-z0-9._-]{0,79})\b")
@@ -88,7 +89,7 @@ PIN_MERGE = "no merge without Security pin"
 def ready_job_id(line):
     f = line.split("\t")
     if not f: return None
-    if PARK_DEP.match(f[0]): return f[1] if len(f) > 1 else None
+    if PARK_DEP.match(f[0]) or PARK_RATE.match(f[0]): return f[1] if len(f) > 1 else None
     return f[0]
 inq = {j for j in (ready_job_id(x) for x in ready_raw) if j}
 # Count only distinct launchable rows. Dispatcher status can count parked or malformed
@@ -97,7 +98,7 @@ queue_diagnostics = {"parked": 0, "invalid": 0, "empty_prompt": 0, "duplicate": 
 queue_seen = set()
 for row in ready_raw:
     f = row.split("\t")
-    if PARK_DEP.match(f[0]) or (len(f) > 2 and PARK_DEP.match(f[2])):
+    if PARK_DEP.match(f[0]) or PARK_RATE.match(f[0]) or (len(f) > 2 and (PARK_DEP.match(f[2]) or PARK_RATE.match(f[2]))):
         queue_diagnostics["parked"] += 1
         continue
     valid = (len(f) >= 5 and re.fullmatch(r"[A-Za-z0-9._-]+", f[0]) and f[2] in CODEX
@@ -192,6 +193,33 @@ for line in ready_raw:
     if any(d not in merged for d in ids): parked_diagnostics["waiting"] += 1; continue
     need[lane] = max(need[lane] - 1, 0)
     unparks.append((j, ids, line, "\t".join([j, repo, lane, tier, pf])))
+# Recover one Phantom job per hour only when the dispatcher's PR-count observation
+# is fresh and below its 150-PR saturation threshold. Unknown evidence stays parked.
+# The cooldown is checked and recorded under ready.lock, including across restarts.
+rate_candidates = []
+for line in ready_raw:
+    f = line.split("\t")
+    m0 = PARK_RATE.fullmatch(f[0])
+    m2 = PARK_RATE.fullmatch(f[2]) if len(f) > 2 else None
+    if m0 and len(f) == 6 and f[2] == m0.group(1):
+        j, repo, lane, tier, pf = f[1], f[4], f[2], f[3], f[5]
+    elif m2 and len(f) == 5:
+        j, repo, lane, tier, pf = f[0], f[1], m2.group(1), f[3], f[4]
+    else: continue
+    if (repo == "phantom" and lane in CODEX and not slots.get(lane, {}).get("held") and lane not in hold
+            and re.fullmatch(r"[A-Za-z0-9._-]+", j) and j not in claimed and j not in parked_seen
+            and tier in ("frontier", "work", "mid", "fast") and os.path.isdir(H + "/Projects/ashlrai/phantom")
+            and os.path.realpath(pf).startswith(os.path.realpath(Q + "/prompts") + "/")
+            and os.path.isfile(pf) and rd(pf).strip()):
+        parked_seen.add(j)
+        rate_candidates.append((j, line, "\t".join([j, repo, lane, tier, pf])))
+def rate_recovered(now):
+    try:
+        stamp, count = rd(R + "/phantom-open-prs").split()
+        age = now - float(stamp); count = int(count)
+        return 0 <= age < 600 and 0 <= count < 150
+    except (ValueError, TypeError): return False
+rate_unpark = []
 # bold census before the restock (RQ-QUEUEGEN-BOLD-30): the READY stock's share of bet=bold decides prefer_bold
 ready_n = len(recs); ready_bold = sum(1 for r in recs if ISBOLD.search(r[2]))
 bold_frac = ready_bold / ready_n if ready_n else 0.0   # empty READY stock reads as starved, not satisfied
@@ -348,7 +376,7 @@ if not DRY:
     ready_ids = {r[1] for r in recs}
     park_state = {j: e for j, e in park_state.items() if j in ready_ids}
     open(PARKF + ".tmp", "w").write(json.dumps(park_state)); os.replace(PARKF + ".tmp", PARKF)
-if DRY or (not out and not seclist and not done and not unparks and not dep_out): sys.exit(0)
+if DRY or (not out and not seclist and not done and not unparks and not dep_out and not rate_candidates): sys.exit(0)
 for j, repo, l, tier, pf, p, i in out: open(pf, "w").write(p)
 for j, repo, l, tier, pf, p, i, deps in dep_out: open(pf, "w").write(p)
 # RQ-READYLOCK-SCOPE: take ready.lock with a timeout (ASHLR_READY_LOCK_TIMEOUT, default 10 s) and log waits and
@@ -367,11 +395,21 @@ def ready_lock(who="restock"):
             time.sleep(0.05)
     if time.monotonic() - t0 > 1: ev("READY_LOCK_WAIT %s %.1fs" % (who, time.monotonic() - t0))
     return lk
-if out or unparks or dep_out:
+if out or unparks or dep_out or rate_candidates:
     with ready_lock() as lk:
         # Locked snapshot: apply UNPARK rewrites, then append new READY and PARKED-DEP rows.
         snap = rd(Q + "/ready.tsv").splitlines()
         repl = {old: new for _j, _ids, old, new in unparks}
+        cooldown = Q + "/mergerate-recovery-at"
+        try: last = float(rd(cooldown))
+        except ValueError: last = 0
+        now = time.time()
+        if rate_recovered(now) and 0 <= last <= now - 3600:
+            for j, old, new in rate_candidates:
+                if old in snap and not any(x.split("\t")[0] == j for x in snap):
+                    # Write the cooldown first: interruption can delay, never accelerate, recovery.
+                    open(cooldown + ".tmp", "w").write(str(now)); os.replace(cooldown + ".tmp", cooldown)
+                    repl[old] = new; rate_unpark.append(j); break
         with open(Q + "/ready.tsv.tmp", "w") as f:
             for x in snap:
                 x = repl.pop(x, x)
@@ -390,6 +428,7 @@ for j, repo, l, tier, pf, p, i, deps in dep_out:
 for i, j, pc in done:
     lines[i] = re.sub(r"^- READY ", "- DONE-NOOP ", lines[i], count=1)
     ev("DONE-NOOP %s [precheck code=%d %s]" % (j, pc[0], pc[1]))
+for j in rate_unpark: ev("UNPARK %s reason=MERGERATE" % j)
 for j, ids, _old, _new in unparks:
     ev("UNPARK %s deps=%s" % (j, ",".join(ids)))
 for j, repo, l, tier, pf, p, i, deps in dep_out:

@@ -667,3 +667,36 @@ class PrecheckAuthoringTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class MergeRateRecoveryTests(unittest.TestCase):
+    def test_saturation_recovery_and_repeated_runs(self):
+        import time
+        tmp = build('# empty\n')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs' / 'queue'
+        rows = []
+        for n in range(2):
+            pf = q / 'prompts' / f'RQ-RATE-{n}.md'
+            pf.write_text('no merge without Security pin\n')
+            rows.append(f'PARKED-MERGERATE.devin\tRQ-RATE-{n}\tdevin\twork\tphantom\t{pf}')
+        (q / 'ready.tsv').write_text('\n'.join(rows) + '\n')
+        cache = home / '.ashlr-runs' / 'phantom-open-prs'
+        cache.write_text(f'{time.time()} 150\n')
+        for evidence in [f'{time.time()} 150\n', f'{time.time() - 601} 0\n', 'invalid\n']:
+            cache.write_text(evidence)
+            r = restock(home, '--per-lane', '0')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual((q / 'ready.tsv').read_text(), '\n'.join(rows) + '\n')
+        cache.write_text(f'{time.time()} 20\n')
+        r = restock(home, '--per-lane', '0')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('RQ-RATE-0\tphantom\tdevin\twork', (q / 'ready.tsv').read_text())
+        self.assertIn(rows[1], (q / 'ready.tsv').read_text())
+        before = (q / 'ready.tsv').read_text()
+        self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
+        self.assertEqual((q / 'ready.tsv').read_text(), before)
+        self.assertIn('no merge without Security pin', (q / 'prompts' / 'RQ-RATE-0.md').read_text())
+        (q / 'mergerate-recovery-at').write_text(str(time.time() - 3601))
+        self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
+        self.assertNotIn('PARKED-MERGERATE', (q / 'ready.tsv').read_text())
