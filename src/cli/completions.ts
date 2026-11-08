@@ -113,7 +113,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   fleet: [
     'status', 'session', 'watch', 'events', 'lanes', 'lane-slots', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
-    'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue', 'outcomes', 'backlog', 'lane-slots',
+    'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue', 'outcomes', 'backlog', 'board', 'lane-slots',
     'job-latency', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'pr-hygiene', 'bus', 'usage',
   ],
   bus: ['thread', 'task', '--peer', '--root', '--queue-root', '--json', '--help'],

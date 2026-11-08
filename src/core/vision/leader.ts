@@ -955,6 +955,13 @@ export interface LeaderRunDeps {
    * the answer labels the memo and never reaches a gate. Absent = no advice.
    */
   adviseActionClass?: LeaderActionAdvisor;
+  /**
+   * RQ-SWE3-LEADERLOOP-1: records this tick's Leader-as-CEO board at
+   * <runs>/coordination/leader-board.json for `phm fleet board`. Absent = the
+   * default local writer (fleet/leader-board.ts): loopback-safe, bounded,
+   * never throws. Injected in tests. Observations only — no authority.
+   */
+  board?: { record(nowMs: number): Promise<unknown> };
 }
 
 export async function loadDefaultLeaderRunDeps(cfg: AshlrConfig): Promise<LeaderRunDeps> {
@@ -1467,12 +1474,43 @@ export interface LeaderTickResult {
 }
 
 /**
+ * The board write a tick kicks off before its real work: reads local queue,
+ * ledger and needs-Mason files only. Awaiting it here (it never rejects)
+ * means `ashlr leader tick` lands the board before the process exits, while
+ * the daemon's tick deadline still bounds any pathological read.
+ */
+function recordLeaderBoardTick(deps: LeaderRunDeps, nowMs: number): Promise<void> {
+  const record = deps.board?.record;
+  try {
+    const job = record
+      ? Promise.resolve().then(() => record.call(deps.board, nowMs))
+      : import('../fleet/leader-board.js').then(m => m.recordLeaderBoard({ nowMs }));
+    return job.then(() => undefined, () => undefined);
+  } catch {
+    return Promise.resolve();
+  }
+}
+
+/**
  * One Leader tick — U5 calls this from the daemon's beforeTick (and `ashlr
  * leader tick` from the CLI). Fast by default: applies due class-B actions,
  * grades due moves, and STARTS a run when one is due without waiting for the
  * model (a memo can take minutes on a local model; a tick must not).
+ *
+ * Every tick — due or not, early return or not — also records the Leader
+ * board (RQ-SWE3-LEADERLOOP-1): the structured `fleet.leader-board.v1`
+ * state `phm fleet board` and the fleet's autonomous readers consume.
  */
 export async function leaderTick(deps: LeaderRunDeps, opts: { awaitRun?: boolean } = {}): Promise<LeaderTickResult> {
+  const boardJob = recordLeaderBoardTick(deps, deps.now());
+  try {
+    return await leaderTickOnce(deps, opts);
+  } finally {
+    await boardJob;
+  }
+}
+
+async function leaderTickOnce(deps: LeaderRunDeps, opts: { awaitRun?: boolean }): Promise<LeaderTickResult> {
   const nowMs = deps.now();
   // Both the resident daemon and CLI use this boundary. Away digests must
   // continue even when the daemon already consumed the ordinary memo cadence.
