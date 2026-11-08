@@ -141,7 +141,9 @@ unfinished attempt record its finish only once; a later launch starts a new
 attempt. These records do not remove the worktree or replace publisher recovery.
 The shared ledger reader also recognizes terminal records written by
 `metrics-outcomes reconcile`, including records written before a restart; their
-position in the ledger preserves the same launch boundaries.
+position in the ledger preserves the same launch boundaries. Reconciled PR outcomes
+are matched to the current attempt by URL, including when reconciliation finishes
+after a retry has launched; a previous PR cannot complete the new attempt.
 
 ## Adaptive concurrency and batching
 
