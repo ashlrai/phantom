@@ -19,8 +19,7 @@ as `PARKED-DEP.<lane>` rows with a `DEPENDENCY GATE:` id list in the prompt
 normal launch line and logs `UNPARK <job> deps=<ids>`. Unpark never rewrites the
 prompt body, so prose like `no merge without Security pin` stays put — unpark is
 not a merge. `phm fleet parked --json` lists the same parked rows and reports
-still-unmet gate ids under `unmetDeps`. Merge-rate parked Phantom rows recover at most one per hour, or one immediately when a fresh observed open-PR count falls, when the dispatcher’s
-open-PR count is less than 150 and less than 10 minutes old. Missing, stale or
+still-unmet gate ids under `unmetDeps`. Merge-rate parked Phantom rows recover at most one per hour with a fresh open-PR count, including at saturation. A count that falls below 150 permits one immediate recovery. The dispatcher’s count must be less than 10 minutes old. Missing, stale or
 invalid counts leave rows parked; the count measures backlog, not merge rate.
 The dispatcher refreshes that count and wakes the restocker while such rows
 remain, even when normal lane queues are full. Concurrent queue rewrites preserve

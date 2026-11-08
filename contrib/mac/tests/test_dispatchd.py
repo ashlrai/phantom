@@ -343,6 +343,49 @@ class RestockTriggerTests(unittest.TestCase):
         route_state = json.loads((home / '.ashlr-runs/queue/route-state.json').read_text())
         self.assertEqual(route_state, {})
 
+    def test_saturated_backlog_eventually_dispatches_through_precheck(self):
+        slots = held_lanes()
+        slots['devin'] = devin_slot(last_change=int(1e15))
+        tmp = build(slots=slots, queue_md='# queue\n')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name).resolve()
+        q = home / '.ashlr-runs/queue'
+        rows = []
+        for n in range(22):
+            prompt = q / 'prompts' / f'RQ-PROBE-{n}.md'
+            prompt.write_text(f'RQ-PROBE-{n} (repo=phantom): Required checks apply; no merge without Security pin\n')
+            rows.append(f'PARKED-MERGERATE.devin\tRQ-PROBE-{n}\tdevin\twork\tphantom\t{prompt}')
+        (q / 'ready.tsv').write_text('\n'.join(rows) + '\n')
+        (home / '.ashlr-runs/phantom-open-prs').write_text(f'{time.time()} 150\n')
+        precheck = home / '.ashlr-runs/bin/precheck.sh'
+        precheck.write_text('#!/bin/sh\necho checked >> "$HOME/prechecked"\nexit 13\n')
+        precheck.chmod(0o755)
+        restock_script = SCRIPT.parent / 'restock.py'
+        def recover():
+            return subprocess.run([sys.executable, '-B', str(restock_script), '--per-lane', '0'],
+                                  env={'HOME': str(home), 'PATH': str(home / 'stubbin') + ':' + os.environ.get('PATH', '/usr/bin:/bin')},
+                                  capture_output=True, text=True, timeout=60)
+        r = recover()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((q / 'ready.tsv').read_text().count('PARKED-MERGERATE.'), 21)
+        r = tick(home)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((home / 'prechecked').exists(), (r.stdout, r.stderr, events(home), ready_lines(home)))
+        self.assertIn('RQ-PROBE-0', json.loads((q / 'precheck-parked.json').read_text()))
+        self.assertFalse((q / 'run/RQ-PROBE-0.dispatched').exists())
+        self.assertIn('no merge without Security pin', (q / 'prompts/RQ-PROBE-0.md').read_text())
+        self.assertEqual(recover().returncode, 0)
+        self.assertEqual((q / 'ready.tsv').read_text().count('PARKED-MERGERATE.'), 21)
+        # Once the precheck becomes due and succeeds, the ordinary dispatcher claims it.
+        state = json.loads((q / 'precheck-parked.json').read_text())
+        state['RQ-PROBE-0']['retry_at'] = 0
+        (q / 'precheck-parked.json').write_text(json.dumps(state))
+        precheck.write_text('#!/bin/sh\necho passed >> "$HOME/prechecked"\nexit 0\n')
+        r = tick(home)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((q / 'run/RQ-PROBE-0.dispatched').exists())
+        self.assertIn('passed', (home / 'prechecked').read_text())
+
     def test_concurrent_unpark_survives_dispatcher_rewrite(self):
         from unittest.mock import patch
         for status_first in (True, False):

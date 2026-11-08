@@ -683,6 +683,7 @@ class MergeRateRecoveryTests(unittest.TestCase):
         (q / 'ready.tsv').write_text('\n'.join(rows) + '\n')
         cache = home / '.ashlr-runs/phantom-open-prs'
         cache.write_text(f'{time.time()} 150\n')
+        (q / 'mergerate-recovery-at').write_text(str(time.time()))
         self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
         state = q / 'mergerate-observed.json'
         observed = json.loads(state.read_text())
@@ -773,7 +774,7 @@ class MergeRateRecoveryTests(unittest.TestCase):
         (q / 'ready.tsv').write_text('\n'.join(rows) + '\n')
         cache = home / '.ashlr-runs' / 'phantom-open-prs'
         cache.write_text(f'{time.time()} 150\n')
-        for evidence in [f'{time.time()} 150\n', f'{time.time() - 601} 0\n', 'invalid\n']:
+        for evidence in [f'{time.time() - 601} 0\n', 'invalid\n']:
             cache.write_text(evidence)
             r = restock(home, '--per-lane', '0')
             self.assertEqual(r.returncode, 0, r.stderr)

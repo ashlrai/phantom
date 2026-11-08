@@ -193,8 +193,9 @@ for line in ready_raw:
     if any(d not in merged for d in ids): parked_diagnostics["waiting"] += 1; continue
     need[lane] = max(need[lane] - 1, 0)
     unparks.append((j, ids, line, "\t".join([j, repo, lane, tier, pf])))
-# Recover one Phantom job per hour only when the dispatcher's PR-count observation
-# is fresh and below its 150-PR saturation threshold. Unknown evidence stays parked.
+# Recover one Phantom job per hour when the dispatcher's PR-count observation
+# is fresh, including at saturation so a stalled queue can make progress.
+# Unknown evidence stays parked; the separate publish drip still applies.
 # The cooldown is checked and recorded under ready.lock, including across restarts.
 rate_candidates = []
 for line in ready_raw:
@@ -420,7 +421,7 @@ if out or unparks or dep_out or rate_candidates:
         count = rate_count(now)
         previous = observed.get("count")
         capacity_increased = isinstance(previous, int) and count is not None and count < previous
-        if count is not None and count < 150 and (capacity_increased or 0 <= last <= now - 3600):
+        if count is not None and ((count < 150 and capacity_increased) or 0 <= last <= now - 3600):
             # Recheck identities under the queue lock: a parked duplicate, an
             # active claim or an already completed attempt must never launch.
             current_claimed = {x.split("\t")[0] for x in rd(Q + "/claimed.tsv").splitlines() if x}
