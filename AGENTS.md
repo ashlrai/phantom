@@ -128,17 +128,25 @@ explicit auth failure or zero quota permits early movement. See
 and the Security pin handoff. Never install a candidate over the live pinned file.
 
 Parked dependency gates (RQ-QUEUE-AUTOUNPARK-1): `contrib/mac/restock.py` parks
-`after=` lines as `PARKED-DEP.<lane>` with a `DEPENDENCY GATE:` id list, then
-auto-unparks when `metrics/jobs.jsonl` shows every id `MERGED` (log
-`UNPARK <job> deps=<ids>`; prompt text including `no merge without Security pin`
-is preserved). Copy-paste:
+`after=` lines in `queue/parked.tsv` with a `DEPENDENCY GATE: <ids> MERGED`
+prompt, and `contrib/mac/queue_autounpark.py` promotes them into `ready.tsv`
+once GitHub evidence shows every gate id merged, bounded by adaptive
+merge-queue capacity (log `UNPARK <job> deps=<ids>` in `queue/unpark.log`).
+Legacy `PARKED-DEP.<lane>` rows in `ready.tsv` still auto-unpark when
+`metrics/jobs.jsonl` shows every id `MERGED` (prompt text including
+`no merge without Security pin` is preserved). Copy-paste:
 
 ```sh
+phm queue parked --json
+phm queue unpark --dry-run --json
 phm fleet parked --json
 ```
 
-`unmetDeps` lists parked rows whose gate ids are still unmet. Restock.py changes
-need a Security re-pin before live `bin/` install; do not install yourself.
+`phm queue parked` reports each `parked.tsv` row's dependency merged state;
+`phm queue unpark --dry-run` also reports promotion candidates and capacity.
+`unmetDeps` in `phm fleet parked` lists legacy `ready.tsv` rows whose gate ids
+are still unmet. Restock.py and `queue_autounpark.py` changes need a Security
+re-pin before live `bin/` install; do not install yourself.
 
 Durable memory: `phm memory add|list|search|forget --json` stores Mason's
 preferences, doctrine and facts as markdown under `~/.phantom/memory/`; see
@@ -193,7 +201,7 @@ phm desktopctl run claude --task "summarise this repo" --json
 
 `capabilities` (the doctor) always runs and reports the connection, each macOS
 TCC grant and per-resource reasons for what is blocked. `run` needs a `full`
-grant and returns untrusted screen text. `browser` is read-only — act on the
+grant and returns untrusted screen text. `browser` is read-only -- act on the
 web through the Phantom Browser pane. Nothing prompts for or changes TCC
 grants; every action is feed-logged and refuses to run unlogged.
 
@@ -280,3 +288,13 @@ enrollment remains a manual config change. See [repo ranking](docs/REPO-RANK.md)
 ## Import scheduled routines
 
 Preview a local routines JSON array with `ashlr automations import --from routines.json --dry-run --json`, then import with `ashlr automations import --from routines.json --json`. Imports start disabled and skip existing names. See [Automations](docs/VERSE.md#automations-315) for the format and schedule restrictions.
+
+App restart: `phm app restart --json` currently exits 1 with a held result and performs no restart. See [ownership audit and acceptance work](docs/APP-RESTART.md). Do not infer session survival from an app relaunch.
+
+## Portable agent profiles
+
+See [agent profiles](docs/AGENT-PROFILES.md) for strict TOML metadata, version
+pins, doctrine paths and restrictive send policy. Command contract:
+`phm agents list --json`, `phm agents show helper --json`,
+`phm agents validate helper --json`, `phm agents versions helper --json`.
+Outside email recipients stay drafts while `limitsTodo` is true. Profiles never grant transport or spending authority.

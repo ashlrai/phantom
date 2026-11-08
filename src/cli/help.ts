@@ -63,6 +63,7 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     safety: 'read',
     jsonShape: '{schemaVersion:1, command, status:"ready", nodes|edges|counts} | {schemaVersion:1, command, status:"unavailable"|"error", error:{code,message}}',
   },
+  { usage: 'phm app restart --json', description: 'Report held restart: UI-owned sessions, PTYs and computer-use workers require runtime migration. Does not restart or replace the app. Exit 1 held, 2 usage.', safety: 'read', jsonShape: '{schema: phantom-app-restart/v1, state: held, restarted: false, reason, blockers}' },
   { usage: 'phm route explain [--json]', description: 'Read persisted dispatcher pools and accepted route moves in the trailing hour.', safety: 'read', jsonShape: '{available, route-moves-per-hour: number|null, lines}' },
   { usage: 'ashlr router rank --tier <local|mid|frontier> [--routes FILE] [--slots pool=count ...] [--json]', description: 'Rank eligible lanes by forecast exhaustion, then nearest reset; missing slots or budgets exclude a lane. No dispatch or state writes.', safety: 'read', jsonShape: '{ schema: fleet.lane-rank.v1, tier, lanes: RankedLane[] }' },
   { usage: 'phm router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]', description: 'Compare recorded router predictions with matched outcomes and usage offline.', safety: 'read', jsonShape: 'CalibrationReport (schemaVersion 1)' },
@@ -529,7 +530,8 @@ export function agentDocsText(): string {
   lines.push('phantom_agent_bus_post, phantom_fleet_drop_job, phantom_fleet_job_reassign,');
   lines.push('phantom_fleet_planner_run, phantom_fleet_apps_ensure, phantom_fleet_apps_changes,');
   lines.push('phantom_fleet_apps_status, phantom_fleet_apps_await, phantom_fleet_orders,');
-  lines.push('phantom_fleet_graph, phantom_fleet_session. Tool discovery is not authorization.');
+  lines.push('phantom_fleet_graph, phantom_fleet_session, phantom_fleet_verbs.');
+  lines.push('Tool discovery is not authorization.');
   lines.push('App recovery observation tools: phantom_fleet_apps_history,');
   lines.push('phantom_fleet_apps_follow, phantom_fleet_apps_recovery_wait,');
   lines.push('phantom_fleet_apps_recovery_check, phantom_fleet_apps_recovery_batch.');
@@ -673,6 +675,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'desktopctl capabilities|status|run <resource> [--json]', desc: 'Drive Claude, Codex, Devin and a browser as interchangeable desktop resources. Flag-gated by ~/.ashlr/desktopctl.json; reports missing TCC grants, never prompts. Logged to the feed.', topic: 'core' },
   { cmd: 'desktop-update inspect|apply --stage <32hex> --json', desc: 'Verify signed paired updates; apply after native exit, Stop/drain and unchanged active grant. Never resumes the resident.', topic: 'core' },
   { cmd: 'app update status [--json]', desc: 'Inspect local desktop update status without downloading or installing. Read-only: reports current stage, available version, deferred reason, running job counts. Exit 0 success, 2 bad usage.', topic: 'core' },
+  { cmd: 'app restart --json', desc: 'Report a held restart while the native UI owns live runtime state; does not quit or update the app.', topic: 'core' },
   { cmd: 'update [--check] [--json]',    desc: 'Self-update; mutation requires service registration proven absent and not running. --check remains read-only.', topic: 'core' },
   { cmd: 'self-swap [--plan | --apply --supervised] [--json]', desc: 'Plan a versioned install swap; apply builds, probes, flips current and drains the old supervised process.', topic: 'core' },
   { cmd: 'upgrade [--check] [--json]',   desc: 'Same as update.', topic: 'core' },
@@ -841,6 +844,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'universe deliveries <id> [--root <path>] [--json]', desc: 'Read local delivery receipts; pending/degraded evidence is not completed or verified delivery.', topic: 'autonomy' },
   { cmd: 'eval [--limit N]',             desc: 'Local-agent eval harness: adaptive prompts OFF vs ON, steps/done/tokens (M44).', topic: 'run' },
   { cmd: 'eval attention [--window 1d|7d|30d]', desc: 'Metadata-only fleet attention report: context pressure, retrieval, yield, routing, and traces.', topic: 'run' },
+  { cmd: 'eval checkpoints --file <fixture.json> [--json]', desc: 'Compare scripted context retention and input-token estimates; requires PHANTOM_CHECKPOINTS=1.', topic: 'run' },
   { cmd: 'skills list [--status <s>] [--limit N] [--json]', desc: 'List skills learned from merged PRs (newest revision each; counts are real or "unknown").', topic: 'run' },
   { cmd: 'eval prompts --dataset <jobs.jsonl>', desc: 'Per-class prompt-variant A/B replay; promotes a variant only on a significant lift.', topic: 'run' },
   { cmd: 'skills audit <pack-path> [--json]', desc: 'Read-only quarantine audit for external skill structure, trigger routing, collisions, and behavioral fixtures.', topic: 'run' },

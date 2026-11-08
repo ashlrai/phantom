@@ -1917,6 +1917,23 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/activity ─────────────────────────────────────────
+    // RQ-SWE3-OBSERVABILITY-2: per-job launch->finish->publish lifecycle and
+    // timing folded from the host metrics ledger (metrics/jobs.jsonl) — the
+    // structured feed the UI renders live agent activity from instead of
+    // scraping worker logs. READ-ONLY bounded tail read; never throws on
+    // absent/degraded inputs; same no-auth read class as /api/fleet/lanes.
+    if (path === '/api/fleet/activity' && method === 'GET') {
+      const { readAgentActivity } = await import('../fleet/agent-activity.js');
+      const rawHours = Number(getQueryParam(req.url ?? '', 'hours'));
+      const rawLimit = Number(getQueryParam(req.url ?? '', 'limit'));
+      sendJson(res, 200, await readAgentActivity({
+        windowMs: Number.isFinite(rawHours) && rawHours > 0 ? Math.min(rawHours, 168) * 3_600_000 : undefined,
+        limit: Number.isSafeInteger(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 500) : undefined,
+      }));
+      return true;
+    }
+
     // ── GET /api/fleet/job ───────────────────────────────────────────────
     // RQ-PHX-JOBDETAIL: single-job detail from the dispatchd runs dir —
     // state, lane/model provenance, publish outcome and a scrubbed bounded

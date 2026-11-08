@@ -245,6 +245,11 @@ async function evalFixture(
 // ---------------------------------------------------------------------------
 
 export async function cmdEval(args: string[]): Promise<number> {
+  if (args[0] === 'checkpoints') {
+    const { cmdEvalCheckpoints } = await import('./eval-checkpoints.js');
+    return cmdEvalCheckpoints(args.slice(1));
+  }
+
   // M346: metadata-only fleet attention evaluation.
   if (args[0] === 'attention') {
     const { cmdEvalAttention } = await import('./eval-attention.js');
@@ -374,6 +379,7 @@ function printEvalHelp(): void {
   console.log(`    ashlr eval swe-bench [--fixtures] [--dataset <path>] [--engine <id>]`);
   console.log(`    ashlr eval router --dataset <jobs.jsonl> [--policy <name>] [--check <baseline.json>] [--json]`);
   console.log(`    ashlr eval prompts --dataset <jobs.jsonl> [--spec <experiment.json>] [--promote] [--json]`);
+  console.log(`    PHANTOM_CHECKPOINTS=1 ashlr eval checkpoints --file <fixture.json> [--json]`);
   console.log('');
   console.log('  ' + bold('Options:'));
   console.log('');
