@@ -24,6 +24,7 @@
 | disk | `src/cli/fleet-disk.ts` | Read-only disk-pressure view: free-GB trend from LEADER rows in the last 12 hours projected against the lane freeze and halve lines from queue/budget-overrides.json, plus the ten largest folders under the runs dir; unread sources print unknown | no |
 | drip | `src/cli/fleet-drip.ts` | Read-only open Phantom PRs vs the limit of 250, finished jobs waiting behind a `queue/run/<job>.phdrip` marker and the oldest marker age; unread sources print unknown | no |
 | edit-collisions | `src/cli/fleet-edit-collisions.ts` | Reads job detail, changes, text and bus inbox for a job ID | no |
+| eval-report | `src/cli/fleet-eval-report.ts` | Read-only `fleet.eval-report.v1` weekly "fleet IQ" report: per-merged-PR post-merge durability (reverted / regressed / followed-up / stable / pending / unobserved), revert and follow-up rates, CI-failure correlation and time-to-merge, rolled up by lane, tier, lane+tier and repo. Joins `metrics/jobs.jsonl`, repeatable `--prs` gh-shaped merged-PR exports and the signed post-merge observation ledger; `stable` requires the 72 h window elapsed under a covering evidence channel and `ranked` sorts on the Wilson lower bound | no |
 | grok-usage | `src/cli/fleet-grok-usage.ts` | Reads Grok usage metrics from a configured source | no |
 | job-class-share | `src/cli/fleet-job-class-share.ts` | Offline accounting only; share of finished-job tokens by class per lane | no |
 | job-read | `src/cli/fleet-job-read.ts` | Reads job detail, changes, text and bus inbox for a job ID | no |

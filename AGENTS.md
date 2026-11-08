@@ -115,6 +115,17 @@ ambiguous repeated boundaries are reported as unmeasured, not estimated;
 phase totals need not cover the whole wall time. Existing ledgers may not yet
 contain all boundaries.
 
+Fleet IQ: `phm fleet eval-report [--days 7] [--prs prs.json] --json` scores
+merged PRs post-merge — revert, regression and follow-up rates, CI-failure
+correlation, and time-to-merge — rolled up by lane, tier, lane+tier and repo
+(`fleet.eval-report.v1`). Evidence comes from `~/.ashlr-runs/metrics/jobs.jsonl`,
+repeatable `--prs` files of `gh pr list --state merged --json url,number,title,
+mergedAt,mergeCommit,files,statusCheckRollup,commits,body` output, and the
+signed post-merge observation ledger. A merge counts `stable` only when the
+72 h window elapsed under a covering evidence channel; uncovered merges are
+`unobserved`, and `ranked` sorts groups on the Wilson lower bound. Read-only;
+nothing merges, routes or releases credit.
+
 Merge queue drift protection: the Quick typecheck job runs the CODEOWNERS and
 Tier-1 import closure checks on every PR and merge queue candidate, including
 docs-only changes. A new Tier-1 test needs its generated CODEOWNERS entry in the
