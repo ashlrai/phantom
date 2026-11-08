@@ -367,7 +367,7 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     let recut42: { state: 'open' | 'closed'; merged: boolean } | null = null;
     let closed7 = false;
     const recutSha = () => git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut').split('\t')[0] || head;
-    const pr42 = () => ({ number: 42, state: recut42?.state ?? 'open', merged: recut42?.merged ?? false, draft: false, title: 'the change', user: { login: 'bot' }, head: { ref: 'improve/sum-recut', sha: recutSha(), repo: { full_name: 'o/r' } }, base: { ref: 'main', sha: base }, mergeable: true, mergeable_state: 'clean' });
+    const pr42 = () => ({ number: 42, state: recut42?.state ?? 'open', merged: recut42?.merged ?? false, auto_merge: null, draft: false, title: 'the change', user: { login: 'bot' }, head: { ref: 'improve/sum-recut', sha: recutSha(), repo: { full_name: 'o/r' } }, base: { ref: 'main', sha: base }, mergeable: true, mergeable_state: 'clean' });
     const gh: Gh = async (args) => {
       const path = args[args.length - 1]!;
       calls.push(args.join(' '));
@@ -509,6 +509,42 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     await tick(opts);
     expect(mergeCalls).toBe(3);
     expect(f.calls.filter((c) => c.includes('POST repos/o/r/pulls'))).toHaveLength(1);
+  });
+
+  it('backs off rate limits across ticks and recovers without opening another PR', async () => {
+    const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`, { queued: true });
+    let calls = 0;
+    let time = Date.parse('2026-01-01T00:00:00Z');
+    const gh: Gh = async (args) => {
+      if (args[0] === 'pr' && args[1] === 'merge' && ++calls === 1) throw new Error('HTTP 429 rate limit');
+      return f.gh(args);
+    };
+    const opts = { repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [] as string[][], ownedPrefixes: ['improve/'], gh, guards: () => ({ killSwitch: false, paused: false }), now: () => new Date(time) };
+    expect((await tick(opts)).detail.join(' ')).toContain('retry after 2026-01-01T00:00:30.000Z');
+    expect((await tick(opts)).detail.join(' ')).toContain('rate limited');
+    expect(calls).toBe(1);
+    time += 30_000;
+    expect(await tick(opts)).toMatchObject({ result: 'requeued' });
+    await tick(opts);
+    expect(calls).toBe(2);
+    expect(f.calls.filter((c) => c.includes('POST repos/o/r/pulls'))).toHaveLength(1);
+  });
+
+  it('reconciles an accepted submission after a lost response without submitting twice', async () => {
+    const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`, { queued: true });
+    let calls = 0;
+    let accepted = false;
+    const gh: Gh = async (args) => {
+      if (args[0] === 'pr' && args[1] === 'merge') { calls++; accepted = true; throw new Error('connection lost'); }
+      const response = await f.gh(args);
+      if (accepted && args[args.length - 1]?.endsWith('/pulls/42')) return JSON.stringify({ ...JSON.parse(response), auto_merge: { enabled_by: { login: 'bot' } } });
+      return response;
+    };
+    const opts = { repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [] as string[][], ownedPrefixes: ['improve/'], gh, guards: () => ({ killSwitch: false, paused: false }) };
+    await tick(opts);
+    expect((await tick(opts)).detail.join(' ')).toContain('already has auto-merge enabled');
+    await tick(opts);
+    expect(calls).toBe(1);
   });
 
   it('gives up requeueing after three refusals and says a person queues it, still without a second PR', async () => {
