@@ -335,6 +335,13 @@ class RestockTriggerTests(unittest.TestCase):
         self.assertTrue(called.exists())
         self.assertEqual((home / '.ashlr-runs/phantom-open-prs').read_text().split()[1], '20')
         self.assertEqual(ready_lines(home), rows)
+        status = json.loads((home / '.ashlr-runs/queue/status.json').read_text())
+        self.assertEqual(status['lanes']['devin']['queued'], 0)
+        self.assertEqual(status['invalid_queue_lines'], 0)
+        metrics = (home / '.ashlr-runs/metrics/jobs.jsonl').read_text()
+        self.assertNotIn('"event": "enqueue"', metrics)
+        route_state = json.loads((home / '.ashlr-runs/queue/route-state.json').read_text())
+        self.assertEqual(route_state, {})
 
     def test_concurrent_unpark_survives_dispatcher_rewrite(self):
         from unittest.mock import patch

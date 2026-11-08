@@ -858,6 +858,9 @@ def qlock(who="dispatchd", timeout=None):
 lk = qlock("dispatchd-read")
 if lk is None: log("ready.lock busy; tick skipped"); raise SystemExit(0)
 _raw = rd(Q + "/ready.tsv").splitlines()
+def parked_row(line):
+    fields = line.split("\t")
+    return fields[0].startswith("PARKED-") or (len(fields) > 2 and fields[2].startswith("PARKED-"))
 # Invalid persisted history must not silently reset the move budget.
 try:
     route_state = json.loads(rd(Q + "/route-state.json")) if os.path.exists(Q + "/route-state.json") else {}
@@ -870,7 +873,7 @@ except (ValueError, TypeError, KeyError, AssertionError):
 routed = []
 for line in _raw + requeue:
     f = line.split("\t")
-    if len(f) < 5 or not JID.fullmatch(f[0]) or f[2] not in LANES:
+    if parked_row(line) or len(f) < 5 or not JID.fullmatch(f[0]) or f[2] not in LANES:
         routed.append(line); continue
     job, proposed = f[0], f[2]
     previous = route_state.get(job)
@@ -895,7 +898,7 @@ lines = [l for l in routed if l.strip() and not l.startswith("#")]
 # Per-job receipts survive ticks and queue rewrites without rescanning the metrics log.
 for l in lines:
     f = l.split("\t")
-    if len(f) < 5 or not JID.fullmatch(f[0]) or f[2] not in LANES or f[3] not in TIERS: continue
+    if parked_row(l) or len(f) < 5 or not JID.fullmatch(f[0]) or f[2] not in LANES or f[3] not in TIERS: continue
     receipt = RUN + "/" + f[0] + ".enqueued"
     try:
         with open(receipt, "x") as out: out.write(str(time.time()))
@@ -907,7 +910,7 @@ for l in lines:
 qdepth = {l: 0 for l in LANES}
 for l in lines:
     f = l.split("\t")
-    if len(f) >= 3 and f[2] in qdepth: qdepth[f[2]] += 1
+    if not parked_row(l) and len(f) >= 3 and f[2] in qdepth: qdepth[f[2]] += 1
 
 def api_pace():   # claude-api: slot target comes from the credit burn plan, not memory pressure
     try:
@@ -1014,6 +1017,8 @@ if disk_hard_stop: ev("DISKGUARD hard_stop %.0fG < %.0fG, no launches" % (disk_f
 if not pause and not disk_hard_stop and not GATE["tripped"]:
     cand = []
     for l in lines:
+        if parked_row(l):
+            rest.append(l); continue
         f = l.split("\t")
         ok = (len(f) >= 5 and JID.match(f[0]) and f[2] in LANES and f[3] in TIERS
               and os.path.isdir(H + "/Projects/ashlrai/" + f[1]) and "/" not in f[1]
@@ -1179,9 +1184,7 @@ old_counts, current_counts = Counter(_raw), Counter(current)
 removed = old_counts - current_counts
 survivors = []
 for l in rest:
-    fields = l.split("\t")
-    parked = fields[0].startswith("PARKED-") or (len(fields) > 2 and fields[2].startswith("PARKED-"))
-    if parked and removed[l]: removed[l] -= 1
+    if parked_row(l) and removed[l]: removed[l] -= 1
     else: survivors.append(l)
 rest = survivors
 added = current_counts - old_counts
@@ -1199,7 +1202,7 @@ if rate_parked: _ph_open_prs()
 for lane in ("codex-cmp", "codex-personal", "devin", "claude-api", "codex-local"):
     sl = slots[lane]
     if sl.get("held") or lane in hold: continue
-    qn = sum(1 for l in rest if not l.startswith("PARKED-") and l.split("\t")[2:3] == [lane])
+    qn = sum(1 for l in rest if not parked_row(l) and l.split("\t")[2:3] == [lane])
     if (rate_parked or qn < 3 * max(sl["target"] - running[lane], 4)) and os.path.exists(Q + "/router-queue.md") and not os.path.exists(Q + "/RESTOCK_OFF"):
         subprocess.Popen(["/bin/bash", R + "/bin/restock.sh"], stdin=subprocess.DEVNULL, stdout=open(Q + "/restock.log", "a"),
                          stderr=subprocess.STDOUT, start_new_session=True)
@@ -1208,7 +1211,7 @@ for lane in ("codex-cmp", "codex-personal", "devin", "claude-api", "codex-local"
 qdepth = {l: 0 for l in LANES}
 for l in rest:
     f = l.split("\t")
-    if len(f) >= 3 and f[2] in qdepth: qdepth[f[2]] += 1
+    if not parked_row(l) and len(f) >= 3 and f[2] in qdepth: qdepth[f[2]] += 1
 pubs = []
 for p in glob.glob(R + "/*.publish"):
     if NOW - os.path.getmtime(p) > 86400: continue
