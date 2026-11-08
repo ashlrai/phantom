@@ -36,6 +36,7 @@
 | filler-yield | `src/cli/fleet-filler-yield.ts` | Read-only per-repo yield of author-filler jobs (`RQ-…A…Q8`) from metrics/jobs.jsonl: launches, code-13 precheck skips, empty finishes, MERGED outcomes; red (exit 1) when skips are over half of 10+ rows; unread file prints unknown | no |
 | launch-proof | `src/cli/fleet-launch-proof.ts` | Read one status snapshot and one live process table; never dispatch work | no |
 | memory | `src/cli/fleet-memory.ts` | Read-only host memory view: memstat.json free/swap/disk plus .memguard2.json level and stopped ids | no |
+| merge-batch | `src/cli/fleet-merge-batch.ts` | Read-only merge-batch planner: groups an open-PR snapshot (gh pr list array, merge-backlog read or pr-hygiene report via --input/stdin/<root>/fleet/open-prs.json) into file-overlap batches, scores conflict risk and emits the least-rebase-churn order as fleet.merge-batch.v1; never calls gh | no |
 | mission | `src/cli/fleet-mission.ts` | Read-only briefing of the Mac fleet. `ashlr fleet mission --json` prints `fleet.mission.v1`, the same document as `GET /api/verse/fleet/runs/mission`: health, merges this hour, what needs a look, and the detail behind them. Missing files stay unknown | no |
 | meter-drop | `src/cli/fleet-meter-drop.ts` | Read-only meter drop verdict from lane state and meter samples | no |
 | orders | `src/cli/fleet-orders.ts` | Read-only order coverage and job states, with optional age and uncovered filters; omits order bodies | no |
