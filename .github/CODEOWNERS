@@ -433,6 +433,7 @@
 /test/fleet-ship-gap-31.test.ts @masonwyatt23
 /test/fleet-ship-gap-stage.test.ts @masonwyatt23
 /test/fleet-staging-budget-reconcile-05-stf2.test.ts @masonwyatt23
+/test/fleet-sticky-loop.test.ts @masonwyatt23
 /test/fleet-stray-slots-gate-sole3.test.ts @masonwyatt23
 /test/fleet-superseded-read.test.ts @masonwyatt23
 /test/gate.test.ts @masonwyatt23
