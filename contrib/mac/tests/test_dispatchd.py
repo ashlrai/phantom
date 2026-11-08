@@ -1134,7 +1134,7 @@ if __name__ == '__main__':
 
 
 class DiffMetricsTests(unittest.TestCase):
-    def measure(self, scenario, base_override=None):
+    def measure(self, scenario, base_override=None, lane='codex-cmp', log='finished\n', rc=None):
         tmp = build(slots=held_lanes())
         self.addCleanup(tmp.cleanup)
         home = Path(tmp.name)
@@ -1157,10 +1157,11 @@ class DiffMetricsTests(unittest.TestCase):
         base = base_override or git('rev-parse', 'HEAD')
         scenario(wt, git)
         r = home / '.ashlr-runs'
-        for path, content in [(r / f'{job}.base', f'{base} phantom {wt} codex-cmp\n'),
-                              (r / f'{job}.log', 'finished\n')]:
+        for path, content in [(r / f'{job}.base', f'{base} phantom {wt} {lane}\n'),
+                              (r / f'{job}.log', log)]:
             path.write_text(content)
             os.utime(path, (time.time() - 600, time.time() - 600))
+        if rc is not None: (r / 'queue/run' / f'{job}.rc').write_text(str(rc))
         (r / 'bin/reap-one.sh').write_text('#!/bin/sh\nexit 0\n')
         (r / 'phantom-open-prs').write_text(f'{int(time.time())} 0\n')
         result = tick(home)
@@ -1191,6 +1192,17 @@ class DiffMetricsTests(unittest.TestCase):
     def test_missing_base_records_unknown_instead_of_zero(self):
         row = self.measure(lambda wt, git: None, base_override='0' * 40)
         self.assertEqual((row['diff_files'], row['diff_lines'], row['empty']), (None, None, None))
+
+    def test_devin_failure_labels_do_not_copy_log_contents(self):
+        for log, expected in [('ERROR: 401 Unauthorized private-value\n', 'authentication'),
+                              ('ERROR: ACU limit reached private-value\n', 'quota'),
+                              ('private-value\n', 'failed_empty_unknown')]:
+            with self.subTest(expected=expected):
+                row = self.measure(lambda wt, git: None, lane='devin', log=log, rc=1)
+                self.assertEqual(row['failure_class'], expected)
+                self.assertNotIn('private-value', json.dumps(row))
+        row = self.measure(lambda wt, git: (wt / 'job-file').write_text('work'), lane='devin', rc=1)
+        self.assertEqual(row['failure_class'], 'failed_with_work')
 
 
 class SnapshotSafetyTests(unittest.TestCase):
