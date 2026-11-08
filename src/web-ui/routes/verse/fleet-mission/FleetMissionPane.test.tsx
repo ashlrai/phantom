@@ -61,6 +61,25 @@ it('shows the briefing first and opens one detail at a time', async () => {
   expect(screen.getByText('41% free')).toBeInTheDocument();
 });
 
+it('shows the devin lane time left with its provider mark, and leaves unmetered lanes mark-free and unreported', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+    ...briefing,
+    resources: [
+      { id: 'devin', label: 'Devin', leftPct: 58, creditsLeft: null, resetAt: '2026-11-30T00:00:00Z' },
+      { id: 'terra', label: 'Terra', leftPct: null, creditsLeft: null, resetAt: null },
+    ],
+  })));
+  render(<FleetMissionPane visible />);
+  expect(await screen.findByRole('heading', { name: 'Something needs a look.' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Time left' }));
+  const devinRow = screen.getByText('58% left · resets 2026-11-30 00:00 UTC').closest('li');
+  expect(devinRow).not.toBeNull();
+  expect(devinRow?.querySelector('svg[data-provider="devin"]')).not.toBeNull();
+  const terraRow = screen.getByText('Time left has not reported').closest('li');
+  expect(terraRow).not.toBeNull();
+  expect(terraRow?.querySelector('svg')).toBeNull();
+});
+
 it('says a missing slice has not reported, and survives a missing route', async () => {
   const empty = {
     ...briefing,

@@ -1322,7 +1322,8 @@ export async function handleApi(
     // ── GET /api/snapshot ───────────────────────────────────────────────────
     if (path === '/api/resource' && method === 'GET') {
       const { readResourceView } = await import('../fabric/resource-view-store.js');
-      sendJson(res, 200, await readResourceView());
+      const { readDevinUsage } = await import('../fabric/readers/devin-usage.js');
+      sendJson(res, 200, await readResourceView(undefined, undefined, undefined, readDevinUsage));
       return true;
     }
 

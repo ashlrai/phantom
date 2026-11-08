@@ -7,6 +7,7 @@ import { privateDirectory } from '../universe/artifacts.js';
 import { acquireLocalStoreLockWithOutcome, ownsLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { buildResourceView, MACHINE_MAX_AGE_MS, resourceObject, type ResourceView } from './resource-view.js';
+import { withDevinUsage, type DevinUsageResult } from './readers/devin-usage.js';
 
 const MAX_BYTES = 8 * 1024 * 1024;
 export function resourceViewDirectory(): string { return join(homedir(), '.ashlr'); }
@@ -44,8 +45,19 @@ function readFleetSync(file: string): Record<string, unknown> {
   } finally { closeSync(fd); }
 }
 
+/** Live Devin reads join the same custody reader the usage panel uses; a slow first read never stalls the view. */
+export const DEVIN_READ_BOUND_MS = 4_000;
+
+async function mergeDevin(fleet: Record<string, unknown>, read: () => Promise<DevinUsageResult>): Promise<Record<string, unknown>> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([withDevinUsage(fleet, read),
+      new Promise<Record<string, unknown>>(resolve => { timer = setTimeout(() => resolve(fleet), DEVIN_READ_BOUND_MS); timer.unref?.(); })]);
+  } finally { clearTimeout(timer); }
+}
+
 /** UI reads are async and bounded. Missing, unsafe or corrupt input is unknown, never zero. */
-async function readFleetView(directory: string, nowMs: number): Promise<ResourceView> {
+async function readFleetView(directory: string, nowMs: number, devinRead?: () => Promise<DevinUsageResult>): Promise<ResourceView> {
   try {
     const handle = await open(join(directory, 'fleet.json'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
@@ -58,7 +70,8 @@ async function readFleetView(directory: string, nowMs: number): Promise<Resource
         offset += bytesRead;
       }
       if (offset !== stat.size || !sameFile(stat, await handle.stat())) return buildResourceView({}, nowMs);
-      return buildResourceView(parseFleet(buffer.subarray(0, offset).toString('utf8')), nowMs);
+      const fleet = parseFleet(buffer.subarray(0, offset).toString('utf8'));
+      return buildResourceView(devinRead === undefined ? fleet : await mergeDevin(fleet, devinRead), nowMs);
     } finally { await handle.close(); }
   } catch { return buildResourceView({}, nowMs); }
 }
@@ -112,8 +125,9 @@ async function readControllerMemory(root: string, nowMs: number): Promise<Resour
 }
 
 export async function readResourceView(directory = resourceViewDirectory(), nowMs = Date.now(),
-  runsDir = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs')): Promise<ResourceView> {
-  const [view, controllerMemory] = await Promise.all([readFleetView(directory, nowMs), readControllerMemory(runsDir, nowMs)]);
+  runsDir = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'),
+  devinRead?: () => Promise<DevinUsageResult>): Promise<ResourceView> {
+  const [view, controllerMemory] = await Promise.all([readFleetView(directory, nowMs, devinRead), readControllerMemory(runsDir, nowMs)]);
   return controllerMemory ? { ...view, controllerMemory } : view;
 }
 
