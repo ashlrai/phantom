@@ -42,6 +42,8 @@ A zero exit code is not a merge and not permission to spend. `phm docs --agent -
 | Use the console | [Phantom user guide](VERSE.md) |
 | Choose chat or fleet work | [Automatic work](AUTOMATIC-OUTCOMES.md) |
 
+Synthetic integration checks: [Chain verification](CHAIN-VERIFY.md).
+
 ## All tasks
 
 Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlrai/phantom/blob/master/docs/grokbot-lane.md).

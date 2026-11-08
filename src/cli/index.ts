@@ -2057,6 +2057,11 @@ async function main(): Promise<void> {
 
   try {
     switch (cmd) {
+      case 'chain': {
+        const { cmdChain } = await import('./chain.js');
+        process.exitCode = await cmdChain(rest);
+        break;
+      }
       case 'route': {
         const { cmdRoute } = await import('./route.js');
         process.exitCode = await cmdRoute(rest);

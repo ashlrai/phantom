@@ -63,6 +63,7 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     safety: 'read',
     jsonShape: '{schemaVersion:1, command, status:"ready", nodes|edges|counts} | {schemaVersion:1, command, status:"unavailable"|"error", error:{code,message}}',
   },
+  { usage: 'phm chain verify [--json]', description: 'Exercise synthetic in-memory chain paths; never sends or checks live transport. Exit 0 pass, 1 failure, 2 usage.', safety: 'read', jsonShape: 'phantom.chain.verify.v1; per-link status and latency' },
   { usage: 'phm route explain [--json]', description: 'Read persisted dispatcher pools and accepted route moves in the trailing hour.', safety: 'read', jsonShape: '{available, route-moves-per-hour: number|null, lines}' },
   { usage: 'ashlr router rank --tier <local|mid|frontier> [--routes FILE] [--slots pool=count ...] [--json]', description: 'Rank eligible lanes by forecast exhaustion, then nearest reset; missing slots or budgets exclude a lane. No dispatch or state writes.', safety: 'read', jsonShape: '{ schema: fleet.lane-rank.v1, tier, lanes: RankedLane[] }' },
   { usage: 'phm router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]', description: 'Compare recorded router predictions with matched outcomes and usage offline.', safety: 'read', jsonShape: 'CalibrationReport (schemaVersion 1)' },
