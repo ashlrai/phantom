@@ -248,7 +248,7 @@ test('generated notes normalize below Unreleased without losing previous text', 
   const source = `# Changelog\n\n## [3.30.1](https://github.com/ashlrai/phantom/compare/v3.30.0...v3.30.1) (2026-11-05)\n\n${body}## [Unreleased]\n\nFuture notes.\n\n${old}`;
   const normalized = normalizeReleaseNotes(source, '3.30.1');
   assert.ok(normalized.indexOf('## [Unreleased]') < normalized.indexOf('## [3.30.1]'));
-  assert.ok(normalized.includes('## [3.30.1] — 2026-11-05'));
+  assert.ok(normalized.includes('## [3.30.1] - 2026-11-05'));
   assert.ok(normalized.includes('Future notes.'));
   assert.ok(normalized.endsWith(old));
   assert.equal(normalizeReleaseNotes(normalized, '3.30.1'), normalized);

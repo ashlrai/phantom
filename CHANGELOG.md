@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.24 |
-| Latest dated changelog release (2026-11-07) | 3.30.24 |
+| Source package | 3.30.25 |
+| Latest dated changelog release (2026-11-08) | 3.30.25 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -17,6 +17,8 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ---
 
 ## [Unreleased]
+
+## [3.30.25] - 2026-11-08
 
 ### Added
 
