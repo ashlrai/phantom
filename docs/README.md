@@ -326,3 +326,4 @@ canonical release guide for required hosted qualification and publication.
 
 - [Rebase-wave status](FLEET-REBASE-STATUS.md) — read-only conflict and queue coverage snapshot.
 - [Merge-batch planner](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-BATCH.md) — read-only file-overlap batching of open PRs with a least-rebase-churn order.
+- [Rebase-plan](FLEET-REBASE-PLAN.md) — read-only conflict-to-queue wiring: clusters conflicting bridge PRs by file overlap and emits ready.tsv-ready rebase-job specs.
