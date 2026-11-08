@@ -2,6 +2,7 @@
 export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<string, unknown>>> = {
   'aborts': () => import('./fleet-aborts.js'),
   'act': () => import('./fleet-act.js'),
+  'activity': () => import('./fleet-activity.js'),
   'admission': () => import('./fleet-admission.js'),
   'api-pools': () => import('./fleet-api-pools.js'),
   'app': () => import('./fleet-app.js'),
