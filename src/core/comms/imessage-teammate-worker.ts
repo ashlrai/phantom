@@ -12,7 +12,7 @@ import { ensurePrivateDirectory } from '../verse/preferences.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { scrubSecrets } from '../util/scrub.js';
-import { markTeammateTextsAnswered, readTeammateTexts } from './imessage-teammate-inbox.js';
+import { classifyTeammateIntent, markTeammateTextsAnswered, readTeammateTexts } from './imessage-teammate-inbox.js';
 import { approvedTeammateHandle, reconcileTeammateMessage, sendApprovedTeammateMessage, type TeamMessageReceipt, type TeamTransportOptions } from './imessage-teammate-transport.js';
 
 interface Reply { rowid: number; senderId: string; state: 'claimed' | 'drafted' | 'sending' | 'sent' | 'suppressed'; at: number; claimUntil: number; text?: string; attemptedAt?: number; receipt?: TeamMessageReceipt }
@@ -29,22 +29,9 @@ export interface TeammateWorkerOptions extends TeamTransportOptions {
 const MAX_BYTES = 1024 * 1024;
 const CLAIM_MS = 120000;
 
-/** Pure acknowledgements cannot cause agent-to-agent acknowledgement loops. */
-export function teammateNeedsReply(text: string): boolean {
-  // Code chunks often contain question marks/requests as source literals. They are
-  // artifacts to retain, never conversation requests to answer once per chunk.
-  if (/^.{0,80}\b(?:patch|artifact|chunk)\s+\d+\/\d+\b/i.test(text) || /^(?:diff --git |--- [ab/] |```)/.test(text)) return false;
-  return !/^\s*(ack(?:nowledged)?|thanks|thank you|received|noted|got it|ok(?:ay)?|👍)[.!\s]*$/i.test(text)
-    && /\?|\b(?:please|can you|could you|request(?:ing)?|need you|probe)\b/i.test(text);
-}
-
-/** Keep requests for a decision or action in the local inbox for leader review. */
-export function classifyTeammateIntent(text: string): 'ignore' | 'reply' | 'leader' {
-  if (!teammateNeedsReply(text)) return 'ignore';
-  if (/\b(?:approve|approval|authorize|authorise|permission|decision|decide|escalat\w*|leader|mason)\b/i.test(text)
-      || /\b(?:please|can you|could you|need you to)\s+(?:deploy|release|ship|merge|delete|remove|change|create|pay|buy|run|execute)\b/i.test(text)) return 'leader';
-  return 'reply';
-}
+// Pure intent classifiers live in the leaf inbox module so read-only observers
+// (the unified comms inbox) never pull the responder's transport/model graph.
+export { classifyTeammateIntent, teammateNeedsReply } from './imessage-teammate-inbox.js';
 
 function read(file: string, anchor: string, maxBytes: number): string | null {
   if (!existsSync(file)) return null;

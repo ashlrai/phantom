@@ -585,6 +585,7 @@ function printCommsHelp(): void {
   console.log('  Compatible alias: ashlr comms <command>');
   console.log('');
   console.log('    bus post|read                durable local JSON inbox (bus --help)');
+  console.log('    inbox [--json]               unified pending view: needs-you, teammate texts, drafts, unclaimed bus work');
   console.log('    inbox read|post              Mason inbox for local operators (inbox --help)');
   console.log('    email-drop <dir> --from <a>  ingest .eml files from a drop folder (allowlisted From only)');
   console.log('    email-cycle                  process the enabled saved email drop configuration');

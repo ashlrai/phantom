@@ -37,6 +37,23 @@ export function senderIdFor(handle: string): string {
 
 export type TeammateSourceState = 'healthy' | 'missing' | 'degraded';
 
+/** Pure acknowledgements cannot cause agent-to-agent acknowledgement loops. */
+export function teammateNeedsReply(text: string): boolean {
+  // Code chunks often contain question marks/requests as source literals. They are
+  // artifacts to retain, never conversation requests to answer once per chunk.
+  if (/^.{0,80}\b(?:patch|artifact|chunk)\s+\d+\/\d+\b/i.test(text) || /^(?:diff --git |--- [ab/] |```)/.test(text)) return false;
+  return !/^\s*(ack(?:nowledged)?|thanks|thank you|received|noted|got it|ok(?:ay)?|👍)[.!\s]*$/i.test(text)
+    && /\?|\b(?:please|can you|could you|request(?:ing)?|need you|probe)\b/i.test(text);
+}
+
+/** Keep requests for a decision or action in the local inbox for leader review. */
+export function classifyTeammateIntent(text: string): 'ignore' | 'reply' | 'leader' {
+  if (!teammateNeedsReply(text)) return 'ignore';
+  if (/\b(?:approve|approval|authorize|authorise|permission|decision|decide|escalat\w*|leader|mason)\b/i.test(text)
+      || /\b(?:please|can you|could you|need you to)\s+(?:deploy|release|ship|merge|delete|remove|change|create|pay|buy|run|execute)\b/i.test(text)) return 'leader';
+  return 'reply';
+}
+
 export interface TeammateText {
   at: string;
   rowid: number;
