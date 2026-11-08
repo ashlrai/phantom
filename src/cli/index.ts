@@ -63,6 +63,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { loadConfig, saveConfig, CONFIG_PATH } from '../core/config.js';
@@ -2057,6 +2059,18 @@ async function main(): Promise<void> {
 
   try {
     switch (cmd) {
+      case 'check': {
+        const script = resolve(process.cwd(), 'scripts/gate.mjs');
+        if (!existsSync(script)) {
+          console.error('phm check: run from the Phantom repository root (scripts/gate.mjs missing)');
+          process.exitCode = 2;
+          break;
+        }
+        const result = spawnSync(process.execPath, [script, '--check', ...rest], { stdio: 'inherit' });
+        if (result.error) console.error(`phm check: ${result.error.message}`);
+        process.exitCode = result.status ?? 1;
+        break;
+      }
       case 'route': {
         const { cmdRoute } = await import('./route.js');
         process.exitCode = await cmdRoute(rest);

@@ -55,17 +55,19 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const GATE_DIR = '.ashlr-gate';
 export const DEFAULT_BASE_REF = 'origin/master';
 
-const USAGE = `usage: node scripts/gate.mjs [--full] [--base <ref>] [--json] [--fail-fast]
+const USAGE = `usage: node scripts/gate.mjs [--full | --check] [--base <ref>] [--json] [--fail-fast]
   --full        run the complete backend and web suites (npm run gate:full)
+  --check       fast development feedback; no build or first-paint check
   --base <ref>  select tests changed since the merge-base with <ref> (default ${DEFAULT_BASE_REF})
   --json        print one JSON result object on stdout instead of the table
   --fail-fast   stop after the first phase that fails (default: only a failed build stops the tests)`;
 
 export function parseArgs(argv) {
-  const out = { full: false, base: null, json: false, failFast: false, help: false };
+  const out = { full: false, check: false, base: null, json: false, failFast: false, help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--full') out.full = true;
+    else if (arg === '--check') out.check = true;
     else if (arg === '--json') out.json = true;
     else if (arg === '--fail-fast') out.failFast = true;
     else if (arg === '-h' || arg === '--help') out.help = true;
@@ -79,6 +81,8 @@ export function parseArgs(argv) {
       if (!out.base) throw new Error('--base needs a ref');
     } else throw new Error(`unknown argument ${arg}`);
   }
+  if (out.full && out.check) throw new Error('--full and --check cannot be combined');
+  if (out.check && out.failFast) throw new Error('--check runs all checks concurrently; --fail-fast has no effect');
   if (out.full && out.base) throw new Error('--full runs every test; --base has no effect with it');
   return out;
 }
@@ -511,6 +515,31 @@ async function main() {
     say(`  ${step.status === 'pass' ? '✓' : step.status === 'skipped' ? '-' : '✗'} ${step.name} ${step.durationMs == null ? '' : formatDuration(step.durationMs)}`);
     return step;
   };
+
+  if (args.check) {
+    // Development feedback only: full release checks remain in gate. Each compiler
+    // owns its cache, and tests have isolated homes just as in the gate.
+    const checkSteps = [
+      { name: 'typecheck', cmd: node, args: [bin.tsc, '--noEmit', '--incremental', '--tsBuildInfoFile', join(GATE_DIR, 'check-backend.tsbuildinfo'), '-p', 'tsconfig.json'] },
+      { name: 'typecheck-web', cmd: node, args: [bin.tsc, '--noEmit', '--incremental', '--tsBuildInfoFile', join(GATE_DIR, 'check-web.tsbuildinfo'), '-p', 'src/web-ui/tsconfig.json'] },
+      { name: 'eslint', cmd: node, args: [bin.eslint, '--cache', '--cache-location', join(GATE_DIR, 'eslintcache'), '.'] },
+    ];
+    const workers = Math.max(1, Math.min(6, Math.floor(availableParallelism() / 3)));
+    await Promise.all([
+      ...checkSteps.map((step) => runStatic(step).then(record)),
+      runSuite('backend', plan.backend, known, null).then(record),
+      runSuite('web', plan.web, known, workers).then(record),
+    ]);
+    const ok = steps.every((step) => step.status === 'pass');
+    const durationMs = Math.round(performance.now() - started);
+    if (args.json) console.log(JSON.stringify({ ok, mode: 'check', base: { ref: baseRef, mergeBase: changes.mergeBase, changedFiles: changes.changed }, durationMs, steps }, null, 2));
+    else {
+      console.log(`\n${renderTable(steps)}`);
+      for (const step of steps.filter((item) => item.status === 'fail')) console.log(`\n── ${step.name} (${relative(repoRoot, step.logPath)}):\n${tail(step.logPath, 25)}`);
+      console.log(`\nCHECK ${ok ? 'PASS' : 'FAIL'} in ${formatDuration(durationMs)} — development feedback; run npm run gate for release checks`);
+    }
+    return ok ? 0 : 1;
+  }
 
   say('phase A: build, typecheck-fast, typecheck-web, eslint, realio-lane, verse-sync-io, docs, quarantine-ledger (parallel)');
   const phaseA = await Promise.all([...staticSteps(), quarantineStep(changes.mergeBase)].map((step) => runStatic(step).then(record)));
