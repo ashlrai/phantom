@@ -42,8 +42,10 @@ import { parsePrHygieneOpenPr, type PrHygieneOpenPr } from './pr-hygiene.js';
 
 export const MERGE_BATCH_SCHEMA = 'fleet.merge-batch.v1' as const;
 
-const MAX_PRS = 5_000;
-const MAX_FILES_PER_PR = 300;
+/** Snapshot row cap shared by every planner on this input. */
+export const MAX_PRS = 5_000;
+/** File-list cap per PR; a list at the cap is treated as unproven (possibly truncated). */
+export const MAX_FILES_PER_PR = 300;
 const MAX_TEXT_CHARS = 200;
 const MAX_SHARED_FILES = 12;
 const MAX_HOT_FILES = 8;
@@ -55,6 +57,8 @@ export interface MergeBatchPr {
   number: number;
   title: string;
   headRef: string;
+  /** Head commit oid when the snapshot carries one (gh `headRefOid`); null otherwise. */
+  headSha: string | null;
   isDraft: boolean;
   mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN';
   /** GitHub's mergeStateStatus, upper-cased (CLEAN, DIRTY, BEHIND, BLOCKED, …). */
@@ -114,15 +118,19 @@ const REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 const repoName = (value: unknown): string | null =>
   typeof value === 'string' && REPO_RE.test(value) ? value : null;
 
+const sha = (value: unknown): string | null =>
+  typeof value === 'string' && /^[0-9a-f]{7,40}$/i.test(value) ? value : null;
+
 /**
  * One `gh pr list --json number,title,headRefName,isDraft,mergeable,
  * mergeStateStatus,createdAt,updatedAt,files` row (same contract
- * parsePrHygieneOpenPr validates).
+ * parsePrHygieneOpenPr validates), plus the optional `headRefOid`.
  */
 function ghRowToPr(row: unknown): MergeBatchPr | null {
   const pr: PrHygieneOpenPr | null = parsePrHygieneOpenPr(row);
   if (pr === null) return null;
-  return { ...pr };
+  const headSha = isRecord(row) ? sha(row['headRefOid'] ?? row['headSha']) : null;
+  return { ...pr, headSha };
 }
 
 /**
@@ -142,6 +150,7 @@ function itemToPr(row: unknown): MergeBatchPr | null {
     number: number as number,
     title: bounded(row['title']),
     headRef: bounded(row['headRef'] ?? row['headRefName']),
+    headSha: sha(row['headSha'] ?? row['headRefOid']),
     isDraft: row['isDraft'] === true,
     mergeable: flaggedConflicted || mergeStateStatus === 'DIRTY' ? 'CONFLICTING' : 'UNKNOWN',
     mergeStateStatus,
