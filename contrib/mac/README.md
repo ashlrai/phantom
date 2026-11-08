@@ -29,6 +29,8 @@ worktrees, published jobs and recorded merges stay parked while later eligible
 rows can recover. Resolve duplicate rows before retrying that job.
 Recovery keeps the prompt and normal checks intact, and logs `UNPARK <job>
 reason=MERGERATE` and `observed_wait_seconds` (time since first observed parked, a lower bound on actual wait). The restocker needs a Security re-pin before live installation.
+The enqueue history in `claimed.tsv` does not block recovery; duplicate queue rows,
+dispatch and batch markers, worktrees, published jobs and recorded merges still do.
 `dispatchd.py` is the per-tick
 supervisor: it reaps finished jobs, adapts per-lane slot targets inside
 `slots.json`, launches queued lines, and fires the restocker when a lane's queue
