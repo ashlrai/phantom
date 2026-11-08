@@ -19,7 +19,7 @@ as `PARKED-DEP.<lane>` rows with a `DEPENDENCY GATE:` id list in the prompt
 normal launch line and logs `UNPARK <job> deps=<ids>`. Unpark never rewrites the
 prompt body, so prose like `no merge without Security pin` stays put — unpark is
 not a merge. `phm fleet parked --json` lists the same parked rows and reports
-still-unmet gate ids under `unmetDeps`. Merge-rate parked Phantom rows recover at most one per hour when the dispatcher’s
+still-unmet gate ids under `unmetDeps`. Merge-rate parked Phantom rows recover at most one per hour, or one immediately when a fresh observed open-PR count falls, when the dispatcher’s
 open-PR count is less than 150 and less than 10 minutes old. Missing, stale or
 invalid counts leave rows parked; the count measures backlog, not merge rate.
 The dispatcher refreshes that count and wakes the restocker while such rows
@@ -29,7 +29,7 @@ Rows are considered in queue order. Duplicate identities, active claims,
 worktrees, published jobs and recorded merges stay parked while later eligible
 rows can recover. Resolve duplicate rows before retrying that job.
 Recovery keeps the prompt and normal checks intact, and logs `UNPARK <job>
-reason=MERGERATE`. The restocker needs a Security re-pin before live installation.
+reason=MERGERATE` and `observed_wait_seconds` (time since first observed parked, a lower bound on actual wait). The restocker needs a Security re-pin before live installation.
 `dispatchd.py` is the per-tick
 supervisor: it reaps finished jobs, adapts per-lane slot targets inside
 `slots.json`, launches queued lines, and fires the restocker when a lane's queue

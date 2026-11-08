@@ -669,6 +669,47 @@ if __name__ == '__main__':
     unittest.main()
 
 class MergeRateRecoveryTests(unittest.TestCase):
+    def test_capacity_drop_wakes_once_and_records_observed_wait(self):
+        import time
+        tmp = build('# empty\n')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs/queue'
+        rows = []
+        for n in range(3):
+            pf = q / 'prompts' / f'RQ-CAP-{n}.md'
+            pf.write_text('Required checks and merge queue rules apply.\n')
+            rows.append(f'PARKED-MERGERATE.devin\tRQ-CAP-{n}\tdevin\twork\tphantom\t{pf}')
+        (q / 'ready.tsv').write_text('\n'.join(rows) + '\n')
+        cache = home / '.ashlr-runs/phantom-open-prs'
+        cache.write_text(f'{time.time()} 150\n')
+        self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
+        state = q / 'mergerate-observed.json'
+        observed = json.loads(state.read_text())
+        observed['first'] = {job: time.time() - 12 for job in observed['first']}
+        state.write_text(json.dumps(observed))
+        (q / 'mergerate-recovery-at').write_text(str(time.time()))
+        cache.write_text(f'{time.time()} 149\n')
+        self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
+        self.assertIn('RQ-CAP-0\tphantom\tdevin\twork', (q / 'ready.tsv').read_text())
+        self.assertRegex((home / '.ashlr-runs/dispatch-events.log').read_text(),
+                         r'UNPARK RQ-CAP-0 reason=MERGERATE observed_wait_seconds=1[2-9]')
+        before = (q / 'ready.tsv').read_text()
+        self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
+        self.assertEqual((q / 'ready.tsv').read_text(), before)
+        cache.write_text(f'{time.time()} 148\n')
+        env = {'HOME': str(home), 'PATH': os.environ.get('PATH', '/usr/bin:/bin')}
+        processes = [subprocess.Popen([sys.executable, '-B', str(SCRIPT), '--per-lane', '0'],
+                                      env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                     for _ in range(4)]
+        for process in processes:
+            _, err = process.communicate(timeout=60)
+            self.assertEqual(process.returncode, 0, err)
+        result = (q / 'ready.tsv').read_text()
+        self.assertIn('RQ-CAP-1\tphantom\tdevin\twork', result)
+        self.assertIn(rows[2], result)
+        self.assertEqual(result.count('RQ-CAP-1\tphantom\tdevin\twork'), 1)
+
     def test_concurrent_recovery_obeys_shared_cooldown(self):
         import time
         tmp = build('# empty\n')
