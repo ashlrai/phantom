@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cmdFleetHealthAge } from '../src/cli/fleet-health-age.js';
+import { readGuardianServiceHealth } from '../src/core/fleet/health-age.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 
 describe('fleet health-age', () => {
@@ -55,5 +56,32 @@ describe('fleet health-age', () => {
     expect(JSON.parse(vi.mocked(console.log).mock.calls[0]![0])).toMatchObject({
       status: 'unreadable file', statusAt: null, ageSeconds: null,
     });
+  });
+  it.each([
+    [true, 'last exit code = 0', 'loaded', 0],
+    [true, 'last exit code = 42', 'loaded', 42],
+    [true, 'no exit recorded', 'loaded', null],
+    [false, 'Could not find service', 'not-loaded', null],
+    [false, 'permission denied', 'unknown', null],
+  ])('classifies launchd evidence without exposing it', async (ok, output, state, code) => {
+    const probe = vi.fn().mockResolvedValue({ ok, output });
+    const service = await readGuardianServiceHealth({ platform: 'darwin', uid: 123, probe });
+    expect(probe).toHaveBeenCalledWith('gui/123/ai.ashlr.main-guardian');
+    expect(service).toMatchObject({ state, lastExitCode: code });
+    expect(JSON.stringify(service)).not.toContain(output);
+  });
+  it('combines fresh status and service evidence into a health verdict', async () => {
+    writeFileSync(join(runsDir, 'supervisor/status-main-guardian.md'), '# Main guardian status (2026-11-03 11:59:00)\n');
+    for (const [state, lastExitCode, exit] of [['loaded', 0, 0], ['loaded', 1, 1], ['loaded', null, 1], ['not-loaded', null, 1], ['unknown', null, 1]] as const) {
+      const service = vi.fn().mockResolvedValue({ state, lastExitCode, diagnostic: 'Check service.' });
+      expect(await cmdFleetHealthAge(['--service', '--json'], { runsDir, now, service })).toBe(exit);
+      expect(JSON.parse(vi.mocked(console.log).mock.lastCall![0])).toMatchObject({ status: 'fresh', service: { state, lastExitCode } });
+    }
+    const service = vi.fn().mockResolvedValue({ state: 'loaded', lastExitCode: 0, diagnostic: 'OK' });
+    expect(await cmdFleetHealthAge(['--service'], { runsDir, now: () => now() + 3600_000, service })).toBe(1);
+  });
+  it('reports unsupported systems and failed probes as unknown', async () => {
+    expect((await readGuardianServiceHealth({ platform: 'linux' })).state).toBe('unknown');
+    expect((await readGuardianServiceHealth({ platform: 'darwin', uid: 1, probe: async () => { throw new Error('private'); } })).state).toBe('unknown');
   });
 });

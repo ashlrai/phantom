@@ -26,6 +26,15 @@ Exit codes: `0` pass, `1` fail, `2` invalid args, `3` unknown/cancelled,
 
 ## Repair escalation
 
+For a read-only service and freshness check, run `phm fleet health-age --service`
+on the guardian's macOS user session. Add `--json` for the typed report. Exit 0
+requires a fresh status, a loaded service and a successful last exit; exit 1
+includes stale or missing status, an unloaded service, a failed exit, or unknown
+evidence. A loaded service without a recorded exit is unknown, not a success.
+The check reads launchd without changing it or printing its raw output. Follow
+the diagnostic in the report to inspect the service or its logs. The existing
+`phm fleet health-age` checks freshness alone.
+
 1. **Compact** prunes old entries. Stale state (entries no longer in the
    manifest) is removed so the state file stays under 1 000 entries.
 2. **Retry** drops a specific failed entry. The output state is then fed
