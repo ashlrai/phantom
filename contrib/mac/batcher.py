@@ -266,7 +266,7 @@ def read_rows(path):
                 try:
                     row = json.loads(line)
                     if (isinstance(row, dict) and row.get("source") == "metrics-outcomes-reconciler"
-                            and row.get("event") is None and row.get("outcome", row.get("status")) in ("MERGED", "CLOSED")):
+                            and row.get("outcome", row.get("status")) in ("MERGED", "CLOSED")):
                         job = row.get("jobId", row.get("job", row.get("id")))
                         url = row.get("prUrl", row.get("pr"))
                         if isinstance(job, str) and job and isinstance(url, str) and url:

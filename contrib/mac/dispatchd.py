@@ -589,14 +589,21 @@ _attempts = {}; _merged_urls = set()
 for row in batcher.read_rows(MD + "/jobs.jsonl"):
     if not isinstance(row, dict): continue
     event, job = row.get("event"), row.get("job")
+    if row.get("outcome", row.get("status")) == "PUBLISHED":
+        job = row.get("jobId", row.get("job", row.get("id")))
     if event == "outcome" and str(row.get("state", row.get("outcome", ""))).upper() == "MERGED":
-        if isinstance(row.get("url"), str) and row["url"]: _merged_urls.add(row["url"])
+        if isinstance(row.get("url"), str) and row["url"]: _merged_urls.add(row["url"].rstrip("/"))
     if not isinstance(job, str): continue
     if event == "launch": _attempts[job] = {"finished": False, "merged": False, "urls": set()}
     attempt = _attempts.setdefault(job, {"finished": False, "merged": False, "urls": set()})
     if event == "finish": attempt["finished"] = True
-    if event == "publish" and isinstance(row.get("url"), str) and row["url"]: attempt["urls"].add(row["url"])
-    if event == "outcome" and str(row.get("state", row.get("outcome", ""))).upper() == "MERGED": attempt["merged"] = True
+    url = row.get("url") if event == "publish" else None
+    if row.get("outcome", row.get("status")) == "PUBLISHED": url = row.get("prUrl", row.get("pr"))
+    if isinstance(url, str) and url: attempt["urls"].add(url.rstrip("/"))
+    # URL-bearing outcomes may arrive after a later launch; match the PR, not
+    # the job id, so reconciliation cannot complete the wrong attempt.
+    if event == "outcome" and str(row.get("state", row.get("outcome", ""))).upper() == "MERGED" and not row.get("url"):
+        attempt["merged"] = True
 # A new marker covers the spawn-to-ps race. Old orphan markers still protect
 # their own job, but must not stop every other publisher forever.
 def _reap_starting(j):

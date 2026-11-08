@@ -945,6 +945,41 @@ class DispatchPriorityTests(unittest.TestCase):
         self.assertIn('REAP ' + job, self.run_tick(home, env).stdout)
         self.assertEqual(self.published(home, 1), [job])
 
+    def test_reconciled_published_event_matches_pr_across_restarts(self):
+        home, env = self.fixture(())
+        self.publish_stubs(home)
+        job = 'RQ-LOCUSMCPLEAKQ7'
+        self.finished_worktree(home, job)
+        ledger = home / '.ashlr-runs/metrics/jobs.jsonl'
+        url = 'https://github.com/ashlrai/phantom/pull/101'
+        published = {'event': 'publish', 'jobId': job, 'prUrl': url + '/', 'outcome': 'PUBLISHED'}
+        ledger.write_text(json.dumps(published) + '\n')
+        loader = importlib.machinery.SourceFileLoader('reconcile_event_fixture', str(SCRIPT.parent / 'metrics-outcomes'))
+        module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+        loader.exec_module(module)
+        self.assertEqual(module.reconcile(ledger, lambda _: {'state': 'MERGED', 'mergedAt': '2026-10-25T19:00:00Z'}), (1, 0))
+        for _ in range(3):
+            self.assertNotIn('REAP ' + job, self.run_tick(home, env).stdout)
+        self.assertFalse((home / '.ashlr-runs/publish-order').exists())
+
+    def test_late_old_pr_completion_does_not_complete_new_attempt(self):
+        home, env = self.fixture(())
+        self.publish_stubs(home)
+        job = 'RQ-RETRY-LATE'
+        self.finished_worktree(home, job)
+        ledger = home / '.ashlr-runs/metrics/jobs.jsonl'
+        old = 'https://github.com/ashlrai/phantom/pull/101'
+        rows = [
+            {'event': 'launch', 'job': job},
+            {'event': 'publish', 'jobId': job, 'prUrl': old, 'outcome': 'PUBLISHED'},
+            {'event': 'launch', 'job': job},
+            {'event': 'publish', 'job': job, 'url': 'https://github.com/ashlrai/phantom/pull/102'},
+            {'event': 'publish', 'jobId': job, 'prUrl': old, 'outcome': 'MERGED', 'source': 'metrics-outcomes-reconciler'},
+        ]
+        ledger.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+        self.assertIn('REAP ' + job, self.run_tick(home, env).stdout)
+        self.assertEqual(self.published(home, 1), [job])
+
     def test_retry_records_finish_once_and_new_launch_resets_attempt(self):
         home, env = self.fixture(())
         self.publish_stubs(home)
