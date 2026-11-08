@@ -669,6 +669,31 @@ if __name__ == '__main__':
     unittest.main()
 
 class MergeRateRecoveryTests(unittest.TestCase):
+    def test_duplicate_and_active_jobs_do_not_block_fair_recovery(self):
+        import time
+        tmp = build('# empty\n')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs/queue'
+        rows = []
+        for job in ('RQ-DUP', 'RQ-ACTIVE', 'RQ-NEXT'):
+            pf = q / 'prompts' / f'{job}.md'
+            pf.write_text('Required checks must pass; no merge without Security pin\n')
+            rows.append(f'PARKED-MERGERATE.devin\t{job}\tdevin\twork\tphantom\t{pf}')
+        (q / 'ready.tsv').write_text('\n'.join([rows[0], rows[0], *rows[1:]]) + '\n')
+        (q / 'claimed.tsv').write_text('RQ-ACTIVE\tdevin\n')
+        (home / '.ashlr-runs/phantom-open-prs').write_text(f'{time.time()} 20\n')
+        self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
+        result = (q / 'ready.tsv').read_text()
+        self.assertEqual(result.count(rows[0]), 2)
+        self.assertIn(rows[1], result)
+        self.assertIn('RQ-NEXT\tphantom\tdevin\twork', result)
+        self.assertEqual((q / 'prompts/RQ-NEXT.md').read_text(),
+                         'Required checks must pass; no merge without Security pin\n')
+        (q / 'mergerate-recovery-at').write_text(str(time.time() - 3601))
+        self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
+        self.assertEqual((q / 'ready.tsv').read_text(), result)
+
     def test_saturation_recovery_and_repeated_runs(self):
         import time
         tmp = build('# empty\n')
