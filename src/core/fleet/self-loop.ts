@@ -39,7 +39,19 @@
  * An optional integer max-ticks bound (1..1000) can be supplied alongside
  * --duration-ms: whichever bound occurs first stops admission. Default
  * behavior (no max-ticks) is unchanged.
+ *
+ * An explicit stop order can gate admission further: the optional checkStop
+ * seam is awaited before every pass (the first included); 'stop' ends
+ * admission with termination 'stop-file' and no further pass, while a
+ * rejection ends the loop as 'stop-check-error' rather than launching passes
+ * blind. The optional stopObserved seam is raced with each inter-tick sleep
+ * so a stop seen while waiting wakes admission promptly — an in-flight pass
+ * is never interrupted either way.
  */
+import { watch, type FSWatcher } from 'node:fs';
+import { lstat } from 'node:fs/promises';
+import { dirname } from 'node:path';
+
 export const SELF_LOOP_MAX_DURATION_MS = 24 * 60 * 60 * 1000;
 export const SELF_LOOP_DEFAULT_INTERVAL_MS = 60_000;
 export const SELF_LOOP_MIN_INTERVAL_MS = 1_000;
@@ -85,7 +97,7 @@ export interface SelfLoopSummary {
   ticks: number;
   failures: number;
   busy: number;
-  termination: 'duration' | 'max-ticks' | 'interrupted' | 'observer-error';
+  termination: 'duration' | 'max-ticks' | 'interrupted' | 'observer-error' | 'stop-file' | 'stop-check-error';
   /** The latest pass's parsed report (sanitized by the caller), or null. */
   lastReport: unknown;
   /**
@@ -116,7 +128,19 @@ export interface RunSelfLoopOptions {
   signal?: AbortSignal;
   /** Optional per-pass sink; awaited after each completed pass. See SelfLoopPassObserver. */
   onPass?: SelfLoopPassObserver;
+  /** Optional async admission-stop seam, awaited before every pass: 'stop'
+   *  ends admission with termination 'stop-file' and no further pass; a
+   *  rejection ends the loop as 'stop-check-error' so errors never launch
+   *  passes silently. */
+  checkStop?: () => Promise<SelfLoopStopVerdict>;
+  /** Optional factory raced with every inter-tick sleep so a stop observed
+   *  while waiting wakes admission promptly; each call returns a fresh view
+   *  settling at most once per observation so the loop can never spin. */
+  stopObserved?: () => Promise<void>;
 }
+
+/** The admission-stop verdict the injected stop seam returns per read. */
+export type SelfLoopStopVerdict = 'continue' | 'stop';
 
 /** The default sleep: real time, interruptible by the abort signal. */
 export function sleepCancellable(ms: number, signal: AbortSignal): Promise<void> {
@@ -141,6 +165,7 @@ export async function runSelfLoop(options: RunSelfLoopOptions): Promise<SelfLoop
   let consecutiveBusy = 0, busyDelayMs = options.intervalMs;
   let lastReport: unknown = null;
   let observerError: string | undefined;
+  let stopTermination: 'stop-file' | 'stop-check-error' | null = null;
   // A pre-aborted signal admits no pass at all: return immediately with
   // zero ticks, failures, and busy counters (the summary still reads
   // 'interrupted').  Otherwise the first pass is admitted; subsequent
@@ -164,6 +189,17 @@ export async function runSelfLoop(options: RunSelfLoopOptions): Promise<SelfLoop
   }
   while (!signal.aborted && now() < deadline
     && (maxTicks === undefined || ticks < maxTicks)) {
+    if (options.checkStop !== undefined) {
+      // The explicit stop order gates admission before every pass.
+      let verdict: SelfLoopStopVerdict;
+      try {
+        verdict = await options.checkStop();
+      } catch {
+        stopTermination = 'stop-check-error';
+        break;
+      }
+      if (verdict === 'stop') { stopTermination = 'stop-file'; break; }
+    }
     let outcome: SelfLoopTickOutcome;
     try {
       outcome = await options.tick();
@@ -221,7 +257,11 @@ export async function runSelfLoop(options: RunSelfLoopOptions): Promise<SelfLoop
     // Wait the interval, but never past the deadline: the remaining budget is
     // positive here, so the capped wait is too.
     try {
-      await sleep(Math.min(scheduledMs, deadline - current), signal);
+      const wait = Math.min(scheduledMs, deadline - current);
+      const observed = options.stopObserved?.();
+      await (observed === undefined
+        ? sleep(wait, signal)
+        : Promise.race([sleep(wait, signal), observed]));
     } catch {
       // An interrupted sleep ends admission; the pass that ran is kept.
       break;
@@ -238,12 +278,70 @@ export async function runSelfLoop(options: RunSelfLoopOptions): Promise<SelfLoop
     ticks,
     failures,
     busy,
-    termination: signal.aborted ? 'interrupted'
+    termination: stopTermination ?? (signal.aborted ? 'interrupted'
       : observerError === undefined
         ? (maxTicks !== undefined && ticks >= maxTicks ? 'max-ticks' : 'duration')
-        : 'observer-error',
+        : 'observer-error'),
     lastReport,
     ...(maxTicks !== undefined ? { maxTicks } : {}),
     ...(observerError === undefined ? {} : { observerError }),
+  };
+}
+
+/** The wired admission-stop source for one explicit stop-file path. */
+export interface SelfLoopStopAdmission {
+  checkStop: () => Promise<SelfLoopStopVerdict>;
+  stopObserved: () => Promise<void>;
+  /** Releases the directory watch; idempotent. */
+  close: () => void;
+}
+
+/**
+ * Wire an explicit operator stop file (an absolute path a supervisor places
+ * to stop admission) as the loop's stop seams. The path is only ever read,
+ * never created or removed: while it is absent (ENOENT) checkStop says
+ * 'continue'; once it exists, 'stop'; any other filesystem error rejects so
+ * runSelfLoop ends as 'stop-check-error' instead of launching passes blind.
+ * One event-driven watch on the parent directory (no polling) lets
+ * stopObserved settle within the watch latency — well under a second — each
+ * event confirmed by the same existence read; once fired, the observation is
+ * delivered exactly once and never settles again, so the loop cannot spin. A
+ * watch that cannot be established or dies mid-run degrades to the per-pass
+ * read only; close() releases it and is safe to call repeatedly.
+ */
+export function watchSelfLoopStopFile(stopFile: string): SelfLoopStopAdmission {
+  const checkStop = async (): Promise<SelfLoopStopVerdict> => {
+    try {
+      await lstat(stopFile);
+      return 'stop';
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code === 'ENOENT') return 'continue';
+      throw cause;
+    }
+  };
+  const never = new Promise<void>(() => {});
+  let fired = false, delivered = false;
+  let resolvePending!: () => void;
+  const pending = new Promise<void>((resolve) => { resolvePending = resolve; });
+  const confirm = () => void checkStop().then((verdict) => {
+    if (verdict === 'stop' && !fired) { fired = true; resolvePending(); }
+  }, () => undefined); // a failed confirm surfaces in the loop's own checkStop
+  let watcher: FSWatcher | undefined;
+  const unwatch = () => { try { watcher?.close(); } catch { /* already closed */ } watcher = undefined; };
+  try {
+    watcher = watch(dirname(stopFile), confirm);
+    watcher.on('error', unwatch);
+  } catch {
+    watcher = undefined; // no watch: every pass boundary still re-reads the file
+  }
+  return {
+    checkStop,
+    stopObserved: () => {
+      if (!fired) return pending;
+      if (delivered) return never;
+      delivered = true;
+      return Promise.resolve();
+    },
+    close: unwatch,
   };
 }

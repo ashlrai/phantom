@@ -78,6 +78,7 @@ const REMOTE_QUERY_PROBES: Record<string, string> = {
   '/api/verse/fleet/live/bus': 'limit=5',
   '/api/verse/fleet/live/queue': 'limit=5',
   '/api/verse/fleet/runs/inbox': 'limit=5',
+  '/api/verse/fleet/cos/status': 'id=cos-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   '/api/verse/leader/thread': 'limit=50',
   // The gateway only reaches this stream through the `?`-carrying branch.
   '/api/verse/sessions/{sessionId}/events': 'after=1',

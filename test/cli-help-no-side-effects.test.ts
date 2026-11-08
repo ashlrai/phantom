@@ -122,9 +122,12 @@ const HELP_STRICT_REFUSALS: Record<string, string> = {
   'openai-agents turns': `read-only inventory with an exact option grammar: ${STRICT_VERB_PARSER}`,
   'config set editor --help': '`config set` refuses a help flag in either operand with its usage line (exit 2) instead of storing it',
   'app update': 'src/cli/app.ts accepts only `update status [--json]`; anything else prints the usage line and exits 2 before the stage is inspected',
-  'app status': 'same exact grammar as `app update` (src/cli/app.ts); anything else prints the usage line and exits 2',
   'fleet session': 'src/cli/fleet-session.ts requires `<job> --json` with an exact flag grammar; anything else prints its usage line and exits 2',
-  'verify': '`verify` only has the `change` verb with an exact flag grammar (src/cli/verify.ts); anything else prints the usage line and exits 2 before any worktree check runs',
+  'metrics idle -h': '--help is honored (exit 0) but -h is not in the exact --status/--jobs grammar (src/cli/metrics-idle.ts); it prints the usage line and exits 2 before any snapshot is read',
+  'fleet usage': 'phm fleet usage accepts only --json (src/cli/fleet-usage.ts); anything else prints the usage line and exits 2 before readings are touched',
+  'repos': 'repos only has the rank verb (src/cli/repos-rank.ts); anything else prints its usage line and exits 2',
+  'repos rank': 'exact proposals/--json/--recompute grammar (src/cli/repos-rank.ts); anything else prints the usage line and exits 2 before the ledger is read',
+  'repos proposals': 'proposals is not a verb (src/cli/repos-rank.ts); a help flag is refused with the usage line and exit 2',
   'signals': '`signals` accepts only --json (src/cli/signals.ts); anything else prints the usage line and exits 2 before signals are read',
   'channels add': `rejectUnknownOptions in src/cli/args.ts: ${STRICT_VERB_PARSER}`,
   'channels status': `rejectUnknownOptions in src/cli/args.ts: ${STRICT_VERB_PARSER}`,
@@ -134,6 +137,7 @@ const HELP_STRICT_REFUSALS: Record<string, string> = {
   'radar diff': 'radar verbs take an exact grammar of only --json (src/cli/radar.ts); anything else prints the usage block and exits 2 before snapshots are read',
   'agents bus': 'runAgentsCli accepts only `bus contract [--json]` (src/cli/agents-bus-contract.ts); anything else prints the contract help and exits 2',
   'capacity publish': '`publish` accepts only --json (src/cli/capacity.ts); anything else prints the usage line and exits 2 before the publisher is built',
+  pr: '`pr` only has the `cockpit` verb; anything else prints its Usage line and exits 2 (src/cli/index.ts)',
 };
 
 /**

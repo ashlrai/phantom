@@ -17,7 +17,7 @@
  *   - a module that fails to load is a 503 naming it, not a silent 404, and
  *     is retried on the next request.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as http from 'node:http';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -46,6 +46,11 @@ import { VERSE_DEVIN_PATH } from '../src/core/devin/types.js';
 import { VERSE_JEV_PATH } from '../src/core/decide/jev-types.js';
 import { cloudTimelinePath } from '../src/core/cloud/timeline-types.js';
 import { readAuthHeaders, startServer } from './helpers/authenticated-web-server.js';
+// Loading every landed mount module through the real dynamic imports
+// exceeds the 5 s unit default on a cold transform; 30 s matches the
+// heavy-suite convention used by other mount/module-graph tests.
+vi.setConfig({ testTimeout: 30_000 });
+
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -187,15 +192,15 @@ async function boot(opts: Partial<WebServerOptions> = {}) {
 // ---------------------------------------------------------------------------
 
 describe('the real mount table', () => {
-  it('mounts health, reasoning, fleet history, budget, the cloud timeline, cloud, devin, jev, runs-history, release-pr, fleet-holds, fleet-graph-live, fleet-ci-runs, fleet-usage-audit, fleet-memory, fleet-inbox-acks, fleet-apps, fleet-standby, fleet-self-tick, fleet-graph, fleet-main-red-age, fleet-merge-pace, fleet-landed-closes and fleet-slow-prs — in that order', () => {
+  it('mounts the complete current API inventory in dispatch order', () => {
     setMountedApiModulesForTest(null);
-    expect(mountedApiModules().map((m) => m.id)).toEqual(['health', 'reasoning', 'fleet-history', 'budget', 'cloud-timeline', 'cloud', 'devin', 'jev', 'runs-history', 'release-pr', 'fleet-holds', 'fleet-graph-live', 'fleet-ci-runs', 'fleet-usage-audit', 'fleet-memory', 'fleet-inbox-acks', 'fleet-apps', 'fleet-standby', 'fleet-self-tick', 'fleet-graph', 'fleet-main-red-age', 'fleet-merge-pace', 'fleet-landed-closes', 'fleet-slow-prs']);
+    expect(mountedApiModules().map((m) => m.id)).toEqual(['health', 'reasoning', 'fleet-history', 'budget', 'cloud-timeline', 'cloud', 'devin', 'jev', 'runs-history', 'release-pr', 'fleet-holds', 'fleet-graph-live', 'fleet-ci-runs', 'fleet-usage-audit', 'fleet-memory', 'fleet-inbox-acks', 'fleet-apps', 'fleet-standby', 'fleet-self-tick', 'fleet-graph', 'fleet-main-red-age', 'fleet-merge-pace', 'fleet-doctor', 'fleet-landed-closes', 'fleet-slow-prs', 'forum']);
   });
 
   it('every entry resolves to a handler function (the owning units exported what the contract names)', async () => {
     setMountedApiModulesForTest(null);
-    for (const entry of mountedApiModules()) {
-      const handler = await entry.load();
+    const loaded = await Promise.all(mountedApiModules().map(async (entry) => ({ entry, handler: await entry.load() })));
+    for (const { entry, handler } of loaded) {
       expect(typeof handler, entry.id).toBe('function');
     }
   });
@@ -236,6 +241,7 @@ describe('the real mount table', () => {
       'fleet-memory': '/api/verse/fleet/memory',
       'fleet-self-tick': '/api/verse/fleet/self-tick',
       'fleet-main-red-age': '/api/verse/fleet/main-red-age',
+      forum: '/api/verse/forum',
     };
     for (const [owner, p] of Object.entries(representative) as Array<[MountedApiModuleId, string]>) {
       for (const { id, handler } of handlers) {

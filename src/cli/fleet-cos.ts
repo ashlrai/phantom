@@ -9,5 +9,9 @@ import { cmdCos } from './cos.js';
 export const FLEET_COS_USAGE = 'Usage: ashlr fleet cos ask "<text>" --channel <cli|desktop|telegram|email|mobile|page> [--json]; ashlr fleet cos status <id> [--json]';
 
 export async function cmdFleetCos(args: string[]): Promise<number> {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(args.includes('--json') ? JSON.stringify({ usage: FLEET_COS_USAGE }) : FLEET_COS_USAGE);
+    return 0;
+  }
   return cmdCos(args);
 }

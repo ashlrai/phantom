@@ -5,6 +5,7 @@
  * owns files, the clock and the bus.
  */
 import type { OutcomeCellView, OutcomeLearning } from './outcome-learning.js';
+import { FRICTION_ID } from '../fleet/friction-ledger.js';
 
 export const SELECTOR_SCHEMA = 'routing.selector.v1' as const;
 export const DEFAULT_FUND_COUNT = 5;
@@ -35,6 +36,7 @@ export interface SelectorCandidate {
   leverage: number;
   estMinutes: number | null;
   estUsage: number | null;
+  frictionId?: string;
 }
 
 export interface SelectorPick extends SelectorCandidate {
@@ -91,11 +93,13 @@ export function parseCandidates(input: string): { candidates: SelectorCandidate[
       || typeof repo !== 'string' || !WORD.test(repo) || typeof jobType !== 'string' || !WORD.test(jobType)
       || !PRIORITIES.includes(priority) || scope === '') { rejected++; continue; }
     seen.add(id);
+    const frictionId = row['friction_id'] ?? row['frictionId'];
     candidates.push({
       id, scope, acceptance: text(row['acceptance'], 400), repo, jobType, priority, value, leverage,
       pool: word(row['pool'], 'claude'),
       tier: word(row['tier'], 'work'),
       estMinutes: minutes, estUsage: usage,
+      ...(typeof frictionId === 'string' && FRICTION_ID.test(frictionId) ? { frictionId } : {}),
     });
   }
   return { candidates, rejected };
@@ -147,7 +151,8 @@ export function rankCandidates(
 /** The line `docs/QUEUE.md` imports: fields in one balanced group, scope then acceptance. */
 export function readyLine(p: SelectorCandidate): string {
   const body = p.acceptance === '' ? p.scope : `${p.scope} Acceptance: ${p.acceptance}`;
-  return `- READY ${p.id} (${p.priority}, pool=${p.pool}, tier=${p.tier}, repo=${p.repo}): ${body.replace(/[()]/g, ' ').replace(/\s+/g, ' ')}`;
+  const friction = p.frictionId === undefined ? '' : `, friction_id=${p.frictionId}`;
+  return `- READY ${p.id} (${p.priority}, pool=${p.pool}, tier=${p.tier}, repo=${p.repo}${friction}): ${body.replace(/[()]/g, ' ').replace(/\s+/g, ' ')}`;
 }
 
 export interface PickRecord {
@@ -162,12 +167,14 @@ export interface PickRecord {
   minutes: number;
   usage: number;
   basis: SelectorPick['basis'];
+  frictionId?: string;
 }
 
 export function pickRecords(result: SelectorResult, at: Date): PickRecord[] {
   return result.picks.map((p) => ({
     at: at.toISOString(), rank: p.rank, id: p.id, repo: p.repo, jobType: p.jobType, score: p.score,
     predictedValue: p.predictedValue, mergeRate: p.mergeRate, minutes: p.minutes, usage: p.usage, basis: p.basis,
+    ...(p.frictionId === undefined ? {} : { frictionId: p.frictionId }),
   }));
 }
 

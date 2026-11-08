@@ -10,6 +10,7 @@
  * updated in the same commit (that IS the versioning act).
  */
 
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import { makeFixture, makeCfg, type H1Fixture } from './helpers/h1-fixture.js';
@@ -121,6 +122,7 @@ describe('native MCP tool surface lock', () => {
       'phantom_fleet_apps_recovery_check:read',
       'phantom_fleet_apps_recovery_wait:read',
       'phantom_fleet_apps_status:read',
+      'phantom_fleet_apps_watch:append',
       'phantom_fleet_doctor:read',
       'phantom_fleet_drop_job:append',
       'phantom_fleet_graph:read',
@@ -128,6 +130,8 @@ describe('native MCP tool surface lock', () => {
       'phantom_fleet_orders:read',
       'phantom_fleet_planner_run:append',
       'phantom_fleet_session:read',
+      'phantom_fleet_verbs:read',
+      'phantom_forum:append',
       'phm_proactive_agents_create:append',
       'phm_proactive_agents_delete:append',
       'phm_proactive_agents_list:read',
@@ -161,3 +165,5 @@ describe('AGENT_COMMANDS registry lock', () => {
     }
   });
 });
+
+registerFleetNativeTools();

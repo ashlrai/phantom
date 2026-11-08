@@ -86,6 +86,7 @@ drift, not changed imports, individual files, semantics or contract coverage.
 - `src/core/context/`
 - `src/core/cos/`
 - `src/core/daemon/`
+- `src/core/dailyfix/`
 - `src/core/decide/`
 - `src/core/desktop/`
 - `src/core/devin/`
@@ -131,6 +132,7 @@ drift, not changed imports, individual files, semantics or contract coverage.
 - `src/core/receipt/`
 - `src/core/release/`
 - `src/core/resources/`
+- `src/core/routines/`
 - `src/core/routing/`
 - `src/core/run/`
 - `src/core/sandbox/`
@@ -141,7 +143,9 @@ drift, not changed imports, individual files, semantics or contract coverage.
 - `src/core/strategy/`
 - `src/core/swarm/`
 - `src/core/teams/`
+- `src/core/tenancy/`
 - `src/core/toolgraph/`
+- `src/core/tune/`
 - `src/core/types/`
 - `src/core/universe/`
 - `src/core/usage/`

@@ -1,13 +1,20 @@
-import { useState } from 'react';
+import { getReadClientProof } from '../../../data/auth-store.js';
+import { ForumBoard } from '../fleet-forum/ForumBoard.js';
+import { narrowForum } from '../fleet-forum/forum-view.js';
+import { useEffect, useState } from 'react';
 import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { missionQuery, type MissionControl, type MissionDecision, type MissionHealth, type MissionJob, type MissionMain, type MissionResource } from './mission-queries.js';
 import styles from './fleet-mission.module.css';
 
-type Detail = 'jobs' | 'choices' | 'time' | 'mains' | 'incidents' | 'memory' | 'plan';
+type Detail = 'jobs' | 'choices' | 'time' | 'mains' | 'incidents' | 'memory' | 'plan' | 'activity' | 'timeline' | 'forum' | 'log';
 
 const DETAILS: ReadonlyArray<{ id: Detail; label: string }> = [
+  { id: 'timeline', label: 'Merge timeline' },
+  { id: 'activity', label: 'Agent activity' },
+  { id: 'forum', label: 'Shared forum' },
+  { id: 'log', label: 'Leader plan log' },
   { id: 'jobs', label: 'What is running' },
   { id: 'choices', label: 'Recent choices' },
   { id: 'time', label: 'Time left' },
@@ -65,8 +72,23 @@ function mainLine(row: MissionMain): string {
   return `${row.repo} — ${health}${fixes}`;
 }
 
+function MissionForum({ data }: { data: MissionControl }) {
+  const [channel, setChannel] = useState<string | null>(null);
+  const forum = narrowForum(data.forum);
+  if (!forum) return <p>unknown</p>;
+  const filtered = channel ? { ...forum, posts: forum.posts.filter((post) => post.channelId === channel) } : forum;
+  return <ForumBoard view={filtered} channel={channel} onChannel={setChannel} />;
+}
+
 function DetailView({ data, detail }: { data: MissionControl; detail: Detail }) {
   switch (detail) {
+    case 'forum': return <MissionForum data={data} />;
+    case 'log':
+      return <p>{data.planLog?.points.join(' · ') || 'Not reported yet.'}</p>;
+    case 'activity':
+      return <ul>{data.activity?.length ? data.activity.map((row) => <li key={row.job}>{row.job} · {row.lane} · {row.at}</li>) : <li>Not reported yet.</li>}</ul>;
+    case 'timeline':
+      return <><ul>{data.timeline?.length ? data.timeline.map((row) => <li key={row.pr}>{row.at} · {row.pr}</li>) : <li>Not reported yet.</li>}</ul></>;
     case 'jobs':
       return data.jobs.length === 0 ? <p className={styles.quiet}>Not reported yet.</p>
         : <ul className={styles.rows}>{data.jobs.map((job) => <li className={styles.row} key={`${job.resource}:${job.model ?? ''}:${job.queued}`}>{jobLine(job)}</li>)}</ul>;
@@ -112,6 +134,12 @@ export function FleetMissionPane({ visible }: Pick<PaneProps, 'visible'>) {
   const refetch = useRefetch(missionQuery);
   const refresh = useRefresh(missionQuery);
   usePollWhileVisible(refetch, 5_000, { enabled: visible, refreshOnShow: false });
+  useEffect(() => {
+    if (!active || typeof EventSource === 'undefined') return;
+    const stream = new EventSource(`/api/verse/fleet/runs/mission/events?client=${encodeURIComponent(getReadClientProof())}`, { withCredentials: true });
+    stream.addEventListener('mission', refresh);
+    return () => stream.close();
+  }, [active, refresh]);
   const [detail, setDetail] = useState<Detail | null>(null);
   const data = read.data;
   const open = (id: Detail) => setDetail((current) => current === id ? null : id);
@@ -126,6 +154,8 @@ export function FleetMissionPane({ visible }: Pick<PaneProps, 'visible'>) {
     {data ? <>
       {read.status === 'error' ? <p className={styles.quiet} role="status">Showing the last reading.</p> : null}
       <p className={styles.shipped}>{data.overview.shipped}</p>
+      <p className={styles.quiet}>Cost per merged PR: {data.costPerMergedPrUsd == null ? 'unknown' : `$${data.costPerMergedPrUsd}`}</p>
+      <p className={styles.quiet}>Merge queue: {data.mergeQueue ?? 'unknown'}</p>
       {data.overview.attention ? <p className={styles.quiet}>{data.overview.attention}</p> : null}
       {data.overview.items.length > 0 ? <ul className={styles.look}>{data.overview.items.map((item) => <li key={item.id}>{item.text}</li>)}</ul> : null}
       <Merges data={data} />

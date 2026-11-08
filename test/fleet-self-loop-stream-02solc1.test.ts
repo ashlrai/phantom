@@ -164,18 +164,19 @@ describe('fleet self-loop --stream', () => {
       return { exitCode: 0, output: JSON.stringify({ ok: name }) };
     };
     const steps = {
-      'reset-release': stub('reset-release'),
+      'claude-quota': async () => ({ exitCode: 0, output: '' }), 'reset-release': stub('reset-release'),
       'lane-autohold': stub('lane-autohold'),
       'planner-tick': stub('planner-tick'),
       'inbox-acks': stub('inbox-acks'),
       'order-notices': stub('order-notices'),
       'landed-sweep': stub('landed-sweep'),
+      'cos-work': stub('cos-work'),
     };
     const { code, records } = await run(
       ['--stream', '--apply', '--duration-ms', '1500', '--interval-ms', '1000', '--runs-dir', runsDir],
       { steps, now: clock.now, sleep: clock.sleep });
     expect(code).toBe(0);
-    expect(order).toHaveLength(12); // two full real passes
+    expect(order).toHaveLength(14); // two full real passes
     expect(records).toHaveLength(3);
     expect(records[0]).toMatchObject({ record: 'pass', pass: 1, exitCode: 0, state: 'ran' });
     expect(records[0]!['report']).toMatchObject({ mode: 'apply', state: 'ran' });

@@ -6,6 +6,7 @@
  * no HOME mutation needed (everything here is read-only).
  */
 
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { describe, it, expect, vi } from 'vitest';
 
 import { AGENT_COMMANDS, agentDocsText, claudeMdSnippet, cmdDocs } from '../src/cli/help.js';
@@ -250,3 +251,5 @@ describe('didYouMean', () => {
     expect(didYouMean('xyzzyplugh')).toBeNull();
   });
 });
+
+registerFleetNativeTools();

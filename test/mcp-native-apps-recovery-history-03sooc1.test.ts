@@ -1,3 +1,4 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -86,3 +87,5 @@ describe('native app recovery history', () => {
     expect(data).toEqual({ error: 'Fleet observation unavailable' });
   });
 });
+
+registerFleetNativeTools();

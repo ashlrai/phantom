@@ -49,13 +49,17 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
+// RQ-AGENTPROFILE-1: production sends stay gated pending the reviewed
+// send-policy integration; transport-path tests inject an allow verdict.
+const allowSend = () => ({ decision: 'allow' as const, reason: 'test-allow' });
+
 describe('email outbox sender', () => {
   it('sends a real bridge reply once into sent/; a second pass sends nothing', async () => {
     await dropReply('order-1');
     const name = queuedFiles()[0]!;
     expect(name).toMatch(/\.reply\.eml$/);
     const calls: EmailOutboxMessage[] = [];
-    const first = await sendEmailOutbox({ dir: outboxDir, allowedRecipients: allowedSenders, transport: okTransport(calls) });
+    const first = await sendEmailOutbox({ dir: outboxDir, allowedRecipients: allowedSenders, transport: okTransport(calls), policyCheck: allowSend });
     expect(first).toMatchObject({ queued: 0, sent: 1, refused: 0, failed: 0, stuck: 0 });
     expect(calls).toHaveLength(1);
     expect(calls[0]!.to).toBe(sender);
@@ -63,7 +67,7 @@ describe('email outbox sender', () => {
     expect(calls[0]!.body).toContain('Inbox:');
     expect(sentFiles()).toEqual([name]);
     expect(queuedFiles()).toEqual([]);
-    const second = await sendEmailOutbox({ dir: outboxDir, allowedRecipients: allowedSenders, transport: okTransport(calls) });
+    const second = await sendEmailOutbox({ dir: outboxDir, allowedRecipients: allowedSenders, transport: okTransport(calls), policyCheck: allowSend });
     expect(second).toMatchObject({ queued: 0, sent: 0, refused: 0, failed: 0, stuck: 0 });
     expect(calls).toHaveLength(1);
     expect(readEmailOutbox(outboxDir).counts).toEqual({ queued: 0, sent: 1, stuck: 0, drafted: 0 });
@@ -74,7 +78,7 @@ describe('email outbox sender', () => {
     await dropReply('order-b');
     expect(queuedFiles()).toHaveLength(2);
     const calls: EmailOutboxMessage[] = [];
-    const opts = { dir: outboxDir, allowedRecipients: allowedSenders, transport: okTransport(calls) };
+    const opts = { dir: outboxDir, allowedRecipients: allowedSenders, transport: okTransport(calls), policyCheck: allowSend };
     const [a, b] = await Promise.all([sendEmailOutbox(opts), sendEmailOutbox(opts)]);
     expect(a.sent + b.sent).toBe(2);
     expect(calls).toHaveLength(2);
@@ -90,7 +94,7 @@ describe('email outbox sender', () => {
     symlinkSync(join(root, 'missing-target'), join(outboxDir, 'link.reply.eml'));
     writeFileSync(join(outboxDir, 'big.reply.eml'), `To: ${sender}\r\nSubject: Re: x\r\n\r\n${'x'.repeat(EMAIL_OUTBOX_MAX_BYTES)}`);
     const calls: EmailOutboxMessage[] = [];
-    const result = await sendEmailOutbox({ dir: outboxDir, allowedRecipients: allowedSenders, transport: okTransport(calls) });
+    const result = await sendEmailOutbox({ dir: outboxDir, allowedRecipients: allowedSenders, transport: okTransport(calls), policyCheck: allowSend });
     expect(calls).toHaveLength(0);
     expect(result).toMatchObject({ sent: 0, refused: 2, stuck: 2 });
     const reasons = Object.fromEntries(result.details.map((detail) => [detail.name, detail.reason]));
@@ -110,22 +114,32 @@ describe('email outbox sender', () => {
       calls.push(message);
       return fail ? { ok: false, error: 'mail unavailable' } : { ok: true };
     };
-    const first = await sendEmailOutbox({ dir: outboxDir, allowedRecipients: allowedSenders, transport });
+    const first = await sendEmailOutbox({ dir: outboxDir, allowedRecipients: allowedSenders, transport, policyCheck: allowSend });
     expect(first).toMatchObject({ sent: 0, failed: 1 });
     expect(first.details[0]).toMatchObject({ name, reason: 'mail unavailable' });
     expect(queuedFiles()).toEqual([name]);
     fail = false;
-    const second = await sendEmailOutbox({ dir: outboxDir, allowedRecipients: allowedSenders, transport });
+    const second = await sendEmailOutbox({ dir: outboxDir, allowedRecipients: allowedSenders, transport, policyCheck: allowSend });
     expect(second.sent).toBe(1);
     expect(sentFiles()).toEqual([name]);
     expect(calls).toHaveLength(2);
+  });
+
+  it('refuses every sendable reply while the send-policy integration is pending review', async () => {
+    await dropReply('order-1');
+    const calls: EmailOutboxMessage[] = [];
+    const result = await sendEmailOutbox({ dir: outboxDir, allowedRecipients: allowedSenders, transport: okTransport(calls) });
+    expect(result).toMatchObject({ queued: 0, sent: 0, refused: 1, failed: 0, stuck: 0 });
+    expect(result.details[0]).toMatchObject({ outcome: 'refused', reason: 'agent-profile-policy-review-required' });
+    expect(calls).toHaveLength(0);
+    expect(queuedFiles()).toHaveLength(1);
   });
 
   it('reports a claim left in sending/ as stuck and never resends it', async () => {
     mkdirSync(join(outboxDir, 'sending'), { recursive: true });
     writeFileSync(join(outboxDir, 'sending', 'orphan.reply.eml'), `To: ${sender}\r\nSubject: Re: x\r\n\r\nbody\r\n`);
     const calls: EmailOutboxMessage[] = [];
-    const result = await sendEmailOutbox({ dir: outboxDir, allowedRecipients: allowedSenders, transport: okTransport(calls) });
+    const result = await sendEmailOutbox({ dir: outboxDir, allowedRecipients: allowedSenders, transport: okTransport(calls), policyCheck: allowSend });
     expect(calls).toHaveLength(0);
     expect(result.stuck).toBe(1);
     expect(result.details[0]).toMatchObject({ name: 'orphan.reply.eml', outcome: 'stuck', reason: 'interrupted-send' });
@@ -205,7 +219,7 @@ describe('fleet email-outbox verb', () => {
   it('--send drains through the injected transport; missing allowlist exits 2 sending nothing', async () => {
     await dropReply('order-1');
     const calls: EmailOutboxMessage[] = [];
-    const deps = { runsDir, transport: okTransport(calls) };
+    const deps = { runsDir, transport: okTransport(calls), policyCheck: allowSend };
     expect(await cmdFleetEmailOutbox(['--send'], deps)).toBe(2);
     expect(calls).toHaveLength(0);
     expect(errors.join('\n')).toContain('no allowlist');

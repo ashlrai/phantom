@@ -32,7 +32,7 @@ const steps = (codes: Partial<Record<string, number>> = {}): SelfTickSteps => {
     output: JSON.stringify({ ok: name }),
   });
   return {
-    'reset-release': run('reset-release'),
+    'claude-quota': async () => ({ exitCode: 0, output: '' }), 'reset-release': run('reset-release'),
     'lane-autohold': run('lane-autohold'),
     'stray-stop': run('stray-stop'),
     'meter-incident': run('meter-incident'),
@@ -40,6 +40,7 @@ const steps = (codes: Partial<Record<string, number>> = {}): SelfTickSteps => {
     'inbox-acks': run('inbox-acks'),
     'order-notices': run('order-notices'),
     'landed-sweep': run('landed-sweep'),
+    'cos-work': run('cos-work'),
   };
 };
 
@@ -80,7 +81,7 @@ describe('self-tick last record: writer round trips', () => {
   });
 
   it('every failing step is named, in fixed order, in apply mode', async () => {
-    await runAndPersist({ apply: true, codes: { 'reset-release': 1, 'planner-tick': 3 } });
+    await runAndPersist({ apply: true, codes: { 'claude-quota': async () => ({ exitCode: 0, output: '' }), 'reset-release': 1, 'planner-tick': 3 } });
     expect(readSelfTickLast(runsDir, NOW_MS)).toMatchObject({
       state: 'ok', mode: 'apply', ranState: 'ran',
       failedSteps: ['reset-release', 'planner-tick'],
@@ -98,7 +99,7 @@ describe('self-tick last record: writer round trips', () => {
       'lane-autohold': async () => { throw new Error('seam exploded'); },
     };
     const { report } = await runSelfTick({ runsDir, steps: throwing, now: () => NOW_MS });
-    expect(report.steps[1]).toEqual({ step: 'lane-autohold', state: 'failed', exitCode: 1, report: null });
+    expect(report.steps[2]).toEqual({ step: 'lane-autohold', state: 'failed', exitCode: 1, report: null });
     expect(readSelfTickLast(runsDir, NOW_MS)).toMatchObject({ state: 'ok', failedSteps: ['lane-autohold'] });
   });
 
@@ -134,7 +135,7 @@ describe('self-tick last record: writer round trips', () => {
 describe('self-tick last record: contradictions and tampering', () => {
   it('a failed step flipped to ok cannot make the verdict clean', async () => {
     await runAndPersist({ codes: { 'lane-autohold': 1 } });
-    mutateStored((record) => { storedSteps(record)[1]!['state'] = 'ok'; });
+    mutateStored((record) => { storedSteps(record)[2]!['state'] = 'ok'; });
     expect(readSelfTickLast(runsDir, NOW_MS)).toEqual({ state: 'unreadable' });
   });
 

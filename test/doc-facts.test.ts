@@ -29,6 +29,7 @@ const DOCS = [
   'docs/AGENT-OPERATIONS.md',
   'docs/AGENT-MCP-CLI.md',
   'docs/HUB-REFERENCE.md',
+  'docs/LIVING-DOCS.md',
   'docs/MISSION-OS.md',
   'docs/README.md',
   'docs/SELF-HOSTING.md',

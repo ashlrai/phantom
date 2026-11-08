@@ -38,6 +38,24 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 - Self-update status shows scrubbed paths blocking a clean update, and automatic updates pause after a failed build until a newer master commit is available. Fleet capacity distinguishes idle lanes without a usage meter from other unknown lane states. ([#3367](https://github.com/ashlrai/phantom/pull/3367), [#3372](https://github.com/ashlrai/phantom/pull/3372), [#3362](https://github.com/ashlrai/phantom/pull/3362)).
 
+<!-- changelog-sync:start -->
+
+### Changed
+- **RQ-SWE-NOTIFY-1:** Notification surface handoff
+- **RQ-SWE-DESKTOPCMD-1:** Desktop command-center slice
+- **RQ-SWE-RELWDISPATCH-1:** Release dispatch dry run handoff
+- **RQ-SWE-MOBILE-1:** Mobile fleet parity slice
+- **RQ-SWE-LEADERBRIEF-1:** Leader morning brief handoff
+- **RQ-SWE-SHOWMODE-1:** Show mode handoff
+- **RQ-SWE-RESBAR-1:** Resource bar handoff
+- **RQ-SWE-COMMSHUB-1:** Phantom messaging bridge slice
+- **RQ-DRAIN2-PH-27:** rework of conflicting PRs 1750, 1747, 1745
+- **RQ-SWE2-GMAILBRIDGE-1:** Gmail bridge work
+- **RQ-SWE3-DEADCODE-1:** RQ-SWE3-DEADCODE-1 (dead-code sweep)
+- **RQ-SWE3-TESTSPEED-1:** Test-suite speed audit & safe wins
+
+<!-- changelog-sync:end -->
+
 ## [3.30.24] — 2026-11-07
 
 

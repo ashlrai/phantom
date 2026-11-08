@@ -25,14 +25,16 @@ beforeEach(() => { runsDir = mkdtempSync(join(tmpdir(), 'self-tick-last-cli-'));
 afterEach(() => { rmSync(runsDir, { recursive: true, force: true }); });
 
 const steps = (fails: string[] = []): SelfTickSteps => ({
-  'reset-release': async () => ({ exitCode: fails.includes('reset-release') ? 1 : 0, output: '{"ok":"reset-release"}' }),
+  'claude-quota': async () => ({ exitCode: 0, output: '' }), 'reset-release': async () => ({ exitCode: fails.includes('reset-release') ? 1 : 0, output: '{"ok":"reset-release"}' }),
   'lane-autohold': async () => ({ exitCode: fails.includes('lane-autohold') ? 1 : 0, output: '{"ok":"lane-autohold"}' }),
   'stray-stop': async () => ({ exitCode: 0, output: '{"ok":"stray-stop"}' }),
   'meter-incident': async () => ({ exitCode: 0, output: '{"ok":"meter-incident"}' }),
   'planner-tick': async () => ({ exitCode: fails.includes('planner-tick') ? 1 : 0, output: '{"ok":"planner-tick"}' }),
   'inbox-acks': async () => ({ exitCode: 0, output: '{"ok":"inbox-acks"}' }),
   'order-notices': async () => ({ exitCode: 0, output: '{"ok":"order-notices"}' }),
+  'cos-work': async () => ({ exitCode: 0, output: '{}' }),
   'landed-sweep': async () => ({ exitCode: fails.includes('landed-sweep') ? 1 : 0, output: '{"ok":"landed-sweep"}' }),
+  'cos-work': async () => ({ exitCode: 0, output: '{"ok":"cos-work"}' }),
 });
 
 describe('fleet self-tick --last', () => {
@@ -45,7 +47,7 @@ describe('fleet self-tick --last', () => {
     };
     expect(stored).toMatchObject({ at: AT, mode: 'dry-run', state: 'ran' });
     expect(stored.steps.map((s) => [s.step, s.state])).toEqual([
-      ['reset-release', 'ok'], ['lane-autohold', 'failed'], ['stray-stop', 'ok'], ['meter-incident', 'ok'], ['planner-tick', 'ok'], ['inbox-acks', 'ok'], ['order-notices', 'ok'], ['landed-sweep', 'ok'],
+      ['claude-quota', 'ok'], ['reset-release', 'ok'], ['lane-autohold', 'failed'], ['stray-stop', 'ok'], ['meter-incident', 'ok'], ['planner-tick', 'ok'], ['inbox-acks', 'ok'], ['order-notices', 'ok'], ['landed-sweep', 'ok'], ['cos-work', 'ok'],
     ]);
   });
 
@@ -99,7 +101,7 @@ describe('fleet self-tick --last', () => {
     const code = await cmdFleetSelfTick(['--last', '--json', '--runs-dir', runsDir], {
       now: () => NOW_MS + 300_000,
       output: (t) => out.push(t), error: (t) => err.push(t),
-      steps: { 'reset-release': spy, 'lane-autohold': spy, 'planner-tick': spy, 'landed-sweep': spy },
+      steps: { 'claude-quota': async () => ({ exitCode: 0, output: '' }), 'reset-release': spy, 'lane-autohold': spy, 'planner-tick': spy, 'landed-sweep': spy },
       acquireLock: () => { throw new Error('--last must not take the lock'); },
     });
     expect(code).toBe(0);

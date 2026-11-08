@@ -8,29 +8,33 @@ const begin = '<!-- changelog-sync:start -->';
 const end = '<!-- changelog-sync:end -->';
 const normalize = (body) => body.replace(/\r\n/g, '\n').trim();
 
+// Changelogs may legitimately repeat a heading — Phantom keeps historical
+// milestone sections titled `## [Unreleased] — M<N>: …`. Readers therefore
+// resolve a name to the FIRST matching section (the live one sits at the top);
+// verify() still requires each release tag to name exactly one section, so the
+// strictness this used to enforce globally now applies only where ambiguity
+// would corrupt evidence.
 function sections(text) {
   const headings = [...text.matchAll(/^## \[([^\]\n]+)\][^\n]*$/gm)];
-  const seen = new Set();
-  return headings.map((match, i) => {
-    if (seen.has(match[1])) throw new Error('Duplicate changelog heading');
-    seen.add(match[1]);
-    return {
-      name: match[1], heading: match[0], start: match.index + match[0].length,
-      end: headings[i + 1]?.index ?? text.length,
-    };
-  });
+  return headings.map((match, i) => ({
+    name: match[1], heading: match[0], start: match.index + match[0].length,
+    end: headings[i + 1]?.index ?? text.length,
+  }));
 }
 
 // Bridge merges are titled `bridge(<JOB-ID>): <subject>` and most subjects are
-// boilerplate ("BRIDGE_NOTES — <JOB-ID>"). Returns the reader-facing subject, or
-// null when the entry should be omitted (boilerplate, bare job id, FIXUP- repair jobs).
+// boilerplate ("BRIDGE_NOTES — <JOB-ID>", "RQ-X bridge notes", "RQ-X handoff").
+// Returns the reader-facing subject, or null when the entry should be omitted
+// (boilerplate, bare job id, FIXUP- repair jobs).
 function bridgeSubject(scope, subject) {
   if (scope && /^FIXUP-/i.test(scope)) return null;
   const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const tail = '(?:\\s*[:—–]\\s*|\\s+-\\s+|\\s*$)';
   const prefixes = [new RegExp(`^(?:bridge[ _-]?notes(?:\\.md)?|handoff)\\b${tail}`, 'i')];
   if (scope) prefixes.unshift(new RegExp(`^${escape(scope)}${tail}`, 'i'));
-  let rest = subject.trim();
+  // A squash-merge subject carries its own ` (#NNNN)` pull reference; it is
+  // metadata like the suffix appended per entry, not part of the subject.
+  let rest = subject.trim().replace(/\s*\(#\d+\)\s*$/, '').trim();
   for (let again = true; again && rest;) {
     again = false;
     for (const prefix of prefixes) {
@@ -38,7 +42,11 @@ function bridgeSubject(scope, subject) {
       if (next !== rest) { rest = next; again = true; }
     }
   }
-  return !rest || /^(?:RQ|FIXUP)-[A-Za-z0-9._-]+$/.test(rest) ? null : rest;
+  // A job id followed only by whitespace and boilerplate words is still
+  // boilerplate: `RQ-X bridge notes`, `RQ-X handoff`, `RQ-X`. Real prose that
+  // merely begins with the id ("RQ-X is now supported") keeps the entry.
+  const boilerplateTail = /^(?:RQ|FIXUP)-[A-Za-z0-9._-]+(?:[ \t]+(?:bridge[ _-]?notes(?:\.md)?|handoff)\b.*)?$/i;
+  return !rest || boilerplateTail.test(rest) ? null : rest;
 }
 
 function update(text, data) {
@@ -84,7 +92,8 @@ function verify(text, data) {
   const failures = [];
   for (const tag of data.tags) {
     if (typeof tag !== 'string' || !/^v?\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(tag)) throw new Error('Invalid release tag');
-    const section = all.find((s) => s.name === tag.replace(/^v/, ''));
+    const matching = all.filter((s) => s.name === tag.replace(/^v/, ''));
+    const section = matching.length === 1 ? matching[0] : undefined;
     const releases = data.releases.filter((r) => r.tagName === tag && r.isDraft === false);
     if (!section || releases.length !== 1 || typeof releases[0].body !== 'string' || !normalize(releases[0].body) || normalize(text.slice(section.start, section.end)) !== normalize(releases[0].body)) failures.push(tag);
   }

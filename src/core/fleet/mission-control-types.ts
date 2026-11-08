@@ -119,6 +119,13 @@ export interface MissionControlV1 {
   incidents: MissionIncident[];
   memory: MissionMemory;
   plan: MissionPlan;
+  planLog: MissionPlan;
+  activity: { job: string; lane: string; at: string }[];
+  timeline: { pr: string; at: string }[];
+  /** No measured billing or queue-position source is supplied by dispatchd. */
+  costPerMergedPrUsd: number | null;
+  mergeQueue: 'unknown';
+  forum: import('./forum/service.js').ForumView | null;
 }
 
 export const VERSE_FLEET_MISSION_PATH = '/api/verse/fleet/runs/mission';

@@ -1,6 +1,7 @@
 
 - [Node router](docs/NODE-ROUTER.md): `phm node join|pull|plan|status --json`; computers join as nodes, jobs carry an owner scope, per-job leases with fencing tokens so no job runs twice.
 - [Lane health](docs/LANE-HEALTH.md): `phm lanes health --json`, calls, error rate, p50 latency and deployed commit per lane over 12 h, with a stuck badge and phase age past a phase timeout.
+- [Provider capacity cards](docs/PROVIDER-CARDS.md): `phm resource --cards --json`, usage and burn-down per provider, unknown stays unknown.
 - [Standing lane freshness](docs/FLEET-LANE-FRESHNESS.md): `phm fleet lane-slots --json`, observations during mirror prep, per-repo timeout and unknown capacity.
 - [Team invite, join and remove](docs/TEAM.md#invite-join-and-remove-a-teammate): `phm team invite <gh-user>`, `phm team join <invite>`, `phm team remove <gh-user> --json`; membership only, no credentials, each node keeps its own local auth, removal drains claims.
 - [Queue tiers](docs/QUEUE.md#tier-values): router-queue `tier=` is `frontier`, `work`, `mid` or `fast`; queuegen and router-lint reject any other value (`standard` means `work`), since dispatchd skips unknown tiers silently.
@@ -15,4 +16,6 @@ phm pool admission --json
 - [Connector profiles](docs/CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; declarative metadata and Phantom Secrets names, with explicit lane selectors and credential-safe import reports.
 
 - [Agent network](docs/AGENT-NETWORK.md): SSH multi-Mac node pool, join, worker, list/status, heartbeat, backup fencing and RPC JSON contract.
+- [Job cost breakdown](docs/JOB-COST.md): `phm job cost <id> --json` and loopback `GET /api/fleet/job/cost?id=<id>`; per-model-call tokens in/out, model and cost or 'unknown'.
+- [App control](docs/APP-CONTROL.md): `phm app steer pause|resume --json`, `phm app prefs`, app.control.v1 and existing stdio MCP bridge.
 - [oMLX on the small Macs](docs/OMLX-SMALL-MACS.md): `phm node lanes --json` plans an evidence-picked local model per RAM class; join/worker advertise `omlx`/`omlx-work` caps with kernel memory-pressure backoff; HF/oMLX caches are protected model roots.

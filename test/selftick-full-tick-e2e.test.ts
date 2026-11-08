@@ -67,7 +67,7 @@ it('runs the composed tick twice, preserves recovery evidence, and continues aft
         readJobs: async () => lines('metrics/jobs.jsonl').map(line => JSON.parse(line) as StrayJob),
         readProcesses: async () => gone ? [] : [json('queue/running-job.json') as StrayProcess],
       }) },
-      steps: { 'landed-sweep': sweep, ...(failEarly ? { 'reset-release': async () => { throw new Error('fake read failure'); } } : {}) },
+      steps: { 'landed-sweep': sweep, ...(failEarly ? { 'claude-quota': async () => ({ exitCode: 0, output: '' }), 'reset-release': async () => { throw new Error('fake read failure'); } } : {}) },
     });
     return { code, report: JSON.parse(output) as SelfTickReport };
   };
@@ -110,8 +110,8 @@ it('runs the composed tick twice, preserves recovery evidence, and continues aft
   expect(json('queue/self-tick-last.json').steps).toEqual(second.report.steps);
   const failure = await run(true);
   expect(failure.code).toBe(1);
-  expect(failure.report.steps[0]).toMatchObject({ step: 'reset-release', state: 'failed' });
-  expect(failure.report.steps.slice(1).every(step => step.state === 'ok')).toBe(true);
+  expect(failure.report.steps[1]).toMatchObject({ step: 'reset-release', state: 'failed' });
+  expect(failure.report.steps.slice(2).every(step => step.state === 'ok')).toBe(true);
   expect(sweep).toHaveBeenCalledTimes(3);
   expect(json('queue/self-tick-last.json').steps).toEqual(failure.report.steps);
   expect(realSignal).not.toHaveBeenCalled();
@@ -135,7 +135,7 @@ it('uses the owning recovery CLI cap and typed refusal in the composed tick', as
     const code = await cmdFleetSelfTick(['--json', '--apply', '--runs-dir', localRoot], {
       home: localHome, now: () => NOW, output: text => { output = text; }, error: () => {},
       stray: { readStraySlots, kill },
-      steps: { 'reset-release': noop, 'lane-autohold': noop, 'meter-incident': noop, 'planner-tick': noop,
+      steps: { 'claude-quota': async () => ({ exitCode: 0, output: '' }), 'reset-release': noop, 'lane-autohold': noop, 'meter-incident': noop, 'planner-tick': noop,
         'inbox-acks': noop, 'order-notices': noop, 'landed-sweep': noop },
     });
     expect(code).toBe(0);
@@ -159,7 +159,7 @@ describe('meter incident bus root', () => {
     meters: async () => [NOON - 7_200_000, NOON].map(at => ({ provider: 'codex-personal', window: 'secondary:10080', usedPercent: 20, resetAt: new Date(NOON + 86400000).toISOString(), sampledAt: new Date(at).toISOString() })),
   } satisfies LaneTruthReaders;
   const noop = async () => ({ exitCode: 0, output: '{}' });
-  const others = { 'reset-release': noop, 'lane-autohold': noop, 'stray-stop': noop, 'planner-tick': noop,
+  const others = { 'claude-quota': async () => ({ exitCode: 0, output: '' }), 'reset-release': noop, 'lane-autohold': noop, 'stray-stop': noop, 'planner-tick': noop,
     'inbox-acks': noop, 'order-notices': noop, 'landed-sweep': noop };
   const tick = async (runs: string, extra: Record<string, unknown>) => {
     let output = '';

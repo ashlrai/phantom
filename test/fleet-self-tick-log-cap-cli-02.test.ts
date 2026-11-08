@@ -27,7 +27,7 @@ let log: string;
 const stub = (name: string): SelfTickStep => async () =>
   ({ exitCode: 0, output: JSON.stringify({ ok: name }) });
 const steps: SelfTickSteps = {
-  'reset-release': stub('reset-release'),
+  'claude-quota': async () => ({ exitCode: 0, output: '' }), 'reset-release': stub('reset-release'),
   'lane-autohold': stub('lane-autohold'),
   'stray-stop': stub('stray-stop'),
   'meter-incident': stub('meter-incident'),
@@ -35,6 +35,7 @@ const steps: SelfTickSteps = {
   'inbox-acks': stub('inbox-acks'),
   'order-notices': stub('order-notices'),
   'landed-sweep': stub('landed-sweep'),
+  'cos-work': stub('cos-work'),
 };
 
 const run = async (args: string[]) => {

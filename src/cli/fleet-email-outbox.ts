@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readEmailDropConfig } from '../core/comms/email-drop-config.js';
-import { macMailTransport, readEmailOutbox, sendEmailOutbox, type EmailTransport } from '../core/comms/email-outbox.js';
+import { macMailTransport, readEmailOutbox, sendEmailOutbox, type EmailOutboxSendOptions, type EmailTransport } from '../core/comms/email-outbox.js';
 import {
   MAX_FLEET_EMAIL_OUTBOX_ENTRIES, parseFleetEmailOutboxArgs, readFleetEmailOutbox,
   type FleetEmailOutboxReport, type FleetEmailOutboxSourceState,
@@ -16,6 +16,8 @@ export interface FleetEmailOutboxDeps {
   runsDir?: string;
   /** Send transport; default macMailTransport() (test seam — fakes never spawn). */
   transport?: EmailTransport;
+  /** RQ-AGENTPROFILE-1 test seam; unset keeps the pending-review fail-closed stub. */
+  policyCheck?: EmailOutboxSendOptions['policyCheck'];
 }
 
 /**
@@ -115,6 +117,7 @@ export async function cmdFleetEmailOutbox(args: string[], deps: FleetEmailOutbox
       allowedRecipients: new Set(allowed),
       transport: deps.transport ?? macMailTransport(),
       draftsRunsDir: deps.runsDir ?? join(homedir(), '.ashlr-runs'),
+      policyCheck: deps.policyCheck,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

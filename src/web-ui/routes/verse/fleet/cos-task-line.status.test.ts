@@ -35,6 +35,7 @@ describe('cosTaskLine job status mapping', () => {
   it('keeps the other delivery states ahead of the job status', () => {
     expect(line('BLOCKED', { delivery: 'uncertain' })).toMatch(/^Delivery uncertain/);
     expect(line('READY', { delivery: 'sending' })).toBe('Sending the approved reply…');
+    expect(line('READY', { draft, delivery: 'declined' })).toBe('Declined');
   });
 
   it('null status is still checking', () => expect(cosTaskLine(null)).toBe('Checking the task…'));
