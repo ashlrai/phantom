@@ -399,6 +399,13 @@ def _rc(j):   # RQ-FINISH-SIGNAL A: agent exit status written by launch.sh; miss
         v = rd(RUN + "/" + j + ".rc").strip()
         return int(v) if re.fullmatch(r"-?[0-9]{1,6}", v) else None
     except Exception: return None
+def devin_failure(exit_code, empty, tail):
+    """Fixed labels only; a silent failure cannot prove that no remote work started."""
+    if exit_code is None or exit_code == 0: return None
+    if empty is not True: return "failed_with_work" if empty is False else "failed_diff_unknown"
+    if any(rx.search(tail) for _, rx in AB_AUTH_RX["devin"]): return "authentication"
+    if any(rx.search(tail) for _, rx in AB_RX["devin"]): return "quota"
+    return "failed_empty_unknown"
 def _kind(j, kinds): return re.match(r"(?:RQ-)?(?:%s)(?:[-_]|$)" % "|".join(kinds), j) is not None
 REUSE_KINDS = ("FIXUP", "LAND", "SALVAGE")
 try: DISK_REUSE_ONLY_GB = float(os.environ.get("DISK_REUSE_ONLY_GB", "100"))
@@ -720,6 +727,7 @@ for bp in sorted(glob.glob(R + "/*.base"), key=_prio):
             metric({"event": "finish", "job": j, "lane": pool, "wall_s": wall_s, "batch_size": bsize,
                 "exit_code": _rc(j), "tokens_total": tokens(tl), "tokens_in": None, "tokens_out": None, "cost": None,
                 "diff_files": nf, "diff_lines": diff_lines, "empty": empty,
+                "failure_class": devin_failure(_rc(j), empty, tl) if pool == "devin" else None,
                 "pool_error": next((c for c, rx in CLS if any(rx.search(t) for t in errlines(tl.splitlines()[-30:]))), None)})
     except Exception as e: log("metric finish err %s %s" % (j, type(e).__name__))
     subprocess.Popen(["/bin/bash", R + "/bin/reap-one.sh", j], stdin=subprocess.DEVNULL,
