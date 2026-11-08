@@ -55,6 +55,33 @@ function load(file: string, root: string): Row[] {
   }
   return rows;
 }
+/** Public claim view: the fencing token and lease internals never leave the module. */
+export interface BusWorkClaimView {
+  id: string; cursor: number; receivedAt: number; owner: string;
+  leaseUntil: number; completedAt: number | null;
+}
+export interface BusWorkClaimsInspection {
+  source: 'missing' | 'available' | 'unavailable';
+  claims: BusWorkClaimView[];
+}
+/**
+ * Read-only snapshot of the claims table for observers such as the unified
+ * comms inbox. Creates nothing and mutates nothing: an absent file is
+ * 'missing', a validated table 'available', anything else 'unavailable'.
+ */
+export function inspectBusWorkClaims(root?: string): BusWorkClaimsInspection {
+  const resolved = root ?? join(ashlrHome(), 'fleet');
+  const file = join(resolved, 'bus-work-claims', 'claims.json');
+  try { lstatSync(file); }
+  catch (error) {
+    return { source: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unavailable', claims: [] };
+  }
+  try {
+    const claims = load(file, resolved).map(({ id, cursor, receivedAt, owner, leaseUntil, completedAt }) =>
+      ({ id, cursor, receivedAt, owner, leaseUntil, completedAt }));
+    return { source: 'available', claims };
+  } catch { return { source: 'unavailable', claims: [] }; }
+}
 function receipt(id: string, root: string): BusInboxReceipt | undefined {
   // At zero, the reader returns original TTL, including expired retained receipts.
   let after = 0;
