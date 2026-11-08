@@ -27,7 +27,7 @@ phm --version
 phm docs --agent --json
 ```
 
-This source tree targets version 3.30.25; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.26; check canonical release availability and exact matching assets before installation.
 
 Patch release PRs are evaluated every 30 minutes when master has new green CI.
 `RELEASE_CADENCE_MINUTES` configures the minimum interval; the release PR keeps

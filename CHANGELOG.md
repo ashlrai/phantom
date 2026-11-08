@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.25 |
-| Latest dated changelog release (2026-11-08) | 3.30.25 |
+| Source package | 3.30.26 |
+| Latest dated changelog release (2026-11-08) | 3.30.26 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -16,7 +16,9 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
-## [3.30.26](https://github.com/ashlrai/phantom/compare/v3.30.25...v3.30.26) (2026-11-08)
+## [Unreleased]
+
+## [3.30.26] - 2026-11-08
 
 
 ### Changes
@@ -36,8 +38,6 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 * **RQ-SWE3-PRTRIAGE-1:** BRIDGE_NOTES — RQ-SWE3-PRTRIAGE-1 ([#4111](https://github.com/ashlrai/phantom/issues/4111)) ([9aa58a2](https://github.com/ashlrai/phantom/commit/9aa58a2a83488cd0820980f306702f049b7438d2))
 * **RQ-SWE3-REDIRECT-FIX-1:** BRIDGE_NOTES — RQ-SWE3-REDIRECT-FIX-1 ([#4106](https://github.com/ashlrai/phantom/issues/4106)) ([35f2650](https://github.com/ashlrai/phantom/commit/35f265092bf56b37f843af3a26d8047b8b9ab1d9))
 * **RQ-SWE3-SESS-REAPER-1:** BRIDGE_NOTES — RQ-SWE3-SESS-REAPER-1 `phm fleet session-audi ([#4110](https://github.com/ashlrai/phantom/issues/4110)) ([4b57b00](https://github.com/ashlrai/phantom/commit/4b57b00d8e33144a04b2657d15530a46a6c2ca3b))
-
-## [Unreleased]
 
 ## [3.30.25] - 2026-11-08
 
