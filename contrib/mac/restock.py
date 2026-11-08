@@ -213,12 +213,12 @@ for line in ready_raw:
             and os.path.isfile(pf) and rd(pf).strip()):
         parked_seen.add(j)
         rate_candidates.append((j, line, "\t".join([j, repo, lane, tier, pf])))
-def rate_recovered(now):
+def rate_count(now):
     try:
         stamp, count = rd(R + "/phantom-open-prs").split()
         age = now - float(stamp); count = int(count)
-        return 0 <= age < 600 and 0 <= count < 150
-    except (ValueError, TypeError): return False
+        return count if 0 <= age < 600 and count >= 0 else None
+    except (ValueError, TypeError): return None
 rate_unpark = []
 # bold census before the restock (RQ-QUEUEGEN-BOLD-30): the READY stock's share of bet=bold decides prefer_bold
 ready_n = len(recs); ready_bold = sum(1 for r in recs if ISBOLD.search(r[2]))
@@ -405,7 +405,22 @@ if out or unparks or dep_out or rate_candidates:
         try: last = float(rd(cooldown))
         except ValueError: last = 0
         now = time.time()
-        if rate_recovered(now) and 0 <= last <= now - 3600:
+        # Persist first observations and capacity under the same lock as wakeups.
+        # Missing evidence never opens the gate; a fall in the observed count
+        # permits one immediate wake without removing the normal hourly pacing.
+        state_path = Q + "/mergerate-observed.json"
+        try: observed = json.loads(rd(state_path, "{}"))
+        except (ValueError, TypeError): observed = {}
+        if not isinstance(observed, dict): observed = {}
+        first = observed.get("first", {})
+        if not isinstance(first, dict): first = {}
+        parked_ids = {j for j, old, _new in rate_candidates if old in snap}
+        first = {j: v for j, v in first.items() if j in parked_ids and isinstance(v, (int, float)) and 0 <= v <= now}
+        for j in parked_ids: first.setdefault(j, now)
+        count = rate_count(now)
+        previous = observed.get("count")
+        capacity_increased = isinstance(previous, int) and count is not None and count < previous
+        if count is not None and count < 150 and (capacity_increased or 0 <= last <= now - 3600):
             # Recheck identities under the queue lock: a parked duplicate, an
             # active claim or an already completed attempt must never launch.
             current_claimed = {x.split("\t")[0] for x in rd(Q + "/claimed.tsv").splitlines() if x}
@@ -418,7 +433,10 @@ if out or unparks or dep_out or rate_candidates:
                         and "RESULT PR" not in rd("%s/%s.publish" % (R, j))):
                     # Write the cooldown first: interruption can delay, never accelerate, recovery.
                     open(cooldown + ".tmp", "w").write(str(now)); os.replace(cooldown + ".tmp", cooldown)
-                    repl[old] = new; rate_unpark.append(j); break
+                    repl[old] = new; rate_unpark.append((j, max(0, int(now - first.pop(j, now))))); break
+        if count is not None: observed["count"] = count
+        observed["first"] = first
+        open(state_path + ".tmp", "w").write(json.dumps(observed)); os.replace(state_path + ".tmp", state_path)
         with open(Q + "/ready.tsv.tmp", "w") as f:
             for x in snap:
                 x = repl.pop(x, x)
@@ -437,7 +455,7 @@ for j, repo, l, tier, pf, p, i, deps in dep_out:
 for i, j, pc in done:
     lines[i] = re.sub(r"^- READY ", "- DONE-NOOP ", lines[i], count=1)
     ev("DONE-NOOP %s [precheck code=%d %s]" % (j, pc[0], pc[1]))
-for j in rate_unpark: ev("UNPARK %s reason=MERGERATE" % j)
+for j, wait in rate_unpark: ev("UNPARK %s reason=MERGERATE observed_wait_seconds=%d" % (j, wait))
 for j, ids, _old, _new in unparks:
     ev("UNPARK %s deps=%s" % (j, ",".join(ids)))
 for j, repo, l, tier, pf, p, i, deps in dep_out:
