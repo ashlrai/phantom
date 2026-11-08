@@ -711,6 +711,29 @@ class MergeRateRecoveryTests(unittest.TestCase):
         self.assertIn(rows[2], result)
         self.assertEqual(result.count('RQ-CAP-1\tphantom\tdevin\twork'), 1)
 
+    def test_available_capacity_drains_backlog_once_across_ticks(self):
+        import time
+        tmp = build('# empty\n')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs/queue'
+        rows = []
+        for n in range(22):
+            pf = q / 'prompts' / f'RQ-BUDGET-{n}.md'
+            pf.write_text('Required merge queue checks apply.\n')
+            rows.append(f'PARKED-MERGERATE.devin\tRQ-BUDGET-{n}\tdevin\twork\tphantom\t{pf}')
+        (q / 'ready.tsv').write_text('\n'.join(rows) + '\n')
+        cache = home / '.ashlr-runs/phantom-open-prs'
+        cache.write_text(f'{time.time()} 145\n')
+        for remaining in (17, 17):
+            result = restock(home, '--per-lane', '0')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((q / 'ready.tsv').read_text().count('PARKED-MERGERATE.'), remaining)
+        cache.write_text(f'{time.time()} 143\n')
+        self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
+        self.assertEqual((q / 'ready.tsv').read_text().count('PARKED-MERGERATE.'), 15)
+        self.assertEqual((q / 'prompts/RQ-BUDGET-0.md').read_text(), 'Required merge queue checks apply.\n')
+
     def test_concurrent_recovery_obeys_shared_cooldown(self):
         import time
         tmp = build('# empty\n')
@@ -723,7 +746,7 @@ class MergeRateRecoveryTests(unittest.TestCase):
             pf.write_text('Required checks and merge queue rules apply.\n')
             rows.append(f'PARKED-MERGERATE.devin\tRQ-RACE-{n}\tdevin\twork\tphantom\t{pf}')
         (q / 'ready.tsv').write_text('\n'.join(rows) + '\n')
-        (home / '.ashlr-runs/phantom-open-prs').write_text(f'{time.time()} 20\n')
+        (home / '.ashlr-runs/phantom-open-prs').write_text(f'{time.time()} 149\n')
         env = {'HOME': str(home), 'PATH': os.environ.get('PATH', '/usr/bin:/bin')}
         processes = [subprocess.Popen([sys.executable, '-B', str(SCRIPT), '--per-lane', '0'],
                                       env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -748,7 +771,7 @@ class MergeRateRecoveryTests(unittest.TestCase):
             rows.append(f'PARKED-MERGERATE.devin\t{job}\tdevin\twork\tphantom\t{pf}')
         (q / 'ready.tsv').write_text('\n'.join([rows[0], rows[0], *rows[1:]]) + '\n')
         (q / 'run/RQ-ACTIVE.dispatched').write_text('1')
-        (home / '.ashlr-runs/phantom-open-prs').write_text(f'{time.time()} 20\n')
+        (home / '.ashlr-runs/phantom-open-prs').write_text(f'{time.time()} 149\n')
         self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
         result = (q / 'ready.tsv').read_text()
         self.assertEqual(result.count(rows[0]), 2)
@@ -779,7 +802,7 @@ class MergeRateRecoveryTests(unittest.TestCase):
             r = restock(home, '--per-lane', '0')
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertEqual((q / 'ready.tsv').read_text(), '\n'.join(rows) + '\n')
-        cache.write_text(f'{time.time()} 20\n')
+        cache.write_text(f'{time.time()} 150\n')
         r = restock(home, '--per-lane', '0')
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn('RQ-RATE-0\tphantom\tdevin\twork', (q / 'ready.tsv').read_text())

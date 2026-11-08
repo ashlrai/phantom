@@ -193,8 +193,8 @@ for line in ready_raw:
     if any(d not in merged for d in ids): parked_diagnostics["waiting"] += 1; continue
     need[lane] = max(need[lane] - 1, 0)
     unparks.append((j, ids, line, "\t".join([j, repo, lane, tier, pf])))
-# Recover one Phantom job per hour when the dispatcher's PR-count observation
-# is fresh, including at saturation so a stalled queue can make progress.
+# Recover up to observed PR capacity promptly, with one hourly probe at saturation.
+# Reservations prevent repeated ticks from spending the same capacity twice.
 # Unknown evidence stays parked; the separate publish drip still applies.
 # The cooldown is checked and recorded under ready.lock, including across restarts.
 rate_candidates = []
@@ -420,10 +420,14 @@ if out or unparks or dep_out or rate_candidates:
         for j in parked_ids: first.setdefault(j, now)
         count = rate_count(now)
         previous = observed.get("count")
-        capacity_increased = isinstance(previous, int) and count is not None and count < previous
-        if count is not None and ((count < 150 and capacity_increased) or 0 <= last <= now - 3600):
-            # claimed.tsv is an enqueue history, not an active lease: parked
-            # jobs normally already appear there. Check live dispatch evidence.
+        reserved = observed.get("reserved", 0)
+        if not isinstance(reserved, int) or isinstance(reserved, bool) or reserved < 0: reserved = 0
+        if count is not None and isinstance(previous, int) and not isinstance(previous, bool):
+            reserved = max(0, reserved - max(0, count - previous))
+        budget = max(0, 150 - count - reserved) if count is not None else 0
+        probe = count is not None and budget == 0 and 0 <= last <= now - 3600
+        if budget or probe:
+            # claimed.tsv is enqueue history, not an active lease.
             for j, old, new in rate_candidates:
                 occurrences = sum(ready_job_id(x) == j for x in snap)
                 if (old in snap and occurrences == 1
@@ -433,9 +437,13 @@ if out or unparks or dep_out or rate_candidates:
                         and not os.path.exists(Q + "/run/" + j + ".dispatched")
                         and not os.path.exists(Q + "/run/" + j + ".batched")
                         and "RESULT PR" not in rd("%s/%s.publish" % (R, j))):
-                    # Write the cooldown first: interruption can delay, never accelerate, recovery.
-                    open(cooldown + ".tmp", "w").write(str(now)); os.replace(cooldown + ".tmp", cooldown)
-                    repl[old] = new; rate_unpark.append((j, max(0, int(now - first.pop(j, now))))); break
+                    repl[old] = new; rate_unpark.append((j, max(0, int(now - first.pop(j, now)))))
+                    reserved += 1
+                    if len(rate_unpark) >= (budget or 1): break
+            if rate_unpark:
+                # Record reservations before rewriting the queue: a crash can delay recovery, never duplicate capacity.
+                open(cooldown + ".tmp", "w").write(str(now)); os.replace(cooldown + ".tmp", cooldown)
+        observed["reserved"] = reserved
         if count is not None: observed["count"] = count
         observed["first"] = first
         open(state_path + ".tmp", "w").write(json.dumps(observed)); os.replace(state_path + ".tmp", state_path)
