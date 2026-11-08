@@ -75,12 +75,14 @@ export async function planReleaseCadence({ repository, revision, minutes = 30, n
 }
 
 class MetadataRateLimitError extends Error {}
+class MetadataTransientError extends Error {}
 
 export async function planReleaseCadenceWhenAvailable(input) {
   try {
     return await planReleaseCadence(input);
   } catch (error) {
     if (error instanceof MetadataRateLimitError) return { due: false, reason: 'metadata-rate-limited' };
+    if (error instanceof MetadataTransientError) return { due: false, reason: 'metadata-unavailable' };
     throw error;
   }
 }
@@ -125,7 +127,11 @@ export function createPublicMetadataReader({ fetchImpl = fetch, now = () => perf
           firstTransient = `${transient} at ${endpoint}`;
           report(`release metadata transient read failure: ${firstTransient}`);
         }
-        assert.ok(attempt < 3, `release metadata unavailable (${transient}) after ${attempt} read attempts; first transient ${firstTransient}`);
+        if (attempt === 3) {
+          const message = `release metadata unavailable (${transient}) after ${attempt} read attempts; first transient ${firstTransient}`;
+          report(`${message}; deferring until the next run`);
+          throw new MetadataTransientError(message);
+        }
         const delay = attempt * 250;
         assert.ok(remaining() > delay, `release metadata read deadline exhausted; first transient ${firstTransient}`);
         await sleep(delay);

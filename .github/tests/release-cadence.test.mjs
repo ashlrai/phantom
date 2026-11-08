@@ -125,8 +125,26 @@ test('persistent transient failure stops after three reads and retains the origi
   await assert.rejects(f.read('repos/ashlrai/phantom'), /503.*after 3 read attempts; first transient 504/);
   assert.equal(f.calls.length, 3);
   assert.deepEqual(f.waits, [250, 500]);
-  assert.equal(f.reports.length, 1);
+  assert.equal(f.reports.length, 2);
   assert.match(f.reports[0], /504/);
+});
+
+test('exhausted timeouts defer the release without granting eligibility', async () => {
+  let calls = 0, clock = 0;
+  const reports = [];
+  const read = createPublicMetadataReader({ now: () => clock, sleep: async ms => { clock += ms; },
+    report: message => reports.push(message), timeoutSignal: () => {
+      const controller = new AbortController();
+      controller.abort(new DOMException('timed out', 'TimeoutError'));
+      return controller.signal;
+    }, fetchImpl: async (_url, { signal }) => { calls++; clock += 5_000; throw signal.reason; } });
+  assert.deepEqual(await planReleaseCadenceWhenAvailable({ ...fixture().input, read }),
+    { due: false, reason: 'metadata-unavailable' });
+  assert.equal(calls, 3);
+  assert.match(reports[1], /timeout.*after 3 read attempts.*deferring/);
+  const gateway = metadataReaderFixture([{ status: 503 }, { status: 502 }, { status: 504 }]);
+  assert.deepEqual(await planReleaseCadenceWhenAvailable({ ...fixture().input, read: gateway.read }),
+    { due: false, reason: 'metadata-unavailable' });
 });
 
 test('fetch and body timeouts retry within the shared budget without masking other errors', async () => {
