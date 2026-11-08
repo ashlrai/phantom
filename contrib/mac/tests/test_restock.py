@@ -734,6 +734,36 @@ class MergeRateRecoveryTests(unittest.TestCase):
         self.assertEqual((q / 'ready.tsv').read_text().count('PARKED-MERGERATE.'), 15)
         self.assertEqual((q / 'prompts/RQ-BUDGET-0.md').read_text(), 'Required merge queue checks apply.\n')
 
+    def test_abandoned_reservation_releases_capacity_but_active_job_keeps_it(self):
+        import time
+        tmp = build('# empty\n')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs/queue'
+        rows = []
+        for n in range(22):
+            pf = q / 'prompts' / f'RQ-STALE-{n}.md'
+            pf.write_text('Required merge queue checks apply; no merge without Security pin\n')
+            rows.append(f'PARKED-MERGERATE.devin\tRQ-STALE-{n}\tdevin\twork\tphantom\t{pf}')
+        (q / 'ready.tsv').write_text('\n'.join(rows) + '\n')
+        (home / '.ashlr-runs/phantom-open-prs').write_text(f'{time.time()} 148\n')
+        self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
+        self.assertEqual((q / 'ready.tsv').read_text().count('PARKED-MERGERATE.'), 20)
+        state_path = q / 'mergerate-observed.json'
+        state = json.loads(state_path.read_text())
+        state['reservations'] = {j: time.time() - 3601 for j in state['reservations']}
+        state_path.write_text(json.dumps(state))
+        # The first vanished; the second is still queued. Only one place reopens.
+        ready = (q / 'ready.tsv').read_text().splitlines()
+        (q / 'ready.tsv').write_text('\n'.join(row for row in ready if not row.startswith('RQ-STALE-0\t')) + '\n')
+        self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
+        ready = (q / 'ready.tsv').read_text()
+        self.assertIn('RQ-STALE-2\tphantom\tdevin\twork', ready)
+        self.assertEqual(ready.count('PARKED-MERGERATE.'), 19)
+        self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
+        self.assertEqual((q / 'ready.tsv').read_text(), ready)
+        self.assertIn('no merge without Security pin', (q / 'prompts/RQ-STALE-2.md').read_text())
+
     def test_concurrent_recovery_obeys_shared_cooldown(self):
         import time
         tmp = build('# empty\n')

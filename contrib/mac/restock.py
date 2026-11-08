@@ -420,11 +420,28 @@ if out or unparks or dep_out or rate_candidates:
         for j in parked_ids: first.setdefault(j, now)
         count = rate_count(now)
         previous = observed.get("count")
+        reservations = observed.get("reservations", {})
+        if not isinstance(reservations, dict): reservations = {}
+        # A reservation whose job vanished without producing a PR must not hold
+        # capacity forever. Give dispatch and crash recovery an hour, and keep
+        # reservations while any queue or execution evidence remains.
+        active = {ready_job_id(row) for row in snap}
+        reservations = {j: at for j, at in reservations.items()
+                        if isinstance(j, str) and re.fullmatch(r"[A-Za-z0-9._-]+", j)
+                        and isinstance(at, (int, float)) and not isinstance(at, bool) and math.isfinite(at)
+                        and (not 0 <= at <= now - 3600 or j in active
+                             or os.path.isdir(H + "/Projects/ashlrai/wt/" + j)
+                             or any(os.path.exists(Q + "/run/" + j + suffix)
+                                    for suffix in (".reaping", ".dispatched", ".batched"))
+                             or "RESULT PR" in rd("%s/%s.publish" % (R, j)))}
         reserved = observed.get("reserved", 0)
         if not isinstance(reserved, int) or isinstance(reserved, bool) or reserved < 0: reserved = 0
         if count is not None and isinstance(previous, int) and not isinstance(previous, bool):
-            reserved = max(0, reserved - max(0, count - previous))
-        budget = max(0, 150 - count - reserved) if count is not None else 0
+            increase = max(0, count - previous)
+            consumed = min(increase, len(reservations))
+            for j in sorted(reservations, key=reservations.get)[:consumed]: reservations.pop(j)
+            reserved = max(0, reserved - (increase - consumed))
+        budget = max(0, 150 - count - reserved - len(reservations)) if count is not None else 0
         probe = count is not None and budget == 0 and 0 <= last <= now - 3600
         if budget or probe:
             # claimed.tsv is enqueue history, not an active lease.
@@ -438,12 +455,13 @@ if out or unparks or dep_out or rate_candidates:
                         and not os.path.exists(Q + "/run/" + j + ".batched")
                         and "RESULT PR" not in rd("%s/%s.publish" % (R, j))):
                     repl[old] = new; rate_unpark.append((j, max(0, int(now - first.pop(j, now)))))
-                    reserved += 1
+                    reservations[j] = now
                     if len(rate_unpark) >= (budget or 1): break
             if rate_unpark:
                 # Record reservations before rewriting the queue: a crash can delay recovery, never duplicate capacity.
                 open(cooldown + ".tmp", "w").write(str(now)); os.replace(cooldown + ".tmp", cooldown)
         observed["reserved"] = reserved
+        observed["reservations"] = reservations
         if count is not None: observed["count"] = count
         observed["first"] = first
         open(state_path + ".tmp", "w").write(json.dumps(observed)); os.replace(state_path + ".tmp", state_path)
