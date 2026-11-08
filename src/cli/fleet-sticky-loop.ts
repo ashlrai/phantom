@@ -16,6 +16,7 @@ export function correlateStickyLoop(events: string, drops: string, sticky: strin
   const byId = new Map<string, Drop[]>();
   for (const line of drops.split(/\r?\n/)) {
     const [time, id, action, reason, ...extra] = line.split('\t');
+    // eslint-disable-next-line no-control-regex -- log fields must not contain control bytes.
     if (!time || !id || !idPattern.test(id) || action !== 'drop' || !reason || extra.length || reason.length > 400 || /[\x00-\x1f\x7f]/.test(reason)) continue;
     const ms = localTimestamp(time).ms;
     if (!Number.isFinite(ms) || ms > now) continue;
