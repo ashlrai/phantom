@@ -177,3 +177,25 @@ it('exposes configurable stall diagnostics in JSON, plain output and help, rejec
   expect(await cmdFleetMergeLatency(['--help'])).toBe(0);
   expect(log.mock.calls.at(-1)![0]).toContain('auto_merge_enabled');
 });
+
+it('records queue observations and attributes only unambiguous eligibility intervals', async () => {
+  const { mkdtemp, readFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { recordMergeEvent } = await import('../src/cli/fleet-merge-latency.js');
+  const dir = await mkdtemp(join(tmpdir(), 'merge-observation-'));
+  const path = join(dir, 'events.jsonl');
+  try {
+    for (const row of [ev(1, 'queued', 100), ev(1, 'blocked', 90, { reason: 'required_checks' }),
+      ev(1, 'eligible', 40), ev(1, 'merged', 10)]) await recordMergeEvent(path, row);
+    await expect(recordMergeEvent(path, ev(1, 'blocked', 20, { reason: 'arbitrary text' }))).rejects.toThrow();
+    const text = await readFile(path, 'utf8');
+    const report = await fleetMergeLatency(async () => text, now);
+    expect(report.queue_timelines).toMatchObject([{ enqueue_to_eligible_s: 60, eligible_to_merge_s: 30,
+      blocked: [{ reason: 'required_checks', at: ago(90) }] }]);
+    const ambiguous = await fleetMergeLatency(reader(...text.trim().split('\n'), ev(1, 'blocked', 20, { reason: 'review' })), now);
+    expect(ambiguous.queue_timelines?.[0]).toMatchObject({ enqueue_to_eligible_s: null, eligible_to_merge_s: null });
+    const repeated = await fleetMergeLatency(reader(...text.trim().split('\n'), ev(1, 'queued', 80)), now);
+    expect(repeated.queue_timelines?.[0]).toMatchObject({ enqueued_at: null, enqueue_to_eligible_s: null });
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

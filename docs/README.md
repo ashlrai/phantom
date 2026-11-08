@@ -325,4 +325,5 @@ canonical release guide for required hosted qualification and publication.
 - [Local model tuning data and evaluation](https://github.com/ashlrai/phantom/blob/master/docs/TUNE.md) — offline dataset preparation and paired evaluation.
 
 - [Rebase-wave status](FLEET-REBASE-STATUS.md) — read-only conflict and queue coverage snapshot.
+- [Merge queue latency](FLEET-MERGE-LATENCY.md) — record observed queue transitions and inspect blocker and eligibility timing.
 - [Merge-batch planner](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-BATCH.md) — read-only file-overlap batching of open PRs with a least-rebase-churn order.
