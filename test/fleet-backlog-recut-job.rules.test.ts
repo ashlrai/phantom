@@ -6,7 +6,7 @@ const BODY = renderBacklogRecutJob(2523, 'abc123', 'bridge: RQ-PHX-EXAMPLE');
 describe('backlog recut job rules (verbatim)', () => {
   it('contains sentence 1: apply-only hunks + stale-base recovery', () => {
     expect(BODY).toContain(
-      "Apply only the hunks that belong to this PR's own concern. Before stopping, git diff --stat origin/master must list only the files you planned for this concern (write that list in BRIDGE_NOTES.md first); if it lists more, you started from a stale base: git checkout origin/master -- <extra files> and continue.",
+      "Apply only the hunks that belong to this PR's own concern. Before stopping, git diff --stat origin/master must list only the files you planned for this concern (write that list in BRIDGE_NOTES.md first); check every hunk as well as every path. Create a JSON array of the exact planned paths outside the worktree, including any new tests and BRIDGE_NOTES.md, then run node scripts/verify-recut-paths.mjs origin/master <paths.json>; resolve every unplanned path before stopping. Never force-push.",
     );
   });
 

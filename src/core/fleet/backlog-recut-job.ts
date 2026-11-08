@@ -19,15 +19,15 @@ Work from a fresh origin/master in an isolated worktree. Fetch the original PR
 head from the canonical origin, including fork-hosted worker branches:
   git fetch origin pull/${number}/head
 Check that FETCH_HEAD is exactly ${headSha}; stop and re-observe if it differs.
-${opts.unionSafe ? `The fleet union preview marks this PR fully union-safe, so the recut is a mechanical apply: run
+${opts.unionSafe ? `The fleet union preview is advisory. After reviewing the original PR diff below, run
   ashlr fleet union-apply --pr ${number} --out <dir>
-to write the resolved files plus a patch into a directory you name, then apply that output instead of re-deriving the merge.\n` : ''}
+to write a candidate into a directory you name. Review every candidate hunk against the original PR diff before applying it; omit unrelated changes and preserve intended edits.\n` : ''}
 Identify the original change with a unique merge base, not a two-tip diff:
   git merge-base --all origin/master ${headSha}
 Stop if there is not exactly one merge base. Inspect git diff <merge-base> ${headSha} -- and plan only the PR's own paths and hunks. A two-tip diff from origin/master to the old head includes unrelated base history; never apply it or copy whole old files over current files.
 Inspect the original change and replay its completed behavior onto fresh
 origin/master, resolving the conflict without losing already completed work.
-Apply only the hunks that belong to this PR's own concern. Before stopping, git diff --stat origin/master must list only the files you planned for this concern (write that list in BRIDGE_NOTES.md first); if it lists more, you started from a stale base: git checkout origin/master -- <extra files> and continue.
+Apply only the hunks that belong to this PR's own concern. Before stopping, git diff --stat origin/master must list only the files you planned for this concern (write that list in BRIDGE_NOTES.md first); check every hunk as well as every path. Create a JSON array of the exact planned paths outside the worktree, including any new tests and BRIDGE_NOTES.md, then run node scripts/verify-recut-paths.mjs origin/master <paths.json>; resolve every unplanned path before stopping. Never force-push.
 Do not edit src/cli/fleet.ts, src/cli/index.ts, completions.ts, help.ts, docs/README.md or docs/AGENT-OPERATIONS.md. A new verb is only a new src/cli/fleet-<verb>.ts exporting cmdFleet<Verb>; drop any fleet.ts hunk the original carried and rename the export to fit.
 Do not import a symbol from a job that has not merged; if the inherited work depends on one, define the type in a new file of your own.
 Your last step before stopping is npx tsc --noEmit -p tsconfig.json with exit 0, covering every symbol you import. If it fails, fix it. A red PR emails Mason.
