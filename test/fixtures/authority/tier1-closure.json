@@ -509,6 +509,7 @@
     "src/core/fleet/bus-mirror-dispatch.ts",
     "src/core/fleet/bus-wake-queue.ts",
     "src/core/fleet/bus-wake.ts",
+    "src/core/fleet/bus-work-claims.ts",
     "src/core/fleet/channel-ack-text.ts",
     "src/core/fleet/channel-bus-publish.ts",
     "src/core/fleet/channel-dedupe-store.ts",
