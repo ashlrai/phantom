@@ -8,6 +8,7 @@ import { isAbsolute, join } from 'node:path';
 import { desktopSessions, type DesktopSessionsResult } from '../desktop/desktop-sessions.js';
 import { collectAgentRoster, type AgentRoster, type RosterSession, type RosterSourceId } from '../fleet/agent-roster.js';
 import type { BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
+import { grokManualSensorReadings } from '../usage/grok-resource.js';
 import { presentUsageSensors } from '../usage/sensor-reading.js';
 import { sessionFromRoster, type ObserveInput } from './assemble.js';
 import type { ObserveSnapshot, SessionDetail } from './types.js';
@@ -115,7 +116,8 @@ export async function loadMergedRoster(): Promise<AgentRoster | undefined> {
 export async function loadSensorReport(nowMs: number): Promise<unknown> {
   // Same projection as `phm usage sensors --json` with no snapshot file:
   // every lane is unmeasured until a reading is supplied, and headroom is null.
-  return presentUsageSensors([], nowMs);
+  // Grok carries the owner's manual reading and reset time.
+  return presentUsageSensors(grokManualSensorReadings(nowMs), nowMs);
 }
 
 export async function readObserveSession(sessionId: string, options: ReadObserveOptions = {}): Promise<SessionDetail> {

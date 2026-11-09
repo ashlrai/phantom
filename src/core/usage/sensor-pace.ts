@@ -11,7 +11,7 @@ import type { UsageSensorLaneView, UsageSensorReport } from './sensor-reading.js
 
 export const PACE_SAFETY_MARGIN = 0.15;
 
-export type PaceReason = 'kill' | 'pay-per-use' | 'unknown' | 'paced' | 'uncapped';
+export type PaceReason = 'kill' | 'pay-per-use' | 'unknown' | 'paced' | 'uncapped' | 'exhausted';
 
 export interface PaceInput {
   lane: string;
@@ -66,6 +66,8 @@ export function paceLane(input: PaceInput): PaceDecision {
   if (input.uncapped === true) return { lane, target: clamp(ceiling, floor, ceiling), reason: 'uncapped' };
   const resetMs = input.resetAt ? Date.parse(input.resetAt) : NaN;
   const hours = Number.isFinite(resetMs) ? (resetMs - input.nowMs) / 3_600_000 : NaN;
+  // Nothing left before the reset is zero capacity, whatever the burn is.
+  if (input.remaining === 0 && hours > 0) return { lane, target: 0, reason: 'exhausted' };
   if (input.remaining === null || !(input.remaining >= 0) || !(hours > 0) || input.burnPerJob === null || input.burnPerJob < 0) {
     return { lane, target: null, reason: 'unknown' };
   }
@@ -99,7 +101,11 @@ const FLEET_FROM_SENSOR: Partial<Record<UsageSensorLaneView['lane'], FleetEngine
 /** Advice for the fleet scheduler. Devin's ACU row is not a CLI slot change. */
 export function fleetPaceAdvice(report: UsageSensorReport): Partial<Record<FleetEngine, SchedulerPaceAdvice>> {
   const byLane = new Map(report.lanes.map((lane) => [lane.lane, lane]));
-  const grok = byLane.get('grok-bot')?.status === 'fresh' ? byLane.get('grok-bot') : byLane.get('grok-ultra');
+  const grokBot = byLane.get('grok-bot');
+  const grokUltra = byLane.get('grok-ultra');
+  // Either Grok lane at zero capacity zeroes the engine; Ultra is the shared pool.
+  const grok = grokBot?.zeroCapacityUntil ? grokBot : grokUltra?.zeroCapacityUntil ? grokUltra
+    : grokBot?.status === 'fresh' ? grokBot : grokUltra;
   const chosen: [FleetEngine, UsageSensorLaneView | undefined][] = [
     ['codex', byLane.get('codex-personal')],
     ['claude-cli', byLane.get('claude-max')],
@@ -108,6 +114,10 @@ export function fleetPaceAdvice(report: UsageSensorReport): Partial<Record<Fleet
   ];
   const advice: Partial<Record<FleetEngine, SchedulerPaceAdvice>> = {};
   for (const [engine, row] of chosen) {
+    if (row?.zeroCapacityUntil) {
+      advice[engine] = { remaining: 0, resetAt: row.zeroCapacityUntil, burnPerHour: null };
+      continue;
+    }
     if (!row || row.status !== 'fresh') continue;
     if (!FLEET_FROM_SENSOR[row.lane] && engine !== 'grok-cli') continue;
     advice[engine] = {
@@ -128,6 +138,8 @@ export function paceReason(reason: PaceReason, target: number): string {
       return 'This pay-per-use lane stays at 0 until measured spend is below the owner budget and a fresh balance exists.';
     case 'uncapped':
       return `Local throughput allows ${target}.`;
+    case 'exhausted':
+      return 'The allowance is used up until the reset. Other lanes keep running.';
     case 'paced':
       return `Pacing holds this lane to ${target} so included usage meets the reset.`;
     case 'unknown':
