@@ -1,5 +1,8 @@
 /** The unified comms inbox for the Inbox pane (GET /api/verse/comms/inbox). Read only; narrowing is defensive, never repairing. */
 export const UNIFIED_INBOX_PATH = '/api/verse/comms/inbox?limit=20';
+/** Every pending item, for the expanded Waiting list. */
+export const UNIFIED_INBOX_ALL_PATH = '/api/verse/comms/inbox?limit=200';
+const DETAIL_MAX = 300;
 /** The CLI twin of this card. */
 export const UNIFIED_INBOX_COMMAND = 'phm comms inbox';
 
@@ -21,6 +24,8 @@ export interface UnifiedInboxEntry {
   severity: InboxSeverity;
   blocking: boolean;
   title: string;
+  /** Why it waits (sender and age, subject, plan size); absent when the API sent none or a non-string. */
+  detail?: string;
   since: string | null;
   expiresAt: string | null;
   act: string[];
@@ -48,6 +53,8 @@ function readEntry(raw: unknown): UnifiedInboxEntry | null {
     blocking: raw.blocking === true, title: raw.title,
     since: isoOrNull(raw.since), expiresAt: isoOrNull(raw.expiresAt),
     act: Array.isArray(raw.act) ? raw.act.filter((a): a is string => typeof a === 'string') : [],
+    // Omitted (not null) when absent so entries without a detail keep their prior shape.
+    ...(typeof raw.detail === 'string' && { detail: raw.detail.slice(0, DETAIL_MAX) }),
   };
 }
 
@@ -94,4 +101,25 @@ export function itemLine(item: UnifiedInboxEntry, nowMs: number): { label: strin
     if (left <= EXPIRES_SOON_MS) parts.push(`expires in ${Math.max(0, Math.ceil(left / 60_000))}m`);
   }
   return { label: ITEM_LABELS[item.source], title: item.title, age: parts.length ? parts.join(' · ') : null };
+}
+
+const SOURCE_COMMANDS: Record<InboxSource, string> = {
+  'needs-you': 'phm fleet needs', imessage: 'phm fleet teammate-texts', drafts: 'phm drafts list --status pending',
+  bus: 'phm fleet bus-claim', gmail: 'phm fleet gmail-archive-plan',
+};
+const STATE_MEANINGS: Record<Exclude<InboxSourceState, 'healthy'>, string> = {
+  missing: 'not set up on this Mac', degraded: 'read partly; some items may be missing', unavailable: 'could not be read',
+};
+
+export interface SourceProblem { source: InboxSource; name: string; meaning: string; command: string }
+
+/** One entry per source that is not healthy; a source absent from the response counts as unreadable. */
+export function sourceProblems(sources: UnifiedInboxSources): SourceProblem[] {
+  const problems: SourceProblem[] = [];
+  for (const source of SOURCES) {
+    const state = sources[source]?.state ?? 'unavailable';
+    if (state === 'healthy') continue;
+    problems.push({ source, name: SOURCE_NAMES[source], meaning: STATE_MEANINGS[state], command: SOURCE_COMMANDS[source] });
+  }
+  return problems;
 }
