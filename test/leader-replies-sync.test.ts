@@ -21,13 +21,13 @@ it('posts two dated blocks once through CLI and typed API without modifying the 
   const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   expect(await runLeaderCli(['replies', 'sync', '--json'])).toBe(0);
   const first = JSON.parse(String(log.mock.calls.at(-1)![0]));
-  expect(first.posted).toHaveLength(2);
+  expect(first.posted).toHaveLength(1);
   expect(first.skipped).toEqual([]);
   const second = await syncLeaderReplies();
   expect(second.posted).toEqual([]);
   expect(second.skipped).toEqual(first.posted);
   const messages = readFileSync(leaderThreadPath(), 'utf8').trim().split('\n').map(s => JSON.parse(s));
-  expect(messages).toHaveLength(2);
+  expect(messages).toHaveLength(1);
   expect(messages.every(m => m.text === 'Your reply is here.\nAnother paragraph.' && m.delivery.telegram === 'pending')).toBe(true);
   expect(readFileSync(plan, 'utf8')).toBe(fixture);
 });

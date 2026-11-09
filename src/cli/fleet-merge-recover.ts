@@ -83,6 +83,7 @@ export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDep
           const replacement = replacements[0];
           if (replacement) {
             action = `replacement-${replacement.state.toLowerCase()}`;
+            if (replacement.state === 'OPEN' && replacement.mergeStateStatus === 'DIRTY') action = 'replacement-conflict';
             if (replacement.state === 'OPEN' && !replacement.isDraft && replacement.baseRefName === pr.base && ['CLEAN', 'BLOCKED', 'BEHIND', 'UNSTABLE', 'HAS_HOOKS'].includes(replacement.mergeStateStatus)) {
               action = replacement.autoMergeRequest ? 'auto-merge-requested' : 'request-auto-merge';
               if (apply && !replacement.autoMergeRequest) {
