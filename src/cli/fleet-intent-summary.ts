@@ -8,10 +8,12 @@ export async function cmdFleetIntentSummary(args: string[]): Promise<number> {
   const report = await intentSummary();
   if (args[0] === '--json') console.log(JSON.stringify(report));
   else {
-    console.log(report.present
+    console.log(report.sourceQuality === 'unavailable'
+      ? 'Intent ledger evidence is unavailable; counts are unknown.'
+      : report.present
       ? `Intents: ${report.items}; tracked: ${report.tracked}; partial: ${report.partial}; stale: ${report.stale}`
       : 'Intent ledger not present.');
     for (const item of report.staleItems) console.log(`  ${item.id} [${item.status}] ${item.title}`);
   }
-  return 0;
+  return report.sourceQuality === 'unavailable' ? 1 : 0;
 }
