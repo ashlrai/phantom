@@ -24,6 +24,7 @@ import { refetchQuery } from '../../../../data/cache.js';
 import { readFailureReason } from '../../../../data/client.js';
 import { useQuery, useRefetch } from '../../../../data/hooks.js';
 import { leaderQuery } from '../../command/surface-data.js';
+import { NO_OWNER_THREAD, ownerThreadQuery } from '../../leader-thread/owner-thread-queries.js';
 import {
   addLeaderDirective,
   answerLeaderQuestion,
@@ -51,6 +52,7 @@ import { mobileTime } from '../interject-ack-model.js';
 import { unansweredRows } from '../leader-unanswered-model.js';
 import { showMobileToast } from '../mobile-toast.js';
 import { inboxLinesFor } from '../leader-inbox-lines.js';
+import { mergeOwnerThread } from './leader-owner-model.js';
 import { LeaderPasses } from '../LeaderPasses.js';
 import { LeaderRefsRow } from '../LeaderRefsRow.js';
 import { MicButton } from '../MicButton.js';
@@ -268,7 +270,11 @@ export function LeaderScreen() {
     refetchDirectives();
     refetchLeader();
   }, [refetchDirectives, refetchLeader]);
-  usePollWhileVisible(refetchThread, LEADER_THREAD_POLL_MS);
+  // Owner lines (iMessage, Slack, ...): a 404 or failed read is "none", never an error.
+  const owner = useQuery(ownerThreadQuery, { freshMs: 5_000 });
+  const refetchOwner = useRefetch(ownerThreadQuery);
+  const ownerRead = owner.data ?? NO_OWNER_THREAD;
+  usePollWhileVisible(() => { refetchThread(); refetchOwner(); }, LEADER_THREAD_POLL_MS);
   usePollWhileVisible(slowPoll, LEADER_SLOW_POLL_MS);
 
   const [older, setOlder] = useState<LeaderThreadMessage[]>([]);
@@ -308,8 +314,7 @@ export function LeaderScreen() {
   const hasUnanswered = unanswered.length > 0;
   const headline = unansweredHeadline(unansweredOrders(buildSteering(runs.data), nowMs, 30));
   const inboxLines = useMemo(() => inboxLinesFor(runs.data, messages, Date.now()), [runs.data, messages]);
-  const inboxLabels = useMemo(() => new Map(inboxLines.map(line => [line.key, line.label])), [inboxLines]);
-  const conversation = useMemo(() => [
+  const inboxEntries = useMemo(() => [
     ...inboxLines.map(line => {
       const at = new Date(line.at).toISOString();
       return { type: 'message' as const, key: line.key, at,
@@ -317,6 +322,8 @@ export function LeaderScreen() {
     }),
     ...entries,
   ].sort((a, b) => Date.parse(a.at) - Date.parse(b.at)), [entries, inboxLines]);
+  const { entries: conversation, labels: ownerLabels } = useMemo(() => mergeOwnerThread(inboxEntries, ownerRead), [inboxEntries, ownerRead]);
+  const inboxLabels = useMemo(() => new Map([...inboxLines.map(line => [line.key, line.label] as const), ...ownerLabels]), [inboxLines, ownerLabels]);
   const rows = useMemo(() => groupThread(conversation), [conversation]);
   const leaderActions = leader.data?.value?.actions ?? null;
 
@@ -597,6 +604,7 @@ export function LeaderScreen() {
       ) : reachability === 'unreachable' ? (
         <Banner>Can’t reach your Mac. Showing the last conversation ({sinceText(thread.updatedAt).toLowerCase()}).</Banner>
       ) : null}
+      {ownerRead.paused ? <p className={styles.system}>Owner channels are paused</p> : null}
       {body}
       <div ref={end} />
 
