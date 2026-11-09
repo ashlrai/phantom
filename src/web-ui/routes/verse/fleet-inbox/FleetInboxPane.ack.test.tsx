@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
-import { evictAll, refetchQuery } from '../../../data/cache.js';
+import { evictAll, refetchQuery, resetQueryGate } from '../../../data/cache.js';
 import { apiGet } from '../../../data/client.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { FleetInboxPane } from './FleetInboxPane.js';
@@ -23,7 +23,7 @@ const entries = [
 ];
 let passAge = 300;
 beforeEach(() => {
-  evictAll(); sessionStorage.clear(); passAge = 300;
+  evictAll(); resetQueryGate(); sessionStorage.clear(); passAge = 300;
   vi.mocked(apiGet).mockImplementation(async path => path.includes('/inbox?')
     ? { v: 1, sourceState: 'healthy', entries }
     : { v: 1, generatedAt: '2026-10-31T04:20:00Z', leaders: [{ ageSeconds: passAge }] });

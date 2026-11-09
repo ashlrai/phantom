@@ -1295,12 +1295,13 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         elif pc_n < PC_MAX and not over_budget():   # empty-run precheck (contrib/precheck.sh): no model call, fail open
             pc_n += 1; pc = precheck(j, repo, pf)
             if pc and pc[0] == 13:
-                first = park(park_state, j, key, NOW)
+                first = park(park_state, j, key, NOW, pc[0], pc[1])
                 jsave(PARK_PATH, park_state)
+                metric({"event": "precheck_parked", "job": j, "repo": repo,
+                        "lane": lane, "code": 13, "reason": pc[1],
+                        "retry_at": park_state[j]["retry_at"], "attempt": park_state[j]["count"]})
                 if first:
-                    metric({"event": "precheck_parked", "job": j, "repo": repo,
-                            "lane": lane, "code": 13, "retry_at": park_state[j]["retry_at"]})
-                    ev("PARKED %s [precheck code=13 acceptance unproven]" % j)
+                    ev("PARKED %s [precheck code=13 reason=%s]" % (j, pc[1]))
                 rest.append(line); continue
             if j in park_state:
                 park_state.pop(j); jsave(PARK_PATH, park_state)

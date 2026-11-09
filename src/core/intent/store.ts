@@ -70,7 +70,7 @@ export async function readLedger(root?: string): Promise<IntentLedger> {
 }
 
 export async function writeLedger(ledger: IntentLedger, root?: string): Promise<void> {
-  if (ledger.schema !== INTENT_LEDGER_SCHEMA) throw new IntentError(`Intent ledger must be ${INTENT_LEDGER_SCHEMA}.`);
+  if (!isIntentLedger(ledger)) throw new IntentError(`Intent ledger must be ${INTENT_LEDGER_SCHEMA}.`);
   assertLedgerText(ledger);
   const dir = await directory(root);
   const target = join(dir, 'ledger.json');
