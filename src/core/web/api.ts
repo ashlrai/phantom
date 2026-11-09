@@ -104,6 +104,7 @@ import type { ProposalsReadResult } from '../inbox/store.js';
 import { handleRunEventsSse, RUN_EVENTS_PATH_RE } from './run-stream.js';
 import { buildHostSummary, HOST_SUMMARY_PATH } from './host-summary.js';
 import { handleVerseApi, isVerseApiPath, verseSessionsDigest, verseSessionsSnapshot, verseAccountReadingsDigest } from '../verse/verse-api.js';
+import { handleIdeasDraftApi, isIdeasDraftPath } from './ideas-draft-route.js';
 // V2 autonomy control plane (mounted BEFORE handleVerseApi — see handleApi).
 import { handleVerseControlApi, isVerseControlPath } from '../verse/control-api.js';
 // GitHub, reachable from Verse (docs/VERSE-WORKSPACES.md §2) — also BEFORE handleVerseApi.
@@ -2082,6 +2083,12 @@ export async function handleApi(
       const backlog = loadBacklog();
       sendJson(res, 200, backlog ?? null);
       return true;
+    }
+
+    // ── POST /api/ideas/draft (Ideas pane → one drop-job draft) ─────────────
+    // Gated inside the handler: --allow-dispatch + token + JSON Content-Type.
+    if (isIdeasDraftPath(path)) {
+      return handleIdeasDraftApi(ctx, req, res, method);
     }
 
     // ── GET /api/impact ─────────────────────────────────────────────────────
