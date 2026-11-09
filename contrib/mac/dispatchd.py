@@ -426,14 +426,14 @@ def mem():
         m = re.search(r"used = ([\d.]+)M", out); swap = float(m.group(1)) / 1024 if m else None
     except Exception: pass
     return free, swap
-def _daemon_tick_age():   # -> (seconds since lastTickAt | None, why)
+def _daemon_tick_age():   # -> (seconds since lastTickAt | None, lastTickAt | None, why)
     import datetime as dt
     try:
         r = subprocess.run(["ashlr", "daemon", "status", "--json"], capture_output=True, text=True, timeout=GATE_STATUS_TIMEOUT, stdin=subprocess.DEVNULL)
         v = json.loads(r.stdout).get("lastTickAt")
-        if not isinstance(v, str): return (None, "no lastTickAt")
-        return (max(0.0, NOW - dt.datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()), None)
-    except Exception as e: return (None, type(e).__name__)
+        if not isinstance(v, str): return (None, None, "no lastTickAt")
+        return (max(0.0, NOW - dt.datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()), v, None)
+    except Exception as e: return (None, None, type(e).__name__)
 def api_pace():   # claude-api: slot target comes from the credit burn plan, not memory pressure
     try:
         return json.loads(subprocess.run(["/usr/bin/python3", R + "/bin/claude-api.py", "pace", "--json"], capture_output=True,
@@ -895,7 +895,7 @@ def admission_gate():
     except (ValueError, OSError): load1 = float("inf")   # unreadable load: reduce claims
     procs = sum(1 for l in ps.splitlines() if l.strip())
     wts = sum(1 for bp in glob.glob(R + "/*.base") if os.path.basename(bp)[:-5] in alive and (lambda b: bool(b) and os.path.isdir(b[2]))(base(os.path.basename(bp)[:-5])))
-    age, why = TICK_AGE_F.result()
+    age, last_tick, why = TICK_AGE_F.result()
     pressure = None
     try:
         pressure = int(os.environ["LOADGATE_PRESSURE"]) if test and "LOADGATE_PRESSURE" in os.environ else int(
@@ -927,8 +927,8 @@ def admission_gate():
              procs_max=GATE_PROCS_MAX, worktrees_max=GATE_WORKTREES_MAX, tick_max_s=GATE_TICK_MAX_S)
     if wts > GATE_WORKTREES_MAX: g["warnings"].append("worktrees %d > %d" % (wts, GATE_WORKTREES_MAX))
     if age is None: g["warnings"].append("daemon_status_unavailable (%s)" % why)
-    elif age > GATE_TICK_MAX_S: g["warnings"].append("daemon_tick_stale %ds > %ds" % (age, GATE_TICK_MAX_S))
-    g.update(load1=load1, ncpu=ncpu, load_max=load_max, procs=procs, worktrees=wts, daemon_tick_age_s=None if age is None else int(age))
+    elif age > GATE_TICK_MAX_S: g["warnings"].append("daemon_tick_stale %ds > %ds (Phantom daemon last tick: %s)" % (age, GATE_TICK_MAX_S, last_tick))
+    g.update(load1=load1, ncpu=ncpu, load_max=load_max, procs=procs, worktrees=wts, daemon_tick_age_s=None if age is None else int(age), daemon_last_tick_at=last_tick)
     g["tripped"] = bool(g["reasons"]) and not g["disabled"]
     return g
 GATE = admission_gate()
