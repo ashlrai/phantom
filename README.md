@@ -10,6 +10,7 @@ Agents start here. Humans can use the same commands.
 [Full agent reference](https://github.com/ashlrai/phantom/blob/master/docs/llms-full.txt) ·
 [Onboarding](https://phm.dev/connect) ·
 [User guide](docs/VERSE.md) ·
+[Repository tools](tools/README.md) ·
 [GitHub](https://github.com/ashlrai/phantom)
 
 [![CI](https://github.com/ashlrai/phantom/actions/workflows/ci.yml/badge.svg)](https://github.com/ashlrai/phantom/actions/workflows/ci.yml)
