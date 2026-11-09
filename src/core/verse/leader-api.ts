@@ -84,7 +84,7 @@ import {
   answerLeaderQuestion,
   appendMasonMessage,
   approveLeaderAction,
-  listThread,
+  listLeaderThread,
   readLeaderQuestion,
   submitLeaderQuestion,
   syncLeaderMemosToThread,
@@ -574,7 +574,7 @@ async function handleThreadRoutes(ctx: VerseApiContext, req: IncomingMessage, re
         return true;
       }
       try {
-        sendJson(res, 200, { messages: listThread(query) });
+        sendJson(res, 200, { messages: await listLeaderThread(query) });
       } catch (err) {
         if (!sendThreadError(res, err)) throw err;
       }

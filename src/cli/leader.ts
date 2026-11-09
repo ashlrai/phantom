@@ -414,8 +414,8 @@ async function runThreadCli(sub: string, args: string[]): Promise<number> {
       console.error(USAGE);
       return 2;
     }
-    return threadCall(thread, () => {
-      const messages = thread.listThread(limitOpt === null ? {} : { limit: Number(limitOpt) });
+    return threadCall(thread, async () => {
+      const messages = await thread.listLeaderThread(limitOpt === null ? {} : { limit: Number(limitOpt) });
       if (json) console.log(JSON.stringify({ messages }, null, 2));
       else if (messages.length === 0) console.log('No messages yet. Say something: phm leader say "…"');
       else for (const m of messages) printThreadMessage(m);

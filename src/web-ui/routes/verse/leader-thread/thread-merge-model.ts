@@ -66,11 +66,13 @@ export function mergeThread(thread: readonly ThreadPostShape[], inbox: FleetRuns
   outbox.forEach((entry, index) => {
     push({ at: inboxMs(entry.at, nowMs), who: 'leader', source: 'outbox', text: entry.text, id: `outbox-${index}`, ack: null, kind: classifyOutboxText(entry.text) });
   });
+  const fileTexts = new Set(outbox.map(entry => entry.text.trim()));
   for (const message of thread) {
+    if (message.from === 'leader' && fileTexts.has(message.text.trim())) continue;
     // Only attribute a relayed entry when its text identifies exactly one inbox row.
     const matches = message.from === 'mason' && message.channel !== 'system'
       ? inbox.flatMap((entry, index) => entry.text.trim() === message.text.trim() ? [index] : []) : [];
-    push({ at: Date.parse(message.at), who: message.from, source: message.channel, text: displayThreadText(message), id: message.id,
+    push({ at: Date.parse(message.at), who: message.from, source: message.id.startsWith('leader-file-') ? 'outbox' : message.channel, text: displayThreadText(message), id: message.id,
       ack: matches.length === 1 ? ackFor(matches[0]!) : null });
   }
   dated.sort((a, b) => a.line.at - b.line.at || a.order - b.order);
