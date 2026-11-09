@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cmdBudget } from '../src/cli/budget.js';
+import { appendLedger } from '../src/core/authority/ledger.js';
 import { AGENT_ENV_MARKERS } from '../src/core/teams/identity.js';
 import { recordOperatorApproval } from '../src/core/vision/leader-operator.js';
 import {
@@ -13,7 +14,7 @@ import {
   spendBudgetChangeRefused,
   spendBudgetPolicyHash,
 } from '../src/core/spend/budget-policy.js';
-import { readSpendBudget, setSpendBudget, SpendBudgetOwnerError, spendBudgetAuditPath, spendBudgetPath } from '../src/core/spend/budget-store.js';
+import { readSpendBudget, readSpendBudgetEpoch, setSpendBudget, SpendBudgetOwnerError, spendBudgetAuditPath, spendBudgetPath } from '../src/core/spend/budget-store.js';
 
 const roots: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -95,7 +96,8 @@ describe('spend budget policy', () => {
         });
       });
     });
-    expect(next!.entries).toEqual([{ provider: 'claude-api', period: 'month', usd: 20 }]);
+    expect(next!.entries).toEqual([{ provider: 'claude-api', period: 'month', usd: 0 }]);
+    expect(JSON.parse(readFileSync(spendBudgetPath(dir), 'utf8')).entries[0].usd).toBe(20);
     const audit = readFileSync(spendBudgetAuditPath(dir), 'utf8').trim();
     expect(JSON.parse(audit)).toEqual({
       at: '2026-11-09T12:00:00.000Z', provider: 'claude-api', period: 'month', fromUsd: 0, toUsd: 20, by: 'owner',
@@ -153,47 +155,44 @@ describe('spend budget attestation', () => {
       stored.entries[0]!.usd = 99;
       writeFileSync(file, `${JSON.stringify(stored)}\n`);
       expect(budgetFor((await readSpendBudget(dir)).policy, 'claude-api')).toBe(0);
-
-      const hash = spendBudgetPolicyHash({
-        schema: 'spend.budget.v1',
-        entries: [{ provider: 'claude-api', period: 'month', usd: 15 }],
-      });
-      recordOperatorApproval({
-        actionId: hash,
-        memoId: 'lm-20261109120000-abcdef',
-        kind: 'spend-budget',
-        summary: 'owner spend budget',
-        detail: 'approved',
-        channel: 'cli',
-        outcome: 'applied',
-      });
-      writeFileSync(file, `${JSON.stringify({
-        schema: 'spend.budget.v1',
-        entries: [{ provider: 'claude-api', period: 'month', usd: 15 }],
-        attestation: { kind: 'mason-approval', id: hash, digest: `${'a'.repeat(63)}b` },
-      })}\n`);
-      expect(budgetFor((await readSpendBudget(dir)).policy, 'claude-api')).toBe(0);
     });
   });
 
-  it('honors a pin-chain attestation and a verified Mason approval', async () => {
+  it('gives a forged ledger note an effective budget of 0', async () => {
     const dir = root();
+    const policy = {
+      schema: 'spend.budget.v1' as const,
+      entries: [{ provider: 'claude-api', period: 'month' as const, usd: 42 }],
+    };
+    const hash = spendBudgetPolicyHash(policy, 0);
     await withHome(dir, async () => {
-      await withTty(true, async () => {
-        await withoutMarkers(async () => {
-          await setSpendBudget(
-            { provider: 'claude-api', period: 'month', usd: 20 },
-            { env: {}, root: dir },
-          );
-        });
+      const appended = appendLedger({
+        kind: 'note',
+        actor: 'mason',
+        grantId: null,
+        repo: null,
+        data: { topic: 'spend-budget', detail: hash },
       });
-      expect(budgetFor((await readSpendBudget(dir)).policy, 'claude-api')).toBe(20);
+      expect(appended.ok).toBe(true);
+      if (!appended.ok) return;
+      writeFileSync(spendBudgetPath(dir), `${JSON.stringify({
+        ...policy,
+        attestation: { kind: 'pin-chain', hash, chain: appended.entry.hash, epoch: 0 },
+      })}\n`);
+      const read = await readSpendBudget(dir);
+      expect(read.source).toBe('owner');
+      expect(budgetFor(read.policy, 'claude-api')).toBe(0);
+    });
+  });
 
-      const policy = {
-        schema: 'spend.budget.v1' as const,
-        entries: [{ provider: 'claude-api', period: 'month' as const, usd: 15 }],
-      };
-      const hash = spendBudgetPolicyHash(policy);
+  it('gives a forged operator approval an effective budget of 0', async () => {
+    const dir = root();
+    const policy = {
+      schema: 'spend.budget.v1' as const,
+      entries: [{ provider: 'claude-api', period: 'month' as const, usd: 77 }],
+    };
+    const hash = spendBudgetPolicyHash(policy, 0);
+    await withHome(dir, async () => {
       recordOperatorApproval({
         actionId: hash,
         memoId: 'lm-20261109120000-abcdef',
@@ -205,9 +204,34 @@ describe('spend budget attestation', () => {
       });
       writeFileSync(spendBudgetPath(dir), `${JSON.stringify({
         ...policy,
-        attestation: { kind: 'mason-approval', id: hash, digest: hash },
+        attestation: { kind: 'mason-approval', id: hash, digest: hash, epoch: 0 },
       })}\n`);
-      expect(budgetFor((await readSpendBudget(dir)).policy, 'claude-api')).toBe(15);
+      const read = await readSpendBudget(dir);
+      expect(read.source).toBe('owner');
+      expect(budgetFor(read.policy, 'claude-api')).toBe(0);
+    });
+  });
+
+  it('gives a replayed file an effective budget of 0 after the budget is zeroed', async () => {
+    const dir = root();
+    await withHome(dir, async () => {
+      await withTty(true, async () => {
+        await withoutMarkers(async () => {
+          await setSpendBudget(
+            { provider: 'claude-api', period: 'month', usd: 42 },
+            { env: {}, root: dir },
+          );
+          const saved = readFileSync(spendBudgetPath(dir), 'utf8');
+          await setSpendBudget(
+            { provider: 'claude-api', period: 'month', usd: 0 },
+            { env: {}, root: dir },
+          );
+          expect(await readSpendBudgetEpoch(dir)).toBe(1);
+          expect(budgetFor((await readSpendBudget(dir)).policy, 'claude-api')).toBe(0);
+          writeFileSync(spendBudgetPath(dir), saved);
+          expect(budgetFor((await readSpendBudget(dir)).policy, 'claude-api')).toBe(0);
+        });
+      });
     });
   });
 
