@@ -248,8 +248,8 @@ describe('cmdFleetDisk lane lines', () => {
     });
     expect(code).toBe(0);
     expect(logs).toContain('lane freeze below 80 GB in: now');
-    // 140 -> 75 over 4 hours: 16.3 GB/hour, 35 GB to the halve line: 2.1 hours.
-    expect(logs).toContain('lane halve below 40 GB in: 2.1 hours');
+    // 140 -> 75 over 4 hours: 16.25 GB/hour, 35 GB to the halve line: 2.2 hours.
+    expect(logs).toContain('lane halve below 40 GB in: 2.2 hours');
   });
 
   it('prints unknown for the lane lines when the log cannot be read and exits 0', async () => {
