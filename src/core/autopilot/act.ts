@@ -662,6 +662,16 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
     const stopped = await stopNow(opts);
     if (stopped) return { result: 'refused', detail: [...detail, stopped], newHead: null };
     if (p.action === 'recut') {
+      // The replacement must still represent the observed PR on the base we
+      // verified. A normal push to a new branch cannot detect either race.
+      const refs = await git(opts.checkout, ['ls-remote', '--heads', pushUrl, `refs/heads/${pr.headRef}`, `refs/heads/${pr.baseRef}`]);
+      if (refs.code !== 0) return { result: 'error', detail: [...detail, 'could not re-read the source and base branches'], newHead: null };
+      const heads = new Map(refs.stdout.trim().split('\n').filter(Boolean).map((line) => {
+        const [sha, ref] = line.split('\t');
+        return [ref, sha];
+      }));
+      if (heads.get(`refs/heads/${pr.headRef}`) !== pr.headSha || heads.get(`refs/heads/${pr.baseRef}`) !== recutBase)
+        return { result: 'refused', detail: [...detail, 'the source or base branch moved during recut; next tick re-reads'], newHead: null };
       // One fresh branch per conflicting lane PR: <head>-recut, then -recut-2…
       const listed = await git(opts.checkout, ['ls-remote', '--heads', pushUrl, `${pr.headRef}-recut*`]);
       if (listed.code !== 0) return { result: 'error', detail: [...detail, `could not list origin's recut branches: ${(listed.stderr.trim().split('\n').pop() ?? '').slice(0, 200)}`], newHead: null };

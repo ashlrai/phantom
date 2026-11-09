@@ -426,6 +426,25 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     expect((await tick(opts)).plan).toBe('done');
   });
 
+  it.each(['main', 'improve/sum'])('refuses a recut when %s moves during verification', async (branch) => {
+    const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`, { queued: true });
+    let reads = 0;
+    const r = await tick({ repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [['true']],
+      ownedPrefixes: ['improve/'], gh: f.gh, guards: () => {
+        if (++reads === 2) {
+          git(f.clone, 'checkout', '-q', '--detach', branch === 'main' ? f.base : f.head);
+          writeFileSync(join(f.clone, 'concurrent.js'), 'concurrent change\n');
+          git(f.clone, 'add', 'concurrent.js');
+          git(f.clone, 'commit', '-qm', 'concurrent update');
+          git(f.clone, 'push', '-q', 'origin', `HEAD:${branch}`);
+        }
+        return { killSwitch: false, paused: false };
+      } });
+    expect(r).toMatchObject({ result: 'refused', detail: expect.arrayContaining([expect.stringContaining('moved during recut')]) });
+    expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut')).toBe('');
+    expect(f.calls.some(c => c.startsWith('pr merge'))).toBe(false);
+  });
+
   it('explains how to retry an unresolved recut without pushing a branch', async () => {
     const f = conflicting('exit 99');
     const opts = { repo: 'o/r', number: 7, checkout: f.clone, apply: true, verify: [] as string[][], ownedPrefixes: ['improve/'], gh: f.gh, guards: () => ({ killSwitch: false, paused: false }) };
