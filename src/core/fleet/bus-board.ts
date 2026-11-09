@@ -23,6 +23,7 @@ import {
 import { validateBusEnvelope } from './bus-envelope.js';
 import { appendBusHop } from './bus-hoplog.js';
 import { emit } from './event-bus.js';
+import { clearBoardLease, upsertBoardLease } from '../agents/claim-store.js';
 
 interface BoardThread { id: string; title: string; members: string[] }
 interface BoardTask { id: string; threadId: string; itemId: string; title: string; claim?: QueueClaimRef }
@@ -311,12 +312,14 @@ export class BusBoard {
     return { delivered: deliveries.length, envelopeIds: deliveries.map((d) => d.id), unlogged };
   }
 
-  readThread(actor: string, threadId: string): BusBoardDelivery[] {
+  readThread(actor: string, threadId: string, pendingOnly = false): BusBoardDelivery[] {
     actor = this.peer(actor);
     return this.transaction(false, (state) => {
       this.member(state, threadId, actor);
+      const acknowledged = new Set((state.receipts ?? []).map((receipt) => receipt.deliveryId));
       return state.deliveries
-        .filter((delivery) => delivery.threadId === threadId && delivery.recipient === actor)
+        .filter((delivery) => delivery.threadId === threadId && delivery.recipient === actor &&
+          (!pendingOnly || !acknowledged.has(delivery.id)))
         .map((delivery) => ({
           ...delivery,
           content: { trust: 'untrusted' as const, text: presentBusBoardText(delivery.content.text) },
@@ -385,6 +388,9 @@ export class BusBoard {
       // If the board write fails, the queue lease still fences every contender
       // and expires normally. Never fabricate success or release another
       // generation.
+      const recorded = upsertBoardLease({ sourceId: task.itemId, owner: actor, leaseUntil: claim.leaseUntil });
+      if (recorded.status === 'conflict') throw new Error('Task claim conflict');
+      if (recorded.status !== 'acquired') throw new Error('Claim store unavailable.');
       task.claim = claim;
       return this.taskView(task);
     });
@@ -400,6 +406,9 @@ export class BusBoard {
       const current = this.options.fleet.validateClaims([task.claim])[0];
       const claim = current && this.options.fleet.handoffClaim(current, recipient);
       if (!claim) throw new Error('Fleet handoff conflict or lease unavailable');
+      const recorded = upsertBoardLease({ sourceId: task.itemId, owner: recipient, leaseUntil: claim.leaseUntil });
+      if (recorded.status === 'conflict') throw new Error('Task claim conflict');
+      if (recorded.status !== 'acquired') throw new Error('Claim store unavailable.');
       task.claim = claim;
       return this.taskView(task);
     });
@@ -414,6 +423,8 @@ export class BusBoard {
       const current = this.options.fleet.validateClaims([task.claim])[0];
       const claim = current && this.options.fleet.renewClaims([current])[0];
       if (!claim) throw new Error('Fleet lease unavailable');
+      const recorded = upsertBoardLease({ sourceId: task.itemId, owner: actor, leaseUntil: claim.leaseUntil });
+      if (recorded.status !== 'acquired') throw new Error('Fleet lease unavailable');
       task.claim = claim;
       return this.taskView(task);
     });
@@ -428,6 +439,7 @@ export class BusBoard {
         !current || current.machineId !== actor ||
         !this.options.fleet.releaseClaims([current]).includes(task.itemId)
       ) throw new Error('Fleet release refused');
+      if (clearBoardLease(task.itemId).status === 'unavailable') throw new Error('Claim store unavailable.');
       delete task.claim;
       return this.taskView(task);
     });

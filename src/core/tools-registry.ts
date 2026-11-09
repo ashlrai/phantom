@@ -596,7 +596,10 @@ function runProbeAsync(cmd: string, args: string[], timeout: number): Promise<st
       }
       resolve(null);
     });
+    // A spawn that yields no child handle can never fire its callback —
+    // fail the probe instead of parking the whole registry on it forever.
+    if (!child) { resolve(null); return; }
     // Match the synchronous inventory's ignored stdin: MCP shims may wait for EOF.
-    child?.stdin?.end();
+    child.stdin?.end();
   });
 }

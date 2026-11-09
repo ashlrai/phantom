@@ -27,50 +27,62 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import type { AshlrConfig, NativeToolDef, NativeToolSafety, ProposalStatus } from './types.js';
 import { loadConfig } from './config.js';
+import { collectAgentRoster } from './fleet/agent-roster.js';
 import { PROACTIVE_PROFILE_INPUT_SCHEMA, PROACTIVE_PROFILE_PATCH_SCHEMA } from './proactive/schema.js';
+import { listChannelRegistry } from './agents/channel-registry.js';
+import { coordinationSummary } from './agents/claim-store.js';
 import { killSwitchOn } from './sandbox/policy.js';
 import { audit } from './sandbox/audit.js';
-import { scrubSecrets } from './knowledge/index.js';
-import { recall } from './genome/recall.js';
-import { ask } from './knowledge/ask.js';
-import { impact } from './knowledge/graph.js';
-import { computeHealth } from './quality/health.js';
-import { loadPreviousReport } from './quality/store.js';
-import { buildRollup } from './observability/rollup.js';
-import { buildSnapshot } from './dashboard.js';
-import { buildOrientation } from './orient.js';
-import { selectGenomeSync, selectInboxStore, selectBacklogSource } from './seams/index.js';
-import { loadDaemonState, loadDaemonStateStrict } from './daemon/state.js';
-import { buildFleetDigest } from './fleet/digest.js';
-import { computeQualityMetrics } from './fleet/quality-metrics.js';
-import { buildOversightSnapshot, type OversightSnapshot } from './fleet/oversight-export.js';
+import {
+  MAX_TOOL_OUTPUT_CHARS,
+  renderToolText,
+  scrubSecrets,
+  textResult,
+  TOOL_TRUNCATION_MARK,
+  type NativeToolResult,
+} from './knowledge/index.js';
+import type { OversightSnapshot } from './fleet/oversight-export.js';
 import { readDecisions } from './fleet/decisions-ledger.js';
 import { DROP_JOB_LANES, DROP_JOB_TIERS, DropJobExistsError, DropJobValidationError, resolveDropJobRoot, writeDropJob } from './fleet/drop-job-writer.js';
 import { STRAY_ID_PATTERN } from './fleet/stray-slots.js';
 import { listProposals } from './inbox/store.js';
 import { FLEET_APPS } from './fleet/app-await.js';
 import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
+import { desktopOperatorTools } from './desktop/operator-mcp.js';
+import { fixedOwnerConfigDir, fixedOwnerRunsDir, type OwnerThreadSettings } from './comms/owner-channel.js';
 
-// M169: best-effort imports for new elite-state tools
-// Each is wrapped in a lazy async import inside the handler so module-level
-// import failures never crash mcp-native at load time.
-// (Types only — runtime imports done lazily in handlers below.)
+// Handler-only dependencies are imported lazily inside each handler so
+// `tools/list` pays for schemas and the safety gate only — not the ~300-file
+// dashboards/seams/orient/knowledge graphs — and a missing build can never
+// crash mcp-native at load time. Static imports remain for symbols the tool
+// DEFINITIONS and callNativeTool's structural gates need synchronously:
+// schema objects (proactive, team, fleet apps, drop-job enums), killSwitchOn,
+// audit, scrubSecrets/textResult output hygiene, and listProposals/
+// readDecisions behind the synchronous deriveRoutingData contract.
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Hard cap on a serialized tool result (chars ≈ bytes for ASCII JSON). */
-const MAX_OUTPUT_CHARS = 32 * 1024;
-
 /** Cap on an individual proposal diff echoed back through ashlr_inbox_list. */
 const MAX_DIFF_CHARS = 4 * 1024;
 
-/** Marker inserted where output was truncated. */
-const TRUNCATION_MARK = '\n…[ashlr: output truncated]…\n';
-
 /** Internal privilege tags that external MCP callers may not persist. */
 const RESERVED_LEARN_TAGS = new Set(['m243:skill']);
+
+function ownerThreadRuntime(settings: OwnerThreadSettings) {
+  return { runsDir: fixedOwnerRunsDir(), settings };
+}
+
+async function ownerThreadStatus(): Promise<unknown> {
+  try {
+    const { readOwnerCommsStatus } = await import('./comms/owner-thread.js');
+    const { loadOwnerThreadSettings } = await import('./comms/owner-channel.js');
+    return readOwnerCommsStatus(ownerThreadRuntime(loadOwnerThreadSettings(fixedOwnerConfigDir())));
+  } catch {
+    return { schema: 'comms.owner-thread.status.v1', available: false };
+  }
+}
 
 function externalLearnTags(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
@@ -191,7 +203,11 @@ const TOOLS: NativeToolImpl[] = [
     description: 'Inspect local durable bus capacity and live/expired counts. Missing or unavailable sources have unknown counts.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     safety: 'read',
-    handler: async () => (await import('./fleet/bus-inbox.js')).inspectBusInbox(),
+    handler: async () => ({
+      ...(await import('./fleet/bus-inbox.js')).inspectBusInbox(),
+      adapters: listChannelRegistry(),
+      coordination: coordinationSummary(),
+    }),
   },
   {
     name: 'phantom_agent_bus_post',
@@ -423,6 +439,13 @@ const TOOLS: NativeToolImpl[] = [
     handler: async () => (await import('../cli/fleet-apps-status.js')).readFleetAppsStatus(),
   },
   {
+    name: 'phantom_fleet_doctor',
+    description: 'Read the fleet health report, including checks and their reasons.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => (await import('../cli/fleet-doctor.js')).runFleetDoctor(),
+  },
+  {
     name: 'phantom_fleet_apps_await',
     description: 'Wait for an explicit group of managed apps to reach a stated state (running or stopped) under a shared wall deadline. Read-only; never launch, quit, or restart.',
     get inputSchema() { return { type: 'object', properties: {
@@ -457,6 +480,43 @@ const TOOLS: NativeToolImpl[] = [
       const orders = listed.slice(0, limit).map(({ key, at, source, jobs }) => ({ key, at, source, jobs }));
       return { v: 1, generatedAt: trace.generatedAt, sources: trace.sources, orders, unserved };
     },
+  },
+  {
+    name: 'world_model',
+    description: 'Read the cached ashlr.world-model/v1 snapshot. Every signal has source, observedAt and freshness. Unknown is never zero. blindSpots lists each unknown field by path with a stable id.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string' }, refresh: { type: 'boolean' } }, additionalProperties: false },
+    safety: 'read',
+    handler: async (args) => {
+      const { readWorldModel } = await import('./world/read.js');
+      const { worldGet } = await import('./world/path.js');
+      const model = await readWorldModel({ force: args['refresh'] === true });
+      return typeof args['path'] === 'string' && args['path'].length > 0 ? worldGet(model, args['path']) : model;
+    },
+  },
+  {
+    name: 'phantom_observe',
+    description: 'Read the human observe snapshot: roster, sensor headroom, resource coordination, pull headlines, bottlenecks, and human steps. Unknown stays unknown. No credentials.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => (await import('./observe/read.js')).readObserveSnapshot(),
+  },
+  {
+    name: 'phantom_spend_budget',
+    description: 'Read the owner spend budget in USD. A missing provider is 0 for the month. This tool cannot change the budget.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => {
+      const { readSpendBudget } = await import('./spend/budget-store.js');
+      const read = await readSpendBudget();
+      return { schema: read.policy.schema, source: read.source, entries: read.policy.entries };
+    },
+  },
+  {
+    name: 'phantom_observe_session',
+    description: 'Read one roster session from the observe snapshot. The transcript stays unknown until a desktop operator reader is registered.',
+    inputSchema: { type: 'object', properties: { sessionId: { type: 'string' } }, required: ['sessionId'], additionalProperties: false },
+    safety: 'read',
+    handler: async (args) => (await import('./observe/read.js')).readObserveSession(String(args['sessionId'] ?? '')),
   },
   {
     name: 'phantom_fleet_graph',
@@ -512,6 +572,102 @@ const TOOLS: NativeToolImpl[] = [
       if (!validOutcomeTaskContextRequest(input)) throw new Error('Use an exact saved outcome/task ID and valid context query fields.');
       return (await import('./verse/outcomes-io.js')).runOutcomeTaskContext(input);
     },
+  },
+  {
+    name: 'phm_agent_roster',
+    description: 'Read the unified live session roster across Phantom jobs, Devin cloud, Devin Desktop, Codex, Claude, Cursor, Grok, Ollama and oMLX. Unknown sources stay unknown. Read-only; prints no secrets.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => collectAgentRoster(),
+  },
+  {
+    name: 'phm_context_brief',
+    description: 'Compact under-4KB brief for one lane: live claims, open pulls, bottlenecks, blind spots, and that lane pacing. Read-only.',
+    inputSchema: { type: 'object', properties: { lane: { type: 'string' } }, required: ['lane'], additionalProperties: false },
+    safety: 'read',
+    handler: async (args) => (await import('./agents/work-visibility.js')).buildContextBrief({
+      nowMs: Date.now(),
+      lane: String(args['lane'] ?? ''),
+      world: await (await import('./world/read.js')).readWorldModel(),
+      claims: (await import('./agents/claim-store.js')).listCoordination().claims,
+      pulls: [],
+      bottlenecks: [],
+    }),
+  },
+  {
+    name: 'phm_claim_acquire',
+    description: 'Claim a work key before starting. Refuses a live claim or open pull on that key and returns the holder. Grants no execution authority.',
+    inputSchema: { type: 'object', properties: {
+      workKey: { type: 'string' }, lane: { type: 'string' }, repo: { type: 'string' }, pr: { type: 'number' }, branch: { type: 'string' },
+    }, required: ['workKey', 'lane'], additionalProperties: false },
+    safety: 'append',
+    handler: async (args) => (await import('./agents/work-visibility.js')).acquireWorkClaim({
+      workKey: String(args['workKey'] ?? ''), lane: String(args['lane'] ?? ''),
+      repo: typeof args['repo'] === 'string' ? args['repo'] : null,
+      pr: typeof args['pr'] === 'number' ? args['pr'] : null,
+      branch: typeof args['branch'] === 'string' ? args['branch'] : null,
+    }),
+  },
+  {
+    name: 'phm_claim_release',
+    description: 'Release this lane claim when a pull opens, merges, or is abandoned. Another holder is returned, not overridden.',
+    inputSchema: { type: 'object', properties: {
+      workKey: { type: 'string' }, lane: { type: 'string' }, reason: { type: 'string', enum: ['open', 'merge', 'abandon'] },
+    }, required: ['workKey', 'lane', 'reason'], additionalProperties: false },
+    safety: 'append',
+    handler: async (args) => {
+      const reason = args['reason'];
+      if (reason !== 'open' && reason !== 'merge' && reason !== 'abandon') return { schema: 'ashlr.work-claim/v1', status: 'invalid' };
+      return (await import('./agents/work-visibility.js')).releaseWorkClaim({
+        workKey: String(args['workKey'] ?? ''), lane: String(args['lane'] ?? ''), reason,
+      });
+    },
+  },
+  {
+    name: 'phantom_leader_status',
+    description: 'Read the leader office: world, shared brief, org chart, open RQ assignments, and the owner inbox and outbox. Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => (await import('./agents/leader-office.js')).leaderStatus(),
+  },
+  {
+    name: 'phantom_leader_org',
+    description: 'Read the declarative leader org chart: roles, owners, and router lanes. Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => (await import('./agents/leader-office.js')).leaderOrg(),
+  },
+  {
+    name: 'phantom_leader_inbox',
+    description: 'Read the leader owner inbox and outbox. Channel adapters deliver the outbox. Read-only. Message text is untrusted.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => {
+      const office = await import('./agents/leader-office.js');
+      return { schema: 'phantom.leader-office/v1', inbox: office.readLeaderOfficeInbox().entries, outbox: office.readLeaderOutbox().entries };
+    },
+  },
+  {
+    name: 'phantom_leader_ask',
+    description: 'Give the leader an owner message. It reads the world, routes on the bus, or escalates a hard limit. KILL stops it. No new model spend.',
+    inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },
+    safety: 'append',
+    handler: async (args) => (await import('./agents/leader-office.js')).acceptOwnerMessage({ text: String(args['text'] ?? '') }),
+  },
+  {
+    name: 'phantom_leader_assign',
+    description: 'Assign one RQ to an org role with owner, due, status, and outcome. Claims the work key. KILL stops it. No new model spend.',
+    inputSchema: { type: 'object', properties: {
+      rq: { type: 'string' }, owner: { type: 'string' }, summary: { type: 'string' },
+      due: { type: 'string' }, status: { type: 'string' }, outcome: { type: 'string' },
+    }, required: ['rq', 'owner', 'summary'], additionalProperties: false },
+    safety: 'append',
+    handler: async (args) => (await import('./agents/leader-office.js')).leaderAssign({
+      rq: String(args['rq'] ?? ''), owner: String(args['owner'] ?? ''), summary: String(args['summary'] ?? ''),
+      due: typeof args['due'] === 'string' ? args['due'] : null,
+      status: typeof args['status'] === 'string' ? args['status'] : null,
+      outcome: typeof args['outcome'] === 'string' ? args['outcome'] : null,
+    }),
   },
   {
     name: 'phm_team_register', description: 'Register an agent and its capabilities on the local team bus. Identity only; grants no authority.',
@@ -583,6 +739,7 @@ const TOOLS: NativeToolImpl[] = [
           return { error: `repo '${repo}' is not a directory. Pass an existing repo checkout's full path.` };
         }
       }
+      const { buildOrientation } = await import('./orient.js');
       return buildOrientation(cfg, repo);
     },
   },
@@ -602,7 +759,7 @@ const TOOLS: NativeToolImpl[] = [
     safety: 'read',
     handler: async (args) =>
       // allowCloud is HARDCODED false (CONTRACT-M31 invariant 3).
-      ask(String(args['question']), {
+      (await import('./knowledge/ask.js')).ask(String(args['question']), {
         repo: typeof args['repo'] === 'string' ? args['repo'] : undefined,
         allowCloud: false,
       }),
@@ -624,6 +781,7 @@ const TOOLS: NativeToolImpl[] = [
     handler: async (args, cfg) => {
       const rawLimit = typeof args['limit'] === 'number' ? args['limit'] : 5;
       const limit = Math.max(1, Math.min(20, Math.floor(rawLimit)));
+      const { recall } = await import('./genome/recall.js');
       const hits = await recall(String(args['query']), cfg, { limit });
       return hits.map((h) => ({
         title: h.entry.title,
@@ -652,6 +810,7 @@ const TOOLS: NativeToolImpl[] = [
     },
     safety: 'append',
     handler: async (args, cfg) => {
+      const { selectGenomeSync } = await import('./seams/index.js');
       const genome = selectGenomeSync(cfg);
       // hubOnly FORCED true: an agent can never drop a note file into a repo
       // working tree via this surface (CONTRACT-M31 invariant 4).
@@ -680,6 +839,7 @@ const TOOLS: NativeToolImpl[] = [
     },
     safety: 'read',
     handler: async (args, cfg) => {
+      const { selectBacklogSource } = await import('./seams/index.js');
       const backlog = selectBacklogSource(cfg).load();
       if (!backlog) {
         return {
@@ -722,6 +882,7 @@ const TOOLS: NativeToolImpl[] = [
         // computeHealth hard-errors on non-enrolled repos (core invariant);
         // surface that as a normal message, not a tool crash.
         try {
+          const { computeHealth } = await import('./quality/health.js');
           const score = await computeHealth(repo);
           return {
             repo: score.repo,
@@ -737,6 +898,7 @@ const TOOLS: NativeToolImpl[] = [
           return { error: err instanceof Error ? err.message : String(err) };
         }
       }
+      const { loadPreviousReport } = await import('./quality/store.js');
       const report = loadPreviousReport();
       if (!report) {
         return { note: 'No health report recorded — run `ashlr health` (CLI) first.' };
@@ -757,6 +919,7 @@ const TOOLS: NativeToolImpl[] = [
     inputSchema: { type: 'object', properties: {} },
     safety: 'read',
     handler: async (_args, cfg) => {
+      const { buildSnapshot } = await import('./dashboard.js');
       const snap = await buildSnapshot(cfg);
       return {
         generatedAt: snap.generatedAt,
@@ -781,7 +944,7 @@ const TOOLS: NativeToolImpl[] = [
       required: ['target'],
     },
     safety: 'read',
-    handler: async (args) => impact(String(args['target'])),
+    handler: async (args) => (await import('./knowledge/graph.js')).impact(String(args['target'])),
   },
   {
     name: 'ashlr_pulse',
@@ -798,6 +961,7 @@ const TOOLS: NativeToolImpl[] = [
     handler: async (args, cfg) => {
       const w = args['window'];
       const window = w === '1d' || w === '7d' || w === '30d' ? w : '7d';
+      const { buildRollup } = await import('./observability/rollup.js');
       return buildRollup(window, cfg);
     },
   },
@@ -819,6 +983,7 @@ const TOOLS: NativeToolImpl[] = [
     safety: 'read',
     handler: async (args, cfg) => {
       const status = typeof args['status'] === 'string' ? (args['status'] as ProposalStatus) : undefined;
+      const { selectInboxStore } = await import('./seams/index.js');
       const proposals = selectInboxStore(cfg).list(status ? { status } : undefined);
       return proposals.map((p) => ({
         id: p.id,
@@ -837,7 +1002,7 @@ const TOOLS: NativeToolImpl[] = [
           const raw = p.diff ?? '';
           const scrubbed = scrubSecrets(raw);
           return scrubbed.length > MAX_DIFF_CHARS
-            ? scrubbed.slice(0, MAX_DIFF_CHARS) + TRUNCATION_MARK
+            ? scrubbed.slice(0, MAX_DIFF_CHARS) + TOOL_TRUNCATION_MARK
             : scrubbed || undefined;
         })(),
       }));
@@ -871,6 +1036,7 @@ const TOOLS: NativeToolImpl[] = [
       if (kind !== 'patch' && kind !== 'pr' && kind !== 'note') {
         return { error: `invalid kind "${kind}" — agent proposals may be patch | pr | note` };
       }
+      const { selectInboxStore } = await import('./seams/index.js');
       const proposal = selectInboxStore(cfg).create({
         repo: typeof args['repo'] === 'string' ? args['repo'] : null,
         origin: 'agent',
@@ -946,6 +1112,7 @@ const TOOLS: NativeToolImpl[] = [
       }
 
       // Create a PENDING proposal — NEVER execute here.
+      const { selectInboxStore } = await import('./seams/index.js');
       const proposal = selectInboxStore(cfg).create({
         repo,
         origin: 'agent',
@@ -986,6 +1153,8 @@ const TOOLS: NativeToolImpl[] = [
     safety: 'read',
     handler: async (_args, cfg) => {
       // loadDaemonState and buildFleetDigest both never throw.
+      const { loadDaemonState, loadDaemonStateStrict } = await import('./daemon/state.js');
+      const { buildFleetDigest } = await import('./fleet/digest.js');
       const ds = loadDaemonState();
       let budget: import('./fleet/budget-view.js').FleetBudget | null;
       try { budget = (await import('./fleet/budget-view.js')).fleetBudget(cfg, loadDaemonStateStrict()); } catch { budget = null; }
@@ -1032,6 +1201,7 @@ const TOOLS: NativeToolImpl[] = [
     handler: async (args, _cfg) => {
       const w = args['window'];
       const window = w === '7d' || w === '30d' || w === 'all' ? w : '7d';
+      const { computeQualityMetrics } = await import('./fleet/quality-metrics.js');
       return computeQualityMetrics(window);
     },
   },
@@ -1049,6 +1219,7 @@ const TOOLS: NativeToolImpl[] = [
       // buildOversightSnapshot accepts PulseExportCfg; AshlrConfig is structurally
       // compatible (both have optional pulse?: { enabled?, endpoint? }).
       // The cfg arg is currently void'd inside the function but passed for future scoping.
+      const { buildOversightSnapshot } = await import('./fleet/oversight-export.js');
       const snap: OversightSnapshot = buildOversightSnapshot(cfg as { pulse?: { enabled?: boolean; endpoint?: string } });
       return snap;
     },
@@ -1230,6 +1401,7 @@ const TOOLS: NativeToolImpl[] = [
         const outstandingReq = (() => {
           try { return outstanding(); } catch { return undefined; }
         })();
+        const ownerThread = await ownerThreadStatus();
 
         return {
           enabled,
@@ -1238,6 +1410,7 @@ const TOOLS: NativeToolImpl[] = [
           hasOutstanding: outstandingReq !== undefined,
           outstandingKind: outstandingReq?.kind ?? null,
           outstandingType: outstandingReq?.type ?? null,
+          ownerThread,
         };
       } catch {
         return {
@@ -1250,6 +1423,42 @@ const TOOLS: NativeToolImpl[] = [
           _unavailable: true,
         };
       }
+    },
+  },
+
+  {
+    name: 'ashlr_comms_thread',
+    description: 'Read the single owner thread (desktop, Telegram, email, iMessage, Slack). No credentials. Read-only.',
+    inputSchema: { type: 'object', properties: { limit: { type: 'number' } } },
+    safety: 'read',
+    handler: async args => {
+      const { readOwnerThread } = await import('./comms/owner-thread.js');
+      const { loadOwnerThreadSettings } = await import('./comms/owner-channel.js');
+      const limit = typeof args.limit === 'number' ? args.limit : 50;
+      return readOwnerThread(ownerThreadRuntime(loadOwnerThreadSettings(fixedOwnerConfigDir())), limit);
+    },
+  },
+  {
+    name: 'ashlr_comms_send_owner',
+    description: 'Fan a leader reply to the owner channel they used and the desktop thread. Refused unless the recipient is the configured owner. KILL halts it.',
+    inputSchema: {
+      type: 'object',
+      properties: { text: { type: 'string' }, replyTo: { type: 'string' }, idempotencyKey: { type: 'string' } },
+      required: ['text'],
+    },
+    safety: 'append',
+    handler: async args => {
+      const { sendOwnerReply } = await import('./comms/owner-thread.js');
+      const { loadOwnerThreadSettings } = await import('./comms/owner-channel.js');
+      const { liveOwnerTransports } = await import('./comms/owner-live-transport.js');
+      const settings = loadOwnerThreadSettings(fixedOwnerConfigDir());
+      const text = typeof args.text === 'string' ? args.text : '';
+      const replyTo = typeof args.replyTo === 'string' ? args.replyTo : undefined;
+      const idempotencyKey = typeof args.idempotencyKey === 'string' ? args.idempotencyKey : undefined;
+      return sendOwnerReply({ text, ...(replyTo ? { replyTo } : {}), ...(idempotencyKey ? { idempotencyKey } : {}) }, {
+        ...ownerThreadRuntime(settings),
+        transports: liveOwnerTransports(settings, fixedOwnerRunsDir()),
+      });
     },
   },
 
@@ -1311,6 +1520,7 @@ const TOOLS: NativeToolImpl[] = [
       }
 
       // Create a PENDING proposal — NEVER execute here.
+      const { selectInboxStore } = await import('./seams/index.js');
       const proposal = selectInboxStore(cfg).create({
         repo,
         origin: 'agent',
@@ -1329,6 +1539,47 @@ const TOOLS: NativeToolImpl[] = [
         status: 'pending',
         note: 'Pending human approval — approve via `ashlr inbox` (CLI). The action will NOT execute until you approve it.',
       };
+    },
+  },
+  ...desktopOperatorTools,
+  {
+    name: 'ashlr_comms_agent_status',
+    description: 'Comms role status: parent Leader role, unset lane, KILL, pause, draft count and registered channel adapters. Read-only. No send.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => {
+      const { commsStatus } = await import('./comms-agent/run.js');
+      const { commsRunsRoot } = await import('./comms-agent/store.js');
+      return commsStatus(commsRunsRoot());
+    },
+  },
+  {
+    name: 'ashlr_comms_agent_drafts',
+    description: 'List Comms drafts waiting for the owner. Read-only. Approval is not a send.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => {
+      const { commsDrafts } = await import('./comms-agent/run.js');
+      const { commsRunsRoot } = await import('./comms-agent/store.js');
+      return commsDrafts(commsRunsRoot());
+    },
+  },
+  {
+    name: 'ashlr_comms_agent_run',
+    description: 'Triage the Comms inbox and draft replies. The router picks a lane only from the lanes argument. Sends follow the Comms send policy.',
+    inputSchema: {
+      type: 'object',
+      properties: { lanes: { type: 'string' } },
+      additionalProperties: false,
+    },
+    safety: 'append',
+    handler: async args => {
+      const { runCommsAgent } = await import('./comms-agent/run.js');
+      const { commsRunsRoot } = await import('./comms-agent/store.js');
+      const lanes = typeof args.lanes === 'string'
+        ? args.lanes.split(',').map(lane => lane.trim()).filter(Boolean)
+        : [];
+      return runCommsAgent({ runsDir: commsRunsRoot(), lanes });
     },
   },
 ];
@@ -1408,37 +1659,12 @@ function validateArgs(schema: object, args: Record<string, unknown>): string | n
 // callNativeTool — the gated pipeline
 // ---------------------------------------------------------------------------
 
-/**
- * MCP-style text result (plain object; the SDK validates it gateway-side).
- * A `type` alias (not an interface) so it picks up an implicit index signature
- * and stays assignable to the SDK's CallToolResult without importing the SDK.
- */
-export type NativeToolResult = {
-  content: { type: 'text'; text: string }[];
-  isError?: boolean;
-};
-
-/** Exported for tests: serialize + scrub + cap exactly as tool results do. */
-export function renderToolText(payload: unknown): string {
-  return textResult(payload).content[0]?.text ?? '';
-}
-
-function textResult(payload: unknown, isError = false): NativeToolResult {
-  let text: string;
-  try {
-    text = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
-  } catch {
-    text = String(payload);
-  }
-  // Scrub BEFORE capping so a secret straddling the cap boundary can't survive.
-  text = scrubSecrets(text);
-  if (text.length > MAX_OUTPUT_CHARS) {
-    const head = text.slice(0, Math.floor(MAX_OUTPUT_CHARS * 0.75));
-    const tail = text.slice(-Math.floor(MAX_OUTPUT_CHARS * 0.2));
-    text = head + TRUNCATION_MARK + tail;
-  }
-  return isError ? { content: [{ type: 'text', text }], isError: true } : { content: [{ type: 'text', text }] };
-}
+// NativeToolResult, renderToolText and textResult live beside the strict
+// scrubSecrets in knowledge/index.js so light callers (e.g. the verify runner)
+// can render tool output without pulling in this orchestration graph. They are
+// re-exported here to keep the established import surface unchanged.
+export { renderToolText };
+export type { NativeToolResult };
 
 /** A handler's `{ error: "<reason>" }` refusal (a non-empty string error). */
 function isRefusalPayload(payload: unknown): payload is { error: string } {
@@ -1468,7 +1694,7 @@ function auditNativeCall(summary: string, result: 'ok' | 'refused' | 'error'): v
  * surface as isError text results. Every outcome is audited.
  */
 export async function callNativeTool(name: string, rawArgs: unknown): Promise<NativeToolResult> {
-  const noArgumentObservation = ['phantom_fleet_graph', 'phantom_fleet_session', 'phantom_fleet_apps_status'].includes(name);
+  const noArgumentObservation = ['phantom_fleet_graph', 'phantom_fleet_session', 'phantom_fleet_apps_status', 'phantom_fleet_doctor'].includes(name);
   const fleetObservation = noArgumentObservation || ['phantom_fleet_apps_changes', 'phantom_fleet_apps_history', 'phantom_fleet_apps_recovery_wait'].includes(name);
   const tool = TOOLS.find((t) => t.name === name);
   const args: Record<string, unknown> =
@@ -1478,7 +1704,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
   const argKeys = Object.keys(args).sort().join(',') || '(none)';
 
   if (noArgumentObservation && (Object.keys(args).length > 0 ||
-    (name === 'phantom_fleet_apps_status' && (rawArgs === null || typeof rawArgs !== 'object' || Array.isArray(rawArgs))))) {
+    (['phantom_fleet_apps_status', 'phantom_fleet_doctor'].includes(name) && (rawArgs === null || typeof rawArgs !== 'object' || Array.isArray(rawArgs))))) {
     auditNativeCall(`${name} — invalid observation arguments`, 'error');
     return textResult({ error: 'Fleet observation tools accept no arguments' }, true);
   }
@@ -1606,6 +1832,9 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       ('unservedOnly' in args && typeof args.unservedOnly !== 'boolean') ||
       ('limit' in args && (!Number.isSafeInteger(args.limit) || (args.limit as number) < 1 || (args.limit as number) > 100))
       ? 'invalid orders arguments' : null;
+  } else if (name === 'phm_agent_roster') {
+    const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
+    invalid = !object || Object.keys(args).length > 0 ? 'invalid roster arguments' : null;
   } else if (name === 'phantom_agent_bus_read' || name === 'phantom_agent_bus_status') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
     const keys = Object.keys(args);
@@ -1651,7 +1880,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       auditNativeCall(`${tool.name} keys=${argKeys} — ${failed ? 'error' : 'ok'}`, failed ? 'error' : 'ok');
       const text = JSON.stringify(payload, (key, value: unknown) =>
         /^(env|environment)$/i.test(key) ? undefined : typeof value === 'string' ? scrubSecrets(value) : value);
-      if (text.length > MAX_OUTPUT_CHARS) return textResult({ error: 'Fleet app follow exceeds output limit' }, true);
+      if (text.length > MAX_TOOL_OUTPUT_CHARS) return textResult({ error: 'Fleet app follow exceeds output limit' }, true);
       return { content: [{ type: 'text', text }], ...(failed ? { isError: true } : {}) };
     }
     if (name === 'phantom_fleet_apps_recovery_batch') {
@@ -1673,7 +1902,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
         /^(env|environment)$/i.test(key) ? undefined :
           typeof value === 'string' ? scrubSecrets(value) : value,
       );
-      return text.length > MAX_OUTPUT_CHARS
+      return text.length > MAX_TOOL_OUTPUT_CHARS
         ? { isError: true, content: [{ type: 'text', text: '{"error":"Fleet observation exceeds output limit"}' }] }
         : { content: [{ type: 'text', text }] };
     }

@@ -11,7 +11,10 @@ const QUEUE_FILE = 'ashlr-fleet-queue.json';
 const CHILD_SOURCE = String.raw`
   import { SharedStore } from './src/core/fleet/shared-store.ts';
   const store = new SharedStore(process.env.QUEUE_DIR, 30_000);
-  const [ref] = store.claimLeases(['race-item'], 1, 'same-machine');
+  const [ref] = store.claimLeasesByLane([
+    { candidateIds: ['race-item', 'race-item'], limit: 2 },
+    { candidateIds: ['race-item'], limit: 1 },
+  ], 3, 'same-machine');
   if (!process.send) throw new Error('IPC unavailable');
   process.send({ claimed: Boolean(ref), epoch: ref?.epoch ?? null });
   process.disconnect();
@@ -65,16 +68,26 @@ function spawnClaimant(): Promise<{ claimed: boolean; epoch: number | null }> {
   });
 }
 
-function unlinkFromChild(target: string, delayMs = 50): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [
-      '--input-type=module',
-      '--eval',
-      `import fs from 'node:fs'; setTimeout(() => { fs.unlinkSync(${JSON.stringify(target)}); }, ${delayMs});`,
-    ], { stdio: 'ignore', windowsHide: true });
+async function unlinkFromChild(target: string, delayMs = 50): Promise<{ release(): void; done: Promise<void> }> {
+  const child = spawn(process.execPath, [
+    '--input-type=module', '--eval',
+    `import fs from 'node:fs';
+     process.once('message', () => setTimeout(() => {
+       fs.unlinkSync(${JSON.stringify(target)}); process.disconnect();
+     }, ${delayMs}));
+     process.send('ready');`,
+  ], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true });
+  const done = new Promise<void>((resolve, reject) => {
     child.once('error', reject);
-    child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`unlink child exited ${code}`)));
+    child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(
+      `unlink child exited ${code}`,
+    )));
   });
+  await Promise.race([
+    new Promise<void>(resolve => child.once('message', () => resolve())),
+    done.then(() => { throw new Error('unlink child exited before ready'); }),
+  ]);
+  return { release: () => { child.send('release'); }, done };
 }
 
 beforeEach(() => {
@@ -87,13 +100,24 @@ afterEach(() => {
 });
 
 describe('M392 shared queue exact claim generations', () => {
-  it('allows exactly one independent process to win a same-machine claim race', async () => {
+  it('allows exactly one independent process to win a duplicate cross-lane claim race', async () => {
     const results = await Promise.all([spawnClaimant(), spawnClaimant(), spawnClaimant()]);
     expect(results.filter((result) => result.claimed)).toHaveLength(1);
     expect(results.filter((result) => result.epoch !== null)).toHaveLength(1);
     expect(new SharedStore(dir, 30_000).readSnapshot().claims).toEqual({
       'race-item': expect.objectContaining({ machineId: 'same-machine' }),
     });
+  }, 30_000);
+
+  it('recovers an unstarted claim after its worker exits without releasing', async () => {
+    const abandoned = await spawnClaimant(); // process has exited, no release
+    expect(abandoned.claimed).toBe(true);
+    const restarted = new SharedStore(dir, 30_000);
+    expect(restarted.claimLeases(['race-item'], 1, 'replacement')).toEqual([]);
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31_000);
+    const recovered = restarted.claimLeases(['race-item'], 1, 'replacement');
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]!.epoch).toBeGreaterThan(abandoned.epoch!);
   }, 30_000);
 
   it('persists a token commitment and queue epoch without exposing the capability', () => {
@@ -392,16 +416,18 @@ describe('M392 shared queue exact claim generations', () => {
     const [claimed] = store.claimLeases(['item-a'], 1, 'machine-A');
     const lockPath = path.join(dir, 'ashlr-fleet-queue.json.lock');
 
+    const firstRelease = await unlinkFromChild(lockPath);
     fs.writeFileSync(lockPath, `${JSON.stringify({ token: randomUUID() })}\n`, 'utf8');
-    const firstRelease = unlinkFromChild(lockPath);
+    firstRelease.release();
     const executing = store.beginClaimExecution(claimed!);
-    await firstRelease;
+    await firstRelease.done;
     expect(executing).toMatchObject({ phase: 'executing' });
 
+    const secondRelease = await unlinkFromChild(lockPath);
     fs.writeFileSync(lockPath, `${JSON.stringify({ token: randomUUID() })}\n`, 'utf8');
-    const secondRelease = unlinkFromChild(lockPath);
+    secondRelease.release();
     expect(store.completeClaim(executing!, 'item-a', 'diff')).toBe(true);
-    await secondRelease;
+    await secondRelease.done;
     expect(store.readSnapshot().claims['item-a']).toBeUndefined();
   });
 

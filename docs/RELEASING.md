@@ -103,10 +103,14 @@ never executes in the attestor.
 **Current limits:** the trusted tree must still equal the candidate tree, and
 finalization still requires the attestor revision to equal live master. Merges
 between preparation, attestation and signing can therefore defer a release.
-The host `release-autorun` consumer and published signed updater acceptance
-must be verified separately before claiming continuous release operation.
-The one-minute smoke-body limit is a budget, not a measured hosted runtime.
-The phase deadline does not shorten the build job or weaken qualification.
+The host `release-autorun` consumer now includes a rev2 published-state pass:
+after a completed successful signing outcome it proves the tag's seven-asset
+set, feed binding and live `latest.json` endpoint through GET-only reads and
+writes a final `feed-<sha>.rc` receipt (see
+[the desktop update channel](DESKTOP-UPDATE-CHANNEL.md)). Installed-app
+startup acceptance remains a separate gate. The one-minute smoke-body limit is
+a budget, not a measured hosted runtime. The phase deadline does not shorten
+the build job or weaken qualification.
 
 The pinned immutable input upload binds the same four local files before and
 after upload to the exact source/run/attempt and artifact ID/digest. Smoke
@@ -125,13 +129,88 @@ reproducible evidence and a linked issue in the existing ledger.
 ### Patch cadence and notes
 
 The existing Release PR workflow evaluates new green master commits every
-30 minutes. `RELEASE_CADENCE_MINUTES` sets the minimum interval (5–1440 minutes;
-values below 30 are bounded by the timer's polling interval). It requests a
-patch bump, then synchronizes README, desktop and registry version carriers
-and the dated changelog in that release PR. Its existing guarded merge route
-remains required. Auto-tag retries every 30 minutes and only creates the tag
-and draft after the exact commit's required checks succeed. Signed publication
-then makes the complete updater feed visible; a draft is not an update.
+30 minutes. `RELEASE_CADENCE_MINUTES` sets the requested interval, from 5 to
+1440 minutes. The continuous release train raises any value below 60 to 60,
+so a release is cut at most hourly. It requests a patch bump, then synchronizes
+README, desktop and registry version carriers and the dated changelog in that
+release PR. Auto-tag creates the tag and draft only after the exact commit's
+required checks succeed. Signed publication then makes the complete updater
+feed visible; a draft is not an update.
+
+## Continuous release train
+
+Standing approval, recorded verbatim:
+
+> Standing approval: Phantom may automatically cut, sign, notarize and publish releases from green master as often as hourly, using only the existing signing identity and the sanctioned release workflows (GitHub release, npm trusted publishing, update feed, docs and website), and may mark older unshipped drafts superseded, with no per-release approval from me. No new spend, no bypass of signing, notarization, attestation or secret gates, and KILL still stops it.
+
+The train is [`.github/workflows/release-train.yml`](../.github/workflows/release-train.yml).
+It does not replace signing, notarization, attestation, the secret-shape gate,
+or trusted publishing. It resumes the sanctioned jobs and records
+`phantom.release-train.v1` state for `phm release status --json`.
+
+What runs without a per-release approval:
+
+- A green `release-please` pull request is merged at most hourly, and only
+  when its version is the next patch, its head is `release-please--*`, and
+  GitHub Actions checks on that head are success. The merge uses the existing
+  release app token and has no admin flag.
+- `auto-tag.yml` still creates `vX.Y.Z` and the draft after required checks
+  on that commit.
+- A `workflow_dispatch` of `ci.yml` with `release_gate=true` and `--ref` set
+  to that tag builds that commit. Later master commits do not retarget it.
+  The half-hour schedule on master is unchanged.
+- When that build artifact exists, the train dispatches
+  `attest-ci-build.yml` and then `publish-canonical-npm.yml` with the exact
+  run, attempt, and artifact ids. The publisher's own admission still runs.
+- Older draft releases are patched with `Superseded by vX.Y.Z. This draft
+  stays unpublished.` Published releases are not edited and nothing is deleted.
+- README and the other version carriers are updated in the release commit by
+  the existing candidate sync before the tag exists.
+
+KILL fails closed. On a hosted runner the train proceeds only when the
+repository variable `PHANTOM_RELEASE_TRAIN` is `on`. Unset and `off` both
+stop it. `ashlr authority stop` and `ashlr fleet pause` arm `~/.ashlr/KILL`,
+create `~/.ashlr-runs/RELEASE_AUTORUN_OFF`, and best-effort set that variable
+to `off`. A failed variable write is logged and does not block the local stop.
+The Mac signer still stops when the OFF file exists. The npm publish job
+uses the same variable.
+
+Signing and notarization stay in `contrib/mac/release-autorun.sh` and the
+stock `release-sign.sh` wrapper. CI does not codesign and does not notarize.
+The wrapper picks up a successful attestation of a `v*` tag on its existing
+10 minute poll. The attestor commit must be master at attestation time and
+must still be an ancestor of master when the wrapper runs. A diverged
+attestor is not signed. If `~/.ashlr-runs/release-sign/keychain-allowed` is
+missing, the wrapper writes `NEEDS-MASON-<tag>` and waits. That file is the
+one-time unlock of the existing signing identity, not a per-release approval.
+
+`phm.dev` is not deployed from this repository. The host profile is
+`phantom-public-web` in `src/core/website/host-release.ts`: repository
+`ashlrai/phantom-secrets`, root `apps/web`, domain `phm.dev`. The train
+records that hook. `src/core/website/release-metadata.ts` is the existing
+task that refreshes `apps/web/src/lib/workbench-release.json` from public
+GitHub and npm facts after publication. A train state file does not mean the
+site was deployed.
+
+After publication, the train reads
+`https://github.com/ashlrai/phantom/releases/latest/download/latest.json`
+and fails when its `version` is not the semver it just published. A list of
+stocked feeds is chosen by highest semver. Creation time, list order, and a
+cached older asset do not win. Installed 3.30.24 must not be offered 3.29.3
+while 3.30.28 is stocked.
+
+`phm release status --json --file <phantom-release-state.json>` prints the
+uploaded train state. The same JSON is the `phantom-release-state` workflow
+artifact. Stage keys are `merge`, `tag`, `build`, `attest`, `sign`,
+`notarize`, `npm`, `feed`, `docs`, `website`, and `finalize`. `at` is an
+observed timestamp. `sinceMergeMs` is set only when both timestamps exist
+and are in order. Missing evidence stays null.
+
+On the fast path, the tagged build reuses the green push CI and the smoke
+phase budget is 5 minutes. Attestation's job timeout is 15 minutes. The Mac
+poll is 10 minutes. A cold desktop build still has the existing 90 minute
+ceiling, so a cold build can take longer than one hour. The train does not
+shorten that ceiling.
 
 Keep all contents of the original `ashlr-attested-…` artifact together in a
 private directory. In a clean checkout at the exact candidate commit, verify:
@@ -157,6 +236,29 @@ attestor arguments. The native path checks the adopted bytes again. Follow
 packaging and toolchain procedure.
 
 ## Complete publication and installation
+
+### Orchestration and evidence boundaries
+
+The current release pipeline is not yet an end-to-end autonomous orchestrator.
+The release PR and auto-tag lanes prepare a candidate; hosted CI, Dependency
+Audit and the attestor qualify its exact source and original artifact. The
+canonical npm publisher then admits that evidence, publishes the original
+archive and verifies registry bytes, integrity, provenance, an isolated
+consumer and the `latest` tag. Its successful run is evidence for npm only.
+Desktop signing and publication have separate requirements, including any
+owner-reserved keychain interaction; an npm result does not prove a signed
+desktop feed, a Homebrew update or an installed application.
+
+The release dispatch dry run in `scripts/release-dispatch-dry-run.ts` sequences
+reported observations only. It does not independently authenticate them or
+dispatch a workflow. The release candidate planner likewise provides recovery
+guidance, not permission to publish. A future executor must obtain and recheck
+the exact candidate, CI, audit, attestor and immutable artifact identities from
+fresh authoritative reads, invoke only the commissioned workflow with those
+inputs, and reconcile uncertain dispatch or publication outcomes before any
+retry. It must report verification per distribution and preserve unknown or
+failed checks as such. Do not infer checksums, attestations, npm, Homebrew or
+desktop acceptance from the existence of a GitHub release record.
 
 The commissioned [canonical npm publisher](../.github/workflows/publish-canonical-npm.yml)
 publishes the original archive once, reconciles public bytes and provenance,
@@ -256,7 +358,10 @@ Updater recovery additionally requires actual fleet job ID/lane/start timestamp
 from sanctioned Mac read surfaces, sanctioned signed seven-asset publication
 after quarantine repair, and HTTP 200 after redirects from the configured
 `releases/latest/download/latest.json` with publisher-equivalent signature and
-provenance verification. File handoff, inbox messages, npm `latest` and GitHub
+provenance verification. The rev2 `release-autorun` pass performs the endpoint
+HTTP 200 and signed-feed checks for each completed signing outcome; see
+[the desktop update channel](DESKTOP-UPDATE-CHANNEL.md). File handoff, inbox
+messages, npm `latest` and GitHub
 release metadata are insufficient. Installed-app version/update and successful
 launch remain unverified until supported tooling is used with authorized Mac
 access. See the [complete evidence checklist](contracts/CONTRACT-M523.md#recovery-evidence).
@@ -275,3 +380,31 @@ retired and removed from `scripts/`; the archived procedure is evidence only,
 not a runnable lane. None of the archive replaces canonical release
 admission. Use [Authority](AUTHORITY.md) and the installed CLI help for current
 maintainer verification and account/Stop requirements.
+
+## Release PR enqueue pass
+
+On an authorized Mac with repository-scoped `gh` access, run
+`node scripts/release-enqueue.mjs` for a read-only pass and
+`node scripts/release-enqueue.mjs --apply` to enqueue eligible release PRs.
+Schedule the pass at least every 15 minutes using the existing operator-owned
+scheduler; this repository change does not install or activate a scheduler. The
+under-one-hour open-to-merge target depends on check duration, scheduler uptime,
+and merge queue dwell, and is not a guaranteed deadline.
+
+The pass discovers open `autorelease: pending` PRs and requires the master
+rules to require `Merge Gate`, successful head-specific gate evidence, a clean
+and mergeable non-draft PR, and no existing queue entry. Unknown, conflicting,
+or inaccessible evidence is refused. It repeats the checks immediately before
+calling exactly `gh pr merge <number> -R ashlrai/phantom`; GitHub's rules and
+merge queue remain authoritative if the PR changes in the remaining race.
+The pass makes one immediate observation of the queue event and merge time, then
+stops. If the event is not yet visible, inspect the PR timeline before retrying;
+a successful request alone does not prove enqueue. Record the event and eventual
+`mergedAt`, and calculate opening-to-merge time after the merge. PR #4130's
+baseline was 2h 29m 52s; report an after value only for a measured later PR.
+
+This lane does not publish, sign, stock assets, finalize releases, or dispatch
+workflows. Release Please and auto-tag can temporarily create empty drafts;
+those are not by themselves failed releases or evidence of a settled published
+release with signed assets. SIGN-PUBLISH-3311 and the desktop, Terra and Dot
+lanes retain their separate ownership.

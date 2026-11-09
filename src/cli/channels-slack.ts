@@ -24,7 +24,7 @@ import { rejectUnknownOptions } from './args.js';
 import { createSlackApi, deliverSlackEnvelope, openSlackSocket, verifySlackIdentity, type SlackSocketSession } from '../core/agents/slack-transport.js';
 import { loadAgentNetworkConfig, loadCommsConfirmation } from '../core/agents/slack-network.js';
 import { listBusInboxAfter } from '../core/fleet/bus-inbox.js';
-import { flushSlackLeaderReplies, ingestSlackLeaderEnvelope, readSlackDeliveryPolicy } from '../core/agents/slack-leader.js';
+import { createSlackLeaderAdapter, flushSlackLeaderReplies, readSlackDeliveryPolicy } from '../core/agents/slack-leader.js';
 
 const SLACK_USAGE = `usage: phm channels slack status [--json]
        phm channels slack map [--topic <topic>] [--snapshot <file>] [--json]
@@ -185,7 +185,7 @@ async function cmdSlackTransport(args: string[], run: boolean): Promise<number> 
     if (run) {
       socket = await openSlackSocket({ call, config, ingest: { config, teamIdentities: parsed.teamIdentities },
         signal: controller.signal,
-        owner: envelope => ingestSlackLeaderEnvelope(envelope, { call, signal: controller.signal }),
+        leaderAdapter: createSlackLeaderAdapter({ call, signal: controller.signal }),
         readIngest: () => {
           const current = readSlackDeliveryPolicy();
           return current && JSON.stringify(current.config) === JSON.stringify(config) ? { config, teamIdentities: current.teamIdentities } : undefined;

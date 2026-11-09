@@ -81,6 +81,22 @@ describe('planDailyBrief', () => {
   });
 });
 
+describe('leader morning delivery', () => {
+  it('plans the same generated brief for both channels and delivers through existing senders', async () => {
+    const root = fixture();
+    let calls = 0;
+    const plan = await planDailyBrief({ runsDir: root, now, isConfigured: () => true,
+      leaderBrief: async () => { calls++; return 'Morning leader brief\nShipped: a'; } });
+    const delivered: string[] = [];
+    const results = await applyDailyBriefPlan(root, plan, {
+      email: async text => { delivered.push(text); }, telegram: async text => { delivered.push(text); },
+    });
+    expect(calls).toBe(1);
+    expect(delivered).toEqual(['Morning leader brief\nShipped: a', 'Morning leader brief\nShipped: a']);
+    expect(results.map(result => result.outcome)).toEqual(['sent', 'sent']);
+  });
+});
+
 describe('readDailyBriefStamp', () => {
   it('returns {} for missing or malformed stamps and drops bad values', async () => {
     const root = fixture();

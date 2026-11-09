@@ -120,6 +120,24 @@ describe('fleet claim handoff (SharedStore.handoffClaim)', () => {
 });
 
 describe('bus board threads', () => {
+  it('polls unacknowledged deliveries across restarts without acknowledging them', async () => {
+    const thread = threadWith('alice', 'bob', 'carol');
+    await board().post('alice', thread, 'first');
+    await board().post('carol', thread, 'second');
+    const pending = board().readThread('bob', thread, true);
+    expect(pending).toHaveLength(2);
+    expect(board().readThread('bob', thread, true).map((row) => row.id)).toEqual(pending.map((row) => row.id));
+    board().acknowledge('bob', thread, pending[0]!.id);
+    expect(board().readThread('bob', thread, true).map((row) => row.id)).toEqual([pending[1]!.id]);
+    expect(board().readThread('bob', thread)).toHaveLength(2);
+    expect(board().readThread('carol', thread, true)).toHaveLength(2);
+    expect(() => board().readThread('outsider', thread, true)).toThrow('Thread missing or peer has not joined');
+    const output: string[] = [];
+    expect(await cmdFleetBus(['thread', 'pending', thread, '--peer', 'bob', '--root', boardRoot, '--queue-root', queueDir],
+      { loadConfig: () => cfg, out: (line) => output.push(line) })).toBe(0);
+    expect(JSON.parse(output[0]!).result.map((row: { id: string }) => row.id)).toEqual([pending[1]!.id]);
+  });
+
   it('records recipient acknowledgements idempotently and exposes only sender metadata', async () => {
     const store = board();
     const thread = threadWith('alice', 'bob', 'carol');

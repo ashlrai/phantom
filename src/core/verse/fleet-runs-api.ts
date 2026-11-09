@@ -21,6 +21,8 @@ import type { reassignQueuedJobs } from '../fleet/runs-reassign.js';
 import { isJobCommand, renderJobCommandReply, runTelegramJobCommand } from '../comms/telegram-job-command.js';
 
 export const VERSE_FLEET_RUNS_REASSIGN_PATH = '/api/verse/fleet/runs/reassign';
+import { emptyMission, readMissionControl, VERSE_FLEET_MISSION_PATH } from '../fleet/mission-control.js';
+import type { MissionControlV1 } from '../fleet/mission-control-types.js';
 
 // passesMutationGate authenticates a single local operator (the x-ashlr-token
 // holder); there is no per-request user identity. The shared channel receiver's
@@ -70,6 +72,8 @@ export interface FleetRunsApiDeps {
   /** One-job stop behind POST .../runs/stop. Injected so tests never signal a real process. */
   stopJob?: (id: string, opts: StopJobOptions) => Promise<JobStopResult>;
   reassign?: typeof reassignQueuedJobs;
+  /** Briefing behind GET .../runs/mission. Default reads the runs directory. */
+  readMission?: () => Promise<MissionControlV1>;
 }
 
 /** ASHLR_RUNS_DIR overrides ~/.ashlr-runs — the fleet runs-dir convention. */
@@ -276,7 +280,25 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   let cached: { at: number; value: FleetRunsV1 } | undefined;
   let generation = 0;
   let flight: { generation: number; promise: Promise<FleetRunsV1> } | undefined;
+  const readMission = deps.readMission ?? (() => readMissionControl({ runsDir: deps.runsDir ?? defaultRunsDir(), now }));
+  let missionCache: { at: number; value: MissionControlV1 } | undefined;
+  let missionFlight: Promise<MissionControlV1> | undefined;
+  async function mission(): Promise<MissionControlV1> {
+    try { return await readMission(); }
+    catch { return emptyMission(now()); }
+  }
   return async (ctx, req, res, path, method) => {
+    if (path === VERSE_FLEET_MISSION_PATH) {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      if (!missionFlight && (!missionCache || now() - missionCache.at >= 2000)) {
+        missionFlight = mission().then((value) => {
+          missionCache = { at: now(), value };
+          return value;
+        }).finally(() => { missionFlight = undefined; });
+      }
+      sendJson(res, 200, missionFlight ? await missionFlight : missionCache!.value);
+      return true;
+    }
     if (path === VERSE_FLEET_LANE_MODELS_PATH) {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
       if (!modelFlight && (!modelCache || now() - modelCache.at >= 15_000)) {

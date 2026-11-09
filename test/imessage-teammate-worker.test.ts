@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AshlrConfig } from '../src/core/types.js';
-import { recordTeammateText, readTeammateTexts } from '../src/core/comms/imessage-teammate-inbox.js';
+import { recordTeammateText, readTeammateTexts, senderIdFor } from '../src/core/comms/imessage-teammate-inbox.js';
 import { runTeammateResponder, teammateNeedsReply, generateLocalTeammateReply } from '../src/core/comms/imessage-teammate-worker.js';
 
 let runsDir: string;
@@ -48,6 +48,14 @@ describe('teammate worker', () => {
     expect(await runTeammateResponder(cfg, deps)).toMatchObject({ pending: 1 });
     expect(deps.send).not.toHaveBeenCalled(); expect(deps.generate).not.toHaveBeenCalled();
   });
+  it('retains decision and action requests for leader review without generating or sending', async () => {
+    seed('Please deploy the release?'); const deps = options();
+    expect(await runTeammateResponder(cfg, deps)).toMatchObject({ state: 'pending', leader: 1, sent: 0 });
+    expect(deps.generate).not.toHaveBeenCalled(); expect(deps.send).not.toHaveBeenCalled();
+    expect(readTeammateTexts({ runsDir }).texts).toHaveLength(1);
+    expect(await runTeammateResponder(cfg, deps)).toMatchObject({ leader: 1 });
+    expect(deps.send).not.toHaveBeenCalled();
+  });
   it('suppresses acknowledgements and artifact-only updates without generating acknowledgement loops', async () => {
     seed('Acknowledged.'); const deps = options();
     expect(await runTeammateResponder(cfg, deps)).toMatchObject({ suppressed: 1 });
@@ -82,6 +90,29 @@ describe('teammate worker', () => {
     for (let rowid = 1; rowid <= 5; rowid++) recordTeammateText({ rowid, handle: 'agent@example.test', text: 'Please report the current blocker?' }, runsDir, new Date(now()));
     const deps = options(); expect(await runTeammateResponder(cfg, deps)).toMatchObject({ examined: 3, sent: 3 });
     expect(readTeammateTexts({ runsDir }).texts).toHaveLength(2);
+  });
+  it('sweeps a late-recorded old receipt inside the frozen rowid round', async () => {
+    const deps = options();
+    deps.approved = (senderId: string) => senderId === senderIdFor('agent@example.test') ? 'agent@example.test' : null;
+    for (let rowid = 2; rowid <= 262; rowid++) recordTeammateText({ rowid, handle: 'other@example.test', text: 'Please report the current blocker?' }, runsDir, new Date(now() + rowid));
+    // Re-recorded after an intake deferral, the oldest arrival sits behind every
+    // newer text in the at-ordered inbox; the round still scans it by rowid.
+    recordTeammateText({ rowid: 1, handle: 'agent@example.test', text: 'Please report the current blocker?' }, runsDir, new Date(now() + 1000));
+    expect(await runTeammateResponder(cfg, deps)).toMatchObject({ sent: 1, pending: 255 });
+    expect(deps.send).toHaveBeenCalledOnce();
+    expect(state().replies[0]?.state).toBe('sent');
+    expect(readTeammateTexts({ runsDir }).texts).toHaveLength(261);
+  });
+  it('holds arrivals past the frozen round bound until the open round drains', async () => {
+    const deps = options();
+    for (let rowid = 1; rowid <= 4; rowid++) recordTeammateText({ rowid, handle: 'agent@example.test', text: 'Please report the current blocker?' }, runsDir, new Date(now() + rowid));
+    expect(await runTeammateResponder(cfg, deps)).toMatchObject({ sent: 3 });
+    recordTeammateText({ rowid: 5, handle: 'agent@example.test', text: 'Please report the current blocker?' }, runsDir, new Date(now() + 5));
+    // Rowid 5 ranked after the frozen ceiling: it is examined next round, not now.
+    expect(await runTeammateResponder(cfg, deps)).toMatchObject({ sent: 1 });
+    expect(deps.send).toHaveBeenCalledTimes(4);
+    expect(await runTeammateResponder(cfg, deps)).toMatchObject({ sent: 1 });
+    expect(deps.send).toHaveBeenCalledTimes(5);
   });
   const modelResponse = (finish = 'stop', model = 'fast', content = 'The source version is unknown.') => new Response([
     `data: ${JSON.stringify({ model, choices: [{ index: 0, delta: { role: 'assistant', content }, finish_reason: null }] })}\n\n`,

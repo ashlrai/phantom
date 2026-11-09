@@ -8,6 +8,7 @@ import type { AshlrConfig } from '../core/types.js';
 
 export const usage = `Usage: phm bus thread create <title> [--peer <id>] [--json]
        phm bus thread join|read|hops|receipts <thread-id> [--peer <id>] [--json]
+       phm bus thread pending <thread-id> [--peer <id>] [--json]
        phm bus thread ack <thread-id> <delivery-id> [--peer <id>] [--json]
        phm bus thread post <thread-id> <body> [--peer <id>] [--json]
        phm bus thread list [--peer <id>] [--json]
@@ -23,7 +24,7 @@ routing labels, never identities; fleet claims grant no execution authority.`;
 
 const ARITIES: Record<string, number> = {
   'thread:create': 1, 'thread:join': 1, 'thread:post': 2,
-  'thread:read': 1, 'thread:list': 0, 'thread:hops': 1, 'thread:ack': 2, 'thread:receipts': 1,
+  'thread:read': 1, 'thread:pending': 1, 'thread:list': 0, 'thread:hops': 1, 'thread:ack': 2, 'thread:receipts': 1,
   'task:create': 3, 'task:list': 1, 'task:claim': 1,
   'task:handoff': 2, 'task:renew': 1, 'task:release': 1,
 };
@@ -127,6 +128,7 @@ export async function cmdFleetBus(args: string[], deps: FleetBusDeps = {}): Prom
       case 'thread:join': result = board.joinThread(actor, first!); break;
       case 'thread:post': result = await board.post(actor, first!, second!); break;
       case 'thread:read': result = board.readThread(actor, first!); break;
+      case 'thread:pending': result = board.readThread(actor, first!, true); break;
       case 'thread:list': result = board.listThreads(actor); break;
       case 'thread:ack': result = board.acknowledge(actor, first!, second!); break;
       case 'thread:receipts': result = board.receipts(actor, first!); break;

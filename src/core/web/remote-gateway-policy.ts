@@ -58,6 +58,7 @@ const READ_ROUTES = new Set<RemoteReadRoute>([
   '/api/verse/fleet/control/lanes',
   '/api/verse/fleet/control/holds',
   '/api/verse/release-pr',
+  '/api/verse/world',
 ]);
 
 export type RemoteRouteDecision =

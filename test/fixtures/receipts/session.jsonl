@@ -1,0 +1,8 @@
+{"type":"task","text":"Fix flaky retry in queue worker"}
+{"type":"edit","path":"src/core/queue.ts"}
+{"type":"command","command":"npm run typecheck","exitCode":0,"output":"ok"}
+{"type":"command","command":"npx vitest run test/queue.test.ts","exitCode":1,"output":" Test Files  1 failed (1)\n      Tests  1 failed | 10 passed | 2 skipped (13)\n"}
+{"type":"edit","path":"src/core/queue.ts"}
+{"type":"command","command":"npx vitest run test/queue.test.ts","exitCode":0,"output":" Test Files  1 passed (1)\n      Tests  13 passed | 2 skipped (15)\n"}
+{"type":"command","command":"npm run test:integration","exitCode":0,"output":"Tests: 4 passed, 4 total\n"}
+{"type":"command","command":"git commit -m fix","exitCode":0,"output":"[main abc1234] fix\n 1 file changed\n"}
