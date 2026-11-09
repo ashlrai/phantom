@@ -40,6 +40,7 @@ import { RunsLanesCard } from '../fleet/RunsLanesCard.js';
 import { WorkersCard } from '../fleet/WorkersCard.js';
 import { InterjectBox } from '../fleet/InterjectBox.js';
 import { CosTaskList } from '../fleet/CosTaskList.js';
+import { EmptyJobsPanel } from '../growth/EmptyJobsPanel.js';
 import { FleetControl } from '../fleet/FleetControl.js';
 import { SteerPanel } from '../fleet/SteerPanel.js';
 import { Cell, Surface, lazyPanel } from '../command/Surface.js';
@@ -188,6 +189,7 @@ export function FleetSection() {
             onReviewGrant={() => grantFlow.open('re-approve', 'Review subscription reserve floors and producer roles before allowance reserve shrinking.')} />
         </Suspense>
         <FleetScheduling budget={budget.data ?? null} now={now} />
+        <EmptyJobsPanel />
         <ExecutionFeedback />
       </Cell>
       {collapse ? null : (
