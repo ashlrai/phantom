@@ -80,6 +80,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'ashlr.work-claim/v1',
   },
   {
+    usage: 'phm growth [--json] [--range 1H|1D|1W|1M] [--prs <file>]',
+    description: 'Read the Growth chart series. Each series comes from a local ledger. A missing source is no-data-source and a world-model blind spot. Exit 0 report, 1 unreadable pull file, 2 bad usage.',
+    safety: 'read',
+    jsonShape: 'growth.series.v1',
+  },
+  {
     usage: 'phm world [--json] [--refresh] | phm world get <path> [--json]',
     description: 'Read the cached ashlr.world-model/v1 snapshot. blindSpots lists each unknown field by path with a stable id. Unknown is never zero. Exit 0 snapshot, 2 bad usage.',
     safety: 'read',
@@ -691,6 +697,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'context --for-agent <lane> [--json]', desc: 'Compact under-4KB brief for one lane: claims, open pulls, bottlenecks, blind spots, and pacing. See docs/WORLD.md.', topic: 'observability' },
   { cmd: 'claim acquire <work-key> --lane <lane> [--json]', desc: 'Claim a work key before starting. Refuses a live claim or open pull on that key and returns the holder.', topic: 'observability' },
   { cmd: 'claim release <work-key> --lane <lane> --reason open|merge|abandon [--json]', desc: 'Release this lane claim when a pull opens, merges, or is abandoned.', topic: 'observability' },
+  { cmd: 'growth [--json] [--range 1H|1D|1W|1M] [--prs <file>]', desc: 'Growth chart series from local ledgers. A missing source is no-data-source and a world-model blind spot. See docs/GROWTH.md.', topic: 'observability' },
   { cmd: 'world [--json] [--refresh]', desc: 'Cached ashlr.world-model/v1 for the scheduler and leaders. blindSpots lists each unknown field by path with a stable id. See docs/WORLD.md.', topic: 'observability' },
   { cmd: 'world get <path> [--json]', desc: 'Read one node from the cached world model. A missing path is unknown, not zero.', topic: 'observability' },
   { cmd: 'chain verify [--json]', desc: 'Synthetic in-memory chain checks. Does not verify live transports.', topic: 'observability' },
