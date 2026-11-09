@@ -327,6 +327,11 @@ function postWriteIntent(request: OperatorRequest, deps: OperatorDeps): Operator
   return null;
 }
 
+/** A stop probe that throws counts as engaged: a write must never run on an unknown pause state. */
+function failClosedProbe(probe: () => boolean): boolean {
+  try { return probe() !== false; } catch { return true; }
+}
+
 export async function runDesktopOperator(request: OperatorRequest, deps: OperatorDeps = {}): Promise<OperatorResult> {
   const problem = invalidRequest(request);
   if (problem === 'forbidden_store') {
@@ -334,8 +339,8 @@ export async function runDesktopOperator(request: OperatorRequest, deps: Operato
   }
   if (problem) return fail(request.verb, 'invalid', problem);
 
-  const kill = (deps.killed ?? killSwitchOn)();
-  const commsPaused = (deps.commsPaused ?? isPaused)();
+  const kill = failClosedProbe(deps.killed ?? killSwitchOn);
+  const commsPaused = failClosedProbe(deps.commsPaused ?? isPaused);
   if (isWriteVerb(request.verb) && kill) {
     return fail(request.verb, 'killed', 'The fleet KILL switch is on. Desktop writes are stopped.');
   }

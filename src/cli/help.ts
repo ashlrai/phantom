@@ -80,6 +80,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'ashlr.work-claim/v1',
   },
   {
+    usage: 'phm growth [--json] [--range 1H|1D|1W|1M] [--prs <file>]',
+    description: 'Read the Growth chart series. Each series comes from a local ledger. A missing source is no-data-source and a world-model blind spot. Exit 0 report, 1 unreadable pull file, 2 bad usage.',
+    safety: 'read',
+    jsonShape: 'growth.series.v1',
+  },
+  {
     usage: 'phm world [--json] [--refresh] | phm world get <path> [--json]',
     description: 'Read the cached ashlr.world-model/v1 snapshot. blindSpots lists each unknown field by path with a stable id. Unknown is never zero. Exit 0 snapshot, 2 bad usage.',
     safety: 'read',
@@ -556,7 +562,8 @@ export function agentDocsText(): string {
   lines.push('ashlr_scorecard, ashlr_oversight, ashlr_routing.');
   lines.push('Elite fleet-state read tools (M169): ashlr_north_star (north-star metric,');
   lines.push('7d window), ashlr_self_heal (self-heal queue summary), ashlr_racing');
-  lines.push('(model-racing distillation stats), ashlr_comms (comms channel status).');
+  lines.push('(model-racing distillation stats), ashlr_comms (comms channel status),');
+  lines.push('ashlr_comms_thread (owner thread) and ashlr_comms_send_owner (owner replies only).');
   lines.push('Fleet command tools: phantom_agent_bus_read, phantom_agent_bus_status,');
   lines.push('phantom_agent_bus_post, phantom_fleet_drop_job, phantom_fleet_job_reassign,');
   lines.push('phantom_fleet_planner_run, phantom_fleet_apps_ensure, phantom_fleet_apps_changes,');
@@ -691,6 +698,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'context --for-agent <lane> [--json]', desc: 'Compact under-4KB brief for one lane: claims, open pulls, bottlenecks, blind spots, and pacing. See docs/WORLD.md.', topic: 'observability' },
   { cmd: 'claim acquire <work-key> --lane <lane> [--json]', desc: 'Claim a work key before starting. Refuses a live claim or open pull on that key and returns the holder.', topic: 'observability' },
   { cmd: 'claim release <work-key> --lane <lane> --reason open|merge|abandon [--json]', desc: 'Release this lane claim when a pull opens, merges, or is abandoned.', topic: 'observability' },
+  { cmd: 'growth [--json] [--range 1H|1D|1W|1M] [--prs <file>]', desc: 'Growth chart series from local ledgers. A missing source is no-data-source and a world-model blind spot. See docs/GROWTH.md.', topic: 'observability' },
   { cmd: 'world [--json] [--refresh]', desc: 'Cached ashlr.world-model/v1 for the scheduler and leaders. blindSpots lists each unknown field by path with a stable id. See docs/WORLD.md.', topic: 'observability' },
   { cmd: 'world get <path> [--json]', desc: 'Read one node from the cached world model. A missing path is unknown, not zero.', topic: 'observability' },
   { cmd: 'chain verify [--json]', desc: 'Synthetic in-memory chain checks. Does not verify live transports.', topic: 'observability' },
@@ -775,6 +783,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'backlog --json',               desc: 'Emit raw JSON backlog.', topic: 'autonomy' },
   { cmd: 'inbox',                        desc: 'Approval inbox: list pending proposals (the outward-action gate).', topic: 'autonomy' },
   { cmd: 'drafts list|show|approve|reject [--json]', desc: 'Outbound drafts waiting for owner approval; approve records, never sends. See docs/DRAFTS.md.', topic: 'autonomy' },
+  { cmd: 'comms-agent status|run|drafts [--json]', desc: 'Comms role under the Leader. Triage archives bulk and bot mail and drafts replies. Sends need an owner standing approval. No lane is hard-coded. See docs/COMMS-AGENT.md.', topic: 'autonomy' },
   { cmd: 'inbox show <id>',              desc: 'Full detail of a proposal incl. diff (read-only).', topic: 'autonomy' },
   { cmd: 'inbox approve <id>',           desc: 'Confirm + apply an approved proposal to its dedicated local branch.', topic: 'autonomy' },
   { cmd: 'inbox approve <id> --yes',     desc: 'Approve without interactive prompt (non-TTY safe).', topic: 'autonomy' },
@@ -830,6 +839,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'authority protect --print|--apply', desc: 'Print (or apply after confirmation) the GitHub rulesets for the grant\'s server-enforced repos.', topic: 'autonomy' },
   { cmd: 'authority setup [--dry-run [--json]]', desc: 'Guided Phase 0: custody key, trust-root PR, GitHub App, Claude token, canary, rulesets, first grant, switch, daemon service — asks before every step; --dry-run --json prints the checklist as JSON.', topic: 'autonomy' },
   { cmd: 'leader show|run|tick|veto',     desc: 'The Leader (Visionary): show the latest memo and actions, run it now, apply due class-B actions (tick), veto an action or a whole memo (--memo).', topic: 'autonomy' },
+  { cmd: 'leader status|ask|org|assign [--json]', desc: 'Digital co-founder: world-backed status, owner ask, declarative org chart, and RQ assignment. Escalates only for secrets, money, outside sends, and owner-data destruction. KILL stops it. No new model spend.', topic: 'autonomy' },
   { cmd: 'leader seat|inbox [--json]', desc: 'Inspect admitted model tiers and failover seats, or the durable CEO inbox/outbox; inbox --text records a policy-checked message.', topic: 'autonomy' },
   { cmd: 'leader say|thread|answer|approve|directives', desc: 'Talk to the Leader in the one thread Phantom and Telegram share: say something, read the thread, answer a memo question, approve a pending action (applied only if the grant allows), add or retire standing directives.', topic: 'autonomy' },
   { cmd: 'leader oversight-plist --print', desc: 'Print (never install) the nightly ai.ashlr.oversight LaunchAgent that runs `ashlr leader tick --wait` instead of the legacy Strategist; install by hand per docs/AUTHORITY.md.', topic: 'autonomy' },
@@ -856,7 +866,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'manager [--apply-rejects]',    desc: 'Frontier judge scorecard over pending proposals (shadow mode by default; never merges).', topic: 'autonomy' },
   { cmd: 'best-of-n [--repo --title -n]', desc: 'Generate N candidate diffs (multi-model), critic-select, file the winner as a proposal (M142/M333).', topic: 'autonomy' },
   { cmd: 'context read | write [--json]', desc: 'Read current company context or save a sourced note.', topic: 'run' },
-  { cmd: 'comms <status|cycle|digest>',  desc: 'Operator comms channel (Telegram/iMessage): digests, approve-by-text.', topic: 'autonomy' },
+  { cmd: 'comms <status|thread|send-owner|cycle|digest>',  desc: 'Operator comms. status --json, thread and send-owner are the one owner thread; replies go only to the configured owner. KILL halts adapters.', topic: 'autonomy' },
   { cmd: 'connectors add|list|remove|show|import [--json]', desc: 'Manage credential-free connector profiles and import safe client metadata; vault references only.', topic: 'autonomy' },
   { cmd: 'channels add <kind> | status [--json] | slack status|map [--json]', desc: 'Bring a channel up (config only, credentials stay in custody), read the per-channel rollup, or inspect the Slack bridge mapping offline.', topic: 'autonomy' },
   { cmd: 'imessage doctor|poll [--apply] [--json]', desc: 'iMessage intake: doctor checks permissions and config; poll counts waiting messages (dry run), --apply receipts them. Never prints message text.', topic: 'autonomy' },
@@ -939,6 +949,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'trail claim|beat|release <claim-key> [--json]', desc: 'Stigmergic work-item markers: claim a key, heartbeat progress, release. File-based coordination; no execution authority. See docs/STIGMERGY.md.', topic: 'autonomy' },
   { cmd: 'trail list|show|resume|sweep|save [--json]', desc: 'Read claim markers, pick up a stalled claim with its saved checkpoint, or evaporate expired markers. See docs/STIGMERGY.md.', topic: 'autonomy' },
   { cmd: 'sessions list|revoke <id> [--json]', desc: 'See running MCP gateway sessions and block one; every gateway call is logged (caller, tool, verdict) with arguments redacted, kept 14 days.', topic: 'integrations' },
+  { cmd: 'sessions create|show|resume|terminate [sesn_id] [--json]', desc: 'Resumable agent sessions: agent profile id and version, environment id and an append-only event log; each turn is one phm queue job. Statuses idle, running, rescheduling, terminated.', topic: 'autonomy' },
   { cmd: 'mcp list',                     desc: 'List native ashlr tools + discovered MCP servers with per-server tool counts.', topic: 'integrations' },
   { cmd: 'mcp doctor',                   desc: 'Per-server MCP health: does it start? how many tools?', topic: 'integrations' },
   { cmd: 'autopilot <pr> [--apply] [--watch]', desc: 'Drive one of Phantom\'s own PRs to green: fix red CI and review feedback with an agent, merge a conflicting or behind base, re-run infra failures once, re-verify; stops and says why when a failure is not the PR\'s. Plan only unless --apply; never force-pushes or merges the PR.', topic: 'integrations' },
