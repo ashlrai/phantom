@@ -63,6 +63,9 @@ or control apps.
 | Tool | Description |
 | --- | --- |
 | `phm_agent_roster` | Read the unified live session roster across Phantom jobs, Devin cloud, Devin Desktop, Codex, Claude, Cursor, Grok, Ollama and oMLX. Unknown sources stay unknown. Read-only; prints no secrets. |
+| `phm_claim_acquire` | Claim a work key before starting. Refuses a live claim or open pull on that key and returns the holder. Grants no execution authority. |
+| `phm_claim_release` | Release this lane claim when a pull opens, merges, or is abandoned. Another holder is returned, not overridden. |
+| `phm_context_brief` | Compact under-4KB brief for one lane: live claims, open pulls, bottlenecks, blind spots, and that lane pacing. Read-only. |
 | `phm_proactive_agents_list` | List personal-agent profiles and readiness. Profiles do not verify adapters or authorize spending. |
 | `phm_proactive_agents_create` | Save private agent identity, capabilities and assignment preferences. Does not connect an adapter or authorize dispatch or spending. |
 | `phm_proactive_agents_update` | Edit agent metadata using patch.expectedVersion from a fresh read. Identity and connection verification cannot change. |

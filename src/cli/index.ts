@@ -2087,8 +2087,16 @@ async function main(): Promise<void> {
         break;
       }
       case 'context': {
+        if (rest.includes('--for-agent')) {
+          process.exitCode = await (await import('./work-visibility.js')).cmdAgentContext(rest);
+          break;
+        }
         const { cmdCompanyContext } = await import('./company-context.js');
         cmdCompanyContext(rest);
+        break;
+      }
+      case 'claim': {
+        process.exitCode = await (await import('./work-visibility.js')).cmdWorkClaim(rest);
         break;
       }
       case 'router-calibration': {
