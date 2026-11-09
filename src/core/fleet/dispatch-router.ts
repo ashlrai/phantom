@@ -32,6 +32,11 @@
  *  - A lane outside the grant's current rollout stage has zero slots.
  *  - A seat is a PRODUCER only when the grant gives it the `producer` role;
  *    claude-a is judge / Leader only by default.
+ *  - Bottleneck-only stage delegation (routing/stage-delegation.ts): judgment
+ *    stages (plan/verify — the `plan`, `review` and `leader` task kinds)
+ *    never take the free-first implement ordering in `tierPreference`;
+ *    cheap lanes implement (`code`/`bulk`), and only the declared bottleneck
+ *    stage may draw delegated extra capacity.
  *  - Land-first scheduling (RQ-V4-LAND-FIRST-1): a repo with more than 30
  *    counted open PRs is saturated — it launches no new feature work, and
  *    its free slots go to the LAND and FIXUP jobs that shrink the pile.

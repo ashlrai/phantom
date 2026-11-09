@@ -113,6 +113,22 @@ tier name itself. The vocabulary lives in
 [`queue-tier.ts`](../src/core/drive/queue-tier.ts). Keep it identical to
 `TIERS` in `contrib/mac/dispatchd.py`.
 
+### Stage delegation (bottleneck-only)
+
+Router/leader policy: frontier lanes plan and verify; cheap lanes implement;
+only the stage that is the actual bottleneck earns delegated extra capacity.
+`plan` and `verify` are judgment stages — they never take the free-first
+implement ordering in `tierPreference`, whatever the labelled difficulty,
+because a cheap verify proves nothing. `implement` (router task kinds `code`
+and `bulk`) is the cheap-lane stage and escalates to frontier ordering only
+when it is the declared bottleneck. A delegated run may declare its stage in
+`DelegationScope.stage` (`plan` | `implement` | `verify`), which the worker
+prompt renders with the stage's lane class. The vocabulary and lane-class
+policy live in
+[`stage-delegation.ts`](../src/core/routing/stage-delegation.ts) and
+[`delegation.ts`](../src/core/types/delegation.ts); the stage-aware ranking is
+in [`router.ts`](../src/core/routing/router.ts).
+
 `exportMarkdown` round-trips unchanged imports byte-for-byte. State changes
 update the status while retaining original text and append a comment with claim,
 PR and block metadata. JSON export is the complete backup and restore format.
