@@ -10,7 +10,8 @@
  * Read-only; touches no real config.
  */
 import { describe, it, expect } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { runInNewContext } from 'node:vm';
@@ -361,13 +362,25 @@ describe('M30 CI workflow', () => {
     const restore = quick.steps.find((step: { name?: string }) => step.name === 'Restore protected-branch compiler state');
     expect(restore.if).toBe("steps.history.outputs.equal != 'true'");
     expect(restore.uses).toBe('actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809');
-    expect(restore.with.path).toBe('node_modules/.cache/phantom-backend.tsbuildinfo');
-    expect(restore.with.key).toBe("master-typecheck-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json') }}-${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}");
+    expect(restore.with.path.trim().split('\n')).toEqual([
+      'node_modules/.cache/phantom-backend.tsbuildinfo',
+      'node_modules/.cache/phantom-web.tsbuildinfo',
+    ]);
+    expect(restore.with['restore-keys']).toBe(restore.with.key.slice(0, restore.with.key.lastIndexOf('-${{') + 1));
+    expect(restore.with.key).toBe("master-typecheck-v2-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json', 'src/web-ui/tsconfig.json') }}-${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}");
     const save = quick.steps.find((step: { name?: string }) => step.name === 'Save protected-branch compiler state');
     expect(save.if).toBe("success() && github.event_name == 'push' && github.ref == 'refs/heads/master'");
     const compiler = quick.steps.find((step: { name?: string }) => step.name === 'Core no-emit type check');
     expect(compiler.if).toBe("steps.history.outputs.equal != 'true'");
-    expect(compiler.run).toBe('npx tsc --noEmit -p tsconfig.json');
+    expect(compiler.run).toContain('npm run typecheck\n');
+    expect(compiler.run).toContain('$GITHUB_STEP_SUMMARY');
+    expect(compiler['continue-on-error']).toBeUndefined();
+    expect(save.with.path).toBe(restore.with.path);
+    for (const config of ['tsconfig.json', 'src/web-ui/tsconfig.json']) {
+      expect(JSON.parse(readFileSync(resolve(repoRoot, config), 'utf8')).compilerOptions.incremental).toBe(true);
+    }
+    expect(pkg.scripts.typecheck).toBe('tsc --noEmit && npm run typecheck:web');
+    expect(pkg.scripts['typecheck:web']).toBe('tsc --noEmit -p src/web-ui/tsconfig.json');
     const drift = quick.steps.find((step: { name?: string }) => step.name === 'Check authority drift (hermetic)');
     expect(drift).toBeDefined();
     expect(drift.if).toBe("steps.history.outputs.equal != 'true'");
@@ -379,6 +392,37 @@ describe('M30 CI workflow', () => {
     );
     expect(quick.steps[0].with.ref).toBe('${{ github.event.pull_request.head.sha || github.sha }}');
   });
+
+  it('rejects a deliberate type error even with a warm incremental graph', () => {
+    const root = mkdtempSync(resolve(tmpdir(), 'phantom-typegate-'));
+    try {
+      const config = resolve(root, 'tsconfig.json');
+      const source = resolve(root, 'candidate.ts');
+      const cache = resolve(root, 'candidate.tsbuildinfo');
+      writeFileSync(config, JSON.stringify({
+        compilerOptions: { incremental: true, tsBuildInfoFile: cache, noEmit: true, strict: true, types: [], skipLibCheck: true },
+        files: [source],
+      }));
+      const compile = () => {
+        const parsed = ts.getParsedCommandLineOfConfigFile(config, {}, {
+          ...ts.sys, onUnRecoverableConfigFileDiagnostic: () => { throw new Error('Invalid fixture config'); },
+        })!;
+        const program = ts.createIncrementalProgram({ rootNames: parsed.fileNames, options: parsed.options });
+        const diagnostics = ts.getPreEmitDiagnostics(program.getProgram());
+        program.emit();
+        return diagnostics;
+      };
+      writeFileSync(source, 'export const candidate: number = 1;\n');
+      expect(compile()).toEqual([]);
+      expect(existsSync(cache)).toBe(true);
+      expect(compile()).toEqual([]);
+      writeFileSync(source, 'export const candidate: number = "deliberate type error";\n');
+      const rejected = compile();
+      expect(rejected.map((diagnostic) => diagnostic.code)).toContain(2322);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 90_000);
 
   it('gates only the expensive Quick steps on the proven source-identical flag', () => {
     type Step = { name?: string; id?: string; if?: string; env?: Record<string, string>; run?: string; uses?: string };
@@ -406,15 +450,18 @@ describe('M30 CI workflow', () => {
     const names = quick.steps.map((entry) => entry.name);
     expect(names.indexOf('Set up Node.js 22')).toBeLessThan(names.indexOf(proof.name!));
     expect(names.indexOf(proof.name!)).toBeLessThan(names.indexOf('Install dependencies'));
-    // Every expensive step shares the exact same trusted flag — no variant.
+    // Compiler and drift steps require the trusted proof; the selected MCP
+    // contract still needs dependencies even for a source-identical candidate.
     const expensive = ['Install dependencies', 'Restore protected-branch compiler state', 'Core no-emit type check', 'Check authority drift (hermetic)'];
     for (const name of expensive) {
-      expect(step(name).if, name).toBe("steps.history.outputs.equal != 'true'");
+      expect(step(name).if, name).toBe(name === 'Install dependencies'
+        ? "steps.history.outputs.equal != 'true' || steps.mcp_selection.outputs.mcp_output == 'true'"
+        : "steps.history.outputs.equal != 'true'");
     }
     // Execute the actual workflow predicate: skip only when the flag is the
     // exact string 'true'; every fallback shape (false, unset, empty) runs.
-    const runs = (condition: string, equal: string | undefined): boolean => Boolean(runInNewContext(
-      `(${condition.replace(/steps\.history\.outputs\.equal/g, JSON.stringify(equal ?? ''))})`,
+    const runs = (condition: string, equal: string | undefined, mcpOutput = 'false'): boolean => Boolean(runInNewContext(
+      `(${condition.replace(/steps\.history\.outputs\.equal/g, JSON.stringify(equal ?? '')).replace(/steps\.mcp_selection\.outputs\.mcp_output/g, JSON.stringify(mcpOutput))})`,
     ));
     for (const name of expensive) {
       const condition = step(name).if!;
@@ -423,6 +470,7 @@ describe('M30 CI workflow', () => {
         expect(runs(condition, fallback), `${name} runs on ${String(fallback)}`).toBe(true);
       }
     }
+    expect(runs(step('Install dependencies').if!, 'true', 'true')).toBe(true);
     // A tampered or unknown flag spelling must never satisfy the skip either.
     for (const forged of ['True', 'TRUE', '1', 'yes', ' equal']) {
       expect(runs(step('Install dependencies').if!, forged), `forged flag ${forged}`).toBe(true);
@@ -1225,6 +1273,7 @@ describe('M30 CI workflow', () => {
       'test/m30.ci.test.ts',
       'test/m25.index.test.ts',
       'test/site-ecosystem-smoke.test.ts',
+      'test/mcp-output-efficiency.test.ts',
     ].sort());
     expect(windowsPortabilityThree).toContain('--reporter=dot');
     expect(windowsPortabilityOverflow).toContain('--reporter=dot');
