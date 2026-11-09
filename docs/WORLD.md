@@ -10,7 +10,7 @@ phm world --refresh --json
 
 Schema: `ashlr.world-model/v1`. Every signal has `value`, `source`, `observedAt`, and `freshness` (`fresh`, `stale`, or `unknown`). A missing file, a stale sensor, or a probe that did not run has `value: null`. A real measured zero is only returned when the source was read and the count was zero.
 
-`blindSpots` lists each unknown or stale field by path, with a stable id (`sensors.lanes.claude-max.pacePerHour` is `sensors-lanes-claude-max-pacePerHour`). The same rows are copied onto `views.observe.coverage.unknownFields`, beside the live and unknown counts. Resource pacing (`pacePerHour`, `requiredPacePerHour`, `runwayHours`) is read when a sensor row carries those keys. Until RQ-SENSORS-PACE-1 lands, those fields stay unknown.
+`blindSpots` lists each unknown or stale field by path, with a stable id (`sensors.lanes.claude-max.pacePerHour` is `sensors-lanes-claude-max-pacePerHour`). The same rows are copied onto `views.observe.coverage.unknownFields`, beside the live and unknown counts. `claims.live` reads `coordinationSummary` from the claim store. A missing store is unknown, not zero. Sensor `burnRate`, `remaining`, and `idleIncludedWastedPerWeek` come from `usage.sensors.v1`. Optional `pacePerHour`, `requiredPacePerHour`, and `runwayHours` are read when a sensor row already carries them. Absent keys stay unknown. The strict sensor schema is unchanged.
 
 The snapshot is cached in the process and at `~/.ashlr-runs/world/model.json` for 15 seconds. `phm world get` on a warm cache is the tick read. The tick does not call gh and does not read credential files.
 
