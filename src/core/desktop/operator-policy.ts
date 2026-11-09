@@ -2,8 +2,10 @@
  * desktop operator policy. Reuses the computer-use denylist, settings titles
  * and bundle matcher from computer-types.ts, and the Devin/Claude/Codex
  * identities from desktop-adapters.ts. Two owner exceptions sit on top of
- * that policy: Phantom itself (`ai.ashlr.desktop`) may be operated, and
- * Cursor may be typed into. The computer_* grant path is unchanged.
+ * that policy. Reads of Phantom stay open. Desktop writes are an exact
+ * bundle-id allowlist of Devin, Codex, Claude, Grok Bot and Cursor.
+ * A name match or a missing bundle id never unlocks a write. The computer_*
+ * grant path is unchanged.
  *
  * Screen Recording and Accessibility URLs match computer.rs
  * SETTINGS_URL_SCREEN and SETTINGS_URL_ACCESSIBILITY.
@@ -85,6 +87,15 @@ export const OPERATOR_ROSTER: readonly OperatorRosterApp[] = [
   { id: 'cursor', names: ['Cursor'], bundleIds: ['com.todesktop.230313mzl4w4u92'] },
 ];
 
+/** Exact bundle ids that may receive focus, scroll, type or click. Phantom is not in this list. */
+export const DESKTOP_WRITE_BUNDLE_IDS: readonly string[] = OPERATOR_ROSTER
+  .filter((app) => app.id !== 'phantom')
+  .flatMap((app) => app.bundleIds);
+
+function exactBundleId(bundleId: string, expected: string): boolean {
+  return bundleId.toLowerCase() === expected.toLowerCase();
+}
+
 const MESSAGES_BUNDLES = ['com.apple.MobileSMS', 'com.apple.iChat'] as const;
 const DENIED_NAMES = new Set(['messages', 'keychain access', 'passwords', 'system settings']);
 
@@ -141,6 +152,13 @@ export function operatorDenyReason(input: {
   }
   if (bundleId && SYSTEM_SETTINGS_BUNDLES.some((id) => bundleMatches(id, bundleId))) {
     return 'System Settings is closed to desktop control.';
+  }
+  if (isWriteVerb(input.verb)) {
+    if (isPhantom(name, bundleId)) {
+      return 'Agents drive Phantom through phm and MCP. Desktop writes to Phantom are closed.';
+    }
+    const allowed = typeof bundleId === 'string' && DESKTOP_WRITE_BUNDLE_IDS.some((id) => exactBundleId(bundleId, id));
+    if (!allowed) return 'Desktop writes are limited to Devin, Codex, Claude, Grok Bot and Cursor.';
   }
   if (isPhantom(name, bundleId)) return null;
   if (bundleId) {

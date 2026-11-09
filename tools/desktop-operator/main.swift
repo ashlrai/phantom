@@ -12,6 +12,7 @@
 // Denied settings titles are kept in sync with COMPUTER_DENIED_SETTINGS_TITLES.
 import AppKit
 import ApplicationServices
+import Darwin
 import Foundation
 import Vision
 
@@ -44,6 +45,37 @@ let closedBundles = [
     "com.apple.systempreferences",
     "com.apple.Settings",
 ]
+// Exact bundle ids only. Phantom (ai.ashlr.desktop) is not writable.
+let writableBundles = [
+    "ai.cognition.devin",
+    "com.cognition.devin",
+    "com.openai.codex",
+    "com.anthropic.claudefordesktop",
+    "ai.x.grok",
+    "com.xai.grok",
+    "com.todesktop.230313mzl4w4u92",
+]
+
+func writable(_ bundle: String?) -> Bool {
+    guard let bundle = bundle?.lowercased() else { return false }
+    return writableBundles.contains { $0.lowercased() == bundle }
+}
+
+func requireWritable(_ app: NSRunningApplication) {
+    if !writable(app.bundleIdentifier) {
+        fail("denied", "Desktop writes are limited to Devin, Codex, Claude, Grok Bot and Cursor.")
+    }
+}
+
+func requireFrontmost(_ app: NSRunningApplication) {
+    if NSWorkspace.shared.frontmostApplication?.processIdentifier != app.processIdentifier {
+        _ = app.activate(options: [.activateIgnoringOtherApps])
+        usleep(150_000)
+    }
+    if NSWorkspace.shared.frontmostApplication?.processIdentifier != app.processIdentifier {
+        fail("failed", "The target app is not frontmost, so no input was sent.")
+    }
+}
 
 func emit(_ object: [String: Any]) -> Never {
     do {
@@ -199,7 +231,7 @@ func walk(_ element: AXUIElement, depth: Int, into state: inout AxWalk) {
     }
     state.nodes += 1
     let role = stringAttribute(element, kAXRoleAttribute as String) ?? ""
-    if role == "AXSecureTextField" {
+    if isSecure(element) {
         state.secure = true
         return
     }
@@ -236,10 +268,33 @@ func readTree(pid: pid_t, title: String?) -> AxWalk {
     return state
 }
 
+func isSecure(_ element: AXUIElement) -> Bool {
+    let role = (stringAttribute(element, kAXRoleAttribute as String) ?? "").lowercased()
+    let subrole = (stringAttribute(element, kAXSubroleAttribute as String) ?? "").lowercased()
+    for value in [role, subrole] where value.contains("secure") || value.contains("password") { return true }
+    return false
+}
+
 func focusedIsSecure(_ pid: pid_t) -> Bool {
-    guard let focused = copyAttribute(AXUIElementCreateApplication(pid), kAXFocusedUIElementAttribute as String) else { return false }
-    let element = focused as! AXUIElement
-    return stringAttribute(element, kAXRoleAttribute as String) == "AXSecureTextField"
+    guard let focused = copyAttribute(AXUIElementCreateApplication(pid), kAXFocusedUIElementAttribute as String),
+          CFGetTypeID(focused) == AXUIElementGetTypeID() else { return true }
+    return isSecure(focused as! AXUIElement)
+}
+
+func pointOverTarget(_ point: CGPoint, pid: pid_t) -> Bool {
+    let options = CGWindowListOption(arrayLiteral: .optionOnScreenOnly, .excludeDesktopElements)
+    let infos = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] ?? []
+    for info in infos {
+        let layer = info[kCGWindowLayer as String] as? Int ?? 0
+        if layer != 0 { continue }
+        // kCGWindowBounds is already a dictionary. Cast that value, do not rebuild [String: Double].
+        guard let bounds = info[kCGWindowBounds as String] as? CFDictionary,
+              let rect = CGRect(dictionaryRepresentation: bounds) else { continue }
+        if !rect.contains(point) { continue }
+        let owner = info[kCGWindowOwnerPID as String] as? Int ?? -1
+        return owner == Int(pid)
+    }
+    return false
 }
 
 func postText(_ text: String) {
@@ -408,6 +463,7 @@ case "focus":
     if !accessibilityGranted(prompt: false) { permission("accessibility") }
     guard let name = appName else { fail("failed", "app is required") }
     let app = requireApp(name)
+    requireWritable(app)
     if !app.activate(options: [.activateIgnoringOtherApps]) { fail("failed", "The app did not take focus.") }
     if let windowTitle {
         for window in axWindows(app.processIdentifier) where stringAttribute(window, kAXTitleAttribute as String) == windowTitle {
@@ -419,7 +475,8 @@ case "scroll":
     if !accessibilityGranted(prompt: false) { permission("accessibility") }
     guard let name = appName else { fail("failed", "app is required") }
     let app = requireApp(name)
-    _ = app.activate(options: [.activateIgnoringOtherApps])
+    requireWritable(app)
+    requireFrontmost(app)
     let dy = json["dy"] as? Int ?? -3
     let dx = json["dx"] as? Int ?? 0
     let source = CGEventSource(stateID: .hidSystemState)
@@ -431,14 +488,17 @@ case "type":
     guard let name = appName else { fail("failed", "app is required") }
     guard let text = json["text"] as? String, !text.isEmpty, text.count <= maxType else { fail("failed", "text must be 1 to 2000 characters") }
     let app = requireApp(name)
+    requireWritable(app)
+    requireFrontmost(app)
     if focusedIsSecure(app.processIdentifier) { fail("secure_field", "Secure text fields are not typed into.") }
-    _ = app.activate(options: [.activateIgnoringOtherApps])
     postText(text)
     emit(["ok": true, "typed": text.count])
 case "click":
     if !accessibilityGranted(prompt: false) { permission("accessibility") }
     guard let name = appName else { fail("failed", "app is required") }
     let app = requireApp(name)
+    requireWritable(app)
+    requireFrontmost(app)
     if let ref = json["ref"] as? String, !ref.isEmpty {
         if !pressRef(pid: app.processIdentifier, ref: ref) { fail("failed", "That accessibility ref was not pressed.") }
         emit(["ok": true, "clicked": true])
@@ -447,7 +507,9 @@ case "click":
           let y = json["y"] as? Double ?? (json["y"] as? Int).map(Double.init) else {
         fail("failed", "click needs a ref or both x and y")
     }
-    _ = app.activate(options: [.activateIgnoringOtherApps])
+    if !pointOverTarget(CGPoint(x: x, y: y), pid: app.processIdentifier) {
+        fail("denied", "That point is not over the target app's window.")
+    }
     postClick(x: x, y: y)
     emit(["ok": true, "clicked": true])
 case "screenshot":

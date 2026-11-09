@@ -19,6 +19,7 @@ import {
   ACCESSIBILITY_PANE,
   ACCESSIBILITY_SETTINGS_URL,
   COMPUTER_DENIED_SETTINGS_TITLES,
+  DESKTOP_WRITE_BUNDLE_IDS,
   OPERATOR_ROSTER,
   SCREEN_RECORDING_PANE,
   SCREEN_RECORDING_SETTINGS_URL,
@@ -118,13 +119,32 @@ describe('desktop operator policy reuses computer-use rules', () => {
     for (const title of COMPUTER_DENIED_SETTINGS_TITLES) expect(swift).toContain(`"${title}"`);
     expect(COMPUTER_TERMINAL_IDE_BUNDLES).toContain('com.todesktop.230313mzl4w4u92');
     expect(OPERATOR_ROSTER.map((app) => app.id)).toEqual(['phantom', 'devin', 'codex', 'claude', 'grok', 'cursor']);
+    const writable = /let writableBundles = \[([\s\S]*?)\]/.exec(swift)?.[1] ?? '';
+    const ids = [...writable.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+    expect(ids).toEqual([...DESKTOP_WRITE_BUNDLE_IDS]);
+    expect(ids).not.toContain('ai.ashlr.desktop');
   });
 
-  it('allows Phantom and Cursor typing, and refuses keychain, Messages and other terminals', () => {
-    expect(operatorDenyReason({ name: 'Phantom', bundleId: 'ai.ashlr.desktop', verb: 'type' })).toBeNull();
+  it('allows Cursor typing by exact bundle id, and keeps Phantom, mail, chat, browsers and terminals read-only', () => {
     expect(operatorDenyReason({ name: 'Cursor', bundleId: 'com.todesktop.230313mzl4w4u92', verb: 'type' })).toBeNull();
-    expect(operatorDenyReason({ name: 'Terminal', bundleId: 'com.apple.Terminal', verb: 'type' })).toEqual(expect.any(String));
+    expect(operatorDenyReason({ name: 'Codex', bundleId: 'com.openai.codex', verb: 'click' })).toBeNull();
+    expect(operatorDenyReason({ name: 'Codex', bundleId: 'com.openai.codex.helper', verb: 'type' })).toEqual(expect.any(String));
+    expect(operatorDenyReason({ name: 'Phantom', bundleId: 'ai.ashlr.desktop', verb: 'read' })).toBeNull();
+    expect(operatorDenyReason({ name: 'Phantom', bundleId: 'ai.ashlr.desktop', verb: 'screenshot' })).toBeNull();
+    expect(operatorDenyReason({ name: 'Ashlr', bundleId: null, verb: 'read' })).toBeNull();
+    for (const verb of ['type', 'click', 'focus', 'scroll'] as const) {
+      expect(operatorDenyReason({ name: 'Phantom', bundleId: 'ai.ashlr.desktop', verb })).toEqual(expect.any(String));
+      expect(operatorDenyReason({ name: 'Ashlr', bundleId: null, verb })).toEqual(expect.any(String));
+      expect(operatorDenyReason({ name: 'Mail', bundleId: 'com.apple.mail', verb })).toEqual(expect.any(String));
+      expect(operatorDenyReason({ name: 'Slack', bundleId: 'com.tinyspeck.slackmacgap', verb })).toEqual(expect.any(String));
+      expect(operatorDenyReason({ name: 'Notes', bundleId: 'com.apple.Notes', verb })).toEqual(expect.any(String));
+      expect(operatorDenyReason({ name: 'Safari', bundleId: 'com.apple.Safari', verb })).toEqual(expect.any(String));
+      expect(operatorDenyReason({ name: 'Terminal', bundleId: 'com.apple.Terminal', verb })).toEqual(expect.any(String));
+      expect(operatorDenyReason({ name: 'Cursor', bundleId: null, verb })).toEqual(expect.any(String));
+    }
     expect(operatorDenyReason({ name: 'Terminal', bundleId: 'com.apple.Terminal', verb: 'read' })).toBeNull();
+    expect(operatorDenyReason({ name: 'Mail', bundleId: 'com.apple.mail', verb: 'read' })).toBeNull();
+    expect(operatorDenyReason({ name: 'Safari', bundleId: 'com.apple.Safari', verb: 'read' })).toBeNull();
     expect(operatorDenyReason({ name: 'Keychain Access', bundleId: 'com.apple.keychainaccess', verb: 'read' })).toEqual(expect.any(String));
     expect(operatorDenyReason({ name: 'Messages', bundleId: 'com.apple.MobileSMS', verb: 'read' })).toEqual(expect.any(String));
     expect(operatorDenyReason({ name: '1Password', bundleId: 'com.1password.1password', verb: 'read' })).toEqual(expect.any(String));
@@ -222,6 +242,24 @@ describe('runDesktopOperator', () => {
     expect(pausedOrder).toEqual([]);
 
     const read = await runDesktopOperator({ verb: 'read', app: 'Phantom' }, deps(mockSurface(), { killed: () => true }));
+    expect(read.ok).toBe(true);
+  });
+
+  it('denies Phantom type and click, and still reads Phantom', async () => {
+    const order: string[] = [];
+    const surface = mockSurface({ order });
+    const posted: unknown[] = [];
+    const base = deps(surface, {
+      postIntent: (envelope) => {
+        posted.push(envelope);
+        return { status: 'posted' };
+      },
+    });
+    expect(await runDesktopOperator({ verb: 'type', app: 'Phantom', text: 'approve' }, base)).toMatchObject({ ok: false, code: 'denied' });
+    expect(await runDesktopOperator({ verb: 'click', app: 'Phantom', x: 10, y: 10 }, base)).toMatchObject({ ok: false, code: 'denied' });
+    expect(posted).toEqual([]);
+    expect(order.filter((step) => step === 'type' || step === 'click')).toEqual([]);
+    const read = await runDesktopOperator({ verb: 'read', app: 'Phantom' }, deps(surface));
     expect(read.ok).toBe(true);
   });
 
