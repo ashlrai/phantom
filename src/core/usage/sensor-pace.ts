@@ -154,7 +154,9 @@ export function paceAgainstCeiling(advice: SchedulerPaceAdvice, ceiling: number,
     nowMs,
     payPerUse: advice.payPerUse,
     balanceFresh: advice.balanceFresh,
-    budgetUsd: advice.budgetUsd,
+    // A caller-supplied amount is not the owner budget. Pay-per-use stays at 0
+    // until pacing reads readSpendBudget and a real attestation root exists.
+    budgetUsd: advice.payPerUse === true ? 0 : advice.budgetUsd,
     spentUsd: advice.spentUsd,
     uncapped: advice.uncapped,
   });
