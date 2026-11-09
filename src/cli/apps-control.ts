@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { ashlrHome } from '../core/cloud/store.js';
 import { appendBusInbox } from '../core/fleet/bus-inbox.js';
 import { scrubSecrets } from '../core/util/scrub.js';
+import { defaultHostAppLauncher } from '../core/verse/app-launcher.js';
 import {
   createAppControl, type AppControlResult, type AppLauncher, type RunningApp, type ToolCall,
 } from '../core/verse/desktop-adapters.js';
@@ -73,7 +74,11 @@ export interface AppsFeedEntry { phase: 'start' | 'result'; action: Verb; app: s
 export interface AppsControlDeps {
   /** The `computer_*` transport. Absent means this shell has no desktop connection and actions fail closed. */
   call?: ToolCall;
-  launcher?: AppLauncher;
+  /**
+   * Host launcher for open/focus. `undefined` uses `/usr/bin/open -b` on macOS only, and only when no
+   * `call` is supplied (a shell with no desktop connection); `null` disables it.
+   */
+  launcher?: AppLauncher | null;
   allowFile?: string;
   /** Returns false when the entry could not be recorded. */
   feed?: (entry: AppsFeedEntry) => boolean;
@@ -127,7 +132,8 @@ export async function cmdApps(args: string[], deps: AppsControlDeps = {}): Promi
   const allowFile = deps.allowFile ?? join(ashlrHome(), 'apps-allow.json');
   const allow = readAllowlist(allowFile);
   const feed = deps.feed ?? defaultFeed;
-  const control = createAppControl(deps.call ?? notConnected, { launcher: deps.launcher });
+  const launcher = deps.launcher === null ? undefined : deps.launcher ?? (deps.call === undefined ? defaultHostAppLauncher() : undefined);
+  const makeControl = (openWithoutList = false) => createAppControl(deps.call ?? notConnected, { launcher, openWithoutList });
   const emit = (report: unknown, human: string): void => out(json ? JSON.stringify(report) : human);
 
   if (!allow.ok) {
@@ -137,7 +143,7 @@ export async function cmdApps(args: string[], deps: AppsControlDeps = {}): Promi
 
   if (verb === 'list') {
     const started = feed({ phase: 'start', action: 'list', app: '*' });
-    const live = await control.list();
+    const live = await makeControl().list();
     const running: RunningApp[] = live.ok ? live.apps : [];
     const rows = allow.apps.map((a) => {
       const hit = running.find((r) => (a.bundleId && r.bundleId?.toLowerCase() === a.bundleId.toLowerCase()) || r.name.toLowerCase() === a.name.toLowerCase());
@@ -168,6 +174,9 @@ export async function cmdApps(args: string[], deps: AppsControlDeps = {}): Promi
   if (!allowed) return result('refused', `not in ${allowFile}.`, { code: 'not-allowlisted' });
 
   // Prefer the bundle id when the file has one; the adapter matches it exactly.
+  // Opening may skip the app list only with no desktop connection at all and an explicit bundle id in the
+  // allowlist file. A connected desktop whose list errors (KILL, pause, no grant) and a name-only entry still refuse.
+  const control = makeControl(verb === 'open' && deps.call === undefined && allowed.bundleId !== null);
   const res: AppControlResult = await control[verb](allowed.bundleId ?? allowed.name);
   if (res.ok) return result('done', res.detail, { running: res.running, frontmost: res.frontmost });
   if (verb === 'quit' && (res.code === 'unsaved-state' || res.code === 'unreadable')) {
