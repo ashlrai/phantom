@@ -1,3 +1,4 @@
+import { readOutboxEntries, replyTextHash, replyTime } from '../fleet/mason-outbox.js';
 /**
  * The Leader thread (3.14) — ONE conversation between Mason and the Leader,
  * whatever the surface: Verse, Telegram, the CLI. This module is the server
@@ -488,6 +489,29 @@ export function listThread(opts: { limit?: number; before?: string } = {}): Lead
     }
   }
   return log.slice(-limit).map((m) => withDelivery(m, index));
+}
+
+/** File replies are projected only: reading never copies them into the thread log. */
+export async function listLeaderThread(opts: { limit?: number; before?: string } = {}): Promise<LeaderThreadMessage[]> {
+  const limit = Math.max(1, Math.min(THREAD_LIMITS.listMax, Math.floor(opts.limit ?? THREAD_LIMITS.listDefault)));
+  const posts = listThread({ limit: THREAD_LIMITS.listMax });
+  const { entries } = await readOutboxEntries({ limit: THREAD_LIMITS.listMax });
+  const seen = new Set(posts.filter(post => post.from === 'leader').map(post => replyTextHash(post.text)));
+  const files: LeaderThreadMessage[] = entries.filter(entry => !seen.has(replyTextHash(entry.text))).map(entry => ({
+    id: `leader-file-${replyTextHash(entry.text).slice(0, 48)}`, at: Number.isFinite(replyTime(entry.at)) ? new Date(replyTime(entry.at)).toISOString() : '', text: entry.text,
+    from: 'leader', channel: 'system', kind: 'answer',
+  }));
+  let messages = [...posts, ...files].sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
+  if (opts.before !== undefined) {
+    const index = messages.findIndex(message => message.id === opts.before);
+    if (index >= 0) messages = messages.slice(0, index);
+    else if (LEADER_THREAD_ID_RE.test(opts.before) || /^leader-file-[a-f0-9]{48}$/.test(opts.before)) messages = [];
+    else {
+      if (!Number.isFinite(Date.parse(opts.before))) throw new LeaderThreadError(400, 'before must be a message id or an ISO time');
+      messages = messages.filter(message => Date.parse(message.at) < Date.parse(opts.before!));
+    }
+  }
+  return messages.slice(-limit);
 }
 
 /** One message by id (with its delivery state), or null. */
