@@ -113,6 +113,8 @@ export type { PublicDaemonObservation, DaemonSourceQuality } from '../../core/da
  */
 export type { FleetStatus, FleetNextAction, FleetNextActionCommand, FleetAutonomousShipReadinessStatus } from '../../core/fleet/status.js';
 export type { AgentWorkspaceRecentAction } from '../../core/fleet/agent-action-ledger.js';
+/** Verified-completion metric behind GET /api/fleet/verified-completion. */
+export type { VerifiedCompletionReport } from '../../core/fleet/agent-activity.js';
 /** RQ-PHANTOM-ENG-CONSOLE: per-lane engineering console projection behind GET /api/fleet/lanes. */
 import type { FleetLaneSnapshot as CoreFleetLaneSnapshot, FleetLaneView as CoreFleetLaneView } from '../../core/fleet/lane-console.js';
 export type { FleetLaneCreditView } from '../../core/fleet/lane-console.js';

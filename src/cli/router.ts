@@ -1,7 +1,8 @@
 import { readFile, stat } from 'node:fs/promises';
 import { readPoolBudgets } from '../core/fleet/pool-budget-store.js';
 import { BUDGET_POOLS, type BudgetPool } from '../core/fleet/pool-budget.js';
-import { LANE_BACKENDS, rankLanes, type LaneResourceSnapshot, type LaneSlots } from '../core/fleet/lane-rank.js';
+import { LANE_BACKENDS, rankLanes, type LaneEvalScores, type LaneResourceSnapshot, type LaneSlots } from '../core/fleet/lane-rank.js';
+import { readLaneScores } from '../core/eval/passk.js';
 import type { EngineTier } from '../core/types.js';
 
 const USAGE = 'Usage: ashlr router rank --tier local|mid|frontier [--routes FILE] [--slots pool=count ...] [--json]\n' +
@@ -49,9 +50,20 @@ export async function cmdRouter(args: string[]): Promise<number> {
       }
     }
     const budgets = await readPoolBudgets();
-    const lanes = rankLanes(tier, { budgets, routes }, slots);
+    // Advisory pass^k evidence from the nightly eval: lane-scores rows land
+    // on pools by name; absent/degraded state leaves evalScore null.
+    const evalScores: LaneEvalScores = {};
+    const { scores } = readLaneScores();
+    if (scores) {
+      for (const row of scores.lanes) {
+        if ((BUDGET_POOLS as readonly string[]).includes(row.lane)) {
+          evalScores[row.lane as BudgetPool] = { pass1: row.pass1, passPowK: row.passPowK, trials: row.trials };
+        }
+      }
+    }
+    const lanes = rankLanes(tier, { budgets, routes, evalScores }, slots);
     console.log(json ? JSON.stringify({ schema: 'fleet.lane-rank.v1', tier, lanes }) :
-      lanes.map(l => `${l.pool}\t${l.availableSlots}\t${l.resetAt ?? 'unknown reset'}`).join('\n') || 'No eligible lanes.');
+      lanes.map(l => `${l.pool}\t${l.availableSlots}\t${l.resetAt ?? 'unknown reset'}${l.evalScore ? `\tpass^k ${l.evalScore.passPowK === null ? 'n/a' : l.evalScore.passPowK.toFixed(3)} (${l.evalScore.trials} trials)` : ''}`).join('\n') || 'No eligible lanes.');
     return 0;
   } catch { console.error('Router rank unavailable.'); return 1; }
 }

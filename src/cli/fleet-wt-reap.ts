@@ -21,13 +21,16 @@ export interface WtReapDeps {
 export interface WtReapReport {
   schema: 'fleet.wt-reap.v1';
   readOnly: boolean;
-  removals?: Array<{ id: string; status: 'removed' | 'refused' | 'failed'; reason?: string }>;
+  removals?: Array<{ id: string; status: 'removed' | 'already-removed' | 'refused' | 'failed'; reason?: string }>;
   sources: { worktrees: boolean; jobs: boolean };
   worktrees: Array<{ id: string; ageHours: number | null; state: State; reapable: boolean }>;
   totals: Record<State | 'worktrees' | 'reapable', number>;
 }
 const defaults: WtReapReaders = {
-  listDirs: async path => (await readdir(path, { withFileTypes: true })).filter(d => d.isDirectory()).map(d => d.name),
+  listDirs: async path => {
+    try { return (await readdir(path, { withFileTypes: true })).filter(d => d.isDirectory()).map(d => d.name); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
+  },
   readJobs: path => readFile(path, 'utf8'),
 };
 const usage = 'Usage: ashlr fleet wt-reap [--apply] [--json]';
@@ -97,14 +100,32 @@ export async function cmdFleetWtReap(args: string[], deps: WtReapDeps = {}): Pro
           r.removals.push({ id: w.id, status: 'refused', reason: 'unsafe-path' });
           continue;
         }
-      } catch {
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          r.removals.push({ id: w.id, status: 'already-removed' });
+          continue;
+        }
         r.removals.push({ id: w.id, status: 'refused', reason: 'path-unavailable' });
         continue;
       }
       try {
         await runner('git', ['-C', path, 'worktree', 'remove', '--', path]);
-        r.removals.push({ id: w.id, status: 'removed' });
+        try {
+          await lstat(path);
+          r.removals.push({ id: w.id, status: 'failed', reason: 'worktree-remains' });
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          r.removals.push({ id: w.id, status: 'removed' });
+        }
       } catch (error) {
+        // Another reaper can remove the directory after our path check or while
+        // Git is running. Only absence proves that this attempt converged.
+        try { await lstat(path); } catch (statError) {
+          if ((statError as NodeJS.ErrnoException).code === 'ENOENT') {
+            r.removals.push({ id: w.id, status: 'already-removed' });
+            continue;
+          }
+        }
         // Git output can contain private paths or file names; expose only fixed codes.
         const e = error as { stderr?: unknown; code?: unknown; killed?: unknown };
         const stderr = typeof e?.stderr === 'string' ? e.stderr : '';
@@ -122,5 +143,5 @@ export async function cmdFleetWtReap(args: string[], deps: WtReapDeps = {}): Pro
     for (const removal of r.removals ?? []) out.log(`${removal.id}: ${removal.status}${removal.reason ? ` (${removal.reason})` : ''}.`);
     out.log(`Totals: ${r.totals.worktrees} worktrees, ${r.totals.merged} merged, ${r.totals.empty} empty, ${r.totals.open} open, ${r.totals.none} none, ${r.totals.reapable} reapable.`);
   }
-  return r.sources.worktrees && r.sources.jobs && (r.removals ?? []).every(item => item.status === 'removed') ? 0 : 1;
+  return r.sources.worktrees && r.sources.jobs && (r.removals ?? []).every(item => (item.status === 'removed' || item.status === 'already-removed')) ? 0 : 1;
 }

@@ -4,6 +4,7 @@ import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, writeS
 import { join } from 'node:path';
 import { parse, stringify } from 'smol-toml';
 import { checkSendPolicy, parseCommsConfirmation, parseTeamIdentities, shouldIngestFromBridge, type ChannelAdapter, type ChannelId, type DeliverResult, type TeamIdentity } from './channel-policy.js';
+import { localChannelAdapters } from './channel-registry.js';
 import { validateBusEnvelope, type BusEnvelope } from '../fleet/bus-envelope.js';
 import { appendBusInbox } from '../fleet/bus-inbox.js';
 import { CHANNEL_BUS_TTL_MS } from '../fleet/channel-bus-publish.js';
@@ -69,6 +70,7 @@ export interface LeaderNetworkResult { status: 'accepted' | 'duplicate' | 'ignor
 
 /** Private receipts serialize writers and survive restarts. Pending inputs/replies stay private for recovery. */
 export function createLeaderNetwork(options: LeaderNetworkOptions) {
+  const adapters = { ...localChannelAdapters({ root: options.busRoot, now: options.now }), ...options.adapters };
   const leaderDir = join(options.runsDir, 'leader');
   const stateFile = join(leaderDir, 'network-state.json');
   const clock = options.now ?? Date.now;
@@ -184,7 +186,7 @@ export function createLeaderNetwork(options: LeaderNetworkOptions) {
     const decision = policy(route);
     if (decision.status !== 'sent') return decision;
     if (!owner({ channel: route.channel, id: route.recipient }, options.configSource)) return { status: 'refused', reason: 'Recipient is no longer the verified owner.' };
-    const adapter = options.adapters?.[route.channel];
+    const adapter = adapters[route.channel];
     if (!options.deliver && (!adapter || adapter.id !== route.channel)) return { status: 'drafted', reason: 'No channel adapter is available.' };
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {

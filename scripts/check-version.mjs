@@ -23,8 +23,8 @@ if (!tag) {
   console.error('check-version: no tag (set GITHUB_REF_NAME or pass as arg)');
   process.exit(1);
 }
-const tagVersion = tag.replace(/^v/, '');
-if (tagVersion !== pkg.version) {
+const tagVersion = tag.startsWith('v') ? tag.slice(1) : '';
+if (!/^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(tag) || tagVersion !== pkg.version) {
   console.error(
     `check-version: tag "${tag}" (→ ${tagVersion}) does not match package.json version ${pkg.version}`,
   );

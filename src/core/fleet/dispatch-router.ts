@@ -32,6 +32,11 @@
  *  - A lane outside the grant's current rollout stage has zero slots.
  *  - A seat is a PRODUCER only when the grant gives it the `producer` role;
  *    claude-a is judge / Leader only by default.
+ *  - Bottleneck-only stage delegation (routing/stage-delegation.ts): judgment
+ *    stages (plan/verify — the `plan`, `review` and `leader` task kinds)
+ *    never take the free-first implement ordering in `tierPreference`;
+ *    cheap lanes implement (`code`/`bulk`), and only the declared bottleneck
+ *    stage may draw delegated extra capacity.
  *  - Land-first scheduling (RQ-V4-LAND-FIRST-1): a repo with more than 30
  *    counted open PRs is saturated — it launches no new feature work, and
  *    its free slots go to the LAND and FIXUP jobs that shrink the pile.
@@ -71,6 +76,7 @@ import {
   DEVIN_CLI_LANE_DEFAULT_SLOTS,
   resolveDevinCliFleetModel,
 } from '../devin/cli-engine.js';
+import { paceAgainstCeiling, paceReason, type SchedulerPaceAdvice } from '../usage/sensor-pace.js';
 import {
   DEVIN_CLI_LANE,
   FLEET_ENGINES,
@@ -197,6 +203,12 @@ export interface LanePlanInput {
   leaderPreferences?: ResolvedLeaderPreferences;
   /** Finite selected-batch/journal/pool bound, never a business preference or account-count clamp. */
   admittedBatchCapacity?: number;
+  /** Included-usage pace. Absent leaves the existing ceilings alone. */
+  sensorPace?: Readonly<Partial<Record<FleetEngine, SchedulerPaceAdvice>>>;
+  /** Clock for the pace. Required before sensorPace can narrow a lane. */
+  nowMs?: number;
+  /** ~/.ashlr/KILL. Zeroes every lane after the other ceilings. */
+  killed?: boolean;
 }
 
 export interface LanePlan {
@@ -374,6 +386,18 @@ export function planLanes(input: LanePlanInput): Record<FleetEngine, LanePlan> {
       narrow(0, lane === DEVIN_CLI_LANE
         ? "The grant's current rollout stage does not include Devin."
         : `The grant's current rollout stage does not include ${FLEET_LANE_LABEL[lane]}.`);
+    }
+    const advice = input.sensorPace?.[lane];
+    if (slots > 0 && advice && typeof input.nowMs === 'number') {
+      const paced = paceAgainstCeiling(advice, slots, input.nowMs, false);
+      if (paced.target !== null && paced.target < slots) {
+        slots = paced.target;
+        capReason = paceReason(paced.reason, paced.target);
+      }
+    }
+    if (input.killed === true) {
+      slots = 0;
+      capReason = paceReason('kill', 0);
     }
     out[lane] = { lane, slots, capReason };
   }

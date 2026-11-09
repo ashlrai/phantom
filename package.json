@@ -1,6 +1,6 @@
 {
   "name": "@ashlr/phantom",
-  "version": "3.30.24",
+  "version": "3.30.28",
   "description": "Phantom by AshlrAI: the open-source engineering agent workbench for CLI accounts, local models and autonomous fleets.",
   "publishConfig": {
     "access": "public"
@@ -143,6 +143,7 @@
     "node": ">=22.15.0"
   },
   "scripts": {
+    "authority:regen": "node scripts/authority-regen.mjs",
     "version:sync": "node scripts/sync-candidate-version.mjs",
     "check:version": "node scripts/sync-candidate-version.mjs --check",
     "prepublishOnly": "npm run build && npm run check:first-paint:built && npm run check:docs && npm run typecheck && npm run lint && npm run test:web && npm run test:ci:sharded",
@@ -171,6 +172,7 @@
     "check:first-paint": "node scripts/check-first-paint-budget.mjs --budget-kb 354 --mobile-budget-kb 250",
     "check:first-paint:built": "node scripts/check-first-paint-budget.mjs --no-build --out-dir dist/core/web/public/next --budget-kb 354 --mobile-budget-kb 250",
     "check:docs": "node scripts/check-documentation.mjs",
+    "docs:sync": "node scripts/docs-sync.mjs",
     "check:perf": "node scripts/perf-budget.mjs",
     "check:pack-contracts": "node --test .github/tests/ci-pack-smoke.test.mjs .github/tests/desktop-update-finalizer.test.mjs .github/tests/first-paint-built.test.mjs .github/tests/ci-qualification-lane.test.mjs .github/tests/ci-impact-shadow.test.mjs .github/tests/ci-attestation-inputs.test.mjs .github/tests/hosted-build-artifact.test.mjs .github/tests/hosted-native-build.test.mjs .github/tests/release-train.test.mjs .github/tests/fast-hosted-artifact.test.mjs .github/tests/release-fast-smoke.test.mjs .github/tests/release-local-input.test.mjs .github/tests/release-smoke-phase.test.mjs .github/tests/ci-release-same-runner.test.mjs .github/tests/release-cadence.test.mjs .github/tests/ci-history-source.test.mjs .github/tests/ci-test-feedback.test.mjs .github/tests/ci-impact-map.test.mjs",
     "check:quarantine": "node scripts/check-quarantine-ledger.mjs",

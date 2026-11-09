@@ -33,6 +33,12 @@ function fixture(overrides = {}) {
   return { read, run, data, input: { repository: 'ashlrai/phantom', revision, now, read } };
 }
 
+test('standing approval raises a sub-hour cadence to hourly', () => {
+  assert.equal(Math.max(60, cadenceMinutes('30')), 60);
+  assert.equal(Math.max(60, cadenceMinutes('60')), 60);
+  assert.equal(Math.max(60, cadenceMinutes('120')), 120);
+});
+
 test('default cadence produces next patch only for new green master work', async () => {
   const f = fixture();
   assert.equal(cadenceMinutes(), 30);
@@ -125,8 +131,26 @@ test('persistent transient failure stops after three reads and retains the origi
   await assert.rejects(f.read('repos/ashlrai/phantom'), /503.*after 3 read attempts; first transient 504/);
   assert.equal(f.calls.length, 3);
   assert.deepEqual(f.waits, [250, 500]);
-  assert.equal(f.reports.length, 1);
+  assert.equal(f.reports.length, 2);
   assert.match(f.reports[0], /504/);
+});
+
+test('exhausted timeouts defer the release without granting eligibility', async () => {
+  let calls = 0, clock = 0;
+  const reports = [];
+  const read = createPublicMetadataReader({ now: () => clock, sleep: async ms => { clock += ms; },
+    report: message => reports.push(message), timeoutSignal: () => {
+      const controller = new AbortController();
+      controller.abort(new DOMException('timed out', 'TimeoutError'));
+      return controller.signal;
+    }, fetchImpl: async (_url, { signal }) => { calls++; clock += 5_000; throw signal.reason; } });
+  assert.deepEqual(await planReleaseCadenceWhenAvailable({ ...fixture().input, read }),
+    { due: false, reason: 'metadata-unavailable' });
+  assert.equal(calls, 3);
+  assert.match(reports[1], /timeout.*after 3 read attempts.*deferring/);
+  const gateway = metadataReaderFixture([{ status: 503 }, { status: 502 }, { status: 504 }]);
+  assert.deepEqual(await planReleaseCadenceWhenAvailable({ ...fixture().input, read: gateway.read }),
+    { due: false, reason: 'metadata-unavailable' });
 });
 
 test('fetch and body timeouts retry within the shared budget without masking other errors', async () => {
@@ -230,7 +254,7 @@ test('generated notes normalize below Unreleased without losing previous text', 
   const source = `# Changelog\n\n## [3.30.1](https://github.com/ashlrai/phantom/compare/v3.30.0...v3.30.1) (2026-11-05)\n\n${body}## [Unreleased]\n\nFuture notes.\n\n${old}`;
   const normalized = normalizeReleaseNotes(source, '3.30.1');
   assert.ok(normalized.indexOf('## [Unreleased]') < normalized.indexOf('## [3.30.1]'));
-  assert.ok(normalized.includes('## [3.30.1] — 2026-11-05'));
+  assert.ok(normalized.includes('## [3.30.1] - 2026-11-05'));
   assert.ok(normalized.includes('Future notes.'));
   assert.ok(normalized.endsWith(old));
   assert.equal(normalizeReleaseNotes(normalized, '3.30.1'), normalized);
@@ -248,6 +272,7 @@ test('timer cadence keeps the existing permissions and guarded merge route', () 
   const steps = workflow.jobs['release-please'].steps;
   assert.equal(steps.find(s => s.id === 'rp').if, "steps.cadence.outputs.due == 'true'");
   assert.match(steps.find(s => s.id === 'cadence').env.RELEASE_CADENCE_MINUTES, /vars.RELEASE_CADENCE_MINUTES/);
+  assert.match(read('../scripts/release-cadence.mjs'), /Math\.max\(60, cadenceMinutes/);
   const config = JSON.parse(read('../../release-please-config.json'));
   assert.equal(config.versioning, 'always-bump-patch');
   assert.equal(config['skip-changelog'], false);

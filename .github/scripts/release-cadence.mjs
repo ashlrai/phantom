@@ -75,12 +75,14 @@ export async function planReleaseCadence({ repository, revision, minutes = 30, n
 }
 
 class MetadataRateLimitError extends Error {}
+class MetadataTransientError extends Error {}
 
 export async function planReleaseCadenceWhenAvailable(input) {
   try {
     return await planReleaseCadence(input);
   } catch (error) {
     if (error instanceof MetadataRateLimitError) return { due: false, reason: 'metadata-rate-limited' };
+    if (error instanceof MetadataTransientError) return { due: false, reason: 'metadata-unavailable' };
     throw error;
   }
 }
@@ -125,7 +127,11 @@ export function createPublicMetadataReader({ fetchImpl = fetch, now = () => perf
           firstTransient = `${transient} at ${endpoint}`;
           report(`release metadata transient read failure: ${firstTransient}`);
         }
-        assert.ok(attempt < 3, `release metadata unavailable (${transient}) after ${attempt} read attempts; first transient ${firstTransient}`);
+        if (attempt === 3) {
+          const message = `release metadata unavailable (${transient}) after ${attempt} read attempts; first transient ${firstTransient}`;
+          report(`${message}; deferring until the next run`);
+          throw new MetadataTransientError(message);
+        }
         const delay = attempt * 250;
         assert.ok(remaining() > delay, `release metadata read deadline exhausted; first transient ${firstTransient}`);
         await sleep(delay);
@@ -147,7 +153,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   try {
     assert.equal(process.env.GITHUB_REF, 'refs/heads/master');
     const plan = await planReleaseCadenceWhenAvailable({ repository: process.env.GITHUB_REPOSITORY, revision: process.env.GITHUB_SHA,
-      minutes: cadenceMinutes(process.env.RELEASE_CADENCE_MINUTES || '30'), read: createPublicMetadataReader() });
+      minutes: Math.max(60, cadenceMinutes(process.env.RELEASE_CADENCE_MINUTES || '60')), read: createPublicMetadataReader() });
     assert.ok(process.env.GITHUB_OUTPUT);
     appendFileSync(process.env.GITHUB_OUTPUT, `due=${plan.due}\nversion=${plan.version ?? ''}\n`);
     console.log(JSON.stringify(plan));
