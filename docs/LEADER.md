@@ -120,6 +120,33 @@ conversation. Directives steer its judgement; they never widen the grant. See
 [STANDING-AUTHORITY.md](STANDING-AUTHORITY.md) and
 [Autonomy with custody](VERSE.md#autonomy-with-custody-310).
 
+## One co-founder
+
+Mason talks to one leader. The leader talks to every other agent on the bus.
+`phm leader status`, `ask`, `org` and `assign` are that office. Each decision
+reads `phm world` and the shared-visibility brief (`phm context`). Assignments
+are claimed with `phm claim` and carry an RQ key, owner, due date, status and
+outcome. The org chart is `config/leader-org.json`; a private `org.json` in
+the leader directory replaces it. Work is addressed to a role's lane so the
+existing router can admit it. The office does not call a model and does not
+spend.
+
+Escalation to the owner is only for secrets or keys, money, outside sends, and
+destruction of owner data. Anything else is routed. With no standing grant the
+work is recorded as a proposal and is not put on the bus. KILL stops ask and
+assign; status still reads.
+
+Channel adapters do not live here. After they authenticate the owner they call
+`acceptOwnerMessage` and drain `readLeaderOutbox`. The desktop Leader pane
+shows the conversation, the open assignments and the org.
+
+```sh
+phm leader status --json
+phm leader ask "fix the flaky test" --json
+phm leader org --json
+phm leader assign --rq RQ-EXAMPLE-1 --owner engineering --summary "fix the flaky test" --due 2026-11-10 --json
+```
+
 ---
 
 ## The conversation
