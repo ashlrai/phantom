@@ -76,7 +76,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Choose chat or fleet work, understand routing and inspect results | [Automatic work](AUTOMATIC-OUTCOMES.md) |
 | Compare router predictions with recorded outcomes | [Router calibration](https://github.com/ashlrai/phantom/blob/master/docs/router/calibration.md) |
 | Replay policies over frozen router lines with known outcomes | [Router eval harness](https://github.com/ashlrai/phantom/blob/master/docs/router/eval.md) |
-| Measure lane/model reliability across N clean-worktree trials and feed routing | [pass^k offline eval suite](EVAL-PASSK.md) |
+| Measure lane/model reliability across N clean-worktree trials and feed routing | [pass^k offline eval suite](https://github.com/ashlrai/phantom/blob/master/docs/EVAL-PASSK.md) |
 | Navigate source entry points, subsystems and contracts | [Code map (source guide)](https://github.com/ashlrai/phantom/blob/master/docs/CODEMAP.md) |
 | A/B test prompt variants per job class and promote only significant winners | [Prompt-variant A/B eval](https://github.com/ashlrai/phantom/blob/master/docs/router/prompt-ab.md) |
 | Understand the current components and their boundaries | [Architecture](ARCHITECTURE.md#current-runtime-map) |
@@ -330,7 +330,7 @@ canonical release guide for required hosted qualification and publication.
 - [Verify a worktree change](https://github.com/ashlrai/phantom/blob/master/docs/VERIFY-CHANGE.md): local toolchain checks and safe verdicts.
 
 - [Agent checkpoints](AGENT-CHECKPOINT.md): explicit durable state and resume format.
-- [Stigmergic coordination](STIGMERGY.md): `phm trail` file markers — claim/lease, heartbeats, resumable checkpoints; agents pick up stalled work.
+- [Stigmergic coordination](https://github.com/ashlrai/phantom/blob/master/docs/STIGMERGY.md): `phm trail` file markers — claim/lease, heartbeats, resumable checkpoints; agents pick up stalled work.
 - [Engineering receipt](https://github.com/ashlrai/phantom/blob/master/docs/ENGINEERING-RECEIPT.md): evidence from tool events vs model claims; `PHANTOM_RECEIPTS=1`.
 
 - [Local model tuning data and evaluation](https://github.com/ashlrai/phantom/blob/master/docs/TUNE.md) — offline dataset preparation and paired evaluation.

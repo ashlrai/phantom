@@ -29,3 +29,20 @@ test spans as CPU time or claiming a speedup. Use the map for focused review and
 to identify the next dependency edges to verify. Whole-tree equality, when shown,
 is a source observation here; a separate trusted CI proof decides whether a history
 merge can avoid duplicate checks. No historical results are inherited by this view.
+
+## Quick-lane drift selection
+
+The required Quick typecheck job separately selects a small set of structural
+drift suites from changed paths. Pass candidate paths as arguments to inspect
+the exact mapping locally:
+
+```sh
+node .github/scripts/select-quick-drift-tests.mjs src/cli/index.ts docs/README.md
+```
+
+Changes under `src/cli/` select `test/cli-registry-drift.test.ts` and
+`test/cli-help-no-side-effects.test.ts`. Changes under `docs/`, or to the root
+`package.json`, `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, or
+`pnpm-workspace.yaml`, select `test/documentation-navigation.test.ts`. Mixed
+changes are deduplicated. Unrelated paths select no additional tests. This is a
+required quick-lane check, unlike the advisory impact map above.

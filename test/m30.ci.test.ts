@@ -378,6 +378,22 @@ describe('M30 CI workflow', () => {
       'test/authority-codeowners-310b.test.ts test/authority-tier1-closure-310b.test.ts',
     );
     expect(quick.steps[0].with.ref).toBe('${{ github.event.pull_request.head.sha || github.sha }}');
+    expect(quick.steps[0].with['fetch-depth']).toBe(0);
+    const changed = quick.steps.find((step: { name?: string }) => step.name === 'Check changed-path drift (hermetic)');
+    expect(changed).toBeDefined();
+    expect(changed.if).toBe("steps.history.outputs.equal != 'true'");
+    expect(changed['continue-on-error']).toBeUndefined();
+    expect(changed.env).toEqual({
+      BASE_SHA: '${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}',
+      HEAD_SHA: '${{ github.event.pull_request.head.sha || github.sha }}',
+      PHM_HELP_GUARD_CONCURRENCY: '32',
+    });
+    expect(changed.run).toContain('node --test .github/tests/quick-drift-test-selection.test.mjs');
+    expect(changed.run).toContain('git merge-base "$BASE_SHA" "$HEAD_SHA"');
+    expect(changed.run).toContain('git diff --name-only -z --no-renames "$base" "$HEAD_SHA"');
+    expect(changed.run).toContain('node .github/scripts/select-quick-drift-tests.mjs "${changed[@]}"');
+    expect(changed.run).toContain('node .github/scripts/build-quick-dist.mjs');
+    expect(changed.run).toContain('HOME=$(mktemp -d) npm run test:ci -- --maxWorkers=1 --fileParallelism=false "${files[@]}"');
   });
 
   it('gates only the expensive Quick steps on the proven source-identical flag', () => {
@@ -407,7 +423,7 @@ describe('M30 CI workflow', () => {
     expect(names.indexOf('Set up Node.js 22')).toBeLessThan(names.indexOf(proof.name!));
     expect(names.indexOf(proof.name!)).toBeLessThan(names.indexOf('Install dependencies'));
     // Every expensive step shares the exact same trusted flag — no variant.
-    const expensive = ['Install dependencies', 'Restore protected-branch compiler state', 'Core no-emit type check', 'Check authority drift (hermetic)'];
+    const expensive = ['Install dependencies', 'Restore protected-branch compiler state', 'Core no-emit type check', 'Check authority drift (hermetic)', 'Check changed-path drift (hermetic)'];
     for (const name of expensive) {
       expect(step(name).if, name).toBe("steps.history.outputs.equal != 'true'");
     }
@@ -427,7 +443,7 @@ describe('M30 CI workflow', () => {
     for (const forged of ['True', 'TRUE', '1', 'yes', ' equal']) {
       expect(runs(step('Install dependencies').if!, forged), `forged flag ${forged}`).toBe(true);
     }
-    // Only these four steps may key off the proof output — checkout, setup
+    // Only these expensive steps may key off the proof output: checkout, setup
     // and protected-branch cache saving must never join the exemption.
     const gated = quick.steps
       .filter((entry) => entry.name !== proof.name && (entry.if ?? '').includes('steps.history'))
@@ -1214,6 +1230,7 @@ describe('M30 CI workflow', () => {
       'test/authority-release-truth.test.ts',
       'test/m33.release-meta.test.ts',
       'test/cli-registry-drift.test.ts',
+      'test/cli-help-no-side-effects.test.ts',
       'test/authority-tier1-closure-310b.test.ts',
       'test/sidecar-literal-imports-315.test.ts',
       ...Array<string>(4).fill('test/m342.dispatch-production-ledger.test.ts'),

@@ -178,6 +178,11 @@ function renderTable(usage: import('../core/usage/frontier-usage.js').FrontierUs
 // ---------------------------------------------------------------------------
 
 export async function cmdUsage(args: string[]): Promise<number> {
+  if (args.includes('--help') || args.includes('-h')) {
+    if (args[0] === 'validate') console.log('Usage: phm usage validate <file> [--json]');
+    else printUsage();
+    return 0;
+  }
   if (args[0] === 'sensors') return cmdUsageSensors(args.slice(1));
   if (args[0] === 'validate') {
     if ((args.length !== 2 && args.length !== 3) || !args[1] || args[1].startsWith('-') ||
@@ -193,9 +198,6 @@ export async function cmdUsage(args: string[]): Promise<number> {
   for (const arg of args) {
     if (arg === '--json') {
       jsonMode = true;
-    } else if (arg === '--help' || arg === '-h') {
-      printUsage();
-      return 0;
     } else if (arg.startsWith('-')) {
       console.error(red('error: ') + `Unknown flag: ${arg}`);
       console.error(dim('Run `ashlr usage --help` for usage.'));

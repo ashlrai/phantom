@@ -124,7 +124,6 @@ const HELP_STRICT_REFUSALS: Record<string, string> = {
   'app update': 'src/cli/app.ts accepts only `update status [--json]`; anything else prints the usage line and exits 2 before the stage is inspected',
   'app status': 'same exact grammar as `app update` (src/cli/app.ts); anything else prints the usage line and exits 2',
   'fleet session': 'src/cli/fleet-session.ts requires `<job> --json` with an exact flag grammar; anything else prints its usage line and exits 2',
-  'verify': '`verify` only has the `change` verb with an exact flag grammar (src/cli/verify.ts); anything else prints the usage line and exits 2 before any worktree check runs',
   'signals': '`signals` accepts only --json (src/cli/signals.ts); anything else prints the usage line and exits 2 before signals are read',
   'channels add': `rejectUnknownOptions in src/cli/args.ts: ${STRICT_VERB_PARSER}`,
   'channels status': `rejectUnknownOptions in src/cli/args.ts: ${STRICT_VERB_PARSER}`,
@@ -485,7 +484,7 @@ describe.skipIf(IS_WINDOWS)('`<cmd> [verb] --help` and `-h` print usage and have
     git('commit', '-q', '-m', 'fixture');
     git('remote', 'add', 'origin', 'https://github.com/example-owner/example-repo.git');
 
-    const concurrency = Math.max(2, Math.min(8, availableParallelism()));
+    const concurrency = Math.max(2, Math.min(32, Number(process.env['PHM_HELP_GUARD_CONCURRENCY']) || availableParallelism()));
     let next = 0;
     await Promise.all(Array.from({ length: concurrency }, async () => {
       while (next < CASES.length) {

@@ -12,14 +12,14 @@ One ashlr.world-model/v1 snapshot. A warm cache is the tick read.
 Unknown stays unknown. See docs/WORLD.md.`;
 
 export async function cmdWorld(args: string[]): Promise<number> {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(args.includes('--json') ? JSON.stringify({ usage: USAGE }) : USAGE);
+    return 0;
+  }
   const json = args.includes('--json');
   const force = args.includes('--refresh');
   const rest = args.filter((arg) => arg !== '--json' && arg !== '--refresh');
-  if (rest.length === 0 && (args.includes('--help') || args.includes('-h'))) {
-    console.log(json ? JSON.stringify({ usage: USAGE }) : USAGE);
-    return 0;
-  }
-  if (args.includes('--help') || args.includes('-h') || rest.some((arg) => arg.startsWith('-'))) {
+  if (rest.some((arg) => arg.startsWith('-'))) {
     console.error(USAGE);
     return 2;
   }
