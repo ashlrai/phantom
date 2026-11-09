@@ -3,7 +3,7 @@
  * card in the drawer owes Mason (3.14):
  *
  *   Chat   ● Ready
- *   Fleet  ● Ready · reserve 40% kept for you
+ *   Fleet  ● Ready
  *          63% of the weekly window is left for the fleet. Roles: judges, leads.
  *   Last reading 4:56 PM · Polling is paused …
  *   Set up the Claude seat — run in Terminal
@@ -35,13 +35,13 @@ const TONE_ATTR: Readonly<Record<ReadinessTone, 'success' | 'warning' | 'danger'
   off: 'neutral',
 };
 
-/** "Ready · reserve 40% kept for you" when the fleet protects a share for Mason. */
+/**
+ * The fleet verdict word. `fleet.reservePercent` is the router's effective
+ * reserve, which may be a mode default rather than a setting, so it is never
+ * worded here as a share kept for Mason.
+ */
 export function fleetWord(row: ResourceReadinessRow): string {
-  const { fleet } = row;
-  if (fleet.ready && fleet.reservePercent !== null && fleet.reservePercent > 0) {
-    return `${fleet.word} · reserve ${Math.round(fleet.reservePercent)}% kept for you`;
-  }
-  return fleet.word;
+  return row.fleet.word;
 }
 
 /** The reading caveat, or null when the reading is live. */
