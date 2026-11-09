@@ -19,3 +19,8 @@
 .kind[data-kind='fleet'] { color: var(--text-secondary); background: transparent; }
 .body { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); white-space: pre-wrap; overflow-wrap: anywhere; }
 .link { color: var(--accent-500); font-size: var(--text-xs-size); }
+.dismiss { align-self: flex-start; border: 0; background: transparent; padding: 0; color: var(--text-secondary); font-size: var(--text-xs-size); cursor: pointer; text-decoration: underline; }
+.dismiss:hover { color: var(--text-primary); }
+.dismiss:focus-visible { outline: 2px solid var(--accent-500); outline-offset: 1px; }
+.dismissedBar { color: var(--text-secondary); font-size: var(--text-xs-size); }
+.dimmed { opacity: 0.6; }
