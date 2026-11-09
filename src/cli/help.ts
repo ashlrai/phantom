@@ -52,6 +52,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{ok, connector? , removed?} | {imported, skipped} | {ok:false,error}',
   },
   {
+    usage: 'phm connectors config --client claude|cursor|codex --lane <lane> [--project <dir>] [--json]',
+    description: 'Print client MCP entries whose servers launch through phm connectors exec (credentials come from phantom exec as session tokens, never in the entry). Every entry passes the secret-shape gate; writes nothing. Exit 0, 1 skipped entries, 2 invalid.',
+    safety: 'read',
+    jsonShape: '{client, lane, format, servers, skipped, config} | {ok:false,error}',
+  },
+  {
     usage: 'phm capacity publish [--json]',
     description: 'Publish local subscription usage metadata once using this node’s local auth. Exit 0 fresh/published, 1 unavailable, 2 bad usage/configuration. No model execution.',
     safety: 'append',
@@ -859,7 +865,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'best-of-n [--repo --title -n]', desc: 'Generate N candidate diffs (multi-model), critic-select, file the winner as a proposal (M142/M333).', topic: 'autonomy' },
   { cmd: 'context read | write [--json]', desc: 'Read current company context or save a sourced note.', topic: 'run' },
   { cmd: 'comms <status|cycle|digest>',  desc: 'Operator comms channel (Telegram/iMessage): digests, approve-by-text.', topic: 'autonomy' },
-  { cmd: 'connectors add|list|remove|show|import [--json]', desc: 'Manage credential-free connector profiles and import safe client metadata; vault references only.', topic: 'autonomy' },
+  { cmd: 'connectors add|list|remove|show|import|exec|config [--json]', desc: 'Manage credential-free connector profiles, launch connectors with phantom-injected credentials, and print client configs that hold no token.', topic: 'autonomy' },
   { cmd: 'channels add <kind> | status [--json] | slack status|map [--json]', desc: 'Bring a channel up (config only, credentials stay in custody), read the per-channel rollup, or inspect the Slack bridge mapping offline.', topic: 'autonomy' },
   { cmd: 'imessage doctor|poll [--apply] [--json]', desc: 'iMessage intake: doctor checks permissions and config; poll counts waiting messages (dry run), --apply receipts them. Never prints message text.', topic: 'autonomy' },
   { cmd: 'director',                     desc: 'Retired — the Leader handles this (see `ashlr leader`). Still prints the read-only fleet god-view; sends nothing.', topic: 'autonomy' },

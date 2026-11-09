@@ -181,6 +181,12 @@ Connector profiles: `phm connectors add|list|remove|show|import --json` manages
 Use vault names only. Import withholds inline credentials; Codex requires a
 lane-owned CODEX_HOME under `~/.ashlr-runs`, never `~/.codex`.
 
+Connector launch: `phm connectors exec github --tool claude --lane work -- gh repo list`
+starts a cli or mcp-stdio connector whose tool and lane are listed. Credentials
+come from `phantom exec` as session tokens in the child env only; argv, files and
+logs never hold a value. `phm connectors config --client claude --lane work --json`
+prints client MCP entries that launch through exec (no token, secret-shape gated).
+
 ## Chief-of-staff intake
 
 See [docs/COS.md](docs/COS.md) for the planned chief-of-staff ask and status commands.

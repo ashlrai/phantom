@@ -326,7 +326,7 @@ canonical release guide for required hosted qualification and publication.
 
 - [Dispatcher route hysteresis](https://github.com/ashlrai/phantom/blob/master/docs/ROUTE-HYSTERESIS.md): route residency, move caps, replay and Security pin handoff.
 
-- [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references only.
+- [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import|exec|config --json`; metadata and Phantom Secrets references, phantom-injected launch and token-free client configs.
 
 - [Verify a worktree change](https://github.com/ashlrai/phantom/blob/master/docs/VERIFY-CHANGE.md): local toolchain checks and safe verdicts.
 

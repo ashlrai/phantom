@@ -88,6 +88,7 @@ export const REAL_IO_TEST_FILES = [
   'test/verify-change.test.ts',
   'test/remote-reassign-e2e.test.ts', // Binds a real loopback HTTP server for remote reassignment.
   'test/connector-profile.test.ts', // Runs the pinned Perl secret-shape gate against generated profile TOML.
+  'test/connector-exec.test.ts', // Spawns connector children, a fake phantom and the CLI entry; runs the Perl secret-shape gate.
   'test/docs-fleet-health.test.ts', // Executes documented health commands through the real CLI.
   'test/changelog-current-version-01.test.ts', // Runs the changelog extractor in a real child process.
   'test/docs-agent-parity.test.ts', // Runs docs build and link checks in real child processes.

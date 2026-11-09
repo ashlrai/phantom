@@ -26,7 +26,7 @@ describe('tool mesh', () => {
       expect(JSON.stringify(mesh)).not.toContain('private-argument');
       expect(JSON.stringify(mesh)).not.toContain('vault-name');
       expect(JSON.stringify(mesh)).not.toContain('example.com');
-      expect(mesh.connectors[0]?.route).toContain('denied');
+      expect(mesh.connectors[0]?.route).toContain('phm connectors exec');
     } finally { await rm(home, { recursive: true, force: true }); }
   });
 });

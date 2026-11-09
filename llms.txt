@@ -12,7 +12,7 @@ Read the dispatcher starvation signals and admission decision (read-only):
 phm pool admission --json
 ```
 
-- [Connector profiles](docs/CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; declarative metadata and Phantom Secrets names, with explicit lane selectors and credential-safe import reports.
+- [Connector profiles](docs/CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; declarative metadata and Phantom Secrets names, with explicit lane selectors and credential-safe import reports. `exec <id> --tool <tool> --lane <lane> -- <command>` launches with phantom-injected session tokens; `config --client claude|cursor|codex --lane <lane> --json` prints token-free client entries.
 
 - [Agent network](docs/AGENT-NETWORK.md): SSH multi-Mac node pool, join, worker, list/status, heartbeat, backup fencing and RPC JSON contract.
 - [oMLX on the small Macs](docs/OMLX-SMALL-MACS.md): `phm node lanes --json` plans an evidence-picked local model per RAM class; join/worker advertise `omlx`/`omlx-work` caps with kernel memory-pressure backoff; HF/oMLX caches are protected model roots.
