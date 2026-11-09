@@ -174,8 +174,9 @@ function failedPlan(repo: string | null, now: Date, input: Record<string, unknow
   return {
     schema: REBASE_PLAN_SCHEMA, v: 1, repo, generatedAt: now.toISOString(),
     input, error,
-    counts: { open: 0, unreadable: 0, duplicates: 0, conflicting: 0, held: 0, covered: 0, superseded: 0, deferred: 0, jobs: 0, clusters: 0, singles: 0, chunks: 0, chained: 0, pinned: 0, noFileData: 0 },
+    counts: { open: 0, unreadable: 0, duplicates: 0, conflicting: 0, held: 0, covered: 0, superseded: 0, exhausted: 0, deferred: 0, jobs: 0, clusters: 0, singles: 0, chunks: 0, chained: 0, pinned: 0, noFileData: 0 },
     coverage: { state: 'skipped', coveredPrs: [] },
+    exhausted: [],
     jobs: [],
   };
 }
@@ -364,11 +365,16 @@ export async function cmdFleetRebasePlan(args: string[], deps: FleetRebasePlanDe
   const { counts } = report;
   out(`rebase-plan${report.repo ? ` ${report.repo}` : ''}: ${counts.open} open → ${counts.conflicting} conflicting bridge PRs → `
     + `${counts.jobs} job(s) (${counts.clusters} cluster, ${counts.singles} single${counts.chained ? `, ${counts.chained} chained` : ''})`
-    + `${counts.covered ? `; ${counts.covered} already queued` : ''}${counts.held ? `; ${counts.held} held` : ''}${counts.superseded ? `; ${counts.superseded} superseded by rework` : ''}${counts.deferred ? `; ${counts.deferred} deferred behind clean PRs` : ''}${counts.pinned ? `; ${counts.pinned} pinned` : ''}\n`);
+    + `${counts.covered ? `; ${counts.covered} already queued` : ''}${counts.held ? `; ${counts.held} held` : ''}${counts.superseded ? `; ${counts.superseded} superseded by rework` : ''}${counts.exhausted ? `; ${counts.exhausted} refused (one rebase attempt each)` : ''}${counts.deferred ? `; ${counts.deferred} deferred behind clean PRs` : ''}${counts.pinned ? `; ${counts.pinned} pinned` : ''}\n`);
   if (upstreamBad) out(`  snapshot upstream read is '${parsed.upstream}' — items may be incomplete\n`);
   if (resolvedRepo === null) out('  repo unknown — pass --repo so queue coverage and the hold list can attribute rows\n');
   if (existingState === 'missing') out('  queue coverage not read (no router-queue.md/ready.tsv) — specs may duplicate live jobs\n');
   if (holdSource === 'missing') out('  no hold-list.txt — held PRs not filtered\n');
+  for (const refusal of plan.exhausted) {
+    out(`  refused #${refusal.number}: ${refusal.reason === 'is-rebase'
+      ? 'is itself a rebase PR that conflicts again; close it or recut the origin'
+      : `already rebased by #${refusal.via}; fix or close that PR, do not rebase again`}\n`);
+  }
   for (const job of plan.jobs) {
     const label = job.kind === 'single' ? `single #${job.prs[0]}` : `${job.kind === 'cluster' ? 'cluster' : 'chunk'} ×${job.prs.length} ${job.prs.map(n => `#${n}`).join(',')}`;
     out(`  ${job.id} — ${label}${job.after.length ? ` after ${job.after.join(',')}` : ''}${job.pinned ? ' [Security pin required]' : ''}${job.evidence === 'no-file-data' ? ' (no file data)' : ''}\n`);
