@@ -41,7 +41,7 @@ not just the exit code: several report commands exit 0 even with problems.
 | Wasted runs | `ashlr fleet waste --json` | Last six hours of skips, empty finishes, pool errors and runs without a PR. Counts overlap; unavailable totals stay unknown. |
 | Old worktrees | `ashlr fleet worktree-stale --json` | Lists cleanup candidates, oldest first. This example only lists; do not add `--apply` for a health check. |
 | Brain activity | `ashlr fleet brains --json` | Last recorded action; stale after 90 minutes, missing log is unknown. |
-| Disk | `ashlr fleet disk --json` | Free-space trend and largest runs folders; unknown readings are not zero. |
+| Disk | `ashlr fleet disk --json` | Read-only free-space consumption in decimal GB per hour and estimated hours to 150 GB free, using the first and last readings in the past 12 hours. Flat or growing free space has no estimated arrival; missing readings are unknown. Also lists the largest runs folders. |
 | Memory | `ashlr fleet memory --json` | Recorded free memory, swap and memory guard state; check the sample age. |
 | Judge | `ashlr fleet judge-health --json` | Recorded calibration, verdict distribution and warnings. Leave out `--degradation` to avoid running new judge evaluations. |
 | Evidence source | `ashlr fleet evidence doctor decisions --json` | Source state and reason; healthy, cold-start and recovered retry exit 0. Other states exit 1; cold-start still means little evidence. |
