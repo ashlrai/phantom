@@ -3,6 +3,7 @@
  * no scripts), one primary number (value per 1M tokens) and one primary action.
  */
 import type { Rollup, ArmStats } from './scoring.js';
+import type { buildLeverageMix } from './leverage-mix.js';
 import type { StewardReport } from '../steward/disk.js';
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
@@ -17,7 +18,7 @@ function board(title: string, rows: ArmStats[]): string {
   return `<section><h2>${esc(title)}</h2><table><tr><th></th><th>Value / 1M tok</th><th>Value / hr</th><th>Value / $</th><th>PRs</th><th>Quality</th></tr>${rows.slice(0, 8).map((r) => `<tr><td>${esc(r.key)}</td><td>${fmt(r.valuePerMTok)}</td><td>${fmt(r.valuePerHour)}</td><td>${fmt(r.valuePerUsd)}</td><td>${r.prsShipped}</td><td>${fmt(r.avgQuality, 3)}</td></tr>`).join('')}</table></section>`;
 }
 
-export function renderDashboard(r: Rollup, steward?: StewardReport, generatedAt = new Date().toISOString()): string {
+export function renderDashboard(r: Rollup, steward?: StewardReport, generatedAt = new Date().toISOString(), leverage?: ReturnType<typeof buildLeverageMix>): string {
   const t = r.totals;
   const disk = steward ? steward.roots.filter((x) => x.exists).map((x) => `<tr><td>${esc(x.id)}</td><td>${fmt(x.bytes / 1048576, 0)} MB</td><td>${fmt(x.quotaBytes / 1048576, 0)} MB</td><td>${x.overQuota ? '<b class="warn">over</b>' : 'ok'}</td></tr>`).join('') : '';
   const over = steward?.roots.some((x) => x.overQuota);
@@ -27,6 +28,7 @@ export function renderDashboard(r: Rollup, steward?: StewardReport, generatedAt 
 <div class="hero">${fmt(t.valuePerMTok)}<span class="muted" style="font-size:18px"> value / 1M tokens</span></div>
 <div class="kpis"><span>${t.prsShipped} PRs shipped</span><span>${fmt(t.valuePerHour)} value/hr</span><span>${fmt(t.valuePerUsd)} value/$</span><span>${fmt(t.tokens, 0)} tokens</span><span>$${fmt(t.costUsd)}</span></div>
 ${over ? '<code class="cta">phm steward disk --apply</code>' : '<code class="cta">phm improve propose</code>'}
+${leverage ? `<section><h2>Merge mix · last 24 hours</h2><p>${leverage.improvedShare === null ? 'Share of merges improving the product or fleet: unknown.' : `${fmt(leverage.improvedShare * 100, 1)}% of merges are known to have improved the product or fleet.`}</p>${leverage.total ? `<figure aria-label="Merge mix by class">${leverage.classes.map(c => `<div>${esc(c.name)}: ${fmt((c.share ?? 0) * 100, 1)}% (${c.count}) <div style="background:#7c5cff;height:8px;width:${(c.share ?? 0) * 100}%"></div></div>`).join('')}</figure>` : '<p class="muted">No measured merges.</p>'}<p class="muted">Unknown classifications are included in the total. PR file evidence: ${esc(leverage.sources.pullRequests)}.</p></section>` : ''}
 <section><h2>Value shipped per day</h2>${bars(r.byDay.map((d) => ({ label: d.day, v: d.value })))}</section>
 <section><h2>Quality trend</h2>${bars(r.prs.map((p) => ({ label: `${p.repo}#${p.number}`, v: p.quality })))}</section>
 ${board('By agent', r.byAgent)}${board('By strategy', r.byStrategy)}${board('By model', r.byModel)}
