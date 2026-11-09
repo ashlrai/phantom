@@ -29,6 +29,8 @@ import type { AshlrConfig, NativeToolDef, NativeToolSafety, ProposalStatus } fro
 import { loadConfig } from './config.js';
 import { collectAgentRoster } from './fleet/agent-roster.js';
 import { PROACTIVE_PROFILE_INPUT_SCHEMA, PROACTIVE_PROFILE_PATCH_SCHEMA } from './proactive/schema.js';
+import { listChannelRegistry } from './agents/channel-registry.js';
+import { coordinationSummary } from './agents/claim-store.js';
 import { killSwitchOn } from './sandbox/policy.js';
 import { audit } from './sandbox/audit.js';
 import {
@@ -186,7 +188,11 @@ const TOOLS: NativeToolImpl[] = [
     description: 'Inspect local durable bus capacity and live/expired counts. Missing or unavailable sources have unknown counts.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     safety: 'read',
-    handler: async () => (await import('./fleet/bus-inbox.js')).inspectBusInbox(),
+    handler: async () => ({
+      ...(await import('./fleet/bus-inbox.js')).inspectBusInbox(),
+      adapters: listChannelRegistry(),
+      coordination: coordinationSummary(),
+    }),
   },
   {
     name: 'phantom_agent_bus_post',

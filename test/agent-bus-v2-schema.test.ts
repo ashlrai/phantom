@@ -144,9 +144,10 @@ describe('ashlr agents bus contract', () => {
     expect(j).toEqual(JSON.parse(JSON.stringify(busV2ContractSummary())));
     expect(j.bodyKinds).toEqual([...BODY_KINDS]);
   });
-  it('lists and tests channels without a network or adapter', async () => {
+  it('lists registered adapters and refuses channels that have none', async () => {
     const listed = JSON.parse((await run(['bus', 'channels', 'list', '--json'])).out);
     expect(listed.channels.map((c: { id: string }) => c.id)).toEqual(['bus', 'slack', 'imessage', 'email', 'telegram', 'handoff']);
+    expect(listed.channels.filter((c: { adapterRegistered: boolean }) => c.adapterRegistered).map((c: { id: string }) => c.id)).toEqual(['bus', 'handoff']);
     expect(JSON.parse((await run(['bus', 'channels', 'test', 'email', '--json'])).out)).toMatchObject({ dryRun: true, status: 'refused' });
     expect((await run(['bus', 'channels', 'test', 'unknown', '--json'])).code).toBe(2);
   });

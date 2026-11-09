@@ -2924,7 +2924,7 @@ async function main(): Promise<void> {
           process.exitCode = await cmdRoster(rest.slice(1));
           break;
         }
-        // Agent Bus v2 contract (docs/AGENT-BUS.md "v2"); read-only, no bus access.
+        // Agent Bus v2 contract (docs/AGENT-BUS.md "v2"). channels test bus|handoff writes a local probe.
         const cmdAgents = await loadAgentsCmd();
         process.exitCode = await cmdAgents(rest);
         break;
