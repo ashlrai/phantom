@@ -50,6 +50,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 
 | Your task | Canonical guide |
 |-----------|-----------------|
+| Run tests for changed files | [Test changed files](TEST-CHANGED.md) |
 | Replay CI test feedback and order failures first | [CI test feedback](https://github.com/ashlrai/phantom/blob/master/docs/CI-TEST-FEEDBACK.md) |
 | Inspect changed-file and test dependency relationships | [PR impact map](https://github.com/ashlrai/phantom/blob/master/docs/CI-IMPACT-MAP.md) |
 | Explain empty jobs | [Empty jobs](EMPTY-JOBS.md) |
