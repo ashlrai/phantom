@@ -19,6 +19,19 @@ describe('LeaderReplies', () => {
     expect(card).toHaveTextContent(/You · /);
   });
 
+  it('shows two outbox and two plan replies in chronological order', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ inbox: [], outbox: [
+      { at: '2026-11-09T01:00:00Z', text: 'Outbox one' },
+      { at: '2026-11-09T02:00:00Z', text: 'Plan one' },
+      { at: '2026-11-09T03:00:00Z', text: 'Outbox two' },
+      { at: '2026-11-09T04:00:00Z', text: 'Plan two' },
+    ] })));
+    render(<LeaderReplies />);
+    const card = await screen.findByRole('region', { name: 'Leader replies' });
+    await screen.findByText('Plan two');
+    expect(card.textContent).toMatch(/Outbox one.*Plan one.*Outbox two.*Plan two/);
+  });
+
   it('shows the empty line when there is no leader reply', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ inbox: [] })));
     render(<LeaderReplies />);

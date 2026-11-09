@@ -349,3 +349,5 @@ canonical release guide for required hosted qualification and publication.
 - [Rebase-plan](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-REBASE-PLAN.md) — read-only conflict-to-queue wiring: clusters conflicting bridge PRs by file overlap and emits ready.tsv-ready rebase-job specs.
 
 - [Empty job reasons](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-EMPTIES.md): group recorded empty outcomes and review filler suggestions.
+
+[Fable 5.2 orchestration and host handoff](FABLE-ORCHESTRATOR.md)
