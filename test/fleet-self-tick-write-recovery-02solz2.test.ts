@@ -4,13 +4,14 @@
  * exit code follows the steps alone, the real local-store lock is released,
  * and the next pass against the same runs dir acquires it and runs.
  */
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   runSelfTick,
   SELF_TICK_LOCK,
+  SELF_TICK_STEP_ORDER,
   type SelfTickReport,
   type SelfTickStepName,
   type SelfTickSteps,
@@ -32,6 +33,8 @@ const recordingSteps = (order: SelfTickStepName[], failing: SelfTickStepName[] =
   return {
     'reset-release': step('reset-release'),
     'lane-autohold': step('lane-autohold'),
+    'stray-stop': step('stray-stop'),
+    'meter-incident': step('meter-incident'),
     'planner-tick': step('planner-tick'),
     'inbox-acks': step('inbox-acks'),
     'order-notices': step('order-notices'),
@@ -45,6 +48,25 @@ const throwingWrite = (writes: SelfTickReport[]) => (_dir: string, report: SelfT
 };
 
 describe('self-tick survives a failed last-report write', () => {
+  it.each(['stray-stop', 'meter-incident'] as const)('records missing %s, continues, persists, and releases the lease', async (missing) => {
+    const order: SelfTickStepName[] = [];
+    const incomplete: Partial<SelfTickSteps> = recordingSteps(order);
+    delete incomplete[missing];
+    // Model an untyped caller violating the required TypeScript contract.
+    const first = await runSelfTick({ runsDir, steps: incomplete as SelfTickSteps, now: () => NOW_MS });
+    expect(first.exitCode).toBe(1);
+    expect(first.report.steps.map((step) => step.step)).toEqual(SELF_TICK_STEP_ORDER);
+    expect(first.report.steps.find((step) => step.step === missing)).toEqual({
+      step: missing, state: 'failed', exitCode: 1, report: { reason: 'step-not-configured' },
+    });
+    expect(order).toEqual(SELF_TICK_STEP_ORDER.filter((step) => step !== missing));
+    expect(JSON.parse(readFileSync(join(runsDir, 'queue', 'self-tick-last.json'), 'utf8'))).toEqual(first.report);
+    expect(existsSync(LOCK())).toBe(false);
+    const next = await runSelfTick({ runsDir, steps: recordingSteps([]), now: () => NOW_MS });
+    expect(next.lock).toBe('acquired');
+    expect(next.exitCode).toBe(0);
+    expect(existsSync(LOCK())).toBe(false);
+  });
   it('runs all three steps in order and keeps the step failure as the exit code', async () => {
     const order: SelfTickStepName[] = [];
     const writes: SelfTickReport[] = [];
@@ -53,10 +75,10 @@ describe('self-tick survives a failed last-report write', () => {
       writeLast: throwingWrite(writes),
     });
 
-    expect(order).toEqual(['reset-release', 'lane-autohold', 'planner-tick', 'inbox-acks', 'order-notices', 'landed-sweep']);
+    expect(order).toEqual(['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'landed-sweep']);
     expect(writes).toHaveLength(1);
     expect(first.report.steps.map((s) => [s.step, s.state])).toEqual([
-      ['reset-release', 'ok'], ['lane-autohold', 'failed'], ['planner-tick', 'ok'], ['inbox-acks', 'ok'], ['order-notices', 'ok'], ['landed-sweep', 'ok'],
+      ['reset-release', 'ok'], ['lane-autohold', 'failed'], ['stray-stop', 'ok'], ['meter-incident', 'ok'], ['planner-tick', 'ok'], ['inbox-acks', 'ok'], ['order-notices', 'ok'], ['landed-sweep', 'ok'],
     ]);
     expect(first.exitCode).toBe(1);
     expect(existsSync(LOCK())).toBe(false);
@@ -68,7 +90,7 @@ describe('self-tick survives a failed last-report write', () => {
     expect(second.lock).toBe('acquired');
     expect(second.report.state).toBe('ran');
     expect(second.exitCode).toBe(0);
-    expect(orderAgain).toEqual(['reset-release', 'lane-autohold', 'planner-tick', 'inbox-acks', 'order-notices', 'landed-sweep']);
+    expect(orderAgain).toEqual(['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'landed-sweep']);
     expect(existsSync(LOCK())).toBe(false);
   });
 
@@ -80,7 +102,7 @@ describe('self-tick survives a failed last-report write', () => {
       writeLast: throwingWrite(writes),
     });
 
-    expect(order).toEqual(['reset-release', 'lane-autohold', 'planner-tick', 'inbox-acks', 'order-notices', 'landed-sweep']);
+    expect(order).toEqual(['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'landed-sweep']);
     expect(writes).toHaveLength(1);
     expect(first.report.steps.every((s) => s.state === 'ok')).toBe(true);
     expect(first.exitCode).toBe(0);
@@ -92,7 +114,7 @@ describe('self-tick survives a failed last-report write', () => {
     });
     expect(second.lock).toBe('acquired');
     expect(second.report.state).toBe('ran');
-    expect(orderAgain).toEqual(['reset-release', 'lane-autohold', 'planner-tick', 'inbox-acks', 'order-notices', 'landed-sweep']);
+    expect(orderAgain).toEqual(['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'landed-sweep']);
     expect(second.exitCode).toBe(1);
     expect(existsSync(LOCK())).toBe(false);
   });

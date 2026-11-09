@@ -87,11 +87,13 @@ For routine drift detection, `node scripts/sync-candidate-version.mjs --check`
 uses the root package version as the expected value; writing still requires an
 explicit version.
 
-This source tree targets version 3.30.11; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.28; check canonical release availability and exact matching assets before installation.
 
 Canonical releases use `ashlrai/phantom` and `@ashlr/phantom`.
 Its fixed discovery endpoint is
 `https://github.com/ashlrai/phantom/releases/latest/download/latest.json`.
+[The update channel](../docs/DESKTOP-UPDATE-CHANNEL.md) describes the feed,
+asset set, publication boundary and post-publication verification.
 The commissioned public key, `ai.ashlr.desktop` bundle identifier, signer,
 sidecar and saved-data identities stay unchanged. The signed legacy and
 canonical profiles remain distinct; transport redirects do not choose a profile.
@@ -797,16 +799,15 @@ focused) and notifications are on — raises banners:
 
 | Banner | When |
 |---|---|
-| Finished: ‹chat title› — "Done in 2m 14s" | A turn ended cleanly |
-| Failed: ‹chat title› | A turn ended with an error |
+| Chat finished — "Done in 2m 14s" | A turn ended cleanly |
+| Chat failed | A turn ended with an error |
 | Finished: N chats, M failed | More than two turns ended in one poll |
 | Needs you: N new — "2 approvals · 1 fleet decision" | New Needs-you items |
 | Seat health (signed out, expiring, out of usage) | From the 30 s health poll |
 
-- **Every word is a Rust template** (`notify.rs`). The only server text that can
-  appear is a chat title, stripped of control and bidi-override characters and
-  capped at 60 characters. Needs-you items are described by category counts,
-  never by their own text.
+- **Banner text uses fixed templates** (`notify.rs`): chat and terminal titles
+  and Needs-you item text are withheld. Event categories, counts, durations and
+  exit codes may appear. Control banners in Settings ▸ Desktop ▸ Notifications.
 - The first poll is a baseline: nothing that finished or was waiting before the
   app started raises a banner. A cancelled turn (yours, or the tray's Stop) is
   not news. A failure announced as "Failed" is not announced again when its

@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createHash } from 'node:crypto';
 import { Buffer } from 'node:buffer';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { URL } from 'node:url';
-import { checkFeed, checkLaunch, readUpdaterFeed, restorePreparedDist, selectRun, stockedFeedTag } from '../scripts/release-fast-smoke.mjs';
+import { preparedArchiveFixture } from './fixtures/release-prepared.mjs';
+import { acceptReleaseRef, checkFeed, checkLaunch, readUpdaterFeed, restorePreparedDist, selectRun, stockedFeedTag } from '../scripts/release-fast-smoke.mjs';
 
 const repository = 'ashlrai/phantom', revision = 'a'.repeat(40);
 const repo = { full_name: repository, id: 1263526319, node_id: 'R_kgDOS0_hrw', owner: { id: 258113726, login: 'ashlrai' }, default_branch: 'master', private: false, visibility: 'public' };
@@ -43,6 +43,16 @@ function setup(kind = 'build') {
 
 for (const kind of ['push', 'build', 'attest']) test(`selects exact-source successful ${kind} evidence`, () => {
   const f = setup(kind); assert.deepEqual(f.select(), { run: 30, attempt: 2, sha: revision, ...(kind === 'push' ? {} : { artifact: 100 }) });
+});
+
+test('combined canonical smoke job reuses the same immutable input without a second prepare role', () => {
+  const f = setup(); f.jobs[0].name = 'Desktop release smoke';
+  assert.equal(f.select().artifact, 100);
+});
+
+test('legacy two-job producer still selects only its original preparation role', () => {
+  const f = setup(); f.jobs.push({ ...f.jobs[0], id: 201, name: 'Desktop release smoke' }); f.jobResponse.total_count++;
+  assert.equal(f.select().artifact, 100);
 });
 
 test('reuses the immutable build only when its download step passed and compilation was skipped', () => {
@@ -130,33 +140,6 @@ test('a successful upload with no artifact cannot silently fall back', () => {
   const f = setup(); f.inventory.artifacts = []; f.inventory.total_count = 0;
   assert.throws(f.select, /successful release upload missing artifact/);
 });
-
-function preparedArchiveFixture(t, prefix = 'dist') {
-  const root = mkdtempSync(join(tmpdir(), 'release-dist-test-'));
-  const prepared = mkdtempSync(join(tmpdir(), 'release-input-test-'));
-  t.after(() => { rmSync(root, { recursive: true, force: true }); rmSync(prepared, { recursive: true, force: true }); });
-  const content = Buffer.from('original build bytes');
-  const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-  const entries = [{ path: prefix, type: 'directory', mode: 0o755 },
-    { path: `${prefix}/worker.js`, type: 'file', mode: 0o755, bytes: content.length, sha256: hash(content) },
-    { path: `${prefix}/inventory.json`, type: 'file', mode: 0o400, bytes: content.length, sha256: hash(content) }];
-  const parts = [];
-  for (const entry of entries) {
-    const header = Buffer.alloc(512);
-    const octal = (value, width) => `${value.toString(8).padStart(width - 1, '0')}\0`;
-    header.write(entry.path, 0); header.write(octal(entry.mode, 8), 100);
-    header.write(octal(0, 8), 108); header.write(octal(0, 8), 116);
-    header.write(octal(entry.bytes ?? 0, 12), 124); header.write(octal(0, 12), 136);
-    header.fill(32, 148, 156); header[156] = entry.type === 'directory' ? 53 : 48;
-    header.write('ustar\0', 257); header.write('00', 263);
-    header.write(`${header.reduce((sum, value) => sum + value, 0).toString(8).padStart(6, '0')}\0 `, 148);
-    parts.push(header);
-    if (entry.type === 'file') parts.push(content, Buffer.alloc(512 - content.length));
-  }
-  const bytes = Buffer.concat([...parts, Buffer.alloc(1024)]);
-  writeFileSync(join(prepared, 'dist.tar'), bytes);
-  return { root, prepared, manifest: { archive: { bytes: bytes.length, sha256: hash(bytes), entries } }, bytes, content };
-}
 
 test('prepared tar preserves executable and readonly modes across artifact ZIP transport', t => {
   const f = preparedArchiveFixture(t); restorePreparedDist(f);
@@ -318,7 +301,7 @@ for (const mutation of ['new latest', 'feed appeared', 'unpublished latest', 'li
   });
 }
 
-for (const mutation of ['duplicate release', 'null release', 'missing latest', 'changed latest', 'ambiguous timestamp', 'newer stocked', 'incomplete page',
+for (const mutation of ['duplicate release', 'null release', 'missing latest', 'changed latest', 'newer stocked', 'incomplete page',
   'bad asset state', 'duplicate feed', 'wrong asset URL', 'wrong download URL', 'changed stocked metadata', 'changed asset inventory']) {
   test(`${mutation} cannot select fallback evidence`, async () => {
     const f = feedFixture();
@@ -326,7 +309,6 @@ for (const mutation of ['duplicate release', 'null release', 'missing latest', '
     if (mutation === 'null release') f.inventory.push(null);
     if (mutation === 'missing latest') f.inventory = [f.stocked];
     if (mutation === 'changed latest') f.inventory = [{ ...f.latest, published_at: '2026-11-08T02:00:00Z' }, f.stocked];
-    if (mutation === 'ambiguous timestamp') f.inventory.push(stockedRow(6, { created_at: f.stocked.created_at }));
     if (mutation === 'newer stocked') f.stocked.created_at = '2026-11-09T00:00:00Z';
     if (mutation === 'incomplete page') f.inventory = Array.from({ length: 100 }, () => structuredClone(f.stocked));
     if (mutation === 'bad asset state') f.stocked.assets[0].state = 'starter';
@@ -345,6 +327,38 @@ test('fallback feed errors, oversized bytes, malformed JSON and version drift ar
   }
   const f = feedFixture(); const fetch = f.fetchImpl; f.fetchImpl = async url => url === FEED_ENDPOINT ? fetch(url) : feedResponse(404);
   await assert.rejects(f.run, /stocked updater feed unavailable/);
+});
+
+test('a tag ref is accepted only when its commit is an ancestor of master', () => {
+  const sha = 'a'.repeat(40);
+  acceptReleaseRef({ ref: 'refs/heads/master', sha, repository, read: () => { throw new Error('master does not compare'); } });
+  acceptReleaseRef({ ref: 'refs/tags/v3.30.28', sha, repository, read: () => ({ status: 'ahead' }) });
+  assert.throws(() => acceptReleaseRef({ ref: 'refs/tags/v3.30.28', sha, repository, read: () => ({ status: 'diverged' }) }), /ancestor/);
+  assert.throws(() => acceptReleaseRef({ ref: 'refs/heads/feature', sha, repository, read: () => ({ status: 'ahead' }) }), /stable tag/);
+});
+
+test('stocked feed selection uses the highest semver, not list order or a newer timestamp on an older release', () => {
+  const row = (id, version, created) => {
+    const tag = `v${version}`;
+    const bytes = Buffer.from(JSON.stringify({ version }));
+    return {
+      id, tag_name: tag, draft: false, prerelease: false,
+      url: `https://api.github.com/repos/${repository}/releases/${id}`,
+      html_url: `https://github.com/${repository}/releases/tag/${tag}`,
+      assets_url: `https://api.github.com/repos/${repository}/releases/${id}/assets`,
+      created_at: created, published_at: created,
+      assets: [{ id: id * 10, name: 'latest.json', state: 'uploaded', size: bytes.length, digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+        url: `https://api.github.com/repos/${repository}/releases/assets/${id * 10}`,
+        browser_download_url: `https://github.com/${repository}/releases/download/${tag}/latest.json` }],
+    };
+  };
+  const entries = [
+    row(1, '3.29.3', '2026-11-09T00:00:00Z'),
+    row(2, '3.30.24', '2026-11-01T00:00:00Z'),
+    row(3, '3.30.28', '2026-11-02T00:00:00Z'),
+  ];
+  assert.equal(stockedFeedTag(entries), 'v3.30.28');
+  assert.equal(stockedFeedTag([...entries].reverse()), 'v3.30.28');
 });
 
 test('empty inventories, absent stocked feeds and changed endpoints fail closed', async () => {
@@ -415,6 +429,11 @@ test('legitimate untagged draft URLs do not block a complete published fallback'
   const f = feedFixture();
   f.inventory.push(stockedRow(9, {draft: true, published_at: null, html_url: `https://github.com/${repository}/releases/tag/untagged-fixture`, assets: []}));
   assert.equal((await f.run()).served, 'v3.30.7');
+});
+
+test('historical feed rejects a size mismatch even when its digest matches', async () => {
+  const f = feedFixture(); f.stocked.assets[0].size = 1;
+  await assert.rejects(f.run, /stocked feed bytes differ from asset/);
 });
 
 for (const change of [{size: 128 * 1024 + 1}, {digest: null}, {digest: `sha256:${'f'.repeat(64)}`}]) {

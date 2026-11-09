@@ -86,11 +86,11 @@ describe('fleet apps snapshot shared deadline', () => {
     const first = get(api);
     await vi.advanceTimersByTimeAsync(BUDGET_MS);
     expect((await first).body.apps.every(r => r.running === null)).toBe(true);
-    // Within the 30 s TTL the expired view is reused without new probes.
+    // The snapshot settled at the 20 s deadline; its 30 s TTL counts from completion.
     await vi.advanceTimersByTimeAsync(5_000);
     await get(api);
     expect(exec).toHaveBeenCalledTimes(2);
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(26_000);
     healthy = true;
     const second = await get(api);
     expect(second.status).toBe(200);

@@ -162,7 +162,7 @@ it('resumes scanning at --after', () => {
   expect(result).toEqual({ status: 'complete', to: 'fake-agent', messages: [], scanned: 0, nextCursor: 200, scanCapReached: false });
 });
 
-it('rejects invalid arguments before touching the store', () => {
+it('backlog drain rejects invalid arguments before touching the store', () => {
   const inspect = available(), read = vi.fn<typeof listBusInboxAfter>();
   for (const args of [
     [], ['--to'], ['--to', ''], ['--to', 'two words'], ['--to', 'a'.repeat(129)], ['--to', 'é'],

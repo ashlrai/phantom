@@ -7,7 +7,8 @@ import { closeVerseOverlay, setVerseSection } from '../verse-ui-store.js';
 import { setFocusMode } from './focus-mode.js';
 import { TERMINAL_PANE_ID } from '../dock/terminal-id.js';
 const state = vi.hoisted(() => ({ data: undefined as unknown }));
-vi.mock('../../../data/hooks.js', () => ({
+vi.mock('../../../data/hooks.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../../../data/hooks.js')>(),
   useQuery: (query: { key: string }) => ({ data: query.key === 'verse-fleet-runs' ? state.data : null, status: 'success' }),
   useRefetch: () => () => {}, useRefresh: () => () => {},
   useMutationHold: () => ({ hasHold: false, token: null, touch: () => {} }),
@@ -63,19 +64,21 @@ it('copies the exact fix and opens Terminal without sending a request', async ()
   const writeText = vi.fn().mockResolvedValue(undefined);
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
   show(snapshot({ claudeLane: 'down', lanes: [{ ...snapshot().lanes[0]!, lane: 'claude' }] }));
+  vi.mocked(fetch).mockClear(); // Ignore the initial Needs Mason read; opening Terminal must not send a request.
   fireEvent.click(screen.getByRole('button', { name: 'Open Terminal' }));
   await screen.findByRole('button', { name: 'Open Terminal · command copied' });
   expect(writeText).toHaveBeenCalledWith('~/.ashlr-runs/bin/fix-claude-lane.sh');
   expect(openDockPane).toHaveBeenCalledWith(TERMINAL_PANE_ID);
   expect(closeVerseOverlay).toHaveBeenCalledOnce();
-  expect(vi.mocked(fetch).mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
+  expect(fetch).not.toHaveBeenCalled();
 });
 it('keeps a failed clipboard command visible for manual copying', async () => {
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } });
   show(snapshot({ claudeLane: 'down', lanes: [{ ...snapshot().lanes[0]!, lane: 'claude' }] }));
+  vi.mocked(fetch).mockClear(); // Ignore the initial Needs Mason read; opening Terminal must not send a request.
   fireEvent.click(screen.getByRole('button', { name: 'Open Terminal' }));
   await waitFor(() => expect(screen.getByText('Copy command: ~/.ashlr-runs/bin/fix-claude-lane.sh')).toBeVisible());
   expect(closeVerseOverlay).not.toHaveBeenCalled();
   expect(openDockPane).toHaveBeenCalledWith(TERMINAL_PANE_ID);
-  expect(vi.mocked(fetch).mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
+  expect(fetch).not.toHaveBeenCalled();
 });

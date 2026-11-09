@@ -88,6 +88,24 @@ describe('package files allowlist', () => {
     },
   );
 
+  it('admits only the explicitly reviewed machine telemetry documentation', () => {
+    const candidate = {
+      ...packageJson,
+      files: ['bin', 'dist', 'scripts/run-verify-command.mjs', 'docs/MACHINE-TELEMETRY.md'],
+    };
+    expect(() => assertRuntimeReleaseRootPackagePortability(candidate, [], inventory))
+      .not.toThrow();
+  });
+
+  it.each(['docs/MACHINE-TELEMETRY-NOTES.md', 'docs/machine-telemetry.md'])(
+    'refuses an unreviewed machine telemetry neighbor: %s',
+    (entry) => {
+      const candidate = { ...packageJson, files: [...packageJson['files'] as string[], entry] };
+      expect(() => assertRuntimeReleaseRootPackagePortability(candidate, [], inventory))
+        .toThrow('release package files declaration is not portable');
+    },
+  );
+
   it('admits the reviewed docs/FLEET-API.md entry', () => {
     const candidate = {
       ...packageJson,
@@ -97,7 +115,7 @@ describe('package files allowlist', () => {
       .not.toThrow();
   });
 
-  it.each(['docs/SIGNALS.md', 'docs/LEADER-NETWORK.md', 'docs/DISK-MAINT.md', 'scripts/lib/docs-pages.mjs', 'scripts/lib/docs-pages.d.mts'])(
+  it.each(['docs/SIGNALS.md', 'docs/LEADER-NETWORK.md', 'docs/DISK-MAINT.md', 'docs/AGENT-CHECKPOINT.md', 'scripts/lib/docs-pages.mjs', 'scripts/lib/docs-pages.d.mts'])(
     'admits the shipped documentation member: %s',
     (entry) => {
       const candidate = {

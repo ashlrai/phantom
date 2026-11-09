@@ -1,6 +1,8 @@
 import { isAbsolute } from 'node:path';
 import { followFleetSession } from '../core/fleet/session.js';
 
+const USAGE = 'usage: phantom fleet session <job> --json [--follow] [--queue-dir <abs>]';
+
 export async function cmdFleetSession(args: string[]): Promise<number> {
   const [job, ...rest] = args;
   let queueDir: string | undefined;
@@ -27,6 +29,6 @@ export async function cmdFleetSession(args: string[]): Promise<number> {
   }
 }
 function usage(): number {
-  process.stderr.write('usage: phantom fleet session <job> --json [--follow] [--queue-dir <abs>]\n');
+  process.stderr.write(`${USAGE}\n`);
   return 2;
 }

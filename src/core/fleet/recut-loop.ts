@@ -137,7 +137,7 @@ export interface RecutLoopDeps {
    * Dirty-landed class of this head. Defaults to `inspectDirtyLanded` in a
    * scratch repo. Only 'landed' skips; anything else, or a throw, proceeds.
    */
-  readLanded?: (pr: { number: number; headSha: string; title: string }) => Promise<DirtyLandedClass>;
+  readLanded?: (pr: { number: number; headSha: string; title: string }) => Promise<DirtyLandedClass | 'diff-anomaly'>;
   now?: () => number;
   /** Publish one job file (name + rendered body). Defaults to the drop-folder publish below. */
   writeJob?: (file: string, body: string) => Promise<void>;
@@ -242,7 +242,8 @@ function defaultReadHeadSha(repo: string, states: ReadonlyMap<number, FleetMerge
 function defaultReadLanded(repo: string): NonNullable<RecutLoopDeps['readLanded']> {
   const remote = `https://github.com/${repo}.git`;
   return ({ number, headSha, title }) => withScratchRepo(async dir =>
-    (await inspectDirtyLanded(dir, { number, title, mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY', headSha, baseRef: 'master' }, remote)).class);
+    { const inspection = await inspectDirtyLanded(dir, { number, title, mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY', headSha, baseRef: 'master' }, remote);
+      return inspection.diffAnomaly ? 'diff-anomaly' : inspection.class; });
 }
 
 function defaultReadUnionSafe(repo: string): (pr: { number: number; headSha: string }) => Promise<boolean> {
@@ -603,7 +604,8 @@ async function recutLoopTickLocked(deps: RecutLoopDeps): Promise<RecutLoopTickRe
     const headSha = await readHeadSha(pr);
     if (headSha === null) { skip('no-head'); continue; }
     // Fail open: a degraded landed read must never block a real recut.
-    if (await readLanded({ number: pr, headSha, title: item.title }).catch(() => null) === 'landed') { skip('landed'); continue; }
+    const landed = await readLanded({ number: pr, headSha, title: item.title }).catch(() => null);
+    if (landed === 'landed' || landed === 'diff-anomaly') { skip(landed); continue; }
     const id = await nextFreeId(runsDir, dropDir, pr);
     if (id === null) { skip('no-id'); continue; }
     const file = join(dropDir, `${DROP_JOB_FILE_PREFIX}${id}.md`);

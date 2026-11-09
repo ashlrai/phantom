@@ -42,6 +42,7 @@ if (isolatedConcurrencyInput !== '1' && isolatedConcurrencyInput !== '2') {
 const isolatedConcurrency = Number(isolatedConcurrencyInput);
 const reportInput = process.env.ASHLR_TEST_CI_REPORT_DIRECTORY;
 let reportDirectory = null;
+let temporaryReports = false;
 if (reportInput !== undefined) {
   try {
     if (!isAbsolute(reportInput) || realpathSync(reportInput) !== reportInput || typeof process.getuid !== 'function') {
@@ -64,8 +65,12 @@ if (reportInput !== undefined) {
     process.exit(2);
   }
 }
+if (reportDirectory === null) {
+  reportDirectory = mkdtempSync(join(tmpdir(), 'ashlr-shard-reports-'));
+  temporaryReports = true;
+}
 function reportArgs(name) {
-  return reportDirectory === null ? [] : [
+  return [
     '--reporter=default', '--reporter=json', `--outputFile.json=${join(reportDirectory, name)}`,
   ];
 }
@@ -111,7 +116,8 @@ const isolatedCases = [
   { file: isolatedAcceptance, filter: 'automatic seed measurement: true', label: 'campaign true' },
 ];
 // Measured macOS seconds per isolated case (hosted run 39088914496, 10-18).
-// Paired runs start the longest first so neither slot is left with the tail.
+// The paired acceptance pool starts longest first; the capacity ledger runs
+// afterward without a competing consumer.
 const isolatedSeconds = {
   'test/resource-engineering-setup-acceptance.test.ts': 473,
   'test/resource-engineering-successor-acceptance.test.ts': 172,
@@ -162,7 +168,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
   });
 }
 
-/** Run one test-ci wrapper; the first non-zero exit stops every sibling. */
+/** Run one test-ci wrapper and retain failures while other work continues. */
 function launch(key, startLabel, endLabel, runnerArgs, env) { return new Promise((resolve) => {
   const child = spawn(process.execPath, [runner, ...runnerArgs], { cwd: process.cwd(), env, stdio: 'inherit' });
   children.set(key, child);
@@ -174,7 +180,6 @@ function launch(key, startLabel, endLabel, runnerArgs, env) { return new Promise
     console.error(`[test-ci:sharded] ${endLabel} ${detail}`);
     if (code !== 0 && !failure) {
       failure = code;
-      stopOthers(key);
     }
     resolve(code);
   };
@@ -182,11 +187,11 @@ function launch(key, startLabel, endLabel, runnerArgs, env) { return new Promise
   child.once('exit', (code, signal) => finish(code ?? 1, signal ? `exited via ${signal}` : `exited ${code}`));
 }); }
 
-/** Drain `order` with `concurrency` consumers, launching nothing after a failure. */
+/** Drain `order` with `concurrency` consumers unless interrupted. */
 async function runPool(order, concurrency, run) {
   const queue = [...order];
   const consume = async () => {
-    while (queue.length && !failure) await run(queue.shift());
+    while (queue.length && !stopping) await run(queue.shift());
   };
   await Promise.all(Array.from({ length: concurrency }, consume));
 }
@@ -243,19 +248,22 @@ const shardEnvironment = balancedWorkers !== null ? isolatedEnvironment : select
   ? childEnvironment : { ...childEnvironment, ASHLR_VITEST_UNIT_MAX_WORKERS: '1' };
 const shardCount = balancedWorkers ?? shards.length;
 const codes = [];
+const failedReports = [];
 const runGeneral = async ({ shard, files }) => {
   const selector = files === null ? [`--shard=${shard}/${shardCount}`] : files;
   const report = files === null ? `general-${shard}-of-4.json` : `balanced-${shard}-of-${shardCount}.json`;
   codes[shard - 1] = await launch(shard, `${shard}/${shardCount}`, `${shard}/${shardCount}`,
-    [...selector, ...shardWorkerArgs, '--bail=1', ...exclusions, ...reportArgs(report)], shardEnvironment);
+    [...selector, ...shardWorkerArgs, '--bail=0', ...exclusions, ...reportArgs(report)], shardEnvironment);
+  if (codes[shard - 1] !== 0) failedReports.push(report);
 };
 await runPool(generalLaunches, balancedWorkers ?? 2, runGeneral);
 const expectedShards = generalLaunches.map(({ shard }) => shard);
-if (failure || !expectedShards.every((shard) => codes[shard - 1] === 0)) {
+if (stopping || (!isolatedOnly && !expectedShards.every((shard) => codes[shard - 1] !== undefined))) {
   process.exitCode = failure || 1;
   console.error(`[test-ci:sharded] FAIL (${codes.join(', ')})`);
 } else if (selectedShard !== null) {
-  console.error(`[test-ci:sharded] PASS (general ${selectedShard}/${shards.length})`);
+  process.exitCode = failure;
+  console.error(`[test-ci:sharded] ${failure ? 'FAIL' : 'PASS'} (general ${selectedShard}/${shards.length})`);
 } else {
   // Run slow real-I/O suites after the shards with no competing test workers.
   // Each gets a fresh home. The campaign's two cases also get separate homes
@@ -264,17 +272,47 @@ if (failure || !expectedShards.every((shard) => codes[shard - 1] === 0)) {
   const runIsolated = async (index) => {
     const { file, filter, label } = isolatedCases[index];
     isolatedCodes[index] = await launch(`isolated-${label}`, `isolated acceptance ${label}`, `isolated ${label}`,
-      [file, ...(filter ? ['-t', filter] : []), '--maxWorkers=1', '--fileParallelism=false', '--bail=1',
+      [file, ...(filter ? ['-t', filter] : []), '--maxWorkers=1', '--fileParallelism=false', '--bail=0',
         ...reportArgs(`isolated-${String(index + 1).padStart(2, '0')}.json`)], isolatedEnvironment);
+    if (isolatedCodes[index] !== 0) failedReports.push(`isolated-${String(index + 1).padStart(2, '0')}.json`);
   };
   const order = isolatedCases.map((_, index) => index);
   if (isolatedConcurrency > 1) {
     const seconds = ({ file, label }) => isolatedSeconds[label === file ? file : label] ?? 0;
     order.sort((a, b) => seconds(isolatedCases[b]) - seconds(isolatedCases[a]) || a - b);
   }
-  await runPool(order, isolatedConcurrency, runIsolated);
+  // Retiring 2,048 real receipt generations must not compete with an acceptance
+  // fixture for filesystem/ACL capacity. Preserve its original report and bounds;
+  // serial mode is already exclusive and keeps its existing order.
+  const capacityLedger = isolatedConcurrency > 1
+    ? isolatedCases.findIndex(({ file }) => file === 'test/m342.dispatch-production-ledger.test.ts') : -1;
+  await runPool(order.filter((index) => index !== capacityLedger), isolatedConcurrency, runIsolated);
+  if (capacityLedger !== -1 && !stopping) await runIsolated(capacityLedger);
   const launched = isolatedCodes.filter((code) => code !== undefined);
   process.exitCode = failure || (launched.length === isolatedCases.length ? 0 : 1);
   const prefix = isolatedOnly ? '' : `${codes.join(', ')}, `;
   console.error(`[test-ci:sharded] ${process.exitCode === 0 ? 'PASS' : 'FAIL'} (${prefix}isolated ${launched.join(', ')})`);
 }
+
+// Vitest's JSON report contains every failed assertion, including collection errors.
+if (failure) {
+  console.error('[test-ci:sharded] Failure summary:');
+  for (const name of failedReports.sort()) {
+    try {
+      const report = JSON.parse(readFileSync(join(reportDirectory, name), 'utf8'));
+      for (const suite of report.testResults ?? []) {
+        const failed = (suite.assertionResults ?? []).filter((test) => test.status === 'failed');
+        for (const test of failed) {
+          const message = test.failureMessages?.[0] ?? 'No error details';
+          console.error(`  ${suite.name} | ${test.fullName ?? test.title} | ${String(message).split(/\r?\n/)[0]}`);
+        }
+        if (!failed.length && suite.status === 'failed') {
+          console.error(`  ${suite.name} | (suite) | ${String(suite.message || 'No error details').split(/\r?\n/)[0]}`);
+        }
+      }
+    } catch {
+      console.error(`  ${name} | (report) | Could not read failure details`);
+    }
+  }
+}
+if (temporaryReports) rmSync(reportDirectory, { recursive: true, force: true });

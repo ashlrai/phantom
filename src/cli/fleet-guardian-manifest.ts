@@ -1,6 +1,8 @@
 import { isAbsolute, resolve } from 'node:path';
 import { guardianManifestEntries, readFirstParentCommits, writeGuardianManifest } from '../core/fleet/guardian-manifest.js';
 
+export const usage = 'Usage: ashlr fleet guardian-manifest --repo <abs> --out <abs> [--branch <name>] [--limit <1..100>] [--json]';
+
 // Exit codes: 0 manifest written, 1 git failure / zero eligible commits / write
 // failure, 2 invalid arguments. Never prints commit subjects or bodies.
 export async function cmdFleetGuardianManifest(args: string[]): Promise<number> {

@@ -1,16 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import type { LeaderInboxAppender } from '../src/core/agents/leader-inbox-writer.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deliverSlackLeaderMessage, flushSlackLeaderReplies, ingestSlackLeaderEnvelope, readSlackDeliveryPolicy } from '../src/core/agents/slack-leader.js';
+import { createSlackLeaderAdapter, deliverSlackLeaderMessage, flushSlackLeaderReplies, ingestSlackLeaderEnvelope, readSlackDeliveryPolicy } from '../src/core/agents/slack-leader.js';
 import { readLeaderInbox, tickLeaderNetwork } from '../src/core/agents/leader-network-runtime.js';
 import { createSlackApi, openSlackSocket, type SlackCall } from '../src/core/agents/slack-transport.js';
 import { listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 import type { AshlrConfig } from '../src/core/types.js';
 import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
 
+// This module now contains a real host-helper fixture; serialization must not
+// enlarge the pre-existing unit-lane per-case deadline.
+vi.setConfig({ testTimeout: 5000 });
 let root: string;
-let options: { configDir: string; runsDir: string; busRoot: string; now: () => number };
+let options: { configDir: string; runsDir: string; busRoot: string; now: () => number; appendInbox?: LeaderInboxAppender };
 const configText = `[mason]\nidentities=[{channel="slack",id="U0OWNER"}]\n[team]\nidentities=[{channel="slack",id="U0OWNER"},{channel="slack",id="B0PEER"}]\n[slack]\nbridge_id="slack"\nteam_id="T0TEAM"\nown_user_id="U0BOT"\nown_bot_id="B0BOT"\nbot_token_ref="phm_SLACK_AGENTNET_BOT_TOKEN"\napp_token_ref="phm_SLACK_AGENTNET_APP_TOKEN"\n[[slack.map]]\ntopic="leaders"\nchannel="D0LEADER"\n`;
 const event = { type: 'events_api', envelope_id: 'Ev-delivery', payload: { team_id: 'T0TEAM', event_id: 'Ev-request', event: {
   type: 'message', user: 'U0OWNER', channel: 'D0LEADER', ts: '1793920001.000001', thread_ts: '1793920000.000001', text: 'Please report the synthetic release blocker.' } } };
@@ -40,14 +46,17 @@ function fakeCall(input: { post?: (body: Record<string, unknown>) => Promise<Rec
   });
 }
 
-async function receive(call: SlackCall, payload: unknown = event) {
+async function receive(call: SlackCall, payload: unknown = event, acknowledged = true) {
+  let ownerSettled = false;
   const policy = readSlackDeliveryPolicy(options)!;
+  const adapter = createSlackLeaderAdapter({ ...options, call });
   const handlers: Record<string, (event: { data?: unknown }) => void> = {};
   const socket = { readyState: 1, addEventListener: (type: string, callback: (event: { data?: unknown }) => void) => { handlers[type] = callback; }, send: vi.fn(), close: vi.fn() };
   await openSlackSocket({ call, config: policy.config, ingest: { config: policy.config, teamIdentities: policy.teamIdentities, runsDir: options.runsDir, busRoot: options.busRoot },
-    owner: envelope => ingestSlackLeaderEnvelope(envelope, { ...options, call }), connect: () => socket });
+    leaderAdapter: { ...adapter, route: async envelope => { try { return await adapter.route(envelope); } finally { ownerSettled = true; } } }, connect: () => socket });
   handlers.message!({ data: JSON.stringify(payload) });
-  await vi.waitFor(() => expect(socket.send).toHaveBeenCalledOnce());
+  if (acknowledged) await vi.waitFor(() => expect(socket.send).toHaveBeenCalledOnce());
+  else { await vi.waitFor(() => expect(ownerSettled).toBe(true)); expect(socket.send).not.toHaveBeenCalled(); }
   return socket;
 }
 
@@ -134,5 +143,62 @@ describe('authenticated Slack Leader integration', () => {
     const post = request.mock.calls[2]![1]!;
     expect((post.headers as Record<string, string>)['Content-Type']).toContain('application/json');
     expect(JSON.parse(String(post.body))).toEqual({ channel: 'D0LEADER', text: 'Synthetic result' });
+  });
+});
+
+
+describe('approved sole writer integration in a private HOME fixture', () => {
+  it.runIf(process.platform === 'darwin')('recovers a lost writer result through the same retained request and sends one reply', async () => {
+    const copy = join(root, 'private-mason-inbox-append');
+    copyFileSync(fileURLToPath(new URL('../contrib/mac/mason-inbox-append', import.meta.url)), copy);
+    const scrub = join(root, 'approved-scrubber.pl');
+    copyFileSync(fileURLToPath(new URL('./fixtures/leader-inbox/approved-scrubber.pl', import.meta.url)), scrub);
+    const leader = join(options.runsDir, 'leader'); mkdirSync(leader, { recursive: true, mode: 0o700 });
+    const inbox = join(leader, 'MASON-INBOX.md'); writeFileSync(inbox, '', { mode: 0o444 });
+    let loseReceipt = true;
+    const statuses: string[] = [];
+    options.appendInbox = async request => {
+      const stdout = execFileSync('/usr/bin/python3', [copy, '--src', 'slack', '--id', request.requestId, '--received-at', String(request.receivedAt)],
+        { input: request.text, encoding: 'utf8', timeout: 25000, maxBuffer: 1024,
+          env: { PATH: '/usr/bin:/bin', MASON_INBOX_TEST: '1', MASON_INBOX_PATH: inbox, MASON_INBOX_SCRUB: scrub } });
+      const receipt = JSON.parse(stdout); statuses.push(receipt.status);
+      if (loseReceipt) { loseReceipt = false; throw new Error('Synthetic lost helper acknowledgement'); }
+      return receipt;
+    };
+    const call = fakeCall();
+    await receive(call, event, false);
+    const saved = () => JSON.parse(readFileSync(join(leader, 'network-state.json'), 'utf8'));
+    expect(Object.values(saved().routes)).toMatchObject([{ inbox: false, bus: false }]);
+    await receive(call);
+    expect(Object.values(saved().routes)).toMatchObject([{ inbox: true, bus: true }]);
+    expect(statuses).toEqual(['appended', 'duplicate']);
+    expect(readFileSync(inbox, 'utf8').split('\n').filter(line => line.startsWith('## '))).toHaveLength(1);
+    const generate = vi.fn(async () => 'Synthetic evidence-grounded reply');
+    expect(await tickLeaderNetwork({} as AshlrConfig, { ...options, slackCall: call }, { reply: generate })).toMatchObject({ replies: 1 });
+    await receive(call);
+    expect(vi.mocked(call).mock.calls.filter(row => row[0] === 'chat.postMessage')).toHaveLength(1);
+    expect(generate).toHaveBeenCalledOnce();
+    chmodSync(inbox, 0o600); // fixture cleanup only; installed inbox is never touched.
+  });
+});
+
+
+describe('current owner before trusted inbox append', () => {
+  it('refuses a revocation during the authenticated user lookup before any writer or bus append', async () => {
+    const appendInbox = vi.fn();
+    options.appendInbox = appendInbox;
+    const original = fakeCall();
+    const call: SlackCall = async (method, body, credential) => {
+      const value = await original(method, body, credential);
+      if (method === 'users.info' && body?.user === 'U0OWNER') {
+        writeFileSync(join(options.configDir, 'agent-network.toml'), configText.replace('identities=[{channel="slack",id="U0OWNER"}]', 'identities=[]'));
+      }
+      return value;
+    };
+    await receive(call, event, false);
+    expect(appendInbox).not.toHaveBeenCalled();
+    expect(vi.mocked(original).mock.calls.filter(row => row[0] === 'chat.postMessage')).toHaveLength(0);
+    const state = JSON.parse(readFileSync(join(options.runsDir, 'leader/network-state.json'), 'utf8'));
+    expect(Object.values(state.routes)).toMatchObject([{ inbox: false, bus: false }]);
   });
 });

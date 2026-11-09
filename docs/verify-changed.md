@@ -13,11 +13,14 @@ Pass `--force` (or set `PHANTOM_VERIFY_FORCE`) to rerun a state that already pas
 0. **Skips already-passed states** — before any check it fingerprints the working tree (see "Pass dedupe" below) and exits 0 with `SKIP verify-changed` when that exact state previously passed.
 1. **Collects changed paths** — committed, staged, unstaged, and untracked files diffed against `origin/master`.
 2. **Selects lintable files** — existing `.js`, `.mjs`, `.cjs`, `.ts`, `.cts`, `.mts`, `.tsx`, `.jsx` files still on disk.
-3. **Runs ESLint** on the changed files (skipped silently if `node_modules/eslint` is absent — CI Merge Gate handles this).
-4. **Takes one machine-wide typecheck slot** (default 3, `PHANTOM_TSC_SLOTS` overrides) before running `tsc --noEmit` with incremental build-info caching and a **shared atomic cache** (works through a unique temporary file to avoid readers seeing partial writes).
-5. **Runs `tsc --noEmit` on `src/web-ui/tsconfig.json`** only when a path under `src/web-ui/` is changed.
-6. **Runs two lane/integrity scripts**: `scripts/check-realio-lane-membership.mjs` and `scripts/check-verse-sync-io.mjs`.
-7. **Records the pass** — on success the fingerprint is written as a marker so a later identical state skips the run.
+3. **Checks authority drift** with the existing CODEOWNERS and Tier-1 closure suites when relevant paths change.
+4. **Runs ESLint** on the changed files (skipped silently if `node_modules/eslint` is absent — CI Merge Gate handles this).
+5. **Takes one machine-wide typecheck slot** (default 3, `PHANTOM_TSC_SLOTS` overrides) before running `tsc --noEmit` with incremental build-info caching and a **shared atomic cache** (works through a unique temporary file to avoid readers seeing partial writes).
+6. **Runs `tsc --noEmit` on `src/web-ui/tsconfig.json`** only when a path under `src/web-ui/` is changed.
+7. **Runs two lane/integrity scripts**: `scripts/check-realio-lane-membership.mjs` and `scripts/check-verse-sync-io.mjs`.
+8. **Records the pass** — on success the fingerprint is written as a marker so a later identical state skips the run.
+
+When authority drift fails, run `npm run authority:regen`, review the summary and generated changes, and list each new Tier-1 root in the PR body for CODEOWNERS review. The drift tests run when a changed path is under `src/` or `test/`, or is `.github/CODEOWNERS`.
 
 ## Environment variables
 

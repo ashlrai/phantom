@@ -1,8 +1,8 @@
 /**
  * `ashlr fleet self-tick` — one locked pass of Phantom's self-management for
- * a host timer or an agent with no desktop app open. It calls the six
+ * a host timer or an agent with no desktop app open. It calls the eight
  * existing one-shot verbs in the fixed order reset-release → lane-autohold
- * → planner-tick → inbox-acks → order-notices → landed-sweep, each with --json (plus --apply and --runs-dir when given),
+ * → stray-stop → meter-incident → planner-tick → inbox-acks → order-notices → landed-sweep, each with --json (plus --apply and --runs-dir when given),
  * and folds their parsed reports into one run report. Only one self-tick runs
  * per runs dir; a step that fails or throws never stops the later ones.
  */
@@ -19,11 +19,17 @@ import { runSelfTick, type RunSelfTickOptions, type SelfTickStep, type SelfTickS
 import { readSelfTickLast } from '../core/fleet/self-tick-last.js';
 import { capSelfTickLog, selfTickLogPath } from '../core/fleet/self-tick-log-cap.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
+import { cmdFleetStrayStop } from './fleet-stray-stop.js';
+import type { StrayStopDeps } from '../core/fleet/stray-stop.js';
+import { defaultLaneTruthReaders, type LaneTruthReaders } from '../core/fleet/lane-truth.js';
+import { readMeterDrop } from './fleet-meter-drop.js';
+import { postMeterIncidents } from '../core/fleet/meter-incident.js';
 
 const usage = `Usage: ashlr fleet self-tick [--json] [--runs-dir <abs>] [--apply] [--last]
 One locked pass of Phantom's self-management: reset-release first (a lane it
 frees counts as a free slot for the planner step), then lane-autohold, then
-planner-tick, then inbox-acks (sends pending same-channel acks), then order-notices
+stray-stop (bounded guarded recovery), then meter-incident (deduped flat-meter
+notices), then planner-tick, then inbox-acks (sends pending same-channel acks), then order-notices
 (tells Mason when a merged job served one of his orders), then landed-sweep (closes DIRTY PRs whose work already landed;
 last because it is the slowest). Without --apply nothing is released, held, spawned, acknowledged or notified — the
 planner step still appends its observational PLANNER_TICK line to
@@ -38,6 +44,13 @@ when any step failed, 2 on usage.`;
 
 interface Dependencies {
   now?: () => number;
+  /** Recovery evidence and signal seams; the guarded stop path owns all signals. */
+  stray?: Partial<Pick<StrayStopDeps, 'readStraySlots' | 'kill'>>;
+  meterReaders?: LaneTruthReaders;
+  /** Isolated bus store for fixtures or explicit configured intent. Never derived
+   * from the runs dir; unset, the ordinary default bus is used on the canonical
+   * runs root only. */
+  busRoot?: string;
   output?: (text: string) => void;
   error?: (text: string) => void;
   /** Per-step overrides for tests; unlisted steps run the real verbs. */
@@ -108,7 +121,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
   // --last is a read-only report of the last recorded pass: nothing runs,
   // no lock is taken, so --apply has no meaning beside it.
   if (last && apply) return invalid();
-  // One root for the lock and all six steps: the verbs' own fallbacks
+  // One root for the lock and all eight steps: the verbs' own fallbacks
   // (ASHLR_RUNS_DIR, ~/.ashlr-runs) resolve here once, so the lock domain
   // and the released slots can never drift to different dirs.
   const home = deps.home ?? homedir();
@@ -147,6 +160,33 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
   const defaults: SelfTickSteps = {
     'reset-release': bind(cmdFleetResetRelease, { now }),
     'lane-autohold': bind(cmdFleetLaneAutohold, { now: () => new Date(now()) }),
+    'stray-stop': async (argv) => {
+      // The default process reader is tied to the real host's canonical root.
+      if (!deps.stray?.readStraySlots && root !== join(homedir(), '.ashlr-runs')) {
+        return { exitCode: 0, output: JSON.stringify({ reason: 'custom-runs-dir-no-process-reader' }) };
+      }
+      return bind(cmdFleetStrayStop, {
+        ...deps.stray,
+        ledgerFile: join(root, 'stray-stops.jsonl'),
+        now: () => new Date(now()),
+      })(argv);
+    },
+    'meter-incident': async () => {
+      if (!deps.meterReaders && root !== join(home, '.ashlr-runs')) {
+        return { exitCode: 0, output: JSON.stringify({ reason: 'custom-runs-dir-no-meter-reader' }) };
+      }
+      const report = await readMeterDrop(deps.meterReaders ?? defaultLaneTruthReaders(home, now()), now());
+      // A custom runs root never reaches the ordinary production bus: posting
+      // there needs an explicit bus root beside the injected meter readers.
+      if (apply && !deps.busRoot && root !== join(home, '.ashlr-runs')) {
+        return { exitCode: 0, output: JSON.stringify({ report, posted: [], reason: 'custom-runs-dir-no-bus-root' }) };
+      }
+      const posted = apply ? postMeterIncidents(report, now(), undefined, {
+        now, ...(deps.busRoot === undefined ? {} : { root: resolve(deps.busRoot) }),
+      }) : [];
+      return { exitCode: posted.some(row => !['posted', 'duplicate'].includes(row.status)) ? 1 : 0,
+        output: JSON.stringify({ report, posted, reason: apply ? 'observed' : 'dry-run' }) };
+    },
     'planner-tick': bind(cmdFleetPlannerTick, { now, spawn: deps.spawn }),
     'inbox-acks': bind(cmdFleetInboxAcks, { now: () => new Date(now()), senders: deps.senders }),
     'order-notices': bind(cmdFleetOrderNotices, { now, senders: deps.noticeSenders }),

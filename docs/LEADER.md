@@ -4,6 +4,14 @@ The [CEO network endpoint](LEADER-NETWORK.md) bridges verified owner channels,
 the durable inbox/outbox, configured model tiers, and away-mode digests. The
 desktop's **Leader** pane is the shared point of contact.
 
+Roles describe responsibilities: coordination, implementation, review and release.
+They do not bind an agent to a model or provider. Use the shared tool catalog,
+durable context and work claims to coordinate agents; the Leader need not relay
+every tool call or merge. Each action still uses its current account, repository
+scope and standing authority. The Mac's **Scheduled planning passes** and
+**Leader planning loop** switches control supplementary historical schedules;
+they do not select the model used by the Leader.
+
 ## Release-backed articles (successor candidate)
 
 The opt-in `release-articles` maintenance lane follows Phantom's latest stable
@@ -111,6 +119,37 @@ What the Leader may *do* is bounded by your standing grant, never by the
 conversation. Directives steer its judgement; they never widen the grant. See
 [STANDING-AUTHORITY.md](STANDING-AUTHORITY.md) and
 [Autonomy with custody](VERSE.md#autonomy-with-custody-310).
+
+## One co-founder
+
+Mason talks to one leader. The leader talks to every other agent on the bus.
+`phm leader status`, `ask`, `org` and `assign` are that office. Each decision
+reads `phm world` and the shared-visibility brief (`phm context`). Assignments
+are claimed with `phm claim` and carry an RQ key, owner, due date, status and
+outcome. The org chart is `config/leader-org.json`; a private `org.json` in
+the leader directory replaces it. Work is addressed to a role's lane so the
+existing router can admit it. The office does not call a model and does not
+spend.
+
+A request is routed only when its words are ordinary work and a role keyword,
+or an explicit owner, picks the lane. The hard-limit regex only labels a match.
+It does not decide escalation. A paraphrase, or any wording that is not clearly
+ordinary work, escalates to the owner. Stored and posted text goes through
+`scrubSecrets`. With no standing grant the work is recorded as a proposal and
+is not put on the bus. KILL is checked at entry and again immediately before
+the office file is written and before each bus post.
+
+Channel adapters do not live here. After they authenticate the owner they call
+`acceptOwnerMessage` and drain `readLeaderOutbox`. A raw channel payload is not
+a caller. The desktop Leader pane
+shows the conversation, the open assignments and the org.
+
+```sh
+phm leader status --json
+phm leader ask "fix the flaky test" --json
+phm leader org --json
+phm leader assign --rq RQ-EXAMPLE-1 --owner engineering --summary "fix the flaky test" --due 2026-11-10 --json
+```
 
 ---
 

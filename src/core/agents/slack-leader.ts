@@ -2,18 +2,33 @@
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { realHome } from '../real-home.js';
 import { validateBusEnvelope, type BusEnvelope } from '../fleet/bus-envelope.js';
-import { readLeaderNetworkConfig, type LeaderRuntimeOptions } from './leader-network-runtime.js';
+import { leaderInboxAppender, leaderNetworkSources, readLeaderNetworkConfig, type LeaderRuntimeOptions } from './leader-network-runtime.js';
 import { createLeaderNetwork, parseMasonIdentities } from './leader-network.js';
 import { loadAgentNetworkConfig, isSlackUserId, parseSlackThreadRef } from './slack-network.js';
 import { createSlackApi, deliverSlackEnvelope, type SlackCall, type SlackDeliveryPolicy } from './slack-transport.js';
 import { parseCommsConfirmation, type DeliverResult, type TeamIdentity } from './channel-policy.js';
+import { slackEventToBus, type SlackInboundDecision, type SlackIngestContext } from './slack-inbound.js';
+import type { LeaderChannelAdapter } from './leader-channel-adapter.js';
 
 export interface SlackLeaderOptions extends LeaderRuntimeOptions { call?: SlackCall; signal?: AbortSignal }
 
+/** Compose the existing authenticated Slack mapper, durable Leader routing and
+ * journaled same-thread delivery without putting credentials in the adapter. */
+export function createSlackLeaderAdapter(options: SlackLeaderOptions = {}): LeaderChannelAdapter<unknown, SlackIngestContext, SlackInboundDecision> {
+  return {
+    id: 'slack',
+    normalize: slackEventToBus,
+    route: message => ingestSlackLeaderEnvelope(message, options),
+    deliver: (identity, message) => deliverSlackLeaderMessage(identity, message, options),
+  };
+}
+
 /** Config is trusted host state, never an identity field supplied in a Slack message. */
 export function readSlackDeliveryPolicy(options: LeaderRuntimeOptions = {}): SlackDeliveryPolicy | undefined {
-  const configDir = options.configDir ?? join(homedir(), '.ashlr');
+  const home = realHome();
+  const configDir = options.configDir ?? join(home ?? '/owner-home-unavailable', '.ashlr');
   const parsed = loadAgentNetworkConfig({ path: join(configDir, 'agent-network.toml') });
   if (parsed.state !== 'ok' || !parsed.slack || parsed.slack === 'invalid') return undefined;
   const sources = readLeaderNetworkConfig(options);
@@ -31,7 +46,7 @@ export async function ingestSlackLeaderEnvelope(message: BusEnvelope, options: S
   if (!checked.ok || message.channel !== 'slack' || message.external !== false || message.sender?.human !== true ||
       message.sender.vendor !== 'slack' || !isSlackUserId(message.sender.agent_id) || message.from !== `slack:${message.sender.agent_id}`) return { owned: false, durable: false };
   const identity: TeamIdentity = { channel: 'slack', id: message.sender.agent_id };
-  const sources = readLeaderNetworkConfig(options);
+  const sources = leaderNetworkSources(options);
   if (!parseMasonIdentities(sources.configSource).some(owner => owner.channel === 'slack' && owner.id === identity.id)) return { owned: false, durable: false };
   const policy = readSlackDeliveryPolicy(options), ref = parseSlackThreadRef(message.channel_ref);
   if (options.signal?.aborted || !policy || !ref || ref.teamId !== policy.config.teamId || message.origin_bridge !== policy.config.bridgeId ||
@@ -46,7 +61,7 @@ export async function ingestSlackLeaderEnvelope(message: BusEnvelope, options: S
         user.is_bot !== false || user.is_app_user === true || user.deleted === true || user.is_stranger === true ||
         user.is_restricted === true || user.is_ultra_restricted === true || options.signal?.aborted) return { owned: true, durable: false };
   } catch { return { owned: true, durable: false }; }
-  const network = createLeaderNetwork({ ...sources, runsDir: options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), busRoot: options.busRoot, now: options.now });
+  const network = createLeaderNetwork({ ...sources, runsDir: options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), busRoot: options.busRoot, now: options.now, appendInbox: leaderInboxAppender(options) });
   const result = await network.ingest({ message: {
     // A namespaced 128-bit receipt avoids secret-value heuristics on raw digests.
     ...checked.value, id: `slack-owner-${createHash('sha256').update(message.id).digest('hex').slice(0, 32)}`, from: 'mason',
@@ -96,9 +111,9 @@ export async function deliverSlackLeaderMessage(identity: TeamIdentity, message:
 /** The transport drains existing Leader drafts; the resident Leader owns model generation. */
 export async function flushSlackLeaderReplies(options: SlackLeaderOptions = {}): Promise<{ state: 'completed' | 'unavailable'; sent: number }> {
   try {
-    const sources = readLeaderNetworkConfig(options);
+    const sources = leaderNetworkSources(options);
     const network = createLeaderNetwork({ ...sources, runsDir: options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'),
-      busRoot: options.busRoot, now: options.now, deliver: (identity, message) => deliverSlackLeaderMessage(identity, message, options) });
+      busRoot: options.busRoot, now: options.now, appendInbox: leaderInboxAppender(options), deliver: (identity, message) => deliverSlackLeaderMessage(identity, message, options) });
     let sent = 0;
     for (const pending of (await network.pending()).filter(row => row.envelope.channel === 'slack').slice(0, 5)) {
       if (options.signal?.aborted) break;

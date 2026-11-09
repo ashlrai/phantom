@@ -16,6 +16,7 @@ _fleet-needs-you.ts_ items (local snapshot).
 | switches-on | A dispatch switch file exists | "Dispatch is paused by {switch}" | Clear the switch in Fleet ▸ Switches | Fleet ▸ Switches |
 | runs-dir-missing | The runs directory does not exist | "The runs directory is missing on this Mac" | Start the dispatcher to create it — Settings ▸ Connection | Settings ▸ Connection |
 | stall-incident | Nothing starts and nothing merges for 30 min | "Stall incident" | Check Live runs and the leaders in Ops | Ops ▸ Leader journal |
+| merge-stall | Healthy merge evidence shows zero merges and at least three publishes in the last hour | "Merge gate stalled" with recent publishes | Check the merge gate | Fleet ▸ Merges |
 | leader-overdue | No leader pass in 30 minutes | "No leader process is running" | Check leaders in Ops and restart the leader loop | Ops ▸ Leader journal |
 | lane-held:{lane} | A lane has a hold reason | "Lane {lane} is held" | Check the lane in Ops ▸ Live runs | Ops ▸ Live runs |
 | supply-personal-reset | Personal reset hit but lane still held | "Personal Codex has reset; its lane is still held" | Release the hold in Fleet ▸ Lanes, or wait for it to expire | Fleet ▸ Lanes |

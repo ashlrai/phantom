@@ -61,9 +61,10 @@ function fixture(t) {
 
 test('opt-in collection preserves the complete original specs and inherited project sort', async (t) => {
   const f = fixture(t); const observed = await f.inventory(); const hints = await f.hints(); f.save(hints);
-  // Non-Darwin remains the actual default. Pure planner semantics are host-independent.
-  const planned = comparePartitions({ ...observed, runtime: { ...observed.runtime, platform: 'darwin' } },
-    { ...hints, runtime: { ...hints.runtime, platform: 'darwin' } });
+  // Explicit synthetic inputs exercise the calibrated planner independently of
+  // the installed runtime. The real inventory and adapter keep their own version.
+  const planned = comparePartitions({ ...observed, runtime: { ...observed.runtime, platform: 'darwin', vitestVersion: '4.1.11' } },
+    { ...hints, runtime: { ...hints.runtime, platform: 'darwin', vitestVersion: '4.1.11' } });
   assert.equal(planned.proposed.flat().length, f.specs.length);
   const bins = [];
   for (let index = 1; index <= 4; index++) {
@@ -72,7 +73,7 @@ test('opt-in collection preserves the complete original specs and inherited proj
     const reverse = await adapter.shard([...f.specs].reverse());
     assert.deepEqual(new Set(reverse), new Set(bin));
     assert.deepEqual(await adapter.sort(bin), await new BaseSequencer(f.ctx(index)).sort(bin));
-    if (process.platform === 'darwin') {
+    if (process.platform === 'darwin' && observed.runtime.vitestVersion === '4.1.11') {
       assert.deepEqual(bin.map((spec) => spec.moduleId), planned.proposed[index - 1].map((row) => join(f.root, row.file)));
     } else {
       assert.deepEqual(bin, await new BaseSequencer(f.ctx(index)).shard(f.specs));
@@ -119,7 +120,9 @@ test('source changes stay historical and new specs cannot disappear behind a sta
   assert.equal(bins.flat().filter((spec) => spec === added).length, 1);
   assert.equal(new Set(bins.flat()).size, f.specs.length);
   if (process.platform === 'darwin') {
-    const projected = comparePartitions(inventory, old).report;
+    // This models source-history projection, not an installed-version calibration.
+    const projected = comparePartitions({ ...inventory, runtime: { ...inventory.runtime, vitestVersion: '4.1.11' } },
+      { ...old, runtime: { ...old.runtime, vitestVersion: '4.1.11' } }).report;
     assert.equal(projected.diagnostics.unknownModules, 1); assert.equal(projected.diagnostics.staleTestBytes, 1);
     assert.equal(projected.sourceChangedSinceCalibration, true); assert.equal(projected.recordedAt, old.recordedAt);
     assert.equal(projected.measuredSpeedup, null);
@@ -157,7 +160,9 @@ export default { test: { sequence: { sequencer: Witness }, projects: [
   assert.equal(child.error, undefined); assert.equal(child.signal, null); assert.equal(child.status, 0, child.stderr);
   assert.ok(child.stderr.includes('actual-spec-object-witness'));
   const raw = JSON.parse(readFileSync(output, 'utf8'));
-  const expected = process.platform === 'darwin' ? comparePartitions(await f.inventory(), hints).proposed[0].map(row => join(f.root, row.file))
+  const inventory = await f.inventory();
+  const expected = process.platform === 'darwin' && inventory.runtime.vitestVersion === '4.1.11'
+    ? comparePartitions(inventory, hints).proposed[0].map(row => join(f.root, row.file))
     : (await new BaseSequencer(f.ctx(1)).shard(f.specs)).map(spec => spec.moduleId);
   assert.deepEqual(raw.testResults.map(row => row.name).sort(), expected.sort());
   assert.equal(raw.numFailedTests, 0); assert.equal(raw.numPendingTests, 0);

@@ -7,7 +7,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -99,6 +99,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.doUnmock('node:child_process');
+  vi.doUnmock('../src/core/run/host-headroom.js');
   if (origHome === undefined) delete process.env['HOME'];
   else process.env['HOME'] = origHome;
   if (origUserProfile === undefined) delete process.env['USERPROFILE'];
@@ -265,6 +266,7 @@ describe('Claude rate_limit_event resource sensing', () => {
 
 describe('Claude rate_limit_event engine capture', () => {
   it('records rate_limit_event JSONL from claude stderr without changing stdout output', async () => {
+    vi.doMock('../src/core/run/host-headroom.js', () => ({ checkHostHeadroom: () => ({ allowed: true }) }));
     let control: FakeChildControl | null = null;
     vi.doMock('node:child_process', () => ({
       execFileSync: vi.fn(() => Buffer.from('/usr/local/bin/claude')),
@@ -315,9 +317,10 @@ describe('Claude rate_limit_event store stays bounded', () => {
     // One weekly reading, then the five_hour reading every Claude run emits, as an
     // unattended fleet produces over days. resource-monitor reads this file whole.
     recordClaudeRateLimitEventLine(eventLine({ rateLimitType: 'seven_day', resetsAt: nowSec + 6 * 86_400, utilization: 0.93 }));
-    for (let i = 0; i < 20_000; i++) {
-      recordClaudeRateLimitEventLine(eventLine({ rateLimitType: 'five_hour', resetsAt: nowSec - 20_000 + i, utilization: (i % 100) / 100 }));
-    }
+    const historical = Array.from({ length: 20_000 }, (_, i) =>
+      eventLine({ rateLimitType: 'five_hour', resetsAt: nowSec - 20_000 + i, utilization: (i % 100) / 100 }));
+    const path = claudeRateLimitEventsPath();
+    writeFileSync(path, readFileSync(path, 'utf8') + historical.join('\n') + '\n');
     recordClaudeRateLimitEventLine(eventLine({ rateLimitType: 'five_hour', resetsAt: nowSec + 3_600, utilization: 0.42 }));
 
     expect(statSync(claudeRateLimitEventsPath()).size).toBeLessThanOrEqual(256 * 1024);

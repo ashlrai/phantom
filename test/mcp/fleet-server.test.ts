@@ -3,6 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createFleetServer, MAX_FLEET_OUTPUT_BYTES, type FleetReaders } from '../../src/mcp/fleet-server.js';
 import { cmdMcp } from '../../src/cli/mcp.js';
+import { FLEET_MCP_TOOL_NAMES } from '../support/fleet-mcp-tools.js';
 
 const connections: Client[] = [];
 afterEach(async () => {
@@ -25,18 +26,22 @@ describe('fleet MCP protocol', () => {
     expect(client.getServerCapabilities()).toEqual({ tools: {} });
     expect(client.getServerVersion()?.name).toBe('phantom-fleet');
     const { tools } = await client.listTools();
-    expect(tools.map(t => t.name)).toEqual([
-      'fleet_status', 'fleet_loop', 'fleet_bus_hops', 'fleet_host_runs', 'fleet_bus_inbox',
-      'fleet_lanes', 'fleet_usage_resets', 'fleet_reset_await', 'fleet_reset_group_await',
-      'fleet_reset_release_await', 'fleet_reset_history', 'fleet_reset_follow', 'fleet_job_history',
-      'fleet_job_history_batch', 'fleet_job_overlap', 'fleet_job_current', 'fleet_job_patch', 'fleet_path_history', 'fleet_job_precheck', 'fleet_job_precheck_batch', 'fleet_main_health',
-      'fleet_waste_risk', 'fleet_kept', 'fleet_trim', 'fleet_email_outbox', 'fleet_email_outbox_await', 'fleet_email_diagnosis',
-      'fleet_imessage_path', 'fleet_imessage_acks',
-    ]);
+    expect(tools.map(t => t.name)).toEqual([...FLEET_MCP_TOOL_NAMES]);
     for (const tool of tools) {
       expect(tool.annotations).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
       expect(tool.inputSchema.additionalProperties).toBe(false);
     }
+  });
+
+  it('validates batch job IDs and dispatches one bounded read', async () => {
+    const jobCurrentBatch = vi.fn(async input => ({ ids: input.jobIds }));
+    const client = await connect({ jobCurrentBatch });
+    const result = await client.callTool({ name: 'fleet_job_current_batch', arguments: { jobIds: ['RQ-EXAMPLE-1'] } });
+    expect(result).toMatchObject({ content: [{ text: '{"ids":["RQ-EXAMPLE-1"]}' }] });
+    for (const args of [{ jobIds: [] }, { jobIds: ['RQ-EXAMPLE-1', 'RQ-EXAMPLE-1'] }, { jobIds: ['RQ-EXAMPLE-1'], ref: 'other' }]) {
+      await expect(client.callTool({ name: 'fleet_job_current_batch', arguments: args })).rejects.toMatchObject({ code: -32602 });
+    }
+    expect(jobCurrentBatch).toHaveBeenCalledTimes(1);
   });
 
   it('round trips status and loop calls with omitted/default and explicit limits', async () => {

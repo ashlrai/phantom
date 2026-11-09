@@ -50,7 +50,7 @@ it('runs independent tasks concurrently in their own directories with literal ar
   expect(process.cwd()).toBe(original);
 });
 
-it('inherits the process directory when cwd is omitted', async () => {
+it('graph argv run inherits the process directory when cwd is omitted', async () => {
   const marker = join(dir, 'inherited');
   const result = await run([{ id: 'A', argv: argv("require('node:fs').writeFileSync(process.argv[1], process.cwd())", marker) }]);
   expect(result.status).toBe('complete');

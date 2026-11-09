@@ -882,3 +882,48 @@ async function indexRepo(
 
   return newChunks.length;
 }
+
+// ---------------------------------------------------------------------------
+// Tool-result text rendering
+// ---------------------------------------------------------------------------
+// These helpers render MCP-style tool text. They live beside the strict
+// scrubSecrets they must use so any module can render tool output without
+// importing the heavyweight mcp-native orchestration graph.
+
+/** Hard cap on a serialized tool result (chars ≈ bytes for ASCII JSON). */
+export const MAX_TOOL_OUTPUT_CHARS = 32 * 1024;
+
+/** Marker inserted where output was truncated. */
+export const TOOL_TRUNCATION_MARK = '\n…[ashlr: output truncated]…\n';
+
+/**
+ * MCP-style text result (plain object; the SDK validates it gateway-side).
+ * A `type` alias (not an interface) so it picks up an implicit index signature
+ * and stays assignable to the SDK's CallToolResult without importing the SDK.
+ */
+export type NativeToolResult = {
+  content: { type: 'text'; text: string }[];
+  isError?: boolean;
+};
+
+/** Serialize + scrub + cap exactly as tool results do. */
+export function renderToolText(payload: unknown): string {
+  return textResult(payload).content[0]?.text ?? '';
+}
+
+export function textResult(payload: unknown, isError = false): NativeToolResult {
+  let text: string;
+  try {
+    text = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
+  } catch {
+    text = String(payload);
+  }
+  // Scrub BEFORE capping so a secret straddling the cap boundary can't survive.
+  text = scrubSecrets(text);
+  if (text.length > MAX_TOOL_OUTPUT_CHARS) {
+    const head = text.slice(0, Math.floor(MAX_TOOL_OUTPUT_CHARS * 0.75));
+    const tail = text.slice(-Math.floor(MAX_TOOL_OUTPUT_CHARS * 0.2));
+    text = head + TOOL_TRUNCATION_MARK + tail;
+  }
+  return isError ? { content: [{ type: 'text', text }], isError: true } : { content: [{ type: 'text', text }] };
+}

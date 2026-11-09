@@ -4,6 +4,11 @@ import { type BusInboxOptions } from '../core/fleet/bus-inbox.js';
 import { postBusReply, replyResult, type ReplyDependencies, type ReplyResult } from '../core/fleet/bus-reply-post.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
+const usage = `ashlr fleet bus-reply-stdin --request-id <id> --reply-id <id> [--input-timeout-ms <ms>] [--json]
+Pipe a UTF-8 JSON object without inReplyTo (maximum 65536 bytes); interactive input is refused.
+Input must end within 5000 ms by default; --input-timeout-ms accepts 10 to 30000 ms.
+Routing labels do not authenticate the responder. A reply does not mark work completed.`;
+
 const DEFAULT_TIMEOUT_MS = 5000;
 const MIN_TIMEOUT_MS = 10;
 const MAX_TIMEOUT_MS = 30000;
@@ -57,7 +62,7 @@ export async function cmdFleetBusReplyStdin(args: string[], options: BusInboxOpt
       : result.outcome === 'invalid-input' ? 2 : result.outcome === 'request-not-found' ? 3 : 4;
   };
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
-    output('ashlr fleet bus-reply-stdin --request-id <id> --reply-id <id> [--input-timeout-ms <ms>] [--json]\nPipe a UTF-8 JSON object without inReplyTo (maximum 65536 bytes); interactive input is refused.\nInput must end within 5000 ms by default; --input-timeout-ms accepts 10 to 30000 ms.\nRouting labels do not authenticate the responder. A reply does not mark work completed.');
+    output(usage);
     return 0;
   }
   const values: Record<string, string> = {};

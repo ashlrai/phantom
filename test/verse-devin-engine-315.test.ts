@@ -149,8 +149,14 @@ describe('a Devin chat in the session engine', () => {
     engine.sendTurn(session.id, 'NEW add a health check');
     const events = await done;
     expect(events.map((e) => e.type)).toEqual([
-      'user-message', 'turn-started', 'remote-status', 'assistant-message', 'remote-pr', 'remote-status', 'turn-done',
+      'user-message', 'assistant-status', 'turn-started', 'remote-status', 'assistant-message', 'remote-pr', 'remote-status', 'assistant-status', 'turn-done',
     ]);
+    const lifecycle = events.filter((event) => event.type === 'assistant-status');
+    const turnId = events.find((event) => event.type === 'turn-started')!.turnId;
+    expect(lifecycle).toMatchObject([
+      { phase: 'acknowledgement', turnId }, { phase: 'result', turnId },
+    ]);
+    expect(lifecycle.every((event) => event.text.trim().length > 0)).toBe(true);
     const after = engine.getSession(session.id)!;
     expect(after.nativeSessionId).toBe('dv_20260927T0500_000001');
     expect(after.status).toBe('idle');

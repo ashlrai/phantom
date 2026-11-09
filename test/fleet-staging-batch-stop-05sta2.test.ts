@@ -47,9 +47,12 @@ describe('staging batch graceful stop', () => {
       expect(JSON.parse(lines[1]!)).toMatchObject({ interrupted: true, signal: 'SIGTERM', requested: 2, attempted: 1, completed: 1, remaining: 1, complete: false });
     } else if (mode === '--json') {
       expect(lines).toHaveLength(1);
-      expect(JSON.parse(lines[0]!)).toMatchObject({ interrupted: true, signal: 'SIGTERM', requested: 2, attempted: 1, completed: 1, remaining: 1, reports: [{ root: '/fake/a' }] });
+      expect(JSON.parse(lines[0]!)).toMatchObject({ interrupted: true, signal: 'SIGTERM', requested: 2, attempted: 1, completed: 1, remaining: 1,
+        reports: [{ root: '/fake/a', complete: true, source: 'ok' },
+          { root: '/fake/b', complete: false, source: 'unattempted', cleanupEligibility: ELIGIBILITY }] });
     } else {
       expect(lines.join('\n')).toContain('"/fake/a": complete');
+      expect(lines.join('\n')).toContain('"/fake/b": skipped (unattempted)');
       expect(lines.join('\n')).toContain('Interrupted by SIGTERM: 1 attempted, 1 remaining');
     }
     expect(signals.eventNames()).toEqual([]);
@@ -68,16 +71,43 @@ describe('staging batch graceful stop', () => {
   });
 
   it('handles a real process signal through the source CLI while reading stdin', async () => {
-    const child = spawn(process.execPath, ['--import', 'tsx', 'src/cli/index.ts', 'fleet', 'staging-inventory-batch', '--stdin', '--ndjson'], { stdio: ['pipe', 'pipe', 'pipe'] });
+    // Observe the real stdin iterator after the command installs both signal
+    // handlers. Startup speed is not evidence that stdin intake has begun.
+    const observeStdin = `const original = process.stdin[Symbol.asyncIterator];
+      process.stdin[Symbol.asyncIterator] = function (...args) {
+        const iterator = Reflect.apply(original, this, args);
+        queueMicrotask(() => process.send?.({ type: 'staging-stdin-ready',
+          handlersInstalled: process.listenerCount('SIGINT') > 0 && process.listenerCount('SIGTERM') > 0 }));
+        return iterator;
+      };`;
+    const child = spawn(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(observeStdin)}`,
+      '--import', 'tsx', 'src/cli/index.ts', 'fleet', 'staging-inventory-batch', '--stdin', '--ndjson'],
+    { stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
     let stdout = ''; let stderr = '';
     child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
     child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
-    // Hold stdin open until the CLI has loaded and installed its listeners.
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    expect(child.kill('SIGINT')).toBe(true);
-    child.stdin.end(envelope);
-    const [code, signal] = await new Promise<[number | null, NodeJS.Signals | null]>(resolve => child.on('exit', (c, s) => resolve([c, s])));
-    expect([code, signal, stderr]).toEqual([130, null, '']);
-    expect(stdout.trim().split('\n').map(line => JSON.parse(line))).toMatchObject([{ interrupted: true, signal: 'SIGINT', attempted: 0, remaining: 2 }]);
+    const exited = new Promise<[number | null, NodeJS.Signals | null]>((resolve, reject) => {
+      child.once('exit', (code, signal) => resolve([code, signal]));
+      child.once('error', reject);
+    });
+    let readinessTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const ready = await Promise.race([
+        new Promise(resolve => child.once('message', resolve)),
+        exited.then(() => { throw new Error('Source CLI exited before stdin intake'); }),
+        new Promise((_, reject) => { readinessTimer = setTimeout(() => reject(new Error('Source CLI did not begin stdin intake')), 5000); }),
+      ]);
+      clearTimeout(readinessTimer);
+      expect(ready).toEqual({ type: 'staging-stdin-ready', handlersInstalled: true });
+      expect(child.kill('SIGINT')).toBe(true);
+      child.stdin.end(envelope);
+      const [code, signal] = await exited;
+      expect([code, signal, stderr]).toEqual([130, null, '']);
+      expect(stdout.trim().split('\n').map(line => JSON.parse(line))).toMatchObject([{ interrupted: true, signal: 'SIGINT', attempted: 0, remaining: 2 }]);
+    } finally {
+      clearTimeout(readinessTimer);
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      await exited.catch(() => {});
+    }
   }, 10000);
 });
