@@ -30,3 +30,10 @@ it('does not count without a tag', async () => {
   expect((await probeRepoRelease(path, { run, identity: () => null })).commitsSinceTag).toBeNull();
   expect(run.mock.calls.some(([, args]) => args.includes('rev-list'))).toBe(false);
 });
+
+it('reports the tagged commit date and leaves invalid dates unknown', async () => {
+  const run: OpsRunner = async (_bin, args) => args.includes('describe') ? 'v1' : args.includes('log') ? '2026-11-01T12:00:00Z' : null;
+  expect((await probeRepoRelease(path, { run, identity: () => null })).tagCommittedAt).toBe('2026-11-01T12:00:00Z');
+  const invalid: OpsRunner = async (_bin, args) => args.includes('describe') ? 'v1' : 'invalid';
+  expect((await probeRepoRelease(path, { run: invalid, identity: () => null })).tagCommittedAt).toBeNull();
+});
