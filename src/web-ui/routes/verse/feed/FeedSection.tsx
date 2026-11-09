@@ -26,6 +26,7 @@ import { updateStatusQuery } from '../sections/update-status-queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { useActivity } from '../shell/useActivity.js';
 import { buildFeed, filterFeed, type FeedFilter, type FeedKind } from './feed-model.js';
+import { isDismissed, useFeedDismissals } from './feed-dismiss-store.js';
 import styles from './feed.module.css';
 
 const FILTERS: readonly { id: FeedFilter; label: string }[] = [
@@ -57,6 +58,8 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
   usePollWhileVisible(() => { refetchLeader(); refetchRuns(); refetchOwner(); refetchBus(); }, FEED_POLL_MS, { enabled: visible });
   const now = useNow(30_000);
   const [filter, setFilter] = useState<FeedFilter>('all');
+  const { map: dismissedMap, dismissItem, restoreItem } = useFeedDismissals();
+  const [showDismissed, setShowDismissed] = useState(false);
 
   const leaderFailed = Boolean(leader.error) || leader.data?.available === false;
   const runsFailed = Boolean(runs.error) && runs.data === undefined;
@@ -82,7 +85,9 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
     update: updateItems,
     bus: bus.data,
   }), [leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data]);
-  const shown = filterFeed(feed, filter);
+  const filtered = filterFeed(feed, filter);
+  const shown = filtered.filter(item => !isDismissed(item, dismissedMap));
+  const dismissed = filtered.filter(item => isDismissed(item, dismissedMap));
 
   return <div className={styles.root}>
     <section aria-labelledby="feed-running-title" className={styles.running}>
@@ -117,6 +122,17 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
           actions={<span className={styles.kind} data-kind={item.kind}>{item.label ?? KIND_LABEL[item.kind]}</span>}>
           {item.body ? <p className={styles.body}>{item.body}</p> : null}
           {item.href ? <a className={styles.link} href={item.href} target="_blank" rel="noopener noreferrer">Open</a> : null}
+          <button type="button" className={styles.dismiss} aria-label={`Dismiss ${item.title}`} onClick={() => dismissItem(item)}>Dismiss</button>
+        </Card>
+      </li>)}
+    </ol> : null}
+    {dismissed.length ? <div className={styles.dismissedBar}>
+      <span>{dismissed.length} dismissed</span> · <button type="button" className={styles.dismiss} aria-expanded={showDismissed} onClick={() => setShowDismissed(v => !v)}>{showDismissed ? 'Hide' : 'Show'}</button>
+    </div> : null}
+    {showDismissed && dismissed.length ? <ol className={styles.list} aria-label="Dismissed">
+      {dismissed.map(item => <li key={item.id} data-kind={item.kind} className={styles.dimmed}>
+        <Card title={item.title} caption={<time dateTime={item.at}>{formatRelative(item.at, now)}</time>}>
+          <button type="button" className={styles.dismiss} aria-label={`Restore ${item.title}`} onClick={() => restoreItem(item)}>Restore</button>
         </Card>
       </li>)}
     </ol> : null}
