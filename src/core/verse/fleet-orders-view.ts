@@ -40,7 +40,7 @@ function touched(row: OrderRow): number {
   return Number.isFinite(at) ? at : 0;
 }
 
-function toRow(item: IntentItem, nowMs: number): OrderRow {
+export function toOrderRow(item: IntentItem, nowMs: number): OrderRow {
   return {
     id: item.id,
     title: item.title.slice(0, ORDERS_MAX_TITLE),
@@ -57,7 +57,7 @@ export async function readOrdersView(opts: { root?: string; nowMs?: number } = {
   const observedAt = new Date(nowMs).toISOString();
   try {
     const { items, summary } = await listIntents({ ...opts, nowMs });
-    const rows = items.map(item => toRow(item, nowMs))
+    const rows = items.map(item => toOrderRow(item, nowMs))
       .sort((a, b) => group(a) - group(b) || touched(b) - touched(a))
       .slice(0, ORDERS_MAX_ITEMS);
     // The summary's staleItems carry titles too; cap them like the rows.

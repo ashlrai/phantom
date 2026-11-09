@@ -31,8 +31,32 @@ import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs
 import { enableCompileCache } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { beforeEach, vi } from 'vitest';
 import { useProcessHomeForTest } from '../../src/core/real-home.js';
+
+function childHomePreloadPath(): string {
+  const here = import.meta.url;
+  if (typeof here === 'string' && here.startsWith('file:')) {
+    return fileURLToPath(new URL('./child-process-home.cjs', here));
+  }
+  return join(process.cwd(), 'test', 'setup', 'child-process-home.cjs');
+}
+
+const CHILD_HOME_PRELOAD = childHomePreloadPath();
+
+/** Node children inherit this. The preload opts them into process home. */
+function retainChildHomePreload(): void {
+  const flag = `--require=${CHILD_HOME_PRELOAD}`;
+  const current = process.env.NODE_OPTIONS ?? '';
+  if (current.includes('child-process-home.cjs')) return;
+  process.env.NODE_OPTIONS = current.length === 0 ? flag : `${current} ${flag}`;
+}
+
+retainChildHomePreload();
+// beforeAll runs before setup beforeEach. Opt in at load so a fixture that
+// relocates HOME before the first test still keeps KILL and enrollment there.
+useProcessHomeForTest();
 
 const workerHomeKey = 'ASHLR_VITEST_WORKER_HOME';
 const workerPidKey = 'ASHLR_VITEST_WORKER_PID';
@@ -220,6 +244,8 @@ vi.mock('node:os', async (importOriginal) => {
 beforeEach(() => {
   // Fixtures relocate HOME and expect KILL, enrollment and pause to follow.
   // Production realHome() stays on the passwd entry; a test that must prove
-  // that calls useAccountHomeForTest().
+  // that calls useAccountHomeForTest(). Spawned Node children inherit the
+  // preload above; a test that cleared NODE_OPTIONS must not drop it.
+  retainChildHomePreload();
   useProcessHomeForTest();
 });
