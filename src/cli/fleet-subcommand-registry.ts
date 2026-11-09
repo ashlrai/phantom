@@ -269,6 +269,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'release-paced': () => import('./fleet-release-paced.js'),
   'release-retry-batch': () => import('./fleet-release-retry-batch.js'),
   'repo-rate': () => import('./fleet-repo-rate.js'),
+  'research-digest': () => import('./fleet-research-digest.js'),
   'reset-await': () => import('./fleet-reset-await.js'),
   'reset-follow': () => import('./fleet-reset-follow.js'),
   'reset-group-await': () => import('./fleet-reset-group-await.js'),

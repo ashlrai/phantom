@@ -257,27 +257,40 @@ def save_json(path, obj):
     os.replace(tmp, path)
 
 
-def read_rows(path):
-    """Read ledger rows, projecting reconciled outcomes into dispatcher vocabulary."""
+def parse_rows(path):
+    """Ledger rows as decoded dicts (no projection); unreadable lines are skipped."""
     rows = []
     try:
         with open(path) as f:
             for line in f:
                 try:
-                    row = json.loads(line)
-                    if (isinstance(row, dict) and row.get("source") == "metrics-outcomes-reconciler"
-                            and row.get("outcome", row.get("status")) in ("MERGED", "CLOSED")):
-                        job = row.get("jobId", row.get("job", row.get("id")))
-                        url = row.get("prUrl", row.get("pr"))
-                        if isinstance(job, str) and job and isinstance(url, str) and url:
-                            row = dict(row, event="outcome", job=job, url=url.rstrip("/"),
-                                       state=row.get("outcome", row.get("status")))
-                    rows.append(row)
+                    rows.append(json.loads(line))
                 except ValueError:
                     pass
     except OSError:
         pass
     return rows
+
+
+def project_row(row):
+    """One metrics-outcomes-reconciler row in dispatcher vocabulary, or the row unchanged."""
+    if (isinstance(row, dict) and row.get("source") == "metrics-outcomes-reconciler"
+            and row.get("outcome", row.get("status")) in ("MERGED", "CLOSED")):
+        job = row.get("jobId", row.get("job", row.get("id")))
+        url = row.get("prUrl", row.get("pr"))
+        if isinstance(job, str) and job and isinstance(url, str) and url:
+            return dict(row, event="outcome", job=job, url=url.rstrip("/"),
+                        state=row.get("outcome", row.get("status")))
+    return row
+
+
+def project_rows(rows):
+    return [project_row(row) for row in rows]
+
+
+def read_rows(path):
+    """Read ledger rows, projecting reconciled outcomes into dispatcher vocabulary."""
+    return project_rows(parse_rows(path))
 
 
 def main(argv=None):

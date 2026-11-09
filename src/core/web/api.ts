@@ -68,6 +68,7 @@ function canonForCompare(p: string): string {
 
 import type { AshlrConfig, DaemonState, ProposalStatus } from '../types.js';
 import { buildSnapshot, type DashboardSnapshotWithSourceQuality } from '../dashboard.js';
+import { currentThroughputLevel, noteThroughputSample } from '../daemon/count-preferences.js';
 import { loadEffectiveConfigSnapshot } from '../effective-config.js';
 import { listRuns, loadRun, runGoal } from '../run/orchestrator.js';
 import { listSwarms, loadSwarm } from '../swarm/store.js';
@@ -107,6 +108,8 @@ import { handleVerseApi, isVerseApiPath, verseSessionsDigest, verseSessionsSnaps
 import { handleVerseControlApi, isVerseControlPath } from '../verse/control-api.js';
 // GitHub, reachable from Verse (docs/VERSE-WORKSPACES.md §2) — also BEFORE handleVerseApi.
 import { handleVerseGithubApi, isVerseGithubPath } from '../verse/github-api.js';
+import { handleObserveApi, isObservePath } from '../verse/observe-api.js';
+import { handleGrowthApi, isGrowthPath } from '../verse/growth-api.js';
 // MCP + per-account CLI management (mounted BEFORE both — see handleApi).
 import { handleVerseMcpApi, isVerseMcpPath } from '../verse/mcp-control-api.js';
 // Desktop native-shell read API (GET /api/wb/v1/*).
@@ -1236,18 +1239,21 @@ async function handleDispatch(
   // Local-first budget ceilings — never elevated by caller input.
   const MAX_TOKENS_CEILING = 200_000;
   const MAX_STEPS_CEILING = 40;
-  const MAX_PARALLEL_CEILING = 4;
 
   const rawMaxTokens =
     typeof obj['maxTokens'] === 'number' ? obj['maxTokens'] : MAX_TOKENS_CEILING;
   const rawMaxSteps =
     typeof obj['maxSteps'] === 'number' ? obj['maxSteps'] : MAX_STEPS_CEILING;
+  const throughput = currentThroughputLevel();
   const rawParallel =
-    typeof obj['parallel'] === 'number' ? obj['parallel'] : 2;
+    typeof obj['parallel'] === 'number' ? obj['parallel'] : throughput.level;
 
   const maxTokens = Math.min(Math.max(1, Math.floor(rawMaxTokens)), MAX_TOKENS_CEILING);
   const maxSteps = Math.min(Math.max(1, Math.floor(rawMaxSteps)), MAX_STEPS_CEILING);
-  const parallel = Math.min(Math.max(1, Math.floor(rawParallel)), MAX_PARALLEL_CEILING);
+  const requestedParallel = Math.max(1, Math.floor(rawParallel));
+  const parallel = throughput.measuredLimit === null
+    ? Math.min(requestedParallel, throughput.level)
+    : Math.min(requestedParallel, throughput.measuredLimit);
 
   // Run goal (local-first, never cloud).
   try {
@@ -1262,6 +1268,7 @@ async function handleDispatch(
       json: true,
     });
 
+    noteThroughputSample({ saturated: false });
     sendJson(res, 200, {
       id: runState.id,
       status: runState.status,
@@ -1270,6 +1277,7 @@ async function handleDispatch(
       result: runState.result,
     });
   } catch (err) {
+    noteThroughputSample({ saturated: true });
     const msg = err instanceof Error ? err.message : String(err);
     send500(res, `run failed: ${msg}`);
   }
@@ -1934,6 +1942,21 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/verified-completion ──────────────────────────────
+    // Verified-completion-rate metric: completed tasks passing an
+    // independent outcome check (reconciled PR state) vs eligible claims,
+    // plus coordination failures (duplicates, false completions,
+    // unauthorized actions). Same bounded jobs.jsonl tail read as
+    // /api/fleet/activity; read-only, never throws on absent/degraded input.
+    if (path === '/api/fleet/verified-completion' && method === 'GET') {
+      const { readVerifiedCompletion } = await import('../fleet/agent-activity.js');
+      const rawHours = Number(getQueryParam(req.url ?? '', 'hours'));
+      sendJson(res, 200, await readVerifiedCompletion({
+        verifiedWindowMs: Number.isFinite(rawHours) && rawHours > 0 ? Math.min(rawHours, 168) * 3_600_000 : undefined,
+      }));
+      return true;
+    }
+
     // ── GET /api/fleet/job ───────────────────────────────────────────────
     // RQ-PHX-JOBDETAIL: single-job detail from the dispatchd runs dir —
     // state, lane/model provenance, publish outcome and a scrubbed bounded
@@ -2445,6 +2468,14 @@ export async function handleApi(
     // is no POST half, so no dispatch gate is needed here.
     if (isVerseGithubPath(path)) {
       return handleVerseGithubApi({ readSession: ctx.readSession }, req, res, path, method);
+    }
+
+    if (isObservePath(path)) {
+      return handleObserveApi(req, res, path, method);
+    }
+
+    if (isGrowthPath(path)) {
+      return handleGrowthApi(req, res, path, method);
     }
 
     // ── /api/verse/* (Ashlr Verse — src/core/verse/verse-api.ts) ────────────

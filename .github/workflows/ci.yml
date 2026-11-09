@@ -1091,7 +1091,14 @@ jobs:
           const masterPush = process.env.EVENT_NAME === 'push' && process.env.REF === 'refs/heads/master';
           const fast = process.env.EVENT_NAME === 'pull_request' || process.env.EVENT_NAME === 'merge_group' || masterPush;
           const release = jobs.classify.outputs?.release_gate === 'true';
-          if (release && (!['schedule', 'workflow_dispatch'].includes(process.env.EVENT_NAME) || process.env.REF !== 'refs/heads/master')) throw new Error('Invalid release event');
+          const masterRef = process.env.REF === 'refs/heads/master';
+          const taggedRef = /^refs\/tags\/v\d+\.\d+\.\d+$/.test(process.env.REF ?? '');
+          // A tag dispatch builds that exact commit. The half-hour schedule stays
+          // on master. A reusable tag push is not a release build.
+          if (release && !(
+            (process.env.EVENT_NAME === 'schedule' && masterRef) ||
+            (process.env.EVENT_NAME === 'workflow_dispatch' && (masterRef || taggedRef))
+          )) throw new Error('Invalid release event');
           const lanes = ['site', 'docs', ...full, 'release-build'];
           const selected = lane === 'full' ? full : [lane];
           // PR and merge queue: the independent quick check runs for every lane.
@@ -1166,7 +1173,7 @@ jobs:
   release-build:
     needs: [secret-shape, classify]
     name: Desktop release smoke
-    if: github.ref == 'refs/heads/master' && needs.classify.outputs.release_gate == 'true'
+    if: needs.classify.outputs.release_gate == 'true' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
     permissions:
       contents: read
       actions: read
@@ -1175,7 +1182,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 90
     steps:
-      - name: Checkout exact master
+      - name: Checkout exact release candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false

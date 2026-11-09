@@ -129,13 +129,88 @@ reproducible evidence and a linked issue in the existing ledger.
 ### Patch cadence and notes
 
 The existing Release PR workflow evaluates new green master commits every
-30 minutes. `RELEASE_CADENCE_MINUTES` sets the minimum interval (5–1440 minutes;
-values below 30 are bounded by the timer's polling interval). It requests a
-patch bump, then synchronizes README, desktop and registry version carriers
-and the dated changelog in that release PR. Its existing guarded merge route
-remains required. Auto-tag retries every 30 minutes and only creates the tag
-and draft after the exact commit's required checks succeed. Signed publication
-then makes the complete updater feed visible; a draft is not an update.
+30 minutes. `RELEASE_CADENCE_MINUTES` sets the requested interval, from 5 to
+1440 minutes. The continuous release train raises any value below 60 to 60,
+so a release is cut at most hourly. It requests a patch bump, then synchronizes
+README, desktop and registry version carriers and the dated changelog in that
+release PR. Auto-tag creates the tag and draft only after the exact commit's
+required checks succeed. Signed publication then makes the complete updater
+feed visible; a draft is not an update.
+
+## Continuous release train
+
+Standing approval, recorded verbatim:
+
+> Standing approval: Phantom may automatically cut, sign, notarize and publish releases from green master as often as hourly, using only the existing signing identity and the sanctioned release workflows (GitHub release, npm trusted publishing, update feed, docs and website), and may mark older unshipped drafts superseded, with no per-release approval from me. No new spend, no bypass of signing, notarization, attestation or secret gates, and KILL still stops it.
+
+The train is [`.github/workflows/release-train.yml`](../.github/workflows/release-train.yml).
+It does not replace signing, notarization, attestation, the secret-shape gate,
+or trusted publishing. It resumes the sanctioned jobs and records
+`phantom.release-train.v1` state for `phm release status --json`.
+
+What runs without a per-release approval:
+
+- A green `release-please` pull request is merged at most hourly, and only
+  when its version is the next patch, its head is `release-please--*`, and
+  GitHub Actions checks on that head are success. The merge uses the existing
+  release app token and has no admin flag.
+- `auto-tag.yml` still creates `vX.Y.Z` and the draft after required checks
+  on that commit.
+- A `workflow_dispatch` of `ci.yml` with `release_gate=true` and `--ref` set
+  to that tag builds that commit. Later master commits do not retarget it.
+  The half-hour schedule on master is unchanged.
+- When that build artifact exists, the train dispatches
+  `attest-ci-build.yml` and then `publish-canonical-npm.yml` with the exact
+  run, attempt, and artifact ids. The publisher's own admission still runs.
+- Older draft releases are patched with `Superseded by vX.Y.Z. This draft
+  stays unpublished.` Published releases are not edited and nothing is deleted.
+- README and the other version carriers are updated in the release commit by
+  the existing candidate sync before the tag exists.
+
+KILL fails closed. On a hosted runner the train proceeds only when the
+repository variable `PHANTOM_RELEASE_TRAIN` is `on`. Unset and `off` both
+stop it. `ashlr authority stop` and `ashlr fleet pause` arm `~/.ashlr/KILL`,
+create `~/.ashlr-runs/RELEASE_AUTORUN_OFF`, and best-effort set that variable
+to `off`. A failed variable write is logged and does not block the local stop.
+The Mac signer still stops when the OFF file exists. The npm publish job
+uses the same variable.
+
+Signing and notarization stay in `contrib/mac/release-autorun.sh` and the
+stock `release-sign.sh` wrapper. CI does not codesign and does not notarize.
+The wrapper picks up a successful attestation of a `v*` tag on its existing
+10 minute poll. The attestor commit must be master at attestation time and
+must still be an ancestor of master when the wrapper runs. A diverged
+attestor is not signed. If `~/.ashlr-runs/release-sign/keychain-allowed` is
+missing, the wrapper writes `NEEDS-MASON-<tag>` and waits. That file is the
+one-time unlock of the existing signing identity, not a per-release approval.
+
+`phm.dev` is not deployed from this repository. The host profile is
+`phantom-public-web` in `src/core/website/host-release.ts`: repository
+`ashlrai/phantom-secrets`, root `apps/web`, domain `phm.dev`. The train
+records that hook. `src/core/website/release-metadata.ts` is the existing
+task that refreshes `apps/web/src/lib/workbench-release.json` from public
+GitHub and npm facts after publication. A train state file does not mean the
+site was deployed.
+
+After publication, the train reads
+`https://github.com/ashlrai/phantom/releases/latest/download/latest.json`
+and fails when its `version` is not the semver it just published. A list of
+stocked feeds is chosen by highest semver. Creation time, list order, and a
+cached older asset do not win. Installed 3.30.24 must not be offered 3.29.3
+while 3.30.28 is stocked.
+
+`phm release status --json --file <phantom-release-state.json>` prints the
+uploaded train state. The same JSON is the `phantom-release-state` workflow
+artifact. Stage keys are `merge`, `tag`, `build`, `attest`, `sign`,
+`notarize`, `npm`, `feed`, `docs`, `website`, and `finalize`. `at` is an
+observed timestamp. `sinceMergeMs` is set only when both timestamps exist
+and are in order. Missing evidence stays null.
+
+On the fast path, the tagged build reuses the green push CI and the smoke
+phase budget is 5 minutes. Attestation's job timeout is 15 minutes. The Mac
+poll is 10 minutes. A cold desktop build still has the existing 90 minute
+ceiling, so a cold build can take longer than one hour. The train does not
+shorten that ceiling.
 
 Keep all contents of the original `ashlr-attested-…` artifact together in a
 private directory. In a clean checkout at the exact candidate commit, verify:
