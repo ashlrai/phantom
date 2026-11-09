@@ -26,7 +26,8 @@ describe('fleet MCP protocol', () => {
     expect(client.getServerCapabilities()).toEqual({ tools: {} });
     expect(client.getServerVersion()?.name).toBe('phantom-fleet');
     const { tools } = await client.listTools();
-    expect(tools.map(t => t.name)).toEqual([...FLEET_MCP_TOOL_NAMES]);
+    expect(tools.map(t => t.name)).toEqual(FLEET_MCP_TOOL_NAMES.flatMap(name =>
+      name === 'fleet_path_history' ? [name, 'fleet_path_cochanges'] : [name]));
     for (const tool of tools) {
       expect(tool.annotations).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
       expect(tool.inputSchema.additionalProperties).toBe(false);
