@@ -1,11 +1,11 @@
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
 
 export interface FleetEdgeEndpoint { address: string; provider: string | null }
-export interface FleetEdge { from: FleetEdgeEndpoint; to: FleetEdgeEndpoint; messages: number; lastAt: number }
+export interface FleetEdge { from: FleetEdgeEndpoint; to: FleetEdgeEndpoint; messages: number; messagesLastHour: number; lastAt: number }
 export interface FleetEdges { schema: 'fleet.edges.v1'; source: 'available' | 'missing' | 'unavailable'; edges: FleetEdge[] | null }
 
 /** Routing labels are claims, not authenticated identities. Never expose message bodies. */
-export function projectFleetEdges(rows: BusInboxReceipt[]): FleetEdge[] {
+export function projectFleetEdges(rows: BusInboxReceipt[], now = Date.now()): FleetEdge[] {
   const edges = new Map<string, FleetEdge>();
   const providers = new Map<string, Set<string>>();
   for (const { envelope } of rows) {
@@ -19,8 +19,9 @@ export function projectFleetEdges(rows: BusInboxReceipt[]): FleetEdge[] {
     const provider = providerFor(envelope.from);
     const key = JSON.stringify([envelope.from, envelope.to, provider]);
     const edge = edges.get(key);
-    if (edge) { edge.messages++; edge.lastAt = Math.max(edge.lastAt, receivedAt); }
-    else edges.set(key, { from: { address: envelope.from, provider }, to: { address: envelope.to, provider: providerFor(envelope.to) }, messages: 1, lastAt: receivedAt });
+    const recent = receivedAt > now - 3_600_000 && receivedAt <= now;
+    if (edge) { edge.messages++; if (recent) edge.messagesLastHour++; edge.lastAt = Math.max(edge.lastAt, receivedAt); }
+    else edges.set(key, { from: { address: envelope.from, provider }, to: { address: envelope.to, provider: providerFor(envelope.to) }, messages: 1, messagesLastHour: recent ? 1 : 0, lastAt: receivedAt });
   }
   return [...edges.values()].sort((a, b) => b.lastAt - a.lastAt || a.from.address.localeCompare(b.from.address));
 }
@@ -34,7 +35,7 @@ export function readFleetEdges(options: BusInboxOptions = {}): FleetEdges {
     const result = listBusInboxAfter(cursor, BUS_INBOX_MAX_READ, options);
     if (result.status !== 'ok') return { schema: 'fleet.edges.v1', source: 'unavailable', edges: null };
     rows.push(...result.messages);
-    if (result.messages.length < BUS_INBOX_MAX_READ || result.nextCursor <= cursor) return { schema: 'fleet.edges.v1', source, edges: projectFleetEdges(rows) };
+    if (result.messages.length < BUS_INBOX_MAX_READ || result.nextCursor <= cursor) return { schema: 'fleet.edges.v1', source, edges: projectFleetEdges(rows, options.now?.() ?? Date.now()) };
     cursor = result.nextCursor;
   }
   return { schema: 'fleet.edges.v1', source: 'unavailable', edges: null };

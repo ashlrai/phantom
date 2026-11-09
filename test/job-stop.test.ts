@@ -65,7 +65,10 @@ it('SIGKILLs the survivor after graceMs, never the pid that already exited', asy
   const pending: (() => void)[] = [];
   const timers = { set: (fn: () => void) => { pending.push(fn); return {}; } };
   const run = stopJob(JOB, { readers, kill, timers, graceMs: 8000, runsDir: dir });
-  for (let i = 0; i < 100 && pending.length === 0; i++) await new Promise((resolve) => setImmediate(resolve));
+  const deadline = Date.now() + 2_000;
+  while (pending.length === 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
   expect(pending).toHaveLength(1);
   expect(calls).toEqual([{ pid: 111, signal: 'SIGTERM' }, { pid: 222, signal: 'SIGTERM' }]);
   pending[0]!();
