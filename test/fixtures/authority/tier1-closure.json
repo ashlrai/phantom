@@ -474,6 +474,8 @@
     "src/core/fabric/gateway.ts",
     "src/core/fabric/production-velocity-pending.ts",
     "src/core/fabric/production-velocity.ts",
+    "src/core/fabric/readers/devin-usage-worker.ts",
+    "src/core/fabric/readers/devin-usage.ts",
     "src/core/fabric/resource-monitor.ts",
     "src/core/fabric/resource-view-store.ts",
     "src/core/fabric/resource-view.ts",
