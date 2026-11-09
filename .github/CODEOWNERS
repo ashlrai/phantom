@@ -369,6 +369,8 @@
 /test/execution-feedback-case.test.ts @masonwyatt23
 /test/execution-leases-310b.test.ts @masonwyatt23
 /test/external-skill-audit-trust-roots.test.ts @masonwyatt23
+/test/fable-orchestrator.test.ts @masonwyatt23
+/test/fable-world.test.ts @masonwyatt23
 /test/fixture-custody.test.ts @masonwyatt23
 /test/fixtures/eval/routing.ts @masonwyatt23
 /test/fixtures/fleet-graph/router-queue.md @masonwyatt23
