@@ -160,6 +160,25 @@ def logtail(lp, n=6000):
 def tokens(txt):
     m = re.findall(r"(?im)^tokens used\s*\n\s*([\d,]+)", txt)
     return int(m[-1].replace(",", "")) if m else None
+def claude_usage(txt):
+    # The result is cumulative; assistant message usage is per call and must not
+    # be added to it. Missing or malformed fields remain unknown independently.
+    result = None
+    for line in txt.splitlines():
+        try: row = json.loads(line)
+        except (ValueError, TypeError): continue
+        if isinstance(row, dict) and row.get("type") == "result" and isinstance(row.get("usage"), dict):
+            result = row["usage"]
+    def count(key):
+        value = result.get(key) if result is not None else None
+        return value if type(value) is int and 0 <= value <= 9007199254740991 else None
+    uncached, output = count("input_tokens"), count("output_tokens")
+    read, write = count("cache_read_input_tokens"), count("cache_creation_input_tokens")
+    inputs = [uncached, read, write]
+    total_in = sum(inputs) if all(v is not None for v in inputs) and sum(inputs) <= 9007199254740991 else None
+    total = total_in + output if total_in is not None and output is not None and total_in + output <= 9007199254740991 else None
+    return {"tokens_in": total_in, "tokens_out": output, "tokens_cache_read": read,
+            "tokens_cache_write": write, "tokens_total": total}
 def ev(msg):
     with open(EV, "a") as f: f.write("%s %s\n" % (TS, msg))
 def log(msg): print("%s %s" % (TS, msg), flush=True)
@@ -860,13 +879,14 @@ def reap_worktrees():
             drip_budget -= 1; open(DRIPLOG, "a").write("%f\n" % NOW)
         try:
             lp = "%s/%s.log" % (R, j); tl = logtail(lp, 20000)
+            usage = claude_usage(logtail(lp, 16 * 1024 * 1024)) if pool == "claude" else {"tokens_total": tokens(tl), "tokens_in": None, "tokens_out": None}
             nf, diff_lines, empty = job_diff_metrics(wt, b[0])
             wall_s = int(os.path.getmtime(lp) - os.path.getmtime(bp)) if os.path.exists(lp) else None
             try: bsize = reap_batch(j, wt, pool, wall_s)
             except Exception as e: bsize = None; log("batch reap err %s %s" % (j, type(e).__name__))
             if not attempt.get("finished") and not os.path.exists(RUN + "/" + j + ".timeout"):
                 metric({"event": "finish", "job": j, "lane": pool, "wall_s": wall_s, "batch_size": bsize,
-                    "exit_code": _rc(j), "tokens_total": tokens(tl), "tokens_in": None, "tokens_out": None, "cost": None,
+                    "exit_code": _rc(j), **usage, "cost": None,
                     "diff_files": nf, "diff_lines": diff_lines, "empty": empty,
                     "failure_class": devin_failure(_rc(j), empty, tl) if pool == "devin" else None,
                     "pool_error": next((c for c, rx in CLS if any(rx.search(t) for t in errlines(tl.splitlines()[-30:]))), None)})
