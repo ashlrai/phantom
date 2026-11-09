@@ -17,6 +17,15 @@ const accounts = { sampledAt: '2026-10-31T12:00:00Z', refreshing: false, account
   windows: [{ id: 'weekly', label: 'Weekly', usedPercent: 92, resetsAt: null, resetDescription: 'resets Thu', limitReached: false, measured: true }] }] };
 const bus = { v: 1, status: 'ok', nextCursor: 2, messages: [{ cursor: 1, receivedAt: 1, envelope: { id: 'm1', from: 'claude-1', to: 'codex-2', priority: 'P2', ttl: 1000, body: { text: 'handing off' } } }] };
 
+const roster = {
+  schema: 'agent-roster.v1',
+  sessions: [{ provider: 'devin-cloud', sessionId: 'devin-cloud-1', title: 'Cloud task', state: 'running', ownership: 'org-1', claims: [{ id: 'devin-cloud-1' }], lastActivity: null, blockers: [] }],
+  sources: [
+    { source: 'devin-cloud', availability: 'known', error: null, sessions: [{}] },
+    { source: 'devin-desktop', availability: 'unknown', error: 'No official command lists Devin Desktop sessions.', sessions: [] },
+  ],
+};
+
 function stub(map: Record<string, unknown>) {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
@@ -28,7 +37,7 @@ beforeEach(() => { evictAll(); openPane.mockClear(); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 it('renders every region from real snapshot data and opens a session log', async () => {
-  stub({ '/api/verse/fleet/runs': runs(), '/api/verse/accounts': accounts, '/api/verse/agent-bus': bus });
+  stub({ '/api/verse/fleet/runs': runs(), '/api/verse/accounts': accounts, '/api/verse/agent-bus': bus, '/api/verse/fleet/agent-roster': roster });
   render(<ObservePane {...props} />);
   const sessions = await screen.findByRole('region', { name: 'Sessions' });
   expect(within(sessions).getByText('4,200')).toBeInTheDocument();
@@ -37,6 +46,9 @@ it('renders every region from real snapshot data and opens a session log', async
   expect(within(screen.getByRole('region', { name: 'Merge ticker' })).getByRole('link', { name: 'a/b #9' })).toHaveAttribute('href', 'https://github.com/a/b/pull/9');
   expect(await within(screen.getByRole('region', { name: 'Agent comms' })).findByText(/handing off/)).toBeInTheDocument();
   expect(within(screen.getByRole('region', { name: 'Incidents' })).getByText('devin held: quota')).toBeInTheDocument();
+  const agents = await screen.findByRole('region', { name: 'All agents' });
+  expect(within(agents).getByText('devin-cloud-1')).toBeInTheDocument();
+  expect(within(agents).getByText(/devin-desktop: unknown/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Open log for job-alpha' }));
   expect(openPane).toHaveBeenCalledWith('worker-log');
 });

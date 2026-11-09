@@ -105,6 +105,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "safety": "read",
     },
     {
+      "name": "phm_agent_roster",
+      "safety": "read",
+    },
+    {
       "name": "phm_team_register",
       "safety": "append",
     },
@@ -1269,6 +1273,14 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "phm_task_context",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "phm_agent_roster",
   },
   {
     "inputSchema": {

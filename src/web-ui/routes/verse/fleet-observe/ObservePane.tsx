@@ -11,7 +11,9 @@
  */
 import { useMemo } from 'react';
 import { SkeletonLine, Tag } from '../../../components/primitives/index.js';
+import { apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
+import type { QueryDef } from '../../../data/queries.js';
 import { formatCount, formatDuration, formatRelative } from '../autonomy/format.js';
 import { agentBusFeedQuery } from '../fleet-events/agent-bus-feed-query.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
@@ -24,21 +26,31 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { usedPercentText } from '../percent-text.js';
 import { verseAccountsQuery } from '../usage/usage-queries.js';
 import { projectAccountsSnapshot } from '../usage/usage-contract.js';
-import { heldIncidents, readComms, readGauges, readLanes, readMerges, readSessions } from './observe-model.js';
+import { VERSE_AGENT_ROSTER_PATH } from '../../../../core/verse/agent-roster-api.js';
+import { heldIncidents, readComms, readGauges, readLanes, readMerges, readRoster, readSessions } from './observe-model.js';
 import styles from './fleet-observe.module.css';
 
 const POLL_MS = 5_000;
+const ROSTER_POLL_MS = 20_000;
 const ACCOUNTS_POLL_MS = 60_000;
+
+const agentRosterQuery: QueryDef<unknown> = {
+  key: 'verse-fleet-agent-roster',
+  fetch: (signal) => apiGet<unknown>(VERSE_AGENT_ROSTER_PATH, signal),
+};
 
 export function ObservePane({ visible, host }: PaneProps) {
   const runs = useQuery(fleetUsageRunsQuery, { enabled: visible, freshMs: 0 });
   const accounts = useQuery(verseAccountsQuery, { enabled: visible, freshMs: 0 });
   const bus = useQuery(agentBusFeedQuery, { enabled: visible, freshMs: 0 });
+  const rosterQuery = useQuery(agentRosterQuery, { enabled: visible, freshMs: 0 });
   const refetchRuns = useRefetch(fleetUsageRunsQuery);
   const refetchAccounts = useRefetch(verseAccountsQuery);
   const refetchBus = useRefetch(agentBusFeedQuery);
+  const refetchRoster = useRefetch(agentRosterQuery);
   usePollWhileVisible(refetchRuns, POLL_MS, { enabled: visible });
   usePollWhileVisible(refetchBus, POLL_MS, { enabled: visible });
+  usePollWhileVisible(refetchRoster, ROSTER_POLL_MS, { enabled: visible });
   usePollWhileVisible(refetchAccounts, ACCOUNTS_POLL_MS, { enabled: visible });
 
   const snapshot = runs.data;
@@ -51,6 +63,7 @@ export function ObservePane({ visible, host }: PaneProps) {
     return readGauges(rowsFromAccounts(read?.available ? projectAccountsSnapshot(read.raw) : null));
   }, [accounts.data]);
   const { comms, incidents } = useMemo(() => readComms(bus.data), [bus.data]);
+  const roster = useMemo(() => rosterQuery.data === undefined ? null : readRoster(rosterQuery.data), [rosterQuery.data]);
   const generatedAt = snapshot && typeof snapshot === 'object' && 'generatedAt' in snapshot && typeof snapshot.generatedAt === 'string' ? snapshot.generatedAt : null;
   const held = heldIncidents(lanes);
 
@@ -82,6 +95,25 @@ export function ObservePane({ visible, host }: PaneProps) {
           </tr>;
         })}</tbody>
       </table>}
+    </section>
+
+    <section className={styles.region} aria-label="All agents">
+      <h3 className={styles.title}>All agents</h3>
+      {roster === null ? <p className={styles.quiet}>{rosterQuery.status === 'error' || rosterQuery.status === 'success' ? 'The agent roster could not be read.' : 'Reading the agent roster.'}</p> : <>
+        {roster.rows.length === 0 ? <p className={styles.quiet}>No known sessions.</p> : <table className={styles.table}>
+          <thead><tr><th>Provider</th><th>Session</th><th>State</th><th>Owner</th><th className={styles.num}>Claims</th><th>Blockers</th></tr></thead>
+          <tbody>{roster.rows.map((row) => <tr key={`${row.provider}:${row.sessionId}`}>
+            <td>{row.provider}</td>
+            <td>{row.sessionId}{row.title ? <span className={styles.meta}>{row.title}</span> : null}</td>
+            <td>{row.state}</td>
+            <td>{row.ownership ?? 'unknown'}</td>
+            <td className={styles.num}>{row.claims}</td>
+            <td>{row.blockers || 'none'}</td>
+          </tr>)}</tbody>
+        </table>}
+        <ul className={styles.list}>{roster.sources.filter((source) => source.availability === 'unknown').map((source) =>
+          <li key={source.source} className={styles.row}><span className={styles.text}>{source.source}: unknown. {source.error ?? 'reason unknown'}</span></li>)}</ul>
+      </>}
     </section>
 
     <section className={styles.region} aria-label="Quota">

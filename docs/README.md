@@ -235,6 +235,7 @@ canonical release guide for required hosted qualification and publication.
 - [Agent network channels](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-NETWORK-CHANNELS.md)
 - [Group chat rooms, topics, subscriptions, and presence](https://github.com/ashlrai/phantom/blob/master/docs/GROUP-CHAT.md)
 - [Durable agent bus: read, write, envelope, and conventions](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-BUS.md)
+- [Agent roster](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-ROSTER.md)
 - [ASHLR Agentic Inference Fabric — Definitive Architecture Specification](https://github.com/ashlrai/phantom/blob/master/docs/SPEC-INFERENCE-FABRIC.md)
 - [Agent OS Doctrine](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-OS-DOCTRINE.md)
 - [Agent OS Observation Sandbox V1](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-OS-OBSERVATION-SANDBOX-V1.md)

@@ -60,6 +60,7 @@ or control apps.
 
 | Tool | Description |
 | --- | --- |
+| `phm_agent_roster` | Read the unified live session roster across Phantom jobs, Devin cloud, Devin Desktop, Codex, Claude, Cursor, Grok, Ollama and oMLX. Unknown sources stay unknown. Read-only; prints no secrets. |
 | `phm_proactive_agents_list` | List personal-agent profiles and readiness. Profiles do not verify adapters or authorize spending. |
 | `phm_proactive_agents_create` | Save private agent identity, capabilities and assignment preferences. Does not connect an adapter or authorize dispatch or spending. |
 | `phm_proactive_agents_update` | Edit agent metadata using patch.expectedVersion from a fresh read. Identity and connection verification cannot change. |

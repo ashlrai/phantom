@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import type { UsageRow } from '../fleet-usage/usage-pane-model.js';
-import { heldIncidents, readComms, readGauges, readLanes, readMerges, readSessions } from './observe-model.js';
+import { heldIncidents, readComms, readGauges, readLanes, readMerges, readRoster, readSessions } from './observe-model.js';
 
 const runs = {
   lanes: [
@@ -62,4 +62,15 @@ it('splits bus traffic into comms and CI incidents', () => {
 
 it('reports held lanes as incidents with their own reason', () => {
   expect(heldIncidents(readLanes(runs))).toEqual(['devin held: quota']);
+});
+
+it('reads an agent roster feed and rejects a payload that is not the schema', () => {
+  const view = readRoster({
+    schema: 'agent-roster.v1',
+    sessions: [{ provider: 'devin-cloud', sessionId: 'devin-1', title: 'Ship', state: 'running', ownership: 'org-1', claims: [{}], lastActivity: null, blockers: ['ci'] }],
+    sources: [{ source: 'devin-desktop', availability: 'unknown', error: 'no desktop list', sessions: [] }],
+  });
+  expect(view?.rows).toEqual([{ provider: 'devin-cloud', sessionId: 'devin-1', title: 'Ship', state: 'running', ownership: 'org-1', claims: 1, lastActivity: null, blockers: 'ci' }]);
+  expect(view?.sources[0]).toMatchObject({ source: 'devin-desktop', availability: 'unknown' });
+  expect(readRoster({ schema: 'other' })).toBeNull();
 });
