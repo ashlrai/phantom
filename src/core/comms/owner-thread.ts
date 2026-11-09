@@ -8,7 +8,7 @@
  * KILL and the comms pause halt every adapter before a transport is called.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { lstatSync } from 'node:fs';
+import { linkSync, lstatSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkSendPolicy } from '../agents/channel-policy.js';
 import { appendBusInbox } from '../fleet/bus-inbox.js';
@@ -20,6 +20,7 @@ import { isPaused } from './pause.js';
 import { killSwitchOn } from '../sandbox/policy.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
+import { fsyncDirectory } from '../util/durability.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { ensurePrivateDirectory } from '../verse/preferences.js';
 import {
@@ -65,10 +66,13 @@ interface ThreadState {
   threadId: typeof OWNER_THREAD_ID;
   messages: OwnerThreadMessage[];
   deliveries: Record<string, 'sent'>;
+  base?: number;
+  archivedKeys?: string[];
 }
 
 export interface OwnerThreadOptions {
   runsDir: string;
+  capacity?: { messages: number; bytes: number };
   busRoot?: string;
   now?: () => number;
   settings: OwnerThreadSettings;
@@ -167,16 +171,70 @@ function readState(options: OwnerThreadOptions): ThreadState {
       !parsed.deliveries || typeof parsed.deliveries !== 'object' || Array.isArray(parsed.deliveries)) {
     throw new Error('Owner thread unavailable');
   }
+  const base = parsed.base ?? 0;
+  if (!Number.isSafeInteger(base) || base < 0 || !Number.isSafeInteger(base + parsed.messages.length) ||
+      (parsed.archivedKeys !== undefined && (!Array.isArray(parsed.archivedKeys) || parsed.archivedKeys.length > 5000 ||
+        parsed.archivedKeys.some(key => typeof key !== 'string' || !/^[a-f0-9]{16}$/.test(key))))) {
+    throw new Error('Owner thread unavailable');
+  }
   parsed.messages.forEach((message, index) => {
-    if (!validMessage(message, index + 1)) throw new Error('Owner thread unavailable');
+    if (!validMessage(message, base + index + 1)) throw new Error('Owner thread unavailable');
   });
   return parsed;
+}
+
+function capacity(options: OwnerThreadOptions): { messages: number; bytes: number } {
+  const value = options.capacity;
+  if (!value) return { messages: MAX_MESSAGES, bytes: MAX_BYTES };
+  if (!Number.isSafeInteger(value.messages) || value.messages < 2 || value.messages > MAX_MESSAGES ||
+      !Number.isSafeInteger(value.bytes) || value.bytes < 2 || value.bytes > MAX_BYTES) throw new Error('Invalid owner thread capacity');
+  return value;
+}
+
+function keyDigest(key: string): string {
+  return createHash('sha256').update(key).digest('hex').slice(0, 16);
+}
+
+function rotate(options: OwnerThreadOptions, state: ThreadState): void {
+  const cap = capacity(options);
+  const size = () => Buffer.byteLength(JSON.stringify(state));
+  if (state.messages.length <= cap.messages && size() <= cap.bytes) return;
+  const archived: OwnerThreadMessage[] = [];
+  while (state.messages.length > Math.floor(cap.messages / 2) || size() > Math.floor(cap.bytes / 2)) {
+    const message = state.messages.shift();
+    if (!message) throw new Error('Owner thread full');
+    archived.push(message);
+    state.base = (state.base ?? 0) + 1;
+    state.archivedKeys = [...(state.archivedKeys ?? []), keyDigest(message.idempotencyKey)].slice(-5000);
+    if (message.direction === 'outbound') {
+      for (const key of Object.keys(state.deliveries)) {
+        if (key.slice(0, key.lastIndexOf(':')) === message.idempotencyKey) delete state.deliveries[key];
+      }
+    }
+  }
+  const directory = threadDir(options);
+  const target = join(directory, `owner-thread-archive-${archived[0]!.seq}-${archived[archived.length - 1]!.seq}.json`);
+  const text = JSON.stringify({ v: 1, threadId: OWNER_THREAD_ID, messages: archived });
+  try {
+    lstatSync(target);
+    const existing = readStableRegularFile(target, { anchorPath: directory, maxFileBytes: MAX_BYTES * 2, remainingBytes: MAX_BYTES * 2 });
+    if (!existing.ok || existing.text !== text) throw new Error('Owner thread archive conflict');
+    return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  const staged = join(directory, `.${randomUUID()}.archive`);
+  writePrivateFileAtomically(join(directory, `.${randomUUID()}.tmp`), staged, text, {
+    anchorPath: directory, label: 'Owner thread archive',
+  });
+  try { linkSync(staged, target); fsyncDirectory(directory); } finally { unlinkSync(staged); }
 }
 
 function writeState(options: OwnerThreadOptions, state: ThreadState): void {
   const directory = threadDir(options);
   const text = JSON.stringify(state);
-  if (state.messages.length > MAX_MESSAGES || Buffer.byteLength(text) > MAX_BYTES) throw new Error('Owner thread full');
+  const cap = capacity(options);
+  if (state.messages.length > cap.messages || Buffer.byteLength(text) > cap.bytes) throw new Error('Owner thread full');
   writePrivateFileAtomically(join(directory, `.${randomUUID()}.tmp`), join(directory, 'owner-thread.json'), text, {
     anchorPath: directory, label: 'Owner thread',
   });
@@ -191,6 +249,7 @@ async function transaction<T>(options: OwnerThreadOptions, work: (state: ThreadS
   try {
     const state = readState(options);
     const result = await work(state);
+    rotate(options, state);
     writeState(options, state);
     return result;
   } finally {
@@ -221,7 +280,8 @@ function mirror(options: OwnerThreadOptions, message: OwnerThreadMessage): void 
 }
 
 function appendMessage(state: ThreadState, message: Omit<OwnerThreadMessage, 'seq' | 'id'>): OwnerThreadMessage {
-  const seq = state.messages.length + 1;
+  const seq = (state.base ?? 0) + state.messages.length + 1;
+  if (!Number.isSafeInteger(seq)) throw new Error('Owner thread full');
   const stored: OwnerThreadMessage = { ...message, seq, id: `m${seq}` };
   state.messages.push(stored);
   return stored;
@@ -244,6 +304,7 @@ export async function acceptOwnerInbound(input: OwnerInboundInput, options: Owne
   if (!Number.isSafeInteger(input.at) || input.at < 0) return { status: 'refused', reason: 'Owner message is invalid.' };
   try {
     return await transaction(options, async state => {
+      if (state.archivedKeys?.includes(keyDigest(input.idempotencyKey))) return { status: 'duplicate' as const, idempotencyKey: input.idempotencyKey };
       const existing = state.messages.find(message => message.idempotencyKey === input.idempotencyKey);
       if (existing) return { status: 'duplicate' as const, seq: existing.seq, idempotencyKey: existing.idempotencyKey };
       const receipt = await mailboxFor(options).accept({
@@ -280,12 +341,16 @@ export async function sendOwnerReply(input: OwnerReplyInput, options: OwnerThrea
   }
   try {
     return await transaction(options, async state => {
+      if (input.idempotencyKey && state.archivedKeys?.includes(keyDigest(input.idempotencyKey))) {
+        return { status: 'duplicate' as const, idempotencyKey: input.idempotencyKey };
+      }
       const inbound = input.replyTo
         ? state.messages.find(message => message.direction === 'inbound' && message.idempotencyKey === input.replyTo)
         : [...state.messages].reverse().find(message => message.direction === 'inbound');
       if (!inbound) return { status: 'refused' as const, reason: 'No owner message to answer.' };
       const key = replyKey(input, inbound.idempotencyKey, text);
       if (!KEY.test(key)) return { status: 'refused' as const, reason: 'Reply identity is invalid.' };
+      if (state.archivedKeys?.includes(keyDigest(key))) return { status: 'duplicate' as const, idempotencyKey: key };
       const prior = state.messages.find(message => message.direction === 'outbound' && message.idempotencyKey === key);
       if (prior && prior.text !== text) return { status: 'refused' as const, reason: 'A different reply already owns this identity.' };
       const destinations = fanoutChannels(inbound.channel);
@@ -377,7 +442,7 @@ export function readOwnerCommsStatus(options: OwnerThreadOptions): OwnerCommsSta
   const kill = halted(options);
   const hold = paused(options);
   let messages = 0;
-  try { messages = readState(options).messages.length; } catch { messages = 0; }
+  try { const state = readState(options); messages = (state.base ?? 0) + state.messages.length; } catch { messages = 0; }
   return {
     schema: 'comms.owner-thread.status.v1',
     claimKey: OWNER_THREAD_CLAIM_KEY,
