@@ -55,6 +55,7 @@ import {
   previewText,
   type PendingMessage,
 } from './thread-model.js';
+import { answerStates } from './answer-state.js';
 import { ThreadRows, type ThreadContext } from './ThreadItems.js';
 import type { QuestionFormStore } from './LeaderQuestionForm.js';
 const TypedQuestionForm = lazy(() => import('./LeaderQuestionForm.js'));
@@ -150,6 +151,7 @@ export function LeaderConversation({ leader, actions, dormant }: LeaderConversat
   const messages = useMemo(() => entries.flatMap((e) => (e.type === 'message' ? [e.message] : [])), [entries]);
   const byId = useMemo(() => new Map(messages.map((m) => [m.id, m])), [messages]);
   const answered = useMemo(() => answeredQuestions(messages), [messages]);
+  const states = useMemo(() => answerStates(messages, now), [messages, now]);
   const rows = useMemo(() => groupThread(entries, now), [entries, now]);
   const thinking = awaitingReply(entries, awaiting, now);
 
@@ -381,6 +383,7 @@ export function LeaderConversation({ leader, actions, dormant }: LeaderConversat
     leader: leader?.value ?? null,
     actions,
     answered,
+    answerStates: states,
     byId,
     answering,
     focusQuestionId,

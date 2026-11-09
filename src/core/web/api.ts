@@ -1914,6 +1914,13 @@ export async function handleApi(
       return true;
     }
 
+    if (path === '/api/fleet/empty-jobs' && method === 'GET') {
+      const { readEmptyJobs } = await import('../fleet/empty-jobs.js');
+      const report = await readEmptyJobs();
+      sendJson(res, report ? 200 : 503, report ?? { error: 'Jobs ledger is unreadable.' });
+      return true;
+    }
+
     // ── GET /api/fleet/lanes ─────────────────────────────────────────────
     // RQ-PHANTOM-ENG-CONSOLE: per-lane engineering console projection —
     // credit left, queue depth, live jobs and merges/hour per router lane,
