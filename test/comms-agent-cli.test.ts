@@ -36,7 +36,7 @@ describe('phm comms-agent', () => {
     expect(report.grokRequired).toBe(false);
     expect(report.lane === null || report.lane === 'claude').toBe(true);
     expect(report.lane).not.toBe('grok');
-    expect(report.sends.map(send => send.status)).toEqual(['drafted']);
+    expect(report.sends).toEqual([expect.objectContaining({ status: 'drafted', reason: expect.stringContaining('standing approval') })]);
     run.restore();
 
     const drafts = capture();

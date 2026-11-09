@@ -16,7 +16,9 @@ the caller supplies. Scraping is refused.
 The policy is code, not prompt text. A prompt cannot approve a recipient.
 
 - A send requires an owner standing approval for that exact transport and
-  recipient (`standing-approvals.json` in the Comms directory).
+  recipient. The file is `~/.ashlr/comms-agent/standing-approvals.json`.
+  `--dir` and `ASHLR_RUNS_DIR` do not select it. The file must be a regular
+  file owned by the current user, mode 0600, and not a symlink.
 - Everyone else, including a novel recipient, becomes a draft for the owner.
   Email drafts are also copied into `phm drafts` so the desktop drafts card
   can show them. Every draft is recorded on the local owner thread.
@@ -39,9 +41,9 @@ than picking one. `--dir` selects an isolated runs directory.
 MCP tools: `ashlr_comms_agent_status`, `ashlr_comms_agent_drafts`, and
 `ashlr_comms_agent_run`.
 
-Records live under `~/.ashlr-runs/comms-agent/` with mode 0600. The inbox is
-`inbox.json`. Bulk and bot messages move to `archive.jsonl` and stay readable.
-Standing approvals are `standing-approvals.json`:
+The inbox, archive and send log live under `~/.ashlr-runs/comms-agent/`
+(or `--dir`). Those files must not be symlinks. The inbox is rewritten
+atomically. Standing approvals stay at the fixed owner path:
 
 ```json
 { "owners": ["you@example.com"], "approvals": [{ "transport": "email", "recipient": "known@example.com" }] }

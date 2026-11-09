@@ -19,7 +19,7 @@ function emit(json: boolean, value: unknown): void {
 
 function publicError(error: unknown): string {
   const message = error instanceof Error ? error.message : '';
-  if (message.startsWith('Inbox file') || message.startsWith('Comms agent directory')) return message;
+  if (message.startsWith('Inbox file') || message.startsWith('Comms agent directory') || message === 'Refusing a symlink.' || message === 'Approval overrides are refused.') return message;
   return 'Comms agent run failed.';
 }
 

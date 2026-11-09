@@ -7,6 +7,7 @@
 import { createHash } from 'node:crypto';
 import { CHANNEL_IDS, type ChannelAdapter, type ChannelId, type DeliverResult } from '../agents/channel-policy.js';
 import { getChannelAdapter, listChannelRegistry } from '../agents/channel-registry.js';
+import { readLocalSendPolicy } from '../agents/send-gate.js';
 import { createDraft } from '../cos/drafts.js';
 import { COMMS_AGENT_ROLE } from './role.js';
 import {
@@ -15,8 +16,8 @@ import {
 } from './policy.js';
 import { routeCommsLane } from './route.js';
 import {
-  appendArchive, appendDraft, appendOwnerNotice, appendSendLog, listDrafts, readInbox, readOwnerConfig, readSendLog, writeInbox,
-  type CommsDraft,
+  appendArchive, appendDraft, appendOwnerNotice, appendSendLog, listDrafts, readInbox, readOwnerApprovals, readSendLog, writeInbox,
+  type CommsDraft, type OwnerApprovals,
 } from './store.js';
 import { triageInbox, type InboxMessage } from './triage.js';
 
@@ -31,8 +32,15 @@ export interface CommsRunOptions {
   now?: () => string;
   kill?: () => KillState;
   paused?: () => boolean;
+  /**
+   * `injected` is the test seam. CLI and MCP leave this unset, which reads only
+   * the fixed owner file and refuses an approvals or owners override.
+   */
+  approvalsSource?: 'owner-file' | 'injected';
   approvals?: readonly StandingApproval[];
   owners?: readonly string[];
+  /** Team identities used to label an envelope. Unset reads the owner policy file. */
+  teamIdentities?: readonly { channel: string; id: string }[];
   deliver?: (attempt: SendAttempt) => Promise<DeliverResult>;
   adapters?: Partial<Record<ChannelId, ChannelAdapter>>;
   linkedin?: LinkedInConnector;
@@ -49,7 +57,7 @@ export interface CommsRunReport {
   laneReason: string;
   grokRequired: false;
   triage: { kept: number; archived: number; drafted: number; deleted: 0 };
-  sends: Array<{ transport: CommsTransport; recipient: string; status: DeliverResult['status'] }>;
+  sends: Array<{ transport: CommsTransport; recipient: string; status: DeliverResult['status']; reason: string }>;
 }
 
 const EMAIL = /^[^\s@,;<>]+@[^\s@,;<>]+$/;
@@ -58,7 +66,13 @@ function isChannelId(value: string): value is ChannelId {
   return (CHANNEL_IDS as readonly string[]).includes(value);
 }
 
-function envelope(attempt: SendAttempt, channel: ChannelId) {
+/** True when the recipient is not an explicit team identity on that channel. */
+export function envelopeExternal(transport: string, recipient: string, team: readonly { channel: string; id: string }[]): boolean {
+  const id = recipient.trim();
+  return !team.some(member => member.channel === transport && member.id === id);
+}
+
+function envelope(attempt: SendAttempt, channel: ChannelId, team: readonly { channel: string; id: string }[]) {
   return {
     id: `comms-${createHash('sha256').update(`${channel}\n${attempt.recipient}\n${attempt.text}`).digest('hex').slice(0, 32)}`,
     from: 'comms',
@@ -69,9 +83,15 @@ function envelope(attempt: SendAttempt, channel: ChannelId) {
     channel,
     channel_ref: 'comms-agent',
     sender: { agent_id: 'comms', vendor: 'phantom', human: false, team: true },
-    external: false,
+    external: envelopeExternal(channel, attempt.recipient, team),
     origin_bridge: 'comms-agent',
   };
+}
+
+function teamFrom(options: CommsRunOptions): readonly { channel: string; id: string }[] {
+  if (options.teamIdentities !== undefined) return options.teamIdentities;
+  try { return readLocalSendPolicy().teamIdentities; }
+  catch { return []; }
 }
 
 export function defaultDeliver(options: CommsRunOptions): (attempt: SendAttempt) => Promise<DeliverResult> {
@@ -87,7 +107,7 @@ export function defaultDeliver(options: CommsRunOptions): (attempt: SendAttempt)
     if (!isChannelId(attempt.transport)) return { status: 'drafted', reason: 'No channel adapter is available.' };
     const adapter = options.adapters?.[attempt.transport] ?? getChannelAdapter(attempt.transport);
     if (!adapter || adapter.id !== attempt.transport) return { status: 'drafted', reason: 'No channel adapter is available.' };
-    return adapter.deliver(envelope(attempt, attempt.transport));
+    return adapter.deliver(envelope(attempt, attempt.transport, teamFrom(options)));
   };
 }
 
@@ -122,19 +142,49 @@ async function rememberDraft(runsDir: string, attempt: SendAttempt, at: string, 
   }
 }
 
+function gate(options: CommsRunOptions): { kill: KillState; paused: boolean } {
+  return {
+    kill: (options.kill ?? readKillState)(),
+    paused: (options.paused ?? readPauseState)(),
+  };
+}
+
+async function approvalsFor(options: CommsRunOptions): Promise<OwnerApprovals | DeliverResult> {
+  if ((options.approvalsSource ?? 'owner-file') !== 'injected') {
+    if (options.approvals !== undefined || options.owners !== undefined) {
+      return { status: 'refused', reason: 'Approval overrides are refused.' };
+    }
+    return readOwnerApprovals();
+  }
+  return { approvals: [...(options.approvals ?? [])], owners: [...(options.owners ?? [])], accepted: true, reason: 'ok' };
+}
+
 export async function executeSend(
   attempt: SendAttempt,
   options: CommsRunOptions & { messageId?: string },
 ): Promise<DeliverResult> {
-  const decision = decideSend(attempt, {
-    kill: (options.kill ?? readKillState)(),
-    paused: (options.paused ?? readPauseState)(),
-    approvals: options.approvals ?? (await readOwnerConfig(options.runsDir)).approvals,
-  });
+  const loaded = await approvalsFor(options);
+  if ('status' in loaded) return loaded;
+  if (!loaded.accepted && loaded.reason !== 'missing' && loaded.reason !== 'malformed') {
+    return { status: 'refused', reason: 'Standing approvals file is not a private owner file.' };
+  }
   const at = (options.now ?? (() => new Date().toISOString()))();
+  const decision = decideSend(attempt, { ...gate(options), approvals: loaded.approvals });
   if (decision.status !== 'sent') {
     if (decision.status === 'drafted') await rememberDraft(options.runsDir, attempt, at, options.messageId ?? attempt.recipient);
     return decision;
+  }
+  const freshGate = gate(options);
+  if (freshGate.kill !== 'inactive') return { status: 'refused', reason: 'KILL halts all sends.' };
+  if (freshGate.paused) return { status: 'refused', reason: 'Communications are paused.' };
+  const freshApprovals = (options.approvalsSource ?? 'owner-file') === 'injected' ? loaded : await readOwnerApprovals();
+  if ('accepted' in freshApprovals && !freshApprovals.accepted && freshApprovals.reason !== 'missing' && freshApprovals.reason !== 'malformed') {
+    return { status: 'refused', reason: 'Standing approvals file is not a private owner file.' };
+  }
+  const confirmed = decideSend(attempt, { ...freshGate, approvals: freshApprovals.approvals });
+  if (confirmed.status !== 'sent') {
+    if (confirmed.status === 'drafted') await rememberDraft(options.runsDir, attempt, at, options.messageId ?? attempt.recipient);
+    return confirmed;
   }
   const deliver = options.deliver ?? defaultDeliver(options);
   let outcome: DeliverResult;
@@ -158,14 +208,19 @@ export async function executeSend(
 }
 
 export async function runCommsAgent(options: CommsRunOptions): Promise<CommsRunReport> {
+  if ((options.approvalsSource ?? 'owner-file') !== 'injected' && (options.approvals !== undefined || options.owners !== undefined)) {
+    throw new Error('Approval overrides are refused.');
+  }
   const lane = options.lane ?? routeCommsLane(options.lanes ?? []);
-  const config = options.approvals !== undefined || options.owners !== undefined
-    ? { approvals: options.approvals ?? [], owners: [...(options.owners ?? [])] }
-    : await readOwnerConfig(options.runsDir);
-  const messages = await readInbox(options.runsDir);
-  const triage = triageInbox(messages, config.owners);
-  for (const message of triage.archived) await appendArchive(options.runsDir, message);
-  await writeInbox(options.runsDir, triage.kept);
+  const config = (options.approvalsSource ?? 'owner-file') === 'injected'
+    ? { approvals: options.approvals ?? [], owners: [...(options.owners ?? [])], accepted: true, reason: 'ok' as const }
+    : await readOwnerApprovals();
+  const inbox = await readInbox(options.runsDir);
+  const triage = triageInbox(inbox.messages, config.owners);
+  for (const message of triage.archived) {
+    await appendArchive(options.runsDir, inbox.rows.find(row => row.id === message.id) ?? { ...message });
+  }
+  await writeInbox(options.runsDir, triage.kept, inbox.rows);
   const sends: CommsRunReport['sends'] = [];
   for (const draft of triage.drafts) {
     const attempt: SendAttempt = {
@@ -175,8 +230,13 @@ export async function runCommsAgent(options: CommsRunOptions): Promise<CommsRunR
       text: draft.body,
       ...(draft.transport === 'linkedin' ? { linkedinMode: 'official-api' as const } : {}),
     };
-    const outcome = await executeSend(attempt, { ...options, approvals: config.approvals, messageId: draft.messageId });
-    sends.push({ transport: attempt.transport, recipient: attempt.recipient, status: outcome.status });
+    const outcome = await executeSend(attempt, {
+      ...options,
+      approvals: options.approvalsSource === 'injected' ? config.approvals : undefined,
+      owners: options.approvalsSource === 'injected' ? config.owners : undefined,
+      messageId: draft.messageId,
+    });
+    sends.push({ transport: attempt.transport, recipient: attempt.recipient, status: outcome.status, reason: outcome.reason });
   }
   return {
     ok: true,

@@ -101,10 +101,17 @@ function bounded(value: unknown, max: number): value is string {
   return typeof value === 'string' && value.length <= max && ![...value].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127);
 }
 
+export interface ParsedInbox {
+  messages: InboxMessage[];
+  /** Original rows, including fields triage does not use. */
+  rows: Record<string, unknown>[];
+}
+
 /** Strict inbox document. A bad document is refused so a run cannot rewrite it. */
-export function parseInboxDocument(value: unknown): InboxMessage[] | null {
+export function parseInboxDocument(value: unknown): ParsedInbox | null {
   if (!isRecord(value) || !Array.isArray(value.messages)) return null;
   const messages: InboxMessage[] = [];
+  const rows: Record<string, unknown>[] = [];
   for (const row of value.messages) {
     if (!isRecord(row) || !bounded(row.id, 128) || !row.id.trim()) return null;
     if (typeof row.transport !== 'string' || !isCommsTransport(row.transport)) return null;
@@ -122,6 +129,7 @@ export function parseInboxDocument(value: unknown): InboxMessage[] | null {
       body: row.body,
       ...(labels ? { labels } : {}),
     });
+    rows.push({ ...row });
   }
-  return messages;
+  return { messages, rows };
 }
