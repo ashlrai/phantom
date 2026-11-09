@@ -386,7 +386,7 @@ class HardCapTests(unittest.TestCase):
         self.assertEqual(tick(home).returncode, 0)
         s = slots_of(home)
         self.assertEqual({k: v['hard_cap'] for k, v in s.items() if isinstance(v, dict)},
-                         {'codex-cmp': 32, 'codex-personal': 32, 'claude': 8, 'devin': 10, 'claude-api': 8, 'codex-local': 6})
+                         {'codex-cmp': 32, 'codex-personal': 32, 'claude': 8, 'devin': 10, 'claude-api': 8, 'codex-local': 6, 'omlx': 0})
 
     def test_hard_cap_clamps_stored_target_ceiling_and_floor(self):
         home = self._devin({'target': 14, 'floor': 12, 'ceiling': 16, 'hard_cap': 8})

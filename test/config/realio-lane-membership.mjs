@@ -88,6 +88,7 @@ export const REAL_IO_TEST_FILES = [
   'test/connector-profile.test.ts', // Runs the pinned Perl secret-shape gate against generated profile TOML.
   'test/docs-fleet-health.test.ts', // Executes documented health commands through the real CLI.
   'test/changelog-current-version-01.test.ts', // Runs the changelog extractor in a real child process.
+  'test/ecosystem-changelog-generator.test.ts', // Spawns the changelog generator in real child processes.
   'test/docs-agent-parity.test.ts', // Runs docs build and link checks in real child processes.
   'test/fleet-bridge-install-01.test.ts', // Runs the bridge installer against private test fixtures.
   'test/fleet-guardian-exclusive-02-solx1.test.ts', // Runs real guardian subprocesses to exercise exclusive ownership.
@@ -95,6 +96,7 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-guardian-manifest.test.ts', // Runs guardian manifest commands in real child processes.
   'test/fleet-standby-verb-02.test.ts', // Runs the standby CLI in real child processes.
   'test/standby-takeover-e2e.test.ts', // Drives the real lease/snapshot/relay/readiness Python scripts in real child processes.
+  'test/verse-standby-python-contract-02somp1.test.ts', // Runs the standby host_lease.py contract in a real python3 child process.
   'test/gitignore-routing-eval.test.ts', // Runs git check-ignore against repository paths.
   'test/fleet-diff-scan.test.ts', // Creates real git worktrees and reads staged/unstaged diffs.
   'test/lane-quota-text.test.ts', // runs the dispatcher against temporary lane fixtures in Python
@@ -250,6 +252,7 @@ export const REAL_IO_TEST_FILES = [
   'test/verse-seats.test.ts', // real loopback HTTP server standing in for Ollama
   'test/verse-local-dispatch.test.ts', // real loopback HTTP server standing in for Ollama's discovery endpoints
   'test/local-inference-probe.test.ts', // real loopback HTTP server standing in for a local /models endpoint (P3 probe)
+  'test/local-tool-calls.test.ts', // real loopback HTTP servers standing in for OMLX/Ollama-style tool-call endpoints
   'test/radar-local-bench-redirect.test.ts', // two real loopback HTTP servers: a redirector and a second listener the body must never reach
   'test/verse-accounts.test.ts', // real collector lease acquisition and private evidence files in a tmp root
   'test/verse-api.test.ts', // real web server bind + SSE tails against an in-memory fake engine

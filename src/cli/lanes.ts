@@ -1,13 +1,20 @@
+import { readFleetRunsDirState } from '../core/fleet/runs-dir-state.js';
 import { buildFleetLiveSnapshot } from '../core/verse/fleet-live-api.js';
 import { computeLaneHealth, laneHealthLine, stuckBadge } from '../core/fleet/lane-health.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const USAGE = `Usage: phm lanes health [--json]
+const USAGE = `Usage: phm lanes --json | phm lanes health [--json]
 Calls, error rate, p50 latency and deployed commit per lane over the last 12 h,
 plus a "stuck" badge with phase age for any run past its phase timeout.
 Figures that cannot be measured print "unknown".`;
 
 export async function cmdLanes(args: string[]): Promise<number> {
+  if (args.length === 1 && args[0] === '--json') {
+    const state = await readFleetRunsDirState();
+    console.log(JSON.stringify(sanitizePublicJson({ schema: 'lanes.dispatchd.v1', lastTick: state.lastTick,
+      sourceState: state.sources.status, lanes: state.lanes })));
+    return 0;
+  }
   if (args.length === 0 || ['--help', '-h'].includes(args[0]!)) {
     console.log(USAGE);
     return args.length === 0 ? 2 : 0;
