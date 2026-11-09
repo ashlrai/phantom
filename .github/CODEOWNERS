@@ -335,6 +335,7 @@
 /test/desktop-artifact-installer.test.ts @masonwyatt23
 /test/desktop-consumer-install.test.ts @masonwyatt23
 /test/desktop-metadata-launch-trust.test.ts @masonwyatt23
+/test/desktop-operator.test.ts @masonwyatt23
 /test/desktop-qualified-update.test.ts @masonwyatt23
 /test/desktop-update-cli.test.ts @masonwyatt23
 /test/desktop-update-manifest.test.ts @masonwyatt23
