@@ -226,6 +226,22 @@ grant and returns untrusted screen text. `browser` is read-only; act on the
 web through the Phantom Browser pane. Nothing prompts for or changes TCC
 grants; every action is feed-logged and refuses to run unlogged.
 
+## Desktop operator
+
+`phm desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]`
+operates desktop apps on this Mac through the `desktop-operator` helper.
+Accessibility is the reader. A window screenshot plus OCR is the fallback.
+Reads do not post to the bus. `focus`, `scroll`, `type` and `click` post a
+bus intent, then act. The fleet KILL switch and comms pause block those writes.
+The roster hook is `desktopSessions()` in `src/core/desktop/desktop-sessions.ts`.
+See [DESKTOP-OPERATOR](docs/DESKTOP-OPERATOR.md).
+
+```sh
+phm desktop doctor --json
+phm desktop list-apps --json
+phm desktop read --app Cursor --json
+```
+
 ## Drafts
 
 `phm drafts list|show|approve|reject --json` handles outbound mail waiting for

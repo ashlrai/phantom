@@ -29,6 +29,7 @@ Approval cards record consent and do not collect credentials.
 
 - [Apps control](APPS-CONTROL.md): Manage allowlisted desktop apps (`~/.ashlr/apps-allow.json`, empty by default). Commands: `phm apps list|open|quit|focus|status [--json]`. Runs through the desktop adapter only, logs every action to the feed, sends a quit with unsaved work to needs-you.
 - [Desktop control](DESKTOPCTL.md): Drive Claude, Codex and Devin desktop apps as interchangeable resources through the `computer_*` tools (`~/.ashlr/desktopctl.json`, off by default). Commands: `phm desktopctl capabilities|status|run <resource> [--json]`. Reports TCC grant state per resource, never prompts for or changes grants; `browser` is read-only.
+- [Desktop operator](DESKTOP-OPERATOR.md): Read and drive Phantom, Devin, Codex, Claude, Grok and Cursor on this Mac. Commands: `phm desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]`. Writes post a bus intent first. `phm desktop doctor --json` reports Accessibility and Screen Recording for the `desktop-operator` binary.
 - [Drafts](DRAFTS.md): Outbound mail to anyone but you is written as a draft and surfaces as a needs-you item. Commands: `phm drafts list|show|approve|reject --json`. Example: `phm drafts list --status pending --json`. Approve records your decision and does not send.
 - [Import scheduled routines](VERSE.md#automations-315): `ashlr automations import --from routines.json --dry-run --json` previews disabled imports from a local JSON array.
 
