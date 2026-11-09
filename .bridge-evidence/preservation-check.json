@@ -1,0 +1,15 @@
+{
+  "allIncomingTestFilesPresent": true,
+  "closureRemoved": [],
+  "newClosureMembers": [
+    "src/cli/fleet-apps-follow.ts",
+    "src/cli/fleet-apps-recovery-batch.ts",
+    "src/core/fleet/apps-follow-checkpoint.ts",
+    "src/core/fleet/apps-recovery-batch-bus.ts",
+    "src/core/fleet/apps-recovery-history.ts",
+    "src/core/fleet/apps-recovery-invocations.ts",
+    "src/core/fleet/apps-recovery-verdict.ts",
+    "src/core/fleet/apps-recovery-wait.ts"
+  ],
+  "securityTestSourcesUnchanged": true
+}

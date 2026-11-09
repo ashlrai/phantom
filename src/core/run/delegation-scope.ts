@@ -9,9 +9,12 @@ import type {
   DelegationResultKind,
   DelegationScope,
   DelegationScopeSummary,
+  DelegationStage,
   RunBudget,
   WorkItem,
 } from '../types.js';
+import { DELEGATION_STAGES } from '../types/delegation.js';
+import { STAGE_LANE_CLASS } from '../routing/stage-delegation.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 const MAX_TEXT = 240;
@@ -21,6 +24,7 @@ const MAX_FILE_SAMPLES = 6;
 const MAX_BUDGET_VALUE = 10_000_000;
 
 const MEMORY_MODES: readonly DelegationMemoryMode[] = ['inherit', 'none', 'bounded', 'repo-only', 'full'];
+const STAGES: readonly DelegationStage[] = DELEGATION_STAGES;
 const RESULT_KINDS: readonly DelegationResultKind[] = [
   'text',
   'diff',
@@ -51,6 +55,12 @@ function normalizeMemoryMode(value: unknown): DelegationMemoryMode {
 function normalizeResultKind(value: unknown): DelegationResultKind | undefined {
   return typeof value === 'string' && RESULT_KINDS.includes(value as DelegationResultKind)
     ? value as DelegationResultKind
+    : undefined;
+}
+
+function normalizeStage(value: unknown): DelegationStage | undefined {
+  return typeof value === 'string' && STAGES.includes(value as DelegationStage)
+    ? value as DelegationStage
     : undefined;
 }
 
@@ -228,6 +238,7 @@ export function normalizeDelegationScope(
     ...(boundedText(merged.swarmId, 160) ? { swarmId: boundedText(merged.swarmId, 160) } : {}),
     ...(boundedText(merged.taskId, 160) ? { taskId: boundedText(merged.taskId, 160) } : {}),
     ...(boundedText(merged.objective) ? { objective: boundedText(merged.objective) } : {}),
+    ...(normalizeStage(merged.stage) ? { stage: normalizeStage(merged.stage) } : {}),
     ...(allowedFiles ? { allowedFiles } : {}),
     ...(normalizeBudget(merged.budget) ? { budget: normalizeBudget(merged.budget) } : {}),
     ...(normalizeContextBudget(merged.contextBudget) ? { contextBudget: normalizeContextBudget(merged.contextBudget) } : {}),
@@ -266,6 +277,7 @@ export function summarizeDelegationScope(
     ...(scope.swarmId ? { swarmId: scope.swarmId } : {}),
     ...(scope.taskId ? { taskId: scope.taskId } : {}),
     ...(scope.objective ? { objective: scope.objective } : {}),
+    ...(scope.stage ? { stage: scope.stage } : {}),
     ...(allowedFiles ? { allowedFiles } : {}),
     ...(scope.budget ? { budget: scope.budget } : {}),
     ...(scope.contextBudget ? { contextBudget: scope.contextBudget } : {}),
@@ -296,6 +308,9 @@ export function renderDelegationScopeForPrompt(scope: Partial<DelegationScope> |
     `- Memory mode: ${normalized.memoryMode ?? 'inherit'}`,
   ];
   if (normalized.origin) lines.push(`- Origin: ${normalized.origin}`);
+  if (normalized.stage) {
+    lines.push(`- Stage: ${normalized.stage} (${STAGE_LANE_CLASS[normalized.stage]} lane class — delegate only the stage that is the actual bottleneck)`);
+  }
   if (normalized.resultContract) {
     const contract = normalized.resultContract;
     const flags = [

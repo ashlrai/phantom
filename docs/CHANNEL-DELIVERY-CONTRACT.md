@@ -69,6 +69,30 @@ root for the default sink; the default stays hermetic for runsDir-scoped
 receivers that name no `busRoot`, while adapters that pass neither option
 publish to the canonical store.
 
+A pending mirror receipt stores only the source channel and a hash-only
+`envelopeDigest` (SHA-256 over the exact raw body, channel, verified sender and
+thread; not `receivedAt`, which the receipt pins). A duplicate retry rebuilds
+and republishes the original envelope only when its own tuple hashes to that
+digest. Case, whitespace, channel, thread or sender variants, and legacy
+receipts without a digest, still dedupe and ack as `duplicate` but never
+reconstruct a body: the mirror stays pending and the result reports
+`publishState: 'failed'`. A malformed digest makes the receipt store refuse the
+receive (`dedupe-store-unavailable`).
+
+The same binding gates every retried effect, not only the mirror. Each accepted
+record whose receiver has a background effect (mirror or COS queue) stores the
+digest, with `pending: false` when mirroring is disabled. On a duplicate, the
+COS queue write and the bus mirror use only the envelope rebuilt from a
+matching digest (original body, channel, thread and `receivedAt`); the receipt
+channel must also equal the hashed channel, otherwise the record fails closed.
+Variant and legacy unbound duplicates still ack as `duplicate` but enqueue and
+publish nothing.
+
+The inbox reader keeps ordinary Markdown headings inside a structured message.
+A dated legacy entry still starts a separate record when old and current
+writers share the inbox. The writer escapes entry-like headings in message
+bodies so they cannot create an extra record.
+
 ### Fleet dispatch events
 
 The dispatch log's own events — launches, publishes, lane holds, incidents,

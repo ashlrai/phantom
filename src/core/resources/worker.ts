@@ -8,9 +8,9 @@ import { MAX_RESOURCE_OBSERVATION_AGE_MS, validateResourcePool, type ResourceObs
 import { mergeClaudeResourceObservation } from './provider-observations.js';
 import { validResourceNativeProcessSignal, type ResourceNativeProcessDiagnostic } from './native-diagnostics.js';
 import { readKillSwitch } from '../sandbox/policy.js';
-import { validateResourceBindings, type ResourceBinding } from './worker-bindings.js';
+import { validateResourceBindings, workerEnvironment, type ResourceBinding } from './worker-bindings.js';
 import { probePoolCliVersion } from './pool-cli-versions.js';
-export { validateResourceBindings } from './worker-bindings.js';
+export { validateResourceBindings, workerEnvironment } from './worker-bindings.js';
 export type { ResourceBinding } from './worker-bindings.js';
 
 export interface ResourceWorkerTask {
@@ -212,16 +212,6 @@ function parseClaude(output: string): ResourceWorkerResult {
     (terminal.deferred_tool_use === undefined || terminal.deferred_tool_use === null) && result.trim();
   return { status: success ? 'completed' : 'failed', output: result, inputTokens, outputTokens,
     reason: success ? 'worker-completed' : 'worker-terminal-failed' };
-}
-
-export function workerEnvironment(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
-  // HOME is copied unchanged. Account-specific auth belongs to the explicit
-  // wrapper; no API keys, proxy, loader, or account-switching variables pass.
-  for (const key of ['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL']) {
-    if (process.env[key] !== undefined) env[key] = process.env[key];
-  }
-  return env;
 }
 
 async function executeNative(worker: ResourceWorker, binding: Extract<ResourceBinding, { kind: 'native-cli' }>,

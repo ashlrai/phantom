@@ -104,7 +104,7 @@ it('reports per-id limit truncation and scan-bound truncation honestly', async (
   expect(bound.jobs[0].commits).toHaveLength(20);
 });
 
-it('validates ids and limit before invoking git, and propagates git failure', async () => {
+it('job-history-batch validates ids and limit before invoking git, and propagates git failure', async () => {
   const run = vi.fn(async () => 'x');
   for (const [ids, limit] of [
     [[], 20],

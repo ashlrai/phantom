@@ -47,6 +47,16 @@ The weekly bucket is a calendar-week counter that resets on Monday 00:00 UTC.
 Phantom does not reorder or prioritise tasks across buckets; it only checks
 whether each bucket has remaining credits.
 
+## Lane identity and usage reading
+
+`zai` is the one GLM Lite lane id. There is no second GLM lane; the Z.ai
+GLM Coding Lite plan, its models and its key are all behind `zai` in
+`slots.json`. dispatchd paces it with the use-before-reset allowlist, and
+the "Every resource" usage panel reads its window from the `zai` row of
+`<runsDir>/queue/resources.json` (`used_frac`, `reset_at`), the same row
+`phm fleet resources` reports. A missing or invalid row is "no reading",
+never 0%.
+
 ## Error classes
 
 The lane emits three error classes:

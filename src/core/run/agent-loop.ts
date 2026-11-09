@@ -114,10 +114,11 @@ export type RunTaskContext = {
   reserveModelStep?: ReserveModelStep;
   /**
    * M264: optional context prefix prepended to the system prompt.
-   * Used by local-context.ts to inject NORTH-STAR + ecosystem map +
-   * genome recall + repo tree for local api-model engines (local-coder,
-   * local-agent). When absent (default) the system prompt is byte-identical
-   * to pre-M264 behavior. Never affects frontier engines.
+   * Used by local-context.ts to inject genome recall and a repo orientation
+   * for local api-model engines (local-coder, local-agent). Vision and
+   * ecosystem-map text stay on the planner, not on this coding prompt.
+   * When absent (default) the system prompt is byte-identical to pre-M264
+   * behavior. Never affects frontier engines.
    */
   systemPrefix?: string;
   /** Exact whole-run generation used to bind mutating tool evidence. */

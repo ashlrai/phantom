@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { readRecentChannelEntries } from '../src/core/fleet/mason-inbox.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -73,8 +75,14 @@ it('distinguishes missing inbox evidence, stdin post, and usage errors', async (
   expect(output()).toEqual({ sourceState: 'missing', entries: [] });
   expect(await command(['post', '--file', '-'])).toBe(0);
   expect(output()).toMatchObject({ ok: true, ack: { channel: 'cli', status: 'accepted' } });
+  const ack = output().ack;
+  expect(ack.dedupeKey).toMatch(/^[0-9a-f]{64}$/);
+  const [entry] = readRecentChannelEntries(join(root, 'runs'), Date.now(), 60_000);
+  expect(entry).toMatchObject({ text: 'Fake handoff.', channels: ['cli'] });
+  const id = `cli-${createHash('sha256').update(new Date(entry!.receivedAt).toISOString() + 'Fake handoff.').digest('hex').slice(0, 16)}`;
+  expect(entry!.id).toBe(id);
   expect(await command(['read', '--source', 'cli'])).toBe(0);
-  expect(output()).toMatchObject({ sourceState: 'healthy', entries: [{ source: 'cli', text: 'Fake handoff.' }] });
+  expect(output()).toMatchObject({ sourceState: 'healthy', entries: [{ source: `cli (${id})`, text: 'Fake handoff.' }] });
   expect(await command(['post'])).toBe(2);
   expect(output()).toEqual({ status: 'invalid' });
   expect(stderr).toBe('');

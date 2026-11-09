@@ -29,6 +29,8 @@ const stub = (name: string): SelfTickStep => async () =>
 const steps: SelfTickSteps = {
   'reset-release': stub('reset-release'),
   'lane-autohold': stub('lane-autohold'),
+  'stray-stop': stub('stray-stop'),
+  'meter-incident': stub('meter-incident'),
   'planner-tick': stub('planner-tick'),
   'inbox-acks': stub('inbox-acks'),
   'order-notices': stub('order-notices'),

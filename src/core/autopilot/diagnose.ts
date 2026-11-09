@@ -124,7 +124,7 @@ export interface AutopilotState {
    * GitHub twice. While set, this PR is superseded — it waits for the recut
    * and closes after it merges.
    */
-  recut?: { branch: string; number: number; fromHead: string; queued?: boolean };
+  recut?: { branch: string; number: number; fromHead: string; queued?: boolean; retryAt?: string };
   /** Fix attempts per failure signature, and `merge-base:<head>:<base>`/`recut:<head>:<base>` attempts. */
   attempts: Record<string, number>;
   /** Heads the autopilot pushed from (a stale read of one is never acted on twice). */
@@ -303,7 +303,7 @@ export function plan(obs: Observation, guards: Guards, state: AutopilotState, li
 
   if (pr.mergeable === false || pr.mergeableState === 'dirty') {
     if ((state.attempts[`recut:${pr.headSha}:${pr.baseSha}`] ?? 0) >= 1) {
-      return { action: 'stop', reason: `this head was already recut once and still conflicts with ${pr.baseRef}; it needs a person` };
+      return { action: 'stop', reason: `this head was already recut once and still conflicts with ${pr.baseRef}; resolve the conflicts on ${pr.headRef} and push an updated head to retry` };
     }
     return mutate() ?? { action: 'recut', reason: `PR #${pr.number} conflicts with ${pr.baseRef}; recutting it on the current ${pr.baseRef}` };
   }

@@ -45,6 +45,21 @@ function mockFetch() {
   });
 }
 
+describe('journal timestamps', () => {
+  it('shows the local timezone and preserves the source timestamp', () => {
+    const ts = '2026-01-15T12:00:00Z';
+    const entry = { id: 'timestamp', ts, source: 'merge', title: 'Test', detail: '', statusLabel: 'success' } satisfies JournalEntry;
+    render(<JournalEntryRow entry={entry} />);
+    const label = screen.getByTitle(new RegExp(`Source: ${ts}`));
+    expect(label).toHaveAttribute('title', expect.stringContaining(Intl.DateTimeFormat().resolvedOptions().timeZone));
+  });
+  it('renders an invalid timestamp without throwing', () => {
+    const entry = { id: 'invalid', ts: 'not-a-date', source: 'merge', title: 'Test', detail: '', statusLabel: 'success' } satisfies JournalEntry;
+    render(<JournalEntryRow entry={entry} />);
+    expect(screen.getByText('Invalid Date')).toHaveAttribute('title', 'Invalid date: not-a-date');
+  });
+});
+
 describe('JournalView', () => {
   beforeEach(() => {
     evictAll();

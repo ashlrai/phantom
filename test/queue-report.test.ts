@@ -56,7 +56,7 @@ describe('queue report', () => {
     expect(out.mock.calls.flat().join('\n')).toContain('build\t1.0000\t2.0000\t0.5000\t0.7500');
     expect(out.mock.calls.flat()).toContain('Bottleneck: review');
   });
-  it.each([['report'], ['other'], ['report','--events'], ['report','--events','--json'], ['report','--wat']])('rejects bad usage %j', async (...args) => {
+  it.each([['report'], ['other'], ['report','--events'], ['report','--events','--json'], ['report','--wat']])('rejects bad usage %j (%#)', async (...args) => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await cmdQueue(args)).toBe(2);
   });

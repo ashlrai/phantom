@@ -32,6 +32,8 @@ export interface ResourceView {
   generatedAt: string;
   pools: PoolResourceView[];
   machine: MachineResourceView;
+  /** Separate macOS memory_pressure availability; not physical free RAM or admission. */
+  controllerMemory?: { pressureFreePct: number; observedAt: string };
   localModels: { status: 'known' | 'unknown'; count: number | null; fetchedAt: string | null };
 }
 

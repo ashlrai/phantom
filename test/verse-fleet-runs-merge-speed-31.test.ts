@@ -14,7 +14,7 @@ vi.mock('node:child_process', async (importOriginal) => ({
 
 async function snapshot(mergedLastHour?: () => Promise<unknown>) {
   const fail = async () => { throw new Error('unavailable'); };
-  const api = createFleetRunsApi({ readHostLoad: () => null, readRunsDir: fail, listWorkers: fail, readInbox: fail, codexPersonal: fail, mergedLastHour });
+  const api = createFleetRunsApi({ now: () => Date.parse('2026-10-31T12:00:00Z'), readHostLoad: () => null, readRunsDir: fail, listWorkers: fail, readInbox: fail, codexPersonal: fail, mergedLastHour });
   let body = '';
   const res = { writeHead() {}, end(text: string) { body = text; } } as unknown as ServerResponse;
   await api({} as VerseApiContext, {} as IncomingMessage, res, VERSE_FLEET_RUNS_PATH, 'GET');
@@ -54,30 +54,35 @@ describe('merge speed facts', () => {
     expect(result.mergesLastHour).toEqual({ count: 1, perHour: null, medianOpenToMergeMs: null, items: [{ repo: item.repo, number: item.number, title: item.title, openedAt: null, mergedAt: null, openToMergeMs: null }] });
   });
 
-  it('maps GitHub timestamps, falls back to closed_at, and excludes invalid durations', async () => {
+  it('counts only verified in-window merges and excludes invalid durations', async () => {
     const base = { repository_url: 'https://api.github.com/repos/ashlrai/phantom', number: 42, title: 'Fix' };
-    gh.stdout = JSON.stringify({ total_count: 7, items: [
-      { ...base, created_at: item.openedAt, closed_at: '2026-10-31T12:00:00Z', pull_request: { merged_at: item.mergedAt } },
+    gh.stdout = JSON.stringify({ total_count: 5, incomplete_results: false, items: [
+      { ...base, created_at: item.openedAt, pull_request: { merged_at: item.mergedAt } },
       { ...base, number: 43, created_at: item.openedAt, closed_at: '2026-10-31T11:10:00Z', pull_request: { merged_at: null } },
-      { ...base, number: 44, created_at: 'invalid', closed_at: item.mergedAt },
-      { ...base, number: 45, created_at: item.mergedAt, closed_at: item.openedAt },
-      { ...base, number: 46, created_at: 123, closed_at: null },
+      { ...base, number: 44, created_at: 'invalid', pull_request: { merged_at: item.mergedAt } },
+      { ...base, number: 45, created_at: '2026-10-31T11:50:00Z', pull_request: { merged_at: item.mergedAt } },
+      { ...base, number: 46, created_at: item.openedAt, pull_request: { merged_at: '2026-10-31T10:30:00Z' } },
     ] });
     const result = await snapshot();
     expect(result.sources.merges).toBe('healthy');
-    expect(result.mergesLastHour).toEqual({ count: 7, perHour: 7, medianOpenToMergeMs: 20 * minute, items: [
+    expect(result.mergesLastHour).toEqual({ complete: true, count: 3, perHour: 3, medianOpenToMergeMs: 30 * minute, items: [
       item,
-      { ...item, number: 43, mergedAt: '2026-10-31T11:10:00Z', openToMergeMs: 10 * minute },
-      { ...item, number: 44, openedAt: 'invalid', openToMergeMs: null },
-      { ...item, number: 45, openedAt: item.mergedAt, mergedAt: item.openedAt, openToMergeMs: null },
-      { ...item, number: 46, openedAt: null, mergedAt: null, openToMergeMs: null },
+      { ...item, number: 44, openedAt: null, openToMergeMs: null },
+      { ...item, number: 45, openedAt: '2026-10-31T11:50:00Z', openToMergeMs: null },
     ] });
   });
 
-  it('still rejects a GitHub item outside the allowed organization', async () => {
-    gh.stdout = JSON.stringify({ total_count: 1, items: [{ repository_url: 'https://api.github.com/repos/other/phantom', number: 1, title: 'Fix' }] });
+  it('leaves unverified search totals unknown for malformed merge timestamps', async () => {
+    gh.stdout = JSON.stringify({ total_count: 1, incomplete_results: false, items: [{ repository_url: 'https://api.github.com/repos/ashlrai/phantom', number: 1, title: 'Fix', pull_request: { merged_at: 'invalid' } }] });
     const result = await snapshot();
     expect(result.sources.merges).toBe('degraded');
     expect(result.mergesLastHour).toEqual({ count: null, items: [] });
+  });
+
+  it('excludes a GitHub item outside the allowed organization', async () => {
+    gh.stdout = JSON.stringify({ total_count: 1, incomplete_results: false, items: [{ repository_url: 'https://api.github.com/repos/other/phantom', number: 1, title: 'Fix' }] });
+    const result = await snapshot();
+    expect(result.sources.merges).toBe('healthy');
+    expect(result.mergesLastHour).toEqual({ complete: true, count: 0, perHour: 0, medianOpenToMergeMs: null, items: [] });
   });
 });

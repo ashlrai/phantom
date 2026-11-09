@@ -189,12 +189,13 @@ export function acceptanceCommand(file: string): string {
 
 /* Line grammar sanitizers: a queue line is one physical line, and unquoted
  * fields may contain no whitespace; quoted fields collapse it and swap their
- * double quotes so a crafted branch/check/error can never open a second line. */
-const noWs = (value: string, max: number): string =>
+ * double quotes so a crafted branch/check/error can never open a second line.
+ * Exported for every router-queue line writer — the grammar is the contract. */
+export const noWs = (value: string, max: number): string =>
   value.replace(/[^\w@.+/~-]/g, '').slice(0, max);
-const quoted = (value: string, max: number): string =>
+export const quoted = (value: string, max: number): string =>
   value.replace(/["“”]/g, "'").replace(/[^\x20-\x7E]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max).trimEnd();
-const singleLine = (text: string): string =>
+export const singleLine = (text: string): string =>
   text.replace(/[^\x20-\x7E]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, QUEUEGEN_TEXT_CAP).trimEnd();
 
 const hhmm = (now: number): string => {

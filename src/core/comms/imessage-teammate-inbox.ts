@@ -22,9 +22,10 @@
  */
 
 import { createHash } from 'node:crypto';
-import { appendFileSync, chmodSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { imessageStateDir } from '../integrations/imessage.js';
+import { readPrivateFileTailCapped } from '../verse/preferences.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 const TEAMMATES_FILE = 'teammates.jsonl';
@@ -36,6 +37,23 @@ export function senderIdFor(handle: string): string {
 }
 
 export type TeammateSourceState = 'healthy' | 'missing' | 'degraded';
+
+/** Pure acknowledgements cannot cause agent-to-agent acknowledgement loops. */
+export function teammateNeedsReply(text: string): boolean {
+  // Code chunks often contain question marks/requests as source literals. They are
+  // artifacts to retain, never conversation requests to answer once per chunk.
+  if (/^.{0,80}\b(?:patch|artifact|chunk)\s+\d+\/\d+\b/i.test(text) || /^(?:diff --git |--- [ab/] |```)/.test(text)) return false;
+  return !/^\s*(ack(?:nowledged)?|thanks|thank you|received|noted|got it|ok(?:ay)?|👍)[.!\s]*$/i.test(text)
+    && /\?|\b(?:please|can you|could you|request(?:ing)?|need you|probe)\b/i.test(text);
+}
+
+/** Keep requests for a decision or action in the local inbox for leader review. */
+export function classifyTeammateIntent(text: string): 'ignore' | 'reply' | 'leader' {
+  if (!teammateNeedsReply(text)) return 'ignore';
+  if (/\b(?:approve|approval|authorize|authorise|permission|decision|decide|escalat\w*|leader|mason)\b/i.test(text)
+      || /\b(?:please|can you|could you|need you to)\s+(?:deploy|release|ship|merge|delete|remove|change|create|pay|buy|run|execute)\b/i.test(text)) return 'leader';
+  return 'reply';
+}
 
 export interface TeammateText {
   at: string;
@@ -61,15 +79,21 @@ const isTextRow = (r: TeammateRow): r is TextRow =>
   validRowid(r.rowid) && typeof r.at === 'string' && typeof r.senderId === 'string' && typeof r.text === 'string'
   && Number.isFinite(Date.parse(r.at));
 
+/** Rows are ~200-2500 bytes each; 8 MiB keeps many thousand of the newest. */
+const STORE_READ_BYTES = 8 * 1024 * 1024;
+
 function readRows(runsDir?: string): { rows: TeammateRow[]; state: TeammateSourceState } {
-  let raw: string;
-  try {
-    raw = readFileSync(file(runsDir), 'utf8');
-  } catch {
-    return { rows: [], state: 'missing' };
+  const read = readPrivateFileTailCapped(file(runsDir), STORE_READ_BYTES);
+  if (read === null) return { rows: [], state: 'missing' };
+  let raw = read.text;
+  if (read.truncated) {
+    // Torn first line is dropped; the newest rows (the only ones rowid
+    // dedupe and unanswered-text reads ever need) live at the tail.
+    const firstBreak = raw.indexOf('\n');
+    raw = firstBreak < 0 ? '' : raw.slice(firstBreak + 1);
   }
   const rows: TeammateRow[] = [];
-  let degraded = false;
+  let degraded = read.truncated;
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
     try {

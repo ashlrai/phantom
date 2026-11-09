@@ -1,0 +1,78 @@
+{
+  "upstream": "93af05a2c7b4938b6e3301dbab136fcd1cc32255",
+  "selectedPRs": [
+    3163,
+    3166,
+    3174,
+    3175,
+    3176,
+    3186,
+    3187,
+    3188,
+    3192
+  ],
+  "selectedHeadsRefetchedUnchanged": true,
+  "deduplicatedBehavioralCoverage": {
+    "modules": 36,
+    "cases": 310,
+    "passed": 308,
+    "baselineFailures": 2
+  },
+  "finalGroupedTests": {
+    "modules": 18,
+    "passed": 169,
+    "failed": 0,
+    "log": "/tmp/recut-final-tests.log"
+  },
+  "finalWatchWaitTests": {
+    "modules": 3,
+    "passed": 25,
+    "failed": 0,
+    "log": "/tmp/recut-final-cli-extra.log"
+  },
+  "fullClassicTypecheck": {
+    "exitCode": 0,
+    "log": "/tmp/recut-typecheck-final.log"
+  },
+  "nativeBackendTypecheck": {
+    "exitCode": 0,
+    "log": "/tmp/recut-final-native-typecheck.log"
+  },
+  "nativeWebTypecheck": {
+    "exitCode": 0,
+    "log": "/tmp/recut-final-native-web-typecheck.log"
+  },
+  "changedEslint": {
+    "exitCode": 0,
+    "files": 20,
+    "log": "/tmp/recut-eslint-final.log"
+  },
+  "docs": {
+    "exitCode": 0,
+    "errors": 0
+  },
+  "affectedRealioGuard": {
+    "exitCode": 0,
+    "log": "/tmp/recut-realio-affected.log"
+  },
+  "globalRealioGuard": {
+    "exitCode": 1,
+    "unchangedBaselineGaps": 28,
+    "baselineLog": "/tmp/recut-realio-baseline.log"
+  },
+  "verseSyncIoGuard": {
+    "exitCode": 0
+  },
+  "globalEslint": {
+    "outcome": "interrupted after 17 minutes; focused replacement passed",
+    "log": "/tmp/recut-lint.log"
+  },
+  "diffCheck": {
+    "exitCode": 0
+  },
+  "commitsCreated": 0,
+  "pushes": 0,
+  "prClosures": 0,
+  "publications": 0,
+  "toolsUsed": []
+}

@@ -114,10 +114,14 @@ export function verifyHandoff(directory, expectedAdmissionHash, expectedPackageH
   return record;
 }
 
-export function assertRegistryPackage(record, metadata, bytes) {
+function assertRegistryMetadata(record, metadata) {
   assert.equal(metadata.name, record.name); assert.equal(metadata.version, record.version);
   assert.equal(metadata.dist?.integrity, record.integrity);
   assert.equal(metadata.dist?.attestations?.provenance?.predicateType, 'https://slsa.dev/provenance/v1');
+}
+
+export function assertRegistryPackage(record, metadata, bytes) {
+  assertRegistryMetadata(record, metadata);
   assert.equal(sha(bytes), record.sha256);
   assert.equal(`sha512-${createHash('sha512').update(bytes).digest('base64')}`, record.integrity);
   return true;
@@ -184,12 +188,29 @@ async function registryFetch(url, timeoutMs = 30_000, {headers, onStatus} = {}) 
   return response;
 }
 
-async function registry(record, directory, onStatus) {
+async function registry(record, directory, onStatus, deadline) {
   const response = await registryFetch(`https://registry.npmjs.org/@ashlr%2Fphantom/${record.version}`, 30_000, {headers: {'Cache-Control': 'no-cache'}, onStatus});
   const metadata = await response.json();
+  assertRegistryMetadata(record, metadata);
   const url = new URL(metadata.dist?.tarball);
   assert.equal(url.origin, 'https://registry.npmjs.org');
   assert.equal(url.pathname, `/@ashlr/phantom/-/phantom-${record.version}.tgz`);
+  // npm install consumes this abbreviated catalog, which may lag the version
+  // endpoint. Check it before downloading the archive on every pending read.
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new RegistryReadPending('Public install catalog is still processing or unavailable');
+  const catalogResponse = await registryFetch('https://registry.npmjs.org/@ashlr%2Fphantom', Math.min(30_000, remaining),
+    {headers: {Accept: 'application/vnd.npm.install-v1+json'}, onStatus});
+  const catalog = await catalogResponse.json();
+  assert.equal(catalog.name, record.name, 'Public install catalog package differs');
+  assert.ok(catalog.versions && typeof catalog.versions === 'object' && !Array.isArray(catalog.versions), 'Malformed public install catalog');
+  if (!Object.hasOwn(catalog.versions, record.version)) throw new RegistryReadPending('Public install catalog is still processing or unavailable');
+  const version = catalog.versions[record.version];
+  assert.equal(version?.name, record.name, 'Public install catalog package differs');
+  assert.equal(version?.version, record.version, 'Public install catalog version differs');
+  assert.equal(version?.dist?.integrity, record.integrity, 'Public install catalog integrity differs');
+  assert.equal(version?.dist?.tarball, url.href, 'Public install catalog archive differs');
+  if (Date.now() >= deadline) throw new RegistryReadPending('Public install catalog is still processing or unavailable');
   const archive = await registryFetch(url);
   const bytes = Buffer.from(await archive.arrayBuffer());
   assertRegistryPackage(record, metadata, bytes);
@@ -207,7 +228,7 @@ export async function reconcileRegistry(record, directory) {
     let status = 'unavailable';
     attempt++;
     try {
-      try {await registry(record, directory, value => {status = value;});}
+      try {await registry(record, directory, value => {status = value;}, deadline);}
       finally {console.log(`Registry verification attempt ${attempt}: elapsed=${Date.now() - started}ms HTTP status=${status}`);}
       return;
     }
@@ -247,6 +268,85 @@ export async function reconcileLatest(record) {
   }
 }
 
+// npm resolution (ETARGET) can lag the reconciled install catalog: the
+// version endpoint and npm's own packument read can sit on different
+// registry replicas. The no-scripts install retries a small bounded number
+// of times with backoff — ETARGET only. Integrity, provenance, auth and
+// every other failure hold immediately; this never republishes.
+export const INSTALL_ETARGET_ATTEMPTS = 4;
+export const INSTALL_ETARGET_DELAY_MS = 5_000;
+const INSTALL_TIMEOUT_MS = 120_000;
+const INSTALL_OUTPUT_TAIL = 4_000;
+const INSTALL_NEVER_RETRY = /\b(?:EINTEGRITY|EPROVENANCE|E401|E403|ENEEDAUTH)\b/;
+
+/** True only for a transient ETARGET resolution miss; never for a mixed or hard failure. */
+export function installFailureIsTransient(output) {
+  return /\bETARGET\b/.test(output) && !INSTALL_NEVER_RETRY.test(output);
+}
+
+/** The exact-version no-scripts consumer install. --prefer-online forces each
+ * attempt to revalidate the packument over the network, so a retry reads the
+ * install catalog freshly instead of replaying a locally cached response. */
+export function installPublishedArgs(version) {
+  return ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--save-exact', '--prefer-online',
+    '--registry=https://registry.npmjs.org', `${PACKAGE}@${version}`];
+}
+
+function runInstall(argv, cwd, timeoutMs) {
+  try {
+    const stdout = execFileSync('npm', argv, {cwd, env: process.env, encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 8 * 1024 * 1024, timeout: timeoutMs});
+    return {ok: true, output: stdout ?? ''};
+  } catch (error) {
+    return {ok: false, code: error.status ?? null, signal: error.signal ?? null,
+      output: `${error.stdout ?? ''}\n${error.stderr ?? ''}`.trim()};
+  }
+}
+
+/**
+ * The no-scripts consumer install of the admitted version, bounded-retried on
+ * ETARGET only, then proven to be the admitted package: the installed
+ * package.json identity and the hidden lockfile's resolved archive integrity
+ * must equal the record exactly. A substituted or downgraded tree holds.
+ */
+export async function installPublishedPackage(record, directory, deps = {}) {
+  assert.equal(typeof directory, 'string'); assert.ok(directory.length > 0);
+  const exec = deps.exec ?? runInstall;
+  const sleep = deps.sleep ?? (ms => new Promise(done => setTimeout(done, ms)));
+  const timeoutMs = deps.timeoutMs ?? INSTALL_TIMEOUT_MS;
+  fs.mkdirSync(directory, {recursive: true, mode: 0o700});
+  const manifest = join(directory, 'package.json');
+  if (!fs.existsSync(manifest)) {
+    fs.writeFileSync(manifest, `${JSON.stringify({name: 'phantom-install-check', version: '0.0.0', private: true})}\n`, {mode: 0o600, flag: 'wx'});
+  }
+  const argv = installPublishedArgs(record.version);
+  let delay = INSTALL_ETARGET_DELAY_MS;
+  for (let attempt = 1; ; attempt++) {
+    const run = await exec(argv, directory, timeoutMs);
+    if (run.ok) {
+      console.log(`npm install attempt ${attempt} accepted ${PACKAGE}@${record.version}`);
+      break;
+    }
+    const output = String(run.output ?? '');
+    const status = run.code !== null && run.code !== undefined ? `exited with code ${run.code}`
+      : run.signal ? `was killed on ${run.signal}` : 'failed';
+    const tail = output ? `; last output: ${output.slice(-INSTALL_OUTPUT_TAIL)}` : '';
+    if (attempt >= INSTALL_ETARGET_ATTEMPTS || !installFailureIsTransient(output)) {
+      throw new Error(`npm install ${status} while reading ${PACKAGE}@${record.version}${tail}`);
+    }
+    console.log(`npm install attempt ${attempt} could not resolve ${PACKAGE}@${record.version} (ETARGET); retrying in ${delay}ms`);
+    await sleep(delay);
+    delay = Math.min(delay * 2, 30_000);
+  }
+  const installed = readBoundedJson(join(directory, 'node_modules', '@ashlr', 'phantom', 'package.json'));
+  assert.equal(installed.name, PACKAGE);
+  assert.equal(installed.version, record.version);
+  const lock = readBoundedJson(join(directory, 'node_modules', '.package-lock.json'));
+  assert.equal(lock.packages?.[`node_modules/${PACKAGE}`]?.integrity, record.integrity,
+    'installed package resolved a different archive than the admitted record');
+  return argv;
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [command, directory] = process.argv.slice(2);
   if (command === 'prepare') prepare();
@@ -257,6 +357,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   } else if (command === 'registry') {
     const record = verifyHandoff(directory, process.env.ADMISSION_SHA256, process.env.PACKAGE_SHA256);
     await reconcileRegistry(record, process.env.RUNNER_TEMP);
+  } else if (command === 'install') {
+    const record = verifyHandoff(directory, process.env.ADMISSION_SHA256, process.env.PACKAGE_SHA256);
+    await installPublishedPackage(record, process.argv[4]);
   } else if (command === 'provenance') {
     const record = verifyHandoff(directory, process.env.ADMISSION_SHA256, process.env.PACKAGE_SHA256);
     console.log(JSON.stringify(verifyCanonicalProvenance(record, readBoundedJson(join(process.env.RUNNER_TEMP, 'phantom-signatures.json')), process.env.GITHUB_SHA, process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT)));

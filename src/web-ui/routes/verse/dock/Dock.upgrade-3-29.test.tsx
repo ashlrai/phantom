@@ -26,7 +26,7 @@ it('renders the upgraded tabs and hides unavailable panes without an error', () 
   expect(within(dock).getByRole('tab', { name: 'Browser' })).toHaveAttribute('aria-selected', 'true');
   expect(within(dock).getByRole('tab', { name: 'Terminal' })).toBeInTheDocument();
   expect(within(dock).queryByRole('tab', { name: /gone-pane/i })).not.toBeInTheDocument();
-  expect(getDockState().tabs).toContain('gone-pane');
+  expect(getDockState().tabs).not.toContain('gone-pane');
   expect(within(dock).queryByText(/could not load/i)).not.toBeInTheDocument();
   expect(within(dock).queryByRole('alert')).not.toBeInTheDocument();
 });

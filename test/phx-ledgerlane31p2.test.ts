@@ -118,7 +118,7 @@ describe('phm resources ledger --lane', () => {
     ['--lane', 'bad lane'], ['--lane', 'bad/lane'], ['--lane', '.dot'], ['--lane', 'x'.repeat(65)],
     ['--lane', 'a', '--lane', 'b'], ['--lane', 'a', '--lane', 'a'],
     ['--watch', '--lane', 'codex-personal', '--lane', 'claude'], ['--lane', 'ok', 'extra'],
-  ])('rejects invalid lane arguments %j before reading', async (...args) => {
+  ])('rejects invalid lane arguments %j before reading (%#)', async (...args) => {
     const err = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const read = vi.fn();
     expect(await cmdResourceLedger(args, read)).toBe(2);

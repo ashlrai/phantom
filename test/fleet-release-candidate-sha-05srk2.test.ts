@@ -42,7 +42,7 @@ describe('release candidate SHA inspection', () => {
     expect(plan()).toMatchObject({ outcome: 'blocked', master: { sha: other }, treeMatch: false });
     expect(plan().blockers.map((b: { id: string }) => b.id)).toContain('master_tree_mismatch');
   });
-  it.each([result({ sha: other, tree: { sha: tree } }), result({}, 1)])('does not accept an invalid commit response', async response => {
+  it.each([result({ sha: other, tree: { sha: tree } }), result({}, 1)])('does not accept an invalid commit response (%#)', async response => {
     const map = routes(); map[`${base}/git/commits/${sha}`] = response;
     expect(await cmdFleetReleaseCandidate(args, { gh: fake(map).gh })).toBe(3);
     expect(plan().outcome).toBe('unavailable');

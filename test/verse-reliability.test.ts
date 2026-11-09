@@ -259,7 +259,7 @@ describe('transient events and compaction', () => {
     const stored = engine.getEvents(s.id);
     expect(stored.some((e) => isTransientVerseEvent(e))).toBe(false);
     // Folded at turn end: the two streamed deltas are superseded by the message.
-    expect(stored.map((e) => e.type)).toEqual(['user-message', 'turn-started', 'assistant-message', 'turn-done']);
+    expect(stored.map((e) => e.type)).toEqual(['user-message', 'assistant-status', 'turn-started', 'assistant-message', 'assistant-status', 'turn-done']);
     expect(engine.getSession(s.id)!.status).toBe('idle');
   });
 });
@@ -332,10 +332,10 @@ describe('native-thread recovery', () => {
 
     const persisted = seen.filter((e) => !isTransientVerseEvent(e));
     expect(persisted.map((e) => e.type)).toEqual([
-      'user-message', 'turn-started', 'error', 'recovered', 'turn-started', 'assistant-message', 'turn-done',
+      'user-message', 'assistant-status', 'turn-started', 'error', 'recovered', 'turn-started', 'assistant-message', 'assistant-status', 'turn-done',
     ]);
-    expect(persisted[2]).toMatchObject({ type: 'error', code: 'native-thread-missing' });
-    expect(persisted[3]).toMatchObject({ type: 'recovered', how: 'handoff' });
+    expect(persisted[3]).toMatchObject({ type: 'error', code: 'native-thread-missing' });
+    expect(persisted[4]).toMatchObject({ type: 'recovered', how: 'handoff' });
     expect(persisted.at(-1)).toMatchObject({ type: 'turn-done', ok: true });
     // One turn: every event carries the same turnId.
     expect(new Set(persisted.map((e) => (e as { turnId: string }).turnId)).size).toBe(1);
@@ -507,7 +507,8 @@ describe('storage failures, crash interruption, registry, reasoning tap', () => 
 
     expect(engine.interruptAll?.('server crashed')).toBe(1);
     const events = engine.getEvents(s.id);
-    expect(events.at(-2)).toMatchObject({ type: 'error', message: 'turn interrupted: server crashed' });
+    expect(events.at(-3)).toMatchObject({ type: 'error', message: 'turn interrupted: server crashed' });
+    expect(events.at(-2)).toMatchObject({ type: 'assistant-status' });
     expect(events.at(-1)).toMatchObject({ type: 'turn-done', ok: false });
     expect(engine.getSession(s.id)).toMatchObject({ status: 'error', lastError: 'turn interrupted: server crashed' });
     expect((JSON.parse(readFileSync(registryFile, 'utf8')) as { entries: unknown[] }).entries).toEqual([]);
@@ -549,7 +550,7 @@ describe('storage failures, crash interruption, registry, reasoning tap', () => 
     children[0]!.exit(0);
     await waitFor(() => tapped.some((t) => t.type === 'turn-done'));
     // The first call (user-message) threw and was contained; the rest arrive in order.
-    expect(tapped.map((t) => t.type)).toEqual(['turn-started', 'thinking', 'thinking', 'tool-use', 'turn-done']);
+    expect(tapped.map((t) => t.type)).toEqual(['assistant-status', 'turn-started', 'thinking', 'thinking', 'tool-use', 'assistant-status', 'turn-done']);
     expect(tapped.every((t) => t.sessionId === s.id)).toBe(true);
   });
 });

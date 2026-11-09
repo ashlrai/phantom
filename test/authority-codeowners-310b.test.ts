@@ -133,6 +133,11 @@ describe('.github/CODEOWNERS', () => {
     // The assertions are unchanged — only the budget for this one whole-tree case.
   }, 30_000);
 
+  it('keeps the external Mac release observer in the release-tooling owner lane', () => {
+    expect(matchProtectedPath('contrib/mac/release-autorun.sh', { selfRepo: true })?.ruleId).toBe('release-tooling');
+    expect(patterns).toContain('/contrib/mac/release-autorun.sh');
+  });
+
   it('the glob matcher is not vacuous', () => {
     const matches = (path: string) => regexes.some((re) => re.test(path));
     expect(matches('src/core/authority/rollout.ts')).toBe(true);

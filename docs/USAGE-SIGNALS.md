@@ -1,8 +1,26 @@
 # Event-driven operations usage readings
 
+## Hourly Mac refresh
+
+`contrib/mac/com.ashlr.usage-hourly.plist.in` is a launchd template for a
+signed-in Mac pool. Fill its placeholders with XML-escaped absolute paths to
+Node, the built `dist/cli/usage-signal.js`, the private operations directory,
+the private reader configuration, HOME and a PATH containing Phantom Secrets.
+Provision all five read-only readers first, then install the rendered plist in
+the user's LaunchAgents and load it with launchctl. The template runs at load
+and every 3600 seconds; it does not launch a model or consume Grok usage.
+The hourly event refuses non-macOS hosts, partial reader configurations and
+pool overrides. It uses the same per-pool 30-minute debounce and lock as events.
+Installation and provisioning are not performed by a repository merge.
+
+Grok still requires a verified current usage surface and an available signed-in
+session. An absent or unverified surface yields unknown, not a numeric reading.
+The reader's original weekly reset pin expires, so a fresh verification is needed
+after that reset. Do not treat an unknown row as evidence of remaining quota.
+
 The operations bridge can invoke this one-shot entrypoint on `dispatch-start`,
-`pr-merge`, `429`, `limit-message`, or `manual-reading`. It never starts a watcher,
-interval, cron job or trailing debounce timer. Event producers must invoke it;
+`pr-merge`, `429`, `limit-message`, `manual-reading`, or `hourly`. The entrypoint
+never starts a watcher, interval or trailing debounce timer. Producers invoke it;
 the daemon's protected dispatch and merge hooks are not changed by this feature.
 
 From a source checkout:

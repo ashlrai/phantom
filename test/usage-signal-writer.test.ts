@@ -8,7 +8,7 @@ import { USAGE_POOLS, writeUsageSignal, type UsagePool } from '../src/core/fabri
 const START = '2026-10-26T12:00:00.000Z';
 const RESET = '2026-11-02T12:00:00.000Z';
 const WINDOW = 30 * 60 * 1_000;
-const EVENTS = ['dispatch-start', 'pr-merge', '429', 'limit-message', 'manual-reading'] as const;
+const EVENTS = ['dispatch-start', 'pr-merge', '429', 'limit-message', 'manual-reading', 'hourly'] as const;
 type Event = typeof EVENTS[number];
 type Entry = { pool: UsagePool; pctUsed: number | null; resetAt: string | null; source: string; fetchedAt: string;
   writtenAt: string; event: Event; burnRatePctPerHour: number | null; projected100At: string | null; cutActive: boolean };
