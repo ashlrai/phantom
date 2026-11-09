@@ -111,18 +111,45 @@ function iso(value: string): boolean {
   return !Number.isNaN(Date.parse(value));
 }
 
+function record(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function boundedArray(value: unknown, max: number, check: (entry: unknown) => boolean): boolean {
+  return Array.isArray(value) && value.length <= max && value.every(check);
+}
+
+function pull(value: unknown): boolean {
+  return record(value) && typeof value['repo'] === 'string' && validRepo(value['repo'])
+    && typeof value['number'] === 'number' && Number.isSafeInteger(value['number']) && value['number'] > 0
+    && (value['url'] === undefined || typeof value['url'] === 'string')
+    && ['open', 'merged', 'closed', 'unknown'].includes(value['state'] as string);
+}
+
+function evidence(value: unknown): boolean {
+  return record(value) && typeof value['at'] === 'string' && iso(value['at'])
+    && ['note', 'pr', 'release', 'verification', 'sweep', 'import'].includes(value['kind'] as string)
+    && typeof value['ref'] === 'string' && (value['note'] === undefined || typeof value['note'] === 'string');
+}
+
+function provenance(value: unknown): boolean {
+  return record(value) && typeof value['source'] === 'string' && value['source'].length <= MAX_SOURCE
+    && (value['date'] === null || (typeof value['date'] === 'string' && iso(value['date'])))
+    && typeof value['verbatim'] === 'boolean' && typeof value['partial'] === 'boolean';
+}
+
 export function isIntentItem(value: unknown): value is IntentItem {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const item = value as Record<string, unknown>;
   return typeof item['id'] === 'string' && validIntentId(item['id'])
-    && typeof item['title'] === 'string'
-    && typeof item['source'] === 'string'
-    && typeof item['owner'] === 'string'
-    && Array.isArray(item['rq'])
-    && Array.isArray(item['prs'])
+    && typeof item['title'] === 'string' && item['title'].length <= MAX_TITLE
+    && typeof item['source'] === 'string' && item['source'].length <= MAX_SOURCE
+    && typeof item['owner'] === 'string' && item['owner'].length <= MAX_OWNER
+    && boundedArray(item['rq'], MAX_RQ, (key) => typeof key === 'string' && RQ_RE.test(key))
+    && boundedArray(item['prs'], MAX_PRS, pull)
     && typeof item['status'] === 'string' && isIntentStatus(item['status'])
-    && Array.isArray(item['evidence'])
-    && Array.isArray(item['provenance'])
+    && boundedArray(item['evidence'], MAX_EVIDENCE, evidence)
+    && boundedArray(item['provenance'], MAX_PROVENANCE, provenance)
     && typeof item['partial'] === 'boolean'
     && (item['closureProposal'] === null || item['closureProposal'] === 'superseded')
     && typeof item['lastTouchedAt'] === 'string' && iso(item['lastTouchedAt'])
@@ -134,7 +161,7 @@ export function isIntentItem(value: unknown): value is IntentItem {
 export function isIntentLedger(value: unknown): value is IntentLedger {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const ledger = value as Record<string, unknown>;
-  return ledger['schema'] === INTENT_LEDGER_SCHEMA && Array.isArray(ledger['items']) && ledger['items'].every(isIntentItem);
+  return ledger['schema'] === INTENT_LEDGER_SCHEMA && boundedArray(ledger['items'], MAX_INTENT_ITEMS, isIntentItem);
 }
 
 export function sameDirective(left: Pick<IntentItem, 'rq' | 'title'>, right: Pick<IntentItem, 'rq' | 'title'>): boolean {

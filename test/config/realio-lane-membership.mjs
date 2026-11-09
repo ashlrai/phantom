@@ -43,6 +43,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/worktrees-prune.test.ts', // Real Git worktree fixtures.
   'test/ecosystem-changelog-generator.test.ts', // Runs the generator in a real Node child process.
   'test/verse-standby-python-contract-02somp1.test.ts', // Runs the Python lease helper in a real child process.
   'test/company-context-store.test.ts', // concurrent context writer processes

@@ -63,7 +63,7 @@ export interface TeammateText {
   ageMinutes: number;
 }
 
-interface TeammateRow {
+export interface TeammateRow {
   v?: unknown;
   at?: unknown;
   rowid?: unknown;
@@ -82,7 +82,7 @@ const isTextRow = (r: TeammateRow): r is TextRow =>
 /** Rows are ~200-2500 bytes each; 8 MiB keeps many thousand of the newest. */
 const STORE_READ_BYTES = 8 * 1024 * 1024;
 
-function readRows(runsDir?: string): { rows: TeammateRow[]; state: TeammateSourceState } {
+export function readRows(runsDir?: string): { rows: TeammateRow[]; state: TeammateSourceState } {
   const read = readPrivateFileTailCapped(file(runsDir), STORE_READ_BYTES);
   if (read === null) return { rows: [], state: 'missing' };
   let raw = read.text;

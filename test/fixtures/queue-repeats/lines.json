@@ -1,0 +1,93 @@
+[
+ {
+  "id": "RQ-LEXICON9300",
+  "status": "READY",
+  "repo": "lexicon",
+  "at": "2026-11-09T01:00:00Z",
+  "text": "Add surrogate tests to src/schema.test.ts. Acceptance: lone surrogates are rejected and pairs pass."
+ },
+ {
+  "id": "RQ-LEXICON9403",
+  "status": "CLAIMED",
+  "repo": "lexicon",
+  "at": "2026-11-09T05:00:00Z",
+  "text": "Cover surrogates in `src/schema.test.ts`.\nAcceptance: Lone surrogates are rejected, and pairs pass!"
+ },
+ {
+  "id": "RQ-LEXICON9600",
+  "status": "READY",
+  "repo": "Lexicon",
+  "at": "2026-11-09T11:00:00Z",
+  "text": "Add surrogate tests to src/schema.test.ts. Acceptance: lone surrogates are rejected and pairs pass."
+ },
+ {
+  "id": "RQ-PLUGIN9201",
+  "status": "READY",
+  "repo": "ashlr-plugin",
+  "at": "2026-11-09T02:00:00Z",
+  "text": "Add the SAFETY marker check to test/read-fidelity.test.ts. Acceptance: read output keeps the SAFETY marker."
+ },
+ {
+  "id": "RQ-PLUGIN9505",
+  "status": "READY",
+  "repo": "ashlr-plugin",
+  "at": "2026-11-09T06:00:00Z",
+  "text": "Add the SAFETY marker check to test/read-fidelity.test.ts. Acceptance: read output keeps the SAFETY marker."
+ },
+ {
+  "id": "RQ-PLUGIN9600",
+  "status": "CLAIMED",
+  "repo": "ashlr-plugin",
+  "at": "2026-11-09T11:30:00Z",
+  "text": "Add the SAFETY marker check to test/read-fidelity.test.ts. Acceptance: read output keeps the SAFETY marker."
+ },
+ {
+  "id": "RQ-U1",
+  "status": "READY",
+  "repo": "lexicon",
+  "at": "2026-11-09T03:00:00Z",
+  "text": "Add surrogate tests to src/schema.test.ts. Acceptance: empty strings pass."
+ },
+ {
+  "id": "RQ-U2",
+  "status": "READY",
+  "repo": "phantom",
+  "at": "2026-11-09T03:00:00Z",
+  "text": "Add surrogate tests to src/schema.test.ts. Acceptance: lone surrogates are rejected and pairs pass."
+ },
+ {
+  "id": "RQ-U3",
+  "status": "READY",
+  "repo": "lexicon",
+  "at": "2026-11-09T03:00:00Z",
+  "text": "Add surrogate tests to src/other.test.ts. Acceptance: lone surrogates are rejected and pairs pass."
+ },
+ {
+  "id": "RQ-NOFILE",
+  "status": "READY",
+  "repo": "lexicon",
+  "at": "2026-11-09T03:00:00Z",
+  "text": "Tidy things. Acceptance: tidy."
+ },
+ {
+  "id": "RQ-NOACC",
+  "status": "READY",
+  "repo": "lexicon",
+  "at": "2026-11-09T03:00:00Z",
+  "text": "Edit src/schema.test.ts."
+ },
+ {
+  "id": "RQ-DONE",
+  "status": "MERGED",
+  "repo": "lexicon",
+  "at": "2026-11-09T04:00:00Z",
+  "text": "Add surrogate tests to src/schema.test.ts. Acceptance: lone surrogates are rejected and pairs pass."
+ },
+ {
+  "id": "RQ-OLD",
+  "status": "READY",
+  "repo": "ashlr-plugin",
+  "at": "2026-11-07T02:00:00Z",
+  "text": "Add the SAFETY marker check to test/read-fidelity.test.ts. Acceptance: read output keeps the SAFETY marker."
+ }
+]
