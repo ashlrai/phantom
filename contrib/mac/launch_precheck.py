@@ -31,7 +31,14 @@ def precheck(job, repo, prompt, home, runs, runner=run):
                 rf"SKIP {re.escape(job)} code=10 reason=(id_merged_pr_[1-9][0-9]*|pr_[1-9][0-9]*_(?:MERGED|CLOSED))\n?",
                 r.stdout)
             return (10, receipt.group(1)) if receipt else (13, "unproven_completion")
-        if r.returncode in (11, 12, 13):
+        if r.returncode == 13:
+            # Only retain known, exact receipts: subprocess output is untrusted and
+            # may contain credentials. Existence heuristics never prove completion.
+            receipt = re.fullmatch(
+                rf"SKIP {re.escape(job)} code=13 reason=(files_and_tests_exist|symbols_defined)\n?",
+                r.stdout)
+            return (13, receipt.group(1) if receipt else "invalid_or_unknown_receipt")
+        if r.returncode in (11, 12):
             m = re.search(r"reason=(\S+)", r.stdout)
             return (r.returncode, m.group(1) if m else "?")
     except Exception:
@@ -53,11 +60,13 @@ def parked(state, job, key, now):
     return now < entry.get("retry_at", 0)
 
 
-def park(state, job, key, now):
+def park(state, job, key, now, code=None, reason=None):
     """Retry at 1, 2, 4, ... 60 minutes; report only the first parking."""
     previous = state.get(job, {})
     first = previous.get("key") != key
     count = 1 if first else min(previous.get("count", 0) + 1, 7)
     state[job] = {"key": key, "count": count,
                   "retry_at": now + min(3600, 60 * 2 ** (count - 1))}
+    if code is not None:
+        state[job].update(code=code, reason=reason)
     return first
