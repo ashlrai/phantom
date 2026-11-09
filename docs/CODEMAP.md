@@ -84,6 +84,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/classify/`
 - `src/core/cloud/`
 - `src/core/comms/`
+- `src/core/comms-agent/`
 - `src/core/connectors/`
 - `src/core/context/`
 - `src/core/cos/`
@@ -108,6 +109,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/goal-loop/`
 - `src/core/goals/`
 - `src/core/graph/`
+- `src/core/growth/`
 - `src/core/improve/`
 - `src/core/inbox/`
 - `src/core/incident/`
@@ -144,6 +146,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/seams/`
 - `src/core/security/`
 - `src/core/spec/`
+- `src/core/spend/`
 - `src/core/steward/`
 - `src/core/strategy/`
 - `src/core/swarm/`

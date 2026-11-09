@@ -34,6 +34,8 @@ import { mentionedRefs } from './thread-refs.js';
 import { leaderCeoSummary } from './leader-ceo-model.js';
 import { LeaderOfficeStrip } from './LeaderOfficeStrip.js';
 import { leaderOfficeQuery } from './leader-office-data.js';
+import { mergeOwnerLines, ownerThreadLines, type LabeledLine } from './owner-thread-lines.js';
+import { NO_OWNER_THREAD, ownerThreadQuery } from './owner-thread-queries.js';
 import { sendLeaderInboxMessage } from './leader-inbox-data.js';
 
 /** Shared 'verse-fleet-runs' key so the pane rides the same cache and SSE invalidation as the other fleet panes. */
@@ -47,7 +49,7 @@ const NO_MESSAGES: LeaderThreadMessage[] = [];
 const STICK_PX = 96;
 
 /** One merged line: a system note stays the centered quiet line; the leaders' rows keep the conversation's look; Mason's get a left rule and a source chip. */
-function LineView({ line }: { line: MergedLine }) {
+function LineView({ line }: { line: LabeledLine }) {
   const leader = line.who === 'leader';
   const iso = Number.isFinite(line.at) ? new Date(line.at).toISOString() : null;
   const clock = iso ? clockTime(iso) : '—';
@@ -61,7 +63,7 @@ function LineView({ line }: { line: MergedLine }) {
     <section className={leader ? leaderStyles.group : `${leaderStyles.group} ${styles.masonLine}`} data-from={line.who} data-source={line.source} aria-label={`${leader ? 'Leader' : 'You'}, ${clock}`}>
       <header className={leaderStyles.groupHead}>
         <span className={leaderStyles.avatar} data-from={line.who} aria-hidden="true">{leader ? 'L' : 'M'}</span>
-        <span className={leaderStyles.who}>{leader ? 'Leader' : 'You'}</span>
+        <span className={leaderStyles.who}>{line.label ?? (leader ? 'Leader' : 'You')}</span>
         {leader && channel ? <ChannelBadge channel={channel} /> : <span className={leaderStyles.channel} data-channel={channel ?? undefined} title={`Sent via ${label}`}>{label}</span>}
         {line.kind ? <span className={leaderStyles.channel}>{OUTBOX_KIND_LABEL[line.kind]}</span> : null}
         {!leader && line.ack ? <span className={leaderStyles.channel} data-ack={line.ack.state}>{line.ack.text}</span> : null}
@@ -104,12 +106,14 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const fleet = useQuery(fleetLiveQuery, { enabled: visible, freshMs: 30_000 });
   const directives = useQuery(leaderDirectivesQuery, { enabled: visible, freshMs: 30_000 });
   const office = useQuery(leaderOfficeQuery, { enabled: visible, freshMs: 30_000 });
+  const owner = useQuery(ownerThreadQuery, { enabled: visible, freshMs: 5_000 });
   const busStatus = useQuery(agentBusStatusQuery, { enabled: visible && !agentBusMissing(), freshMs: 10_000 });
   const after = Math.max(0, (busStatus.data?.retainedCount ?? 0) - 100);
   const busPageQuery = useMemo(() => agentBusPageQuery(after, 100), [after]);
   const busPage = useQuery(busPageQuery, { enabled: visible && busStatus.data?.source === 'available' && !agentBusMissing(), freshMs: 10_000 });
   const refetchThread = useRefetch(leaderThreadQuery);
   const refetchRuns = useRefetch(fleetRunsQuery);
+  const refetchOwner = useRefetch(ownerThreadQuery);
   const refetchJournal = useRefetch(leaderJournalQuery);
   const refetchLeader = useRefetch(leaderQuery);
   const refetchFleet = useRefetch(fleetLiveQuery);
@@ -131,7 +135,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   // Inbox wall times, the merge and the day labels want a coarse tick.
   const now = useNow(10_000);
 
-  usePollWhileVisible(() => { refetchThread(); refetchRuns(); }, 5_000, { enabled: visible });
+  usePollWhileVisible(() => { refetchThread(); refetchRuns(); refetchOwner(); }, 5_000, { enabled: visible });
   usePollWhileVisible(refetchDirectives, 30_000, { enabled: visible });
   usePollWhileVisible(() => { refetchJournal(); refetchLeader(); refetchFleet(); refetchOffice(); }, 30_000, { enabled: visible });
   usePollWhileVisible(() => {
@@ -144,15 +148,17 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const outbox = useMemo(() => fleetOutbox(runs.data), [runs.data]);
   const merged = useMemo(() => mergeThread(messages, inbox, now, runs.data, outbox), [messages, inbox, outbox, now, runs.data]);
   const busRows = useMemo(() => busRepliesToMason(busPage.data?.messages ?? [], now, outbox), [busPage.data, now, outbox]);
+  const ownerRead = owner.data ?? NO_OWNER_THREAD;
+  const ownerLines = useMemo(() => ownerRead.paused ? [] : ownerThreadLines(ownerRead.lines, merged.lines), [ownerRead, merged.lines]);
   const summary = leaderCeoSummary(journal.data);
   const bottleneck = summary.bottleneck ?? leader.data?.value?.latest?.bottleneck?.statement ?? null;
   const health = useMemo(() => fleet.data?.value ? computeLaneHealth(fleet.data.value) : null, [fleet.data]);
 
   // One row per line, keeping the conversation's day separators; undated lines go last.
   const items = useMemo(() => {
-    const out: ({ type: 'day'; key: string; label: string } | { type: 'line'; key: string; line: MergedLine } | { type: 'bus'; key: string; row: BusReply })[] = [];
+    const out: ({ type: 'day'; key: string; label: string } | { type: 'line'; key: string; line: LabeledLine } | { type: 'bus'; key: string; row: BusReply })[] = [];
     let day = '';
-    for (const item of mergeByTime([...merged.lines, ...merged.undated], busRows)) {
+    for (const item of mergeByTime([...mergeOwnerLines(merged.lines, ownerLines), ...merged.undated], busRows)) {
       if (needsYouOnly && (item.type !== 'line' || !((item.line.source === 'outbox' && (item.line.kind === 'decision' || item.line.kind === 'alert')) || (item.line.who === 'mason' && item.line.ack?.state === 'waiting')))) continue;
       const at = item.type === 'line' ? item.line.at : Date.parse(item.row.at);
       if (Number.isFinite(at)) {
@@ -166,7 +172,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       out.push(item.type === 'line' ? { ...item, key: item.line.id } : { ...item, key: item.row.key });
     }
     return out;
-  }, [merged, busRows, now, needsYouOnly]);
+  }, [merged, ownerLines, busRows, now, needsYouOnly]);
 
   const lastKey = items.length ? items[items.length - 1]!.key : null;
   const forcedAt = useRef(scrollVersion);
@@ -265,6 +271,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
         if (el) atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_PX;
       }}>
       <div className={leaderStyles.logInner}>
+        {ownerRead.paused ? <p className={leaderStyles.system}>Owner channels paused</p> : null}
         {body}
       </div>
     </div>
