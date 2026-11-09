@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useRefetch } from '../../data/hooks.js';
-import { controlLogsObservationQuery, fleetActivityQuery, fleetStatusQuery, inboxQuery, runsQuery } from '../../data/queries.js';
+import { controlLogsObservationQuery, fleetActivityQuery, fleetLanesQuery, fleetStatusQuery, inboxQuery, runsQuery } from '../../data/queries.js';
 import { buildJournalEntries } from '../journal/journal-model.js';
 import { EpistemicBadge } from '../../components/primitives/Epistemic.js';
+import { AgentFeed, QuotaGauges, WinFeed, type PanelState } from './ShowPanels.js';
+import { buildAgentFeed, buildQuotaGauges, buildWins } from './show-model.js';
 import styles from './ShowView.module.css';
 
 const REFRESH_MS = 15_000;
 const ADVANCE_MS = 8_000;
+
+const panelState = (...queries: { status: string }[]): PanelState =>
+  queries.some(q => q.status === 'error') ? 'error' : queries.some(q => q.status === 'loading') ? 'loading' : 'ready';
 
 export function ShowView() {
   const activity = useQuery(fleetActivityQuery);
@@ -14,32 +19,37 @@ export function ShowView() {
   const logs = useQuery(controlLogsObservationQuery);
   const runs = useQuery(runsQuery);
   const inbox = useQuery(inboxQuery);
+  const lanes = useQuery(fleetLanesQuery);
   const refreshActivity = useRefetch(fleetActivityQuery);
   const refreshFleet = useRefetch(fleetStatusQuery);
   const refreshLogs = useRefetch(controlLogsObservationQuery);
   const refreshRuns = useRefetch(runsQuery);
   const refreshInbox = useRefetch(inboxQuery);
+  const refreshLanes = useRefetch(fleetLanesQuery);
   const [playing, setPlaying] = useState(true);
   const [position, setPosition] = useState(0);
   const entries = useMemo(() => buildJournalEntries({ logs: logs.data, fleetActivity: activity.data, runs: runs.data, inbox: inbox.data }), [logs.data, activity.data, runs.data, inbox.data]);
   const merges = entries.filter(entry => entry.source === 'merge');
+  const feed = useMemo(() => buildAgentFeed(entries), [entries]);
+  const wins = useMemo(() => buildWins(entries), [entries]);
+  const gauges = useMemo(() => buildQuotaGauges(lanes.data), [lanes.data]);
   const current = entries[position % (entries.length || 1)];
 
   useEffect(() => {
     const id = setInterval(() => {
       if (document.visibilityState !== 'hidden') {
-        refreshActivity(); refreshFleet(); refreshLogs(); refreshRuns(); refreshInbox();
+        refreshActivity(); refreshFleet(); refreshLogs(); refreshRuns(); refreshInbox(); refreshLanes();
       }
     }, REFRESH_MS);
     return () => clearInterval(id);
-  }, [refreshActivity, refreshFleet, refreshLogs, refreshRuns, refreshInbox]);
+  }, [refreshActivity, refreshFleet, refreshLogs, refreshRuns, refreshInbox, refreshLanes]);
   useEffect(() => {
     if (!playing || entries.length < 2) return;
     const id = setInterval(() => setPosition(value => value + 1), ADVANCE_MS);
     return () => clearInterval(id);
   }, [playing, entries.length]);
 
-  const errors = [activity, fleet, logs, runs, inbox].filter(query => query.status === 'error').length;
+  const errors = [activity, fleet, logs, runs, inbox, lanes].filter(query => query.status === 'error').length;
   return <div className={styles.view}>
     <header className={styles.header}>
       <div><p className={styles.eyebrow}>THE FLEET · SHOW MODE</p><h1>Watch the work unfold.</h1><p>Real activity from the fleet, as it happens.</p></div>
@@ -67,6 +77,11 @@ export function ShowView() {
         {merges.length ? <ul>{merges.map(merge => <li key={merge.id}><span className={styles.spark}>✦</span><div><strong>{merge.repo ?? 'Unknown repo'}</strong><p>{merge.detail}</p><time>{merge.ts}</time><EpistemicBadge quality={merge.sourceQuality} /></div></li>)}</ul> : <p className={styles.empty}>{activity.status === 'loading' ? 'Loading merges…' : activity.status === 'error' ? 'Merge activity unavailable.' : 'No recent merges reported.'}</p>}
       </section>
     </div>
-    <p className={styles.caption}>Recent activity only: fleet merges, ticks and agent actions, daemon logs, runs and pending proposals. Sources refresh every 15 seconds while visible.</p>
+    <div className={styles.ambient}>
+      <AgentFeed entries={feed} state={panelState(activity, runs)} />
+      <WinFeed entries={wins} state={panelState(activity, runs)} />
+      <QuotaGauges gauges={gauges} state={panelState(lanes)} />
+    </div>
+    <p className={styles.caption}>Recent activity only: fleet merges, ticks and agent actions, daemon logs, runs, pending proposals and lane quota readings. Sources refresh every 15 seconds while visible.</p>
   </div>;
 }
