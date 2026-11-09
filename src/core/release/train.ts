@@ -73,6 +73,7 @@ export interface TrainState {
   schema: typeof TRAIN_SCHEMA;
   stopped: boolean;
   reason: string;
+  refusal?: { check: string; candidateSha: string; observed: string | boolean; required: string | boolean };
   version: string | null;
   tag: string | null;
   sha: string | null;
@@ -279,11 +280,12 @@ export function assertReleaseWrite(write: ReleaseWrite): void {
 export function buildTrain(input: TrainObservation): TrainPlan {
   const kill = releaseKillDecision(input.fleetKill, input.autorunOff);
   const minutes = cappedCadenceMinutes(input.cadenceMinutes);
-  const stopped = (reason: string): TrainPlan => ({
+  const stopped = (reason: string, refusal?: TrainState['refusal']): TrainPlan => ({
     exitCode: 1,
     writes: [],
     state: {
       schema: TRAIN_SCHEMA, stopped: true, reason, version: null, tag: null, sha: null, next: null,
+      ...(refusal ? { refusal } : {}),
       superseded: [], website: WEBSITE_HOOK,
       steps: { kill: { status: 'stopped', reason } },
       stages: emptyStages(null),
@@ -302,7 +304,17 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   const admitted = (input.head.ancestry === 'ancestor' || input.head.ancestry === 'identical')
     && input.head.sha !== ''
     && isReleasePleaseCommit(input.head.message, version);
-  if (!admitted) return stopped('candidate-refused');
+  if (!admitted) {
+    const candidateSha = headTag.sha;
+    if (input.head.ancestry !== 'ancestor' && input.head.ancestry !== 'identical') {
+      const observed = (['diverged', 'behind', 'unknown'] as string[]).includes(input.head.ancestry) ? input.head.ancestry : 'unknown';
+      return stopped('candidate-refused', { check: 'candidate-ancestry', candidateSha, observed, required: 'ancestor or identical' });
+    }
+    if (input.head.sha === '') {
+      return stopped('candidate-refused', { check: 'candidate-sha', candidateSha, observed: 'empty', required: 'nonempty' });
+    }
+    return stopped('candidate-refused', { check: 'release-please-subject', candidateSha, observed: false, required: true });
+  }
 
   const marker = supersedeMarker(headTag.name);
   const superseded: string[] = [];

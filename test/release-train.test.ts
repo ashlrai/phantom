@@ -143,8 +143,13 @@ describe('release train', () => {
   it('refuses a newest tag that is not a release-please ancestor', () => {
     expect(isReleasePleaseCommit(message, '3.30.27')).toBe(true);
     expect(docsCarriersSynced(message, '3.30.27')).toBe(true);
-    expect(buildTrain(observation({ head: { tag: 'v3.30.27', sha: head, message: 'feat: something\n', ancestry: 'ancestor', committedAt: null } })).exitCode).toBe(1);
-    expect(buildTrain(observation({ head: { tag: 'v3.30.27', sha: head, message, ancestry: 'diverged', committedAt: null } })).state.reason).toBe('candidate-refused');
+    const subject = buildTrain(observation({ head: { tag: 'v3.30.27', sha: head, message: 'feat: private commit text\n', ancestry: 'ancestor', committedAt: null } }));
+    expect(subject).toMatchObject({ exitCode: 1, writes: [], state: { reason: 'candidate-refused', refusal: {
+      check: 'release-please-subject', candidateSha: head, observed: false, required: true,
+    } } });
+    expect(JSON.stringify(subject.state.refusal)).not.toContain('private commit text');
+    const ancestry = buildTrain(observation({ head: { tag: 'v3.30.27', sha: head, message, ancestry: 'diverged', committedAt: null } }));
+    expect(ancestry.state.refusal).toEqual({ check: 'candidate-ancestry', candidateSha: head, observed: 'diverged', required: 'ancestor or identical' });
   });
 
   it('dispatches attest and npm for the tagged sha and leaves signing to the Mac wrapper', () => {
