@@ -2,16 +2,15 @@
  * M212: Soft-pause flag for the comms dispatch cycle.
  *
  * Dual interface:
- *   isPaused() / setPause(on)      — file-existence-based (used by dispatch.ts fast-path)
+ *   isPaused() / setPause(on)      — boolean interface (used by dispatch.ts fast-path)
  *   loadPauseState() / savePauseState(s) — JSON-object-based (used by elon-dialogue, handlers)
  *
  * Both back onto ~/.ashlr/comms/pause.json so state is consistent across callers.
- * The file-existence check for isPaused() reads the same .json file's `paused` field.
  *
- * Never throws.
+ * Never throws; invalid or inaccessible pause state fails closed.
  */
 
-import { existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { lstatSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readPrivateFileCapped } from '../verse/preferences.js';
@@ -27,16 +26,23 @@ function pauseJsonPath(): string {
 
 export function loadPauseState(): PauseState {
   try {
-    if (!existsSync(pauseJsonPath())) return { paused: false };
+    let stat;
+    try {
+      stat = lstatSync(pauseJsonPath());
+    } catch (error) {
+      return { paused: (error as NodeJS.ErrnoException).code !== 'ENOENT' };
+    }
+    if (!stat.isFile() || stat.size > 64 * 1024) return { paused: true };
     const read = readPrivateFileCapped(pauseJsonPath(), 64 * 1024);
-    if (read === null || read.truncated) return { paused: false };
-    const parsed = JSON.parse(read.text) as Partial<PauseState>;
-    return {
-      paused: parsed.paused === true,
-      since: typeof parsed.since === 'number' ? parsed.since : undefined,
-    };
+    if (read === null || read.truncated) return { paused: true };
+    const parsed: unknown = JSON.parse(read.text);
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return { paused: true };
+    const state = parsed as Partial<PauseState>;
+    if (typeof state.paused !== 'boolean') return { paused: true };
+    if (!state.paused) return { paused: false };
+    return typeof state.since === 'number' ? { paused: true, since: state.since } : { paused: true };
   } catch {
-    return { paused: false };
+    return { paused: true };
   }
 }
 
@@ -50,7 +56,7 @@ export function savePauseState(s: PauseState): void {
 
 /** Returns true when the fleet soft-pause flag is active. Never throws. */
 export function isPaused(): boolean {
-  try { return loadPauseState().paused === true; } catch { return false; }
+  try { return loadPauseState().paused === true; } catch { return true; }
 }
 
 export function setPause(on: boolean): void {
