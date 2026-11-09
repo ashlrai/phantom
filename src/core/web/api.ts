@@ -44,6 +44,7 @@
  */
 
 import { handleFrictionFeedback } from '../verse/feedback-api.js';
+import { COMMS_CONFIRM_PATH, handleCommsConfirmRoute } from './comms-confirm-route.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { timingSafeEqual, randomBytes } from 'node:crypto';
 import { basename, resolve as resolvePath, sep as pathSep } from 'node:path';
@@ -2436,6 +2437,11 @@ export async function handleApi(
 
     if (path === '/api/verse/feedback') {
       return handleFrictionFeedback(ctx, req, res);
+    }
+
+    // Before the V1 catch-all, which 404s every /api/verse/* path it does not know.
+    if (path === COMMS_CONFIRM_PATH) {
+      return handleCommsConfirmRoute(ctx, req, res, method);
     }
 
     // ── /api/verse/{control,caps,scope,audit,daemon,safety} (V2 control) ────

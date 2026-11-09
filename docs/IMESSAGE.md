@@ -86,7 +86,10 @@ that app. Phantom never edits the TCC database or works around this permission.
 Sending requires all three current local facts: the peer is in
 `comms.imessageAllow`, its hashed `imessage:<sha256-16>` identity is explicitly
 listed in `[team].identities` in `~/.ashlr/agent-network.toml`, and
-`~/.ashlr/comms.toml` has `confirmedByMason = true`. The owner handle remains
+`~/.ashlr/comms.toml` has `confirmedByMason = true`. The desktop console's
+Needs-you drawer shows "Confirm Comms limits" while it is unset: it lists the
+limits and sets the flag in one click from the unlocked app. No agent, CLI or
+MCP path writes it. The owner handle remains
 separate. Missing configuration leaves the peer pending. Pause applies to this
 transport as well.
 

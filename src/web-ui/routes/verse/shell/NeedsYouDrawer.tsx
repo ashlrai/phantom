@@ -53,6 +53,7 @@ import {
 } from '../verse-ui-store.js';
 import { matchCommand } from './command-catalog.js';
 import { FleetNeedsYouRows, type FleetNeedsYouReport } from './FleetNeedsYouRows.js';
+import { CommsConfirmCard } from '../comms-confirm/CommsConfirmCard.js';
 import { isGuardOpen } from './guarded-action.js';
 import { markResolved, pruneResolved, runNeedsYouAction, useResolvedIds } from './needs-you-actions.js';
 import { requestOpenTerminal } from './open-terminal-request.js';
@@ -511,6 +512,8 @@ export function NeedsYouDrawer() {
               {/* "Fleet on this Mac" — the drawer's local producer; renders
                   its group at the top of the All and Fleet splits, null on
                   the others (and reports either way). */}
+              {/* One item while comms.toml is unconfirmed; renders nothing otherwise. */}
+              {split === 'all' || split === 'approvals' ? <CommsConfirmCard /> : null}
               <FleetNeedsYouRows split={split} nowMs={now} onResult={reportFleetNeeds} />
               {items.length === 0 ? (
                 fleetRows.length === 0 ? (
