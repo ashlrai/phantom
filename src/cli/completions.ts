@@ -66,6 +66,9 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'disk', 'app', 'radar',
   // Standing disk maintenance: plan/apply reclaim classes (RQ-DISKMAINT).
   'disk-maint',
+  // Changed-file tests and the fleet event feed.
+  'test', 'feed',
+  'worklog', 'library',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
