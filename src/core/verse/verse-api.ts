@@ -488,6 +488,9 @@ const WORKBENCH_IMPORTS: Readonly<Record<WorkbenchRouteFamilyId, () => Promise<W
   'comms-inbox': async () => {
     try { return (await import('./comms-inbox-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'comms-inbox-api.js'); }
   },
+  'comms-teammate-reply': async () => {
+    try { return (await import('./comms-teammate-reply-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'comms-teammate-reply-api.js'); }
+  },
   'agent-roster': async () => {
     try { return (await import('./agent-roster-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'agent-roster-api.js'); }
   },
