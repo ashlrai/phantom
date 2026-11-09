@@ -950,6 +950,21 @@ describe('land-first scheduling', () => {
       expect(unknown.codex.slots).toBe(LANE_DEFAULT_SLOTS.codex);
     });
 
+    it('zeroes a lane with nothing left until the reset and leaves every other lane alone', () => {
+      const resetAt = new Date(NOW + 10 * 3_600_000).toISOString();
+      const open = planLanes({ policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {}, nowMs: NOW });
+      const plan = planLanes({
+        policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {},
+        nowMs: NOW,
+        sensorPace: { 'grok-cli': { remaining: 0, resetAt, burnPerHour: null } },
+      });
+      expect(plan['grok-cli'].slots).toBe(0);
+      expect(plan['grok-cli'].capReason).toContain('Other lanes keep running');
+      for (const lane of Object.keys(plan) as (keyof typeof plan)[]) {
+        if (lane !== 'grok-cli') expect(plan[lane]).toEqual(open[lane]);
+      }
+    });
+
     it('keeps a pay-per-use lane at 0 when the owner budget is 0', () => {
       const resetAt = new Date(NOW + 10 * 3_600_000).toISOString();
       const plan = planLanes({

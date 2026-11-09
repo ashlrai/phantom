@@ -96,7 +96,8 @@ export function blindSpotsFrom(model: Omit<WorldModel, 'blindSpots'>): { spots: 
   const walk = (node: unknown, path: string): void => {
     if (isField(node)) {
       if (node.freshness === 'fresh') fresh += 1;
-      else spots.push({ id: stableFieldId(path), path, freshness: node.freshness, need: needFor(path) });
+      // Not at zero is the normal state; its absence is not a blind spot.
+      else if (!path.endsWith('.zeroCapacityUntil')) spots.push({ id: stableFieldId(path), path, freshness: node.freshness, need: needFor(path) });
       return;
     }
     if (Array.isArray(node)) {
@@ -137,7 +138,14 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
       }
       return reading(value, source ?? 'usage.sensors.v1', observedAt, 'fresh');
     };
-    const remaining = laneNumber(lane.remaining);
+    const remaining = lane.zeroCapacityUntil
+      ? reading(0, source ?? 'usage.sensors.v1', observedAt, 'fresh')
+      : laneNumber(lane.remaining);
+    const resetKnown = lane.resetAt !== null && Date.parse(lane.resetAt) > input.nowMs;
+    const resetAt = resetKnown ? reading(lane.resetAt, source ?? 'usage.sensors.v1', observedAt, 'fresh') : unknown<string>(source ?? 'usage.sensors.v1');
+    const zeroCapacityUntil = lane.zeroCapacityUntil
+      ? reading(lane.zeroCapacityUntil, source ?? 'usage.sensors.v1', observedAt, 'fresh')
+      : unknown<string>(source ?? 'usage.sensors.v1');
     const burnRate = laneNumber(lane.burnRate);
     const idleIncludedWastedPerWeek = laneNumber(lane.idleIncludedWastedPerWeek);
     const paceFreshness: Freshness = fresh ? 'fresh' : 'unknown';
@@ -151,7 +159,7 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
     const paceHour = paceField(pacePerHour);
     const required = paceField(requiredPacePerHour);
     const runway = paceField(runwayHours);
-    return { lane: lane.lane, headroom, used, limit, remaining, burnRate, idleIncludedWastedPerWeek, pacePerHour: paceHour, requiredPacePerHour: required, runwayHours: runway };
+    return { lane: lane.lane, headroom, used, limit, remaining, resetAt, zeroCapacityUntil, burnRate, idleIncludedWastedPerWeek, pacePerHour: paceHour, requiredPacePerHour: required, runwayHours: runway };
   });
 
   const knownSources = input.roster?.sources.filter((source) => source.availability === 'known') ?? [];

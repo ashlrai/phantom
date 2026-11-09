@@ -73,6 +73,7 @@ import { hasResetDeadline, opportunityPriority } from '../routing/reset-pressure
 import type { ResourceChoiceCandidate, AccountSchedulingView } from '../routing/scheduling-types.js';
 import type { WorkHistorySample } from '../routing/work-estimates.js';
 import { isAbsolute, join, resolve } from 'node:path';
+import { grokManualSensorReadings } from '../usage/grok-resource.js';
 import { fleetPaceAdvice } from '../usage/sensor-pace.js';
 import { parseUsageSensorSnapshot, presentUsageSensors } from '../usage/sensor-reading.js';
 
@@ -723,7 +724,7 @@ async function loadSchedulerPace(nowMs: number): Promise<{ nowMs: number; killed
       readings = parseUsageSensorSnapshot(JSON.parse(await readFile(path, 'utf8')));
     }
   } catch { readings = []; }
-  return { nowMs, killed, sensorPace: fleetPaceAdvice(presentUsageSensors(readings, nowMs)) };
+  return { nowMs, killed, sensorPace: fleetPaceAdvice(presentUsageSensors([...grokManualSensorReadings(nowMs), ...readings], nowMs)) };
 }
 
 export function defaultLiveHooksDeps(): LiveHooksDeps {

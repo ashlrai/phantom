@@ -52,6 +52,7 @@ export const USAGE_SENSOR_SOURCES = [
   'claude-api-balance',
   'cursor-status',
   'grok-status',
+  'manual',
   'local-throughput',
   'unmeasured',
 ] as const;
@@ -99,6 +100,12 @@ export interface UsageSensorLaneView {
   forecastVsReset: ForecastVsReset;
   /** Included allowance projected to expire unused, scaled to a week. Null when unknown. */
   idleIncludedWastedPerWeek: number | null;
+  /**
+   * Reset time while the allowance is used up, else null. Usage never falls
+   * inside a window, so this holds past staleAfter: a lane at zero stays at
+   * zero until the reset, however old the reading is.
+   */
+  zeroCapacityUntil: string | null;
 }
 
 export interface UsageSensorReport {
@@ -187,6 +194,8 @@ function viewLane(samples: readonly UsageSensorReading[], nowMs: number): UsageS
     const usedAtReset = latest.used! + burn * hoursLeft;
     idleIncludedWastedPerWeek = weeklyWaste(Math.max(0, latest.limit! - usedAtReset), hoursLeft);
   }
+  const spent = latest.source !== 'unmeasured' && latest.used !== null && latest.limit !== null && latest.used >= latest.limit;
+  const zeroCapacityUntil = spent && Number.isFinite(resetMs) && resetMs > nowMs ? latest.resetAt : null;
   return {
     lane: latest.lane,
     observedAt: latest.observedAt,
@@ -206,6 +215,7 @@ function viewLane(samples: readonly UsageSensorReading[], nowMs: number): UsageS
     forecastExhaustAt,
     forecastVsReset,
     idleIncludedWastedPerWeek,
+    zeroCapacityUntil,
   };
 }
 
