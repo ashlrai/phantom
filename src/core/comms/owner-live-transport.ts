@@ -4,6 +4,7 @@
  * directory overrides are ignored. Tests inject fakes and do not send.
  */
 import { parseSlackThreadRef, isSlackUserId } from '../agents/slack-network.js';
+import { loadConfigAt } from '../config.js';
 import { OWNER_SECRET_HANDLES, fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings, type OwnerChannelTransport, type OwnerThreadSettings } from './owner-channel.js';
 import type { OwnerChannel } from './leader-mailbox.js';
 
@@ -22,7 +23,18 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-/** The address Mail.app may receive, or null. Reads only the fixed owner home. */
+/** Slack owner id from the account home, or null. Does not follow `$HOME`. */
+export function resolveLiveSlackOwnerId(): string | null {
+  return loadOwnerThreadSettings(fixedOwnerConfigDir()).owners.slack ?? null;
+}
+
+/** iMessage handle from the account home's config.json, or null. Does not follow `$HOME`. */
+export function resolveLiveIMessageHandle(): string | null {
+  const handle = loadConfigAt(fixedOwnerConfigDir()).comms?.imessageHandle;
+  return typeof handle === 'string' && handle.length > 0 ? handle : null;
+}
+
+/** The address Mail.app may receive, or null. Reads only the account home, not `$HOME`. */
 export async function resolveLiveEmailRecipient(ownerId: string): Promise<string | null> {
   const fixed = loadOwnerThreadSettings(fixedOwnerConfigDir());
   const owner = fixed.owners.email;
@@ -71,10 +83,10 @@ export function liveOwnerTransports(settings: OwnerThreadSettings, _runsDir: str
     telegram: {
       async pull() { return []; },
       async deliver(input) {
-        if (settings.secretHandles.telegram !== OWNER_SECRET_HANDLES.telegram || input.ownerId !== settings.owners.telegram) return refused();
-        const { loadConfig } = await import('../config.js');
+        const fixed = loadOwnerThreadSettings(fixedOwnerConfigDir());
+        if (fixed.secretHandles.telegram !== OWNER_SECRET_HANDLES.telegram || input.ownerId !== fixed.owners.telegram) return refused();
         const { sendTelegramMessage } = await import('../integrations/telegram.js');
-        const cfg = await loadConfig();
+        const cfg = loadConfigAt(fixedOwnerConfigDir());
         const chatId = cfg.comms?.telegram?.chatId;
         if (!chatId || input.ownerId !== `telegram:${chatId}`) return refused();
         const result = await sendTelegramMessage(input.text, undefined, cfg);
@@ -97,12 +109,11 @@ export function liveOwnerTransports(settings: OwnerThreadSettings, _runsDir: str
     imessage: {
       async pull() { return []; },
       async deliver(input) {
-        if (settings.imessageBridge !== 'loopback' || process.platform !== 'darwin' || input.ownerId !== settings.owners.imessage) return refused();
-        const { loadConfig } = await import('../config.js');
+        const handle = resolveLiveIMessageHandle();
+        const fixed = loadOwnerThreadSettings(fixedOwnerConfigDir());
+        if (!handle || input.ownerId !== handle || fixed.imessageBridge !== 'loopback' || process.platform !== 'darwin') return refused();
         const { sendIMessageOutbox } = await import('./imessage-outbox.js');
-        const cfg = await loadConfig();
-        const handle = cfg.comms?.imessageHandle;
-        if (!handle || input.ownerId !== handle) return refused();
+        const cfg = loadConfigAt(fixedOwnerConfigDir());
         const result = await sendIMessageOutbox(input.text, cfg, handle);
         return result.ok ? { status: 'sent', reason: 'sent' } : refused();
       },
@@ -110,20 +121,23 @@ export function liveOwnerTransports(settings: OwnerThreadSettings, _runsDir: str
     slack: {
       async pull() { return []; },
       async deliver(input) {
-        if (settings.secretHandles.slack !== OWNER_SECRET_HANDLES.slack || input.ownerId !== settings.owners.slack || !input.channelRef) return refused();
+        const owner = resolveLiveSlackOwnerId();
+        const fixed = loadOwnerThreadSettings(fixedOwnerConfigDir());
+        if (!owner || input.ownerId !== owner || fixed.secretHandles.slack !== OWNER_SECRET_HANDLES.slack || !input.channelRef) return refused();
+        const ownerHome = { configDir: fixedOwnerConfigDir() };
         const { readSlackDeliveryPolicy, configuredSlackCall, deliverSlackLeaderMessage } = await import('../agents/slack-leader.js');
-        const policy = readSlackDeliveryPolicy();
+        const policy = readSlackDeliveryPolicy(ownerHome);
         const call = deps.slackCall ?? (policy ? configuredSlackCall(policy.config) : undefined);
-        if (!call || !(await proveOwnerDirectMessage(call, input.channelRef, input.ownerId))) return refused();
+        if (!call || !(await proveOwnerDirectMessage(call, input.channelRef, owner))) return refused();
         const { CHANNEL_BUS_TTL_MS } = await import('../fleet/channel-bus-publish.js');
-        const result = await deliverSlackLeaderMessage({ channel: 'slack', id: input.ownerId }, {
+        const result = await deliverSlackLeaderMessage({ channel: 'slack', id: owner }, {
           id: `own-${input.idempotencyKey}`.slice(0, 120),
           from: 'leader', to: 'mason', priority: 'P0', ttl: CHANNEL_BUS_TTL_MS,
           body: { kind: 'leader-reply', text: input.text },
           channel: 'slack', channel_ref: input.channelRef,
           sender: { agent_id: 'leader', vendor: 'phantom', human: false, team: true },
           external: false, origin_bridge: 'leader-network',
-        });
+        }, { ...ownerHome, ...(deps.slackCall ? { call: deps.slackCall } : {}) });
         return result.status === 'sent' ? { status: 'sent', reason: 'sent' } : refused();
       },
     },

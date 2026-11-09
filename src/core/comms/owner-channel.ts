@@ -3,8 +3,8 @@
  * until its owner identity is configured. Remote credentials are Phantom
  * Secrets handle names, never values.
  */
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { realAccountHome } from '../config.js';
 import { parse } from 'smol-toml';
 import type { TeamIdentity } from '../agents/channel-policy.js';
 import { parseCommsConfirmation, parseTeamIdentities } from '../agents/channel-policy.js';
@@ -25,14 +25,16 @@ export const OWNER_SECRET_HANDLES = {
 
 export type OwnerSecretChannel = keyof typeof OWNER_SECRET_HANDLES;
 
-/** Real owner config. Env overrides cannot retarget this path. */
+/** Real owner config. `$HOME` and `ASHLR_CONFIG_DIR` cannot retarget this path. */
 export function fixedOwnerConfigDir(): string {
-  return join(homedir(), '.ashlr');
+  const home = realAccountHome();
+  return home ? join(home, '.ashlr') : join('/owner-home-unavailable');
 }
 
-/** Real runs directory. Env overrides cannot retarget email-drop or the owner thread. */
+/** Real runs directory. `$HOME` and `ASHLR_RUNS_DIR` cannot retarget email-drop. */
 export function fixedOwnerRunsDir(): string {
-  return join(homedir(), '.ashlr-runs');
+  const home = realAccountHome();
+  return home ? join(home, '.ashlr-runs') : join('/owner-home-unavailable');
 }
 
 export interface OwnerInbound {
