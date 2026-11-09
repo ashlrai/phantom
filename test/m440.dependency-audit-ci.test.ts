@@ -61,8 +61,11 @@ const osvScannerInstallCommand = `set -euo pipefail
 binary="\${RUNNER_TEMP}/osv-scanner-download"
 bin_dir="\${RUNNER_TEMP}/osv-scanner-bin"
 url="https://github.com/google/osv-scanner/releases/download/v\${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
-curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \\
-  --retry 3 --retry-all-errors --output "\${binary}" "\${url}"
+if [[ "\${CACHE_HIT}" != 'true' ]]; then
+  curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \\
+    --retry 6 --retry-all-errors --retry-max-time 240 --connect-timeout 20 --max-time 120 \\
+    --output "\${binary}" "\${url}"
+fi
 echo "\${OSV_SCANNER_SHA256}  \${binary}" | sha256sum --check --strict
 mkdir --parents "\${bin_dir}"
 install --mode 0755 "\${binary}" "\${bin_dir}/osv-scanner"
@@ -75,8 +78,11 @@ archive="\${RUNNER_TEMP}/cargo-audit.tgz"
 extract_dir="\${RUNNER_TEMP}/cargo-audit-extract"
 bin_dir="\${RUNNER_TEMP}/cargo-audit-bin"
 url="https://github.com/rustsec/rustsec/releases/download/cargo-audit/v\${CARGO_AUDIT_VERSION}/cargo-audit-\${CARGO_AUDIT_TARGET}-v\${CARGO_AUDIT_VERSION}.tgz"
-curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \\
-  --retry 3 --retry-all-errors --output "\${archive}" "\${url}"
+if [[ "\${CACHE_HIT}" != 'true' ]]; then
+  curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \\
+    --retry 6 --retry-all-errors --retry-max-time 240 --connect-timeout 20 --max-time 120 \\
+    --output "\${archive}" "\${url}"
+fi
 echo "\${CARGO_AUDIT_SHA256}  \${archive}" | sha256sum --check --strict
 mkdir --parents "\${extract_dir}" "\${bin_dir}"
 tar --extract --gzip --file "\${archive}" --directory "\${extract_dir}" \\
@@ -136,14 +142,40 @@ describe('M440 dependency audit CI', () => {
               run: npmInstallCommand,
             },
             {
+              name: 'Restore OSV-Scanner cache',
+              id: 'osv-cache',
+              uses: 'actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809',
+              with: { path: '${{ runner.temp }}/osv-scanner-download', key: 'osv-scanner-${{ env.OSV_SCANNER_VERSION }}-${{ env.OSV_SCANNER_SHA256 }}-linux-amd64' },
+            },
+            {
               name: 'Install pinned OSV-Scanner',
+              env: { CACHE_HIT: '${{ steps.osv-cache.outputs.cache-hit }}' },
               shell: 'bash',
               run: osvScannerInstallCommand,
             },
             {
+              name: 'Save OSV-Scanner cache',
+              if: "steps.osv-cache.outputs.cache-hit != 'true'",
+              uses: 'actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809',
+              with: { path: '${{ runner.temp }}/osv-scanner-download', key: 'osv-scanner-${{ env.OSV_SCANNER_VERSION }}-${{ env.OSV_SCANNER_SHA256 }}-linux-amd64' },
+            },
+            {
+              name: 'Restore cargo-audit cache',
+              id: 'cargo-cache',
+              uses: 'actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809',
+              with: { path: '${{ runner.temp }}/cargo-audit.tgz', key: 'cargo-audit-${{ env.CARGO_AUDIT_VERSION }}-${{ env.CARGO_AUDIT_SHA256 }}-${{ env.CARGO_AUDIT_TARGET }}' },
+            },
+            {
               name: 'Install pinned cargo-audit',
+              env: { CACHE_HIT: '${{ steps.cargo-cache.outputs.cache-hit }}' },
               shell: 'bash',
               run: cargoAuditInstallCommand,
+            },
+            {
+              name: 'Save cargo-audit cache',
+              if: "steps.cargo-cache.outputs.cache-hit != 'true'",
+              uses: 'actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809',
+              with: { path: '${{ runner.temp }}/cargo-audit.tgz', key: 'cargo-audit-${{ env.CARGO_AUDIT_VERSION }}-${{ env.CARGO_AUDIT_SHA256 }}-${{ env.CARGO_AUDIT_TARGET }}' },
             },
             {
               name: 'Verify root dependency graph installs',
@@ -182,6 +214,38 @@ describe('M440 dependency audit CI', () => {
     });
   });
 
+  it.each([
+    ['OSV-Scanner', osvScannerInstallCommand, 'osv-scanner-download', 'OSV_SCANNER_SHA256'],
+    ['cargo-audit', cargoAuditInstallCommand, 'cargo-audit.tgz', 'CARGO_AUDIT_SHA256'],
+  ])('rejects a corrupt cached %s before installation', (_name, command, file, shaVar) => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'audit-cache-'));
+    try {
+      writeFileSync(resolve(dir, file), 'corrupt cache');
+      if (process.platform === 'darwin') {
+        writeFileSync(resolve(dir, 'sha256sum'), '#!/bin/sh\nexec shasum -a 256 "$@"\n', { mode: 0o755 });
+      }
+      const result = spawnSync('bash', ['-c', command], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          RUNNER_TEMP: dir,
+          PATH: `${dir}:${process.env.PATH ?? ''}`,
+          GITHUB_PATH: resolve(dir, 'path'),
+          CACHE_HIT: 'true',
+          OSV_SCANNER_VERSION: '2.5.1',
+          CARGO_AUDIT_VERSION: '0.22.2',
+          CARGO_AUDIT_TARGET: 'x86_64-unknown-linux-gnu',
+          [shaVar]: '0'.repeat(64),
+        },
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain('checksum');
+      expect(existsSync(resolve(dir, 'path'))).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('runs on dependency pull request heads, dependency pushes, daily drift, and manual dispatch', () => {
     expect(events.push).toEqual({ branches: ['master'], paths: authorityPaths });
     expect(events.pull_request).toEqual({ branches: ['**'], paths: authorityPaths });
@@ -218,10 +282,14 @@ describe('M440 dependency audit CI', () => {
   });
 
   it('uses only approved actions with bounded checkout authority', () => {
-    expect(steps).toHaveLength(12);
+    expect(steps).toHaveLength(16);
     expect(steps.filter((step) => step.uses).map((step) => step.uses)).toEqual([
       'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
       'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
+      'actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809',
+      'actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809',
+      'actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809',
+      'actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809',
     ]);
     expect(steps[0]).toMatchObject({
       uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
@@ -241,12 +309,13 @@ describe('M440 dependency audit CI', () => {
       name: 'Install pinned npm',
       run: npmInstallCommand,
     });
-    expect(steps[3]).toEqual({
+    expect(steps[4]).toEqual({
       name: 'Install pinned OSV-Scanner',
+      env: { CACHE_HIT: '${{ steps.osv-cache.outputs.cache-hit }}' },
       shell: 'bash',
       run: osvScannerInstallCommand,
     });
-    expect(steps.slice(5, 11).map(({ run, ['working-directory']: cwd }) => ({ run, cwd }))).toEqual([
+    expect(steps.slice(9, 15).map(({ run, ['working-directory']: cwd }) => ({ run, cwd }))).toEqual([
       {
         run: 'npm ci --ignore-scripts --no-audit --no-fund --force=false --legacy-peer-deps=false --strict-peer-deps',
         cwd: undefined,
@@ -280,7 +349,7 @@ describe('M440 dependency audit CI', () => {
     const firstAuditIndex = steps.findIndex((step) =>
       String(step.run ?? '').includes('npm-audit-with-osv-fallback.sh'),
     );
-    expect(installIndexes).toEqual([5, 6]);
+    expect(installIndexes).toEqual([9, 10]);
     expect(Math.max(...installIndexes)).toBeLessThan(firstAuditIndex);
     for (const index of installIndexes) {
       const command = String(steps[index]?.run ?? '');
@@ -494,8 +563,9 @@ exit "\${TEST_OSV_RC:-0}"
   });
 
   it('pins RustSec tooling and fails on every vulnerability except the open GLib quarantine', () => {
-    expect(steps[4]).toEqual({
+    expect(steps[7]).toEqual({
       name: 'Install pinned cargo-audit',
+      env: { CACHE_HIT: '${{ steps.cargo-cache.outputs.cache-hit }}' },
       shell: 'bash',
       run: cargoAuditInstallCommand,
     });
@@ -503,12 +573,12 @@ exit "\${TEST_OSV_RC:-0}"
     expect(cargoAuditInstallCommand).toContain('sha256sum --check --strict');
     expect(cargoAuditInstallCommand).not.toMatch(/cargo install|latest|stable/);
 
-    expect(steps[11]).toEqual({
+    expect(steps[15]).toEqual({
       name: 'Audit desktop Cargo dependencies',
       run: 'cargo-audit audit --file desktop/src-tauri/Cargo.lock --ignore RUSTSEC-2024-0429',
     });
-    expect(String(steps[11]?.run).match(/--ignore\s+RUSTSEC-/g)).toHaveLength(1);
-    expect(String(steps[11]?.run)).not.toMatch(/continue|allow|deny warnings/i);
+    expect(String(steps[15]?.run).match(/--ignore\s+RUSTSEC-/g)).toHaveLength(1);
+    expect(String(steps[15]?.run)).not.toMatch(/continue|allow|deny warnings/i);
     expect(steps.some((step) => step['continue-on-error'] === true)).toBe(false);
   });
 
