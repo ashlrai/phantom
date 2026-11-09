@@ -45,7 +45,7 @@
  */
 import { FrictionFeedback } from './feedback/FrictionFeedback.js';
 import { PRODUCT_NAME } from '../../app/product-brand.js';
-import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import { reportThemeToShell, subscribeShellCommands, isDesktopShell } from '../../app/desktop-shell.js';
 import { RouteErrorBoundary } from '../../components/primitives/RouteErrorBoundary.js';
 import { Tooltip } from '../../components/primitives/Tooltip.js';
@@ -71,7 +71,9 @@ import { SurfaceNotInBuild, SurfaceSkeleton } from './shell/skeletons.js';
 import { onActivityCompletions, useActivity } from './shell/useActivity.js';
 import { useViewport } from './shell/viewport.js';
 import { CompactNavStrip, type CompactNavId } from './shell/CompactNavStrip.js';
+import { useUnreadTitle } from './shell/last-seen-store.js';
 import { setHomeChoice, useHomeView } from './shell/home-view-store.js';
+import type { UnreadCounts } from './shell/unread-counts.js';
 import type { WarmupOptions } from './shell/warmup.js';
 import { useVerseUi } from './useVerseUi.js';
 import { useFocusMode } from './shell/focus-mode.js';
@@ -321,6 +323,8 @@ function openWorkbenchLink(sessionId: string | null, paneId: string | null): voi
 const HomeSurface = lazy(() => import('./shell/HomeSurface.js').then((m) => ({ default: m.HomeSurface })));
 const ShellUpdates = lazy(() => import('./shell/ShellUpdates.js'));
 const WindowTitle = lazy(() => import('./shell/WindowTitle.js'));
+const HomeUnread = lazy(() => import('./shell/WindowTitle.js').then((m) => ({ default: m.HomeUnread })));
+const NO_UNREAD: UnreadCounts = { leader: 0, feed: 0 };
 
 export function VerseApp() {
   const guardOpen = useGuardState().request !== null;
@@ -334,6 +338,8 @@ export function VerseApp() {
   const [updateLabel, setUpdateLabel] = useState<string | null>(null);
   const { compact } = useViewport();
   const home = useHomeView();
+  const [unread, setUnread] = useState<UnreadCounts>(NO_UNREAD);
+  const onUnread = useCallback((next: UnreadCounts) => setUnread((prev) => prev.leader === next.leader && prev.feed === next.feed ? prev : next), []);
   const platform = useMemo(() => detectKeyPlatform(), []);
   const gearRef = useRef<HTMLButtonElement>(null);
   const [trayOpen, setTrayOpen] = useState(false);
@@ -508,6 +514,7 @@ export function VerseApp() {
   const homeNarrow = homeShowing && home.layout === 'compact' && !compact;
   const stripActive: CompactNavId | null = ui.overlay === 'needs-you' ? 'needs-you'
     : ui.section === 'fleet' ? 'fleet' : homeShowing ? (home.view === 'feed' ? 'feed' : 'leader') : null;
+  useUnreadTitle(unread.leader + unread.feed + (needsYouCount ?? 0));
   const selectCompactNav = (id: CompactNavId) => {
     closeVerseOverlay();
     if (id === 'needs-you') { openVerseOverlay('needs-you'); return; }
@@ -531,7 +538,7 @@ export function VerseApp() {
       data-focus={focus ? 'on' : undefined}
       data-home-narrow={homeNarrow || undefined}
     >
-      <Suspense fallback={null}><WindowTitle /></Suspense>
+      <Suspense fallback={null}><WindowTitle /><HomeUnread viewing={homeShowing ? (home.view === 'feed' ? 'feed' : 'leader') : null} onCounts={onUnread} /></Suspense>
       <nav className={styles.rail} data-rail={expanded ? 'expanded' : 'collapsed'} aria-label={`${PRODUCT_NAME} sections`}>
         {/*
           Desktop shell: the window's top 48px is overlaid by the OS title bar
@@ -656,7 +663,7 @@ export function VerseApp() {
           }}>Review</button>
         {isDesktopShell() ? <Suspense fallback={null}><PowerStatus /></Suspense> : <span className={styles.workMode}>Host power unavailable</span>}
         </div>
-        {home.layout === 'compact' ? <CompactNavStrip active={stripActive} needsYouCount={needsYouCount} onSelect={selectCompactNav} /> : null}
+        {home.layout === 'compact' ? <CompactNavStrip active={stripActive} needsYouCount={needsYouCount} unread={unread} onSelect={selectCompactNav} /> : null}
         {homePane ? <Suspense fallback={null}><HomeSurface paneId={homePane} visible={homeShowing} compact={home.layout === 'compact'} /></Suspense> : null}
         {ui.mounted.map((id) => (
           <SurfaceHost key={id} id={id} active={id === ui.section && !(id === 'live' && homePane)} />
