@@ -1656,6 +1656,7 @@ export const WORKBENCH_ROUTE_FAMILIES = [
   { id: 'team', owner: 'desktop-command', module: 'src/core/verse/team-api.ts', handler: 'handleTeamApi', prefixes: ['/api/verse/team'] },
   { id: 'fleet-comms-status', owner: 'desktop-command', module: 'src/core/verse/fleet-comms-status-api.ts', handler: 'handleFleetCommsStatusApi', prefixes: ['/api/verse/fleet/comms-status'] },
   { id: 'owner-thread', owner: 'desktop-command', module: 'src/core/verse/owner-thread-api.ts', handler: 'handleOwnerThreadApi', prefixes: ['/api/verse/comms/owner-thread'] },
+  { id: 'gmail-triage', owner: 'desktop-command', module: 'src/core/verse/gmail-triage-api.ts', handler: 'handleGmailTriageApi', prefixes: ['/api/verse/comms/gmail-triage'] },
   { id: 'comms-inbox', owner: 'desktop-command', module: 'src/core/verse/comms-inbox-api.ts', handler: 'handleCommsInboxApi', prefixes: ['/api/verse/comms/inbox'] },
   { id: 'agent-roster', owner: 'desktop-command', module: 'src/core/verse/agent-roster-api.ts', handler: 'handleAgentRosterApi', prefixes: ['/api/verse/fleet/agent-roster'] },
   {
