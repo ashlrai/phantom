@@ -268,6 +268,7 @@ Every command, grouped by topic.
     context --for-agent <lane> [--json]                                                        Compact under-4KB brief for one lane: claims, open pulls, bottlenecks, blind spots, and pacing. See docs/WORLD.md.
     claim acquire <work-key> --lane <lane> [--json]                                            Claim a work key before starting. Refuses a live claim or open pull on that key and returns the holder.
     claim release <work-key> --lane <lane> --reason open|merge|abandon [--json]                Release this lane claim when a pull opens, merges, or is abandoned.
+    growth [--json] [--range 1H|1D|1W|1M] [--prs <file>]                                       Growth chart series from local ledgers. A missing source is no-data-source and a world-model blind spot. See docs/GROWTH.md.
     world [--json] [--refresh]                                                                 Cached ashlr.world-model/v1 for the scheduler and leaders. blindSpots lists each unknown field by path with a stable id. See docs/WORLD.md.
     world get <path> [--json]                                                                  Read one node from the cached world model. A missing path is unknown, not zero.
     chain verify [--json]                                                                      Synthetic in-memory chain checks. Does not verify live transports.

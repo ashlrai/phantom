@@ -33,6 +33,7 @@ import { leaderDirectivesQuery, leaderThreadQuery } from '../leader/thread-data.
 import { fleetControlQuery, fleetQueueQuery } from '../fleet/fleet-control-queries.js';
 import { outcomesQuery } from '../fleet/outcomes-queries.js';
 import { adoptionQuery } from '../growth/adoption-data.js';
+import { growthSeriesDayQuery } from '../growth/growth-data.js';
 import { lessonsQuery } from '../growth/lessons-data.js';
 import { runsNowQuery } from '../command/runs-now-queries.js';
 import { operatorGlanceQuery } from '../mobile/operator-glance-query.js';
@@ -57,7 +58,7 @@ export const SURFACE_PREFETCH: Readonly<Partial<Record<VerseSectionId, readonly 
   fleet: [fleetLiveQuery, authorityQuery, overnightQuery, budgetQuery, budgetPreviewQuery, fleetControlQuery, fleetQueueQuery, outcomesQuery],
   // adoptionQuery + lessonsQuery: Growth's two lazy panels, which otherwise
   // ask only once their chunks have loaded and the section has rendered.
-  growth: [fleetHistoryQuery, learningQuery, modelsQuery('30d'), authorityQuery, fleetLiveQuery, adoptionQuery, lessonsQuery],
+  growth: [fleetHistoryQuery, learningQuery, modelsQuery('30d'), authorityQuery, fleetLiveQuery, adoptionQuery, lessonsQuery, growthSeriesDayQuery],
   // The conversation (leader/LeaderConversation) reads the thread and the directives.
   mind: [leaderQuery, leaderThreadQuery, leaderDirectivesQuery, reasoningDigestQuery, verseBootstrapQuery, verseWorkspacesQuery, authorityQuery, fleetLiveQuery],
   chat: [verseBootstrapQuery, verseSessionsQuery, verseWorkspacesQuery],

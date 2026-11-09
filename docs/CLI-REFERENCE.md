@@ -138,6 +138,7 @@ Phantom - every command (phm or ashlr)
     backlog --json                                                                                                                                                Emit raw JSON backlog.
     inbox                                                                                                                                                         Approval inbox: list pending proposals (the outward-action gate).
     drafts list|show|approve|reject [--json]                                                                                                                      Outbound drafts waiting for owner approval; approve records, never sends. See docs/DRAFTS.md.
+    comms-agent status|run|drafts [--json]                                                                                                                        Comms role under the Leader. Triage archives bulk and bot mail and drafts replies. Sends need an owner standing approval. No lane is hard-coded. See docs/COMMS-AGENT.md.
     inbox show <id>                                                                                                                                               Full detail of a proposal incl. diff (read-only).
     inbox approve <id>                                                                                                                                            Confirm + apply an approved proposal to its dedicated local branch.
     inbox approve <id> --yes                                                                                                                                      Approve without interactive prompt (non-TTY safe).
@@ -266,6 +267,7 @@ Phantom - every command (phm or ashlr)
     context --for-agent <lane> [--json]                                                        Compact under-4KB brief for one lane: claims, open pulls, bottlenecks, blind spots, and pacing. See docs/WORLD.md.
     claim acquire <work-key> --lane <lane> [--json]                                            Claim a work key before starting. Refuses a live claim or open pull on that key and returns the holder.
     claim release <work-key> --lane <lane> --reason open|merge|abandon [--json]                Release this lane claim when a pull opens, merges, or is abandoned.
+    growth [--json] [--range 1H|1D|1W|1M] [--prs <file>]                                       Growth chart series from local ledgers. A missing source is no-data-source and a world-model blind spot. See docs/GROWTH.md.
     world [--json] [--refresh]                                                                 Cached ashlr.world-model/v1 for the scheduler and leaders. blindSpots lists each unknown field by path with a stable id. See docs/WORLD.md.
     world get <path> [--json]                                                                  Read one node from the cached world model. A missing path is unknown, not zero.
     chain verify [--json]                                                                      Synthetic in-memory chain checks. Does not verify live transports.
