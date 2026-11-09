@@ -131,6 +131,25 @@ describe('leader office decisions', () => {
     expect(readFileSync(join(root, 'office.json'), 'utf8')).not.toContain('sk-TEST-abcdefghijklmnopqrst');
   });
 
+  it('escalates wording the hard-limit regex does not recognize', async () => {
+    root = mkdtempSync(join(tmpdir(), 'leader-office-'));
+    const phrases = [
+      'wire a little extra to the vendor',
+      'pass the note along to the client',
+      'clear the old notes off the machine',
+      'fix the test then wire a little extra to the vendor',
+    ];
+    for (const phrase of phrases) {
+      expect(classifyEscalation(phrase), phrase).toBeNull();
+      const decision = await leaderAsk({ text: phrase }, deps());
+      expect(decision.status, phrase).toBe('escalated');
+      expect(decision.escalation?.category, phrase).toBe('unsure');
+      expect(decision.route, phrase).toBeNull();
+      expect(busTo('engineering'), phrase).toHaveLength(0);
+      expect(busTo('owner').length, phrase).toBeGreaterThan(0);
+    }
+  });
+
   it('stops ask and assign when KILL is on, without writing or posting', async () => {
     root = mkdtempSync(join(tmpdir(), 'leader-office-'));
     const options = deps({ killed: () => true });
@@ -142,6 +161,44 @@ describe('leader office decisions', () => {
     expect(listBusInboxAfter(0, 10, { root, now: () => NOW }).status === 'ok'
       ? listBusInboxAfter(0, 10, { root, now: () => NOW }) : { messages: [] }).toMatchObject({ messages: [] });
     expect(() => readFileSync(join(root, 'office.json'), 'utf8')).toThrow();
+  });
+
+  it('a KILL set after entry blocks the bus post and the office write', async () => {
+    root = mkdtempSync(join(tmpdir(), 'leader-office-'));
+    let checks = 0;
+    const decision = await leaderAsk({ text: 'fix the flaky test' }, deps({
+      killed: () => { checks += 1; return checks > 1; },
+    }));
+    expect(decision.status).toBe('stopped');
+    expect(checks).toBeGreaterThan(1);
+    expect(listBusInboxAfter(0, 10, { root, now: () => NOW })).toMatchObject({ status: 'ok', messages: [] });
+    expect(() => readFileSync(join(root, 'office.json'), 'utf8')).toThrow();
+  });
+
+  it('a KILL set after entry blocks the office write when nothing is posted', async () => {
+    root = mkdtempSync(join(tmpdir(), 'leader-office-'));
+    let checks = 0;
+    const decision = await leaderAssign({
+      rq: 'RQ-LEADER-CEO-1', owner: 'engineering', summary: 'fix the test',
+    }, deps({
+      grant: () => ({ mode: 'propose', reason: 'no-standing-grant' }),
+      killed: () => { checks += 1; return checks > 1; },
+    }));
+    expect(decision.status).toBe('stopped');
+    expect(checks).toBeGreaterThan(1);
+    expect(listBusInboxAfter(0, 10, { root, now: () => NOW })).toMatchObject({ status: 'ok', messages: [] });
+    expect(() => readFileSync(join(root, 'office.json'), 'utf8')).toThrow();
+  });
+
+  it('stores an AWS-shaped key through scrubSecrets', async () => {
+    root = mkdtempSync(join(tmpdir(), 'leader-office-'));
+    const token = 'AKIAIOSFODNN7EXAMPLE';
+    const decision = await leaderAsk({ text: `note ${token} in the log` }, deps());
+    expect(classifyEscalation(`note ${token} in the log`)).toBeNull();
+    expect(decision.status).toBe('escalated');
+    const stored = readFileSync(join(root, 'office.json'), 'utf8');
+    expect(stored).not.toContain(token);
+    expect(stored).toContain('[REDACTED]');
   });
 
   it('records a proposal and stays off the bus without a standing grant', async () => {

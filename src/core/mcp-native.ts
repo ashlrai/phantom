@@ -1489,6 +1489,46 @@ const TOOLS: NativeToolImpl[] = [
     },
   },
   ...desktopOperatorTools,
+  {
+    name: 'ashlr_comms_agent_status',
+    description: 'Comms role status: parent Leader role, unset lane, KILL, pause, draft count and registered channel adapters. Read-only. No send.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => {
+      const { commsStatus } = await import('./comms-agent/run.js');
+      const { commsRunsRoot } = await import('./comms-agent/store.js');
+      return commsStatus(commsRunsRoot());
+    },
+  },
+  {
+    name: 'ashlr_comms_agent_drafts',
+    description: 'List Comms drafts waiting for the owner. Read-only. Approval is not a send.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => {
+      const { commsDrafts } = await import('./comms-agent/run.js');
+      const { commsRunsRoot } = await import('./comms-agent/store.js');
+      return commsDrafts(commsRunsRoot());
+    },
+  },
+  {
+    name: 'ashlr_comms_agent_run',
+    description: 'Triage the Comms inbox and draft replies. The router picks a lane only from the lanes argument. Sends follow the Comms send policy.',
+    inputSchema: {
+      type: 'object',
+      properties: { lanes: { type: 'string' } },
+      additionalProperties: false,
+    },
+    safety: 'append',
+    handler: async args => {
+      const { runCommsAgent } = await import('./comms-agent/run.js');
+      const { commsRunsRoot } = await import('./comms-agent/store.js');
+      const lanes = typeof args.lanes === 'string'
+        ? args.lanes.split(',').map(lane => lane.trim()).filter(Boolean)
+        : [];
+      return runCommsAgent({ runsDir: commsRunsRoot(), lanes });
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------

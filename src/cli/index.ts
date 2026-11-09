@@ -2805,6 +2805,11 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'comms-agent': {
+        process.exitCode = await (await import('./comms-agent.js')).cmdCommsAgent(rest);
+        break;
+      }
+
       case 'imessage': {
         const { cmdIMessage } = await import('./imessage.js');
         process.exitCode = await cmdIMessage(rest);

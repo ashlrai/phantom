@@ -44,7 +44,7 @@ codesign -s - --force ~/.ashlr/bin/desktop-operator
 phm desktop doctor --json
 ```
 
-`PHANTOM_DESKTOP_OPERATOR` may point at another absolute path. When that variable is set, no other path is tried.
+The helper is loaded only from `~/.ashlr/bin/desktop-operator`.
 
 ## Writes
 
