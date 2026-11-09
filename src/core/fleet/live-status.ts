@@ -5,6 +5,9 @@ import type { ResourceView } from '../fabric/resource-view.js';
 export function projectLiveStatus(live: FleetLiveSnapshotV1, resources: ResourceView) {
   return {
     v: 1 as const, generatedAt: live.generatedAt, state: live.state, reason: live.stateReason,
+    summary: live.summary,
+    lanes: live.lanes,
+    repos: live.repos,
     running: live.summary.building === null ? null : live.runs.filter(run =>
       run.endedAt === null && ['producing', 'verifying', 'judging', 'landing'].includes(run.phase)),
     merged: live.merged24h ?? null,

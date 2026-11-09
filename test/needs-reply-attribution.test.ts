@@ -29,9 +29,9 @@ it('labels a Telegram reply as Telegram', async () => {
   expect(entries()).toHaveLength(1);
 });
 
-it('labels a CLI reply as ashlr CLI', async () => {
+it('labels a CLI reply with its bound CLI receipt', async () => {
   await resolveNeedsMasonWithInbox({ itemId, reply: 'fake blue' }, { ...options, source: 'cli' });
-  expect(readFileSync(inboxPath(), 'utf8')).toContain('[src:ashlr-cli ');
+  expect(readFileSync(inboxPath(), 'utf8')).toMatch(/\[src:cli id:cli-[a-f0-9]+\]/);
   expect(entries()).toHaveLength(1);
 });
 

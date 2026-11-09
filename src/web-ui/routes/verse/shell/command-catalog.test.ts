@@ -46,7 +46,7 @@ import {
   type KeyEventLike,
   type WorkbenchCommand,
 } from './command-catalog.js';
-import { DOCK_PANES } from './dock-catalog.js';
+import { DOCK_PANES } from './dock-pane-catalog.js';
 import { SETUP_COMMAND } from '../autonomy/autonomy-off-model.js';
 import { WORKBENCH_COMMAND_EVENT as COMPOSER_WORKBENCH_COMMAND_EVENT } from '../composer/composer-keys.js';
 

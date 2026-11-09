@@ -6,6 +6,7 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 | --- | --- | --- | --- |
 | `checks` | Checks | — | `src/web-ui/routes/verse/agents/checks.pane.tsx` |
 | `computer` | Computer use | — | `src/web-ui/routes/verse/computer/computer.pane.tsx` |
+| `feed` | Feed | — | `src/web-ui/routes/verse/feed/feed.pane.tsx` |
 | `fleet-bus` | Bus | `mod+alt+b` | `src/web-ui/routes/verse/fleet-bus/fleet-bus.pane.tsx` |
 | `fleet-capacity` | Capacity | — | `src/web-ui/routes/verse/fleet-capacity/fleet-capacity.pane.tsx` |
 | `fleet-channels` | Channels | — | `src/web-ui/routes/verse/fleet-channels/fleet-channels.pane.tsx` |

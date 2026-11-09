@@ -10,18 +10,15 @@ owner, on channels you already configured. Nothing goes to a third party.
 
 ## What you get
 
-```text
-Needs you: 3 (overnight)
-- Review: weekly dependency refresh
-- Approve release note for the docs lane
-- Merge request waiting on you
-<fleet status counts>
-```
-
-The morning brief has no label on the first line. The list holds the owner
-ledger items first, then automation reviews. Pending drafts are listed too
-when the drafts lane (RQ-COS-DRAFTS-1) supplies them; until it does, that
-section is skipped without error. The whole text stays under 1200 characters.
+The morning slot composes recorded merges from the preceding 12 hours, owner
+ledger items mentioning 2FA, MFA, passwords, payments or billing, recorded
+quota by pool, and up to two newest pending inbox proposals. Unknown and
+incomplete sources are labelled. Quota observations are advisory, and the
+keyword filter does not establish that every owner blocker was captured.
+Proposal order is recency, not a leverage ranking. Use the existing inbox to
+review and decide on a proposal; this brief does not create an approval or
+turn a reply into execution authority. The overnight slot retains the fleet
+status and needs-you summary. Messages are limited to 1200 characters.
 
 ## Budget
 

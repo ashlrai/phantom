@@ -50,3 +50,82 @@ A merge or green post-merge observation is not shipping proof. Case details expl
 `inspectOneAskReward` reports one attempt's task weight divided by its total input and output tokens after an authenticated merge survives a 72-hour Git history inspection. A deterministic revert yields the negative of that value, including when found later; publishing without merging yields zero. The caller supplies the complete attempt usage and a positive weight. Missing or invalid usage, an unauthenticated merge, incomplete inspection, an unelapsed window, and a heuristic follow-up remain unknown rather than earning a score.
 
 This is an observation of the inspected local HEAD, not proof that a remote branch was fetched or that every kind of revert was detected. The existing inspector detects explicit Git revert references and treats overlapping fix-like commits as heuristic follow-ups. A later inspection can change the result. This score does not release post-merge credit, change routing, or grant merge authority.
+
+## Routing observations in the CLI
+
+`phm models routing [--json]` and `phm telemetry routing [--json]` inspect the
+same local evidence without probing providers, measuring models or dispatching
+work. They do not require telemetry configuration. Task fit shows candidate and
+exclusion counts from the newest valid shadow decision in the bounded 50-record
+read. This is eligibility for that recorded request, not a fresh recommendation,
+measured model quality or proof that a candidate actually ran. No account IDs or
+raw decision text are printed.
+
+Evidence up to fifteen minutes old is `observed`; older evidence is `stale`.
+Missing records are `absent`, never measured zeros. Unreadable sources or invalid
+or future timestamps are `unavailable`. Feedback retains its seven-day window,
+source state, completeness and lower-bound counts independently of freshness.
+Feedback is fleet-wide and is not attributed to a model or to a routing choice.
+Comparable latency is `absent`: these sources contain no account/model/task/version
+latency measurements. Missing latency did not influence a choice. Neither stale
+nor current feedback establishes a causal contribution to a recorded choice.
+An inspection failure returns exit code 1; absent or stale evidence alone does
+not fail the command.
+
+### Scoped regression check
+
+The following executable regression uses only a temporary home. Run the block
+with `HOME=$(mktemp -d) node --import tsx --input-type=module` from the repository
+root. It checks observed, stale and absent evidence through both command views,
+as well as invalid timestamps and missing latency. No real account data is read.
+
+```js
+import assert from 'node:assert/strict';
+import { cmdModels } from './src/cli/models.ts';
+import { cmdTelemetry, routingEvidenceAge } from './src/cli/telemetry.ts';
+import { recordShadowDecision } from './src/core/routing/budget-store.ts';
+const now = Date.now();
+assert.equal(routingEvidenceAge(null, now), 'absent');
+assert.equal(routingEvidenceAge(new Date(now).toISOString(), now), 'observed');
+assert.equal(routingEvidenceAge(new Date(now - 900001).toISOString(), now), 'stale');
+assert.equal(routingEvidenceAge('invalid', now), 'unavailable');
+assert.equal(routingEvidenceAge(new Date(now + 1).toISOString(), now), 'unavailable');
+async function inspect(command) {
+  let output = '';
+  const write = process.stdout.write;
+  process.stdout.write = chunk => { output += chunk; return true; };
+  try { assert.equal(await command(['routing', '--json']), 0); }
+  finally { process.stdout.write = write; }
+  return JSON.parse(output);
+}
+const absent = await inspect(cmdModels);
+assert.equal(absent.taskFit.state, 'absent');
+assert.equal(absent.taskFit.candidates, null);
+assert.equal(absent.feedback.state, 'absent');
+for (const [age, state] of [[1800000, 'stale'], [0, 'observed']]) {
+  assert.equal(recordShadowDecision({
+    source: 'test', now: new Date(now - age),
+    request: { task: 'code', difficulty: 'medium', autonomous: true },
+    decision: { seatId: 'private-seat', candidates: ['private-seat'],
+      exclusions: [], why: 'private explanation', mode: 'balanced' },
+  }), true);
+  for (const command of [cmdModels, cmdTelemetry]) {
+    const view = await inspect(command);
+    assert.equal(view.taskFit.state, state);
+    assert.equal(view.taskFit.candidates, 1);
+    assert.equal(view.latency.state, 'absent');
+    assert.equal(view.latency.milliseconds, null);
+    assert.match(view.latency.explanation, /Missing latency did not influence/);
+    assert.doesNotMatch(JSON.stringify(view), /private-seat|private explanation/);
+    const lines = [];
+    const log = console.log;
+    console.log = (...args) => lines.push(args.join(' '));
+    try { assert.equal(await command(['routing']), 0); }
+    finally { console.log = log; }
+    assert.match(lines.join('\n'), new RegExp('Task fit: ' + state));
+    assert.match(lines.join('\n'), /Latency: absent/);
+    assert.match(lines.join('\n'), /absent evidence is not a measured zero/);
+  }
+}
+console.log('Routing observation regression passed (5 age cases, 9 CLI views).');
+```

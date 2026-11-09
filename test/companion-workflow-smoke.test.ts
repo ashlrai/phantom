@@ -109,6 +109,29 @@ async function handshake(path: string, protocolVersion = '2025-06-18') {
 }
 
 describe('companion workflow smoke', () => {
+  it('initializes the Stack project vault before Phantom runs its credential-wrapped status', async () => {
+    const root = mkdtempSync(join(dir, 'stack-transport-'));
+    const secrets = join(root, 'phantom.mjs');
+    const stack = join(root, 'stack.mjs');
+    const phm = join(root, 'phm.mjs');
+    writeFileSync(secrets, `
+import { writeFileSync } from 'node:fs';
+if (process.argv[2] === 'init' && process.env.PHANTOM_VAULT_PASSPHRASE) writeFileSync('.phantom.toml', 'fixture');
+else process.exitCode = 1;
+`);
+    writeFileSync(stack, `console.log(JSON.stringify({ services: [{ name: 'openai' }, { name: 'supabase' }] }));`);
+    writeFileSync(phm, `
+import { existsSync } from 'node:fs';
+if (process.argv[2] === 'companions') console.log(JSON.stringify({ companions: [] }));
+else if (process.argv[2] === 'stack' && existsSync('.phantom.toml') && process.env.PHANTOM_VAULT_PASSPHRASE)
+  console.log(JSON.stringify({ services: ['openai', 'supabase'] }));
+else process.exitCode = 1;
+`);
+    const report = await smoke.runSmoke({ phm, stackBin: stack, secretsBin: secrets });
+    expect(report.checks.find((check: { id: string }) => check.id === 'stack:status-json')).toMatchObject({ status: 'pass' });
+    expect(report.checks.find((check: { id: string }) => check.id === 'phm:stack-status')).toMatchObject({ status: 'pass' });
+  });
+
   it('isolates real ecosystem discovery from competing PATH launchers', async () => {
     const root = mkdtempSync(join(dir, 'ecosystem-path-'));
     const home = join(root, 'home');

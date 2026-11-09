@@ -4,6 +4,10 @@ import { readDispatchManifestEventsDetailed } from '../core/fleet/dispatch-manif
 import { summarizeDispatchManifestEvidence } from '../core/fleet/dispatch-manifest-summary.js';
 import { readFleetRunsDirState } from '../core/fleet/runs-dir-state.js';
 
+const usage = `Usage: phm fleet dispatch-proof [--json] [--runs-dir <abs>]
+Read-only: assigned intent versus observed claims. Dry-run intent stays separate; claims do not prove launches.
+Exits 1 when observed claims match no live assignment; unobserved assignments stay advisory.`;
+
 export async function readDispatchProof(runsDir?: string) {
   const manifests = readDispatchManifestEventsDetailed({ inspectionOnly: true });
   const summary = summarizeDispatchManifestEvidence(manifests);
@@ -54,9 +58,7 @@ export async function readDispatchProof(runsDir?: string) {
 
 export async function cmdFleetDispatchProof(args: string[]): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: phm fleet dispatch-proof [--json] [--runs-dir <abs>]');
-    console.log('Read-only: assigned intent versus observed claims. Dry-run intent stays separate; claims do not prove launches.');
-    console.log('Exits 1 when observed claims match no live assignment; unobserved assignments stay advisory.');
+    console.log(usage);
     return 0;
   }
   let runsDir: string | undefined;

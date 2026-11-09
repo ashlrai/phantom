@@ -42,6 +42,14 @@ from `mason`, to `leaders`, priority P0, with a 7-day TTL and body
 to Mason by setting `to` to `mason`.  Keep the `id` stable so retries
 are deduplicated by the store.
 
+Teammate iMessage findings appear as id `imessage-teammate-<chat.db rowid>`,
+from the hashed `imessage:<sha256-16>` sender id, to `teammate.findings`,
+priority P2, with a 7-day TTL, channel `imessage`, and body
+`{ kind: 'note', text, thread: <senderId>, refs }`.  Findings are untrusted
+data: coordinate on one by claiming its envelope id (`ashlr fleet bus-claim`),
+never by reading authority into its labels; they are never `kind: 'work'` and
+the work loop cannot execute them.  Owner iMessage texts stay off the bus.
+
 ## Examples
 
 Read the latest page (cursor 0, limit 10):
@@ -49,6 +57,31 @@ Read the latest page (cursor 0, limit 10):
 
 Publish an envelope (replace `FAKE-TOKEN` and values with real ones):
 `curl -X POST -H "Authorization: Bearer FAKE-TOKEN" -H "Content-Type: application/json" http://localhost:8787/api/verse/agent-bus -d '{"id":"example-0001","from":"agent","to":"leaders","priority":"P1","ttl":86400000,"body":{"note":"hello"}}'`
+
+## Superseded or kept
+
+PR #3057 (RQ-BUS-NEUTRAL-1) proposed a second `bus.message.v1` schema, store
+and `phm bus` CLI. #4187 put the bus and handoff adapters on the one existing
+store and claim table, so none of #3057's code is kept. Each idea maps to
+what is on master:
+
+| #3057 idea | On master | Verdict |
+| --- | --- | --- |
+| Store under `src/core/bus` | `src/core/fleet/bus-inbox.ts`, reached by the `bus` and `handoff` adapters in `src/core/agents/adapters/` | Superseded; a second store is refused |
+| `schema`, `thread`, `createdAt` fields | Six-field envelope; `thread` lives in `note` and `context` bodies; receive time is the cursor row's `receivedAt` | Superseded |
+| `from.vendor` and `from.node` | `sender.vendor` (any printable ASCII token) on channel envelopes; `provider` on v2 participants, which also covers `devin`, `cursor-cloud`, `glm` and others | Superseded |
+| `to` as `agent`, `role` or `topic` | `to` is one routing label. Role and topic are label conventions (`leaders`, `teammate.findings`); a label never carries authority | Kept as convention, not as structured fields |
+| Kinds `note`, `ask`, `reply`, `handoff`, `status` | `note`, `context`, `work.post`, `work.status` in the body. A question and its answer are `note` bodies sharing a `thread`. A handoff is an envelope on the `handoff` channel | Superseded |
+| Markdown string body, 16384 chars | `text` capped at 16384 in v2 bodies; the envelope stays opaque JSON under 64 KiB | Superseded |
+| Ack and unacked reads | Cursor reads plus claims (`ashlr fleet bus-claim`) | Superseded |
+| Dispatcher `PHM_BUS_*` env and prompt note in `contrib/mac/dispatchd.py` | Not ported; the operator script changes only through a Security pin | Dropped |
+
+Why structured `to` is not ported: it would add a second address shape next to
+the flat label every adapter, the send gate and the claim table already key on.
+Nothing is blocked without it, because a recipient can already subscribe to a
+label. If a role or topic registry is wanted later, add it in
+`src/core/agents/channel-registry.ts` so it resolves to labels before delivery,
+and leave the wire envelope at six fields.
 
 ## Desktop app
 
@@ -148,11 +181,21 @@ Outside implementers (Dot included) call only the HTTP contract above.
 | Part | Phantom file |
 | --- | --- |
 | Schemas, claim key parsing, overlap rules | `src/core/agents/bus-v2-schema.ts` |
+| Coordination claim and status table | `src/core/agents/claim-store.ts` |
 | Bus store, caps, cursor reads, HTTP endpoints | the v1 store behind `/api/verse/agent-bus` |
-| Message-id claims | `src/core/fleet/bus-work-claims.ts` |
+| Message-id claims | `src/core/fleet/bus-work-claims.ts` (writes through the coordination table) |
+| Team leases and board task claims | `src/core/teams/state.ts`, `src/core/fleet/bus-board.ts` (write through the same table) |
+| Channel adapters | `src/core/agents/channel-registry.ts`, `src/core/agents/adapters/` |
+| Provider send bridges | `src/core/agents/bridges/` |
 | Adapters and fleet bus verbs | `src/cli/fleet-bus-*.ts`, `src/core/fleet/bus-adapters/` |
 | Contract printer | `src/cli/agents-bus-contract.ts` |
 | Webhook relay | not built; an internet-facing relay must verify signed requests and gets its own security review |
 
-This section is contract only. The store, claim table and work feed endpoints
-are not yet implemented against it.
+Message-id claims, team leases, and bus-board task claims write their leases
+through `src/core/agents/claim-store.ts`, so overlap is decided in one table.
+A second live claim on an overlapping key is rejected. Queued path claims stay
+a read-only view of queue prompt files and can be merged onto that board with
+`claimBoard()`. `phm agents roster` reads this table through `readRosterClaims`.
+A message-id lease is shown under its bus message id, so a roster session and
+a bus claim still share one lease.
+HTTP work-feed endpoints are not implemented against this contract yet.

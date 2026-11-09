@@ -23,6 +23,10 @@ import { localTimestamp, readSource, type Source } from '../core/fleet/runs-park
 export const FLEET_BRAINS_STALE_MINUTES = 90;
 export const FLEET_BRAINS_MAX_TAIL_BYTES = 5 * 1024 * 1024;
 
+const usage = `ashlr fleet brains [--json]
+Read-only last-action view of the fleet brains from the dispatch-events tail.
+Stale means nothing attributed within 90 minutes; a missing log reports every brain unknown.`;
+
 export interface FleetBrainRow {
   brain: string;
   /** ISO instant of the newest attributed event in the retained tail; null when none. */
@@ -113,9 +117,7 @@ export async function readFleetBrains(opts: FleetBrainsOptions = {}): Promise<Fl
 
 export async function cmdFleetBrains(args: string[], opts: FleetBrainsOptions = {}): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log('ashlr fleet brains [--json]\n' +
-      'Read-only last-action view of the fleet brains from the dispatch-events tail.\n' +
-      'Stale means nothing attributed within 90 minutes; a missing log reports every brain unknown.');
+    console.log(usage);
     return 0;
   }
   let json = false;

@@ -6,9 +6,10 @@ import { parseArgs } from 'node:util';
 import { loadConfigReadOnlyStrict } from '../core/config.js';
 import { buildDoctorReport, pollInboundSince, readCursor } from '../core/integrations/imessage.js';
 import { ingestIMessages } from '../core/comms/imessage-inbox-bridge.js';
+import { tickTeammateMessages } from '../core/comms/imessage-teammate-worker.js';
 import type { AshlrConfig } from '../core/types.js';
 
-const USAGE = 'phm imessage doctor [--json]; phm imessage poll [--apply] [--json]';
+const USAGE = 'phm imessage doctor [--json]; phm imessage poll [--apply] [--json]; phm imessage respond --apply [--json]';
 
 function loadCfg(): AshlrConfig | null {
   try { return loadConfigReadOnlyStrict(); } catch { return null; }
@@ -28,6 +29,13 @@ export async function cmdIMessage(args: string[]): Promise<number> {
     }
     const cfg = loadCfg();
 
+    if (command === 'respond') {
+      if (!values.apply || !cfg) throw new Error('respond requires --apply and readable config');
+      const result = await tickTeammateMessages(cfg);
+      out(result, `Teammate responder: ${result.state}`);
+      return result.state === 'healthy' || result.state === 'busy' ? 0 : 1;
+    }
+
     if (command === 'doctor') {
       if (values.apply) throw new Error('--apply is only supported for poll');
       const report = await buildDoctorReport({ cfg });
@@ -40,7 +48,9 @@ export async function cmdIMessage(args: string[]): Promise<number> {
       if (!cfg) throw new Error('config unreadable');
       if (values.apply) {
         const r = await ingestIMessages(cfg);
-        out({ dryRun: false, ...r }, `iMessage poll: ${r.state}; scanned ${r.scanned}, accepted ${r.accepted}, duplicate ${r.duplicate}, refused ${r.refused}${r.deferred ? ', deferred' : ''}${r.notMason > 0 ? `, not Mason ${r.notMason}` : ''}`);
+        const f = r.findings;
+        const mirror = f === null || (f.posted === 0 && f.pending === 0) ? '' : `, findings +${f.posted}${f.pending > 0 ? ` (${f.pending} pending)` : ''}`;
+        out({ dryRun: false, ...r }, `iMessage poll: ${r.state}; scanned ${r.scanned}, accepted ${r.accepted}, duplicate ${r.duplicate}, refused ${r.refused}${r.deferred ? ', deferred' : ''}${r.notMason > 0 ? `, not Mason ${r.notMason}` : ''}${r.teammate > 0 ? `, teammate ${r.teammate}` : ''}${mirror}`);
         return r.ok ? 0 : 1;
       }
       // Dry run: read only, cursor untouched, counts only.

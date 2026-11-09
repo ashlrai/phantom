@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { cmdFleetPlannerBrief } from '../src/cli/fleet-planner-brief.js';
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
-it.each([['--bad'], ['--runs-dir'], ['--repo', 'relative'], ['--runs-dir', 'relative'], ['--note'], ['--json', '--json'], ['--write', '--write'], ['--note', 'a', '--note', 'b']])('rejects bad flags %j', async (...args) => {
+it.each([['--bad'], ['--runs-dir'], ['--repo', 'relative'], ['--runs-dir', 'relative'], ['--note'], ['--json', '--json'], ['--write', '--write'], ['--note', 'a', '--note', 'b']])('rejects bad flags %j (%#)', async (...args) => {
   expect(await cmdFleetPlannerBrief(args, { stdout: { write: () => undefined } })).toBe(2);
 });
 it('reports missing orchestration as exit 1 and writes the private prompt with counts and path', async () => {

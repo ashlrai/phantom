@@ -1,3 +1,4 @@
+import { nodeFixtureHeader } from './helpers/node-fixture.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -28,7 +29,7 @@ describe('responsive staging inventory', () => {
     const root = await tree();
     const bin = join(root, 'bin'); await mkdir(bin);
     const started = join(root, 'started'); const release = join(root, 'release');
-    const script = `#!${process.execPath}\nconst fs = require('node:fs');\nconst [started, release] = ${JSON.stringify([started, release])};\nfs.appendFileSync(started, process.pid + '\\n');\nconst timer = setInterval(() => { if (fs.existsSync(release)) { clearInterval(timer); console.log('2\\tfixture'); } }, 10);\n`;
+    const script = `${nodeFixtureHeader()}const fs = require('node:fs');\nconst [started, release] = ${JSON.stringify([started, release])};\nfs.appendFileSync(started, process.pid + '\\n');\nconst timer = setInterval(() => { if (fs.existsSync(release)) { clearInterval(timer); console.log('2\\tfixture'); } }, 10);\n`;
     await writeFile(join(bin, 'du'), script, { mode: 0o755 });
     process.env.PATH = bin;
     const listing = { state: 'ok' as const, children: ['a', 'b'].map((name) => ({ name, modifiedAt: '2026-01-01' })), skippedSymlinks: 0, truncated: false };

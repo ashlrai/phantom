@@ -1,3 +1,4 @@
+import { nodeFixtureHeader } from './helpers/node-fixture.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile, chmod } from 'node:fs/promises';
@@ -22,7 +23,7 @@ let children: ChildProcess[] = [];
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'capacity-test-'));
   bin = join(dir, 'fake-phm');
-  await writeFile(bin, `#!${process.execPath}\nimport { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+  await writeFile(bin, nodeFixtureHeader() + `import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 const dir = process.env.FAKE_DIR;
 appendFileSync(dir + '/requests', JSON.stringify(process.argv.slice(2)) + '\\n');
 const sequence = JSON.parse(readFileSync(dir + '/sequence', 'utf8'));

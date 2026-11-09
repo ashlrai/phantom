@@ -13,7 +13,10 @@ import { warmLocalModel, resetThroughputForTest } from '../src/core/verse/multim
 
 const key = 'disposable-version-contract-test-key';
 const secret = vi.hoisted(() => ({ read: vi.fn() }));
-vi.mock('../src/core/integrations/secrets.js', () => ({ resolveProviderKey: secret.read }));
+vi.mock('../src/core/integrations/secrets.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/core/integrations/secrets.js')>(),
+  resolveProviderKey: secret.read,
+}));
 vi.mock('../src/core/observability/usage-source.js', () => ({ collectUsageEvents: () => [] }));
 vi.mock('../src/core/observability/codex-source.js', () => ({ readCodexRateLimits: () => null }));
 

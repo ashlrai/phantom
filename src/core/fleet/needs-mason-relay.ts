@@ -7,7 +7,7 @@ export type NeedsMasonRelayResult = NeedsMasonResolveResult & { inbox: 'appended
 
 // Keyed by string so it compiles whether or not 'email' is in NeedsMasonOptions['source'].
 const INBOX_SOURCE: Readonly<Record<string, string>> = {
-  desktop: 'Phantom desktop', cli: 'ashlr CLI', telegram: 'Telegram', phone: 'Phantom phone', email: 'Email',
+  desktop: 'Phantom desktop', cli: 'CLI', telegram: 'Telegram', phone: 'Phantom phone', email: 'Email',
 };
 const DEFAULT_INBOX_SOURCE = 'Phantom desktop';
 

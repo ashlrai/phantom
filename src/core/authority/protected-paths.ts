@@ -100,12 +100,15 @@ export const TIER1_SOURCE_PATTERNS: readonly string[] = Object.freeze([
   'desktop/src-tauri/src/main.rs',
   'desktop/src-tauri/src/lib.rs',
   'src/core/run/desktop-metadata-launch-trust.ts',
+  // Fixed worker is an authority validator even though Worker URLs are not imports.
+  'src/core/resources/quota-evidence-worker.ts',
   // Governed-client gateway target validation decides where a provider key may be sent (#880).
   'src/core/run/gateway-target.ts',
   'src/cli/desktop-update.ts',
   'src/cli/desktop.ts',
   'scripts/desktop-release-policy.mjs',
   'scripts/finalize-desktop-update.mjs',
+  'scripts/finalize-github-release.mjs',
   'scripts/publish-desktop-release.mjs',
   'src/core/daemon/activation-permit.ts',
   'src/core/daemon/tick-hooks.ts',
@@ -323,6 +326,8 @@ const ALL_REPO_RULES: readonly ProtectedPathRule[] = [
       'scripts/publish-desktop-release.mjs',
       // Release-path policy verifier gating npm `latest` on the live publisher.
       'scripts/verify-release-policy.mjs',
+      // This external host observer invokes the stock signing/publication boundary.
+      'contrib/mac/release-autorun.sh',
       'tools/custody/**', '**/*.plist', '**/*.entitlements', '**/src-tauri/capabilities/**',
       '**/src-tauri/tauri.conf.json', '**/src-tauri/tauri.*.conf.json',
     ],
@@ -362,6 +367,12 @@ const SELF_REPO_RULES: readonly ProtectedPathRule[] = [
       'test/setup/**', 'test/config/**', 'test/fixtures/authority/**', 'test/fixtures/memory/**', 'vitest.config*', 'vitest.workspace*',
     ],
     why: 'test setup and build config decide which tests run and whether HOME is isolated',
+  },
+  {
+    id: 'comms-agent',
+    scope: 'self-repo',
+    patterns: ['src/core/comms-agent/'],
+    why: 'Comms send policy decides what may leave the machine',
   },
 ];
 

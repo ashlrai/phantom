@@ -127,7 +127,7 @@ it('bounds the number of pending records', async () => {
 it.each([
   ['--retry'], ['--retry', 'relative/record.json'], ['--retry', '/tmp/x.json', '--'],
   ['--snapshot', '/a', '--prompt', '/b', '--request-file', '/c', '--reply-id', 'r'],
-])('rejects invalid invocation %j', async (...args) => {
+])('rejects invalid invocation %j (%#)', async (...args) => {
   expect(await cmdFleetContextDeliver(args, io(), { root: busRoot })).toBe(2);
   await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' });
 });

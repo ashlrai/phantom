@@ -60,9 +60,9 @@ from the checked-in schema and guide, not from an independently retrieved PR.
 - [`channel-bus-publish.ts`](../../src/core/fleet/channel-bus-publish.ts): existing
   Mason interjection projection has stable ids and best-effort append. Do not
   invent a second interjection format or treat best effort as durable delivery.
-- Desktop Durable bus and the console's
-  [`FleetBusMapPane.tsx`](../../src/web-ui/routes/verse/fleet-bus-map/FleetBusMapPane.tsx)
-  should remain projections of existing receipts. Real iMessage must never enter
+- Desktop Durable bus and the retired console
+  [`FleetBusMapPane.tsx` prototype](https://github.com/ashlrai/phantom/blob/e4a9e781440cc3006de8efe3be2ee94fbb412361/src/web-ui/routes/verse/fleet-bus-map/FleetBusMapPane.tsx)
+  illustrate projections of existing receipts. Real iMessage must never enter
   a cloud-readable bus projection, including bodies, handles or attachments.
 
 No runtime CLI/API surface is added here. Future surfaces require JSON output,
