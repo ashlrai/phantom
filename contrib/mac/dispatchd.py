@@ -8,6 +8,7 @@
 # RQ-LANERECOVERNOV1Q8 rev: repeated authentication failures (>=2 distinct failed/EMPTY finishes with a
 # provider auth-error line) hold the lane autobackoff-style; no credential store is ever written.
 import os, re, json, time, fcntl, subprocess, glob, math, datetime
+from concurrent.futures import ThreadPoolExecutor
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
 WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
 # A kernel-held claim serializes the complete tick, including liveness sampling and
@@ -101,6 +102,13 @@ FORK_RX = re.compile(r"(?i)(fork: (retry: )?resource temporarily unavailable|can
 RL = re.compile(r"(?i)(429 too many requests|status(code)?[\s:=\"]+429\b|rate[ _-]?limit (reached|exceeded|hit)|exceeded (your|the) .{0,20}rate limit|usage limit|you've hit your|quota exceeded)")
 
 MD = R + "/metrics"; os.makedirs(MD, exist_ok=True)
+# RQ-SWE5-LOOP-BENCH: the ledger was read three times per tick (attempts scan, devin
+# spike, status rollup) plus once more for batch throughput. Parse once into
+# JOBS_RAW; JOBS holds the projected view (reconciler rows). Once _JOBS_LIVE is set
+# at the parse point, metric() also mirrors this tick's own rows in memory exactly
+# as a file re-read would see them.
+JOBS_RAW, JOBS = [], []
+_JOBS_LIVE = False
 def metric(d):
     d.setdefault("ts", time.strftime("%Y-%m-%dT%H:%M:%S%z"))
     if d.get("job") and "ab" not in d:   # Masbot 16:35: tag A/B arm from the router line (TERRA-AB-1)
@@ -110,6 +118,7 @@ def metric(d):
             if a: d["ab"] = a.group(1)
             if b: d["arm"] = b.group(1)
         except Exception: pass
+    if _JOBS_LIVE: JOBS_RAW.append(d); JOBS.append(d)
     with open(MD + "/jobs.jsonl", "a") as f: f.write(json.dumps(d, sort_keys=True) + "\n")
 CLS = [("credits_exhausted", re.compile(r"(?i)(credits? (are |have been )?(exhausted|depleted)|out of credits|insufficient credits|no credits remaining)")),
        ("usage_limit", re.compile(r"(?i)(usage limit|you've hit your|weekly limit)")),
@@ -128,9 +137,19 @@ def tokens(txt):
 def ev(msg):
     with open(EV, "a") as f: f.write("%s %s\n" % (TS, msg))
 def log(msg): print("%s %s" % (TS, msg), flush=True)
+# RQ-SWE5-LOOP-BENCH: queue metadata (.line/.base/.publish/prompts) is re-read
+# many times per job per tick. Cache reads keyed on (mtime_ns, size): a mid-tick
+# rewrite by launch.sh or a publisher invalidates exactly as a fresh read would.
+# Misses are never cached, so a file created mid-tick is still seen.
+_RD = {}
 def rd(p, d=""):
     try:
-        with open(p) as f: return f.read()
+        st = os.stat(p)
+        hit = _RD.get(p)
+        if hit is not None and hit[0] == (st.st_mtime_ns, st.st_size): return hit[1]
+        with open(p) as f: text = f.read()
+        _RD[p] = ((st.st_mtime_ns, st.st_size), text)
+        return text
     except Exception: return d
 def jload(p, d):
     try: return json.loads(rd(p)) or d
@@ -370,7 +389,46 @@ def _autopilot():
     try:
         return json.loads(subprocess.run(["/usr/bin/python3", R + "/bin/autopilot.py"], capture_output=True, text=True, timeout=20).stdout)
     except Exception: return None
-AP = _autopilot()
+# ---- memory
+def mem():
+    free = swap = None
+    try:
+        out = subprocess.run(["memory_pressure"], capture_output=True, text=True, timeout=10).stdout
+        m = re.search(r"free percentage:\s*(\d+)", out); free = int(m.group(1)) if m else None
+        out = subprocess.run(["sysctl", "-n", "vm.swapusage"], capture_output=True, text=True, timeout=5).stdout
+        m = re.search(r"used = ([\d.]+)M", out); swap = float(m.group(1)) / 1024 if m else None
+    except Exception: pass
+    return free, swap
+def _daemon_tick_age():   # -> (seconds since lastTickAt | None, why)
+    import datetime as dt
+    try:
+        r = subprocess.run(["ashlr", "daemon", "status", "--json"], capture_output=True, text=True, timeout=GATE_STATUS_TIMEOUT, stdin=subprocess.DEVNULL)
+        v = json.loads(r.stdout).get("lastTickAt")
+        if not isinstance(v, str): return (None, "no lastTickAt")
+        return (max(0.0, NOW - dt.datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()), None)
+    except Exception as e: return (None, type(e).__name__)
+def api_pace():   # claude-api: slot target comes from the credit burn plan, not memory pressure
+    try:
+        return json.loads(subprocess.run(["/usr/bin/python3", R + "/bin/claude-api.py", "pace", "--json"], capture_output=True,
+                                         text=True, timeout=20).stdout)
+    except Exception: return {"target": 0, "held": True, "reason": "claude-api.py pace failed"}
+def _claude_report():
+    try:
+        return json.loads(subprocess.run(["/usr/bin/python3", R + "/bin/claude-api.py", "report", "--json"],
+                                         capture_output=True, text=True, timeout=20).stdout)
+    except Exception: return {}
+from process_snapshot import capture as capture_process_snapshot
+# RQ-SWE5-LOOP-BENCH: these are independent read-only subprocesses; run in
+# sequence they cost ~0.5-1.5 s of every tick. Start all of them now and collect
+# each result at its original decision point. Probe behavior is unchanged.
+_PROBES = ThreadPoolExecutor(max_workers=6)
+AP_F = _PROBES.submit(_autopilot)
+MEM_F = _PROBES.submit(mem)
+PS_F = _PROBES.submit(capture_process_snapshot, timeout=5)
+TICK_AGE_F = _PROBES.submit(_daemon_tick_age)
+PACE_F = _PROBES.submit(api_pace)
+REPORT_F = _PROBES.submit(_claude_report)
+AP = AP_F.result()
 # Lane disk gate (green|freeze|halve|yellow), NOT the cleanup level: compact_level only drives compact.sh.
 # Missing or unknown (older autopilot, failed read) is yellow: raises frozen, no halving.
 DISK_GATE = (AP or {}).get("lane_disk_gate") or "yellow"
@@ -388,10 +446,17 @@ def _ph_check():   # auto-release PUBLISH_HOLD once org Actions backlog < 50 que
     try:
         if time.time() - os.path.getmtime(st) < 600: return
     except FileNotFoundError: pass
-    open(st, "w").close(); n = 0
-    for rp in ("phantom", "phantom-secrets", "locus", "lexicon", "ashlr-md", "ashlr-stack", "ashlr-plugin"):
-        try: n += int(_run(["gh", "api", "repos/ashlrai/%s/actions/runs?status=queued&per_page=1" % rp, "--jq", ".total_count"], 20).stdout.strip())
-        except Exception: return
+    open(st, "w").close()
+    # RQ-SWE5-LOOP-BENCH: the seven queued-run counts are independent; fetch them
+    # concurrently. Any failure still abandons the check (nothing is written).
+    repos = ("phantom", "phantom-secrets", "locus", "lexicon", "ashlr-md", "ashlr-stack", "ashlr-plugin")
+    def queued(rp):
+        try: return int(_run(["gh", "api", "repos/ashlrai/%s/actions/runs?status=queued&per_page=1" % rp, "--jq", ".total_count"], 20).stdout.strip())
+        except Exception: return None
+    with ThreadPoolExecutor(max_workers=len(repos)) as ex:
+        counts = list(ex.map(queued, repos))
+    if any(c is None for c in counts): return
+    n = sum(counts)
     open(R + "/PUBLISH_HOLD.queued", "w").write("%d %d\n" % (int(time.time()), n))
     if n < 50: os.replace(ph, ph + ".released-%d" % int(time.time()))
 try: _ph_check()
@@ -449,17 +514,7 @@ def _ph_drip_hold(j):   # True = hold this finished job in place (not dropped)
     if _kind(j, PH_DRIP_KINDS): return False
     n = _ph_open_prs(); return n is None or n >= PH_DRIP_MAX
 
-# ---- memory
-def mem():
-    free = swap = None
-    try:
-        out = subprocess.run(["memory_pressure"], capture_output=True, text=True, timeout=10).stdout
-        m = re.search(r"free percentage:\s*(\d+)", out); free = int(m.group(1)) if m else None
-        out = subprocess.run(["sysctl", "-n", "vm.swapusage"], capture_output=True, text=True, timeout=5).stdout
-        m = re.search(r"used = ([\d.]+)M", out); swap = float(m.group(1)) / 1024 if m else None
-    except Exception: pass
-    return free, swap
-free, swap = mem()
+free, swap = MEM_F.result()
 
 # ---- liveness: map processes to jobs by cmdline and cwd
 alive, publishing, cwdjobs = set(), set(), set()
@@ -467,8 +522,7 @@ pat_wt = re.compile(re.escape(WTROOT) + r"/([A-Za-z0-9._-]+)")
 pat_pr = re.compile(re.escape(R) + r"/([A-Za-z0-9._-]+?)\.prompt\b")
 pat_ln = re.compile(r"launch\.sh ([A-Za-z0-9._-]+) ")
 pat_pb = re.compile(r"(?:publish|reap-one)\.sh ([A-Za-z0-9._-]+)")
-from process_snapshot import capture as capture_process_snapshot
-ps_result = capture_process_snapshot(timeout=5)
+ps_result = PS_F.result()
 jsave(Q + "/process-snapshot.json", {"observed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                                     "known": ps_result.returncode == 0,
                                     "reason": ps_result.stderr if ps_result.returncode else None})
@@ -521,7 +575,7 @@ BATCH_TUNING_PATH = Q + "/batch-tuning.json"; batch_tuning = batcher.load_tuning
 _bstats = None
 def batch_stats():   # throughput per lane and mode from jobs.jsonl, read once per tick and only when needed
     global _bstats
-    if _bstats is None: _bstats = batcher.throughput(batcher.read_rows(MD + "/jobs.jsonl"), NOW)
+    if _bstats is None: _bstats = batcher.throughput(JOBS, NOW)
     return _bstats
 def batch_attempts(j):
     try: return int(rd(RUN + "/" + j + ".batch-attempts", "0").strip() or 0)
@@ -604,7 +658,10 @@ running = {l: 0 for l in LANES}; kept = []; nreap = len(reaping); local_mid = 0
 # A leftover .base is not evidence that an already merged attempt needs another
 # publisher. A later launch starts a new attempt with the same job id.
 _attempts = {}; _merged_urls = set()
-for row in batcher.read_rows(MD + "/jobs.jsonl"):
+_raw_rows = batcher.parse_rows(MD + "/jobs.jsonl")
+JOBS_RAW.extend(_raw_rows); JOBS.extend(batcher.project_rows(_raw_rows))
+_JOBS_LIVE = True
+for row in JOBS:
     if not isinstance(row, dict): continue
     event, job = row.get("event"), row.get("job")
     if row.get("outcome", row.get("status")) == "PUBLISHED":
@@ -744,14 +801,6 @@ for bp in sorted(glob.glob(R + "/*.base"), key=_prio):
     log("REAP %s (%s)" % (j, pool))
 
 # ---- admission gate. Fixture signal overrides require the LOADGATE_TEST marker.
-def _daemon_tick_age():   # -> (seconds since lastTickAt | None, why)
-    import datetime as dt
-    try:
-        r = subprocess.run(["ashlr", "daemon", "status", "--json"], capture_output=True, text=True, timeout=GATE_STATUS_TIMEOUT, stdin=subprocess.DEVNULL)
-        v = json.loads(r.stdout).get("lastTickAt")
-        if not isinstance(v, str): return (None, "no lastTickAt")
-        return (max(0.0, NOW - dt.datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()), None)
-    except Exception as e: return (None, type(e).__name__)
 def _install_holder():   # the install-gate.py wrapper writes its holder JSON into queue/install.lock; a dead pid is no holder
     try:
         h = json.loads(rd(Q + "/install.lock") or "null")
@@ -768,7 +817,7 @@ def admission_gate():
     except (ValueError, OSError): load1 = float("inf")   # unreadable load: reduce claims
     procs = sum(1 for l in ps.splitlines() if l.strip())
     wts = sum(1 for bp in glob.glob(R + "/*.base") if os.path.basename(bp)[:-5] in alive and (lambda b: bool(b) and os.path.isdir(b[2]))(base(os.path.basename(bp)[:-5])))
-    age, why = _daemon_tick_age()
+    age, why = TICK_AGE_F.result()
     pressure = None
     try:
         pressure = int(os.environ["LOADGATE_PRESSURE"]) if test and "LOADGATE_PRESSURE" in os.environ else int(
@@ -929,19 +978,11 @@ for l in lines:
     f = l.split("\t")
     if not parked_row(l) and len(f) >= 3 and f[2] in qdepth: qdepth[f[2]] += 1
 
-def api_pace():   # claude-api: slot target comes from the credit burn plan, not memory pressure
-    try:
-        return json.loads(subprocess.run(["/usr/bin/python3", R + "/bin/claude-api.py", "pace", "--json"], capture_output=True,
-                                         text=True, timeout=20).stdout)
-    except Exception: return {"target": 0, "held": True, "reason": "claude-api.py pace failed"}
 _dv = None
 def _devin_spike():   # DEVIN-LEVERAGE-20261026, computed in dispatchd itself (Masbot 21:19): the same
     global _dv          # last-10 devin finish scan bin/autopilot.py publishes, kept here so a down
     if _dv is None:     # autopilot never leaves the spike check unrun. Cached once per tick.
-        rows = []
-        for l in rd(MD + "/jobs.jsonl").splitlines():
-            try: rows.append(json.loads(l))
-            except Exception: pass
+        rows = JOBS_RAW
         pub = {r.get("job") for r in rows if r.get("event") == "publish" and r.get("url")}
         fin = [r for r in rows if r.get("event") == "finish" and r.get("lane") == "devin"][-DEVIN_STEP["window"]:]
         _dv = {"last_n": len(fin), "last_job": fin[-1].get("job") if fin else None,
@@ -956,7 +997,7 @@ for lane in LANES:
 for lane in LANES:
     s = slots[lane]
     if lane == "claude-api":
-        ap = api_pace(); nt = max(0, min(int(ap.get("target") or 0), s["ceiling"]))
+        ap = PACE_F.result(); nt = max(0, min(int(ap.get("target") or 0), s["ceiling"]))
         if nt != s["target"]: ev("SLOTS %s %d->%d paced (pool=%s need=$%s/h)" % (lane, s["target"], nt, ap.get("pool"), ap.get("need_usd_per_hour")))
         s["target"] = nt; s["api_pool"] = ap.get("pool"); s["api_reason"] = ap.get("reason")
         if s.get("held") or lane in hold: continue
@@ -1113,6 +1154,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                 or running[lane] >= s["target"] or sum(running.values()) >= GCAP or j in alive or j in reaping or j in publishing):
             rest.append(line); seen.add(j); continue
         if lane == "codex-local":
+            if _size_hint(j, pf) > 60:
+                rest.append(line); seen.add(j); continue
             if tier == "mid" and local_mid >= LOCAL_MID_CAP: rest.append(line); seen.add(j); continue
             if local_ok is None:
                 local_ok = _local_healthy()
@@ -1215,13 +1258,16 @@ jsave(Q + "/slots.json", slots)
 concurrency.save(CONC_PATH, CONC)
 
 # ---- restock trigger: a codex lane's queue below 3x its free slots -> Mac-side deterministic restocker (no LLM)
+import queue_gate
+_gate = queue_gate.read_gate(Q)
+ev("QUEUE_GATE allow=%s depth=%s target=%s src=dispatchd" % (_gate["allow"], _gate["depth"], _gate["target"]))
 rate_parked = any("PARKED-MERGERATE." in l for l in rest)
 if rate_parked: _ph_open_prs()
 for lane in ("codex-cmp", "codex-personal", "devin", "claude-api", "codex-local"):
     sl = slots[lane]
     if sl.get("held") or lane in hold: continue
     qn = sum(1 for l in rest if not parked_row(l) and l.split("\t")[2:3] == [lane])
-    if (rate_parked or qn < 3 * max(sl["target"] - running[lane], 4)) and os.path.exists(Q + "/router-queue.md") and not os.path.exists(Q + "/RESTOCK_OFF"):
+    if _gate["allow"] and (rate_parked or qn < 3 * max(sl["target"] - running[lane], 4)) and os.path.exists(Q + "/router-queue.md") and not os.path.exists(Q + "/RESTOCK_OFF"):
         subprocess.Popen(["/bin/bash", R + "/bin/restock.sh"], stdin=subprocess.DEVNULL, stdout=open(Q + "/restock.log", "a"),
                          stderr=subprocess.STDOUT, start_new_session=True)
         break
@@ -1494,7 +1540,7 @@ for p in glob.glob(R + "/*.publish"):
     m = re.search(r"RESULT PR (https://github.com/\S+/pull/\d+)", rd(p))
     if m: pubs.append((os.path.getmtime(p), os.path.basename(p)[:-8], m.group(1)))
 pubs.sort(reverse=True)
-evs = rd(EV).splitlines()[-25:]
+evs = logtail(EV, 65536).splitlines()[-25:]   # tail read: the events log grows unbounded
 st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "paused": pause or None,
       "mem_free_pct": free, "swap_gb": round(swap, 2) if swap is not None else None,
       "autopilot": AP,
@@ -1512,10 +1558,7 @@ st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%
                    "size_target": {l: batcher.size_for(batch_tuning, l) for l in batcher.BATCH_LANES}}}
 # budget per lane: overrides file (Grok Bot writes Mason's readings) + log-derived token burn
 ov = jload(Q + "/budget-overrides.json", {}); budget = {}
-mets = []
-for l in rd(MD + "/jobs.jsonl").splitlines():
-    try: mets.append(json.loads(l))
-    except Exception: pass
+mets = JOBS_RAW
 def epoch(t):
     try: return time.mktime(time.strptime(t[:19], "%Y-%m-%dT%H:%M:%S"))
     except Exception: return 0
@@ -1530,8 +1573,7 @@ for l in LANES:
     for k in ("weekly_used_pct", "credits_remaining", "reset_at", "source"): o.setdefault(k, None)
     budget[l] = o
 try:
-    budget["claude-api"].update(json.loads(subprocess.run(["/usr/bin/python3", R + "/bin/claude-api.py", "report", "--json"],
-                                                          capture_output=True, text=True, timeout=20).stdout))
+    budget["claude-api"].update(REPORT_F.result() or {})
 except Exception: pass
 st["budget"] = budget
 # 24h rollup by lane and tier

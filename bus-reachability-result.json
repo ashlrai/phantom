@@ -1,0 +1,20 @@
+{
+  "timestamp": "2026-11-09T07:38:07.353Z",
+  "timestampET": "11/9/26, 2:38:07 AM EST",
+  "resources": [
+    {
+      "resource": "codex-personal",
+      "status": "fail",
+      "reason": "No live resource delivery and ingest command established",
+      "sessionThreadId": null,
+      "deliverIngestLatencyMs": null
+    },
+    {
+      "resource": "devin",
+      "status": "SKIP-ACU-CAP",
+      "reason": "Daily ACU launch limit reached; included allowance not established",
+      "sessionThreadId": null,
+      "deliverIngestLatencyMs": null
+    }
+  ]
+}

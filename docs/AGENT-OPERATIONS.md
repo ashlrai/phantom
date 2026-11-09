@@ -359,6 +359,7 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `phm fleet status\|watch\|lanes\|direction\|doctor\|scorecard\|oversight` | Read-only fleet snapshot, per-lane engineering console, direction report, engine readiness and quality metrics |
 | `phm manager [--apply-rejects]` | Judges pending proposals; shadow mode by default, never merges |
 | `phm leader show\|run\|tick\|say\|thread\|approve\|veto\|directives` | The Leader: memos, actions, directives and veto ([LEADER.md](LEADER.md)) |
+| `phm leader status\|ask\|org\|assign --json` | One co-founder: world, org chart, RQ accountability, and the owner inbox. Hard limits escalate; KILL stops it |
 | `phm improve propose [--open-pr --repo <dir>]` | Evidence-backed self-improvement proposals; `--open-pr` opens draft PRs from an isolated worktree and never merges or deploys |
 | `phm cloud ...` / `phm devin ...` | Claude Code cloud and Devin lanes ([CLOUD.md](CLOUD.md), [DEVIN.md](DEVIN.md)) |
 | `phm automations ...` | Turn triggers (labels, red CI, schedules, webhooks) into fleet tasks |
@@ -676,7 +677,7 @@ For more failure modes and their recovery, see
 
 ## Per-pool budget ledger
 
-`phm budget show --json` returns `{ "budgets": ... }`; fleet status includes the
+`phm budget get --json` reads the owner spend budget (`spend.budget.v1`). A provider the owner has not named is 0 USD for the month. `phm budget set --provider claude-api --period month --usd 0 --json` is the explicit owner change and appends one audit line. Agent processes are refused, and the MCP tool `phantom_spend_budget` can only read. The committed config stays at 0, so pay-per-use lanes stay closed. `phm budget show --json` returns `{ "budgets": ... }`; fleet status includes the
 same `budgets` projection. Its schema is `fleet.budgets.v1`. It is an advisory
 observation ledger, with no dispatch or spending authority. Pools are
 `codex-cmp`, `codex-personal`, `devin`, `claude`, `grok-build`, `local-omlx`, and

@@ -538,3 +538,24 @@ launchctl kickstart gui/$(id -u)/ai.ashlr.oversight    # optional: run once now
 To roll back, do the same `bootout` and `bootstrap` with the saved copy.
 After the swap, `~/.ashlr/oversight.sh` is no longer used. Archive it rather
 than editing it, so that no second copy of the job drifts.
+
+## 8. Auto-merge canary controller status (issue #27)
+
+Audit of the bounded auto-merge canary against the requirements of issue #27, as of 2026-11-09. The controller is shadow-only: `ashlr fleet automerge-canary status` reports `enforceSupported:false`.
+
+| Requirement (issue #27) | Status | Code |
+| --- | --- | --- |
+| Durable controller between `runAutoMergePass()` and protected-remote delivery | Partial | Durable HMAC-chained store, exact CAS, one controller-wide lock: `src/core/fleet/automerge-canary-store.ts` (`activateShadow` :1452, `appendShadowObservation` :1698, `haltShadow` :1796). Observation hook runs after the outward result is fixed and its result is discarded: `src/core/inbox/merge.ts:5173`. It observes only; it does not gate admission. |
+| Explicit `shadow\|enforce` mode, shadow by default | Done | Stored mode is the literal `'shadow'` (`automerge-canary-store.ts:171`, :1490). `enforce` is refused by `activateShadow` (:1457), `activateEnforce` (:1523) and the CLI (`src/cli/automerge-canary.ts:774`). |
+| Enforce cannot be enabled from configuration alone | Done | `AUTOMERGE_CANARY_ENFORCE_SUPPORTED = false` is a code constant (`automerge-canary-store.ts:56`). The ladder reads constants only, never config or env (`src/core/fleet/automerge-canary-ladder.ts:47-66`). `HOST_CANCELLATION_PROVEN` is a second code gate (`automerge-canary-cancel.ts:41`). |
+| `maxInFlight` 1 | Done (this change) | `AUTOMERGE_CANARY_EPOCH_ADMISSION_LIMIT` pins it in `strictBudgets` (`automerge-canary-store.ts:58`, :425-431), so activation input and every state read from disk must carry 1. Before, only `prepare-shadow` set 1 and the store accepted 1 to 64. |
+| One admission per epoch | Done (this change) | Same pin on `maxAdmissions` and `maxMerges`. Counters are bounded by the budgets (`:437-444`). Real admission accounting is not wired because enforce does not exist. |
+| Observation window | Done | `observationDurationMs` budget, `observation.startedAt/deadlineAt` validated (`:614-640`), overdue windows are critical (`:1059`). |
+| Lease and clock safety | Done | Lease bounds (`:636-637`), `lease-expired` (`:1054`), `clock-rollback` blocker (`:1332`). |
+| Halt | Done for shadow state | `haltShadow` (`:1796`), CLI `halt`. Reports `hostCancellationProven:false`. |
+| Rollback controller | Partial | Ladder `rollback` returns to shadow from any state (`automerge-canary-ladder.ts:69-129`), and host cancellation with read-back proof exists (`automerge-canary-cancel.ts:43`). Neither is called from a runtime path. CLI `reconcile` refuses (`src/cli/automerge-canary.ts:760`). The `rollbacks` counter exists but nothing increments it. |
+| Protected-remote delivery gated by the controller | Missing | Delivery is not routed through the controller. This is the enforce path, intentionally unsupported until an external monotonic anchor and exact cancellation reconciliation exist (`docs/internal/notes.md`, shadow canary authority pass). |
+
+Verdict: not fully done. Issue #27 stays open. The remaining work is the
+enforce path (admission, delivery gating, wired rollback), which this release
+deliberately does not enable.

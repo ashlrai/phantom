@@ -14,6 +14,9 @@
  *   init [--yes]               Idempotent onboarding; NON-TTY safe with --yes.
  *   mcp [list|doctor|install]  MCP aggregation gateway and registry management.
  *   radar [list|run|diff]      Observe public documentation and package changes.
+ *   observe [--json]           Human observe snapshot: roster, sensors, pulls, bottlenecks.
+ *   growth [--json]            Growth chart series. Missing sources stay no-data-source.
+ *   world [--json]             Versioned world model for the scheduler and leaders.
  *   drafts [list|show|approve|reject]  Outbound drafts waiting for your approval.
  *   run "<goal>" [opts]        Local-first agent orchestrator; decompose & execute a goal.
  *   run show <id>              Print a past run in detail.
@@ -2085,8 +2088,16 @@ async function main(): Promise<void> {
         break;
       }
       case 'context': {
+        if (rest.includes('--for-agent')) {
+          process.exitCode = await (await import('./work-visibility.js')).cmdAgentContext(rest);
+          break;
+        }
         const { cmdCompanyContext } = await import('./company-context.js');
         cmdCompanyContext(rest);
+        break;
+      }
+      case 'claim': {
+        process.exitCode = await (await import('./work-visibility.js')).cmdWorkClaim(rest);
         break;
       }
       case 'router-calibration': {
@@ -2532,6 +2543,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'prs': {
+        const { cmdPrs } = await import('./prs.js');
+        process.exitCode = await cmdPrs(rest);
+        break;
+      }
+
       case 'repos': {
         const { cmdReposRank } = await import('./repos-rank.js');
         process.exitCode = cmdReposRank(rest);
@@ -2749,6 +2766,21 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'observe': {
+        process.exitCode = await (await import('./observe.js')).cmdObserve(rest);
+        break;
+      }
+
+      case 'growth': {
+        process.exitCode = await (await import('./growth.js')).cmdGrowth(rest);
+        break;
+      }
+
+      case 'world': {
+        process.exitCode = await (await import('./world.js')).cmdWorld(rest);
+        break;
+      }
+
       case 'docs': {
         const cmdDocs = await loadDocsCmd();
         process.exitCode = await cmdDocs(rest);
@@ -2776,6 +2808,11 @@ async function main(): Promise<void> {
       case 'comms': {
         const cmdComms = await loadCommsCmd();
         process.exitCode = await cmdComms(rest);
+        break;
+      }
+
+      case 'comms-agent': {
+        process.exitCode = await (await import('./comms-agent.js')).cmdCommsAgent(rest);
         break;
       }
 
@@ -2924,7 +2961,7 @@ async function main(): Promise<void> {
           process.exitCode = await cmdRoster(rest.slice(1));
           break;
         }
-        // Agent Bus v2 contract (docs/AGENT-BUS.md "v2"); read-only, no bus access.
+        // Agent Bus v2 contract (docs/AGENT-BUS.md "v2"). channels test bus|handoff writes a local probe.
         const cmdAgents = await loadAgentsCmd();
         process.exitCode = await cmdAgents(rest);
         break;

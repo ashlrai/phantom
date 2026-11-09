@@ -133,9 +133,6 @@ export interface OperatorDeps {
   commsPaused?: () => boolean;
   postIntent?: (envelope: BusEnvelope) => { status: string };
   id?: () => string;
-  env?: NodeJS.ProcessEnv;
-  cwd?: string;
-  exists?: (path: string) => boolean;
   helperPath?: string | null;
 }
 
@@ -285,7 +282,7 @@ async function resolveSurface(deps: OperatorDeps, status: { kill: boolean; comms
       details: details(null),
     });
   }
-  const helperPath = deps.helperPath ?? resolveDesktopOperatorBinary(deps.env ?? process.env, deps.cwd ?? process.cwd(), deps.exists);
+  const helperPath = resolveDesktopOperatorBinary();
   if (!helperPath) {
     return fail('doctor', 'helper_missing', 'The desktop-operator binary is not installed. Build it, then grant Accessibility and Screen Recording to that binary.', {
       binary: DESKTOP_OPERATOR_BINARY,
@@ -330,6 +327,11 @@ function postWriteIntent(request: OperatorRequest, deps: OperatorDeps): Operator
   return null;
 }
 
+/** A stop probe that throws counts as engaged: a write must never run on an unknown pause state. */
+function failClosedProbe(probe: () => boolean): boolean {
+  try { return probe() !== false; } catch { return true; }
+}
+
 export async function runDesktopOperator(request: OperatorRequest, deps: OperatorDeps = {}): Promise<OperatorResult> {
   const problem = invalidRequest(request);
   if (problem === 'forbidden_store') {
@@ -337,8 +339,8 @@ export async function runDesktopOperator(request: OperatorRequest, deps: Operato
   }
   if (problem) return fail(request.verb, 'invalid', problem);
 
-  const kill = (deps.killed ?? killSwitchOn)();
-  const commsPaused = (deps.commsPaused ?? isPaused)();
+  const kill = failClosedProbe(deps.killed ?? killSwitchOn);
+  const commsPaused = failClosedProbe(deps.commsPaused ?? isPaused);
   if (isWriteVerb(request.verb) && kill) {
     return fail(request.verb, 'killed', 'The fleet KILL switch is on. Desktop writes are stopped.');
   }
