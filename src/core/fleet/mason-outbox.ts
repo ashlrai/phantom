@@ -68,9 +68,14 @@ export function parsePlanLog(markdown: string): OutboxEntry[] {
   let at = '';
   let heading = '';
   let body: string[] | null = null;
+  let entryIndex = -1;
   const finish = (): void => {
     const text = body?.join('\n').trim();
-    if (text) entries.push({ at, heading, text: cap(text) });
+    if (text) {
+      const reply = { at, heading, text: cap(text) };
+      if (entryIndex >= 0) entries[entryIndex] = reply;
+      else { entryIndex = entries.length; entries.push(reply); }
+    }
     body = null;
   };
   for (const line of markdown.replace(/\r\n/g, '\n').split('\n')) {
@@ -81,6 +86,7 @@ export function parsePlanLog(markdown: string): OutboxEntry[] {
     } else if (/^#{1,6} /.test(line)) {
       finish();
       if (line.startsWith('## ')) {
+        entryIndex = -1;
         heading = line.slice(3).trim();
         at = HEADING_TIME.exec(line)?.[0] ?? /^## (\d{4}-\d{2}-\d{2}) ET/.exec(line)?.[1] ?? '';
       }
@@ -160,10 +166,14 @@ export async function readOutboxEntries(opts: { runsDir?: string; limit?: number
 }
 
 /** Only explicit dated PLAN-LOG replies; no outbox fallback or text deduplication. */
-export async function readPlanLogReplies(): Promise<{ sourceState: 'healthy' | 'missing' | 'unknown'; entries: OutboxEntry[] }> {
+export async function readPlanLogReplies(opts: { limit?: number } = {}): Promise<{ sourceState: 'healthy' | 'missing' | 'unknown'; entries: OutboxEntry[] }> {
   const root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   try {
-    return { sourceState: 'healthy', entries: parsePlanLog(await readTail(join(root, 'leader', 'PLAN-LOG.md'))).filter(e => e.at && e.heading).slice(-30) };
+    const limit = opts.limit ?? 30;
+    const entries = parsePlanLog(await readTail(join(root, 'leader', 'PLAN-LOG.md')))
+      .filter(e => e.at && e.heading && Number.isFinite(replyTime(e.at)))
+      .sort((a, b) => replyTime(a.at) - replyTime(b.at));
+    return { sourceState: 'healthy', entries: Number.isFinite(limit) && limit > 0 ? entries.slice(-Math.floor(limit)) : [] };
   } catch (error) {
     return { sourceState: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unknown', entries: [] };
   }

@@ -24,6 +24,20 @@ describe('leader facts', () => {
       expect(await readdir(join(root, 'leader'))).toEqual(['facts.json']);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
+  it('discovers recent Q8 pull requests independently of the local ledger', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'leader-facts-'));
+    try {
+      const gh: CloudGh = async args => ({ ok: true, stderr: '', stdout: JSON.stringify(
+        args[1] === 'search/issues' && args.some(a => a.includes('created:>='))
+          ? { incomplete_results: false, items: [{ title: 'bridge: RQ-TESTN9NQ8', html_url: 'https://github.com/ashlrai/phantom/pull/4416' }] }
+          : args[1]?.includes('/pulls/') ? { state: 'closed', merged_at: '2026-01-02T02:00:00Z' }
+          : args[1] === 'search/issues' ? { total_count: 1, incomplete_results: false } : { tag_name: 'v1' },
+      ) });
+      const facts = await writeLeaderFacts(root, gh, Date.parse('2026-01-03T00:00:00Z'));
+      expect(facts.sources.github).toBe('ok');
+      expect(facts.jobs).toContainEqual({ id: 'RQ-TESTN9NQ8', repo: 'ashlrai/phantom', publish_result: 'published', pr_url: 'https://github.com/ashlrai/phantom/pull/4416', pr_state: 'merged', merged_at: '2026-01-02T02:00:00Z' });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
   it('preserves unknowns when sources or GitHub are unavailable', async () => {
     const root = await mkdtemp(join(tmpdir(), 'leader-facts-'));
     try {
