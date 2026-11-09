@@ -42,3 +42,15 @@ it('prints the count line first, supports --json, errors and is registered', asy
   expect(err).toHaveBeenCalled();
   expect(typeof (await FLEET_SUBCOMMAND_LOADERS['running']!()).cmdFleetRunning).toBe('function');
 });
+
+it('uses event timestamps, ignores future events, and does not reuse stale launch metadata', () => {
+  const ledger = [
+    { job: 'a', event: 'finish', ts: '2026-11-03T11:45:00Z' },
+    { job: 'a', event: 'launch', ts: '2026-11-03T11:00:00Z', lane: 'old' },
+    { job: 'b', event: 'finish', ts: '2026-11-03T13:00:00Z' },
+    { job: 'b', event: 'launch', ts: '2026-11-03T11:30:00Z', lane: 'current' },
+    { job: 'b', event: 'launch', ts: '2026-11-03T10:00:00Z', lane: 'stale' },
+    { job: 'c', event: 'launch', ts: '2026-11-03T05:00:00Z', lane: 'stale' },
+  ].map(row => JSON.stringify(row)).join('\n');
+  expect(runningJobs(ledger, now)).toMatchObject({ total: 1, by_lane: { current: 1 }, jobs: [{ job: 'b', lane: 'current' }] });
+});

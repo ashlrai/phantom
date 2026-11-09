@@ -20,11 +20,19 @@ describe('unified inbox view, gmail source', () => {
 
   it('shows the gmail count in the summary', () => {
     const view = readUnifiedInboxView({ ...base, sources: { ...base.sources, gmail: report('healthy', 1) }, items: [gmailItem] });
-    expect(view && !view.unavailable && sourceSummary(view.sources)).toMatch(/Gmail 1$/);
+    expect(view && !view.unavailable && sourceSummary(view.sources)).toMatch(/Gmail 1 · LinkedIn —$/);
   });
 
   it('shows Gmail — when an older server sends no gmail source', () => {
     const view = readUnifiedInboxView(base);
-    expect(view && !view.unavailable && sourceSummary(view.sources)).toMatch(/Gmail —$/);
+    expect(view && !view.unavailable && sourceSummary(view.sources)).toMatch(/Gmail — · LinkedIn —$/);
   });
+});
+
+it('labels a linkedin item and source as LinkedIn', () => {
+  const item = { id: 'linkedin:m1', source: 'linkedin', kind: 'linkedin-message', severity: 'info', blocking: false,
+    title: 'LinkedIn from Ada Fake: Hi', since: null, expiresAt: null, act: ['phm drafts list --status pending'] };
+  const view = readUnifiedInboxView({ ...base, sources: { ...base.sources, linkedin: report('healthy', 1) }, items: [item] });
+  expect(view && !view.unavailable && view.items).toEqual([item]);
+  expect(view && !view.unavailable && sourceSummary(view.sources)).toMatch(/LinkedIn 1$/);
 });

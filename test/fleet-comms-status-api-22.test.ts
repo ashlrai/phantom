@@ -14,6 +14,31 @@ import { writeEmailDropConfig } from '../src/core/comms/email-drop-config.js';
 const NOW = new Date('2026-11-04T21:00:00.000Z');
 const OLDEST = '2026-11-04T10:00:00.000Z';
 
+/** Counts and states only. No handles, message text or paths. */
+const absentImessage = {
+  configuration: { state: 'disabled', reason: 'CONFIG_DISABLED_OR_INCOMPLETE' },
+  chatDb: { state: 'unknown', reason: 'DB_NOT_PROBED' },
+  cursor: { state: 'unknown', reason: 'CURSOR_UNAVAILABLE' },
+  ackSource: 'missing',
+  lastAckAt: null,
+  acks24h: 0,
+  nextStep: 'Run phm imessage doctor --json to inspect configuration.',
+};
+const absentTeammate = {
+  windowHours: 24,
+  targetMinutes: 5,
+  texts: 0,
+  answered: 0,
+  unanswered: 0,
+  ignorable: 0,
+  medianMinutes: null,
+  p90Minutes: null,
+  maxMinutes: null,
+  withinTarget: 0,
+  oldestUnanswered: null,
+  sourceState: 'missing',
+};
+
 async function call(api: ApiModule, url = PATH, method = 'GET', allowDispatch = true) {
   let status = 404, text = '';
   const req = Object.assign(new PassThrough(), { url, method }) as IncomingMessage;
@@ -62,7 +87,9 @@ describe('fleet comms status route', () => {
         replies: 'blocked',
         coverage: 'local-evidence-only-not-gmail-triage-or-proof-of-delivery',
       }),
-      sources: { drafts: 'healthy', emailOutbox: 'healthy' },
+      imessage: absentImessage,
+      teammate: absentTeammate,
+      sources: { drafts: 'healthy', emailOutbox: 'healthy', imessage: 'healthy', teammate: 'missing' },
     });
     // Counts only: no body, subject, address, file name or path crosses the wire.
     for (const secret of ['person@example.test', 'subject', 'reply.eml', runsDir, outbox, drop]) {
@@ -77,7 +104,9 @@ describe('fleet comms status route', () => {
     const result = await call(createFleetCommsStatusApi({ runsDir, outboxDir: outbox, now: () => NOW }));
     expect(result.status).toBe(200);
     expect(result.body.emailOutbox).toEqual({ configured: true, queued: 1, drafted: 0, sent: 0, stuck: 0, stuckReasons: {} });
-    expect(result.body.sources).toEqual({ drafts: 'healthy', emailOutbox: 'healthy' });
+    expect(result.body.sources).toEqual({ drafts: 'healthy', emailOutbox: 'healthy', imessage: 'healthy', teammate: 'missing' });
+    expect(result.body.imessage).toEqual(absentImessage);
+    expect(result.body.teammate).toEqual(absentTeammate);
   });
 
   it('reports a missing email-drop config as not configured, drafts still read', async () => {
@@ -88,7 +117,9 @@ describe('fleet comms status route', () => {
     expect(result.body.emailOutbox).toEqual({ configured: false, queued: 0, drafted: 0, sent: 0, stuck: 0, stuckReasons: {} });
     expect(result.body.drafts.pending).toBe(1);
     expect(Number.isNaN(Date.parse(result.body.drafts.oldestPendingAt))).toBe(false);
-    expect(result.body.sources).toEqual({ drafts: 'healthy', emailOutbox: 'missing' });
+    expect(result.body.sources).toEqual({ drafts: 'healthy', emailOutbox: 'missing', imessage: 'healthy', teammate: 'missing' });
+    expect(result.body.imessage).toEqual(absentImessage);
+    expect(result.body.teammate).toEqual(absentTeammate);
   });
 
   it('degrades one section without failing the response', async () => {
