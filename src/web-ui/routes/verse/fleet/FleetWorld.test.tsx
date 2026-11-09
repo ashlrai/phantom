@@ -10,7 +10,7 @@ describe('Fleet world recorded identity', () => {
     const { rerender } = render(<FleetWorld read={undefined} readFailed />);
     expect(screen.getByRole('status')).toHaveTextContent('Fleet data could not be read.');
     rerender(<FleetWorld read={{ value: snapshot(), available: true, reason: null }} readFailed />);
-    expect(screen.getByRole('status')).toHaveTextContent('Last recorded snapshot · refresh failed.');
+    expect(screen.getAllByRole('status')[0]).toHaveTextContent('Last recorded snapshot · refresh failed.');
     expect(screen.getAllByRole('button').length).toBeGreaterThan(0);
   });
   it('keeps the selected run through reordering, updates its outcome, and never substitutes a vanished run', () => {
@@ -52,6 +52,6 @@ describe('Fleet world recorded identity', () => {
     expect(screen.getByText('No recorded runs in the current window.')).toBeInTheDocument();
     expect(screen.getByText('Paused by you')).toBeInTheDocument();
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
-    expect(screen.getByText(/collaboration links are not recorded/)).toBeInTheDocument();
+    expect(screen.getByText(/message links use the local bus/)).toBeInTheDocument();
   });
 });

@@ -83,6 +83,17 @@ for i, l in enumerate(lines):
         for n in re.findall(r"(?:pull/|PR=|#)(\d+)", l): held_pr.add((hr.group(1) if hr else "*", n))
         for rr, n in re.findall(r"github\.com/[A-Za-z0-9._-]+/([A-Za-z0-9._-]+)/pull/(\d+)", l): held_pr.add((rr, n))
     if m2: recs.append((i, m2.group(1), m2.group(2), m2.group(3), l))
+# Only suppress narrowly identified author filler; unknown or stale-looking rollups do
+# not invent an empty rate. Group by repo and explicit test path, not job ID.
+def single_case_group(job, attrs, text):
+    if not re.search(r"A\d{6,}Q8$", job) or re.search(r"guardian", job + " " + attrs + " " + text, re.I): return None
+    if not re.search(r"\b(?:single|one|1)[ -](?:test[ -])?case\b", text, re.I): return None
+    repo = re.search(r"\brepo=(?:ashlrai/)?([a-z0-9-]+)", attrs)
+    files = set(re.findall(r"(?<![\w./-])((?:[\w.-]+/)+[\w.-]+(?:\.test|\.spec)\.[A-Za-z0-9]+)\b", text))
+    return (repo.group(1), next(iter(files))) if repo and len(files) == 1 else None
+
+personal_rate = st.get("rollup_24h", {}).get("by_lane", {}).get("codex-personal", {}).get("empty_rate")
+quality_active = isinstance(personal_rate, (int, float)) and not isinstance(personal_rate, bool) and math.isfinite(personal_rate) and 0.25 < personal_rate <= 1
 claimed = {x.split("\t")[0] for x in rd(Q + "/claimed.tsv").splitlines() if x}
 ready_raw = [x for x in rd(Q + "/ready.tsv").splitlines() if x.strip() and not x.strip().startswith("#")]
 # RQ-QUEUE-AUTOUNPARK-1: PARKED-DEP[.lane] may lead the row (fleet parked status-first) or sit in the lane column.
@@ -97,6 +108,14 @@ def ready_job_id(line):
     if PARK_DEP.match(f[0]) or PARK_RATE.match(f[0]): return f[1] if len(f) > 1 else None
     return f[0]
 inq = {j for j in (ready_job_id(x) for x in ready_raw) if j}
+# Include active rows from earlier passes so the group survives restock cycles.
+quality_groups = set()
+if quality_active:
+    for raw in lines:
+        m = re.match(r"^- (?:READY|CLAIMED) (?:\S+ \S+ )?([A-Za-z0-9._-]+)(?: r\d+)? \((.*?)\):\s*(.*)$", raw)
+        if m and m.group(1) in (inq | claimed):
+            group = single_case_group(*m.groups())
+            if group: quality_groups.add(group)
 # Count only distinct launchable rows. Dispatcher status can count parked or malformed
 # rows and is a previous-tick snapshot, so it cannot measure replenishment demand.
 queue_diagnostics = {"parked": 0, "invalid": 0, "empty_prompt": 0, "duplicate": 0}
@@ -341,6 +360,9 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re
     if prp & seen_pr: skip(j, "dup-pr"); continue
     if fkey and fkey in seen_file: skip(j, "dup-file"); continue
     if j in checked: skip(j, "dup-line"); continue
+    quality_group = single_case_group(j, attrs, text) if quality_active else None
+    if quality_group and quality_group in quality_groups:
+        skip(j, "duplicate-single-case-test-file"); continue
     # balance codex lanes: line pool first, else the lane with more unmet need (cmp wins ties)
     lane = pool if len(picks[pool]) < need[pool] or pool == "codex-local" else max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
     if len(picks[lane]) >= need[lane]: continue
@@ -355,6 +377,7 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re
     if pc:
         done.append((i, j, pc)); skip(j, "done-noop"); continue
     picks[lane].append((j, rm.group(1), lane, tier, attrs, text, i))
+    if quality_group: quality_groups.add(quality_group)
     seen_pr |= prp
     if fkey: seen_file.add(fkey)
 out = []
