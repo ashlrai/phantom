@@ -330,6 +330,7 @@ canonical release guide for required hosted qualification and publication.
 - [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references only.
 
 - [Verify a worktree change](https://github.com/ashlrai/phantom/blob/master/docs/VERIFY-CHANGE.md): local toolchain checks and safe verdicts.
+- [Done contract](DONE-CONTRACT.md): the layered `done-contract.v1` file schema — floor checks, frozen acceptance criteria, verify commands — and `phm verify done`, the one generic validator (backward compatible with freeform bridge notes).
 
 - [Agent checkpoints](AGENT-CHECKPOINT.md): explicit durable state and resume format.
 - [Stigmergic coordination](STIGMERGY.md): `phm trail` file markers — claim/lease, heartbeats, resumable checkpoints; agents pick up stalled work.

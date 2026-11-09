@@ -103,6 +103,8 @@ const SUBCOMMANDS: Record<string, string[]> = {
   run: ['show'],
   spec: ['new', 'list', 'show', 'refine'],
   swarm: ['show', 'verify', 'approve', 'rollback'],
+  chain: ['verify', '--json', '--help'],
+  verify: ['change', 'done', '--worktree', '--checks', '--contract', '--plan', '--help'],
   models: ['list', 'pull', 'start', 'inventory'],
   gh: ['pr', 'issue', 'ci'],
   vercel: ['ls', 'logs'],
