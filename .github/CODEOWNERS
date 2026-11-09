@@ -266,6 +266,7 @@
 /test/authority-grant-scope-315.test.ts @masonwyatt23
 /test/authority-ledger-310b.test.ts @masonwyatt23
 /test/authority-no-file-trust-310b.test.ts @masonwyatt23
+/test/authority-regen.test.ts @masonwyatt23
 /test/authority-release-truth.test.ts @masonwyatt23
 /test/authority-repository-binding.test.ts @masonwyatt23
 /test/authority-resident-admission.test.ts @masonwyatt23
