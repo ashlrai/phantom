@@ -3,7 +3,7 @@ import type { AppNotification } from '../../../components/notifications/types.js
 import { buildFeed, filterFeed, updateAdapter } from './feed-model.js';
 
 const note = (id: string, title: string, ts: string, detail?: string): AppNotification => ({
-  id, category: 'action-required', severity: 'high', title, ts, ...(detail ? { detail } : {}), actionLabel: 'Update now', actionRun: () => {},
+  id, category: 'action-required', severity: 'high', title, detail: detail ?? '', ts, actionLabel: 'Update now', actionRun: () => {},
 });
 const T = '2026-11-09T10:00:00.000Z';
 
