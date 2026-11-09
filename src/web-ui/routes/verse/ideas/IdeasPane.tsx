@@ -7,6 +7,9 @@
 import { Fragment, useId, useMemo, useState } from 'react';
 import { openDockPane } from '../dock/dock-store.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
+import { goalsQuery, type GoalSummary } from '../../../data/queries.js';
+import { openGoals } from '../goals-pane/goals-pane-model.js';
+import { filterIdeasByGoal, goalChipText, ideaGoalId } from './idea-goal-link.js';
 import { Card, CardNote } from '../command/Surface.js';
 import { verseBacklogQuery } from '../autonomy/control-queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
@@ -18,11 +21,14 @@ const PER_REPO = 5;
 
 export function IdeasPane({ visible = true }: { visible?: boolean }) {
   const backlog = useQuery(verseBacklogQuery, { enabled: visible, freshMs: IDEAS_POLL_MS });
+  const goals = useQuery(goalsQuery, { enabled: visible });
+  const [goalFilter, setGoalFilter] = useState('all');
   const refetch = useRefetch(verseBacklogQuery);
   usePollWhileVisible(() => { refetch(); }, IDEAS_POLL_MS, { enabled: visible });
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
 
-  const rows = useMemo(() => rankIdeas(backlog.data?.items ?? []), [backlog.data]);
+  const allRows = useMemo(() => rankIdeas(backlog.data?.items ?? []), [backlog.data]);
+  const rows = useMemo(() => filterIdeasByGoal(allRows, goalFilter), [allRows, goalFilter]);
   const full = useMemo(() => groupByRepo(rows, Number.MAX_SAFE_INTEGER), [rows]);
   const groups = useMemo(() => groupByRepo(rows, PER_REPO), [rows]);
   const { counts, nudge } = useMemo(() => sourceCounts(rows), [rows]);
@@ -40,8 +46,10 @@ export function IdeasPane({ visible = true }: { visible?: boolean }) {
     body = <CardNote>Loading ideas…</CardNote>;
   } else if (backlog.data.absent) {
     body = <CardNote>No backlog has been built yet. Run <code>ashlr backlog</code> or one tick from Controls.</CardNote>;
-  } else if (rows.length === 0) {
+  } else if (allRows.length === 0) {
     body = <CardNote>The backlog is empty, so a tick idles. Enroll another repository in Scope, or add a goal, to give it work.</CardNote>;
+  } else if (rows.length === 0) {
+    body = <CardNote>No ideas for this goal.</CardNote>;
   } else {
     body = <>
       <p className={styles.headline}>{ideasHeadline(rows)}</p>
@@ -50,15 +58,21 @@ export function IdeasPane({ visible = true }: { visible?: boolean }) {
         {counts.map(({ source, count }, i) => <Fragment key={source}>{i ? ' · ' : ''}{source} {count}</Fragment>)}
       </p>
       <div className={styles.groups}>
-        {groups.map((group, i) => <RepoCard key={group.repo} group={group} all={full[i]!} expanded={open.has(group.repo)} onToggle={() => toggle(group.repo)} />)}
+        {groups.map((group, i) => <RepoCard key={group.repo} group={group} all={full[i]!} goals={goals.data ?? []} expanded={open.has(group.repo)} onToggle={() => toggle(group.repo)} />)}
       </div>
     </>;
   }
 
-  return <div className={styles.root} aria-label="Ideas">{body}</div>;
+  return <div className={styles.root} aria-label="Ideas">
+    <label>Goal: <select value={goalFilter} onChange={event => setGoalFilter(event.target.value)}>
+      <option value="all">All</option>
+      {openGoals(goals.data ?? []).map(goal => <option key={goal.id} value={goal.id}>{goal.objective}</option>)}
+    </select></label>
+    {body}
+  </div>;
 }
 
-function RepoCard({ group, all, expanded, onToggle }: { group: RepoGroup; all: RepoGroup; expanded: boolean; onToggle: () => void }) {
+function RepoCard({ group, all, goals, expanded, onToggle }: { group: RepoGroup; all: RepoGroup; goals: readonly GoalSummary[]; expanded: boolean; onToggle: () => void }) {
   const listId = useId();
   const shown = expanded ? all.rows : group.rows;
   return (
@@ -67,7 +81,7 @@ function RepoCard({ group, all, expanded, onToggle }: { group: RepoGroup; all: R
         {shown.map(row => <li key={row.key} className={styles.row}>
           <span className={styles.title}>{row.title}</span>
           <span className={styles.meta}>{row.scoreText} · {row.source}</span>
-          {row.goal ? <button type="button" className={styles.toggle} onClick={() => openDockPane('goals')}>from goal: {row.goal.name}</button> : null}
+          {ideaGoalId(row) ? <button type="button" className={styles.toggle} onClick={() => openDockPane('goals')}>{goalChipText(ideaGoalId(row), goals)}</button> : null}
         </li>)}
       </ol>
       {group.more > 0 ? <button type="button" className={styles.toggle} aria-expanded={expanded} aria-controls={listId} onClick={onToggle}>
