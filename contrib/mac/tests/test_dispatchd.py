@@ -81,14 +81,16 @@ def set_daemon_tick(home, value):
         f.write_text(value)
 
 
-def tick(home, env_extra=None):
+def tick(home, env_extra=None, script=None):
     env = {'HOME': str(home),
            'PATH': str(Path(home) / 'stubbin') + ':' + os.environ.get('PATH', '/usr/bin:/bin'),
            'LANG': 'C', 'LOADGATE_LOADAVG': '1.0', 'LOADGATE_NCPU': '18', 'LOADGATE_PRESSURE': '1', 'LOADGATE_SWAP_GB': '0',
            'DISKGUARD_FREE_GB': '500'}
     if env_extra:
         env.update(env_extra)
-    return subprocess.run([sys.executable, '-B', str(SCRIPT)], env=env,
+    env.setdefault('PYTHONPATH', str(Path(home) / 'stubbin') + ':' + str(SCRIPT.parent))
+    script = script or SCRIPT
+    return subprocess.run([sys.executable, '-B', str(script)], env=env,
                           capture_output=True, text=True, timeout=120)
 
 
@@ -171,6 +173,59 @@ def dispatched(home, job):
 def auth_mark(home, job):
     f = home / '.ashlr-runs' / 'queue' / 'run' / f'{job}.authfail.seen'
     return f.read_text().strip() if f.exists() else None
+
+
+class DispatchClaimTests(unittest.TestCase):
+    def test_tick_claim_recovers_after_owner_exit(self):
+        tmp = build(); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+        env = launch_stubs(home); queue_job(home, 'RQ-CLAIM', lane='devin')
+        lock = home / '.ashlr-runs/queue/dispatchd.tick.lock'
+        owner = subprocess.Popen([sys.executable, '-c',
+            'import fcntl,sys,time; f=open(sys.argv[1], "a"); fcntl.flock(f, fcntl.LOCK_EX); print("locked", flush=True); time.sleep(60)',
+            str(lock)], stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(owner.stdout.readline().strip(), 'locked')
+            self.assertEqual(tick(home, env).returncode, 0)
+            self.assertFalse(dispatched(home, 'RQ-CLAIM'))
+        finally:
+            owner.kill(); owner.wait(); owner.stdout.close()
+        self.assertEqual(tick(home, env).returncode, 0)
+        self.assertTrue(dispatched(home, 'RQ-CLAIM'))
+        self.assertEqual(tick(home, env).returncode, 0)
+        rows = [json.loads(x) for x in (home / '.ashlr-runs/metrics/jobs.jsonl').read_text().splitlines()]
+        self.assertEqual(sum(x.get('event') == 'launch' and x.get('job') == 'RQ-CLAIM' for x in rows), 1)
+
+    def test_interrupted_claim_is_retried(self):
+        tmp = build(); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+        env = launch_stubs(home); queue_job(home, 'RQ-CRASH', lane='devin')
+        q = home / '.ashlr-runs/queue'; line = (q / 'ready.tsv').read_text()
+        (q / 'ready.tsv').write_text('')
+        (q / 'run/RQ-CRASH.line').write_text(line)
+        receipt = q / 'run/RQ-CRASH.dispatched'; receipt.write_text('0')
+        os.utime(receipt, (time.time() - 300, time.time() - 300))
+        self.assertEqual(tick(home, env).returncode, 0)
+        self.assertTrue(dispatched(home, 'RQ-CRASH'))
+        self.assertIn('LAUNCH_INTERRUPTED RQ-CRASH', events(home))
+
+    def test_candidate_worker_cwd_prevents_duplicate_after_grace(self):
+        candidate = SCRIPT.parent / 'host-integration/dispatchd.candidate.py'
+        for lane in ('grok', 'cursor'):
+            with self.subTest(lane=lane):
+                tmp = build(); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+                env = launch_stubs(home); queue_job(home, 'RQ-LIVE', lane=lane)
+                (home / 'stubbin/router_queue.py').write_text('def load(path): return ({}, set())\ndef read_metadata(path): return open(path).read()\n')
+                (home / '.ashlr-runs/bin/router.py').write_text('def load(path): return ({}, {})\n')
+                (home / '.ashlr-runs/queue/ROUTER_OFF').touch()
+                r = home / '.ashlr-runs'; wt = home / 'Projects/ashlrai/wt/RQ-LIVE'; wt.mkdir()
+                (r / 'RQ-LIVE.base').write_text(f'phantom branch {wt} {lane}\n')
+                receipt = r / 'queue/run/RQ-LIVE.dispatched'; receipt.write_text('0')
+                os.utime(receipt, (time.time() - 300, time.time() - 300))
+                (home / 'stubbin/lsof').write_text(f'#!/bin/sh\necho n{wt}\n')
+                result = tick(home, env, script=candidate)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(receipt.exists())
+                rows = [json.loads(x) for x in (r / 'metrics/jobs.jsonl').read_text().splitlines()]
+                self.assertFalse(any(x.get('event') == 'launch' and x.get('job') == 'RQ-LIVE' for x in rows))
 
 
 class SlotDefaultTests(unittest.TestCase):
