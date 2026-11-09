@@ -1087,6 +1087,8 @@
     "src/core/seams/work-queue-coordinator.ts",
     "src/core/security/binshield-scan.ts",
     "src/core/spec/spec-store.ts",
+    "src/core/spend/budget-policy.ts",
+    "src/core/spend/budget-store.ts",
     "src/core/steward/disk.ts",
     "src/core/strategy/goal-planner.ts",
     "src/core/swarm/gate.ts",

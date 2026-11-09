@@ -82,6 +82,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   radar: ['list', 'run', 'diff', '--json', '--help'],
   usage: ['sensors', 'validate', '--json', '--refresh', '--file', '--help'],
   observe: ['session', '--json', '--human-steps', '--bottlenecks', '--prs', '--days', '--claim-minutes', '--help'],
+  budget: ['show', 'add', 'get', 'set', '--json', '--provider', '--period', '--usd', '--bucket', '--remaining', '--reset-at', '--at', '--source', '--input', '--help'],
   world: ['get', '--json', '--refresh', '--help'],
   chain: ['verify', '--json', '--help'],
   incident: ['report', 'receipts', '--json', '--help'],

@@ -5,7 +5,7 @@ import { ashlrHome } from '../cloud/store.js';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
-import { listBusInboxAfter, type BusInboxReceipt } from './bus-inbox.js';
+import { BusInboxChurnError, listBusInboxAfter, type BusInboxReceipt } from './bus-inbox.js';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from './local-store-lock.js';
 import { acquireCoordination, renewCoordination, settleCoordination } from '../agents/claim-store.js';
 
@@ -87,6 +87,7 @@ function receipt(id: string, root: string): BusInboxReceipt | undefined {
   let after = 0;
   for (let page = 0; page < 11; page++) {
     const result = listBusInboxAfter(after, 100, { root, now: () => 0 });
+    if (result.status === 'retryable') throw new BusInboxChurnError('Bus inbox changed during read');
     if (result.status !== 'ok') throw new Error('Unavailable');
     const found = result.messages.find(r => r.envelope.id === id);
     if (found) return found;
@@ -159,8 +160,13 @@ export function mutateBusWorkClaim(request: BusClaimRequest): BusClaimResult {
         }
         result = { status: request.action === 'renew' ? 'renewed' : request.action === 'release' ? 'released' : 'completed', leaseUntil: row.leaseUntil };
       }
-      const json = JSON.stringify(rows);
-      if (rows.length > CLAIM_MAX_ROWS || Buffer.byteLength(json) > CLAIM_MAX_BYTES) return { status: 'full' };
+      // Rows only matter while their receipt can still be live; past its TTL every
+      // action answers 'expired' before consulting the row. Without this sweep,
+      // completed and lapsed rows accumulate until the next new ID reports 'full'
+      // forever. A clock before receipt keeps the row, as the inbox keeps it live.
+      const retained = rows.filter(r => now < r.receivedAt || now - r.receivedAt < r.ttl);
+      const json = JSON.stringify(retained);
+      if (retained.length > CLAIM_MAX_ROWS || Buffer.byteLength(json) > CLAIM_MAX_BYTES) return { status: 'full' };
       const pending = join(directory, '.pending');
       // With the writer lock held, a leftover stage belongs to a vanished writer.
       // Canonical state was validated above; an incomplete stage is never promoted.
@@ -169,5 +175,5 @@ export function mutateBusWorkClaim(request: BusClaimRequest): BusClaimResult {
       writePrivateFileAtomically(pending, file, json, { anchorPath: root, label: 'Bus claims' });
       return result;
     } finally { releaseLocalStoreLock(lock.lock); }
-  } catch { return { status: 'unavailable' }; }
+  } catch (error) { return { status: error instanceof BusInboxChurnError ? 'retryable' : 'unavailable' }; }
 }

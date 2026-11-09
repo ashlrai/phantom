@@ -950,6 +950,28 @@ describe('land-first scheduling', () => {
       expect(unknown.codex.slots).toBe(LANE_DEFAULT_SLOTS.codex);
     });
 
+    it('keeps a pay-per-use lane at 0 when the owner budget is 0', () => {
+      const resetAt = new Date(NOW + 10 * 3_600_000).toISOString();
+      const plan = planLanes({
+        policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {},
+        nowMs: NOW,
+        sensorPace: { codex: { remaining: 80, resetAt, burnPerHour: 1, payPerUse: true, balanceFresh: true, budgetUsd: 0, spentUsd: 0 } },
+      });
+      expect(plan.codex.slots).toBe(0);
+      const allowed = planLanes({
+        policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {},
+        nowMs: NOW,
+        sensorPace: { codex: { remaining: 80, resetAt, burnPerHour: 1, payPerUse: true, balanceFresh: true, budgetUsd: 100, spentUsd: 1 } },
+      });
+      expect(allowed.codex.slots).toBeGreaterThan(0);
+      const killed = planLanes({
+        policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {},
+        nowMs: NOW, killed: true,
+        sensorPace: { codex: { remaining: 80, resetAt, burnPerHour: 1, payPerUse: true, balanceFresh: true, budgetUsd: 100, spentUsd: 1 } },
+      });
+      expect(killed.codex.slots).toBe(0);
+    });
+
     it('zeroes every lane when KILL is on', () => {
       const plan = planLanes({
         policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {}, killed: true,
