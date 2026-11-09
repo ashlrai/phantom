@@ -23,6 +23,8 @@ import {
 import type { UsageSensorReport } from '../usage/sensor-reading.js';
 import type { AgentRoster } from '../fleet/agent-roster.js';
 import { writeWorldExport } from './export.js';
+import { loadGrowthFacts } from '../growth/read.js';
+import { growthSnapshot } from '../growth/series.js';
 import { projectWorldModel } from './project.js';
 import { WORLD_CACHE_TTL_MS, type WorldModel } from './types.js';
 import type { ObserveSnapshot } from '../observe/types.js';
@@ -57,7 +59,7 @@ async function readDisk(nowMs: number): Promise<CachedWorld | null> {
     const ageMs = nowMs - stat.mtimeMs;
     if (ageMs < 0 || ageMs >= WORLD_CACHE_TTL_MS) return null;
     const parsed = JSON.parse(await readFile(path, 'utf8')) as CachedWorld;
-    if (parsed?.schema !== 'ashlr.world-model/v1' || !parsed.views?.observe) return null;
+    if (parsed?.schema !== 'ashlr.world-model/v1' || !parsed.views?.observe || !parsed.growth?.mergesPerHour) return null;
     return stamp(parsed, true, ageMs);
   } catch {
     return null;
@@ -179,6 +181,10 @@ export async function buildWorldModel(options: ReadObserveOptions = {}): Promise
     stepsRemaining: steps?.stepsRemaining ?? null,
     stepsObservedAt: steps?.stepsRemaining === null || steps === null ? null : new Date(nowMs).toISOString(),
     outcomes,
+    growth: growthSnapshot(await loadGrowthFacts({
+      nowMs,
+      ...(parsedPulls ? { pulls: parsedPulls.pulls, pullsComplete: parsedPulls.complete === true } : {}),
+    })),
   });
   observe.coverage = {
     ...observe.coverage,

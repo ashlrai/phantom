@@ -4,8 +4,8 @@
  * Handles reading, writing, and defaulting the ~/.ashlr/config.json file.
  * All ~ paths are expanded to the real homedir at module load time.
  */
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { homedir, userInfo } from 'node:os';
+import { isAbsolute, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import {
   closeSync,
@@ -54,6 +54,25 @@ export const INDEX_PATH: string = join(CONFIG_DIR, 'index.json');
 
 function resolveConfigDir(): string {
   return join(homedir(), '.ashlr');
+}
+
+/**
+ * Password-database home. Unlike `os.homedir()`, this does not follow `$HOME`,
+ * so a relocated home cannot retarget owner sends.
+ */
+export function realAccountHome(): string | null {
+  try {
+    const home = userInfo().homedir;
+    return typeof home === 'string' && isAbsolute(home) ? home : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Read `config.json` from an explicit directory. Does not create files or follow `$HOME`. */
+export function loadConfigAt(configDir: string): AshlrConfig {
+  const configPath = join(configDir, 'config.json');
+  return existsSync(configPath) ? readConfigOrDefaults(configPath) : firstRunConfig();
 }
 
 function resolveConfigPath(): string {
