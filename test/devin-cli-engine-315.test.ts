@@ -340,23 +340,23 @@ const LEGACY: LegacyRoute = { backend: 'builtin' as EngineId, tier: 'local', rea
 describe('planLanes — the Devin CLI lane', () => {
   const base = { directives: null, presence: ABSENT, localServingSlots: 4 };
 
-  it('one slot when the grant names devin with a producer seat and the engine is ready', () => {
-    const planned = planLanes({ ...base, policy: policy(), engineUnavailable: {} });
+  it('one slot when the grant names devin with a producer seat and the engine is ready', async () => {
+    const planned = await planLanes({ ...base, policy: policy(), engineUnavailable: {} });
     expect(LANE_DEFAULT_SLOTS['devin-cli']).toBe(1);
     expect(planned['devin-cli']).toEqual({ lane: 'devin-cli', slots: 1, capReason: null });
   });
 
-  it('zero, with the reason, when the grant stage lacks devin, the seat is missing, or the engine is not ready', () => {
-    expect(planLanes({ ...base, policy: policy({ engines: ['local'] }), engineUnavailable: {} })['devin-cli'])
+  it('zero, with the reason, when the grant stage lacks devin, the seat is missing, or the engine is not ready', async () => {
+    expect((await planLanes({ ...base, policy: policy({ engines: ['local'] }), engineUnavailable: {} }))['devin-cli'])
       .toMatchObject({ slots: 0, capReason: "The grant's current rollout stage does not include Devin." });
-    expect(planLanes({ ...base, policy: policy({ devinSeat: null }), engineUnavailable: {} })['devin-cli'])
+    expect((await planLanes({ ...base, policy: policy({ devinSeat: null }), engineUnavailable: {} }))['devin-cli'])
       .toMatchObject({ slots: 0, capReason: 'The grant gives Devin no producer seat.' });
-    expect(planLanes({ ...base, policy: policy(), engineUnavailable: { 'devin-cli': 'The Devin CLI is logged out.' } })['devin-cli'])
+    expect((await planLanes({ ...base, policy: policy(), engineUnavailable: { 'devin-cli': 'The Devin CLI is logged out.' } }))['devin-cli'])
       .toMatchObject({ slots: 0, capReason: 'The Devin CLI is logged out.' });
   });
 
-  it('is not held back by presence (it spends no seat Mason uses)', () => {
-    const present = planLanes({ ...base, presence: { present: true, reason: 'Verse turn', evidenceAt: NOW_ISO }, policy: policy(), engineUnavailable: {} });
+  it('is not held back by presence (it spends no seat Mason uses)', async () => {
+    const present = await planLanes({ ...base, presence: { present: true, reason: 'Verse turn', evidenceAt: NOW_ISO }, policy: policy(), engineUnavailable: {} });
     expect(present['devin-cli'].slots).toBe(1);
   });
 });
