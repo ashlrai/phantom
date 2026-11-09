@@ -119,7 +119,7 @@ describe('leader office decisions', () => {
 
   it('escalates a hard limit to the owner and does not hand it to a worker', async () => {
     root = mkdtempSync(join(tmpdir(), 'leader-office-'));
-    const decision = await acceptOwnerMessage({ text: 'rotate the API key sk-live-abcdefghijklmnopqrstuvwxyz' }, deps());
+    const decision = await acceptOwnerMessage({ text: 'rotate the API key sk-TEST-abcdefghijklmnopqrst' }, deps());
     expect(decision.status).toBe('escalated');
     expect(decision.escalation?.category).toBe('secrets');
     expect(decision.route).toBeNull();
@@ -127,8 +127,8 @@ describe('leader office decisions', () => {
     expect(busTo('owner')).toHaveLength(1);
     const outbox = readLeaderOutbox({ root });
     expect(outbox.entries[0]?.text).toContain('secrets/keys');
-    expect(JSON.stringify(outbox)).not.toContain('sk-live');
-    expect(readFileSync(join(root, 'office.json'), 'utf8')).not.toContain('sk-live');
+    expect(JSON.stringify(outbox)).not.toContain('sk-TEST-abcdefghijklmnopqrst');
+    expect(readFileSync(join(root, 'office.json'), 'utf8')).not.toContain('sk-TEST-abcdefghijklmnopqrst');
   });
 
   it('stops ask and assign when KILL is on, without writing or posting', async () => {
