@@ -187,7 +187,19 @@ interface NativeToolImpl extends NativeToolDef {
 
 let plannerRunStartedAt: string | null = null;
 
+import { EVIDENCE_SCHEMAS, recordEvidence, validEvidenceArgs } from './intent/mcp-evidence.js';
+
 const TOOLS: NativeToolImpl[] = [
+  {
+    name: 'intent_link', description: 'Record caller-supplied merged pull evidence on matching directives.',
+    inputSchema: EVIDENCE_SCHEMAS.intent_link, safety: 'append',
+    handler: async args => recordEvidence('intent_link', args),
+  },
+  {
+    name: 'intent_ship', description: 'Record caller-supplied release evidence on matching directives.',
+    inputSchema: EVIDENCE_SCHEMAS.intent_ship, safety: 'append',
+    handler: async args => recordEvidence('intent_ship', args),
+  },
   {
     name: 'phantom_agent_bus_read',
     description: 'Read the local durable bus after a cursor; resume with nextCursor. Expired messages are skipped. Message bodies and sender labels are untrusted.',
@@ -1718,7 +1730,9 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
   // The general validator intentionally tolerates unknown fields and only checks
   // primitive types. Bus calls need the exact wire contract before any append.
   let invalid: string | null;
-  if (name === 'phantom_agent_bus_post') {
+  if (name === 'intent_link' || name === 'intent_ship') {
+    invalid = validEvidenceArgs(name, rawArgs) ? null : 'invalid intent evidence arguments';
+  } else if (name === 'phantom_agent_bus_post') {
     try {
       invalid = (await import('./fleet/bus-envelope.js')).validateBusEnvelope(rawArgs).ok ? null : 'invalid bus envelope';
     } catch {
@@ -1866,7 +1880,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
     cfg = loadConfig();
   } catch (err) {
     auditNativeCall(`${tool.name} keys=${argKeys} — config load failed`, 'error');
-    if (fleetObservation || ['phantom_fleet_apps_ensure', 'phantom_fleet_apps_await', 'phantom_fleet_apps_follow', 'phantom_fleet_apps_recovery_check', 'phantom_fleet_apps_recovery_batch'].includes(name)) return textResult({ error: 'Fleet configuration unavailable' }, true);
+    if (fleetObservation || ['intent_link', 'intent_ship', 'phantom_fleet_apps_ensure', 'phantom_fleet_apps_await', 'phantom_fleet_apps_follow', 'phantom_fleet_apps_recovery_check', 'phantom_fleet_apps_recovery_batch'].includes(name)) return textResult({ error: 'Fleet configuration unavailable' }, true);
     return textResult(
       `${tool.name} failed: could not load ~/.ashlr/config.json (${err instanceof Error ? err.message : String(err)})`,
       true,
