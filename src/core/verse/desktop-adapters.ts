@@ -274,7 +274,9 @@ export function createDesktopAdapters(call: ToolCall, opts: Partial<Record<Deskt
 // all stay in force. Nothing here types, sends keys, reads window text (control
 // labels and window titles only) or touches TCC grants or the MACCU helper.
 // There is no `computer_*` tool that launches or activates an app, so open and
-// focus go through an injected `AppLauncher`; without one they refuse.
+// focus go through an injected `AppLauncher` (CLI default on macOS:
+// `/usr/bin/open -b`); without one they refuse. Open by bundle id may still
+// proceed when the desktop app list is unavailable.
 
 export type AppControlAction = 'open' | 'quit' | 'focus' | 'status';
 export type AppControlCode = 'not-running' | 'unsupported' | 'denied' | 'unsaved-state' | 'unreadable' | 'failed';
@@ -378,7 +380,18 @@ export function createAppControl(call: ToolCall, opts: AppControlOptions = {}): 
     },
     async open(target) {
       const found = await find(target);
-      if (!found.ok) return fail('open', 'failed', found.error);
+      // When the desktop list is unavailable, still allow open by bundle id
+      // through the host launcher (allowlist + denylist checked by the caller
+      // and computerAppPolicy below). computer_* cannot start apps.
+      if (!found.ok) {
+        const bundle = bundleOf(target, null);
+        if (!bundle || !opts.launcher) return fail('open', 'failed', found.error);
+        if (computerAppPolicy(bundle).ceiling === null) return fail('open', 'denied', 'that app is never available to agents.');
+        const started = await opts.launcher.open(bundle);
+        return started.ok
+          ? { ok: true, action: 'open', running: true, frontmost: false, detail: `asked macOS to open ${bundle} (desktop list unavailable).` }
+          : fail('open', 'failed', started.error.slice(0, 300));
+      }
       const bundle = bundleOf(target, found.app);
       if (found.app && !bundle) return fail('open', 'denied', 'that app is never available to agents.');
       if (bundle && computerAppPolicy(bundle).ceiling === null) return fail('open', 'denied', 'that app is never available to agents.');

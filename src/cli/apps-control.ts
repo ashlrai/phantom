@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { ashlrHome } from '../core/cloud/store.js';
 import { appendBusInbox } from '../core/fleet/bus-inbox.js';
 import { scrubSecrets } from '../core/util/scrub.js';
+import { defaultHostAppLauncher } from '../core/verse/app-launcher.js';
 import {
   createAppControl, type AppControlResult, type AppLauncher, type RunningApp, type ToolCall,
 } from '../core/verse/desktop-adapters.js';
@@ -73,7 +74,11 @@ export interface AppsFeedEntry { phase: 'start' | 'result'; action: Verb; app: s
 export interface AppsControlDeps {
   /** The `computer_*` transport. Absent means this shell has no desktop connection and actions fail closed. */
   call?: ToolCall;
-  launcher?: AppLauncher;
+  /**
+   * Host launcher for open/focus. `undefined` uses the macOS `/usr/bin/open -b`
+   * default; `null` forces none (tests / non-host shells).
+   */
+  launcher?: AppLauncher | null;
   allowFile?: string;
   /** Returns false when the entry could not be recorded. */
   feed?: (entry: AppsFeedEntry) => boolean;
@@ -127,7 +132,8 @@ export async function cmdApps(args: string[], deps: AppsControlDeps = {}): Promi
   const allowFile = deps.allowFile ?? join(ashlrHome(), 'apps-allow.json');
   const allow = readAllowlist(allowFile);
   const feed = deps.feed ?? defaultFeed;
-  const control = createAppControl(deps.call ?? notConnected, { launcher: deps.launcher });
+  const launcher = deps.launcher === null ? undefined : deps.launcher ?? defaultHostAppLauncher();
+  const control = createAppControl(deps.call ?? notConnected, { launcher });
   const emit = (report: unknown, human: string): void => out(json ? JSON.stringify(report) : human);
 
   if (!allow.ok) {

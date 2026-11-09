@@ -121,6 +121,16 @@ describe('createAppControl', () => {
     expect(launcher.open).toHaveBeenCalledWith('com.apple.Calendar');
     expect(launcher.activate).toHaveBeenCalledWith('com.apple.Notes');
   });
+
+  it('opens by bundle id through the launcher when computer_list_apps fails', async () => {
+    const call = vi.fn(async () => ({ content: [{ type: 'text' as const, text: 'not connected' }], isError: true }));
+    const launcher = { open: vi.fn(async () => ({ ok: true as const })), activate: vi.fn(async () => ({ ok: true as const })) };
+    const c = createAppControl(call, { launcher });
+    expect(await c.open('com.apple.iCal')).toMatchObject({ ok: true, detail: expect.stringContaining('desktop list unavailable') });
+    expect(launcher.open).toHaveBeenCalledWith('com.apple.iCal');
+    expect(await c.open('ai.ashlr.desktop')).toMatchObject({ ok: false, code: 'denied' });
+    expect(await createAppControl(call).open('com.apple.iCal')).toMatchObject({ ok: false, code: 'failed' });
+  });
 });
 
 describe('parseAllowlist', () => {
@@ -228,11 +238,29 @@ describe('phm apps', () => {
   it('refuses open and focus when no launcher is connected', async () => {
     allow([{ name: 'Calendar', bundleId: 'com.apple.iCal' }, 'Notes']);
     const d = fakeDesktop();
-    expect(await cmdApps(['open', 'Calendar', '--json'], { ...base(), call: d.call })).toBe(1);
+    expect(await cmdApps(['open', 'Calendar', '--json'], { ...base(), call: d.call, launcher: null })).toBe(1);
     expect(JSON.parse(lines[0]!)).toMatchObject({ outcome: 'refused', code: 'unsupported' });
     lines = [];
-    expect(await cmdApps(['focus', 'Notes', '--json'], { ...base(), call: d.call })).toBe(1);
+    expect(await cmdApps(['focus', 'Notes', '--json'], { ...base(), call: d.call, launcher: null })).toBe(1);
     expect(JSON.parse(lines[0]!)).toMatchObject({ outcome: 'refused', code: 'unsupported' });
+  });
+
+  it('opens an allowlisted app through an injected host launcher', async () => {
+    allow([{ name: 'Calendar', bundleId: 'com.apple.iCal' }]);
+    const d = fakeDesktop();
+    const launcher = { open: vi.fn(async () => ({ ok: true as const })), activate: vi.fn(async () => ({ ok: true as const })) };
+    expect(await cmdApps(['open', 'Calendar', '--json'], { ...base(), call: d.call, launcher })).toBe(0);
+    expect(JSON.parse(lines[0]!)).toMatchObject({ ok: true, outcome: 'done' });
+    expect(launcher.open).toHaveBeenCalledWith('com.apple.iCal');
+  });
+
+  it('opens by bundle id through the launcher when the desktop list is unavailable', async () => {
+    allow([{ name: 'Calendar', bundleId: 'com.apple.iCal' }]);
+    const launcher = { open: vi.fn(async () => ({ ok: true as const })), activate: vi.fn(async () => ({ ok: true as const })) };
+    expect(await cmdApps(['open', 'Calendar', '--json'], { ...base(), launcher })).toBe(0);
+    expect(JSON.parse(lines[0]!)).toMatchObject({ ok: true, outcome: 'done' });
+    expect(JSON.parse(lines[0]!).detail).toContain('desktop list unavailable');
+    expect(launcher.open).toHaveBeenCalledWith('com.apple.iCal');
   });
 
   it('reports a bad allowlist file as a failure', async () => {

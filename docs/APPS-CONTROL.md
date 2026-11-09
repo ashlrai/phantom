@@ -63,9 +63,15 @@ cannot be written the action does not run.
 
 ## Connection and launcher
 
-Actions need a desktop connection (a Phantom desktop chat that holds the app
-grant). From a plain shell there is none, so actions fail with "not connected"
-and nothing happens. `list` still shows your allowlist with state unknown.
+`list`, `status` and `quit` need a desktop connection (a Phantom desktop chat
+that holds the app grant). From a plain shell there is none, so those actions
+fail with "not connected" and nothing happens. `list` still shows your
+allowlist with state unknown.
 
-No `computer_*` tool starts or raises an app, so `open` and `focus` also need a
-launcher supplied by the host. Without one they are refused as `unsupported`.
+No `computer_*` tool starts or raises an app. On macOS, `phm apps` supplies a
+host launcher that runs `/usr/bin/open -b <bundleId>` (LaunchServices only —
+no Accessibility, no TCC helper, no keystrokes). `open` can therefore start an
+allowlisted app by bundle id even when the desktop list is unavailable; `focus`
+still needs the running-app list from a connected chat. Injected hosts may
+replace the launcher; tests pass `launcher: null` to force none. Without a
+launcher, `open` and `focus` are refused as `unsupported`.

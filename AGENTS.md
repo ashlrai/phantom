@@ -208,6 +208,16 @@ grant and returns untrusted screen text. `browser` is read-only — act on the
 web through the Phantom Browser pane. Nothing prompts for or changes TCC
 grants; every action is feed-logged and refuses to run unlogged.
 
+## Capability audit
+
+`phm fleet capability-audit [--json]` ranks what a human can do on this Mac
+(apps, browser, files, shell, GUI, comms) against what fleet agents can do
+today. Read-only; see [CAPABILITY-AUDIT](docs/CAPABILITY-AUDIT.md):
+
+```sh
+phm fleet capability-audit --json
+```
+
 ## Drafts
 
 `phm drafts list|show|approve|reject --json` handles outbound mail waiting for
