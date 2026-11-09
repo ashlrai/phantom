@@ -2534,10 +2534,6 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
 };
 
 export async function cmdFleet(args: string[]): Promise<number> {
-  if (args[0] === 'act') {
-    const { cmdFleetAct } = await import('./fleet-act.js');
-    return cmdFleetAct(args.slice(1));
-  }
   if (args[0] === 'merge-throughput') {
     const { cmdMergeThroughput } = await import('./telemetry.js');
     return cmdMergeThroughput(args.slice(1));
