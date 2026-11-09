@@ -176,6 +176,8 @@ export const WORKBENCH_COMMANDS = [
   { id: 'mode.with-me', title: 'Work with me', scope: 'global', keys: [], group: 'go-to', section: 'Surfaces', keywords: ['interactive', 'guide', 'ask', 'chat'] },
   { id: 'mode.for-me', title: 'Work for me', scope: 'global', keys: [], group: 'go-to', section: 'Surfaces', keywords: ['autonomous', 'fleet', 'delegate', 'background'] },
   // ── Surfaces (⌘1 Command … ⌘5 Chat) and the gear tray ────────────────────
+  { ...bind('home.leader'), title: 'Open Leader thread', group: 'actions', section: 'Surfaces', keywords: ['leader', 'chat', 'home', 'reply'] },
+  { ...bind('home.feed'), title: 'Open Feed', group: 'actions', section: 'Surfaces', keywords: ['feed', 'news', 'updates'] },
   surface('surface.command', 'Command'),
   surface('surface.fleet', 'Fleet'),
   surface('surface.growth', 'Growth'),

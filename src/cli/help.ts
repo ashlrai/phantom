@@ -64,6 +64,7 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{schemaVersion:1, command, status:"ready", nodes|edges|counts} | {schemaVersion:1, command, status:"unavailable"|"error", error:{code,message}}',
   },
   { usage: 'phm chain verify [--json]', description: 'Exercise synthetic in-memory chain paths; never sends or checks live transport. Exit 0 pass, 1 failure, 2 usage.', safety: 'read', jsonShape: 'phantom.chain.verify.v1; per-link status and latency' },
+  { usage: 'phm fleet deploy-plan --since <sha> [--repo <path>] [--bin <path>] [--json]', description: 'Find committed fleet scripts without matching live copies. Read-only; pinned or unknown files need Security review. Exit 0 compared, 1 unreadable live file, 2 invalid input or unavailable evidence.', safety: 'read', jsonShape: 'FleetDeployPlan {schema:fleet.deploy-plan.v1,since,head,checked,inSync,files:[{repoPath,livePath,repoSha256,liveSha256,shaPinned,status,action}]} | {schema,error}' },
   { usage: 'phm fleet restock plan [--json]', description: 'Check READY candidates before grouping 6–10 items per repo. Read-only; exclusions and small groups remain visible.', safety: 'read', jsonShape: 'RestockPlan {schema:fleet.restock-plan.v1,jobs,excluded,held,invalid}' },
   { usage: 'phm route explain [--json]', description: 'Read persisted dispatcher pools and accepted route moves in the trailing hour.', safety: 'read', jsonShape: '{available, route-moves-per-hour: number|null, lines}' },
   { usage: 'ashlr router rank --tier <local|mid|frontier> [--routes FILE] [--slots pool=count ...] [--json]', description: 'Rank eligible lanes by forecast exhaustion, then nearest reset; missing slots or budgets exclude a lane. No dispatch or state writes.', safety: 'read', jsonShape: '{ schema: fleet.lane-rank.v1, tier, lanes: RankedLane[] }' },
@@ -122,6 +123,7 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     safety: 'append',
     jsonShape: 'Merge: {status,jobId}; read: {v:1,jobs:[{jobId,repo,prompt}]}; complete: {status,jobId}; errors exit 1, usage exit 2',
   },
+  { usage: 'phm jobs empty [--since 24h] [--json]', description: 'Explain empty jobs from local notes and logs.', safety: 'read', jsonShape: 'jobs.empty.v1 {hours,total,counts,jobs}' },
   {
     usage: 'phm metrics ingest --jobs <jobs.jsonl> --status <status.json> [--json]',
     description: 'Read local job snapshots into deterministic lane and tier metrics and advisory priors. No network, writes or operational steering.',
@@ -692,6 +694,7 @@ const TOPIC_LABELS: Record<HelpTopic, string> = {
 /** The full command table (the former inline cmdHelp list), topic-tagged. */
 export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'tune <prepare|evaluate>', desc: 'Prepare scrub-gated local model datasets or evaluate paired evidence.', topic: 'core' },
+  { cmd: 'jobs empty [--since 24h] [--json]', desc: 'Explain empty jobs from local notes and logs.', topic: 'observability' },
   { cmd: 'metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]', desc: 'Estimate idle slot-minutes and flag long-running jobs from local snapshots.', topic: 'autonomy' },
   { cmd: 'graph nodes|edges|status [--json]', desc: 'Read-only GRAPH-1 nodes, edges, and availability; unavailable data exits 1. See phm graph --help.', topic: 'knowledge' },
   { cmd: 'radar list|run|diff [--json]', desc: 'Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.', topic: 'observability' },
@@ -928,6 +931,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'resources [--json] [--watch]', desc: 'Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).', topic: 'observability' },
   { cmd: 'capacity publish [--json]', desc: 'Refresh local subscription usage metadata once with this node’s local authentication.', topic: 'observability' },
   { cmd: 'estates [--json] [--repo <repo-id>]', desc: 'Per-repo estate cards: health, CI, security. Read-only portfolio view.', topic: 'observability' },
+  { cmd: 'main blame --good <sha> --check "<cmd>" [--bad <sha>] [--repo <path>] [--json]', desc: 'Name the first merge that turned the default branch red. Bisects in a temp worktree; read-only.', topic: 'observability' },
   { cmd: 'ci-metrics [--json]', desc: 'Per-repo daily turn-time (red to green) metrics; writes ~/.ashlr/ci-metrics.json.', topic: 'observability' },
   { cmd: 'daily-fix validate|filter|dispatch|parse-fixup [--json]', desc: 'Daily CI re-run helper: validate dispatch inputs against the allowlist, preview the job/test filter, emit the gh workflow command, or aggregate fixup-queue lines.', topic: 'observability' },
   { cmd: 'budget <show|add> [--json]', desc: 'Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.', topic: 'observability' },
