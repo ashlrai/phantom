@@ -197,6 +197,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'leader': () => import('./fleet-leader.js'),
   'leader-health': () => import('./fleet-leader-health.js'),
   'leader-score': () => import('./fleet-leader-score.js'),
+  'leader-search': () => import('./fleet-leader-search.js'),
   'load': () => import('./fleet-load.js'),
   'load-why': () => import('./fleet-load-why.js'),
   'local-gate': () => import('./fleet-local-gate.js'),
