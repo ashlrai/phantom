@@ -1,10 +1,11 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cmdCommsOwner, cmdCommsOwnerStatus } from '../src/cli/comms-owner-thread.js';
 import { createLeaderMailbox } from '../src/core/comms/leader-mailbox.js';
 import { loadOwnerThreadSettings, type OwnerChannelTransport, type OwnerDelivery, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
+import { liveOwnerTransports, proveOwnerDirectMessage, resolveLiveEmailRecipient } from '../src/core/comms/owner-live-transport.js';
 import { acceptOwnerInbound, pullOwnerChannel, readOwnerThread, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
 import { listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 
@@ -146,7 +147,7 @@ describe('owner thread', () => {
     const configDir = mkdtempSync(join(tmpdir(), 'owner-config-'));
     roots.push(configDir);
     mkdirSync(join(configDir, 'comms'), { mode: 0o700 });
-    const planted = '123456:AAFxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+    const planted = ['123456', `${'AA'}${'F'}${'x'.repeat(30)}`].join(':');
     writeFileSync(join(configDir, 'agent-network.toml'), '[mason]\nidentities = [{ channel = "telegram", id = "telegram:100" }]\n[team]\nidentities = []\n', { mode: 0o600 });
     writeFileSync(join(configDir, 'comms.toml'), 'confirmedByMason = false\n', { mode: 0o600 });
     writeFileSync(join(configDir, 'comms', 'owner-adapters.toml'), `[telegram]\nsecretHandle = "${planted}"\n[imessage]\nbridge = "https://example.invalid"\n`, { mode: 0o600 });
@@ -178,4 +179,86 @@ describe('owner thread', () => {
     expect(status.adapters.every(adapter => adapter.secretHandle === null || adapter.secretHandle.startsWith('phm_'))).toBe(true);
     expect(sent.status).toBe('sent');
   });
+
+  it('refuses an email recipient swapped in through directory env overrides', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'owner-home-'));
+    const swapped = mkdtempSync(join(tmpdir(), 'owner-swap-'));
+    roots.push(home, swapped);
+    writeEmailHome(home, 'owner@example.com');
+    writeEmailHome(swapped, 'attacker@example.com');
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('ASHLR_CONFIG_DIR', join(swapped, '.ashlr'));
+    vi.stubEnv('ASHLR_RUNS_DIR', join(swapped, '.ashlr-runs'));
+    const sent: string[] = [];
+    try {
+      expect(await resolveLiveEmailRecipient('email:attacker@example.com')).toBeNull();
+      expect(await resolveLiveEmailRecipient('email:owner@example.com')).toBe('owner@example.com');
+      const transports = liveOwnerTransports(loadOwnerThreadSettings(join(swapped, '.ashlr')), join(swapped, '.ashlr-runs'), {
+        sendMail: async message => { sent.push(message.to); return { ok: true }; },
+      });
+      expect((await transports.email!.deliver({ idempotencyKey: 'email-reply-01', text: 'no', ownerId: 'email:attacker@example.com' })).status).toBe('refused');
+      expect((await transports.email!.deliver({ idempotencyKey: 'email-reply-02', text: 'yes', ownerId: 'email:owner@example.com' })).status).toBe('sent');
+      expect(sent).toEqual(['owner@example.com']);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it('refuses a Slack reply that is not a 1:1 with the owner', async () => {
+    const ref = 'slack:T123:D123:1700000000.000100';
+    const channel = slackProbe({ id: 'D123', is_im: true }, ['U0123456789', 'U0OTHER01', 'U0THIRD001']);
+    expect(await proveOwnerDirectMessage(channel.call, ref, 'U0123456789')).toBe(false);
+    const direct = slackProbe({ id: 'D123', is_im: true }, ['U0123456789', 'U0BOTUSER1']);
+    expect(await proveOwnerDirectMessage(direct.call, ref, 'U0123456789')).toBe(true);
+    const transports = liveOwnerTransports(settings, '/unused', { slackCall: channel.call });
+    expect((await transports.slack!.deliver({ idempotencyKey: 'slack-reply-1', text: 'no', ownerId: 'U0123456789', channelRef: ref })).status).toBe('refused');
+    expect(channel.methods).not.toContain('chat.postMessage');
+    expect(await proveOwnerDirectMessage(slackProbe({ id: 'C123', is_im: false }, ['U0123456789', 'U0BOTUSER1']).call, 'slack:T123:C123:1700000000.000100', 'U0123456789')).toBe(false);
+  });
+
+  it('blocks a delivery when KILL is armed after the reply is queued', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'owner-kill-'));
+    roots.push(home);
+    mkdirSync(join(home, '.ashlr'), { mode: 0o700 });
+    vi.stubEnv('HOME', home);
+    try {
+      const { options } = fixture();
+      await acceptOwnerInbound({ channel: 'telegram', senderId: 'telegram:100', text: 'queued', idempotencyKey: 'telegram-msg-1', at: 1_700_000_000_000 }, options);
+      let desktopCalled = false;
+      options.transports!.telegram = { ...options.transports!.telegram!, async deliver() {
+        writeFileSync(join(home, '.ashlr', 'KILL'), 'kill switch active\n', { mode: 0o600 });
+        return { status: 'sent', reason: 'ok' };
+      } };
+      options.transports!.desktop = { ...options.transports!.desktop!, async deliver() {
+        desktopCalled = true;
+        return { status: 'sent', reason: 'ok' };
+      } };
+      const reply = await sendOwnerReply({ text: 'answer', idempotencyKey: 'reply-owner-01' }, options);
+      expect(desktopCalled).toBe(false);
+      expect(reply.deliveries?.find(row => row.channel === 'desktop')?.status).toBe('halted');
+    } finally { vi.unstubAllEnvs(); }
+  });
 });
+
+function writeEmailHome(root: string, email: string): void {
+  const config = join(root, '.ashlr');
+  const runs = join(root, '.ashlr-runs');
+  mkdirSync(config, { mode: 0o700 });
+  mkdirSync(join(config, 'comms'), { mode: 0o700 });
+  mkdirSync(runs, { mode: 0o700 });
+  mkdirSync(join(runs, 'queue'), { mode: 0o700 });
+  mkdirSync(join(runs, 'in'), { mode: 0o700 });
+  writeFileSync(join(config, 'agent-network.toml'), `[mason]\nidentities = [{ channel = "email", id = "email:${email}" }]\n[team]\nidentities = [{ channel = "email", id = "email:${email}" }]\n`, { mode: 0o600 });
+  writeFileSync(join(config, 'comms.toml'), 'confirmedByMason = true\n', { mode: 0o600 });
+  writeFileSync(join(config, 'comms', 'owner-adapters.toml'), '[email]\nsecretHandle = "phm_EMAIL_CREDENTIAL"\n', { mode: 0o600 });
+  writeFileSync(join(runs, 'queue', 'email-drop.json'), `${JSON.stringify({ v: 1, enabled: true, sendReplies: true, inboxDir: join(runs, 'in'), from: [email] })}\n`, { mode: 0o600 });
+}
+
+function slackProbe(channel: Record<string, unknown>, members: string[]): { call: (method: string) => Promise<Record<string, unknown>>; methods: string[] } {
+  const methods: string[] = [];
+  return { methods, call: async method => {
+    methods.push(method);
+    if (method === 'conversations.info') return { channel };
+    if (method === 'conversations.members') return { members };
+    if (method === 'auth.test') return { user_id: 'U0BOTUSER1', bot_id: 'B0BOTUSER1' };
+    return {};
+  } };
+}

@@ -3,8 +3,9 @@
  * until its owner identity is configured. Remote credentials are Phantom
  * Secrets handle names, never values.
  */
-import { parse } from 'smol-toml';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { parse } from 'smol-toml';
 import type { TeamIdentity } from '../agents/channel-policy.js';
 import { parseCommsConfirmation, parseTeamIdentities } from '../agents/channel-policy.js';
 import { parseMasonIdentities } from '../agents/leader-network.js';
@@ -23,6 +24,16 @@ export const OWNER_SECRET_HANDLES = {
 } as const;
 
 export type OwnerSecretChannel = keyof typeof OWNER_SECRET_HANDLES;
+
+/** Real owner config. Env overrides cannot retarget this path. */
+export function fixedOwnerConfigDir(): string {
+  return join(homedir(), '.ashlr');
+}
+
+/** Real runs directory. Env overrides cannot retarget email-drop or the owner thread. */
+export function fixedOwnerRunsDir(): string {
+  return join(homedir(), '.ashlr-runs');
+}
 
 export interface OwnerInbound {
   idempotencyKey: string;

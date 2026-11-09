@@ -131,12 +131,13 @@ function cleanText(text: string): string | null {
   return value;
 }
 
+/** A captured `false` does not hide a KILL or pause that appears later. */
 function halted(options: OwnerThreadOptions): boolean {
-  return options.halted ?? killSwitchOn();
+  return options.halted === true || killSwitchOn();
 }
 
 function paused(options: OwnerThreadOptions): boolean {
-  return options.paused ?? isPaused();
+  return options.paused === true || isPaused();
 }
 
 function threadDir(options: OwnerThreadOptions): string {
@@ -321,6 +322,13 @@ export async function sendOwnerReply(input: OwnerReplyInput, options: OwnerThrea
           deliveries.push({ channel, status: 'disabled', reason: 'No transport is attached for this channel.' });
           continue;
         }
+        const kill = halted(options);
+        const hold = paused(options);
+        const liveGate = adapterStatus(channel, options.settings, kill, hold);
+        if (kill || hold || !liveGate.enabled) {
+          deliveries.push({ channel, status: kill || hold ? 'halted' : 'disabled', reason: liveGate.reason });
+          continue;
+        }
         let result: { status: 'sent' | 'duplicate' | 'refused' };
         try {
           result = await transport.deliver({
@@ -390,10 +398,11 @@ export async function noteOwnerReceipt(input: OwnerInboundInput, options: OwnerT
 
 export async function pullOwnerChannel(channel: OwnerChannel, options: OwnerThreadOptions): Promise<OwnerThreadResult[]> {
   if (halted(options) || paused(options)) return [{ status: 'halted', reason: 'Adapters are halted.' }];
-  const gate = adapterStatus(channel, options.settings, false, false);
+  const gate = adapterStatus(channel, options.settings, halted(options), paused(options));
   if (!gate.enabled && !gate.configured) return [{ status: 'refused', reason: gate.reason }];
   const transport = options.transports?.[channel];
   if (!transport) return [{ status: 'refused', reason: 'No transport is attached for this channel.' }];
+  if (halted(options) || paused(options)) return [{ status: 'halted', reason: 'Adapters are halted.' }];
   let batch: Awaited<ReturnType<OwnerChannelTransport['pull']>>;
   try { batch = await transport.pull(); } catch { return [{ status: 'unavailable', reason: 'Channel transport is unavailable.' }]; }
   const results: OwnerThreadResult[] = [];

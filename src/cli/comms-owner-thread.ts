@@ -2,10 +2,8 @@
  * `phm comms status --json`, `phm comms thread --json`, and `phm comms send-owner --json`.
  * Status and thread are reads. send-owner writes only to the configured owner.
  */
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { rejectUnknownOptions } from './args.js';
-import { loadOwnerThreadSettings } from '../core/comms/owner-channel.js';
+import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings } from '../core/comms/owner-channel.js';
 import { liveOwnerTransports } from '../core/comms/owner-live-transport.js';
 import {
   readOwnerCommsStatus,
@@ -18,11 +16,11 @@ const THREAD_USAGE = 'usage: phm comms thread [--limit <1..200>] [--json]';
 const SEND_USAGE = 'usage: phm comms send-owner --text <message> [--reply-to <key>] [--idempotency-key <key>] [--json]';
 
 function runsDir(): string {
-  return process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  return fixedOwnerRunsDir();
 }
 
 function configDir(): string {
-  return process.env.ASHLR_CONFIG_DIR ?? join(homedir(), '.ashlr');
+  return fixedOwnerConfigDir();
 }
 
 export function ownerThreadOptions(transports: OwnerThreadOptions['transports'] = liveOwnerTransports(loadOwnerThreadSettings(configDir()), runsDir())): OwnerThreadOptions {
