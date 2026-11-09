@@ -13,6 +13,7 @@ import { openChat } from '../command/nav.js';
 import { verseProjectMemoryQuery, searchSessions } from '../context/context-queries.js';
 import { openDockPane } from '../dock/dock-store.js';
 import { verseSessionsQuery } from '../verse-queries.js';
+import { LibraryMemory } from './LibraryMemory.js';
 import { memorySummary, recentProjects, searchQueryValid, type RecentProject } from './library-model.js';
 import styles from './library.module.css';
 
@@ -129,6 +130,7 @@ export function LibraryPane({ visible = true }: { visible?: boolean }) {
           </div>
         )}
       </section>
+      <LibraryMemory visible={visible} />
       <PastChats />
       <section className={styles.section} aria-label="Agent conversation">
         <h2>Agent conversation</h2>
