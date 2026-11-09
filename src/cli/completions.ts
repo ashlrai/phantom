@@ -134,7 +134,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   ],
   'conductor-permit': ['request', 'mint', 'inspect', 'stage'],
   vision: ['show', 'review', 'preview', 'shadow', 'approve', 'reconcile', 'set'],
-  eval: ['attention', 'swe-bench', 'router', 'prompts'],
+  eval: ['attention', 'swe-bench', 'router', 'prompts', 'passk'],
   genome: ['recall', 'learn', 'teach', 'consolidate', 'export', 'playbook'],
   comms: ['status', 'send-test', 'cycle', 'ask', 'digest', 'ask-vision', 'ask-merges', 'setup-telegram', 'telegram-brand', 'inbox', 'bus', 'email-drop', 'email-cycle', 'setup-email', 'pair-telegram', 'diagnose', 'health'],
   memory: ['add', 'list', 'search', 'forget', '--kind', '--source', '--json', '--help'],
