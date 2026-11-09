@@ -107,3 +107,16 @@ printed activation commands' disable forms (`launchctl bootout` /
 gains `results` (per-class per-path status and `freedBytes`), updates `freeGb`
 from the runs volume after the sweep, and adds
 `totals.freedBytes`/`failures`. Paths are home-relative sanitized.
+
+### Forecast the 150 GB free-space line
+
+Run `phm fleet disk-forecast --json` for a read-only, typed
+`fleet.disk-forecast.v1` report. It uses the first and last valid samples in
+`queue/disk-growth-history.json` (decimal GB), and counts distinct launches in
+`metrics/jobs.jsonl` during that interval. `--storage <path>` and `--jobs <path>`
+select other records. The projection extends the observed net consumption rate
+from the last sample; cleanup and other activity affect it, and the job count
+is context, not an attribution. A missing or insufficient history reports
+`unknown`; a flat or rising free-space trend reports `not-falling`. A single
+sample at or below 150 GB reports `reached`. An unreadable job ledger gives a
+null job count. Old samples describe their own interval, not current disk space.
