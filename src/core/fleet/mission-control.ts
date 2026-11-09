@@ -12,6 +12,7 @@ import { open, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { getLaneModelSnapshot } from './lane-models.js';
+import { readingIsFresh } from '../usage/sensor-reading.js';
 import { parseJobsJsonl, parseUsageJournals } from './lane-console.js';
 import { memoryView } from './memory-view.js';
 import { readFleetRunsDirState, type FleetRunsClaim, type FleetRunsLane } from './runs-dir-state.js';
@@ -511,7 +512,9 @@ export async function readMissionControl(opts: { runsDir?: string; now?: () => n
     const journal = parseUsageJournals([usageFile.text]);
     view.resources = [...journal.latest.entries()].flatMap(([pool, row]) => {
       const id = identity(pool);
-      if (!id || row.pctUsed === null) return [];
+      if (!id || row.pctUsed === null || !readingIsFresh({
+        observedAt: row.observedAt, staleAfter: row.staleAfter, nowMs,
+      })) return [];
       return [{
         id, label: resourceLabel(id), leftPct: Math.round((100 - row.pctUsed) * 10) / 10,
         creditsLeft: null, resetAt: stamp(row.resetAt), source: 'usage-readings.log' as const,

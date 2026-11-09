@@ -123,7 +123,7 @@ describe('fleet mission briefing', () => {
     const dir = await root();
     await mkdir(join(dir, 'queue'), { recursive: true });
     await writeFile(join(dir, 'queue/usage-readings.log'), JSON.stringify({
-      pool: 'codex-personal', pctUsed: 10, resetAt: '2026-11-03T06:00:00Z', fetchedAt: '2026-11-02T04:00:00Z',
+      pool: 'codex-personal', pctUsed: 10, resetAt: '2026-11-03T06:00:00Z', fetchedAt: '2026-11-02T04:20:00Z',
     }));
     const view = await readMissionControl({ runsDir: dir, now: () => NOW });
     expect(view.resources).toEqual([{

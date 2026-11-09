@@ -80,6 +80,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   desktopctl: ['capabilities', 'doctor', 'status', 'run', '--task', '--timeout', '--poll', '--json', '--help'],
   app: ['update', 'status', '--json', '--help'],
   radar: ['list', 'run', 'diff', '--json', '--help'],
+  usage: ['sensors', 'validate', '--json', '--refresh', '--file', '--help'],
   apps: ['list', 'open', 'quit', 'focus', 'status', '--json', '--help'],
   // Mirrors the verb check in src/cli/repos-rank.ts (cmdReposRank).
   repos: ['rank', 'proposals', '--json', '--recompute', '--help'],

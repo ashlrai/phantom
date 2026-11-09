@@ -1146,6 +1146,7 @@
 /test/universe-supervisor-enrollment-stop.test.ts @masonwyatt23
 /test/universe-value-allocation-store.test.ts @masonwyatt23
 /test/universe-value-allocation.test.ts @masonwyatt23
+/test/usage-sensors.test.ts @masonwyatt23
 /test/verify-check-run-313.test.ts @masonwyatt23
 /test/verify-commands-confine-310b.test.ts @masonwyatt23
 /test/verify-confinement-310b.test.ts @masonwyatt23
