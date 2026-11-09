@@ -64,3 +64,19 @@ bridge = "loopback"
 | Slack | The thread can record an owner message passed to the adapter. `send-owner` delivers only through the existing Slack leader path, and only when the original thread reference is present. | 1. Name `phm_SLACK_BOT_TOKEN` in `owner-adapters.toml`. The token value stays in existing Slack custody. 2. Add `{ channel = "slack", id = "<your Slack user id>" }` to `[mason]` and `[team]`. 3. Finish the existing Socket Mode bridge (`phm channels slack status --json`) so a thread reference exists. This command does not open a new paid Slack app. |
 
 `~/.ashlr/KILL` and the comms pause stop every adapter before a transport is called. Nothing in this path spends money or sends to a non-owner address.
+
+### Copy Leader plan replies into the conversation
+
+Run `phm leader replies sync --json` to copy new dated **Reply for Mason**
+blocks from `~/.ashlr-runs/leader/PLAN-LOG.md` into the existing Leader thread.
+The same typed function, `syncLeaderReplies()` in `leader-thread.ts`, serves
+agent callers. Reply text appears directly in the conversation; Telegram
+messages enter the existing delivery queue.
+
+The command reads only the last 256 KiB and considers the newest 30 blocks.
+It never writes the plan log. Dated headings identify replies, including when
+text repeats; editing an already posted heading does not post it again.
+JSON returns `posted` and `skipped` heading hashes, `sourceState`, and `unknown`
+ids for interrupted writes. Missing sources report `missing`; unreadable
+sources report `unknown`. Unknown writes are held for inspection rather than
+replayed. Phone receipt is not proven by a successful local append.
