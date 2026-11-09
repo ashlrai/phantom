@@ -10,7 +10,7 @@ describe('Phantom update status version', () => {
   it('idle names the installed version and the no-newer-release line', () => {
     render(<UpdateStatus />);
     expect(screen.getAllByText('Up to date · v3.29.15').length).toBeGreaterThan(0);
-    expect(screen.getByText('No signed release newer than v3.29.15 has been published yet.')).toBeTruthy();
+    expect(screen.getByText('No installable signed release newer than v3.29.15 is on the update feed.')).toBeTruthy();
     expect(screen.queryByText('No update found')).toBeNull();
     expect(screen.getByLabelText('Desktop updates: Up to date · v3.29.15')).toBeTruthy();
   });

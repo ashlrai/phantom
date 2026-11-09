@@ -270,3 +270,15 @@ is executed by the planner. The planner does not install or change host scripts.
 ## Find repeated router jobs
 
 Run `phm queue dedupe --json` to preview repeated READY jobs in the local router queue. Add `--apply` to mark repeats `SUPERSEDED-BY-<first id>`, or `--file <path>` to inspect another router queue. The first READY or CLAIMED line wins. Matching uses the repository, first named target file, and either normalized acceptance text or the same quoted acceptance phrase. Lines missing evidence are reported as unknown. This is a partial, text-based check; review quoted matches for different intended outcomes.
+
+### Suggest work for an idle lane
+
+Run `phm fleet supply --lane codex-personal --n 5 --json` from the Phantom
+checkout. It suggests READY lines from open TODO issues, unchecked root
+`ROADMAP.md` items and `// TODO(owner)` source comments. It reads the local
+`~/.ashlr-runs/queue/router-queue.md` to skip matching title hashes; it does
+not add lines to the queue. The JSON reports the requested count, emitted
+lines, gap and each source's status. An unavailable source is `unknown`;
+if the queue is unavailable no lines are emitted because deduplication cannot
+be verified. GitHub reads are public and may be unavailable or incomplete.
+Without `--lane` and `--n`, `fleet supply` retains its batch activity report.

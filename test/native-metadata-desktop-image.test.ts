@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { lstatSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -32,8 +32,10 @@ describe.skipIf(process.platform === 'win32')('early native registration desktop
 
   it('rejects an old pinned stamp after file replacement', () => {
     const original = image(Buffer.from('signed-host-image'));
+    const replacement = join(original.root, 'replacement');
+    writeFileSync(replacement, Buffer.from('signed-host-image'), { mode: 0o600 });
     rmSync(original.path);
-    writeFileSync(original.path, Buffer.from('signed-host-image'), { mode: 0o600 });
+    renameSync(replacement, original.path);
     expect(() => verifyPinnedDesktopImage(original.path, original.stamp, original.digest)).toThrow('Native desktop image changed');
   });
 
