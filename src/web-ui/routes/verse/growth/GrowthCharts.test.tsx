@@ -20,6 +20,7 @@ function row(over: Partial<GrowthSeries> & Pick<GrowthSeries, 'id' | 'label'>): 
     reason: 'no data source',
     need: 'missing',
     caveat: null,
+    freshness: 'fresh',
     points: [],
     ...over,
   };
