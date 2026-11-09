@@ -255,6 +255,58 @@ describe('planRebaseJobs', () => {
     expect(result.counts.noFileData).toBe(1);
   });
 
+  it('covers a PR whose rework job is in flight (RQ-RECUT id)', () => {
+    const result = plan([conflictedBridge(7, { files: ['a.ts'] }), conflictedBridge(8, { files: ['b.ts'] })], {
+      existing: [existing('RQ-RECUT-phantom-7-abc1234', 'RUNNING'), existing('RQ-RECUT-phantom-8-abc1234', 'DONE')],
+    });
+    expect(result.coverage.coveredPrs).toEqual([7]);
+    expect(result.jobs.flatMap(j => j.prs)).toEqual([8]);
+  });
+
+  it('drops a conflicting origin replaced by an open rework PR, keeping the rework PR', () => {
+    const rework = (number: number, origin: number) =>
+      conflictedBridge(number, { title: `bridge: RQ-RECUT-phantom-${origin}-abc1234`, files: ['s.ts'] });
+    const result = plan([
+      conflictedBridge(10, { files: ['s.ts'] }),
+      rework(20, 10),
+      rework(21, 10),
+      conflictedBridge(11, { files: ['t.ts'] }),
+    ]);
+    // 10 is replaced; rework 20 is older than 21; 21 (conflicting) is rebased.
+    expect(result.counts).toMatchObject({ conflicting: 4, superseded: 2, jobs: 2 });
+    expect(result.jobs.flatMap(j => j.prs).sort()).toEqual([11, 21]);
+  });
+
+  it('defers conflicting PRs behind an overlapping clean PR only when asked', () => {
+    const prs = [
+      conflictedBridge(1, { files: ['hot.ts'] }),
+      conflictedBridge(2, { files: ['cold.ts'] }),
+      conflictedBridge(3, { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', files: ['hot.ts'] }),
+      conflictedBridge(4, { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', isDraft: true, files: ['cold.ts'] }),
+    ];
+    expect(plan(prs).counts).toMatchObject({ deferred: 0, jobs: 2 });
+    const result = plan(prs, { deferBehindClean: true });
+    expect(result.counts).toMatchObject({ conflicting: 2, deferred: 1, jobs: 1 });
+    expect(result.jobs[0]!.prs).toEqual([2]);
+  });
+
+  it('measures the rebase work saved on a hot-file backlog', () => {
+    // 12 conflicting PRs on one hot file, 2 already replaced by rework PRs,
+    // 3 clean PRs on the same file about to land: the baseline rebases all 12
+    // (and again after each landing), the convergent plan only the survivors.
+    const prs: MergeBatchPr[] = [];
+    for (let n = 1; n <= 12; n++) prs.push(conflictedBridge(n, { files: ['hot.ts', `own${n}.ts`] }));
+    for (let n = 1; n <= 2; n++) {
+      prs.push(conflictedBridge(100 + n, { title: `bridge: RQ-RECUT-phantom-${n}-abc1234`, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', files: ['hot.ts'] }));
+    }
+    const baseline = plan(prs.map(pr => ({ ...pr, title: pr.title.replace('RQ-RECUT', 'RQ-OTHER') })));
+    const convergent = plan(prs, { deferBehindClean: true });
+    const rebased = (p: ReturnType<typeof plan>) => p.jobs.flatMap(j => j.prs).length;
+    expect(rebased(baseline)).toBe(12);
+    expect(convergent.counts).toMatchObject({ superseded: 2, deferred: 10 });
+    expect(rebased(convergent)).toBe(0);
+  });
+
   it('rejects an unknown tier and a bad pool', () => {
     expect(() => plan([conflictedBridge(1)], { tier: 'standard' })).toThrow(/unknown tier/);
     expect(() => plan([conflictedBridge(1)], { pool: 'bad pool!' })).toThrow(/invalid pool/);

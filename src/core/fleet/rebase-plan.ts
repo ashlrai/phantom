@@ -74,6 +74,14 @@ const PRIORITY_RE = /^P[0-3]$/;
 const ACTIVE_STATUS = /^(?:READY|CLAIMED|RUNNING|STARTING|DISPATCHED|WORKING|IN-PROGRESS|PARKED(?:-|$)|HOLD-SECURITY)/;
 /** Any rebase-flavoured job id: queuegen's, this planner's, and the hand-run PH batches. */
 const REBASE_JOB_ID = /^RQ-REBASE[A-Za-z0-9]*-/;
+/**
+ * A rework job: recut requests (`RQ-RECUT-<short>-<pr>-<head7>`, see
+ * merge-eta's recutRequest) replace PR <pr> with a fresh PR, so a live one
+ * covers its origin just as a rebase job does.
+ */
+const RECUT_JOB_ID = /^RQ-RECUT-/;
+/** merge states that will land on their own — a conflicting PR sharing a file with one re-conflicts. */
+const IMMINENT_STATE = /^(?:CLEAN|HAS_HOOKS|UNSTABLE|BEHIND)$/;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -155,6 +163,13 @@ export interface RebasePlanOptions {
   existingState?: 'ok' | 'missing' | 'degraded';
   /** Hold-list entries as '<short>#<n>' or '<owner>/<name>#<n>'; held PRs skip. */
   hold?: ReadonlySet<string>;
+  /**
+   * Defer conflicting PRs sharing a file with a non-conflicting, non-draft PR
+   * that will land on its own: rebasing first is wasted work, the landing
+   * re-conflicts it. Deferred PRs re-enter the plan once the blocker merges.
+   * Default off — a blocker that never lands would starve its deferrals.
+   */
+  deferBehindClean?: boolean;
 }
 
 export interface RebasePlan {
@@ -173,6 +188,10 @@ export interface RebasePlan {
     held: number;
     /** Conflicting PRs skipped because an active queue job already covers them. */
     covered: number;
+    /** Conflicting PRs skipped because an open rework (recut) PR replaces them. */
+    superseded: number;
+    /** Conflicting PRs deferred behind an overlapping clean PR (deferBehindClean). */
+    deferred: number;
     jobs: number;
     clusters: number;
     singles: number;
@@ -219,6 +238,12 @@ function batchJobPrs(id: string, repoShort: string): number[] {
   return match[1]!.split('-').map(Number);
 }
 
+/** RQ-RECUT-<short>-<pr>-<head7> ids replace exactly <pr>. */
+function recutJobPr(id: string, repoShort: string): number | null {
+  const match = new RegExp(`^RQ-RECUT-${escapeRe(repoShort)}-(\\d{1,7})-[0-9a-f]{7}$`, 'i').exec(id);
+  return match ? Number(match[1]) : null;
+}
+
 /** pull/<n>, PR=<n> and #<n> references — the same PR markers restock extracts. */
 function textRefs(text: string): number[] {
   const out: number[] = [];
@@ -243,8 +268,14 @@ export function coveredPrNumbers(existing: readonly RebasePlanExistingJob[], rep
   const short = shortName(repo);
   for (const job of existing) {
     const id = job.id ?? '';
-    if (!REBASE_JOB_ID.test(id) || !ACTIVE_STATUS.test(job.status.toUpperCase())) continue;
+    if (!ACTIVE_STATUS.test(job.status.toUpperCase())) continue;
     if (job.repo !== null && job.repo !== undefined && job.repo !== short) continue;
+    if (RECUT_JOB_ID.test(id)) {
+      const origin = recutJobPr(id, short);
+      if (origin !== null) covered.add(origin);
+      continue;
+    }
+    if (!REBASE_JOB_ID.test(id)) continue;
     const single = singleJobPr(id, short);
     if (single !== null) covered.add(single);
     for (const pr of batchJobPrs(id, short)) covered.add(pr);
@@ -290,6 +321,33 @@ const conflicted = (pr: MergeBatchPr): boolean =>
   pr.mergeable === 'CONFLICTING' || pr.mergeStateStatus === 'DIRTY';
 
 const isBridge = (pr: MergeBatchPr): boolean => pr.title.startsWith('bridge:');
+
+/** `bridge: RQ-RECUT-<short>-<origin>-<head7>`: the PR a rework PR replaces. */
+function reworkOrigin(pr: MergeBatchPr, repo: string | null): number | null {
+  if (repo === null) return null;
+  const match = new RegExp(`^bridge: RQ-RECUT-${escapeRe(shortName(repo))}-(\\d{1,7})-[0-9a-f]{7}$`, 'i').exec(pr.title);
+  return match ? Number(match[1]) : null;
+}
+
+/**
+ * Open PRs a rework PR makes redundant, so no rebase job is spent on them:
+ * the origin of every open rework PR, and every older rework PR of an origin
+ * that has a newer one (the highest number wins). Conflicting rework PRs
+ * stay in the rebase population themselves — only the stale side drops out.
+ */
+export function reworkSuperseded(prs: readonly MergeBatchPr[], repo: string | null): Set<number> {
+  const latest = new Map<number, number>();
+  for (const pr of prs) {
+    const origin = reworkOrigin(pr, repo);
+    if (origin !== null && origin !== pr.number) latest.set(origin, Math.max(latest.get(origin) ?? 0, pr.number));
+  }
+  const out = new Set(latest.keys());
+  for (const pr of prs) {
+    const origin = reworkOrigin(pr, repo);
+    if (origin !== null && latest.get(origin) !== pr.number) out.add(pr.number);
+  }
+  return out;
+}
 
 const hash6 = (material: string): string =>
   createHash('sha256').update(material).digest('hex').slice(0, 6);
@@ -448,9 +506,19 @@ export function planRebaseJobs(input: RebasePlanInput): RebasePlan {
   const heldCount = conflicting.length - unheld.length;
 
   // Coverage: drop PRs an active queue job already covers, then re-cluster the rest.
+  const superseded = reworkSuperseded(prs, repoFull);
+  const live = unheld.filter(pr => !superseded.has(pr.number));
   const covered = input.existing === undefined ? new Set<number>() : coveredPrNumbers(input.existing, repoFull);
-  const eligible = unheld.filter(pr => !covered.has(pr.number));
-  const coveredPrs = unheld.filter(pr => covered.has(pr.number)).map(pr => pr.number);
+  const uncovered = live.filter(pr => !covered.has(pr.number));
+  const coveredPrs = live.filter(pr => covered.has(pr.number)).map(pr => pr.number);
+
+  // Ordering: a conflicting PR that shares a file with a PR about to land
+  // would be rebased onto a base that moves under it — wait for the landing.
+  const landing = new Set(input.deferBehindClean === true
+    ? prs.filter(pr => !conflicted(pr) && !pr.isDraft && IMMINENT_STATE.test(pr.mergeStateStatus)).flatMap(pr => pr.files)
+    : []);
+  const deferredPrs = uncovered.filter(pr => pr.files.some(file => landing.has(file)));
+  const eligible = uncovered.filter(pr => !deferredPrs.includes(pr));
 
   const ctx: EmitContext = { repo, repoFull, pool, tier, priority, stamp: hhmm(now) };
   const plan = planMergeBatches({ prs: eligible, repo: repoFull, now });
@@ -502,6 +570,8 @@ export function planRebaseJobs(input: RebasePlanInput): RebasePlan {
       conflicting: conflicting.length,
       held: heldCount,
       covered: coveredPrs.length,
+      superseded: unheld.length - live.length,
+      deferred: deferredPrs.length,
       jobs: jobs.length,
       clusters: jobs.filter(j => j.kind !== 'single').length,
       singles: jobs.filter(j => j.kind === 'single').length,

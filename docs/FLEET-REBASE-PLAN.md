@@ -21,8 +21,8 @@ cannot attribute rows — the human output says so.
 The live queue is read from `--queue-dir <abs>` (default `<root>/queue`):
 
 - `router-queue.md` lines and `ready.tsv` rows with a live status (READY,
-  CLAIMED, RUNNING, PARKED-*, HOLD-SECURITY) whose `RQ-REBASE*` id or text
-  names a conflicting PR *cover* it — covered PRs are excluded and the rest
+  CLAIMED, RUNNING, PARKED-*, HOLD-SECURITY) whose `RQ-REBASE*` id or text,
+  or `RQ-RECUT-<repo>-<pr>-<head7>` id, names a conflicting PR *cover* it — covered PRs are excluded and the rest
   re-clustered, so a re-run never re-queues in-flight work. `--no-coverage`
   disables the read. A row proven to belong to another repo never covers;
   unattributed rows still count (restock's `repo` → `*` hold-list rule).
@@ -70,8 +70,24 @@ Each `jobs[]` entry carries everything a writer needs:
 
 `--pool`, `--tier` (validated against the queue tier vocabulary — `standard`
 is rejected, it means `work`), `--priority` (P0–P3) and `--max-prs` shape the
-specs. `counts` reports the funnel: open → conflicting → held/covered → jobs
-(clusters, singles, chunks, chained, pinned).
+specs. `counts` reports the funnel: open → conflicting →
+held/superseded/covered/deferred → jobs (clusters, singles, chunks, chained,
+pinned).
+
+## Convergence
+
+Rework churn is what keeps the conflicting count high, so the planner avoids
+spending jobs on PRs that are about to stop mattering:
+
+- **Superseded by rework.** An open `bridge: RQ-RECUT-<repo>-<pr>-<head7>` PR
+  replaces PR `<pr>`; the origin gets no rebase job (`counts.superseded`), and
+  of several rework PRs for one origin only the newest is kept. A conflicting
+  rework PR is still rebased itself.
+- **Ordering (`--defer-behind-clean`).** A conflicting PR sharing a file with
+  a non-draft, non-conflicting PR in a self-landing state (CLEAN, HAS_HOOKS,
+  UNSTABLE, BEHIND) is deferred (`counts.deferred`): rebasing it first is wasted
+  work, the landing re-conflicts it. Off by default so a clean PR that never
+  lands cannot starve its deferrals.
 
 ## Limits
 
