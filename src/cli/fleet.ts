@@ -39,8 +39,9 @@
  * separate untrusted router handoff and its read audit; status remains read-only.
  */
 
+import { spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import type { AshlrConfig } from '../core/types.js';
@@ -53,7 +54,6 @@ import { makeColors, isTty } from './ui.js';
 import { rejectUnknownOptions, type AllowedOptions } from './args.js';
 import { resolveFleetSubcommand, isModuleNotFound } from './fleet-subcommand-resolve.js';
 import { FLEET_SUBCOMMAND_LOADERS } from './fleet-subcommand-registry.js';
-import { pauseReleaseTrain } from '../core/release/train.js';
 
 const { bold, dim, green, red, yellow, cyan } = makeColors(isTty());
 
@@ -2104,6 +2104,18 @@ export async function cmdFleetWatch(jsonMode: boolean): Promise<number> {
 // Subcommands: pause / resume (kill-switch only)
 // ---------------------------------------------------------------------------
 
+function pauseHostedReleaseTrain(): void {
+  if (process.env.VITEST) return;
+  try {
+    const dir = join(homedir(), '.ashlr-runs');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const off = join(dir, 'RELEASE_AUTORUN_OFF');
+    if (!existsSync(off)) writeFileSync(off, 'release train off\n', { mode: 0o600 });
+  } catch { /* the local kill switch is already the stop */ }
+  const result = spawnSync('gh', ['variable', 'set', 'PHANTOM_RELEASE_TRAIN', '-R', 'ashlrai/phantom', '--body', 'off'], { stdio: 'ignore', timeout: 15_000 });
+  if (result.status !== 0) console.error('PHANTOM_RELEASE_TRAIN was not set off');
+}
+
 async function setKillSwitch(on: boolean): Promise<number> {
   try {
     const { setKill } = await import('../core/sandbox/policy.js');
@@ -2132,7 +2144,7 @@ async function setKillSwitch(on: boolean): Promise<number> {
 
   console.log('');
   if (on) {
-    try { pauseReleaseTrain(); } catch { /* local stop already armed */ }
+    pauseHostedReleaseTrain();
     console.log(green('  ✓ fleet paused') + dim(' — kill switch engaged.'));
     console.log(dim('  Any running loop halts on its next tick; nothing autonomous dispatches.'));
     console.log(dim('  Resume with `ashlr fleet resume`.'));
