@@ -104,7 +104,7 @@ describe('readAdmission and phm pool admission', () => {
   it('reads the v2 dispatcher decision and preserves every signal', async () => {
     const snapshot = { schema: 'dispatchd.admission.v2', admit: true, decision: 'halve_claims',
       load1: 64, ncpu: 18, load_max: 54, procs: 962, memory_pressure: 1, claim_limit: 2,
-      warnings: ['loadavg 64.0 > 54.0'], ts: '2026-11-02 19:00:00' };
+      warnings: ['loadavg 64.0 > 54.0'], ts: '2026-11-02T11:59:00+0000' };
     await writeFile(join(queue, 'admission.json'), JSON.stringify(snapshot));
     const report = await readAdmission(probes({ countProcesses: async () => { throw new Error('must not probe'); } }));
     expect(report).toMatchObject({ admit: true, load: { load1: 64, max: 54 }, snapshot });
@@ -125,8 +125,22 @@ describe('readAdmission and phm pool admission', () => {
   });
   it('maps the v2 adaptive cap and an absent operator hard_cap', async () => {
     await writeFile(join(queue, 'admission.json'), JSON.stringify({ schema: 'dispatchd.admission.v2', admit: true,
-      cap: 22, hard_cap: null, concurrency_cap: 22, running: 3 }));
+      cap: 22, hard_cap: null, concurrency_cap: 22, running: 3, ts: '2026-11-02T11:58:00+0000' }));
     expect(await readAdmission(probes())).toMatchObject({ cap: 22, hardCap: null, adaptiveCap: 22 });
+  });
+  it('a v2 snapshot dispatchd stopped refreshing is not reported as the live decision', async () => {
+    const dead = { schema: 'dispatchd.admission.v2', admit: true, cap: 22, concurrency_cap: 22, running: 0, daemon_tick_age_s: 5 };
+    for (const [ts, ageSeconds] of [['2026-11-02T09:00:00+0000', 3 * 3600], ['2026-11-03T12:00:00+0000', 0], [undefined, null]] as const) {
+      await writeFile(join(queue, 'admission.json'), JSON.stringify({ ...dead, ts }));
+      const r = await readAdmission(probes());
+      // Live probes: the runs dir has 4 running against a lane target of 6, and the tick age is measured now.
+      expect(r).toMatchObject({ running: 4, cap: 6, adaptiveCap: null, daemon: { tickAgeSeconds: 60 }, staleSnapshot: { ts: ts ?? null, ageSeconds } });
+      expect(r.snapshot).toBeUndefined();
+    }
+    await writeFile(join(queue, 'admission.json'), JSON.stringify({ ...dead, ts: '2026-11-02T11:50:00+0000' }));
+    const fresh = await readAdmission(probes());
+    expect(fresh).toMatchObject({ running: 0, cap: 22 });
+    expect(fresh.staleSnapshot).toBeUndefined();
   });
   it('counts only .base files whose worktree directory exists', async () => {
     const wt = join(dir, 'wt-1'); await mkdir(wt);

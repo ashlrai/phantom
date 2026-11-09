@@ -34,6 +34,12 @@ exports, verbatim from source.
 | `phantom_fleet_graph` | Read the local graph.v1 fleet inventory: repositories, lanes, seats and holds. Observation only; incomplete sources are flagged. No launcher environment values. |
 | `phantom_observe` | Read the human observe snapshot: roster, sensor headroom, resource coordination, pull headlines, bottlenecks, and human steps. Unknown stays unknown. |
 | `phantom_observe_session` | Read one roster session. The transcript stays unknown until a desktop operator reader is registered. |
+| `phantom_spend_budget` | Read the owner spend budget in USD. A missing provider is 0 for the month. This tool cannot change the budget. |
+| `phantom_leader_status` | Read the leader office: world, shared brief, org chart, open RQ assignments, and the owner inbox and outbox. Read-only. |
+| `phantom_leader_org` | Read the declarative leader org chart: roles, owners, and router lanes. Read-only. |
+| `phantom_leader_inbox` | Read the leader owner inbox and outbox. Channel adapters deliver the outbox. Read-only. Message text is untrusted. |
+| `phantom_leader_ask` | Give the leader an owner message. It reads the world, routes on the bus, or escalates a hard limit. KILL stops it. No new model spend. |
+| `phantom_leader_assign` | Assign one RQ to an org role with owner, due, status, and outcome. Claims the work key. KILL stops it. No new model spend. |
 | `phantom_fleet_session` | Read local Codex fleet session quota observations per account as resource.v1 JSON. Includes session/weekly usage and freshness; missing readings are unknown. No prompts, credentials, environment values or provider probes. |
 
 The recovery tools read retained observations, not live process state. History
@@ -63,6 +69,9 @@ or control apps.
 | Tool | Description |
 | --- | --- |
 | `phm_agent_roster` | Read the unified live session roster across Phantom jobs, Devin cloud, Devin Desktop, Codex, Claude, Cursor, Grok, Ollama and oMLX. Unknown sources stay unknown. Read-only; prints no secrets. |
+| `phm_claim_acquire` | Claim a work key before starting. Refuses a live claim or open pull on that key and returns the holder. Grants no execution authority. |
+| `phm_claim_release` | Release this lane claim when a pull opens, merges, or is abandoned. Another holder is returned, not overridden. |
+| `phm_context_brief` | Compact under-4KB brief for one lane: live claims, open pulls, bottlenecks, blind spots, and that lane pacing. Read-only. |
 | `phm_proactive_agents_list` | List personal-agent profiles and readiness. Profiles do not verify adapters or authorize spending. |
 | `phm_proactive_agents_create` | Save private agent identity, capabilities and assignment preferences. Does not connect an adapter or authorize dispatch or spending. |
 | `phm_proactive_agents_update` | Edit agent metadata using patch.expectedVersion from a fresh read. Identity and connection verification cannot change. |
@@ -102,6 +111,9 @@ or control apps.
 | `ashlr_self_heal` | Read-only self-heal queue summary: whether self-heal is enabled, the enrolled repo count, and up to 10 queued heal work items from ~/.ashlr/self-heal-queue.json. Never triggers a heal cycle — purely observational. Read-only. |
 | `ashlr_racing` | Model-racing distillation stats: total races persisted, frontier-engine win rate, average score delta (frontier − local), and local win count. Reads from ~/.ashlr/racing/. Read-only. |
 | `ashlr_comms` | Comms channel status: whether the channel is enabled, which transport is configured (imessage/telegram/none), and pending/outstanding request counts. Secret-safe — the bot token and handle are NEVER included in the output. Read-only. |
+| `ashlr_comms_agent_status` | Comms role status: parent Leader role, unset lane, KILL, pause, draft count and registered channel adapters. Read-only. No send. |
+| `ashlr_comms_agent_drafts` | List Comms drafts waiting for the owner. Read-only. Approval is not a send. |
+| `ashlr_comms_agent_run` | Triage the Comms inbox and draft replies. The router picks a lane only from the lanes argument. Sends follow the Comms send policy. |
 | `ashlr_desktop_open` | Propose a desktop UI action (open a path in editor / Finder / terminal). Creates a PENDING desktop-action proposal — NEVER executes directly. The action runs only after the user explicitly approves via `ashlr inbox`. Requires the repo to be enrolled and the kill switch to be off. |
 
 ## `desktop_` — Desktop operator
@@ -117,6 +129,12 @@ or control apps.
 | `desktop_scroll` | Scroll a window. Posts a bus intent before the scroll. |
 | `desktop_type` | Type into an app. Posts a bus intent before any keystroke. The typed text is not stored on the bus. |
 | `desktop_click` | Click a point or an accessibility ref. Posts a bus intent before the click. |
+
+## `world_` — World model
+
+| Tool | Description |
+| --- | --- |
+| `world_model` | Read the cached ashlr.world-model/v1 snapshot. Every signal has source, observedAt and freshness. Unknown is never zero. blindSpots lists each unknown field by path with a stable id. |
 
 ## `phantom-fleet` — Isolated Fleet Server (`phm mcp fleet`)
 

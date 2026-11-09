@@ -24,25 +24,48 @@ function pauseJsonPath(): string {
   return join(homedir(), '.ashlr', 'comms', 'pause.json');
 }
 
+const MAX_PAUSE_BYTES = 64 * 1024;
+
+/** Reasons already logged, so a polling dispatch loop does not repeat itself. */
+const loggedReasons = new Set<string>();
+
+function failClosed(reason: string): PauseState {
+  if (!loggedReasons.has(reason)) {
+    loggedReasons.add(reason);
+    console.error(`comms pause: treating as PAUSED, pause.json ${reason}`);
+  }
+  return { paused: true };
+}
+
 export function loadPauseState(): PauseState {
   try {
+    const path = pauseJsonPath();
     let stat;
     try {
-      stat = lstatSync(pauseJsonPath());
+      stat = lstatSync(path);
     } catch (error) {
-      return { paused: (error as NodeJS.ErrnoException).code !== 'ENOENT' };
+      const code = (error as NodeJS.ErrnoException).code;
+      return code === 'ENOENT' ? { paused: false } : failClosed(`is not inspectable (${code ?? 'unknown'})`);
     }
-    if (!stat.isFile() || stat.size > 64 * 1024) return { paused: true };
-    const read = readPrivateFileCapped(pauseJsonPath(), 64 * 1024);
-    if (read === null || read.truncated) return { paused: true };
-    const parsed: unknown = JSON.parse(read.text);
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return { paused: true };
+    if (stat.isSymbolicLink()) return failClosed('is a symlink');
+    if (!stat.isFile()) return failClosed('is not a regular file');
+    if (stat.size > MAX_PAUSE_BYTES) return failClosed('is larger than 64 KiB');
+    const read = readPrivateFileCapped(path, MAX_PAUSE_BYTES);
+    if (read === null) return failClosed('is unreadable');
+    if (read.truncated) return failClosed('is larger than 64 KiB');
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(read.text);
+    } catch {
+      return failClosed('is not valid JSON');
+    }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return failClosed('is not a JSON object');
     const state = parsed as Partial<PauseState>;
-    if (typeof state.paused !== 'boolean') return { paused: true };
+    if (typeof state.paused !== 'boolean') return failClosed('has a non-boolean "paused"');
     if (!state.paused) return { paused: false };
     return typeof state.since === 'number' ? { paused: true, since: state.since } : { paused: true };
   } catch {
-    return { paused: true };
+    return failClosed('could not be checked');
   }
 }
 

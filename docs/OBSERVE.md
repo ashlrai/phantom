@@ -9,6 +9,8 @@ phm observe session <id> --json
 
 The desktop route is `GET /api/verse/observe`. A session drill-down is `GET /api/verse/observe/session?id=<id>`. The transcript field stays null until a desktop operator reader is registered.
 
+`phm observe --json` reads the world model in [WORLD.md](WORLD.md). `coverage.fields` is still the live and unknown counts. `coverage.unknownFields` lists each unknown or stale field by path, with the same stable id as `blindSpots`.
+
 ## Baseline, 3.30.24
 
 Captured read-only at 2026-11-09 00:24 ET from Phantom 3.30.24.
@@ -43,6 +45,10 @@ A resource is one of: Devin cloud, Devin desktop, Codex personal, Dot, Cursor cl
 - Idle: reachable, sensor headroom above zero, and no claim in the window.
 - Duplicated: two or more claims or sessions share a task title or claim key.
 - Unknown: not reachable, or reachable without a fresh headroom reading. Unknown is never counted as idle.
+
+Each resource row includes a `gauge`: remaining and its unit, burn per hour, `forecastExhaustAt`, `forecastVsReset` (`early`, `on-pace`, `underuse`, or `unknown`), and `idleIncludedWastedPerWeek`. A missing burn or reset leaves those fields null. Null is not zero and does not make the resource idle.
+
+The scheduler (`planLanes`) narrows a lane when `phm usage sensors` has a fresh included-usage pace: remaining, divided by time to reset, divided by the burn of one job, with a 15 percent safety margin, then clamped to the lane ceiling. `~/.ashlr/KILL` sets every lane to 0. A pay-per-use lane stays at 0 unless measured spend this period is below the owner budget and a fresh balance exists. The budget defaults to 0. Local models have no allowance; the gauge reports throughput only. Devin's ACU cap is not raised. SWE-2 Flash and the weekly included allowance are separate rows.
 
 When no resource is reachable, the coordinated, idle, and duplicated counts are null.
 

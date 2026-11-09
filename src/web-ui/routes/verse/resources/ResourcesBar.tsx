@@ -48,6 +48,7 @@ import { apiGrantDisplay } from './credit-pool-model.js';
 import { devinConsumptionEvidence, devinUsageEvidence, formatAcu } from '../devin/devin-model.js';
 import { DEVIN_POLL_MS, devinQuery } from '../devin/devin-queries.js';
 import { closeResources, openResources, setResourcesCompact, useResourcesUi } from './resources-store.js';
+import { WorldLaneRows } from './WorldLaneRows.js';
 import { moveResource, orderedResources, useResourceOrder } from './resource-order.js';
 import { proactiveProfilesQuery } from '../proactive/proactive-queries.js';
 import { setVerseSection } from '../verse-ui-store.js';
@@ -265,6 +266,10 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   const devinRead = useQuery(devinQuery);
   const refreshDevin = useRefetch(devinQuery);
   const resources = useResourcesUi();
+  const [worldLive, setWorldLive] = useState(false);
+  const onWorldLive = useCallback((live: boolean) => {
+    setWorldLive((prev) => (prev === live ? prev : live));
+  }, []);
   const sectionVisible = useSectionVisible();
   const documentVisible = useDocumentVisible();
   const [personalQuery] = useState(() => {
@@ -574,8 +579,11 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   const primaryIds = new Set(rows.map(row => `account:${row.key}`));
   // Recorded API funding is a distinct resource, unlike a session-log view or estimate.
   primaryIds.add('budget:claude-api-promotions');
-  const evidenceCount = ordered.filter(entry => !primaryIds.has(entry.key)).length;
-  const visible = ordered.filter(entry => primaryIds.has(entry.key) || !expanded || showEvidence);
+  // Once the world snapshot is in hand, subscription batteries are evidence.
+  // The glance is one world-model lane per row.
+  const demotedAccount = (key: string) => worldLive && key.startsWith('account:');
+  const evidenceCount = ordered.filter(entry => demotedAccount(entry.key) || !primaryIds.has(entry.key)).length;
+  const visible = ordered.filter(entry => demotedAccount(entry.key) ? expanded && showEvidence : primaryIds.has(entry.key) || !expanded || showEvidence);
   const ids = visible.map(entry => entry.key);
   const providerOf = (engine: string) => engine === 'codex' ? 'openai' : engine === 'claude' ? 'anthropic' : engine === 'grok' ? 'xai' : engine === 'devin' ? 'devin' : 'local';
   const descriptors: ProviderResourceDescriptor[] = ordered.map(entry => {
@@ -641,6 +649,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
         {providerView ? 'Show account view' : 'Group by provider'}
       </button> : null}
       <span className={styles.visuallyHidden} role="status">{announcement}</span>
+      <WorldLaneRows expanded={expanded} enabled={resources.bar} now={fixedNow} onLive={onWorldLive} />
       {providerView && expanded ? <Suspense fallback={null}>
         <LazyProviderResourceGroups resources={descriptors} nowMs={now} maxAgeMs={data.budget?.readingMaxAgeMs} kind="bar" ready={providerView === 2} onReady={setProviderView}
           classes={{ group: styles.providerGroup, account: styles.accountGroup, note: styles.coverageNote }}

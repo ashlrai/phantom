@@ -1,7 +1,8 @@
-import { readFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { cmdDesktop, parseDesktopInstallArgs } from '../src/cli/desktop.js';
 import { cmdDesktopOperator } from '../src/cli/desktop-operator.js';
@@ -286,9 +287,6 @@ describe('runDesktopOperator', () => {
     expect(unsupported).toMatchObject({ ok: false, code: 'unsupported' });
     const missing = await runDesktopOperator({ verb: 'list-apps' }, {
       platform: 'darwin',
-      exists: () => false,
-      env: {},
-      cwd: '/tmp/none',
     });
     expect(missing).toMatchObject({ ok: false, code: 'helper_missing', binary: 'desktop-operator' });
     expect(JSON.stringify(missing)).toContain(ACCESSIBILITY_PANE);
@@ -377,18 +375,92 @@ describe('desktop operator MCP tools', () => {
 });
 
 describe('helper protocol', () => {
-  it('parses permission_required and ignores a configured binary that is absent', () => {
+  it('parses permission_required', () => {
     expect(parseHelperPayload('{"ok":false,"code":"permission_required","permission":"accessibility"}')).toEqual({
-      ok: false,
-      code: 'permission_required',
-      permission: 'accessibility',
+      ok: false, code: 'permission_required', permission: 'accessibility',
     });
     expect(parseHelperPayload('nope')).toMatchObject({ ok: false, code: 'failed' });
-    expect(resolveDesktopOperatorBinary(
-      { PHANTOM_DESKTOP_OPERATOR: '/missing/desktop-operator', HOME: '/tmp/home' },
-      '/repo',
-      (path) => path === '/tmp/home/.ashlr/bin/desktop-operator',
-    )).toBeNull();
-    expect(resolveDesktopOperatorBinary({ HOME: '/tmp/home' }, '/repo', (path) => path.endsWith('/.ashlr/bin/desktop-operator'))).toMatch(/desktop-operator$/);
+  });
+
+  it('uses only the installed regular, owner-controlled helper', () => {
+    const home = mkdtempSync(join(tmpdir(), 'operator-pin-'));
+    const binary = join(home, '.ashlr', 'bin', 'desktop-operator');
+    const cwdBinary = join(home, 'tools', 'desktop-operator', 'desktop-operator');
+    const previous = process.env['PHANTOM_DESKTOP_OPERATOR'];
+    const previousCwd = process.cwd();
+    try {
+      mkdirSync(join(home, '.ashlr', 'bin'), { recursive: true });
+      mkdirSync(join(home, 'tools', 'desktop-operator'), { recursive: true });
+      writeFileSync(cwdBinary, 'untrusted');
+      process.chdir(home);
+      process.env['PHANTOM_DESKTOP_OPERATOR'] = cwdBinary;
+      expect(resolveDesktopOperatorBinary(home)).toBeNull();
+      symlinkSync(cwdBinary, binary);
+      expect(resolveDesktopOperatorBinary(home)).toBeNull();
+      rmSync(binary);
+      writeFileSync(binary, 'installed', { mode: 0o755 });
+      chmodSync(binary, 0o775);
+      expect(resolveDesktopOperatorBinary(home)).toBeNull();
+      chmodSync(binary, 0o757);
+      expect(resolveDesktopOperatorBinary(home)).toBeNull();
+      chmodSync(binary, 0o755);
+      expect(resolveDesktopOperatorBinary(home)).toBe(binary);
+      for (const directory of [join(home, '.ashlr'), join(home, '.ashlr', 'bin')]) {
+        chmodSync(directory, 0o775);
+        expect(resolveDesktopOperatorBinary(home)).toBeNull();
+        chmodSync(directory, 0o777);
+        expect(resolveDesktopOperatorBinary(home)).toBeNull();
+        chmodSync(directory, 0o755);
+      }
+      expect(resolveDesktopOperatorBinary(home)).toBe(binary);
+    } finally {
+      process.chdir(previousCwd);
+      if (previous === undefined) delete process.env['PHANTOM_DESKTOP_OPERATOR'];
+      else process.env['PHANTOM_DESKTOP_OPERATOR'] = previous;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('desktop operator fails closed on an unknown pause state', () => {
+  const originalHome = process.env.HOME;
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+  });
+
+  const write = { verb: 'type', app: 'Cursor', text: 'hi' } as const;
+
+  it('refuses a write when a stop probe throws', async () => {
+    const order: string[] = [];
+    const result = await runDesktopOperator(write, deps(mockSurface({ order }), {
+      commsPaused: () => { throw new Error('probe failed'); },
+    }));
+    expect(result).toMatchObject({ ok: false, code: 'comms_paused' });
+    const killed = await runDesktopOperator(write, deps(mockSurface({ order }), {
+      killed: () => { throw new Error('probe failed'); },
+    }));
+    expect(killed).toMatchObject({ ok: false, code: 'killed' });
+    expect(order).toEqual([]);
+  });
+
+  it('refuses a write when the real pause.json is a symlink, using the default probe', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'desktop-op-pause-'));
+    try {
+      process.env.HOME = home;
+      mkdirSync(join(home, '.ashlr', 'comms'), { recursive: true });
+      const target = join(home, 'target');
+      writeFileSync(target, '{"paused":false}');
+      symlinkSync(target, join(home, '.ashlr', 'comms', 'pause.json'));
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const order: string[] = [];
+      const { commsPaused: _omit, ...rest } = deps(mockSurface({ order }));
+      const result = await runDesktopOperator(write, rest);
+      expect(result).toMatchObject({ ok: false, code: 'comms_paused' });
+      expect(order).toEqual([]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
