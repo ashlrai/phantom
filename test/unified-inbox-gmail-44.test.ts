@@ -69,7 +69,7 @@ describe('unified inbox gmail source', () => {
       readNeeds: () => ({ status: 'available', items: [{ id: 'nm-1', text: 'fake needs-you line' }] } as never),
     });
     expect(inbox.sources.gmail).toEqual({ state: 'degraded', pending: 0 });
-    expect(Object.keys(inbox.sources).sort()).toEqual(['bus', 'drafts', 'gmail', 'imessage', 'needs-you']);
+    expect(Object.keys(inbox.sources).sort()).toEqual(['bus', 'drafts', 'gmail', 'imessage', 'linkedin', 'needs-you']);
     expect(inbox.items.map(i => i.id)).toContain('needs-you:nm-1');
   });
 

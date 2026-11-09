@@ -34,7 +34,7 @@ it('refuses expired records and keeps replayed teammate findings private, idempo
   expect(replay).toMatchObject({ refused: 1, duplicate: 1, posted: 0, lastRowid: 2 });
   expect(JSON.stringify(replay)).not.toContain(handle);
   expect(JSON.stringify(replay)).not.toContain(body);
-  const page = listBusInboxAfter(0, 100, { root: busRoot });
+  const page = listBusInboxAfter(0, 100, { root: busRoot, now: () => now.getTime() });
   expect(page.status).toBe('ok');
   if (page.status !== 'ok') throw new Error('Synthetic bus unavailable');
   expect(page.messages).toHaveLength(1);

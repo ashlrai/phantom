@@ -1,5 +1,6 @@
 import { readGoals } from '../fleet/goals.js';
 import { readMetricsPanel } from '../fleet/metrics-panel.js';
+import { applyOrderStatus, OrderStatusError } from './fleet-order-status.js';
 import { readOrdersView } from './fleet-orders-view.js';
 import { readInboxAckStates, type InboxAckState } from '../fleet/inbox-ack-state.js';
 import { getLaneModelSnapshot, type LaneModelSnapshot } from '../fleet/lane-models.js';
@@ -304,6 +305,29 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     if (path === '/api/verse/fleet/runs/orders') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
       sendJson(res, 200, await readOrdersView({ root: deps.runsDir ?? defaultRunsDir(), nowMs: now() }));
+      return true;
+    }
+    if (path === '/api/verse/fleet/runs/orders/status') {
+      if (method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let body: unknown;
+      try { body = JSON.parse(await readBody(req, 4096)); } catch { body = null; }
+      if (!record(body) || Object.keys(body).some(k => !['id', 'status', 'note'].includes(k)) ||
+        typeof body.id !== 'string' || typeof body.status !== 'string' ||
+        ('note' in body && typeof body.note !== 'string')) {
+        sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid order status body' }); return true;
+      }
+      try {
+        const row = await applyOrderStatus(
+          { id: body.id, status: body.status, ...(typeof body.note === 'string' ? { note: body.note } : {}) },
+          { root: deps.runsDir ?? defaultRunsDir(), now },
+        );
+        sendJson(res, 200, row);
+      } catch (error) {
+        if (error instanceof OrderStatusError) sendJson(res, error.status, { code: 'ORDER_STATUS_REFUSED', error: error.message });
+        else sendJson(res, 503, { code: 'ORDER_STATUS_UNAVAILABLE', error: 'The orders ledger could not be updated.' });
+      }
       return true;
     }
     if (path === VERSE_FLEET_MISSION_PATH) {
