@@ -50,6 +50,11 @@ Adding a node? Follow [Add a computer in 60 seconds](https://github.com/ashlrai/
 
 New here? [phm.dev/connect](https://phm.dev/connect) is the guided onboarding path. The [first-run guide](docs/QUICKSTART.md#open-verse) covers the same ground in this repository.
 
+`phm connect` is not available in this checkout. For a new Phantom Secrets
+name, use `phantom add NAME` in a trusted terminal. Keep credentials out of
+chat and agent transcripts. Approval cards record decisions; they do not
+collect credentials.
+
 ### Commands that print JSON
 
 Run these after install. They read local state. They do not start a fleet or spend credits.

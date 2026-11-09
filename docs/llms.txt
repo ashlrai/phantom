@@ -6,6 +6,10 @@ Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent
 
 ## Start
 
+`phm connect` is not available in this checkout. Use `phantom add NAME` in a
+trusted terminal for a new Phantom Secrets name; keep credentials out of chat.
+Approval cards record consent and do not collect credentials.
+
 - [Phantom](README.md): Doc map for this folder.
 - [Quickstart](QUICKSTART.md): Install Phantom, open the console, and make a first turn.
 - [Self-hosting](SELF-HOSTING.md): Install, connect MCP, upgrade, and uninstall.
