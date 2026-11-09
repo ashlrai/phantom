@@ -1,7 +1,8 @@
 import { EMPTY_CLASSES, readEmptyJobs } from '../core/fleet/empty-jobs.js';
 
-const usage = 'Usage: phm jobs empty [--json] [--since <hours>h]';
+const usage = 'Usage: phm jobs empty [--json] [--since <hours>h] | phm jobs retry-empty --dry-run|--apply [--json] [--file <router-queue.md>]';
 export async function cmdJobs(args: string[]): Promise<number> {
+  if (args[0] === 'retry-empty') return (await import('./jobs-retry-empty.js')).cmdJobsRetryEmpty(args.slice(1));
   if (args[0] !== 'empty') { console.error(usage); return 2; }
   let hours = 24;
   let json = false;
