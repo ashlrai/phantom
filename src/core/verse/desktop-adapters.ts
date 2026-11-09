@@ -274,7 +274,8 @@ export function createDesktopAdapters(call: ToolCall, opts: Partial<Record<Deskt
 // all stay in force. Nothing here types, sends keys, reads window text (control
 // labels and window titles only) or touches TCC grants or the MACCU helper.
 // There is no `computer_*` tool that launches or activates an app, so open and
-// focus go through an injected `AppLauncher`; without one they refuse.
+// focus go through an injected `AppLauncher` (the CLI supplies `/usr/bin/open -b` on
+// macOS when no desktop is connected); without one they refuse.
 
 export type AppControlAction = 'open' | 'quit' | 'focus' | 'status';
 export type AppControlCode = 'not-running' | 'unsupported' | 'denied' | 'unsaved-state' | 'unreadable' | 'failed';
@@ -307,6 +308,13 @@ export interface AppControl {
 
 export interface AppControlOptions {
   launcher?: AppLauncher;
+  /**
+   * Let `open` start an app by bundle id when the desktop app list is unavailable.
+   * Off by default: a list error from a connected desktop can mean KILL, a pause or
+   * a missing grant, and must still refuse. The caller sets it only when it has
+   * already matched an explicit allowlist entry and knows there is no desktop connection.
+   */
+  openWithoutList?: boolean;
   maxDepth?: number;
 }
 
@@ -378,7 +386,16 @@ export function createAppControl(call: ToolCall, opts: AppControlOptions = {}): 
     },
     async open(target) {
       const found = await find(target);
-      if (!found.ok) return fail('open', 'failed', found.error);
+      if (!found.ok) {
+        // computer_* cannot start apps, so only the host launcher can run, and only for a bundle id the policy allows.
+        const bundle = opts.openWithoutList && opts.launcher ? bundleOf(target, null) : null;
+        if (!bundle) return fail('open', 'failed', found.error);
+        if (computerAppPolicy(bundle).ceiling === null) return fail('open', 'denied', 'that app is never available to agents.');
+        const started = await opts.launcher!.open(bundle);
+        return started.ok
+          ? { ok: true, action: 'open', running: true, frontmost: false, detail: `asked macOS to open ${bundle} (desktop app list unavailable).` }
+          : fail('open', 'failed', started.error.slice(0, 300));
+      }
       const bundle = bundleOf(target, found.app);
       if (found.app && !bundle) return fail('open', 'denied', 'that app is never available to agents.');
       if (bundle && computerAppPolicy(bundle).ceiling === null) return fail('open', 'denied', 'that app is never available to agents.');
