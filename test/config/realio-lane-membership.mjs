@@ -43,6 +43,11 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/agent-tools-registry.test.ts', // Spawns a real child to read the tool registry.
+  'test/main-blame.test.ts', // Spawns git bisect children against a real temporary repository.
+  'test/mcp/fleet-current-replay-preservation-09stm2.test.ts', // Spawns the fleet CLI child for replay preservation.
+  'test/mcp/fleet-path-cochanges-04-sqd1.test.ts', // Spawns the fleet CLI child for path co-change reads.
+  'test/measure-desktop-perf.test.ts', // Spawns a real child to measure desktop startup.
   'test/worktrees-prune.test.ts', // Real Git worktree fixtures.
   'test/ecosystem-changelog-generator.test.ts', // Runs the generator in a real Node child process.
   'test/verse-standby-python-contract-02somp1.test.ts', // Runs the Python lease helper in a real child process.

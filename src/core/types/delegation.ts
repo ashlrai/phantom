@@ -11,8 +11,7 @@ export type DelegationOrigin = 'run' | 'swarm' | 'daemon' | 'best-of-n' | 'manag
  * `implement` runs on cheap lanes. The lane-class policy lives in
  * routing/stage-delegation.ts; this is only the shared vocabulary.
  */
-export const DELEGATION_STAGES = ['plan', 'implement', 'verify'] as const;
-export type DelegationStage = (typeof DELEGATION_STAGES)[number];
+export type DelegationStage = 'plan' | 'implement' | 'verify';
 
 export type DelegationMemoryMode = 'inherit' | 'none' | 'bounded' | 'repo-only' | 'full';
 
