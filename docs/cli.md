@@ -24,7 +24,7 @@ Topic summary and discovery hints.
     knowledge       Knowledge - portfolio RAG + graph (graph, knowledge, ask, …)
     autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (metrics, enroll, …)
     observability   Observability - cost, telemetry, audit (radar, router, router-calibration, …)
-    integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, checkpoint, …)
+    integrations    Integrations - MCP, GitHub, Vercel, editors (connect, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
     web             Surfaces - TUI + web dashboard (top, tui, dash, …)
     scaffold        Scaffold - new projects + shipping (new, ship, …)
@@ -283,6 +283,10 @@ Every command, grouped by topic.
     lanes health [--json]                                                                      Per-lane calls, error rate, p50 latency and deployed commit over 12 h; flags runs stuck past their phase timeout.
 
   Integrations - MCP, GitHub, Vercel, editors
+    connect [wizard]                                                                 Sign-in wizard: discovers signed-in CLIs/services and connects each account to a node, one explicit approval per account.
+    connect status [--json]                                                          One screen of what is connected where: discovered sign-ins, pending requests, active and revoked grants with approve/revoke actions.
+    connect request <service> --node <id>                                            Agent-side: file a connection request that stays pending until the operator approves it; no flag skips approval.
+    connect approve|deny|revoke <id>                                                 Operator-side: approve a pending request (transfer: vendor login, then a vaulted scoped token, then a sealed per-file-approved session copy), refuse it, or revoke a live grant.
     mcp                                                                              Run the MCP aggregation gateway on stdio (point any agent here; includes the native ashlr_* tools; list them with tools/list).
     checkpoint save <source> <destination> <worktree> [--json]                       Save a handoff with a Git worktree inventory. See docs/AGENT-CHECKPOINT.md.
     checkpoint resume <file> [--json]                                                Validate and print a structured agent checkpoint for a fresh session. See docs/AGENT-CHECKPOINT.md.

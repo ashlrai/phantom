@@ -581,6 +581,24 @@ show that the package is published to npm.
   authority and provider qualification remain separate gates.
 - Add bounded steward disk and session-retention planning with the existing
   operator controls; source availability does not establish runtime acceptance.
+- Local-first bandit lane behind the new opt-in key `localFirstBandit.enabled`
+  (default off). When on, an item the P4 policy already sends local may move to
+  a frontier seat if local scores worse on merged PRs per dollar and per hour
+  (Thompson sampling or epsilon greedy, seeded and replayable). Evidence is the
+  routing ledger joined with `~/.ashlr/routing/merge-outcomes.json`. Cold start,
+  P4 escalations, merge, credential and publish roles, and unknown engine ids
+  are never routed local by the bandit.
+- Hybrid local/frontier routing is live in fleet dispatch behind the new opt-in
+  key `localInference.routing: "hybrid"` (default `"off"`). Dispatch builds the
+  router's engine map from config; unknown engine ids are unclassified and get
+  no merge, credential or publish work. The status JSON serializer gains
+  `bandit` and `routing` blocks (per-arm pulls/merges/cost and per-item tier,
+  engine and lane reason) and `phm doctor` a `routing` row that warns, never
+  fails.
+
+### Changed
+- `phm doctor` reports an installed Locus whose agent report fails, and a
+  failed local provider probe, as warnings unless `LOCUS_ENFORCE=enforce`.
 
 ### Fixed
 - Provider error bodies that echo the rejected API key no longer carry it into

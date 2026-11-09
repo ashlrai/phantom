@@ -10,6 +10,8 @@
  * mirroring the human output, which silently omits it.
  */
 
+import { banditStatus, type BanditStatus } from '../core/fleet/bandit-feedback.js';
+
 import { existsSync } from 'node:fs';
 import { collectMergeEtas, type MergeEta } from '../core/merge-eta.js';
 import type {
@@ -82,6 +84,7 @@ export interface StatusRepoRow {
 
 export interface StatusJson {
   schemaVersion: 1;
+  bandit: BanditStatus;
   summary: {
     tracked: number;
     clean: number;
@@ -114,6 +117,8 @@ export interface StatusJson {
   custody: import('./status-custody.js').CustodyStatus | null;
   /** Local inference probe (loopback GET /models); null when not configured or it could not run. */
   localInference: import('../core/run/local-inference-probe.js').LocalInferenceProbe | null;
+  /** Per-run routing accounting: tier, engine and lane reason per dispatched item. */
+  routing: import('../core/routing/routing-ledger.js').RoutingLedger | null;
   /** Strict phantom preflight; null unless ASHLR_PHANTOM_PREFLIGHT=1 and phantom is configured. */
   phantomPreflight: import('./status-preflight.js').PreflightStatus | null;
 }
@@ -153,7 +158,7 @@ export async function gatherStatus(
   // Launch every section at once so module loads, probes and spawned
   // children overlap; each failure resolves to null via attempt().
   const [tools, mcpServers, activity7d, memory, github, vercel, identity,
-    custody, localInference, phantomPreflight, resources] = await Promise.all([
+    custody, localInference, phantomPreflight, resources, routing] = await Promise.all([
 
     attempt(async () => {
       const fn = await loaders.getToolsRegistry();
@@ -239,10 +244,16 @@ export async function gatherStatus(
         .filter(r => r.backend !== 'builtin')
         .map(r => ({ backend: r.backend, availability: r.availability, usedPct: r.usedPct }));
     }),
+
+    attempt(async () => {
+      const { readRoutingLedger } = await import('../core/routing/routing-ledger.js');
+      return readRoutingLedger();
+    }),
   ]);
 
   return {
     schemaVersion: 1,
+    bandit: banditStatus(cfg),
     summary: {
       tracked: b.repos.length,
       clean: b.clean.length,
@@ -265,6 +276,7 @@ export async function gatherStatus(
     resources,
     custody,
     localInference,
+    routing,
     phantomPreflight,
   };
 }
