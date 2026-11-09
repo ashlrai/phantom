@@ -12,7 +12,7 @@ const HELP = `Usage:
   phm budget set --provider <id> --period day|week|month --usd <n> --json
 Manual observations override automatic observations until their reset. No reset means a persistent override.
 Automatic input is parsed locally; raw output is never stored. '-' reads standard input.
-Spend budget get/set is the owner USD cap. The default is 0. Set requires an interactive terminal. A budget above 0 counts only with a pin-chain or Mason approval attestation. Agents cannot set it.
+Spend budget get/set is the owner USD cap. The default is 0. Set requires an interactive terminal. An amount above 0 stays ineffective until a Security pin-chain or owner signature root exists. Agents cannot set it.
 `;
 async function readInput(path: string): Promise<string> {
   const stream = path === '-' ? process.stdin : createReadStream(path);
@@ -110,8 +110,9 @@ async function cmdSpendBudget(args: string[]): Promise<number> {
       { provider, period: period as SpendBudgetPeriod, usd: Number(usdText) },
       { env: process.env },
     );
+    const effective = policy.entries.find((row) => row.provider === provider && row.period === period)?.usd ?? 0;
     if (json) console.log(JSON.stringify({ schema: policy.schema, source: 'owner', entries: policy.entries }));
-    else console.log(`Set ${provider} ${period} to $${usdText}`);
+    else console.log(`Recorded ${provider} ${period} $${usdText}. Effective budget is $${effective}.`);
     return 0;
   } catch (error) {
     if (error instanceof SpendBudgetOwnerError) return fail(error.message);

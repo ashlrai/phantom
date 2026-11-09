@@ -32,6 +32,8 @@ export class ApiError extends Error {
      * caller branch on WHAT was refused without parsing the sentence.
      */
     public readonly code: string | null = null,
+    /** The parsed JSON refusal body, when it had one; null otherwise. For callers that branch on a field `detail` and `code` drop. */
+    public readonly body: unknown = null,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -138,10 +140,10 @@ async function mutateJson<T>(method: 'POST' | 'DELETE', path: string, body: unkn
   });
   if (res.status === 401) throw new ApiError('Mutation token was rejected.', 401, path);
   if (!res.ok) {
-    const { detail, code } = await readRefusal(res);
+    const { detail, code, body: refusal } = await readRefusal(res);
     // A codeless 404 is the dispatch gate; coded route refusals stay ApiError.
     if (res.status === 404 && code === null) throw new DispatchDisabledError(path);
-    throw new ApiError(`${method} ${path} failed (HTTP ${res.status})${detail ? `: ${detail}` : ''}.`, res.status, path, detail || null, code);
+    throw new ApiError(`${method} ${path} failed (HTTP ${res.status})${detail ? `: ${detail}` : ''}.`, res.status, path, detail || null, code, refusal);
   }
   if (res.status === 204) return undefined as T;
   if (post) return (await res.json()) as T;
@@ -150,15 +152,15 @@ async function mutateJson<T>(method: 'POST' | 'DELETE', path: string, body: unkn
 }
 
 /** A route's own refusal sentence and code, including daemon `note` bodies. */
-async function readRefusal(res: Response): Promise<{ detail: string; code: string | null }> {
+async function readRefusal(res: Response): Promise<{ detail: string; code: string | null; body: unknown }> {
   try {
     const j = (await res.json()) as { error?: unknown; note?: unknown; message?: unknown; reason?: unknown; code?: unknown };
     const detail = typeof j.error === 'string' && j.error ? j.error
       : typeof j.note === 'string' && j.note ? j.note
         : typeof j.message === 'string' ? j.message : typeof j.reason === 'string' ? j.reason : '';
-    return { detail, code: typeof j.code === 'string' && j.code ? j.code : null };
+    return { detail, code: typeof j.code === 'string' && j.code ? j.code : null, body: j };
   } catch {
-    return { detail: '', code: null };
+    return { detail: '', code: null, body: null };
   }
 }
 

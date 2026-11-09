@@ -3,8 +3,8 @@ export const UNIFIED_INBOX_PATH = '/api/verse/comms/inbox?limit=20';
 /** The CLI twin of this card. */
 export const UNIFIED_INBOX_COMMAND = 'phm comms inbox';
 
-const SOURCES = ['needs-you', 'imessage', 'drafts', 'bus'] as const;
-const KINDS = ['needs-you', 'teammate-text', 'draft-approval', 'bus-work'] as const;
+const SOURCES = ['needs-you', 'imessage', 'drafts', 'bus', 'gmail'] as const;
+const KINDS = ['needs-you', 'teammate-text', 'draft-approval', 'bus-work', 'gmail-over-target'] as const;
 const SEVERITIES = ['info', 'warn', 'high'] as const;
 const STATES = ['healthy', 'missing', 'degraded', 'unavailable'] as const;
 const EXPIRES_SOON_MS = 30 * 60_000;
@@ -65,8 +65,8 @@ export function readUnifiedInboxView(data: unknown): UnifiedInboxView | null {
   return { total: data.total, omitted: data.omitted, sources, items };
 }
 
-const SOURCE_NAMES: Record<InboxSource, string> = { 'needs-you': 'Needs you', imessage: 'iMessage', drafts: 'Drafts', bus: 'Bus' };
-const ITEM_LABELS: Record<InboxSource, string> = { 'needs-you': 'Needs you', imessage: 'Teammate text', drafts: 'Draft', bus: 'Bus work' };
+const SOURCE_NAMES: Record<InboxSource, string> = { 'needs-you': 'Needs you', imessage: 'iMessage', drafts: 'Drafts', bus: 'Bus', gmail: 'Gmail' };
+const ITEM_LABELS: Record<InboxSource, string> = { 'needs-you': 'Needs you', imessage: 'Teammate text', drafts: 'Draft', bus: 'Bus work', gmail: 'Gmail inbox' };
 
 /** "Needs you 3 · iMessage 1 · Drafts 0 · Bus degraded 2"; a missing source shows "—", never 0. */
 export function sourceSummary(sources: UnifiedInboxSources): string {
