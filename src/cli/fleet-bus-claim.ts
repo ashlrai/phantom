@@ -1,9 +1,13 @@
 import { mutateBusWorkClaim, validBusClaimRequest, type BusClaimRequest } from '../core/fleet/bus-work-claims.js';
 
+const usage = `Usage: ashlr fleet bus-claim acquire --id <message> --owner <label> --lease-ms <1..3600000> [--root <absolute>] [--json]
+renew|release|complete --id <message> --token <claim-token> [--root <absolute>] [--json]
+Local coordination only; no identity or execution authority. Renew reuses the original lease duration.`;
+
 /** Coordination handles only; never authenticates a worker or executes a task. */
 export async function cmdFleetBusClaim(args: string[]): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log('Usage: ashlr fleet bus-claim acquire --id <message> --owner <label> --lease-ms <1..3600000> [--root <absolute>] [--json]\nrenew|release|complete --id <message> --token <claim-token> [--root <absolute>] [--json]\nLocal coordination only; no identity or execution authority. Renew reuses the original lease duration.');
+    console.log(usage);
     return 0;
   }
   const values = new Map<string, string>();

@@ -40,6 +40,7 @@ import {
   loadVersePreferences,
   memoryEnabledFor,
   parseVersePreferencesUpdate,
+  readPrivateFileTailCapped,
   seatDefaultMode,
   updateVersePreferences,
   versePreferencesPath,
@@ -283,5 +284,44 @@ describe('loadVersePreferences is total', () => {
     writeRaw('garbage');
     const stored = updateVersePreferences({ seatId: 'claude-a', contextMode: 'expansive' }, root);
     expect(JSON.parse(readFileSync(versePreferencesPath(root), 'utf8'))).toEqual(stored);
+  });
+});
+
+describe('readPrivateFileTailCapped', () => {
+  const path = () => join(tmp, 'journal.jsonl');
+
+  it('returns the whole file when it fits the cap', () => {
+    writeFileSync(path(), 'a\nb\nc\n');
+    const read = readPrivateFileTailCapped(path(), 1024);
+    expect(read).not.toBeNull();
+    expect(read!.text).toBe('a\nb\nc\n');
+    expect(read!.truncated).toBe(false);
+    expect(read!.bytes).toBe(6);
+  });
+
+  it('returns only the LAST bytes and flags truncation when the file exceeds the cap', () => {
+    const body = `${'o'.repeat(64)}\nnewest line\n`;
+    writeFileSync(path(), body);
+    const read = readPrivateFileTailCapped(path(), 32);
+    expect(read).not.toBeNull();
+    expect(read!.truncated).toBe(true);
+    expect(read!.bytes).toBe(body.length);
+    expect(read!.text).toBe(body.slice(-32));
+    expect(read!.text.endsWith('newest line\n')).toBe(true);
+  });
+
+  it('returns null for an absent path and does not follow a symlink', () => {
+    expect(readPrivateFileTailCapped(join(tmp, 'missing'), 1024)).toBeNull();
+    const target = join(tmp, 'target');
+    writeFileSync(target, 'real\n');
+    const link = join(tmp, 'link');
+    symlinkSync(target, link);
+    expect(readPrivateFileTailCapped(link, 1024)).toBeNull();
+  });
+
+  it('handles an empty file without negative math', () => {
+    writeFileSync(path(), '');
+    const read = readPrivateFileTailCapped(path(), 1024);
+    expect(read).toMatchObject({ text: '', bytes: 0, truncated: false });
   });
 });

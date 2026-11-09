@@ -106,7 +106,7 @@ describe('bounded upstream pack explanations', () => {
   it.each([
     ['--explain'], ['--explain', '--json', '--markdown'], ['--json', '--explain', '--explain'],
     ['--json', '--query', '--explain'],
-  ])('rejects invalid flag combinations before reading a snapshot: %j', async flags => {
+  ])('rejects invalid flag combinations before reading a snapshot: %j (%#)', async flags => {
     const stdin = new Readable({ read() { throw new Error('unexpected read'); } });
     const stdout = vi.fn();
     expect(await runKnowledgeContextPack(['--stdin', ...flags], stdin, { stdout, stderr: vi.fn() })).toBe(2);

@@ -14,6 +14,7 @@ interface Dependencies {
 type ReadResult = { kind: 'missing' } | { kind: 'text'; text: string } | { kind: 'refused'; reason: string };
 
 const MAX_BYTES = 64 * 1024;
+export const USAGE = 'Usage: ashlr fleet self-loop-await --result-file <abs> --after <ISO-UTC> --timeout-ms <1..60000> [--poll-ms <10..1000>] --json';
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 const TERMINATIONS = ['duration', 'max-ticks', 'interrupted', 'observer-error'];
 

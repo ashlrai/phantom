@@ -36,7 +36,7 @@ describe('behind commit subjects', () => {
       behindSubjects: null, sourceState: 'healthy', canFastForward: true,
     });
   });
-  it.each(['', ' \n\t\r\n'])('returns null for empty subjects', async (subjects) => {
+  it.each(['', ' \n\t\r\n'])('returns null for empty subjects (%#)', async (subjects) => {
     expect((await readSelfUpdateStatus(fixture(12, subjects).deps)).behindSubjects).toBeNull();
   });
   it('strips controls, trims and bounds long subjects', async () => {

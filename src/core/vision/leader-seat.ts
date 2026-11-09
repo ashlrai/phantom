@@ -22,7 +22,7 @@ import type { NativeRoleEngine, RoleCompletionMetrics } from '../run/role-comple
 import type { AgentActionEvent } from '../fleet/agent-action-ledger.js';
 import type { LocalLeaderCompletionMetrics, LocalLeaderBinding } from './local-leader-transport.js';
 import { subscriptionOnlyCurrent } from '../routing/subscription-only.js';
-import { peekDevinCliExecutionBinding, refreshDevinCliExecutionBinding } from '../devin/cli-admission.js';
+import { devinCliIdentityCurrent, peekDevinCliExecutionBinding, refreshDevinCliExecutionBindings, type DevinCliExecutionBinding } from '../devin/cli-admission.js';
 import type { EffectivePolicy } from '../authority/types.js';
 import type { VerseSeat } from '../verse/types.js';
 import type { LeaderRunMode, LeaderSeatAttempt } from './leader-types.js';
@@ -50,6 +50,8 @@ export type LeaderSeatResolution =
 /** What discovery tells us about one seat — identity, model, launcher. */
 export interface LeaderSeatCandidate {
   seat: VerseSeat;
+  /** Native catalog/principal evidence only; never a chat seat or shared quota. */
+  devinBindings?: readonly DevinCliExecutionBinding[];
   /** Native-profile launcher argv prefix (claude / grok); null for local seats. */
   launcher: string[] | null;
   /** Ollama base (no /v1) for local seats. */
@@ -141,6 +143,14 @@ function unknownCapacity(seat: VerseSeat): SeatCapacity {
     observedAt: null,
     spentTodayUsd: null,
   };
+}
+
+function currentDevinBinding(candidate: LeaderSeatCandidate, model: string): DevinCliExecutionBinding | null {
+  const initial = candidate.devinBindings?.find(binding => binding.model === model);
+  const current = peekDevinCliExecutionBinding(model);
+  if (!initial || !current || !devinCliIdentityCurrent(initial, model)) return null;
+  return (['executableEpoch', 'credentialsEpoch', 'principalDigest', 'principalBasis', 'teamDigest', 'originDigest', 'contextTokens'] as const)
+    .every(key => initial[key] === current[key]) ? current : null;
 }
 
 interface LeaderRouting {
@@ -244,8 +254,8 @@ async function routeLeader(
     const variants=models.map(model => ({
       candidate:{...candidate,seat:{...candidate.seat,models:[model],contextWindow:model.contextWindow}},
       capacity:{...base,contextWindow:model.contextWindow,tier:seatTier(candidate.seat.engine,model.id),
-        ...(candidate.seat.engine === 'devin' && candidate.seat.id === 'devin-cli' && peekDevinCliExecutionBinding(model.id)
-          ? {free:true,costBasis:'free' as const,contextWindow:peekDevinCliExecutionBinding(model.id)!.contextTokens} : {})},
+        ...(candidate.seat.engine === 'devin' && candidate.seat.id === 'devin-cli' && currentDevinBinding(candidate, model.id)
+          ? {free:true,costBasis:'free' as const,contextWindow:currentDevinBinding(candidate, model.id)!.contextTokens} : {})},
     })).filter(variant => deps.route(request,[variant.capacity],policy,nowMs).seatId !== null);
     const ranked = rankEligibleCapacities(request, variants.map(variant => variant.capacity), policy, { nowMs });
     const orderedVariants = [...variants].sort((a, b) => preferences
@@ -317,12 +327,12 @@ function buildSeat(deps: LeaderSeatDeps, chosen: LeaderSeatCandidate, opts: { mo
       const capacity=snapshot?.seats.find(row=>row.seatId === chosen.seat.id) ?? (engine === 'devin' ? unknownCapacity(chosen.seat) : null);
       if(!capacity)return false;
       if(engine === 'codex' && !subscriptionOnlyCurrent(capacity,deps.now()))return false;
-      if(engine === 'devin' && !peekDevinCliExecutionBinding(model))return false;
+      if(engine === 'devin' && !currentDevinBinding(chosen, model))return false;
       let budgetPolicy=deps.budgetPolicy();
       if(policy)budgetPolicy=deps.clampBudget(budgetPolicy,policy);
       return deps.route({task:'leader',difficulty:'high',autonomous:true,contextTokens:Math.ceil(opts.promptChars/4)+4096},
         [{...capacity,contextWindow:chosen.seat.contextWindow,tier:seatTier(engine,model),
-          ...(engine === 'devin' && peekDevinCliExecutionBinding(model) ? {free:true,costBasis:'free' as const} : {})}],budgetPolicy,deps.now()).seatId === chosen.seat.id;
+          ...(engine === 'devin' && currentDevinBinding(chosen, model) ? {free:true,costBasis:'free' as const} : {})}],budgetPolicy,deps.now()).seatId === chosen.seat.id;
     };
     complete = deps.transports.native
       ? deps.transports.native(chosen.seat.id,engine,model,admitted,budget)
@@ -802,17 +812,18 @@ export async function loadDefaultLeaderSeatDeps(cfg: AshlrConfig): Promise<Leade
         // The Leader needs identity and launchers, not the Claude token scan.
         claudeUsage: () => ({ tokens5h: 0, tokens7d: 0, messages5h: 0, messages7d: 0, readAt: Date.now(), filesScanned: 0 }),
       });
-      const standing=effective.currentStandingPolicy();
-      const devinSeat=discovery.seats.find(seat=>seat.id === 'devin-cli' && seat.engine === 'devin');
-      if(devinSeat && cfg.devin?.enabled === true && cfg.devin?.fleet === true && standing?.engines.includes('devin') && standing.spend.seats[devinSeat.id]?.roles.includes('leader')){
-        for(const model of devinSeat.models.filter(model=>!model.unavailableReason)){
-          await refreshDevinCliExecutionBinding(model.id,{admitted:()=>effective.currentStandingPolicy()?.spend.seats[devinSeat.id]?.roles.includes('leader') === true});
-        }
-      }
+      // Native CLI admission is separate from Verse's cloud/chat seat registry.
+      const devinAdmitted = () => {
+        const policy = effective.currentStandingPolicy();
+        const seat = policy?.spend.seats['devin-cli'];
+        return cfg.devin?.enabled === true && cfg.devin?.fleet === true && policy?.engines.includes('devin') === true &&
+          seat?.enabled === true && seat.roles.includes('leader');
+      };
+      const bindings = devinAdmitted() ? await refreshDevinCliExecutionBindings({ admitted: devinAdmitted }) : [];
       const llamaSelected = discovery.localRuntime.dispatch?.lane === 'llama-server';
       const localTransport = llamaSelected ? await import('./local-leader-transport.js') : null;
       const runtime = localTransport ? await localTransport.readLocalLeaderRuntime(cfg) : null;
-      return discovery.seats.map((seat) => {
+      const candidates: LeaderSeatCandidate[] = discovery.seats.map((seat) => {
         const launch = discovery.launches.get(seat.id);
         return {
           seat,
@@ -822,6 +833,16 @@ export async function loadDefaultLeaderSeatDeps(cfg: AshlrConfig): Promise<Leade
             binding: localTransport!.bindLocalLeaderModel(runtime, seat.models[0]?.id ?? '', seat.contextWindow) } } : {}),
         };
       });
+      if (bindings.length && devinAdmitted()) {
+        const first = bindings[0]!;
+        candidates.push({ launcher: null, ollamaBaseUrl: null, devinBindings: bindings, seat: {
+          id: 'devin-cli', engine: 'devin', label: 'Devin (native CLI)', accountId: first.principalDigest,
+          models: bindings.map(binding => ({ id: binding.model, label: binding.model, contextWindow: binding.contextTokens, windowSource: 'provider-catalog' })),
+          contextWindow: first.contextTokens,
+          health: { state: 'ready', summary: 'Current native CLI identity and explicitly Free model catalog.', windows: [], observedAt: new Date(first.observedAt).toISOString() },
+        } });
+      }
+      return candidates;
     },
     capacitySnapshot: () => budgetStore.readCapacitySnapshot(),
     budgetPolicy: () => budgetStore.loadBudgetPolicy(),

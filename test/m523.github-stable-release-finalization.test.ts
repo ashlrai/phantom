@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {describe, expect, it} from 'vitest';
+import {nodeFixtureHeader} from './helpers/node-fixture.js';
 import {parse} from 'yaml';
 import {canonicalJson} from '../src/core/authority/canonical-json.js';
 import {verifyCompatibleUpdateManifest, verifyMinisign, type CanonicalUpdateManifest} from '../src/core/desktop/update-manifest.js';
@@ -334,7 +335,7 @@ function runEffect(mode = 'happy') {
     mkdirSync(preflight); mkdirSync(bin); mkdirSync(runtime);
     const receiptBytes = JSON.stringify(receipt); writeFileSync(join(preflight, 'github-stable-finalization-preflight.json'), receiptBytes);
     writeFileSync(join(dir, 'fixture.json'), JSON.stringify({release, assets: observation.assets, run, jobs, artifact, latest: f.files.get('latest.json')!.toString('base64'), input}));
-    const stub = `#!${process.execPath}
+    const stub = `${nodeFixtureHeader()}
 const fs = require('node:fs'), path = require('node:path');
 const root = process.env.FIXTURE_ROOT, mode = process.env.FIXTURE_MODE;
 const f = JSON.parse(fs.readFileSync(path.join(root, 'fixture.json'), 'utf8'));

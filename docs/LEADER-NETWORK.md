@@ -1,5 +1,19 @@
 # Leader network endpoint
 
+Slack Socket Mode uses the same durable Leader inbox, reply routes and outbox.
+Only a human Slack user ID explicitly listed in the local `[mason].identities`
+and `[team].identities` can become operator input. Peer bots retain agent
+identities even if a mistaken owner entry lists their bot ID. Owner input is
+durable before its Socket Mode acknowledgement; retries reuse the same route.
+
+Replies use the original authenticated Slack channel and thread and recheck
+current approval and complete membership before sending. The existing Slack
+intent journal reconciles an uncertain post by client ID without posting twice.
+The resident Leader owns model generation; `channels slack run` drains saved
+Leader replies within its bounded session. Its deadline aborts Slack HTTP and
+socket setup, and expired sessions cannot begin another send. Private iMessage
+and email bodies are excluded from general Slack forwarding.
+
 ```sh
 phm leader seat --json
 phm leader seat --tier workhorse --json
@@ -69,6 +83,8 @@ checks; email also requires its existing `sendReplies` opt-in. Other network
 channels use the typed adapter boundary and remain drafted without a qualified
 transport. iMessage content remains on the Mac. The local desktop path requires
 the normal dispatch gate and mutation token; a body cannot supply its identity.
+
+The unified owner thread (`phm comms thread --json`) records every allowed inbound message in one order and fans leader replies back to the originating channel and the desktop thread. `createLeaderMailbox` in `src/core/comms/leader-mailbox.ts` is the inbox handoff for that thread (claim key `queue:RQ-COMMS-UNIFIED-1`). Adapters stay disabled until configured. See [Owner thread](OWNER-THREAD.md).
 
 `createLeaderNetwork` is the typed adapter boundary. `ingest` receives the
 adapter-authenticated identity separately from the envelope. Adapters pass their

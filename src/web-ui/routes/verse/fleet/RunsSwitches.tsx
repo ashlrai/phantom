@@ -40,7 +40,7 @@ export function RunsSwitches({ readOnly = false }: { readOnly?: boolean }) {
   usePollWhileVisible(read, 10_000, { enabled: !missing });
 
   async function change(id: string, checked: boolean): Promise<void> {
-    if (writes.current.has(id)) return;
+    if (id === 'HOLD' || writes.current.has(id)) return;
     writes.current.add(id);
     if (writes.current.size > 1) reconcile.current = true;
     setPending([...writes.current]);
@@ -68,8 +68,8 @@ export function RunsSwitches({ readOnly = false }: { readOnly?: boolean }) {
         <div className={styles.rows}>
           {data.switches.map(row => (
             <div className={styles.row} key={row.id}>
-              <Switch label={switchLabel(row.id)} checked={!row.on} onChange={checked => void change(row.id, checked)} disabled={readOnly || pending.includes(row.id)} aria-describedby={`switch-description-${row.id}`} />
-              <p id={`switch-description-${row.id}`}>{row.effect}{row.on && sinceText(row.since, Date.now()) ? ` · ${sinceText(row.since, Date.now())}` : ''}</p>
+              <Switch label={switchLabel(row.id)} checked={row.id === 'HOLD' ? row.on : !row.on} onChange={checked => void change(row.id, checked)} disabled={readOnly || row.id === 'HOLD' || pending.includes(row.id)} aria-describedby={`switch-description-${row.id}`} />
+              <p id={`switch-description-${row.id}`}>{row.effect}{row.id !== 'HOLD' && row.on && sinceText(row.since, Date.now()) ? ` · ${sinceText(row.since, Date.now())}` : ''}</p>
             </div>
           ))}
         </div>

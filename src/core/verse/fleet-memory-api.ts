@@ -36,7 +36,7 @@ export function createFleetMemoryApi(deps: FleetMemoryApiDeps = {}): ApiModule {
     if (path !== VERSE_FLEET_MEMORY_PATH || method !== 'GET') return false;
     try {
       const files = await read(deps.runsDir ?? defaultRunsDir());
-      const view = memoryView(files.memstat, files.memguard, now());
+      const view = memoryView(files.memstat, files.memguard, now(), files.resourceSession);
       const body: FleetMemoryResponseV1 = { v: 1, generatedAt: view.generatedAt,
         memory: { ...view, engine_admission: readAdmission() } };
       sendJson(res, 200, body);

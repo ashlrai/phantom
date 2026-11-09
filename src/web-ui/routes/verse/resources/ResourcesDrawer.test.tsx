@@ -445,8 +445,9 @@ describe('ResourcesDrawer — accounts', () => {
     const claude = within(cardOf('Claude Max'));
     fireEvent.click(claude.getByText('Usage details'));
     expect(claude.getByText('92%')).toBeInTheDocument();
-    expect(claude.getByText('15%')).toBeInTheDocument();
-    expect(claude.getByRole('img', { name: /5-hour window: 15% used/ })).toBeInTheDocument();
+    expect(claude.getByText('85%')).toBeInTheDocument();
+    expect(claude.getByRole('img', { name: /weekly window: 85% used/ })).toBeInTheDocument();
+    expect(claude.queryByRole('img', { name: /5-hour window/ })).not.toBeInTheDocument();
     // The binding window carries the reserve in its sentence.
     expect(claude.getAllByRole('img').some((m) => /40% kept for you/.test(m.getAttribute('aria-label') ?? ''))).toBe(true);
     expect(within(cardOf('Personal Codex')).getByText('limit reached')).toBeInTheDocument();
@@ -758,7 +759,9 @@ describe('shared resource observation clock', () => {
     const groups = [...document.querySelectorAll('[data-provider-group="openai"]')];
     for (const group of groups) {
       expect(group).not.toHaveAttribute('open');
-      expect(group.querySelector('summary')).toHaveTextContent('1 current readings · 0 stale readings · 1 unconfirmed resources');
+      // The bar also includes the unconfirmed personal-session usage resource.
+      const isBar = group.closest('[role="group"][aria-label="Resources at a glance"]') !== null;
+      expect(group.querySelector('summary')).toHaveTextContent(`1 current readings · 0 stale readings · ${isBar ? 2 : 1} unconfirmed resources · 2 configured/declared references`);
       fireEvent.click(group.querySelector('summary')!);
       expect(group.textContent).toContain('synthetic-alpha-account'); expect(group.textContent).toContain('synthetic-beta-account');
       const alpha = [...group.querySelectorAll('details')].find(detail => detail.querySelector('summary')?.textContent?.includes('synthetic-alpha-account'))!;
@@ -1184,6 +1187,7 @@ describe('ResourcesDrawer — equal partners (3.15)', () => {
     devin = DEVIN_OVERVIEW;
     cloud = CLOUD;
     render(<ResourcesBar expanded />);
+    fireEvent.click(screen.getByRole('button', { name: /Usage sources and budgets/ }));
     const devinButton = await screen.findByRole('button', { name: 'Devin tracked budget: 38 ACUs of 50 ACUs left. Open Resources' });
     expect(within(devinButton).getByText('38 ACUs budget')).toBeInTheDocument();
     expect(devinButton.querySelector('svg[data-provider="devin"]')).toHaveAttribute('viewBox', '0 0 425 425');
@@ -1213,7 +1217,7 @@ describe('ResourcesDrawer — weekly-only Claude', () => {
     const heading = await screen.findByRole('heading', { name: /^Claude weekly/ });
     const card = within(heading.closest('li')!);
     expect(card.getAllByRole('img', { name: /weekly window/ })).toHaveLength(1);
-    expect(card.getByText(/Anthropic removed the 5-hour limit on this plan\. Only the weekly window applies\./)).toBeInTheDocument();
+    expect(card.getByText('Anthropic removed the 5-hour limit on this plan. Only the weekly window applies.')).toBeInTheDocument();
     expect(card.queryByText(/5-hour window|rolling 5h/)).toBeNull();
   });
 });

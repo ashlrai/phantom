@@ -14,6 +14,11 @@ export type { IdleLane } from '../core/fleet/idle-lanes.js';
 
 export type IdleLaneReader = (path: string) => Promise<string>;
 
+const usage = `Usage: ashlr fleet idle-lanes [--json]
+Read lanes with queued work. Red: room to run. Warn: held. Exit 1 if any lane is red.
+Each lane shows the age of its last jobs.jsonl event; a red lane quiet for 30 minutes or more is marked STUCK.
+--stuck-after <min>  Mark a red lane STUCK after this many quiet minutes (default 30; the desktop uses 15).`;
+
 // Same bound lane-console puts on jobs.jsonl.
 const MAX_LEDGER_FILE_BYTES = 8 * 1024 * 1024;
 
@@ -29,12 +34,7 @@ export async function cmdFleetIdleLanes(
   reader: IdleLaneReader = readBounded,
 ): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log(
-      'Usage: ashlr fleet idle-lanes [--json]\n' +
-        'Read lanes with queued work. Red: room to run. Warn: held. Exit 1 if any lane is red.\n' +
-        'Each lane shows the age of its last jobs.jsonl event; a red lane quiet for 30 minutes or more is marked STUCK.\n' +
-        '--stuck-after <min>  Mark a red lane STUCK after this many quiet minutes (default 30; the desktop uses 15).',
-    );
+    console.log(usage);
     return 0;
   }
   const stuckAfterArg = parseStuckAfterArg(args);

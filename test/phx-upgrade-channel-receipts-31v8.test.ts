@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createChannelReceiver, type ChannelAck } from '../src/core/fleet/channel-envelope.js';
+import { normalizeForDedupe } from '../src/core/fleet/cross-channel-dedupe.js';
 import { readInboxEntries } from '../src/core/fleet/mason-inbox.js';
 
 let runsDir: string;
@@ -12,6 +13,7 @@ const at = new Date('2026-10-31T04:13:00Z');
 const legacyInbox = '# Mason inbox\n\n## 2026-10-30 23:59 ET (Mason, desktop) PRIORITY P0\nFake legacy order.\n';
 const desktop = { channel: 'desktop' as const, verifiedSenderId: sender, body: '  Fake cafe\u0301\r\nupgrade order.  ' };
 const mobile = { channel: 'mobile' as const, verifiedSenderId: sender, body: 'Fake café\nupgrade order.' };
+const entryId = `desk-${createHash('sha256').update(at.toISOString() + mobile.body).digest('hex').slice(0, 16)}`;
 const inboxPath = (): string => join(runsDir, 'leader', 'MASON-INBOX.md');
 const receiptPath = (): string => join(runsDir, 'channel-receipts', 'receipts.json');
 const options = () => ({ runsDir, allowedSenderIds: new Set([sender]), now: () => at });
@@ -36,8 +38,8 @@ describe('3.30 channel receipts on a 3.29 inbox', () => {
     expect(desktopAcks).toEqual([first.ack]);
 
     const receipt = await readFile(receiptPath(), 'utf8');
-    const hash = createHash('sha256').update(JSON.stringify([sender, mobile.body])).digest('hex');
-    expect(JSON.parse(receipt)).toEqual([[hash, at.getTime(), first.ack.dedupeKey]]);
+    const hash = createHash('sha256').update(JSON.stringify([sender, normalizeForDedupe(mobile.body)])).digest('hex');
+    expect(JSON.parse(receipt)).toEqual([[hash, at.getTime(), first.ack.dedupeKey, { channel: 'desktop', pending: false, envelopeDigest: expect.stringMatching(/^[a-f0-9]{64}$/) }]]);
     expect(receipt).not.toContain(sender);
     expect(receipt).not.toContain(mobile.body);
     const acceptedInbox = await readFile(inboxPath(), 'utf8');
@@ -47,16 +49,16 @@ describe('3.30 channel receipts on a 3.29 inbox', () => {
     const retry = await receiveMobile(mobile);
     expect(retry.ok).toBe(true);
     if (!retry.ok) throw new Error('expected a duplicate mobile order');
-    expect(retry.ack).toEqual({ channel: 'mobile', status: 'duplicate', dedupeKey: first.ack.dedupeKey });
+    expect(retry.ack).toEqual({ channel: 'mobile', status: 'duplicate', dedupeKey: first.ack.dedupeKey, entryId });
     expect(mobileAcks).toEqual([retry.ack]);
     expect(await receiveMobile({ ...mobile, verifiedSenderId: 'fake-other-sender' })).toEqual({ ok: false, reason: 'sender-not-allowed' });
     expect(mobileAcks).toEqual([retry.ack]);
     expect(await readFile(receiptPath(), 'utf8')).toBe(receipt);
-    expect(await readFile(inboxPath(), 'utf8')).toBe(acceptedInbox);
+    expect(await readFile(inboxPath(), 'utf8')).toBe(acceptedInbox.replace('] Fake', '] [also:phone] Fake'));
     expect(await readInboxEntries({ runsDir })).toEqual({
       sourceState: 'healthy',
       entries: [
-        { at: '2026-10-31 00:13', source: 'desktop', priority: 'P0', text: mobile.body },
+        { at: '2026-10-31 00:13', channel: 'desktop', id: entryId, source: `desktop (${entryId})`, priority: null, alsoChannels: ['phone'], text: mobile.body },
         { at: '2026-10-30 23:59', source: 'desktop', priority: 'P0', text: 'Fake legacy order.' },
       ],
     });
@@ -73,21 +75,21 @@ describe('3.30 channel receipts on a 3.29 inbox', () => {
     expect(first.ack).toEqual({ channel: 'desktop', status: 'accepted', dedupeKey: expect.stringMatching(/^[a-f0-9]{64}$/) });
     expect(failedAcks).toEqual([first.ack]);
     const receipt = await readFile(receiptPath(), 'utf8');
-    expect(JSON.parse(receipt)).toEqual([[expect.stringMatching(/^[a-f0-9]{64}$/), at.getTime(), first.ack.dedupeKey]]);
+    expect(JSON.parse(receipt)).toEqual([[expect.stringMatching(/^[a-f0-9]{64}$/), at.getTime(), first.ack.dedupeKey, { channel: 'desktop', pending: false, envelopeDigest: expect.stringMatching(/^[a-f0-9]{64}$/) }]]);
     const acceptedInbox = await readFile(inboxPath(), 'utf8');
 
     const mobileAcks: ChannelAck[] = [];
     const retry = await createChannelReceiver({ ...options(), acknowledge: async (ack) => { mobileAcks.push(ack); } })(mobile);
     expect(retry.ok).toBe(true);
     if (!retry.ok) throw new Error('expected duplicate after transport failure');
-    expect(retry.ack).toEqual({ channel: 'mobile', status: 'duplicate', dedupeKey: first.ack.dedupeKey });
+    expect(retry.ack).toEqual({ channel: 'mobile', status: 'duplicate', dedupeKey: first.ack.dedupeKey, entryId });
     expect(mobileAcks).toEqual([retry.ack]);
     expect(await readFile(receiptPath(), 'utf8')).toBe(receipt);
-    expect(await readFile(inboxPath(), 'utf8')).toBe(acceptedInbox);
+    expect(await readFile(inboxPath(), 'utf8')).toBe(acceptedInbox.replace('] Fake', '] [also:phone] Fake'));
     expect(await readInboxEntries({ runsDir })).toEqual({
       sourceState: 'healthy',
       entries: [
-        { at: '2026-10-31 00:13', source: 'desktop', priority: 'P0', text: mobile.body },
+        { at: '2026-10-31 00:13', channel: 'desktop', id: entryId, source: `desktop (${entryId})`, priority: null, alsoChannels: ['phone'], text: mobile.body },
         { at: '2026-10-30 23:59', source: 'desktop', priority: 'P0', text: 'Fake legacy order.' },
       ],
     });

@@ -65,7 +65,7 @@ it.each([503, 404])('keeps rows visible when the bus returns %i', async code => 
   vi.stubGlobal('fetch', vi.fn((url: string) => url.includes('/fleet/runs') ? reply(fleetRunsFixture({ inbox })) : reply({ error: 'fake' }, code)));
   render(<FleetChannelsPane {...props} />);
   await waitFor(() => expect(screen.getByText('Bus unavailable, cannot verify')).toBeInTheDocument());
-  expect(within(screen.getByRole('list', { name: 'Channels' })).getAllByRole('listitem')).toHaveLength(7);
+  expect(within(screen.getByRole('list', { name: 'Channels' })).getAllByRole('listitem')).toHaveLength(8);
   expect(channel('Desktop app')).toHaveTextContent('Bus mirror unavailable');
   expect(screen.queryByText(/hub needs --allow-dispatch/)).toBeNull();
 });

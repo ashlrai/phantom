@@ -62,7 +62,7 @@ describe('graph.v1 registry projection', () => {
     { ...fleet, mcp: [{ id: 'locus' }, { id: 'locus' }] },
     { ...fleet, edges: [{ kind: 'executes', from: 'producer', to: 'reviewer' }] },
     { ...fleet, agents: new Array(10_001).fill({ id: 'a' }) },
-  ])('withholds malformed fleet input while retaining valid seat nodes', value => {
+  ])('withholds malformed fleet input while retaining valid seat nodes (%#)', value => {
     const graph = buildRegistryGraph(value, seats);
     expect(graph.sources.fleet).toBe('invalid');
     expect(graph.nodes.some(n => n.kind === 'agent')).toBe(false);

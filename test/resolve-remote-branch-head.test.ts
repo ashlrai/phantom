@@ -10,11 +10,11 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { resolveRemoteBranchHead } from '../src/core/inbox/merge.js';
 
 function git(cwd: string, args: string[]): string {
-  return execSync('git ' + args.join(' '), { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+  return execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', ...args], { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
 }
 
 describe('resolveRemoteBranchHead', () => {

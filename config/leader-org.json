@@ -1,0 +1,57 @@
+{
+  "schema": "phantom.leader-org/v1",
+  "coordinatesWith": [
+    {
+      "rq": "RQ-SHARED-VISIBILITY-1",
+      "surface": "phm context / phm claim",
+      "note": "The leader reads the shared brief and claims work. It does not replace context or claim."
+    },
+    {
+      "rq": "RQ-COMMS-UNIFIED-1",
+      "surface": "acceptOwnerMessage / readLeaderOutbox",
+      "note": "Channel adapters authenticate the owner, then use this inbox and outbox. This office does not speak to a channel."
+    }
+  ],
+  "roles": [
+    {
+      "id": "leader",
+      "title": "Digital co-founder",
+      "owner": "leader",
+      "lane": "frontier",
+      "mission": "Vision, direction, org structure, accountability and orchestration. Mason talks only to this role.",
+      "routes": []
+    },
+    {
+      "id": "engineering",
+      "title": "Engineering",
+      "owner": "engineering",
+      "lane": "work",
+      "mission": "Implement and fix the product.",
+      "routes": ["code", "bug", "test", "repo", "implement", "fix", "pr"]
+    },
+    {
+      "id": "review",
+      "title": "Review",
+      "owner": "review",
+      "lane": "mid",
+      "mission": "Review changes and hold the quality bar.",
+      "routes": ["review", "audit"]
+    },
+    {
+      "id": "release",
+      "title": "Release",
+      "owner": "release",
+      "lane": "work",
+      "mission": "Ship through the sanctioned release workflow.",
+      "routes": ["release", "publish", "ship"]
+    },
+    {
+      "id": "steward",
+      "title": "Context and resources",
+      "owner": "steward",
+      "lane": "fast",
+      "mission": "Context, disk and resource stewardship.",
+      "routes": ["disk", "context", "resource", "cleanup"]
+    }
+  ]
+}

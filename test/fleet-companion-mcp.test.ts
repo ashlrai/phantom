@@ -38,7 +38,7 @@ describe('fleet companion MCP specs', () => {
     for (const [name, args] of Object.entries(FLEET_COMPANION_MCP_SPECS)) {
       expect(repoMcp.mcpServers[name]).toEqual({ command: 'npx', args: [...args] });
     }
-    // Stack has no reviewed release yet, so confined runs do not start it.
+    // Stack is not admitted by this confined-run companion allowlist.
     expect(Object.keys(trackedCompanionMcpServers(process.cwd())).sort()).toEqual(['lexicon', 'locus', 'phantom-secrets']);
   });
 });
@@ -61,15 +61,31 @@ describe('trackedCompanionMcpServers', () => {
     expect(trackedCompanionMcpServers(worktree('{not json'))).toEqual({});
     expect(trackedCompanionMcpServers(worktree({ mcpServers: [] }))).toEqual({});
   });
+
+  it('rejects historical pins and altered execution settings for reviewed pins', () => {
+    for (const [name, args] of Object.entries({
+      locus: ['-y', '@ashlrai/locus-mcp@0.6.2'],
+      lexicon: ['-y', '-p', '@ashlr/lexicon@0.5.4', 'lexicon-mcp'],
+    })) {
+      expect(trackedCompanionMcpServers(worktree({ mcpServers: { [name]: { command: 'npx', args } } }))).toEqual({});
+    }
+    for (const [name, args] of Object.entries(FLEET_COMPANION_MCP_SPECS)) {
+      for (const altered of [
+        { command: 'npx', args: [...args], env: { X: '1' } },
+        { command: 'sh', args: [...args] },
+        { command: 'npx', args: [...args, '--extra'] },
+      ]) expect(trackedCompanionMcpServers(worktree({ mcpServers: { [name]: altered } }))).toEqual({});
+    }
+  });
 });
 
 describe('fleet sidecar with companions', () => {
   it('writes companions without ashlr-mcp and stays off for codex', () => {
-    const dir = worktree({ mcpServers: { locus: { command: 'npx', args: ['-y', '@ashlrai/locus-mcp@0.5.0'] } } });
+    const dir = worktree({ mcpServers: { locus: { command: 'npx', args: ['-y', '@ashlrai/locus-mcp@0.7.0'] } } });
     const path = writeMcpConfigIfAvailable(dir, NO_PATH);
     expect(path).toBe(join(dir, FLEET_MCP_CONFIG_FILENAME));
     const written = JSON.parse(readFileSync(path!, 'utf8')) as { mcpServers: Record<string, unknown> };
-    expect(written.mcpServers['locus']).toEqual({ command: 'npx', args: ['-y', '@ashlrai/locus-mcp@0.5.0'] });
+    expect(written.mcpServers['locus']).toEqual({ command: 'npx', args: ['-y', '@ashlrai/locus-mcp@0.7.0'] });
     expect(fleetEfficiencyMcpArgs('claude', { path: path!, command: null })).toEqual(['--mcp-config', path, '--strict-mcp-config']);
     expect(fleetEfficiencyMcpArgs('codex', { path: path!, command: null })).toEqual([]);
   });

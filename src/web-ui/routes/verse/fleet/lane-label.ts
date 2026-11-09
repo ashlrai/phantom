@@ -40,12 +40,12 @@ export function laneShort(lane: string): string {
 function normaliseLabel(lane: string): string {
   if (typeof lane !== 'string' || lane.trim().length === 0) return 'Unknown lane';
   const cleaned = lane.trim().replace(/[-_]+/g, ' ');
-  return (cleaned.charAt(0).toUpperCase() + cleaned.slice(1)).replace(/\b(\w)/g, (_m, c) => c.toUpperCase());
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 }
 
 function normaliseShort(lane: string): string {
   if (typeof lane !== 'string' || lane.trim().length === 0) return '?';
-  const trimmed = lane.trim().replace(/[-_]+/g, ' ');
+  const trimmed = lane.trim();
   const upper = trimmed.toUpperCase();
   return upper.slice(0, 4);
 }

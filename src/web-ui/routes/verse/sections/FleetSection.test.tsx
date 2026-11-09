@@ -350,7 +350,8 @@ describe('FleetSection — automatic live polling', () => {
     const { unmount } = render(<FleetSection />);
     try {
       await act(async () => { await vi.advanceTimersByTimeAsync(3 * FLEET_POLL_MS); });
-      expect(fetchMock).not.toHaveBeenCalled();
+      // The task list has its own abortable read outside the metadata gate.
+      expect(fetchMock.mock.calls.filter(([input]) => String(input) === '/api/verse/fleet/live')).toHaveLength(0);
       expect(queryGateStats().active).toBe(4);
       await act(async () => { releases.forEach(release => release()); await Promise.all(blockers); });
       const liveCalls = fetchMock.mock.calls.filter(([input, init]) => String(input) === '/api/verse/fleet/live' && init?.method !== 'POST');

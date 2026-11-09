@@ -103,7 +103,7 @@ const round1 = (n: number): number => Math.round(n * 10) / 10;
 const HOUR_MS = 3_600_000;
 
 /**
- * Latest outcome and finish rows per job id, wt-reap semantics: the last row
+ * Latest outcome and finish rows after the last launch per job id: the last row
  * of each event type wins, outcome.state (or .outcome) lowercased, finish.ts
  * parsed for age, finish.empty for an empty run. Torn lines are skipped,
  * never echoed.
@@ -117,7 +117,9 @@ export function parseJobLedger(
       const row = JSON.parse(line) as Record<string, unknown> | null;
       if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
       const id = row.job ?? row.job_id ?? row.id;
-      if (typeof id !== 'string' || (row.event !== 'outcome' && row.event !== 'finish')) continue;
+      if (typeof id !== 'string') continue;
+      if (row.event === 'launch') { latest.delete(id); continue; }
+      if (row.event !== 'outcome' && row.event !== 'finish') continue;
       const entry = latest.get(id) ?? {};
       entry[row.event] = row;
       latest.set(id, entry);

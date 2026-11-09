@@ -2,7 +2,7 @@
  * `ashlr fleet dot-handoff [--json]` — offline, read-only evidence summary for
  * handing work to Mason's personal OpenAI Dot (and back). Prints what official
  * OpenAI documentation establishes, what stays unverified, the honest transport
- * boundary (Phantom's iMessage outbox is self-only), and the next concrete
+ * boundary (owner-only outbox plus a separately approved teammate transport), and the next concrete
  * handoff step. No network, no filesystem reads, no account access, no sends.
  * Guide: docs/DOT-HANDOFF.md.
  */
@@ -103,6 +103,7 @@ const LIMITS = [
 export const DOT_HANDOFF_SUMMARY = {
   schema: 'fleet.dot-handoff.v1',
   observedAt: '2026-11-04',
+  repositoryObservedAt: '2026-11-08',
   readOnly: true,
   offline: true,
   guide: 'docs/DOT-HANDOFF.md',
@@ -121,9 +122,11 @@ export const DOT_HANDOFF_SUMMARY = {
     note: 'Validates counterpart shape (localOptIn, remoteOptInEvidence, channel email|slack|imessage, scope). Disabled by default; no runtime, transport or send path is wired.',
   },
   transport: {
-    phantomToDot: 'blocked',
+    phantomToDot: 'unverified',
     reason:
-      'Phantom\'s iMessage transport is self-only: src/core/integrations/imessage.ts and src/core/comms/imessage-outbox.ts accept only the configured owner handle (isSelfIMessageHandle); any other handle is refused as not_self/drafts_unavailable. The a2a imessage counterpart channel is configuration-only. Phantom cannot send a handoff to a counterpart.',
+      'The owner outbox remains self-only. A separate approved teammate transport exists in src/core/comms/imessage-teammate-transport.ts and is used by the teammate responder. It requires macOS, enabled/unpaused comms, a non-owner allowlisted handle, local team/send-policy approval, and a fresh config check. This offline command does not inspect those prerequisites or prove an installed responder, successful delivery, or remote Dot acceptance.',
+    teammateTransport: 'available-in-source',
+    hostQualification: 'not-observed',
     unsupportedStep: 'needs-you',
     needsYou: 'ashlr fleet needs',
     needsYouFile: 'NEEDS-MASON.md under the runs dir',
@@ -131,7 +134,7 @@ export const DOT_HANDOFF_SUMMARY = {
   capabilities: CAPABILITIES,
   limits: LIMITS,
   nextHandoffStep:
-    'Draft the bounded task template from docs/DOT-HANDOFF.md into a local file (no secrets, no personal identifiers), then route delivery through needs-you: Mason sends it to his dot on a documented surface (ChatGPT app, Slack/Teams, or the dot\'s one-to-one iMessage texting). Phantom records intake when Mason messages himself via `phm imessage poll --apply`; the dot\'s reply returns through Mason, correlated by handoff-id.',
+    'Use the bounded template and check host readiness with phm imessage doctor --json. A configured, authorized teammate exchange can use the existing responder; phm imessage respond --apply is a sending action, not a diagnostic. Preserve the handoff-id and verify exact delivery and returned results. If the route is unconfigured, unsupported or lacks approval, use needs-you rather than changing permissions. The generic a2a configuration does not itself establish transport.',
   taskTemplate: {
     'handoff-id': 'stable local id, e.g. dot-handoff-20261104-01',
     goal: 'one sentence: the outcome wanted',

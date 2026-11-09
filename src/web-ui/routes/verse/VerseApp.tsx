@@ -64,13 +64,12 @@ import { subscribeAnchorRequests } from './shell/anchor-requests.js';
 import { executeCatalogCommand, useShellCommands } from './shell/run-command.js';
 import { SectionVisibilityProvider, usePollWhileVisible } from './shell/section-visibility.js';
 import { FLEET_CI_RUNS_POLL_MS, fleetCiRunsQuery } from './shell/fleet-ci-runs-query.js';
-import { deriveCiNeedsYou } from './shell/ci-needs-you.js';
+import { ciNeedsYouCount } from './shell/ci-runs-facts.js';
 import { preloadedLazy } from './shell/preloaded.js';
 import { SECTION_MODULES, sectionImporter } from './shell/section-modules.js';
 import { SurfaceNotInBuild, SurfaceSkeleton } from './shell/skeletons.js';
 import { onActivityCompletions, useActivity } from './shell/useActivity.js';
 import { useViewport } from './shell/viewport.js';
-import { useWindowTitle } from './shell/window-title.js';
 import type { WarmupOptions } from './shell/warmup.js';
 import { useVerseUi } from './useVerseUi.js';
 import { useFocusMode } from './shell/focus-mode.js';
@@ -316,9 +315,9 @@ function openWorkbenchLink(sessionId: string | null, paneId: string | null): voi
 }
 
 const ShellUpdates = lazy(() => import('./shell/ShellUpdates.js'));
+const WindowTitle = lazy(() => import('./shell/WindowTitle.js'));
 
 export function VerseApp() {
-  useWindowTitle();
   const guardOpen = useGuardState().request !== null;
   const ui = useVerseUi();
   const theme = useTheme();
@@ -489,7 +488,7 @@ export function VerseApp() {
   }, [ui.section, data?.mind?.unseen, latestMemoAt]);
 
   const expanded = ui.railExpanded && !compact;
-  const ciCount = deriveCiNeedsYou(ciRead.status === 'error' ? undefined : ciRead.data, Date.now()).length;
+  const ciCount = ciNeedsYouCount(ciRead.status === 'error' ? undefined : ciRead.data, Date.now());
   const needsYouCount = data ? data.counts.needsYou + ciCount : ciCount || null;
   // Settings, Apps & Accounts and Usage open from the gear, so on those pages
   // the gear IS the current rail item — for assistive tech too (aria-current,
@@ -511,6 +510,7 @@ export function VerseApp() {
       data-resources={resources.open && resources.pinned && !compact ? 'docked' : undefined}
       data-focus={focus ? 'on' : undefined}
     >
+      <Suspense fallback={null}><WindowTitle /></Suspense>
       <nav className={styles.rail} data-rail={expanded ? 'expanded' : 'collapsed'} aria-label={`${PRODUCT_NAME} sections`}>
         {/*
           Desktop shell: the window's top 48px is overlaid by the OS title bar

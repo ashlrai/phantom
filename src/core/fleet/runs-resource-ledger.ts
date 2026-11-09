@@ -122,6 +122,8 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
   const root = opts.runsDir ?? join(homedir(), '.ashlr-runs');
   const now = (opts.now ?? Date.now)();
   const result: ResourceLedgerV1 = { v: 1, generatedAt: new Date(now).toISOString(), sources: { status: 'missing', apiSpend: 'missing', jobs: 'missing' }, asOf: null, lanes: [], apiSpend: null, jobsMalformedRows: null };
+  // A controller tick republishes cached quotas; it never recaptures them.
+  const statusQuotaObservedAt = new Map<string, string | null>();
   let signals: ReturnType<typeof laneDeadSignals> | null = null;
   await Promise.all([
     (async () => {
@@ -135,6 +137,7 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
           if (!safeName(lane)) { result.sources.status = 'degraded'; continue; }
           const l = object(data.lanes[lane]) ? data.lanes[lane] : {};
           const b = object(budget[lane]) ? budget[lane] : {};
+          statusQuotaObservedAt.set(lane, timestamp(b.observed_at));
           if ((lane in data.lanes && !object(data.lanes[lane])) || (lane in budget && !object(budget[lane]))) result.sources.status = 'degraded';
           const credits = number(b.credits_remaining);
           result.lanes.push({ lane, running: number(l.running), target: number(l.target), held: typeof l.held === 'boolean' ? l.held : null,
@@ -166,7 +169,7 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
   ]);
   const statusMeasurements = new Map(result.lanes.map(row => [row.lane, {
     lane: row.lane, window: row.window, usedPct: row.usedPct, resetAt: row.resetAt,
-    source: row.source, observedAt: result.asOf,
+    source: row.source, observedAt: statusQuotaObservedAt.get(row.lane) ?? null,
   } satisfies QuotaMeasurement]));
   for (const row of result.lanes) row.quotaEvidence = quotaEvidence(statusMeasurements.get(row.lane)!, null, row.held, now);
   // Both collector slots point at the explicitly personal home. The collector
@@ -180,11 +183,12 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
     const personal = report.resources[0];
     const observed = personal?.observedAt ? Date.parse(personal.observedAt) : NaN;
     let lane = result.lanes.find(row => row.lane === 'codex-personal');
-    const statusAt = result.asOf ? Date.parse(result.asOf) : NaN;
+    const quotaAt = statusMeasurements.get('codex-personal')?.observedAt;
+    const statusAt = quotaAt ? Date.parse(quotaAt) : NaN;
     if (personal?.weekly?.usedPct != null &&
         (personal.weekly.windowMinutes === null || personal.weekly.windowMinutes > 315) &&
         Number.isFinite(observed) && observed <= now &&
-        (!lane || (Number.isFinite(statusAt) ? observed > statusAt : lane.usedPct === null))) {
+        (!lane || !Number.isFinite(statusAt) || statusAt > now || observed > statusAt)) {
       if (!lane) {
         lane = { lane: 'codex-personal', running: null, target: null, held: null,
           window: 'weekly', usedPct: null, creditsRemaining: null, resetAt: null,

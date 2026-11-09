@@ -32,6 +32,8 @@ const bounded = (raw: string | undefined, min: number, max: number): number | un
 // missing file is polled, sequentially; the first receipt available is the one
 // used. At most one continuation happens: waiting is not a retry policy, and
 // --apply is never added here.
+export const usage = 'Usage: ashlr fleet guardian-wait-continue --result-file <abs> --wait-ms <1..60000> [--poll-ms <10..1000>] [guardian-continue args]';
+
 export async function cmdFleetGuardianWaitContinue(args: string[], deps: GuardianWaitContinueDependencies = {}): Promise<number> {
   const fail = (reason: string, code: number): number => {
     (deps.output ?? (line => { process.stderr.write(line); }))(`error: guardian-wait-continue: ${reason}\n`);
