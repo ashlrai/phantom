@@ -52,6 +52,17 @@ export interface UseQueryOptions {
  * of a skeleton, `status === 'loading'` (no data yet at all) is the only
  * state that should render a skeleton.
  */
+/**
+ * Start (or join) the read `useQuery(def, { freshMs })` will make on mount, so
+ * the request overlaps work that happens before the component exists. It goes
+ * through the same `ensureQuery` call as the mount, so the mount joins the
+ * in-flight read or accepts the fresh one instead of issuing a second request.
+ * Never rejects: a failed warm-up leaves the entry for the mount to retry.
+ */
+export function warmQuery<T>(def: QueryDef<T>, freshMs: number = DEFAULT_QUERY_FRESH_MS): void {
+  void ensureQuery(def.key, () => def.fetch(), freshMs).catch(() => undefined);
+}
+
 export function useQuery<T>(def: QueryDef<T>, options?: UseQueryOptions): QueryEntry<T> {
   const freshMs = options?.freshMs ?? DEFAULT_QUERY_FRESH_MS;
   const enabled = options?.enabled ?? true;
