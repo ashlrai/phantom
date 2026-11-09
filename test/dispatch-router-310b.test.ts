@@ -9,6 +9,7 @@
  * Pure: no I/O, fixed clock.
  */
 import { describe, expect, it } from 'vitest';
+import { ADAPTIVE_START_LEVEL, resetAdaptiveThroughput } from '../src/core/daemon/count-preferences.js';
 
 import {
   FLEET_LOCAL_SEAT_ID,
@@ -728,7 +729,9 @@ describe('operator Grok preference and finite dispatch capacity', () => {
     expect(grokDispatchBatchCapacity({ daemon: { mode: 'continuous', perTickItems: null, maxConcurrent: 5, concurrency: { cloud: null, total: null } } } as AshlrConfig)).toBe(5);
     expect(grokDispatchBatchCapacity({ daemon: { perTickItems: null, parallel: null, maxConcurrent: null, concurrency: { cloud: 1, total: null } } } as AshlrConfig)).toBe(1);
     expect(grokDispatchBatchCapacity({ daemon: { perTickItems: null, parallel: 2, maxConcurrent: null, concurrency: { cloud: null, total: null } } } as AshlrConfig)).toBe(2);
-    expect(grokDispatchBatchCapacity({} as AshlrConfig)).toBe(2);
+    resetAdaptiveThroughput();
+    // Unset daemon counts follow the adaptive first ramp step, not the lane default of 2.
+    expect(grokDispatchBatchCapacity({} as AshlrConfig)).toBe(ADAPTIVE_START_LEVEL);
     expect(grokDispatchBatchCapacity({ daemon: { perTickItems: 20, parallel: 17 } } as AshlrConfig)).toBe(17);
     expect(grokDispatchBatchCapacity({ daemon: { perTickItems: Number.MAX_SAFE_INTEGER, parallel: Number.MAX_SAFE_INTEGER } } as AshlrConfig)).toBe(64);
     expect(grokDispatchBatchCapacity({ daemon: { mode: 'continuous', perTickItems: 20, concurrency: { cloud: 17, total: 18 } } } as AshlrConfig)).toBe(17);

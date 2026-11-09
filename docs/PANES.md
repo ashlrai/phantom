@@ -18,6 +18,8 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 | `fleet-inbox` | Leaders' inbox | `mod+alt+i` | `src/web-ui/routes/verse/fleet-inbox/fleet-inbox.pane.tsx` |
 | `fleet-lanes` | Lanes | `mod+alt+n` | `src/web-ui/routes/verse/fleet-lanes/fleet-lanes.pane.tsx` |
 | `fleet-merges` | Merges | `mod+alt+o` | `src/web-ui/routes/verse/fleet-merges/fleet-merges.pane.tsx` |
+| `fleet-mission` | Mission | `mod+alt+k` | `src/web-ui/routes/verse/fleet-mission/fleet-mission.pane.tsx` |
+| `fleet-observe` | Observe | `mod+alt+v` | `src/web-ui/routes/verse/fleet-observe/fleet-observe.pane.tsx` |
 | `fleet-outcomes` | Outcomes | — | `src/web-ui/routes/verse/fleet-outcomes/fleet-outcomes.pane.tsx` |
 | `fleet-queue` | Queue | `mod+alt+q` | `src/web-ui/routes/verse/fleet-queue/fleet-queue.pane.tsx` |
 | `fleet-releases` | Releases | — | `src/web-ui/routes/verse/fleet-releases/fleet-releases.pane.tsx` |
@@ -25,8 +27,11 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 | `fleet-supply` | Supply | `mod+alt+u` | `src/web-ui/routes/verse/fleet-supply/fleet-supply.pane.tsx` |
 | `fleet-timeline` | Worker timeline | `mod+alt+t` | `src/web-ui/routes/verse/fleet-timeline/fleet-timeline.pane.tsx` |
 | `fleet-usage` | Usage | — | `src/web-ui/routes/verse/fleet-usage/fleet-usage.pane.tsx` |
+| `goals` | Goals | — | `src/web-ui/routes/verse/goals-pane/goals.pane.tsx` |
+| `ideas` | Ideas | — | `src/web-ui/routes/verse/ideas/ideas.pane.tsx` |
 | `leader-journal` | Leader journal | `mod+alt+j` | `src/web-ui/routes/verse/leader-journal/leader-journal.pane.tsx` |
 | `leader-thread` | Leaders | `mod+alt+l` | `src/web-ui/routes/verse/leader-thread/leader-thread.pane.tsx` |
+| `library` | Library | — | `src/web-ui/routes/verse/library/library.pane.tsx` |
 | `reasoning` | Reasoning | — | `src/web-ui/routes/verse/reasoning/reasoning.pane.tsx` |
 | `sources` | Sources | — | `src/web-ui/routes/verse/reasoning/sources.pane.tsx` |
 | `terminal` | Terminal | — | `src/web-ui/routes/verse/terminal/terminal.pane.tsx` |
