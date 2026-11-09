@@ -158,7 +158,7 @@ export async function readOutboxEntries(opts: { runsDir?: string; limit?: number
   entries.sort((a, b) => (replyTime(b.at) || 0) - (replyTime(a.at) || 0));
   const seen = new Set<string>();
   const unique = entries.filter(entry => {
-    const hash = replyTextHash(entry.text);
+    const hash = `${entry.at.slice(0, 10)}:${replyTextHash(entry.text)}`;
     if (seen.has(hash)) return false;
     seen.add(hash);
     return true;
@@ -167,7 +167,7 @@ export async function readOutboxEntries(opts: { runsDir?: string; limit?: number
   return { sourceState, entries: Number.isFinite(limit) && limit > 0 ? unique.slice(-Math.floor(limit)) : [] };
 }
 
-/** Only explicit dated PLAN-LOG replies, keeping the newest copy of each text. */
+/** Only explicit dated PLAN-LOG replies, keeping the newest copy of each text per date. */
 export async function readPlanLogReplies(opts: { limit?: number } = {}): Promise<{ sourceState: 'healthy' | 'missing' | 'unknown'; entries: OutboxEntry[] }> {
   const root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   try {
@@ -177,7 +177,7 @@ export async function readPlanLogReplies(opts: { limit?: number } = {}): Promise
       .filter(e => e.at && e.heading && Number.isFinite(replyTime(e.at)))
       .sort((a, b) => replyTime(b.at) - replyTime(a.at))
       .filter(e => {
-        const hash = replyTextHash(e.text);
+        const hash = `${e.at.slice(0, 10)}:${replyTextHash(e.text)}`;
         if (seen.has(hash)) return false;
         seen.add(hash);
         return true;

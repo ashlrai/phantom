@@ -136,6 +136,11 @@ MD = R + "/metrics"; os.makedirs(MD, exist_ok=True)
 JOBS_RAW, JOBS = [], []
 _JOBS_LIVE = False
 def metric(d):
+    # launch.sh owns the pick; carry its exact tag without treating it as a new pool.
+    job = d.get("job", "")
+    if d.get("lane") == "claude" and re.fullmatch(r"[A-Za-z0-9_.-]+", job):
+        if "SUBLANE claude:fable" in rd(R + "/" + job + ".base.meta").splitlines():
+            d["sublane"] = "fable"
     d.setdefault("ts", time.strftime("%Y-%m-%dT%H:%M:%S%z"))
     if d.get("job") and "ab" not in d:   # Masbot 16:35: tag A/B arm from the router line (TERRA-AB-1)
         try:
@@ -1004,6 +1009,30 @@ def route_decision(record, proposed, now, hard_down=False, launched=False):
     record.update(pool=proposed, decided_at=now, moves=record["moves"] + [now])
     return record, None
 
+# Only included subscription pools may use this projection; metered pools never boost.
+def waste_risk(projection, lane):
+    if lane not in ("claude", "codex-personal"): return None
+    if not isinstance(projection, dict) or projection.get("known") is not True or projection.get("stale") is not False: return None
+    risk = projection.get("waste_risk")
+    return risk if risk in ("medium", "high") else None
+
+def waste_boost(projection, lane, tier):
+    risk = waste_risk(projection, lane)
+    if not risk: return None
+    boosted = {"mid": "work", "work": "frontier"}.get(tier)
+    return (boosted, "use-it-all %s waste risk: %s -> %s" % (risk, tier, boosted)) if boosted else None
+
+# The host-owned projection is advisory and expires after two minutes.
+UIA = {}
+try:
+    probe = _run(["/usr/bin/python3", "-I", R + "/bin/use-it-all.py"], 3)
+    projection = json.loads(probe.stdout)
+    if (probe.returncode == 0 and isinstance(projection, dict) and projection.get("schema") == "use-it-all.v1"
+            and type(projection.get("ts")) is int and abs(NOW - projection["ts"]) <= 120
+            and isinstance(projection.get("lanes"), dict)):
+        UIA = projection["lanes"]
+except (OSError, ValueError, subprocess.SubprocessError): pass
+
 tick_phase("restock", 5)
 # ---- restock trigger: a codex lane's queue below 3x its free slots -> Mac-side deterministic restocker (no LLM)
 import queue_gate
@@ -1209,7 +1238,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     # The key is global across pools; blocked jobs are retained below while
     # scanning continues, so a capped FIX-MAIN sibling cannot consume a claim.
     ready_ranks = _ready_repo_ranks()
-    cand.sort(key=lambda f: (_bucket(f[0]), ready_ranks.get(f[1], len(ready_ranks)),
+    cand.sort(key=lambda f: (not bool(waste_risk(UIA.get(f[2]), f[2])), _bucket(f[0]), ready_ranks.get(f[1], len(ready_ranks)),
                              *_job_priority(f[0], f[1], f[4], f[4])[1:]))
     seen = set(); pc_n = 0; local_ok = None
     def _local_healthy():   # one GET per tick; any error, timeout or non-200 -> unhealthy. Env proxies ignored.
@@ -1243,8 +1272,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                             "chars": len(text), "f": f, "prompt": text}
         return _tasks[f[0]]
     def form_batch(f):   # -> (members, lane, size target) or None to launch f on its own
-        if not (BATCHING and member_ok(f, lead=True)): return None
-        pool = [task_info(c) for c in cand if c[1] == f[1] and c[3] == f[3] and c[0] != f[0] and member_ok(c)]
+        if not (BATCHING and member_ok(f, lead=True)) or waste_risk(UIA.get(f[2]), f[2]): return None
+        pool = [task_info(c) for c in cand if c[1] == f[1] and c[3] == f[3] and c[0] != f[0] and member_ok(c) and not waste_risk(UIA.get(c[2]), c[2])]
         size = batcher.size_for(batch_tuning, f[2])
         picked = batcher.pick_members(task_info(f), pool, size)
         if not picked: return None
@@ -1336,6 +1365,10 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         for x in (".keptlogged", ".diskguard", ".phdrip", ".rc", ".timeout"):
             try: os.remove(RUN + "/" + j + x)
             except FileNotFoundError: pass
+        risk = waste_risk(UIA.get(lane), lane) if not batch else None
+        boost = waste_boost(UIA.get(lane), lane, tier) if risk else None
+        reason = boost[1] if boost else ("use-it-all %s waste risk: pool preferred" % risk if risk else None)
+        if boost: tier = boost[0]
         open(RUN + "/" + j + ".line", "w").write(line + "\n")
         open("%s/%s.launch" % (R, j), "w").close()  # discard the previous attempt before claiming
         open(RUN + "/" + j + ".dispatched", "w").write(str(int(NOW)))
@@ -1352,6 +1385,10 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             CONC["fork_failures"].append(NOW); ev("FORK_FAILED %s %s (concurrency backoff)" % (j, type(e).__name__))
             conc_adjusted(concurrency.backoff(CONC, NOW, "backoff fork", {"fork": ("danger", len(CONC["fork_failures"]))}, CONC_FLOOR, CONC_CEILING))
             GCAP = min(GCAP, global_cap()); continue
+        if reason and "waste_reason" not in route_state[j]:
+            route_state[j]["waste_reason"] = reason
+            jsave(Q + "/route-state.json", route_state)
+            ev("ROUTE_BOOST %s %s %s" % (j, lane, reason))
         if j.startswith("RQ-FIX-MAIN-"): fix_main_repos.add(repo)
         if target: drain_targets.add(target)
         fam = "codex" if lane.startswith("codex") and lane != "codex-local" else lane
