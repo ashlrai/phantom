@@ -87,11 +87,13 @@ For routine drift detection, `node scripts/sync-candidate-version.mjs --check`
 uses the root package version as the expected value; writing still requires an
 explicit version.
 
-This source tree targets version 3.30.24; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.28; check canonical release availability and exact matching assets before installation.
 
 Canonical releases use `ashlrai/phantom` and `@ashlr/phantom`.
 Its fixed discovery endpoint is
 `https://github.com/ashlrai/phantom/releases/latest/download/latest.json`.
+[The update channel](../docs/DESKTOP-UPDATE-CHANNEL.md) describes the feed,
+asset set, publication boundary and post-publication verification.
 The commissioned public key, `ai.ashlr.desktop` bundle identifier, signer,
 sidecar and saved-data identities stay unchanged. The signed legacy and
 canonical profiles remain distinct; transport redirects do not choose a profile.

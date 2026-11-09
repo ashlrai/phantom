@@ -479,6 +479,9 @@ const WORKBENCH_IMPORTS: Readonly<Record<WorkbenchRouteFamilyId, () => Promise<W
   'fleet-comms-status': async () => {
     try { return (await import('./fleet-comms-status-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-comms-status-api.js'); }
   },
+  'agent-roster': async () => {
+    try { return (await import('./agent-roster-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'agent-roster-api.js'); }
+  },
   'fleet-control': async () => {
     try { return (await import('./fleet-control-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-control-api.js'); }
   },
@@ -2179,6 +2182,25 @@ export async function handleVerseApi(
     const contextRoute = contextRouteOf(path);
     if (contextRoute !== null) {
       return await handleContextRoutes(ctx, req, res, path, method, contextRoute);
+    }
+
+    // Registry records reference the existing, gated session operations.  Do
+    // not duplicate their dispatch, readiness, or spend checks here.
+    if (path === `${VERSE_API_PREFIX}/session-registry` && method === 'GET') {
+      const engine = await getVerseEngine();
+      sendJson(res, 200, {
+        schema: 'verse.session-registry.v1',
+        start: `${VERSE_API_PREFIX}/sessions`,
+        sessions: engine.listSessions().map((session) => {
+          const base = `${VERSE_API_PREFIX}/sessions/${encodeURIComponent(session.id)}`;
+          return {
+            id: session.id, provider: session.engine, title: session.title,
+            status: session.status, createdAt: session.createdAt, updatedAt: session.updatedAt,
+            inspect: base, message: `${base}/turns`, stop: `${base}/cancel`,
+          };
+        }),
+      });
+      return true;
     }
 
     // ── /api/verse/sessions ──────────────────────────────────────────────

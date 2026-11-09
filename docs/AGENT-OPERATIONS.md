@@ -359,12 +359,13 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `phm fleet status\|watch\|lanes\|direction\|doctor\|scorecard\|oversight` | Read-only fleet snapshot, per-lane engineering console, direction report, engine readiness and quality metrics |
 | `phm manager [--apply-rejects]` | Judges pending proposals; shadow mode by default, never merges |
 | `phm leader show\|run\|tick\|say\|thread\|approve\|veto\|directives` | The Leader: memos, actions, directives and veto ([LEADER.md](LEADER.md)) |
+| `phm leader status\|ask\|org\|assign --json` | One co-founder: world, org chart, RQ accountability, and the owner inbox. Hard limits escalate; KILL stops it |
 | `phm improve propose [--open-pr --repo <dir>]` | Evidence-backed self-improvement proposals; `--open-pr` opens draft PRs from an isolated worktree and never merges or deploys |
 | `phm cloud ...` / `phm devin ...` | Claude Code cloud and Devin lanes ([CLOUD.md](CLOUD.md), [DEVIN.md](DEVIN.md)) |
 | `phm automations ...` | Turn triggers (labels, red CI, schedules, webhooks) into fleet tasks |
 | `phm website status\|auto\|pause\|off` | Inspect or pause automatic phm.dev publication |
 | `phm top [--once] [--json]` | Read-only per-account pool capacity and reset-pressure snapshot; always includes codex-personal. JSON schemaVersion is 1; missing telemetry stays unknown. Local subscription readings are engine-wide, with no account attribution. |
-| `phm resources [--json]`, `phm usage` | Per-backend capacity and usage, read-only |
+| `phm resources [--json]`, `phm usage`, `phm usage sensors --json` | Per-backend capacity and usage, read-only. `phm usage sensors --json` prints each lane's reading, age and stale status (`usage.sensors.v1`). A reading at or after `staleAfter` is unknown and its headroom is null. `phm usage sensors --refresh --json` pulls the Devin official daily ACU API and official Codex, Claude and Grok status output. It does not read `~/.codex` or print secret values. |
 | `phm audit [N] [--json]` | Tail the append-only audit trail |
 
 ### Metrics levers
@@ -388,6 +389,13 @@ legacy proposal read quality yield `score: null` and `evidence: "unavailable"`.
 Known scores sort first, descending, rounded to two decimals. Ties use the table
 order, including unavailable entries, so the report always contains three rows.
 Use the reasons to investigate before changing routing or templates.
+
+`phm fleet act <pause|resume|kill|reassign|set-slot|vision-edit> --dry-run
+[--path <target>] [--json]` records a proposal only. Each successful call appends
+one versioned intent to the operator-provisioned `~/.ashlr/router-queue/actions.jsonl`;
+it does not apply the action. Targets are confined to that queue or
+`~/.ashlr/vision/leader/`, without symlink components. Audit failures fail the
+command; no executor consumes these intents automatically.
 
 ### Stop and pause
 
@@ -669,7 +677,7 @@ For more failure modes and their recovery, see
 
 ## Per-pool budget ledger
 
-`phm budget show --json` returns `{ "budgets": ... }`; fleet status includes the
+`phm budget get --json` reads the owner spend budget (`spend.budget.v1`). A provider the owner has not named is 0 USD for the month. `phm budget set --provider claude-api --period month --usd 0 --json` is the explicit owner change and appends one audit line. Agent processes are refused, and the MCP tool `phantom_spend_budget` can only read. The committed config stays at 0, so pay-per-use lanes stay closed. `phm budget show --json` returns `{ "budgets": ... }`; fleet status includes the
 same `budgets` projection. Its schema is `fleet.budgets.v1`. It is an advisory
 observation ledger, with no dispatch or spending authority. Pools are
 `codex-cmp`, `codex-personal`, `devin`, `claude`, `grok-build`, `local-omlx`, and

@@ -1,5 +1,17 @@
 # Incidents
 
+## 2026-11-08 — RQ-GUARDHEALTHQ10Q8: guardian inspection still blocked
+
+Guardian health and recovery remain unverified. The three requested files are
+absent from this worktree and access to their locations under `~/.ashlr-runs`
+returned `Operation not permitted`. A launchctl inspection also returned
+`Operation not permitted`. No host service or files were changed and no repair
+jobs were enqueued. Resume the recovery handoff below with host access; a fresh
+status and a successful guardian cycle are still needed to establish recovery.
+
+The read-only service check now identifies negative launchd exit statuses as
+errors. This improves diagnosis but does not establish the host's state.
+
 ## 2026-11-06 — RQ-GUARDIANHEALTHQ8: guardian inspection blocked
 
 Guardian health is unknown. No runtime failure or recovery has been verified.

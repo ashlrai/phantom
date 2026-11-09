@@ -8,6 +8,7 @@ import {
   type ClaimTarget, type ConsequentialAction, type TeamActor, type TeamEvent, type TeamRole,
 } from './protocol.js';
 import { appendUnlocked, readEvents, withTeamLock } from './store.js';
+import { acquireCoordination, releaseCoordinationBySource, teamClaimKey } from '../agents/claim-store.js';
 
 export const PRESENCE_WINDOW_MS = 5 * 60_000;
 export const DEFAULT_CLAIM_TTL_MS = 2 * 60 * 60_000;
@@ -123,7 +124,22 @@ export function acquireClaim(team: string, actor: TeamActor, target: ClaimTarget
     const state = teamState(team);
     const conflicts = state.claims.filter((c) => c.holder !== actor.id && claimsOverlap(c.target, target));
     if (conflicts.length) return { ok: false as const, conflicts };
-    const ev = appendUnlocked(team, actor, 'claim.acquired', { target: { repo: target.repo, ...(target.branch ? { branch: target.branch } : {}), ...(target.path ? { path: target.path } : {}) }, reason, expiresAt: new Date(Date.now() + ttl).toISOString() });
+    const now = Date.now();
+    const expiresAt = new Date(now + ttl).toISOString();
+    const narrowed = { repo: target.repo, ...(target.branch ? { branch: target.branch } : {}), ...(target.path ? { path: target.path } : {}) };
+    const ev = appendUnlocked(team, actor, 'claim.acquired', { target: narrowed, reason, expiresAt });
+    const gate = acquireCoordination({
+      origin: 'team', key: teamClaimKey(narrowed), owner: actor.id, leaseMs: ttl, leaseUntil: Date.parse(expiresAt),
+      sourceId: ev.id, teamTarget: narrowed, now,
+    });
+    if (gate.status === 'conflict') {
+      appendUnlocked(team, actor, 'claim.released', { claimId: ev.id });
+      return { ok: false as const, conflicts: [{ id: 'coordination', target: narrowed, holder: gate.holder.owner, reason: 'coordination', acquiredAt: new Date(now).toISOString(), expiresAt: new Date(gate.holder.leaseUntil).toISOString() }] };
+    }
+    if (gate.status !== 'acquired') {
+      appendUnlocked(team, actor, 'claim.released', { claimId: ev.id });
+      throw new Error('Claim store unavailable.');
+    }
     return { ok: true as const, claimId: ev.id, expiresAt: ev.payload.expiresAt };
   });
 }
@@ -133,6 +149,8 @@ export function releaseClaim(team: string, actor: TeamActor, claimId: string) {
     const c = teamState(team).claims.find((x) => x.id === claimId);
     if (!c) throw new Error('No active claim with that id.');
     if (c.holder !== actor.id) throw new Error('Only the holder can release this claim.');
+    const released = releaseCoordinationBySource({ origin: 'team', sourceId: claimId });
+    if (released.status === 'unavailable') throw new Error('Claim store unavailable.');
     appendUnlocked(team, actor, 'claim.released', { claimId });
     return { released: claimId };
   });

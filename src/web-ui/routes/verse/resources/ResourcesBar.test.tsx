@@ -490,11 +490,11 @@ describe('fresh Devin sidebar readbacks', () => {
     expect(screen.getByRole('button', { name: 'Devin (cloud): consumption not reported · remaining quota unknown. Open Resources' })).toBeInTheDocument();
     consumption = { ...reading, report: { totalAcus: 0, days: [] } };
     view.rerender(<ResourcesBar expanded />);
-    expect(screen.getByRole('button', { name: 'Devin (cloud): 0 ACUs reported · remaining quota unknown. Open Resources' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Devin (cloud): unknown · remaining quota unknown. Open Resources' })).toBeInTheDocument();
     consumption = reading; clock.mockReturnValue(NOW + 400_000); view.rerender(<ResourcesBar expanded />);
     expect(screen.getByRole('button', { name: 'Devin (cloud): 0 ACUs consumed · last · remaining quota unknown. Open Resources' })).toBeInTheDocument();
     consumption = { ...reading, report: { totalAcus: 0, days: [] } }; view.rerender(<ResourcesBar expanded />);
-    expect(screen.getByRole('button', { name: 'Devin (cloud): 0 ACUs reported · last · remaining quota unknown. Open Resources' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Devin (cloud): unknown · last · remaining quota unknown. Open Resources' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /40 ACUs held exposure/ })).toBeInTheDocument();
   });
 });
@@ -617,6 +617,19 @@ describe('Codex credits are independent of the quota battery', () => {
     expect(projected[1]!.display!.usage.current).toBe(true);
     expect(projected[1]!.exactCreditBalance).toBeUndefined();
     expect(projected[1]!.detail.join(' ')).not.toContain('Estimated credit value');
+  });
+
+  it('does not color expired or untimed Codex usage as current capacity', () => {
+    for (const patch of [
+      { usageObservedAt: new Date(NOW - 60 * 60_000).toISOString() },
+      { usageObservedAt: null },
+      { quotaExpiresAt: new Date(NOW - 1).toISOString() },
+    ]) {
+      const result = barRows([row({ engine: 'codex', ...patch })], { healthRead: true, now: NOW })[0]!;
+      expect(result).toMatchObject({ level: 'unknown', value: '28% used · last' });
+      expect(result.display!.usage.current).toBe(false);
+      expect(result.summary).toContain('unconfirmed');
+    }
   });
 
   it('never invents measured percentages from limit flags or an exhausted connection', () => {

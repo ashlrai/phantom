@@ -188,6 +188,12 @@ describe('probeDesktopCapabilities', () => {
     expect(caps.resources.find((r) => r.id === 'claude')!.can).toEqual({ status: true, read: true, run: true });
   });
 
+  it('does not substitute a similarly named app for an absent bundle pin', async () => {
+    const apps = '- Claude (com.anthropic.claudefordesktop): up to full control; this chat holds full control';
+    const caps = await probeDesktopCapabilities(fakeDesktop({ apps }).call, { flag: { enabled: true, bundleIds: { claude: 'com.anthropic.claude.beta' } } });
+    expect(caps.resources.find((r) => r.id === 'claude')).toMatchObject({ running: false, can: { status: false, read: false, run: false }, reasons: ['not-running'] });
+  });
+
   it('resolves a bundle override from the flag file', async () => {
     const apps = '- Claude Beta (com.anthropic.claude.beta): up to full control; this chat holds full control';
     const caps = await probeDesktopCapabilities(fakeDesktop({ apps }).call, { flag: { enabled: true, bundleIds: { claude: 'com.anthropic.claude.beta' } } });

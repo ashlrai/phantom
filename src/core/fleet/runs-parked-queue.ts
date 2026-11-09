@@ -301,27 +301,64 @@ async function readUnmetDeps(
 }
 
 /**
+ * Path whose realpath reports an open descriptor's own location, where the OS
+ * provides one. Linux /proc/self/fd entries are symlinks to the pinned inode's
+ * path, so a swapped directory symlink cannot relabel what open() captured.
+ * macOS /dev/fd nodes are character devices whose realpath yields only a
+ * basename and Windows has no descriptor path; on both, the canonical re-open
+ * below carries the containment proof instead.
+ */
+function descriptorPath(fd: number): string | null {
+  return process.platform === 'linux' || process.platform === 'android'
+    ? `/proc/self/fd/${fd}`
+    : null;
+}
+
+/**
  * Read at most MAX_PROMPT bytes of a DEP prompt that must stay physically
  * inside the runs dir. Absolute paths are normalized before the lexical
- * containment check, the open uses O_NOFOLLOW so a symlinked final component
- * is refused, and realpath containment is verified while the descriptor is
- * held — bytes are never read through a separately checked pathname.
+ * containment check, and the open uses O_NOFOLLOW so a symlinked final
+ * component is refused. Containment is then proven against the held
+ * descriptor, not the name — realpath() and lstat() re-walk a mutable
+ * namespace, so a flipped intermediate symlink could present "inside" to the
+ * checks while open() and the read land outside:
+ *
+ *   - where the kernel reports an fd's path (Linux /proc/self/fd), the
+ *     descriptor's own location must sit beneath the root;
+ *   - everywhere, the canonical spelling of the path — which carries no
+ *     symlinks — is re-opened and must name the same inode the descriptor
+ *     pinned. A flip can steer open() or realpath(), but cannot make the
+ *     canonical name resolve to the same outside inode;
+ *   - an observed name or namespace change discards the read.
+ *
+ * Node has no portable descriptor-relative openat(2) or F_GETPATH, so a
+ * same-user attacker renaming real directories underneath the tree can still
+ * race the probes; the before/after checks make those swaps observable and
+ * fail closed, matching the rest of the tree's acknowledged limit.
  */
 async function readDepPrompt(root: string, realRootWithSep: string, promptPath: string): Promise<string | null> {
   const resolved = isAbsolute(promptPath) ? resolve(promptPath) : resolve(root, 'queue', promptPath);
   const rootAbs = resolve(root);
   const rootWithSep = rootAbs.endsWith(sep) ? rootAbs : rootAbs + sep;
   if (!resolved.startsWith(rootWithSep)) return null;
+  const noFollow = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0;
+  const nonBlock = typeof constants.O_NONBLOCK === 'number' ? constants.O_NONBLOCK : 0;
   let file: Awaited<ReturnType<typeof open>> | undefined;
+  let canonical: Awaited<ReturnType<typeof open>> | undefined;
   try {
-    file = await open(resolved, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    file = await open(resolved, constants.O_RDONLY | noFollow | nonBlock);
     const opened = await file.stat();
     if (!opened.isFile()) return null;
+    const fdPath = descriptorPath(file.fd);
+    if (fdPath !== null) {
+      const fdReal = await realpath(fdPath).then((value) => value, () => null);
+      if (fdReal !== null && !fdReal.startsWith(realRootWithSep)) return null;
+    }
     const real = await realpath(resolved);
     if (!real.startsWith(realRootWithSep)) return null;
-    const named = await lstat(resolved);
-    if (named.isSymbolicLink() || !named.isFile() ||
-      named.dev !== opened.dev || named.ino !== opened.ino) return null;
+    canonical = await open(real, constants.O_RDONLY | noFollow | nonBlock);
+    const rebound = await canonical.stat();
+    if (!rebound.isFile() || rebound.dev !== opened.dev || rebound.ino !== opened.ino) return null;
     const size = Math.min(opened.size, MAX_PROMPT);
     const buffer = Buffer.alloc(size);
     let length = 0;
@@ -330,7 +367,14 @@ async function readDepPrompt(root: string, realRootWithSep: string, promptPath: 
       if (!bytesRead) break;
       length += bytesRead;
     }
+    const named = await lstat(resolved);
+    const realAfter = await realpath(resolved).then((value) => value, () => '');
+    if (named.isSymbolicLink() || !named.isFile() || named.dev !== opened.dev || named.ino !== opened.ino ||
+        realAfter !== real) return null;
     return buffer.subarray(0, length).toString('utf8');
   } catch { return null; }
-  finally { await file?.close().catch(() => undefined); }
+  finally {
+    await file?.close().catch(() => undefined);
+    await canonical?.close().catch(() => undefined);
+  }
 }

@@ -69,7 +69,7 @@ import {
   type Observation,
   type Plan,
 } from './diagnose.js';
-import { closePr, commentOnPr, createPr, defaultGh, observe, queuePrMerge, readPr, readPrByBranch, rerunJob, type Gh } from './github.js';
+import { closePr, commentOnPr, createPr, defaultGh, observe, queuePrMerge, readMergeRequest, readPr, readPrByBranch, rerunJob, type Gh } from './github.js';
 import type { PrView } from './diagnose.js';
 
 const mergeKey = (obs: Observation) => `merge-base:${obs.pr.headSha}:${obs.pr.baseSha}`;
@@ -145,7 +145,7 @@ export function loadState(repo: string, n: number): AutopilotState {
     const base = emptyState();
     const r = raw.recut && typeof raw.recut === 'object' ? raw.recut : null;
     const recut = r && typeof r.branch === 'string' && r.branch && typeof r.fromHead === 'string' && r.fromHead
-      ? { branch: r.branch, number: Number.isSafeInteger(r.number) ? r.number! : 0, fromHead: r.fromHead, ...(r.queued === true ? { queued: true } : {}) }
+      ? { branch: r.branch, number: Number.isSafeInteger(r.number) ? r.number! : 0, fromHead: r.fromHead, ...(r.queued === true ? { queued: true } : {}), ...(typeof r.retryAt === 'string' && Number.isFinite(Date.parse(r.retryAt)) ? { retryAt: r.retryAt } : {}) }
       : undefined;
     return {
       pushes: Number.isSafeInteger(raw.pushes) ? raw.pushes! : 0,
@@ -305,27 +305,41 @@ async function requeueRecut(opts: TickOptions, obs: Observation, state: Autopilo
   const recut = state.recut;
   if (!recut?.number || recut.queued === true || !obs.pr.autoMerge) return null;
   const key = `recut-queue:${recut.branch}`;
-  if ((state.attempts[key] ?? 0) >= RECUT_QUEUE_ATTEMPTS) return null;
+  const attempts = state.attempts[key] ?? 0;
+  if (recut.retryAt && (opts.now ?? (() => new Date()))().getTime() < Date.parse(recut.retryAt)) return { line: `recut #${recut.number} rate limited; retry after ${recut.retryAt} (attempt ${attempts}/${RECUT_QUEUE_ATTEMPTS})`, queued: false };
   let head: string;
   try {
     const live = await readPr(opts.repo, recut.number, gh);
     if (live.state !== 'open') return null;
+    if (await readMergeRequest(opts.repo, recut.number, gh)) {
+      recut.queued = true;
+      delete recut.retryAt;
+      saveState(opts.repo, opts.number, state);
+      return { line: `recut #${recut.number} already has auto-merge enabled`, queued: true };
+    }
     head = live.headSha;
   } catch {
     return null; // unreadable this tick; the next one re-reads — no attempt spent
   }
+  if (attempts >= RECUT_QUEUE_ATTEMPTS) return { line: `recut #${recut.number} requeue exhausted ${RECUT_QUEUE_ATTEMPTS} attempts; a person queues it`, queued: false };
   const stopped = await stopNow(opts);
   if (stopped) return { line: `${stopped}; recut #${recut.number} is open but not requeued`, queued: false };
+  delete recut.retryAt;
   state.attempts[key] = (state.attempts[key] ?? 0) + 1;
   saveState(opts.repo, opts.number, state);
   try {
     await queuePrMerge(opts.repo, recut.number, head, gh);
     recut.queued = true;
+    delete recut.retryAt;
     saveState(opts.repo, opts.number, state);
     return { line: `requeued recut #${recut.number} onto the merge queue (auto-merge pinned to ${head.slice(0, 8)}; required checks still decide)`, queued: true };
   } catch (err) {
     const last = (state.attempts[key] ?? 0) >= RECUT_QUEUE_ATTEMPTS;
-    return { line: `could not requeue recut #${recut.number} on the merge queue: ${err instanceof Error ? err.message : String(err)}${last ? '; no more retries — a person queues it' : ''}`, queued: false };
+    if (!last && /rate.?limit|too many requests|\b429\b/i.test(err instanceof Error ? err.message : String(err))) {
+      recut.retryAt = new Date((opts.now ?? (() => new Date()))().getTime() + 30_000 * 2 ** (state.attempts[key]! - 1)).toISOString();
+      saveState(opts.repo, opts.number, state);
+    }
+    return { line: `could not requeue recut #${recut.number} on the merge queue: ${err instanceof Error ? err.message : String(err)}${last ? '; no more retries — a person queues it' : recut.retryAt ? `; retry after ${recut.retryAt}` : ''}`, queued: false };
   }
 }
 
@@ -504,11 +518,45 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
     await must(opts.checkout, ['fetch', '--no-tags', 'origin', `+refs/heads/${pr.headRef}:refs/remotes/origin/${pr.headRef}`, `+refs/heads/${pr.baseRef}:refs/remotes/origin/${pr.baseRef}`]);
     const remoteHead = await must(opts.checkout, ['rev-parse', `refs/remotes/origin/${pr.headRef}`]);
     if (remoteHead !== pr.headSha) return { result: 'refused', detail: [`the branch moved to ${remoteHead.slice(0, 8)} since GitHub was read; next tick re-reads`], newHead: null };
+    let recutPaths: Set<string> | null = null;
+    let recutBase = pr.baseSha;
+    const recutBounds = async (cwd: string, range: string[]) => {
+      const names = await git(cwd, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-only', '-z', ...range]);
+      if (names.code !== 0) throw new Error('could not measure recut paths');
+      const paths = names.stdout.split('\0').filter(Boolean);
+      const stats = await must(cwd, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--numstat', ...range]);
+      let lines = 0;
+      for (const row of stats.split('\n').filter(Boolean)) {
+        const [added, deleted] = row.split('\t');
+        if (!/^\d+$/.test(added!) || !/^\d+$/.test(deleted!)) return { paths, refusal: 'binary or unmeasured recut diff' };
+        lines += Number(added) + Number(deleted);
+      }
+      return { paths, refusal: paths.length > 100 || lines > 2000 ? 'recut exceeds 100 files or 2000 changed lines' : null };
+    };
+    if (p.action === 'recut') {
+      const fetchedBase = await must(opts.checkout, ['rev-parse', `refs/remotes/origin/${pr.baseRef}`]);
+      recutBase = fetchedBase;
+      if ((await git(opts.checkout, ['merge-base', '--is-ancestor', pr.baseSha, fetchedBase])).code !== 0)
+        return { result: 'refused', detail: ['the base history diverged since observation; next tick re-reads'], newHead: null };
+      const originalFork = await git(opts.checkout, ['merge-base', '--all', pr.baseSha, pr.headSha]);
+      if (originalFork.code !== 0) return { result: 'refused', detail: ['the PR has no shared base history'], newHead: null };
+      const forks = originalFork.stdout.trim().split('\n');
+      const currentForks = (await must(opts.checkout, ['merge-base', '--all', fetchedBase, pr.headSha])).split('\n');
+      if (forks.length !== 1 || currentForks.length !== 1 || forks[0] !== currentForks[0])
+        return { result: 'refused', detail: ['the PR merge base changed or is ambiguous; next tick re-reads'], newHead: null };
+      const commits = (await must(opts.checkout, ['rev-list', '--max-count=101', `${forks[0]}..${pr.headSha}`])).split('\n').filter(Boolean);
+      const merges = await must(opts.checkout, ['rev-list', '--merges', '--max-count=1', `${forks[0]}..${pr.headSha}`]);
+      if (!commits.length || commits.length > 100 || merges)
+        return { result: 'refused', detail: ['recut requires 1–100 original PR commits without merge commits'], newHead: null };
+      const original = await recutBounds(opts.checkout, [forks[0]!, pr.headSha]);
+      if (original.refusal) return { result: 'refused', detail: [original.refusal], newHead: null };
+      recutPaths = new Set(original.paths);
+    }
     // Captured before any untrusted code runs: the push goes here, not to whatever `origin` says later.
     const pushUrl = await must(opts.checkout, ['remote', 'get-url', '--push', 'origin']);
     // A recut starts from the current base, not the PR head: the lane's changes
     // are replayed on top, which is exactly what `merge --squash <head>` stages.
-    await must(opts.checkout, ['worktree', 'add', '--detach', wt, p.action === 'recut' ? `refs/remotes/origin/${pr.baseRef}` : pr.headSha]);
+    await must(opts.checkout, ['worktree', 'add', '--detach', wt, p.action === 'recut' ? recutBase : pr.headSha]);
     added = true;
     // The worktree's start commit: the pre-merge head, or the fetched base for a recut.
     const startSha = await must(wt, ['rev-parse', 'HEAD']);
@@ -539,7 +587,7 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
       if (merged.code !== 0) {
         const conflicted = (await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--name-only', '--diff-filter=U'])).split('\n').filter(Boolean);
         if (!conflicted.length) return { result: 'error', detail: [`merge failed without conflicts: ${merged.stderr.trim().slice(0, 200)}`], newHead: null };
-        if (!opts.fixer) { await git(wt, p.action === 'recut' ? ['reset', '--hard', 'HEAD'] : ['merge', '--abort']); return { result: 'refused', detail: [`conflicts in ${conflicted.join(', ')} and no fixer is configured`], newHead: null }; }
+        if (!opts.fixer) { await git(wt, p.action === 'recut' ? ['reset', '--hard', 'HEAD'] : ['merge', '--abort']); return { result: 'refused', detail: [`conflicts in ${conflicted.join(', ')}; resolve them on ${pr.headRef} and push the updated head to retry`], newHead: null }; }
         // The commit takes the whole index, but only the conflicted files are the fixer's to change.
         const stagedOutside = async () => {
           const raw = await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--cached', '--raw', '--abbrev=40', startSha]);
@@ -568,6 +616,9 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
         // protected paths, and a recut may never smuggle one into a fresh PR.
         const staged = (await must(wt, ['diff', '--no-ext-diff', '--no-textconv', '--cached', '--name-only', startSha])).split('\n').filter(Boolean);
         if (!staged.length) return { result: 'no-change', detail: [...detail, `the PR's changes are already in ${pr.baseRef}; there is nothing to recut`], newHead: null };
+        const bounded = await recutBounds(wt, ['--cached', startSha]);
+        if (bounded.refusal || bounded.paths.some((path) => !recutPaths?.has(path)))
+          return { result: 'refused', detail: [...detail, bounded.refusal ?? 'recut changed files outside the original PR'], newHead: null };
         const protectedHits = protectedPathHits(staged, { selfRepo: isHubRepositoryLabel(opts.repo) });
         if (protectedHits.length) return { result: 'refused', detail: [...detail, ...protectedHits.map((h) => `${h.path}: protected path (${h.why})`)], newHead: null };
         await must(wt, ['commit', '--no-verify', '-m', `${(pr.title || `recut of ${pr.headRef}`).slice(0, 120)}\n\nSquashed recut of #${pr.number} (${pr.headRef} @ ${pr.headSha.slice(0, 8)}) onto ${pr.baseRef}.\n\nPhantom-Autopilot: recut`]);
@@ -611,6 +662,16 @@ async function actInWorktree(opts: TickOptions, obs: Observation, p: Extract<Pla
     const stopped = await stopNow(opts);
     if (stopped) return { result: 'refused', detail: [...detail, stopped], newHead: null };
     if (p.action === 'recut') {
+      // The replacement must still represent the observed PR on the base we
+      // verified. A normal push to a new branch cannot detect either race.
+      const refs = await git(opts.checkout, ['ls-remote', '--heads', pushUrl, `refs/heads/${pr.headRef}`, `refs/heads/${pr.baseRef}`]);
+      if (refs.code !== 0) return { result: 'error', detail: [...detail, 'could not re-read the source and base branches'], newHead: null };
+      const heads = new Map(refs.stdout.trim().split('\n').filter(Boolean).map((line) => {
+        const [sha, ref] = line.split('\t');
+        return [ref, sha];
+      }));
+      if (heads.get(`refs/heads/${pr.headRef}`) !== pr.headSha || heads.get(`refs/heads/${pr.baseRef}`) !== recutBase)
+        return { result: 'refused', detail: [...detail, 'the source or base branch moved during recut; next tick re-reads'], newHead: null };
       // One fresh branch per conflicting lane PR: <head>-recut, then -recut-2…
       const listed = await git(opts.checkout, ['ls-remote', '--heads', pushUrl, `${pr.headRef}-recut*`]);
       if (listed.code !== 0) return { result: 'error', detail: [...detail, `could not list origin's recut branches: ${(listed.stderr.trim().split('\n').pop() ?? '').slice(0, 200)}`], newHead: null };

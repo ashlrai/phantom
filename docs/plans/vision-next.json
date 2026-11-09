@@ -1,0 +1,306 @@
+{
+  "schemaVersion": 1,
+  "id": "RQ-PLAN-VISION-NEXT",
+  "repo": "phantom",
+  "status": "planning-only",
+  "asOf": "2026-11-08",
+  "sourceDocuments": [
+    "docs/NORTH-STAR.md",
+    "docs/AUTONOMY-GAP.md",
+    "docs/LIVING-END-STATE.md",
+    "docs/STANDING-AUTHORITY.md",
+    "docs/research/agent-swarms-rsi.md",
+    "docs/UNIVERSE-AUTONOMY-RESEARCH.md",
+    ".bridge-evidence/RQ-SWE3-MERGE-ACCEL-1-report.md",
+    ".bridge-evidence/RQ-SWE3-PRTRIAGE-1-report.md",
+    "CONSTITUTION.md"
+  ],
+  "objective": "Turn the fleet from a high-volume producer whose outcomes cannot be attributed into an engineering entity that attributes every result to one attempt, refuses redundant work, converges its own backlog, and reinvests in the policies, harnesses and products that produced verified yield.",
+  "moves": [
+    {
+      "id": "RQ-VN-ATTEMPT-ID",
+      "rank": 1,
+      "title": "One minted attempt identity across the run ledger",
+      "pillar": "foundation",
+      "priority": "P1",
+      "tier": "frontier",
+      "status": "planned",
+      "dependsOn": [],
+      "spec": "docs/plans/VISION-NEXT-SPEC-ATTEMPT-ID.md",
+      "entrypoints": [
+        "contrib/mac/dispatchd.py",
+        "contrib/mac/batcher.py",
+        "contrib/mac/publish.sh",
+        "src/cli/fleet-wt-reap.ts",
+        "src/cli/fleet-worktree-stale.ts",
+        "src/core/fleet/wt-audit.ts",
+        "src/core/fleet/lane-console.ts"
+      ],
+      "rationale": "No row in jobs.jsonl carries an attempt identity. dispatchd.py, batcher.py, wt-reap, worktree-stale and wt-audit each re-derive the current attempt from launch-event order, and about six REAP iterations in the last 200 commits each patched one edge of that inference. Every learning loop downstream (yield, routing, harness selection) needs exact attribution of an outcome to the attempt that produced it.",
+      "deliverable": "A dispatcher-minted attemptId threaded through launch, finish, publish and outcome rows, one shared fold in TypeScript and Python checked against one fixture corpus, and consumers migrated to it with an explicit inferred-identity fallback for legacy rows.",
+      "acceptance": [
+        "A late MERGED outcome that arrives after a relaunch settles the attempt that published the PR, never the newer attempt.",
+        "Legacy rows without attemptId fold to the same result as today and are reported as identity=inferred, never silently upgraded to minted.",
+        "The TypeScript and Python folds produce byte-identical canonical JSON on every fixture in the shared corpus."
+      ],
+      "validation": [
+        "Add test/fleet-run-attempts.test.ts and a Python parity test over test/fixtures/run-attempts/.",
+        "Run node scripts/verify-changed.mjs and the existing wt-reap, worktree-stale and wt-audit suites unchanged."
+      ],
+      "ownerReviewRequired": false,
+      "nonGoals": [
+        "No rewrite or migration of existing jobs.jsonl history; old rows stay byte-identical.",
+        "No host installation of the changed dispatcher without the Security re-pin contrib/mac/README.md requires."
+      ]
+    },
+    {
+      "id": "RQ-VN-LANDED-INTENT",
+      "rank": 2,
+      "title": "Refuse work whose diff is already on master",
+      "pillar": "foundation",
+      "priority": "P1",
+      "tier": "frontier",
+      "status": "planned",
+      "dependsOn": [],
+      "spec": "docs/plans/VISION-NEXT-SPEC-LANDED-INTENT.md",
+      "entrypoints": [
+        "src/core/fleet/job-precheck.ts",
+        "contrib/mac/launch_precheck.py",
+        "scripts/bridge/precheck.py",
+        "src/core/fleet/rebase-plan.ts",
+        ".bridge-evidence/RQ-SWE3-MERGE-ACCEL-1-report.md"
+      ],
+      "rationale": "Thirteen of 260 recent merges (5%) changed no files, some after days in the queue, and 140 PRs were closed unmerged at a median age of 5.5 days. The existing precheck proves completion only by job identity or path presence; nothing proves that a PR's net change is already contained in master, so DRAIN, REBASE, CIFIX and RECUT waves keep re-validating landed work.",
+      "deliverable": "A pure landed-diff verdict built on git merge-tree against the current base, with a content-addressed receipt, wired into launch precheck as a completion receipt and reusable by the backlog closer.",
+      "acceptance": [
+        "A PR whose head merges into master with a tree identical to master's tree yields verdict landed with a receipt naming base, head and tree.",
+        "A conflicting, partially landed or unreadable PR never yields landed; errors stay fail-open for launch and fail-closed for closing.",
+        "launch_precheck accepts only the exact landed receipt grammar as code 10; any other code-10 output still maps to unproven_completion."
+      ],
+      "validation": [
+        "Add a temp-repo git fixture test for landed, partially landed, conflicting and reverted-then-relanded PRs.",
+        "Extend contrib/mac/test_launch_precheck.py for the new receipt grammar and run the existing precheck suites."
+      ],
+      "ownerReviewRequired": false,
+      "nonGoals": [
+        "No pull request is closed by this move; closing belongs to RQ-VN-CONVERGE.",
+        "No semantic or model-judged equivalence; only exact tree containment counts."
+      ]
+    },
+    {
+      "id": "RQ-VN-CONVERGE",
+      "rank": 3,
+      "title": "Backlog convergence: flow-based admission and proof-carrying dispositions",
+      "pillar": "foundation",
+      "priority": "P1",
+      "tier": "frontier",
+      "status": "planned",
+      "dependsOn": ["RQ-VN-ATTEMPT-ID", "RQ-VN-LANDED-INTENT"],
+      "spec": "docs/plans/VISION-NEXT-SPEC-CONVERGE.md",
+      "entrypoints": [
+        "contrib/mac/restock.py",
+        "src/core/fleet/backpressure.ts",
+        "src/core/fleet/pr-hygiene.ts",
+        "src/core/fleet/superseded-close.ts",
+        "src/core/fleet/rebase-plan.ts",
+        "src/core/fleet/merge-batch.ts"
+      ],
+      "rationale": "About ten successive jobs rewrote the restocker's open-PR count gate without shrinking the backlog: 170 of 236 triaged PRs needed a rebase while drain and recut waves added more. The gate throttles on a count the fleet itself inflates, the bridge restocker bypasses the per-repo daemon backpressure, and the planners that know each PR's disposition (pr-hygiene, rebase-plan, superseded-close) are read-only or narrowly scoped.",
+      "deliverable": "One pure disposition planner that gives every open fleet PR exactly one next action backed by a proof, and an admission rule driven by measured inflow and outflow instead of a fixed count, applied only through existing ledgered apply paths.",
+      "acceptance": [
+        "On a fixture backlog the planner assigns each PR exactly one disposition and emits no close action without a landed or superseded receipt.",
+        "Admission opens when measured outflow meets inflow over the window and closes when the backlog grows, with unknown flow treated as closed.",
+        "A simulated 200-PR backlog converges below the configured target within a bounded number of ticks without any proofless close."
+      ],
+      "validation": [
+        "Add a deterministic simulation test that replays fixture inflow and outflow through the planner and admission rule.",
+        "Run node scripts/verify-changed.mjs and the existing pr-hygiene, superseded-close and rebase-plan suites."
+      ],
+      "ownerReviewRequired": true,
+      "nonGoals": [
+        "No ruleset bypass, force-push, branch deletion or merge of a PR that fails its gate.",
+        "No live restocker installation without the required Security re-pin."
+      ]
+    },
+    {
+      "id": "RQ-VN-YIELD",
+      "rank": 4,
+      "title": "Verified engineering yield per attempt, with unknowns kept unknown",
+      "pillar": "recursive-self-improvement",
+      "priority": "P1",
+      "tier": "frontier",
+      "status": "planned",
+      "dependsOn": ["RQ-VN-ATTEMPT-ID"],
+      "entrypoints": [
+        "src/core/fleet/eval-report.ts",
+        "src/core/fleet/scorecard.ts",
+        "docs/UNIVERSE-AUTONOMY-RESEARCH.md"
+      ],
+      "rationale": "The north star optimizes useful accepted changes per token and hour, but eval-report and the scorecard aggregate by job id and lane, so a reverted second attempt and a clean first attempt are blended. Once attempts are exact, durability (stable, followed-up, regressed, reverted), usage coverage and wall time can be attributed per attempt and per policy.",
+      "deliverable": "A yield record per settled attempt (accepted, durable, reverted, empty, abandoned) with usage coverage, and an eval-report view grouped by lane, model, tier and arm that keeps missing usage out of cost denominators.",
+      "acceptance": [
+        "Failed, timed-out and empty attempts remain in denominators; an arm with zero successes reports undefined cost per success.",
+        "An attempt with missing usage is counted for yield but excluded from cost and labelled with coverage below one.",
+        "A later revert appends a reversal; it never rewrites the original acceptance record."
+      ],
+      "validation": [
+        "Fixture tests for durability transitions and coverage accounting.",
+        "Run the eval-report and scorecard suites."
+      ],
+      "ownerReviewRequired": false,
+      "nonGoals": ["No routing or dispatch change; this move only measures."]
+    },
+    {
+      "id": "RQ-VN-ROUTING",
+      "rank": 5,
+      "title": "Route by measured yield, not by declared role",
+      "pillar": "recursive-self-improvement",
+      "priority": "P2",
+      "tier": "frontier",
+      "status": "planned",
+      "dependsOn": ["RQ-VN-YIELD"],
+      "entrypoints": [
+        "src/core/routing/outcome-learning.ts",
+        "src/core/routing/bandit.ts",
+        "src/core/learning/routing-assignment-receipt.ts"
+      ],
+      "rationale": "AUTONOMY-GAP lists learned routing fed by accepted-work receipts as unwired. The bandit and assignment receipts exist; they lack a trustworthy reward. Per-attempt yield is that reward, and it lets the fleet learn the division of labor that NORTH-STAR milestone 3 asks for.",
+      "deliverable": "Shadow routing recommendations from per-attempt yield with exposed priors and intervals, promoted to live selection only after a matched comparison against the incumbent policy on the same task classes.",
+      "acceptance": [
+        "Recommendations are reproducible from the receipts they cite and expose every factor and interval.",
+        "An interval spanning zero keeps the incumbent route.",
+        "Account exclusions, operator reserves and capacity limits apply before any yield preference."
+      ],
+      "validation": ["Replay tests over recorded receipts.", "Run routing and learning suites."],
+      "ownerReviewRequired": false,
+      "nonGoals": ["No use of a benchmark score as a dispatch gate."]
+    },
+    {
+      "id": "RQ-VN-INTEGRATE",
+      "rank": 6,
+      "title": "Portfolio-triggered integration with compare-and-swap branch advancement",
+      "pillar": "product-factory",
+      "priority": "P2",
+      "tier": "frontier",
+      "status": "planned",
+      "dependsOn": ["RQ-VN-CONVERGE", "RQ-VN-YIELD"],
+      "entrypoints": [
+        "src/core/universe/integration-delivery.ts",
+        "src/core/universe/integration-handoff.ts",
+        "src/core/universe/portfolio-controller.ts"
+      ],
+      "rationale": "Composition planning, fresh combined evaluation, new-branch delivery and downstream handoff exist as primitives, but the checkpointed controller never schedules handoff and the candidate branch is never advanced. Without that the fleet ships parallel PRs rather than an integrated product.",
+      "deliverable": "Integration and handoff nodes in the checkpointed portfolio graph, and local candidate-branch advancement that names the expected old commit, requires fresh combined evidence on a changed base, and records durable intent and completion.",
+      "acceptance": [
+        "Crash injection before and after the ref update never duplicates an advancement or loses intent.",
+        "A changed base without newly evaluated combined evidence refuses to advance.",
+        "Unexpected human commits on the target are preserved and reported, never overwritten."
+      ],
+      "validation": ["Separate-process kill tests at each boundary.", "Run the universe portfolio and integration suites."],
+      "ownerReviewRequired": false,
+      "nonGoals": ["No remote push or deployment authority; advancement stays local."]
+    },
+    {
+      "id": "RQ-VN-LADDER",
+      "rank": 7,
+      "title": "Earn the next autonomy stage from would-merge evidence",
+      "pillar": "foundation",
+      "priority": "P2",
+      "tier": "frontier",
+      "status": "planned",
+      "dependsOn": ["RQ-VN-YIELD", "RQ-VN-CONVERGE"],
+      "entrypoints": [
+        "docs/STANDING-AUTHORITY.md",
+        "docs/AUTONOMY-GAP.md",
+        "src/core/fleet/backpressure.ts"
+      ],
+      "rationale": "The standing-authority ladder is still at shadow with zero of the five required would-merge digests. Durable per-attempt yield is exactly the evidence the next stage needs; producing it continuously turns owner approval from an open-ended review into one bounded signature on measured evidence.",
+      "deliverable": "A digest generator that assembles would-merge evidence packets from durable yield records and files one Needs-you decision when the stage criteria are met.",
+      "acceptance": [
+        "A packet cites only durable attempts and their gate results; reverted or unknown-coverage attempts cannot count.",
+        "No stage advances without the owner's signature; the generator has no authority bit.",
+        "Any change to an authority file pauses the grant exactly as today."
+      ],
+      "validation": ["Fixture tests for packet eligibility.", "Run authority and standing-authority suites."],
+      "ownerReviewRequired": true,
+      "nonGoals": ["No change to trust roots, gates or the ladder definition."]
+    },
+    {
+      "id": "RQ-VN-VALUE-PLANNER",
+      "rank": 8,
+      "title": "Let measured value, not backlog order, choose the next bet",
+      "pillar": "product-factory",
+      "priority": "P2",
+      "tier": "frontier",
+      "status": "planned",
+      "dependsOn": ["RQ-VN-YIELD", "RQ-VN-ROUTING"],
+      "entrypoints": [
+        "src/core/vision/value-portfolio.ts",
+        "src/core/universe/value-allocation.ts",
+        "docs/LIVING-END-STATE.md"
+      ],
+      "rationale": "PortfolioShadowV1 already ranks falsifiable bets against expiring inventory, but its factors are uncalibrated estimates and no resident planner calls it. Yield receipts can calibrate probability and cost factors, after which the shadow ranking can propose the queue's next bets.",
+      "deliverable": "Calibration receipts that compare predicted and observed factors per hypothesis, and a shadow planner that proposes ready-queue bets from PortfolioShadowV1 alongside the existing backlog for side-by-side comparison.",
+      "acceptance": [
+        "Uncalibrated factors stay ineligible for live learning, as LIVING-END-STATE requires.",
+        "Every proposed bet carries its score factors and the receipts that calibrated them.",
+        "The shadow planner never enqueues; adoption is a separate decision."
+      ],
+      "validation": ["Calibration fixture tests.", "Run value-portfolio and value-allocation suites."],
+      "ownerReviewRequired": false,
+      "nonGoals": ["No budget mutation and no enabled authority or effect bit."]
+    },
+    {
+      "id": "RQ-VN-HARNESS-RSI",
+      "rank": 9,
+      "title": "An archive of harness variants selected by a frozen evaluator",
+      "pillar": "recursive-self-improvement",
+      "priority": "P2",
+      "tier": "frontier",
+      "status": "planned",
+      "dependsOn": ["RQ-VN-YIELD", "RQ-VN-ROUTING"],
+      "entrypoints": [
+        "src/core/universe/harness-archive.ts",
+        "src/core/improve/discover.ts",
+        "src/core/improve/lesson-trial.ts",
+        "src/core/fleet/prompt-optimizer.ts",
+        "docs/research/agent-swarms-rsi.md"
+      ],
+      "rationale": "The harness archive has no proposer and no promotion. Archive-based search (Darwin Godel Machine) and reflective Pareto search (GEPA) are the strongest published techniques for self-improving agents, and both depend on an evaluator the candidate cannot touch. Yield and routing provide that evaluator.",
+      "deliverable": "An offline proposer that mutates prompts, playbooks and tool policies into archived variants, evaluated on a frozen held-out task set with matched comparators, and promoted to shadow routing only when the interval excludes zero.",
+      "acceptance": [
+        "A candidate that edits the evaluator, permissions, protected paths or budget is rejected.",
+        "The archive retains losing variants and their ancestry, bounded in size.",
+        "Promotion keeps the incumbent when evidence is incomplete."
+      ],
+      "validation": ["Offline replay on the fixed corpus.", "Run improve, learn and universe archive suites."],
+      "ownerReviewRequired": true,
+      "nonGoals": ["No live self-modification of daemon/loop.ts, tick hooks or authority code."]
+    },
+    {
+      "id": "RQ-VN-PRODUCT",
+      "rank": 10,
+      "title": "One sister product shipped end to end by the integrated loop",
+      "pillar": "composition-platform",
+      "priority": "P2",
+      "tier": "frontier",
+      "status": "planned",
+      "dependsOn": ["RQ-VN-INTEGRATE", "RQ-VN-VALUE-PLANNER", "RQ-VN-LADDER"],
+      "entrypoints": [
+        "docs/ECOSYSTEM-MAP.md",
+        "docs/NORTH-STAR.md",
+        "docs/AUTONOMY-GAP.md"
+      ],
+      "rationale": "The product-factory pillar is judged by shipped and adopted products, not by Phantom's own PR count. Once yield, integration and value planning work on Phantom, the same loop must prove it transfers by carrying one enrolled sister repository from hypothesis to released feature against that repository's own acceptance suite.",
+      "deliverable": "One enrolled ecosystem repository with a pinned acceptance suite, a value hypothesis with an outcome window, and a released feature whose effect is observed independently.",
+      "acceptance": [
+        "The feature was proposed, built, integrated and verified by the loop; the owner only enrolled the repo and signed the release.",
+        "The outcome receipt comes from an observer independent of the building agents.",
+        "The run's yield, usage coverage and rework are reported in the same terms as Phantom's own."
+      ],
+      "validation": ["The sister repository's acceptance suite.", "The RQ-VN-YIELD report for the campaign."],
+      "ownerReviewRequired": true,
+      "nonGoals": ["No enrollment, spend or public release without the owner."]
+    }
+  ]
+}
