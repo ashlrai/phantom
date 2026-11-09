@@ -1,0 +1,6 @@
+.edges { margin: 1rem 0; }
+.edges ul { list-style: none; padding: 0; display: grid; gap: .5rem; }
+.edges li { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+.endpoint { display: inline-flex; align-items: center; gap: .4rem; }
+.endpoint small { opacity: .7; }
+.line { flex: 0 1 5rem; border-bottom: 1px solid currentColor; text-align: right; }
