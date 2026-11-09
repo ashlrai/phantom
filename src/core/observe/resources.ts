@@ -59,10 +59,12 @@ export function classifyResources(input: {
     if (!input.roster) {
       return { id: def.id, label: def.label, state: 'unknown', reason: 'Agent roster has not been read', headroom: null, sessions: null, claims: null };
     }
-    const probes = input.roster.filter((source) => def.probes.includes(source.source));
+    const probeNames = def.probes as readonly string[];
+    const laneNames = def.lanes as readonly string[];
+    const probes = input.roster.filter((source) => probeNames.includes(source.source));
     const probeKnown = probes.some((source) => source.availability === 'known');
-    const phantom = knownSessions(input.roster, ['phantom']).filter((session) => session.ownership !== null && def.lanes.includes(session.ownership));
-    const own = probeKnown ? knownSessions(input.roster, def.probes) : [];
+    const phantom = knownSessions(input.roster, ['phantom']).filter((session) => session.ownership !== null && laneNames.includes(session.ownership));
+    const own = probeKnown ? knownSessions(input.roster, probeNames) : [];
     const sessions = [...own, ...phantom];
     const reachable = probeKnown || phantom.length > 0;
     if (!reachable) {

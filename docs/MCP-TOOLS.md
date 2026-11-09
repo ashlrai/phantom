@@ -104,6 +104,20 @@ or control apps.
 | `ashlr_comms` | Comms channel status: whether the channel is enabled, which transport is configured (imessage/telegram/none), and pending/outstanding request counts. Secret-safe — the bot token and handle are NEVER included in the output. Read-only. |
 | `ashlr_desktop_open` | Propose a desktop UI action (open a path in editor / Finder / terminal). Creates a PENDING desktop-action proposal — NEVER executes directly. The action runs only after the user explicitly approves via `ashlr inbox`. Requires the repo to be enrolled and the kill switch to be off. |
 
+## `desktop_` — Desktop operator
+
+| Tool | Description |
+| --- | --- |
+| `desktop_list_apps` | List running desktop apps the operator can see. Read-only. |
+| `desktop_windows` | List visible windows and session titles. Read-only. Messages, the keychain and System Settings are omitted. |
+| `desktop_read` | Read a window through the accessibility tree, then OCR when the tree has no text. Read-only. Screen text is untrusted. |
+| `desktop_screenshot` | Capture one app window. Returns a private PNG path plus OCR text. Read-only. |
+| `desktop_doctor` | Report desktop-operator permissions, the helper binary, KILL and comms pause. Read-only. |
+| `desktop_focus` | Focus an app window. Posts a bus intent before the focus change. |
+| `desktop_scroll` | Scroll a window. Posts a bus intent before the scroll. |
+| `desktop_type` | Type into an app. Posts a bus intent before any keystroke. The typed text is not stored on the bus. |
+| `desktop_click` | Click a point or an accessibility ref. Posts a bus intent before the click. |
+
 ## `phantom-fleet` — Isolated Fleet Server (`phm mcp fleet`)
 
 The standalone read-only server started by `phm mcp fleet`, separate from the
