@@ -37,7 +37,9 @@ import { OwnerChannelsStrip } from './OwnerChannelsStrip.js';
 import { leaderOfficeQuery } from './leader-office-data.js';
 import { mergeOwnerLines, ownerThreadLines, type LabeledLine } from './owner-thread-lines.js';
 import { NO_OWNER_THREAD, ownerThreadQuery } from './owner-thread-queries.js';
-import { sendLeaderInboxMessage } from './leader-inbox-data.js';
+import { sendLeaderInboxMessage, sendLeaderThreadMessage } from './leader-inbox-data.js';
+import { COMMS_CONFIRM_LINE, COMMS_TOML_PATH, INBOX_HELD_SENTENCE, inboxHeld } from './inbox-held-model.js';
+import { CopyPill } from '../apps/CopyPill.js';
 import { commandHints, completeCommand, parseComposerDraft } from './composer-commands.js';
 import { commandGate, liveComposerDeps, runComposerCommand, type ComposerCommand } from './composer-command-run.js';
 
@@ -132,6 +134,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const [held, setHeld] = useState(false);
   const [unlockOpen, setUnlockOpen] = useState(false);
   const [scrollVersion, setScrollVersion] = useState(0);
   const [addingDirective, setAddingDirective] = useState(false);
@@ -222,10 +225,37 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     inFlight.current = true;
     setSending(true);
     setFailure(null);
+    setHeld(false);
     try {
       await sendLeaderInboxMessage(text);
       setDraft('');
       await refetchQuery(fleetRunsQuery.key, () => fleetRunsQuery.fetch(), true);
+      setScrollVersion(version => version + 1);
+    } catch (error) {
+      if (inboxHeld(error)) setHeld(true);
+      else setFailure(readFailureReason(error));
+    } finally {
+      inFlight.current = false;
+      setSending(false);
+    }
+  }
+
+  /** The thread route has no comms gate, so a held inbox message can still reach the Leader. */
+  async function sendToThread() {
+    if (inFlight.current || !canSend(draft, sending) || actions.readOnly) return;
+    if (!hasMutationHold()) {
+      setUnlockOpen(true);
+      return;
+    }
+    inFlight.current = true;
+    setSending(true);
+    setFailure(null);
+    try {
+      await sendLeaderThreadMessage(trimReply(draft));
+      setDraft('');
+      setHeld(false);
+      refetchThread();
+      refetchRuns();
       setScrollVersion(version => version + 1);
     } catch (error) {
       setFailure(readFailureReason(error));
@@ -320,6 +350,12 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       {hints.length ? <ul className={styles.note} aria-label="Composer commands">
         {hints.map(hint => <li key={hint.name}><code>{hint.usage}</code> {hint.summary}</li>)}
       </ul> : null}
+      {held ? <div className={styles.note} role="status">
+        <p>{INBOX_HELD_SENTENCE} Only Mason edits this file.</p>
+        <CopyPill text={COMMS_TOML_PATH} what="the comms.toml path" />
+        <CopyPill text={COMMS_CONFIRM_LINE} what="the comms.toml confirmation line" />
+        <button type="button" disabled={!canSend(draft, sending) || actions.readOnly} onClick={() => void sendToThread()}>Send to the Leader thread instead</button>
+      </div> : null}
       {failure ? <p className={styles.replyFailure} role="alert">{failure}</p> : null}
     </form>
     <MutationTokenDialog open={unlockOpen} onClose={() => setUnlockOpen(false)} onUnlocked={() => void send()}

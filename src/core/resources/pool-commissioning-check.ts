@@ -17,6 +17,9 @@ import { assertOfflineResourcePoolCommissioningHistory } from './pool-commission
 const MAX_BYTES = 4 * 1024 * 1024;
 const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const HASH = /^[a-f0-9]{64}$/;
+/** Host OS at load. Commissioning follows that OS, not a simulated platform. */
+const HOST_PLATFORM: NodeJS.Platform = process.platform;
+
 export type ResourcePoolCommissioningCheckCode = 'invalid-input' | 'ownership-present' | 'uncertain-work' |
   'state-unavailable' | 'config-conflict' | 'enrollment-invalid' | 'profile-invalid' | 'state-changed';
 /** Fixed diagnostics deliberately exclude paths, identities and private contents. */
@@ -147,7 +150,13 @@ export function prepareResourcePoolCommissioning(value: unknown) {
     const launch = resolveNativeSeatLaunch({ accountsRoot: input.accountsRoot, provider, seatId: seat.id });
     if (!launch.ok || canonical(launch.launch.command) !== canonical(seat.command)) refuse('profile-invalid');
     const profile = read(join(dirname(seat.command[1]!), 'profile.json'), dirname(seat.command[1]!));
-    if (!record(profile) || profile.schemaVersion !== 2 || !record(profile.identity)) refuse('profile-invalid');
+    // Darwin preparation always binds a reboot witness. Other hosts publish a
+    // schema-1 profile; that file is still pinned, and a schema-2 profile
+    // without identity is refused everywhere.
+    if (!record(profile) || profile.schemaVersion === 2 && !record(profile.identity) ||
+      profile.schemaVersion !== 2 && (profile.schemaVersion !== 1 || HOST_PLATFORM === 'darwin' || profile.identity !== undefined)) {
+      refuse('profile-invalid');
+    }
     const launcher = read(join(dirname(seat.command[1]!), 'launcher.mjs'), dirname(seat.command[1]!), false, false);
     const commandFile = read(join(dirname(seat.command[1]!), 'command.json'), dirname(seat.command[1]!));
     if (aliases.every(row => row.kind === 'native-cli' && canonical(row.command) === canonical(seat.command))) refuse('enrollment-invalid');

@@ -1,4 +1,6 @@
 import { readGoals } from '../fleet/goals.js';
+import { readMetricsPanel } from '../fleet/metrics-panel.js';
+import { readOrdersView } from './fleet-orders-view.js';
 import { readInboxAckStates, type InboxAckState } from '../fleet/inbox-ack-state.js';
 import { getLaneModelSnapshot, type LaneModelSnapshot } from '../fleet/lane-models.js';
 import { VERSE_FLEET_LANE_MODELS_PATH, toFleetLaneModelsV1, type FleetLaneModelsV1 } from './fleet-lane-models-contract.js';
@@ -289,9 +291,19 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     catch { return emptyMission(now()); }
   }
   return async (ctx, req, res, path, method) => {
+    if (path === '/api/verse/fleet/runs/metrics') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      sendJson(res, 200, await readMetricsPanel(deps.runsDir ?? defaultRunsDir()));
+      return true;
+    }
     if (path === '/api/verse/fleet/runs/goals') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
       sendJson(res, 200, await readGoals(deps.runsDir ?? defaultRunsDir()));
+      return true;
+    }
+    if (path === '/api/verse/fleet/runs/orders') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      sendJson(res, 200, await readOrdersView({ root: deps.runsDir ?? defaultRunsDir(), nowMs: now() }));
       return true;
     }
     if (path === VERSE_FLEET_MISSION_PATH) {

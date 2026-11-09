@@ -38,6 +38,17 @@ DEVIN_T = 10; DEVIN_C = 16
 DVLH = re.compile(r"(?i)\b(?:horizon=long(?:-horizon)?|long[-_]horizon)\b")
 def devin_default(tm, attrs):   # open pool + frontier tier or a long-horizon marker -> devin by default
     return bool(tm and tm.group(1) == "frontier") or bool(DVLH.search(attrs))
+
+def local_fit(attrs, text):
+    """Conservatively admit only bounded, file-specific offline work."""
+    sizes = re.findall(r"(?:^|[,;\s])size<=([0-9]+)(?=[,;\s]|$)", attrs)
+    if len(sizes) != 1 or int(sizes[0]) > 80: return False, "size must be at most 80"
+    files = set(re.findall(r"(?<![\w./-])((?:[\w.-]+/)*[\w.-]+\.[A-Za-z][A-Za-z0-9]{0,9})(?![\w./-])", text))
+    if not 1 <= len(files) <= 2: return False, "name one or two files"
+    if not re.search(r"\boffline\b", text, re.I): return False, "offline work is not explicit"
+    if re.search(r"\b(?:network|browser|internet|https?://|fetch|download|upload|deploy|publish)\b", text, re.I):
+        return False, "network or browser may be needed"
+    return True, "bounded file-specific work"
 def rd(p, d=""):
     try: return open(p).read()
     except Exception: return d
@@ -330,9 +341,10 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re
     if pool == "any": pool = max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
     if pool not in CODEX: skip(j, "lane-" + pool); continue
     if pool == "codex-local":
-        size = re.search(r"(?:^|[,;\s])size<=([0-9]+)(?=[,;\s]|$)", attrs)
-        if not size or int(size.group(1)) > 60:
-            skip(j, "local-size"); continue
+        fits, reason = local_fit(attrs, text)
+        if not fits:
+            pool = max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
+            print("LOCAL_FIT %s: %s; fallback=%s" % (j, reason, pool), file=sys.stderr)
     prp = set(re.findall(r"github\.com/[A-Za-z0-9._-]+/([A-Za-z0-9._-]+)/pull/(\d+)", raw))
     prp |= {(rm.group(1), n) for n in re.findall(r"(?:pull/|PR=|#)(\d+)", attrs + " " + text)}
     if prp & held_pr or any(("*", n) in held_pr for _, n in prp): skip(j, "hold-list-pr"); continue
