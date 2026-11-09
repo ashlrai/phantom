@@ -60,6 +60,8 @@ describe('fleet health-age', () => {
   it.each([
     [true, 'last exit code = 0', 'loaded', 0],
     [true, 'last exit code = 42', 'loaded', 42],
+    [true, 'last exit code = -9', 'loaded', -9],
+    [true, 'last exit code = 999999999999999999999999', 'loaded', null],
     [true, 'no exit recorded', 'loaded', null],
     [false, 'Could not find service', 'not-loaded', null],
     [false, 'permission denied', 'unknown', null],
@@ -83,5 +85,13 @@ describe('fleet health-age', () => {
   it('reports unsupported systems and failed probes as unknown', async () => {
     expect((await readGuardianServiceHealth({ platform: 'linux' })).state).toBe('unknown');
     expect((await readGuardianServiceHealth({ platform: 'darwin', uid: 1, probe: async () => { throw new Error('private'); } })).state).toBe('unknown');
+  });
+  it('reports a signal exit as unhealthy without creating repair jobs', async () => {
+    writeFileSync(join(runsDir, 'supervisor/status-main-guardian.md'), '# Main guardian status (2026-11-03 11:59:00)\n');
+    const service = () => readGuardianServiceHealth({ platform: 'darwin', uid: 123,
+      probe: async () => ({ ok: true, output: 'last exit code = -9' }) });
+    expect(await cmdFleetHealthAge(['--service', '--json'], { runsDir, now, service })).toBe(1);
+    expect(JSON.parse(vi.mocked(console.log).mock.lastCall![0])).toMatchObject({ service: { lastExitCode: -9, diagnostic: expect.stringContaining('error') } });
+    expect(() => readFileSync(join(runsDir, 'queue', 'ready.tsv'))).toThrow();
   });
 });

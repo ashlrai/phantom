@@ -42,8 +42,11 @@ export async function readGuardianServiceHealth(opts: {
       ? { state: 'not-loaded', lastExitCode: null, diagnostic: 'Guardian service is not loaded. Check its launchd installation and user session.' }
       : { state: 'unknown', lastExitCode: null, diagnostic: 'Could not inspect the guardian service. Check launchctl and the user session.' };
   }
-  const match = /^\s*last exit code = (\d+)\s*$/m.exec(result.output);
-  const lastExitCode = match ? Number(match[1]) : null;
+  // launchd can report a negative status when a process was killed by a signal.
+  // Treat malformed or unrepresentable values as unknown, never as success.
+  const match = /^\s*last exit code = (-?\d+)\s*$/m.exec(result.output);
+  const parsedExitCode = match ? Number(match[1]) : null;
+  const lastExitCode = parsedExitCode !== null && Number.isSafeInteger(parsedExitCode) ? parsedExitCode : null;
   return { state: 'loaded', lastExitCode, diagnostic: lastExitCode !== null && lastExitCode !== 0
     ? 'Guardian last exited with an error. Inspect the guardian logs and service configuration.'
     : lastExitCode === null ? 'Guardian is loaded; launchd did not report a last exit code.' : 'Guardian is loaded; last exit was successful.' };
