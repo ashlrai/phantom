@@ -124,6 +124,10 @@ report ready; `mobile` needs the `~/.ashlr/verse-remote.json` gateway file
   `phm comms inbox read` reads the inbox file directly.
 - **API** — the `GET /api/verse/fleet/runs/inbox` route exposes the inbox in JSON.
 
+## One owner thread
+
+`phm comms status --json`, `phm comms thread --json` and `phm comms send-owner --text "<reply>" --json` are the single owner thread across desktop, Telegram, email, iMessage and Slack. Inbound messages from the configured owner land in one ordered thread. A reply goes back to that channel and to the desktop thread, and nowhere else. Adapters stay disabled until configured. Secret fields are Phantom Secrets handle names. KILL and the comms pause halt every adapter. See [Owner thread](OWNER-THREAD.md).
+
 ## Unified inbox
 
 `phm comms inbox [--json]`
