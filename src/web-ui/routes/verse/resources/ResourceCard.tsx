@@ -32,6 +32,7 @@ import { ReadinessLines } from './ReadinessLines.js';
 import { ResourceFacts } from './ResourceFacts.js';
 import type { ResourceDisplayView } from './resource-display-model.js';
 import type { ResourceFactsView } from './resources-model.js';
+import { useWorldReading } from './world-card-reading.js';
 import { SchedulingEvidence } from './SchedulingEvidence.js';
 import type { SchedulingEvidenceView } from './scheduling-model.js';
 import styles from './ResourcesDrawer.module.css';
@@ -106,6 +107,13 @@ function WindowMeter({ row, w, reservePercent, current = true }: { row: Capacity
   );
 }
 
+/** Rendered only for a missing reading, so other cards never subscribe to the world model. */
+export function WorldReadingLine({ seatId, engine }: { seatId: string; engine: string }) {
+  const world = useWorldReading(seatId, engine);
+  if (world === null) return null;
+  return <p className={styles.subtle} data-resource-world-reading>World model: {world.usage} · {world.remaining} · from {world.source} · {world.age}</p>;
+}
+
 export interface ResourceCardProps {
   row: CapacityRow;
   /** Worded against the drawer's clock, with any running check applied. */
@@ -153,6 +161,7 @@ export function ResourceCard({ row, status, display, settled, mode, busy, onActi
       {row.engine === 'grok' ? <p className={styles.subtle}>Grok Build · native CLI</p> : null}
       <StatusLine status={status} />
       {display ? <p className={styles.subtle} data-resource-usage-label>{display.usage.label}</p> : null}
+      {display?.usage.state === 'missing' ? <WorldReadingLine seatId={row.seatId} engine={row.engine} /> : null}
       {display?.usage.observedAt && display.usage.state !== 'historical' ? <p className={styles.stamp}>Usage observed <time dateTime={display.usage.observedAt} title={display.usage.observedAt}>{new Date(display.usage.observedAt).toLocaleString()}</time></p> : null}
       {creditText !== null ? <p className={styles.subtle}>{creditText}</p> : null}
       {!creditCurrent && row.engine === 'codex' && row.creditState !== undefined && row.creditState !== 'unknown' ? <p className={styles.subtle}>Credits unconfirmed · current balance and availability are unknown.</p> : null}

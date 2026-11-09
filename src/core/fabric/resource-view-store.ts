@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { constants, closeSync, fstatSync, lstatSync, openSync, readSync, mkdirSync, rmdirSync, unlinkSync, type Stats } from 'node:fs';
-import { open } from 'node:fs/promises';
+import { lstat, open, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { privateDirectory } from '../universe/artifacts.js';
 import { acquireLocalStoreLockWithOutcome, ownsLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
-import { buildResourceView, resourceObject, type ResourceView } from './resource-view.js';
+import { readDevinUsage, withDevinUsage, type DevinUsageResult } from './readers/devin-usage.js';
+import { buildResourceView, MACHINE_MAX_AGE_MS, resourceObject, type ResourceView } from './resource-view.js';
 
 const MAX_BYTES = 8 * 1024 * 1024;
 export function resourceViewDirectory(): string { return join(homedir(), '.ashlr'); }
@@ -44,23 +45,99 @@ function readFleetSync(file: string): Record<string, unknown> {
   } finally { closeSync(fd); }
 }
 
+/** A live custody call may not stall the UI: the deadline wins and Devin is unknown. */
+const LIVE_DEVIN_DEADLINE_MS = 12_000;
+async function boundedDevinRead(read: () => Promise<DevinUsageResult>): Promise<DevinUsageResult> {
+  const work = Promise.resolve().then(read)
+    .catch((): DevinUsageResult => ({ status: 'unknown', reason: 'reader-unavailable' }));
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<DevinUsageResult>((resolve) => {
+    timer = setTimeout(() => resolve({ status: 'unknown', reason: 'reader-timeout' }), LIVE_DEVIN_DEADLINE_MS);
+    timer.unref();
+  });
+  try { return await Promise.race([work, deadline]); } finally { clearTimeout(timer); }
+}
+
 /** UI reads are async and bounded. Missing, unsafe or corrupt input is unknown, never zero. */
-export async function readResourceView(directory = resourceViewDirectory(), nowMs = Date.now()): Promise<ResourceView> {
+async function readFleetView(directory: string, nowMs: number,
+  readDevin: () => Promise<DevinUsageResult> = readDevinUsage): Promise<ResourceView> {
+  let fleet: Record<string, unknown> = {};
   try {
     const handle = await open(join(directory, 'fleet.json'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const stat = await handle.stat();
-      if (!safeFile(stat)) return buildResourceView({}, nowMs);
-      const buffer = Buffer.alloc(stat.size + 1); let offset = 0;
+      if (safeFile(stat)) {
+        const buffer = Buffer.alloc(stat.size + 1); let offset = 0;
+        while (offset < buffer.length) {
+          const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
+          if (bytesRead === 0) break;
+          offset += bytesRead;
+        }
+        if (offset === stat.size && sameFile(stat, await handle.stat())) {
+          fleet = parseFleet(buffer.subarray(0, offset).toString('utf8'));
+        }
+      }
+    } finally { await handle.close(); }
+  } catch { /* Missing, unsafe or corrupt snapshot is unknown input; the live read still runs. */ }
+  // The independent Devin reader is consulted on every path, after the snapshot
+  // fallback converges; it never revives refused file contents or other pools.
+  return buildResourceView(await withDevinUsage({ ...fleet, resources: resourceObject(fleet.resources) },
+    () => boundedDevinRead(readDevin)), nowMs);
+}
+
+function safeDirectory(stat: Stats): boolean {
+  return stat.isDirectory() && !stat.isSymbolicLink() &&
+    (typeof process.getuid !== 'function' || stat.uid === process.getuid()) && (Number(stat.mode) & 0o022) === 0;
+}
+function sameDirectory(a: Stats, b: Stats): boolean {
+  return safeDirectory(a) && safeDirectory(b) && a.dev === b.dev && a.ino === b.ino && a.uid === b.uid && a.mode === b.mode;
+}
+function controllerInstant(value: unknown): number | null {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:Z|[+-](?:[01]\d|2[0-3]):?[0-5]\d)$/.test(value)) return null;
+  const [year, month, day] = value.slice(0, 10).split('-').map(Number) as [number, number, number];
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  const at = Date.parse(value);
+  return Number.isFinite(at) ? at : null;
+}
+/** Controller data is advisory only; it never enters Performance admission or pacing. */
+async function readControllerMemory(root: string, nowMs: number): Promise<ResourceView['controllerMemory']> {
+  try {
+    const queue = join(root, 'queue'), path = join(queue, 'status.json');
+    const parents = await Promise.all([lstat(root), lstat(queue)]);
+    if (!parents.every(safeDirectory) || await realpath(root) !== resolve(root) || await realpath(queue) !== resolve(queue)) return undefined;
+    const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const before = await handle.stat();
+      if (!safeFile(before) || before.mtimeMs > nowMs || nowMs - before.mtimeMs >= MACHINE_MAX_AGE_MS) return undefined;
+      const buffer = Buffer.alloc(before.size + 1); let offset = 0;
       while (offset < buffer.length) {
         const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
         if (bytesRead === 0) break;
         offset += bytesRead;
       }
-      if (offset !== stat.size || !sameFile(stat, await handle.stat())) return buildResourceView({}, nowMs);
-      return buildResourceView(parseFleet(buffer.subarray(0, offset).toString('utf8')), nowMs);
+      const after = await handle.stat(), current = await lstat(path), afterParents = await Promise.all([lstat(root), lstat(queue)]);
+      if (offset !== before.size || !sameFile(before, after) || !safeFile(current) || !sameFile(before, current) ||
+          !parents.every((parent, index) => sameDirectory(parent, afterParents[index]!)) ||
+          await realpath(root) !== resolve(root) || await realpath(queue) !== resolve(queue)) return undefined;
+      const status = resourceObject(JSON.parse(buffer.subarray(0, offset).toString('utf8'))), sample = resourceObject(status.machine_sample);
+      const tick = controllerInstant(status.last_tick), started = sample.startedAtMs, free = sample.memoryPressureFreePct, swap = sample.swapUsedGiB;
+      if (status.schema !== 'dispatchd.status.v1' || sample.schema !== 'dispatchd.machine-sample.v1' ||
+          Object.keys(sample).sort().join(',') !== 'memoryPressureFreePct,schema,startedAtMs,swapUsedGiB' ||
+          !Number.isSafeInteger(started) || Number(started) < 0 || Number(started) > nowMs || nowMs - Number(started) >= MACHINE_MAX_AGE_MS ||
+          tick === null || tick > nowMs || nowMs - tick >= MACHINE_MAX_AGE_MS || tick + 1000 <= Number(started) ||
+          typeof free !== 'number' || !Number.isFinite(free) || free < 0 || free > 100 ||
+          !(swap === null || typeof swap === 'number' && Number.isFinite(swap) && swap >= 0)) return undefined;
+      return { pressureFreePct: free, observedAt: new Date(Number(started)).toISOString() };
     } finally { await handle.close(); }
-  } catch { return buildResourceView({}, nowMs); }
+  } catch { return undefined; }
+}
+
+export async function readResourceView(directory = resourceViewDirectory(), nowMs = Date.now(),
+  runsDir = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'),
+  readDevin: () => Promise<DevinUsageResult> = readDevinUsage): Promise<ResourceView> {
+  const [view, controllerMemory] = await Promise.all([readFleetView(directory, nowMs, readDevin), readControllerMemory(runsDir, nowMs)]);
+  return controllerMemory ? { ...view, controllerMemory } : view;
 }
 
 /** Atomically add the view without replacing sibling readings or inventory. No provider calls. */

@@ -1,8 +1,8 @@
 /** Synthetic private projects only. Most packaging cases mock esbuild; compiled
  * owner cases run the real bounded tiny-project compiler, never the workload. */
-import * as fs from 'node:fs';
+import fs from 'node:fs';
 import { tmpdir } from 'node:os';
-import { isBuiltin } from 'node:module';
+import { createRequire, isBuiltin, syncBuiltinESMExports } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -39,8 +39,8 @@ vi.mock('node:url', async original => {
 });
 vi.mock('../scripts/build-preparation-typecheck.mjs', () => ({ authorPreparationTypecheckProject: fake.author }));
 vi.mock('esbuild', () => ({ build: fake.build }));
-vi.mock('node:fs', async original => ({ ...await original<typeof import('node:fs')>() }));
 
+const nativeImport = createRequire(import.meta.url)('./helpers/preparation-native-import.cjs') as (specifier: string) => Promise<unknown>;
 const repository = dirname(dirname(fileURLToPath(import.meta.url)));
 const files = ['preparation-bridge.mjs', 'preparation-verification-activity.mjs', 'preparation-verification-child.mjs',
   'preparation-verification-controller.mjs', 'preparation-verification-fixtures.mjs', 'preparation-verification-native.mjs',
@@ -49,13 +49,14 @@ const roots: string[] = [];
 function write(path: string, bytes: string | Buffer) { fs.writeFileSync(path, bytes, { mode: 0o600 }); }
 function changedCompilerReadWhen(enabled: () => boolean) {
   const selected = fs.lstatSync(join(repository, 'src/core/universe/preparation-typecheck.ts'), { bigint: true }), original = fs.readSync;
-  return vi.spyOn(fs, 'readSync').mockImplementation(((...args: [number, NodeJS.ArrayBufferView, number, number, number | null]) => {
+  vi.spyOn(fs, 'readSync').mockImplementation(((...args: [number, NodeJS.ArrayBufferView, number, number, number | null]) => {
     const count = Reflect.apply(original, fs, args), stat = fs.fstatSync(args[0], { bigint: true });
     if (enabled() && stat.dev === selected.dev && stat.ino === selected.ino && args[4] === 0 && count > 0) {
       const bytes = args[1] as Buffer; bytes[0] = bytes[0]! ^ 1;
     }
     return count;
   }) as typeof fs.readSync);
+  syncBuiltinESMExports();
 }
 function fixture() {
   const root = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'preparation-score-package-'))); roots.push(root);
@@ -141,7 +142,7 @@ export async function runPreparationWorkload(options) {
   }
   fake.build.mockImplementation(esbuild.build);
   await buildPreparationScoreBundle({ repository, ...f });
-  const entry = await import(pathToFileURL(join(f.output, 'preparation-score.mjs')).href) as {
+  const entry = await nativeImport(pathToFileURL(join(f.output, 'preparation-score.mjs')).href) as {
     runPreparationScore(): Promise<{ passed: boolean; score: number; metrics: Record<string, number>; diagnostics?: Array<{ code: string }> }>;
   };
   return { ...f, entry };
@@ -151,7 +152,7 @@ function rewriteOuter(output: string) {
     files: PREPARATION_SCORE_FILES.map(name => ({ name, digest: digest(fs.readFileSync(join(output, name))) })) }) + '\n');
 }
 afterEach(() => {
-  vi.restoreAllMocks(); vi.unstubAllEnvs(); fake.build.mockReset(); fake.calibrate.mockReset(); fake.author.mockReset();
+  vi.restoreAllMocks(); syncBuiltinESMExports(); vi.unstubAllEnvs(); fake.build.mockReset(); fake.calibrate.mockReset(); fake.author.mockReset();
   fake.git.path = '/fixed/developer/git'; fake.git.digest = 'e'.repeat(64);
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
@@ -190,7 +191,7 @@ describe('explicit nested preparation scoring packaging', () => {
     const selected = inspectPreparationScoreBundle(f.output);
     const writes = vi.spyOn(process.stdout, 'write');
     const before = [process.listenerCount('SIGINT'), process.listenerCount('SIGTERM')];
-    const entry = await import(pathToFileURL(join(f.output, 'preparation-score.mjs')).href) as {
+    const entry = await nativeImport(pathToFileURL(join(f.output, 'preparation-score.mjs')).href) as {
       inspectPreparationScoreIdentity(path: string): { digest: string; calibrationJson: string; workload: unknown; git: unknown };
     };
     expect(writes).not.toHaveBeenCalled();
@@ -219,6 +220,7 @@ describe('explicit nested preparation scoring packaging', () => {
         if (!injected && args[0] === f.output) { injected = true; write(join(activityRoot, 'unexpected.json'), '{}'); }
         return observed;
       }) as typeof fs.lstatSync);
+      syncBuiltinESMExports();
     }
     const listeners = [process.listenerCount('SIGINT'), process.listenerCount('SIGTERM')], writes = vi.spyOn(process.stdout, 'write');
     try {
@@ -232,7 +234,7 @@ describe('explicit nested preparation scoring packaging', () => {
       if (kind === 'expired') expect(JSON.parse(fs.readFileSync(join(activityRoot, 'complete.json'), 'utf8')).count).toBe(0);
       if (kind === 'completion-failure') { expect(injected).toBe(true); expect(fs.existsSync(join(activityRoot, 'complete.json'))).toBe(false); }
       expect(fs.readdirSync(f.root).some(name => name.startsWith('verification-'))).toBe(false);
-    } finally { process.argv = priorArgv; }
+    } finally { process.argv = priorArgv; vi.restoreAllMocks(); syncBuiltinESMExports(); }
   });
 
   it.skipIf(NOT_MACOS).each(['settled', 'bom', 'unsettled', 'scope-violation', 'type-error'] as const)('the compiled owner handles a synthetic %s workload without claiming native qualification', async kind => {
@@ -256,6 +258,7 @@ describe('explicit nested preparation scoring packaging', () => {
     process.argv = [process.execPath, join(f.output, 'preparation-score.mjs'), join(f.output, 'measurement/preparation-bridge.mjs')];
     const writes = vi.spyOn(process.stdout, 'write'), publications = vi.spyOn(fs, 'linkSync');
     const listeners = [process.listenerCount('SIGINT'), process.listenerCount('SIGTERM')];
+    syncBuiltinESMExports();
     try {
       const result = await f.entry.runPreparationScore();
       if (kind === 'settled' || kind === 'bom') {
@@ -279,7 +282,7 @@ describe('explicit nested preparation scoring packaging', () => {
         .toMatchObject({ kind: 'tool', phase: 'settled', settlement: 'group-exit-confirmed' });
       expect(writes).not.toHaveBeenCalled();
       expect([process.listenerCount('SIGINT'), process.listenerCount('SIGTERM')]).toEqual(listeners);
-    } finally { process.argv = priorArgv; }
+    } finally { process.argv = priorArgv; vi.restoreAllMocks(); syncBuiltinESMExports(); }
   });
 
   it.skipIf(NOT_MACOS)('preserves all nine measured files and original manifest while pinning the separate score entry', async () => {
@@ -406,6 +409,7 @@ describe('explicit nested preparation scoring packaging', () => {
       }
       return result;
     }) as typeof fs.writeFileSync);
+    syncBuiltinESMExports();
     await expect(buildPreparationScoreBundle({ repository, ...f })).rejects.toThrow();
     expect(injected).toBe(true); expect(fs.existsSync(join(f.output, 'manifest.json'))).toBe(false);
   });
@@ -429,6 +433,7 @@ describe('explicit nested preparation scoring packaging', () => {
         return result;
       }) as typeof fs.writeFileSync);
     }
+    syncBuiltinESMExports();
     await expect(buildPreparationScoreBundle({ repository, ...f })).rejects.toThrow();
     expect(injected).toBe(true); expect(fs.readdirSync(outside)).toEqual([]);
     expect(fs.existsSync(join(f.output, 'manifest.json'))).toBe(false);
@@ -444,6 +449,7 @@ describe('explicit nested preparation scoring packaging', () => {
       }
       return result;
     }) as typeof fs.writeFileSync);
+    syncBuiltinESMExports();
     await expect(buildPreparationScoreBundle({ repository, ...f })).rejects.toThrow();
     expect(injected).toBe(true); expect(fs.readdirSync(outside)).toEqual([]);
   });

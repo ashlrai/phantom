@@ -20,8 +20,10 @@ export interface StrayStopCliV1 {
   summary: { planned: number; signalled: number; alreadyGone: number; refused: number; failed: number; capped: boolean };
 }
 
-export async function cmdFleetStrayStop(args: string[], deps: Partial<StrayStopDeps> = {}): Promise<number> {
-  if (args.length === 1 && ['--help', '-h'].includes(args[0])) { console.log(usage); return 0; }
+export async function cmdFleetStrayStop(args: string[], deps: Partial<StrayStopDeps> & { output?: (text: string) => void; error?: (text: string) => void } = {}): Promise<number> {
+  const output = deps.output ?? ((text: string) => console.log(text));
+  const error = deps.error ?? ((text: string) => { process.stderr.write(text); });
+  if (args.length === 1 && ['--help', '-h'].includes(args[0])) { output(usage); return 0; }
   let json = false;
   let apply = false;
   let max: number | undefined;
@@ -35,7 +37,7 @@ export async function cmdFleetStrayStop(args: string[], deps: Partial<StrayStopD
     else if (arg === '--lane' && next !== undefined && STRAY_ID_PATTERN.test(next)) { lanes.add(next); i++; }
     else if (arg === '--max' && max === undefined && next !== undefined && /^\d{1,2}$/.test(next) && +next >= 1 && +next <= 50) { max = +next; i++; }
     else if (arg === '--runs-dir' && runsDir === undefined && next !== undefined && next !== '' && !next.startsWith('--')) { runsDir = next; i++; }
-    else { process.stderr.write(`${usage}\n`); return 2; }
+    else { error(`${usage}\n`); return 2; }
   }
   const stopDeps: StrayStopDeps = {
     readStraySlots: deps.readStraySlots ?? (() => readStraySlots(defaultStrayReaders)),
@@ -50,7 +52,7 @@ export async function cmdFleetStrayStop(args: string[], deps: Partial<StrayStopD
     found = report.lanes.filter(l => !lanes.size || lanes.has(l.lane))
       .flatMap(l => l.strays.map(s => ({ lane: l.lane, job: s.job, pid: s.pid, ageSeconds: s.ageSeconds })));
   } catch {
-    process.stderr.write('error: fleet stray-stop unavailable\n'); return 1;
+    error('error: fleet stray-stop unavailable\n'); return 1;
   }
   const planned = found.slice(0, limit);
   const results: StrayStopOutcome[] = [];
@@ -69,7 +71,7 @@ export async function cmdFleetStrayStop(args: string[], deps: Partial<StrayStopD
     v: 1, mode: apply ? 'apply' : 'dry-run', planned, results,
     summary: { planned: planned.length, signalled: count('signalled'), alreadyGone: count('already-gone'), refused: count('refused'), failed: count('failed'), capped: found.length > limit },
   };
-  if (json) console.log(JSON.stringify(out));
+  if (json) output(JSON.stringify(out));
   else {
     const lines = planned.map(p => `${apply ? '' : 'would stop '}${p.lane} ${p.job} pid=${p.pid} age=${p.ageSeconds ?? 'unknown'}s`
       + (apply ? ` -> ${results.find(r => r.pid === p.pid && r.lane === p.lane && r.job === p.job)?.result ?? ''}` : ''));
@@ -78,7 +80,7 @@ export async function cmdFleetStrayStop(args: string[], deps: Partial<StrayStopD
       ? `Stray stop: ${s.signalled} signalled, ${s.alreadyGone} already gone, ${s.refused} refused, ${s.failed} failed.`
       : `Dry run: ${s.planned} stray(s) planned; pass --apply to stop them.`);
     if (s.capped) lines.push(`Capped at ${limit} per run; rerun for the rest.`);
-    console.log(scrubSecrets(lines.join('\n')));
+    output(scrubSecrets(lines.join('\n')));
   }
   return count('failed') > 0 ? 1 : 0;
 }

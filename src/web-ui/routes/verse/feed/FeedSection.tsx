@@ -13,6 +13,8 @@ import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { formatRelative } from '../autonomy/format.js';
 import { useNow } from '../autonomy/use-ticker.js';
 import { Card, CardNote } from '../command/Surface.js';
+import { openChat } from '../command/nav.js';
+import { liveLine } from '../chat/sidebar-model.js';
 import { fleetMergesQuery } from '../fleet-merges/fleet-merges-queries.js';
 import { leaderThreadQuery } from '../leader/thread-data.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
@@ -53,6 +55,21 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
   const shown = filterFeed(feed, filter);
 
   return <div className={styles.root}>
+    <section aria-labelledby="feed-running-title" className={styles.running}>
+      <h2 id="feed-running-title">Running chats</h2>
+      {activity.status === 'stale' ? <CardNote tone="unknown">Activity is stale; showing the last successful read.</CardNote> : null}
+      {activity.data && activity.data.sources.chats !== 'ok' ? <CardNote tone="unknown">Chat activity could not be fully read.</CardNote> : null}
+      {!activity.data ? <CardNote tone="unknown">{activity.status === 'unavailable' ? 'Running chat activity is unavailable.' : 'Loading running chats…'}</CardNote>
+        : activity.data.running.length === 0 ? activity.data.sources.chats === 'ok' ? <CardNote>No chats running in the latest activity snapshot.</CardNote> : null
+          : <ul className={styles.runningList}>
+            {activity.data.running.map(chat => <li key={chat.sessionId}>
+              <button type="button" className={styles.runningButton} onClick={() => openChat(chat.sessionId)}>
+                <span>{chat.title || 'Untitled chat'}</span>
+                <span className={styles.runningDetail}>{chat.engine} · {liveLine(chat.live) ?? 'Running'}</span>
+              </button>
+            </li>)}
+          </ul>}
+    </section>
     <div className={styles.filters} role="group" aria-label="Filter the feed">
       {FILTERS.map(f => <button key={f.id} type="button" className={styles.chip} aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>{f.label}</button>)}
     </div>

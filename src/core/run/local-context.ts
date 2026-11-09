@@ -7,10 +7,13 @@
  * modified — this only enriches the local model's system prompt.
  *
  * Sections (each in its own try/catch — never-throws, degrades to ''):
- *   1. NORTH-STAR summary — grand vision + three pillars + ambitious bets
- *   2. Ecosystem map    — 13-repo platform map + composition bets
- *   3. Genome recall    — top-K keyword hits relevant to the goal
- *   4. Repo tree        — shallow dir/entry-point orientation
+ *   1. Genome recall — top-K keyword hits relevant to the goal
+ *   2. Repo tree     — shallow dir/entry-point orientation
+ *
+ * NORTH-STAR and the ecosystem map are not injected here. They carry no
+ * secret, sandbox, or authority constraint, and they used to sit in front of
+ * the task evidence so a length cut dropped the recall and the tree first.
+ * Planners still read those docs through northStarDocSummary.
  *
  * Length-bounded: each section is individually capped; total capped at
  * MAX_BUNDLE_CHARS (~2 400 chars / ~600 tokens) — safely under local model
@@ -22,20 +25,16 @@
 
 import { execFileSync } from 'node:child_process';
 import type { AshlrConfig, PromptContextSummary, RunContextSummary } from '../types.js';
-import {
-  northStarDocSummary,
-  ecosystemSummary,
-} from '../ecosystem/map.js';
 import { recall } from '../genome/recall.js';
 
 // ---------------------------------------------------------------------------
 // Section caps (chars)
 // ---------------------------------------------------------------------------
 
-const CAP_NORTH_STAR = 500;
-const CAP_ECOSYSTEM  = 600;
-const CAP_GENOME     = 500;
-const CAP_REPO_TREE  = 400;
+/** Per recalled hit. The old 80-char cut existed to fit a vision prefix. */
+const CAP_HIT_CHARS = 280;
+const CAP_GENOME     = 1_400;
+const CAP_REPO_TREE  = 800;
 
 /** Hard ceiling on the assembled bundle (chars). ~600 tokens. */
 const MAX_BUNDLE_CHARS = 2_400;
@@ -47,22 +46,6 @@ const GENOME_TOP_K = 4;
 // Section builders — each must never throw
 // ---------------------------------------------------------------------------
 
-function buildNorthStarSection(): string {
-  try {
-    return northStarDocSummary(CAP_NORTH_STAR);
-  } catch {
-    return '';
-  }
-}
-
-function buildEcosystemSection(): string {
-  try {
-    return ecosystemSummary(CAP_ECOSYSTEM);
-  } catch {
-    return '';
-  }
-}
-
 async function buildGenomeSection(
   goal: string,
   cfg: AshlrConfig,
@@ -71,7 +54,7 @@ async function buildGenomeSection(
     const hits = await recall(goal, cfg, { limit: GENOME_TOP_K, embeddings: false });
     if (hits.length === 0) return '';
     const lines = hits.map((h) =>
-      `- [${h.entry.tags.join(', ') || 'general'}] ${h.entry.title}: ${h.entry.text.slice(0, 80).replace(/\n/g, ' ')}`,
+      `- [${h.entry.tags.join(', ') || 'general'}] ${h.entry.title}: ${h.entry.text.slice(0, CAP_HIT_CHARS).replace(/\n/g, ' ')}`,
     );
     const body = lines.join('\n');
     return (
@@ -137,8 +120,6 @@ function buildRepoTreeSection(repo: string): string {
 // ---------------------------------------------------------------------------
 
 export interface LocalContextBundle {
-  northStar: string;
-  ecosystem: string;
   genome: string;
   repoTree: string;
 }
@@ -148,37 +129,24 @@ export interface LocalContextSummaryOptions {
 }
 
 /**
- * Assemble the four context sections for a local model run.
+ * Assemble the task-evidence sections for a local model run.
  * Always resolves (never rejects). Any absent/erroring section is ''.
  * Each section is individually length-bounded; the assembled bundle is
- * capped at MAX_BUNDLE_CHARS total.
+ * capped at MAX_BUNDLE_CHARS total. Genome comes first so a cut keeps the
+ * hits that match this goal.
  */
 export async function buildLocalContextBundle(
   goal: string,
   repo: string,
   cfg: AshlrConfig,
 ): Promise<LocalContextBundle> {
-  const [northStar, ecosystem, genome] = await Promise.all([
-    Promise.resolve(buildNorthStarSection()),
-    Promise.resolve(buildEcosystemSection()),
-    buildGenomeSection(goal, cfg),
-  ]);
-
+  const genome = await buildGenomeSection(goal, cfg);
   const repoTree = buildRepoTreeSection(repo);
-
-  return { northStar, ecosystem, genome, repoTree };
+  return { genome, repoTree };
 }
 
 function localContextParts(bundle: LocalContextBundle): string[] {
   const parts: string[] = [];
-
-  if (bundle.northStar) {
-    parts.push(bundle.northStar);
-  }
-
-  if (bundle.ecosystem) {
-    parts.push(bundle.ecosystem);
-  }
 
   if (bundle.genome) {
     parts.push(bundle.genome);
@@ -260,12 +228,6 @@ export function summarizeLocalContextBundle(
  * Render the bundle as a system-prompt prefix.
  *
  * Structure:
- *   === GRAND VISION (orient all work here) ===
- *   {northStar}
- *
- *   === PLATFORM MAP (13 repos, composition bets) ===
- *   {ecosystem}
- *
  *   {genome}
  *
  *   {repoTree}

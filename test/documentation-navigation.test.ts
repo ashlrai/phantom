@@ -20,6 +20,13 @@ afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: 
 describe('operator documentation navigation', () => {
   const swarmResearch = 'docs/research/agent-swarms-rsi.md';
 
+  it('keeps the node scale path and its references navigable', () => {
+    const index = readFileSync(join(process.cwd(), 'docs/README.md'), 'utf8');
+    expect(index).toContain('docs/architecture/scale-path.md');
+    expect(checkDocumentation({ root: process.cwd(), entrypoints: ['docs/architecture/scale-path.md'] }))
+      .toMatchObject({ ok: true, errors: [], externalRequests: 0 });
+  });
+
   it('resolves the swarm research implementation references in the source checkout', () => {
     const result = checkDocumentation({ root: process.cwd(), entrypoints: [swarmResearch] });
     expect(result).toMatchObject({ ok: true, errors: [], externalRequests: 0 });

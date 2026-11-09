@@ -145,7 +145,8 @@ async function jobsFor(reader: ReleasePublicReader, base: string, id: number, at
 }
 /** The exact candidate workflow distinguishes historical full matrices from the
  * later site lane and merge gate. Neither replaces the 15 authority gates. */
-type CiAncillaryTopology = 'historical' | 'site' | 'gate' | 'gate-docs' | 'gate-fast' | 'documentation-gate' | 'frontend-gate';
+type CiAncillaryTopology = 'historical' | 'site' | 'gate' | 'gate-docs' | 'gate-fast' | 'gate-complete' | 'gate-complete-combined' | 'documentation-gate' | 'frontend-gate';
+const isCompleteTopology = (topology: CiAncillaryTopology): boolean => topology === 'gate-complete' || topology === 'gate-complete-combined';
 // Reviewed complete decision bodies, not executable lookalikes containing guard strings.
 // Legacy body: protected b5a6 CI. Documentation body/job: reviewed da4db0 CI patch.
 // These bind parsed original-CI bytes fetched at sourceSha, never the local checkout.
@@ -174,6 +175,12 @@ async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: Re
   const workflow = object(document.toJS({ maxAliasCount: 100 }) as unknown);
   equal(workflow['name'], 'CI', 'CI workflow name');
   const jobs = object(workflow['jobs']);
+  // These reviewed source revisions retain the separate fast desktop producer.
+  // Only their exact original bytes are recognized; an edited workflow cannot inherit the
+  // admission. Runtime verification below still requires all fifteen complete
+  // roles and their successful steps, never the fast producer's green summary.
+  if (COMPLETE_CI_WORKFLOW_SHA256.has(createHash('sha256').update(bytes).digest('hex'))) return 'gate-complete';
+  if (COMBINED_COMPLETE_CI_WORKFLOW_SHA256.has(createHash('sha256').update(bytes).digest('hex'))) return 'gate-complete-combined';
   const hasClassifier = Object.hasOwn(jobs, 'classify'); const hasSite = Object.hasOwn(jobs, 'site');
   const hasGate = Object.hasOwn(jobs, 'merge-gate');
   const hasDocumentation = Object.hasOwn(jobs, 'documentation');
@@ -253,11 +260,28 @@ async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: Re
   return hasFrontend ? 'frontend-gate' : hasDocumentation ? 'documentation-gate' : fast ? 'gate-fast' : hasDocs ? 'gate-docs' : 'gate';
 }
 
+// Exact reviewed source bytes: legacy topology and bounded outer envelopes for
+// the same complete roles. Per-test bounds and required coverage are unchanged.
+const COMPLETE_CI_WORKFLOW_SHA256 = new Set([
+  '94ba87387e1f97e1b1e22a01f152b0b580b3476e45206909e2abca6a23c14a44',
+  'ed6a2ba96a8c6a46e5aa216509212d5f829b0cee491cf6bab73e339e3fd2e390',
+  '5d88a822dabe4b188e44683991cd921623470c0fa0e20fb96df883cb4f173444',
+  '95714a1fd967c9a5b072761c1aff68ec9ea3792ac5e7058a62e0cde2a18bbd21',
+  'ce859f45ba3f0dc32eb307bfb7e7f77dc664eaecb99273e53820d875b892dffc',
+]);
+const COMPLETE_SKIPPED_JOBS = Object.freeze(['Prepare unsigned desktop release', 'Desktop release smoke', 'Daily fixup queue']);
+// One reviewed same-runner producer replaces the two separate fast jobs. The
+// exhaustive role set remains unchanged; fast execution cannot qualify here.
+const COMBINED_COMPLETE_CI_WORKFLOW_SHA256 = new Set([
+  '846f957410fcaf44b5002833fd21e59dacbf6972ccc7603b2898e7dcd2d78692',
+]);
+const completeSkippedJobs = (topology: CiAncillaryTopology): readonly string[] => topology === 'gate-complete-combined'
+  ? COMPLETE_SKIPPED_JOBS.filter(name => name !== 'Prepare unsigned desktop release') : COMPLETE_SKIPPED_JOBS;
 const FAST_SUFFIX = " && github.event_name != 'pull_request' && github.event_name != 'merge_group'";
 const FAST_JOBS = Object.freeze(['Secret-shape scan', 'Quick typecheck', 'Daily fixup queue']);
 
 function verifyCiAncillaryJobs(jobs: Record<string, unknown>[], id: number, sourceSha: string, topology: CiAncillaryTopology): void {
-  if (topology === 'gate-fast') {
+  if (topology === 'gate-fast' || isCompleteTopology(topology)) {
     for (const [name, conclusion] of [['Secret-shape scan', 'success'], ['Quick typecheck', 'skipped']]) {
       const matches = jobs.filter((job) => job['name'] === name);
       if (matches.length !== 1) throw new Error('Fast gate qualification job missing or ambiguous');
@@ -265,8 +289,24 @@ function verifyCiAncillaryJobs(jobs: Record<string, unknown>[], id: number, sour
       equal(matches[0]!['conclusion'], conclusion, 'fast gate job outcome');
     }
   }
+  if (isCompleteTopology(topology)) {
+    const scan = jobs.find(job => job['name'] === 'Secret-shape scan')!;
+    equal(scan['status'], 'completed', 'secret-shape job status');
+    if (!Array.isArray(scan['labels']) || scan['labels'].includes('self-hosted') || !scan['labels'].includes('ubuntu-latest')) throw new Error('Unexpected secret-shape runner');
+    if (!Array.isArray(scan['steps']) || scan['steps'].some(step => object(step)['status'] !== 'completed' || !['success', 'skipped'].includes(String(object(step)['conclusion'])))) throw new Error('Secret-shape steps incomplete');
+    const steps = scan['steps'].map(object).filter(step => step['name'] === 'Scan candidate diff (fail closed)');
+    if (steps.length !== 1 || steps[0]!['conclusion'] !== 'success') throw new Error('Required secret-shape step missing or skipped');
+    for (const name of ['Quick typecheck', ...completeSkippedJobs(topology)]) {
+      const matches = jobs.filter(job => job['name'] === name);
+      if (matches.length !== 1) throw new Error('Excluded complete qualification job missing or ambiguous');
+      const job = matches[0]!;
+      equal(job['run_id'], id, 'excluded job run'); equal(job['head_sha'], sourceSha, 'excluded job candidate');
+      equal(job['status'], 'completed', 'excluded job status'); equal(job['conclusion'], 'skipped', 'excluded job outcome');
+      if (!Array.isArray(job['steps']) || job['steps'].length !== 0) throw new Error('Excluded complete qualification job executed');
+    }
+  }
   for (const name of ['Classify PR site lane', 'Site PR (ecosystem)',
-    ...(topology === 'gate-docs' || topology === 'gate-fast' ? ['Docs PR (docs-only)'] : []),
+    ...(topology === 'gate-docs' || topology === 'gate-fast' || isCompleteTopology(topology) ? ['Docs PR (docs-only)'] : []),
     ...(hasDocumentationTopology(topology) ? ['Documentation PR (reviewed prose)'] : []),
     ...(topology === 'frontend-gate' ? ['Frontend PR (reviewed presentation)'] : [])]) {
     const matches = jobs.filter((job) => job['name'] === name);
@@ -327,10 +367,11 @@ async function successfulRun(reader: ReleasePublicReader, base: string, reposito
   const ancillary = workflow === 'ci.yml' ? await sourceCiAncillaryJobs(base, sourceSha, reader, signal) : 'historical';
   const allNames: readonly string[] = ancillary === 'historical' ? names :
     [...names, 'Classify PR site lane', 'Site PR (ecosystem)',
-      ...(ancillary === 'gate-docs' || ancillary === 'gate-fast' ? ['Docs PR (docs-only)'] : []),
+      ...(ancillary === 'gate-docs' || ancillary === 'gate-fast' || isCompleteTopology(ancillary) ? ['Docs PR (docs-only)'] : []),
       ...(hasDocumentationTopology(ancillary) ? ['Documentation PR (reviewed prose)'] : []),
       ...(ancillary === 'frontend-gate' ? ['Frontend PR (reviewed presentation)'] : []),
-      ...(ancillary === 'site' ? [] : ['Merge Gate']), ...(ancillary === 'gate-fast' ? FAST_JOBS : [])];
+      ...(ancillary === 'site' ? [] : ['Merge Gate']), ...(ancillary === 'gate-fast' || isCompleteTopology(ancillary) ? FAST_JOBS : []),
+      ...(isCompleteTopology(ancillary) ? completeSkippedJobs(ancillary).filter(name => name !== 'Daily fixup queue') : [])];
   if (jobs.length !== allNames.length || new Set(jobs.map((job) => job['id'])).size !== jobs.length ||
       new Set(jobs.map((job) => job['name'])).size !== jobs.length || jobs.some((job) => !allNames.includes(String(job['name'])))) throw new Error('Unexpected qualification job inventory');
   if (ancillary !== 'historical') verifyCiAncillaryJobs(jobs, id, sourceSha, ancillary);

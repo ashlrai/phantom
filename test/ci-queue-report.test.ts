@@ -151,7 +151,7 @@ describe('CI queue report command', () => {
     else expect(output.stdout).toContain('| macos-15 | 1 | 1 |');
   });
 
-  it.each(['PRIVATE_SENTINEL malformed JSON', new Error('PRIVATE_SENTINEL file error')])('fails closed without printing input or filesystem error contents', async contents => {
+  it.each(['PRIVATE_SENTINEL malformed JSON', new Error('PRIVATE_SENTINEL file error')])('fails closed without printing input or filesystem error contents (%#)', async contents => {
       const { io, output } = outputIO(contents);
       expect(await main(['capture.json'], io)).toBe(1);
       expect(output.stdout).toBe('');

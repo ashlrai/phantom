@@ -142,7 +142,7 @@ describe('fleet ci-publish', () => {
     ['--repo', 'ashlrai/phantom', '--run', '0', '--to', 'leader'],
     ['--repo', 'ashlrai/phantom', '--run', '123', '--to', 'bad address'],
     ['--repo', 'ashlrai/phantom', '--run', '123', '--to', 'leader', '--repo', 'x/y'],
-  ])('rejects invalid arguments before invoking gh', async (...argv) => {
+  ])('rejects invalid arguments before invoking gh (%#)', async (...argv) => {
     const h = setup();
     expect(await h.invoke(argv)).toBe(2);
     expect(h.calls).toHaveLength(0);

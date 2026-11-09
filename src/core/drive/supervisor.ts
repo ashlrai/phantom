@@ -18,6 +18,9 @@ export interface DrivePool {
   id: string;
   floor: number;
   ceiling: number;
+  /** Current lane controls/probe result supplied by the host bridge. */
+  paused?: boolean;
+  admission?: 'open' | 'closed' | 'unknown';
   /**
    * Optional paced daily share (pool-routing.ts): the pool may dispatch only
    * the share that has vested by now, minus what the bridge already counted.
@@ -45,14 +48,38 @@ export interface DriveReport {
   published: string[];
   publicationUnknown: string[];
   held: string | null;
+  skipped: { job: string; pool: string; reason: string }[];
+  /** The pressure reading this tick launched under; null when the gate was not reached. */
+  pressure: DrivePressureLevel | null;
+  /** Running workers critical pressure asks the host to pause, newest and lowest value first. */
+  pauseWorkers: string[];
   laneHealth?: LaneHealth;
   laneBreakers?: LaneBreaker[];
 }
 
 /**
+ * The host's memory-pressure reading for a tick. `warning` and `critical`
+ * stop every new launch; `critical` additionally asks which running workers
+ * to pause. `normal` is the only level that launches.
+ */
+export type DrivePressureLevel = 'normal' | 'warning' | 'critical';
+
+/**
+ * A running worker as the host reports it (fleet/runs-live-workers.ts shape).
+ * The launch.sh process filter guarantees only Phantom workers arrive here —
+ * a GUI app (Cursor, ChatGPT, Codex, a bot) can never parse as a row.
+ */
+export interface DrivePressureWorker {
+  /** Job id — the launch.sh `<job>` token. */
+  job: string;
+  /** ps etime in seconds; null = unreadable, sorts after every known age. */
+  ageSeconds: number | null;
+}
+
+/**
  * The host bridge owns native queue transitions and dispatchd-format serialization.
  * Every mutation must verify the shared ownership lease. launch must atomically
- * recheck PAUSE, capacity and #1014 admission, persist STARTING, then call the
+ * recheck PAUSE, pressure, capacity and #1014 admission, persist STARTING, then call the
  * existing sandboxed pool runner. A lost reply must never make a job READY again.
  */
 export interface DriveBridge {
@@ -72,6 +99,17 @@ export interface DriveDependencies {
   /** Only the existing publish.sh may implement this callback in the CLI. */
   publish(job: string, lease: string): Promise<void>;
   now?(): Date;
+  /**
+   * Host memory-pressure reading, sampled once per tick before launches are
+   * planned. Absent dep = no pressure gate installed; a missing or malformed
+   * reading holds launches like `warning` (fail closed, pauses nothing).
+   */
+  pressure?(): Promise<DrivePressureLevel | null>;
+  /**
+   * Running workers visible to the supervisor, evaluated only at `critical`.
+   * Absent or a failed read = no known workers, so the pause list is empty.
+   */
+  liveWorkers?(): Promise<readonly DrivePressureWorker[]>;
 }
 
 const states = new Set<DriveJobState>(['READY', 'HELD', 'STARTING', 'RUNNING', 'FINISHED', 'FAILED', 'PUBLISHING', 'PUBLISHED', 'PUBLISH_UNKNOWN']);
@@ -94,9 +132,13 @@ export function parseDriveSnapshot(value: unknown): DriveSnapshot {
   for (const pool of value.pools) {
     if (!object(pool) || !id(pool.id) || pools.has(pool.id) || !count(pool.floor) ||
         !count(pool.ceiling) || pool.floor > pool.ceiling) return invalid();
+    if ((pool.paused !== undefined && typeof pool.paused !== 'boolean') ||
+        (pool.admission !== undefined && !['open', 'closed', 'unknown'].includes(pool.admission as string))) return invalid();
     // A malformed share must never read as an unpaced pool.
     if (pool.daily !== undefined && !isPoolDayShare(pool.daily)) return invalid();
     pools.set(pool.id, { id: pool.id, floor: pool.floor, ceiling: pool.ceiling,
+      ...(pool.paused === undefined ? {} : { paused: pool.paused as boolean }),
+      ...(pool.admission === undefined ? {} : { admission: pool.admission as DrivePool['admission'] }),
       ...(pool.daily === undefined ? {} : { daily: { ...pool.daily } }) });
   }
   if ([...pools.values()].reduce((total, pool) => total + pool.floor, 0) > value.maxRunning) return invalid();
@@ -123,6 +165,28 @@ export function parseDriveSnapshot(value: unknown): DriveSnapshot {
 
 const active = (job: DriveJob): boolean => job.state === 'RUNNING' || job.state === 'STARTING';
 
+function skippedJobs(snapshot: DriveSnapshot, nowMs: number): DriveReport['skipped'] {
+  const counts = new Map(snapshot.pools.map(pool => [pool.id, 0]));
+  let total = 0;
+  for (const job of snapshot.jobs) {
+    if (active(job)) { total++; counts.set(job.pool, counts.get(job.pool)! + 1); }
+  }
+  const reasons = new Map(snapshot.pools.map(pool => {
+    const reason = snapshot.paused ? 'paused'
+      : snapshot.admission !== 'open' ? `admission-${snapshot.admission}`
+      : pool.paused ? 'lane-paused'
+      : pool.admission !== undefined && pool.admission !== 'open' ? `lane-admission-${pool.admission}`
+      : total >= snapshot.maxRunning ? 'global-capacity'
+      : counts.get(pool.id)! >= pool.ceiling ? 'lane-capacity'
+      : pool.daily !== undefined && pacedShareRemaining(pool.daily, nowMs) === 0 ? 'paced-share' : null;
+    return [pool.id, reason];
+  }));
+  return snapshot.jobs.filter(job => job.state === 'READY').flatMap(job => {
+    const reason = reasons.get(job.pool) ?? (drivePoolAllowed(job.id, job.pool) ? null : 'pool-routing');
+    return reason === null ? [] : [{ job: job.id, pool: job.pool, reason }];
+  });
+}
+
 /**
  * Floor deficits get first choice; priority and queue order break ties. A
  * READY job whose declared pool cannot serve its kind (pool-routing.ts) is
@@ -144,7 +208,8 @@ export function planDrive(snapshot: DriveSnapshot, nowMs = Date.now()): string[]
   const laneLimit = new Map(laneBreakers(snapshot.jobs, nowMs).map(breaker =>
     [breaker.pool, breaker.state === 'open' ? 0 : breaker.state === 'probing' ? 1 : Number.POSITIVE_INFINITY]));
   laneLimit.set('claude-api', Math.min(apiLimit, laneLimit.get('claude-api') ?? Number.POSITIVE_INFINITY));
-  const ready = snapshot.jobs.filter(job => job.state === 'READY' && drivePoolAllowed(job.id, job.pool));
+  const skipped = new Set(skippedJobs(snapshot, nowMs).map(item => item.job));
+  const ready = snapshot.jobs.filter(job => job.state === 'READY' && !skipped.has(job.id));
   const result: string[] = [];
   while (total < snapshot.maxRunning) {
     const eligible = ready.filter(job => {
@@ -166,13 +231,52 @@ export function planDrive(snapshot: DriveSnapshot, nowMs = Date.now()): string[]
   return result;
 }
 
+/**
+ * The order in which critical pressure sacrifices running workers: the
+ * NEWEST first (the least completed work is lost), then the lowest value
+ * (`valueOf` — the queue's own priority), job id last. Workers whose age the
+ * host cannot report sort behind every known age; only well-formed, unique
+ * job ids are ever listed.
+ */
+export function pressurePauseOrder(workers: readonly DrivePressureWorker[], valueOf: (job: string) => number): string[] {
+  const seen = new Set<string>();
+  const age = (worker: DrivePressureWorker): number =>
+    typeof worker.ageSeconds === 'number' && Number.isFinite(worker.ageSeconds) && worker.ageSeconds >= 0 ? worker.ageSeconds : Number.MAX_SAFE_INTEGER;
+  return [...workers]
+    .filter(worker => object(worker) && id(worker.job) && !seen.has(worker.job) && seen.add(worker.job))
+    .sort((a, b) => age(a) - age(b) || valueOf(a.job) - valueOf(b.job) || a.job.localeCompare(b.job))
+    .map(worker => worker.job);
+}
+
+/** One reading per tick; anything it cannot prove normal holds launches. */
+async function pressureLevel(deps: DriveDependencies): Promise<DrivePressureLevel> {
+  if (!deps.pressure) return 'normal';
+  try {
+    const level = await deps.pressure();
+    return level === 'normal' || level === 'warning' || level === 'critical' ? level : 'warning';
+  } catch {
+    return 'warning';
+  }
+}
+
+async function liveWorkers(deps: DriveDependencies): Promise<readonly DrivePressureWorker[]> {
+  if (!deps.liveWorkers) return [];
+  try {
+    const workers = await deps.liveWorkers();
+    return Array.isArray(workers) ? workers : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function driveTick(deps: DriveDependencies, options: { dryRun?: boolean; signal?: AbortSignal } = {}): Promise<DriveReport> {
   const { bridge } = deps;
   const dryRun = options.dryRun === true;
   let lease: string | null = null;
   const nowMs = (): number => (deps.now?.() ?? new Date()).getTime();
   const report: DriveReport = { version: 1, at: (deps.now?.() ?? new Date()).toISOString(), dryRun,
-    paused: false, active: 0, ready: 0, planned: [], launched: [], published: [], publicationUnknown: [], held: null };
+    paused: false, active: 0, ready: 0, planned: [], launched: [], published: [], publicationUnknown: [], held: null,
+    pressure: null, pauseWorkers: [], skipped: [] };
   const snapshot = async (): Promise<DriveSnapshot> => {
     const state = parseDriveSnapshot(await bridge.snapshot(lease ?? undefined));
     state.paused ||= await deps.paused();
@@ -181,7 +285,11 @@ export async function driveTick(deps: DriveDependencies, options: { dryRun?: boo
     report.paused = state.paused;
     report.active = state.jobs.filter(active).length;
     report.ready = state.jobs.filter(job => job.state === 'READY').length;
+    report.skipped = skippedJobs(state, nowMs());
     report.held = state.paused ? 'paused' : state.admission !== 'open' ? `admission-${state.admission}` : null;
+    if (report.held === null && report.skipped.length === report.ready) {
+      report.held = report.ready === 0 ? 'no-ready-jobs' : report.skipped[0]?.reason ?? 'no-eligible-jobs';
+    }
     return state;
   };
   try {
@@ -210,19 +318,45 @@ export async function driveTick(deps: DriveDependencies, options: { dryRun?: boo
       else report.publicationUnknown.push(job.id);
     }
     state = await snapshot();
-    report.planned = planDrive(state, nowMs());
+    // One pressure reading gates every launch below; nothing latches, so the
+    // first `normal` tick launches again with no manual step. `critical` also
+    // names the running workers to pause — only jobs this queue runs, so a
+    // GUI app can never be named.
+    const level = await pressureLevel(deps);
+    report.pressure = level;
+    if (level === 'normal') report.planned = planDrive(state, nowMs());
+    else {
+      report.held ??= 'memory-pressure';
+      if (level === 'critical') {
+        const running = new Set(state.jobs.filter(active).map(job => job.id));
+        const priority = new Map(state.jobs.map(job => [job.id, job.priority]));
+        report.pauseWorkers = pressurePauseOrder(
+          (await liveWorkers(deps)).filter(worker => object(worker) && id(worker.job) && running.has(worker.job)),
+          job => priority.get(job) ?? Number.MAX_SAFE_INTEGER);
+      }
+    }
     const launchBudget = report.planned.length;
     const attempted = new Set<string>();
-    while (attempted.size < launchBudget && !options.signal?.aborted) {
+    while (level === 'normal' && attempted.size < launchBudget && !options.signal?.aborted) {
       // Fresh snapshots account for external pool users and changed ceilings.
       state = await snapshot();
       const next = planDrive(state, nowMs()).find(job => !attempted.has(job));
       if (!next) break;
       attempted.add(next);
-      if (await deps.paused()) { report.paused = true; report.held = 'paused'; break; }
+      if (await deps.paused()) {
+        report.paused = true; report.held = 'paused';
+        state.paused = true;
+        report.skipped = skippedJobs(state, nowMs());
+        break;
+      }
       if (options.signal?.aborted) break;
+      const pool = state.jobs.find(item => item.id === next)!.pool;
       if (await bridge.launch(lease, next) === 'held') {
-        report.held = 'launch-held';
+        state = await snapshot();
+        report.held = report.skipped.find(item => item.job === next)?.reason ?? 'launch-held';
+        if (!report.skipped.some(item => item.job === next)) {
+          report.skipped.push({ job: next, pool, reason: report.held });
+        }
         break;
       }
       report.launched.push(next);

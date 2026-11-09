@@ -11,7 +11,6 @@ import {
   buildFleetResourcesView,
   cmdFleetResources,
   FLEET_RESOURCES_SCHEMA,
-  ROUTER_ASSUMED_USED_FRAC,
   type FleetResourcesDeps,
 } from '../src/cli/fleet-resources.js';
 
@@ -84,6 +83,16 @@ describe('buildFleetResourcesView', () => {
     expect(view.lanes.map(l => [l.lane, l.status])).toEqual([['live', 'unseen'], ['paused', 'ok']]);
     expect(view.unseenLanes).toEqual(['live']);
   });
+
+  it('marks malformed or missing fractions as unseen for active lanes', () => {
+    const view = buildFleetResourcesView(
+      { state: 'healthy', rows: { invalid: lane(1), missing: lane(1) } },
+      { state: 'healthy', rows: { invalid: { used_frac: 'bad' }, missing: {} } },
+      '2026-11-04T12:00:00.000Z',
+    );
+    expect(view.unseenLanes).toEqual(['invalid', 'missing']);
+    expect(view.lanes.every(lane => lane.usedFrac === null && lane.status === 'unseen')).toBe(true);
+  });
 });
 
 describe('ashlr fleet resources', () => {
@@ -106,7 +115,7 @@ describe('ashlr fleet resources', () => {
       'devin: ok; target=8; used_frac=0.42; reset=2026-11-05T00:00:00Z',
       'codex: skipped; target=4; used_frac=1.25; reset=2026-11-05T06:00:00Z',
       'claude: ok; target=1; used_frac=0.99; reset=2026-11-04T18:00:00Z',
-      'paused: ok; target=0; used_frac=unset, router assumes 0.5; reset=unknown',
+      'paused: ok; target=0; used_frac=unknown; reset=unknown',
     ]);
   });
 
@@ -116,7 +125,7 @@ describe('ashlr fleet resources', () => {
       resources: { devin: { used_frac: 0.5, reset_at: '2026-11-05T00:00:00Z' } },
     }));
     expect(code).toBe(1);
-    expect(out).toContain(`codex: unseen; target=4; used_frac=unset, router assumes ${ROUTER_ASSUMED_USED_FRAC}; reset=unknown`);
+    expect(out).toContain('codex: unseen; target=4; used_frac=unknown; reset=unknown');
     expect(out).toContain('devin: ok; target=8');
     expect(out).toContain('paused: ok; target=0');
   });
@@ -124,7 +133,7 @@ describe('ashlr fleet resources', () => {
   it('treats a missing resources.json as no readings: every live lane unseen', async () => {
     const { code, out } = await run(files({ slots: { devin: lane(2) } }));
     expect(code).toBe(1);
-    expect(out).toContain('devin: unseen; target=2; used_frac=unset, router assumes 0.5; reset=unknown');
+    expect(out).toContain('devin: unseen; target=2; used_frac=unknown; reset=unknown');
     const { code: codeJson, out: outJson } = await run(files({ slots: { devin: lane(2) } }), ['--json']);
     expect(codeJson).toBe(1);
     expect(JSON.parse(outJson)).toMatchObject({ resources: 'missing', unseenLanes: ['devin'] });
@@ -231,7 +240,7 @@ describe('ashlr fleet resources', () => {
     expect(code).toBe(1);
     expect(logs.join('\n').split('\n')).toEqual([
       'devin: ok; target=4; used_frac=0.75; reset=2026-11-05T00:00:00Z',
-      'codex: unseen; target=1; used_frac=unset, router assumes 0.5; reset=unknown',
+      'codex: unseen; target=1; used_frac=unknown; reset=unknown',
     ]);
     expect(await readFile(slotsPath, 'utf8')).toBe(slotsBefore); // read-only
   });
@@ -251,7 +260,7 @@ describe('ashlr fleet resources', () => {
     ['--runs-dir', 'relative/path'],
     ['extra'],
     ['--json', '--', 'extra'],
-  ])('rejects usage error %j with exit 2', async (...args: string[]) => {
+  ])('rejects usage error %j with exit 2 (%#)', async (...args: string[]) => {
     const { code, err, read } = await run(new Map(), args);
     expect(code).toBe(2);
     expect(err).toContain('Usage: ashlr fleet resources');

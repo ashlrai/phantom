@@ -25,13 +25,15 @@ export function readAppsRecoveryInvocations(root: string, reader: HistoryReader 
     }
     for (const event of page.events) {
       const id = event.invocationId as string;
-      const previous = groups.get(id);
+      // UUID identity is case-insensitive; keep the event spelling in output.
+      const key = id.toLowerCase();
+      const previous = groups.get(key);
       const state = event.kind === 'apps-watch.summary.v1' ? event.lastObservedState : event.observedState;
       const observedApps = Array.isArray(state) ? state.map((row: { app: string }) => row.app) : previous?.observedApps ?? null;
       const outcome = event.kind === 'apps-watch.summary.v1'
         ? event.outcome as Invocation['terminalOutcome'] : previous?.terminalOutcome ?? null;
-      groups.delete(id);
-      groups.set(id, { invocationId: id, latestCursor: event.cursor as number, latestTime: event.receivedAt as number,
+      groups.delete(key);
+      groups.set(key, { invocationId: id, latestCursor: event.cursor as number, latestTime: event.receivedAt as number,
         observedApps, retainedObservedState: state as AppsWatchState,
         retainedDiagnostics: (event.kind === 'apps-watch.summary.v1' ? event.lastDiagnostics : event.diagnostics) as AppsWatchDiagnostic[] | null ?? null,
         retainedHealthy: event.kind === 'apps-watch.observation.v1' ? event.healthy as boolean : null,

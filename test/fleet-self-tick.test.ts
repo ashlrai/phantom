@@ -121,6 +121,8 @@ const recording = () => {
   const steps = {
     'reset-release': stub('reset-release'),
     'lane-autohold': stub('lane-autohold'),
+    'stray-stop': stub('stray-stop'),
+    'meter-incident': stub('meter-incident'),
     'planner-tick': stub('planner-tick'),
     'inbox-acks': stub('inbox-acks'),
     'order-notices': stub('order-notices'),
@@ -154,7 +156,7 @@ describe('fleet self-tick', () => {
     const rec = recording();
     const { code, report } = await run(['--json', '--runs-dir', runsDir], { steps: rec.steps });
     expect(code).toBe(0);
-    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'planner-tick', 'inbox-acks', 'order-notices', 'landed-sweep']);
+    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'landed-sweep']);
     expect(report).toMatchObject({ v: 1, at: NOW_ISO, mode: 'dry-run', state: 'ran' });
     expect(report!.steps.map((s) => s.step)).toEqual(rec.order);
     expect(report!.steps.every((s) => s.state === 'ok' && s.exitCode === 0
@@ -171,7 +173,7 @@ describe('fleet self-tick', () => {
       steps: { ...rec.steps, 'reset-release': throwing },
     });
     expect(code).toBe(1);
-    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'planner-tick', 'inbox-acks', 'order-notices', 'landed-sweep']);
+    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'landed-sweep']);
     expect(report!.steps[0]).toMatchObject({ step: 'reset-release', state: 'failed', exitCode: 1, report: null });
     expect(report!.steps.slice(1).every((s) => s.state === 'ok')).toBe(true);
   });
@@ -182,7 +184,7 @@ describe('fleet self-tick', () => {
       steps: { ...rec.steps, 'lane-autohold': rec.stub('lane-autohold', 1, 'not json') },
     });
     expect(code).toBe(1);
-    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'planner-tick', 'inbox-acks', 'order-notices', 'landed-sweep']);
+    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'landed-sweep']);
     expect(report!.steps[1]).toMatchObject({ step: 'lane-autohold', state: 'failed', exitCode: 1, report: null });
   });
 
@@ -203,7 +205,7 @@ describe('fleet self-tick', () => {
     const { code, report } = await run(['--apply', '--json', '--runs-dir', runsDir], { steps: rec.steps });
     expect(code).toBe(0);
     expect(report!.mode).toBe('apply');
-    for (const name of ['reset-release', 'lane-autohold', 'planner-tick', 'order-notices', 'landed-sweep']) {
+    for (const name of ['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'order-notices', 'landed-sweep']) {
       expect(rec.argvs[name]).toContain('--apply');
       expect(rec.argvs[name]).toContain('--json');
       expect(rec.argvs[name]).toEqual(expect.arrayContaining(['--runs-dir', runsDir]));
@@ -248,8 +250,8 @@ describe('fleet self-tick', () => {
     expect(code).toBe(0);
     expect(calls).toEqual(['fake-planner --plan']);
     expect(children[0]!.stdinText).toBe(PROMPT);
-    expect(report!.steps[2]).toMatchObject({ step: 'planner-tick', state: 'ok', exitCode: 0 });
-    expect(report!.steps[2]!.report).toMatchObject({ outcome: 'ran', verdict: 'productive' });
+    expect(report!.steps[4]).toMatchObject({ step: 'planner-tick', state: 'ok', exitCode: 0 });
+    expect(report!.steps[4]!.report).toMatchObject({ outcome: 'ran', verdict: 'productive' });
   });
 
   it('a held lock reports busy, exits 0 and runs no step', async () => {

@@ -7,6 +7,8 @@ import { readWasteRiskInputs } from '../core/resources/waste-risk-read.js';
 import { projectWasteRisk, type WasteRiskProjection } from '../core/resources/waste-risk.js';
 import { notifyWasteRiskTransition } from '../core/resources/waste-risk-notify.js';
 
+const usage = 'ashlr fleet waste-risk [--json] [--notify] [--runs-dir <abs>] — advisory only';
+
 export interface WasteRiskDeps {
   read?: typeof readWasteRiskInputs;
   notify?: typeof notifyWasteRiskTransition;
@@ -15,7 +17,7 @@ export interface WasteRiskDeps {
 }
 export async function cmdFleetWasteRisk(args: string[], deps: WasteRiskDeps = {}): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log('ashlr fleet waste-risk [--json] [--notify] [--runs-dir <abs>] — advisory only');
+    console.log(usage);
     return 0;
   }
   let runsDir = join(homedir(), '.ashlr-runs');

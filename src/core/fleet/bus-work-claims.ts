@@ -1,13 +1,13 @@
 /** Local coordination only: labels and tokens confer no execution authority. */
-import { randomBytes } from 'node:crypto';
 import { lstatSync, mkdirSync, unlinkSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
-import { listBusInboxAfter, type BusInboxReceipt } from './bus-inbox.js';
+import { BusInboxChurnError, listBusInboxAfter, type BusInboxReceipt } from './bus-inbox.js';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from './local-store-lock.js';
+import { acquireCoordination, renewCoordination, settleCoordination } from '../agents/claim-store.js';
 
 export const CLAIM_MAX_ROWS = 1024, CLAIM_MAX_BYTES = 512 * 1024, CLAIM_MAX_LEASE_MS = 3_600_000;
 type Action = 'acquire' | 'renew' | 'release' | 'complete';
@@ -55,11 +55,39 @@ function load(file: string, root: string): Row[] {
   }
   return rows;
 }
+/** Public claim view: the fencing token and lease internals never leave the module. */
+export interface BusWorkClaimView {
+  id: string; cursor: number; receivedAt: number; owner: string;
+  leaseUntil: number; completedAt: number | null;
+}
+export interface BusWorkClaimsInspection {
+  source: 'missing' | 'available' | 'unavailable';
+  claims: BusWorkClaimView[];
+}
+/**
+ * Read-only snapshot of the claims table for observers such as the unified
+ * comms inbox. Creates nothing and mutates nothing: an absent file is
+ * 'missing', a validated table 'available', anything else 'unavailable'.
+ */
+export function inspectBusWorkClaims(root?: string): BusWorkClaimsInspection {
+  const resolved = root ?? join(ashlrHome(), 'fleet');
+  const file = join(resolved, 'bus-work-claims', 'claims.json');
+  try { lstatSync(file); }
+  catch (error) {
+    return { source: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unavailable', claims: [] };
+  }
+  try {
+    const claims = load(file, resolved).map(({ id, cursor, receivedAt, owner, leaseUntil, completedAt }) =>
+      ({ id, cursor, receivedAt, owner, leaseUntil, completedAt }));
+    return { source: 'available', claims };
+  } catch { return { source: 'unavailable', claims: [] }; }
+}
 function receipt(id: string, root: string): BusInboxReceipt | undefined {
   // At zero, the reader returns original TTL, including expired retained receipts.
   let after = 0;
   for (let page = 0; page < 11; page++) {
     const result = listBusInboxAfter(after, 100, { root, now: () => 0 });
+    if (result.status === 'retryable') throw new BusInboxChurnError('Bus inbox changed during read');
     if (result.status !== 'ok') throw new Error('Unavailable');
     const found = result.messages.find(r => r.envelope.id === id);
     if (found) return found;
@@ -92,25 +120,53 @@ export function mutateBusWorkClaim(request: BusClaimRequest): BusClaimResult {
       if (remaining <= 0) return { status: 'expired' };
       if (row?.completedAt !== null && row?.completedAt !== undefined) return { status: 'completed' };
       let result: BusClaimResult;
+      const claimKey = `queue:${request.id}`;
       if (request.action === 'acquire') {
         if (row && row.leaseUntil > now) return { status: 'conflict' };
         const leaseMs = request.leaseMs!, leaseUntil = now + Math.min(leaseMs, remaining);
         if (!Number.isSafeInteger(leaseUntil)) return { status: 'invalid' };
-        const next: Row = { id: request.id, cursor, receivedAt, ttl: envelope.ttl, token: randomBytes(32).toString('hex'),
-          owner: request.owner!, leaseMs, leaseUntil, completedAt: null };
+        if ((row ? rows.length : rows.length + 1) > CLAIM_MAX_ROWS) return { status: 'full' };
+        const gate = acquireCoordination({
+          root, origin: 'message', key: claimKey, owner: request.owner!, leaseMs, leaseUntil,
+          sourceId: `${request.id}:${cursor}:${receivedAt}`, now,
+        });
+        if (gate.status !== 'acquired' || !gate.token || gate.leaseUntil === undefined) {
+          return { status: gate.status === 'conflict' || gate.status === 'full' ? gate.status : 'unavailable' };
+        }
+        const next: Row = { id: request.id, cursor, receivedAt, ttl: envelope.ttl, token: gate.token,
+          owner: request.owner!, leaseMs, leaseUntil: gate.leaseUntil, completedAt: null };
         if (row) rows[rows.indexOf(row)] = next; else rows.push(next);
-        result = { status: 'acquired', token: next.token, leaseUntil };
+        result = { status: 'acquired', token: next.token, leaseUntil: next.leaseUntil };
       } else {
         if (!row) return { status: 'lost' };
         if (row.token !== request.token) return { status: 'mismatched-token' };
         if (row.leaseUntil <= now) return { status: 'expired' };
-        if (request.action === 'release') rows.splice(rows.indexOf(row), 1);
-        if (request.action === 'complete') row.completedAt = now;
-        if (request.action === 'renew') row.leaseUntil = now + Math.min(row.leaseMs, remaining);
+        if (request.action === 'renew') {
+          const leaseUntil = now + Math.min(row.leaseMs, remaining);
+          const gate = renewCoordination({ root, key: claimKey, token: request.token!, leaseUntil, now });
+          if (gate.status !== 'renewed' || gate.leaseUntil === undefined) {
+            return { status: gate.status === 'mismatched-token' || gate.status === 'expired' || gate.status === 'lost' ? gate.status : 'unavailable' };
+          }
+          row.leaseUntil = gate.leaseUntil;
+        }
+        if (request.action === 'release' || request.action === 'complete') {
+          const outcome = request.action === 'release' ? 'released' : 'completed';
+          const gate = settleCoordination({ root, key: claimKey, token: request.token!, outcome, now });
+          if (gate.status !== outcome) {
+            return { status: gate.status === 'mismatched-token' || gate.status === 'expired' || gate.status === 'lost' ? gate.status : 'unavailable' };
+          }
+          if (request.action === 'release') rows.splice(rows.indexOf(row), 1);
+          else row.completedAt = now;
+        }
         result = { status: request.action === 'renew' ? 'renewed' : request.action === 'release' ? 'released' : 'completed', leaseUntil: row.leaseUntil };
       }
-      const json = JSON.stringify(rows);
-      if (rows.length > CLAIM_MAX_ROWS || Buffer.byteLength(json) > CLAIM_MAX_BYTES) return { status: 'full' };
+      // Rows only matter while their receipt can still be live; past its TTL every
+      // action answers 'expired' before consulting the row. Without this sweep,
+      // completed and lapsed rows accumulate until the next new ID reports 'full'
+      // forever. A clock before receipt keeps the row, as the inbox keeps it live.
+      const retained = rows.filter(r => now < r.receivedAt || now - r.receivedAt < r.ttl);
+      const json = JSON.stringify(retained);
+      if (retained.length > CLAIM_MAX_ROWS || Buffer.byteLength(json) > CLAIM_MAX_BYTES) return { status: 'full' };
       const pending = join(directory, '.pending');
       // With the writer lock held, a leftover stage belongs to a vanished writer.
       // Canonical state was validated above; an incomplete stage is never promoted.
@@ -119,5 +175,5 @@ export function mutateBusWorkClaim(request: BusClaimRequest): BusClaimResult {
       writePrivateFileAtomically(pending, file, json, { anchorPath: root, label: 'Bus claims' });
       return result;
     } finally { releaseLocalStoreLock(lock.lock); }
-  } catch { return { status: 'unavailable' }; }
+  } catch (error) { return { status: error instanceof BusInboxChurnError ? 'retryable' : 'unavailable' }; }
 }

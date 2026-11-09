@@ -21,6 +21,8 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 // marker and the latest output path, and sanitized before print. Exit codes
 // mirror guardian-verify: 0 done, 2 args, 3 unsafe/collision/cancelled,
 // 4 deadline, 5 refused.
+export const usage = 'Usage: ashlr fleet guardian-drain --manifest <abs> --source-state <abs> --output-dir <abs> --max-retries <1..20> --timeout-ms <1..86400000> [--stop-file <abs>] [--apply] [--new-session] [--json] [--stream]';
+
 export async function cmdFleetGuardianDrain(
   args: string[],
   deps: GuardianDrainDeps & { now?: () => number; writeLine?: (line: string) => void | Promise<void> } = {},

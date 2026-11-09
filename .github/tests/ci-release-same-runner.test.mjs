@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
+import { parse } from 'yaml';
+import { URL } from 'node:url';
+
+const workflow = () => parse(readFileSync(new URL('../workflows/ci.yml', import.meta.url), 'utf8'));
+test('one real macOS build job preserves the canonical fast-v1 role and all three real evidence steps', () => {
+  const jobs = workflow().jobs; assert.equal(jobs['release-smoke'], undefined);
+  const job = jobs['release-build']; assert.equal(job.name, 'Desktop release smoke');
+  assert.equal(job['runs-on'], 'macos-15'); assert.equal(job['timeout-minutes'], 90);
+  assert.deepEqual(job.permissions, { contents: 'read', actions: 'read' });
+  const one = name => { const rows = job.steps.filter(step => step.name === name); assert.equal(rows.length, 1); return rows[0]; };
+  assert.equal(one('Verify green master push CI').run, 'node .github/scripts/release-smoke-phase.mjs push');
+  assert.equal(one('Smoke desktop release artifact').run, 'node .github/scripts/release-smoke-phase.mjs smoke');
+  assert.equal(one('Upload qualified build handoff').uses, 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a');
+  assert.equal(one('Upload qualified build handoff').env.NODE_OPTIONS, '--import=${{ github.workspace }}/.github/scripts/release-smoke-upload-deadline.mjs');
+  const smoke = one('Smoke desktop release artifact');
+  assert.equal(smoke.env.INPUT_ARTIFACT_ID, '${{ steps.artifact.outputs.artifact-id }}');
+  assert.equal(smoke.env.INPUT_ARTIFACT_DIGEST, '${{ steps.artifact.outputs.artifact-digest }}');
+  const names = job.steps.map(step => step.name);
+  assert.ok(names.indexOf('Capture original immutable input custody') < names.indexOf('Upload immutable release input'));
+  assert.ok(names.indexOf('Upload immutable release input') < names.indexOf('Start bounded release smoke phase'));
+  const phase = job.steps.slice(names.indexOf('Start bounded release smoke phase'));
+  assert.equal(phase.at(-1).name, 'Finish bounded release smoke phase');
+  assert.ok(phase.every(step => !step['continue-on-error'] && !/npm (ci|install|run build)/.test(step.run ?? '')));
+  assert.ok(!names.includes('Download immutable prepared artifact'));
+  const reused = one('Download existing immutable build');
+  assert.equal(reused.with['artifact-ids'], '${{ steps.existing.outputs.artifact }}');
+  assert.equal(reused.with['run-id'], '${{ steps.existing.outputs.run }}');
+  assert.equal(reused.with['digest-mismatch'], 'error');
+  assert.equal(reused.with.name, undefined);
+});

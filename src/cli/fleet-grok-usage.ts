@@ -2,9 +2,9 @@ import { grokUltraFleetPath, readGrokUltraRunway, recordManualGrokUltraReading }
 import { emitGrokUltraRunway } from '../core/fleet/grok-ultra-telemetry.js';
 import type { GrokUltraRunway } from '../core/fleet/grok-ultra-types.js';
 
-const HELP = `Usage:
-  phm fleet grok-usage status [--file /absolute/path/fleet.json] [--json]
-  phm fleet grok-usage record --remaining-points N --total-points N [--at ISO-UTC] [--file /absolute/path/fleet.json] [--json]
+const USAGE = `Usage: phm fleet grok-usage status|record [options] [--json]
+  status [--file /absolute/path/fleet.json] [--json]
+  record --remaining-points N --total-points N [--at ISO-UTC] [--file /absolute/path/fleet.json] [--json]
 
 Manual fallback: enter points shown by the signed-in app. No app credentials or browser access.
 Status is read-only. Record persists a manual reading and emits configured PostHog telemetry.
@@ -20,9 +20,9 @@ function show(runway: GrokUltraRunway): string {
 }
 
 export async function cmdFleetGrokUsage(args: string[]): Promise<number> {
-  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') { process.stdout.write(HELP); return 0; }
+  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') { process.stdout.write(USAGE); return 0; }
   const [verb, ...rest] = args;
-  if (verb !== 'status' && verb !== 'record') { process.stderr.write(HELP); return 2; }
+  if (verb !== 'status' && verb !== 'record') { process.stderr.write(USAGE); return 2; }
   const options = new Map<string, string>();
   let json = false;
   const allowed = verb === 'record'

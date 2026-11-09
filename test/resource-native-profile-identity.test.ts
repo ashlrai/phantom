@@ -1,3 +1,4 @@
+import { nodeFixtureHeader } from './helpers/node-fixture.js';
 /** Inert profiles only: no vendor login, credentials, network or model call. */
 import { spawnSync } from 'node:child_process';
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -11,7 +12,7 @@ let root: string; let binary: string;
 beforeEach(() => {
   root = realpathSync(mkdtempSync(join(tmpdir(), 'native-identity-')));
   binary = join(root, 'inert-native');
-  writeFileSync(binary, `#!${realpathSync(process.execPath)}\nconsole.log('INERT_NATIVE_RAN')\n`, { mode: 0o700 });
+  writeFileSync(binary, `${nodeFixtureHeader(realpathSync(process.execPath))}console.log('INERT_NATIVE_RAN')\n`, { mode: 0o700 });
 });
 afterEach(() => { rmSync(root, { recursive: true, force: true }); });
 

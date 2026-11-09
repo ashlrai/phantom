@@ -122,6 +122,16 @@ describe('the build script', () => {
       put(path, 'export const binding = 1;\n');
     }
   });
+  it('binds the fixed quota validation worker bytes before accepting its evidence', async () => {
+    const worker = 'dist/core/resources/quota-evidence-worker.js';
+    expect(script.AUTHORITY_SURFACE_ROOTS).toContain(worker);
+    put(worker, 'export const freshValidation = 1;\n');
+    const manifest = await script.computeAuthoritySurface({ packageRoot: root, roots: [worker], ts });
+    writeFileSync(join(root, 'dist/authority-surface.json'), JSON.stringify(manifest));
+    expect(verifyAuthoritySurfaceAt(root, 'running', { fresh: true })).toMatchObject({ ok: true });
+    put(worker, 'export const freshValidation = 2;\n');
+    expect(verifyAuthoritySurfaceAt(root, 'running', { fresh: true })).toMatchObject({ ok: false, code: 'file-changed' });
+  });
   it('walks exactly the runtime closure', async () => {
     const manifest = await build();
     expect(manifest.files.map((f) => f.path)).toEqual([

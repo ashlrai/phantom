@@ -7,7 +7,7 @@ import { readResourceLedger } from '../src/core/fleet/runs-resource-ledger.js';
 const roots: string[] = [];
 const now = Date.parse('2036-10-31T12:00:00Z');
 const statusAt = '2036-10-30T23:45:00Z';
-async function setup(at: string | null = statusAt) {
+async function setup(at: string | null = statusAt, quotaObservedAt: string | null = at) {
   const root = await mkdtemp(join(tmpdir(), 'fake-ledger-personal-'));
   roots.push(root);
   const runsDir = join(root, 'runs');
@@ -15,7 +15,7 @@ async function setup(at: string | null = statusAt) {
   await mkdir(join(runsDir, 'queue'), { recursive: true });
   await writeFile(join(runsDir, 'queue', 'status.json'), JSON.stringify({ last_tick: at,
     lanes: { 'codex-personal': { running: 1 }, claude: {} },
-    budget: { 'codex-personal': { weekly_used_pct: 99, reset_at: '2036-11-01T00:00:00Z', burn_pct_per_hour: 5, tokens_per_hour_6h: 9, projected_exhaustion: '2036-11-01T00:00:00Z', source: 'fake status' }, claude: { weekly_used_pct: 42 } } }));
+    budget: { 'codex-personal': { weekly_used_pct: 99, reset_at: '2036-11-01T00:00:00Z', burn_pct_per_hour: 5, tokens_per_hour_6h: 9, projected_exhaustion: '2036-11-01T00:00:00Z', source: 'fake status', observed_at: quotaObservedAt }, claude: { weekly_used_pct: 42 } } }));
   return { runsDir, personalCodexHome };
 }
 async function session(home: string, at: string, weekly: unknown = { used_percent: 73, window_minutes: 10080, resets_at: Date.parse('2036-11-07T12:00:00Z') / 1000 }) {
@@ -50,10 +50,23 @@ describe('personal session evidence in the resource ledger', () => {
     expect(ledger.lanes[0]).toMatchObject({ usedPct: 99, source: 'fake status', burnPctPerHour: 5 });
     expect(ledger.lanes[0]?.observation).toBeUndefined();
   });
-  it('does not replace dated-unknown status usage when freshness cannot be compared', async () => {
+  it('retains dated personal evidence over an undated status without presenting stale evidence as fresh', async () => {
     const opts = await setup(null);
     await session(opts.personalCodexHome, '2036-10-31T10:00:00Z');
-    expect((await readResourceLedger({ ...opts, now: () => now })).lanes[0]?.usedPct).toBe(99);
+    const ledger = await readResourceLedger({ ...opts, now: () => now });
+    expect(ledger.sources.status).toBe('degraded');
+    expect(ledger.lanes[0]).toMatchObject({ usedPct: 73, source: 'codex-personal-sessions',
+      quotaEvidence: { state: 'refresh-needed', reason: 'stale-or-invalid-reading', holdConflict: null,
+        statusQuota: { usedPct: 99, observedAt: null },
+        measuredQuota: { usedPct: 73, observedAt: '2036-10-31T10:00:00.000Z' } } });
+  });
+  it('preserves a newer captured quota even when the controller tick is unknown', async () => {
+    const opts = await setup(null, '2036-10-31T11:00:00Z');
+    await session(opts.personalCodexHome, '2036-10-31T10:00:00Z');
+    const ledger = await readResourceLedger({ ...opts, now: () => now });
+    expect(ledger.sources.status).toBe('degraded');
+    expect(ledger.lanes[0]).toMatchObject({ usedPct: 99, source: 'fake status',
+      quotaEvidence: { statusQuota: { observedAt: '2036-10-31T11:00:00Z' }, measuredQuota: null } });
   });
   it('ignores inherited Codex account overrides', async () => {
     const opts = await setup();

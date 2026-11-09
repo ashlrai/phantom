@@ -9,13 +9,16 @@ const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 const now = '2026-11-05T02:00:00.000Z';
 const repo = 'ashlrai/phantom', tag = 'v3.30.6';
+const desktopAssets = ['ashlr-phantom-3.30.6.tgz', 'ashlr-phantom-3.30.6.tgz.sig', 'Phantom_3.30.6_aarch64.app.tar.gz',
+  'Phantom_3.30.6_aarch64.app.tar.gz.sig', 'manifest.json', 'manifest.json.sig', 'latest.json']
+  .map(name => ({ name, state: 'uploaded', size: 1, browser_download_url: `https://github.com/${repo}/releases/download/${tag}/${name}` }));
 const evidence = (version = '3.30.6', overrides: Partial<MilestoneEvidence> = {}): MilestoneEvidence => ({ repo, version, observedAt: now, ...overrides });
 function setup() {
   const root = mkdtempSync(join(tmpdir(), 'milestone-')); dirs.push(root);
   let feed: MilestoneEvidence | null = null, installed: MilestoneEvidence | null = null, fail = false;
   const output: string[] = [];
   const deps = { runsDir: root, now: () => new Date(now), output: (text: string) => output.push(text), error: () => {},
-    run: async () => ({ code: 0, stdout: JSON.stringify({ tag_name: tag, published_at: '2026-11-05T01:00:00Z', html_url: `https://github.com/${repo}/releases/tag/${tag}`, draft: false, prerelease: false }) }),
+    run: async () => ({ code: 0, stdout: JSON.stringify({ tag_name: tag, published_at: '2026-11-05T01:00:00Z', html_url: `https://github.com/${repo}/releases/tag/${tag}`, draft: false, prerelease: false, assets: desktopAssets }) }),
     feed: async () => { if (fail) throw new Error('offline'); return feed; }, installed: async () => installed };
   const run = async (extra: string[] = []) => { output.length = 0; expect(await cmdFleetReleaseLive(['--repo', repo, '--tag', tag, '--json', ...extra], deps)).toBe(0); return JSON.parse(output[0]!); };
   return { root, run, deps, setFeed: (v: MilestoneEvidence | null) => { feed = v; }, setInstalled: (v: MilestoneEvidence | null) => { installed = v; }, setFail: (v: boolean) => { fail = v; } };
@@ -55,6 +58,6 @@ it('keeps a dry run write-free and an ordinary first run baselines', async () =>
 
 it('reports the absent local desktop identity contract', async () => {
   const t = setup(); const output: string[] = [];
-  expect(await cmdFleetReleaseLive(['--repo', repo, '--tag', tag, '--json'], { ...t.deps, installed: undefined, output: text => output.push(text) })).toBe(0);
+  expect(await cmdFleetReleaseLive(['--repo', repo, '--tag', tag, '--json'], { ...t.deps, installed: async () => null, output: text => output.push(text) })).toBe(0);
   expect(JSON.parse(output[0]!).observations[2]).toMatchObject({ status: 'unknown', reason: 'no safe desktop installed-version read contract available' });
 });

@@ -1,5 +1,5 @@
 /** One security floor for pool CLI admission and doctor. */
-import { runVerifySubprocessAsync, type VerifySubprocessOptions } from '../run/verify-commands.js';
+import type { VerifySubprocessOptions } from '../run/verify-commands.js';
 import { compareCliVersions } from '../verse/model-windows.js';
 
 export const POOL_CLI_MIN_VERSIONS = Object.freeze({
@@ -37,6 +37,8 @@ export async function probePoolCliVersion(provider: PoolCliProvider, command: re
   options: Pick<VerifySubprocessOptions, 'cwd' | 'env' | 'signal' | 'timeoutMs'>): Promise<PoolCliVersionCheck> {
   if (command.length === 0 || options.signal?.aborted) return { version: null, status: 'unknown' };
   try {
+    // The verify-runner graph loads only when a real probe fires.
+    const { runVerifySubprocessAsync } = await import('../run/verify-commands.js');
     const result = await runVerifySubprocessAsync([...command, '--version'], {
       ...options, timeoutMs: Math.min(options.timeoutMs, 5_000), maxOutputChars: 4_096,
     });

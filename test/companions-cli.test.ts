@@ -21,7 +21,7 @@ function capture(): { stdout: string[]; stderr: string[] } {
 describe('phm companions first-run CLI', () => {
   it('prints help about MCP and credential boundaries without probing executables', async () => {
     const directory = fixture(); const marker = join(directory, 'executed');
-    writeFileSync(join(directory, 'phantom'), `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(marker)},'bad');`);
+    writeFileSync(join(directory, 'phantom'), `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(marker)},'bad');`);
     chmodSync(join(directory, 'phantom'), 0o700);
     vi.stubEnv('PATH', directory);
     const output = capture();
@@ -45,7 +45,7 @@ describe('phm companions first-run CLI', () => {
     const root = fixture(); const directory = join(root, 'install with spaces', 'bin');
     mkdirSync(directory, { recursive: true });
     const binary = join(directory, 'selected-lexicon');
-    writeFileSync(binary, `#!${process.execPath}\nconsole.log(process.argv[2]==='--version'?'0.5.4':'Usage: lexicon [OPTIONS] <COMMAND>');`);
+    writeFileSync(binary, `#!/usr/bin/env node\nconsole.log(process.argv[2]==='--version'?'0.5.9':'Usage: lexicon [OPTIONS] <COMMAND>');`);
     chmodSync(binary, 0o700);
     const output = capture();
     expect(await cmdCompanions(['--bin-dir', directory, '--lexicon-bin', binary, '--json'])).toBe(0);

@@ -77,3 +77,40 @@ it('accepts the direct lane map and validates exact action keys', async () => {
   expect(parseLaneTargetAction({ lane: 'sol', target: 0 })).toEqual({ lane: 'sol', target: 0 });
   for (const body of [null, [], {}, { lane: 's', target: 1 }, { lane: '../sol', target: 1 }, { lane: 'sol', target: -1 }, { lane: 'sol', target: 1.2 }, { lane: 'sol', target: Number.MAX_SAFE_INTEGER + 1 }, { lane: 'sol', target: 1, extra: true }]) expect(parseLaneTargetAction(body)).toBeNull();
 });
+it.each([false, true])('accepts omitted false hold flags in the existing dispatcher map (wrapped=%s)', async wrapped => {
+  const data = fixture();
+  const sol = { ...data.lanes.sol } as Record<string, unknown>;
+  delete sol.held;
+  const lanes = { ...data.lanes, sol };
+  const stored = wrapped ? { lanes, metadata: data.metadata } : { hard_cap: 30, last_change_by: 'Existing operator attribution', ...lanes };
+  await writeFile(path, JSON.stringify(stored));
+  expect(await readLaneTargets({ runsDir, now })).toMatchObject({ sourceState: 'healthy',
+    lanes: [{ lane: 'sol', held: false }, { lane: 'claude', held: true }] });
+  const state = await setLaneTarget('sol', 3, { runsDir, now });
+  expect(state.lanes[0]).toMatchObject({ target: 3, held: false });
+  const after = JSON.parse(await readFile(path, 'utf8'));
+  const afterLanes = wrapped ? after.lanes : after;
+  expect(afterLanes.sol).not.toHaveProperty('held');
+  expect(afterLanes.claude).toEqual(data.lanes.claude);
+  if (wrapped) expect(after.metadata).toEqual(data.metadata);
+  else {
+    expect(after.hard_cap).toBe(30);
+    expect(after.last_change_by).toBe('Existing operator attribution');
+  }
+});
+it.each([null, 0, 1, 'false', {}, []])('refuses an explicitly malformed hold flag (%j) without writes', async held => {
+  const data = fixture();
+  Object.assign(data.lanes.sol, { held });
+  const original = JSON.stringify(data);
+  await writeFile(path, original);
+  expect(await readLaneTargets({ runsDir })).toMatchObject({ sourceState: 'degraded', lanes: [] });
+  await expect(setLaneTarget('sol', 3, { runsDir })).rejects.toMatchObject({ code: 'unavailable', status: 503 });
+  expect(await readFile(path, 'utf8')).toBe(original);
+});
+it.each([{ last_change_by: {} }, { unknown_metadata: 'not a lane' }])('refuses malformed or unknown global metadata (%j)', async extra => {
+  const original = JSON.stringify({ ...fixture().lanes, ...extra });
+  await writeFile(path, original);
+  expect(await readLaneTargets({ runsDir })).toMatchObject({ sourceState: 'degraded', lanes: [] });
+  await expect(setLaneTarget('sol', 3, { runsDir })).rejects.toMatchObject({ code: 'unavailable' });
+  expect(await readFile(path, 'utf8')).toBe(original);
+});

@@ -135,7 +135,11 @@ export function VerseConsoleApp() {
     return () => { live = false; off?.(); };
   }, []);
   useEffect(() => {
-    if (phase === 'authenticated') preloadVerseFonts(document, true);
+    if (phase === 'authenticated') {
+      preloadVerseFonts(document, true);
+      // Reads for the opening section start now, beside the shell's mount.
+      void import('./verse-first-paint.js').then((m) => m.warmOpeningSection(), () => undefined);
+    }
     if (phase !== 'checking') return;
     preloadSessionGate();
     let cancelled = false;

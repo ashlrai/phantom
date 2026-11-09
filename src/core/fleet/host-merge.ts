@@ -694,10 +694,13 @@ export async function readRequiredChecks(
   deps: HostMergeDeps,
 ): Promise<{ required: RequiredCheck[]; protectionDigest: string; strict: boolean | null; rulesetsUnavailable: boolean } | string> {
   if (!BRANCH_RE.test(baseBranch)) return 'invalid base branch';
-  const rules = await gh(deps, repo, 'GET', `/rules/branches/${encodePathSegments(baseBranch)}?per_page=100`);
+  // Rulesets and classic protection are independent reads; fetch them together.
+  const [rules, branch] = await Promise.all([
+    gh(deps, repo, 'GET', `/rules/branches/${encodePathSegments(baseBranch)}?per_page=100`),
+    gh(deps, repo, 'GET', `/branches/${encodePathSegments(baseBranch)}`),
+  ]);
   const rulesetsUnavailable = rules.status === 403 && isPlanUnavailable({ status: 403, message: str(obj(rules.body)?.['message']) ?? '' });
   if (rules.status !== 200 && rules.status !== 404 && !rulesetsUnavailable) return `rulesets: ${githubMessage(rules)}`;
-  const branch = await gh(deps, repo, 'GET', `/branches/${encodePathSegments(baseBranch)}`);
   if (branch.status !== 200) return `branch protection: ${githubMessage(branch)}`;
   const byContext = new Map<string, Set<string | null>>();
   const add = (context: unknown, appId: unknown): void => {
@@ -767,6 +770,9 @@ export async function readHeadChecks(
   deps: HostMergeDeps,
 ): Promise<{ runs: CheckRunObservation[]; statuses: StatusObservation[] } | string> {
   if (!SHA_RE.test(oid)) return 'invalid commit id';
+  // Commit statuses are independent of the check-run pages: read them while
+  // the pages paginate instead of queueing a second round-trip behind them.
+  const statusRead = gh(deps, repo, 'GET', `/commits/${oid}/status?per_page=100`);
   const runs: CheckRunObservation[] = [];
   for (let page = 1; page <= 3; page++) {
     const reply = await gh(deps, repo, 'GET', `/commits/${oid}/check-runs?per_page=100&page=${page}`);
@@ -790,7 +796,7 @@ export async function readHeadChecks(
     const total = typeof body?.['total_count'] === 'number' ? body['total_count'] as number : list.length;
     if (list.length < 100 || runs.length >= total) break;
   }
-  const status = await gh(deps, repo, 'GET', `/commits/${oid}/status?per_page=100`);
+  const status = await statusRead;
   if (status.status !== 200) return `commit statuses: ${githubMessage(status)}`;
   const statusList = obj(status.body)?.['statuses'];
   const statuses: StatusObservation[] = (Array.isArray(statusList) ? statusList as unknown[] : [])
@@ -949,7 +955,12 @@ export type OpenFleetPrResult =
 
 /** Open (or adopt the open) PR for `branch`, authored by the App; label it when it is owner-lane. */
 export async function openFleetPr(input: OpenFleetPrInput, deps: HostMergeDeps): Promise<OpenFleetPrResult> {
-  const info = await readRepoInfo(input.repo, deps);
+  // Repo identity and the open-PR list are independent reads; fetch together.
+  const owner = input.repo.split('/')[0]!;
+  const [info, list] = await Promise.all([
+    readRepoInfo(input.repo, deps),
+    gh(deps, input.repo, 'GET', `/pulls?state=open&head=${encodeURIComponent(`${owner}:${input.branch}`)}&per_page=10`),
+  ]);
   if (typeof info === 'string') return { ok: false, reason: info, retryable: true };
   // The grant authorizes landing on a repo's default branch only. WHY check
   // here, against GitHub: the base came from the mirror, whose refs sit in a
@@ -961,8 +972,6 @@ export async function openFleetPr(input: OpenFleetPrInput, deps: HostMergeDeps):
       retryable: false,
     };
   }
-  const owner = input.repo.split('/')[0]!;
-  const list = await gh(deps, input.repo, 'GET', `/pulls?state=open&head=${encodeURIComponent(`${owner}:${input.branch}`)}&per_page=10`);
   let pr: PrSnapshot | null = null;
   if (list.status === 200 && Array.isArray(list.body)) {
     const parsed = (list.body as unknown[]).map((body) => parsePr(body, input.repo));
@@ -1777,11 +1786,13 @@ export async function landFleetRevert(req: FleetRevertRequest, opts: LandFleetRe
         recheck: async () => {
           if (deps.killActive()) return 'Stop is on';
           if (!deps.policy()) return 'the standing grant is no longer in force';
-          const live = await readPr(landing.repo, pr.number, deps);
+          const [live, base] = await Promise.all([
+            readPr(landing.repo, pr.number, deps),
+            readBranchHead(landing.repo, landing.baseBranch, deps),
+          ]);
           if (typeof live === 'string') return `the revert PR could not be re-read: ${live}`;
           if (live.state !== 'open' || live.merged) return `revert PR #${pr.number} is no longer open`;
           if (live.headSha !== pr.headSha) return `revert PR #${pr.number}'s head moved off the verified commit`;
-          const base = await readBranchHead(landing.repo, landing.baseBranch, deps);
           if (typeof base === 'string' || base.sha !== pr.baseSha) return 'the base branch moved; the revert is rebuilt on the new base';
           return null;
         },
@@ -1993,9 +2004,12 @@ async function waitForChecks(state: FleetMergeStateV1, deps: HostMergeDeps, dead
   }
   for (;;) {
     if (deps.killActive()) return { kind: 'killed' };
-    const required = await readRequiredChecks(state.repo, pr.baseBranch, deps);
+    // Required checks and the head's check state are independent reads.
+    const [required, checks] = await Promise.all([
+      readRequiredChecks(state.repo, pr.baseBranch, deps),
+      readHeadChecks(state.repo, pr.headSha, deps),
+    ]);
     if (typeof required === 'string') return { kind: 'error', reason: required };
-    const checks = await readHeadChecks(state.repo, pr.headSha, deps);
     if (typeof checks === 'string') return { kind: 'error', reason: checks };
     const evaluation = evaluateG7Checks({
       enforcement: (state.enforcement ?? 'server') as RepoEnforcement,

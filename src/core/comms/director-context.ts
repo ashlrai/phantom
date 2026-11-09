@@ -13,11 +13,17 @@
  * decisions-ledger, goals/store, NORTH-STAR.md, genome/store).
  */
 
-import { readFileSync, existsSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { AshlrConfig } from '../types.js';
 import { realizedMergeOf } from '../inbox/realized-merge.js';
+import { readPrivateFileCapped, readPrivateFileTailCapped } from '../verse/preferences.js';
+
+/** NORTH-STAR.md is a short doc; anything past 256 KiB only hurts the regex pass. */
+const NORTH_STAR_READ_BYTES = 256 * 1024;
+/** The genome hub is an append-only JSONL; only the newest entries matter here. */
+const HUB_READ_BYTES = 8 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -119,8 +125,9 @@ function loadNorthStar(): DirectorContext['northStar'] {
 
     let raw = '';
     for (const p of candidates) {
-      if (existsSync(p)) {
-        raw = readFileSync(p, 'utf8');
+      const read = existsSync(p) ? readPrivateFileCapped(p, NORTH_STAR_READ_BYTES) : null;
+      if (read !== null) {
+        raw = read.text;
         break;
       }
     }
@@ -490,7 +497,14 @@ export async function buildDirectorContext(cfg: AshlrConfig): Promise<DirectorCo
     const { hubStorePath } = await import('../genome/store.js');
     const hubPath = hubStorePath();
     if (existsSync(hubPath)) {
-      const raw = readFileSync(hubPath, 'utf8');
+      // Tail read: only recent entries are counted, and they live at the end.
+      const read = readPrivateFileTailCapped(hubPath, HUB_READ_BYTES);
+      if (read === null) throw new Error('hub store unreadable');
+      let raw = read.text;
+      if (read.truncated) {
+        const firstBreak = raw.indexOf('\n');
+        raw = firstBreak < 0 ? '' : raw.slice(firstBreak + 1);
+      }
       let antiPlaybookCount = 0;
       const recentTitles: string[] = [];
       const since7d = Date.now() - 7 * 24 * 60 * 60 * 1000;

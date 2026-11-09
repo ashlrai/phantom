@@ -22,9 +22,11 @@ describe('fleetAttention', () => {
     expect(fleetAttention(healthy, now)).toEqual([]);
   });
   it('recognizes a down Claude lane case insensitively and gives the fix', () => {
-    const [card] = fleetAttention({ ...healthy, claudeLane: 'DOWN: quota' }, now);
-    expect(card).toMatchObject({ id: 'claude-lane-down', severity: 'high', title: 'The Claude lane is down', next: "Run the Claude lane fix script from the runs directory's bin folder, then check Fleet" });
-    expect(fleetAttention({ ...healthy, claudeLane: 'not down' }, now)[0]?.id).toBe('claude-lane-down');
+    const active = { ...healthy, lanes: [lane('claude', false)] };
+    const [card] = fleetAttention({ ...active, claudeLane: 'DOWN: quota' }, now);
+    expect(card).toMatchObject({ id: 'claude-lane-down', severity: 'high', title: 'Claude lane is down: 1 slots idle', next: 'runs claude setup-token, saves the token silently; the fleet rechecks within 5 minutes' });
+    expect(fleetAttention({ ...active, claudeLane: 'not down' }, now).some((item) => item.id === 'claude-lane-down')).toBe(false);
+    expect(fleetAttention({ ...healthy, claudeLane: 'down' }, now)).toEqual([]);
     expect(fleetAttention({ ...healthy, claudeLane: 'up' }, now)).toEqual([]);
   });
   it('reports active switches and held lanes with stable identifiers and next steps', () => {
@@ -33,6 +35,7 @@ describe('fleetAttention', () => {
     expect(cards.map(({ id, severity, title }) => ({ id, severity, title }))).toEqual([
       { id: 'switches-on', severity: 'high', title: 'Dispatch is paused by STOP, HOLD' },
       { id: 'lane-held:codex', severity: 'medium', title: 'Lane codex is held' },
+      { id: 'lane-idle:other', severity: 'medium', title: 'Lane other is idle' },
     ]);
     expect(cards.every((card) => card.detail && card.next)).toBe(true);
     expect(fleetAttention({ ...runs, switches: [...runs.switches].reverse() }, now).map((card) => card.id)).toEqual(cards.map((card) => card.id));
@@ -46,7 +49,7 @@ describe('fleetAttention', () => {
     expect(fleetAttention({ ...healthy, lastTick: 'invalid' }, now)[0]?.detail).toBe('Last tick: unknown.');
   });
   it('orders high severity first and then by title', () => {
-    const cards = fleetAttention({ ...healthy, lastTick: null, claudeLane: 'down', switches: ['Z', 'A'], lanes: [lane('beta', true)] }, now);
-    expect(cards.map((card) => card.title)).toEqual(['Dispatch is paused by Z, A', 'Orchestrator tick stale', 'The Claude lane is down', 'Lane beta is held']);
+    const cards = fleetAttention({ ...healthy, lastTick: null, claudeLane: 'down', switches: ['Z', 'A'], lanes: [lane('beta', true), { ...lane('claude', false), queued: 0 }] }, now);
+    expect(cards.map((card) => card.title)).toEqual(['Claude lane is down: 1 slots idle', 'Dispatch is paused by Z, A', 'Orchestrator tick stale', 'Lane beta is held']);
   });
 });

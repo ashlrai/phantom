@@ -151,7 +151,7 @@ describe('ashlr fleet backlog', () => {
   it.each([
     ['--repo'], ['--repo', 'not a repo'], ['--limit'], ['--limit', 'abc'], ['--limit', '0'],
     ['--merges', '-1'], ['--recuts', '1.5'], ['--json', '--json'], ['extra'], ['--bogus'],
-  ])('rejects bad arguments %j without reading gh', async (...args) => {
+  ])('rejects bad arguments %j without reading gh (%#)', async (...args) => {
     const gh = vi.fn();
     expect(await cmdFleetBacklog(args, { gh, states: noStates })).toBe(2);
     expect(gh).not.toHaveBeenCalled();

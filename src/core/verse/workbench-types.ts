@@ -611,6 +611,9 @@ export const VERSE_SESSION_CONTROL_DEFAULTS_PATH = '/api/verse/session-controls/
 export const VERSE_ATTACHMENTS_PATH = '/api/verse/attachments';
 export const VERSE_QUEUE_PATH = '/api/verse/queue';
 export const VERSE_FILES_PATH = '/api/verse/files';
+/** The Files pane's browser: privileged reads, so POSTs behind the mutation gate. */
+export const VERSE_FILES_BROWSE_PATH = '/api/verse/files/browse';
+export const VERSE_FILES_READ_PATH = '/api/verse/files/read';
 
 /** One picker option. Unavailable options are shown DISABLED with `reason`, never hidden. */
 export interface VerseControlOption<T extends string = string> {
@@ -749,6 +752,56 @@ export interface VerseFilesResponse {
    * older server omits it and every match is shown with its root.
    */
   primaryRoot?: string | null;
+}
+
+/**
+ * POST /api/verse/files/browse {sessionId, root?, path?} — one directory of
+ * the Files pane's browser. `root` names one of the chat's roots (absent =
+ * the primary); `path` is a `/`-joined path relative to it (absent or '' =
+ * the root itself). Both are privileged reads: the route is a POST, so the
+ * mount's mutation gate applies before this module runs.
+ */
+export interface VerseFileBrowseRequest {
+  sessionId: string;
+  root?: string;
+  path?: string;
+}
+export interface VerseFileBrowseEntry {
+  name: string;
+  /** `/`-joined, relative to `root`. */
+  path: string;
+  kind: 'directory' | 'file';
+  /** File size in bytes; null for a directory. */
+  sizeBytes: number | null;
+}
+export interface VerseFileBrowseResponse {
+  sessionId: string;
+  /** The resolved absolute root (sanitised like every response: home → `~`). */
+  root: string;
+  /** The directory browsed, relative to `root` ('' = the root itself). */
+  path: string;
+  entries: VerseFileBrowseEntry[];
+}
+
+/**
+ * POST /api/verse/files/read {sessionId, root?, path} — a bounded text
+ * preview. No digest field: a bare sha256 is secret-shaped to
+ * sanitizePublicJson and would leave as `[REDACTED]`; size + truncation is
+ * the snapshot identity the pane shows.
+ */
+export interface VerseFileReadRequest {
+  sessionId: string;
+  root?: string;
+  path: string;
+}
+export interface VerseFileReadResponse {
+  sessionId: string;
+  root: string;
+  path: string;
+  text: string;
+  sizeBytes: number;
+  byteLength: number;
+  truncated: boolean;
 }
 
 // ===========================================================================
@@ -1598,9 +1651,11 @@ export const WORKBENCH_ROUTE_FAMILIES = [
   },
   { id: 'fleet-runs', owner: 'desktop-command', module: 'src/core/verse/fleet-runs-api.ts', handler: 'handleFleetRunsApi', prefixes: ['/api/verse/fleet/runs'] },
   { id: 'fleet-cos', owner: 'desktop-command', module: 'src/core/verse/fleet-cos-api.ts', handler: 'handleFleetCosApi', prefixes: ['/api/verse/fleet/cos'] },
+  { id: 'app-update', owner: 'desktop-command', module: 'src/core/verse/app-update-api.ts', handler: 'handleAppUpdateApi', prefixes: ['/api/verse/app/update-status'] },
   { id: 'cos-memory', owner: 'desktop-command', module: 'src/core/verse/cos-memory-api.ts', handler: 'handleCosMemoryApi', prefixes: ['/api/verse/cos/memory'] },
   { id: 'team', owner: 'desktop-command', module: 'src/core/verse/team-api.ts', handler: 'handleTeamApi', prefixes: ['/api/verse/team'] },
   { id: 'fleet-comms-status', owner: 'desktop-command', module: 'src/core/verse/fleet-comms-status-api.ts', handler: 'handleFleetCommsStatusApi', prefixes: ['/api/verse/fleet/comms-status'] },
+  { id: 'agent-roster', owner: 'desktop-command', module: 'src/core/verse/agent-roster-api.ts', handler: 'handleAgentRosterApi', prefixes: ['/api/verse/fleet/agent-roster'] },
   {
     // 3.15: the Fleet tab's control surface (Start / Pause / Resume / Stop,
     // per-run stop and interject, task and goal edits). Its own prefix, so it

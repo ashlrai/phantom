@@ -177,7 +177,7 @@ const mkState = (receipts: Array<{ job: string; jobId: number; conclusion: strin
   return {
     run: ok(JSON.stringify(runMetaObj)),
     artifact: ok(JSON.stringify(artifactMeta)),
-    jobs: ok(JSON.stringify(extra.jobs ?? jobsPage)),
+    jobs: extra.jobs ?? ok(JSON.stringify(jobsPage)),
     downloadBody: json,
     artifactQueue: [ok(JSON.stringify(presentPage))],
     attemptQueue: [ok(JSON.stringify(attemptMeta('completed')))],
@@ -200,10 +200,7 @@ describe('fleet_ci_recovery_pipe — receipt_await → resume_inputs cross-tool'
       async (input) => readFleetCiResumeInputs(input, { cwd: root, git: defaultGitRunner })
     );
 
-    let rawResult;
-    try { rawResult = await client.callTool({ name: 'fleet_ci_receipt_await', arguments: baseArgs() }); }
-    catch (e) { console.error('EXCEPTION:', (e as Error).message); throw e; }
-    console.log('RAW:', JSON.stringify(rawResult).slice(0, 500));
+    const rawResult = await client.callTool({ name: 'fleet_ci_receipt_await', arguments: baseArgs() });
     expect(rawResult.content).toBeDefined();
     const priorDoc = parse(rawResult);
     expect(priorDoc.prior.receipts).toHaveLength(2);
@@ -313,7 +310,7 @@ describe('fleet_ci_recovery_pipe — receipt_await → resume_inputs cross-tool'
     expect(pj.decision).toBe('rerun');
   });
 
-  it.skip('producer digest survives the MCP JSON boundary exactly', async () => {
+  it('producer digest survives the MCP JSON boundary exactly', async () => {
     const calls: Call[] = [];
     const receipts = [{ job: jobAKey, jobId: jobAId, conclusion: 'success', inputsDigest: baseDigestA }];
     const state = mkState(receipts, {
