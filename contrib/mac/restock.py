@@ -68,7 +68,8 @@ for l in CODEX:
     free = max(t - s.get("running", 0), 0)
     want = PER if PER is not None else 3 * max(free, 4)
     need[l] = want
-lines = rd(Q + "/router-queue.md").splitlines()
+RQ_TXT = rd(Q + "/router-queue.md")   # one read: the pick loop below greps it per READY line
+lines = RQ_TXT.splitlines()
 status = {}; recs = []; held_pr = set()
 for i, l in enumerate(lines):
     m = re.match(r"^- ([A-Z][A-Z-]*)\b", l)
@@ -285,7 +286,7 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re
     if i in parked: continue
     if re.search(r"(?i)not bridge|owner-authored|\bowners?\b|RETIRED|folds into|reuse the kept worktree|repos=|standing|tier=local", attrs + " " + text[:200]): skip(j, "not-bridge/fold/kept-reuse"); continue
     if not re.match(r"^[A-Z]", j): skip(j, "bad-id"); continue
-    if re.search(r"sub of " + re.escape(j) + r"\b", rd(Q + "/router-queue.md")): skip(j, "split-into-subs"); continue
+    if re.search(r"sub of " + re.escape(j) + r"\b", RQ_TXT): skip(j, "split-into-subs"); continue
     if "BASE_OVERRIDE" in attrs: skip(j, "base-override(supervisor)"); continue
     rm = re.search(r"\brepo=(?:ashlrai/)?([a-z0-9-]+)", attrs)
     if not rm:
