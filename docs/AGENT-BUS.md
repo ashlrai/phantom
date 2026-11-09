@@ -199,3 +199,15 @@ a read-only view of queue prompt files and can be merged onto that board with
 A message-id lease is shown under its bus message id, so a roster session and
 a bus claim still share one lease.
 HTTP work-feed endpoints are not implemented against this contract yet.
+
+### Message links in Fleet
+
+The Fleet world shows live local bus messages as directional links. Run
+`phm fleet edges --json` for the same `fleet.edges.v1` projection. Each edge
+contains routing labels, a message count and the latest receipt time; it never
+includes message bodies. Provider labels come from sender metadata observed on
+live receipts. A missing or conflicting provider is `null` (unknown). Labels
+are not authenticated identities. Broadcasts to `leaders`, human/external
+messages and self-messages are excluded. The local bus retains and expires
+messages, so these links are not a complete history; A2A events are not yet
+included. A missing or unreadable bus reports unknown edges, not an empty list.
