@@ -37,3 +37,12 @@ Copy and paste:
 phm repos rank --recompute --json
 phm repos rank proposals --json
 ```
+
+## Dispatcher tie-breaking
+
+The dispatcher reads the same snapshot once per tick when ordering ready jobs.
+Within a priority bucket, enrolled repositories follow the snapshot's ranking;
+unranked repositories follow ranked repositories and retain their previous order.
+A missing or invalid snapshot preserves the previous ordering. Publish ordering,
+lane selection and eligibility are unchanged. The dispatcher is security pinned:
+this source change needs Security review and a re-pin before installation.
