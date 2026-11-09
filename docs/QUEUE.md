@@ -266,3 +266,7 @@ repository, original items and combined prompt), `excluded` (id, precheck code
 and reason), `held` (ids waiting for enough items), and `invalid` (admission
 lint drops). Groups smaller than six wait for more work. No candidate task text
 is executed by the planner. The planner does not install or change host scripts.
+
+## Find repeated router jobs
+
+Run `phm queue dedupe --json` to preview repeated READY jobs in the local router queue. Add `--apply` to mark repeats `SUPERSEDED-BY-<first id>`, or `--file <path>` to inspect another router queue. The first READY or CLAIMED line wins. Matching uses the repository, first named target file, and either normalized acceptance text or the same quoted acceptance phrase. Lines missing evidence are reported as unknown. This is a partial, text-based check; review quoted matches for different intended outcomes.

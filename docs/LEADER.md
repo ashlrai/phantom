@@ -512,3 +512,7 @@ older exact model tags remain readable and do not authorize newer versions.
 and [Claude model details](https://platform.claude.com/docs/en/models/overview)
 provide public API price estimates. Those prices do not replace subscription
 allowance, native context allocation or verified funding observations.
+
+### Leader facts snapshot
+
+Run `ashlr fleet leader-facts --json` to refresh `~/.ashlr-runs/leader/facts.json` before a leader pass. The `leader.facts.v1` snapshot joins leader-tagged router queue lines to jobs with a dated ledger event in the last 48 hours, then reads PR state, 24-hour merge counts, and latest release tags from GitHub. Repositories are those represented by the selected jobs. `null` means unknown; source status reports missing or damaged local evidence. Jobs with no dated ledger evidence have unknown age and are retained. Queue history that is no longer present cannot be recovered by this command. The file is replaced atomically; this command does not merge or publish anything.
