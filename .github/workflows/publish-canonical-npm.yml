@@ -112,6 +112,7 @@ jobs:
           retention-days: 7
 
   publish:
+    if: vars.PHANTOM_RELEASE_TRAIN == 'on'
     needs: admit
     runs-on: ubuntu-latest
     timeout-minutes: 25

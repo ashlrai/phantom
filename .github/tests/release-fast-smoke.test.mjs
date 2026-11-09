@@ -7,7 +7,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { join } from 'node:path';
 import { URL } from 'node:url';
 import { preparedArchiveFixture } from './fixtures/release-prepared.mjs';
-import { checkFeed, checkLaunch, readUpdaterFeed, restorePreparedDist, selectRun, stockedFeedTag } from '../scripts/release-fast-smoke.mjs';
+import { acceptReleaseRef, checkFeed, checkLaunch, readUpdaterFeed, restorePreparedDist, selectRun, stockedFeedTag } from '../scripts/release-fast-smoke.mjs';
 
 const repository = 'ashlrai/phantom', revision = 'a'.repeat(40);
 const repo = { full_name: repository, id: 1263526319, node_id: 'R_kgDOS0_hrw', owner: { id: 258113726, login: 'ashlrai' }, default_branch: 'master', private: false, visibility: 'public' };
@@ -327,6 +327,14 @@ test('fallback feed errors, oversized bytes, malformed JSON and version drift ar
   }
   const f = feedFixture(); const fetch = f.fetchImpl; f.fetchImpl = async url => url === FEED_ENDPOINT ? fetch(url) : feedResponse(404);
   await assert.rejects(f.run, /stocked updater feed unavailable/);
+});
+
+test('a tag ref is accepted only when its commit is an ancestor of master', () => {
+  const sha = 'a'.repeat(40);
+  acceptReleaseRef({ ref: 'refs/heads/master', sha, repository, read: () => { throw new Error('master does not compare'); } });
+  acceptReleaseRef({ ref: 'refs/tags/v3.30.28', sha, repository, read: () => ({ status: 'ahead' }) });
+  assert.throws(() => acceptReleaseRef({ ref: 'refs/tags/v3.30.28', sha, repository, read: () => ({ status: 'diverged' }) }), /ancestor/);
+  assert.throws(() => acceptReleaseRef({ ref: 'refs/heads/feature', sha, repository, read: () => ({ status: 'ahead' }) }), /stable tag/);
 });
 
 test('stocked feed selection uses the highest semver, not list order or a newer timestamp on an older release', () => {

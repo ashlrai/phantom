@@ -4,7 +4,7 @@
  * See docs/RELEASING.md.
  */
 import { execFileSync } from 'node:child_process';
-import { lstatSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -52,10 +52,12 @@ export interface TrainObservation {
   tags: { name: string; sha: string }[];
   head: { tag: string; sha: string; message: string; ancestry: Ancestry; committedAt: string | null } | null;
   releases: ReleaseRow[];
-  openReleasePr: { number: number; version: string; headSha: string; headRef: string; mergeable: string } | null;
+  openReleasePr: { number: number; nodeId: string; version: string; headSha: string; headRef: string; mergeable: string; state: 'OPEN' | 'MERGED'; queued: boolean } | null;
   pullChecks: { pending: number; failing: number } | null;
   build: { runId: number; attempt: number; artifactId: number; completedAt: string | null } | null;
   buildPending: boolean;
+  /** A failed release build for this SHA completed within the last 6 hours. */
+  buildCooldown: boolean;
   attest: { runId: number; attempt: number; artifactId: number; completedAt: string | null } | null;
   attestPending: boolean;
   audit: { runId: number; attempt: number } | null;
@@ -81,9 +83,12 @@ export interface TrainState {
   stages: Record<string, StageTiming>;
 }
 
+export const ENQUEUE_PULL_REQUEST = 'mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){mergeQueueEntry{position state}}}';
+const PULL_NODE = /^PR_[A-Za-z0-9_-]+$/;
 export type ReleaseWrite =
   | { method: 'PATCH'; path: string; body: { name: string; body: string; draft: true; prerelease: false } }
-  | { method: 'POST'; path: string; body: { sha: string; merge_method: 'merge' } | { ref: string; inputs: Record<string, string | boolean> } };
+  | { method: 'POST'; path: 'graphql'; body: { query: string; variables: { pullRequestId: string } } }
+  | { method: 'POST'; path: string; body: { ref: string; inputs: Record<string, string | boolean> } };
 
 export interface TrainPlan { state: TrainState; writes: ReleaseWrite[]; exitCode: 0 | 1 }
 
@@ -103,12 +108,46 @@ export function readSentinel(path: string): KillObservation {
   }
 }
 
+/** Hosted Actions cannot see ~/.ashlr/KILL. The repo variable is the remote stop. */
+export function hostedTrainGate(env: { GITHUB_ACTIONS?: string; PHANTOM_RELEASE_TRAIN?: string }): { proceed: boolean; reason: string } | null {
+  if (env.GITHUB_ACTIONS !== 'true') return null;
+  if (env.PHANTOM_RELEASE_TRAIN === 'on') return { proceed: true, reason: 'repo-variable-on' };
+  if (env.PHANTOM_RELEASE_TRAIN === 'off') return { proceed: false, reason: 'repo-variable-off' };
+  return { proceed: false, reason: 'repo-variable-unset' };
+}
+
 export function releaseKillDecision(fleet: KillObservation, autorun: KillObservation): { proceed: boolean; reason: string } {
   if (fleet === 'active') return { proceed: false, reason: 'fleet-kill' };
   if (fleet !== 'inactive') return { proceed: false, reason: 'fleet-kill-unknown' };
   if (autorun === 'active') return { proceed: false, reason: 'release-autorun-off' };
   if (autorun !== 'inactive') return { proceed: false, reason: 'release-autorun-unknown' };
   return { proceed: true, reason: 'kill-inactive' };
+}
+
+/** Local stop stays authoritative. The GitHub variable update is best-effort. */
+export function pauseReleaseTrain(exec: (file: string, args: string[], opts: { stdio: 'pipe'; timeout: number }) => unknown = execFileSync, home = homedir(), log: (line: string) => void = (line) => console.error(line)): void {
+  try {
+    const dir = join(home, '.ashlr-runs');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const path = autorunOffPath(home);
+    if (!existsSync(path)) writeFileSync(path, 'release train off\n', { mode: 0o600 });
+  } catch {
+    log('release autorun pause file was not written');
+  }
+  try {
+    exec('gh', ['variable', 'set', 'PHANTOM_RELEASE_TRAIN', '-R', 'ashlrai/phantom', '--body', 'off'], { stdio: 'pipe', timeout: 15_000 });
+  } catch {
+    log('PHANTOM_RELEASE_TRAIN was not set off');
+  }
+}
+
+export function mergeStageDone(state: string | null | undefined): boolean {
+  return state === 'MERGED';
+}
+
+export function enqueueReleasePullRequest(nodeId: string): ReleaseWrite {
+  if (!PULL_NODE.test(nodeId)) throw new Error('refusing release enqueue');
+  return { method: 'POST', path: 'graphql', body: { query: ENQUEUE_PULL_REQUEST, variables: { pullRequestId: nodeId } } };
 }
 
 /** Standing approval: at most hourly. Slower values pass through. Faster values rise to 60. */
@@ -215,16 +254,18 @@ function emptyStages(mergeAt: string | null): Record<string, StageTiming> {
 export function assertReleaseWrite(write: ReleaseWrite): void {
   if (write.method !== 'PATCH' && write.method !== 'POST') throw new Error('refusing release write');
   const release = /^repos\/ashlrai\/phantom\/releases\/([1-9]\d*)$/;
-  const merge = /^repos\/ashlrai\/phantom\/pulls\/([1-9]\d*)\/merge$/;
   const dispatch = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|publish-canonical-npm|ci)\.yml\/dispatches$/;
+  if (write.path.includes('/merge') || JSON.stringify(write.body).includes('admin') || JSON.stringify(write.body).includes('bypass')) {
+    throw new Error('refusing release write');
+  }
   if (write.method === 'PATCH') {
     if (!release.test(write.path)) throw new Error('refusing release write');
     if (write.body.draft !== true || write.body.prerelease !== false) throw new Error('refusing to publish a superseded draft');
     return;
   }
-  if (merge.test(write.path)) {
-    const body = write.body as { sha?: string; merge_method?: string };
-    if (body.merge_method !== 'merge' || !SHA.test(body.sha ?? '')) throw new Error('refusing release merge');
+  if (write.path === 'graphql') {
+    const body = write.body as { query?: string; variables?: { pullRequestId?: string } };
+    if (body.query !== ENQUEUE_PULL_REQUEST || !PULL_NODE.test(body.variables?.pullRequestId ?? '')) throw new Error('refusing release enqueue');
     return;
   }
   if (dispatch.test(write.path)) {
@@ -283,9 +324,9 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   const expected = nextPatch(input.masterVersion);
   const pr = input.openReleasePr;
   const checks = input.pullChecks;
-  if (cadenceDue && pr && checks && pr.version === expected && pr.headRef.startsWith('release-please--')
+  if (cadenceDue && pr && checks && pr.state === 'OPEN' && !pr.queued && pr.version === expected && pr.headRef.startsWith('release-please--')
     && SHA.test(pr.headSha) && pr.mergeable === 'MERGEABLE' && checks.failing === 0 && checks.pending === 0) {
-    writes.push({ method: 'POST', path: `repos/${REPOSITORY}/pulls/${pr.number}/merge`, body: { sha: pr.headSha, merge_method: 'merge' } });
+    writes.push(enqueueReleasePullRequest(pr.nodeId));
   }
 
   const row = input.releases.find((release) => release.tag_name === headTag.name) ?? null;
@@ -294,7 +335,7 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   const feed = names.includes('latest.json');
   const published = row !== null && row.draft === false && feed;
   const assetAt = latestTime(row?.assets.map((asset) => asset.created_at) ?? []);
-  if (!input.build && !input.buildPending && !(row?.draft === false && input.npmPublished === true)) {
+  if (!input.build && !input.buildPending && !input.buildCooldown && !(row?.draft === false && input.npmPublished === true)) {
     writes.push({
       method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/ci.yml/dispatches`,
       body: { ref: headTag.name, inputs: { release_gate: true } },
@@ -342,6 +383,7 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   const steps: TrainState['steps'] = {
     kill: { status: 'complete' },
     admit: { status: 'complete' },
+    merge: { status: mergeStageDone(admitted ? 'MERGED' : pr?.state) ? 'complete' : 'pending' },
     supersede: { status: writes.some((write) => write.method === 'PATCH') ? 'pending' : 'complete' },
     build: { status: input.build ? 'complete' : 'pending' },
     attest: { status: input.attest ? 'complete' : 'pending' },
@@ -378,7 +420,7 @@ export function buildTrain(input: TrainObservation): TrainPlan {
 }
 
 export function markWritesApplied(state: TrainState): TrainState {
-  const steps = { ...state.steps, supersede: { status: 'complete' as const } };
+  const steps: TrainState['steps'] = { ...state.steps, supersede: { status: 'complete' } };
   const order = ['build', 'attest', 'sign', 'notarize', 'npm', 'feed', 'docs', 'finalize'];
   const next = order.find((name) => steps[name]?.status === 'pending') ?? null;
   return { ...state, steps, next };
@@ -482,10 +524,12 @@ export async function observeTrain(
     const version = /^chore\([^)]+\): release (\d+\.\d+\.\d+)/.exec(title)?.[1];
     const headRef = text(record(detail?.head)?.ref) ?? '';
     const headSha = text(record(detail?.head)?.sha) ?? '';
+    const nodeId = text(detail?.node_id) ?? '';
     const state = text(detail?.mergeable_state) ?? '';
-    if (!version || !headRef.startsWith('release-please--') || !SHA.test(headSha)) throw new Error('invalid release pull request');
+    const pullState = detail?.merged_at ? 'MERGED' : detail?.state === 'open' ? 'OPEN' : 'OPEN';
+    if (!version || !headRef.startsWith('release-please--') || !SHA.test(headSha) || !PULL_NODE.test(nodeId)) throw new Error('invalid release pull request');
     const mergeable = detail?.mergeable === true && state === 'clean' ? 'MERGEABLE' : state === 'dirty' ? 'CONFLICTING' : 'UNKNOWN';
-    openReleasePr = { number: Number(listed.number), version, headSha, headRef, mergeable };
+    openReleasePr = { number: Number(listed.number), nodeId, version, headSha, headRef, mergeable, state: pullState, queued: false };
   }
   let pullChecks: TrainObservation['pullChecks'] = null;
   if (openReleasePr) {
@@ -504,7 +548,7 @@ export async function observeTrain(
     pullChecks = { pending, failing };
   }
   const version = head ? head.tag.slice(1) : masterVersion;
-  const found = head ? await successfulRun(read, 'ci.yml', head.sha, head.tag) : { build: null, pending: false };
+  const found = head ? await successfulRun(read, 'ci.yml', head.sha, head.tag, Date.parse(now)) : { build: null, pending: false, cooldown: false };
   const audit = head ? await auditRun(read, head.sha) : null;
   const attested = found.build ? await attestRun(read, found.build.runId, found.build.attempt) : { attest: null, pending: false };
   const npm = await read(`registry/npm/@ashlr/phantom/${version}`);
@@ -513,7 +557,7 @@ export async function observeTrain(
   return {
     now, fleetKill: kill.fleet, autorunOff: kill.autorun,
     masterSha, masterVersion, cadenceMinutes, lastTaggedAt, aheadBy, tags, head, releases,
-    openReleasePr, pullChecks, build: found.build, buildPending: found.pending,
+    openReleasePr, pullChecks, build: found.build, buildPending: found.pending, buildCooldown: found.cooldown,
     attest: attested.attest, attestPending: attested.pending, audit,
     npmPublished: npm === null ? false : npmRecord?.version === version ? true : null,
     npmAt: text(npmRecord?.time) ?? (npmRecord && record(npmRecord.time)?.[version] ? String(record(npmRecord.time)?.[version]) : null),
@@ -530,17 +574,37 @@ async function publishedFeedVersion(read: (path: string) => Promise<unknown>, re
   return version && VERSION.test(version) ? version : null;
 }
 
-async function successfulRun(read: (path: string) => Promise<unknown>, workflow: string, sha: string, tag: string): Promise<{ build: TrainObservation['build']; pending: boolean }> {
+export function admitCiRun(run: Record<string, unknown>, sha: string, tag: string): boolean {
+  if (run.head_sha !== sha || run.path !== '.github/workflows/ci.yml') return false;
+  if (run.event !== 'workflow_dispatch' && run.event !== 'schedule') return false;
+  if (text(record(run.repository)?.full_name) !== REPOSITORY) return false;
+  if (text(record(run.head_repository)?.full_name) !== REPOSITORY) return false;
+  return run.head_branch === 'master' || run.head_branch === tag;
+}
+
+export function failedBuildWithin(run: Record<string, unknown>, nowMs: number, windowMs = 6 * 60 * 60 * 1000): boolean {
+  if (run.status !== 'completed' || run.conclusion !== 'failure') return false;
+  const at = Date.parse(text(run.updated_at) ?? '');
+  return Number.isFinite(at) && nowMs >= at && nowMs - at < windowMs;
+}
+
+async function successfulRun(read: (path: string) => Promise<unknown>, workflow: string, sha: string, tag: string, nowMs: number): Promise<{ build: TrainObservation['build']; pending: boolean; cooldown: boolean }> {
   const listed = record(await read(`repos/${REPOSITORY}/actions/workflows/${workflow}/runs?head_sha=${sha}&per_page=20`));
   const runs = Array.isArray(listed?.workflow_runs) ? listed.workflow_runs : [];
   if (!Number.isInteger(listed?.total_count) || Number(listed?.total_count) > 20 && runs.length === 20) throw new Error('incomplete build inventory');
   let pending = false;
+  let cooldown = false;
   for (const row of runs) {
     const run = record(row);
-    if (run?.head_sha !== sha) continue;
+    if (!run || run.head_sha !== sha) continue;
+    if (run.path === '.github/workflows/ci.yml'
+      && (run.event === 'workflow_dispatch' || run.event === 'schedule')
+      && text(record(run.repository)?.full_name) === REPOSITORY
+      && text(record(run.head_repository)?.full_name) === REPOSITORY
+      && failedBuildWithin(run, nowMs)) cooldown = true;
     if (run.status === 'queued' || run.status === 'in_progress' || run.status === 'waiting') pending = true;
+    if (!admitCiRun(run, sha, tag)) continue;
     if (run.status !== 'completed' || run.conclusion !== 'success') continue;
-    if (run.head_branch !== 'master' && run.head_branch !== tag) continue;
     const id = run.id; const attempt = run.run_attempt;
     if (!Number.isSafeInteger(id) || !Number.isSafeInteger(attempt) || Number(id) <= 0 || Number(attempt) <= 0) continue;
     const artifacts = record(await read(`repos/${REPOSITORY}/actions/runs/${Number(id)}/artifacts?per_page=100`));
@@ -549,9 +613,9 @@ async function successfulRun(read: (path: string) => Promise<unknown>, workflow:
     const name = `ashlr-build-${Number(id)}-${Number(attempt)}`;
     const match = rows.map(record).find((artifact) => artifact?.name === name && artifact.expired !== true);
     if (!match || !Number.isSafeInteger(match.id)) continue;
-    return { build: { runId: Number(id), attempt: Number(attempt), artifactId: Number(match.id), completedAt: text(run.updated_at) }, pending };
+    return { build: { runId: Number(id), attempt: Number(attempt), artifactId: Number(match.id), completedAt: text(run.updated_at) }, pending, cooldown };
   }
-  return { build: null, pending };
+  return { build: null, pending, cooldown };
 }
 
 async function auditRun(read: (path: string) => Promise<unknown>, sha: string): Promise<TrainObservation['audit']> {
@@ -602,10 +666,10 @@ export function readReleaseState(path: string): TrainState {
 }
 
 function gh(method: string, path: string, body?: unknown): string {
-  const appWrite = method === 'PATCH' || /\/pulls\/\d+\/merge$/.test(path);
+  const appWrite = method === 'PATCH' || path === 'graphql';
   const token = appWrite ? process.env.RELEASE_APP_TOKEN : process.env.GH_TOKEN;
   if (!token) throw new Error(appWrite ? 'release app token unavailable' : 'github token unavailable');
-  const env = { ...process.env, GH_TOKEN: token };
+  const env: NodeJS.ProcessEnv = { ...process.env, GH_TOKEN: token };
   delete env.RELEASE_APP_TOKEN;
   try {
     return execFileSync('gh', ['api', '--hostname', 'github.com', '--method', method, path], {
@@ -647,7 +711,8 @@ function isDirectRun(): boolean {
 async function main(): Promise<number> {
   const args = process.argv.slice(2);
   if (args[0] === 'guard') {
-    const decision = releaseKillDecision(readSentinel(fleetKillPath()), readSentinel(autorunOffPath()));
+    const hosted = hostedTrainGate(process.env);
+    const decision = hosted ?? releaseKillDecision(readSentinel(fleetKillPath()), readSentinel(autorunOffPath()));
     process.stdout.write(`${JSON.stringify({ schema: TRAIN_SCHEMA, ...decision })}\n`);
     return decision.proceed ? 0 : 1;
   }

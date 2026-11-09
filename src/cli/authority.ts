@@ -33,6 +33,7 @@ import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 
 import { CUSTODY_HELPER_PATH } from '../core/authority/custody-client.js';
+import { pauseReleaseTrain } from '../core/release/train.js';
 import { HUB_REPOSITORY_IDENTITY } from '../core/authority/repository-binding.js';
 import { STANDING_GRANT_PATTERNS } from '../core/authority/types.js';
 import type { ResidentAdmission, ResidentPlistState } from '../core/authority/resident.js';
@@ -579,6 +580,7 @@ async function cmdStop(parsed: Parsed, deps: AuthorityCliDeps): Promise<number> 
   // With --json, stdout carries only the JSON; the prose goes to stderr.
   const json = parsed.flags.has('--json');
   const say = json ? deps.err : deps.out;
+  try { pauseReleaseTrain(); } catch { /* local stop already armed */ }
   say(`Stopped.${result.ledgered ? '' : ' (the ledger could not record it)'}`);
   for (const line of drainSummary(result)) say(line);
   if (json) deps.out(JSON.stringify(result, null, 2));

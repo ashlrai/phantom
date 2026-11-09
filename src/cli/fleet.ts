@@ -53,6 +53,7 @@ import { makeColors, isTty } from './ui.js';
 import { rejectUnknownOptions, type AllowedOptions } from './args.js';
 import { resolveFleetSubcommand, isModuleNotFound } from './fleet-subcommand-resolve.js';
 import { FLEET_SUBCOMMAND_LOADERS } from './fleet-subcommand-registry.js';
+import { pauseReleaseTrain } from '../core/release/train.js';
 
 const { bold, dim, green, red, yellow, cyan } = makeColors(isTty());
 
@@ -2131,6 +2132,7 @@ async function setKillSwitch(on: boolean): Promise<number> {
 
   console.log('');
   if (on) {
+    try { pauseReleaseTrain(); } catch { /* local stop already armed */ }
     console.log(green('  ✓ fleet paused') + dim(' — kill switch engaged.'));
     console.log(dim('  Any running loop halts on its next tick; nothing autonomous dispatches.'));
     console.log(dim('  Resume with `ashlr fleet resume`.'));

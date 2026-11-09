@@ -4,8 +4,9 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cmdRelease } from '../src/cli/release.js';
 import {
-  assertReleaseWrite, buildTrain, cappedCadenceMinutes, docsCarriersSynced, isReleasePleaseCommit,
-  markWritesApplied, observeTrain, readSentinel, releaseKillDecision, selectUpdaterFeed,
+  admitCiRun, assertReleaseWrite, buildTrain, cappedCadenceMinutes, docsCarriersSynced, ENQUEUE_PULL_REQUEST,
+  enqueueReleasePullRequest, failedBuildWithin, hostedTrainGate, isReleasePleaseCommit,
+  markWritesApplied, mergeStageDone, observeTrain, pauseReleaseTrain, readSentinel, releaseKillDecision, selectUpdaterFeed,
   TRAIN_SCHEMA, updaterFeedMatches, WEBSITE_HOOK,
   type ReleaseWrite, type TrainObservation,
 } from '../src/core/release/train.js';
@@ -36,6 +37,7 @@ function observation(overrides: Partial<TrainObservation> = {}): TrainObservatio
     pullChecks: null,
     build: null,
     buildPending: false,
+    buildCooldown: false,
     attest: null,
     attestPending: false,
     audit: null,
@@ -50,6 +52,32 @@ function observation(overrides: Partial<TrainObservation> = {}): TrainObservatio
 describe('release train', () => {
   const dirs: string[] = [];
   afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+
+  it('fails closed on the hosted repo variable unless it is on', () => {
+    expect(hostedTrainGate({ GITHUB_ACTIONS: 'true' })).toEqual({ proceed: false, reason: 'repo-variable-unset' });
+    expect(hostedTrainGate({ GITHUB_ACTIONS: 'true', PHANTOM_RELEASE_TRAIN: 'off' })).toEqual({ proceed: false, reason: 'repo-variable-off' });
+    expect(hostedTrainGate({ GITHUB_ACTIONS: 'true', PHANTOM_RELEASE_TRAIN: 'on' })).toEqual({ proceed: true, reason: 'repo-variable-on' });
+    expect(hostedTrainGate({})).toBeNull();
+    const calls: string[][] = [];
+    const logs: string[] = [];
+    pauseReleaseTrain(() => { calls.push(['gh', 'variable', 'set', 'PHANTOM_RELEASE_TRAIN', '-R', 'ashlrai/phantom', '--body', 'off']); throw new Error('gh down'); }, mkdtempSync(join(tmpdir(), 'release-off-')), (line) => logs.push(line));
+    expect(logs.join(' ')).toContain('PHANTOM_RELEASE_TRAIN was not set off');
+    pauseReleaseTrain((file, args) => { calls.push([file, ...args]); return ''; }, mkdtempSync(join(tmpdir(), 'release-off-')), () => undefined);
+    expect(calls.some((argv) => argv.join(' ') === 'gh variable set PHANTOM_RELEASE_TRAIN -R ashlrai/phantom --body off')).toBe(true);
+  });
+
+  it('admits only sanctioned ci runs and backs off after a recent failure', () => {
+    const repo = { full_name: 'ashlrai/phantom' };
+    const good = { head_sha: head, path: '.github/workflows/ci.yml', event: 'workflow_dispatch', repository: repo, head_repository: repo, head_branch: 'v3.30.28' };
+    expect(admitCiRun(good, head, 'v3.30.28')).toBe(true);
+    expect(admitCiRun({ ...good, event: 'push' }, head, 'v3.30.28')).toBe(false);
+    expect(admitCiRun({ ...good, path: '.github/workflows/other.yml' }, head, 'v3.30.28')).toBe(false);
+    expect(admitCiRun({ ...good, repository: { full_name: 'other/phantom' } }, head, 'v3.30.28')).toBe(false);
+    const now = Date.parse('2026-11-09T06:00:00Z');
+    expect(failedBuildWithin({ status: 'completed', conclusion: 'failure', updated_at: '2026-11-09T01:00:00Z' }, now)).toBe(true);
+    expect(failedBuildWithin({ status: 'completed', conclusion: 'failure', updated_at: '2026-11-08T20:00:00Z' }, now)).toBe(false);
+    expect(buildTrain(observation({ buildCooldown: true })).writes.some((write) => write.path.includes('/ci.yml/'))).toBe(false);
+  });
 
   it('fails closed unless both kill sentinels are proven absent', () => {
     expect(releaseKillDecision('inactive', 'inactive')).toEqual({ proceed: true, reason: 'kill-inactive' });
@@ -73,22 +101,27 @@ describe('release train', () => {
     expect(() => cappedCadenceMinutes(0)).toThrow(/cadence/);
     const early = buildTrain(observation({
       lastTaggedAt: '2026-11-09T05:30:00.000Z',
-      openReleasePr: { number: 9, version: '3.30.28', headSha: pr, headRef: 'release-please--master', mergeable: 'MERGEABLE' },
+      openReleasePr: { number: 9, nodeId: 'PR_kwDO_test', version: '3.30.28', headSha: pr, headRef: 'release-please--master', mergeable: 'MERGEABLE', state: 'OPEN', queued: false },
       pullChecks: { pending: 0, failing: 0 },
     }));
-    expect(early.writes.some((write) => write.path.endsWith('/merge'))).toBe(false);
+    expect(early.writes.some((write) => write.path === 'graphql' || write.path.endsWith('/merge'))).toBe(false);
     const due = buildTrain(observation({
       masterVersion: '3.30.27',
-      openReleasePr: { number: 9, version: '3.30.28', headSha: pr, headRef: 'release-please--master', mergeable: 'MERGEABLE' },
+      openReleasePr: { number: 9, nodeId: 'PR_kwDO_test', version: '3.30.28', headSha: pr, headRef: 'release-please--master', mergeable: 'MERGEABLE', state: 'OPEN', queued: false },
       pullChecks: { pending: 0, failing: 0 },
     }));
-    const merge = due.writes.find((write) => write.path.endsWith('/merge'));
-    expect(merge).toEqual({ method: 'POST', path: 'repos/ashlrai/phantom/pulls/9/merge', body: { sha: pr, merge_method: 'merge' } });
+    const merge = due.writes.find((write) => write.path === 'graphql');
+    expect(merge).toEqual(enqueueReleasePullRequest('PR_kwDO_test'));
+    expect(ENQUEUE_PULL_REQUEST).toContain('enqueuePullRequest');
+    expect(JSON.stringify(due.writes)).not.toMatch(/admin|bypass|\/merge/);
+    expect(mergeStageDone('OPEN')).toBe(false);
+    expect(mergeStageDone('MERGED')).toBe(true);
+    expect(due.state.steps.merge?.status).toBe('complete');
     const blocked = buildTrain(observation({
-      openReleasePr: { number: 9, version: '3.30.28', headSha: pr, headRef: 'release-please--master', mergeable: 'MERGEABLE' },
+      openReleasePr: { number: 9, nodeId: 'PR_kwDO_test', version: '3.30.28', headSha: pr, headRef: 'release-please--master', mergeable: 'MERGEABLE', state: 'OPEN', queued: false },
       pullChecks: { pending: 1, failing: 0 },
     }));
-    expect(blocked.writes.some((write) => write.path.endsWith('/merge'))).toBe(false);
+    expect(blocked.writes.some((write) => write.path === 'graphql')).toBe(false);
   });
 
   it('marks older drafts superseded and never deletes or publishes them', () => {

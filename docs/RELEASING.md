@@ -167,11 +167,13 @@ What runs without a per-release approval:
 - README and the other version carriers are updated in the release commit by
   the existing candidate sync before the tag exists.
 
-KILL fails closed. The train proceeds only when both sentinels are proven
-absent. `~/.ashlr/KILL` is the same file `ashlr stop` writes. A present file
-stops the train. An unreadable path stops it too. The Mac signer also stops
-when `~/.ashlr-runs/RELEASE_AUTORUN_OFF` exists, which is its existing pause
-file. Either sentinel stops signing and publication.
+KILL fails closed. On a hosted runner the train proceeds only when the
+repository variable `PHANTOM_RELEASE_TRAIN` is `on`. Unset and `off` both
+stop it. `ashlr authority stop` and `ashlr fleet pause` arm `~/.ashlr/KILL`,
+create `~/.ashlr-runs/RELEASE_AUTORUN_OFF`, and best-effort set that variable
+to `off`. A failed variable write is logged and does not block the local stop.
+The Mac signer still stops when the OFF file exists. The npm publish job
+uses the same variable.
 
 Signing and notarization stay in `contrib/mac/release-autorun.sh` and the
 stock `release-sign.sh` wrapper. CI does not codesign and does not notarize.
