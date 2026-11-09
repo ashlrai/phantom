@@ -2732,6 +2732,11 @@ async function main(): Promise<void> {
       }
 
       case 'goals': {
+        if (rest.length === 0 || (rest.length === 1 && rest[0] === '--json')) {
+          const { cmdGoals } = await import('./goals-view.js');
+          process.exitCode = await cmdGoals(rest);
+          break;
+        }
         const cmdGoals = await loadGoalsCmd();
         process.exitCode = await cmdGoals(rest);
         break;
