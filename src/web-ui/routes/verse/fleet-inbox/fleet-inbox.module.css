@@ -23,3 +23,5 @@
 .unifiedItem[data-severity="high"] { border-left-color: var(--status-danger-solid); }
 .unifiedTitle { overflow-wrap: anywhere; flex: 1 1 12rem; }
 .cos[data-over-target] { border-color: var(--status-warning-solid); }
+.unifiedReply { display: flex; flex: 1 1 100%; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.unifiedReplyInput { flex: 1 1 8rem; min-width: 0; }
