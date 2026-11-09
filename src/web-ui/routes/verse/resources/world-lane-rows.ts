@@ -75,6 +75,11 @@ const EXTRA: Readonly<Record<string, { label: string; engine: LaneEngine }>> = {
 
 const ABSENT: Signal = { present: false, value: null, source: null, observedAt: null, freshness: 'unknown' };
 
+/** The canonical lane a seat or lane id belongs to, by the same aliases the bar uses. */
+export function canonicalLaneFor(id: string): string | null {
+  return CANONICAL.find((spec) => spec.match.includes(id))?.lane ?? null;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
