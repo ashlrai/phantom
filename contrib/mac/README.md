@@ -259,6 +259,12 @@ contrib/mac/install.sh                    # install with timestamped backups
 contrib/mac/install.sh --json             # same, one JSON object (schema macdispatch.install.v1)
 ```
 
+`install.sh` covers the dispatcher lane only. [fleet/sync.py](../../fleet/README.md)
+is the manifest-driven generalization for all `~/.ashlr-runs/bin` machinery —
+same diff/backup/sha-verify semantics plus rollback, pinned-file drift reports
+and an unmanaged-file sweep; it is the adoption path once Security re-reviews
+the installer.
+
 Afterwards `shasum -a 256 contrib/mac/dispatchd.py ~/.ashlr-runs/bin/dispatchd.py`
 prints the same digest twice, and a second `install.sh` run reports every file
 `unchanged`.
@@ -376,8 +382,11 @@ dispatcher. The adapters below are installation steps for that external bridge;
 adding these files alone does not activate a service. No launcher, publisher,
 release configuration, or CI configuration is changed by this contribution.
 
-Copy `wt-prune.sh` and `wt-prune.py` together to the bridge directory, then run
-`wt-prune.sh --dry-run` before enabling cleanup. At the existing `WT_REMOVED`
+`wt-prune.sh` and `wt-prune.py` are class `managed` in
+[fleet/manifest.json](../../fleet/manifest.json): install them together to the
+bridge directory with `python3 fleet/sync.py --apply` (dry-run first, same
+Security re-pin rule as `install.sh`), then run `wt-prune.sh --dry-run` before
+enabling cleanup. At the existing `WT_REMOVED`
 handler, after releasing the worktree lease and leaving its cwd, invoke:
 
 ```sh
