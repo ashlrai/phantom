@@ -76,6 +76,7 @@ import { setHomeChoice, useHomeView } from './shell/home-view-store.js';
 import type { UnreadCounts } from './shell/unread-counts.js';
 import type { WarmupOptions } from './shell/warmup.js';
 import { useVerseUi } from './useVerseUi.js';
+import { useLayoutMode } from './layout-mode.js';
 import { useFocusMode } from './shell/focus-mode.js';
 import { openPaneInChat } from './dock/dock-store.js';
 // Only the event name: validation and the handler are the lazy open-terminal chunk.
@@ -337,6 +338,9 @@ export function VerseApp() {
   usePollWhileVisible(refetchCi, FLEET_CI_RUNS_POLL_MS);
   const [updateLabel, setUpdateLabel] = useState<string | null>(null);
   const { compact } = useViewport();
+  // Below 960px (or pinned in Settings) the Leader conversation comes first: icon-only rail, tab row, floating Resources.
+  const layout = useLayoutMode();
+  const narrow = layout === 'narrow';
   const home = useHomeView();
   const [unread, setUnread] = useState<UnreadCounts>(NO_UNREAD);
   const onUnread = useCallback((next: UnreadCounts) => setUnread((prev) => prev.leader === next.leader && prev.feed === next.feed ? prev : next), []);
@@ -499,7 +503,7 @@ export function VerseApp() {
     if (token) void apiPost<unknown>(VERSE_ACTIVITY_SEEN_PATH, { surface: 'mind' }, token).catch(() => undefined);
   }, [ui.section, data?.mind?.unseen, latestMemoAt]);
 
-  const expanded = ui.railExpanded && !compact;
+  const expanded = ui.railExpanded && !compact && !narrow;
   const ciCount = ciNeedsYouCount(ciRead.status === 'error' ? undefined : ciRead.data, Date.now());
   const needsYouCount = data ? data.counts.needsYou + ciCount : ciCount || null;
   // Settings, Apps & Accounts and Usage open from the gear, so on those pages
@@ -511,6 +515,8 @@ export function VerseApp() {
   // the compact strip carries navigation and, above the phone layout, the rail steps aside on it.
   const homePane = home.view === 'leader' ? 'leader-thread' : home.view === 'feed' ? 'feed' : null;
   const homeShowing = ui.section === 'live' && homePane !== null;
+  // The tab row (Leader / Feed / Needs you / Fleet) replaces side columns in a narrow window.
+  const tabRow = narrow || home.layout === 'compact';
   const homeNarrow = homeShowing && home.layout === 'compact' && !compact;
   const stripActive: CompactNavId | null = ui.overlay === 'needs-you' ? 'needs-you'
     : ui.section === 'fleet' ? 'fleet' : homeShowing ? (home.view === 'feed' ? 'feed' : 'leader') : null;
@@ -533,8 +539,9 @@ export function VerseApp() {
     <div
       className={styles.shell}
       data-rail={expanded ? 'expanded' : 'collapsed'}
+      data-layout={layout}
       data-compact={compact || undefined}
-      data-resources={resources.open && resources.pinned && !compact ? 'docked' : undefined}
+      data-resources={resources.open && resources.pinned && !compact && !narrow ? 'docked' : undefined}
       data-focus={focus ? 'on' : undefined}
       data-home-narrow={homeNarrow || undefined}
     >
@@ -663,8 +670,8 @@ export function VerseApp() {
           }}>Review</button>
         {isDesktopShell() ? <Suspense fallback={null}><PowerStatus /></Suspense> : <span className={styles.workMode}>Host power unavailable</span>}
         </div>
-        {home.layout === 'compact' ? <CompactNavStrip active={stripActive} needsYouCount={needsYouCount} unread={unread} onSelect={selectCompactNav} /> : null}
-        {homePane ? <Suspense fallback={null}><HomeSurface paneId={homePane} visible={homeShowing} compact={home.layout === 'compact'} /></Suspense> : null}
+        {tabRow ? <CompactNavStrip active={stripActive} needsYouCount={needsYouCount} unread={unread} onSelect={selectCompactNav} /> : null}
+        {homePane ? <Suspense fallback={null}><HomeSurface paneId={homePane} visible={homeShowing} compact={tabRow} /></Suspense> : null}
         {ui.mounted.map((id) => (
           <SurfaceHost key={id} id={id} active={id === ui.section && !(id === 'live' && homePane)} />
         ))}
@@ -681,7 +688,7 @@ export function VerseApp() {
         {reviewOpen && reviewRef.current ? <ReviewMenu anchor={reviewRef.current} onClose={() => setReviewOpen(false)} /> : null}
       </Suspense>
       <Suspense fallback={null}>
-        <ResourcesChrome compact={compact} />
+        <ResourcesChrome compact={compact || narrow} />
       </Suspense>
       <Suspense fallback={null}>
         {ui.overlay === 'palette' ? <Palette.Slot /> : null}
