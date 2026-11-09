@@ -1,3 +1,4 @@
+import { dispatchedCommands } from './helpers/cli-command-table.js';
 /**
  * Regression guard: `phm <cmd> [verb] --help` and `-h` print usage and do
  * nothing else.
@@ -232,7 +233,8 @@ function enumerate(): { cases: HelpCase[]; verbs: Map<string, string[]> } {
       third.set(`${m[1]!} ${m[2]!}`, (m[3] ?? '').split(' ').filter(isVerb));
     }
     const bases: string[][] = [];
-    for (const cmd of top) {
+    const dispatched = dispatchedCommands(readFileSync(join(ROOT, 'src/cli/index.ts'), 'utf8'));
+    for (const cmd of new Set([...top, ...dispatched])) {
       bases.push([cmd]);
       for (const verb of verbs.get(cmd) ?? []) {
         bases.push([cmd, verb]);
@@ -505,6 +507,19 @@ describe.skipIf(IS_WINDOWS)('`<cmd> [verb] --help` and `-h` print usage and have
       expect(bases.has(expected), expected).toBe(true);
     }
     expect(CASES.length).toBeGreaterThan(600);
+  });
+
+  it('documents every dispatched top-level command whose help is exercised', () => {
+    const source = readFileSync(join(ROOT, 'src/cli/index.ts'), 'utf8');
+    const doc = readFileSync(join(ROOT, 'docs/cli.md'), 'utf8');
+    const commands = dispatchedCommands(source);
+    const bases = new Set(CASES.map((helpCase) => helpCase.base));
+    const missingHelp = commands.filter((command) => !bases.has(command));
+    const missingDocs = commands.filter((command) =>
+      !doc.split('\n').some((line) => new RegExp(`^    ${command}(?:\\s|$)`).test(line)),
+    );
+    expect(missingHelp, 'add these commands to the help safety cases').toEqual([]);
+    expect(missingDocs, 'add these commands to the CLI help table and regenerate docs/cli.md').toEqual([]);
   });
 
   it('every allow-list and known-acts entry names an enumerated case, and the lists are consistent', () => {
