@@ -2614,6 +2614,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'worklog': {
+        const { cmdWorklog } = await import('./worklog.js');
+        process.exitCode = await cmdWorklog(rest);
+        break;
+      }
+
       case 'fleet': {
         if (rest[0] === 'usage' && wantsHelp(rest)) {
           printCoreUsage('fleet usage', 'Read fleet usage.', [
@@ -2996,6 +3002,12 @@ async function main(): Promise<void> {
         }
         const cmdAuthority = await loadAuthorityCmd();
         process.exitCode = await cmdAuthority(rest);
+        break;
+      }
+
+      case 'library': {
+        const { cmdLibrary } = await import('./library.js');
+        process.exitCode = await cmdLibrary(rest);
         break;
       }
 
