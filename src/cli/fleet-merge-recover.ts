@@ -1,12 +1,14 @@
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import type { CloudGh } from '../core/cloud/pr-actions.js';
 import { defaultCloudGh } from '../core/cloud/tracker.js';
 import { recutDropJob } from '../core/fleet/recut-drop-body.js';
 import { countQueuedDropJobPrompts, DROP_JOB_QUEUE_LIMIT, dropJobExists, DropJobExistsError, resolveDropJobRoot, writeDropJob } from '../core/fleet/drop-job-writer.js';
 import { cmdFleetDirtyLanded, type DirtyLandedPr } from './fleet-dirty-landed.js';
+import { mergeQueueAge, validMergeQueueAgeInput } from './fleet-merge-queue-age.js';
 
-const USAGE = 'Usage: phm fleet merge-recover [--apply] [--json] [--runs-dir <absolute path>]\nPreview stale conflicting fleet PRs. Apply queues isolated recuts; run again after publication to request auto-merge. Required checks remain enforced.';
+const USAGE = 'Usage: phm fleet merge-recover [--queue-input <snapshot.json>] [--apply] [--json] [--runs-dir <absolute path>]\nPreview stale conflicting fleet PRs. A queue snapshot prioritizes the oldest measured entries and reports their wait. Apply queues isolated recuts; run again after publication to request auto-merge. Required checks remain enforced.';
 const REPO = 'ashlrai/phantom';
 const HOLDS = new Set([197, 878, 743, 725, 738, 744, 693, 1228]);
 const FIELDS = 'number,title,state,headRefOid,baseRefName,isDraft,mergeStateStatus,autoMergeRequest';
@@ -21,7 +23,7 @@ export interface MergeRecoverDeps {
 export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDeps = {}): Promise<number> {
   const output = deps.output ?? console.log;
   if (args.length === 1 && args[0] === '--help') { output(USAGE); return 0; }
-  let apply = false, json = false, root: string | undefined;
+  let apply = false, json = false, root: string | undefined, queuePath: string | undefined;
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -30,11 +32,13 @@ export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDep
     if (arg === '--apply') apply = true;
     else if (arg === '--json') json = true;
     else if (arg === '--runs-dir' && isAbsolute(args[i + 1] ?? '')) root = args[++i];
+    else if (arg === '--queue-input' && args[i + 1] && !args[i + 1]!.startsWith('-')) queuePath = args[++i];
     else { output(USAGE); return 2; }
   }
   const gh = deps.gh ?? defaultCloudGh;
   const rows: { pr: number; action: string }[] = [];
   let failed = false, queued = 0;
+  let queue: ReturnType<typeof mergeQueueAge> | null = null;
   const read = async (argv: string[]): Promise<unknown> => {
     const result = await gh(argv);
     if (!result.ok) throw new Error('read');
@@ -44,12 +48,21 @@ export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDep
     && typeof p.title === 'string' && /^[a-f0-9]{40}$/.test(p.headRefOid)
     && ['OPEN', 'CLOSED', 'MERGED'].includes(p.state) && typeof p.isDraft === 'boolean';
   try {
+    if (queuePath) {
+      const snapshot: unknown = JSON.parse(await readFile(queuePath, 'utf8'));
+      if (!validMergeQueueAgeInput(snapshot)) throw new Error('invalid queue snapshot');
+      queue = mergeQueueAge(snapshot);
+    }
     const prs = await (deps.inspect ?? (async () => {
       let text = '';
       if (await cmdFleetDirtyLanded(['--json'], { gh, output: t => { text = t; } })) throw new Error('inspect');
       return (JSON.parse(text) as { prs: DirtyLandedPr[] }).prs;
     }))();
-    for (const pr of prs) {
+    const ranks = new Map<number, number>();
+    queue?.entries.forEach((entry, index) => {
+      if (entry.ageSeconds !== null && !entry.missingData.includes('unique_queue_entry')) ranks.set(entry.number, index);
+    });
+    for (const pr of [...prs].sort((a, b) => (ranks.get(a.number) ?? Infinity) - (ranks.get(b.number) ?? Infinity))) {
       if (HOLDS.has(pr.number)) { rows.push({ pr: pr.number, action: 'held' }); continue; }
       const job = recutDropJob(pr, 0);
       if ('reason' in job || !['main', 'master'].includes(pr.base)) continue;
@@ -97,7 +110,7 @@ export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDep
       } catch { failed = true; rows.push({ pr: pr.number, action: 'failed' }); }
     }
   } catch { failed = true; }
-  const report = { schema: 'fleet.merge-recover.v1', dryRun: !apply, ok: !failed, rows };
-  output(json ? JSON.stringify(report) : `${USAGE}\n${rows.map(r => `#${r.pr}: ${r.action}`).join('\n')}`);
+  const report = { schema: 'fleet.merge-recover.v1', dryRun: !apply, ok: !failed, queue, rows };
+  output(json ? JSON.stringify(report) : `${USAGE}\n${queue ? queue.entries.map(e => `#${e.number}: ${e.ageSeconds === null ? 'unknown wait' : `${e.ageSeconds}s queued`}`).join('\n') + '\n' : ''}${rows.map(r => `#${r.pr}: ${r.action}`).join('\n')}`);
   return failed ? 1 : 0;
 }

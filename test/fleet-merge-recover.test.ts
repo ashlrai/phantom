@@ -1,4 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { cmdFleetMergeRecover } from '../src/cli/fleet-merge-recover.js';
 import type { DirtyLandedPr } from '../src/cli/fleet-dirty-landed.js';
 import type { CloudGh } from '../src/core/cloud/pr-actions.js';
@@ -63,5 +67,40 @@ describe('fleet merge-recover', () => {
     f.state.replacementState = 'MERGED'; await f.run(true);
     expect(f.calls.filter(args => args[1] === 'merge')).toHaveLength(0);
     expect(f.writes).toBe(1);
+  });
+  it('prioritizes the oldest measured queue entry and reports wait and required checks', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'merge-recover-'));
+    const path = join(dir, 'queue.json');
+    let output = '';
+    try {
+      await writeFile(path, JSON.stringify({ prs: [{ number: 42 }, { number: 44 }], queue: [
+        { number: 42, enteredAt: '2026-01-02T00:00:00Z', requiredChecks: [{ name: 'Merge Gate', status: 'pending' }] },
+        { number: 44, enteredAt: '2026-01-01T00:00:00Z', requiredChecks: [{ name: 'Merge Gate', status: 'failure' }] },
+      ] }));
+      const result = await cmdFleetMergeRecover(['--queue-input', path, '--json'], {
+        inspect: async () => [source, { ...source, number: 44 }],
+        gh: async args => ({ ok: true, stdout: JSON.stringify({ number: Number(args[2]), title: source.title, state: 'MERGED', headRefOid: head, baseRefName: 'main', isDraft: false }), stderr: '' }),
+        output: text => { output = text; },
+      });
+      expect(result).toBe(0);
+      const report = JSON.parse(output);
+      expect(report.rows.map((row: { pr: number }) => row.pr)).toEqual([44, 42]);
+      expect(report.queue.entries[0]).toMatchObject({ number: 44, causes: [{ code: 'check_failure' }] });
+      expect(report.queue.entries[0].ageSeconds).toBeGreaterThan(0);
+      await writeFile(path, '{}');
+      expect(await cmdFleetMergeRecover(['--queue-input', path, '--apply'], { inspect: async () => { throw new Error('must not inspect'); }, output: () => {} })).toBe(1);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+  it('requests only ordinary head-pinned auto-merge when required checks block a replacement', async () => {
+    // BLOCKED represents host-side review or required-check gates; --auto leaves them in force.
+    let output = '', merges = 0;
+    const gh: CloudGh = async args => {
+      if (args[1] === 'merge') { merges++; expect(args).toEqual(['pr', 'merge', '43', '--repo', 'ashlrai/phantom', '--auto', '--match-head-commit', head]); return { ok: true, stdout: '', stderr: '' }; }
+      const base = { number: 42, title: source.title, state: 'OPEN', headRefOid: head, baseRefName: 'main', isDraft: false, mergeStateStatus: 'DIRTY', autoMergeRequest: null };
+      return { ok: true, stdout: JSON.stringify(args[1] === 'view' ? base : [{ ...base, number: 43, title: `bridge: RQ-PHX-MR${createHash('sha256').update(`42:${head}`).digest('hex').slice(0, 32).toUpperCase()}`, mergeStateStatus: 'BLOCKED' }]), stderr: '' };
+    };
+    expect(await cmdFleetMergeRecover(['--apply', '--json'], { gh, inspect: async () => [source], output: text => { output = text; } })).toBe(0);
+    expect(JSON.parse(output).rows[0].action).toBe('auto-merge-requested');
+    expect(merges).toBe(1);
   });
 });
