@@ -1,0 +1,8 @@
+.root { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); min-width: 0; }
+.headline { margin: 0; color: var(--text-primary); font-size: var(--text-sm-size); font-weight: var(--font-weight-semibold); }
+.mission { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); overflow-wrap: anywhere; }
+.progressRow { display: flex; align-items: center; gap: var(--space-2); }
+.track { flex: 1; height: var(--space-2); border-radius: var(--radius-full); background: var(--border-subtle); overflow: hidden; }
+.fill { height: 100%; background: var(--accent-500); }
+.percent { color: var(--text-secondary); font-size: var(--text-xs-size); min-width: 3ch; text-align: right; }
+.meta { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); overflow-wrap: anywhere; }
