@@ -461,6 +461,20 @@ const TOOLS: NativeToolImpl[] = [
     },
   },
   {
+    name: 'phantom_observe',
+    description: 'Read the human observe snapshot: roster, sensor headroom, resource coordination, pull headlines, bottlenecks, and human steps. Unknown stays unknown. No credentials.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => (await import('./observe/read.js')).readObserveSnapshot(),
+  },
+  {
+    name: 'phantom_observe_session',
+    description: 'Read one roster session from the observe snapshot. The transcript stays unknown until a desktop operator reader is registered.',
+    inputSchema: { type: 'object', properties: { sessionId: { type: 'string' } }, required: ['sessionId'], additionalProperties: false },
+    safety: 'read',
+    handler: async (args) => (await import('./observe/read.js')).readObserveSession(String(args['sessionId'] ?? '')),
+  },
+  {
     name: 'phantom_fleet_graph',
     description: 'Read the local graph.v1 fleet inventory: repositories, lanes, seats and holds. Observation only; incomplete sources are flagged. No launcher environment values.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },

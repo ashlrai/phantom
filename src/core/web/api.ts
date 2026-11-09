@@ -107,6 +107,7 @@ import { handleVerseApi, isVerseApiPath, verseSessionsDigest, verseSessionsSnaps
 import { handleVerseControlApi, isVerseControlPath } from '../verse/control-api.js';
 // GitHub, reachable from Verse (docs/VERSE-WORKSPACES.md §2) — also BEFORE handleVerseApi.
 import { handleVerseGithubApi, isVerseGithubPath } from '../verse/github-api.js';
+import { handleObserveApi, isObservePath } from '../verse/observe-api.js';
 // MCP + per-account CLI management (mounted BEFORE both — see handleApi).
 import { handleVerseMcpApi, isVerseMcpPath } from '../verse/mcp-control-api.js';
 // Desktop native-shell read API (GET /api/wb/v1/*).
@@ -2460,6 +2461,10 @@ export async function handleApi(
     // is no POST half, so no dispatch gate is needed here.
     if (isVerseGithubPath(path)) {
       return handleVerseGithubApi({ readSession: ctx.readSession }, req, res, path, method);
+    }
+
+    if (isObservePath(path)) {
+      return handleObserveApi(req, res, path, method);
     }
 
     // ── /api/verse/* (Ashlr Verse — src/core/verse/verse-api.ts) ────────────
