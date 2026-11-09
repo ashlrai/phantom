@@ -64,6 +64,10 @@ function gatewayEnv(): Record<string, string> {
     ASHLR_CONFIG: join(fx.ashlrDir, 'config.json'),
     ASHLR_GENOME_DIR: join(fx.ashlrDir, 'genome'),
     PATH: process.env.PATH ?? '',
+    // The gateway is a child process. Keep the Vitest home preload so profile
+    // files stay in this fixture instead of the account home.
+    ...(process.env.VITEST ? { VITEST: process.env.VITEST } : {}),
+    ...(process.env.NODE_OPTIONS ? { NODE_OPTIONS: process.env.NODE_OPTIONS } : {}),
   };
 }
 
@@ -111,8 +115,7 @@ describe('gateway serves native tools', () => {
   it('advertises all native tools with zero downstreams', async () => {
     const client = new Client({ name: 'native-inventory-test', version: '1.0.0' });
     const transport = new StdioClientTransport({ command: process.execPath, args: [cliEntry, 'mcp'],
-      cwd: repoRoot, stderr: 'pipe', env: { HOME: fx.home, USERPROFILE: fx.home,
-        ASHLR_HOME: fx.ashlrDir, PATH: process.env.PATH ?? '' } });
+      cwd: repoRoot, stderr: 'pipe', env: gatewayEnv() });
     transport.stderr?.on('data', () => undefined);
     try {
       await client.connect(transport, { timeout: 20_000 });
