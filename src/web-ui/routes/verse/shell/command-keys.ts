@@ -129,6 +129,8 @@ const KEYS = {
     'surface.chat': 'mod+5',
     'surface.agents': 'mod+6',
     'section.settings': 'mod+,',
+    'home.leader': 'mod+shift+h',
+    'home.feed': 'mod+shift+g',
     // Navigation
     'palette.open': 'mod+k',
     'needs-you.open': 'mod+j',

@@ -18,6 +18,21 @@ MCP tools: `ashlr_comms_thread` (read) and `ashlr_comms_send_owner` (append;
 KILL refuses it). `ashlr_comms` includes the same adapter rollup as
 `phm comms status --json`.
 
+## Rotation, history and pulling
+
+When the live thread passes its message or byte cap it archives the oldest
+half to `owner-thread-archive-<first>-<last>.json` beside it in the leader
+runs directory. Sequence numbers keep counting, and archived idempotency keys
+still dedupe replays.
+
+```sh
+phm fleet owner-history --limit 50 --json   # read-only; page back with --before <seq>
+phm fleet owner-pull --channel telegram     # pull remote channels into the thread
+```
+
+`owner-pull` skips a channel that is not configured and enabled, and does
+nothing while `~/.ashlr/KILL` or the comms pause is set.
+
 ## Adapters
 
 Each adapter is disabled until that channel's owner identity is in
