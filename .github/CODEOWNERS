@@ -247,6 +247,7 @@
 # (every test G1 holds by name, safety suite or Tier-1 import; test/authority-codeowners-310b.test.ts regenerates this list)
 /test/activation-readiness-package.test.ts @masonwyatt23
 /test/activation-readiness-windows.test.ts @masonwyatt23
+/test/agent-bus-adapters.test.ts @masonwyatt23
 /test/agent-bus-api-mirror.test.ts @masonwyatt23
 /test/agent-network-policy.test.ts @masonwyatt23
 /test/anthropic-messages-client.test.ts @masonwyatt23

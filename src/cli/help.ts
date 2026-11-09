@@ -165,9 +165,9 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
   },
   {
     usage: 'ashlr agents bus channels list|test <id> [--json]',
-    description: 'List channel types or test one offline; no adapter or network is invoked.',
-    safety: 'read',
-    jsonShape: '{dryRun, channels[]} | {id, dryRun, status, reason}',
+    description: 'List registered channel adapters. bus and handoff probes write one local envelope; other channels stay refused. No network.',
+    safety: 'append',
+    jsonShape: '{dryRun, channels:[{id, adapterRegistered, healthy}]} | {id, dryRun, status, reason}',
   },
   {
     usage: 'ashlr agents bus contract [--json]',
@@ -812,7 +812,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'cloud launch "<task>" [--repo o/n] [--base b]', desc: 'Start a Claude Code cloud session that delivers a draft PR (spends Claude credits; never merges). Repo defaults to this folder\'s GitHub origin.', topic: 'autonomy' },
   { cmd: 'playbook list|show|new|edit|run <id>', desc: 'Versioned task templates every lane runs under (`!fix-bug` in any task text): list them, show one with per-version outcomes, write a new version in $EDITOR, or run one in the cloud / Devin lane (`--repo o/n --lane cloud|devin`).', topic: 'autonomy' },
   { cmd: 'openai-agents sessions|inspect|turns [session-id] [--json]', desc: 'Read bounded managed OpenAI Agents API metadata. API access is separate from subscriptions; no execution qualification or mutations.', topic: 'autonomy' },
-  { cmd: 'agents bus channels list|test <id> [--json]', desc: 'List or test channel types offline without sending.', topic: 'autonomy' },
+  { cmd: 'agents bus channels list|test <id> [--json]', desc: 'List registered channel adapters and probe the local bus or handoff store.', topic: 'autonomy' },
   { cmd: 'agents bus contract [--json]', desc: 'Print the Agent Bus v2 contract: schema version, providers, body kinds, work statuses, claim key forms. Read-only.', topic: 'autonomy' },
   { cmd: 'agents roster [--json]', desc: 'Unified live session roster. One probe per source, about 5s each, unknown on timeout or an unverified command. Read-only.', topic: 'autonomy' },
   { cmd: 'bus thread|task <verb> [--peer <id>] [--json]', desc: 'Shared task board: local threads plus task claim, handoff, renew and release tied to fenced fleet queue claims. Cooperative labels only; no execution authority.', topic: 'autonomy' },

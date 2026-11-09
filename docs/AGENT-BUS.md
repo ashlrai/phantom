@@ -156,11 +156,21 @@ Outside implementers (Dot included) call only the HTTP contract above.
 | Part | Phantom file |
 | --- | --- |
 | Schemas, claim key parsing, overlap rules | `src/core/agents/bus-v2-schema.ts` |
+| Coordination claim and status table | `src/core/agents/claim-store.ts` |
 | Bus store, caps, cursor reads, HTTP endpoints | the v1 store behind `/api/verse/agent-bus` |
-| Message-id claims | `src/core/fleet/bus-work-claims.ts` |
+| Message-id claims | `src/core/fleet/bus-work-claims.ts` (writes through the coordination table) |
+| Team leases and board task claims | `src/core/teams/state.ts`, `src/core/fleet/bus-board.ts` (write through the same table) |
+| Channel adapters | `src/core/agents/channel-registry.ts`, `src/core/agents/adapters/` |
+| Provider send bridges | `src/core/agents/bridges/` |
 | Adapters and fleet bus verbs | `src/cli/fleet-bus-*.ts`, `src/core/fleet/bus-adapters/` |
 | Contract printer | `src/cli/agents-bus-contract.ts` |
 | Webhook relay | not built; an internet-facing relay must verify signed requests and gets its own security review |
 
-This section is contract only. The store, claim table and work feed endpoints
-are not yet implemented against it.
+Message-id claims, team leases, and bus-board task claims write their leases
+through `src/core/agents/claim-store.ts`, so overlap is decided in one table.
+A second live claim on an overlapping key is rejected. Queued path claims stay
+a read-only view of queue prompt files and can be merged onto that board with
+`claimBoard()`. `phm agents roster` reads this table through `readRosterClaims`.
+A message-id lease is shown under its bus message id, so a roster session and
+a bus claim still share one lease.
+HTTP work-feed endpoints are not implemented against this contract yet.

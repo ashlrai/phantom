@@ -1,5 +1,4 @@
 /** Local coordination only: labels and tokens confer no execution authority. */
-import { randomBytes } from 'node:crypto';
 import { lstatSync, mkdirSync, unlinkSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
@@ -8,6 +7,7 @@ import { readStableRegularFile } from '../util/stable-file-read.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { listBusInboxAfter, type BusInboxReceipt } from './bus-inbox.js';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from './local-store-lock.js';
+import { acquireCoordination, renewCoordination, settleCoordination } from '../agents/claim-store.js';
 
 export const CLAIM_MAX_ROWS = 1024, CLAIM_MAX_BYTES = 512 * 1024, CLAIM_MAX_LEASE_MS = 3_600_000;
 type Action = 'acquire' | 'renew' | 'release' | 'complete';
@@ -119,21 +119,44 @@ export function mutateBusWorkClaim(request: BusClaimRequest): BusClaimResult {
       if (remaining <= 0) return { status: 'expired' };
       if (row?.completedAt !== null && row?.completedAt !== undefined) return { status: 'completed' };
       let result: BusClaimResult;
+      const claimKey = `queue:${request.id}`;
       if (request.action === 'acquire') {
         if (row && row.leaseUntil > now) return { status: 'conflict' };
         const leaseMs = request.leaseMs!, leaseUntil = now + Math.min(leaseMs, remaining);
         if (!Number.isSafeInteger(leaseUntil)) return { status: 'invalid' };
-        const next: Row = { id: request.id, cursor, receivedAt, ttl: envelope.ttl, token: randomBytes(32).toString('hex'),
-          owner: request.owner!, leaseMs, leaseUntil, completedAt: null };
+        if ((row ? rows.length : rows.length + 1) > CLAIM_MAX_ROWS) return { status: 'full' };
+        const gate = acquireCoordination({
+          root, origin: 'message', key: claimKey, owner: request.owner!, leaseMs, leaseUntil,
+          sourceId: `${request.id}:${cursor}:${receivedAt}`, now,
+        });
+        if (gate.status !== 'acquired' || !gate.token || gate.leaseUntil === undefined) {
+          return { status: gate.status === 'conflict' || gate.status === 'full' ? gate.status : 'unavailable' };
+        }
+        const next: Row = { id: request.id, cursor, receivedAt, ttl: envelope.ttl, token: gate.token,
+          owner: request.owner!, leaseMs, leaseUntil: gate.leaseUntil, completedAt: null };
         if (row) rows[rows.indexOf(row)] = next; else rows.push(next);
-        result = { status: 'acquired', token: next.token, leaseUntil };
+        result = { status: 'acquired', token: next.token, leaseUntil: next.leaseUntil };
       } else {
         if (!row) return { status: 'lost' };
         if (row.token !== request.token) return { status: 'mismatched-token' };
         if (row.leaseUntil <= now) return { status: 'expired' };
-        if (request.action === 'release') rows.splice(rows.indexOf(row), 1);
-        if (request.action === 'complete') row.completedAt = now;
-        if (request.action === 'renew') row.leaseUntil = now + Math.min(row.leaseMs, remaining);
+        if (request.action === 'renew') {
+          const leaseUntil = now + Math.min(row.leaseMs, remaining);
+          const gate = renewCoordination({ root, key: claimKey, token: request.token!, leaseUntil, now });
+          if (gate.status !== 'renewed' || gate.leaseUntil === undefined) {
+            return { status: gate.status === 'mismatched-token' || gate.status === 'expired' || gate.status === 'lost' ? gate.status : 'unavailable' };
+          }
+          row.leaseUntil = gate.leaseUntil;
+        }
+        if (request.action === 'release' || request.action === 'complete') {
+          const outcome = request.action === 'release' ? 'released' : 'completed';
+          const gate = settleCoordination({ root, key: claimKey, token: request.token!, outcome, now });
+          if (gate.status !== outcome) {
+            return { status: gate.status === 'mismatched-token' || gate.status === 'expired' || gate.status === 'lost' ? gate.status : 'unavailable' };
+          }
+          if (request.action === 'release') rows.splice(rows.indexOf(row), 1);
+          else row.completedAt = now;
+        }
         result = { status: request.action === 'renew' ? 'renewed' : request.action === 'release' ? 'released' : 'completed', leaseUntil: row.leaseUntil };
       }
       const json = JSON.stringify(rows);
