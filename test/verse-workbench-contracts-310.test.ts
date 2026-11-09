@@ -75,7 +75,9 @@ import {
   VERSE_ACTIVITY_SEEN_PATH,
   VERSE_APPS_PATH,
   VERSE_ATTACHMENTS_PATH,
+  VERSE_FILES_BROWSE_PATH,
   VERSE_FILES_PATH,
+  VERSE_FILES_READ_PATH,
   VERSE_GIT_DIFF_PATH,
   VERSE_GIT_STATUS_PATH,
   VERSE_PREVIEW_RAW_PATH,
@@ -153,6 +155,8 @@ const EXISTING_ROUTES = {
 } as const;
 
 const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
+  // Agent Bus v2: the fleet's shared message bus (agent-bus-api.ts).
+  'agent-bus': 'handleAgentBusApi',
   // SPEC-310C §7 route contracts.
   activity: 'handleActivityApi',
   'session-controls': 'handleSessionControlsApi',
@@ -175,6 +179,7 @@ const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
   browser: 'handleBrowserApi',
   // 3.15 agent tools: Verse's one MCP server for every seat, and the Agent tools sheet.
   'agent-tools': 'handleVerseMcpApi',
+  'agent-bus': 'handleAgentBusApi',
   // 3.15: desktop control for agents (the Verse window's relay, grants, KILL).
   computer: 'handleComputerApi',
   // 3.16: every model working together (Auto seat, compare, escalation, meter).
@@ -185,10 +190,22 @@ const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
   sources: 'handleSourcesApi',
   // 3.15: the Fleet tab's control surface (Start / Pause / Stop, steering).
   'fleet-control': 'handleFleetControlApi',
+  'fleet-runs': 'handleFleetRunsApi',
+  'fleet-comms-status': 'handleFleetCommsStatusApi',
+  'agent-roster': 'handleAgentRosterApi',
+  'fleet-cos': 'handleFleetCosApi',
+  'cos-memory': 'handleCosMemoryApi',
+  team: 'handleTeamApi',
   // 3.16: run many agents — the board, agent workspaces, Checks, Plan first, spend caps.
   agents: 'handleAgentsApi',
   outcomes: 'handleOutcomesApi',
   'proactive-agents': 'handleProactiveAgentsApi',
+  // The desktop command center's own reads: runs, chief-of-staff intake, the
+  // staged self-update status line and memory.
+  'fleet-runs': 'handleFleetRunsApi',
+  'fleet-cos': 'handleFleetCosApi',
+  'app-update': 'handleAppUpdateApi',
+  'cos-memory': 'handleCosMemoryApi',
   // The desktop command center: board, router, releases and the leaders' channel.
   ops: 'handleOpsApi',
 };
@@ -243,6 +260,7 @@ describe('workbench route families — claims', () => {
     expect(workbenchFamilyFor('/api/verse/git/status')?.id).toBe('git');
     expect(workbenchFamilyFor('/api/verse/github')).toBeNull();
     expect(workbenchFamilyFor('/api/verse/gitx')).toBeNull();
+    expect(workbenchFamilyFor('/api/verse/filesx')).toBeNull();
     expect(workbenchFamilyFor('/api/verse/applications')).toBeNull();
     expect(workbenchFamilyFor('/api/verse/activity-log')).toBeNull();
     expect(workbenchFamilyFor('/api/verse/terminals')).toBeNull();
@@ -260,6 +278,8 @@ describe('workbench route families — claims', () => {
       [`${VERSE_QUEUE_PATH}/s-1`, 'session-controls'],
       [`${VERSE_QUEUE_PATH}/s-1/q-1/delete`, 'session-controls'],
       [VERSE_FILES_PATH, 'session-controls'],
+      [VERSE_FILES_BROWSE_PATH, 'session-controls'],
+      [VERSE_FILES_READ_PATH, 'session-controls'],
       [VERSE_TERMINAL_PATH, 'terminal'],
       [`${VERSE_TERMINAL_PATH}/t-1/stream`, 'terminal'],
       [VERSE_PREVIEW_TARGETS_PATH, 'preview'],

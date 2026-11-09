@@ -20,8 +20,23 @@ on:
       - ".github/workflows/dependency-audit.yml"
   pull_request:
     branches: ["**"]
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - "npm-shrinkwrap.json"
+      - ".npmrc"
+      - "src/raycast/package.json"
+      - "src/raycast/package-lock.json"
+      - "src/raycast/npm-shrinkwrap.json"
+      - "src/raycast/.npmrc"
+      - "scripts/npm-audit-with-osv-fallback.sh"
+      - "desktop/src-tauri/Cargo.toml"
+      - "desktop/src-tauri/Cargo.lock"
+      - "docs/DEPENDENCY-SECURITY.md"
+      - ".github/dependabot.yml"
+      - ".github/workflows/dependency-audit.yml"
   schedule:
-    - cron: "17 9 * * 1"
+    - cron: "17 9 * * *"
   workflow_dispatch:
 
 permissions:

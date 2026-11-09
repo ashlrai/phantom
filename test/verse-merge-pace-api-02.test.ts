@@ -21,7 +21,7 @@ it('returns the report on GET', async () => {
   expect(r.status).toBe(200);
   expect(r.json).toMatchObject({ schema: 'fleet.merge-pace.v1', known: true, rows: [{ repo: 'example/one', merges: 1 }, { repo: 'total' }] });
 });
-it('answers 405 on POST and ignores other paths', async () => {
+it('merge-pace answers 405 on POST and ignores other paths', async () => {
   expect((await call(async () => text, path, 'POST'))).toMatchObject({ handled: true, status: 405 });
   expect((await call(async () => text, '/api/verse/fleet/other', 'GET')).handled).toBe(false);
 });

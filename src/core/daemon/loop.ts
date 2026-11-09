@@ -46,7 +46,7 @@ import { resetSpendingParkDelay } from './reset-spending-park-delay.js';
  */
 
 import { startLocalWorkObservation, beginLocalWorkObservation, endLocalWorkObservation, closeLocalWorkObservation } from './local-work-observation.js';
-import { countForInventory, resolveDaemonCountPreferences } from './count-preferences.js';
+import { countForInventory, noteResidentTickOutcome, resolveDaemonCountPreferences } from './count-preferences.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, readdirSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -1167,10 +1167,20 @@ const audit = persistAudit;
 // DaemonConfig defaults (conservative)
 // ---------------------------------------------------------------------------
 
+function noteAdaptiveThroughput(tickFailedOpen: boolean): void {
+  try {
+    const outcome = loadDaemonState().lastTickOutcome ?? null;
+    if (tickFailedOpen) noteResidentTickOutcome('timeout');
+    else noteResidentTickOutcome(outcome);
+  } catch {
+    // A missing daemon record is not a measured limit.
+  }
+}
+
 const DEFAULTS: DaemonConfig = {
-  dailyBudgetUsd: 1.0,    // $1/day hard cap by default
-  perTickItems: 3,         // at most 3 backlog items per tick
-  parallel: 2,             // at most 2 concurrent sandboxed swarms per tick
+  dailyBudgetUsd: 1.0,    // $1/day spend gate. Not a throughput knob.
+  perTickItems: 1,         // adaptive ramp start, not a permanent ceiling
+  parallel: 1,             // adaptive ramp start; a measured limit backs this off
   intervalMs: 5 * 60_000, // 5-minute tick interval in loop mode
 };
 const KILL_SWITCH_POLL_MS = 50;
@@ -10610,6 +10620,7 @@ async function runDaemonInEnrollmentScope(
           }),
           opts.tickDeadlineMs ?? DAEMON_TICK_DEADLINE_MS,
         );
+        noteAdaptiveThroughput(tickResult === null);
         if (tickResult === null) {
           // Thrown / timed-out / refused-open tick: nothing else this pass can
           // safely run (pulse sync, rollups read the tick record).
@@ -10942,6 +10953,7 @@ async function runDaemonInEnrollmentScope(
           }),
           opts.tickDeadlineMs ?? DAEMON_TICK_DEADLINE_MS,
         );
+        noteAdaptiveThroughput(tickResult === null);
         completedTicks++;
         if (tickResult === null) {
           // Thrown / timed-out / refused-open tick: the outcome is already

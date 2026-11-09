@@ -65,6 +65,7 @@ import {
   codexDefaultForTask,
   type EngineScoreMap,
 } from './learned-router.js';
+export { modelTierForTask } from './learned-router.js';
 // LOCAL-ONLY: the ONE predicate. No parallel mechanism lives in this file.
 import {
   ALWAYS_PERMITTED_ENGINE,

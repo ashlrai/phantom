@@ -4,6 +4,7 @@ import { defineConfig } from 'vitest/config';
 // (to keep certain modules observation-only / unreferenceable from shipped
 // tooling), and this list's own comments name several such test files.
 import { REAL_IO_LANE_TIMEOUT_MS, REAL_IO_TEST_FILES } from './test/config/realio-lane-membership.mjs';
+import { SERIAL_CPU_TEST_FILES } from './test/config/serial-cpu-lane-membership.mjs';
 import { WeightedCalibrationSequencer } from './test/config/weighted-sequencer.mjs';
 
 const configuredTestTimeoutMs = Number(process.env['ASHLR_VITEST_TEST_TIMEOUT_MS']);
@@ -40,8 +41,9 @@ const BASE_EXCLUDE = [
 
 export default defineConfig({
   test: {
-    // Disabled by default: explicit calibration never changes case inventory.
-    ...(process.env['ASHLR_TEST_CI_WEIGHTED_PARTITION'] === '1'
+    // Independent opt-ins share the adapter; weighted sharding keeps its own
+    // flag inside the sequencer. Neither option changes collected cases.
+    ...(process.env['ASHLR_TEST_CI_WEIGHTED_PARTITION'] === '1' || process.env['ASHLR_TEST_CI_FAILURE_FIRST'] === '1'
       ? { sequence: { sequencer: WeightedCalibrationSequencer } } : {}),
     // Make os.homedir() follow process.env.HOME on every platform (Windows
     // ignores $HOME natively). Without this, every HOME-isolated test resolves
@@ -54,22 +56,22 @@ export default defineConfig({
     clearMocks: true,
     pool: 'forks',
     exclude: BASE_EXCLUDE,
-    // Two lanes, both scoped to the hub's OWN tests under `test/` (never the
+    // All lanes are scoped to the hub's OWN tests under `test/` (never the
     // bare vitest default glob — see the BASE_EXCLUDE comment above for why a
     // stray `ashlr new` scaffold at the repo root must never be collected).
-    // `npm test` runs `vitest run` with no --project filter, so both lanes
+    // `npm test` runs `vitest run` with no --project filter, so all projects
     // execute in one invocation. REAL_IO_TEST_FILES (imported above, from
     // test/config/realio-lane-membership.mjs) is the single source of truth
     // for which files belong in the serialized, generous-timeout `real-io`
     // lane versus the fast, parallel `unit` lane — see that module for the
     // full rationale and the per-file "why" on every entry.
     //
-    // The two lanes deliberately run different `maxWorkers`, and Vitest's
+    // The projects deliberately run different `maxWorkers`, and Vitest's
     // scheduler requires projects with different `maxWorkers` to sit in
     // different `sequence.groupOrder` groups (it reuses a single OS process
     // pool per invocation, resized between groups — it cannot run two pool
-    // sizes at once). Groups execute in ascending order, each one waiting for
-    // the previous to finish, so the two lanes run SEQUENTIALLY within a
+    // sizes at once). Positive groups execute in ascending order, each waiting for
+    // the previous to finish, so all three lanes run SEQUENTIALLY within a
     // single `vitest run`, not concurrently — accepted here because it also
     // means the real-io lane gets the machine to itself while it runs (no
     // contention from the unit lane's 4 workers), which is exactly the
@@ -83,7 +85,7 @@ export default defineConfig({
         test: {
           name: 'unit',
           include: ['test/**/*.test.ts'],
-          exclude: [...BASE_EXCLUDE, ...REAL_IO_TEST_FILES],
+          exclude: [...BASE_EXCLUDE, ...REAL_IO_TEST_FILES, ...SERIAL_CPU_TEST_FILES],
           // Cap worker forks. Many tests spawn real git/child processes, so at
           // the default (~one fork per core) the machine oversubscribes and
           // heavy git-bound tests flake with timeouts — non-deterministically,
@@ -98,7 +100,7 @@ export default defineConfig({
           hookTimeout: testTimeoutMs,
           // Runs first: the fast lane should give feedback before the
           // serialized real-io lane even starts.
-          sequence: { groupOrder: 0 },
+          sequence: { groupOrder: 1 },
         },
       },
       {
@@ -117,7 +119,21 @@ export default defineConfig({
           maxWorkers: 2,
           testTimeout: REAL_IO_LANE_TIMEOUT_MS,
           hookTimeout: REAL_IO_LANE_TIMEOUT_MS,
-          sequence: { groupOrder: 1 },
+          sequence: { groupOrder: 2 },
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'serial-cpu',
+          include: [...SERIAL_CPU_TEST_FILES],
+          exclude: BASE_EXCLUDE,
+          maxWorkers: 1,
+          fileParallelism: false,
+          // Preserve the measured profile's existing bound, not the real-I/O ceiling.
+          testTimeout: 5_000,
+          hookTimeout: 5_000,
+          sequence: { groupOrder: 3 },
         },
       },
     ],

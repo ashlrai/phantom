@@ -114,7 +114,10 @@ export function parseInbox(markdown: string, limit = 20): InboxEntry[] {
         ...(also ? { alsoChannels: also.channels } : {}),
       };
       body = [also ? also.text : channel[4]!];
-    } else if (line.startsWith('## ')) {
+    } else if (line.startsWith('## ') && (!channelEntry || /^## \d{4}-\d{2}-\d{2} \d{2}:\d{2}(?: ET)?(?:\s|$)/.test(line))) {
+      // Ordinary headings remain body text; a dated legacy record is still a
+      // boundary when old and current writers share the same inbox. Appended
+      // message bodies escape such headings before they reach this parser.
       finish();
       channelEntry = undefined;
       heading = line;

@@ -12,11 +12,14 @@
  */
 
 import { credentialSpawnSync as spawnSync } from './secrets.js';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { readPrivateFileCapped } from '../verse/preferences.js';
 
 const STACK_BIN = 'stack';
 const TIMEOUT_MS = 5_000;
+/** A committed stack manifest is a small config; anything past 256 KiB is refused. */
+const STACK_TOML_READ_BYTES = 256 * 1024;
 /** Mutating actions (add/apply) may prompt and run an OAuth round-trip. */
 const INTERACTIVE_TIMEOUT_MS = 10 * 60_000;
 
@@ -52,7 +55,9 @@ export interface StackStatus {
  */
 export function stackConfiguredServices(repo: string): string[] | null {
   try {
-    const text = readFileSync(join(repo, '.stack.toml'), 'utf8');
+    const read = readPrivateFileCapped(join(repo, '.stack.toml'), STACK_TOML_READ_BYTES);
+    if (read === null || read.truncated) return null;
+    const text = read.text;
     const names: string[] = [];
     for (const m of text.matchAll(/^[ \t]*\[services\.(?:"([^"]+)"|([A-Za-z0-9_-]+))\][ \t]*(?:#.*)?\r?$/gm)) {
       const name = m[1] ?? m[2];

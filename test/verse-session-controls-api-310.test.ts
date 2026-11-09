@@ -8,7 +8,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -218,5 +218,56 @@ describe('files route', () => {
     expect((await call('GET', '/api/verse/files?q=x'))!.status).toBe(400);
     expect((await call('GET', `/api/verse/files?sessionId=${sessionId}&q=${'x'.repeat(201)}`))!.status).toBe(400);
     expect((await call('GET', '/api/verse/files?sessionId=nope&q=x'))!.status).toBe(404);
+  });
+});
+
+describe('files browse/read routes', () => {
+  it('browses the chat’s project root and reads a bounded preview', async () => {
+    mkdirSync(join(project, 'src'));
+    writeFileSync(join(project, 'src', 'a.ts'), 'export {}\n');
+    writeFileSync(join(project, 'README.md'), '# hi\n');
+    writeFileSync(join(project, '.env'), 'SECRET=1');
+    const browse = await call('POST', '/api/verse/files/browse', { sessionId });
+    expect(browse!.status).toBe(200);
+    expect(browse!.json).toMatchObject({ sessionId, path: '' });
+    expect((browse!.json['entries'] as Array<{ name: string }>).map((e) => e.name)).toEqual(['src', 'README.md']);
+    const sub = await call('POST', '/api/verse/files/browse', { sessionId, path: 'src' });
+    expect(sub!.json['entries']).toEqual([expect.objectContaining({ name: 'a.ts', path: 'src/a.ts', kind: 'file' })]);
+    const read = await call('POST', '/api/verse/files/read', { sessionId, path: 'README.md' });
+    expect(read!.status).toBe(200);
+    expect(read!.json).toMatchObject({ sessionId, path: 'README.md', text: '# hi\n', truncated: false });
+    // A named root that is one of the chat's folders works; a foreign one is a 400.
+    expect((await call('POST', '/api/verse/files/browse', { sessionId, root: project, path: '' }))!.status).toBe(200);
+    expect((await call('POST', '/api/verse/files/browse', { sessionId, root: '/etc' }))!.status).toBe(400);
+  });
+
+  it('is a POST-only privileged read: GETs and unknown paths decline to the mount', async () => {
+    expect(await call('GET', '/api/verse/files/browse')).toBeNull();
+    expect(await call('GET', '/api/verse/files/read')).toBeNull();
+    expect(await call('POST', '/api/verse/files')).toBeNull();
+    expect(await call('POST', '/api/verse/files/browse/extra', { sessionId })).toBeNull();
+    expect(await call('DELETE', '/api/verse/files/browse', { sessionId })).toBeNull();
+  });
+
+  it('validates bodies and maps file errors to stable statuses', async () => {
+    expect((await call('POST', '/api/verse/files/browse', {}))!.status).toBe(400);
+    expect((await call('POST', '/api/verse/files/browse', { sessionId, extra: 1 }))!.status).toBe(400);
+    expect((await call('POST', '/api/verse/files/browse', { sessionId: 'no such!' }))!.status).toBe(400);
+    expect((await call('POST', '/api/verse/files/browse', { sessionId: 'nope' }))!.status).toBe(404);
+    expect((await call('POST', '/api/verse/files/read', { sessionId }))!.status).toBe(400); // path required
+    writeFileSync(join(project, 'a.txt'), 'x');
+    mkdirSync(join(project, 'dir'));
+    symlinkSync(join(project, 'a.txt'), join(project, 'link.txt'));
+    for (const path of ['../a.txt', '/etc/passwd', 'a\\b', '.env', 'link.txt', 'dir']) {
+      const res = await call('POST', '/api/verse/files/read', { sessionId, path });
+      expect(res!.status, path).toBe(400);
+      expect(res!.json['code'], path).toBe('VERSE_INVALID');
+    }
+    const missing = await call('POST', '/api/verse/files/read', { sessionId, path: 'nope.txt' });
+    expect(missing!.status).toBe(404);
+    expect(missing!.json['code']).toBe('VERSE_FILE_NOT_FOUND');
+    const browseBad = await call('POST', '/api/verse/files/browse', { sessionId, path: '../x' });
+    expect(browseBad!.status).toBe(400);
+    expect(browseBad!.json['code']).toBe('VERSE_INVALID');
   });
 });

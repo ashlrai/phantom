@@ -1,3 +1,4 @@
+import { nodeFixtureHeader } from './helpers/node-fixture.js';
 /**
  * V3.10 R3a — the stall monitor sees grok's tool calls (run/engines.ts).
  *
@@ -19,7 +20,7 @@
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createEngineOutputNormaliser, engineStreamFamily, spawnEngine } from '../src/core/run/engines.js';
 import { runEngineSandboxed, isTransientAbort } from '../src/core/run/sandboxed-engine.js';
@@ -29,6 +30,15 @@ import { loadProposal } from '../src/core/inbox/store.js';
 import { listSandboxes } from '../src/core/sandbox/worktree.js';
 import type { AshlrConfig } from '../src/core/types.js';
 
+
+// The synthetic stream tests exercise stall/process semantics, independently of
+// the real host's current pressure. The production gate is tested separately.
+vi.mock('../src/core/run/host-headroom.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../src/core/run/host-headroom.js')>();
+  return { ...actual, checkHostHeadroom: () => actual.assessHostHeadroom({
+    freePercent: 50, swapGb: 0, pressureLevel: 1,
+  }) };
+});
 const GROK_ARGS = ['--no-auto-update', '--output-format', 'streaming-messages-json', '--cwd', '/w', '--permission-mode', 'dontAsk', '--single=goal'];
 
 describe('engineStreamFamily', () => {
@@ -128,7 +138,7 @@ function fakeGrok(lines: unknown[]): string {
   const bin = join(dir, 'grok-0.2.118-macos-aarch64');
   writeFileSync(
     bin,
-    `#!${process.execPath}\n` +
+    `${nodeFixtureHeader()}` +
       `for (const l of ${JSON.stringify(lines.map((l) => JSON.stringify(l)))}) process.stdout.write(l + '\\n');\n` +
       `setTimeout(() => process.exit(0), 800);\n`,
   );
@@ -173,14 +183,14 @@ describe('spawnEngine stall monitor on a grok stream', () => {
   it('a grok run that only reads is stopped as no-diff-stall', async () => {
     const lines = Array.from({ length: 16 }, (_, i) => toolUse(`r${i}`, 'read_file', { path: `f${i}.ts` }));
     const res = await run(fakeGrok(lines), 12);
-    expect(res.terminationReason).toBe('no-diff-stall');
+    expect(res.terminationReason, JSON.stringify(res)).toBe('no-diff-stall');
   });
 });
 
 /** A real offline child; the final line deliberately has no newline. */
 function nativeResultChild(output: string, name = 'grok-1.0.46-macos-aarch64', exitCode = 0): string {
   const bin = join(dir, name);
-  writeFileSync(bin, `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(output)});process.exit(${exitCode});\n`);
+  writeFileSync(bin, `${nodeFixtureHeader()}process.stdout.write(${JSON.stringify(output)});process.exit(${exitCode});\n`);
   chmodSync(bin, 0o755);
   return bin;
 }
@@ -233,7 +243,7 @@ describe('native terminal results and process truth', () => {
     const controller = new AbortController();
     const bin = join(dir, 'grok-stop-fixture');
     const output = line({ type: 'result', subtype: 'error_during_execution', is_error: true, usage: { input_tokens: 4, output_tokens: 2 } });
-    writeFileSync(bin, `#!${process.execPath}\nprocess.on('SIGINT',()=>{});process.stdout.write(${JSON.stringify(output + '\n')});setTimeout(()=>{}, 10_000);\n`);
+    writeFileSync(bin, `${nodeFixtureHeader()}process.on('SIGINT',()=>{});process.stdout.write(${JSON.stringify(output + '\n')});setTimeout(()=>{}, 10_000);\n`);
     chmodSync(bin, 0o755);
     const result = await spawnEngine({ bin, args: [], cwd: dir }, { models: {}, foundry: {} } as AshlrConfig,
       { signal: controller.signal, timeoutMs: 20_000, _stallGraceMs: 100, _terminationDrainMs: 200, onEvent: () => controller.abort() });
@@ -255,7 +265,7 @@ describe.skipIf(process.platform === 'win32')('sandbox native stream action coun
       const counter = join(dir, 'partial-count');
       const bin = join(dir, 'grok-partial-fixture');
       const terminal = line({ type: 'result', subtype: 'error_during_execution', is_error: true, ...(nativeCancelled ? { stop_reason: 'cancelled' } : {}) });
-      writeFileSync(bin, `#!${process.execPath}\n` +
+      writeFileSync(bin, `${nodeFixtureHeader()}` +
         `const fs=require('node:fs'),path=require('node:path');fs.appendFileSync(${JSON.stringify(counter)},'contact\\n');\n` +
         `const cwd=process.argv[process.argv.indexOf('--cd')+1];fs.writeFileSync(path.join(cwd,'generated.ts'),'export const generated = true;\\n');\n` +
         `console.log(${JSON.stringify(terminal)});\n`);
@@ -285,7 +295,7 @@ describe.skipIf(process.platform === 'win32')('sandbox native stream action coun
       const previousAllow = process.env.ASHLR_TEST_ALLOW_ANY_REPO;
       const counter = join(dir, 'repair-count');
       const bin = join(dir, 'codex');
-      writeFileSync(bin, `#!${process.execPath}\n` +
+      writeFileSync(bin, `${nodeFixtureHeader()}` +
         `const fs=require('node:fs'),path=require('node:path');const p=${JSON.stringify(counter)};const n=fs.existsSync(p)?Number(fs.readFileSync(p,'utf8'))+1:1;fs.writeFileSync(p,String(n));\n` +
         `const cwd=process.argv[process.argv.indexOf('--cd')+1];fs.writeFileSync(path.join(cwd,'generated.ts'),'export const value = '+n+';\\n');\n` +
         `for(let i=0;i<(n===1?2:3);i++)console.log(JSON.stringify({type:'function_call',name:'read_file'}));console.log('done');\n`);
@@ -318,7 +328,7 @@ describe.skipIf(process.platform === 'win32')('sandbox native stream action coun
       const previousAllow = process.env.ASHLR_TEST_ALLOW_ANY_REPO;
       const counter = join(dir, 'retry-count');
       const bin = join(dir, 'codex');
-      writeFileSync(bin, `#!${process.execPath}\n` +
+      writeFileSync(bin, `${nodeFixtureHeader()}` +
         `const fs=require('node:fs');const p=${JSON.stringify(counter)};const n=fs.existsSync(p)?Number(fs.readFileSync(p,'utf8'))+1:1;fs.writeFileSync(p,String(n));\n` +
         `for(let i=0;i<(n===1?2:1);i++)console.log(JSON.stringify({type:'function_call',name:'read_file'}));\n` +
         `if(n===1){process.stderr.write('error_during_execution');process.exit(1);}console.log('done');\n`);

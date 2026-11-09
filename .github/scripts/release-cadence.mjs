@@ -1,4 +1,4 @@
-/* global process, console, fetch, Buffer, AbortSignal */
+/* global process, console, fetch, Buffer, AbortSignal, performance, setTimeout */
 // Read-only scheduling policy. Release-please owns version PRs; auto-tag owns
 // tags. In particular, elapsed time is never permission to bypass green CI.
 import assert from 'node:assert/strict';
@@ -74,25 +74,86 @@ export async function planReleaseCadence({ repository, revision, minutes = 30, n
   return { due: true, reason: 'green-master-cadence-due', version, revision, ciRunId: latest.id, ciRunAttempt: latest.run_attempt };
 }
 
+class MetadataRateLimitError extends Error {}
+class MetadataTransientError extends Error {}
+
+export async function planReleaseCadenceWhenAvailable(input) {
+  try {
+    return await planReleaseCadence(input);
+  } catch (error) {
+    if (error instanceof MetadataRateLimitError) return { due: false, reason: 'metadata-rate-limited' };
+    if (error instanceof MetadataTransientError) return { due: false, reason: 'metadata-unavailable' };
+    throw error;
+  }
+}
+
 // Public reads deliberately carry no credential. The existing release-please
 // job has no Actions permission; adding a scheduling read must not widen it.
-async function readPublic(endpoint) {
-  assert.match(endpoint, /^repos\/ashlrai\/phantom(?:\/|$)/);
-  const response = await fetch(`https://api.github.com/${endpoint}`, {
-    headers: { Accept: 'application/vnd.github+json' }, redirect: 'error', signal: AbortSignal.timeout(15_000),
-  });
-  if (response.status === 404 && endpoint.includes('/git/ref/tags/')) return null;
-  assert.equal(response.status, 200, `release metadata unavailable (${response.status})`);
-  const text = await response.text();
-  assert.ok(text.length <= 4 * 1024 * 1024, 'release metadata too large');
-  return JSON.parse(text);
+export function createPublicMetadataReader({ fetchImpl = fetch, now = () => performance.now(),
+  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), report = message => console.warn(message),
+  timeoutSignal = ms => AbortSignal.timeout(ms) } = {}) {
+  // One small budget covers the whole plan, not a renewed budget per endpoint.
+  // Only timeouts and gateway/service failures retry; JSON, identity and permission failures
+  // still refuse. This reader never receives credentials or performs writes.
+  const deadline = now() + 30_000;
+  let firstTransient;
+  const remaining = () => {
+    const ms = Math.floor(deadline - now());
+    assert.ok(ms > 0, `release metadata read deadline exhausted${firstTransient ? `; first transient ${firstTransient}` : ''}`);
+    return ms;
+  };
+  return async endpoint => {
+    assert.match(endpoint, /^repos\/ashlrai\/phantom(?:\/|$)/);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const signal = timeoutSignal(Math.min(5_000, remaining()));
+      let response, text, transient;
+      try {
+        response = await fetchImpl(`https://api.github.com/${endpoint}`, {
+          method: 'GET', headers: { Accept: 'application/vnd.github+json' }, redirect: 'error', signal,
+        });
+        if ([502, 503, 504].includes(response.status)) {
+          void response.body?.cancel().catch(() => {});
+          transient = String(response.status);
+        } else if (response.status === 200) {
+          text = await response.text();
+        }
+      } catch (error) {
+        if (!signal.aborted || !['TimeoutError', 'AbortError'].includes(error.name)) throw error;
+        transient = 'timeout';
+      }
+      remaining();
+      if (transient) {
+        if (!firstTransient) {
+          firstTransient = `${transient} at ${endpoint}`;
+          report(`release metadata transient read failure: ${firstTransient}`);
+        }
+        if (attempt === 3) {
+          const message = `release metadata unavailable (${transient}) after ${attempt} read attempts; first transient ${firstTransient}`;
+          report(`${message}; deferring until the next run`);
+          throw new MetadataTransientError(message);
+        }
+        const delay = attempt * 250;
+        assert.ok(remaining() > delay, `release metadata read deadline exhausted; first transient ${firstTransient}`);
+        await sleep(delay);
+        continue;
+      }
+      if (response.status === 404 && endpoint.includes('/git/ref/tags/')) return null;
+      if ([403, 429].includes(response.status) && response.headers?.get('x-ratelimit-remaining') === '0') {
+        report(`release metadata rate limited at ${endpoint}; deferring until the next run`);
+        throw new MetadataRateLimitError('release metadata rate limited');
+      }
+      assert.equal(response.status, 200, `release metadata unavailable (${response.status}) at ${endpoint}`);
+      assert.ok(text.length <= 4 * 1024 * 1024, 'release metadata too large');
+      return JSON.parse(text);
+    }
+  };
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     assert.equal(process.env.GITHUB_REF, 'refs/heads/master');
-    const plan = await planReleaseCadence({ repository: process.env.GITHUB_REPOSITORY, revision: process.env.GITHUB_SHA,
-      minutes: cadenceMinutes(process.env.RELEASE_CADENCE_MINUTES || '30'), read: readPublic });
+    const plan = await planReleaseCadenceWhenAvailable({ repository: process.env.GITHUB_REPOSITORY, revision: process.env.GITHUB_SHA,
+      minutes: Math.max(60, cadenceMinutes(process.env.RELEASE_CADENCE_MINUTES || '60')), read: createPublicMetadataReader() });
     assert.ok(process.env.GITHUB_OUTPUT);
     appendFileSync(process.env.GITHUB_OUTPUT, `due=${plan.due}\nversion=${plan.version ?? ''}\n`);
     console.log(JSON.stringify(plan));

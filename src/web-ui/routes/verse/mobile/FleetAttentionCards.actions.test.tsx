@@ -13,7 +13,7 @@ const snapshot: FleetRuns = {
   sources: { runsDir: 'healthy', workers: 'healthy', inbox: 'healthy', codex: 'healthy', merges: 'healthy' },
   lastTick: new Date(now).toISOString(), paused: false, memFreePct: 50, diskFreeGb: 80,
   claudeLane: 'down token rejected', switches: [],
-  lanes: [{ lane: 'example', running: 0, target: 1, queued: 2, held: true, heldReason: 'operator hold', tokensLastHour: null, merged24h: null, mergeRate24h: null }],
+  lanes: [{ lane: 'claude', running: 0, target: 1, queued: 0, held: false, heldReason: null, tokensLastHour: null, merged24h: null, mergeRate24h: null }, { lane: 'example', running: 0, target: 1, queued: 2, held: true, heldReason: 'operator hold', tokensLastHour: null, merged24h: null, mergeRate24h: null }],
   workers: [], leaders: [{ label: 'leader', ageSeconds: 30 }], orchestratorAgents: 1,
   publishesLastHour: [], mergesLastHour: { count: 1, items: [] }, events: [], codexPersonal: null, inbox: [], drop: null,
 };

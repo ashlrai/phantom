@@ -1,4 +1,5 @@
 import { generateResearchLines, type ResearchRestockInput } from './research-restock.js';
+import { generateTestSupply, type TestSupplyInput } from './test-supply.js';
 
 /** DRIVER-3 integration seam until its queue driver is available.
  * Call under the driver's queue lock with a fresh queue snapshot, then persist
@@ -6,6 +7,14 @@ import { generateResearchLines, type ResearchRestockInput } from './research-res
  */
 export function restockQueue(input: ResearchRestockInput): { queue: string; added: string[] } {
   const added = generateResearchLines(input);
+  if (!added.length) return { queue: input.queue, added };
+  const separator = input.queue.length && !input.queue.endsWith('\n') ? '\n' : '';
+  return { queue: input.queue + separator + added.join('\n') + '\n', added };
+}
+
+/** Caller must hold the queue lock and supply fresh repository and claim evidence. */
+export function restockTestQueue(input: TestSupplyInput): { queue: string; added: string[] } {
+  const added = generateTestSupply(input);
   if (!added.length) return { queue: input.queue, added };
   const separator = input.queue.length && !input.queue.endsWith('\n') ? '\n' : '';
   return { queue: input.queue + separator + added.join('\n') + '\n', added };

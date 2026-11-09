@@ -102,7 +102,9 @@ describe('GET /api/verse/runs-history/lane-truth', () => {
     const d = deps();
     const result = await call('GET', `${VERSE_RUNS_HISTORY_PATH}?hours=6`, d);
     expect(result.status).toBe(200);
-    expect(result.json).toEqual(series);
+    // A single sample cannot form an observed idle interval; the history is otherwise served verbatim.
+    expect(result.json).toEqual({ ...series,
+      stallWindows: { sourceState: 'healthy', dropped: 0, maxSampleGapMs: 150_000, intervals: [] } });
     expect(d.readHistory).toHaveBeenCalledWith(6);
     expect(d.laneTruth!.lanes).not.toHaveBeenCalled();
   });

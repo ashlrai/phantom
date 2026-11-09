@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -60,12 +61,54 @@ export function parseOutbox(markdown: string, limit = 30): OutboxEntry[] {
   return entries.slice(-Math.floor(limit));
 }
 
-/** Read-only tail read of MASON-OUTBOX.md; missing file is 'missing', any read error is 'degraded'. */
-export async function readOutboxEntries(opts: { runsDir?: string; limit?: number } = {}): Promise<{ sourceState: 'healthy' | 'missing' | 'degraded'; entries: OutboxEntry[] }> {
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
+/** Extract only explicit leader replies, retaining their section's wall-clock time. */
+function parsePlanLog(markdown: string): OutboxEntry[] {
+  const entries: OutboxEntry[] = [];
+  let at = '';
+  let body: string[] | null = null;
+  const finish = (): void => {
+    const text = body?.join('\n').trim();
+    if (text) entries.push({ at, text: cap(text) });
+    body = null;
+  };
+  for (const line of markdown.replace(/\r\n/g, '\n').split('\n')) {
+    const marker = /^(?:[-*]\s+|#{1,6}\s+)?(?:\*\*)?(?:Reply for Mason(?:, to copy there)?|MASON-OUTBOX)(?:\*\*)?\s*:?(?:\*\*)?\s*(.*)$/i.exec(line);
+    if (marker) {
+      finish();
+      body = [marker[1]!];
+    } else if (/^#{1,6} /.test(line)) {
+      finish();
+      if (line.startsWith('## ')) at = HEADING_TIME.exec(line)?.[0] ?? /^## (\d{4}-\d{2}-\d{2}) ET/.exec(line)?.[1] ?? '';
+    } else if (body !== null) {
+      body.push(line);
+    }
+  }
+  finish();
+  return entries;
+}
+
+/** Interpret journal wall times in Eastern time, independent of the server timezone. */
+export function replyTime(at: string): number {
+  if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(at)) return Date.parse(at);
+  const wall = Date.parse(at.replace(' ', 'T') + ':00Z');
+  const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  let instant = wall;
+  for (let i = 0; i < 2; i++) {
+    const parts = formatter.formatToParts(instant);
+    const n = (type: Intl.DateTimeFormatPartTypes): number => Number(parts.find(p => p.type === type)?.value);
+    instant += wall - Date.UTC(n('year'), n('month') - 1, n('day'), n('hour'), n('minute'));
+  }
+  return instant;
+}
+
+export function replyTextHash(text: string): string {
+  return createHash('sha256').update(text.trim()).digest('hex');
+}
+
+/** Bounded, read-only tail; never expose a partial first line. */
+async function readTail(path: string): Promise<string> {
+  const handle = await open(path, 'r');
   try {
-    const runsDir = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
-    handle = await open(join(runsDir, 'leader', 'MASON-OUTBOX.md'), 'r');
     const { size } = await handle.stat();
     const offset = Math.max(0, size - MAX_READ_BYTES);
     const buffer = Buffer.alloc(size - offset);
@@ -76,16 +119,37 @@ export async function readOutboxEntries(opts: { runsDir?: string; limit?: number
       bytesRead += result.bytesRead;
     }
     let markdown = buffer.subarray(0, bytesRead).toString('utf8');
-    // An offset inside a line cannot identify a complete heading or body.
     if (offset > 0) {
       const firstNewline = markdown.indexOf('\n');
       markdown = firstNewline < 0 ? '' : markdown.slice(firstNewline + 1);
     }
-    return { sourceState: 'healthy', entries: parseOutbox(markdown, opts.limit) };
-  } catch (error) {
-    const missing = !handle && (error as NodeJS.ErrnoException).code === 'ENOENT';
-    return { sourceState: missing ? 'missing' : 'degraded', entries: [] };
+    return markdown;
   } finally {
-    await handle?.close().catch(() => undefined);
+    await handle.close().catch(() => undefined);
   }
+}
+
+/** Read both journals without modifying them; dedupe before taking the newest replies. */
+export async function readOutboxEntries(opts: { runsDir?: string; limit?: number } = {}): Promise<{ sourceState: 'healthy' | 'missing' | 'degraded'; entries: OutboxEntry[] }> {
+  const runsDir = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  let sourceState: 'healthy' | 'missing' | 'degraded' = 'missing';
+  const entries: OutboxEntry[] = [];
+  for (const name of ['MASON-OUTBOX.md', 'PLAN-LOG.md']) {
+    try {
+      const markdown = await readTail(join(runsDir, 'leader', name));
+      entries.push(...(name === 'PLAN-LOG.md' ? parsePlanLog(markdown) : parseOutbox(markdown, Number.MAX_SAFE_INTEGER)));
+      if (sourceState !== 'degraded') sourceState = 'healthy';
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') sourceState = 'degraded';
+    }
+  }
+  const seen = new Set<string>();
+  const unique = entries.filter(entry => {
+    const hash = replyTextHash(entry.text);
+    if (seen.has(hash)) return false;
+    seen.add(hash);
+    return true;
+  }).sort((a, b) => (replyTime(a.at) || 0) - (replyTime(b.at) || 0));
+  const limit = opts.limit ?? 30;
+  return { sourceState, entries: Number.isFinite(limit) && limit > 0 ? unique.slice(-Math.floor(limit)) : [] };
 }

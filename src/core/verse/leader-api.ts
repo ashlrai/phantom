@@ -84,12 +84,12 @@ import {
   answerLeaderQuestion,
   appendMasonMessage,
   approveLeaderAction,
-  listThread,
+  listLeaderThread,
   readLeaderQuestion,
   submitLeaderQuestion,
   syncLeaderMemosToThread,
 } from '../vision/leader-thread.js';
-import { parseLeaderQuestionSubmission } from '../vision/leader-thread-types.js';
+import { LEADER_THREAD_CHANNELS, parseLeaderQuestionSubmission, type LeaderThreadChannel } from '../vision/leader-thread-types.js';
 import { runPlannerPass, type RunPlannerPassOpts, type PlannerRunResult } from '../fleet/planner-run.js';
 import { readPlannerCandidates } from '../fleet/planner-candidates.js';
 import { readPlannerPromptPath } from '../fleet/planner-prompt.js';
@@ -523,11 +523,11 @@ function sendThreadError(res: ServerResponse, err: unknown): boolean {
   return true;
 }
 
-function parseThreadQuery(req: IncomingMessage): { limit?: number; before?: string } | string {
+function parseThreadQuery(req: IncomingMessage): import('../vision/leader-thread.js').LeaderThreadQuery | string {
   const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
-  const out: { limit?: number; before?: string } = {};
+  const out: import('../vision/leader-thread.js').LeaderThreadQuery = {};
   for (const key of new Set(params.keys())) {
-    if (key !== 'limit' && key !== 'before') return `unknown query parameter: ${key}`;
+    if (!['limit', 'before', 'q', 'channel', 'from'].includes(key)) return `unknown query parameter: ${key}`;
     if (params.getAll(key).length > 1) return `${key} may appear once`;
   }
   const limit = params.get('limit');
@@ -539,6 +539,18 @@ function parseThreadQuery(req: IncomingMessage): { limit?: number; before?: stri
   if (before !== null) {
     if (before.length === 0 || before.length > 64) return 'before must be a message id or an ISO time';
     out.before = before;
+  }
+  const q = params.get('q');
+  if (q !== null) out.q = q;
+  const channel = params.get('channel');
+  if (channel !== null) {
+    if (!(LEADER_THREAD_CHANNELS as readonly string[]).includes(channel)) return 'invalid channel';
+    out.channel = channel as LeaderThreadChannel;
+  }
+  const from = params.get('from');
+  if (from !== null) {
+    if (from !== 'mason' && from !== 'leader') return 'from must be mason or leader';
+    out.from = from;
   }
   return out;
 }
@@ -574,7 +586,7 @@ async function handleThreadRoutes(ctx: VerseApiContext, req: IncomingMessage, re
         return true;
       }
       try {
-        sendJson(res, 200, { messages: listThread(query) });
+        sendJson(res, 200, { messages: await listLeaderThread(query) });
       } catch (err) {
         if (!sendThreadError(res, err)) throw err;
       }
@@ -793,6 +805,17 @@ export async function buildPlannerPlan(deps: PlannerPlanDeps = {}): Promise<Plan
 
 export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) => {
   if (path !== VERSE_LEADER_PATH && !path.startsWith(`${VERSE_LEADER_PATH}/`)) return false;
+  if (path === `${VERSE_LEADER_PATH}/office`) {
+    if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+    if (!ctx.readSession || !Number.isFinite(ctx.readSession.expiresAt) || ctx.readSession.expiresAt <= Date.now()) { sendJson(res, 401, { error: 'A current read session is required.' }); return true; }
+    try {
+      const { leaderStatus } = await import('../agents/leader-office.js');
+      sendJson(res, 200, await leaderStatus());
+    } catch {
+      sendJson(res, 503, { error: 'leader-office-unavailable' });
+    }
+    return true;
+  }
   if (path === `${VERSE_LEADER_PATH}/inbox`) {
     if (method === 'GET') {
       if (!ctx.readSession || !Number.isFinite(ctx.readSession.expiresAt) || ctx.readSession.expiresAt <= Date.now()) { sendJson(res, 401, { error: 'A current read session is required.' }); return true; }

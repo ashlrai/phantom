@@ -6,8 +6,8 @@ import { canonical, digest, inspectPrivateDirectory } from '../universe/artifact
 import { writePrivateFileAtomicallyAsync } from '../util/private-file-write.js';
 import { validResetProvenance } from '../routing/reset-pressure.js';
 import { readResourceJson } from './pool-runtime.js';
-import { readResourceAccountLocalEpoch, resourceAccountProfileDigest, resourceIdentityInstant, validResourceAccountIdentityWitness,
-  type ResourceAccountIdentityWitness, type ResourceAccountLocalEpoch, type ResourceAccountIdentitySnapshot } from './account-identity-witness.js';
+import { readResourceAccountDisplayEpoch, readResourceAccountLocalEpoch, resourceAccountProfileDigest, resourceIdentityInstant, validResourceAccountIdentityWitness,
+  type ResourceAccountDisplayEpoch, type ResourceAccountIdentityWitness, type ResourceAccountLocalEpoch, type ResourceAccountIdentitySnapshot } from './account-identity-witness.js';
 import type { ResourceConnectionConfig } from './connection-monitor.js';
 import type { ResourceAccountConnection, ResourceConnectionQuotaWindow } from './connection-types.js';
 import { normalizeCodexCredits } from './codex-credits.js';
@@ -25,6 +25,7 @@ export interface ResourceReadingCache {
   captureEpoch(account: Account): ResourceAccountLocalEpoch | null;
   remember(account: Account, row: ResourceAccountConnection, accountHint: string, before: ResourceAccountLocalEpoch | null): void;
   invalidate(account: Account): void;
+  /** Historical display only. Uses the cached-volume display epoch (at most 60 s old) and never calls witness(). */
   lastKnown(account: Account): ResourceLastKnownUsage | null;
   witness(account: Account, nowMs?: number): ResourceAccountIdentityWitness | null;
   /** Pure memory only; worker must recheck local identity metadata before use. */
@@ -82,7 +83,7 @@ function creditHistory(value: unknown): ResourceCodexCreditHistory {
 function claudeDisplayIdentityDigest(profileDigest: string, accountDigest: string): string {
   return digest(canonical(['claude-historical-display-identity-v1', profileDigest, accountDigest]));
 }
-function displayIdentityMatches(row: CachedReading, current: ResourceAccountLocalEpoch | null): boolean {
+function displayIdentityMatches(row: CachedReading, current: Pick<ResourceAccountLocalEpoch, 'profileDigest' | 'accountDigest'> | null): boolean {
   return row.provider === 'claude' && row.displayIdentityDigest !== undefined && current !== null &&
     current.profileDigest === row.profileDigest && current.accountDigest === row.accountDigest &&
     claudeDisplayIdentityDigest(current.profileDigest, current.accountDigest) === row.displayIdentityDigest;
@@ -133,7 +134,9 @@ export function readResourceHistoricalIdentityWitnesses(options: { root: string;
  * are left intact. Writes are deferred/coalesced after sample completion, not awaited
  * by native workers. This is a single-owner writer, not a cross-process CAS store. */
 export function createResourceReadingCache(options: { root: string; accountsRoot: string; accounts: readonly Account[];
-  assertOwnership: () => void; ownershipIdentity?: () => string; readEpoch?: (account: Account) => ResourceAccountLocalEpoch | null; generation?: number }): ResourceReadingCache {
+  assertOwnership: () => void; ownershipIdentity?: () => string; readEpoch?: (account: Account) => ResourceAccountLocalEpoch | null;
+  /** Historical-display reader for lastKnown only. Defaults to the injected readEpoch, else the cached-volume display read. */
+  readDisplayEpoch?: (account: Account) => ResourceAccountDisplayEpoch | null; generation?: number }): ResourceReadingCache {
   inspectPrivateDirectory(options.root);
   const file = join(options.root, RESOURCE_READING_CACHE_FILENAME);
   const roster = new Map(options.accounts.map(a => [a.id, structuredClone(a)]));
@@ -147,6 +150,11 @@ export function createResourceReadingCache(options: { root: string; accountsRoot
   try { for (const row of checked(readResourceJson(file, RESOURCE_READING_CACHE_MAX_BYTES))) if (roster.has(row.accountId)) rows.set(row.accountId, row); }
   catch { try { lstatSync(file); writable = false; } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') writable = false; } }
   const readEpoch = options.readEpoch ?? ((account: Account) => readResourceAccountLocalEpoch(options.accountsRoot, account));
+  const readDisplayEpoch = options.readDisplayEpoch ?? (options.readEpoch ? (account: Account): ResourceAccountDisplayEpoch | null => {
+    const e = options.readEpoch!(account);
+    return e && { scope: 'historical-display-only', profileDigest: e.profileDigest, displayEpochDigest: e.epochDigest,
+      ...(e.accountDigest === undefined ? {} : { accountDigest: e.accountDigest }) };
+  } : (account: Account) => readResourceAccountDisplayEpoch(options.accountsRoot, account));
   const belongs = (a: Account): boolean => {
     const own = roster.get(a.id);
     return own !== undefined && resourceAccountProfileDigest(own) === resourceAccountProfileDigest(a);
@@ -209,6 +217,15 @@ export function createResourceReadingCache(options: { root: string; accountsRoot
       } catch { /* Optional display evidence: never interfere with current collection or rewrite corrupt files. */ }
       finally { pending = null; if (revision !== targetRevision) schedule(); }
     });
+  };
+  /** Only lastKnown reads this. Never use it for witness(), remember(), launch or capacity. */
+  const displayEpoch = (a: Account): ResourceAccountDisplayEpoch | null => {
+    try {
+      if (!belongs(a)) return null;
+      const result = readDisplayEpoch(a);
+      return result && result.scope === 'historical-display-only' && result.profileDigest === resourceAccountProfileDigest(a) &&
+        hash(result.displayEpochDigest) && (result.accountDigest === undefined || hash(result.accountDigest)) ? result : null;
+    } catch { return null; }
   };
   const witness = (a: Account, nowMs = Date.now()): ResourceAccountIdentityWitness | null => {
     if (!Number.isFinite(nowMs) || nowMs < 0 || nowMs > Date.now() || !belongs(a)) return null;
@@ -283,13 +300,22 @@ export function createResourceReadingCache(options: { root: string; accountsRoot
     invalidatedIdentityAccountIdsSnapshot: () => [...invalidated],
     identitySnapshotRevision: () => identityRevision,
     lastKnown(a) {
-      const current = witness(a); const row = rows.get(a.id);
+      const row = rows.get(a.id);
       if (!row || Date.parse(row.observedAt) > Date.now() || !belongs(a) ||
-        row.profileDigest !== resourceAccountProfileDigest(a)) return null;
-      // Never expose this fallback through witness() or financial snapshots.
-      if (!current && !displayIdentityMatches(row, epoch(a))) return null;
+        row.profileDigest !== resourceAccountProfileDigest(a) || row.provider !== a.provider) return null;
+      // Display-only: reads the cached-volume epoch and never calls witness(), so it cannot
+      // mint or refresh any witness. Labels mirror what witness() would have said.
+      const local = displayEpoch(a);
+      const epochHolds = row.epochDigest === null || local !== null && local.displayEpochDigest === row.epochDigest &&
+        (local.accountDigest === undefined || local.accountDigest === row.accountDigest);
+      const live = native.get(a.id);
+      const identitySource: ResourceLastKnownUsage['identitySource'] | null = !epochHolds ? null
+        : live && validResourceAccountIdentityWitness(live) ? 'native-account-checked'
+        : row.epochDigest !== null && local ? 'native-account-checked-local-epoch' : null;
+      const source = identitySource ?? (displayIdentityMatches(row, local) ? 'native-account-checked-display-identity' : null);
+      if (!source) return null;
       return { observedAt: row.observedAt, expiresAt: row.expiresAt, windows: structuredClone(row.windows),
-        source: 'native-account-checked-history', identitySource: current?.source ?? 'native-account-checked-display-identity',
+        source: 'native-account-checked-history', identitySource: source,
         ...(row.creditHistory ? { creditHistory: structuredClone(row.creditHistory) } : {}) };
     },
     async flush() { while (pending) await pending; },

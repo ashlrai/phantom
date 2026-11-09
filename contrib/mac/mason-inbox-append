@@ -1,0 +1,127 @@
+#!/usr/bin/python3
+# Sole writer for leader/MASON-INBOX.md (0444). Legacy input stays unchanged.
+# Slack is a trusted host adapter: fixed actor/format, body on stdin, exact receipt.
+import fcntl, hashlib, json, os, re, signal, stat, subprocess, sys, time
+from datetime import datetime
+from zoneinfo import ZoneInfo
+R = '/Users/masonwyatt/.ashlr-runs'
+INBOX, LOCK, SCRUB = R+'/leader/MASON-INBOX.md', R+'/leader/.mason-inbox.lock', R+'/bin/scrub.pl'
+TEST = os.environ.get('MASON_INBOX_TEST') == '1' and bool(os.environ.get('MASON_INBOX_PATH'))
+if TEST:
+    INBOX = os.environ['MASON_INBOX_PATH']
+    LOCK = os.environ.get('MASON_INBOX_LOCK') or os.path.join(os.path.dirname(INBOX), '.mason-inbox.lock')
+    # Same explicit private-fixture guard as PATH/LOCK. Production callers strip
+    # every MASON_INBOX_* override; the installed scrubber path stays fixed.
+    SCRUB = os.environ.get('MASON_INBOX_SCRUB') or SCRUB
+MAX_IN, MAX_OUT, MAX_FILE = 65536, 2048, 8*1024*1024
+BAD = re.compile('[\x00-\x1f\x7f-\x9f\u061c\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]')
+HEX = re.compile(r'^[a-f0-9]{64}$')
+ID = re.compile(r'^[A-Za-z0-9@._:+-]{1,128}$')
+def die(code, message):
+    sys.stderr.write('mason-inbox-append: '+message+'\n')
+    raise SystemExit(code)
+def interrupted(_n, _f): raise SystemExit(1)
+for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT): signal.signal(s, interrupted)
+def arguments(a):
+    o = {}
+    if len(a) not in (4, 6): die(2, 'bad args')
+    for i in range(0, len(a), 2):
+        if a[i] not in ('--src', '--id', '--received-at') or a[i] in o: die(2, 'bad args')
+        o[a[i]] = a[i+1]
+    src, sid = o.get('--src'), o.get('--id', '')
+    if src == 'slack':
+        at = o.get('--received-at', '')
+        if len(o) != 3 or not HEX.fullmatch(sid) or not re.fullmatch(r'(0|[1-9][0-9]{0,15})', at): die(2, 'bad Slack metadata')
+        at = int(at)
+        if at > 9007199254740991: die(2, 'bad receipt clock')
+        return src, sid, at
+    if src not in ('telegram', 'email', 'phone', 'page') or len(o) != 2 or not ID.fullmatch(sid): die(2, 'bad source or id')
+    return src, sid, None
+def scrub(raw):
+    try: p = subprocess.run(['/usr/bin/perl', SCRUB], input=raw, capture_output=True, timeout=20)
+    except Exception: die(1, 'scrub failed')
+    if p.returncode != 0: die(1, 'scrub failed')
+    return p.stdout
+def record(src, sid, at, raw):
+    cleaned = scrub(raw)
+    if src != 'slack':
+        text = re.sub(' +', ' ', BAD.sub(' ', cleaned.decode('utf-8', errors='replace'))).strip()
+        text = text.encode('utf-8')[:MAX_OUT].decode('utf-8', errors='ignore').rstrip()
+        if not text: die(1, 'empty')
+        return ('%s [src:%s id:%s] %s\n' % (time.strftime('%Y-%m-%dT%H:%M:%S%z'), src, sid, text)).encode(), None
+    # New structured mode never silently changes/truncates a verified request.
+    if len(raw) > MAX_IN or cleaned != raw: die(3, 'unsafe Slack text')
+    try: text = raw.decode('utf-8', errors='strict')
+    except UnicodeError: die(3, 'unsafe Slack text')
+    if not text or text != text.strip() or '\r' in text or len(text) > 6000 or any(ord(c) < 32 and c not in '\n\t' for c in text): die(3, 'unsafe Slack text')
+    digest = hashlib.sha256(json.dumps([sid, at, text], ensure_ascii=False, separators=(',', ':')).encode()).hexdigest()
+    stamp = datetime.fromtimestamp(at/1000, ZoneInfo('America/New_York')).strftime('%Y-%m-%d %H:%M')
+    heading = '## %s ET (Operator, slack) PRIORITY P0 [request-sha256:%s] [leader-network:%s]' % (stamp, digest, sid)
+    # A body can never introduce a trusted heading or legacy channel record.
+    def escape(line):
+        return ' '+line if line.startswith('## ') or re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}.*\s\[src:', line) else line
+    body = '\n'.join(escape(line) for line in text.split('\n'))
+    return ('\n'+heading+'\n'+body+'\n').encode(), digest
+
+def identity(s): return s.st_dev, s.st_ino
+def regular(s): return stat.S_ISREG(s.st_mode) and s.st_uid == os.getuid() and s.st_nlink == 1
+
+def main():
+    src, sid, at = arguments(sys.argv[1:])
+    raw = sys.stdin.buffer.read(MAX_IN + (1 if src == 'slack' else 0))
+    data, digest = record(src, sid, at, raw)
+    parent = os.path.dirname(INBOX)
+    ps = os.lstat(parent)
+    if not stat.S_ISDIR(ps.st_mode) or ps.st_uid != os.getuid() or ps.st_mode & 0o077: die(3, 'unsafe parent')
+    pfd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    lk = None
+    try:
+        if identity(os.fstat(pfd)) != identity(ps): die(3, 'parent changed')
+        lk = os.open(LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        ls = os.fstat(lk)
+        if not regular(ls) or ls.st_mode & 0o077 or identity(ls) != identity(os.lstat(LOCK)): die(3, 'unsafe lock')
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        st = os.stat(os.path.basename(INBOX), dir_fd=pfd, follow_symlinks=False)
+        if not regular(st) or digest and stat.S_IMODE(st.st_mode) != 0o444: die(3, 'refused inbox')
+        fd = os.open(os.path.basename(INBOX), os.O_RDONLY | os.O_NOFOLLOW, dir_fd=pfd)
+        try:
+            if not regular(os.fstat(fd)) or identity(os.fstat(fd)) != identity(st): die(3, 'inbox changed')
+            previous = b''
+            if digest:
+                while len(previous) <= MAX_FILE:
+                    block = os.read(fd, min(65536, MAX_FILE+1-len(previous)))
+                    if not block: break
+                    previous += block
+                if len(previous) > MAX_FILE: die(3, 'inbox full')
+                marker = ('[leader-network:'+sid+']').encode()
+                headings = [line for line in previous.splitlines() if line.startswith(b'## ') and line.endswith(marker)]
+                if headings:
+                    if len(headings) != 1 or previous.count(data) != 1: die(3, 'conflicting receipt')
+                    os.fsync(fd)  # A prior crash may have occurred between append and fsync.
+                    return {'schema':'mason-inbox-receipt.v1','requestId':sid,'requestSha256':digest,'status':'duplicate'}
+                if len(previous)+len(data) > MAX_FILE: die(3, 'inbox full')
+            try:
+                os.fchmod(fd, 0o644)
+                if TEST and os.environ.get('MASON_INBOX_TEST_FAIL') == '1': raise OSError('injected failure')
+                wfd = os.open(os.path.basename(INBOX), os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW, dir_fd=pfd)
+                try:
+                    ws = os.fstat(wfd)
+                    named = os.stat(os.path.basename(INBOX), dir_fd=pfd, follow_symlinks=False)
+                    if not regular(ws) or identity(ws) != identity(st) or identity(named) != identity(st) or identity(os.lstat(parent)) != identity(ps): die(3, 'inbox changed')
+                    if os.write(wfd, data) != len(data): die(1, 'short write')
+                    os.fsync(wfd)
+                finally: os.close(wfd)
+            finally:
+                os.fchmod(fd, 0o444)
+                os.fsync(fd)
+        finally: os.close(fd)
+    finally:
+        if lk is not None: os.close(lk)
+        os.close(pfd)
+    if digest: return {'schema':'mason-inbox-receipt.v1','requestId':sid,'requestSha256':digest,'status':'appended'}
+if __name__ == '__main__':
+    try:
+        receipt = main()
+        if receipt: sys.stdout.write(json.dumps(receipt, separators=(',', ':'))+'\n')
+    except SystemExit: raise
+    except BaseException: die(1, 'error')

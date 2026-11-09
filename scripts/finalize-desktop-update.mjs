@@ -3,7 +3,7 @@
 // clears Stop, or accepts a saved native/CI PASS receipt as admission.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import { dirname, join, resolve, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -13,6 +13,7 @@ import { inspectLocalApp } from './local-app-transaction.mjs';
 import { codesignArgv } from './ship-local.mjs';
 import { requireRepositoryMetadata, requireRepositoryReference } from '../.github/scripts/github-repository-binding.mjs';
 import { getDesktopReleaseToolchain, DESKTOP_RELEASE_TOOL_PINS } from './desktop-release-policy.mjs';
+import { verifyExistingIcons } from './build-desktop-nightly.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
@@ -33,11 +34,27 @@ function run(bin, argv, cwd, env, timeout = 120_000) {
   catch { throw new Error('Desktop update finalization held: trusted tool failed'); }
 }
 const githubEnvironment = home => ({HOME: home, GH_CONFIG_DIR: join(home, '.config/gh'), GH_HOST: 'github.com', PATH: '/usr/bin:/bin', LANG: 'C', LC_ALL: 'C'});
+// Closed read-only publication metadata; no caller-supplied CLI arguments or URLs.
+const PUBLICATION_ENDPOINT = /^repos\/ashlrai\/(?:phantom|ashlr-hub)(?:|\/branches\/master|\/rules\/branches\/master\?per_page=100&page=(?:[1-9]|10)|\/git\/commits\/[a-f0-9]{40}|\/compare\/[a-f0-9]{40}\.\.\.[a-f0-9]{40}|\/releases\/tags\/v\d+\.\d+\.\d+|\/releases\/[1-9]\d*\/assets\?per_page=100&page=(?:[1-9]|10)|\/git\/ref\/tags\/v\d+\.\d+\.\d+|\/git\/tags\/[a-f0-9]{40})$/;
+function runPublicationRead(bin, args, options) {
+  return new Promise((resolve, reject) => execFile(bin, args, options,
+    (error, stdout) => error ? reject(new Error('Desktop update publication read failed')) : resolve(stdout)));
+}
 // The executable/runner seam is for hermetic transport tests, never CLI arguments.
-export function desktopPublisherGithub(root, tools = getDesktopReleaseToolchain(), execute = run) {
+export function desktopPublisherGithub(root, tools = getDesktopReleaseToolchain(), execute = run, executePublication = runPublicationRead) {
   const env = githubEnvironment(tools.home);
   return {
     read: endpoint => JSON.parse(execute(tools.gh, ['api', '--hostname', 'github.com', '-H', 'Accept: application/vnd.github+json', endpoint], root, env)),
+    readMany: async endpoints => {
+      assert.ok(Array.isArray(endpoints) && endpoints.length > 0 && endpoints.length <= 3 && new Set(endpoints).size === endpoints.length &&
+        endpoints.every(endpoint => typeof endpoint === 'string' && PUBLICATION_ENDPOINT.test(endpoint)), 'unreviewed publication endpoints');
+      const settled = await Promise.allSettled(endpoints.map(async endpoint => JSON.parse(await executePublication(tools.gh,
+        ['api', '--hostname', 'github.com', '-H', 'Accept: application/vnd.github+json', endpoint],
+        {cwd:root, env, encoding:'utf8', timeout:120_000, maxBuffer:32*1024*1024}))));
+      const refused = settled.find(row => row.status === 'rejected');
+      if (refused) throw new Error('Desktop update publication reads unavailable');
+      return settled.map(row => row.value);
+    },
     attestRun: (bin, args) => {assert.equal(bin, 'gh'); return execute(tools.gh, args, root, env);},
   };
 }
@@ -140,6 +157,12 @@ export function desktopNativeBundleConfiguration(signer) {
   assert.match(signer, /^[A-F0-9]{40}$/);
   return {bundle: {createUpdaterArtifacts: false, macOS: {signingIdentity: signer, hardenedRuntime: false}}};
 }
+/** Compile only from unchanged source-owned icons; regeneration dirties the qualified tree. */
+export function buildTrackedDesktopBundle({root, tools, env}, execute = run) {
+  verifyExistingIcons(root);
+  execute(tools.tauri.path, ['build', '--bundles', 'app', '--ci', '--target', 'aarch64-apple-darwin', '--config', JSON.stringify(desktopNativeBundleConfiguration(tools.appleSigner))], join(root, 'desktop'), env, 30 * 60_000);
+  verifyExistingIcons(root);
+}
 /** Restore only the fixed freshly built SEA before re-signing the private bundle. */
 export function restoreFreshDesktopSidecar(root, afterOpen = () => {}) {
   const source = join(root, 'dist-bin/ashlr');
@@ -200,9 +223,8 @@ async function buildNative({root, bundle, policy, source, version, surfaceDigest
   const hosted = ['--hosted-bundle', bundle, '--run', String(policy.runId), '--attempt', String(policy.runAttempt), '--attestor-sha', policy.attestorSha, '--attestor-run', String(policy.attestorRun), '--attestor-attempt', String(policy.attestorAttempt)];
   run(tools.node.path, ['scripts/build-sea.mjs', ...hosted], root, env, 20 * 60_000);
   run(tools.node.path, ['desktop/scripts/prepare-sidecar.mjs'], root, env);
-  run(tools.tauri.path, ['icon', 'src-tauri/icons/icon.svg'], join(root, 'desktop'), env);
   // The private publishing key is absent from every compiler/build-script environment.
-  run(tools.tauri.path, ['build', '--bundles', 'app', '--ci', '--target', 'aarch64-apple-darwin', '--config', JSON.stringify(desktopNativeBundleConfiguration(tools.appleSigner))], join(root, 'desktop'), env, 30 * 60_000);
+  buildTrackedDesktopBundle({root, tools, env});
   const app = join(root, 'desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Phantom.app');
   // Tauri's legitimate signature changes Mach-O bytes. Replace only this fixed
   // private sidecar with the fresh SEA, then sign and smoke-test the whole app.
@@ -223,23 +245,44 @@ function signFile(path, tools, verify, publicKey) {
   run(tools.tauri.path, ['signer', 'sign', path], dirname(path), {PATH: '/usr/bin:/bin', HOME: tools.home, LANG: 'C', LC_ALL: 'C', TAURI_SIGNING_PRIVATE_KEY_PATH: tools.signingKeyPath, TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''});
   const signature = bytes(`${path}.sig`, 8192).toString('utf8'); verify(bytes(path), signature, publicKey); return signature;
 }
+const FINALIZATION_PHASES = new Set(['source', 'transport', 'hosted-proof', 'manifest', 'audit', 'adopt', 'defaults', 'identity', 'tools', 'output', 'surface', 'package', 'build', 'artifacts', 'late-proof', 'late-tools', 'sign-app', 'sign-cli', 'envelope', 'sign-manifest', 'late-bindings', 'post-signature', 'feed']);
+/** A fixed diagnostic label only; private tool output and assertion values never reach the CLI. */
+export function desktopFinalizationFailurePhase(error) {
+  try {
+    const phase = Object.getOwnPropertyDescriptor(error, 'desktopFinalizationPhase')?.value;
+    return FINALIZATION_PHASES.has(phase) ? phase : 'arguments';
+  } catch { return 'arguments'; }
+}
 /** Programmatic seams are hermetic tests only; the CLI never imports saved proof or custom callbacks. */
 export async function finalizeDesktopUpdate(input, dependencies = {}) {
+  let phase = 'source';
+  try { return await produceDesktopUpdate(input, dependencies, value => { phase = value; }); }
+  catch (error) {
+    const failure = error instanceof Error && Object.isExtensible(error) && !Object.hasOwn(error, 'desktopFinalizationPhase') ? error : new Error('Desktop update finalization refused', {cause: error});
+    Object.defineProperty(failure, 'desktopFinalizationPhase', {value: phase});
+    throw failure;
+  }
+}
+async function produceDesktopUpdate(input, dependencies, phase) {
   const root = input.root ?? ROOT;
   const hooks = {verify: verifyArtifact, adopt: adoptArtifact, validate: validateAdoptedArtifact, source: sourceBinding, audit: verifyUpdateAudit, validateTools, build: buildNative, sign: signFile, ...dependencies};
   const source = hooks.source(root, input.revision);
+  phase('transport');
   if (!hooks.read) Object.assign(hooks, desktopPublisherGithub(root));
   const verifyInput = {root, revision: input.revision, bundle: input.bundle, policy: input.policy, githubRead: hooks.read, ...(hooks.attestRun ? {attestRun: hooks.attestRun} : {})};
-  const observed = hooks.verify(verifyInput);
+  phase('hosted-proof'); const observed = hooks.verify(verifyInput);
+  phase('manifest');
   const hostedBytes = bytes(join(input.bundle, 'manifest.json'), 32 * 1024 * 1024);
   assert.equal(digest(hostedBytes), observed.manifestSha256);
   const hosted = JSON.parse(hostedBytes);
   const auditInput = {root, repository: hosted.producer.repository, revision: input.revision, ...input.audit, read: hooks.read};
-  const audit = hooks.audit(auditInput);
+  phase('audit'); const audit = hooks.audit(auditInput);
   // Import executable compiled helpers only after the fresh signed archive was admitted.
+  phase('adopt');
   if (fs.existsSync(join(root, 'dist'))) hooks.validate(observed);
   else hooks.adopt(observed);
-  const d = {...await (dependencies.defaults ?? defaults)(root), ...hooks};
+  phase('defaults'); const d = {...await (dependencies.defaults ?? defaults)(root), ...hooks};
+  phase('identity');
   const pkg = JSON.parse(bytes(join(root, 'package.json'), 1024 * 1024));
   const profile = d.desktopUpdateProfileForPackage(pkg.name);
   const trust = d.trustForProfile(profile.name);
@@ -250,21 +293,25 @@ export async function finalizeDesktopUpdate(input, dependencies = {}) {
   assert.equal(pkg.version, version, 'source package version differs');
   const appName = `Phantom_${version}_aarch64.app.tar.gz`, cliName = `${profile.archivePrefix}-${version}.tgz`;
   assert.equal(hosted.package.filename, cliName, 'source package and hosted filename differ');
-  const keyBefore = d.validateTools(d.toolchain, root);
+  phase('tools'); const keyBefore = d.validateTools(d.toolchain, root);
+  phase('output');
   ownerDirectory(input.outputParent); const output = fs.mkdtempSync(join(input.outputParent, 'phantom-paired-release-'));
   // Nothing externally discovers this private directory until all final checks succeed.
-  const surface = d.surface(root, 'running', {fresh: true}); assert.equal(surface.ok, true, 'candidate surface is not verified');
+  phase('surface'); const surface = d.surface(root, 'running', {fresh: true}); assert.equal(surface.ok, true, 'candidate surface is not verified');
+  phase('package');
   await d.readArchive({artifactPath: join(input.bundle, hosted.package.filename), sha256: observed.packageSha256, revision: input.revision, version, identityProfile: profile.name});
-  const native = await d.build({root, bundle: input.bundle, policy: input.policy, source, version, surfaceDigest: surface.digest, packageSha256: observed.packageSha256, output, tools: d.toolchain});
+  phase('build'); const native = await d.build({root, bundle: input.bundle, policy: input.policy, source, version, surfaceDigest: surface.digest, packageSha256: observed.packageSha256, output, tools: d.toolchain});
+  phase('artifacts');
   fs.writeFileSync(join(output, appName), native.bytes, {flag: 'wx', mode: 0o600});
   const cliBytes = bytes(join(input.bundle, cliName), 128 * 1024 * 1024); assert.equal(digest(cliBytes), observed.packageSha256);
   fs.writeFileSync(join(output, cliName), cliBytes, {flag: 'wx', mode: 0o600});
-  const fresh = d.verify(verifyInput); d.validate(fresh);
+  phase('late-proof'); const fresh = d.verify(verifyInput); d.validate(fresh);
   assert.deepEqual(fresh, observed); assert.deepEqual(d.audit(auditInput), audit); assert.deepEqual(d.source(root, input.revision), source);
-  const keyAfterBuild = d.validateTools(d.toolchain, root);
+  phase('late-tools'); const keyAfterBuild = d.validateTools(d.toolchain, root);
   if (keyBefore) assert.ok(same(keyBefore, keyAfterBuild), 'publishing key changed before signing');
-  const appSignature = d.sign(join(output, appName), d.toolchain, d.verifyMinisign, trust.publicKey);
-  const cliSignature = d.sign(join(output, cliName), d.toolchain, d.verifyMinisign, trust.publicKey);
+  phase('sign-app'); const appSignature = d.sign(join(output, appName), d.toolchain, d.verifyMinisign, trust.publicKey);
+  phase('sign-cli'); const cliSignature = d.sign(join(output, cliName), d.toolchain, d.verifyMinisign, trust.publicKey);
+  phase('envelope');
   const url = name => `https://github.com/${trust.repository.fullName}/releases/download/v${version}/${name}`;
   const manifest = {schemaVersion: profile.schemaVersion, kind: 'phantom-paired-release', channel: trust.channel, platform: trust.platform, version,
     repository: requireRepositoryMetadata(trust.repository.fullName, d.read(`repos/${trust.repository.fullName}`)), source: {revision: source.revision, tree: source.tree}, authoritySurfaceDigest: surface.digest,
@@ -274,18 +321,19 @@ export async function finalizeDesktopUpdate(input, dependencies = {}) {
       producer: {runId: observed.official.runId, runAttempt: observed.official.runAttempt, eventSha: observed.official.eventSha}, attestor: observed.attestor, audit}};
   const manifestText = d.canonicalJson(manifest); d.parseCompatibleUpdateManifest(manifestText, trust);
   const manifestPath = join(output, 'manifest.json'); fs.writeFileSync(manifestPath, manifestText, {flag: 'wx', mode: 0o600});
-  const signature = d.sign(manifestPath, d.toolchain, d.verifyMinisign, trust.publicKey);
+  phase('sign-manifest'); const signature = d.sign(manifestPath, d.toolchain, d.verifyMinisign, trust.publicKey);
   const checked = d.verifyCompatibleUpdateManifest({manifestText, signature}, trust);
   // Signing subprocesses cannot replace any bytes/policy between proof and the exported feed.
-  assert.deepEqual(d.verify(verifyInput), observed); assert.deepEqual(d.audit(auditInput), audit); assert.deepEqual(d.source(root, input.revision), source);
+  phase('late-bindings'); assert.deepEqual(d.verify(verifyInput), observed); assert.deepEqual(d.audit(auditInput), audit); assert.deepEqual(d.source(root, input.revision), source);
+  phase('post-signature');
   const finalApp = bytes(join(output, appName)), finalCli = bytes(join(output, cliName));
   assert.equal(digest(finalApp), manifest.app.sha256); assert.equal(digest(finalCli), manifest.cli.sha256);
   assert.equal(bytes(manifestPath).toString(), manifestText);
   for (const [path, value] of [[join(output, appName), appSignature], [join(output, cliName), cliSignature], [manifestPath, signature]]) assert.equal(bytes(`${path}.sig`, 8192).toString(), value, 'signature changed after verification');
   d.verifyMinisign(finalApp, appSignature, trust.publicKey); d.verifyMinisign(finalCli, cliSignature, trust.publicKey); d.verifyMinisign(Buffer.from(manifestText), signature, trust.publicKey);
-  const keyFinal = d.validateTools(d.toolchain, root);
+  phase('late-tools'); const keyFinal = d.validateTools(d.toolchain, root);
   if (keyBefore) assert.ok(same(keyBefore, keyFinal), 'publishing key changed');
-  const latest = {version, platforms: {'darwin-aarch64': {url: manifest.app.url, signature: appSignature}}, phantom: {manifestText, signature}};
+  phase('feed'); const latest = {version, platforms: {'darwin-aarch64': {url: manifest.app.url, signature: appSignature}}, phantom: {manifestText, signature}};
   fs.writeFileSync(join(output, 'latest.json'), d.canonicalJson(latest), {flag: 'wx', mode: 0o600});
   return {output, version, revision: source.revision, tree: source.tree, manifestDigest: checked.digest, published: false};
 }
@@ -300,5 +348,5 @@ export function parseFinalizeArguments(args) {
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try { console.log(JSON.stringify(await finalizeDesktopUpdate(parseFinalizeArguments(process.argv.slice(2))))); }
-  catch (error) { console.error(`Desktop update finalization held; no feed was published. Reason: ${String(error?.message ?? error).split('\n')[0].slice(0, 300)}`); process.exitCode = 1; }
+  catch (error) { console.error(`Desktop update finalization held; no feed was published. Phase: ${desktopFinalizationFailurePhase(error)}`); process.exitCode = 1; }
 }

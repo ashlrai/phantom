@@ -36,6 +36,17 @@ it('GET returns lane targets and rejects queries', async () => {
   expect(result.body).toMatchObject({ v: 1, sourceState: 'healthy', generatedAt: expect.any(String), lanes: [{ lane: 'sol', target: 2, floor: 0, ceiling: 4, held: false }] });
   expect((await call('GET', undefined, '', `${PATH}?unknown=1`)).status).toBe(400);
 });
+it('reads and changes a legacy lane without requiring a new hold flag or weakening mutation auth', async () => {
+  await writeFile(join(dir, 'queue/slots.json'), JSON.stringify({ hard_cap: 30, last_change_by: 'Existing operator attribution',
+    'codex-personal': { target: 12, floor: 2, ceiling: 12, hard_cap: 32 } }));
+  expect((await call('GET')).body).toMatchObject({ sourceState: 'healthy',
+    lanes: [{ lane: 'codex-personal', target: 12, held: false }] });
+  const body = { lane: 'codex-personal', target: 2 };
+  expect((await call('POST', body, '')).status).toBe(401);
+  expect((await call('POST', body, 'fixture-token', PATH, false)).status).toBe(404);
+  expect((await call('POST', { ...body, target: 1 })).status).toBe(422);
+  expect((await call('POST', body)).body?.lanes[0]).toMatchObject({ target: 2, held: false });
+});
 it('POST requires dispatch, token and JSON before changing targets', async () => {
   const body = { lane: 'sol', target: 3 };
   expect((await call('POST', body, '')).status).toBe(401);

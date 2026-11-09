@@ -41,12 +41,12 @@ const HOUR_MS = 3_600_000;
 export type MaintClassId =
   | 'run-logs' | 'agent-sessions' | 'ashlr-logs' | 'recovery-dirs'
   | 'staging' | 'caches' | 'worktrees-runs' | 'worktrees-jobs'
-  | 'bridge-targets' | 'venvs' | 'hub-claude';
+  | 'bridge-targets' | 'job-artifacts' | 'venvs' | 'hub-claude';
 
 export const GATED_CLASSES = new Set<MaintClassId>(['venvs', 'hub-claude']);
 export const ALL_CLASSES: readonly MaintClassId[] = [
   'run-logs', 'agent-sessions', 'ashlr-logs', 'recovery-dirs', 'staging', 'caches',
-  'worktrees-runs', 'worktrees-jobs', 'bridge-targets', 'venvs', 'hub-claude',
+  'worktrees-runs', 'worktrees-jobs', 'bridge-targets', 'job-artifacts', 'venvs', 'hub-claude',
 ];
 
 export type MaintAction = 'delete-file' | 'compress-file' | 'rotate-compress' | 'delete-dir' | 'worktree-remove';
@@ -151,6 +151,57 @@ interface ScanCtx {
   kept: (dir: string) => boolean;
   measure: (dir: string) => { bytes: number; complete: boolean };
   deadlineMs: number;
+  completedJobs: Set<string>;
+}
+
+/** A launch invalidates earlier completion evidence, even for a reused job id. */
+export function completedArtifactJobs(text: string): Set<string> {
+  const states = new Map<string, { finished: boolean; merged: boolean }>();
+  for (const line of text.split(/\r?\n/)) {
+    try {
+      const row = JSON.parse(line) as Record<string, unknown>;
+      if (!row || typeof row !== 'object') continue;
+      const id = row.job ?? row.job_id ?? row.id;
+      if (typeof id !== 'string' || !/^[A-Za-z0-9][\w.-]*$/.test(id)) continue;
+      if (row.event === 'launch' || row.event === 'queued') states.set(id, { finished: false, merged: false });
+      else if (row.event === 'finish' || row.event === 'outcome') {
+        const state = states.get(id) ?? { finished: false, merged: false };
+        if (row.event === 'finish') state.finished = true;
+        else state.merged = String(row.state ?? row.outcome ?? '').toLowerCase() === 'merged';
+        states.set(id, state);
+      }
+    } catch { if (line.trim()) return new Set(); }
+  }
+  return new Set([...states].filter(([, state]) => state.finished && state.merged).map(([id]) => id));
+}
+
+/** Any activity marker or surviving workspace makes the job ineligible. */
+export function artifactJobInactive(roots: MaintRoots, job: string): boolean {
+  for (const path of [join(roots.runsDir, `${job}.base`),
+    join(roots.runsDir, 'queue', 'run', `${job}.dispatched`),
+    join(roots.runsDir, 'queue', 'run', `${job}.reaping`),
+    join(roots.runsDir, 'wt', job), join(roots.wtDir, job)]) {
+    try { lstatSync(path); return false; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return false; }
+  }
+  return true;
+}
+
+export function artifactJobName(name: string): string | null {
+  return /^([A-Za-z0-9][\w.-]*)\.publish\.prev-\d+$/.exec(name)?.[1] ?? null;
+}
+
+function scanJobArtifacts(ctx: ScanCtx): MaintCandidate[] {
+  const out: MaintCandidate[] = [];
+  for (const entry of children(ctx.roots.runsDir, ctx, 'file')) {
+    const job = artifactJobName(entry.name);
+    if (!job || !ctx.completedJobs.has(job) || !artifactJobInactive(ctx.roots, job)) continue;
+    if (dayAge(ctx.now, entry.mtimeMs) < ctx.policy.deleteAfterDays) continue;
+    const path = join(ctx.roots.runsDir, entry.name);
+    if (!refused(ctx, path)) out.push({ path, action: 'delete-file', bytes: entry.bytes,
+      ageDays: dayAge(ctx.now, entry.mtimeMs), mtimeMs: entry.mtimeMs, reason: 'archived result of completed job' });
+  }
+  return out;
 }
 
 const dayAge = (now: number, mtimeMs: number): number => Math.max(0, Math.floor((now - mtimeMs) / DAY_MS));
@@ -477,6 +528,7 @@ const SCANNERS: Record<MaintClassId, (ctx: ScanCtx) => MaintCandidate[]> = {
   'worktrees-runs': (ctx) => scanWorktrees(ctx, join(ctx.roots.runsDir, 'wt'), new Set(['merged', 'empty'])),
   'worktrees-jobs': (ctx) => scanWorktrees(ctx, ctx.roots.wtDir, new Set(['merged'])),
   'bridge-targets': scanBridgeTargets,
+  'job-artifacts': scanJobArtifacts,
   'venvs': scanVenvs,
   'hub-claude': scanHubClaude,
 };
@@ -486,7 +538,7 @@ const CLASS_NOTES: Partial<Record<MaintClassId, string>> = {
   'hub-claude': 'gated: enable with --allow hub-claude (ashlr-hub .claude session cache)',
 };
 
-const defaultFreeBytes = (path: string): number | null => {
+export const defaultFreeBytes = (path: string): number | null => {
   let current = resolve(path);
   for (;;) {
     try {
@@ -529,6 +581,7 @@ export async function planDiskMaint(deps: MaintDeps = {}): Promise<DiskMaintPlan
 
   const ctx: ScanCtx = {
     roots, now, policy, ledger, kept, measure, deadlineMs,
+    completedJobs: jobs.state === 'healthy' ? completedArtifactJobs(jobs.text) : new Set(),
     protectedRoots: protectedRoots(roots),
     refused: [],
   };

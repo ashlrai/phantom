@@ -9,14 +9,24 @@
  *   imessageChannelMessage(msg)   - pure mapping to channel `imessage`.
  *   ingestIMessages(cfg, deps)    - poll, receipt, advance the cursor.
  *   senderIdFor(handle)           - `imessage:<hash>`; the raw handle never
- *     reaches the inbox, bus or queue.
+ *     reaches the inbox, bus or queue (re-exported from imessage-teammate-inbox).
+ *
+ * An allowlisted sender that is not the verified Mason handle is still counted
+ * (`notMason`) and is now also kept in the local teammate inbox
+ * (imessage-teammate-inbox.ts; `ashlr fleet teammate-texts` lists it). Teammate
+ * texts never reach MASON-INBOX.md or the queue; after the batch commits, the
+ * findings bridge (imessage-findings-bridge.ts) mirrors each durable teammate
+ * row to the local agent bus on the `teammate.findings` topic as an untrusted
+ * `note` envelope, deduped by rowid. The mirror is best effort and changes no
+ * receipt: a store-side failure only leaves `findings.pending` for the next
+ * pass. Mason's own texts are never mirrored.
  *
  * What the receiver does for us: dedupe inside CHANNEL_DEDUPE_WINDOW_MS,
  * attribution (source `imessage`), the MASON-INBOX.md entry, and the
  * chief-of-staff queue job for commands (createChannelReceiver queues every
  * accepted envelope through cos/intake.ts). Secret-shaped, empty and oversize
  * bodies are refused there, not stored. iMessage opts out of the agent-bus
- * mirror (`publish: null`): texts stay in local inbox/queue files.
+ * mirror (`publish: null`): Mason's texts stay in local inbox/queue files.
  *
  * Acknowledgement: the shared ack text (channel-ack-text.ts) is RECORDED to
  * <runs>/imessage/acks.jsonl. Nonduplicate acknowledgements pass through the
@@ -30,7 +40,8 @@
  */
 
 import { sendIMessageOutbox } from './imessage-outbox.js';
-import { createHash } from 'node:crypto';
+import { recordTeammateText, senderIdFor } from './imessage-teammate-inbox.js';
+import { bridgeTeammateFindings, type FindingsBridgeOptions, type FindingsBridgeReport } from './imessage-findings-bridge.js';
 import { appendFileSync, chmodSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -45,9 +56,15 @@ export interface IMessageIngestDeps {
   /** Shared runs context (inbox, receipts, queue, cursor). Default ~/.ashlr-runs. */
   runsDir?: string;
   now?: () => Date;
+  /** Intake availability seam; never changes the native transport or filesystem platform. */
+  platform?: NodeJS.Platform;
   /** chat.db seams for tests. */
   poll?: (afterRowId: number, cfg: AshlrConfig) => Promise<IntakePoll>;
   maxRowId?: typeof readMaxRowId;
+  /** Private bus store root for the findings mirror; default the canonical store. */
+  busRoot?: string;
+  /** Findings bridge seam for tests; default the real pass. */
+  bridgeFindings?: (options: FindingsBridgeOptions) => FindingsBridgeReport;
 }
 
 export type IMessageIngestState =
@@ -59,17 +76,18 @@ export interface IMessageIngestResult {
   scanned: number;
   accepted: number;
   notMason: number;
+  /** Allowlisted non-Mason texts recorded to the local teammate inbox. */
+  teammate: number;
   duplicate: number;
   refused: number;
   /** Stopped early on a transient failure; the rest is retried next poll. */
   deferred: boolean;
   cursor: number | null;
+  /** Findings mirror outcome; null only when the pass ended before the bus stage. */
+  findings: FindingsBridgeReport | null;
 }
 
-/** Stable, non-reversible-at-a-glance sender id so handles stay out of stored envelopes. */
-export function senderIdFor(handle: string): string {
-  return `imessage:${createHash('sha256').update(handle.trim().toLowerCase()).digest('hex').slice(0, 16)}`;
-}
+export { senderIdFor };
 
 /** Map one allowlisted chat.db row to a canonical channel message. */
 export function imessageChannelMessage(msg: IntakeMsg): ChannelMessage | null {
@@ -91,23 +109,30 @@ function recordAck(ack: ChannelAck, rowid: number, runsDir: string | undefined, 
 }
 
 export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps = {}): Promise<IMessageIngestResult> {
-  const result: IMessageIngestResult = { ok: false, state: 'error', scanned: 0, accepted: 0, notMason: 0, duplicate: 0, refused: 0, deferred: false, cursor: null };
+  const result: IMessageIngestResult = { ok: false, state: 'error', scanned: 0, accepted: 0, notMason: 0, teammate: 0, duplicate: 0, refused: 0, deferred: false, cursor: null, findings: null };
   try {
     if (cfg.comms?.enabled !== true || imessageAllowlist(cfg).length === 0) return { ...result, state: 'disabled' };
-    if (process.platform !== 'darwin') return { ...result, state: 'unsupported' };
+    if ((deps.platform ?? process.platform) !== 'darwin') return { ...result, state: 'unsupported' };
     const now = deps.now ?? (() => new Date());
+    // The findings mirror is best effort and local-only: it never changes a
+    // receipt, the cursor or this result's ok/state, and it drains any durable
+    // backlog even when this poll found nothing new or could not reach chat.db.
+    const findings = (): FindingsBridgeReport | null => {
+      try { return (deps.bridgeFindings ?? bridgeTeammateFindings)({ runsDir: deps.runsDir, busRoot: deps.busRoot, now }); }
+      catch { return null; }
+    };
 
     const start = readCursor(deps.runsDir);
     let cursor = start;
     if (cursor === null) {
       const base = await (deps.maxRowId ?? readMaxRowId)();
-      if (!base.ok) return { ...result, state: base.state };
+      if (!base.ok) return { ...result, state: base.state, findings: findings() };
       writeCursor(base.rowid, deps.runsDir, now);
-      return { ...result, ok: true, state: 'baselined', cursor: base.rowid };
+      return { ...result, ok: true, state: 'baselined', cursor: base.rowid, findings: findings() };
     }
 
     const polled = await (deps.poll ?? pollInboundSince)(cursor, cfg);
-    if (!polled.ok) return { ...result, state: polled.state, cursor };
+    if (!polled.ok) return { ...result, state: polled.state, cursor, findings: findings() };
 
     let current = 0;
     let currentHandle = '';
@@ -128,6 +153,12 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
       const message = imessageChannelMessage(msg);
       if (!isVerifiedMasonHandle(msg.handle, cfg)) {
         result.notMason++;
+        if (recordTeammateText(msg, deps.runsDir, now())) result.teammate++;
+        else {
+          // A teammate's artifact is not receipted until its local record is durable.
+          result.deferred = true;
+          break;
+        }
       } else if (message) {
         current = msg.rowid;
         currentHandle = msg.handle;
@@ -146,7 +177,7 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
       cursor = msg.rowid;
     }
     if (cursor !== start) writeCursor(cursor, deps.runsDir, now);
-    return { ...result, ok: !result.deferred, state: 'ingested', cursor };
+    return { ...result, ok: !result.deferred, state: 'ingested', cursor, findings: findings() };
   } catch {
     return result;
   }

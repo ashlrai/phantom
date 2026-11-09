@@ -7,6 +7,8 @@ import { formatRelative } from '../autonomy/format.js';
 import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import { releasePrQuery, type ReleasePr } from '../fleet/release-pr-query.js';
 import type { PaneProps } from '../panes/pane-registry.js';
+import { useDesktopUpdates } from '../../../app/desktop-updates.js';
+import { pipelineLabel } from '../../../../core/observe/assemble.js';
 import { installedDesktopVersion } from '../sections/app-version.js';
 import { compareReleaseTags, releaseGapText, releaseNotesUrl } from '../sections/release-gap-model.js';
 import { UpdateNowButton } from '../sections/UpdateNowButton.js';
@@ -49,6 +51,7 @@ function MergeReleasePrButton({ repo, pr, blockMerge, onDone }: { repo: string; 
 }
 
 export function FleetReleasesPane({ visible }: PaneProps) {
+  const desktopUpdate = useDesktopUpdates();
   const read = useQuery(opsReleasesQuery, { enabled: visible, freshMs: 0 });
   const prRead = useQuery(releasePrQuery, { enabled: visible });
   const ciRead = useQuery(ciRunsQuery, { enabled: visible });
@@ -78,6 +81,7 @@ export function FleetReleasesPane({ visible }: PaneProps) {
   const ciLine = dailyCiLine(ciRead.status === 'error' ? undefined : ciRead.data, Date.now());
   return <section className={styles.root} aria-label="Release train">
     <p className={styles.header}>{data.repos.length} repos · read {formatRelative(data.generatedAt)}</p>
+    <p role="status">{pipelineLabel(desktopUpdate?.phase ?? null)}</p>
     {data.sourceState !== 'healthy' && <p className={styles.notice} role="status">Release data may be incomplete.</p>}
     {prRead.status === 'error' && <p className={styles.notice} role="status">Release PR state is unavailable.</p>}
     {prRead.status !== 'error' && prRead.data?.kind === 'available' && prRead.data.data.sourceState === 'degraded' && <p className={styles.notice} role="status">GitHub unreachable, showing the last answer.</p>}

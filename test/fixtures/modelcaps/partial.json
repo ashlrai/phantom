@@ -1,0 +1,6 @@
+{
+  "object": "list",
+  "has_more": true,
+  "next_page": "fixture-cursor",
+  "data": [{ "id": "first-page-only", "object": "model" }]
+}

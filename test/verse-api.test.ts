@@ -578,6 +578,17 @@ describe('sessions lifecycle', () => {
     expect(list.body).not.toContain('.ashlr/verse/memory');
     expect(list.body).not.toContain(memory?.block.slice(0, 40) ?? '<no block>');
 
+    const registry = await request(port, 'GET', '/api/verse/session-registry', read);
+    expect(registry.status).toBe(200);
+    expect(registry.json).toMatchObject({
+      schema: 'verse.session-registry.v1', start: '/api/verse/sessions',
+      sessions: [{ id: 's1', provider: 'claude', status: 'idle',
+        inspect: '/api/verse/sessions/s1', message: '/api/verse/sessions/s1/turns',
+        stop: '/api/verse/sessions/s1/cancel' }],
+    });
+    expect(registry.body).not.toContain(memory?.block.slice(0, 40) ?? '<no block>');
+    for (const part of CLAUDE_COMMAND) expect(registry.body).not.toContain(part);
+
     const bootstrap = await request(port, 'GET', '/api/verse/bootstrap', read);
     const body = bootstrap.json as { sessions: VerseSession[]; projects: Array<{ path: string; enrolled: boolean }> };
     expect(body.sessions.map((s) => s.id)).toEqual(['s1']);

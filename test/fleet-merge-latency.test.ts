@@ -10,6 +10,25 @@ const reader = (...rows: unknown[]) => async () => rows.map(r => typeof r === 's
 const SHA = 'a'.repeat(40);
 afterEach(() => vi.restoreAllMocks());
 
+it('reports per-PR stages and makes missing, repeated, reversed and tied boundaries explicit', async () => {
+  const report = await fleetMergeLatency(reader(
+    ev(1, 'opened', 100), ev(1, 'queued', 90), ev(1, 'checks_passed', 40), ev(1, 'merged', 10),
+    ev(2, 'opened', 100), ev(2, 'queued', 90), ev(2, 'merged', 10),
+    ev(3, 'opened', 100), ev(3, 'queued', 90), ev(3, 'queued', 80), ev(3, 'checks_passed', 40), ev(3, 'merged', 10),
+    ev(4, 'opened', 100), ev(4, 'queued', 40), ev(4, 'checks_passed', 90), ev(4, 'merged', 10),
+    ev(5, 'opened', 40), ev(5, 'queued', 30), ev(5, 'checks_passed', 20), ev(5, 'merged', 10),
+  ), now);
+  expect(report.pr_stages).toMatchObject([
+    { pr: 1, queue_wait_s: 10, required_checks_s: 50, merge_s: 30, slowest_stage: 'required_checks', missing_or_ambiguous: [], out_of_order: false },
+    { pr: 2, queue_wait_s: 10, required_checks_s: null, merge_s: null, slowest_stage: null, missing_or_ambiguous: ['checks_passed'] },
+    { pr: 3, queue_wait_s: null, required_checks_s: null, missing_or_ambiguous: ['queued'], slowest_stage: null },
+    { pr: 4, required_checks_s: null, out_of_order: true, slowest_stage: null },
+    { pr: 5, slowest_stage: null, missing_or_ambiguous: [] },
+  ]);
+  expect(formatMergeLatency(report)).toContain('missing or ambiguous: checks_passed');
+  expect(formatMergeLatency(report)).toContain('timestamps out of order');
+});
+
 /** A PR that opened `open` s ago, queued after `q` s and merged `m` s after queueing. */
 const merged = (pr: number, q: number, m: number) =>
   [ev(pr, 'opened', 1000), ev(pr, 'queued', 1000 - q), ev(pr, 'merged', 1000 - q - m)];
@@ -176,4 +195,50 @@ it('exposes configurable stall diagnostics in JSON, plain output and help, rejec
   expect(read).not.toHaveBeenCalled();
   expect(await cmdFleetMergeLatency(['--help'])).toBe(0);
   expect(log.mock.calls.at(-1)![0]).toContain('auto_merge_enabled');
+});
+
+it('records queue observations and attributes only unambiguous eligibility intervals', async () => {
+  const { mkdtemp, readFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { recordMergeEvent } = await import('../src/cli/fleet-merge-latency.js');
+  const dir = await mkdtemp(join(tmpdir(), 'merge-observation-'));
+  const path = join(dir, 'events.jsonl');
+  try {
+    for (const row of [ev(1, 'queued', 100), ev(1, 'blocked', 90, { reason: 'required_checks' }),
+      ev(1, 'eligible', 40), ev(1, 'merged', 10)]) await recordMergeEvent(path, row);
+    await expect(recordMergeEvent(path, ev(1, 'blocked', 20, { reason: 'arbitrary text' }))).rejects.toThrow();
+    const text = await readFile(path, 'utf8');
+    const report = await fleetMergeLatency(async () => text, now);
+    expect(report.queue_timelines).toMatchObject([{ enqueue_to_eligible_s: 60, eligible_to_merge_s: 30,
+      blocked: [{ reason: 'required_checks', at: ago(90) }] }]);
+    const ambiguous = await fleetMergeLatency(reader(...text.trim().split('\n'), ev(1, 'blocked', 20, { reason: 'review' })), now);
+    expect(ambiguous.queue_timelines?.[0]).toMatchObject({ enqueue_to_eligible_s: null, eligible_to_merge_s: null });
+    const repeated = await fleetMergeLatency(reader(...text.trim().split('\n'), ev(1, 'queued', 80)), now);
+    expect(repeated.queue_timelines?.[0]).toMatchObject({ enqueued_at: null, enqueue_to_eligible_s: null });
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+it('reports observed check failures and queue wait by reason without guessing missing evidence', async () => {
+  const report = await fleetMergeLatency(reader(
+    ev(1, 'queued', 100), ev(1, 'blocked', 100, { reason: 'queue' }),
+    ev(1, 'check_observed', 90, { conclusion: 'failure', required: false }),
+    ev(1, 'blocked', 80, { reason: 'required_checks' }), ev(1, 'eligible', 40), ev(1, 'merged', 10),
+    ev(2, 'queued', 100), ev(2, 'blocked', 100, { reason: 'required_checks' }),
+    ev(2, 'check_observed', 80, { conclusion: 'failure', required: true }),
+    ev(3, 'queued', 100), ev(3, 'check_observed', 80, { conclusion: 'failure' }), ev(3, 'merged', 10),
+    ev(4, 'queued', 100), ev(4, 'merged', 10),
+  ), now);
+  expect(report.queue_timelines).toMatchObject([
+    { pr: 1, wait_by_reason_s: { queue: 20, required_checks: 40 }, checks: { required_failures: 0, unrelated_failures: 1, unknown_failures: 0 } },
+    { pr: 2, wait_by_reason_s: null, checks: { required_failures: 1, unrelated_failures: 0, unknown_failures: 0 } },
+    { pr: 3, wait_by_reason_s: null, checks: { required_failures: 0, unrelated_failures: 0, unknown_failures: 1 } },
+    { pr: 4, wait_by_reason_s: null, checks: null },
+  ]);
+});
+
+it('reports current dwell only for a single observed enqueue on an open PR', async () => {
+  const report = await fleetMergeLatency(reader(ev(1, 'queued', 100), ev(2, 'queued', 90), ev(2, 'queued', 50),
+    ev(3, 'queued', 80), ev(3, 'merged', 10), ev(4, 'queued', 70), ev(4, 'closed', 10)), now);
+  expect(report.queue_timelines?.map(t => [t.pr, t.current_dwell_s])).toEqual([[1, 100], [2, null], [3, null], [4, null]]);
 });

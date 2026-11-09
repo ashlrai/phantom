@@ -12,7 +12,7 @@ const report = (root: string, complete = true): Report => ({
 
 // Throws if touched, to prove help consumes zero IO.
 function throwingIterator(): AsyncIterable<Uint8Array | string> {
-  return (async function* () { throw new Error('stdin must not be read'); })();
+  return (async function* () { yield* []; throw new Error('stdin must not be read'); })();
 }
 // Throws if called, to prove help invokes zero scanner calls.
 function throwingScanner(): (root: string) => Promise<Report> {

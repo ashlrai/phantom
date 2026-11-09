@@ -178,8 +178,15 @@ export async function verifyManualDesktopSource(input,manifest,transport,envelop
   const auditInput={root:input.candidateRoot,repository:manifest.repository.nameWithOwner,revision:manifest.source.revision,
     runId:manifest.qualification.audit.runId,runAttempt:manifest.qualification.audit.runAttempt,read:transport.githubRead};
   const historicalAudit=input.publishedRelease?verifyUpdateAudit(auditInput):null;
+  const scope=timingScope.getStore();
+  const onObservationTiming=scope?value=>{try {
+    const emitted=scope.tracer.emit({schemaVersion:1,kind:'artifact-publication-observation-timing',sequence:++scope.tracer.sequence,
+      parentSpanId:scope.parentSpanId,outcome:value.outcome,mode:value.mode,durationMs:value.durationMs===null?null:Math.round(value.durationMs*1000)/1000});
+    if(emitted && typeof emitted.then==='function')Promise.resolve(emitted).catch(()=>{});
+  }catch{/* diagnostics cannot change admission */}}:undefined;
   const receipt=input.publishedRelease?verifyPublishedManualArtifact(proofInput(input,manifest,transport),
-    await inspectCommissionedManualPublication({...envelope,githubRead:transport.githubRead,downloadRead:transport.downloadRead})):
+    await inspectCommissionedManualPublication({...envelope,githubRead:transport.githubRead,downloadRead:transport.downloadRead,
+      ...(transport.githubReadMany?{githubReadMany:transport.githubReadMany}:{}),...(onObservationTiming?{onObservationTiming}:{})})):
     verifyArtifact(proofInput(input,manifest,transport));
   const audit=historicalAudit??verifyUpdateAudit(auditInput);
   assertPairedHostedProof(manifest,receipt,audit);
@@ -205,6 +212,16 @@ export async function inspectDesktopArtifactInstall(input,dependencies) {
   return result;
 }
 
+/** Explicit apply checks the existing local drain before expensive hosted proof. */
+export async function runDesktopArtifactInstall(input,dependencies) {
+  if (input.apply) {
+    const io=createInstallerIo(dependencies);
+    await boundary('quiescence',()=>transaction.requireLocalQuiescence(io));
+  }
+  const inspected=await boundary('preflight',()=>inspectDesktopArtifactInstall(input,dependencies));
+  return input.apply?applyInspectedDesktopArtifacts(inspected):inspected;
+}
+
 function safeInstallParents(home,path) {
   assert.ok(path.startsWith(home+'/'),'installation path outside account home');directory(home,false);
   let at=home;
@@ -228,10 +245,7 @@ function newerCurrent(previous,manifest,io) {
 }
 function sameApp(actual,expected) {assert.ok(actual && actual.path===expected.path && actual.dev===expected.dev && actual.ino===expected.ino && actual.inventory===expected.inventory,'app changed');}
 
-export async function applyInspectedDesktopArtifacts(result) {
-  const admitted=admissions.get(result);assert.ok(admitted && !admitted.attempted,'missing or replayed in-process admission');
-  admitted.attempted=true; // every uncertain/failed attempt is non-replayable
-  const {input,dependencies:d,observed,implementation,proof,source,hosted}=admitted,m=observed.manifest;
+function createInstallerIo(d) {
   const io=transaction.createLocalAppTransactionIo({packageRoot:ROOT,home:d.home});
   // Child commands see only the normal OS account and system tools, never
   // ambient signing credentials, candidate arguments or candidate executables.
@@ -244,6 +258,14 @@ export async function applyInspectedDesktopArtifacts(result) {
     if (status!==0 && !['/bin/ps','/usr/sbin/lsof'].includes(bin)) throw phaseError(bin==='/usr/bin/open'?'app-launch':bin==='/usr/bin/codesign'?'app-signature':bin==='/usr/bin/plutil'?'app-identity':'app-transaction',new Error('Installer command refused'));
     return {status,stdout:child.stdout??''};
   };
+  return io;
+}
+
+export async function applyInspectedDesktopArtifacts(result) {
+  const admitted=admissions.get(result);assert.ok(admitted && !admitted.attempted,'missing or replayed in-process admission');
+  admitted.attempted=true; // every uncertain/failed attempt is non-replayable
+  const {input,dependencies:d,observed,implementation,proof,source,hosted}=admitted,m=observed.manifest;
+  const io=createInstallerIo(d);
   // Fresh hosted proof may be slow. Reprove each exact app immediately at the
   // existing exclusive-move boundary, including rollback; never move a merely
   // inode-matching bundle whose contents changed during that earlier proof.
@@ -361,7 +383,7 @@ export async function productionInstallerDependencies() {
   assert.deepEqual(await implementationSnapshot(),initial,'implementation changed before imports completed');
   const github=desktopPublisherGithub(ROOT,tools);
   return {home:tools.home,environment,implementationSnapshot,initialImplementation:initial,
-    transport:{githubRead:github.read,attestRun:github.attestRun},
+    transport:{githubRead:github.read,githubReadMany:github.readMany,attestRun:github.attestRun},
     primitives:{...manifest,...qualified,...archive,...authority,trust:trust.getDesktopUpdateTrust(),appleSigner:tools.appleSigner}};
 }
 
@@ -374,8 +396,8 @@ async function main() {
     const home=userInfo().homedir;for(const key of Object.keys(process.env)) delete process.env[key];
     Object.assign(process.env,{HOME:home,PATH:'/usr/bin:/bin:/usr/sbin:/sbin',LANG:'C',LC_ALL:'C'});
     const install=async()=> {
-      const deps=await boundary('implementation',productionInstallerDependencies), inspected=await boundary('preflight',()=>inspectDesktopArtifactInstall(input,deps));
-      console.log(JSON.stringify(input.apply?await applyInspectedDesktopArtifacts(inspected):inspected));
+      const deps=await boundary('implementation',productionInstallerDependencies);
+      console.log(JSON.stringify(await runDesktopArtifactInstall(input,deps)));
     };
     if (input.timings) await withArtifactInstallTiming(install,{emit:record=>console.error(JSON.stringify(record))});
     else await install();
