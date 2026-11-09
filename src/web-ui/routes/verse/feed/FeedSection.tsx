@@ -1,7 +1,8 @@
 /**
  * routes/verse/feed/FeedSection.tsx: the Feed, one newest-first stream of the
- * Leader's messages and outbox answers, Needs-you alerts, merges and fleet
- * events. It reads what the Leader, Merges and Needs-you surfaces already
+ * Leader's messages and outbox answers, Needs-you alerts, merges, fleet
+ * events and the owner thread (what came in on Telegram, Slack, email and
+ * iMessage, and where the Leader's answer went). It reads what the Leader, Merges and Needs-you surfaces already
  * read (feed-model.ts), so it adds no route and, on a warm cache, no request.
  *
  * Each source fails on its own: the stream renders whatever did load, with a
@@ -17,6 +18,7 @@ import { openChat } from '../command/nav.js';
 import { liveLine } from '../chat/sidebar-model.js';
 import { fleetMergesQuery } from '../fleet-merges/fleet-merges-queries.js';
 import { leaderThreadQuery } from '../leader/thread-data.js';
+import { ownerThreadQuery } from '../leader-thread/owner-thread-queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { useActivity } from '../shell/useActivity.js';
 import { buildFeed, filterFeed, type FeedFilter, type FeedKind } from './feed-model.js';
@@ -27,31 +29,41 @@ const FILTERS: readonly { id: FeedFilter; label: string }[] = [
   { id: 'leader', label: 'Leader' },
   { id: 'alert', label: 'Alerts' },
   { id: 'merge', label: 'Merges' },
+  { id: 'owner', label: 'Channels' },
 ];
-const KIND_LABEL: Record<FeedKind, string> = { leader: 'Leader', alert: 'Alert', merge: 'Merge', fleet: 'Fleet' };
+const KIND_LABEL: Record<FeedKind, string> = { leader: 'Leader', alert: 'Alert', merge: 'Merge', fleet: 'Fleet', owner: 'Channel' };
 export const FEED_POLL_MS = 15_000;
 
 export function FeedSection({ visible = true }: { visible?: boolean }) {
   const leader = useQuery(leaderThreadQuery, { enabled: visible, freshMs: 15_000 });
   const runs = useQuery(fleetMergesQuery, { enabled: visible, freshMs: 15_000 });
+  const owner = useQuery(ownerThreadQuery, { enabled: visible, freshMs: 15_000 });
   const activity = useActivity();
   const refetchLeader = useRefetch(leaderThreadQuery);
   const refetchRuns = useRefetch(fleetMergesQuery);
-  usePollWhileVisible(() => { refetchLeader(); refetchRuns(); }, FEED_POLL_MS, { enabled: visible });
+  const refetchOwner = useRefetch(ownerThreadQuery);
+  usePollWhileVisible(() => { refetchLeader(); refetchRuns(); refetchOwner(); }, FEED_POLL_MS, { enabled: visible });
   const now = useNow(30_000);
   const [filter, setFilter] = useState<FeedFilter>('all');
 
   const leaderFailed = Boolean(leader.error) || leader.data?.available === false;
   const runsFailed = Boolean(runs.error) && runs.data === undefined;
   const alertsFailed = activity.status === 'unavailable' || (Boolean(activity.error) && !activity.data);
-  const failed = [leaderFailed, runsFailed, alertsFailed].filter(Boolean).length;
-  const loading = leader.data === undefined && !leaderFailed && runs.data === undefined && !runsFailed && !activity.data && !alertsFailed;
+  // A 404 from the owner route is "no owner lines" (the query maps it), so only a real error counts.
+  const ownerFailed = Boolean(owner.error) && owner.data === undefined;
+  const ownerPaused = owner.data?.paused === true;
+  const ownerLines = ownerPaused ? undefined : owner.data?.lines;
+  const failed = [leaderFailed, runsFailed, alertsFailed, ownerFailed].filter(Boolean).length;
+  // Down means no source gave anything: the owner source only counts as up when it returned lines.
+  const allDown = leaderFailed && runsFailed && alertsFailed && (ownerFailed || !ownerLines?.length);
+  const loading = leader.data === undefined && !leaderFailed && runs.data === undefined && !runsFailed && !activity.data && !alertsFailed && owner.data === undefined && !ownerFailed;
 
   const feed = useMemo(() => buildFeed({
     leader: leader.data?.value?.messages,
     runs: runsFailed ? undefined : runs.data,
     needsYou: activity.data?.needsYou,
-  }), [leader.data, runs.data, runsFailed, activity.data]);
+    owner: ownerLines,
+  }), [leader.data, runs.data, runsFailed, activity.data, ownerLines]);
   const shown = filterFeed(feed, filter);
 
   return <div className={styles.root}>
@@ -73,17 +85,18 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
     <div className={styles.filters} role="group" aria-label="Filter the feed">
       {FILTERS.map(f => <button key={f.id} type="button" className={styles.chip} aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>{f.label}</button>)}
     </div>
-    {failed === 3
+    {allDown
       ? <CardNote tone="unknown">The Feed is unavailable: none of its sources answered. It retries on its own.</CardNote>
       : failed > 0 ? <CardNote tone="unknown">Some updates could not be loaded.</CardNote> : null}
+    {ownerPaused ? <CardNote tone="unknown">Owner channels are paused; their messages are hidden.</CardNote> : null}
     {loading ? <CardNote>Loading the feed…</CardNote>
-      : failed < 3 && shown.length === 0
+      : !allDown && shown.length === 0
         ? <CardNote>{filter === 'all' ? 'Nothing new yet. Leader messages, alerts and merges land here as they happen.' : `No ${FILTERS.find(f => f.id === filter)!.label.toLowerCase()} in the feed right now.`}</CardNote>
         : null}
     {shown.length ? <ol className={styles.list} aria-label="Feed">
       {shown.map(item => <li key={item.id} data-kind={item.kind}>
         <Card title={item.title} caption={<time dateTime={item.at} title={new Date(item.at).toLocaleString('en-US')}>{formatRelative(item.at, now)}</time>}
-          actions={<span className={styles.kind} data-kind={item.kind}>{KIND_LABEL[item.kind]}</span>}>
+          actions={<span className={styles.kind} data-kind={item.kind}>{item.label ?? KIND_LABEL[item.kind]}</span>}>
           {item.body ? <p className={styles.body}>{item.body}</p> : null}
           {item.href ? <a className={styles.link} href={item.href} target="_blank" rel="noopener noreferrer">Open</a> : null}
         </Card>
