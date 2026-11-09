@@ -1,13 +1,43 @@
-import { apiGet } from '../../../data/client.js';
-import { useQuery, useRefetch } from '../../../data/hooks.js';
+import { useState } from 'react';
+import { ApiError, apiGet, apiPost } from '../../../data/client.js';
+import { useMutationHold, useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { CopyPill } from '../apps/CopyPill.js';
 import { UNIFIED_INBOX_COMMAND, UNIFIED_INBOX_PATH, itemLine, readUnifiedInboxView, sourceSummary } from './unified-inbox-model.js';
+import { TEAMMATE_REPLY_PATH, teammateReplyOutcome, teammateRowid } from './teammate-reply-model.js';
 import styles from './fleet-inbox.module.css';
 
 const unifiedInboxQuery: QueryDef<unknown> = { key: 'verse-fleet-comms-unified-inbox', fetch: s => apiGet(UNIFIED_INBOX_PATH, s) };
 const MAX_SHOWN = 8;
+
+/** One-line reply under a teammate text. Typed text survives anything but a 200. */
+function TeammateReply({ rowid, onSent }: { rowid: number; onSent: () => void }) {
+  const { token, touch } = useMutationHold();
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
+  async function send() {
+    if (busy || !text.trim()) return;
+    if (!token) { setNote('Unlock to send.'); return; }
+    setBusy(true);
+    try {
+      const body = await apiPost<unknown>(TEAMMATE_REPLY_PATH, { rowid, text }, token);
+      const status = typeof body === 'object' && body !== null && (body as { status?: unknown }).status === 'uncertain' ? 202 : 200;
+      setNote(teammateReplyOutcome(status, body));
+      touch();
+      if (status === 200) { setText(''); onSent(); }
+    } catch (reason) {
+      setNote(teammateReplyOutcome(reason instanceof ApiError ? reason.status : 0, null));
+    } finally { setBusy(false); }
+  }
+  return <form className={styles.unifiedReply} onSubmit={e => { e.preventDefault(); void send(); }}>
+    <input className={styles.unifiedReplyInput} value={text} onChange={e => setText(e.target.value)} maxLength={4000}
+      placeholder="Reply by iMessage" aria-label="Reply to this teammate" />
+    <button type="submit" disabled={busy || !text.trim()}>{busy ? 'Sending' : 'Send'}</button>
+    {note && <span className={styles.meta} role="status">{note}</span>}
+  </form>;
+}
 
 export function UnifiedInboxCard({ visible }: { visible: boolean }) {
   const inbox = useQuery(unifiedInboxQuery, { enabled: visible });
@@ -27,12 +57,14 @@ export function UnifiedInboxCard({ visible }: { visible: boolean }) {
     {shown.length === 0 && allHealthy && <p className={styles.meta}>Nothing waiting</p>}
     {shown.map(item => {
       const line = itemLine(item, now);
+      const rowid = teammateRowid(item);
       return <div key={item.id} className={styles.unifiedItem} data-severity={item.severity}>
         <span className={styles.meta}>{line.label}</span>
         <span className={styles.unifiedTitle}>{item.title}</span>
         {line.age !== null && <span className={styles.meta}>{line.age}</span>}
         {item.blocking && <span className={styles.meta}>blocking</span>}
         {item.act[0] !== undefined && <CopyPill text={item.act[0]} what="the command for this item" />}
+        {rowid !== null && <TeammateReply rowid={rowid} onSent={refetch} />}
       </div>;
     })}
     {more > 0 && <p className={styles.meta}>+{more} more</p>}
