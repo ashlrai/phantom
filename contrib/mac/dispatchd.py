@@ -1113,6 +1113,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                 or running[lane] >= s["target"] or sum(running.values()) >= GCAP or j in alive or j in reaping or j in publishing):
             rest.append(line); seen.add(j); continue
         if lane == "codex-local":
+            if _size_hint(j, pf) > 60:
+                rest.append(line); seen.add(j); continue
             if tier == "mid" and local_mid >= LOCAL_MID_CAP: rest.append(line); seen.add(j); continue
             if local_ok is None:
                 local_ok = _local_healthy()

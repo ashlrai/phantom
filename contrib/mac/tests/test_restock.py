@@ -452,7 +452,7 @@ class AutoUnparkTests(unittest.TestCase):
 
 class ReplenishmentDiagnosticsTests(unittest.TestCase):
     def test_local_and_personal_parked_rows_do_not_fill_lanes_or_loop(self):
-        rows = [line('RQ-LOCAL-NEW', pool='codex-local', repo='phantom'),
+        rows = [line('RQ-LOCAL-NEW', pool='codex-local', repo='phantom', **{'size<': 60}),
                 line('RQ-PERSONAL-NEW', pool='codex-personal', repo='phantom')]
         slots = {l: {'held': True} for l in LANES}
         slots.update({'codex-local': {'target': 1}, 'codex-personal': {'target': 1}})
@@ -481,6 +481,23 @@ class ReplenishmentDiagnosticsTests(unittest.TestCase):
         again = json.loads(restock(home, '--per-lane', '1', '--json').stdout)
         self.assertEqual(again['queued'], 0)
         self.assertEqual((q / 'ready.tsv').read_text(), ready)
+
+    def test_local_requires_bounded_size_at_most_60(self):
+        rows = [line('RQ-LOCAL-' + suffix, pool='codex-local', repo='phantom', **attrs)
+                for suffix, attrs in [('SMALL', {'size<': 59}), ('EDGE', {'size<': 60}),
+                                      ('LARGE', {'size<': 61}), ('MISSING', {}), ('BAD', {'size<': 'oops'})]]
+        slots = {lane: {'held': True} for lane in LANES}
+        slots['codex-local'] = {'target': 10}
+        tmp = build('\n'.join(rows) + '\n', slots=slots)
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        result = restock(home, '--per-lane', '10', '--json')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        ready = (home / '.ashlr-runs/queue/ready.tsv').read_text()
+        for suffix in ('SMALL', 'EDGE'):
+            self.assertIn('RQ-LOCAL-' + suffix, ready)
+        for suffix in ('LARGE', 'MISSING', 'BAD'):
+            self.assertNotIn('RQ-LOCAL-' + suffix, ready)
 
     def test_duplicate_parked_rows_unpark_once(self):
         tmp = build('')
