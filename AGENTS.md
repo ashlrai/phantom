@@ -73,7 +73,7 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 - Do not read or print real credentials, environment dumps, or secret values. Use Phantom Secrets references and Locus for scoped account access; see [the toolchain guide](docs/AGENT-TOOLCHAIN.md).
 - Report the exact commands run, failures and remaining limitations. Keep documentation commands aligned with [package.json](package.json); the [AGENTS.md audit](docs/AGENTS-MD-AUDIT.md) records public-source gaps across the seven repos.
 
-Node router: `phm node join|beat|enqueue|plan|pull|renew|complete|status|leave --json` joins this computer to the router. A job's owner scope decides which nodes see it; a lease and fencing token keep it from running twice; auth stays local and jobs carry secret names only. See [Add a computer in 60 seconds](docs/add-a-computer.md) and the [node router](docs/NODE-ROUTER.md).
+Node router: `phm node join|beat|enqueue|plan|pull|renew|complete|status|leave --json` joins this computer to the router. A job's owner scope decides which nodes see it; a lease and fencing token keep it from running twice; auth stays local and jobs carry secret names only. See [Add a computer in 60 seconds](docs/add-a-computer.md) and the [node router](docs/NODE-ROUTER.md). `phm nodes --json` lists every joined computer with role, caps, heartbeat age, live jobs and the leader — read-only, no credentials ([nodes view](docs/NODES-VIEW.md)).
 
 Lane health: `phm lanes health --json` prints calls, error rate, p50 latency and
 deployed commit per lane over 12 h, and flags runs stuck past their phase
@@ -291,3 +291,7 @@ enrollment remains a manual config change. See [repo ranking](docs/REPO-RANK.md)
 ## Import scheduled routines
 
 Preview a local routines JSON array with `ashlr automations import --from routines.json --dry-run --json`, then import with `ashlr automations import --from routines.json --json`. Imports start disabled and skip existing names. See [Automations](docs/VERSE.md#automations-315) for the format and schedule restrictions.
+
+Shared context: `phm ctxpack build --job <id> --lane <lane> --json` reads existing
+fleet and bus sources within a 2000-token ceiling and logs pack_tokens to the
+outcome store. See [context packs](docs/CONTEXT-PACK.md).

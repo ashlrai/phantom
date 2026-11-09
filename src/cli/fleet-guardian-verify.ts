@@ -3,6 +3,7 @@ import { GUARDIAN_VERIFY_DEADLINE, GUARDIAN_VERIFY_MAX_TIMEOUT_MS, runGuardianVe
 import { runGuardianVerifyExclusive } from '../core/fleet/guardian-verify-exclusive.js';
 import { GUARDIAN_DRAIN_MAX_RETRIES, type GuardianDrainSummary } from '../core/fleet/guardian-retry-drain.js';
 import { runGuardianVerifyRecover, type GuardianVerifyRecoverDeps, type GuardianVerifyRecoverReport } from '../core/fleet/guardian-verify-recover.js';
+import { writeGuardianHeadManifest } from '../core/fleet/guardian-head-manifest.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 // Exit codes: 0 pass, 1 fail, 2 invalid arguments, 3 unknown/cancelled/unprocessable,
@@ -15,7 +16,10 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 // states under the output directory without touching the source. --json reports
 // {verify, retry, retrySkipped, latestState, recovered, final}; recovered counts
 // verified attempts, never merely a drain that ran.
-export const usage = 'Usage: ashlr fleet guardian-verify --manifest <file> --state <file> [--max-passes <n>] [--interval-ms <ms>] [--timeout-ms <ms>] [--retry-infra <1..20> --retry-output-dir <abs>] [--json]';
+// --head-of <absolute repo> [--branch <name>] synthesizes a one-entry manifest
+// from refs/remotes/origin/<branch> (or origin/HEAD) with local git reads only —
+// never a fetch — instead of reading a hand-written --manifest.
+export const usage = 'Usage: ashlr fleet guardian-verify (--manifest <file> | --head-of <repo> [--branch <name>]) --state <file> [--max-passes <n>] [--interval-ms <ms>] [--timeout-ms <ms>] [--retry-infra <1..20> --retry-output-dir <abs>] [--json]';
 
 export async function cmdFleetGuardianVerify(
   args: string[],
@@ -26,11 +30,20 @@ export async function cmdFleetGuardianVerify(
   let json = false;
   for (let i = 0; i < args.length; i++) {
     const flag = args[i]!;
+    if (flag === '--help' || flag === '-h') { console.log(usage); return 0; }
     if (flag === '--json' && !json) { json = true; continue; }
-    if (!['--manifest', '--state', '--max-passes', '--interval-ms', '--timeout-ms', '--retry-infra', '--retry-output-dir'].includes(flag) || values[flag] !== undefined || !args[i + 1] || args[i + 1]!.startsWith('--')) {
+    if (!['--manifest', '--state', '--max-passes', '--interval-ms', '--timeout-ms', '--retry-infra', '--retry-output-dir', '--head-of', '--branch'].includes(flag) || values[flag] !== undefined || !args[i + 1] || args[i + 1]!.startsWith('--')) {
       process.stderr.write('error: invalid guardian-verify arguments\n'); return 2;
     }
     values[flag] = args[++i]!;
+  }
+  const headOf = values['--head-of'];
+  const branch = values['--branch'];
+  if (headOf !== undefined && values['--manifest'] !== undefined) {
+    process.stderr.write('error: --head-of and --manifest are mutually exclusive\n'); return 2;
+  }
+  if (branch !== undefined && headOf === undefined) {
+    process.stderr.write('error: --branch requires --head-of\n'); return 2;
   }
   const integer = (value: string | undefined, fallback: number): number => value === undefined ? fallback : /^[1-9]\d*$/.test(value) ? Number(value) : NaN;
   const timeoutMs = values['--timeout-ms'] === undefined ? undefined : integer(values['--timeout-ms'], NaN);
@@ -50,7 +63,13 @@ export async function cmdFleetGuardianVerify(
   const cancel = (): void => controller.abort();
   process.once('SIGINT', cancel); process.once('SIGTERM', cancel);
   const deadline = timeoutMs === undefined ? undefined : setTimeout(() => controller.abort(GUARDIAN_VERIFY_DEADLINE), timeoutMs);
+  let disposeManifest: (() => Promise<void>) | undefined;
   try {
+    if (headOf !== undefined) {
+      const written = await writeGuardianHeadManifest(headOf, branch);
+      options.manifest = written.manifest;
+      disposeManifest = written.dispose;
+    }
     if (retry) {
       const report = await runGuardianVerifyRecover(
         {
@@ -71,10 +90,12 @@ export async function cmdFleetGuardianVerify(
     const summary = outcome.summary;
     console.log(json ? JSON.stringify(summary) : `guardian-verify: pass=${summary.pass} fail=${summary.fail} unknown=${summary.unknown} cancelled=${summary.cancelled}${summary.deadlineExceeded ? ' deadline-exceeded' : ''}`);
     return summary.deadlineExceeded ? 4 : summary.cancelled || summary.unknown ? 3 : summary.fail ? 1 : 0;
-  } catch {
-    process.stderr.write('error: guardian-verify could not validate or process manifest/state\n');
+  } catch (error) {
+    const detail = headOf !== undefined && error instanceof Error && error.message ? error.message : '';
+    process.stderr.write(detail ? `error: guardian-verify: ${detail}\n` : 'error: guardian-verify could not validate or process manifest/state\n');
     return 3;
   } finally {
+    await disposeManifest?.().catch(() => {});
     if (deadline !== undefined) clearTimeout(deadline);
     process.removeListener('SIGINT', cancel); process.removeListener('SIGTERM', cancel);
   }

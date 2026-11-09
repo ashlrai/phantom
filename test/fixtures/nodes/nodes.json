@@ -1,0 +1,59 @@
+{
+  "version": "drive.nodes.v1",
+  "sequence": 20,
+  "observedAt": 1793620830000,
+  "nodes": [
+    {
+      "nodeId": "mac-mini-1",
+      "session": 1,
+      "heartbeatAt": 1793620800000,
+      "expiresAt": 1793620890000,
+      "owners": ["mason"],
+      "caps": ["arch:arm64", "codex", "gh", "os:darwin"],
+      "usage": 120,
+      "slots": 2,
+      "auth": "ok"
+    },
+    {
+      "nodeId": "lima-vm-2",
+      "session": 2,
+      "heartbeatAt": 1793620630000,
+      "expiresAt": 1793620690000,
+      "owners": ["mason"],
+      "caps": ["arch:arm64", "gh", "os:linux"],
+      "auth": "missing"
+    },
+    {
+      "nodeId": "build-01",
+      "session": 3,
+      "heartbeatAt": 1793620710000,
+      "expiresAt": 1793621010000,
+      "owners": ["mason"],
+      "caps": ["arch:x64", "os:linux"],
+      "auth": "unknown"
+    }
+  ],
+  "leader": { "nodeId": "mac-mini-1", "session": 1, "token": 1, "expiresAt": 1793620950000 },
+  "jobs": [
+    {
+      "id": "job-7",
+      "state": "running",
+      "owner": "mason",
+      "claim": { "nodeId": "mac-mini-1", "session": 1, "jobId": "job-7", "token": 2, "leaderToken": 1, "expiresAt": 1793620890000 }
+    },
+    {
+      "id": "job-9",
+      "state": "running",
+      "owner": "mason",
+      "claim": { "nodeId": "mac-mini-1", "session": 1, "jobId": "job-9", "token": 3, "leaderToken": 1, "expiresAt": 1793620860000 }
+    },
+    {
+      "id": "job-exp",
+      "state": "running",
+      "owner": "mason",
+      "claim": { "nodeId": "mac-mini-1", "session": 1, "jobId": "job-exp", "token": 4, "leaderToken": 1, "expiresAt": 1793620825000 }
+    },
+    { "id": "job-pend", "state": "pending", "owner": "mason" }
+  ],
+  "pool": { "primary": "mac-mini-1", "backup": "lima-vm-2", "active": "primary", "epoch": 1, "heartbeatAt": 1793620830000 }
+}

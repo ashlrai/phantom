@@ -52,6 +52,7 @@ Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent
 - [Cloud lane](CLOUD.md): Claude Code cloud sessions from chat, Command, or CLI.
 - [Add a computer in 60 seconds](add-a-computer.md): install, join, choose capabilities, verify, and leave.
 - Node router: `phm node join|pull|plan|status --json`, guide in `docs/NODE-ROUTER.md`. Nodes advertise caps, jobs carry an owner scope and a fenced lease, auth stays local.
+- [Nodes view](NODES-VIEW.md): `phm nodes [--json]` and `GET /api/nodes` list every joined computer — role, caps, heartbeat age, live jobs, leader — from the node registry, read-only and credential-free.
 - [Drive](DRIVE.md): Mac queue supervisor. Serial ticks, worker reaping, and READY job admission.
 - [Daemon tick phases](daemon-tick-phases.md): Bounded resident tick stages — per-phase status/duration/error and tick outcomes via `phm daemon status --json | jq .tick.phases`.
 - [Disk maintenance](DISK-MAINT.md): `phm disk-maint [--apply] [--json]` reclaims rebuildable bytes by class; `phm disk-maint schedule` installs the daily job. Dry run by default; the protect-list (`~/.codex*`, model weights, Docker, client trees, secrets) is unconditional.
@@ -376,3 +377,4 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Agent network](AGENT-NETWORK.md): SSH multi-Mac node pool; first join needs explicit aliases and owner, repeat node join --json reuses config; RAM/disk pressure admission, local auth, mobile control only, split-brain fencing and primary-only publication.
 
 - [Repository ranking](REPO-RANK.md): `phm repos rank --json`, `phm repos rank --recompute --json` and `phm repos rank proposals --json`; daily local evidence, manual enrollment, read-only restock weights.
+- [Shared context packs](CONTEXT-PACK.md): phm ctxpack build --job <id> --lane <lane> --json; bounded fleet and bus context.

@@ -17,7 +17,7 @@ Topic summary and discovery hints.
 ```text
   Phantom - phm, the CLI for agentic engineers (ashlr remains compatible)
 
-    core            Core - index, navigate, configure (index, go, status, …)
+    core            Core - index, navigate, configure (ctxpack, tune, index, …)
     run             Run - local-first agent runs (run, runs, …)
     swarm           Swarm - specs + multi-agent fleets (spec, …)
     memory          Memory - shared genome (memory, recall, learn, …)
@@ -44,6 +44,8 @@ Every command, grouped by topic.
   Phantom - every command (phm or ashlr)
 
   Core - index, navigate, configure
+    ctxpack build --job <id> --lane <lane> [--json]                                                                Build a bounded shared context pack. See phm ctxpack --help.
+    tune prepare|evaluate                                                                                          Local model tuning: prepare a scrubbed dataset from reviewed samples, or evaluate a paired adapter report (docs/TUNE.md).
     index [--refresh]                                                                                              Build or refresh the desktop index; show counts by category.
     go [query] [--open|--cd]                                                                                       Find a repo or item; open in editor (--open) or print path for cd (--cd).
     status [--json]                                                                                                Attention board: dirty, off-sync, and stale repos; ecosystem summary.
@@ -315,6 +317,7 @@ Every command, grouped by topic.
     disk-maint [--apply] [--json] [--only <class>] [--allow <class>]                      Standing disk maintenance: rotate/compress quiet logs, prune dead session leftovers, stale staging and recovery dirs, and remove merged worktrees. Dry run unless --apply; protect-list never touches ~/.codex*, model weights, Docker, client trees or secrets.
     node join|beat|enqueue|plan|pull|complete|status [--json]                             Join this computer to the node router: caps, owner-scoped jobs, fenced per-job leases.
     node bootstrap --dry-run [--json]                                                     Plan a persistent Linux node; registry integration is a stub, no provisioning.
+    nodes [--json]                                                                        List fleet nodes: role, caps, heartbeat age, live jobs, leader. Read-only, no credentials (docs/NODES-VIEW.md).
     sandbox list                                                                          List active git-worktree sandboxes (M21 safety foundation).
     sandbox diff <id>                                                                     Show diff of a sandbox vs its base HEAD.
     sandbox cleanup <id>                                                                  Remove a sandbox worktree and scratch branch.

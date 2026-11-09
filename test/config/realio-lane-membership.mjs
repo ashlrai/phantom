@@ -781,4 +781,5 @@ export const REAL_IO_TEST_FILES = [
   'test/phx-graph-node-stream01.test.ts', // spawn and spawnSync run the real `fleet graph-run` CLI
   'test/planner-cycle-single-01solc5.test.ts', // spawnSync runs a real node child for the single-cycle planner fixture
   'test/verify-changed-dedupe.test.ts', // spawnSync node scripts/verify-changed.mjs and execFileSync git in real temp repos
+  'test/fleet-guardian-head-manifest-01.test.ts', // execFileSync builds real git repo fixtures; the module execFiles real git reads
 ];

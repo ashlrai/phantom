@@ -4,7 +4,7 @@ import { computeIdleAllowance, type IdleJob, type IdleSnapshot } from '../core/m
 const usage = 'Usage: phm metrics idle --status <snapshot.json> [--status <snapshot.json> ...] --jobs <jobs.jsonl> [--json]\n';
 
 export function cmdMetricsIdle(args: string[]): number {
-  if (args[0] === '--help' || args[0] === 'help' || (args[0] === 'idle' && args[1] === '--help')) { process.stdout.write(usage); return 0; }
+  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') { process.stdout.write(usage); return 0; }
   const statuses: string[] = [];
   let jobsPath: string | undefined;
   let json = false;

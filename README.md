@@ -119,7 +119,7 @@ Details: [self-hosting](docs/SELF-HOSTING.md#connect-claude-code-and-codex-over-
 | ![MCP gateway](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-mcp.svg) | **Companion inventory.** `phm companions --json` checks separately installed Secrets, Locus, and Lexicon CLI identities. It does not establish runtime readiness. |
 | ![Accounts and local models](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-local.svg) | **Your accounts.** Claude Code, Codex, Grok, Devin, API credits, and tool-capable local models. Vendor CLIs manage their own sign-in; the optional Devin API connection stores its key in the macOS Keychain. |
 | ![Review](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-review.svg) | **A record you can review.** Chats, diffs, checkpoints, and fleet runs stay in the console. Fleet telemetry and Show Mode display recent recorded activity. A finished run is not proof the outcome shipped. |
-| ![Review](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-review.svg) | **Fleet inspection.** Read-only reports cover [worktrees](docs/FLEET-VERBS.md), [merge batches](docs/FLEET-MERGE-BATCH.md), and post-merge outcomes. The [unified inbox](docs/CHANNELS.md#unified-inbox) collects pending local items without acting on them. |
+| ![Review](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-review.svg) | **Fleet inspection.** Read-only reports cover [worktrees](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-VERBS.md), [merge batches](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-BATCH.md), and post-merge outcomes. The [unified inbox](https://github.com/ashlrai/phantom/blob/master/docs/CHANNELS.md#unified-inbox) collects pending local items without acting on them. |
 
 **Work with me** is the chat. **Work for me** is the fleet. Saving a fleet outcome does not start work and does not widen permission. The fleet runs only in enrolled repositories under a signed grant. Autonomy ships **dormant** and is macOS-only.
 
@@ -247,6 +247,7 @@ The [ecosystem map](https://github.com/ashlrai/phantom/blob/master/docs/ECOSYSTE
 | [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md) | Install, MCP, upgrade, uninstall |
 | [docs/VERSE.md](docs/VERSE.md) | Console guide |
 | [docs/README.md](docs/README.md) | Full doc map |
+| [docs/VISION.md](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) | Product direction: a chat-first open-source assistant, four pillars, and the gap to today's code |
 | [docs/HUB-REFERENCE.md](https://github.com/ashlrai/phantom/blob/master/docs/HUB-REFERENCE.md) | Kernel reference: Universe, resource pools, and the legacy fleet |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 

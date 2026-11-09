@@ -506,6 +506,12 @@ const loadNodeCmd = lazyCmd(
   'node command requires src/cli/node.ts.',
 );
 
+const loadNodesCmd = lazyCmd(
+  () => import('./nodes.js'),
+  (m) => m['cmdNodes'] as Cmd,
+  'nodes command requires src/cli/nodes.ts.',
+);
+
 const loadSandboxCmd = lazyCmd(
   () => import('./sandbox.js'),
   (m) => m.cmdSandbox as Cmd,
@@ -2457,6 +2463,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'nodes': {
+        const cmdNodes = await loadNodesCmd();
+        process.exitCode = await cmdNodes(rest);
+        break;
+      }
+
       case 'sandbox': {
         const cmdSandbox = await loadSandboxCmd();
         process.exitCode = await cmdSandbox(rest);
@@ -2508,6 +2520,11 @@ async function main(): Promise<void> {
       case 'repos': {
         const { cmdReposRank } = await import('./repos-rank.js');
         process.exitCode = cmdReposRank(rest);
+        break;
+      }
+
+      case 'ctxpack': {
+        process.exitCode = await (await import('./ctxpack.js')).cmdCtxpack(rest);
         break;
       }
 

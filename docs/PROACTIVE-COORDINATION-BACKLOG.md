@@ -8,12 +8,11 @@ product roles or authority. Multiple agents may share a provider or account.
 
 ## Product acceptance direction
 
-The north star is a unified self-improving engineering workspace and service,
-with Ashlr dogfooding its service delivery toward SaaS and autonomous operations.
-**Work with me** and **Work for me** must share task identity, context, resources
-and evidence. Users can inspect, interject, approve, take over and return work to
-agents. This direction is an aspiration, not evidence of a completed product or
-measured autonomous performance.
+The product direction is [VISION.md](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md): a chat-first open-source
+assistant, not a hosted service. **Work with me** and **Work for me** share
+task identity, context, resources, and evidence. Users can inspect, interject,
+approve, take over, and return work to agents. This backlog is an aspiration
+for the coordination slice, not evidence of a completed product.
 
 Acceptance for subsequent milestones:
 
@@ -265,7 +264,7 @@ Acceptance: a routing experiment is reproducible from pinned inputs, its impact
 and exclusions can be inspected, rollback restores the prior approved behavior,
 and malformed/missing learning receipts leave ordinary routing available.
 Reuse verified outcome/production labels rather than counting task volume as
-success. The [efficiency roadmap](EFFICIENCY-ROADMAP.md) separates measured local
+success. The [efficiency roadmap](https://github.com/ashlrai/phantom/blob/master/docs/EFFICIENCY-ROADMAP.md) separates measured local
 changes from hosted and installed performance; use that same evidence standard.
 
 ## Release autonomy: reuse the current channels and qualify generic targets
@@ -277,7 +276,7 @@ exact hosted CI, independent Audit and trusted attestation, reuses the original
 archive, reconciles uncertain publication with reads, verifies public bytes and
 provenance plus an isolated consumer, then promotes and reads back `latest`.
 Source and documented historical commissioning do not establish a release of
-this milestone. Follow [the current release guide](RELEASING.md); the legacy
+this milestone. Follow [the current release guide](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING.md); the legacy
 `release.yml` and [successor policy verifier](../scripts/verify-release-policy.mjs)
 remain frozen evidence contracts, not a canonical or generic release fallback.
 
@@ -304,7 +303,7 @@ exact repository, package/site/app, channels, responsible owner and recovery pla
 |---|---|---|---|
 | npm | Current canonical publisher and [tests](../test/canonical-npm-publisher.test.ts) | Exact package/registry/version/archive integrity, source/tree and qualified run/attempt/artifact IDs; fresh provenance, isolated consumer and stable-tag readback | Never overwrite an immutable version. Reconcile uncertain acceptance; explicitly authorized tag restoration, deprecation and/or corrective newer version are distinct operations. |
 | Website | [Host release](../src/core/website/host-release.ts) and [host adapter](../src/core/website/host-adapter.ts) | Existing profile is fixed to Phantom Secrets/public website. A generic profile needs separately commissioned owner/project/domain set, source/output digests, toolchain and fresh signed scope; staged and promoted health observations | Pin prior deployment and every affected alias. Verify restored aliases and route health; an attempted rollback is not proof of restoration. |
-| Desktop assets and installed app | [Desktop tool policy](../scripts/desktop-release-policy.mjs), [artifact installer](../scripts/install-desktop-artifacts.mjs), [desktop guide](../desktop/README.md) | Exact app/version/platform/architecture, signed archive/feed, qualification and installed-byte/startup acceptance; Stop/drain and app lifecycle remain separate | Preserve independent signed prior assets and supported update/install behavior; package-tag rollback does not downgrade already installed clients. Test recovery for data/schema compatibility and stopped state. |
+| Desktop assets and installed app | [Desktop tool policy](https://github.com/ashlrai/phantom/blob/master/scripts/desktop-release-policy.mjs), [artifact installer](https://github.com/ashlrai/phantom/blob/master/scripts/install-desktop-artifacts.mjs), [desktop guide](https://github.com/ashlrai/phantom/blob/master/desktop/README.md) | Exact app/version/platform/architecture, signed archive/feed, qualification and installed-byte/startup acceptance; Stop/drain and app lifecycle remain separate | Preserve independent signed prior assets and supported update/install behavior; package-tag rollback does not downgrade already installed clients. Test recovery for data/schema compatibility and stopped state. |
 | Resident runtime | [Activation contract](RUNTIME_ACTIVATION_AUTHORITY.md), [M568](contracts/CONTRACT-M568.md), [M521](contracts/CONTRACT-M521.md) | Signed candidate/rollback bindings and scoped admission are observation evidence. M568 production roots are empty and its native consumer unavailable; resident start/ACK and provider dispatch need independent authority | Protected broker, external single-use replay, trusted time, atomic custody and exact stopped rollback remain prerequisites. No local receipt may self-enable them. |
 
 Every future release plan must bind an exact artifact/version/target, immutable

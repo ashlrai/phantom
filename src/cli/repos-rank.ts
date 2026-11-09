@@ -3,9 +3,12 @@ import { readdirSync } from 'node:fs';
 import { loadConfigReadOnly } from '../core/config.js';
 import { localMerges, readRank, updateRank } from '../core/fleet/repo-rank.js';
 
+const USAGE = 'Usage: phm repos rank [proposals] [--json] [--recompute]';
+
 export function cmdReposRank(args: string[]): number {
+  if (args.includes('--help') || args.includes('-h')) { console.log(USAGE); return 0; }
   if (args[0] !== 'rank' || args.slice(1).some(a => !['proposals', '--json', '--recompute'].includes(a))) {
-    console.error('Usage: phm repos rank [proposals] [--json] [--recompute]');
+    console.error(USAGE);
     return 2;
   }
   const proposals = args.includes('proposals');

@@ -3813,7 +3813,7 @@ had corrupted the operator's real `~/.ashlr/daemon.json` for 11 days was
 closed fail-closed; and a new React operator console shipped alongside the
 untouched legacy dashboard. Milestone-level detail and today's newly
 discovered ID collision are in
-[`docs/MILESTONE-INDEX.md`](docs/MILESTONE-INDEX.md); the mechanics of
+[`docs/MILESTONE-INDEX.md`](https://github.com/ashlrai/phantom/blob/master/docs/MILESTONE-INDEX.md); the mechanics of
 turning any of this on — including four non-obvious gates that block
 unattended activation even after a grant — are in
 [`docs/RUNTIME-FLEET-ACTIVATION.md`](docs/RUNTIME-FLEET-ACTIVATION.md).
@@ -3983,7 +3983,7 @@ unattended activation even after a grant — are in
 Forty milestones landed on `master` with no CHANGELOG entry; this backfills
 them by theme. Full per-milestone detail, file:line citations, and the four
 that warrant a standalone contract are indexed in
-[`docs/MILESTONE-INDEX.md`](docs/MILESTONE-INDEX.md) §5. Gaps M474, M483,
+[`docs/MILESTONE-INDEX.md`](https://github.com/ashlrai/phantom/blob/master/docs/MILESTONE-INDEX.md) §5. Gaps M474, M483,
 M489, M499, M500 have no corresponding test file or milestone.
 
 - **Daemon crash-safety and recovery (M486, M487, M490, M501, M488, M476).**

@@ -1,5 +1,9 @@
 # Ambitious Fleet OS V1
 
+The product direction is [VISION.md](VISION.md). This file is the slice spec
+for mission compile, the operator briefing, and crash-safe resident autonomy.
+Its authority limits describe that slice.
+
 ## Product thesis
 
 Ashlr Hub should feel like an always-on engineering chief of staff, not a wall of telemetry. Its first job is to convert an operator's intent into bounded work, keep that work moving through the existing evidence gates, and surface only the exceptions that need judgment.
