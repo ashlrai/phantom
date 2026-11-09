@@ -21,6 +21,7 @@ import { CommsStatusCard } from './CommsStatusCard.js';
 import { GmailTriageCard } from './GmailTriageCard.js';
 import { UnifiedInboxCard } from './UnifiedInboxCard.js';
 import { CosDraftsCard } from './CosDraftsCard.js';
+import { EmailDraftsCard } from './EmailDraftsCard.js';
 import { InboxPostBox } from './InboxPostBox.js';
 import { matchesPosted } from './inbox-post-model.js';
 import { sourceChip } from '../fleet/interject-ack-model.js';
@@ -94,6 +95,7 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
     <CommsStatusCard visible={visible} />
     <GmailTriageCard visible={visible} />
     <CosDraftsCard visible={visible} />
+    <EmailDraftsCard visible={visible} />
     <InboxPostBox snapshot={snapshot.data} onPosted={postedText => {
       setSource(''); setChannel(null); setText(''); setPosted({ text: postedText, until: Date.now() + 5_000 }); setPostedForAck(postedText);
       void refetchQuery(fleetInboxQuery.key, () => fleetInboxQuery.fetch(), true);

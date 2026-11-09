@@ -429,7 +429,36 @@ export async function sendOwnerReply(input: OwnerReplyInput, options: OwnerThrea
   }
 }
 
-export const OWNER_HELLO_TEXT = 'Leader is live here, reply to talk to me.';
+/**
+ * Record a proactive Leader post (brief, recap, ping) as one outbound desktop
+ * line so the owner thread shows what was sent elsewhere. Calls no transport:
+ * nothing leaves the machine. Same halt, secret and idempotency rules as replies.
+ */
+export async function postOwnerNotice(input: { text: string; idempotencyKey: string }, options: OwnerThreadOptions): Promise<OwnerThreadResult> {
+  if (halted(options) || paused(options)) return { status: 'halted', reason: 'Adapters are halted.' };
+  const text = cleanText(input.text);
+  if (!text || typeof input.idempotencyKey !== 'string' || !KEY.test(input.idempotencyKey)) {
+    return { status: 'refused', reason: 'Notice is not recordable.' };
+  }
+  const key = input.idempotencyKey;
+  try {
+    return await transaction(options, async state => {
+      const prior = state.messages.find(message => message.idempotencyKey === key);
+      if (prior) return { status: 'duplicate' as const, seq: prior.seq, idempotencyKey: key };
+      if (state.archivedKeys?.includes(keyDigest(key))) return { status: 'duplicate' as const, idempotencyKey: key };
+      const stored = appendMessage(state, {
+        idempotencyKey: key, channel: 'desktop', senderId: 'leader', direction: 'outbound',
+        at: new Date(clock(options)).toISOString(), text, fanout: ['desktop'],
+      });
+      mirror(options, stored);
+      return { status: 'accepted' as const, seq: stored.seq, idempotencyKey: key };
+    });
+  } catch {
+    return { status: 'unavailable', reason: 'Owner thread is unavailable.' };
+  }
+}
+
+export const OWNER_HELLO_TEXT ='Leader is live here, reply to talk to me.';
 
 export interface OwnerHelloResult {
   status: 'sent' | 'partial' | 'refused' | 'duplicate' | 'halted' | 'unavailable';
