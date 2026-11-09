@@ -6,7 +6,7 @@
  * above zero and no bus claim. Unknown is never counted as idle.
  */
 import type { BusWorkClaimView, BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
-import type { ResourceRow, ResourceState, UsageWindow } from './types.js';
+import type { ResourceGauge, ResourceRow, ResourceState, UsageWindow } from './types.js';
 
 export interface RosterSessionInput {
   provider: string;
@@ -28,12 +28,28 @@ export const RESOURCE_DEFS = [
   { id: 'devin-cloud', label: 'Devin cloud', probes: ['devin-cloud'], lanes: ['devin'], sensor: 'devin' },
   { id: 'devin-desktop', label: 'Devin desktop', probes: ['devin-desktop'], lanes: ['devin-desktop'], sensor: null },
   { id: 'codex-personal', label: 'Codex personal', probes: ['codex-personal'], lanes: ['codex-personal'], sensor: 'codex-personal' },
-  { id: 'dot', label: 'Dot', probes: ['dot'], lanes: ['dot'], sensor: null },
-  { id: 'cursor-cloud', label: 'Cursor cloud agents', probes: ['cursor'], lanes: ['cursor'], sensor: null },
+  { id: 'dot', label: 'Dot', probes: ['dot'], lanes: ['dot'], sensor: 'dot' },
+  { id: 'cursor-cloud', label: 'Cursor cloud agents', probes: ['cursor'], lanes: ['cursor'], sensor: 'cursor-cloud' },
   { id: 'claude', label: 'Claude sessions', probes: ['claude'], lanes: ['claude', 'claude-max'], sensor: 'claude-max' },
-  { id: 'grok-bot', label: 'Grok Bot teammates', probes: ['grok', 'grok-bot'], lanes: ['grok', 'grok-bot', 'grok-build'], sensor: 'grok-ultra' },
-  { id: 'local', label: 'Ollama or oMLX', probes: ['ollama', 'omlx'], lanes: ['omlx', 'local'], sensor: null },
+  { id: 'grok-bot', label: 'Grok Bot teammates', probes: ['grok', 'grok-bot'], lanes: ['grok', 'grok-bot', 'grok-build'], sensor: 'grok-bot' },
+  { id: 'local', label: 'Ollama or oMLX', probes: ['ollama', 'omlx'], lanes: ['omlx', 'local'], sensor: 'local' },
 ] as const;
+
+const UNKNOWN_GAUGE: ResourceGauge = {
+  remaining: null, unit: null, burnRate: null, forecastExhaustAt: null, forecastVsReset: 'unknown', idleIncludedWastedPerWeek: null,
+};
+
+function gaugeOf(sensor: UsageWindow | null): ResourceGauge {
+  if (!sensor || sensor.status !== 'fresh') return UNKNOWN_GAUGE;
+  return {
+    remaining: sensor.remaining,
+    unit: sensor.remainingUnit,
+    burnRate: sensor.burnRate,
+    forecastExhaustAt: sensor.forecastExhaustAt,
+    forecastVsReset: sensor.forecastVsReset,
+    idleIncludedWastedPerWeek: sensor.idleIncludedWastedPerWeek,
+  };
+}
 
 function knownSessions(sources: readonly RosterSourceInput[], names: readonly string[]): RosterSessionInput[] {
   return sources.filter((source) => source.availability === 'known' && names.includes(source.source)).flatMap((source) => source.sessions);
@@ -57,7 +73,7 @@ export function classifyResources(input: {
   const liveClaims = claimsKnown ? (input.claims?.claims ?? []).filter((claim) => qualifying(claim, input.nowMs, input.windowMs)) : [];
   const items = RESOURCE_DEFS.map((def): ResourceRow => {
     if (!input.roster) {
-      return { id: def.id, label: def.label, state: 'unknown', reason: 'Agent roster has not been read', headroom: null, sessions: null, claims: null };
+      return { id: def.id, label: def.label, state: 'unknown', reason: 'Agent roster has not been read', headroom: null, sessions: null, claims: null, gauge: UNKNOWN_GAUGE };
     }
     const probeNames = def.probes as readonly string[];
     const laneNames = def.lanes as readonly string[];
@@ -73,15 +89,17 @@ export function classifyResources(input: {
         : probes.find((source) => source.availability === 'unknown')?.source
           ? `Roster probe ${def.probes.join(' or ')} is unknown`
           : 'Roster probe is unknown';
-      return { id: def.id, label: def.label, state: 'unknown', reason, headroom: null, sessions: null, claims: null };
+      return { id: def.id, label: def.label, state: 'unknown', reason, headroom: null, sessions: null, claims: null, gauge: UNKNOWN_GAUGE };
     }
     if (!claimsKnown) {
-      return { id: def.id, label: def.label, state: 'unknown', reason: 'Bus claims could not be read', headroom: null, sessions: sessions.length, claims: null };
+      return { id: def.id, label: def.label, state: 'unknown', reason: 'Bus claims could not be read', headroom: null, sessions: sessions.length, claims: null, gauge: UNKNOWN_GAUGE };
     }
     const identities = new Set<string>([def.id, ...def.lanes, ...sessions.map((session) => session.sessionId), ...sessions.flatMap((session) => session.ownership ? [session.ownership] : [])]);
     const mine = liveClaims.filter((claim) => identities.has(claim.owner) || identities.has(claim.id) || sessions.some((session) => session.claims.some((ref) => ref.id === claim.id)));
-    const sensor = def.sensor === null ? null : input.windows.find((window) => window.lane === def.sensor) ?? null;
+    const sensor = def.sensor === null ? null : input.windows.find((window) => window.lane === def.sensor)
+      ?? (def.sensor === 'grok-bot' ? input.windows.find((window) => window.lane === 'grok-ultra') ?? null : null);
     const headroom = sensor && sensor.status === 'fresh' ? sensor.headroom : null;
+    const gauge = gaugeOf(sensor);
     const duplicate = duplicated(def.id, sessions, mine, liveClaims, sessionsOf(input.roster));
     let state: ResourceState;
     let reason: string;
@@ -101,7 +119,7 @@ export function classifyResources(input: {
       state = 'unknown';
       reason = 'Reachable, but headroom is unknown, so this is not idle';
     }
-    return { id: def.id, label: def.label, state, reason, headroom, sessions: sessions.length, claims: mine.length };
+    return { id: def.id, label: def.label, state, reason, headroom, sessions: sessions.length, claims: mine.length, gauge };
   });
   return { claims: claimsState, items };
 }

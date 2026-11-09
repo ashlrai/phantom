@@ -135,13 +135,67 @@ export function parseGrokSensor(payload: unknown, nowMs: number): UsageSensorRea
   return stamp('grok-ultra', 'grok-status', row['pctUsed'], 100, 'percent', new Date(resetMs).toISOString(), nowMs);
 }
 
+/** Included Devin allowance. This does not read or change the ACU cap. */
+export function parseDevinIncluded(
+  lane: 'devin-swe-flash' | 'devin-weekly',
+  payload: unknown,
+  nowMs: number,
+): UsageSensorReading | null {
+  if (!Number.isFinite(nowMs) || payload === null || typeof payload !== 'object' || Array.isArray(payload)) return null;
+  const row = payload as Record<string, unknown>;
+  if (!finite(row['used']) || !finite(row['limit']) || typeof row['resetAt'] !== 'string') return null;
+  const resetMs = Date.parse(row['resetAt']);
+  if (!Number.isFinite(resetMs) || resetMs <= nowMs) return null;
+  const unit = row['unit'] === 'acu' || row['unit'] === 'percent' ? row['unit'] : null;
+  if (!unit) return null;
+  return {
+    ...stamp(lane, 'devin-included-allowance', row['used'], row['limit'], unit, new Date(resetMs).toISOString(), nowMs),
+  };
+}
+
+/** Official status object `{ pctUsed, resetAt }` for Dot, Cursor cloud, or Grok Bot. */
+export function parseOfficialPercent(lane: 'dot' | 'cursor-cloud' | 'grok-bot', payload: unknown, nowMs: number): UsageSensorReading | null {
+  const parsed = parseGrokSensor(payload, nowMs);
+  if (!parsed) return null;
+  const source = lane === 'dot' ? 'dot-status' : lane === 'cursor-cloud' ? 'cursor-status' : 'grok-status';
+  return { ...parsed, lane, source };
+}
+
+/** Local throughput. There is no allowance, so limit and headroom stay empty. */
+export function parseLocalThroughput(payload: unknown, nowMs: number): UsageSensorReading | null {
+  if (!Number.isFinite(nowMs) || payload === null || typeof payload !== 'object' || Array.isArray(payload)) return null;
+  const completed = (payload as Record<string, unknown>)['completed'];
+  if (!finite(completed)) return null;
+  const observedAt = new Date(nowMs).toISOString();
+  return {
+    lane: 'local', observedAt, source: 'local-throughput',
+    staleAfter: new Date(nowMs + USAGE_SENSOR_STALE_MS).toISOString(),
+    used: completed, limit: null, unit: null, resetAt: null,
+  };
+}
+
+/** Claude API balance. A balance is not spend approval. */
+export function parseClaudeApiBalance(payload: unknown, nowMs: number): UsageSensorReading | null {
+  if (!Number.isFinite(nowMs) || payload === null || typeof payload !== 'object' || Array.isArray(payload)) return null;
+  const row = payload as Record<string, unknown>;
+  if (!finite(row['spent']) || !finite(row['balance'])) return null;
+  return stamp('claude-api', 'claude-api-balance', row['spent'], row['spent'] + row['balance'], 'acu', null, nowMs);
+}
+
 export interface UsageSensorRefreshInput {
   nowMs: number;
   devin?: { daily: unknown; limit: unknown } | null;
+  devinSweFlash?: unknown;
+  devinWeekly?: unknown;
   codexCmp?: unknown;
   codexPersonal?: unknown;
+  dot?: unknown;
   claude?: unknown;
+  claudeApi?: unknown;
+  cursorCloud?: unknown;
   grok?: unknown;
+  grokBot?: unknown;
+  local?: unknown;
 }
 
 function chosen(lane: UsageSensorLane, reading: UsageSensorReading | null, nowMs: number): UsageSensorReading {
@@ -151,12 +205,20 @@ function chosen(lane: UsageSensorLane, reading: UsageSensorReading | null, nowMs
 /** Build one reading per lane from official payloads already in hand. */
 export function refreshUsageSensors(input: UsageSensorRefreshInput): UsageSensorReading[] {
   const nowMs = input.nowMs;
-  return [
-    chosen('devin', input.devin ? parseDevinDailyAcu(input.devin.daily, input.devin.limit, nowMs) : null, nowMs),
-    chosen('codex-cmp', input.codexCmp === undefined ? null : parseCodexSensor('codex-cmp', input.codexCmp, nowMs), nowMs),
-    chosen('codex-personal', input.codexPersonal === undefined ? null : parseCodexSensor('codex-personal', input.codexPersonal, nowMs), nowMs),
-    chosen('claude-max', input.claude === undefined ? null : parseClaudeSensor(input.claude, nowMs), nowMs),
-    chosen('grok-ultra', input.grok === undefined ? null : parseGrokSensor(input.grok, nowMs), nowMs),
-    chosen('terra', null, nowMs),
-  ];
+  const produced = new Map<UsageSensorReading['lane'], UsageSensorReading>([
+    ['devin', chosen('devin', input.devin ? parseDevinDailyAcu(input.devin.daily, input.devin.limit, nowMs) : null, nowMs)],
+    ['devin-swe-flash', chosen('devin-swe-flash', input.devinSweFlash === undefined ? null : parseDevinIncluded('devin-swe-flash', input.devinSweFlash, nowMs), nowMs)],
+    ['devin-weekly', chosen('devin-weekly', input.devinWeekly === undefined ? null : parseDevinIncluded('devin-weekly', input.devinWeekly, nowMs), nowMs)],
+    ['codex-cmp', chosen('codex-cmp', input.codexCmp === undefined ? null : parseCodexSensor('codex-cmp', input.codexCmp, nowMs), nowMs)],
+    ['codex-personal', chosen('codex-personal', input.codexPersonal === undefined ? null : parseCodexSensor('codex-personal', input.codexPersonal, nowMs), nowMs)],
+    ['dot', chosen('dot', input.dot === undefined ? null : parseOfficialPercent('dot', input.dot, nowMs), nowMs)],
+    ['claude-max', chosen('claude-max', input.claude === undefined ? null : parseClaudeSensor(input.claude, nowMs), nowMs)],
+    ['claude-api', chosen('claude-api', input.claudeApi === undefined ? null : parseClaudeApiBalance(input.claudeApi, nowMs), nowMs)],
+    ['cursor-cloud', chosen('cursor-cloud', input.cursorCloud === undefined ? null : parseOfficialPercent('cursor-cloud', input.cursorCloud, nowMs), nowMs)],
+    ['grok-ultra', chosen('grok-ultra', input.grok === undefined ? null : parseGrokSensor(input.grok, nowMs), nowMs)],
+    ['grok-bot', chosen('grok-bot', input.grokBot === undefined ? null : parseOfficialPercent('grok-bot', input.grokBot, nowMs), nowMs)],
+    ['local', chosen('local', input.local === undefined ? null : parseLocalThroughput(input.local, nowMs), nowMs)],
+    ['terra', chosen('terra', null, nowMs)],
+  ]);
+  return [...produced.values()];
 }
