@@ -220,7 +220,7 @@ describe('handleUsageResourcesApi', () => {
       expect(await handleApi({ url: USAGE_RESOURCES_PATH, method: 'GET' } as IncomingMessage,
         res, cfg(), { ...ctx(), usageResourcesApi: handleUsageResourcesApi })).toBe(true);
       expect(status).toBe(200);
-      expect(JSON.parse(body)).toEqual(snapshot);
+      expect(JSON.parse(body)).toEqual({ ...snapshot, pace: expect.objectContaining({ v: 1, pools: expect.any(Array) }) });
     } finally {
       setUsageResourcesReadForTest(null);
     }
