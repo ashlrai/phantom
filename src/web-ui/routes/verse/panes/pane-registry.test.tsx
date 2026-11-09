@@ -159,6 +159,20 @@ describe('a pane\'s own shortcut', () => {
     expect(matchPaneShortcut(press('t', { meta: true }), 'mac')).toBeNull();
   });
 
+  it('keeps refusing catalog keys on every registration (the catalog map is built once, not per publish)', () => {
+    const entries = vi.spyOn(Object, 'entries');
+    try {
+      for (let i = 0; i < 12; i += 1) registerPane(pane({ id: `bulk-${i}`, title: `Bulk ${i}`, shortcut: i % 2 ? 'mod+k' : `mod+alt+${String.fromCharCode(97 + i)}` }));
+      const walkedCatalog = entries.mock.calls.filter(([o]) => o === COMMAND_KEYS).length;
+      expect(walkedCatalog).toBeLessThanOrEqual(1);
+    } finally {
+      entries.mockRestore();
+    }
+    expect(getPane('bulk-1')!.shortcut).toBeNull();
+    expect(getPane('bulk-0')!.shortcut).not.toBeNull();
+    expect(shortcutProblem('mod+k', 'x')).toMatch(/already palette\.open/);
+  });
+
   it('is refused — the pane still registers, keyless — on any collision', () => {
     expect(shortcutProblem('mod+k', 'x')).toMatch(/already palette\.open/);
     expect(shortcutProblem('mod+shift+e', 'x')).toMatch(/already composer\.effort/);
