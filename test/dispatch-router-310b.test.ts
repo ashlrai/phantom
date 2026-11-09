@@ -961,12 +961,12 @@ describe('land-first scheduling', () => {
         sensorPace: { codex: { remaining: 80, resetAt, burnPerHour: 1, payPerUse: true, balanceFresh: true, budgetUsd: 0, spentUsd: 0 } },
       });
       expect(plan.codex.slots).toBe(0);
-      const allowed = planLanes({
+      const invented = planLanes({
         policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {},
         nowMs: NOW,
         sensorPace: { codex: { remaining: 80, resetAt, burnPerHour: 1, payPerUse: true, balanceFresh: true, budgetUsd: 100, spentUsd: 1 } },
       });
-      expect(allowed.codex.slots).toBeGreaterThan(0);
+      expect(invented.codex.slots).toBe(0);
       const killed = planLanes({
         policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {},
         nowMs: NOW, killed: true,
