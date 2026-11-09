@@ -891,3 +891,21 @@ change does not install it. Rates compare against the oldest retained reading;
 missing or timed-out directory measurements are omitted, and a null projection
 means there is not yet evidence of a positive disk burn rate. Directory sizes
 overlap: worktree totals include their `node_modules` and `target` directories.
+
+### Read merge latency
+
+Run `python3 contrib/mac/merge-latency.py --jobs jobs.jsonl` for JSON evidence
+(`merge-latency.v1`). Optional `--now <ISO timestamp>` makes replays repeatable;
+`--stale-hours 24` sets the inactivity threshold. This offline CLI reads only the
+supplied ledger; it never requests merges or bypasses required checks.
+
+Queue-to-merge seconds use nearest-rank p50/p90/p95/p99 for jobs with exactly one
+queued and one merged observation. Exact duplicate rows count once. Missing,
+reversed, future, repeated-attempt or conflicting boundaries remain unmeasured;
+empty percentiles are null. Use attempt-specific job IDs. Blocking seconds sum
+explicit HELD/BLOCKED reason intervals until the next timestamped observation
+(or now for unresolved jobs); unobserved time is not inferred. Candidates flag
+PRs with stale observations, conflicting outcomes/PR identities or a latest
+CONFLICTING mergeability observation. These are investigation candidates, not
+merge eligibility decisions. Inputs support job/jobId/job_id, ts/timestamp/at,
+state/outcome/status and prUrl/url/pr; reconciled mergedAt/closedAt take priority.
