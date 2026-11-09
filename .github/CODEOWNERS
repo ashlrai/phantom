@@ -374,6 +374,7 @@
 /test/fixtures/fleet-graph/router-queue.md @masonwyatt23
 /test/fixtures/m454/agent-skills-ff2df4c.provenance.json @masonwyatt23
 /test/fixtures/m518/visionquality-gate-robustness-false-positive-mer-c9c62c.json.b64 @masonwyatt23
+/test/fixtures/queue-lint/router-queue.md @masonwyatt23
 /test/fixtures/queue/router-queue-live.md @masonwyatt23
 /test/fixtures/queue/router-queue.md @masonwyatt23
 /test/fixtures/radar-local-bench/routing.json @masonwyatt23

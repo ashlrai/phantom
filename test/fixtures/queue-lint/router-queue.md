@@ -1,0 +1,5 @@
+- CLAIMED 12:00 dispatchd RQ-ONE (repo=phantom): Work
+- DONE RQ-TWO (repo=phantom): Work
+- READY RQ-ONE (queued=2026-01-01T00:00:00Z): Work
+- READY RQ-TWO (queued=2026-01-01T02:30:00Z): Work
+- READY RQ-UNKNOWN (repo=phantom): Work

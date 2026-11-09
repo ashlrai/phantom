@@ -3,7 +3,8 @@ import { queueReportFromText } from '../core/queue-metrics.js';
 import { readQueueVisits } from '../core/queue/journal.js';
 import { estimateQueueStats } from '../core/queue/stats.js';
 
-const HELP = `Usage: phm queue stats [--json] [--window <seconds>]
+const HELP = `Usage: phm queue lint [--json]
+       phm queue stats [--json] [--window <seconds>]
        phm queue report --events <file> [--json]
        phm queue add|claim|done|block|replay|list|import|export [options]
 
@@ -90,6 +91,7 @@ export async function cmdQueue(args: string[]): Promise<number> {
     return (await import('./job-queue.js')).cmdJobQueue(args);
   }
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) { console.log(HELP); return 0; }
+  if (args[0] === 'lint') return (await import('./queue-lint.js')).cmdQueueLint(args.slice(1));
   if (args[0] === 'stats') return cmdQueueStats(args);
   if (args[0] === 'report') return cmdQueueReport(args);
   console.error(HELP);

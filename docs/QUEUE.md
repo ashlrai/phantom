@@ -266,3 +266,14 @@ repository, original items and combined prompt), `excluded` (id, precheck code
 and reason), `held` (ids waiting for enough items), and `invalid` (admission
 lint drops). Groups smaller than six wait for more work. No candidate task text
 is executed by the planner. The planner does not install or change host scripts.
+
+### Check the local queue
+
+Run `phm queue lint --json` for a read-only report. `duplicates` lists READY
+rows after an earlier CLAIMED or DONE row in `router-queue.md`; `invalid` lists
+`ready.tsv` rows that fail dispatcher checks on this machine. Line numbers refer
+to their respective files. `old` lists READY rows with an explicit timezone-aware
+`queued`, `queued_at`, `created`, or `created_at` timestamp over two hours old.
+Rows without one unambiguous, valid timestamp are in `unknownAge`. The command
+reads `$ASHLR_RUNS_DIR/queue` (default `~/.ashlr-runs/queue`), does not change
+files, and cannot reconstruct the dispatcher's earlier tick or unrecorded ages.
