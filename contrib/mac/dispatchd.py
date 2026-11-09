@@ -10,6 +10,11 @@
 import os, re, json, time, fcntl, subprocess, glob, math
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
 WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
+# A kernel-held claim serializes the complete tick, including liveness sampling and
+# queue reconciliation. It is released automatically if the dispatcher crashes.
+_tick_claim = open(Q + "/dispatchd.tick.lock", "a")
+try: fcntl.flock(_tick_claim, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError: raise SystemExit(0)
 NOW = time.time(); TS = time.strftime("%F %T")
 MAX_LAUNCH_PER_TICK = 4; GRACE = 120; RAISE_GAP = 120
 LANES = ["codex-cmp", "codex-personal", "claude", "devin", "claude-api", "codex-local"]   # tie-break order: cmp first
@@ -478,8 +483,8 @@ for line in ps.splitlines():
     for p in (pat_wt, pat_pr, pat_ln):
         m = p.search(line)
         if m: alive.add(m.group(1))
-claude_live = any(rd(x).split()[3:4] in (["claude"], ["claude-api"]) and os.path.isdir(rd(x).split()[2]) for x in glob.glob(R + "/*.base"))
-if claude_live:
+worker_worktrees = any(len(rd(x).split()) >= 4 and os.path.isdir(rd(x).split()[2]) for x in glob.glob(R + "/*.base"))
+if worker_worktrees:
     lo_result = _run(["lsof", "-nP", "-w", "-d", "cwd", "-Fn"], 20)
     if lo_result.returncode or not lo_result.stdout.strip():
         jsave(Q + "/process-snapshot.json", {"observed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -492,7 +497,7 @@ if claude_live:
             if m: cwdjobs.add(m.group(1))
 for j in cwdjobs:
     b = rd("%s/%s.base" % (R, j)).split()
-    if len(b) >= 4 and b[3] in ("claude", "claude-api"): alive.add(j)
+    if len(b) >= 4: alive.add(j)
 reaping = {os.path.basename(p)[:-8] for p in glob.glob(RUN + "/*.reaping")}
 publish_processes = set(publishing)   # a publisher may remove .base before its final auto-merge call
 publishing = {j for j in publishing if os.path.exists("%s/%s.base" % (R, j))}
@@ -584,6 +589,10 @@ for p in glob.glob(RUN + "/*.dispatched"):
     elif re.search(r"^SKIPPED: BRANCH_IN_WORKTREE", out, re.M):
         ev("LAUNCH_SKIPPED %s BRANCH_IN_WORKTREE (not a failure, not requeued; see %s.launch)" % (j, j))
         release_batch(j, "launch skipped")
+    elif not out.strip() and not base(j):
+        ln = rd(RUN + "/" + j + ".line").strip()
+        if ln: requeue.append(ln)
+        ev("LAUNCH_INTERRUPTED %s (requeued)" % j)
     else:
         ev("LAUNCH_FAILED %s (see %s.launch)" % (j, j))
         if FORK_RX.search(out): fork_seen.append(NOW); ev("FORK_FAILED %s (concurrency backoff)" % j)
@@ -1160,6 +1169,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             try: os.remove(RUN + "/" + j + x)
             except FileNotFoundError: pass
         open(RUN + "/" + j + ".line", "w").write(line + "\n")
+        open("%s/%s.launch" % (R, j), "w").close()  # discard the previous attempt before claiming
         open(RUN + "/" + j + ".dispatched", "w").write(str(int(NOW)))
         metric({"event": "claim", "job": j, "repo": repo, "lane": lane, "tier": tier})
         env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG") if k in os.environ}
