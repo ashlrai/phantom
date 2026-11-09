@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Explore six resource categories and open Connect Resources on your own computer.">
+<link rel="canonical" href="https://verse.ashlr.ai/connect">
+<link rel="icon" href="/assets/phantom-mark.svg" type="image/svg+xml">
+<title>Connect Resources | Phantom</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f2f4f8;color:#101b29;font:16px/1.6 system-ui,sans-serif}main,header,footer{max-width:1080px;margin:auto;padding:1.5rem}a{color:#4338ca}a:focus-visible{outline:3px solid #4338ca;outline-offset:4px}header{display:flex;justify-content:space-between;gap:1rem}header a{font-weight:700;text-decoration:none}.hero{padding:3rem 0}h1{font-size:clamp(2.5rem,7vw,4.5rem);line-height:1.05;letter-spacing:-.04em;max-width:16ch;margin:.5rem 0 1rem}.lead{font-size:1.2rem;max-width:60ch;color:#465469}.button{display:inline-block;background:#4338ca;color:white;border-radius:.5rem;padding:.8rem 1.2rem;font-weight:700;text-decoration:none}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,290px),1fr));gap:1rem}.card{background:white;border:1px solid #d6dde8;border-radius:.8rem;padding:1.4rem}.card h2{margin:.25rem 0;font-size:1.3rem}.step{color:#5045b9;font-weight:700;font-size:.85rem;text-transform:uppercase}.badges{display:flex;flex-wrap:wrap;gap:.5rem;padding:0;list-style:none}.badges li{border:1px solid #d6dde8;border-radius:2rem;padding:.2rem .7rem;font-size:.9rem}pre{background:#101b29;color:white;border-radius:.5rem;padding:1rem;overflow:auto}footer{color:#465469}
+</style>
+</head>
+<body>
+<header><a href="/">Phantom</a><a href="https://github.com/ashlrai/phantom/blob/master/docs/QUICKSTART.md">Quickstart</a></header>
+<main>
+<section class="hero">
+<p>YOUR RESOURCES, ON YOUR COMPUTER</p>
+<h1>Connect resources to Phantom</h1>
+<p class="lead">Explore the tools, models and computers available to your local workbench. Choose what works for you, one step at a time.</p>
+<a class="button" href="http://127.0.0.1:7777/next/#/connect">Open Connect Resources</a>
+<p>Start Phantom on this computer first. The link uses the default local port; if you chose another port, open <code>/next/#/connect</code> on that server instead.</p>
+</section>
+<section aria-labelledby="steps"><h2 id="steps">Six resource categories</h2>
+<div class="grid">
+<article class="card"><span class="step">Step 1</span><h2>Subscriptions</h2><p>Explore coding tools you already use and record your plan locally.</p><ul class="badges"><li>Codex</li><li>Claude Code</li><li>Devin</li><li>Cursor</li><li>Gemini CLI</li></ul></article>
+<article class="card"><span class="step">Step 2</span><h2>API keys</h2><p>Explore model providers for API access.</p><ul class="badges"><li>OpenAI</li><li>Anthropic</li><li>Google</li><li>Grok / xAI</li></ul></article>
+<article class="card"><span class="step">Step 3</span><h2>Local models</h2><p>Run models on your own hardware.</p><ul class="badges"><li>oMLX</li><li>LM Studio</li><li>Ollama</li></ul></article>
+<article class="card"><span class="step">Step 4</span><h2>This computer</h2><p>Use the computer running Phantom.</p></article>
+<article class="card"><span class="step">Step 5</span><h2>Cloud computer</h2><p>Explore remote computing resources.</p></article>
+<article class="card"><span class="step">Step 6</span><h2>Proactive agents</h2><p>See agents scheduled on this computer.</p></article>
+</div></section>
+<section aria-labelledby="install"><h2 id="install">Get started</h2><p>Install Phantom with Node.js 22.15.0 or newer, then start the local console:</p><pre><code>npm install -g @ashlr/phantom
+phm verse</code></pre><p>This public page does not accept keys or credentials. Follow the local console and provider instructions to set up your resources.</p></section>
+</main><footer><a href="https://github.com/ashlrai/phantom/blob/master/docs/QUICKSTART.md">Read the Quickstart</a> | <a href="/">Phantom home</a></footer>
+</body></html>

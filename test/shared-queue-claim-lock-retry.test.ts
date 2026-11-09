@@ -15,6 +15,8 @@ import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { verifiedProcessStartIdentity } from '../src/core/fleet/local-store-lock.js';
+import type { WorkItem } from '../src/core/types.js';
+import { SharedWorkQueueCoordinator } from '../src/core/seams/work-queue-coordinator.js';
 import { SharedStore } from '../src/core/fleet/shared-store.js';
 
 let dir: string;
@@ -189,4 +191,39 @@ describe('SharedStore stale lock left with a crashed holder\'s guard link', () =
     expect(seen).toMatchObject({ host: hostname(), pid: process.pid });
     expect(leftovers()).toEqual([]);
   });
+});
+
+describe('cross-lane launch claims and abandoned workers', () => {
+  it('atomically claims duplicate lane candidates once and fences an abandoned generation', () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000);
+    const deadWorker = new SharedStore(dir, 1_000);
+    const lanes = [
+      { candidateIds: ['same-job', 'same-job'], limit: 2 },
+      { candidateIds: ['same-job'], limit: 1 },
+    ];
+    const [abandoned] = deadWorker.claimLeasesByLane(lanes, 3, 'worker-A');
+    expect(abandoned).toBeDefined();
+    const survivor = new SharedStore(dir, 1_000);
+    expect(survivor.claimLeasesByLane(lanes, 3, 'worker-B')).toEqual([]);
+    // The original worker dies without release; a fresh store recovers only
+    // after its pre-execution lease expires, irrespective of the chosen lane.
+    clock.mockReturnValue(1_800_000_001_001);
+    const recovered = survivor.claimLeasesByLane(lanes.toReversed(), 3, 'worker-B');
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]!.epoch).toBeGreaterThan(abandoned!.epoch);
+    expect(deadWorker.renewClaims([abandoned!])).toEqual([]);
+    expect(deadWorker.releaseClaims([abandoned!])).toEqual([]);
+    expect(survivor.validateClaims(recovered)).toHaveLength(1);
+  });
+});
+
+it('does not expand one durable claim into duplicate dispatch candidates', () => {
+  const coordinator = new SharedWorkQueueCoordinator(new SharedStore(dir), 'worker', 30_000, true);
+  const item: WorkItem = {
+    id: 'duplicate', title: 'One launch', goal: 'Deduplicate', repo: '/fixture',
+    effort: 2, source: 'backlog', tags: [], createdAt: '2026-01-01T00:00:00.000Z',
+  };
+  const claimed = coordinator.claimItemsWithGenerations([item, { ...item }], 2, 'worker');
+  expect(claimed).toHaveLength(1);
+  expect(claimed[0]!.item).toBe(item);
 });

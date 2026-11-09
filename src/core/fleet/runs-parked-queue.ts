@@ -1,8 +1,8 @@
 /** Read-only, bounded projection of dispatchd's queue and precheck log. */
 import { constants } from 'node:fs';
-import { lstat, open, readFile } from 'node:fs/promises';
+import { lstat, open, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, resolve, sep } from 'node:path';
 import { parseReadyTsv } from './lane-console.js';
 import { scrubSecrets } from '../util/scrub.js';
 
@@ -158,7 +158,7 @@ export async function readSource(path: string, max: number, tail: boolean): Prom
   } finally { await file?.close().catch(() => undefined); }
 }
 
-export async function readFleetQueue(opts: { runsDir?: string; now?: () => number; limit?: number } = {}): Promise<FleetQueueV1> {
+export async function readFleetQueue(opts: { runsDir?: string; now?: () => number; limit?: number; onWaitingJob?: (lane: string, id: string) => void } = {}): Promise<FleetQueueV1> {
   const now = (opts.now ?? Date.now)();
   const root = opts.runsDir ?? join(homedir(), '.ashlr-runs');
   const [readySource, skipsSource] = await Promise.all([
@@ -230,6 +230,7 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     const parkedState = statusParked.parked ? statusParked : poolParked;
     if (!row.id || !JOB_ID.test(row.id) || (!parkedState.parked && row.status !== 'READY')) { malformed++; continue; }
     const lane = (parkedState.parked ? parkedState.lane : null) ?? row.pool;
+    opts.onWaitingJob?.(lane, row.id);
     const counts = lanes.get(lane) ?? { lane, ready: 0, parked: 0, phantom: 0, other: 0, otherRepos: new Set<string>() };
     lanes.set(lane, counts);
     if (!parkedState.parked) {
@@ -280,23 +281,100 @@ async function readUnmetDeps(
   if (depPromptByJob.size === 0) return [];
   const mergedSource = await readSource(join(root, 'metrics', 'jobs.jsonl'), MAX_JOBS_JSONL, true);
   const merged = mergedJobsFromJsonl(mergedSource.text);
+  const realRoot = await realpath(root).then(
+    (real) => (real.endsWith(sep) ? real : real + sep),
+    () => null,
+  );
   const rows: ParkedUnmetDep[] = [];
   for (const [job, meta] of [...depPromptByJob.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
     let ids: string[] = [];
-    if (meta.promptPath) {
-      try {
-        // Prefer queue-relative prompts under the runs dir; absolute paths must stay inside it.
-        const abs = meta.promptPath.startsWith('/') ? meta.promptPath : join(root, 'queue', meta.promptPath);
-        const normalizedRoot = root.endsWith('/') ? root : `${root}/`;
-        if (abs === root || abs.startsWith(normalizedRoot) || abs.startsWith(join(root, 'queue'))) {
-          const text = await readFile(abs, 'utf8');
-          ids = parseDependencyGateIds(text.slice(0, MAX_PROMPT));
-        }
-      } catch { ids = []; }
+    if (meta.promptPath && realRoot) {
+      const text = await readDepPrompt(root, realRoot, meta.promptPath);
+      if (text !== null) ids = parseDependencyGateIds(text);
     }
     const unmet = ids.filter((id) => !merged.has(id));
     if (unmet.length === 0) continue;
     rows.push({ job, lane: meta.lane, unmet });
+    if (rows.length >= 50) break;
   }
-  return rows.slice(0, 50);
+  return rows;
+}
+
+/**
+ * Path whose realpath reports an open descriptor's own location, where the OS
+ * provides one. Linux /proc/self/fd entries are symlinks to the pinned inode's
+ * path, so a swapped directory symlink cannot relabel what open() captured.
+ * macOS /dev/fd nodes are character devices whose realpath yields only a
+ * basename and Windows has no descriptor path; on both, the canonical re-open
+ * below carries the containment proof instead.
+ */
+function descriptorPath(fd: number): string | null {
+  return process.platform === 'linux' || process.platform === 'android'
+    ? `/proc/self/fd/${fd}`
+    : null;
+}
+
+/**
+ * Read at most MAX_PROMPT bytes of a DEP prompt that must stay physically
+ * inside the runs dir. Absolute paths are normalized before the lexical
+ * containment check, and the open uses O_NOFOLLOW so a symlinked final
+ * component is refused. Containment is then proven against the held
+ * descriptor, not the name — realpath() and lstat() re-walk a mutable
+ * namespace, so a flipped intermediate symlink could present "inside" to the
+ * checks while open() and the read land outside:
+ *
+ *   - where the kernel reports an fd's path (Linux /proc/self/fd), the
+ *     descriptor's own location must sit beneath the root;
+ *   - everywhere, the canonical spelling of the path — which carries no
+ *     symlinks — is re-opened and must name the same inode the descriptor
+ *     pinned. A flip can steer open() or realpath(), but cannot make the
+ *     canonical name resolve to the same outside inode;
+ *   - an observed name or namespace change discards the read.
+ *
+ * Node has no portable descriptor-relative openat(2) or F_GETPATH, so a
+ * same-user attacker renaming real directories underneath the tree can still
+ * race the probes; the before/after checks make those swaps observable and
+ * fail closed, matching the rest of the tree's acknowledged limit.
+ */
+async function readDepPrompt(root: string, realRootWithSep: string, promptPath: string): Promise<string | null> {
+  const resolved = isAbsolute(promptPath) ? resolve(promptPath) : resolve(root, 'queue', promptPath);
+  const rootAbs = resolve(root);
+  const rootWithSep = rootAbs.endsWith(sep) ? rootAbs : rootAbs + sep;
+  if (!resolved.startsWith(rootWithSep)) return null;
+  const noFollow = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0;
+  const nonBlock = typeof constants.O_NONBLOCK === 'number' ? constants.O_NONBLOCK : 0;
+  let file: Awaited<ReturnType<typeof open>> | undefined;
+  let canonical: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    file = await open(resolved, constants.O_RDONLY | noFollow | nonBlock);
+    const opened = await file.stat();
+    if (!opened.isFile()) return null;
+    const fdPath = descriptorPath(file.fd);
+    if (fdPath !== null) {
+      const fdReal = await realpath(fdPath).then((value) => value, () => null);
+      if (fdReal !== null && !fdReal.startsWith(realRootWithSep)) return null;
+    }
+    const real = await realpath(resolved);
+    if (!real.startsWith(realRootWithSep)) return null;
+    canonical = await open(real, constants.O_RDONLY | noFollow | nonBlock);
+    const rebound = await canonical.stat();
+    if (!rebound.isFile() || rebound.dev !== opened.dev || rebound.ino !== opened.ino) return null;
+    const size = Math.min(opened.size, MAX_PROMPT);
+    const buffer = Buffer.alloc(size);
+    let length = 0;
+    while (length < size) {
+      const { bytesRead } = await file.read(buffer, length, size - length, length);
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    const named = await lstat(resolved);
+    const realAfter = await realpath(resolved).then((value) => value, () => '');
+    if (named.isSymbolicLink() || !named.isFile() || named.dev !== opened.dev || named.ino !== opened.ino ||
+        realAfter !== real) return null;
+    return buffer.subarray(0, length).toString('utf8');
+  } catch { return null; }
+  finally {
+    await file?.close().catch(() => undefined);
+    await canonical?.close().catch(() => undefined);
+  }
 }

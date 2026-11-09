@@ -28,14 +28,17 @@
  *   loudly instead of the suite quietly writing through the isolation boundary.
  */
 import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { enableCompileCache } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
-import { vi } from 'vitest';
+import { beforeEach, vi } from 'vitest';
+import { useProcessHomeForTest } from '../../src/core/real-home.js';
 
 const workerHomeKey = 'ASHLR_VITEST_WORKER_HOME';
 const workerPidKey = 'ASHLR_VITEST_WORKER_PID';
 const realHomeKey = 'ASHLR_VITEST_REAL_HOME';
 const workerHomeParentKey = 'ASHLR_VITEST_HOME_PARENT';
+const workerCompileCacheKey = 'ASHLR_VITEST_COMPILE_CACHE';
 let workerHome = process.env[workerHomeKey];
 
 export function resolveWorkerHomeParent(
@@ -78,6 +81,34 @@ if (!workerHome || process.env[workerPidKey] !== String(process.pid)) {
   workerHome = realpathSync(mkdtempSync(join(resolveWorkerHomeParent(), 'ashlr-vitest-home-')));
   process.env[workerHomeKey] = workerHome;
   process.env[workerPidKey] = String(process.pid);
+  // Compile-cache beside (not inside) the worker home: tests snapshot homedir()
+  // to prove fixtures untouched, so cache entries must not land there. The many
+  // Node children tests spawn (tsx CLI fixtures, `node -e` probes) then reuse V8
+  // code cache instead of recompiling the same modules per child. Tests needing
+  // a guaranteed cold child keep their explicit NODE_DISABLE_COMPILE_CACHE.
+  if (!process.env['NODE_DISABLE_COMPILE_CACHE']) {
+    const compileCache = realpathSync(mkdtempSync(join(resolveWorkerHomeParent(), 'ashlr-vitest-ncc-')));
+    process.env[workerCompileCacheKey] = compileCache;
+    try {
+      enableCompileCache(compileCache);
+    } catch {
+      // Compile cache is an optimization only; never let it gate a test run.
+    }
+    const cacheIdentity = lstatSync(compileCache);
+    process.once('exit', () => {
+      try {
+        const current = lstatSync(compileCache);
+        if (current.isDirectory() && !current.isSymbolicLink()
+          && current.dev === cacheIdentity.dev && current.ino === cacheIdentity.ino
+          && current.uid === cacheIdentity.uid
+          && realpathSync(compileCache) === compileCache) {
+          rmSync(compileCache, { recursive: true, force: true });
+        }
+      } catch {
+        // Process shutdown must not turn best-effort cleanup into a failure.
+      }
+    });
+  }
   const homeToRemove = workerHome;
   const homeIdentity = lstatSync(homeToRemove);
   process.once('exit', () => {
@@ -100,6 +131,12 @@ process.env.USERPROFILE = workerHome;
 process.env.ASHLR_HOME = join(workerHome, '.ashlr');
 // Hermetic: fleet-truth never shells out to the real `gh` from a test (tests inject a runner).
 process.env.ASHLR_FLEET_TRUTH_GH = 'off';
+// Reassert per module like HOME: a child that inherits this env gets the
+// worker-private compile cache; an explicit NODE_DISABLE_COMPILE_CACHE in a
+// child's own env still wins (Node gives the disable flag priority).
+if (process.env[workerCompileCacheKey] && !process.env['NODE_DISABLE_COMPILE_CACHE']) {
+  process.env['NODE_COMPILE_CACHE'] = process.env[workerCompileCacheKey];
+}
 // HOME does not override explicit XDG locations inherited from the shell.
 // Reassert these for every module, just like HOME, including for subprocesses.
 for (const [key, name] of Object.entries({
@@ -159,11 +196,30 @@ function guardedHomedir(): string {
   return raw;
 }
 
+function accountHomedir(): string {
+  // The passwd home is stable for this worker. It does not follow a later
+  // HOME change, matching os.userInfo().homedir outside the test harness.
+  return workerHome as string;
+}
+
 vi.mock('node:os', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:os')>();
+  const userInfo = ((options?: { encoding?: 'utf8' | 'buffer' }) => {
+    const info = actual.userInfo(options as { encoding: 'buffer' });
+    const home = accountHomedir();
+    return { ...info, homedir: options?.encoding === 'buffer' ? Buffer.from(home) : home };
+  }) as typeof actual.userInfo;
   return {
     ...actual,
     homedir: guardedHomedir,
-    default: { ...actual.default, homedir: guardedHomedir },
+    userInfo,
+    default: { ...actual.default, homedir: guardedHomedir, userInfo },
   };
+});
+
+beforeEach(() => {
+  // Fixtures relocate HOME and expect KILL, enrollment and pause to follow.
+  // Production realHome() stays on the passwd entry; a test that must prove
+  // that calls useAccountHomeForTest().
+  useProcessHomeForTest();
 });

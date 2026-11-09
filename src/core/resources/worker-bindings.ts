@@ -66,3 +66,18 @@ export function validateResourceBindings(value: unknown, pool: ResourcePool): Re
   }
   return Object.freeze(result) as ResourceBinding[];
 }
+
+/**
+ * The custody-approved environment a bound worker subprocess may inherit.
+ * HOME is copied unchanged. Account-specific auth belongs to the explicit
+ * wrapper; no API keys, proxy, loader, or account-switching variables pass.
+ * Lives with the binding schema so the custody shape stays beside the data
+ * it protects and light probes need not load the worker dispatch graph.
+ */
+export function workerEnvironment(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of ['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL']) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  return env;
+}

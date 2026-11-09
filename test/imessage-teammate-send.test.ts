@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -55,6 +55,17 @@ describe('agent teammate iMessage outbox', () => {
   });
   it.each(['{', '{}', 'null', '[null, {}, {"kind":"agent","handle":7}]'])('fails closed for malformed registry %s', async (data) => {
     writeFileSync(registry, data);
+    expect(await sendIMessageOutbox('reply', cfg, agent)).toEqual({ ok: false, reason: 'drafts_unavailable' });
+    expect(execFile).not.toHaveBeenCalled();
+  });
+  it('refuses a registry that is a symlink or oversized', async () => {
+    const target = join(home, 'elsewhere.json');
+    writeFileSync(target, JSON.stringify([{ kind: 'agent', handle: agent }]));
+    symlinkSync(target, registry);
+    expect(await sendIMessageOutbox('reply', cfg, agent)).toEqual({ ok: false, reason: 'drafts_unavailable' });
+    rmSync(registry);
+    // Valid matching entry padded past the cap: the size bound is what refuses it.
+    writeFileSync(registry, `[{"kind":"agent","handle":"${agent}"},"${'x'.repeat(64 * 1024)}"]`);
     expect(await sendIMessageOutbox('reply', cfg, agent)).toEqual({ ok: false, reason: 'drafts_unavailable' });
     expect(execFile).not.toHaveBeenCalled();
   });

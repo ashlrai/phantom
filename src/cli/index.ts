@@ -14,6 +14,9 @@
  *   init [--yes]               Idempotent onboarding; NON-TTY safe with --yes.
  *   mcp [list|doctor|install]  MCP aggregation gateway and registry management.
  *   radar [list|run|diff]      Observe public documentation and package changes.
+ *   observe [--json]           Human observe snapshot: roster, sensors, pulls, bottlenecks.
+ *   growth [--json]            Growth chart series. Missing sources stay no-data-source.
+ *   world [--json]             Versioned world model for the scheduler and leaders.
  *   drafts [list|show|approve|reject]  Outbound drafts waiting for your approval.
  *   run "<goal>" [opts]        Local-first agent orchestrator; decompose & execute a goal.
  *   run show <id>              Print a past run in detail.
@@ -39,6 +42,7 @@
  *   cloud <launch|list|refresh|improve|budget|backlog>  Claude Code cloud sessions that deliver draft PRs (3.11).
  *   openai-agents <sessions|inspect|turns>  Read managed OpenAI Agents API metadata; no execution.
  *   benchmark run|--compare-reports  Local-agent trials or offline receipt comparison.
+ *   daily-fix <validate|filter|dispatch|parse-fixup>  Daily CI re-run: validate inputs, show filter, generate dispatch.
  *   devin <connect|status|launch|list|refresh|message|budget>  Devin sessions that deliver PRs through the gates (3.15).
  *   automations <list|templates|add|enable|disable|remove|fire>  Issues, red builds, schedules and webhooks become work (3.15).
  *   jev <status|test>          Jev typed decisions: status by kind, and one live test decision (3.15).
@@ -89,8 +93,10 @@ import type { AshlrConfig, AshlrIndex, IndexedItem, GitStatus, ToolsRegistry, Mc
 // exits 1. The fallback message format is identical across every command.
 
 type Cmd = (args: string[]) => Promise<number>;
-type GetToolsRegistryFn = () => ToolsRegistry;
-type DiscoverMcpServersFn = () => McpRegistry;
+// Probe invokers may return the registry or a promise of it; `await` unwraps
+// either so status stays agnostic about which variant the module offered.
+type GetToolsRegistryFn = () => Promise<ToolsRegistry> | ToolsRegistry;
+type DiscoverMcpServersFn = () => Promise<McpRegistry> | McpRegistry;
 
 /**
  * Build a lazy loader for a CLI command export.
@@ -142,8 +148,12 @@ let _discoverMcpServers: DiscoverMcpServersFn | null | undefined = undefined;
 async function tryGetToolsRegistry(): Promise<GetToolsRegistryFn | null> {
   if (_getToolsRegistry === undefined) {
     try {
-      const mod = await import('../core/tools-registry.js') as { getToolsRegistry: GetToolsRegistryFn };
-      _getToolsRegistry = mod.getToolsRegistry;
+      const mod = await import('../core/tools-registry.js') as {
+        getToolsRegistry: (opts: { parallel: true }) => Promise<ToolsRegistry>;
+      };
+      // The parallel variant overlaps every tool's which + --version probes;
+      // the serial variant made status wait on each probe in turn.
+      _getToolsRegistry = () => mod.getToolsRegistry({ parallel: true });
     } catch {
       _getToolsRegistry = null;
     }
@@ -154,8 +164,10 @@ async function tryGetToolsRegistry(): Promise<GetToolsRegistryFn | null> {
 async function tryDiscoverMcpServers(): Promise<DiscoverMcpServersFn | null> {
   if (_discoverMcpServers === undefined) {
     try {
-      const mod = await import('../core/mcp-registry.js') as { discoverMcpServers: DiscoverMcpServersFn };
-      _discoverMcpServers = mod.discoverMcpServers;
+      const mod = await import('../core/mcp-registry.js') as {
+        discoverMcpServersAsync: () => Promise<McpRegistry>;
+      };
+      _discoverMcpServers = () => mod.discoverMcpServersAsync();
     } catch {
       _discoverMcpServers = null;
     }
@@ -191,6 +203,12 @@ const loadBenchmarkCmd = lazyCmd(
   'benchmark command requires a current build of src/cli/benchmark.ts.',
 );
 
+
+const loadDailyFixCmd = lazyCmd(
+  () => import('./daily-fix.js'),
+  (m) => m.cmdDailyFix as Cmd,
+  'daily-fix command requires a current build of src/cli/daily-fix.ts.',
+);
 const loadSkillsCmd = lazyCmd(
   () => import('./skills.js' as unknown as string),
   (m) => m.cmdSkills as Cmd,
@@ -348,6 +366,11 @@ const loadDesktopCmd = lazyCmd(
 const loadAppsCmd = lazyCmd(
   () => import('./apps-control.js'), (m) => m.cmdApps as Cmd,
   'apps command requires src/cli/apps-control.ts.',
+);
+
+const loadDesktopctlCmd = lazyCmd(
+  () => import('./desktopctl.js'), (m) => m.cmdDesktopctl as Cmd,
+  'desktopctl command requires src/cli/desktopctl.ts.',
 );
 
 const loadDesktopUpdateCmd = lazyCmd(
@@ -652,6 +675,12 @@ const loadReleaseArticlesCmd = lazyCmd(
   'release-articles requires the release-backed content maintenance module.',
 );
 
+const loadReleaseCmd = lazyCmd(
+  () => import('./release.js'),
+  (m) => m.cmdRelease as Cmd,
+  'release status requires the release train module.',
+);
+
 // ─── H7 command loaders ─────────────────────────────────────────────
 // preflight + onboard, matching the reflect/health/seams/verify-safety/audit
 // loaders — see docs/contracts/CONTRACT-H7.md.
@@ -806,6 +835,12 @@ const loadAgentsCmd = lazyCmd(
   () => import('./agents-bus-contract.js'),
   (m) => m.runAgentsCli as Cmd,
   'agents command requires a current build of src/cli/agents-bus-contract.ts.',
+);
+
+const loadAgentsRosterCmd = lazyCmd(
+  () => import('./agents-roster.js'),
+  (m) => m.runAgentsRosterCli as Cmd,
+  'agents roster command requires a current build of src/cli/agents-roster.ts.',
 );
 
 // ─── 3.15 Automations ───────────────────────────────────────────────
@@ -1334,25 +1369,44 @@ async function cmdStatus(args: string[]): Promise<void> {
   );
   console.log('');
 
+  // Launch every best-effort probe and lazy import up front so module
+  // compilation and spawned children overlap the serial sections below.
+  // Printed order is unchanged — each promise is awaited at its own section
+  // and every failure resolves to null (status never breaks on a probe).
+  const toolsRegP = (async () => {
+    const fn = await tryGetToolsRegistry();
+    return fn ? await fn() : null;
+  })().catch(() => null);
+  const mcpRegP = (async () => {
+    const fn = await tryDiscoverMcpServers();
+    return fn ? await fn() : null;
+  })().catch(() => null);
+  const rollupFnP = tryBuildRollup();
+  const genomeModP = import('../core/genome/store.js' as unknown as string).catch(() => null);
+  const ghFnP = tryGithubStatus();
+  const vcFnP = tryVercelStatus();
+  const identityFnP = tryGetIdentity();
+  const custodyP = import('./status-custody.js').catch(() => null);
+  const preflightP = import('./status-preflight.js').catch(() => null);
+  const resourcesP = import('./resources.js' as unknown as string)
+    .then((m) => (m as { resourceStatusLine: (c: unknown) => Promise<string | null> }).resourceStatusLine(cfg))
+    .catch(() => null);
+
   // ── M3 Ecosystem summary (graceful degradation if modules not yet built) ──
-  const [getToolsRegistryFn, discoverMcpServersFn] = await Promise.all([
-    tryGetToolsRegistry(),
-    tryDiscoverMcpServers(),
-  ]);
+  const [toolsReg, mcpReg] = await Promise.all([toolsRegP, mcpRegP]);
 
   const ecosystemParts: string[] = [];
 
-  if (getToolsRegistryFn) {
+  if (toolsReg) {
     try {
-      const reg = getToolsRegistryFn();
-      const installedNames = reg.tools
+      const installedNames = toolsReg.tools
         .filter(t => t.installed)
         .map(t => t.id)
         .slice(0, 5); // show up to 5 names; remainder implied by count
-      const moreCount = reg.installedCount - installedNames.length;
+      const moreCount = toolsReg.installedCount - installedNames.length;
       const nameList = installedNames.join(', ') + (moreCount > 0 ? `, +${moreCount}` : '');
       ecosystemParts.push(
-        `${bold('Tools:')} ${cyan(`${reg.installedCount}/${reg.tools.length} installed`)}` +
+        `${bold('Tools:')} ${cyan(`${toolsReg.installedCount}/${toolsReg.tools.length} installed`)}` +
         (installedNames.length > 0 ? ` ${dim('—')} ${gray(nameList)}` : '')
       );
     } catch {
@@ -1360,15 +1414,10 @@ async function cmdStatus(args: string[]): Promise<void> {
     }
   }
 
-  if (discoverMcpServersFn) {
-    try {
-      const mcpReg = discoverMcpServersFn();
-      ecosystemParts.push(
-        `${bold('MCP servers:')} ${cyan(`${mcpReg.servers.length} discovered`)}`
-      );
-    } catch {
-      // silently skip on error
-    }
+  if (mcpReg) {
+    ecosystemParts.push(
+      `${bold('MCP servers:')} ${cyan(`${mcpReg.servers.length} discovered`)}`
+    );
   }
 
   if (ecosystemParts.length > 0) {
@@ -1378,7 +1427,7 @@ async function cmdStatus(args: string[]): Promise<void> {
 
   // ── M5 Activity summary (best-effort; silently skipped on error) ──────────
   try {
-    const buildRollupFn = await tryBuildRollup();
+    const buildRollupFn = await rollupFnP;
     if (buildRollupFn) {
       const rollup = buildRollupFn('7d', cfg);
       const t = rollup.totals;
@@ -1404,16 +1453,18 @@ async function cmdStatus(args: string[]): Promise<void> {
 
   // ── M7 Genome summary (best-effort; silently omitted on error) ────────────
   try {
-    const genomeMod = await import('../core/genome/store.js' as unknown as string) as {
+    const genomeMod = await genomeModP;
+    const health = (genomeMod as {
       genomeHealth: (cfg: AshlrConfig) => import('../core/types.js').GenomeHealth;
-    };
-    const health = genomeMod.genomeHealth(cfg);
-    console.log(
-      `  ${bold('Memory:')} ${cyan(`${health.totalEntries} genome entries`)} across ` +
-      `${cyan(`${health.projects} project${health.projects !== 1 ? 's' : ''}`)}` +
-      (health.embeddingsAvailable ? `  ${dim('·')}  ${gray('embeddings available')}` : '')
-    );
-    console.log('');
+    } | null)?.genomeHealth(cfg);
+    if (health) {
+      console.log(
+        `  ${bold('Memory:')} ${cyan(`${health.totalEntries} genome entries`)} across ` +
+        `${cyan(`${health.projects} project${health.projects !== 1 ? 's' : ''}`)}` +
+        (health.embeddingsAvailable ? `  ${dim('·')}  ${gray('embeddings available')}` : '')
+      );
+      console.log('');
+    }
   } catch {
     // silently omit — genome may not be built yet; never break status
   }
@@ -1425,7 +1476,7 @@ async function cmdStatus(args: string[]): Promise<void> {
 
   // GitHub: only surface when cwd is a gh repo
   try {
-    const ghStatusFn = await tryGithubStatus();
+    const ghStatusFn = await ghFnP;
     if (ghStatusFn) {
       const gs = ghStatusFn(cwd);
       if (gs.isRepo) {
@@ -1455,7 +1506,7 @@ async function cmdStatus(args: string[]): Promise<void> {
 
   // Vercel: only surface when a project is linked
   try {
-    const vcStatusFn = await tryVercelStatus();
+    const vcStatusFn = await vcFnP;
     if (vcStatusFn) {
       const vs = vcStatusFn(cwd);
       if (vs.linked) {
@@ -1473,7 +1524,7 @@ async function cmdStatus(args: string[]): Promise<void> {
 
   // Identity: only surface when phantom is logged in
   try {
-    const identityFn = await tryGetIdentity();
+    const identityFn = await identityFnP;
     if (identityFn) {
       const id = identityFn();
       if (id.loggedIn && id.user) {
@@ -1489,10 +1540,10 @@ async function cmdStatus(args: string[]): Promise<void> {
 
   // Custody: receipt.v1 and spawn custody counts (value-free; quiet when unused)
   try {
-    const { gatherCustodyStatus, formatCustodyStatusLine } = await import('./status-custody.js');
-    const custody = gatherCustodyStatus();
-    if (custody) {
-      console.log(`  ${bold('Custody:')} ${formatCustodyStatusLine(custody)}`);
+    const custodyMod = await custodyP;
+    const custody = custodyMod?.gatherCustodyStatus();
+    if (custodyMod && custody) {
+      console.log(`  ${bold('Custody:')} ${custodyMod.formatCustodyStatusLine(custody)}`);
       console.log('');
     }
   } catch {
@@ -1501,10 +1552,10 @@ async function cmdStatus(args: string[]): Promise<void> {
 
   // Phantom strict preflight: only when the spawn gate is on (value-free)
   try {
-    const { gatherPreflightStatus, formatPreflightStatusLine } = await import('./status-preflight.js');
-    const pre = gatherPreflightStatus();
-    if (pre) {
-      console.log(`  ${bold('Preflight:')} ${formatPreflightStatusLine(pre)}`);
+    const preMod = await preflightP;
+    const pre = preMod?.gatherPreflightStatus();
+    if (preMod && pre) {
+      console.log(`  ${bold('Preflight:')} ${preMod.formatPreflightStatusLine(pre)}`);
       console.log('');
     }
   } catch {
@@ -1512,17 +1563,10 @@ async function cmdStatus(args: string[]): Promise<void> {
   }
 
   // ── M253 Resource Control Plane summary (best-effort; never break status) ──
-  try {
-    const resourcesMod = await import('./resources.js' as unknown as string) as {
-      resourceStatusLine: (cfg: unknown) => Promise<string | null>;
-    };
-    const line = await resourcesMod.resourceStatusLine(cfg);
-    if (line) {
-      console.log(`  ${line}`);
-      console.log('');
-    }
-  } catch {
-    // silently omit — resource sensing never breaks the status command
+  const line = await resourcesP;
+  if (line) {
+    console.log(`  ${line}`);
+    console.log('');
   }
 }
 
@@ -2028,9 +2072,32 @@ async function main(): Promise<void> {
 
   try {
     switch (cmd) {
+      case 'chain': {
+        const { cmdChain } = await import('./chain.js');
+        process.exitCode = await cmdChain(rest);
+        break;
+      }
       case 'route': {
         const { cmdRoute } = await import('./route.js');
         process.exitCode = await cmdRoute(rest);
+        break;
+      }
+      case 'router': {
+        const { cmdRouter } = await import('./router.js');
+        process.exitCode = await cmdRouter(rest);
+        break;
+      }
+      case 'context': {
+        if (rest.includes('--for-agent')) {
+          process.exitCode = await (await import('./work-visibility.js')).cmdAgentContext(rest);
+          break;
+        }
+        const { cmdCompanyContext } = await import('./company-context.js');
+        cmdCompanyContext(rest);
+        break;
+      }
+      case 'claim': {
+        process.exitCode = await (await import('./work-visibility.js')).cmdWorkClaim(rest);
         break;
       }
       case 'router-calibration': {
@@ -2104,6 +2171,15 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'tune': {
+        process.exitCode = await (await import('./tune.js')).cmdTune(rest);
+        break;
+      }
+      case 'org': {
+        const { cmdOrg } = await import('./org.js');
+        process.exitCode = await cmdOrg(rest);
+        break;
+      }
       case 'team': {
         const { cmdTeam } = await import('./team.js');
         process.exitCode = await cmdTeam(rest);
@@ -2140,6 +2216,16 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'checkpoint': {
+        const { cmdCheckpoint } = await import('./checkpoint.js');
+        process.exitCode = await cmdCheckpoint(rest);
+        break;
+      }
+      case 'trail': {
+        const { cmdTrail } = await import('./trail.js');
+        process.exitCode = await cmdTrail(rest);
+        break;
+      }
       case 'sessions': {
         const { cmdSessions } = await import('./sessions.js');
         process.exitCode = await cmdSessions(rest);
@@ -2178,6 +2264,11 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'incident': {
+        process.exitCode = await (await import('./incident.js')).cmdIncident(rest);
+        break;
+      }
+
       case 'select': {
         process.exitCode = await (await import('./select.js')).cmdSelect(rest);
         break;
@@ -2188,6 +2279,11 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'daily-fix': {
+        const cmdDailyFix = await loadDailyFixCmd();
+        process.exitCode = await cmdDailyFix(rest);
+        break;
+      }
       case 'benchmark': {
         process.exitCode = await (await loadBenchmarkCmd())(rest);
         break;
@@ -2265,6 +2361,10 @@ async function main(): Promise<void> {
       }
       case 'apps': {
         process.exitCode = await (await loadAppsCmd())(rest);
+        break;
+      }
+      case 'desktopctl': {
+        process.exitCode = await (await loadDesktopctlCmd())(rest);
         break;
       }
       case 'desktop-update': {
@@ -2448,6 +2548,18 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'prs': {
+        const { cmdPrs } = await import('./prs.js');
+        process.exitCode = await cmdPrs(rest);
+        break;
+      }
+
+      case 'repos': {
+        const { cmdReposRank } = await import('./repos-rank.js');
+        process.exitCode = cmdReposRank(rest);
+        break;
+      }
+
       case 'fleet': {
         // M49: fleet control plane + observability — read-only `status`,
         // plus `pause`/`resume` (kill-switch only).
@@ -2594,6 +2706,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'engineering-receipt': {
+        const { cmdReceipt } = await import('./engineering-receipt.js');
+        process.exitCode = await cmdReceipt(rest);
+        break;
+      }
+
       case 'verify-safety': {
         const cmdVerifySafety = await loadVerifySafetyCmd();
         process.exitCode = await cmdVerifySafety(rest);
@@ -2609,6 +2727,12 @@ async function main(): Promise<void> {
       case 'release-articles': {
         const cmdReleaseArticles = await loadReleaseArticlesCmd();
         process.exitCode = await cmdReleaseArticles(rest);
+        break;
+      }
+
+      case 'release': {
+        const cmdRelease = await loadReleaseCmd();
+        process.exitCode = await cmdRelease(rest);
         break;
       }
 
@@ -2647,6 +2771,21 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'observe': {
+        process.exitCode = await (await import('./observe.js')).cmdObserve(rest);
+        break;
+      }
+
+      case 'growth': {
+        process.exitCode = await (await import('./growth.js')).cmdGrowth(rest);
+        break;
+      }
+
+      case 'world': {
+        process.exitCode = await (await import('./world.js')).cmdWorld(rest);
+        break;
+      }
+
       case 'docs': {
         const cmdDocs = await loadDocsCmd();
         process.exitCode = await cmdDocs(rest);
@@ -2674,6 +2813,11 @@ async function main(): Promise<void> {
       case 'comms': {
         const cmdComms = await loadCommsCmd();
         process.exitCode = await cmdComms(rest);
+        break;
+      }
+
+      case 'comms-agent': {
+        process.exitCode = await (await import('./comms-agent.js')).cmdCommsAgent(rest);
         break;
       }
 
@@ -2816,7 +2960,13 @@ async function main(): Promise<void> {
       }
 
       case 'agents': {
-        // Agent Bus v2 contract (docs/AGENT-BUS.md "v2"); read-only, no bus access.
+        // Roster is a separate dispatcher so the bus-contract command stays untouched.
+        if (rest[0] === 'roster') {
+          const cmdRoster = await loadAgentsRosterCmd();
+          process.exitCode = await cmdRoster(rest.slice(1));
+          break;
+        }
+        // Agent Bus v2 contract (docs/AGENT-BUS.md "v2"). channels test bus|handoff writes a local probe.
         const cmdAgents = await loadAgentsCmd();
         process.exitCode = await cmdAgents(rest);
         break;

@@ -313,7 +313,7 @@ describe('/api/verse/caps', () => {
     expect(after.perTickItems).toBe(5);
     expect(after.subscriptionMaxPercent).toBe(70);
     // Untouched caps stay on their defaults, still flagged as such.
-    expect(after.parallel).toBe(2);
+    expect(after.parallel).toBe(1);
     expect(after.defaulted).toContain('parallel');
     expect(after.defaulted).not.toContain('dailyBudgetUsd');
 

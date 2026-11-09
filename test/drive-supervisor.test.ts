@@ -154,7 +154,8 @@ describe('drive supervisor scheduling', () => {
     const f = fixture();
     vi.mocked(f.bridge.launch).mockResolvedValue('held');
     const report = await driveTick(f.deps);
-    expect(report).toMatchObject({ planned: ['next'], launched: [], held: 'launch-held' });
+    expect(report).toMatchObject({ planned: ['next'], launched: [], held: 'launch-held',
+      skipped: [{ job: 'next', pool: 'codex', reason: 'launch-held' }] });
     expect(f.bridge.launch).toHaveBeenCalledTimes(1);
     expect(f.state.jobs[0]!.state).toBe('READY');
   });
@@ -424,5 +425,98 @@ describe('drive loop', () => {
     const f = fixture();
     await expect(driveLoop(f.deps, { once: true, tickMs })).rejects.toThrow('Drive tick');
     expect(f.calls).toEqual([]);
+  });
+});
+
+describe('Codex lane launch diagnostics', () => {
+  function codex(pool: string) {
+    const f = fixture([job('RQ-WORK-1', 'READY', pool)]);
+    f.state.pools = [{ id: pool, floor: 0, ceiling: 2, admission: 'open' }];
+    return f;
+  }
+
+  describe.each(['codex-cmp', 'codex-local'])('%s', pool => {
+    it.each([
+      ['lane-paused', (s: DriveSnapshot) => { s.pools[0]!.paused = true; }],
+      ['lane-admission-closed', (s: DriveSnapshot) => { s.pools[0]!.admission = 'closed'; }],
+      ['lane-admission-unknown', (s: DriveSnapshot) => { s.pools[0]!.admission = 'unknown'; }],
+      ['lane-capacity', (s: DriveSnapshot) => { s.pools[0]!.ceiling = 0; }],
+      ['global-capacity', (s: DriveSnapshot) => { s.maxRunning = 0; }],
+      ['paced-share', (s: DriveSnapshot) => {
+        s.pools[0]!.daily = { share: 0, used: 0, startMs: 0, endMs: 1 };
+      }],
+    ])('records %s for a skipped tick', async (reason, mutate) => {
+      const f = codex(pool);
+      mutate(f.state);
+      const report = await driveTick(f.deps);
+      expect(report.held).toBe(reason);
+      expect(report.skipped).toEqual([{ job: f.state.jobs[0]!.id, pool: f.state.jobs[0]!.pool, reason }]);
+      expect(f.bridge.launch).not.toHaveBeenCalled();
+      expect(f.bridge.writeStatus).toHaveBeenCalledWith('lease', report);
+    });
+
+    it('launches ready work when current probes and capacity permit', async () => {
+      const f = codex(pool);
+      const report = await driveTick(f.deps);
+      expect(report.launched).toEqual(['RQ-WORK-1']);
+      expect(report.skipped).toEqual([]);
+      expect(f.bridge.launch).toHaveBeenCalledExactlyOnceWith('lease', 'RQ-WORK-1');
+    });
+
+    it('diagnoses a probe refusal from the atomic launch recheck', async () => {
+      const f = codex(pool);
+      vi.mocked(f.bridge.launch).mockImplementation(async () => {
+        f.state.pools[0]!.admission = 'closed';
+        return 'held';
+      });
+      const report = await driveTick(f.deps);
+      expect(report.held).toBe('lane-admission-closed');
+      expect(report.skipped).toEqual([{ job: 'RQ-WORK-1', pool, reason: 'lane-admission-closed' }]);
+      expect(report.launched).toEqual([]);
+    });
+
+    it('honors lane state changed after the initial plan and resumes next tick', async () => {
+      const f = codex(pool);
+      let reads = 0;
+      vi.mocked(f.bridge.snapshot).mockImplementation(async () => {
+        if (++reads === 3) f.state.pools[0]!.admission = 'unknown';
+        return structuredClone(f.state);
+      });
+      const report = await driveTick(f.deps);
+      expect(report.planned).toEqual(['RQ-WORK-1']);
+      expect(report.held).toBe('lane-admission-unknown');
+      expect(f.bridge.launch).not.toHaveBeenCalled();
+      f.state.pools[0]!.admission = 'open';
+      expect((await driveTick(f.deps)).launched).toEqual(['RQ-WORK-1']);
+    });
+  });
+
+  it('explains a routing mismatch without moving the job to another lane', async () => {
+    const f = codex('codex-cmp');
+    f.state.jobs[0]!.id = 'RQ-GEN-1';
+    const report = await driveTick(f.deps);
+    expect(report.skipped).toEqual([{ job: 'RQ-GEN-1', pool: 'codex-cmp', reason: 'pool-routing' }]);
+    expect(report.held).toBe('pool-routing');
+    expect(f.bridge.launch).not.toHaveBeenCalled();
+  });
+
+  it('reports an empty queue explicitly', async () => {
+    expect((await driveTick(fixture([]).deps)).held).toBe('no-ready-jobs');
+  });
+
+  it.each([{ paused: 'false' }, { admission: null }, { admission: 'ready' }])('rejects malformed lane controls %j', controls => {
+    const f = codex('codex-cmp');
+    Object.assign(f.state.pools[0]!, controls);
+    expect(() => parseDriveSnapshot(f.state)).toThrow('Invalid drive bridge snapshot');
+  });
+
+  it('keeps an available lane launching while another lane is paused', async () => {
+    const f = codex('codex-cmp');
+    f.state.pools[0]!.paused = true;
+    f.state.pools.push({ id: 'codex-local', floor: 0, ceiling: 1, admission: 'open' });
+    f.state.jobs.push(job('RQ-GEN-2', 'READY', 'codex-local'));
+    const report = await driveTick(f.deps);
+    expect(report.launched).toEqual(['RQ-GEN-2']);
+    expect(report.skipped).toEqual([{ job: 'RQ-WORK-1', pool: 'codex-cmp', reason: 'lane-paused' }]);
   });
 });

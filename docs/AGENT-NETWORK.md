@@ -247,3 +247,38 @@ For direct messages add `im:read`, `im:history` and `message.im`; group DMs add 
 `chat:write.public`, admin scopes, file upload, channel creation or automatic
 joins. Tokens go into Phantom Secrets under the names above; the bridge reads
 `phm_` references only.
+
+## Team org
+
+`phm org` models co-founders joining with their own agents and pooled usage. The
+declarative file is `~/.ashlr/org.toml` (example: `docs/examples/org.toml`): members,
+their machines, agents, the lanes and the percent share of each lane they contribute,
+roles (`leader`, `implementer`, `reviewer`, `researcher`) and `reports_to` lines. It
+holds ids and numbers only, never tokens, mail or messages, and secret-shaped values
+are refused. Spending stays with each member; nothing here changes billing.
+
+- `phm org show --json` prints the org and which lanes each member has opted into.
+- `phm org join --member <id> --machine <id> --lane <lane>[=<share>] --json` is run by
+  each co-founder on their own machine. They sign in to their own provider CLIs there;
+  join reads no auth and sends nothing. Contribution is opt-in per lane: a lane not
+  named stays at zero, and a share can be lowered but never raised above the declared
+  value. If the machine declares a `host`, join refuses to run anywhere else. The
+  record lands in `~/.ashlr/org/joins/`; copy another machine's record there to count it.
+- `phm org plan [--queue jobs.json] --json` proposes assignments of queue work
+  (`[{"id": "RQ-1", "priority": 3, "costPct": 2, "lane": "claude"}]`) and agent roles to
+  maximize merged output per unit of pooled usage. Jobs are ordered by priority per
+  cost; each goes to the opted-in lane with the most urgent remaining budget, using the
+  router's usage and reset data for the contribution's `pool`. A lane's budget is its
+  headroom times the contributed share; a red pool gets none, and a lane with no
+  telemetry is planned with a conservative 25 points of headroom. Leftover work is
+  returned in `unassigned` with a reason.
+
+The leader reads `phm org plan --json` each planning pass and applies it within each
+member's contributed limits. Private data, mail and messages are never pooled.
+
+```bash
+cp docs/examples/org.toml ~/.ashlr/org.toml
+phm org join --member evan-deloria --machine evan-mac --lane claude=20 --json
+echo '[{"id":"RQ-1","priority":3}]' > /tmp/jobs.json
+phm org plan --queue /tmp/jobs.json --json
+```

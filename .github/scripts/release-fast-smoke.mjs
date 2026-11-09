@@ -158,8 +158,9 @@ function completeRelease(release, repository, read) {
   return identity;
 }
 
-/** Select only from a complete bounded inventory; duplicate identities and tied
- * newest timestamps are ambiguous, not permission to use a convenient old feed. */
+/** Select only from a complete bounded inventory. The highest semver with a
+ * latest.json wins. Duplicate identities are refused. Creation time and list
+ * order do not choose an older feed. */
 export function stockedFeedTag(releases, repository = 'ashlrai/phantom') {
   assert.ok(Array.isArray(releases) && releases.length <= 1000, 'invalid release inventory');
   for (const row of releases) assert.ok(row && positive(row.id)
@@ -172,9 +173,15 @@ export function stockedFeedTag(releases, repository = 'ashlrai/phantom') {
   assert.equal(new Set(rows.map(row => row.tag)).size, rows.length, 'duplicate release tag');
   const stocked = rows.filter(row => !row.draft && !row.prerelease && stableTag.test(row.tag)
     && row.assets.some(asset => asset.name === 'latest.json'));
-  stocked.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  const semver = tag => tag.slice(1).split('.').map(Number);
+  const higher = (left, right) => {
+    for (let i = 0; i < 3; i += 1) if (left[i] !== right[i]) return left[i] > right[i];
+    return false;
+  };
+  // Highest semver, not creation time and not inventory order. A later-created
+  // older release must not become the updater feed.
+  stocked.sort((a, b) => higher(semver(a.tag), semver(b.tag)) ? -1 : higher(semver(b.tag), semver(a.tag)) ? 1 : 0);
   if (!stocked.length) return null;
-  assert.ok(stocked.length === 1 || stocked[0].createdAt !== stocked[1].createdAt, 'ambiguous newest stocked release');
   return stocked[0].tag;
 }
 
@@ -318,6 +325,15 @@ async function smoke() {
   appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Release smoke: ${elapsedMs} ms; candidate ${revision}; reused push CI ${pushCi.runId}/${pushCi.runAttempt}; feed/manifest contract parsed from ${served === 'latest' ? 'releases/latest (HTTP 200)' : `stocked release ${served}; live endpoint remains unavailable (HTTP 404), latest ${latestRelease.tag} (${latestRelease.id}) is assetless; this is not updater recovery`}. Cold build, publication signature verification, signing and installed-app acceptance remain separate prerequisites.\n`);
 }
 
+/** Master is always accepted. A stable tag is accepted only when its commit is an ancestor of master. */
+export function acceptReleaseRef({ ref, sha, repository, read }) {
+  if (ref === 'refs/heads/master') return;
+  assert.match(ref ?? '', /^refs\/tags\/v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/, 'release smoke ref is not master or a stable tag');
+  assert.match(sha ?? '', /^[a-f0-9]{40}$/);
+  const compare = read(`repos/${repository}/compare/${sha}...master`);
+  assert.ok(compare && (compare.status === 'ahead' || compare.status === 'identical'), 'tag is not an ancestor of master');
+}
+
 async function main() {
   const [verb] = process.argv.slice(2);
   if (verb === 'smoke') return smoke();
@@ -336,8 +352,8 @@ async function main() {
     return;
   }
   assert.ok(Object.hasOwn(workflows, verb));
-  assert.equal(process.env.GITHUB_REF, 'refs/heads/master');
   const { repository } = requireProducerEnvironment(process.env);
+  acceptReleaseRef({ ref: process.env.GITHUB_REF, sha: process.env.GITHUB_SHA, repository, read: api });
   const selected = selectRun({ kind: verb, repository, revision: process.env.GITHUB_SHA });
   appendFileSync(process.env.GITHUB_OUTPUT, `ready=${Boolean(selected)}\n`);
   for (const [key, value] of Object.entries(selected ?? {})) appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${value}\n`);

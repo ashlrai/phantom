@@ -260,6 +260,17 @@ afterEach(() => {
 });
 
 describe('the runner: native commands', () => {
+  it('limits immediate poll responses and cancels the delay on stop', async () => {
+    const h = make();
+    vi.mocked(h.api.commands).mockResolvedValue({ commands: [] });
+    h.push();
+    await vi.waitFor(() => expect(h.sleeps).toContain(250));
+    h.runner.stop();
+    const count = vi.mocked(h.api.commands).mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(h.api.commands).toHaveBeenCalledTimes(count);
+  });
+
   it('forwards the op to native and posts its answer', async () => {
     const h = make();
     h.push(nativeCmd(ID1, { op: 'list-apps', req: ID1 }));

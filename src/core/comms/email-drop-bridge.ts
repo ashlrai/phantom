@@ -38,7 +38,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, constants, copyFileSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createChannelReceiver, OPERATOR_SENDER_ID, type ChannelAck, type ChannelEnvelope, type ChannelMessage, type ChannelReceiveResult } from '../fleet/channel-envelope.js';
@@ -125,6 +125,27 @@ function isOtherWritable(path: string): boolean {
 const BODY_CAP_BYTES = 8 * 1024;
 const SEEN_LIMIT = 5_000;
 const SEEN_MAX_BYTES = 2 * 1024 * 1024;
+export const EMAIL_DROP_MAX_BYTES = 2 * 1024 * 1024;
+
+/** Read only a bounded regular file, without following a final-component symlink. */
+function readDropMessage(path: string): string {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > EMAIL_DROP_MAX_BYTES) throw new Error('invalid drop file');
+    const buffer = Buffer.alloc(EMAIL_DROP_MAX_BYTES + 1);
+    let size = 0;
+    while (size < buffer.length) {
+      const read = readSync(fd, buffer, size, buffer.length - size, null);
+      if (read === 0) break;
+      size += read;
+    }
+    if (size > EMAIL_DROP_MAX_BYTES) throw new Error('oversized drop file');
+    return buffer.subarray(0, size).toString('utf8');
+  } finally {
+    closeSync(fd);
+  }
+}
 const ADDRESS = /[A-Za-z0-9._%+'-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*/;
 
 /** A header value that can never inject extra headers into a reply. */
@@ -544,9 +565,12 @@ export async function runEmailDropOnce(opts: EmailDropRunOptions): Promise<Email
   for (const name of names) {
     let result: EmailDropResult = { ok: false, reason: 'invalid' };
     try {
-      const raw = readFileSync(join(opts.inboxDir, name), 'utf8');
+      const raw = readDropMessage(join(opts.inboxDir, name));
       result = await recordEmailToInbox(raw, opts);
-    } catch { /* one bad file stays a single failure */ }
+    } catch {
+      counts.failed += 1;
+      continue; // Leave unsafe or unreadable entries in place; never copy their targets.
+    }
     if (!move(name)) {
       counts.failed += 1;
       continue;

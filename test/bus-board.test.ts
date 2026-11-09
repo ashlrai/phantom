@@ -120,6 +120,50 @@ describe('fleet claim handoff (SharedStore.handoffClaim)', () => {
 });
 
 describe('bus board threads', () => {
+  it('polls unacknowledged deliveries across restarts without acknowledging them', async () => {
+    const thread = threadWith('alice', 'bob', 'carol');
+    await board().post('alice', thread, 'first');
+    await board().post('carol', thread, 'second');
+    const pending = board().readThread('bob', thread, true);
+    expect(pending).toHaveLength(2);
+    expect(board().readThread('bob', thread, true).map((row) => row.id)).toEqual(pending.map((row) => row.id));
+    board().acknowledge('bob', thread, pending[0]!.id);
+    expect(board().readThread('bob', thread, true).map((row) => row.id)).toEqual([pending[1]!.id]);
+    expect(board().readThread('bob', thread)).toHaveLength(2);
+    expect(board().readThread('carol', thread, true)).toHaveLength(2);
+    expect(() => board().readThread('outsider', thread, true)).toThrow('Thread missing or peer has not joined');
+    const output: string[] = [];
+    expect(await cmdFleetBus(['thread', 'pending', thread, '--peer', 'bob', '--root', boardRoot, '--queue-root', queueDir],
+      { loadConfig: () => cfg, out: (line) => output.push(line) })).toBe(0);
+    expect(JSON.parse(output[0]!).result.map((row: { id: string }) => row.id)).toEqual([pending[1]!.id]);
+  });
+
+  it('records recipient acknowledgements idempotently and exposes only sender metadata', async () => {
+    const store = board();
+    const thread = threadWith('alice', 'bob', 'carol');
+    await store.post('alice', thread, 'private body');
+    const delivery = store.readThread('bob', thread)[0]!;
+    expect(store.receipts('alice', thread)).toEqual([]);
+    expect(() => store.acknowledge('carol', thread, delivery.id)).toThrow('Bus delivery not found');
+    const receipt = store.acknowledge('bob', thread, delivery.id);
+    expect(board().acknowledge('bob', thread, delivery.id)).toEqual(receipt);
+    expect(board().receipts('alice', thread)).toEqual([receipt]);
+    expect(store.receipts('carol', thread)).toEqual([]);
+    expect(JSON.stringify(receipt)).not.toContain('private body');
+    expect(() => store.receipts('outsider', thread)).toThrow('Thread missing or peer has not joined');
+  });
+
+  it('fails closed on corrupt acknowledgement state', async () => {
+    const store = board();
+    const thread = threadWith('alice', 'bob');
+    await store.post('alice', thread, 'hello');
+    const file = join(boardRoot, 'state.json');
+    const state = JSON.parse(readFileSync(file, 'utf8'));
+    state.receipts = [{ deliveryId: 'missing', recipient: 'bob', receivedAt: new Date().toISOString() }];
+    writeFileSync(file, JSON.stringify(state));
+    expect(() => store.receipts('alice', thread)).toThrow('Invalid bus receipt');
+  });
+
   it('creates, joins, posts, reads, hops and lists with membership gating', async () => {
     const store = board();
     const threadId = threadWith('alice', 'bob');

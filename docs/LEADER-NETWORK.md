@@ -84,6 +84,8 @@ channels use the typed adapter boundary and remain drafted without a qualified
 transport. iMessage content remains on the Mac. The local desktop path requires
 the normal dispatch gate and mutation token; a body cannot supply its identity.
 
+The unified owner thread (`phm comms thread --json`) records every allowed inbound message in one order and fans leader replies back to the originating channel and the desktop thread. `createLeaderMailbox` in `src/core/comms/leader-mailbox.ts` is the inbox handoff for that thread (claim key `queue:RQ-COMMS-UNIFIED-1`). Adapters stay disabled until configured. See [Owner thread](OWNER-THREAD.md).
+
 `createLeaderNetwork` is the typed adapter boundary. `ingest` receives the
 adapter-authenticated identity separately from the envelope. Adapters pass their
 original receipt timestamp as `receivedAt`; future, invalid and expired receipts

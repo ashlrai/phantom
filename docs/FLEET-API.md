@@ -43,6 +43,8 @@ named nested type. Relative source links refer to the source checkout.
 | GET | `/api/fleet/job` | id (required) | [FleetJobDetailV1](../src/core/fleet/runs-job-detail.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/job?id=example-job'` |
 | GET | `/api/fleet` | none | [FleetStatus](../src/core/fleet/status.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet'` |
 | GET | `/api/fleet/lanes` | none | [FleetLaneSnapshot](../src/core/fleet/lane-console.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/lanes'` |
+| GET | `/api/fleet/activity` | hours, limit | [AgentActivityReport](../src/core/fleet/agent-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/activity?hours=6'` |
+| GET | `/api/fleet/verified-completion` | hours (claim window, default 24, max 168) | [VerifiedCompletionReport](../src/core/fleet/agent-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/verified-completion'` |
 | POST | `/api/fleet/pause` | none | [inline {ok, action, service, activation, fleet, mutation?}](../src/core/web/api.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{}' 'http://127.0.0.1:7777/api/fleet/pause'` |
 | POST | `/api/fleet/resume` | none | [inline {ok, action, service, activation, fleet, mutation?}](../src/core/web/api.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{}' 'http://127.0.0.1:7777/api/fleet/resume'` |
 
@@ -167,6 +169,16 @@ blocking reasons, oldest first. Add `--json` for agents. The typed
 The snapshot contains `prs` and `queue`; `--help` lists their fields.
 Merged and closed PRs are excluded. Missing evidence stays unknown. Required
 checks remain in place; this command only reads the supplied file.
+
+To prioritize conflict recovery by that same evidence, run `phm fleet
+merge-recover --queue-input snapshot.json --json`. The report includes the
+observation time, queue waits, and check blockers. Measured, unique entries are
+processed oldest first; unknown or duplicate queue entries are not prioritized.
+The snapshot is an observation, so the oldest reported PR is only the oldest
+measured entry in that snapshot. Add `--apply` to queue recuts and, after a
+replacement is published, request head-pinned GitHub auto-merge. GitHub still
+enforces required checks and the merge queue. Retry the command after a failed
+request or publication; it reuses the recovery identity.
 
 Acceptance: keep the interface as simple and intuitive as possible, with fewer
 steps, plain words, one obvious path, and every human surface backed by a typed

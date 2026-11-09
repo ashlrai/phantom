@@ -20,30 +20,33 @@
  * changes here once the legacy app is retired and server.ts gains a real
  * SPA catch-all.
  */
-import { DecisionInbox } from '../routes/verse/inbox/DecisionInbox.js';
+import { lazy } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { Shell } from '../components/layout/Shell.js';
 import { PlaceholderView } from '../routes/PlaceholderView.js';
-import { FleetDashboardView } from '../routes/fleet-dashboard/FleetDashboardView.js';
-import { JournalView } from '../routes/journal/JournalView.js';
-import { PulseView } from '../routes/intelligence/pulse/PulseView.js';
-import { GenomeView } from '../routes/intelligence/genome/GenomeView.js';
-import { ProductionView } from '../routes/intelligence/production/ProductionView.js';
-import { PortfolioView } from '../routes/portfolio/PortfolioView.js';
-import { RunsView } from '../routes/work/runs/RunsView.js';
-import { RunDetailView } from '../routes/work/runs/RunDetailView.js';
-import { SwarmsView } from '../routes/work/swarms/SwarmsView.js';
-import { SwarmDetailView } from '../routes/work/swarms/SwarmDetailView.js';
-import { DaemonView } from '../routes/control/daemon/DaemonView.js';
-import { FleetView } from '../routes/control/fleet/FleetView.js';
-import { SecurityView } from '../routes/control/security/SecurityView.js';
-import { GoalsView } from '../routes/goals/GoalsView.js';
-import { InboxView } from '../routes/inbox/InboxView.js';
-import { AgentOsView } from '../routes/agent-os/AgentOsView.js';
-import { ConnectView } from '../routes/connect/ConnectView.js';
-import { UniverseView } from '../routes/universe/UniverseView.js';
-import { ConnectorsSettings } from '../routes/settings/connectors/ConnectorsView.js';
 import { NAV_GROUPS, ALL_NAV_LEAVES } from './nav-config.js';
+
+const DecisionInbox = lazy(() => import('../routes/verse/inbox/DecisionInbox.js').then((module) => ({ default: module.DecisionInbox })));
+const FleetDashboardView = lazy(() => import('../routes/fleet-dashboard/FleetDashboardView.js').then((module) => ({ default: module.FleetDashboardView })));
+const ShowView = lazy(() => import('../routes/show/ShowView.js').then((module) => ({ default: module.ShowView })));
+const JournalView = lazy(() => import('../routes/journal/JournalView.js').then((module) => ({ default: module.JournalView })));
+const PulseView = lazy(() => import('../routes/intelligence/pulse/PulseView.js').then((module) => ({ default: module.PulseView })));
+const GenomeView = lazy(() => import('../routes/intelligence/genome/GenomeView.js').then((module) => ({ default: module.GenomeView })));
+const ProductionView = lazy(() => import('../routes/intelligence/production/ProductionView.js').then((module) => ({ default: module.ProductionView })));
+const PortfolioView = lazy(() => import('../routes/portfolio/PortfolioView.js').then((module) => ({ default: module.PortfolioView })));
+const RunsView = lazy(() => import('../routes/work/runs/RunsView.js').then((module) => ({ default: module.RunsView })));
+const RunDetailView = lazy(() => import('../routes/work/runs/RunDetailView.js').then((module) => ({ default: module.RunDetailView })));
+const SwarmsView = lazy(() => import('../routes/work/swarms/SwarmsView.js').then((module) => ({ default: module.SwarmsView })));
+const SwarmDetailView = lazy(() => import('../routes/work/swarms/SwarmDetailView.js').then((module) => ({ default: module.SwarmDetailView })));
+const DaemonView = lazy(() => import('../routes/control/daemon/DaemonView.js').then((module) => ({ default: module.DaemonView })));
+const FleetView = lazy(() => import('../routes/control/fleet/FleetView.js').then((module) => ({ default: module.FleetView })));
+const SecurityView = lazy(() => import('../routes/control/security/SecurityView.js').then((module) => ({ default: module.SecurityView })));
+const GoalsView = lazy(() => import('../routes/goals/GoalsView.js').then((module) => ({ default: module.GoalsView })));
+const InboxView = lazy(() => import('../routes/inbox/InboxView.js').then((module) => ({ default: module.InboxView })));
+const AgentOsView = lazy(() => import('../routes/agent-os/AgentOsView.js').then((module) => ({ default: module.AgentOsView })));
+const ConnectView = lazy(() => import('../routes/connect/ConnectView.js').then((module) => ({ default: module.ConnectView })));
+const UniverseView = lazy(() => import('../routes/universe/UniverseView.js').then((module) => ({ default: module.UniverseView })));
+const ConnectorsSettings = lazy(() => import('../routes/settings/connectors/ConnectorsView.js').then((module) => ({ default: module.ConnectorsSettings })));
 
 export function AppRoutes() {
   return (
@@ -64,6 +67,7 @@ export function AppRoutes() {
         <Route path="/overview" element={<FleetDashboardView />} />
         <Route path="/agent-os" element={<AgentOsView />} />
         <Route path="/universe" element={<UniverseView />} />
+        <Route path="/show" element={<ShowView />} />
         <Route path="/journal" element={<JournalView />} />
         <Route path="/intelligence/pulse" element={<PulseView />} />
         <Route path="/intelligence/genome" element={<GenomeView />} />
