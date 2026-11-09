@@ -7,7 +7,7 @@
 # hard_cap 10 (the live values; a slots.json or budget-overrides.json entry raises them per host).
 # RQ-LANERECOVERNOV1Q8 rev: repeated authentication failures (>=2 distinct failed/EMPTY finishes with a
 # provider auth-error line) hold the lane autobackoff-style; no credential store is ever written.
-import os, re, json, time, fcntl, subprocess, glob, math
+import os, re, json, time, fcntl, subprocess, glob, math, datetime
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
 WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
 NOW = time.time(); TS = time.strftime("%F %T")
@@ -1215,6 +1215,264 @@ for lane in ("codex-cmp", "codex-personal", "devin", "claude-api", "codex-local"
         subprocess.Popen(["/bin/bash", R + "/bin/restock.sh"], stdin=subprocess.DEVNULL, stdout=open(Q + "/restock.log", "a"),
                          stderr=subprocess.STDOUT, start_new_session=True)
         break
+# ---- verified completion (RQ-SWE5-VERIFY-METRIC; mirror of src/core/fleet/agent-activity.ts foldVerifiedCompletion — keep in sync)
+# A task counts as verified complete only when an independent check confirms it: the reconciled
+# GitHub state of the PR it published (MERGED/CLOSED via metrics-outcomes), never the worker's own
+# "done" report, a non-empty finish, or a publish event alone. Claims: `published` (non-batch job
+# published >=1 github PR url in-window), `batch-member` (task_outcome done; resolves through the
+# batch session's published PRs), `outcome` (bare outcome row, no publish observed). Coordination
+# failures: duplicates (one attempt >1 PR, or one PR claimed by >1 job), false completions (every
+# published PR CLOSED), unauthorized actions (PR repo != the job's routed repo). RQ-BATCH-* session
+# jobs are infrastructure: their publishes resolve member claims but never form claims themselves.
+VC_WINDOW_S = 24 * 3600
+VC_LIFECYCLE = {"enqueue", "claim", "batch_claim", "queued", "launch", "finish", "publish", "outcome", "task_outcome"}
+VC_QUEUE = {"enqueue", "claim", "batch_claim", "queued", "launch"}
+VC_RESOLVED = {"MERGED", "CLOSED", "OPEN"}
+VC_PR = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/([1-9][0-9]*)/?$", re.I)
+VC_JOB = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$")
+VC_LANE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$")
+VC_LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,79}$")
+VC_BATCH_PREFIX = "RQ-BATCH-"
+VC_MAX_DETAIL = 20
+
+def _vc_pick(row, *keys):
+    for k in keys:
+        v = row.get(k)
+        if isinstance(v, str) and v.strip(): return v.strip()
+    return None
+
+def _vc_num(row, *keys):
+    for k in keys:
+        v = row.get(k)
+        if isinstance(v, bool): continue
+        if isinstance(v, (int, float)) and math.isfinite(v): return v
+        if isinstance(v, str) and v.strip():
+            try: return float(v)
+            except ValueError: pass
+    return None
+
+def _vc_ts(value):
+    """ISO-8601 ts -> epoch seconds; None when absent/unparseable. Offset-aware; naive reads as local."""
+    if not isinstance(value, str): return None
+    s = value.strip()
+    if not s: return None
+    try:
+        d = datetime.datetime.fromisoformat(s[:-1] + "+00:00" if s.endswith(("Z", "z")) else s)
+    except ValueError:
+        m = re.match(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})([+-]\d{2})(\d{2})$", s)   # -0500 without colon
+        if not m: return None
+        try: d = datetime.datetime.fromisoformat(m.group(1) + m.group(2) + ":" + m.group(3))
+        except ValueError: return None
+    try:
+        return d.timestamp() if d.tzinfo is not None else time.mktime(d.timetuple()) + d.microsecond / 1e6
+    except (OverflowError, OSError, ValueError): return None
+
+def _vc_event(row):
+    """Lifecycle event name, or None for operational rows. Eventless producer/reconciler rows
+    infer from phase (eval-report/batcher convention): PUBLISHED -> publish, MERGED/CLOSED/OPEN -> outcome."""
+    ev = _vc_pick(row, "event", "type", "kind")
+    if ev is not None:
+        if ev == "published": return "publish"
+        return ev if ev in VC_LIFECYCLE else None
+    ph = _vc_phase(row)
+    if ph == "PUBLISHED": return "publish"
+    if ph in ("MERGED", "CLOSED", "OPEN"): return "outcome"
+    return None
+
+def _vc_phase(row):
+    v = _vc_pick(row, "outcome", "state", "status")
+    return v.upper() if v else None
+
+def _vc_pr(row):
+    """Canonical PR identity (lowercase owner/repo key + repoLc) or None."""
+    for k in ("url", "pr_url", "prUrl", "pr", "html_url"):
+        v = row.get(k)
+        if isinstance(v, str) and len(v) <= 512:
+            m = VC_PR.match(v.strip())
+            if m:
+                o, r, n = m.group(1).lower(), m.group(2).lower(), m.group(3)
+                return "https://github.com/%s/%s/pull/%s" % (o, r, n), "%s/%s" % (o, r)
+    return None
+
+def _vc_bounded(value, rx):
+    return value if value is not None and rx.match(value) else None
+
+def _vc_fresh():
+    return {"boundary": float("-inf"), "finish": None, "publish_ts": None, "publish_lane": None,
+            "urls": [], "url_set": set(), "task_outcome": None, "batch_id": None,
+            "job_outcome": None, "outcome_ts": None, "lane": None, "repo": None}
+
+def _vc_terminal(a):
+    return a["finish"] is not None or a["publish_ts"] is not None or a["outcome_ts"] is not None or a["task_outcome"] is not None
+
+def _vc_last_boundary(a):
+    return max((a["finish"] or {}).get("ts", 0), a["publish_ts"] or 0, a["outcome_ts"] or 0, (a["task_outcome"] or {}).get("ts", 0))
+
+def _vc_merge_meta(a, row):
+    lane = _vc_bounded(_vc_pick(row, "lane", "pool"), VC_LANE)
+    repo = _vc_bounded(_vc_pick(row, "repo"), VC_LABEL)
+    if a["lane"] is None and lane: a["lane"] = lane
+    if a["repo"] is None and repo: a["repo"] = repo
+
+def _vc_url_edge(url_jobs, url, job, ts):
+    by_job = url_jobs.setdefault(url, {})
+    if job not in by_job or ts < by_job[job]: by_job[job] = ts
+
+def _vc_verdict(urls, url_states):
+    """MERGED wins; all-CLOSED fails; anything unresolved stays pending."""
+    merged = closed = unresolved = False
+    for u in urls:
+        s = url_states.get(u)
+        if s == "MERGED": merged = True
+        elif s == "CLOSED": closed = True
+        else: unresolved = True
+    if merged: return "verified"
+    if closed and not unresolved: return "failed"
+    return "pending"
+
+def _vc_repo_match(routed, url_repo_lc):
+    """routed 'owner/name' matches exactly; basename routes match the repo name only."""
+    r = routed.strip().lower()
+    return r == url_repo_lc if "/" in r else r == url_repo_lc.rsplit("/", 1)[-1]
+
+def verified_completion(mets, now, missing=False):
+    cutoff = now - VC_WINDOW_S
+    url_states, url_jobs, claim_urls = {}, {}, {}
+    jobs, dropped = {}, 0
+    for row in mets:
+        if not isinstance(row, dict): dropped += 1; continue
+        ev = _vc_event(row)
+        if ev is None: continue
+        job = _vc_pick(row, "job", "job_id", "jobId", "id")
+        ts = _vc_ts(_vc_pick(row, "ts", "at", "time", "timestamp", "mergedAt", "closedAt", "recordedAt", "updatedAt"))
+        if job is None or not VC_JOB.match(job) or ts is None: dropped += 1; continue
+        j = jobs.setdefault(job, {"attempts": [], "current": _vc_fresh(), "repo": None})
+        a = j["current"]
+        if ev in VC_QUEUE:
+            if _vc_terminal(a) and ts >= _vc_last_boundary(a):
+                j["attempts"].append(a); a = j["current"] = _vc_fresh()
+            if ts > a["boundary"]: a["boundary"] = ts
+            _vc_merge_meta(a, row)
+            if ev == "batch_claim":
+                b = _vc_bounded(_vc_pick(row, "batch", "batch_id", "batchId"), VC_JOB)
+                if b and a["batch_id"] is None: a["batch_id"] = b
+            repo = _vc_bounded(_vc_pick(row, "repo"), VC_LABEL)
+            if repo: j["repo"] = repo
+            continue
+        if ev == "publish":
+            pr = _vc_pr(row); phase = _vc_phase(row)
+            if phase in VC_RESOLVED:
+                # Reconciler resolution row: PR state + claim evidence, never a new claim or attempt state.
+                if pr: url_states[pr[0]] = phase; _vc_url_edge(url_jobs, pr[0], job, ts)
+                continue
+            if ts < a["boundary"]: continue
+            if pr:
+                if pr[0] not in a["url_set"]:
+                    a["url_set"].add(pr[0]); a["urls"].append(pr[0])
+                    claim_urls.setdefault(job, set()).add(pr[0])
+                _vc_url_edge(url_jobs, pr[0], job, ts)
+                if a["publish_ts"] is None:
+                    a["publish_ts"] = ts
+                    a["publish_lane"] = _vc_bounded(_vc_pick(row, "lane", "pool"), VC_LANE)
+            _vc_merge_meta(a, row)
+            continue
+        if ev == "outcome":
+            pr = _vc_pr(row); phase = _vc_phase(row) or "RECORDED"
+            # A url's reconciled state is a fact about the PR, not the attempt: github timestamps can
+            # predate a requeue boundary, so url_states/claim evidence update before the attempt guard.
+            if pr: url_states[pr[0]] = phase; _vc_url_edge(url_jobs, pr[0], job, ts)
+            if ts >= a["boundary"]:
+                if not pr and (a["job_outcome"] is None or ts >= a["job_outcome"]["ts"]):
+                    a["job_outcome"] = {"state": phase, "ts": ts}
+                if a["outcome_ts"] is None or ts >= a["outcome_ts"]: a["outcome_ts"] = ts
+                _vc_merge_meta(a, row)
+            continue
+        if ts < a["boundary"]: continue
+        if ev == "finish":
+            if a["finish"] is None:
+                code = _vc_num(row, "exit_code", "exitCode")
+                a["finish"] = {"ts": ts, "ok_nonempty": code == 0 and row.get("empty") is not True}
+            _vc_merge_meta(a, row)
+            continue
+        # task_outcome — batch member result from the session's BRIDGE_NOTES.
+        o = _vc_pick(row, "outcome")
+        if o is not None and (a["task_outcome"] is None or ts >= a["task_outcome"]["ts"]):
+            b = _vc_bounded(_vc_pick(row, "batch", "batch_id", "batchId"), VC_JOB) or a["batch_id"]
+            a["task_outcome"] = {"outcome": o.lower(), "batch": b, "ts": ts}
+        if a["outcome_ts"] is None or ts >= a["outcome_ts"]: a["outcome_ts"] = ts
+        _vc_merge_meta(a, row)
+
+    claims, multi_pr = [], set()
+    completed_unpublished = 0
+    for job, j in jobs.items():
+        is_batch = job.startswith(VC_BATCH_PREFIX)
+        wurls = set(); has_done = has_resolved = ok_finish = False
+        for att in j["attempts"] + [j["current"]]:
+            if att["publish_ts"] is not None and att["publish_ts"] >= cutoff: wurls.update(att["urls"])
+            if att["finish"] and att["finish"]["ok_nonempty"] and att["finish"]["ts"] >= cutoff: ok_finish = True
+            if att["task_outcome"] and att["task_outcome"]["outcome"] == "done": has_done = True
+            if att["job_outcome"] and att["job_outcome"]["state"] in ("MERGED", "CLOSED"): has_resolved = True
+            if is_batch: continue   # batch sessions are infrastructure, not tasks
+            if att["publish_ts"] is not None and att["publish_ts"] >= cutoff and att["urls"]:
+                claims.append({"job": job, "kind": "published", "lane": att["publish_lane"] or att["lane"],
+                               "ts": att["publish_ts"], "verdict": _vc_verdict(att["urls"], url_states)})
+            to = att["task_outcome"]
+            if to and to["outcome"] == "done" and to["ts"] >= cutoff:
+                bus = claim_urls.get(to["batch"]) if to["batch"] else None
+                claims.append({"job": job, "kind": "batch-member", "lane": att["lane"], "ts": to["ts"],
+                               "verdict": _vc_verdict(bus, url_states) if bus else "pending"})
+            jo = att["job_outcome"]
+            if (not att["urls"] and (not to or to["outcome"] != "done") and jo
+                    and jo["state"] in ("MERGED", "CLOSED") and jo["ts"] >= cutoff):
+                claims.append({"job": job, "kind": "outcome", "lane": att["lane"], "ts": jo["ts"],
+                               "verdict": "verified" if jo["state"] == "MERGED" else "failed"})
+        if len(wurls) > 1: multi_pr.add(job)
+        if not is_batch and ok_finish and not claim_urls.get(job) and not has_done and not has_resolved:
+            completed_unpublished += 1
+
+    by_lane, false_jobs = {}, set()
+    kind_count = {"published": 0, "batch_members": 0, "outcomes": 0}
+    eligible = verified = failed = pending = 0
+    for c in claims:
+        eligible += 1
+        kind_count[{"published": "published", "batch-member": "batch_members", "outcome": "outcomes"}[c["kind"]]] += 1
+        if c["verdict"] == "verified": verified += 1
+        elif c["verdict"] == "failed": failed += 1; false_jobs.add(c["job"])
+        else: pending += 1
+        lane = _vc_bounded(c["lane"], VC_LANE) or "unknown"
+        r = by_lane.setdefault(lane, {"eligible": 0, "verified": 0, "failed": 0, "pending": 0})
+        r["eligible"] += 1
+        if c["verdict"] == "verified": r["verified"] += 1
+        elif c["verdict"] == "failed": r["failed"] += 1
+        else: r["pending"] += 1
+
+    # Duplicate + unauthorized evidence: in-window url->job edges.
+    shared, unauthorized_jobs = {}, set()
+    shared_pr_urls = unauthorized_actions = 0
+    for url, by_job in url_jobs.items():
+        jobs_in_window = {job for job, ts in by_job.items() if ts >= cutoff}
+        if len(jobs_in_window) > 1: shared_pr_urls += 1; shared[url] = jobs_in_window
+        repo_lc = url[len("https://github.com/"):url.rindex("/pull/")]
+        for job in jobs_in_window:
+            routed = jobs.get(job, {}).get("repo")
+            if routed and not _vc_repo_match(routed, repo_lc):
+                unauthorized_actions += 1; unauthorized_jobs.add(job)
+
+    return {"schema": "dispatchd.verified-completion.v1", "window_hours": VC_WINDOW_S // 3600,
+            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "source_state": "missing" if missing else ("degraded" if dropped else "healthy"),
+            "scanned": len(mets), "dropped": dropped, "truncated": False,
+            "eligible": eligible, "verified": verified, "failed": failed, "pending": pending,
+            "rate": round(verified / (verified + failed), 3) if verified + failed else None,
+            "claims": kind_count, "completed_unpublished": completed_unpublished,
+            "duplicates": {"multi_pr_jobs": len(multi_pr), "shared_pr_urls": shared_pr_urls},
+            "false_completions": failed, "unauthorized_actions": unauthorized_actions,
+            "by_lane": by_lane,
+            "detail": {"false_completion_jobs": sorted(false_jobs)[:VC_MAX_DETAIL],
+                       "multi_pr_jobs": sorted(multi_pr)[:VC_MAX_DETAIL],
+                       "shared_pr_urls": sorted(shared)[:VC_MAX_DETAIL],
+                       "unauthorized_jobs": sorted(unauthorized_jobs)[:VC_MAX_DETAIL]}}
+
 # ---- (d) status
 qdepth = {l: 0 for l in LANES}
 for l in rest:
@@ -1290,6 +1548,7 @@ def roll(key):
         r["empty_rate"] = round(r["empty"] / r["finished"], 3) if r["finished"] else None
     return g
 st["rollup_24h"] = {"by_lane": roll("lane"), "by_tier": roll("tier")}
+st["verified_completion"] = verified_completion(mets, NOW, missing=not os.path.exists(MD + "/jobs.jsonl"))
 stamp = MD + "/.outcomes.stamp"
 if not os.path.exists(stamp) or NOW - os.path.getmtime(stamp) > 600:
     open(stamp, "w").close()

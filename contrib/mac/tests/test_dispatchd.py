@@ -1243,3 +1243,122 @@ class SnapshotSafetyTests(unittest.TestCase):
         home, root, wt = self.preserved_fixture('claude')
         (home / 'stubbin/lsof').write_text('#!/bin/bash\nexit 124\n')
         self.assert_preserved(home, root, wt, (root / 'queue/ready.tsv').read_text())
+
+
+class VerifiedCompletionTests(unittest.TestCase):
+    """RQ-SWE5-VERIFY-METRIC: status.json verified_completion block — independently
+    reconciled PR outcomes vs completion claims, plus coordination failures."""
+
+    @staticmethod
+    def ts(offset_s=0):
+        return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() + offset_s))
+
+    @staticmethod
+    def pr(n, repo='ashlrai/phantom'):
+        return f'https://github.com/{repo}/pull/{n}'
+
+    def vc(self, home):
+        status = json.loads((home / '.ashlr-runs' / 'queue' / 'status.json').read_text())
+        return status['verified_completion']
+
+    def run_tick(self, rows):
+        tmp = build(slots=held_lanes(), finishes=[], publishes=[])
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name).resolve()
+        ledger = home / '.ashlr-runs' / 'metrics' / 'jobs.jsonl'
+        ledger.write_text(''.join(json.dumps(r) + '\n' for r in rows))
+        result = tick(home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return self.vc(home)
+
+    def test_empty_ledger_reports_healthy_zero_claims(self):
+        vc = self.run_tick([])
+        self.assertEqual(vc['schema'], 'dispatchd.verified-completion.v1')
+        self.assertEqual(vc['window_hours'], 24)
+        self.assertEqual(vc['source_state'], 'healthy')
+        self.assertEqual(vc['eligible'], 0)
+        self.assertIsNone(vc['rate'])
+        self.assertEqual(vc['claims'], {'published': 0, 'batch_members': 0, 'outcomes': 0})
+
+    def test_eventless_producer_and_reconciler_rows_verify_a_merge(self):
+        pr = self.pr(501)
+        rows = [
+            {'event': 'launch', 'job': 'RQ-VC-1', 'lane': 'devin', 'repo': 'phantom', 'ts': self.ts(-60)},
+            {'event': 'finish', 'job': 'RQ-VC-1', 'exit_code': 0, 'empty': False, 'ts': self.ts(-50)},
+            {'jobId': 'RQ-VC-1', 'prUrl': pr, 'outcome': 'PUBLISHED', 'ts': self.ts(-40), 'lane': 'devin'},
+            {'jobId': 'RQ-VC-1', 'prUrl': pr, 'outcome': 'MERGED', 'ts': self.ts(-30),
+             'mergedAt': self.ts(-30), 'source': 'metrics-outcomes-reconciler'},
+        ]
+        vc = self.run_tick(rows)
+        self.assertEqual(vc['eligible'], 1)
+        self.assertEqual(vc['verified'], 1)
+        self.assertEqual(vc['failed'], 0)
+        self.assertEqual(vc['pending'], 0)
+        self.assertEqual(vc['rate'], 1.0)
+        self.assertEqual(vc['claims']['published'], 1)
+        self.assertEqual(vc['by_lane']['devin'], {'eligible': 1, 'verified': 1, 'failed': 0, 'pending': 0})
+
+    def test_closed_pr_is_a_false_completion(self):
+        pr = self.pr(502)
+        rows = [
+            {'event': 'publish', 'job': 'RQ-VC-2', 'url': pr, 'lane': 'devin', 'ts': self.ts(-60)},
+            {'event': 'outcome', 'job': 'RQ-VC-2', 'url': pr, 'state': 'CLOSED', 'ts': self.ts(-30)},
+        ]
+        vc = self.run_tick(rows)
+        self.assertEqual(vc['eligible'], 1)
+        self.assertEqual(vc['failed'], 1)
+        self.assertEqual(vc['false_completions'], 1)
+        self.assertEqual(vc['rate'], 0.0)
+        self.assertEqual(vc['detail']['false_completion_jobs'], ['RQ-VC-2'])
+
+    def test_publish_without_reconciled_outcome_stays_pending(self):
+        rows = [{'event': 'publish', 'job': 'RQ-VC-3', 'url': self.pr(503), 'lane': 'devin', 'ts': self.ts(-60)}]
+        vc = self.run_tick(rows)
+        self.assertEqual(vc['eligible'], 1)
+        self.assertEqual(vc['pending'], 1)
+        self.assertIsNone(vc['rate'])
+
+    def test_unpublished_nonempty_finish_is_not_a_claim(self):
+        rows = [{'event': 'finish', 'job': 'RQ-VC-4', 'lane': 'devin', 'exit_code': 0, 'empty': False, 'ts': self.ts(-60)}]
+        vc = self.run_tick(rows)
+        self.assertEqual(vc['eligible'], 0)
+        self.assertEqual(vc['completed_unpublished'], 1)
+
+    def test_duplicates_and_unauthorized_actions_are_counted(self):
+        shared = self.pr(510)
+        rows = [
+            {'event': 'claim', 'job': 'RQ-DUP-1', 'repo': 'phantom', 'lane': 'devin', 'ts': self.ts(-300)},
+            {'event': 'publish', 'job': 'RQ-DUP-1', 'url': self.pr(511), 'ts': self.ts(-200)},
+            {'event': 'publish', 'job': 'RQ-DUP-1', 'url': self.pr(512), 'ts': self.ts(-190)},
+            {'event': 'claim', 'job': 'RQ-SHR-1', 'lane': 'devin', 'ts': self.ts(-300)},
+            {'event': 'publish', 'job': 'RQ-SHR-1', 'url': shared, 'ts': self.ts(-200)},
+            {'event': 'claim', 'job': 'RQ-SHR-2', 'lane': 'devin', 'ts': self.ts(-300)},
+            {'event': 'publish', 'job': 'RQ-SHR-2', 'url': shared, 'ts': self.ts(-200)},
+            {'event': 'claim', 'job': 'RQ-BAD-1', 'repo': 'phantom', 'lane': 'devin', 'ts': self.ts(-300)},
+            {'event': 'publish', 'job': 'RQ-BAD-1', 'url': self.pr(513, 'ashlrai/lexicon'), 'ts': self.ts(-200)},
+        ]
+        vc = self.run_tick(rows)
+        self.assertEqual(vc['eligible'], 4)
+        self.assertEqual(vc['pending'], 4)
+        self.assertEqual(vc['duplicates'], {'multi_pr_jobs': 1, 'shared_pr_urls': 1})
+        self.assertEqual(vc['detail']['multi_pr_jobs'], ['RQ-DUP-1'])
+        self.assertEqual(vc['unauthorized_actions'], 1)
+        self.assertEqual(vc['detail']['unauthorized_jobs'], ['RQ-BAD-1'])
+
+    def test_batch_member_done_verifies_through_batch_pr(self):
+        pr = self.pr(520)
+        rows = [
+            {'event': 'batch_claim', 'job': 'RQ-MEM-1', 'batch': 'RQ-BATCH-phantom-t-1', 'repo': 'phantom',
+             'lane': 'devin', 'ts': self.ts(-300)},
+            {'event': 'task_outcome', 'job': 'RQ-MEM-1', 'batch': 'RQ-BATCH-phantom-t-1', 'lane': 'devin',
+             'repo': 'phantom', 'outcome': 'done', 'ts': self.ts(-200)},
+            {'event': 'launch', 'job': 'RQ-BATCH-phantom-t-1', 'lane': 'devin', 'repo': 'phantom', 'ts': self.ts(-290)},
+            {'event': 'publish', 'job': 'RQ-BATCH-phantom-t-1', 'url': pr, 'ts': self.ts(-100)},
+            {'jobId': 'RQ-BATCH-phantom-t-1', 'prUrl': pr, 'outcome': 'MERGED', 'ts': self.ts(-50),
+             'source': 'metrics-outcomes-reconciler'},
+        ]
+        vc = self.run_tick(rows)
+        self.assertEqual(vc['claims']['batch_members'], 1)
+        self.assertEqual(vc['claims']['published'], 0)   # the batch session itself is infrastructure
+        self.assertEqual(vc['eligible'], 1)
+        self.assertEqual(vc['verified'], 1)

@@ -1934,6 +1934,21 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/verified-completion ──────────────────────────────
+    // Verified-completion-rate metric: completed tasks passing an
+    // independent outcome check (reconciled PR state) vs eligible claims,
+    // plus coordination failures (duplicates, false completions,
+    // unauthorized actions). Same bounded jobs.jsonl tail read as
+    // /api/fleet/activity; read-only, never throws on absent/degraded input.
+    if (path === '/api/fleet/verified-completion' && method === 'GET') {
+      const { readVerifiedCompletion } = await import('../fleet/agent-activity.js');
+      const rawHours = Number(getQueryParam(req.url ?? '', 'hours'));
+      sendJson(res, 200, await readVerifiedCompletion({
+        verifiedWindowMs: Number.isFinite(rawHours) && rawHours > 0 ? Math.min(rawHours, 168) * 3_600_000 : undefined,
+      }));
+      return true;
+    }
+
     // ── GET /api/fleet/job ───────────────────────────────────────────────
     // RQ-PHX-JOBDETAIL: single-job detail from the dispatchd runs dir —
     // state, lane/model provenance, publish outcome and a scrubbed bounded
