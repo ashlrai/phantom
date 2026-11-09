@@ -502,7 +502,7 @@ const TOOLS: NativeToolImpl[] = [
   },
   {
     name: 'phantom_spend_budget',
-    description: 'Read the owner spend budget in USD. A missing provider is 0 for the month. This tool cannot change the budget.',
+    description: 'Read the owner spend budget in USD. A missing provider is 0 for the month. A budget above 0 counts only with a valid owner attestation. This tool cannot change the budget.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     safety: 'read',
     handler: async () => {

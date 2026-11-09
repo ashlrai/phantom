@@ -237,3 +237,11 @@ Load per CPU uses the one-minute load average and CPU count; the Machine card
 warns above four times the CPU count. Swap and free disk are in GB. Missing or
 invalid measurements are `null` in JSON and shown as “unknown” in the card.
 Worktrees are the dispatcher's active worker worktrees, not all Git worktrees.
+
+### Fleet map
+
+The Fleet screen shows a map of the Leader, reported lanes and active jobs.
+Run `phm fleet map --json` for the same `fleet.map.v1` tree. The map uses
+`/api/verse/fleet/live`: it shows only jobs in that snapshot, and a job with
+an unreported lane appears under an unknown lane. Provider marks are initials;
+the snapshot does not provide logos or the Leader's identity.
