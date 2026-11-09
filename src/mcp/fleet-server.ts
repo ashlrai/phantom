@@ -33,6 +33,8 @@ import { JOB_LIMIT_MAX } from '../core/fleet/job-path-history.js';
 import { JOB_OVERLAP_MIN_IDS } from '../core/fleet/job-overlap.js';
 import { parseFleetJobOverlapArgs, readFleetJobOverlap, type FleetJobOverlapArgs } from './fleet-job-overlap.js';
 import { MAX_FLEET_JOB_CURRENT_BATCH_IDS, parseFleetJobCurrentBatchArgs, readFleetJobCurrentBatch, type FleetJobCurrentBatchArgs } from './fleet-job-current-batch.js';
+import { DEFAULT_FLEET_INTENT_LIMIT, MAX_FLEET_INTENT_LIMIT, parseFleetIntentReadArgs, readFleetIntent, type FleetIntentReadArgs } from './fleet-intent-read.js';
+import { INTENT_STATUSES } from '../core/intent/schema.js';
 import { parseFleetJobCurrentArgs, readFleetJobCurrent,
   type FleetJobCurrentArgs } from './fleet-job-current.js';
 import { parseFleetJobCurrentSnapshotArgs, readFleetJobCurrentSnapshot, type FleetJobCurrentSnapshotArgs } from './fleet-job-current-snapshot.js';
@@ -119,6 +121,7 @@ export interface FleetReaders {
   ciReceiptAwait?: (input: FleetCiReceiptAwaitArgs, signal: AbortSignal) => Promise<unknown>;
   ciReceiptAwaitBatch?: (input: FleetCiReceiptAwaitBatchArgs, signal: AbortSignal) => Promise<unknown>;
   releaseCandidate?: (input: FleetReleaseCandidateArgs) => Promise<unknown>;
+  intentRead?: (input: FleetIntentReadArgs) => Promise<unknown>;
 }
 
 /** SDK transport injection permits a real protocol round trip without a child. */
@@ -334,6 +337,22 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
           jobId: { type: 'string', description: 'Exact case-sensitive fleet job id such as RQ-EXAMPLE-1; matched only against bridge(…) commit subjects, never by prefix.' },
         },
         required: ['jobId'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_intent_read',
+      description: 'Read the local owner-directive intent ledger (ashlr.intent-ledger/v1) through the same store as `ashlr fleet intent-read`. action "list" returns compact rows (id, title, status, source, owner, RQ keys, partial, lastTouchedAt), optionally for one status, with the total matching count and a truncated flag (default limit 25, max 100). action "get" returns one directive in full — pulls, evidence and provenance — or found:false for an unknown id. A missing ledger is an empty result; a corrupt, oversized or symlinked ledger is a tool error, never an empty success. No caller path, root, environment or command is accepted, and the tool never writes or changes a directive status.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['list', 'get'], description: 'list directives or get one by id.' },
+          status: { type: 'string', enum: [...INTENT_STATUSES], description: 'list only: keep directives with this exact status.' },
+          id: { type: 'string', description: 'get only: exact directive id.' },
+          limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_INTENT_LIMIT, default: DEFAULT_FLEET_INTENT_LIMIT, description: 'list only: maximum rows returned.' },
+        },
+        required: ['action'],
         additionalProperties: false,
       },
       annotations,
@@ -598,7 +617,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate') {
+    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_intent_read') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -637,8 +656,10 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const ciResumeInputs = name === 'fleet_ci_resume_inputs' ? parseFleetCiResumeInputsArgs(args) : null;
     const ciReceiptAwait = name === 'fleet_ci_receipt_await' ? parseFleetCiReceiptAwaitArgs(args) : null;
     const ciReceiptAwaitBatch = name === 'fleet_ci_receipt_await_batch' ? parseFleetCiReceiptAwaitBatchArgs(args) : null;
+    const intentRead = name === 'fleet_intent_read' ? parseFleetIntentReadArgs(args) : null;
     const releaseCandidate = name === 'fleet_release_candidate' ? parseFleetReleaseCandidateArgs(args) : null;
-    if (name === 'fleet_release_candidate' ? releaseCandidate === null :
+    if (name === 'fleet_intent_read' ? intentRead === null :
+        name === 'fleet_release_candidate' ? releaseCandidate === null :
         name === 'fleet_staging_inventory' ? fleetStagingInventory === null :
         name === 'fleet_staging_inventory_retry' ? retry === null :
         name === 'fleet_staging_inventory_batch' ? stagingRoots === null :
@@ -714,6 +735,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_ci_resume_inputs' ? await (readers.ciResumeInputs ?? readFleetCiResumeInputs)(ciResumeInputs as FleetCiResumeInputsArgs)
         : name === 'fleet_ci_receipt_await' ? await (readers.ciReceiptAwait ?? readFleetCiReceiptAwait)(ciReceiptAwait as FleetCiReceiptAwaitArgs, extra.signal)
         : name === 'fleet_ci_receipt_await_batch' ? await (readers.ciReceiptAwaitBatch ?? readFleetCiReceiptAwaitBatch)(ciReceiptAwaitBatch as FleetCiReceiptAwaitBatchArgs, extra.signal)
+        : name === 'fleet_intent_read' ? await (readers.intentRead ?? readFleetIntent)(intentRead as FleetIntentReadArgs)
         : name === 'fleet_release_candidate' ? await (readers.releaseCandidate ?? readFleetReleaseCandidate)(releaseCandidate as FleetReleaseCandidateArgs)
         : await (readers.busInbox ?? readFleetBusInbox)(inbox as FleetBusInboxArgs);
       // Scrub values before serialization: redaction regexes operate on prose
