@@ -852,3 +852,15 @@ Apply rechecks the queue under the existing `ready.lock`, waiting at most ten
 seconds (`--lock-timeout` overrides). `--queue PATH` selects a scratch queue;
 the default is `~/.ashlr-runs/queue/router-queue.md`. The queue must already exist.
 This supplies jobs only; it does not recut, merge, install, or publish anything.
+
+# Merge queue latency
+
+`./contrib/mac/merge-latency.py [--jobs PATH] [--since-hours N] [--json]` reads
+`metrics/jobs.jsonl` (default `~/.ashlr-runs/metrics/jobs.jsonl`) and reports the
+time from each job's `PUBLISHED` record to its `MERGED` record: count, p50, p90,
+p95 and max (nearest-rank), per pool as well. Jobs with no `MERGED` or `CLOSED`
+record are `queued`, with the oldest one's age. Records with a missing, naive or
+unparseable `ts`, or a merge dated before its publication, are counted under
+`missingOrInvalid` and never guessed. Agents use `--json`; all durations are
+seconds. It is read-only and calls no network: run `metrics-outcomes reconcile`
+first for current outcomes.
