@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { validateBusEnvelope, type BusEnvelope } from '../fleet/bus-envelope.js';
 import { leaderInboxAppender, leaderNetworkSources, readLeaderNetworkConfig, type LeaderRuntimeOptions } from './leader-network-runtime.js';
 import { createLeaderNetwork, parseMasonIdentities } from './leader-network.js';
+import { takeLeaderReplyBatch } from './leader-reply-queue.js';
 import { loadAgentNetworkConfig, isSlackUserId, parseSlackThreadRef } from './slack-network.js';
 import { createSlackApi, deliverSlackEnvelope, type SlackCall, type SlackDeliveryPolicy } from './slack-transport.js';
 import { parseCommsConfirmation, type DeliverResult, type TeamIdentity } from './channel-policy.js';
@@ -113,7 +114,9 @@ export async function flushSlackLeaderReplies(options: SlackLeaderOptions = {}):
     const network = createLeaderNetwork({ ...sources, runsDir: options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'),
       busRoot: options.busRoot, now: options.now, appendInbox: leaderInboxAppender(options), deliver: (identity, message) => deliverSlackLeaderMessage(identity, message, options) });
     let sent = 0;
-    for (const pending of (await network.pending()).filter(row => row.envelope.channel === 'slack').slice(0, 5)) {
+    const directory = join(options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'leader');
+    const batch = takeLeaderReplyBatch((await network.pending()).filter(row => row.envelope.channel === 'slack' && row.replyText), directory, 'slack-reply-cursor.json');
+    for (const pending of batch) {
       if (options.signal?.aborted) break;
       if (pending.replyText && (await network.reply(pending.requestId, pending.replyText)).status === 'sent') sent++;
     }
