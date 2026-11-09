@@ -184,7 +184,7 @@ export async function cmdUsage(args: string[]): Promise<number> {
     const { readUsagePace } = await import('../core/usage/pace.js');
     const pace = await readUsagePace();
     if (args[1] === '--json') console.log(JSON.stringify(pace, null, 2));
-    else for (const row of pace.pools) console.log(`${row.pool}: ${row.projectedPercent === null ? 'unknown' : `on pace to use ${row.projectedPercent}% before reset (${row.hoursLeft} h left)`}`);
+    else for (const row of pace.pools) console.log(`${row.pool}: ${row.projectedPercent === null ? 'unknown' : `on pace to use ${row.projectedPercent}% before reset (${row.hoursLeft} h left)`} · suggested running slots: ${row.recommendedSlots ?? 'unknown'}`);
     return 0;
   }
   if (args[0] === 'sensors') return cmdUsageSensors(args.slice(1));
