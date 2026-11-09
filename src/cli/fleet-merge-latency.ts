@@ -61,6 +61,37 @@ export interface MergeLatencyReport {
   /** All pending auto-merges, including old PRs and unknown enable times. Never merge authority. */
   pending_auto_merge: PendingAutoMerge[] | null;
   queue_timelines: QueueTimeline[] | null;
+  pr_stages: PrStages[] | null;
+}
+
+export type PrStage = 'queue_wait' | 'required_checks' | 'merge';
+export interface PrStages {
+  repo: string; pr: number;
+  queue_wait_s: number | null; required_checks_s: number | null; merge_s: number | null;
+  missing_or_ambiguous: MergeEventType[];
+  out_of_order: boolean;
+  slowest_stage: PrStage | null;
+}
+
+function prStages(events: MergeEvent[]): PrStages {
+  const boundaries = ['opened', 'queued', 'checks_passed', 'merged'] as const;
+  const times = boundaries.map(type => {
+    const matches = events.filter(e => e.type === type);
+    return matches.length === 1 && matches[0]!.at ? eventTime(matches[0]!) : undefined;
+  });
+  const durations = [gap(times[0], times[1]), gap(times[1], times[2]), gap(times[2], times[3])];
+  // A later retry or reversed boundary cannot establish a single stage breakdown.
+  const ordered = times.every((time, i) => i === 0 || time === undefined || times[i - 1] === undefined || time >= times[i - 1]!);
+  const complete = ordered && durations.every(d => d !== null);
+  const names: PrStage[] = ['queue_wait', 'required_checks', 'merge'];
+  const max = complete ? Math.max(...durations as number[]) : null;
+  // Ties have no unique slowest stage.
+  const winners = max === null ? [] : names.filter((_, i) => durations[i] === max);
+  return { repo: events[0]!.repo, pr: events[0]!.pr,
+    queue_wait_s: durations[0]!, required_checks_s: durations[1]!, merge_s: durations[2]!,
+    missing_or_ambiguous: boundaries.filter((_, i) => times[i] === undefined),
+    out_of_order: !ordered,
+    slowest_stage: winners.length === 1 ? winners[0]! : null };
 }
 
 /** Recorded transitions are observations, not permission to merge. */
@@ -113,7 +144,7 @@ function timeline(events: MergeEvent[], now: number): QueueTimeline {
 /** Append one validated observation; never runs a merge or changes checks. */
 export async function recordMergeEvent(path: string, value: unknown): Promise<void> {
   const event = parseEvent(JSON.stringify(value));
-  if (!event || !event.at || !['queued', 'eligible', 'blocked', 'merged', 'check_observed'].includes(event.type)) throw new Error('Invalid merge observation');
+  if (!event || !event.at || !['opened', 'queued', 'checks_passed', 'eligible', 'blocked', 'merged', 'check_observed'].includes(event.type)) throw new Error('Invalid merge observation');
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await appendFile(path, `${JSON.stringify(event)}\n`, { mode: 0o600 });
 }
@@ -159,7 +190,7 @@ export async function fleetMergeLatency(read: MergeEventReader, now = Date.now()
   try { text = await read(); } catch { text = null; }
   if (text === null) {
     return { ...base, known: false, merged: 0, merged_time_unknown: 0, open: 0, ignored_events: 0, opened_to_queue: null, queue_to_merge: null,
-      total: null, slowest_step: null, retryable_conflicts: null, blocked_conflicts: null, pending_auto_merge: null, queue_timelines: null };
+      total: null, slowest_step: null, retryable_conflicts: null, blocked_conflicts: null, pending_auto_merge: null, queue_timelines: null, pr_stages: null };
   }
   const since = now - hours * 3_600_000;
   const byPr = new Map<string, MergeEvent[]>();
@@ -178,6 +209,7 @@ export async function fleetMergeLatency(read: MergeEventReader, now = Date.now()
   const blocked: BlockedConflict[] = [];
   const pending: PendingAutoMerge[] = [];
   const timelines: QueueTimeline[] = [];
+  const stages: PrStages[] = [];
   let merged = 0;
   let mergedTimeUnknown = 0;
   let open = 0;
@@ -188,6 +220,7 @@ export async function fleetMergeLatency(read: MergeEventReader, now = Date.now()
     const first = (type: MergeEventType) => { const e = events.find(x => x.type === type); return e?.at ? eventTime(e) : undefined; };
     const { repo, pr } = last;
     const mergedAt = first('merged');
+    if (mergedAt === undefined || mergedAt >= since) stages.push(prStages(events));
     if (events.some(e => e.type === 'queued' || e.type === 'eligible' || e.type === 'blocked' || e.type === 'check_observed')) timelines.push(timeline(events, now));
     if (events.some(e => e.type === 'merged')) {
       if (mergedAt !== undefined && mergedAt < since) continue;
@@ -234,7 +267,7 @@ export async function fleetMergeLatency(read: MergeEventReader, now = Date.now()
   return { ...base, known: true, merged, merged_time_unknown: mergedTimeUnknown, open, ignored_events: ignored, opened_to_queue: q, queue_to_merge: m, total: stats(total),
     slowest_step: q.p50_s === null || m.p50_s === null ? null : m.p50_s >= q.p50_s ? 'queue_to_merge' : 'opened_to_queue',
     retryable_conflicts: retryable.sort(byWait), blocked_conflicts: blocked.sort(byPrId),
-    queue_timelines: timelines.sort(byPrId), pending_auto_merge: pending.sort((a, b) => (b.waiting_s ?? -1) - (a.waiting_s ?? -1) || byPrId(a, b)) };
+    queue_timelines: timelines.sort(byPrId), pr_stages: stages.sort(byPrId), pending_auto_merge: pending.sort((a, b) => (b.waiting_s ?? -1) - (a.waiting_s ?? -1) || byPrId(a, b)) };
 }
 
 export const readMergeEvents = (path: string): MergeEventReader => async () => {
@@ -262,6 +295,7 @@ export function formatMergeLatency(r: MergeLatencyReport): string {
     `Last ${r.window_hours} hours: ${r.merged - r.merged_time_unknown} merged; ${r.merged_time_unknown} merged at an unknown time. Still open in ledger (all ages): ${r.open}.`,
     line('Waiting to join the queue', r.opened_to_queue),
     line('Queue to merge', r.queue_to_merge),
+    ...r.pr_stages!.map(p => `${p.repo}#${p.pr}: queue wait ${secs(p.queue_wait_s)}, required checks ${secs(p.required_checks_s)}, merge ${secs(p.merge_s)}; slowest stage: ${p.slowest_stage ?? 'unknown (incomplete, unordered, or tied)'}; missing or ambiguous: ${p.missing_or_ambiguous.join(', ') || 'none'}${p.out_of_order ? '; timestamps out of order' : ''}.`),
     ...r.queue_timelines!.map(t => `${t.repo}#${t.pr}: enqueue to eligible ${secs(t.enqueue_to_eligible_s)}, eligible to merge ${secs(t.eligible_to_merge_s)}; blockers: ${t.blocked.map(b => b.reason).join(', ') || 'none recorded'}; wait by reason: ${t.wait_by_reason_s === null ? 'unknown' : Object.entries(t.wait_by_reason_s).map(([reason, seconds]) => `${reason} ${seconds}s`).join(', ')}; failed observations: ${t.checks ? `${t.checks.required_failures} required, ${t.checks.unrelated_failures} unrelated, ${t.checks.unknown_failures} unknown` : 'unknown'}.`),
     line('Open to merge', r.total),
     `Pending auto-merge: ${r.pending_auto_merge!.length} (${r.pending_auto_merge!.filter(p => p.stalled).length} stalled after ${r.stalled_after_s}s, ${r.pending_auto_merge!.filter(p => p.stalled === null).length} unknown waits).`,
@@ -284,7 +318,8 @@ export async function cmdFleetMergeLatency(args: string[], deps: MergeLatencyDep
       'Example: phm fleet merge-latency --events merge-events.jsonl --json',
       'Default ledger: ~/.ashlr-runs/metrics/merge-events.jsonl. One JSON event per line: repo, pr, type, at (ISO timestamp), head_sha (optional).',
       'Record: phm fleet merge-latency --events <file> --record <JSON> (repo, pr, type, at; blocked also needs reason).',
-      'Recording types: queued, eligible, blocked, merged, check_observed. Blocker reasons: required_checks, review, conflict, queue, other.',
+      'Recording types: opened, queued, checks_passed, eligible, blocked, merged, check_observed. Blocker reasons: required_checks, review, conflict, queue, other.',
+      'Per PR: queue wait is opened to queued; required checks are queued to checks_passed; merge is checks_passed to merged.',
       'Check observations require conclusion (success, failure, pending); required is true, false, or omitted if unknown.',
       'Eligibility is an observed transition; missing, repeated or reblocked boundaries remain unknown. Required checks remain in place.',
       'Types: opened, queued, eligible, blocked, check_observed, checks_passed, conflict, recut_requested, merged, closed, auto_merge_enabled, auto_merge_disabled.',
