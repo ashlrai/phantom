@@ -37,6 +37,7 @@ A zero exit code is not a merge and not permission to spend. `phm docs --agent -
 
 | Your task | Canonical guide |
 |-----------|-----------------|
+| Discover an experimental Phantom peer API and generate a typed client | [Phantom peer discovery](PHANTOM-DISCOVERY.md) |
 | Install, open the console, and make a first turn | [Quickstart](QUICKSTART.md) |
 | Install, connect MCP, upgrade, and uninstall | [Self-hosting](SELF-HOSTING.md) |
 | Use the console | [Phantom user guide](VERSE.md) |
