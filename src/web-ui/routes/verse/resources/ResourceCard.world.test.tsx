@@ -27,7 +27,7 @@ async function seed(freshness: 'fresh' | 'stale', ageMs: number): Promise<void> 
 
 function card() {
   const now = Date.now();
-  const status = accountStatus(ROW, { now, checking: false });
+  const status = accountStatus(ROW, { now, healthRead: true, checking: false });
   render(<ResourceCard row={ROW} status={status} settled={status} display={projectResourceDisplay(ROW, { nowMs: now, healthRead: true })} mode={null} busy={null} onAction={() => {}} />);
 }
 
