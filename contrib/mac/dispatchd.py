@@ -701,6 +701,26 @@ if DRIP:
     except Exception: drecent = []
     drip_budget = 0 if dq >= 150 else max(0, 10 - len(drecent))
 REPO_RANK = {r: i for i, r in enumerate(("phantom", "phantom-secrets", "locus", "lexicon", "ashlr-md", "ashlr-stack", "ashlr-plugin"))}
+def _ready_repo_ranks():
+    """Read a complete rank snapshot; invalid snapshots leave legacy ordering intact."""
+    try:
+        with open(H + "/.ashlr/repo-rank.json") as f: state = json.load(f)
+        enrolled, rows = state["enrolled"], state["rankings"]
+        weights = [state["weights"][k] for k in ("prior", "recency", "leverage")]
+        number = lambda x: isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+        datetime.datetime.fromisoformat(state["generatedAt"].replace("Z", "+00:00"))
+        if (type(state["schemaVersion"]) is not int or state["schemaVersion"] != 1 or not isinstance(enrolled, list) or not enrolled
+                or any(not isinstance(r, str) or not re.fullmatch(r"[a-z0-9-]+", r) for r in enrolled)
+                or len(set(enrolled)) != len(enrolled) or not isinstance(rows, list) or len(rows) != len(enrolled)
+                or any(not number(w) or w < 0 for w in weights) or not math.isfinite(sum(weights)) or sum(weights) <= 0
+                or not isinstance(state["proposals"], list) or not isinstance(state["history"], list)
+                or any(not isinstance(r, dict) or r.get("repo") not in enrolled
+                       or not number(r.get("weight")) or r["weight"] <= 0 or not number(r.get("score")) for r in rows)
+                or len({r["repo"] for r in rows}) != len(enrolled)):
+            return {}
+        return {r["repo"]: i for i, r in enumerate(rows)}
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, OverflowError): return {}
+
 PRIORITY_QUEUE = rd(Q + "/router-queue.md"); _sizes = {}
 def _bucket(j):
     return (0 if j.startswith("RQ-FIX-MAIN-") else 1 if j.startswith("RQ-REL-") else
@@ -1092,7 +1112,9 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         cand.append(f)
     # The key is global across pools; blocked jobs are retained below while
     # scanning continues, so a capped FIX-MAIN sibling cannot consume a claim.
-    cand.sort(key=lambda f: _job_priority(f[0], f[1], f[4], f[4]))
+    ready_ranks = _ready_repo_ranks()
+    cand.sort(key=lambda f: (_bucket(f[0]), ready_ranks.get(f[1], len(ready_ranks)),
+                             *_job_priority(f[0], f[1], f[4], f[4])[1:]))
     seen = set(); pc_n = 0; local_ok = None
     def _local_healthy():   # one GET per tick; any error, timeout or non-200 -> unhealthy. Env proxies ignored.
         import urllib.request
