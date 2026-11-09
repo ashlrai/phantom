@@ -253,7 +253,7 @@ describe('bridge CLI handoff', () => {
   });
 
   it.each([['read', '--shell'], ['merged', '$(evil)'], ['complete'], ['complete', 'bad', '--extra'], ['read', '--json', '--json']])(
-    'rejects unexpected CLI args %j before reading work', async (...args) => {
+    'rejects unexpected CLI args %j before reading work (%#)', async (...args) => {
       expect((await run(args)).code).toBe(2);
       expect(existsSync(file('state.json'))).toBe(false);
     });
@@ -263,7 +263,7 @@ describe('bridge CLI handoff', () => {
     expect(existsSync(file('state.json'))).toBe(false);
   });
 
-  it.each(['not JSON SECRET_VALUE', 'x'.repeat(4097)])('refuses invalid stdin without echoing it', async (input) => {
+  it.each(['not JSON SECRET_VALUE', 'x'.repeat(4097)])('refuses invalid stdin without echoing it (%#)', async (input) => {
     const result = await run(['merged'], input);
     expect(result).toEqual({ code: 1, output: [{ error: 'queue-unavailable-or-invalid' }] });
   });

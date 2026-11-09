@@ -81,7 +81,7 @@ describe('bounded resource ledger watch', () => {
     ['--watch', '--max-samples', '1e2'], ['--watch', '--max-samples', 'NaN'],
     ['--watch', '--max-samples', '1', '--max-samples', '2'],
     ['--help', '--max-samples', '1'],
-  ])('rejects invalid arguments %j before reading', async (...args) => {
+  ])('rejects invalid arguments %j before reading (%#)', async (...args) => {
     const err = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const read = vi.fn();
     expect(await cmdResourceLedger(args, read)).toBe(2);

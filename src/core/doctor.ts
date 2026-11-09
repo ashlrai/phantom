@@ -12,12 +12,9 @@ import { spawnSync } from 'node:child_process';
 import type { AshlrConfig, DoctorCheck, DoctorCheckStatus, DoctorReport, McpRegistry, ToolsRegistry } from './types.js';
 import { loadConfig } from './config.js';
 import { getPhantomStatus } from './phantom.js';
-import { receiptStatus } from './receipt/receipt-store.js';
-import { readTempWorktreeStorage } from './inbox/temp-worktree-reaper.js';
+import type { readTempWorktreeStorage } from './inbox/temp-worktree-reaper.js';
 import { runPhantomPreflight, type PreflightRunner } from './run/phantom-preflight.js';
 import { probeLocalInference, type ProbeFetch } from './run/local-inference-probe.js';
-import { checkPoolCliVersions } from './resources/pool-cli-doctor.js';
-import { getProviderRegistry } from './providers.js';
 import {
   extractLocusConfigFirm,
   locusAgentReport,
@@ -138,6 +135,22 @@ async function tryGetToolsRegistry(): Promise<ToolsRegistry | null> {
   try {
     const mod = await import('./tools-registry.js');
     return await mod.getToolsRegistry({ parallel: true });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Attempt to run the pool CLI version checks. Returns null when the module is
+ * unavailable (not yet built); the resource-pool import graph is heavy enough
+ * that it stays out of doctor's static imports like every other optional probe.
+ */
+async function tryCheckPoolCliVersions(): Promise<DoctorCheck[] | null> {
+  try {
+    const mod = await import('./resources/pool-cli-doctor.js') as {
+      checkPoolCliVersions: () => Promise<DoctorCheck[]>;
+    };
+    return await mod.checkPoolCliVersions();
   } catch {
     return null;
   }
@@ -592,8 +605,10 @@ export function checkReceiptVerify(
   opts: { status?: () => { receipts: number; latest: { runId: string; verified: boolean; reason: string | null } | null } } = {},
 ): DoctorCheck {
   const title = 'Run receipts';
+  const statusFn = opts.status;
+  if (!statusFn) return check('receipt-verify', title, 'warn', 'receipt store unavailable');
   try {
-    const s = (opts.status ?? receiptStatus)();
+    const s = statusFn();
     if (!s.latest) return check('receipt-verify', title, 'pass', 'no receipts yet');
     if (s.latest.verified) return check('receipt-verify', title, 'pass', `newest of ${s.receipts} verifies`);
     return check('receipt-verify', title, 'warn', `newest receipt ${s.latest.runId} does NOT verify (${s.latest.reason ?? 'unknown'})`, `phm receipt timeline ${s.latest.runId}`);
@@ -612,7 +627,7 @@ export function checkReceiptVerify(
  * protected or unpinned (human must `locus enter` / `locus agent setup`). Pass
  * only when ready + healthy oneline. Names/status only — never secret values.
  */
-export function checkLocus(): DoctorCheck {
+export function checkLocus(opts: { available?: boolean } = {}): DoctorCheck {
   try {
     // A bootstrap launcher (the npm locus-cli shim runs `cargo install` on any
     // invocation, even a probe) is never executed: locusAvailable() and
@@ -631,7 +646,7 @@ export function checkLocus(): DoctorCheck {
         'Install: cargo install --git https://github.com/ashlrai/locus locus-cli --locked  (or brew install ashlrai/tap/locus)',
       );
     }
-    if (!locusAvailable()) {
+    if (!(opts.available ?? locusAvailable())) {
       const enforce = resolveLocusEnforceMode() === 'enforce';
       return check(
         'locus',
@@ -691,10 +706,10 @@ export function checkLocus(): DoctorCheck {
  * Never fails (non-blocking). Fresh empty installs and firm=true pass quietly.
  * See docs/LOCUS-FIRM-FLEET.md.
  */
-export function checkLocusFirm(cfg: AshlrConfig): DoctorCheck {
+export function checkLocusFirm(cfg: AshlrConfig, opts: { available?: boolean } = {}): DoctorCheck {
   const label = 'Locus firm profile';
   try {
-    if (!locusAvailable()) {
+    if (!(opts.available ?? locusAvailable())) {
       return check(
         'locus-firm',
         label,
@@ -1362,7 +1377,7 @@ function checkSandboxHealth(): DoctorCheck {
 }
 
 /** Logical bytes are an estimate; symlinked shared dependencies are excluded. */
-export function checkWorktreeStorage(probe = readTempWorktreeStorage): DoctorCheck {
+export function checkWorktreeStorage(probe: typeof readTempWorktreeStorage): DoctorCheck {
   try {
     const { bytes, worktrees, complete } = probe();
     return check(
@@ -1408,6 +1423,37 @@ function checkGitLocks(): DoctorCheck {
 // ---------------------------------------------------------------------------
 
 /**
+ * Begin loading the optional probe modules WITHOUT running any probe. The
+ * module cache makes runDoctor's own prefetch near-instant afterwards; a
+ * first-run caller (e.g. onboard) can fire this before doing its own work so
+ * the transforms overlap. Fire-and-forget by design: failures are ignored and
+ * runDoctor's probes still handle them.
+ */
+export function prewarmDoctor(): void {
+  void Promise.all([
+    import('./mcp-registry.js'),
+    import('./tools-registry.js'),
+    import('./observability/rollup.js'),
+    import('./observability/governance.js'),
+    import('./observability/telemetry-sink.js'),
+    import('./genome/store.js'),
+    import('./integrations/identity.js'),
+    import('./providers.js'),
+    import('./receipt/receipt-store.js'),
+    import('./inbox/temp-worktree-reaper.js'),
+    import('./resources/pool-cli-doctor.js'),
+    // The pool CLI probe's own deps, warmed directly so the check's load chain
+    // is one wave deep instead of three.
+    import('./resources/worker-bindings.js'),
+    import('./resources/pool-cli-versions.js'),
+    import('./run/verify-commands.js'),
+    // M33 plugin layer — loaded lazily by checkPlugins when plugins enabled.
+    import('./plugins/registry.js'),
+    import('./plugins/integrity.js'),
+  ]).catch(() => undefined);
+}
+
+/**
  * Run all health checks and return a DoctorReport.
  * Never throws — each check is isolated and returns a typed result.
  *
@@ -1420,10 +1466,18 @@ function checkGitLocks(): DoctorCheck {
 export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
   // One invocation-scoped snapshot: never reuse health across doctor runs.
-  const providers = getProviderRegistry(cfg).catch(() => null);
+  const providers = import('./providers.js')
+    .then((m) => m.getProviderRegistry(cfg))
+    .catch(() => null);
 
-  // --- Pre-fetch M3 + M5 + M7 + M19 registry results (all async-safe, never throw) ---
-  const [mcpRegistry, toolsRegistry, budgetRollup, genomeHealth, identity, governance, telemetrySinkInfo] = await Promise.all([
+  // --- Pre-fetch M3 + M5 + M7 + M19 + M33 + pool-CLI registry results (all async-safe, never throw) ---
+  // The receipt-store and worktree-reaper graphs are heavy, so their probe
+  // modules load inside this parallel wave too and are injected into the
+  // checks; both keep their test seams for direct injected callers. The M33
+  // plugin check and the loopback local-inference probe run here too so their
+  // imports and bounded waits overlap the rest of the wave instead of sitting
+  // in a serial tail; results land at their original position in `checks`.
+  const [mcpRegistry, toolsRegistry, budgetRollup, genomeHealth, identity, governance, telemetrySinkInfo, poolCliChecks, receiptMod, reaperMod, pluginsCheck, localInferenceCheck] = await Promise.all([
     tryDiscoverMcpServers(),
     tryGetToolsRegistry(),
     tryBuildBudgetRollup(cfg),
@@ -1431,11 +1485,19 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
     tryGetIdentity(),
     tryEvalGovernance(cfg),
     tryGetTelemetrySinkInfo(cfg),
+    tryCheckPoolCliVersions(),
+    import('./receipt/receipt-store.js').catch(() => null),
+    import('./inbox/temp-worktree-reaper.js').catch(() => null),
+    checkPlugins(cfg),
+    checkLocalInference(cfg),
   ]);
 
   // --- Synchronous checks ---
   checks.push(checkNodeVersion());
-  checks.push(...await checkPoolCliVersions());
+  checks.push(...(poolCliChecks ?? [check(
+    'pool-cli', 'Pool CLI versions', 'warn',
+    'Pool CLI version checks unavailable — rerun phm doctor',
+  )]));
   checks.push(checkGit());
   const finder = process.platform === 'win32' ? 'where' : 'which';
   const phm = runCmd(finder, ['phm']);
@@ -1446,9 +1508,11 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   const phantom = getPhantomStatus();
   checks.push(checkPhantom(phantom));
   checks.push(checkPhantomPreflight({ status: phantom }));
-  checks.push(checkReceiptVerify());
-  checks.push(checkLocus());
-  checks.push(checkLocusFirm(cfg));
+  checks.push(checkReceiptVerify({ status: receiptMod?.receiptStatus }));
+  // One `which locus` spawn serves both locus checks.
+  const locusAvail = locusAvailable();
+  checks.push(checkLocus({ available: locusAvail }));
+  checks.push(checkLocusFirm(cfg, { available: locusAvail }));
   // Upgraded: also accepts discovery via discoverMcpServers (mcpRegistry)
   const mcpPlugin = checkMcpPlugin(mcpRegistry);
   checks.push(mcpPlugin);
@@ -1485,12 +1549,14 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   checks.push(checkKillSwitch());
   checks.push(checkAshlrWriteableProbe());
   checks.push(checkSandboxHealth());
-  checks.push(checkWorktreeStorage());
+  checks.push(checkWorktreeStorage(reaperMod?.readTempWorktreeStorage ?? (() => {
+    throw new Error('worktree storage module unavailable');
+  })));
   checks.push(checkGitLocks());
 
   // --- M33: plugin layer (read-only; discovery never executes plugin code) ---
-  checks.push(await checkPlugins(cfg));
-  checks.push(await checkLocalInference(cfg));
+  checks.push(pluginsCheck);
+  checks.push(localInferenceCheck);
 
   // --- Async: provider registry ---
   try {

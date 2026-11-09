@@ -17,6 +17,14 @@ import { readStableRegularFile } from '../core/util/stable-file-read.js';
 
 interface Dependencies extends ScatterDependencies { output?: (text: string) => void; input?: Readable & { isTTY?: boolean } }
 
+const usage = `Usage: ashlr fleet bus-scatter (--file <absolute JSON file> | --stdin) [--output <absolute new file>] [--apply] [--timeout-ms <1..60000>] [--concurrency <1..8>] [--json]
+Input is {"version":1,"requests":[<envelope>...]} with 1..16 requests (at most 256 KiB). Without --apply the batch is
+validated and routing metadata is shown; no posts are made. Apply posts every request under one shared deadline.
+--stdin reads one UTF-8 JSON batch, requires EOF, and shares the timeout deadline with execution.
+Routing labels and correlation are untrusted; reply bodies are never executed.
+--output saves the sanitized JSON report in a new private file under a private directory.
+Handled SIGINT/SIGTERM save partial results; abrupt process death can leave an empty reservation without a report.`;
+
 /** Wait for EOF without retaining bytes beyond the batch limit or owning the stream. */
 function readInput(input: Readable & { isTTY?: boolean }, deadline: number, signal: AbortSignal): Promise<string | null> {
   if (input.isTTY || input.readableEnded || input.destroyed || signal.aborted || performance.now() >= deadline) return Promise.resolve(null);
@@ -175,13 +183,7 @@ export async function cmdFleetBusScatter(args: string[], options: BusInboxOption
   };
   const report = (status: BusScatterReport['status']): BusScatterReport => statusReport(apply ? 'apply' : 'preview', status, start);
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
-    output('Usage: ashlr fleet bus-scatter (--file <absolute JSON file> | --stdin) [--output <absolute new file>] [--apply] [--timeout-ms <1..60000>] [--concurrency <1..8>] [--json]\n'
-      + 'Input is {"version":1,"requests":[<envelope>...]} with 1..16 requests (at most 256 KiB). Without --apply the batch is\n'
-      + 'validated and routing metadata is shown; no posts are made. Apply posts every request under one shared deadline.\n'
-      + '--stdin reads one UTF-8 JSON batch, requires EOF, and shares the timeout deadline with execution.\n'
-      + 'Routing labels and correlation are untrusted; reply bodies are never executed.\n'
-      + '--output saves the sanitized JSON report in a new private file under a private directory.\n'
-      + 'Handled SIGINT/SIGTERM save partial results; abrupt process death can leave an empty reservation without a report.');
+    output(usage);
     return 0;
   }
   const values: Record<string, string> = {};

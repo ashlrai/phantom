@@ -35,19 +35,28 @@ it('matches the file report, exit and exact job identity evidence', async () => 
   expect(JSON.parse(b.out[0]!)).toMatchObject({ jobId: 'RQ-PHX-TEST1', facts: [{ jobIdMatch: true }, { jobIdMatch: null }], newTestFiles: ['test/new.test.ts'] });
 });
 
-it('rejects bad arguments and batch stdin before reading or probing; help never reads', async () => {
+it('rejects bad arguments before I/O and malformed supported batch stdin before git; help never reads', async () => {
   const readStdin = vi.fn(stream(bytes(draft)));
   const readFile = vi.fn(async () => draft);
   const git = fakeGit();
   const c = capture();
   expect(await cmdFleetJobPrecheck(['--help'], { ...c, readStdin, readFile, git })).toBe(0);
   expect(c.out[0]).toContain('8000 bytes');
-  for (const args of [[], ['--batch', '-'], ['-', '--batch'], ['--batch', 'a.md', '-'], ['-', '--bad'], ['-', '--ref', '-bad'], ['-', '--job-id', 'bad'], ['-', '--json', '--json']]) {
+  for (const args of [[], ['--batch', 'a.md', '-'], ['-', '--bad'], ['-', '--ref', '-bad'], ['-', '--job-id', 'bad'], ['-', '--json', '--json']]) {
     expect(await cmdFleetJobPrecheck(args, { ...c, readStdin, readFile, git })).toBe(2);
   }
   expect(readStdin).not.toHaveBeenCalled();
   expect(readFile).not.toHaveBeenCalled();
   expect(git.exists).not.toHaveBeenCalled();
+  // Batch stdin is now supported in either flag order. This plain-text draft
+  // must be read and rejected as malformed JSON, before any file/git probe.
+  for (const args of [['--batch', '-'], ['-', '--batch']]) {
+    expect(await cmdFleetJobPrecheck(args, { ...c, readStdin, readFile, git })).toBe(2);
+  }
+  expect(readStdin).toHaveBeenCalledTimes(2);
+  expect(readFile).not.toHaveBeenCalled();
+  expect(git.exists).not.toHaveBeenCalled();
+  expect(git.lastCommit).not.toHaveBeenCalled();
 });
 
 it('retains file and batch behavior', async () => {

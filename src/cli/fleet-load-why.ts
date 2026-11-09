@@ -2,6 +2,9 @@ import { execFile } from 'node:child_process';
 import { availableParallelism, loadavg } from 'node:os';
 import { basename } from 'node:path';
 
+const usage = `Usage: ashlr fleet load-why [--json]
+Shows which kinds of processes are loading this machine. Exits 1 when over 100 are orphans.`;
+
 export const LOAD_WHY_KINDS = ['vitest', 'tsc', 'esbuild', 'node mcp', 'bun', 'cargo', 'codex', 'claude', 'devin', 'git', 'other'] as const;
 export type LoadWhyKind = (typeof LOAD_WHY_KINDS)[number];
 
@@ -108,11 +111,11 @@ function formatReport(report: LoadWhyReport): string {
  */
 export async function cmdFleetLoadWhy(args: string[], deps: FleetLoadWhyDeps = {}): Promise<number> {
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
-    console.log('Usage: ashlr fleet load-why [--json]\nShows which kinds of processes are loading this machine. Exits 1 when over 100 are orphans.');
+    console.log(usage);
     return 0;
   }
   if (args.some(a => a !== '--json')) {
-    console.error('Usage: ashlr fleet load-why [--json]');
+    console.error(usage.split('\n')[0]);
     return 2;
   }
   const json = args.includes('--json');

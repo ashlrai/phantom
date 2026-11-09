@@ -95,7 +95,7 @@ describe('knowledge edit-preflight', () => {
   });
 
   it.each([[], ['--file'], ['--json'], ['--file', '--json'], ['--file', 'x', '--file', 'y'],
-    ['--file', 'x', '--json', '--json'], ['--help', '--json'], ['unexpected']])('rejects invalid arguments %j', async (...args) => {
+    ['--file', 'x', '--json', '--json'], ['--help', '--json'], ['unexpected']])('rejects invalid arguments %j (%#)', async (...args) => {
     expect(await run(...args)).toBe(2);
   });
 

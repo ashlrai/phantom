@@ -430,6 +430,52 @@ describe('apply', () => {
   });
 });
 
+describe('completed job artifacts', () => {
+  const completed = jobsText([
+    { job: 'RQ-DONE', event: 'launch' },
+    { job: 'RQ-DONE', event: 'finish' },
+    { job: 'RQ-DONE', event: 'outcome', state: 'MERGED' },
+  ]);
+  const artifact = '.ashlr-runs/RQ-DONE.publish.prev-123';
+
+  it('reclaims an old archived result only after completion, reporting bytes and current free space', async () => {
+    const path = file(artifact, 2048, 60);
+    const plan = await planDiskMaint(baseDeps({ readJobs: HEALTHY(completed), only: new Set(['job-artifacts']) }));
+    expect(plan.classes[0]!.candidates).toHaveLength(1);
+    const result = await applyDiskMaint(plan, { roots, readJobs: HEALTHY(completed), freeBytes: () => 123e9 });
+    expect(existsSync(path)).toBe(false);
+    expect(result.totals.freedBytes).toBe(2048);
+    expect(result.freeGb).toBe(123);
+  });
+
+  it('preserves workspaces, activity markers, fresh artifacts and later attempts', async () => {
+    file(artifact, 2048, 60);
+    file('.ashlr-runs/RQ-DONE.publish.prev-124', 100, 1);
+    for (const marker of ['.ashlr-runs/RQ-DONE.base', '.ashlr-runs/queue/run/RQ-DONE.dispatched',
+      '.ashlr-runs/queue/run/RQ-DONE.reaping', '.ashlr-runs/wt/RQ-DONE', 'Projects/ashlrai/wt/RQ-DONE']) {
+      const path = file(marker, 1, 1);
+      const plan = await planDiskMaint(baseDeps({ readJobs: HEALTHY(completed), only: new Set(['job-artifacts']) }));
+      expect(plan.classes[0]!.candidates).toHaveLength(0);
+      rmSync(path);
+    }
+    for (const text of [completed + jobsText([{ job: 'RQ-DONE', event: 'launch' }]), completed + '{bad\n']) {
+      const plan = await planDiskMaint(baseDeps({ readJobs: HEALTHY(text), only: new Set(['job-artifacts']) }));
+      expect(plan.classes[0]!.candidates).toHaveLength(0);
+    }
+  });
+
+  it('rechecks activity and ledger at apply time and fails closed', async () => {
+    const path = file(artifact, 2048, 60);
+    const plan = await planDiskMaint(baseDeps({ readJobs: HEALTHY(completed), only: new Set(['job-artifacts']) }));
+    file('.ashlr-runs/queue/run/RQ-DONE.dispatched', 1, 1);
+    expect((await applyDiskMaint(plan, { roots, readJobs: HEALTHY(completed) })).totals.refusals).toBe(1);
+    rmSync(join(home, '.ashlr-runs/queue/run/RQ-DONE.dispatched'));
+    expect((await applyDiskMaint(plan, { roots, readJobs: HEALTHY(completed + jobsText([{ job: 'RQ-DONE', event: 'launch' }])) })).totals.refusals).toBe(1);
+    expect((await applyDiskMaint(plan, { roots, readJobs: async () => ({ state: 'degraded', text: '' }) })).totals.refusals).toBe(1);
+    expect(existsSync(path)).toBe(true);
+  });
+});
+
 describe('cli', () => {
   const run = async (argv: string[], planDeps: MaintDeps = {}) => {
     const logs: string[] = [];

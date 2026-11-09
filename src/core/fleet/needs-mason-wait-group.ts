@@ -55,7 +55,11 @@ export async function waitNeedsMasonGroup(options: NeedsWaitGroupOptions): Promi
   const controller = new AbortController();
   const abort = (): void => controller.abort();
   options.signal?.addEventListener('abort', abort, { once: true });
-  if (options.signal?.aborted) abort();
+  // If the outer signal is already aborted (e.g. signal arrived during stdin collection),
+  // return all items as cancelled immediately; do not run children.
+  if (options.signal?.aborted) {
+    return { outcome: 'cancelled', items: ids.map(id => ({ id, status: 'cancelled' as const })) };
+  }
   // Every child registers SIGINT/SIGTERM handlers; avoid Node's leak warning for <=32 of them.
   const maxListeners = process.getMaxListeners();
   process.setMaxListeners(maxListeners + ids.length * 2);

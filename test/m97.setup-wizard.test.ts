@@ -20,6 +20,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 
 // ---------------------------------------------------------------------------
 // Hermetic HOME
@@ -46,15 +48,24 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 vi.mock('node:child_process', () => ({
-  execFile: vi.fn(),
+  execFile: vi.fn((...args: unknown[]) => {
+    const callback = args.at(-1);
+    if (typeof callback === 'function') queueMicrotask(() => callback(new Error('ENOENT'), '', ''));
+    return { stdin: null };
+  }),
   execFileSync: vi.fn(() => { throw new Error('not found'); }),
   spawnSync: vi.fn(() => ({ status: 1, stdout: '', stderr: '' })),
-  spawn: vi.fn(() => ({
-    stdout: { on: vi.fn() },
-    stderr: { on: vi.fn() },
-    on: vi.fn(),
-    pid: 0,
-  })),
+  spawn: vi.fn(() => {
+    const child = Object.assign(new EventEmitter(), {
+      stdout: new PassThrough(), stderr: new PassThrough(),
+      stdin: null, pid: undefined, unref: vi.fn(),
+    });
+    queueMicrotask(() => {
+      child.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }));
+      child.emit('close', -1, null);
+    });
+    return child;
+  }),
 }));
 
 // ---------------------------------------------------------------------------
@@ -149,8 +160,11 @@ function makeConfig() {
   };
 }
 
+// Load the large onboarding module during collection, outside individual test deadlines.
+const onboardModule = await import('../src/core/onboard.js');
+
 async function importNewSteps() {
-  const mod = await import('../src/core/onboard.js');
+  const mod = onboardModule;
   return {
     stepDaemonService: mod.stepDaemonService,
     stepEngines: mod.stepEngines,

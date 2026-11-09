@@ -1,5 +1,8 @@
+import { nodeFixtureHeader } from './helpers/node-fixture.js';
 /** Real inert native process + HTTP + OS jail seams. No vendor executable or credential is used. */
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { createServer } from 'node:http';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,20 +11,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultConfig } from '../src/core/config.js';
 import { prepareResourceNativeProfile } from '../src/core/resources/native-profile.js';
 import { readClaudeNativeBinding, sameClaudeNativeBinding, claudeNativeObservation, observeClaudeNativeBinding } from '../src/core/sandbox/claude-native-admission.js';
-import { runClaudeNativeAdapter } from '../src/core/sandbox/claude-native-adapter.js';
+import { claudeNativeOuterLauncher, runClaudeNativeAdapter } from '../src/core/sandbox/claude-native-adapter.js';
+import { autonomousConfinementProfile, buildAutonomousSbplProfile, escapeSbplPath, SANDBOX_EXEC_PATH } from '../src/core/sandbox/confine.js';
 import { setKernelEvidenceWatcherForTest, type AutonomousSpawnFinish } from '../src/core/sandbox/autonomous-run.js';
 import { spawnEngine } from '../src/core/run/engines.js';
 import type { ClaudeAccountUsageResult } from '../src/core/resources/claude-account-usage.js';
 
 let base: string;
 beforeEach(() => { base=realpathSync(mkdtempSync(join(tmpdir(),'claude-native-inert-'))); });
-afterEach(() => {setKernelEvidenceWatcherForTest();vi.unstubAllEnvs();rmSync(base,{recursive:true,force:true});});
+afterEach(() => {vi.restoreAllMocks();syncBuiltinESMExports();setKernelEvidenceWatcherForTest();vi.unstubAllEnvs();rmSync(base,{recursive:true,force:true});});
 const identity = {email:'native-fixture@example.invalid',orgId:'fixture-org'};
 const accountDigest = createHash('sha256').update(JSON.stringify(['claude-native-auth-v1',identity.email,identity.orgId])).digest('hex');
 function fixture() {
   const executable=join(base,'inert-native');
-  writeFileSync(executable, `#!${realpathSync(process.execPath)}
-const fs=require('node:fs'),path=require('node:path');
+  writeFileSync(executable, `${nodeFixtureHeader(realpathSync(process.execPath))}const fs=require('node:fs'),path=require('node:path');
 const args=process.argv.slice(2),state=process.env.CLAUDE_CONFIG_DIR;
 const data=JSON.parse(fs.readFileSync(path.join(state,'fixture.json'),'utf8'));
 if(args[0]==='auth') {console.log(JSON.stringify({loggedIn:true,authMethod:'claude.ai',subscriptionType:'max',email:data.email,orgId:data.orgId}));process.exit(0);}
@@ -109,6 +112,54 @@ describe.skipIf(process.platform === 'win32' || typeof process.execve !== 'funct
     const f=fixture();writeFileSync(join(f.profile.nativeStatePath,'fixture.json'),JSON.stringify({...identity,credits:false,version:'99.0.0'}),{mode:0o600});
     expect(await observeClaudeNativeBinding(f.cfg,'claude-a','native-fixture','claude-sonnet-4-5',base,new AbortController().signal,()=>true)).toBeNull();
     expect(existsSync(join(f.profile.nativeStatePath,'contact.json'))).toBe(false);
+  });
+});
+
+describe.runIf(process.platform === 'darwin' && typeof process.execve === 'function')('fixed native auth helper closure',()=>{
+  it('adds only the fixed Apple bash variant to the outer profile without changing the worker jail',()=>{
+    const f=fixture();const home=join(base,'helper-home'),scratch=join(base,'helper-scratch');mkdirSync(home);mkdirSync(scratch);
+    const env={HOME:home,TMPDIR:scratch};const overlay={set:{},unset:[],writablePaths:[],readOnlyPaths:[],deniedReadPaths:[]};
+    const profile=autonomousConfinementProfile('local');
+    const original=buildAutonomousSbplProfile(profile,{worktree:scratch,home,env,overlay});
+    const owned={bin:process.execPath,env,launcher:{bin:SANDBOX_EXEC_PATH,prefixArgs:['-p',original]},overlay,profile,runDir:base,home,evidence:null};
+    const binding=readClaudeNativeBinding(f.cfg,'claude-a');expect(binding).not.toBeNull();
+    const outer=claudeNativeOuterLauncher(owned,binding!,12345,scratch);
+    const rules=outer.prefixArgs[1]!.split('\n');
+    const allowed=[binding!.launch.command[0],binding!.launch.executable,'/usr/bin/security','/bin/sh','/bin/bash','/usr/sbin/sysctl','/bin/df','/usr/sbin/diskutil','/usr/bin/plutil'];
+    expect(rules.filter(rule=>rule.startsWith('(allow process-exec '))).toEqual([`(allow process-exec ${allowed.map(path=>`(literal "${escapeSbplPath(path)}")`).join(' ')})`]);
+    expect(outer.prefixArgs.join('\n')).toContain('(deny process-exec)');
+    expect(owned.launcher.prefixArgs).toEqual(['-p',original]);
+    expect(original).not.toContain('(literal "/bin/bash")');
+  });
+  it.each(['symlink','non-regular','non-root','writable','non-canonical','not-executable'] as const)('refuses an unsafe fixed bash helper before task contact: %s',async kind=>{
+    const f=fixture();const stat=fs.lstatSync,real=fs.realpathSync,access=fs.accessSync;
+    vi.spyOn(fs,'lstatSync').mockImplementation(((...args:Parameters<typeof fs.lstatSync>)=>{
+      const observed=Reflect.apply(stat,fs,args);
+      if(args[0]!=='/bin/bash')return observed;
+      const patch=kind==='symlink'?{isSymbolicLink:()=>true}:kind==='non-regular'?{isFile:()=>false}:kind==='non-root'?{uid:1n}:kind==='writable'?{mode:observed.mode|0o020n}:{};
+      return Object.assign(Object.create(observed),patch);
+    }) as typeof fs.lstatSync);
+    const resolve=vi.spyOn(fs,'realpathSync').mockImplementation(((...args:Parameters<typeof fs.realpathSync>)=>args[0]==='/bin/bash'&&kind==='non-canonical'?'/fixture/untrusted-bash':Reflect.apply(real,fs,args)) as typeof fs.realpathSync);
+    Object.assign(resolve,{native:real.native});
+    vi.spyOn(fs,'accessSync').mockImplementation(((...args:Parameters<typeof fs.accessSync>)=>{if(args[0]==='/bin/bash'&&kind==='not-executable')throw Error('inert helper not executable');return Reflect.apply(access,fs,args);}) as typeof fs.accessSync);
+    syncBuiltinESMExports();
+    const result=await runClaudeNativeAdapter({...f,runId:'helper-fixture',seatId:'claude-a',model:'claude-sonnet-4-5',prompt:'{}',signal:new AbortController().signal,admission:()=>true,timeoutMs:4000,recordEvidence(){},retainCleanupFailure(){}});
+    expect(result).toMatchObject({ok:false,providerContacted:false,captureDenied:true});
+    expect(result.error).toBe('Native Claude producer preparation or execution failed');
+    expect(vi.mocked(fs.lstatSync).mock.calls.some(([path])=>path==='/bin/bash')).toBe(true);
+    if(kind==='not-executable')expect(vi.mocked(fs.accessSync).mock.calls.some(([path,mode])=>path==='/bin/bash'&&mode===fs.constants.X_OK)).toBe(true);
+    expect(existsSync(join(f.profile.nativeStatePath,'contact.json'))).toBe(false);expect(existsSync(join(f.worktree,'written.txt'))).toBe(false);
+  });
+  it('refuses a changed fixed bash epoch after native observation and before task contact',async()=>{
+    const f=fixture();const stat=fs.lstatSync;let reads=0;
+    vi.spyOn(fs,'lstatSync').mockImplementation(((...args:Parameters<typeof fs.lstatSync>)=>{
+      const observed=Reflect.apply(stat,fs,args);
+      return args[0]==='/bin/bash'&&++reads>1?Object.assign(Object.create(observed),{ino:observed.ino+1n}):observed;
+    }) as typeof fs.lstatSync);
+    syncBuiltinESMExports();
+    const result=await runClaudeNativeAdapter({...f,runId:'helper-epoch-fixture',seatId:'claude-a',model:'claude-sonnet-4-5',prompt:'{}',signal:new AbortController().signal,admission:()=>true,timeoutMs:4000,recordEvidence(){},retainCleanupFailure(){}});
+    expect(reads).toBeGreaterThan(1);expect(result).toMatchObject({ok:false,providerContacted:false,captureDenied:true});
+    expect(existsSync(join(f.profile.nativeStatePath,'contact.json'))).toBe(false);expect(existsSync(join(f.worktree,'written.txt'))).toBe(false);
   });
 });
 

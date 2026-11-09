@@ -4,6 +4,8 @@ import { MAX_SLATE_BYTES, parsePlannerSlate, readSlateFile, writePlannerSlate } 
 
 type IO = { stdin?: AsyncIterable<Uint8Array | string>; stdout?: { write(text: string): unknown } };
 
+export const usage = 'Usage: ashlr fleet planner-slate --file <abs|-> [--runs-dir <abs>] [--json]';
+
 export async function cmdFleetPlannerSlate(args: string[], io: IO = {}): Promise<number> {
   const output = io.stdout ?? process.stdout;
   const report = (status: 'written' | 'unchanged' | 'refused', count: number, code: number): number => {

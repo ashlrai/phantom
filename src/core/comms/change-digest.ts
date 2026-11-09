@@ -22,9 +22,10 @@
  * lives in ~/.ashlr/comms/digest-state.json. Never throws.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { readPrivateFileCapped } from '../verse/preferences.js';
 
 // ---------------------------------------------------------------------------
 // Facts
@@ -274,7 +275,10 @@ export async function collectDigestFacts(sinceMs: number, overrides: DigestSourc
   let evidence: DigestFacts['evidence'];
   try {
     const truth = await src.fleetTruth(sinceMs, nowMs);
-    mergeCountUnavailable = truth.mergeCountState === 'unavailable';
+    mergeCountUnavailable = truth.mergeCountState !== 'ok' || truth.truncated ||
+      truth.windowStartMs !== sinceMs || truth.windowEndMs !== nowMs || truth.merged.some((m) =>
+        !/^ashlrai\/[A-Za-z0-9_.-]+$/i.test(m.repo) || !Number.isSafeInteger(m.number) || m.number <= 0 ||
+        !Number.isFinite(m.mergedAtMs) || m.mergedAtMs < sinceMs || m.mergedAtMs > nowMs || !['gh', 'both'].includes(m.source));
     fleet = { running: truth.running, queued: truth.queued, blocked: truth.blocked };
     evidence = { sinceMs, asOfMs: truth.windowEndMs, truncated: truth.truncated };
     // A successful GitHub query is authoritative; local observations are not extra merges.
@@ -287,7 +291,8 @@ export async function collectDigestFacts(sinceMs: number, overrides: DigestSourc
       }
     }
     for (const m of truth.merged) {
-      if (m.number <= 0) continue;
+      if (!Number.isSafeInteger(m.number) || m.number <= 0 || !Number.isFinite(m.mergedAtMs) ||
+          m.mergedAtMs < sinceMs || m.mergedAtMs > nowMs) continue;
       push({
         key: `pr:${m.repo}#${m.number}:merged`,
         kind: 'merge',
@@ -419,7 +424,7 @@ function digestEvidenceLines(facts: DigestFacts): string[] {
   }
   if (facts.evidence) {
     const { sinceMs, asOfMs, truncated } = facts.evidence;
-    lines.push(`Source: gh search prs --owner ashlrai --merged; ~/.ashlr-runs (or ASHLR_RUNS_DIR)/queue/admission.json (or live workers) + queue/ready.tsv; as-of ${new Date(asOfMs).toISOString()}; window ${new Date(sinceMs).toISOString()}..${new Date(asOfMs).toISOString()}${truncated ? '; merge count is a lower bound (search cap)' : ''}`);
+    lines.push(`Source: GitHub search visible to the current credential for ashlrai; ~/.ashlr-runs (or ASHLR_RUNS_DIR)/queue/admission.json (or live workers) + queue/ready.tsv; as-of ${new Date(asOfMs).toISOString()}; window ${new Date(sinceMs).toISOString()}..${new Date(asOfMs).toISOString()}${truncated ? '; merge count is a lower bound (search cap)' : ''}`);
   }
   return lines;
 }
@@ -547,10 +552,15 @@ function statePath(): string {
   return join(homedir(), '.ashlr', 'comms', 'digest-state.json');
 }
 
+/** reported[] holds at most REPORTED_KEEP keys (~100 B each); 256 KiB is generous headroom. */
+const STATE_READ_BYTES = 256 * 1024;
+
 export function readDigestState(): DigestState | null {
   try {
     if (!existsSync(statePath())) return null;
-    const s = JSON.parse(readFileSync(statePath(), 'utf8')) as Partial<DigestState>;
+    const read = readPrivateFileCapped(statePath(), STATE_READ_BYTES);
+    if (read === null || read.truncated) return null;
+    const s = JSON.parse(read.text) as Partial<DigestState>;
     if (s.v !== 1 || typeof s.lastCheckAt !== 'string' || typeof s.lastActivityAt !== 'string') return null;
     return {
       v: 1,

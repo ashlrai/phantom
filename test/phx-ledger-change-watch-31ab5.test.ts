@@ -94,7 +94,7 @@ describe('resource ledger changes-only watch', () => {
   it.each([
     ['--changes-only'], ['--json', '--changes-only'], ['--watch', '--changes-only'],
     ['--watch', '--json', '--changes-only', '--changes-only'], ['--help', '--changes-only'],
-  ])('rejects invalid arguments %j without reading', async (...args) => {
+  ])('rejects invalid arguments %j without reading (%#)', async (...args) => {
     const err = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const read = vi.fn();
     expect(await cmdResourceLedger(args, read)).toBe(2);

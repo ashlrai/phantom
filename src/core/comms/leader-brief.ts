@@ -35,7 +35,7 @@ export interface BriefFacts {
   shipped: BriefItem[];
   /** PRs opened in the window (count only — the shipped line leads with merges). */
   prsOpened: number;
-  /** GitHub could not be read: the merge count is unknown, which is not the same as zero. */
+  /** The credential-visible search is incomplete or unavailable, not an empty result. */
   mergeCountUnavailable?: boolean;
   /** Fleet-wide running/queued from the runs dir; null/absent = unknown. */
   fleet?: { running: number | null; queued: number | null } | null;
@@ -163,13 +163,13 @@ export async function gatherBriefFacts(sinceMs: number, nowMs: number, overrides
 
   let digest: Awaited<ReturnType<typeof collectDigestFacts>> | null = null;
   try {
-    digest = await collectDigestFacts(sinceMs, { ...(overrides.digest ?? {}), autonomy: src.autonomy });
+    digest = await collectDigestFacts(sinceMs, { ...(overrides.digest ?? {}), autonomy: src.autonomy }, nowMs);
   } catch {
     digest = null;
   }
   const events = digest?.events ?? [];
   const shipped: BriefItem[] = events
-    .filter((e) => e.kind === 'merge' || (e.kind === 'cloud' && / merged\b/.test(e.text)))
+    .filter((e) => e.kind === 'merge')
     .map((e) => ({ text: e.text, ...(e.url ? { url: e.url } : {}) }));
   const mergeCountUnavailable = digest?.mergeCountUnavailable ?? true;
   const prsOpened = events.filter((e) => e.kind === 'pr-opened').length;
@@ -253,12 +253,13 @@ export function composeBrief(kind: BriefKind, facts: BriefFacts, opts: { narrati
   const opened = facts.prsOpened > 0 ? ` · ${facts.prsOpened} PR${facts.prsOpened === 1 ? '' : 's'} opened` : '';
   const unavailable = facts.mergeCountUnavailable === true;
   if (facts.shipped.length > 0) {
-    lines.push(`Shipped: ${facts.shipped.length}${unavailable ? ' (GitHub unreachable, count may be low)' : ''} — ${items(facts.shipped)}${opened}`);
+    lines.push(`Shipped: ${facts.shipped.length}${unavailable ? ' recorded (merge search incomplete)' : ` GitHub-visible ashlrai merge${facts.shipped.length === 1 ? '' : 's'}`} — ${items(facts.shipped)}${opened}`);
   } else if (unavailable) {
     lines.push(`Shipped: merge count unavailable${opened}.`);
   } else {
-    lines.push(`Shipped: nothing merged${kind === 'morning' ? ' overnight' : kind === 'evening' ? ' today' : ' since the last brief'}${opened}.`);
+    lines.push(`Shipped: no GitHub-visible ashlrai merges in this window${opened}.`);
   }
+  lines[lines.length - 1] += ` (GitHub search window ${new Date(facts.sinceMs).toISOString()}–${new Date(facts.nowMs).toISOString()}, current credential)`;
   const fleet = facts.fleet;
   if (fleet && (fleet.running !== null || fleet.queued !== null)) {
     lines.push(`Fleet: ${fleet.running ?? '?'} running, ${fleet.queued ?? '?'} queued`);

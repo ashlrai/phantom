@@ -96,7 +96,11 @@ it('rejects invalid arguments before any read', async () => {
     ['--lanes', 'alpha', '--lanes', 'beta', '--timeout-ms', '100'],
     ['--lanes', 'alpha', '--timeout-ms', '100', '--json', '--json'],
     ['--lanes', 'alpha', '--timeout-ms', '100', '--bogus'],
-    ['--lanes', 'alpha', '--timeout-ms', '100', '--after', '2026-11-01T00:00:00Z'],
+    ['--lanes', 'alpha', '--timeout-ms', '100', '--after', '2026-11-01T00:00:00'],
+    ['--lanes', 'alpha', '--timeout-ms', '100', '--after', '2026-11-01'],
+    ['--lanes', 'alpha', '--timeout-ms', '100', '--after', 'yesterday'],
+    ['--lanes', 'alpha', '--timeout-ms', '100', '--after'],
+    ['--lanes', 'alpha', '--timeout-ms', '100', '--after', '2026-11-01T00:00:00Z', '--after', '2026-11-01T00:00:00Z'],
     ['--lanes', 'alpha'],
     ['--lanes', '--timeout-ms', '100'],
     ['--lanes', 'alpha', '--timeout-ms', '0'],
@@ -109,6 +113,18 @@ it('rejects invalid arguments before any read', async () => {
     expect(await cmdFleetResetGroupAwait(argv, { read, now })).toBe(2);
   }
   expect(read).not.toHaveBeenCalled();
+});
+
+it('--after admits evidence older than invocation, strictly newer than the persisted watermark', async () => {
+  const lines: string[] = [];
+  // Both readings predate invocation (start); only the one after the watermark counts.
+  const read = vi.fn(async () => snapshot([row('alpha', {}, start - 500), row('beta', {}, start - 2_000)]));
+  const after = new Date(start - 1_000).toISOString();
+  const pending = cmdFleetResetGroupAwait(args('alpha,beta', ['--after', after]), { read, now, emit: line => { lines.push(line); } });
+  await vi.advanceTimersByTimeAsync(100);
+  expect(await pending).toBe(1);
+  expect(JSON.parse(lines[0]!)).toMatchObject({ outcome: 'deadline',
+    observed: [{ lane: 'alpha', readingAsOf: new Date(start - 500).toISOString() }], pending: ['beta'] });
 });
 
 it('bounds a stalled read by the overall deadline and makes no later reads', async () => {

@@ -10,6 +10,7 @@ Agents start here. Humans can use the same commands.
 [Full agent reference](https://github.com/ashlrai/phantom/blob/master/docs/llms-full.txt) ·
 [Onboarding](https://phm.dev/connect) ·
 [User guide](docs/VERSE.md) ·
+[Repository tools](tools/README.md) ·
 [GitHub](https://github.com/ashlrai/phantom)
 
 [![CI](https://github.com/ashlrai/phantom/actions/workflows/ci.yml/badge.svg)](https://github.com/ashlrai/phantom/actions/workflows/ci.yml)
@@ -27,7 +28,7 @@ phm --version
 phm docs --agent --json
 ```
 
-This source tree targets version 3.30.9; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.28; check canonical release availability and exact matching assets before installation.
 
 Patch release PRs are evaluated every 30 minutes when master has new green CI.
 `RELEASE_CADENCE_MINUTES` configures the minimum interval; the release PR keeps
@@ -48,6 +49,11 @@ The page is [http://127.0.0.1:7777/verse/](http://127.0.0.1:7777/verse/). Paste 
 Adding a node? Follow [Add a computer in 60 seconds](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md).
 
 New here? [phm.dev/connect](https://phm.dev/connect) is the guided onboarding path. The [first-run guide](docs/QUICKSTART.md#open-verse) covers the same ground in this repository.
+
+`connect` is not a Phantom command in this checkout. For a new Phantom Secrets
+name, use `phantom add NAME` in a trusted terminal. Keep credentials out of
+chat and agent transcripts. Approval cards record decisions; they do not
+collect credentials.
 
 ### Commands that print JSON
 
@@ -108,7 +114,7 @@ Details: [self-hosting](docs/SELF-HOSTING.md#connect-claude-code-and-codex-over-
 
 ![Phantom 3.24.3 compiled browser Demo chat with labeled sample accounts. No provider ran.](https://github.com/ashlrai/phantom/blob/master/docs/images/verse-work-with-me-3.24.3-demo.jpg)
 
-*Compiled 3.24.3 browser UI with labeled Demo accounts. No provider ran and no fleet was active. The screenshot shows the browser UI, not the native app window.*
+*Historical 3.24.3 browser demo with labeled sample accounts. The current interface may differ. No provider ran and no fleet was active; this is not the native app window.*
 
 ## Features
 
@@ -116,8 +122,10 @@ Details: [self-hosting](docs/SELF-HOSTING.md#connect-claude-code-and-codex-over-
 | --- | --- |
 | ![CLI JSON](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-cli.svg) | **CLI for agents.** `phm docs --agent --json` lists commands. Add `--json` on commands that offer it. |
 | ![MCP gateway](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-mcp.svg) | **One MCP gateway.** Claude, Cursor, and Codex use `ashlr-hub`. |
-| ![Accounts and local models](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-local.svg) | **Your accounts.** Claude Code, Codex, Grok, Devin, API credits, and tool-capable local models. Phantom does not ask for or store the vendor credential. |
-| ![Review](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-review.svg) | **A record you can review.** Chats, diffs, checkpoints, and fleet runs stay in the console. A finished run is not proof the outcome shipped. |
+| ![MCP gateway](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-mcp.svg) | **Companion inventory.** `phm companions --json` checks separately installed Secrets, Locus, and Lexicon CLI identities. It does not establish runtime readiness. |
+| ![Accounts and local models](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-local.svg) | **Your accounts.** Claude Code, Codex, Grok, Devin, API credits, and tool-capable local models. Vendor CLIs manage their own sign-in; the optional Devin API connection stores its key in the macOS Keychain. |
+| ![Review](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-review.svg) | **A record you can review.** Chats, diffs, checkpoints, and fleet runs stay in the console. Fleet telemetry and Show Mode display recent recorded activity. A finished run is not proof the outcome shipped. |
+| ![Review](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-review.svg) | **Fleet inspection.** Read-only reports cover [worktrees](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-VERBS.md), [merge batches](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-BATCH.md), and post-merge outcomes. The [unified inbox](https://github.com/ashlrai/phantom/blob/master/docs/CHANNELS.md#unified-inbox) collects pending local items without acting on them. |
 
 **Work with me** is the chat. **Work for me** is the fleet. Saving a fleet outcome does not start work and does not widen permission. The fleet runs only in enrolled repositories under a signed grant. Autonomy ships **dormant** and is macOS-only.
 
@@ -156,7 +164,7 @@ Independent ready tasks can use more than one admitted resource. Slots, quotas, 
 ## FAQ
 
 **Does Phantom store my API keys?**
-No. Each vendor CLI signs itself in. Phantom does not ask for or store that credential.
+Vendor CLIs manage their own sign-in. The optional `phm devin connect` command asks for a Devin API key at a hidden prompt and stores it in the macOS Keychain, not in a file. See [Devin](docs/DEVIN.md) for the connection and custody details.
 
 **What Node version do I need?**
 22.15.0 or newer. `node --version` must print that before `npm install -g @ashlr/phantom`.
@@ -201,7 +209,7 @@ phm verse
 
 `phm verse` serves [http://127.0.0.1:7777/verse/](http://127.0.0.1:7777/verse/). The package exports `@ashlr/phantom`, `@ashlr/phantom/core`, `@ashlr/phantom/types`, `@ashlr/phantom/plugin`, and `@ashlr/phantom/universe`.
 
-Optional cloud handoff, off unless you launch it:
+Optional cloud handoff, off unless you launch it. Cloud launch spends Claude credits. The Devin API connection requires macOS and Devin sessions spend ACUs:
 
 ```sh
 phm cloud launch "<task>" --repo owner/name

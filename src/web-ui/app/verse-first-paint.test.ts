@@ -2,23 +2,34 @@
  * app/verse-first-paint.test.ts — the signed-in shell waits for its opening
  * section and the chat's columns, never longer than its bound.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const loads = vi.hoisted(() => ({
   section: vi.fn<(id: string) => Promise<unknown>>(),
   chatSurface: vi.fn<() => Promise<unknown>>(),
+  warm: vi.fn<() => void>(),
 }));
 vi.mock('../routes/verse/VerseApp.js', () => ({
   loadSection: loads.section,
-  SECTION_MODULES: { './sections/ChatSection.tsx': async () => ({ preloadChatSurface: loads.chatSurface }) },
+  SECTION_MODULES: {
+    './sections/ChatSection.tsx': async () => ({ preloadChatSurface: loads.chatSurface }),
+    './sections/LiveStatusSection.tsx': async () => ({ warmOpeningData: loads.warm }),
+    './sections/FleetSection.tsx': async () => ({}),
+    './sections/GrowthSection.tsx': async () => { throw new Error('offline'); },
+  },
 }));
 
-import { firstPaintSurface } from './verse-first-paint.js';
+import { firstPaintSurface, warmOpeningSection } from './verse-first-paint.js';
+import { resetVerseUi, setVerseSection } from '../routes/verse/verse-ui-store.js';
+
+beforeEach(() => setVerseSection('chat'));
 
 afterEach(() => {
   vi.useRealTimers();
+  resetVerseUi();
   loads.section.mockReset();
   loads.chatSurface.mockReset();
+  loads.warm.mockReset();
 });
 
 describe('firstPaintSurface', () => {
@@ -53,5 +64,21 @@ describe('firstPaintSurface', () => {
     loads.section.mockRejectedValue(new Error('offline'));
     loads.chatSurface.mockRejectedValue(new Error('offline'));
     await expect(firstPaintSurface(60_000)).resolves.toBeUndefined();
+  });
+});
+
+describe('warmOpeningSection', () => {
+  it('starts the opening section\'s reads once, through that section\'s own hook', async () => {
+    setVerseSection('live');
+    await warmOpeningSection();
+    expect(loads.warm).toHaveBeenCalledTimes(1);
+  });
+
+  it('does nothing for a section that has no hook, and never rejects when its chunk fails', async () => {
+    setVerseSection('fleet');
+    await expect(warmOpeningSection()).resolves.toBeUndefined();
+    setVerseSection('growth');
+    await expect(warmOpeningSection()).resolves.toBeUndefined();
+    expect(loads.warm).not.toHaveBeenCalled();
   });
 });

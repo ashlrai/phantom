@@ -63,7 +63,7 @@ it.each([
   { code: 0, stdout: JSON.stringify({ ok: true, apps: [{ app: 'Phantom', observedRunning: true }, { app: 'Phantom', observedRunning: true }] }) },
   { code: 1, stdout: JSON.stringify({ ok: false, apps: [{ app: 'Phantom', observedRunning: false, outcome: 'refused' }, { app: 'Cursor', observedRunning: true }] }) },
   { ...batch(), code: 1 },
-])('fails closed on malformed or unsuccessful batches', async result => {
+])('fails closed on malformed or unsuccessful batches (%#)', async result => {
   expect(await cmdFleetAppsWatch(['Phantom', 'Cursor', '--duration-ms', '1000', '--json'], { runChild: async () => result })).toBe(1);
   expect(events()).toHaveLength(1);
   expect(events()[0]).toMatchObject({ outcome: 'failed', cycles: 1 });

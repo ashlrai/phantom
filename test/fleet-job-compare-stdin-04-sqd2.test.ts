@@ -52,7 +52,7 @@ describe('fleet job-compare stdin', () => {
     expect(continued).toBe(false);
   });
 
-  it.each([['--stdin', 'RQ-A', 'RQ-B'], ['--stdin', '--stdin'], ['--stdin', '--json', '--json']])('rejects conflicting arguments %j before reading', async (...args) => {
+  it.each([['--stdin', 'RQ-A', 'RQ-B'], ['--stdin', '--stdin'], ['--stdin', '--json', '--json']])('rejects conflicting arguments %j before reading (%#)', async (...args) => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const compare = vi.fn();
     async function* fail() { throw new Error('must not read'); yield bytes(''); }

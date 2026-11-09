@@ -1,3 +1,4 @@
+import { groupPresence, publishGroupMessage, publishGroupPresence, subscribeGroup } from '../core/fleet/bus-group.js';
 import { failedBusBatch, MAX_BUS_BATCH_BYTES, postBusBatch } from '../core/fleet/bus-batch-post.js';
 import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -9,7 +10,12 @@ import { openBusCheckpoint } from './comms-bus-checkpoint.js';
 import { busStatusExitCode } from './comms-bus-exit.js';
 import { withCodexPeersSession, type LocusPeersEndpoint } from '../core/fleet/adapters/codex-peers.js';
 
-const HELP = `phm comms bus post --file <envelope.json|->
+const HELP = `phm comms bus group read <room> <topic> <cursor>
+phm comms bus group presence <room> <topic>
+phm comms bus group heartbeat <room> <topic> <id> <member> <online|offline>
+phm comms bus group publish <room> <topic> <id> <from> <ttl-ms> <json-body>
+Group labels are local routing labels, not identities; group read advances the shared bus cursor.
+phm comms bus post --file <envelope.json|->
 phm comms bus post --reply-to <id> --id <new-id> --from <address> --text <text> [--ttl-ms <ms>]
 phm comms bus post-batch --file <batch.json|->
 phm comms bus status
@@ -330,11 +336,30 @@ async function peers(args: string[], deps: CommsBusDependencies): Promise<number
   }
 }
 
+async function groupCommand(args: string[], options: BusInboxOptions, deps: CommsBusDependencies): Promise<number> {
+  const [verb, room, topic, ...rest] = args;
+  let result: { status: string } = { status: 'invalid' };
+  if (room && topic) {
+    if (verb === 'read' && rest.length === 1 && /^(0|[1-9][0-9]*)$/.test(rest[0]!)) {
+      result = subscribeGroup(room, topic, Number(rest[0]), 100, options);
+    } else if (verb === 'presence' && rest.length === 0) {
+      result = groupPresence(room, topic, options);
+    } else if (verb === 'heartbeat' && rest.length === 3 && (rest[2] === 'online' || rest[2] === 'offline')) {
+      result = publishGroupPresence({ room, topic, id: rest[0]!, member: rest[1]!, state: rest[2] }, options);
+    } else if (verb === 'publish' && rest.length === 4 && /^[1-9][0-9]*$/.test(rest[2]!)) {
+      try { result = publishGroupMessage({ room, topic, id: rest[0]!, from: rest[1]!, ttl: Number(rest[2]), body: JSON.parse(rest[3]!) }, options); } catch { /* invalid JSON */ }
+    }
+  }
+  await deliver(JSON.stringify(result), deps);
+  return busStatusExitCode(result.status);
+}
+
 export async function cmdCommsBus(args: string[], options: BusInboxOptions = {}, deps: CommsBusDependencies = {}): Promise<number> {
   if (args.length === 0 || args.length === 1 && ['--help', '-h'].includes(args[0]!) ||
     args.length === 2 && ['post', 'post-batch', 'read', 'watch', 'status', 'peers'].includes(args[0]!) && ['--help', '-h'].includes(args[1]!)) {
     console.log(HELP); return 0;
   }
+  if (args[0] === 'group') return groupCommand(args.slice(1), options, deps);
   if (args[0] === 'post-batch') return postBatch(args.slice(1), options, deps);
   const [verb, ...rest] = args, values = new Map<string, string>();
   const invalid = (): number => { console.log(JSON.stringify({ status: 'invalid' })); return 2; };

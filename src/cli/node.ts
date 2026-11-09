@@ -31,6 +31,26 @@ export async function cmdNode(args: string[]): Promise<number> {
       (['pool', 'rpc', 'watch', 'worker'].includes(args[0] ?? '') || (args[0] === 'join' && (args.includes('--primary') || args.slice(1).every(a => a === '--json'))))) {
     return (await import('./node-pool.js')).cmdNodePool(args[0]!, args.slice(1));
   }
+  if (args[0] === 'lanes' && !args.includes('--help') && !args.includes('-h')) {
+    const extra = args.slice(1).filter(a => a !== '--json');
+    if (extra.length || args.slice(1).filter(a => a === '--json').length > 1) {
+      console.error('Usage: phm node lanes [--json]');
+      return 2;
+    }
+    const { localLanePlan, localLaneConfigPath } = await import('../core/drive/nodes/local-model-caps.js');
+    const probe = localLanePlan();
+    const out = { schemaVersion: 1, command: 'lanes', configPath: localLaneConfigPath(), ...probe };
+    if (args.includes('--json')) console.log(JSON.stringify(out));
+    else {
+      const p = probe.plan;
+      console.log(`config: ${probe.config ? `enabled=${probe.config.enabled}` : probe.configError ? `invalid (${probe.configError})` : `absent (${out.configPath})`}`);
+      console.log(`ram: ${(p.ramBytes / 1024 ** 3).toFixed(0)} GB, envelope ${(p.budgetBytes / 1024 ** 3).toFixed(1)} GB`);
+      if (p.model) console.log(`model: ${p.model.id} (${p.model.repo}) ctx=${p.model.servedContext} tiers=${p.model.tiers.join('+') || 'none'} slots=${p.slots}`);
+      console.log(`caps: ${p.suggestedCaps || 'none'}${p.backoff ? ` — held: ${p.backoffReason}` : ''}`);
+      for (const r of p.rejected) console.log(`  rejected ${r.id}: ${r.reason}`);
+    }
+    return 0;
+  }
   const fleetVerb = NODE_FLEET_VERBS.find(verb => verb === args[0]);
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`${USAGE}\nbootstrap is a planning stub: no VM creation, login, or registry calls.\n\n${NODE_FLEET_USAGE}\n\nMulti-Mac pool (explicit team SSH aliases only):
@@ -39,7 +59,8 @@ phm node join [--node <id>] --owner <scope> --primary <alias> --backup <alias> -
 phm node join --json (repeat on an already configured Mac)
 phm node watch [--once] --json
 phm node worker --runner /absolute/host-owned-runner --json
-phm node rpc --json (SSH stdin endpoint)`);
+phm node rpc --json (SSH stdin endpoint)
+phm node lanes [--json] (local oMLX lane plan: model pick, caps, backoff)`);
     return 0;
   }
   if (fleetVerb) return (await import('./node-fleet.js')).cmdNodeFleet(fleetVerb, args.slice(1));

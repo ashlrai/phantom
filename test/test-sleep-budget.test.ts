@@ -59,6 +59,21 @@ interface AllowEntry {
 // timer, an injected clock, or a smaller constant — not on this list.
 const ALLOW: readonly AllowEntry[] = [
   {
+    file: 'bus-worker-timeout-cli.test.ts',
+    fragment: 'delay(2100)',
+    reason: 'real renewal interval: observes the successor claim beyond the cancelled 2s renewal tick to prove it stays untouched',
+  },
+  {
+    file: 'fleet-standby-api-read-bound-02somt2.test.ts',
+    fragment: "setTimeout(() => resolve('/fake-script'), 10_000)",
+    reason: 'fake timers advance discovery instantly to verify the remaining child budget; no wall-clock wait',
+  },
+  {
+    file: 'phx-claim-lease-abort01.test.ts',
+    fragment: 'delay(6_000)',
+    reason: 'real process and lock contention: covers a 5s renewal tick while remaining inside the confirmed 15s lease',
+  },
+  {
     file: 'bus-claimed-run.integration.test.ts',
     fragment: 'delay(3600)',
     reason: 'real lease-renewal window: the contender must arrive past a live claim’s original 3s lease, so only renewals can fence it; smaller windows flake under host load',

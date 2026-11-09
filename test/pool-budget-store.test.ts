@@ -68,7 +68,7 @@ describe('immutable budget storage and CLI', () => {
     ['add', 'codex-cmp', '--source', 'cli', '--input', 'missing-private-file'],
     ['show', '--remaining', '1'], ['add', 'claude', '--bucket', 'credits', '--remaining', '2'],
     ['show', '--wat'],
-  ])('rejects invalid command %j without exposing input', async (...args) => {
+  ])('rejects invalid command %j without exposing input (%#)', async (...args) => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     expect(await cmdBudget([...args, '--json'])).toBe(2);
     expect(error).toHaveBeenCalledTimes(1);

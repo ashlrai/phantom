@@ -197,7 +197,7 @@ describe('CLI process exit codes', () => {
       ['remove', '--json'],
       ['kill', '--json'],
       ['kill', '--json', 'maybe'],
-    ])('returns one JSON usage error for %j', (...args) => {
+    ])('returns one JSON usage error for %j (%#)', (...args) => {
       const f = fixture();
       expect(jsonResult(run(['enroll', ...args], f.fixtureHome), 2)).toMatchObject({
         ok: false, error: expect.stringContaining(`Usage: ashlr enroll ${args[0]}`),
