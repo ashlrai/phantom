@@ -61,5 +61,14 @@ export interface WorldModel {
   outcomes: {
     repos: Array<{ repo: string; mergedPerDay: Field<number>; changeFailureRate: Field<number> }>;
   };
+  /** Counts from the local intent ledger. A missing file is unknown, not zero. */
+  intents: {
+    items: Field<number>;
+    tracked: Field<number>;
+    merged: Field<number>;
+    shipped: Field<number>;
+    verified: Field<number>;
+    stale: Field<number>;
+  };
   blindSpots: BlindSpot[];
 }

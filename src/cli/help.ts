@@ -74,6 +74,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'ashlr.world-model/v1 | one dotted path node',
   },
   {
+    usage: 'phm intent list|get|add|update|import|stale|link|ship [--json]',
+    description: 'Local ashlr.intent-ledger/v1 of owner directives. Import merges JSONL by RQ key or title and keeps provenance. A merged pull or shipped release updates the matching item. The file stays in ~/.ashlr-runs/intent/. Exit 0 success, 2 bad usage or a refused write.',
+    safety: 'append',
+    jsonShape: 'ashlr.intent-ledger/v1 item, list, import counts, or stale sweep',
+  },
+  {
     usage: 'phm observe [--json] | phm observe session <id> [--json]',
     description: 'Read-only human observe snapshot. Sensor headroom null, stale readings, and unreachable resources stay unknown and are never counted as idle. Exit 0 snapshot, 1 unreadable pull file, 2 bad usage.',
     safety: 'read',
@@ -677,6 +683,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'radar list|run|diff [--json]', desc: 'Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.', topic: 'observability' },
   { cmd: 'observe [--json]', desc: 'Human observe snapshot: roster, sensor headroom, pull headlines, bottlenecks, and human steps. Unknown stays unknown. See docs/OBSERVE.md.', topic: 'observability' },
   { cmd: 'world [--json] [--refresh]', desc: 'Cached ashlr.world-model/v1 for the scheduler and leaders. blindSpots lists each unknown field by path with a stable id. See docs/WORLD.md.', topic: 'observability' },
+  { cmd: 'intent list|get|add|update|import|stale|link|ship [--json]', desc: 'Local owner-directive ledger (~/.ashlr-runs/intent/ledger.json). Import JSONL, sweep stale items, and link merged pulls or shipped releases. See docs/INTENT.md.', topic: 'observability' },
   { cmd: 'world get <path> [--json]', desc: 'Read one node from the cached world model. A missing path is unknown, not zero.', topic: 'observability' },
   { cmd: 'chain verify [--json]', desc: 'Synthetic in-memory chain checks. Does not verify live transports.', topic: 'observability' },
   { cmd: 'incident report|receipts [--json]', desc: 'Turn a production signal into one bounded fix job, or send receipts for finished incidents.', topic: 'observability' },

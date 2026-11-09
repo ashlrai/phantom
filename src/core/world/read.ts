@@ -22,6 +22,7 @@ import {
 } from '../observe/read.js';
 import type { UsageSensorReport } from '../usage/sensor-reading.js';
 import type { AgentRoster } from '../fleet/agent-roster.js';
+import { intentSummary } from '../intent/ledger.js';
 import { projectWorldModel } from './project.js';
 import { WORLD_CACHE_TTL_MS, type WorldModel } from './types.js';
 import type { ObserveSnapshot } from '../observe/types.js';
@@ -178,12 +179,27 @@ export async function buildWorldModel(options: ReadObserveOptions = {}): Promise
     stepsRemaining: steps?.stepsRemaining ?? null,
     stepsObservedAt: steps?.stepsRemaining === null || steps === null ? null : new Date(nowMs).toISOString(),
     outcomes,
+    intents: await intentReading(nowMs),
   });
   observe.coverage = {
     ...observe.coverage,
     unknownFields: model.blindSpots.map((spot) => ({ id: spot.id, path: spot.path, freshness: spot.freshness })),
   };
   return { ...model, views: { observe } };
+}
+
+async function intentReading(nowMs: number): Promise<NonNullable<Parameters<typeof projectWorldModel>[0]['intents']> | null> {
+  const summary = await intentSummary({ nowMs });
+  if (!summary.present) return null;
+  return {
+    items: summary.items,
+    tracked: summary.tracked,
+    merged: summary.merged,
+    shipped: summary.shipped,
+    verified: summary.verified,
+    stale: summary.stale,
+    staleItems: summary.staleItems,
+  };
 }
 
 function isSensorReport(value: unknown): value is UsageSensorReport {

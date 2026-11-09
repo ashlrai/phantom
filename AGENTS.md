@@ -242,6 +242,10 @@ phm desktop list-apps --json
 phm desktop read --app Cursor --json
 ```
 
+## Intent ledger
+
+`phm intent list|get|add|update|import|stale|link|ship --json` tracks owner directives in `~/.ashlr-runs/intent/ledger.json` (`ashlr.intent-ledger/v1`). The file stays on the owner machine. Import accepts several JSONL files (`id`, `title`, `source`, `date`, `rq_key`, `status`) or one ledger document, deduped by RQ key or normalized title, with provenance on each item. A merged pull whose title or branch carries an RQ key updates the match, and `phm intent ship --release <id>` marks a shipped release. `phm world --json` includes `intents` totals and lists stale items as blind spots. See [INTENT](docs/INTENT.md).
+
 ## Drafts
 
 `phm drafts list|show|approve|reject --json` handles outbound mail waiting for

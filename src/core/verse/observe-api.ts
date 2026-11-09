@@ -4,15 +4,17 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sendJson } from '../web/api.js';
+import { listIntents } from '../intent/ledger.js';
 import { readObserveSession, readObserveSnapshot } from '../observe/read.js';
 import { readWorldModel } from '../world/read.js';
 
 export const OBSERVE_PATH = '/api/verse/observe';
 export const OBSERVE_SESSION_PATH = '/api/verse/observe/session';
 export const WORLD_PATH = '/api/verse/world';
+export const INTENT_PATH = '/api/verse/intent';
 
 export function isObservePath(path: string): boolean {
-  return path === OBSERVE_PATH || path === OBSERVE_SESSION_PATH || path === WORLD_PATH;
+  return path === OBSERVE_PATH || path === OBSERVE_SESSION_PATH || path === WORLD_PATH || path === INTENT_PATH;
 }
 
 function queryId(req: IncomingMessage): string | null {
@@ -30,6 +32,11 @@ export async function handleObserveApi(req: IncomingMessage, res: ServerResponse
   }
   if (path === WORLD_PATH) {
     sendJson(res, 200, await readWorldModel());
+    return true;
+  }
+  if (path === INTENT_PATH) {
+    const listed = await listIntents();
+    sendJson(res, 200, { ok: true, ...listed.summary, records: listed.items });
     return true;
   }
   if (path === OBSERVE_SESSION_PATH) {

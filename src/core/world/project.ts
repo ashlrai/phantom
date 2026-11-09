@@ -28,6 +28,16 @@ export interface WorldProjectInput {
   stepsRemaining: number | null;
   stepsObservedAt: string | null;
   outcomes: readonly RepoHeadline[] | null;
+  /** Null when the ledger file is missing. Counts are real zeros only when the file was read. */
+  intents?: {
+    items: number;
+    tracked: number;
+    merged: number;
+    shipped: number;
+    verified: number;
+    stale: number;
+    staleItems: ReadonlyArray<{ id: string; title: string }>;
+  } | null;
 }
 
 function iso(nowMs: number): string {
@@ -79,6 +89,8 @@ function needFor(path: string): string {
   if (path === 'bottlenecks.count') return 'Eng Ops writes ~/.ashlr-runs/export/bottlenecks.json (bottlenecks.v1).';
   if (path === 'humanSteps.remaining') return 'Eng Ops writes ~/.ashlr-runs/export/human-steps.json (ashlr.human-steps/v1).';
   if (path.startsWith('outcomes.')) return 'A complete pull export. Merged-per-day needs mergedAt. Change-failure rate needs reverted, fixForward, and failedRelease on every merged pull.';
+  if (path.startsWith('intents.stale.')) return 'The intent is past its stale timer. phm intent stale --json re-queues it or proposes superseded closure.';
+  if (path.startsWith('intents.')) return 'A local ashlr.intent-ledger/v1 at ~/.ashlr-runs/intent/ledger.json. A missing file is unknown, not zero.';
   return `A fresh reading for ${path}.`;
 }
 
@@ -208,6 +220,38 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
     bottlenecks: { count: bottleneckCount },
     humanSteps: { remaining: steps },
     outcomes: { repos: outcomeRepos },
+    intents: intentFields(input.intents, now),
   };
-  return { ...draft, blindSpots: blindSpotsFrom(draft).spots };
+  const spots = blindSpotsFrom(draft).spots;
+  if (input.intents) {
+    for (const item of input.intents.staleItems) {
+      const path = `intents.stale.${item.id}`;
+      spots.push({ id: stableFieldId(path), path, freshness: 'stale', need: needFor(path) });
+    }
+    spots.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  }
+  return { ...draft, blindSpots: spots };
+}
+
+function intentFields(snapshot: WorldProjectInput['intents'], now: string): WorldModel['intents'] {
+  const source = 'ashlr.intent-ledger/v1';
+  if (!snapshot) {
+    return {
+      items: unknown<number>(source),
+      tracked: unknown<number>(source),
+      merged: unknown<number>(source),
+      shipped: unknown<number>(source),
+      verified: unknown<number>(source),
+      stale: unknown<number>(source),
+    };
+  }
+  const count = (value: number): Field<number> => reading(value, source, now, 'fresh');
+  return {
+    items: count(snapshot.items),
+    tracked: count(snapshot.tracked),
+    merged: count(snapshot.merged),
+    shipped: count(snapshot.shipped),
+    verified: count(snapshot.verified),
+    stale: count(snapshot.stale),
+  };
 }

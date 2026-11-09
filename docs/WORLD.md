@@ -12,6 +12,8 @@ Schema: `ashlr.world-model/v1`. Every signal has `value`, `source`, `observedAt`
 
 `blindSpots` lists each unknown or stale field by path, with a stable id (`sensors.lanes.claude-max.pacePerHour` is `sensors-lanes-claude-max-pacePerHour`). The same rows are copied onto `views.observe.coverage.unknownFields`, beside the live and unknown counts. `claims.live` reads `coordinationSummary` from the claim store. A missing store is unknown, not zero. Sensor `burnRate`, `remaining`, and `idleIncludedWastedPerWeek` come from `usage.sensors.v1`. Optional `pacePerHour`, `requiredPacePerHour`, and `runwayHours` are read when a sensor row already carries them. Absent keys stay unknown. The strict sensor schema is unchanged.
 
+`intents` is the local [intent ledger](INTENT.md): `items`, `tracked`, `merged`, `shipped`, `verified`, and `stale`. A missing `~/.ashlr-runs/intent/ledger.json` is unknown, not zero. Each stale item is also a blind spot at `intents.stale.<id>`.
+
 The snapshot is cached in the process and at `~/.ashlr-runs/world/model.json` for 15 seconds. `phm world get` on a warm cache is the tick read. The tick does not call gh and does not read credential files.
 
 A path that is not in the snapshot returns `{ "path", "freshness": "unknown", "value": null }`.

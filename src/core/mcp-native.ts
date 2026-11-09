@@ -479,6 +479,126 @@ const TOOLS: NativeToolImpl[] = [
     },
   },
   {
+    name: 'intent_list',
+    description: 'List the local ashlr.intent-ledger/v1. Counts include tracked, merged, shipped, verified, stale, and partial. A missing file is an empty list.',
+    inputSchema: { type: 'object', properties: { status: { type: 'string', enum: ['proposed', 'queued', 'in-progress', 'merged', 'shipped', 'verified', 'superseded', 'closed', 'unknown'] } }, additionalProperties: false },
+    safety: 'read',
+    handler: async (args) => {
+      const { listIntents } = await import('./intent/ledger.js');
+      const { isIntentStatus } = await import('./intent/schema.js');
+      const status = typeof args['status'] === 'string' && isIntentStatus(args['status']) ? args['status'] : undefined;
+      const listed = await listIntents({ status });
+      return { ok: true, ...listed.summary, records: listed.items };
+    },
+  },
+  {
+    name: 'intent_get',
+    description: 'Read one intent by id from the local ledger.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: false },
+    safety: 'read',
+    handler: async (args) => {
+      const { getIntent } = await import('./intent/ledger.js');
+      const item = await getIntent(String(args['id'] ?? ''));
+      return item ? { ok: true, item } : { ok: false, error: 'Intent not found.' };
+    },
+  },
+  {
+    name: 'intent_add',
+    description: 'Add one owner directive to the local intent ledger. Secret-shaped text is refused. Does not open a pull request.',
+    inputSchema: { type: 'object', properties: {
+      title: { type: 'string' }, source: { type: 'string' }, owner: { type: 'string' },
+      rq: { type: 'array', items: { type: 'string' } }, status: { type: 'string' }, verbatim: { type: 'boolean' },
+    }, required: ['title', 'source'], additionalProperties: false },
+    safety: 'append',
+    handler: async (args) => {
+      const { addIntent } = await import('./intent/ledger.js');
+      const { isIntentStatus } = await import('./intent/schema.js');
+      const status = typeof args['status'] === 'string' && isIntentStatus(args['status']) ? args['status'] : undefined;
+      const rq = Array.isArray(args['rq']) ? args['rq'].filter((key): key is string => typeof key === 'string') : undefined;
+      const item = await addIntent({
+        title: String(args['title'] ?? ''), source: String(args['source'] ?? ''),
+        owner: typeof args['owner'] === 'string' ? args['owner'] : undefined,
+        rq, status, verbatim: args['verbatim'] === true,
+      });
+      return { ok: true, item };
+    },
+  },
+  {
+    name: 'intent_update',
+    description: 'Update one local intent. Verification evidence on a merged or shipped item marks it verified.',
+    inputSchema: { type: 'object', properties: {
+      id: { type: 'string' }, title: { type: 'string' }, status: { type: 'string' },
+      rq: { type: 'array', items: { type: 'string' } }, evidence: { type: 'string' },
+    }, required: ['id'], additionalProperties: false },
+    safety: 'append',
+    handler: async (args) => {
+      const { updateIntent } = await import('./intent/ledger.js');
+      const { isIntentStatus } = await import('./intent/schema.js');
+      const status = typeof args['status'] === 'string' && isIntentStatus(args['status']) ? args['status'] : undefined;
+      const rq = Array.isArray(args['rq']) ? args['rq'].filter((key): key is string => typeof key === 'string') : undefined;
+      const item = await updateIntent(String(args['id'] ?? ''), {
+        title: typeof args['title'] === 'string' ? args['title'] : undefined,
+        status, rq: rq?.length ? rq : undefined,
+        evidence: typeof args['evidence'] === 'string' ? { ref: args['evidence'] } : undefined,
+      });
+      return { ok: true, item };
+    },
+  },
+  {
+    name: 'intent_import',
+    description: 'Import one or more local JSONL files or an ashlr.intent-ledger/v1 document. Rows dedup by RQ key or normalized title and keep provenance. Does not read the network.',
+    inputSchema: { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' }, minItems: 1 } }, required: ['paths'], additionalProperties: false },
+    safety: 'append',
+    handler: async (args) => {
+      const { importIntentFiles } = await import('./intent/ledger.js');
+      const paths = Array.isArray(args['paths']) ? args['paths'].filter((path): path is string => typeof path === 'string') : [];
+      return { ok: true, schema: 'ashlr.intent-ledger/v1', ...(await importIntentFiles(paths)) };
+    },
+  },
+  {
+    name: 'intent_stale',
+    description: 'List stale intents. apply true re-queues live work or proposes superseded closure.',
+    inputSchema: { type: 'object', properties: { apply: { type: 'boolean' } }, additionalProperties: false },
+    safety: 'append',
+    handler: async (args) => {
+      const { sweepStale } = await import('./intent/ledger.js');
+      return { ok: true, ...(await sweepStale({ apply: args['apply'] === true })) };
+    },
+  },
+  {
+    name: 'intent_link',
+    description: 'When a pull whose title or branch carries an RQ key has merged, mark the matching local intent merged.',
+    inputSchema: { type: 'object', properties: {
+      repo: { type: 'string' }, number: { type: 'number' }, title: { type: 'string' }, branch: { type: 'string' }, url: { type: 'string' },
+    }, required: ['repo', 'number', 'title'], additionalProperties: false },
+    safety: 'append',
+    handler: async (args) => {
+      const { noteMergedPulls } = await import('./intent/ledger.js');
+      return { ok: true, ...(await noteMergedPulls([{
+        repo: String(args['repo'] ?? ''), number: Number(args['number']), title: String(args['title'] ?? ''),
+        branch: typeof args['branch'] === 'string' ? args['branch'] : undefined,
+        url: typeof args['url'] === 'string' ? args['url'] : undefined,
+      }])) };
+    },
+  },
+  {
+    name: 'intent_ship',
+    description: 'When a release containing an RQ key ships, mark the matching local intent shipped.',
+    inputSchema: { type: 'object', properties: {
+      release: { type: 'string' }, notes: { type: 'string' }, rq: { type: 'array', items: { type: 'string' } },
+    }, required: ['release'], additionalProperties: false },
+    safety: 'append',
+    handler: async (args) => {
+      const { noteShippedRelease } = await import('./intent/ledger.js');
+      const rq = Array.isArray(args['rq']) ? args['rq'].filter((key): key is string => typeof key === 'string') : undefined;
+      return { ok: true, ...(await noteShippedRelease({
+        release: String(args['release'] ?? ''),
+        notes: typeof args['notes'] === 'string' ? args['notes'] : undefined,
+        rq,
+      })) };
+    },
+  },
+  {
     name: 'phantom_observe',
     description: 'Read the human observe snapshot: roster, sensor headroom, resource coordination, pull headlines, bottlenecks, and human steps. Unknown stays unknown. No credentials.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },

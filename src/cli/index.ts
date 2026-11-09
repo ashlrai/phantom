@@ -2761,6 +2761,11 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'intent': {
+        process.exitCode = await (await import('./intent.js')).cmdIntent(rest);
+        break;
+      }
+
       case 'docs': {
         const cmdDocs = await loadDocsCmd();
         process.exitCode = await cmdDocs(rest);

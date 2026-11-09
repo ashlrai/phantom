@@ -268,6 +268,17 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       result.outbox = project(entries, outboxShape) as FleetRunsV1['outbox'];
     } catch { result.outbox = []; }
     await sourcesDone;
+    try {
+      const pulls = result.mergesLastHour.items.flatMap((item) => (
+        item && typeof item.repo === 'string' && typeof item.title === 'string' && Number.isSafeInteger(item.number)
+          ? [{ repo: item.repo, number: item.number, title: item.title, branch: '' }]
+          : []
+      ));
+      if (pulls.length > 0) {
+        const { noteMergedPulls } = await import('../intent/ledger.js');
+        await noteMergedPulls(pulls, { root: deps.runsDir ?? defaultRunsDir(), now: new Date(now()).toISOString() });
+      }
+    } catch { /* A local ledger update never changes the runs snapshot. */ }
     return result;
   }
   const laneModels = deps.laneModels ?? (() => getLaneModelSnapshot({ runsDir: deps.runsDir ?? defaultRunsDir() }));
