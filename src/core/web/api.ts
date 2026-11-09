@@ -1944,6 +1944,12 @@ export async function handleApi(
       return true;
     }
 
+    if (path === '/api/fleet/machine' && method === 'GET') {
+      const { readFleetMachine } = await import('../fleet/machine.js');
+      sendJson(res, 200, await readFleetMachine());
+      return true;
+    }
+
     // ── GET /api/fleet/lanes ─────────────────────────────────────────────
     // RQ-PHANTOM-ENG-CONSOLE: per-lane engineering console projection —
     // credit left, queue depth, live jobs and merges/hour per router lane,
