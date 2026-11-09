@@ -429,6 +429,12 @@ TICK_AGE_F = _PROBES.submit(_daemon_tick_age)
 PACE_F = _PROBES.submit(api_pace)
 REPORT_F = _PROBES.submit(_claude_report)
 AP = AP_F.result()
+# The separately scheduled disk sampler never blocks a dispatcher tick.
+_disk_growth = jload(Q + "/disk-growth.json", {})
+if isinstance(_disk_growth, dict) and _disk_growth:
+    if not isinstance(AP, dict): AP = {}
+    _existing_disk = AP.get("disk")
+    AP["disk"] = {**(_existing_disk if isinstance(_existing_disk, dict) else {}), **_disk_growth}
 # Lane disk gate (green|freeze|halve|yellow), NOT the cleanup level: compact_level only drives compact.sh.
 # Missing or unknown (older autopilot, failed read) is yellow: raises frozen, no halving.
 DISK_GATE = (AP or {}).get("lane_disk_gate") or "yellow"
