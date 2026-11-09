@@ -48,7 +48,7 @@ def references(text, repo=None):
     return found
 
 
-def plan(prs, queue, maximum):
+def plan(prs, queue, maximum, pool=None):
     reference = re.search(r'^- [A-Z-]+ RQ-RC3401N9Q8 \((.*?)\): (.+)$', queue, re.M)
     if not reference:
         raise ValueError('Queue must contain the RQ-RC3401N9Q8 reference line')
@@ -74,6 +74,9 @@ def plan(prs, queue, maximum):
             break
         # Copy the leader's reviewed wording rather than invent another recut brief.
         attrs = re.sub(r'\brepo=(?:ashlrai/)?phantom\b', f'repo={repo}', reference[1])
+        if pool:
+            attrs = (re.sub(r'\bpool=[a-z0-9-]+\b', f'pool={pool}', attrs, count=1)
+                     if re.search(r'\bpool=[a-z0-9-]+\b', attrs) else f'{attrs}, pool={pool}')
         text = re.sub(r'\bphantom\b', repo, reference[2])
         text = re.sub(r'\b3401\b', str(number), text)
         lines.append(f'- READY {job} ({attrs}): {text}')
@@ -96,10 +99,10 @@ def queue_lock(path, timeout):
         yield
 
 
-def run(prs, queue, maximum, apply, timeout):
+def run(prs, queue, maximum, apply, timeout, pool=None):
     def emit():
         text = queue.read_text()
-        lines = plan(prs, text, maximum)
+        lines = plan(prs, text, maximum, pool)
         if apply and lines:
             with queue.open('a') as stream:
                 stream.write(('' if not text or text.endswith('\n') else '\n') + '\n'.join(lines) + '\n')
@@ -116,13 +119,16 @@ def main():
     mode.add_argument('--dry-run', action='store_true', help='print JSON without writing (default)')
     mode.add_argument('--apply', action='store_true', help='append planned lines under ready.lock')
     parser.add_argument('--max', type=int, default=6, help='maximum lines (default: 6)')
+    parser.add_argument('--pool', help='stamp pool=<lane> on every generated line (self-supply)')
     parser.add_argument('--queue', type=Path, default=Path.home() / '.ashlr-runs/queue/router-queue.md')
     parser.add_argument('--lock-timeout', type=float, default=10, help='seconds to wait (default: 10)')
     args = parser.parse_args()
     if args.max < 0 or not math.isfinite(args.lock_timeout) or args.lock_timeout < 0:
         parser.error('--max and --lock-timeout must be nonnegative and finite')
+    if args.pool is not None and not re.fullmatch(r'[a-z0-9-]+', args.pool):
+        parser.error('--pool must be a lane name (lowercase letters, digits, dashes)')
     try:
-        print(json.dumps(run(fetch_prs(), args.queue, args.max, args.apply, args.lock_timeout)))
+        print(json.dumps(run(fetch_prs(), args.queue, args.max, args.apply, args.lock_timeout, args.pool)))
     except (OSError, ValueError, KeyError, TypeError) as error:
         print(json.dumps({'schemaVersion': 1, 'error': type(error).__name__,
                           'message': 'Recut feed failed; no plan applied.'}))

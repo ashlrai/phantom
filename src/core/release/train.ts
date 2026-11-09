@@ -50,7 +50,13 @@ export interface TrainObservation {
   lastTaggedAt: string | null;
   aheadBy: number;
   tags: { name: string; sha: string }[];
-  head: { tag: string; sha: string; message: string; ancestry: Ancestry; committedAt: string | null } | null;
+  /**
+   * releaseMessage: auto-tag tags the commit whose checks finished, which can
+   * be a later merge than the release-please commit (two merges a second apart).
+   * It carries that release commit's message when it is an ancestor of the tag
+   * and package.json at the tag still carries the tag version.
+   */
+  head: { tag: string; sha: string; message: string; releaseMessage?: string; ancestry: Ancestry; committedAt: string | null } | null;
   releases: ReleaseRow[];
   openReleasePr: { number: number; nodeId: string; version: string; headSha: string; headRef: string; mergeable: string; state: 'OPEN' | 'MERGED'; queued: boolean } | null;
   pullChecks: { pending: number; failing: number } | null;
@@ -301,7 +307,7 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   const version = headTag.name.slice(1);
   const admitted = (input.head.ancestry === 'ancestor' || input.head.ancestry === 'identical')
     && input.head.sha !== ''
-    && isReleasePleaseCommit(input.head.message, version);
+    && (isReleasePleaseCommit(input.head.message, version) || isReleasePleaseCommit(input.head.releaseMessage ?? '', version));
   if (!admitted) return stopped('candidate-refused');
 
   const marker = supersedeMarker(headTag.name);
@@ -447,6 +453,21 @@ async function pages(read: (path: string) => Promise<unknown>, path: string): Pr
   throw new Error('incomplete release inventory');
 }
 
+async function ancestorReleaseMessage(read: (path: string) => Promise<unknown>, tag: { name: string; sha: string }): Promise<string | null> {
+  const version = tag.name.slice(1);
+  const content = record(await read(`repos/${REPOSITORY}/contents/package.json?ref=${tag.sha}`));
+  if (content?.encoding !== 'base64' || typeof content.content !== 'string') return null;
+  const pkg = record(JSON.parse(Buffer.from(content.content.replace(/\s/g, ''), 'base64').toString('utf8')));
+  if (pkg?.name !== '@ashlr/phantom' || pkg.version !== version) return null;
+  const rows = await read(`repos/${REPOSITORY}/commits?sha=${tag.sha}&per_page=30`);
+  if (!Array.isArray(rows)) return null;
+  for (const row of rows) {
+    const message = text(record(record(row)?.commit)?.message) ?? '';
+    if (isReleasePleaseCommit(message, version)) return message;
+  }
+  return null;
+}
+
 export async function observeTrain(
   read: (path: string) => Promise<unknown>,
   now = new Date().toISOString(),
@@ -495,6 +516,10 @@ export async function observeTrain(
     const status = text(compare?.status);
     const ancestry: Ancestry = status === 'ahead' ? 'ancestor' : status === 'identical' ? 'identical' : status === 'diverged' ? 'diverged' : status === 'behind' ? 'behind' : 'unknown';
     head = { tag: newest.name, sha: newest.sha, message, ancestry, committedAt };
+    if (!isReleasePleaseCommit(message, newest.name.slice(1))) {
+      const releaseMessage = await ancestorReleaseMessage(read, newest);
+      if (releaseMessage) head.releaseMessage = releaseMessage;
+    }
   }
   const releaseRows = await pages(read, `repos/${REPOSITORY}/releases`);
   const releases: ReleaseRow[] = releaseRows.map((row) => {
