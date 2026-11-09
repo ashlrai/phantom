@@ -10,8 +10,9 @@ import { createSlackApi, deliverSlackEnvelope, type SlackCall, type SlackDeliver
 import { parseCommsConfirmation, type DeliverResult, type TeamIdentity } from './channel-policy.js';
 import { slackEventToBus, type SlackInboundDecision, type SlackIngestContext } from './slack-inbound.js';
 import type { LeaderChannelAdapter } from './leader-channel-adapter.js';
+import { composeStatusReply, isStatusRequest, readStatusFacts, type StatusFactsOptions } from './leader-status-reply.js';
 
-export interface SlackLeaderOptions extends LeaderRuntimeOptions { call?: SlackCall; signal?: AbortSignal }
+export interface SlackLeaderOptions extends LeaderRuntimeOptions { call?: SlackCall; signal?: AbortSignal; statusReaders?: Pick<StatusFactsOptions, 'readInstalled' | 'readLatest'> }
 
 /** Compose the existing authenticated Slack mapper, durable Leader routing and
  * journaled same-thread delivery without putting credentials in the adapter. */
@@ -115,7 +116,14 @@ export async function flushSlackLeaderReplies(options: SlackLeaderOptions = {}):
     let sent = 0;
     for (const pending of (await network.pending()).filter(row => row.envelope.channel === 'slack').slice(0, 5)) {
       if (options.signal?.aborted) break;
-      if (pending.replyText && (await network.reply(pending.requestId, pending.replyText)).status === 'sent') sent++;
+      let text = pending.replyText;
+      // A bare status question gets a factual local answer; anything else waits for the model.
+      const asked = (pending.envelope.body as { text?: unknown } | undefined)?.text;
+      if (!text && typeof asked === 'string' && isStatusRequest(asked)) {
+        const runsDir = options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+        text = composeStatusReply(await readStatusFacts({ runsDir, now: options.now ? () => new Date(options.now!()) : undefined, ...options.statusReaders }));
+      }
+      if (text && (await network.reply(pending.requestId, text)).status === 'sent') sent++;
     }
     return { state: 'completed', sent };
   } catch { return { state: 'unavailable', sent: 0 }; }
