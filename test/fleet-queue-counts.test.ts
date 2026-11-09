@@ -37,8 +37,8 @@ it('counts ready, parked, running and last-hour merges per lane', async () => {
   ].join('\n'));
   const report = await getLaneQueueCounts({ runsDir: root, now });
   expect(report.lanes).toEqual([
-    { lane: 'codex', ready: 1, parked: 0, running: 1, merges: 1 },
-    { lane: 'devin', ready: 2, parked: 1, running: 1, merges: 2 },
+    { lane: 'codex', ready: 1, parked: 0, running: 1, merges: 1, oldestWaitSeconds: null },
+    { lane: 'devin', ready: 2, parked: 1, running: 1, merges: 2, oldestWaitSeconds: null },
   ]);
   expect(report.totals).toEqual({ ready: 3, parked: 1, running: 2, merges: 3 });
 });
@@ -68,10 +68,23 @@ it('counts a duplicated merge event once, by PR then by job', async () => {
 it('reports unknown (null), not zero, when sources are absent', async () => {
   const report = await getLaneQueueCounts({ runsDir: root, now });
   expect(report.lanes).toEqual([]);
-  expect(report.totals).toEqual({ ready: 0, parked: 0, running: 0, merges: 0 });
+  expect(report.totals).toEqual({ ready: null, parked: null, running: null, merges: null });
   await writeFile(join(queueDir, 'jobs.jsonl'), merge('m-1', 'devin', minutesAgo(3)));
   const [devin] = (await getLaneQueueCounts({ runsDir: root, now })).lanes;
-  expect(devin).toEqual({ lane: 'devin', ready: null, parked: null, running: null, merges: 1 });
+  expect(devin).toEqual({ lane: 'devin', ready: null, parked: null, running: null, merges: 1, oldestWaitSeconds: null });
+});
+
+it('includes parked jobs in the oldest wait and refuses incomplete or ambiguous metrics', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), [row('READY', 'a-1', 'devin'), row('PARKED-DEP.devin', 'a-2', 'devin')].join('\n'));
+  await mkdir(join(root, 'metrics'));
+  const path = join(root, 'metrics', 'jobs.jsonl');
+  const queued = (job: string, minutes: number) => JSON.stringify({ job, event: 'queued', ts: minutesAgo(minutes) });
+  await writeFile(path, queued('a-1', 5));
+  expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBeNull();
+  await writeFile(path, [queued('a-1', 5), queued('a-2', 30)].join('\n'));
+  expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBe(1800);
+  await writeFile(path, [queued('a-1', 5), queued('a-2', 30), queued('a-2', 20)].join('\n'));
+  expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBeNull();
 });
 
 it('prints text and JSON from the CLI and rejects bad arguments', async () => {
@@ -80,8 +93,8 @@ it('prints text and JSON from the CLI and rejects bad arguments', async () => {
   const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
   expect(await cmdFleetQueueCounts(['--root', root])).toBe(0);
   expect(log.mock.calls.map(c => String(c[0]))).toEqual([
-    'devin  ready 1  parked 0  running 0  merges/1h -',
-    'total  ready 1  parked 0  running 0  merges/1h 0',
+    'devin  ready 1  parked 0  running 0  oldest wait unknown  merges in last hour unknown',
+    'total  ready 1  parked 0  running 0  merges in last hour unknown',
   ]);
   expect(await cmdFleetQueueCounts(['--root', root, '--json'])).toBe(0);
   expect(JSON.parse(String(log.mock.calls.at(-1)![0])).schema).toBe('fleet.queue-counts.v1');

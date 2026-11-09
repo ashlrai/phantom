@@ -490,11 +490,11 @@ describe('fresh Devin sidebar readbacks', () => {
     expect(screen.getByRole('button', { name: 'Devin (cloud): consumption not reported · remaining quota unknown. Open Resources' })).toBeInTheDocument();
     consumption = { ...reading, report: { totalAcus: 0, days: [] } };
     view.rerender(<ResourcesBar expanded />);
-    expect(screen.getByRole('button', { name: 'Devin (cloud): 0 ACUs reported · remaining quota unknown. Open Resources' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Devin (cloud): unknown · remaining quota unknown. Open Resources' })).toBeInTheDocument();
     consumption = reading; clock.mockReturnValue(NOW + 400_000); view.rerender(<ResourcesBar expanded />);
     expect(screen.getByRole('button', { name: 'Devin (cloud): 0 ACUs consumed · last · remaining quota unknown. Open Resources' })).toBeInTheDocument();
     consumption = { ...reading, report: { totalAcus: 0, days: [] } }; view.rerender(<ResourcesBar expanded />);
-    expect(screen.getByRole('button', { name: 'Devin (cloud): 0 ACUs reported · last · remaining quota unknown. Open Resources' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Devin (cloud): unknown · last · remaining quota unknown. Open Resources' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /40 ACUs held exposure/ })).toBeInTheDocument();
   });
 });
@@ -512,9 +512,21 @@ describe('Devin tracked exposure in the bar', () => {
     renderBar(<ResourcesBar expanded />);
     const devin = screen.getByRole('button', { name: /Devin tracked budget: 30 ACUs of 50 ACUs available, 18 ACUs held exposure/ });
     expect(within(devin).getByText('30 ACUs budget')).toBeInTheDocument();
+    expect(within(devin).getByText('4% of tracked budget used')).toBeInTheDocument();
     fireEvent.focus(devin);
     expect(screen.getByRole('tooltip')).toHaveTextContent('2 ACUs reported usage + adjustment · 18 ACUs held exposure');
     expect(devin.querySelector('[aria-hidden="true"][data-level] > [style]')).toHaveStyle({ '--fill': '60%' });
+  });
+
+  it('shows a fully used tracked budget as 100% used', () => {
+    vi.mocked(useCapacityData).mockReturnValue({ seats: [], health: null, budget: null, loading: false, refreshing: false, readFailed: false, rosterUnavailable: false, pendingSeatIds: [] });
+    vi.mocked(useQuery).mockImplementation(query => ({ data: query.key === 'verse-devin' ? { value: {
+      status: { enabled: true, connected: true },
+      budget: { acuBudgetTotal: 50, acuRemaining: 0, acuUsed: 50, acuInFlight: 0,
+        reportedAcuUsed: 50, unconfirmedAcuExposure: 0, paused: true, running: 0, sessionsToday: 1 },
+    } } : undefined } as never));
+    renderBar(<ResourcesBar expanded />);
+    expect(screen.getByText('100% of tracked budget used')).toBeInTheDocument();
   });
 
   it.each(['missing', 'unavailable'])('keeps %s local Devin capacity unknown without changing provider quota', accountingState => {
@@ -605,6 +617,19 @@ describe('Codex credits are independent of the quota battery', () => {
     expect(projected[1]!.display!.usage.current).toBe(true);
     expect(projected[1]!.exactCreditBalance).toBeUndefined();
     expect(projected[1]!.detail.join(' ')).not.toContain('Estimated credit value');
+  });
+
+  it('does not color expired or untimed Codex usage as current capacity', () => {
+    for (const patch of [
+      { usageObservedAt: new Date(NOW - 60 * 60_000).toISOString() },
+      { usageObservedAt: null },
+      { quotaExpiresAt: new Date(NOW - 1).toISOString() },
+    ]) {
+      const result = barRows([row({ engine: 'codex', ...patch })], { healthRead: true, now: NOW })[0]!;
+      expect(result).toMatchObject({ level: 'unknown', value: '28% used · last' });
+      expect(result.display!.usage.current).toBe(false);
+      expect(result.summary).toContain('unconfirmed');
+    }
   });
 
   it('never invents measured percentages from limit flags or an exhausted connection', () => {

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import type { LeaderInboxAppender } from '../src/core/agents/leader-inbox-writer.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deliverSlackLeaderMessage, flushSlackLeaderReplies, ingestSlackLeaderEnvelope, readSlackDeliveryPolicy } from '../src/core/agents/slack-leader.js';
+import { createSlackLeaderAdapter, deliverSlackLeaderMessage, flushSlackLeaderReplies, ingestSlackLeaderEnvelope, readSlackDeliveryPolicy } from '../src/core/agents/slack-leader.js';
 import { readLeaderInbox, tickLeaderNetwork } from '../src/core/agents/leader-network-runtime.js';
 import { createSlackApi, openSlackSocket, type SlackCall } from '../src/core/agents/slack-transport.js';
 import { listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
@@ -49,10 +49,11 @@ function fakeCall(input: { post?: (body: Record<string, unknown>) => Promise<Rec
 async function receive(call: SlackCall, payload: unknown = event, acknowledged = true) {
   let ownerSettled = false;
   const policy = readSlackDeliveryPolicy(options)!;
+  const adapter = createSlackLeaderAdapter({ ...options, call });
   const handlers: Record<string, (event: { data?: unknown }) => void> = {};
   const socket = { readyState: 1, addEventListener: (type: string, callback: (event: { data?: unknown }) => void) => { handlers[type] = callback; }, send: vi.fn(), close: vi.fn() };
   await openSlackSocket({ call, config: policy.config, ingest: { config: policy.config, teamIdentities: policy.teamIdentities, runsDir: options.runsDir, busRoot: options.busRoot },
-    owner: async envelope => { try { return await ingestSlackLeaderEnvelope(envelope, { ...options, call }); } finally { ownerSettled = true; } }, connect: () => socket });
+    leaderAdapter: { ...adapter, route: async envelope => { try { return await adapter.route(envelope); } finally { ownerSettled = true; } } }, connect: () => socket });
   handlers.message!({ data: JSON.stringify(payload) });
   if (acknowledged) await vi.waitFor(() => expect(socket.send).toHaveBeenCalledOnce());
   else { await vi.waitFor(() => expect(ownerSettled).toBe(true)); expect(socket.send).not.toHaveBeenCalled(); }

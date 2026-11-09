@@ -131,7 +131,7 @@ async function fixture(measureSeed = false) {
     deliveryPlan: { schemaVersion: 1, deliveries: [{ campaignId, branch, baseCommit: HUB_SEED_REVISION, allowInitialRepair: true }] },
     resourceRuntime: runtimeFile, expectedRuntimeDigest: digest(canonical(runtime)) };
   const enrollment = join(base, 'enrollment.json'); save(enrollment, { schemaVersion: 1, graphId: 'hub-marker-graph', host });
-  const env = { ...process.env, HOME: home, USERPROFILE: home, ASHLR_HOME: join(home, '.ashlr'), TSX_DISABLE_CACHE: '1', NODE_DISABLE_COMPILE_CACHE: '1' };
+  const env = { ...process.env, HOME: home, USERPROFILE: home, ASHLR_HOME: join(home, '.ashlr'), TSX_DISABLE_CACHE: '1' };
   await exec(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval',
     "const {loadOrCreateKey}=await import('./src/core/foundry/provenance.ts');loadOrCreateKey();"], { cwd: SOURCE_ROOT, env, timeout: 20_000 });
   const invoke = async (args: string[]) => {

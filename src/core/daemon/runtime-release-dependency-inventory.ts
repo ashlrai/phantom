@@ -522,6 +522,7 @@ function rootPackageIsPortable(
     'docs/DISK-MAINT.md',
     'docs/DEVIN.md',
     'docs/VERSE-CONTEXT.md',
+    'docs/AGENT-CHECKPOINT.md',
     'docs/VERSE-BROWSER.md',
     'docs/JEV-INTEGRATION.md',
     'docs/DEMO.md',

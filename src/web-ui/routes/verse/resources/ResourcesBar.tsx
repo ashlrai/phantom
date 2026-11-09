@@ -40,12 +40,15 @@ import { formatResetInstant } from '../seat-subscription.js';
 import { bindingLeftPercent } from '../usage/binding-left.js';
 import { buildCapacityRows, type AccountStatus, type CapacityRow } from '../usage/capacity-strip-model.js';
 import { formatUsd, localObservationAge } from './resources-model.js';
+import { observeQuery } from '../fleet-observe/observe-queries.js';
 import { cloudCreditsQuery } from './resources-queries.js';
+import { applySensorHeadroom } from './sensor-headroom.js';
 import { creditPoolsQuery } from './credit-pools-query.js';
 import { apiGrantDisplay } from './credit-pool-model.js';
 import { devinConsumptionEvidence, devinUsageEvidence, formatAcu } from '../devin/devin-model.js';
 import { DEVIN_POLL_MS, devinQuery } from '../devin/devin-queries.js';
 import { closeResources, openResources, setResourcesCompact, useResourcesUi } from './resources-store.js';
+import { WorldLaneRows } from './WorldLaneRows.js';
 import { moveResource, orderedResources, useResourceOrder } from './resource-order.js';
 import { proactiveProfilesQuery } from '../proactive/proactive-queries.js';
 import { setVerseSection } from '../verse-ui-store.js';
@@ -178,17 +181,17 @@ export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolea
       ? `${usedPercentText(subscriptionUsed)} used${binding?.limitReached && subscriptionUsed < 100 ? ' · limit reached' : ''}`
       : binding?.limitReached ? 'limit reached' : null;
     // Credit availability/holds do not change the subscription battery's state.
-    const level = row.quotaCurrent === false ? 'unknown' : row.engine === 'codex' && !row.lastReading && !row.signedOut
+    const level = row.kind === 'subscription' && !display.usage.current && !row.signedOut ? 'unknown' : row.engine === 'codex' && !row.lastReading && !row.signedOut
       ? left === null ? 'unknown' : left === 0 ? 'out' : left < 20 ? 'low' : 'ok' : LEVEL_OF_STATUS[status.kind] ?? 'unknown';
-    const value = row.quotaCurrent === false && subscriptionValue !== null ? `${subscriptionValue} · last` : row.engine === 'codex' && subscriptionValue !== null && !row.signedOut
+    const value = !display.usage.current && subscriptionValue !== null && !row.signedOut ? `${subscriptionValue} · last` : row.engine === 'codex' && subscriptionValue !== null && !row.signedOut
       ? `${subscriptionValue}${row.lastReading || row.quotaCurrent === false ? ' · last' : ''}`
       : level === 'out' ? (status.kind === 'spent' ? 'spent' : status.label.toLowerCase())
-      : left === null ? (opts.pendingSeatIds?.includes(row.seatId) ? 'reading…' : status.kind === 'unavailable' ? 'unavailable' : 'no usage') : `${usedPercentText(left)} left${row.lastReading || row.quotaCurrent === false ? ' · last' : ''}`;
+      : left === null ? (opts.pendingSeatIds?.includes(row.seatId) ? 'reading…' : status.kind === 'unavailable' ? 'unavailable' : 'no usage') : `${usedPercentText(left)} left${!display.usage.current ? ' · last' : ''}`;
     const detail = row.windows.map((w) => {
       const used = w.limitReached ? 'limit reached' : w.usedPercent === null ? 'no reading' : `${usedPercentText(w.usedPercent)} used`;
       // The accounts model already words it "resets Fri 2:25 PM"; don't say it twice.
       const reset = w.resetText ? w.resetText.replace(/^resets\s+/i, '') : '';
-      return `${w.label.charAt(0).toUpperCase()}${w.label.slice(1)}: ${used}${reset ? ` · ${row.quotaCurrent === false ? 'recorded reset' : 'resets'} ${reset}` : ''}`;
+      return `${w.label.charAt(0).toUpperCase()}${w.label.slice(1)}: ${used}${reset ? ` · ${!display.usage.current ? 'recorded reset' : 'resets'} ${reset}` : ''}`;
     });
     detail.push(...creditDetail);
     if (row.engine === 'grok') detail.push('Grok Build · native CLI; Grok Bot has a separate allowance.');
@@ -263,6 +266,10 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   const devinRead = useQuery(devinQuery);
   const refreshDevin = useRefetch(devinQuery);
   const resources = useResourcesUi();
+  const [worldLive, setWorldLive] = useState(false);
+  const onWorldLive = useCallback((live: boolean) => {
+    setWorldLive((prev) => (prev === live ? prev : live));
+  }, []);
   const sectionVisible = useSectionVisible();
   const documentVisible = useDocumentVisible();
   const [personalQuery] = useState(() => {
@@ -283,6 +290,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   usePollWhileVisible(() => { refreshPersonal(); if (runsWarm) refreshRuns(); }, 30_000, { enabled: resources.bar && !personalRead.data?.missing });
   const proactiveRead = useQuery(proactiveProfilesQuery, { enabled: resources.bar });
   const creditRead = useQuery(creditPoolsQuery, { enabled: resources.bar, freshMs: 15_000 });
+  const observeRead = useQuery(observeQuery, { enabled: resources.bar, freshMs: 60_000 });
   const refreshCredits = useRefetch(creditPoolsQuery);
   const devin = devinRead.data?.value ?? null;
   const [coldStartedAt] = useState(() => Date.now());
@@ -317,8 +325,8 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
     windows: [{ resetsAt: personal?.resetsAt }],
   }]);
   const rows = useMemo(
-    () => (data.loading ? [] : barRows(buildCapacityRows(data.seats, { health: data.health, budget: data.budget, local: 'collapse', now }), { healthRead: data.health !== null, now, maxAgeMs: data.budget?.readingMaxAgeMs, localReadFailed: data.localReadFailed, pendingSeatIds: data.pendingSeatIds, devinConsumption: devin?.consumption })),
-    [data.loading, data.seats, data.health, data.budget, data.localReadFailed, data.pendingSeatIds, now, devin?.consumption],
+    () => (data.loading ? [] : applySensorHeadroom(barRows(buildCapacityRows(data.seats, { health: data.health, budget: data.budget, local: 'collapse', now }), { healthRead: data.health !== null, now, maxAgeMs: data.budget?.readingMaxAgeMs, localReadFailed: data.localReadFailed, pendingSeatIds: data.pendingSeatIds, devinConsumption: devin?.consumption }), observeRead.data?.usage.windows ?? null)),
+    [data.loading, data.seats, data.health, data.budget, data.localReadFailed, data.pendingSeatIds, now, devin?.consumption, observeRead.data],
   );
   const cloud = cloudRead.data?.credits ?? null;
   const cloudLeft = cloud && cloud.totalUsd > 0 ? (cloud.remainingUsd / cloud.totalUsd) * 100 : null;
@@ -329,6 +337,10 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   const devinUsage = devin ? devinUsageEvidence(devin.budget) : null;
   const devinAvailable = devinUsage?.free ?? (devin ? Math.max(0, devin.budget.acuRemaining - Math.max(0, devin.budget.acuInFlight)) : 0);
   const devinLeft = devinAccountingKnown && devin && devin.budget.acuBudgetTotal > 0 ? (devinAvailable / devin.budget.acuBudgetTotal) * 100 : null;
+  // Held exposure reduces available capacity but is not observed usage.
+  const devinReported = devinUsage?.reported ?? devin?.budget.acuUsed;
+  const devinUsed = devinAccountingKnown && devin && Number.isFinite(devinReported) && devinReported !== undefined && devin.budget.acuBudgetTotal > 0
+    ? Math.min(100, Math.max(0, devinReported / devin.budget.acuBudgetTotal * 100)) : null;
   const devinLevel: Level = !devinAccountingKnown ? 'unknown' : devin.budget.paused || devinAvailable <= 0 ? 'out' : (devinLeft ?? 0) < 20 ? 'low' : 'ok';
   // Admission is separate from tracked capacity and from provider quota readings.
   const devinNewChatPause = devin?.budget.canLaunch?.ok === false
@@ -549,6 +561,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
                   <Battery left={devinLeft} level={devinLevel} vertical={false} />
                   <span className={styles.value}>{devinAccountingKnown ? `${formatAcu(devinAvailable)} budget` : 'Capacity unknown'}</span>
                 </span>
+                {devinUsed !== null ? <span className={styles.line}><span className={styles.value}>{usedPercentText(devinUsed)} of tracked budget used</span></span> : null}
                 {devinNewChatPause ? <span className={styles.line}><span className={styles.value}>New chats paused</span></span> : null}
               </>
             ) : (
@@ -566,8 +579,11 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   const primaryIds = new Set(rows.map(row => `account:${row.key}`));
   // Recorded API funding is a distinct resource, unlike a session-log view or estimate.
   primaryIds.add('budget:claude-api-promotions');
-  const evidenceCount = ordered.filter(entry => !primaryIds.has(entry.key)).length;
-  const visible = ordered.filter(entry => primaryIds.has(entry.key) || !expanded || showEvidence);
+  // Once the world snapshot is in hand, subscription batteries are evidence.
+  // The glance is one world-model lane per row.
+  const demotedAccount = (key: string) => worldLive && key.startsWith('account:');
+  const evidenceCount = ordered.filter(entry => demotedAccount(entry.key) || !primaryIds.has(entry.key)).length;
+  const visible = ordered.filter(entry => demotedAccount(entry.key) ? expanded && showEvidence : primaryIds.has(entry.key) || !expanded || showEvidence);
   const ids = visible.map(entry => entry.key);
   const providerOf = (engine: string) => engine === 'codex' ? 'openai' : engine === 'claude' ? 'anthropic' : engine === 'grok' ? 'xai' : engine === 'devin' ? 'devin' : 'local';
   const descriptors: ProviderResourceDescriptor[] = ordered.map(entry => {
@@ -633,6 +649,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
         {providerView ? 'Show account view' : 'Group by provider'}
       </button> : null}
       <span className={styles.visuallyHidden} role="status">{announcement}</span>
+      <WorldLaneRows expanded={expanded} enabled={resources.bar} now={fixedNow} onLive={onWorldLive} />
       {providerView && expanded ? <Suspense fallback={null}>
         <LazyProviderResourceGroups resources={descriptors} nowMs={now} maxAgeMs={data.budget?.readingMaxAgeMs} kind="bar" ready={providerView === 2} onReady={setProviderView}
           classes={{ group: styles.providerGroup, account: styles.accountGroup, note: styles.coverageNote }}

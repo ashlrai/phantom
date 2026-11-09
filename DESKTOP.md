@@ -133,12 +133,17 @@ Disabled updates stay disabled and concurrent checks are coalesced.
 Copy and paste: `phm app update status --json`. For a readable report, run
 `phm app update status`. This inspects the remembered local stage through the
 installed consumer policy without downloading or applying an update.
-`available` is the inspected stage version. `deferredReason` preserves host
-admission holds. Lease counts cover all host execution leases, including
-unknown leases; they do not identify sidecar ownership. `current` and
-`runningJobs` are null because app identity and attached job IDs are not yet
-exported. Missing or unsafe local status returns exit 1, never a false current
-or idle result. Invalid arguments return exit 2.
+`current` is `CFBundleShortVersionString` from the installed
+`/Applications/Phantom.app` bundle. It is not read from a stage file.
+`available` is the inspected stage version only when that version is newer
+than the installed app. A missing stage, or a stage at or below the installed
+version, leaves `available` empty and is not offered as an update.
+`deferredReason` preserves host admission holds for a newer stage. Lease
+counts cover all host execution leases, including unknown leases; they do not
+identify sidecar ownership. `runningJobs` stays null because attached job IDs
+are not exported. When the installed bundle cannot be read and the stage is
+missing or unsafe, the command returns exit 1 and `current` stays null.
+Invalid arguments return exit 2.
 
 Automatic relaunch remains unavailable: the installed consumer requires
 authority Stop and zero execution leases and requests an operator restart.

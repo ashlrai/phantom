@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { parse } from 'yaml';
-import { cadenceMinutes, nextPatch, planReleaseCadence, createPublicMetadataReader } from '../scripts/release-cadence.mjs';
+import { cadenceMinutes, nextPatch, planReleaseCadence, planReleaseCadenceWhenAvailable, createPublicMetadataReader } from '../scripts/release-cadence.mjs';
 import { reconcileTaggedReleasePrs } from '../scripts/release-pr-labels.mjs';
 import { normalizeReleaseNotes } from '../../scripts/sync-release-notes.mjs';
 
@@ -32,6 +32,12 @@ function fixture(overrides = {}) {
   };
   return { read, run, data, input: { repository: 'ashlrai/phantom', revision, now, read } };
 }
+
+test('standing approval raises a sub-hour cadence to hourly', () => {
+  assert.equal(Math.max(60, cadenceMinutes('30')), 60);
+  assert.equal(Math.max(60, cadenceMinutes('60')), 60);
+  assert.equal(Math.max(60, cadenceMinutes('120')), 120);
+});
 
 test('default cadence produces next patch only for new green master work', async () => {
   const f = fixture();
@@ -96,7 +102,7 @@ function metadataReaderFixture(responses) {
       assert.ok(response, 'unexpected metadata request');
       if (response.error) throw response.error;
       clock += response.elapsed ?? 0;
-      return { status: response.status, text: async () => {
+      return { status: response.status, headers: { get: name => response.headers?.[name] ?? null }, text: async () => {
         clock += response.bodyElapsed ?? 0;
         return response.text ?? JSON.stringify(response.data ?? {});
       } };
@@ -125,8 +131,26 @@ test('persistent transient failure stops after three reads and retains the origi
   await assert.rejects(f.read('repos/ashlrai/phantom'), /503.*after 3 read attempts; first transient 504/);
   assert.equal(f.calls.length, 3);
   assert.deepEqual(f.waits, [250, 500]);
-  assert.equal(f.reports.length, 1);
+  assert.equal(f.reports.length, 2);
   assert.match(f.reports[0], /504/);
+});
+
+test('exhausted timeouts defer the release without granting eligibility', async () => {
+  let calls = 0, clock = 0;
+  const reports = [];
+  const read = createPublicMetadataReader({ now: () => clock, sleep: async ms => { clock += ms; },
+    report: message => reports.push(message), timeoutSignal: () => {
+      const controller = new AbortController();
+      controller.abort(new DOMException('timed out', 'TimeoutError'));
+      return controller.signal;
+    }, fetchImpl: async (_url, { signal }) => { calls++; clock += 5_000; throw signal.reason; } });
+  assert.deepEqual(await planReleaseCadenceWhenAvailable({ ...fixture().input, read }),
+    { due: false, reason: 'metadata-unavailable' });
+  assert.equal(calls, 3);
+  assert.match(reports[1], /timeout.*after 3 read attempts.*deferring/);
+  const gateway = metadataReaderFixture([{ status: 503 }, { status: 502 }, { status: 504 }]);
+  assert.deepEqual(await planReleaseCadenceWhenAvailable({ ...fixture().input, read: gateway.read }),
+    { due: false, reason: 'metadata-unavailable' });
 });
 
 test('fetch and body timeouts retry within the shared budget without masking other errors', async () => {
@@ -188,6 +212,19 @@ test('malformed, oversized, permission and transport failures never become retry
   assert.equal(foreign.calls.length, 0);
 });
 
+test('confirmed anonymous rate limits defer the release without masking other 403s', async () => {
+  for (const status of [403, 429]) {
+    const f = metadataReaderFixture([{ status, headers: { 'x-ratelimit-remaining': '0' } }]);
+    assert.deepEqual(await planReleaseCadenceWhenAvailable({ ...fixture().input, read: f.read }),
+      { due: false, reason: 'metadata-rate-limited' });
+    assert.equal(f.calls.length, 1);
+    assert.match(f.reports[0], /rate limited at repos\/ashlrai\/phantom/);
+  }
+  const denied = metadataReaderFixture([{ status: 403, headers: { 'x-ratelimit-remaining': '5' } }]);
+  await assert.rejects(planReleaseCadenceWhenAvailable({ ...fixture().input, read: denied.read }),
+    /403.*repos\/ashlrai\/phantom/);
+});
+
 test('a recovered metadata read still passes every cadence identity and fresh-tip guard', async () => {
   const f = fixture();
   let requests = 0;
@@ -217,7 +254,7 @@ test('generated notes normalize below Unreleased without losing previous text', 
   const source = `# Changelog\n\n## [3.30.1](https://github.com/ashlrai/phantom/compare/v3.30.0...v3.30.1) (2026-11-05)\n\n${body}## [Unreleased]\n\nFuture notes.\n\n${old}`;
   const normalized = normalizeReleaseNotes(source, '3.30.1');
   assert.ok(normalized.indexOf('## [Unreleased]') < normalized.indexOf('## [3.30.1]'));
-  assert.ok(normalized.includes('## [3.30.1] — 2026-11-05'));
+  assert.ok(normalized.includes('## [3.30.1] - 2026-11-05'));
   assert.ok(normalized.includes('Future notes.'));
   assert.ok(normalized.endsWith(old));
   assert.equal(normalizeReleaseNotes(normalized, '3.30.1'), normalized);
@@ -235,6 +272,7 @@ test('timer cadence keeps the existing permissions and guarded merge route', () 
   const steps = workflow.jobs['release-please'].steps;
   assert.equal(steps.find(s => s.id === 'rp').if, "steps.cadence.outputs.due == 'true'");
   assert.match(steps.find(s => s.id === 'cadence').env.RELEASE_CADENCE_MINUTES, /vars.RELEASE_CADENCE_MINUTES/);
+  assert.match(read('../scripts/release-cadence.mjs'), /Math\.max\(60, cadenceMinutes/);
   const config = JSON.parse(read('../../release-please-config.json'));
   assert.equal(config.versioning, 'always-bump-patch');
   assert.equal(config['skip-changelog'], false);
