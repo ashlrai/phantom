@@ -15,6 +15,7 @@
  *   mcp [list|doctor|install]  MCP aggregation gateway and registry management.
  *   radar [list|run|diff]      Observe public documentation and package changes.
  *   observe [--json]           Human observe snapshot: roster, sensors, pulls, bottlenecks.
+ *   growth [--json]            Growth chart series. Missing sources stay no-data-source.
  *   world [--json]             Versioned world model for the scheduler and leaders.
  *   drafts [list|show|approve|reject]  Outbound drafts waiting for your approval.
  *   run "<goal>" [opts]        Local-first agent orchestrator; decompose & execute a goal.
@@ -2087,8 +2088,16 @@ async function main(): Promise<void> {
         break;
       }
       case 'context': {
+        if (rest.includes('--for-agent')) {
+          process.exitCode = await (await import('./work-visibility.js')).cmdAgentContext(rest);
+          break;
+        }
         const { cmdCompanyContext } = await import('./company-context.js');
         cmdCompanyContext(rest);
+        break;
+      }
+      case 'claim': {
+        process.exitCode = await (await import('./work-visibility.js')).cmdWorkClaim(rest);
         break;
       }
       case 'router-calibration': {
@@ -2534,6 +2543,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'prs': {
+        const { cmdPrs } = await import('./prs.js');
+        process.exitCode = await cmdPrs(rest);
+        break;
+      }
+
       case 'repos': {
         const { cmdReposRank } = await import('./repos-rank.js');
         process.exitCode = cmdReposRank(rest);
@@ -2756,6 +2771,11 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'growth': {
+        process.exitCode = await (await import('./growth.js')).cmdGrowth(rest);
+        break;
+      }
+
       case 'world': {
         process.exitCode = await (await import('./world.js')).cmdWorld(rest);
         break;
@@ -2788,6 +2808,11 @@ async function main(): Promise<void> {
       case 'comms': {
         const cmdComms = await loadCommsCmd();
         process.exitCode = await cmdComms(rest);
+        break;
+      }
+
+      case 'comms-agent': {
+        process.exitCode = await (await import('./comms-agent.js')).cmdCommsAgent(rest);
         break;
       }
 

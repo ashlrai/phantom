@@ -48,7 +48,7 @@ A resource is one of: Devin cloud, Devin desktop, Codex personal, Dot, Cursor cl
 
 Each resource row includes a `gauge`: remaining and its unit, burn per hour, `forecastExhaustAt`, `forecastVsReset` (`early`, `on-pace`, `underuse`, or `unknown`), and `idleIncludedWastedPerWeek`. A missing burn or reset leaves those fields null. Null is not zero and does not make the resource idle.
 
-The scheduler (`planLanes`) narrows a lane when `phm usage sensors` has a fresh included-usage pace: remaining, divided by time to reset, divided by the burn of one job, with a 15 percent safety margin, then clamped to the lane ceiling. `~/.ashlr/KILL` sets every lane to 0. `claude-api` stays at 0 unless a fresh balance exists and spend is approved. Local models have no allowance; the gauge reports throughput only. Devin's ACU cap is not raised. SWE-2 Flash and the weekly included allowance are separate rows.
+The scheduler (`planLanes`) narrows a lane when `phm usage sensors` has a fresh included-usage pace: remaining, divided by time to reset, divided by the burn of one job, with a 15 percent safety margin, then clamped to the lane ceiling. `~/.ashlr/KILL` sets every lane to 0. A pay-per-use lane stays at 0 unless measured spend this period is below the owner budget and a fresh balance exists. The budget defaults to 0. Local models have no allowance; the gauge reports throughput only. Devin's ACU cap is not raised. SWE-2 Flash and the weekly included allowance are separate rows.
 
 When no resource is reachable, the coordinated, idle, and duplicated counts are null.
 

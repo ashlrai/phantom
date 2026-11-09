@@ -252,6 +252,12 @@ function observeUnknownFields(snapshot: Omit<ObserveSnapshot, 'coverage'>): Obse
     if (window.headroom === null) add(`usage.windows.${window.lane}.headroom`);
     if (window.used === null) add(`usage.windows.${window.lane}.used`);
     if (window.limit === null) add(`usage.windows.${window.lane}.limit`);
+    if (window.remaining === null) add(`usage.windows.${window.lane}.remaining`);
+    if (window.burnPerHour === null) add(`usage.windows.${window.lane}.burnPerHour`);
+    if (window.projectedUnused === null) add(`usage.windows.${window.lane}.projectedUnused`);
+    if (window.forecastExhaustAt === null) add(`usage.windows.${window.lane}.forecastExhaustAt`);
+    if (window.forecastVsReset === 'unknown') add(`usage.windows.${window.lane}.forecastVsReset`);
+    if (window.idleIncludedWastedPerWeek === null) add(`usage.windows.${window.lane}.idleIncludedWastedPerWeek`);
   }
   if (snapshot.resources.counts.coordinated === null) add('resources.counts.coordinated');
   if (snapshot.resources.counts.idle === null) add('resources.counts.idle');

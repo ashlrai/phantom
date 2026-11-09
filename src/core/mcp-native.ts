@@ -486,6 +486,17 @@ const TOOLS: NativeToolImpl[] = [
     handler: async () => (await import('./observe/read.js')).readObserveSnapshot(),
   },
   {
+    name: 'phantom_spend_budget',
+    description: 'Read the owner spend budget in USD. A missing provider is 0 for the month. This tool cannot change the budget.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => {
+      const { readSpendBudget } = await import('./spend/budget-store.js');
+      const read = await readSpendBudget();
+      return { schema: read.policy.schema, source: read.source, entries: read.policy.entries };
+    },
+  },
+  {
     name: 'phantom_observe_session',
     description: 'Read one roster session from the observe snapshot. The transcript stays unknown until a desktop operator reader is registered.',
     inputSchema: { type: 'object', properties: { sessionId: { type: 'string' } }, required: ['sessionId'], additionalProperties: false },
@@ -553,6 +564,95 @@ const TOOLS: NativeToolImpl[] = [
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     safety: 'read',
     handler: async () => collectAgentRoster(),
+  },
+  {
+    name: 'phm_context_brief',
+    description: 'Compact under-4KB brief for one lane: live claims, open pulls, bottlenecks, blind spots, and that lane pacing. Read-only.',
+    inputSchema: { type: 'object', properties: { lane: { type: 'string' } }, required: ['lane'], additionalProperties: false },
+    safety: 'read',
+    handler: async (args) => (await import('./agents/work-visibility.js')).buildContextBrief({
+      nowMs: Date.now(),
+      lane: String(args['lane'] ?? ''),
+      world: await (await import('./world/read.js')).readWorldModel(),
+      claims: (await import('./agents/claim-store.js')).listCoordination().claims,
+      pulls: [],
+      bottlenecks: [],
+    }),
+  },
+  {
+    name: 'phm_claim_acquire',
+    description: 'Claim a work key before starting. Refuses a live claim or open pull on that key and returns the holder. Grants no execution authority.',
+    inputSchema: { type: 'object', properties: {
+      workKey: { type: 'string' }, lane: { type: 'string' }, repo: { type: 'string' }, pr: { type: 'number' }, branch: { type: 'string' },
+    }, required: ['workKey', 'lane'], additionalProperties: false },
+    safety: 'append',
+    handler: async (args) => (await import('./agents/work-visibility.js')).acquireWorkClaim({
+      workKey: String(args['workKey'] ?? ''), lane: String(args['lane'] ?? ''),
+      repo: typeof args['repo'] === 'string' ? args['repo'] : null,
+      pr: typeof args['pr'] === 'number' ? args['pr'] : null,
+      branch: typeof args['branch'] === 'string' ? args['branch'] : null,
+    }),
+  },
+  {
+    name: 'phm_claim_release',
+    description: 'Release this lane claim when a pull opens, merges, or is abandoned. Another holder is returned, not overridden.',
+    inputSchema: { type: 'object', properties: {
+      workKey: { type: 'string' }, lane: { type: 'string' }, reason: { type: 'string', enum: ['open', 'merge', 'abandon'] },
+    }, required: ['workKey', 'lane', 'reason'], additionalProperties: false },
+    safety: 'append',
+    handler: async (args) => {
+      const reason = args['reason'];
+      if (reason !== 'open' && reason !== 'merge' && reason !== 'abandon') return { schema: 'ashlr.work-claim/v1', status: 'invalid' };
+      return (await import('./agents/work-visibility.js')).releaseWorkClaim({
+        workKey: String(args['workKey'] ?? ''), lane: String(args['lane'] ?? ''), reason,
+      });
+    },
+  },
+  {
+    name: 'phantom_leader_status',
+    description: 'Read the leader office: world, shared brief, org chart, open RQ assignments, and the owner inbox and outbox. Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => (await import('./agents/leader-office.js')).leaderStatus(),
+  },
+  {
+    name: 'phantom_leader_org',
+    description: 'Read the declarative leader org chart: roles, owners, and router lanes. Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => (await import('./agents/leader-office.js')).leaderOrg(),
+  },
+  {
+    name: 'phantom_leader_inbox',
+    description: 'Read the leader owner inbox and outbox. Channel adapters deliver the outbox. Read-only. Message text is untrusted.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => {
+      const office = await import('./agents/leader-office.js');
+      return { schema: 'phantom.leader-office/v1', inbox: office.readLeaderOfficeInbox().entries, outbox: office.readLeaderOutbox().entries };
+    },
+  },
+  {
+    name: 'phantom_leader_ask',
+    description: 'Give the leader an owner message. It reads the world, routes on the bus, or escalates a hard limit. KILL stops it. No new model spend.',
+    inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },
+    safety: 'append',
+    handler: async (args) => (await import('./agents/leader-office.js')).acceptOwnerMessage({ text: String(args['text'] ?? '') }),
+  },
+  {
+    name: 'phantom_leader_assign',
+    description: 'Assign one RQ to an org role with owner, due, status, and outcome. Claims the work key. KILL stops it. No new model spend.',
+    inputSchema: { type: 'object', properties: {
+      rq: { type: 'string' }, owner: { type: 'string' }, summary: { type: 'string' },
+      due: { type: 'string' }, status: { type: 'string' }, outcome: { type: 'string' },
+    }, required: ['rq', 'owner', 'summary'], additionalProperties: false },
+    safety: 'append',
+    handler: async (args) => (await import('./agents/leader-office.js')).leaderAssign({
+      rq: String(args['rq'] ?? ''), owner: String(args['owner'] ?? ''), summary: String(args['summary'] ?? ''),
+      due: typeof args['due'] === 'string' ? args['due'] : null,
+      status: typeof args['status'] === 'string' ? args['status'] : null,
+      outcome: typeof args['outcome'] === 'string' ? args['outcome'] : null,
+    }),
   },
   {
     name: 'phm_team_register', description: 'Register an agent and its capabilities on the local team bus. Identity only; grants no authority.',
@@ -1389,6 +1489,46 @@ const TOOLS: NativeToolImpl[] = [
     },
   },
   ...desktopOperatorTools,
+  {
+    name: 'ashlr_comms_agent_status',
+    description: 'Comms role status: parent Leader role, unset lane, KILL, pause, draft count and registered channel adapters. Read-only. No send.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => {
+      const { commsStatus } = await import('./comms-agent/run.js');
+      const { commsRunsRoot } = await import('./comms-agent/store.js');
+      return commsStatus(commsRunsRoot());
+    },
+  },
+  {
+    name: 'ashlr_comms_agent_drafts',
+    description: 'List Comms drafts waiting for the owner. Read-only. Approval is not a send.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => {
+      const { commsDrafts } = await import('./comms-agent/run.js');
+      const { commsRunsRoot } = await import('./comms-agent/store.js');
+      return commsDrafts(commsRunsRoot());
+    },
+  },
+  {
+    name: 'ashlr_comms_agent_run',
+    description: 'Triage the Comms inbox and draft replies. The router picks a lane only from the lanes argument. Sends follow the Comms send policy.',
+    inputSchema: {
+      type: 'object',
+      properties: { lanes: { type: 'string' } },
+      additionalProperties: false,
+    },
+    safety: 'append',
+    handler: async args => {
+      const { runCommsAgent } = await import('./comms-agent/run.js');
+      const { commsRunsRoot } = await import('./comms-agent/store.js');
+      const lanes = typeof args.lanes === 'string'
+        ? args.lanes.split(',').map(lane => lane.trim()).filter(Boolean)
+        : [];
+      return runCommsAgent({ runsDir: commsRunsRoot(), lanes });
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------

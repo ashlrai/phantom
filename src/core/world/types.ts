@@ -39,6 +39,9 @@ export interface WorldModel {
       headroom: Field<number>;
       used: Field<number>;
       limit: Field<number>;
+      remaining: Field<number>;
+      burnRate: Field<number>;
+      idleIncludedWastedPerWeek: Field<number>;
       pacePerHour: Field<number>;
       requiredPacePerHour: Field<number>;
       runwayHours: Field<number>;
@@ -57,6 +60,19 @@ export interface WorldModel {
   humanSteps: { remaining: Field<number> };
   outcomes: {
     repos: Array<{ repo: string; mergedPerDay: Field<number>; changeFailureRate: Field<number> }>;
+  };
+  /**
+   * Latest reading of each Growth chart series. Null value and freshness
+   * `unknown` means that series has no source. It is never stored as 0.
+   */
+  growth: {
+    mergesPerHour: Field<number>;
+    pullsOpened: Field<number>;
+    pullsMerged: Field<number>;
+    releases: Field<number>;
+    laneUtilization: Field<number>;
+    costPerMergedPr: Field<number>;
+    bottleneckTrends: Field<number>;
   };
   blindSpots: BlindSpot[];
 }

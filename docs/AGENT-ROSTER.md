@@ -19,7 +19,7 @@ Sources:
 | `ollama` | `GET http://127.0.0.1:11434/api/ps` | The loopback status returns a `models` array. Those rows are loaded models |
 | `omlx` | `GET http://127.0.0.1:8123/v1/models` | The loopback status returns a `data` array. Those rows are listed models (`state: "listed"`), not proof of a live generation |
 
-Claims are the bus work claim table via `inspectBusWorkClaims`. A claim is attached to a session only when the claim id equals the session id. The fencing token is not copied. Team leases are a separate store and are not merged into this view.
+Claims come from the coordination claim store, or from the read-only bus work claim table when the store is missing or unavailable; the roster labels the source used. A claim is attached to a session only when the claim id equals the session id. The fencing token is not copied. Team leases are a separate store and are not merged into this view.
 
 The probes do not read app databases, session stores, or credential files, and they do not print secrets. Local HTTP calls stay on `127.0.0.1` and do not follow redirects.
 

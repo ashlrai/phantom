@@ -24,12 +24,12 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'new', 'ship', 'recall', 'learn', 'genome',
   'self-swap', 'update', 'upgrade', 'desktop', 'desktop-update', 'desktopctl', 'apps', 'app', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
   'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'router', 'router-calibration', 'node', 'sandbox', 'audit',
-  'enroll', 'backlog', 'inbox', 'daemon', 'worker', 'ask', 'knowledge', 'reflect',
-  'health', 'goals', 'fleet', 'recovery', 'manager', 'vision', 'goal', 'loop',
+  'enroll', 'backlog', 'inbox', 'claim', 'daemon', 'worker', 'ask', 'knowledge', 'reflect',
+  'health', 'goals', 'prs', 'fleet', 'recovery', 'manager', 'vision', 'goal', 'loop',
   'roadmap', 'stack', 'ecosystem', 'digest', 'sweep', 'seams', 'verify', 'engineering-receipt', 'verify-safety', 'verify-pr', 'release-articles', 'release', 'preflight',
   'conductor-permit', 'signals', 'friction',
-  'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms',
-  'channels', 'context', 'connectors', 'imessage', 'memory', 'route', 'radar', 'observe', 'world', 'drafts',
+  'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms', 'comms-agent',
+  'channels', 'context', 'connectors', 'imessage', 'memory', 'route', 'radar', 'observe', 'growth', 'world', 'drafts',
   'director', 'best-of-n', 'invent', 'resource', 'resources', 'repos', 'usage', 'version', 'help',
   'skills', 'universe', 'runtime', 'tune',
   // Dispatched by index.ts but previously missing here, so completion and
@@ -80,8 +80,11 @@ const SUBCOMMANDS: Record<string, string[]> = {
   desktopctl: ['capabilities', 'doctor', 'status', 'run', '--task', '--timeout', '--poll', '--json', '--help'],
   app: ['update', 'status', '--json', '--help'],
   radar: ['list', 'run', 'diff', '--json', '--help'],
+  'comms-agent': ['status', 'run', 'drafts', '--json', '--dir', '--lanes', '--help'],
+  claim: ['acquire', 'release', '--lane', '--reason', '--json', '--help'],
   usage: ['sensors', 'validate', '--json', '--refresh', '--file', '--help'],
   observe: ['session', '--json', '--human-steps', '--bottlenecks', '--prs', '--days', '--claim-minutes', '--help'],
+  budget: ['show', 'add', 'get', 'set', '--json', '--provider', '--period', '--usd', '--bucket', '--remaining', '--reset-at', '--at', '--source', '--input', '--help'],
   world: ['get', '--json', '--refresh', '--help'],
   chain: ['verify', '--json', '--help'],
   incident: ['report', 'receipts', '--json', '--help'],
@@ -118,6 +121,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'pause', 'resume', 'doctor',
   ],
   worker: ['setup', 'status'],
+  prs: ['triage'],
   fleet: [
     'status', 'session', 'watch', 'events', 'lanes', 'lane-slots', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
@@ -162,7 +166,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   // Mirror the verb switches in src/cli/leader.ts (runLeaderCli) and src/cli/mirror.ts (runMirrorCli).
   // oversight-plist only PRINTS the nightly LaunchAgent (install is by hand) —
   // listed so the verb is discoverable, not hidden behind `leader help`.
-  leader: ['show', 'run', 'tick', 'veto', 'oversight-plist', 'say', 'thread', 'answer', 'approve', 'directives', 'help'],
+  leader: ['show', 'run', 'tick', 'veto', 'status', 'ask', 'org', 'assign', 'oversight-plist', 'say', 'thread', 'answer', 'approve', 'directives', 'help'],
   mirror: ['list', 'add', 'sync', 'path', 'remove', 'reconcile', 'release', 'help'],
   // Mirror the verb switch in src/cli/cloud.ts (runCloudCli).
   capacity: ['publish'],
