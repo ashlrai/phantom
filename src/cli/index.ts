@@ -2993,6 +2993,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'library': {
+        const { cmdLibrary } = await import('./library.js');
+        process.exitCode = await cmdLibrary(rest);
+        break;
+      }
+
       case 'feed': {
         const { cmdFeed } = await import('./feed.js');
         process.exitCode = await cmdFeed(rest);
