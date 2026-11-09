@@ -74,5 +74,13 @@ export interface WorldModel {
     costPerMergedPr: Field<number>;
     bottleneckTrends: Field<number>;
   };
+  intents: {
+    items: Field<number>;
+    tracked: Field<number>;
+    merged: Field<number>;
+    shipped: Field<number>;
+    verified: Field<number>;
+    stale: Field<number>;
+  };
   blindSpots: BlindSpot[];
 }

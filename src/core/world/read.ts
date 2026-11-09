@@ -25,6 +25,7 @@ import type { AgentRoster } from '../fleet/agent-roster.js';
 import { writeWorldExport } from './export.js';
 import { loadGrowthFacts } from '../growth/read.js';
 import { growthSnapshot } from '../growth/series.js';
+import { intentSummary } from '../intent/summary.js';
 import { projectWorldModel } from './project.js';
 import { WORLD_CACHE_TTL_MS, type WorldModel } from './types.js';
 import type { ObserveSnapshot } from '../observe/types.js';
@@ -59,11 +60,20 @@ async function readDisk(nowMs: number): Promise<CachedWorld | null> {
     const ageMs = nowMs - stat.mtimeMs;
     if (ageMs < 0 || ageMs >= WORLD_CACHE_TTL_MS) return null;
     const parsed = JSON.parse(await readFile(path, 'utf8')) as CachedWorld;
-    if (parsed?.schema !== 'ashlr.world-model/v1' || !parsed.views?.observe || !parsed.growth?.mergesPerHour) return null;
+    if (parsed?.schema !== 'ashlr.world-model/v1' || !parsed.views?.observe || !parsed.growth?.mergesPerHour || !hasIntentFields(parsed)) return null;
     return stamp(parsed, true, ageMs);
   } catch {
     return null;
   }
+}
+
+function hasIntentFields(model: CachedWorld): boolean {
+  const intents = model.intents;
+  return !!intents && ['items', 'tracked', 'merged', 'shipped', 'verified', 'stale'].every((key) => {
+    const field = intents[key as keyof typeof intents];
+    return !!field && ['fresh', 'stale', 'unknown'].includes(field.freshness)
+      && 'value' in field && 'source' in field && 'observedAt' in field;
+  });
 }
 
 async function writeDisk(model: CachedWorld): Promise<void> {
@@ -181,6 +191,7 @@ export async function buildWorldModel(options: ReadObserveOptions = {}): Promise
     stepsRemaining: steps?.stepsRemaining ?? null,
     stepsObservedAt: steps?.stepsRemaining === null || steps === null ? null : new Date(nowMs).toISOString(),
     outcomes,
+    intents: await intentSummary({ nowMs }).catch(() => null),
     growth: growthSnapshot(await loadGrowthFacts({
       nowMs,
       ...(parsedPulls ? { pulls: parsedPulls.pulls, pullsComplete: parsedPulls.complete === true } : {}),

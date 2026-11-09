@@ -2,6 +2,7 @@
  * Pure world-model projection. Callers pass readings they already have.
  * This file does not open files, spawn processes, or call the network.
  */
+import type { IntentSummary } from '../intent/summary.js';
 import type { BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import type { AgentRoster } from '../fleet/agent-roster.js';
 import type { UsageSensorReport } from '../usage/sensor-reading.js';
@@ -31,6 +32,7 @@ export interface WorldProjectInput {
   outcomes: readonly RepoHeadline[] | null;
   /** Latest growth-series readings. Null leaves every growth field unknown. */
   growth?: GrowthSnapshot | null;
+  intents?: IntentSummary | null;
 }
 
 function iso(nowMs: number): string {
@@ -82,6 +84,7 @@ function needFor(path: string): string {
   if (path === 'bottlenecks.count') return 'Eng Ops writes ~/.ashlr-runs/export/bottlenecks.json (bottlenecks.v1).';
   if (path === 'humanSteps.remaining') return 'Eng Ops writes ~/.ashlr-runs/export/human-steps.json (ashlr.human-steps/v1).';
   if (path.startsWith('outcomes.')) return 'A complete pull export. Merged-per-day needs mergedAt. Change-failure rate needs reverted, fixForward, and failedRelease on every merged pull.';
+  if (path.startsWith('intents.')) return 'A readable local intent ledger and review of work past its stale timer.';
   if (path.startsWith('growth.')) return GROWTH_FIELD_NEEDS[path] ?? `A fresh reading for ${path}.`;
   return `A fresh reading for ${path}.`;
 }
@@ -206,6 +209,10 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
     const cfr = repo.changeFailureRate === null ? unknown<number>('pull-export') : reading(repo.changeFailureRate, 'pull-export', now, 'fresh');
     return { repo: repo.repo, mergedPerDay: merged, changeFailureRate: cfr };
   });
+  const intent = input.intents;
+  const intentCount = (key: 'items' | 'tracked' | 'merged' | 'shipped' | 'verified' | 'stale'): Field<number> =>
+    intent?.present && intent.sourceQuality === 'readable' && intent.countQuality === 'observed'
+      ? reading(intent[key], 'ashlr.intent-ledger/v1', now, 'fresh') : unknown<number>('ashlr.intent-ledger/v1');
   const draft = {
     schema: WORLD_SCHEMA,
     generatedAt: now,
@@ -221,6 +228,8 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
     bottlenecks: { count: bottleneckCount },
     humanSteps: { remaining: steps },
     outcomes: { repos: outcomeRepos },
+    intents: { items: intentCount('items'), tracked: intentCount('tracked'), merged: intentCount('merged'),
+      shipped: intentCount('shipped'), verified: intentCount('verified'), stale: intentCount('stale') },
     growth: {
       mergesPerHour: growthField('mergesPerHour'),
       pullsOpened: growthField('pullsOpened'),
@@ -231,5 +240,13 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
       bottleneckTrends: growthField('bottleneckTrends'),
     },
   };
-  return { ...draft, blindSpots: blindSpotsFrom(draft).spots };
+  const spots = blindSpotsFrom(draft).spots;
+  if (intent?.present && intent.sourceQuality === 'readable' && intent.countQuality === 'observed') {
+    for (const item of intent.staleItems.slice(0, 50)) {
+      const path = `intents.stale.${item.id}`;
+      spots.push({ id: stableFieldId(path), path, freshness: 'stale', need: needFor(path) });
+    }
+    spots.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  }
+  return { ...draft, blindSpots: spots };
 }
