@@ -59,16 +59,42 @@ def _run(cmd, timeout, **kw):
                          stdin=kw.pop("stdin", subprocess.DEVNULL), **kw)
     name = os.path.basename(cmd[1] if cmd[0].endswith("bash") and len(cmd) > 1 else cmd[0]); t0 = time.time()
     try: out, err = p.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
+    except BaseException:
         try: os.killpg(p.pid, signal.SIGKILL)
         except OSError: pass
         try: p.communicate(timeout=0.1)
         except subprocess.TimeoutExpired:
             for pipe in (p.stdout, p.stderr):
                 if pipe: pipe.close()
-        log("SLOW %s timeout %ds, group killed" % (name, timeout)); raise
+        log("SLOW %s interrupted (budget %.1fs), group killed" % (name, timeout)); raise
     if time.time() - t0 > 5: log("SLOW %s %.0fs" % (name, time.time() - t0))
     return subprocess.CompletedProcess(cmd, p.returncode, out, err)
+# Monotonic phase deadlines include Python loops, filesystem reads and subprocesses.
+# Required-phase exhaustion fails closed; optional maintenance yields to the next tick.
+import atexit, signal
+_PHASE_START = time.monotonic(); _TICK_START = _PHASE_START
+_PHASE = "setup"; _PHASES = {}; _EXPIRED = []
+class MaintenanceDeadline(BaseException): pass
+def _phase_timeout(signum, frame):
+    _EXPIRED.append(_PHASE)
+    if _PHASE == "worktree_reap": raise MaintenanceDeadline()
+    raise SystemExit("dispatcher phase budget exhausted: " + _PHASE)
+def tick_phase(name, seconds=15):
+    global _PHASE, _PHASE_START
+    signal.setitimer(signal.ITIMER_REAL, 0)
+    now = time.monotonic()
+    _PHASES[_PHASE] = _PHASES.get(_PHASE, 0) + now - _PHASE_START
+    _PHASE, _PHASE_START = name, now
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+def tick_summary():
+    signal.setitimer(signal.ITIMER_REAL, 0)
+    now = time.monotonic()
+    _PHASES[_PHASE] = _PHASES.get(_PHASE, 0) + now - _PHASE_START
+    log("TICK total_s=%.3f %s slowest=%s expired=%s" % (
+        now - _TICK_START, " ".join(k + "_s=%.3f" % v for k, v in sorted(_PHASES.items())),
+        max(_PHASES, key=_PHASES.get), ",".join(_EXPIRED) or "none"))
+signal.signal(signal.SIGALRM, _phase_timeout)
+atexit.register(tick_summary)
 def job_diff_metrics(wt, job_base):
     # Compare the final tracked tree to the launch base, including commits and
     # staged edits. Untracked files count as files, but their line totals are
@@ -137,6 +163,7 @@ def tokens(txt):
 def ev(msg):
     with open(EV, "a") as f: f.write("%s %s\n" % (TS, msg))
 def log(msg): print("%s %s" % (TS, msg), flush=True)
+tick_phase("setup", 10)
 # RQ-SWE5-LOOP-BENCH: queue metadata (.line/.base/.publish/prompts) is re-read
 # many times per job per tick. Cache reads keyed on (mtime_ns, size): a mid-tick
 # rewrite by launch.sh or a publisher invalidates exactly as a fresh read would.
@@ -428,6 +455,7 @@ PS_F = _PROBES.submit(capture_process_snapshot, timeout=5)
 TICK_AGE_F = _PROBES.submit(_daemon_tick_age)
 PACE_F = _PROBES.submit(api_pace)
 REPORT_F = _PROBES.submit(_claude_report)
+tick_phase("budget_read", 25)
 AP = AP_F.result()
 # The separately scheduled disk sampler never blocks a dispatcher tick.
 _disk_growth = jload(Q + "/disk-growth.json", {})
@@ -522,6 +550,7 @@ def _ph_drip_hold(j):   # True = hold this finished job in place (not dropped)
 
 free, swap = MEM_F.result()
 
+tick_phase("liveness", 25)
 # ---- liveness: map processes to jobs by cmdline and cwd
 alive, publishing, cwdjobs = set(), set(), set()
 pat_wt = re.compile(re.escape(WTROOT) + r"/([A-Za-z0-9._-]+)")
@@ -764,7 +793,8 @@ LANDONLY_PREFIXES = ("RQ-DESK-",)   # fixed strings in code; never read from the
 def _landonly_ids():   # exact tokens only (whitespace-split, as before); tokens that are not valid job ids are ignored
     return {t for t in rd(R + "/PUBLISH_LANDONLY").split() if JID.match(t)}
 def _landonly_ok(j): return j in _landonly_ids() or j.startswith(LANDONLY_PREFIXES)
-for bp in sorted(glob.glob(R + "/*.base"), key=_prio):
+tick_phase("worktree_account", 5)
+for bp in glob.glob(R + "/*.base"):
     j = os.path.basename(bp)[:-5]; b = base(j)
     if not b or not JID.match(j): continue
     wt, pool = b[2], b[3]
@@ -785,47 +815,69 @@ for bp in sorted(glob.glob(R + "/*.base"), key=_prio):
         if pool in running: running[pool] += 1
         if pool == "codex-local" and _is_local_mid(j): local_mid += 1
         continue
-    res = result(j)
-    if j in keep or (res and not res.startswith(("RESULT PR", "RESULT EMPTY"))):
-        kept.append(j)
-        mk = RUN + "/" + j + ".keptlogged"
-        if not os.path.exists(mk):
-            open(mk, "w").close()
-            ev(("PUBLISH_ABORT_SECRET_SHAPE %s worktree kept for supervisor" if res and "PUBLISH-ABORT" in res
-                else "KEPT %s worktree kept for supervisor") % j)
-        continue
-    if os.path.exists(R + "/PUBLISH_HOLD"): continue   # Actions backlog: keep finished worktrees local, publish later
-    if os.path.exists(R + "/PUBLISH_LANDONLY") and _bucket(j) > 3 and not _landonly_ok(j) and not os.path.exists(R + "/g1-pass/" + j + ".pass"): continue   # merge-rate first; only priority buckets, G1-passed and listed jobs publish
-    # reap-one.sh owns publish.sh and must wait through auto-merge enablement.
-    # Wait for its complete handoff before starting the next publisher;
-    # concurrent children can reorder merge-queue entry regardless of spawn order.
-    if publish_busy: continue
-    if over_budget(): continue   # RQ-TICK-BUDGET: later reaps wait one tick
-    if _ph_drip_hold(j):
-        mk = RUN + "/" + j + ".phdrip"
-        if not os.path.exists(mk): open(mk, "w").close(); ev("PHANTOM_DRIP hold %s open_prs=%s" % (j, _ph_open_prs()))
-        continue
-    if DRIP:
-        if drip_budget <= 0: continue
-        drip_budget -= 1; open(DRIPLOG, "a").write("%f\n" % NOW)
-    os.mkdir(RUN + "/" + j + ".reaping"); nreap += 1; publish_busy = True
-    try:
-        lp = "%s/%s.log" % (R, j); tl = logtail(lp, 20000)
-        nf, diff_lines, empty = job_diff_metrics(wt, b[0])
-        wall_s = int(os.path.getmtime(lp) - os.path.getmtime(bp)) if os.path.exists(lp) else None
-        try: bsize = reap_batch(j, wt, pool, wall_s)
-        except Exception as e: bsize = None; log("batch reap err %s %s" % (j, type(e).__name__))
-        if not attempt.get("finished") and not os.path.exists(RUN + "/" + j + ".timeout"):
-            metric({"event": "finish", "job": j, "lane": pool, "wall_s": wall_s, "batch_size": bsize,
-                "exit_code": _rc(j), "tokens_total": tokens(tl), "tokens_in": None, "tokens_out": None, "cost": None,
-                "diff_files": nf, "diff_lines": diff_lines, "empty": empty,
-                "failure_class": devin_failure(_rc(j), empty, tl) if pool == "devin" else None,
-                "pool_error": next((c for c, rx in CLS if any(rx.search(t) for t in errlines(tl.splitlines()[-30:]))), None)})
-    except Exception as e: log("metric finish err %s %s" % (j, type(e).__name__))
-    subprocess.Popen(["/bin/bash", R + "/bin/reap-one.sh", j], stdin=subprocess.DEVNULL,
-                     stdout=open(RUN + "/" + j + ".reap.log", "a"), stderr=subprocess.STDOUT, start_new_session=True)
-    log("REAP %s (%s)" % (j, pool))
 
+def reap_worktrees():
+    global nreap, publish_busy, drip_budget
+    for bp in _reap_candidates:
+        j = os.path.basename(bp)[:-5]; b = base(j)
+        if not b or not JID.match(j): continue
+        wt, pool = b[2], b[3]
+        if j in alive:
+            continue
+        if not os.path.isdir(wt) or j in reaping or j in publishing: continue
+        attempt = _attempts.get(j, {})
+        if attempt.get("merged") or attempt.get("urls", set()) & _merged_urls: continue
+        try: recent = max(os.path.getmtime(bp), os.path.getmtime("%s/%s.log" % (R, j)) if os.path.exists("%s/%s.log" % (R, j)) else 0)
+        except Exception: recent = NOW
+        if NOW - recent < 180 or not os.path.exists("%s/%s.log" % (R, j)):   # fresh launch by anyone (routine or us): not finished
+            if j.startswith("RQ-FIX-MAIN-") and _rc(j) is None and not result(j): fix_main_repos.add(_job_repo(j))
+            if _rc(j) is None and not result(j):
+                target = drain_target(j, _job_repo(j))
+                if target: drain_targets.add(target)
+            continue
+        res = result(j)
+        if j in keep or (res and not res.startswith(("RESULT PR", "RESULT EMPTY"))):
+            kept.append(j)
+            mk = RUN + "/" + j + ".keptlogged"
+            if not os.path.exists(mk):
+                open(mk, "w").close()
+                ev(("PUBLISH_ABORT_SECRET_SHAPE %s worktree kept for supervisor" if res and "PUBLISH-ABORT" in res
+                    else "KEPT %s worktree kept for supervisor") % j)
+            continue
+        if os.path.exists(R + "/PUBLISH_HOLD"): continue   # Actions backlog: keep finished worktrees local, publish later
+        if os.path.exists(R + "/PUBLISH_LANDONLY") and _bucket(j) > 3 and not _landonly_ok(j) and not os.path.exists(R + "/g1-pass/" + j + ".pass"): continue   # merge-rate first; only priority buckets, G1-passed and listed jobs publish
+        # reap-one.sh owns publish.sh and must wait through auto-merge enablement.
+        # Wait for its complete handoff before starting the next publisher;
+        # concurrent children can reorder merge-queue entry regardless of spawn order.
+        if publish_busy: continue
+        if over_budget(): continue   # RQ-TICK-BUDGET: later reaps wait one tick
+        if _ph_drip_hold(j):
+            mk = RUN + "/" + j + ".phdrip"
+            if not os.path.exists(mk): open(mk, "w").close(); ev("PHANTOM_DRIP hold %s open_prs=%s" % (j, _ph_open_prs()))
+            continue
+        if DRIP:
+            if drip_budget <= 0: continue
+            drip_budget -= 1; open(DRIPLOG, "a").write("%f\n" % NOW)
+        try:
+            lp = "%s/%s.log" % (R, j); tl = logtail(lp, 20000)
+            nf, diff_lines, empty = job_diff_metrics(wt, b[0])
+            wall_s = int(os.path.getmtime(lp) - os.path.getmtime(bp)) if os.path.exists(lp) else None
+            try: bsize = reap_batch(j, wt, pool, wall_s)
+            except Exception as e: bsize = None; log("batch reap err %s %s" % (j, type(e).__name__))
+            if not attempt.get("finished") and not os.path.exists(RUN + "/" + j + ".timeout"):
+                metric({"event": "finish", "job": j, "lane": pool, "wall_s": wall_s, "batch_size": bsize,
+                    "exit_code": _rc(j), "tokens_total": tokens(tl), "tokens_in": None, "tokens_out": None, "cost": None,
+                    "diff_files": nf, "diff_lines": diff_lines, "empty": empty,
+                    "failure_class": devin_failure(_rc(j), empty, tl) if pool == "devin" else None,
+                    "pool_error": next((c for c, rx in CLS if any(rx.search(t) for t in errlines(tl.splitlines()[-30:]))), None)})
+        except Exception as e: log("metric finish err %s %s" % (j, type(e).__name__))
+        os.mkdir(RUN + "/" + j + ".reaping"); nreap += 1; publish_busy = True
+        subprocess.Popen(["/bin/bash", R + "/bin/reap-one.sh", j], stdin=subprocess.DEVNULL,
+                         stdout=open(RUN + "/" + j + ".reap.log", "a"), stderr=subprocess.STDOUT, start_new_session=True)
+        log("REAP %s (%s)" % (j, pool))
+
+
+tick_phase("admission", 10)
 # ---- admission gate. Fixture signal overrides require the LOADGATE_TEST marker.
 def _install_holder():   # the install-gate.py wrapper writes its holder JSON into queue/install.lock; a dead pid is no holder
     try:
@@ -932,6 +984,28 @@ def route_decision(record, proposed, now, hard_down=False, launched=False):
     record.update(pool=proposed, decided_at=now, moves=record["moves"] + [now])
     return record, None
 
+tick_phase("restock", 5)
+# ---- restock trigger: a codex lane's queue below 3x its free slots -> Mac-side deterministic restocker (no LLM)
+import queue_gate
+_gate = queue_gate.read_gate(Q)
+if _gate["depth"] is None:
+    _gate = queue_gate.allowance(min(lane_target_sum(), slots.get("hard_cap", lane_target_sum())),
+                                 rd(Q + "/ready.tsv"), set(rd(Q + "/RETIRED").split()))
+ev("QUEUE_GATE allow=%s depth=%s target=%s src=dispatchd" % (_gate["allow"], _gate["depth"], _gate["target"]))
+_ready_before_restock = rd(Q + "/ready.tsv").splitlines()
+rate_parked = any("PARKED-MERGERATE." in l for l in _ready_before_restock)
+for lane in ("codex-cmp", "codex-personal", "devin", "claude-api", "codex-local"):
+    sl = slots[lane]
+    if sl.get("held") or lane in hold: continue
+    qn = sum(1 for l in _ready_before_restock if not l.startswith("PARKED-") and l.split("\t")[2:3] == [lane])
+    if _gate["allow"] and (rate_parked or qn < 3 * max(sl["target"] - running[lane], 4)) and os.path.exists(Q + "/router-queue.md") and not os.path.exists(Q + "/RESTOCK_OFF"):
+        try:
+            _run(["/bin/bash", R + "/bin/restock.sh"], 4)
+        except (OSError, subprocess.SubprocessError):
+            log("restock budget exhausted or unavailable; launching existing ready claims")
+        break
+
+tick_phase("queue_parse", 10)
 # ---- queue
 # RQ-READYLOCK-SCOPE: queue/ready.lock guards only the ready.tsv read and the ready.tsv rewrite, never the
 # tick body (a slow tick held it 4+ min and blocked restock.py / sync-router-queue.py appends). Every taker
@@ -1015,6 +1089,7 @@ def _devin_spike():   # DEVIN-LEVERAGE-20261026, computed in dispatchd itself (M
                "non_pr": sum(1 for r in fin if r.get("empty") or r.get("job") not in pub)}
         _dv["step_down"] = len(fin) >= DEVIN_STEP["window"] and _dv["non_pr"] > DEVIN_STEP["max_non_pr"]
     return _dv
+tick_phase("adapt", 10)
 for lane in LANES:
     try: ab_scan(lane, alive)
     except Exception as e: log("autobackoff err %s %s" % (lane, type(e).__name__))
@@ -1089,6 +1164,7 @@ conc_adjusted(concurrency.decide(CONC, {
     "disk_free_gb": disk_free_gb, "disk_hard_stop_gb": DISK_HARD_STOP_GB, "procs": GATE["procs"], "procs_max": GATE_PROCS_MAX},
     NOW, _demand, CONC_FLOOR, CONC_CEILING))
 
+tick_phase("launch", 30)
 # ---- (b) fill
 launched = []; rest = []; bad = 0; batches = []
 GCAP = global_cap()
@@ -1285,20 +1361,27 @@ lk.close()
 jsave(Q + "/slots.json", slots)
 concurrency.save(CONC_PATH, CONC)
 
-# ---- restock trigger: a codex lane's queue below 3x its free slots -> Mac-side deterministic restocker (no LLM)
-import queue_gate
-_gate = queue_gate.read_gate(Q)
-ev("QUEUE_GATE allow=%s depth=%s target=%s src=dispatchd" % (_gate["allow"], _gate["depth"], _gate["target"]))
-rate_parked = any("PARKED-MERGERATE." in l for l in rest)
+# Finished-worktree discovery/sorting runs at most every ten minutes. Drain the
+# cached priority list after launches each tick so cadence cannot throttle merges.
+# Stamp before
+# starting so a timeout does not cause a costly retry on every dispatcher tick.
+_reap_stamp = Q + "/.worktree-reap.stamp"
+_reap_cache = Q + "/worktree-reap-candidates.json"
+_reap_candidates = jload(_reap_cache, [])
+if not isinstance(_reap_candidates, list): _reap_candidates = []
+_reap_candidates = [p for p in _reap_candidates if isinstance(p, str) and os.path.dirname(p) == R and p.endswith(".base")]
+tick_phase("worktree_reap", gate_limit("WORKTREE_REAP_BUDGET_S", 15))
+try:
+    if not os.path.exists(_reap_stamp) or NOW - os.path.getmtime(_reap_stamp) >= 600:
+        open(_reap_stamp, "w").close()
+        _reap_candidates = sorted(glob.glob(R + "/*.base"), key=_prio)
+        jsave(_reap_cache, _reap_candidates)
+    reap_worktrees()
+except MaintenanceDeadline:
+    log("worktree maintenance budget exhausted; deferred")
+tick_phase("status", 15)
 if rate_parked: _ph_open_prs()
-for lane in ("codex-cmp", "codex-personal", "devin", "claude-api", "codex-local"):
-    sl = slots[lane]
-    if sl.get("held") or lane in hold: continue
-    qn = sum(1 for l in rest if not parked_row(l) and l.split("\t")[2:3] == [lane])
-    if _gate["allow"] and (rate_parked or qn < 3 * max(sl["target"] - running[lane], 4)) and os.path.exists(Q + "/router-queue.md") and not os.path.exists(Q + "/RESTOCK_OFF"):
-        subprocess.Popen(["/bin/bash", R + "/bin/restock.sh"], stdin=subprocess.DEVNULL, stdout=open(Q + "/restock.log", "a"),
-                         stderr=subprocess.STDOUT, start_new_session=True)
-        break
+
 # ---- verified completion (RQ-SWE5-VERIFY-METRIC; mirror of src/core/fleet/agent-activity.ts foldVerifiedCompletion — keep in sync)
 # A task counts as verified complete only when an independent check confirms it: the reconciled
 # GitHub state of the PR it published (MERGED/CLOSED via metrics-outcomes), never the worker's own

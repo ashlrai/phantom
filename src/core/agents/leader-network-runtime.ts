@@ -12,6 +12,7 @@ import { readOutboxEntries } from '../fleet/mason-outbox.js';
 import { readLeaderJournal } from '../fleet/leader-journal.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { ensurePrivateDirectory, writePrivateFileAtomic } from '../verse/preferences.js';
+import { realHome } from '../real-home.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { checkSendPolicy, parseCommsConfirmation, parseTeamIdentities, type DeliverResult, type TeamIdentity } from './channel-policy.js';
@@ -36,9 +37,16 @@ function runsRoot(options: LeaderRuntimeOptions): string {
   return options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
 }
 
+/** Owner policy files. `$HOME` cannot retarget identities or confirmation. */
+function ownerConfigDir(override?: string): string {
+  if (override !== undefined) return override;
+  const home = realHome();
+  return join(home ?? '/owner-home-unavailable', '.ashlr');
+}
+
 /** Missing, unsafe and malformed configuration all fail closed. No auto-seeding. */
 export function readLeaderNetworkConfig(options: LeaderRuntimeOptions = {}): { configSource: string; commsSource: string } {
-  const directory = options.configDir ?? join(homedir(), '.ashlr');
+  const directory = ownerConfigDir(options.configDir);
   const read = (name: string): string => {
     const result = readStableRegularFile(join(directory, name), { anchorPath: directory, maxFileBytes: 64 * 1024, remainingBytes: 64 * 1024 });
     return result.ok ? result.text : '';
@@ -116,7 +124,7 @@ async function noteUnifiedOwner(channel: 'desktop' | 'telegram' | 'email' | 'ime
       ...(channelRef ? { channelRef } : {}),
     }, {
       runsDir: runsRoot(options), busRoot: options.busRoot, now: options.now,
-      settings: loadOwnerThreadSettings(options.configDir ?? join(homedir(), '.ashlr')),
+      settings: loadOwnerThreadSettings(ownerConfigDir(options.configDir)),
     });
   } catch { /* A unified-thread miss never unwrites the leader receipt. */ }
 }
