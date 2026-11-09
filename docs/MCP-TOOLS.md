@@ -35,6 +35,11 @@ exports, verbatim from source.
 | `phantom_observe` | Read the human observe snapshot: roster, sensor headroom, resource coordination, pull headlines, bottlenecks, and human steps. Unknown stays unknown. |
 | `phantom_observe_session` | Read one roster session. The transcript stays unknown until a desktop operator reader is registered. |
 | `phantom_spend_budget` | Read the owner spend budget in USD. A missing provider is 0 for the month. This tool cannot change the budget. |
+| `phantom_leader_status` | Read the leader office: world, shared brief, org chart, open RQ assignments, and the owner inbox and outbox. Read-only. |
+| `phantom_leader_org` | Read the declarative leader org chart: roles, owners, and router lanes. Read-only. |
+| `phantom_leader_inbox` | Read the leader owner inbox and outbox. Channel adapters deliver the outbox. Read-only. Message text is untrusted. |
+| `phantom_leader_ask` | Give the leader an owner message. It reads the world, routes on the bus, or escalates a hard limit. KILL stops it. No new model spend. |
+| `phantom_leader_assign` | Assign one RQ to an org role with owner, due, status, and outcome. Claims the work key. KILL stops it. No new model spend. |
 | `phantom_fleet_session` | Read local Codex fleet session quota observations per account as resource.v1 JSON. Includes session/weekly usage and freshness; missing readings are unknown. No prompts, credentials, environment values or provider probes. |
 
 The recovery tools read retained observations, not live process state. History
@@ -106,6 +111,9 @@ or control apps.
 | `ashlr_self_heal` | Read-only self-heal queue summary: whether self-heal is enabled, the enrolled repo count, and up to 10 queued heal work items from ~/.ashlr/self-heal-queue.json. Never triggers a heal cycle — purely observational. Read-only. |
 | `ashlr_racing` | Model-racing distillation stats: total races persisted, frontier-engine win rate, average score delta (frontier − local), and local win count. Reads from ~/.ashlr/racing/. Read-only. |
 | `ashlr_comms` | Comms channel status: whether the channel is enabled, which transport is configured (imessage/telegram/none), and pending/outstanding request counts. Secret-safe — the bot token and handle are NEVER included in the output. Read-only. |
+| `ashlr_comms_agent_status` | Comms role status: parent Leader role, unset lane, KILL, pause, draft count and registered channel adapters. Read-only. No send. |
+| `ashlr_comms_agent_drafts` | List Comms drafts waiting for the owner. Read-only. Approval is not a send. |
+| `ashlr_comms_agent_run` | Triage the Comms inbox and draft replies. The router picks a lane only from the lanes argument. Sends follow the Comms send policy. |
 | `ashlr_desktop_open` | Propose a desktop UI action (open a path in editor / Finder / terminal). Creates a PENDING desktop-action proposal — NEVER executes directly. The action runs only after the user explicitly approves via `ashlr inbox`. Requires the repo to be enrolled and the kill switch to be off. |
 
 ## `desktop_` — Desktop operator
