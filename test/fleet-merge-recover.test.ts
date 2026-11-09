@@ -64,6 +64,7 @@ describe('fleet merge-recover', () => {
   });
   it('never requests merge for conflicting or merged replacements', async () => {
     const f = fixture(); await f.run(true); f.state.replacement = true; f.state.conflict = true; await f.run(true);
+    expect(f.report.rows[0].action).toBe('replacement-conflict');
     f.state.replacementState = 'MERGED'; await f.run(true);
     expect(f.calls.filter(args => args[1] === 'merge')).toHaveLength(0);
     expect(f.writes).toBe(1);
