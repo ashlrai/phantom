@@ -29,7 +29,7 @@ function fixture(t) {
 test('same-runner original uploaded input is rebound to exact source, run, attempt and digest', t => {
   const f = fixture(t); const record = captureInput(f.env, f.root);
   assert.deepEqual(verifyLocalInput(f.env, f.root, f.read), record);
-  assert.throws(() => captureInput(f.env, f.root), /EEXIST/);
+  assert.throws(() => captureInput(f.env, f.root), { custodyCode: 'witness_unavailable' });
 });
 for (const mutation of ['bytes', 'same-size bytes', 'extra', 'missing', 'symlink', 'hardlink', 'mode', 'artifact digest', 'artifact id', 'artifact name', 'artifact source', 'artifact run', 'expired', 'attempt', 'dirty source']) {
   test(`same-runner input refuses ${mutation} before executing original bytes`, t => {
@@ -73,4 +73,14 @@ for (const mutation of ['unchanged', 'bytes', 'mode', 'extra', 'backup occupied'
 });
 test('complete input inventory is required even without a witness', t => {
   const f = fixture(t); writeFileSync(join(f.prepared, 'other'), 'x'); assert.throws(() => snapshotInput(f.prepared));
+});
+
+test('capture reports fixed reason codes without exposing underlying paths or values', t => {
+  const f = fixture(t);
+  assert.throws(() => captureInput({ ...f.env, GITHUB_REF: 'refs/tags/v1.0.0' }, f.root), { custodyCode: 'wrong_runner' });
+  writeFileSync(join(f.root, 'package.json'), '{}');
+  assert.throws(() => captureInput(f.env, f.root), { custodyCode: 'stale_checkout' });
+  execFileSync('git', ['-C', f.root, 'checkout', '--', 'package.json']);
+  unlinkSync(join(f.prepared, 'dist.tar'));
+  assert.throws(() => captureInput(f.env, f.root), { custodyCode: 'invalid_input' });
 });

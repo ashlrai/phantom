@@ -7,7 +7,7 @@ const entry = (over: Record<string, unknown> = {}) => ({
 });
 const view = (items: unknown[]) => readUnifiedInboxView({
   schema: 'comms.unified-inbox.v1', total: items.length, omitted: 0,
-  sources: { 'needs-you': ok, imessage: ok, drafts: ok, bus: ok, gmail: ok }, items,
+  sources: { 'needs-you': ok, imessage: ok, drafts: ok, bus: ok, gmail: ok, linkedin: ok }, items,
 });
 const detailOf = (raw: unknown) => {
   const v = view([entry({ detail: raw })]);
@@ -26,14 +26,14 @@ it('caps detail at 300 characters', () => {
 });
 
 it('sourceProblems gives no entry for healthy sources', () => {
-  const sources: UnifiedInboxSources = { 'needs-you': ok, imessage: ok, drafts: ok, bus: ok, gmail: ok } as UnifiedInboxSources;
+  const sources: UnifiedInboxSources = { 'needs-you': ok, imessage: ok, drafts: ok, bus: ok, gmail: ok, linkedin: ok } as UnifiedInboxSources;
   expect(sourceProblems(sources)).toEqual([]);
 });
 
 it('sourceProblems explains each unhealthy state with its command', () => {
   const sources = {
     'needs-you': ok, imessage: { state: 'missing', pending: 0 }, drafts: { state: 'degraded', pending: 2 },
-    bus: { state: 'unavailable', pending: 0 }, gmail: { state: 'missing', pending: 0 },
+    bus: { state: 'unavailable', pending: 0 }, gmail: { state: 'missing', pending: 0 }, linkedin: ok,
   } as UnifiedInboxSources;
   expect(sourceProblems(sources)).toEqual([
     { source: 'imessage', name: 'iMessage', meaning: 'not set up on this Mac', command: 'phm fleet teammate-texts' },
