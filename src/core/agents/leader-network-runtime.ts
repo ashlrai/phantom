@@ -1,5 +1,6 @@
 /** Production boundary for the CEO network. Only trusted channel receivers call
  * receiptLeaderChannel; bus sender labels never establish operator identity. */
+import { takeLeaderReplyBatch } from './leader-reply-queue.js';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -213,17 +214,7 @@ export async function tickLeaderNetwork(cfg: AshlrConfig, options: LeaderRuntime
   try {
     const network = createLeaderNetwork({ ...sources, runsDir: runsRoot(options), busRoot: options.busRoot, now: options.now, appendInbox: leaderInboxAppender(options), deliver: deps.deliver ?? defaultLeaderDelivery(cfg, options) });
     const pending = await network.pending();
-    // Round-robin through retained requests: an unavailable channel or model
-    // must not monopolize every bounded batch for months.
-    const cursorFile = join(directory, 'network-cursor.json');
-    const cursorRead = readStableRegularFile(cursorFile, { anchorPath: directory, maxFileBytes: 1024, remainingBytes: 1024 });
-    let offset = 0;
-    if (cursorRead.ok) {
-      try { const value: unknown = JSON.parse(cursorRead.text); if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) offset = value; } catch { /* scheduling metadata only */ }
-    }
-    const start = pending.length ? offset % pending.length : 0;
-    const batch = [...pending.slice(start), ...pending.slice(0, start)].slice(0, 5);
-    writePrivateFileAtomic(cursorFile, JSON.stringify(pending.length ? (start + batch.length) % pending.length : 0));
+    const batch = takeLeaderReplyBatch(pending, directory, 'network-cursor.json');
     let replies = 0;
     for (const request of batch) {
       try {
