@@ -1,3 +1,5 @@
+import { isLayoutPreference, LAYOUT_PREF_ATTR } from '../routes/verse/layout-mode.js';
+
 /** Apply stored appearance before React paints; full Settings logic loads later. */
 const KEY = 'ashlr.verse.appearance.v1';
 const choice = <T extends string>(value: unknown, values: readonly T[], fallback: T): T =>
@@ -23,6 +25,7 @@ export function bootAppearance(): void {
   root.setAttribute('data-density', choice(raw.density, ['comfortable', 'compact'], 'comfortable'));
   root.setAttribute('data-ui-scale', choice(raw.uiScale, ['default', 'large', 'xlarge'], 'default'));
   root.setAttribute('data-radius', choice(raw.radius, ['sharp', 'default', 'soft'], 'default'));
+  root.setAttribute(LAYOUT_PREF_ATTR, isLayoutPreference(raw.layout) ? raw.layout : 'auto');
   const motion = choice(raw.motion, ['system', 'reduce', 'full'], 'system');
   if (motion === 'system') root.removeAttribute('data-motion');
   else root.setAttribute('data-motion', motion);
