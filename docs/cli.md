@@ -10,6 +10,18 @@ longer matches current help output. Non-ASCII dashes are written as `-`
 and ANSI styling is stripped; `phm <command> --help` stays the
 per-command detail surface.
 
+## Common tasks
+
+Each command also supports details through `phm help --all`.
+
+| Task | Example |
+| --- | --- |
+| Summarize local metrics. | `phm metrics summary --json` |
+| Check the release train. | `phm release status --json` |
+| Preview cleanup of finished worktrees. | `phm worktrees prune --dry-run --json` |
+| Explain dispatcher routes. | `phm route explain --json` |
+| Show usage by engine. | `phm usage` |
+
 ## `phm --help`
 
 Topic summary and discovery hints.
@@ -84,6 +96,7 @@ Every command, grouped by topic.
     run show <id>                                                         Print a past run in detail.
     runs [--json]                                                         List past runs (newest first).
     models [--json]                                                       List local models (Ollama/LM Studio); marks the active one.
+    models verify [--json]                                                Check registry model IDs against official provider documentation.
     models pull <name> [--yes]                                            Explicitly pull an Ollama model (large download; confirm first).
     models start                                                          Best-effort start a locally-installed Ollama (never downloads).
     local-runtime <status|start|stop|restart|reshape|logs|resolve-model>  Supervise the loopback llama-server serving runtime (parallel local fleet engine); manual and attended.
@@ -132,7 +145,7 @@ Every command, grouped by topic.
     select [--json] [--dry-run] [--top <n>]                                                                                                                       Rank candidates by value x leverage / (time + usage), fund the top 5 as READY lines, record picks with predicted value.
     backlog refresh                                                                                                                                               Re-scan all enrolled repos and rebuild the backlog.
     release-articles status|enable|disable|import|sync [--json]                                                                                                   Configure release-backed article task handoffs; sync verifies public GitHub/npm evidence and never publishes directly.
-    release status [--json] [--file <release-state.json>]                                                                                                         Read the continuous release train state and per-stage timings. Without a state file, reports that the state is unavailable.
+    release status [--json] [--file <release-state.json>]                                                                                                         Show release tags, assets, unreleased commits and updater status for Ashlr repositories. Use --file to read release train state.
     backlog --source <src>                                                                                                                                        Filter backlog by source: issue|todo|test|dep|doc|security|plugin|self|lint|goal|hygiene|invent.
     backlog --repo <path>                                                                                                                                         Filter backlog to a specific enrolled repo.
     backlog --limit <n>                                                                                                                                           Show only the top N items.
@@ -280,6 +293,8 @@ Every command, grouped by topic.
     incident report|receipts [--json]                                                          Turn a production signal into one bounded fix job, or send receipts for finished incidents.
     router rank --tier <local|mid|frontier> [--routes FILE] [--slots pool=count ...] [--json]  Rank supplied router decisions by pool budget reset; advisory, no writes.
     router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]                    Compare recorded router predictions with outcomes and usage.
+    worklog [--since 24h] [--repo <repo>] [--lane <lane>] [--json]                             Show merged pull requests from the jobs ledger.
+    library list [--json]                                                                      List leader files. Read-only.
     queue report --events <file> [--json]                                                      Local per-station lambda, mu, rho, W and bottleneck; queue --help describes event input.
     signals [--json]                                                                           Read real repository adoption signals.
     radar list|run|diff [--json]                                                               Observe public docs and package metadata; GET only, six-hour per-source floor.
