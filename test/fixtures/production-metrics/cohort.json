@@ -1,0 +1,18 @@
+{
+  "pulls": [[
+    {"number": 1, "head": {"ref": "bridge/one"}, "labels": [{"name": "lane:codex"}], "merged_at": "2026-01-01T00:00:00Z", "merge_commit_sha": "merge1"},
+    {"number": 2, "head": {"ref": "feature/two"}, "labels": [{"name": "bridge"}, {"name": "lane:codex"}], "merged_at": null},
+    {"number": 3, "head": {"ref": "bridge/three"}, "labels": [{"name": "lane:claude"}], "merged_at": "2026-01-02T00:00:00Z", "merge_commit_sha": "merge3"}
+  ], [
+    {"number": 4, "head": {"ref": "bridge/four"}, "labels": [{"name": "lane:codex"}], "merged_at": "2026-01-03T00:00:00Z", "merge_commit_sha": "merge4"},
+    {"number": 5, "head": {"ref": "other"}, "labels": [], "merged_at": null}
+  ]],
+  "releases": [[
+    {"tag_name": "v1.0.0", "draft": false, "prerelease": false},
+    {"tag_name": "v2.0.0-beta", "draft": false, "prerelease": true},
+    {"tag_name": "draft", "draft": true, "prerelease": false}
+  ]],
+  "npm": {"name": "@example/fixture", "version": "1.0.0"},
+  "cargo": "[package]\nname = \"fixture\"\nversion = \"1.0.0\"\n",
+  "crate": {"version": {"crate": "fixture", "num": "1.0.0", "yanked": false}}
+}

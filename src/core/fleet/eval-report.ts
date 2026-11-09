@@ -421,14 +421,11 @@ function parseChecks(value: unknown): GhPullRequest['checks'] {
     total++;
     const name = str(ctx, 'name', 'context') ?? 'check';
     const conclusion = str(ctx, 'conclusion', 'state')?.toUpperCase() ?? null;
-    const status = str(ctx, 'status')?.toUpperCase() ?? null;
     if (conclusion && FAILED_CHECK.has(conclusion)) {
       failed++;
       if (failedNames.length < MAX_FAILED_CHECK_NAMES) failedNames.push(name);
     } else if (conclusion && PASSED_CHECK.has(conclusion)) {
       // passed
-    } else if (status === 'COMPLETED' && conclusion && PASSED_CHECK.has(conclusion)) {
-      // passed (defensive; covered above)
     } else {
       pending++;
     }

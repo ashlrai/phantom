@@ -23,11 +23,10 @@
  * still says so under `input.state` — or the envelope's own upstream read
  * failed, `input.upstream`), 2 bad usage.
  */
-import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute } from 'node:path';
 import type { Readable } from 'node:stream';
 import { looksLikeOption } from './args.js';
+import { parseSnapshotJson, readPrSnapshot } from './fleet-pr-snapshot.js';
 import {
   MERGE_BATCH_SCHEMA,
   parseMergeBatchPrs,
@@ -43,8 +42,6 @@ or a fleet.pr-hygiene.v1 report — via --input, piped stdin, or the state file
 <root>/fleet/open-prs.json (root: ASHLR_RUNS_DIR or ~/.ashlr-runs). Read-only:
 never calls gh, never writes. Exit 1 when no usable snapshot is found.`;
 
-/** A 500-PR page with files is ~5 MiB; 32 MiB is generous headroom. */
-const MAX_INPUT_BYTES = 32 * 1024 * 1024;
 const REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 
 export interface FleetMergeBatchDeps {
@@ -59,30 +56,6 @@ export interface FleetMergeBatchDeps {
   now?: () => Date;
   stdout?: (text: string) => void;
   stderr?: (text: string) => void;
-}
-
-type InputRead =
-  | { ok: true; text: string; source: 'input-file' | 'stdin' | 'state-file'; path: string | null }
-  | { ok: false; state: 'missing' | 'unreadable' | 'too-large' | 'malformed'; detail: string };
-
-async function readStream(stdin: Readable): Promise<{ ok: true; text: string } | { ok: false; detail: string }> {
-  const chunks: Buffer[] = [];
-  let bytes = 0;
-  try {
-    for await (const chunk of stdin) {
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
-      bytes += buffer.length;
-      if (bytes > MAX_INPUT_BYTES) {
-        stdin.destroy();
-        return { ok: false, detail: `stdin exceeds ${MAX_INPUT_BYTES} bytes` };
-      }
-      chunks.push(buffer);
-    }
-  } catch {
-    stdin.destroy();
-    return { ok: false, detail: 'stdin read error' };
-  }
-  return { ok: true, text: Buffer.concat(chunks, bytes).toString('utf8') };
 }
 
 function failedPlan(repo: string | null, now: Date, input: Record<string, unknown>, error: string): MergeBatchPlan & { input: Record<string, unknown>; error: string } {
@@ -106,7 +79,7 @@ export async function cmdFleetMergeBatch(args: string[], deps: FleetMergeBatchDe
   let inputPath: string | null = null;
   let repo: string | null = null;
   let json = false;
-  let root = deps.root ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let root = deps.root;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--json' && !json) { json = true; continue; }
@@ -142,37 +115,10 @@ export async function cmdFleetMergeBatch(args: string[], deps: FleetMergeBatchDe
   }
 
   const now = deps.now ?? (() => new Date());
-  const readText = deps.readText ?? (async (path: string) => readFile(path, 'utf8'));
-  const stdin = deps.stdin ?? process.stdin;
-  const tty = deps.stdinIsTty ?? Boolean((stdin as { isTTY?: boolean }).isTTY);
 
-  // Input precedence: --input, then a piped stdin, then the state file.
-  let read: InputRead;
-  if (inputPath !== null && inputPath !== '-') {
-    try {
-      const text = await readText(inputPath);
-      read = text.length > MAX_INPUT_BYTES
-        ? { ok: false, state: 'too-large', detail: `${inputPath} exceeds ${MAX_INPUT_BYTES} bytes` }
-        : { ok: true, text, source: 'input-file', path: inputPath };
-    } catch {
-      read = { ok: false, state: 'unreadable', detail: `cannot read ${inputPath}` };
-    }
-  } else if (inputPath === '-' || !tty) {
-    const piped = await readStream(stdin);
-    read = piped.ok
-      ? { ok: true, text: piped.text, source: inputPath === '-' ? 'input-file' : 'stdin', path: null }
-      : { ok: false, state: 'unreadable', detail: piped.detail };
-  } else {
-    const statePath = join(root, 'fleet', 'open-prs.json');
-    try {
-      const text = await readText(statePath);
-      read = text.length > MAX_INPUT_BYTES
-        ? { ok: false, state: 'too-large', detail: `${statePath} exceeds ${MAX_INPUT_BYTES} bytes` }
-        : { ok: true, text, source: 'state-file', path: statePath };
-    } catch {
-      read = { ok: false, state: 'missing', detail: `no snapshot at ${statePath} — pass --input <file> or pipe a gh pr list page on stdin` };
-    }
-  }
+  const read = await readPrSnapshot(inputPath, {
+    stdin: deps.stdin, stdinIsTty: deps.stdinIsTty, readText: deps.readText, root,
+  });
 
   if (!read.ok) {
     const report = failedPlan(repo, now(), { source: null, path: null, state: read.state }, read.detail);
@@ -181,15 +127,14 @@ export async function cmdFleetMergeBatch(args: string[], deps: FleetMergeBatchDe
     return 1;
   }
 
-  let parsedJson: unknown;
-  try {
-    parsedJson = JSON.parse(read.text);
-  } catch {
+  const snapshotJson = parseSnapshotJson(read);
+  if (!snapshotJson.ok) {
     const report = failedPlan(repo, now(), { source: read.source, path: read.path, state: 'malformed' }, 'input is not JSON');
     if (json) out(JSON.stringify(report) + '\n');
-    else err(`fleet merge-batch: input is not JSON (${read.path ?? 'stdin'})\n`);
+    else err(`fleet merge-batch: ${snapshotJson.detail}\n`);
     return 1;
   }
+  const parsedJson = snapshotJson.value;
 
   const parsed = parseMergeBatchPrs(parsedJson);
   if (!parsed.ok) {

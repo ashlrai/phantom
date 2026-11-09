@@ -10,7 +10,7 @@ import { ensurePrivateDirectory, writePrivateFileAtomic } from '../core/verse/pr
 import { defaultStewardPolicy, runSteward } from '../core/steward/disk.js';
 import { ingestMetrics, MetricsInputError } from '../core/fleet/metrics-ingest.js';
 
-const USAGE = `Usage: phm metrics <summary|dashboard [--out file]|record <json>|recommend <taskType> <arm...>|idle --status <snapshot.json> --jobs <jobs.jsonl>|ingest --jobs <jobs.jsonl> --status <status.json>|levers [--window <7d|30d>]> [--json]
+const USAGE = `Usage: phm metrics <summary|dashboard [--out file]|record <json>|recommend <taskType> <arm...>|idle --status <snapshot.json> --jobs <jobs.jsonl>|ingest --jobs <jobs.jsonl> --status <status.json>|levers [--window <7d|30d>]|prod [--repo OWNER/REPO ...] [--lane NAME] [--json]> [--json]
 phm metrics ingest reads two explicit local files and prints deterministic lane and tier metrics as JSON.
 phm metrics levers ranks opportunity proxies from local activity and fleet rollups.
 No network, writes, provider calls or operational routing changes. See docs/METRICS-ROUTER-FEED.md for schemas.
@@ -47,6 +47,9 @@ export function cmdMetrics(argv: string[], io?: CliIo): number | Promise<number>
   if (argv[0] === 'levers' || (argv[0] === '--json' && argv[1] === 'levers')) {
     const args = argv[0] === 'levers' ? argv : ['levers', '--json', ...argv.slice(2)];
     return import('./metrics-levers.js').then(({ cmdMetricsLevers }) => cmdMetricsLevers(args, io));
+  }
+  if (argv[0] === 'prod') {
+    return import('./metrics-prod.js').then(({ cmdMetricsProd }) => cmdMetricsProd(argv, {}, io));
   }
   io ??= { out: console.log, err: console.error };
   if (argv.includes('--help') || argv.includes('-h')) { io.out(USAGE); return 0; }
