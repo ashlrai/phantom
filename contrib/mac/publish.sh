@@ -139,7 +139,7 @@ print "G1END:$r\n";
 PL
 G1PS1=':(glob).github/**'; G1PS2=':(glob)**/release*.yml'; G1PS3=':(glob)**/release*.yaml'
 g1d(){ git diff --no-ext-diff --no-textconv --no-color --no-renames "$@" "$BASE" -- "$G1PS1" "$G1PS2" "$G1PS3"; }
-for ps in "$G1PS1" "$G1PS2" "$G1PS3"; do git add -N -- "$ps" >/dev/null 2>&1 || :; done
+git add -N -- "$G1PS1" "$G1PS2" "$G1PS3" >/dev/null 2>&1 || :
 G1R=""; G1OK=0; G1AS=""; G1TF=$(mktemp "${TMPDIR:-/tmp}/g1d.XXXXXX") || { echo "RESULT ABORT g1-tmp"; exit 1; }
 if G1NS=$(g1d --name-status) && g1d -U0 > "$G1TF"; then
   G1R=$(awk -F'\t' '$1 ~ /^T/ { for(i=2;i<=NF;i++) if ($i ~ /^\.github\/workflows\//) { print "workflow-typechanged"; exit } }' <<< "$G1NS")  # rev1b: typechange only; adds/renames are classified by content
@@ -170,7 +170,7 @@ verify_dependency_links || { echo "RESULT ABORT dependency-directory-link-or-ind
 FILES=$(git diff --cached --name-only "$BASE"); [ -z "$FILES" ] && [ "$IM" = 0 ] && { echo "RESULT EMPTY"; exit 0; }
 [ "$IM" = 0 ] || [ -z "$FILES" ] || { echo "RESULT ABORT integrated-unreviewed-delta"; exit 1; }
 SKIP=$(git ls-files -v | grep -c '^S')
-CO=$(for p in .github/CODEOWNERS CODEOWNERS docs/CODEOWNERS; do git show "$BASE:$p" 2>/dev/null; done | grep -v '^\s*#' | awk 'NF{print $1}')
+CO=$(git show "$BASE:.github/CODEOWNERS" "$BASE:CODEOWNERS" "$BASE:docs/CODEOWNERS" 2>/dev/null | grep -v '^\s*#' | awk 'NF{print $1}')
 DENY=0; T1=""
 while IFS= read -r f; do
   # PUBLISH-CLASSIFIER rev1c (GATES v4 hard limits only): .npmrc can carry registry auth or redirect publishes (secrets).
@@ -216,8 +216,15 @@ fi
 fg_check(){ local o; o=$(perl -e 'alarm shift; exec @ARGV' 30 gh api "repos/masonwyatt23/$1" --jq '[.full_name,.fork,.parent.full_name]' 2>/dev/null) || return 1
   [ "$o" = "[\"masonwyatt23/$1\",true,\"ashlrai/$1\"]" ]; }
 [ "$IU" = 1 ] || fg_check "$NAME" || { echo "RESULT ABORT fork-target-invalid"; exit 1; }
-git diff --no-ext-diff --no-textconv "$BASE"...HEAD | perl "$R/bin/scrub.pl" --check --allow-fixtures >/dev/null || { echo "RESULT ABORT PUBLISH-ABORT secret-shape in diff ($J)"; exit 1; }
-printf '%s\n' "$NOTES" | perl "$R/bin/scrub.pl" --check >/dev/null || { echo "RESULT ABORT PUBLISH-ABORT secret-shape in notes ($J)"; exit 1; }
+# RQ-SWE5-LOOP-BENCH: the upstream default-branch lookup and both scrub checks
+# are independent of the push; run them concurrently while it is in flight.
+DEF_TMP=$(mktemp "${TMPDIR:-/tmp}/publish-def.XXXXXX") || { echo "RESULT ABORT def-tmp"; exit 1; }
+( gh repo view "$REPO" --json defaultBranchRef -q .defaultBranchRef.name > "$DEF_TMP" 2>/dev/null; echo $? > "$DEF_TMP.rc" ) &
+DEF_PID=$!
+git diff --no-ext-diff --no-textconv "$BASE"...HEAD | perl "$R/bin/scrub.pl" --check --allow-fixtures >/dev/null & SDP=$!
+printf '%s\n' "$NOTES" | perl "$R/bin/scrub.pl" --check >/dev/null & SNP=$!
+wait $SDP || { echo "RESULT ABORT PUBLISH-ABORT secret-shape in diff ($J)"; exit 1; }
+wait $SNP || { echo "RESULT ABORT PUBLISH-ABORT secret-shape in notes ($J)"; exit 1; }
 # Recheck original PR/ref/head and exact current main immediately before any push.
 [ "$IM" = 0 ] || { [ "$(im_verify)" = "$IMPROOF" ] || { echo "RESULT ABORT integrated-proof-changed"; exit 1; }; }
 # push (rev2, Masbot): never loads ~/.gitconfig (helper env: GIT_CONFIG_GLOBAL=/dev/null, no system config). Credential is pinned here:
@@ -232,7 +239,8 @@ git -c core.hooksPath=/dev/null -c credential.helper= -c 'credential.https://git
 if [ "$IM" = 1 ]; then
   mv "$R/integrated-merge/$J.json" "$R/integrated-merge/$J.$IMSHA.consumed" || { echo "RESULT ABORT integrated-receipt-consume"; exit 1; }
 fi
-DEF=$(gh repo view $REPO --json defaultBranchRef -q .defaultBranchRef.name)
+wait $DEF_PID; DEF=$(cat "$DEF_TMP" 2>/dev/null); DEF_RC=$(cat "$DEF_TMP.rc" 2>/dev/null); rm -f "$DEF_TMP" "$DEF_TMP.rc"
+{ [ "$DEF_RC" = 0 ] && [ -n "$DEF" ]; } || { echo "RESULT ABORT default-branch"; exit 1; }
 PUBLISH_CONTEXT="single commit on base \`${BASE:0:9}\`"
 [ "$IM" = 0 ] || PUBLISH_CONTEXT="reviewed original-PR merge \`${IMSHA:0:9}\`, tree equal to current main \`${BASE:0:9}\`"
 { echo "Automated bridge job \`$J\` (pool: $POOL), $PUBLISH_CONTEXT."; echo; echo "**Tests:** $TR"; echo; [ -n "$SENS" ] && echo "**Sensitive paths (needs Security OK):** $SENS" && echo; [ -n "$T1" ] && echo "**Tier-1 (CODEOWNERS) paths, async post-merge review:**$T1" && echo; echo "<details><summary>Agent notes</summary>"; echo; echo "$NOTES"; echo "</details>"; } > $R/$J.body.md

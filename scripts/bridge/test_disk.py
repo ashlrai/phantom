@@ -183,10 +183,43 @@ class DiskLifecycleTests(unittest.TestCase):
             os.kill(int((self.worktree / "owned-pid").read_text()), 0)
 
     def test_unknown_du_size_is_not_treated_as_zero(self):
-        with patch.object(disk, "du", return_value=None):
+        with patch.object(disk, "du", return_value=None), \
+             patch.object(disk, "du_many", side_effect=lambda paths: dict.fromkeys(paths)):
             with self.assertRaisesRegex(disk.Refused, "target-size-unknown"):
                 self.launch()
         self.assertIsNone(self.records()[-1]["du_bytes"]["shared_target"])
+
+    def test_du_many_runs_one_subprocess_and_keeps_unknown_distinct(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            a = root / "a"; a.mkdir(); (a / "f").write_bytes(b"x" * 4096)
+            locked = root / "locked"; locked.mkdir(); (locked / "f").write_bytes(b"y" * 4096)
+            locked.chmod(0)
+            calls = []
+            real = subprocess.run
+            try:
+                def counting(*args, **kwargs):
+                    calls.append(args[0]); return real(*args, **kwargs)
+                with patch.object(disk.subprocess, "run", side_effect=counting):
+                    out = disk.du_many({"a": a, "locked": locked, "gone": root / "gone"})
+            finally:
+                locked.chmod(0o700)
+            self.assertEqual(len(calls), 1)
+            self.assertGreaterEqual(out["a"], 4096)
+            self.assertIsNone(out["locked"])        # unreadable is unknown, not zero
+            self.assertEqual(out["gone"], 0)
+
+    def test_identity_reads_three_git_paths_in_one_call(self):
+        calls = []
+        real = disk.git
+        def counting(path, *args):
+            calls.append(args); return real(path, *args)
+        with patch.object(disk, "git", side_effect=counting):
+            worktree, common = disk.identity(self.worktree)
+        self.assertEqual(worktree, self.worktree)
+        self.assertEqual([c for c in calls], [("rev-parse", "--show-toplevel",
+                                             "--path-format=absolute", "--git-common-dir",
+                                             "--absolute-git-dir")])
 
     def test_success_quarantines_ignored_untracked_and_links_then_plain_removal(self):
         self.launch()

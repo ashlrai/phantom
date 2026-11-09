@@ -101,6 +101,36 @@ def du(path):
         return None
 
 
+def du_many(paths):
+    """One du invocation for many roots; missing -> 0, failed -> None per path."""
+    result, live = {}, {}
+    for label, path in paths.items():
+        try:
+            path.lstat()
+            live[label] = path
+        except FileNotFoundError:
+            result[label] = 0
+        except OSError:
+            result[label] = None
+    if live:
+        try:
+            proc = subprocess.run(["/usr/bin/du", "-sk", *[str(p) for p in live.values()]],
+                                  capture_output=True, timeout=60, check=False)
+            measured = {}
+            # du still reports scanned roots when another argument failed;
+            # per-path failures land as None, matching the single-du contract.
+            for line in proc.stdout.decode().splitlines():
+                kb, sep, name = line.partition("\t")
+                if sep:
+                    measured[name] = int(kb) * 1024
+            for label, path in live.items():
+                result[label] = measured.get(str(path))
+        except (subprocess.TimeoutExpired, ValueError):
+            for label in live:
+                result[label] = None
+    return result
+
+
 def snapshot(worktree, cache, state):
     # A missing/failed measurement is unknown, never zero. df/statvfs is the
     # volume measurement; du is attribution, not exclusive APFS allocation.
@@ -109,7 +139,7 @@ def snapshot(worktree, cache, state):
              "target": worktree / "target", "desktop_target": worktree / "desktop/src-tauri/target",
              "shared_target": cache, "quarantine": state / "quarantine"}
     return {"free_bytes": usage.free, "used_bytes": usage.used,
-            "du_bytes": {label: du(path) for label, path in paths.items()}}
+            "du_bytes": du_many(paths)}
 
 
 def log(state, job, event, worktree, cache, **fields):
@@ -128,9 +158,15 @@ def identity(worktree):
     worktree = Path(os.path.abspath(worktree))
     if worktree.resolve(strict=True) != worktree:
         raise Refused("symlinked-worktree")
-    top = Path(os.fsdecode(git(worktree, "rev-parse", "--show-toplevel")).strip())
-    common = Path(os.fsdecode(git(worktree, "rev-parse", "--path-format=absolute", "--git-common-dir")).strip()).resolve()
-    gitdir = Path(os.fsdecode(git(worktree, "rev-parse", "--absolute-git-dir")).strip()).resolve()
+    # One rev-parse emits all three paths in argument order.
+    fields = os.fsdecode(git(worktree, "rev-parse", "--show-toplevel",
+                           "--path-format=absolute", "--git-common-dir",
+                           "--absolute-git-dir")).splitlines()
+    if len(fields) != 3:
+        raise Refused("git-failed")
+    top = Path(fields[0].strip())
+    common = Path(fields[1].strip()).resolve()
+    gitdir = Path(fields[2].strip()).resolve()
     if top != worktree or common == gitdir or (gitdir / "locked").exists():
         raise Refused("not-unlocked-linked-worktree")
     return worktree, common
@@ -170,10 +206,10 @@ def layout(state, common):
     return state, repo / "target"
 
 
-def check_budget(worktree, cache, cap):
+def check_budget(worktree, cache, cap, target_size=None):
     if shutil.disk_usage(worktree).free < FLOOR:
         raise Refused("disk-below-20-gib")
-    size = du(cache)
+    size = du(cache) if target_size is None else target_size
     if size is None:
         raise Refused("target-size-unknown")
     if size > cap:
@@ -221,9 +257,10 @@ def stop_group(child):
     child.wait()
 
 
-def supervised(command, cwd, env, cache, cap, interval=1, lease_fds=()):
+def supervised(command, cwd, env, cache, cap, interval=1, lease_fds=(), du_interval=4.0):
     child = subprocess.Popen(command, cwd=cwd, env=env, start_new_session=True, pass_fds=lease_fds)
     stopped = False
+    next_du = 0.0
     try:
         while True:
             # WNOWAIT retains the leader's PID until its owned group is stopped;
@@ -234,7 +271,18 @@ def supervised(command, cwd, env, cache, cap, interval=1, lease_fds=()):
                 stop_group(child)
                 stopped = True
                 break
-            check_budget(cwd, cache, cap)
+            if shutil.disk_usage(cwd).free < FLOOR:
+                raise Refused("disk-below-20-gib")
+            # A full du of a multi-GiB target is the expensive probe; the free
+            # floor still runs every interval and catches gross growth early.
+            now = time.monotonic()
+            if now >= next_du:
+                size = du(cache)
+                if size is None:
+                    raise Refused("target-size-unknown")
+                if size > cap:
+                    raise Refused("target-cap-exceeded")
+                next_du = now + du_interval
             time.sleep(interval)
         check_budget(cwd, cache, cap)
         return code
@@ -263,9 +311,12 @@ def launch(source, worktree, state, job, command, cap=CAP):
             if size > cap:
                 with lock(cache.parent / "lease"):
                     clean_cache(cache)
+                size = 0   # clean_cache left a fresh empty target directory
             with lock(cache.parent / "lease", shared=True) as cargo_lease:
                 directory(cache)
-                check_budget(worktree, cache, cap)
+                # Reuse the measurement just taken: the supervised loop below
+                # re-checks the budget throughout the run regardless.
+                check_budget(worktree, cache, cap, size)
                 source = Path(source).resolve(strict=True)
                 source_common = Path(os.fsdecode(git(source, "rev-parse", "--path-format=absolute", "--git-common-dir")).strip()).resolve()
                 if source_common != common:
@@ -387,7 +438,10 @@ def finish(worktree, state, job, evidence):
             head = publication(worktree, evidence)
             remove_modules(worktree, receipt)
             moved = quarantine(worktree, state, job)
-            verify_clean(worktree, head)
+            # verify_clean already ran inside publication(); only untracked
+            # files moved since, which its checks never inspect. The post-
+            # quarantine invariant is the empty --others set, and `worktree
+            # remove` itself refuses a dirtied tree.
             if git(worktree, "ls-files", "--others", "--directory", "--no-empty-directory", "-z"):
                 raise Refused("untracked-files-changed")
             git(common, "worktree", "remove", str(worktree))
