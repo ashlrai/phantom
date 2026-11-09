@@ -32,6 +32,7 @@ const quietDeps = {
   readUltra: vi.fn(async () => ({ state: 'unavailable', targetAt: '', latest: null }) as unknown as GrokUltraRunway),
   readClaude: vi.fn(async () => null as ClaudeApiUsageResult | null),
   readGrants: vi.fn(async () => ({ v: 1, state: 'missing', rows: [] }) as unknown as ClaudeApiGrantReadView),
+  readZai: vi.fn(async () => null as UsageResourceReading | null),
 };
 
 const EMPTY_STATES = new Set(['no-reader', 'no-reading', 'unavailable']);
@@ -57,7 +58,7 @@ describe('readUsageResources', () => {
   it('marks resources with no reader as no-reader, never a fake number', async () => {
     const snapshot = await readUsageResources({ ...quietDeps });
     const noReader = snapshot.resources.filter((row) => row.state === 'no-reader');
-    expect(noReader.map((row) => row.id)).toEqual(['zai', 'agy', 'gemini-workspace', 'local', 'stacksync']);
+    expect(noReader.map((row) => row.id)).toEqual(['agy', 'gemini-workspace', 'local', 'stacksync']);
     for (const row of noReader) emptyRowChecks(row);
     // Readers that ran but measured nothing are a different, honest state.
     for (const row of snapshot.resources.filter((r) => EMPTY_STATES.has(r.state))) emptyRowChecks(row);
@@ -188,11 +189,11 @@ describe('readUsageResources', () => {
 });
 
 describe('usageResourceReaders registry', () => {
-  it('maps every resource; only the five uncovered pools are null', () => {
+  it('maps every resource; only the four uncovered pools are null', () => {
     const readers = usageResourceReaders(quietDeps);
     expect(Object.keys(readers).sort()).toEqual(USAGE_RESOURCES.map((r) => r.id).sort());
     expect(Object.entries(readers).filter(([, reader]) => reader === null).map(([id]) => id))
-      .toEqual(['zai', 'agy', 'gemini-workspace', 'local', 'stacksync']);
+      .toEqual(['agy', 'gemini-workspace', 'local', 'stacksync']);
   });
 });
 

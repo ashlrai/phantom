@@ -39,8 +39,9 @@
  * separate untrusted router handoff and its read audit; status remains read-only.
  */
 
+import { spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import type { AshlrConfig } from '../core/types.js';
@@ -2103,6 +2104,18 @@ export async function cmdFleetWatch(jsonMode: boolean): Promise<number> {
 // Subcommands: pause / resume (kill-switch only)
 // ---------------------------------------------------------------------------
 
+function pauseHostedReleaseTrain(): void {
+  if (process.env.VITEST) return;
+  try {
+    const dir = join(homedir(), '.ashlr-runs');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const off = join(dir, 'RELEASE_AUTORUN_OFF');
+    if (!existsSync(off)) writeFileSync(off, 'release train off\n', { mode: 0o600 });
+  } catch { /* the local kill switch is already the stop */ }
+  const result = spawnSync('gh', ['variable', 'set', 'PHANTOM_RELEASE_TRAIN', '-R', 'ashlrai/phantom', '--body', 'off'], { stdio: 'ignore', timeout: 15_000 });
+  if (result.status !== 0) console.error('PHANTOM_RELEASE_TRAIN was not set off');
+}
+
 async function setKillSwitch(on: boolean): Promise<number> {
   try {
     const { setKill } = await import('../core/sandbox/policy.js');
@@ -2131,6 +2144,7 @@ async function setKillSwitch(on: boolean): Promise<number> {
 
   console.log('');
   if (on) {
+    pauseHostedReleaseTrain();
     console.log(green('  ✓ fleet paused') + dim(' — kill switch engaged.'));
     console.log(dim('  Any running loop halts on its next tick; nothing autonomous dispatches.'));
     console.log(dim('  Resume with `ashlr fleet resume`.'));
@@ -2520,6 +2534,10 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
 };
 
 export async function cmdFleet(args: string[]): Promise<number> {
+  if (args[0] === 'act') {
+    const { cmdFleetAct } = await import('./fleet-act.js');
+    return cmdFleetAct(args.slice(1));
+  }
   if (args[0] === 'merge-throughput') {
     const { cmdMergeThroughput } = await import('./telemetry.js');
     return cmdMergeThroughput(args.slice(1));
@@ -2699,6 +2717,7 @@ export async function cmdFleet(args: string[]): Promise<number> {
 }
 
 function printFleetHelp(): void {
+  console.log('    ashlr fleet act <pause|resume|kill|reassign|set-slot|vision-edit> --dry-run [--path <target>] [--json]');
   console.log('');
   console.log(bold('  ashlr fleet') + dim(' — fleet control plane + observability (M49)'));
   console.log('');

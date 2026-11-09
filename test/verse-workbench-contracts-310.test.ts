@@ -192,6 +192,7 @@ const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
   'fleet-control': 'handleFleetControlApi',
   'fleet-runs': 'handleFleetRunsApi',
   'fleet-comms-status': 'handleFleetCommsStatusApi',
+  'agent-roster': 'handleAgentRosterApi',
   'fleet-cos': 'handleFleetCosApi',
   'cos-memory': 'handleCosMemoryApi',
   team: 'handleTeamApi',

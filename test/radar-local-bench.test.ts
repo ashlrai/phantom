@@ -185,6 +185,26 @@ describe('scoreSuite + summarizeArm', () => {
   });
 });
 
+describe('redirect refusal — the transport never follows a redirect', () => {
+  // The real-server regression lives in test/radar-local-bench-redirect.test.ts
+  // (real-io lane): a 307 to a second listener must not forward the body.
+  it('asks the transport to refuse redirects on every call', async () => {
+    const fixture = parseBenchFixture({
+      schema: LOCAL_BENCH_SCHEMA,
+      suite: 'triage',
+      labels: ['skip', 'work:fleet'],
+      instruction: 'Answer with exactly one label.',
+      cases: [{ id: 'r1', input: 'synthetic bench prompt', expected: 'skip' }],
+    });
+    const fetchImpl = vi.fn(async () => chatBody('skip')) as unknown as typeof fetch;
+    await scoreSuite(fetchImpl, 'http://127.0.0.1:11434', 'm:1b', fixture, 5_000);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://127.0.0.1:11434/v1/chat/completions',
+      expect.objectContaining({ redirect: 'error' }),
+    );
+  });
+});
+
 describe('runLocalBench — end to end', () => {
   /** The acceptance property: a non-loopback endpoint is refused before any fetch or file write. */
   it('refuses non-loopback endpoints before touching network or disk', async () => {

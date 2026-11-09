@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { privateDirectory } from '../universe/artifacts.js';
 import { acquireLocalStoreLockWithOutcome, ownsLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
+import { readDevinUsage, withDevinUsage, type DevinUsageResult } from './readers/devin-usage.js';
 import { buildResourceView, MACHINE_MAX_AGE_MS, resourceObject, type ResourceView } from './resource-view.js';
 
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -44,23 +45,44 @@ function readFleetSync(file: string): Record<string, unknown> {
   } finally { closeSync(fd); }
 }
 
+/** A live custody call may not stall the UI: the deadline wins and Devin is unknown. */
+const LIVE_DEVIN_DEADLINE_MS = 12_000;
+async function boundedDevinRead(read: () => Promise<DevinUsageResult>): Promise<DevinUsageResult> {
+  const work = Promise.resolve().then(read)
+    .catch((): DevinUsageResult => ({ status: 'unknown', reason: 'reader-unavailable' }));
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<DevinUsageResult>((resolve) => {
+    timer = setTimeout(() => resolve({ status: 'unknown', reason: 'reader-timeout' }), LIVE_DEVIN_DEADLINE_MS);
+    timer.unref();
+  });
+  try { return await Promise.race([work, deadline]); } finally { clearTimeout(timer); }
+}
+
 /** UI reads are async and bounded. Missing, unsafe or corrupt input is unknown, never zero. */
-async function readFleetView(directory: string, nowMs: number): Promise<ResourceView> {
+async function readFleetView(directory: string, nowMs: number,
+  readDevin: () => Promise<DevinUsageResult> = readDevinUsage): Promise<ResourceView> {
+  let fleet: Record<string, unknown> = {};
   try {
     const handle = await open(join(directory, 'fleet.json'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const stat = await handle.stat();
-      if (!safeFile(stat)) return buildResourceView({}, nowMs);
-      const buffer = Buffer.alloc(stat.size + 1); let offset = 0;
-      while (offset < buffer.length) {
-        const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
-        if (bytesRead === 0) break;
-        offset += bytesRead;
+      if (safeFile(stat)) {
+        const buffer = Buffer.alloc(stat.size + 1); let offset = 0;
+        while (offset < buffer.length) {
+          const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
+          if (bytesRead === 0) break;
+          offset += bytesRead;
+        }
+        if (offset === stat.size && sameFile(stat, await handle.stat())) {
+          fleet = parseFleet(buffer.subarray(0, offset).toString('utf8'));
+        }
       }
-      if (offset !== stat.size || !sameFile(stat, await handle.stat())) return buildResourceView({}, nowMs);
-      return buildResourceView(parseFleet(buffer.subarray(0, offset).toString('utf8')), nowMs);
     } finally { await handle.close(); }
-  } catch { return buildResourceView({}, nowMs); }
+  } catch { /* Missing, unsafe or corrupt snapshot is unknown input; the live read still runs. */ }
+  // The independent Devin reader is consulted on every path, after the snapshot
+  // fallback converges; it never revives refused file contents or other pools.
+  return buildResourceView(await withDevinUsage({ ...fleet, resources: resourceObject(fleet.resources) },
+    () => boundedDevinRead(readDevin)), nowMs);
 }
 
 function safeDirectory(stat: Stats): boolean {
@@ -112,8 +134,9 @@ async function readControllerMemory(root: string, nowMs: number): Promise<Resour
 }
 
 export async function readResourceView(directory = resourceViewDirectory(), nowMs = Date.now(),
-  runsDir = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs')): Promise<ResourceView> {
-  const [view, controllerMemory] = await Promise.all([readFleetView(directory, nowMs), readControllerMemory(runsDir, nowMs)]);
+  runsDir = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'),
+  readDevin: () => Promise<DevinUsageResult> = readDevinUsage): Promise<ResourceView> {
+  const [view, controllerMemory] = await Promise.all([readFleetView(directory, nowMs, readDevin), readControllerMemory(runsDir, nowMs)]);
   return controllerMemory ? { ...view, controllerMemory } : view;
 }
 

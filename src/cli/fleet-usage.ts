@@ -1,5 +1,7 @@
 import { addFleetUsage, fleetUsageReport, readFleetUsage } from '../core/fleet/usage-pacing.js';
 
+const usage = 'Usage: phm fleet usage [--json] | usage add <pool> <pct> --at <timestamp>';
+
 export async function cmdFleetUsage(args: string[]): Promise<number> {
   try {
     if (args.length === 0 || (args.length === 1 && args[0] === '--json')) {
@@ -10,7 +12,7 @@ export async function cmdFleetUsage(args: string[]): Promise<number> {
       }
       return 0;
     }
-    if (args.length !== 5 || args[0] !== 'add' || args[3] !== '--at' || !args[2].trim()) throw new Error('usage: phm fleet usage add <pool> <pct> --at <timestamp>');
+    if (args.length !== 5 || args[0] !== 'add' || args[3] !== '--at' || !args[2].trim()) throw new Error(usage);
     addFleetUsage(args[1], Number(args[2]), args[4]);
     return 0;
   } catch (error) {
