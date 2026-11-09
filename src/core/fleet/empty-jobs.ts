@@ -3,11 +3,17 @@ import { constants } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { emptyJobs } from './empty-job-ledger.js';
+import { classifyEmptyLog, FLEET_EMPTY_WHY_REASONS, type FleetEmptyWhyReason } from './empty-why-classify.js';
 
 export const EMPTY_CLASSES = ['already-done', 'blocked-by-env', 'missing-input', 'scope-too-cautious', 'other'] as const;
 export type EmptyClass = typeof EMPTY_CLASSES[number];
 export interface EmptyJobResult { id: string; lane: string; class: EmptyClass; reason: string }
-export interface EmptyJobsReport { schema: 'jobs.empty.v1'; hours: number; total: number; counts: Record<EmptyClass, number>; jobs: EmptyJobResult[] }
+export interface EmptyJobReason { id: string; lane: string; reason: FleetEmptyWhyReason }
+export interface EmptyJobsReasons { by_reason: Record<FleetEmptyWhyReason, number>; recent: EmptyJobReason[] }
+export interface EmptyJobsReport { schema: 'jobs.empty.v1'; hours: number; total: number; counts: Record<EmptyClass, number>; jobs: EmptyJobResult[]; reasons?: EmptyJobsReasons }
+
+const REASON_LOG_LIMIT = 50;
+const REASON_RECENT_LIMIT = 20;
 
 // Return fixed descriptions: notes and logs may contain private information.
 const rules: ReadonlyArray<readonly [EmptyClass, string, RegExp]> = [
@@ -42,14 +48,21 @@ export async function readEmptyJobs(hours = 24, root = process.env.ASHLR_RUNS_DI
   try { ledger = await readFile(join(root, 'metrics/jobs.jsonl'), 'utf8'); } catch { return null; }
   const selected = emptyJobs(ledger, now, hours);
   const jobs: EmptyJobResult[] = [];
+  const logs = new Map<string, string | null>();
   for (let offset = 0; offset < selected.length; offset += 16) {
     const batch = selected.slice(offset, offset + 16);
     jobs.push(...await Promise.all(batch.map(async job => {
       const [notes, log] = await Promise.all([tail(join(worktrees, job.id, 'BRIDGE_NOTES.md'), 65536), tail(join(root, `${job.id}.log`), 65536)]);
+      logs.set(job.id, log);
       return { ...job, ...classifyEmpty(notes, log) };
     })));
   }
   const counts: Record<EmptyClass, number> = { 'already-done': 0, 'blocked-by-env': 0, 'missing-input': 0, 'scope-too-cautious': 0, other: 0 };
   for (const job of jobs) counts[job.class]++;
-  return { schema: 'jobs.empty.v1', hours, total: jobs.length, counts, jobs };
+  // The ledger is chronological, so the newest jobs are last. A missing or unreadable log reads as null, which is `other`.
+  const by_reason = Object.fromEntries(FLEET_EMPTY_WHY_REASONS.map(r => [r, 0])) as Record<FleetEmptyWhyReason, number>;
+  const tagged = jobs.slice(-REASON_LOG_LIMIT).map(({ id, lane }) => ({ id, lane, reason: classifyEmptyLog(logs.get(id) ?? null) }));
+  for (const t of tagged) by_reason[t.reason]++;
+  const recent = tagged.slice(-REASON_RECENT_LIMIT).reverse();
+  return { schema: 'jobs.empty.v1', hours, total: jobs.length, counts, jobs, reasons: { by_reason, recent } };
 }
