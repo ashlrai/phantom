@@ -3,6 +3,7 @@
  */
 import type { OperatorDeps, OperatorRequest, OperatorResult } from '../core/desktop/operator.js';
 import { runDesktopOperator, scrubOperatorJson } from '../core/desktop/operator.js';
+import { deliverScreenshot } from '../core/desktop/operator-screenshot.js';
 
 export const OPERATOR_USAGE = `Usage: phm desktop list-apps [--json]
        phm desktop windows [--app <name>] [--json]
@@ -11,12 +12,16 @@ export const OPERATOR_USAGE = `Usage: phm desktop list-apps [--json]
        phm desktop scroll --app <name> [--window <title>] [--dx <n>] [--dy <n>] [--json]
        phm desktop type --app <name> [--window <title>] --text <text> [--json]
        phm desktop click --app <name> [--window <title>] [--x <n> --y <n> | --ref <eN>] [--json]
-       phm desktop screenshot --app <name> [--window <title>] [--json]
+       phm desktop screenshot --app <name> [--window <title>] [--include-image] [--json]
        phm desktop doctor [--json]
 
 macOS desktop operator. Accessibility reads come first. A window screenshot
 plus OCR is the fallback. focus, scroll, type and click post a bus intent
 before they change another app. KILL and comms pause block those writes.
+Screenshots are local-only by default: the PNG is written mode 0600 under
+~/.ashlr/desktop-operator/shots/ and the result carries its path, metadata and
+scrubbed OCR text, never image bytes. Pixels cannot be secret-scrubbed, so
+--include-image (screenshot only) opts one call in to the base64 image.
 Exit 0 when ok is true, 1 when ok is false, 2 for usage.
 `;
 
@@ -26,6 +31,7 @@ type Verb = (typeof VERBS)[number];
 export interface DesktopOperatorCliDeps extends OperatorDeps {
   log?: (line: string) => void;
   error?: (line: string) => void;
+  writeScreenshot?: (bytes: Buffer) => string;
 }
 
 function isVerb(value: string): value is Verb {
@@ -45,16 +51,22 @@ function integer(map: Map<string, string>, flag: string): number | undefined | '
   return Number.isSafeInteger(parsed) ? parsed : 'bad';
 }
 
-export function parseDesktopOperatorArgs(args: readonly string[]): { help: true } | { error: string } | { json: boolean; request: OperatorRequest } {
+export function parseDesktopOperatorArgs(args: readonly string[]): { help: true } | { error: string } | { json: boolean; includeImage: boolean; request: OperatorRequest } {
   if (args.length === 0 || args.some((arg) => arg === '--help' || arg === '-h' || arg === 'help')) return { help: true };
   const verb = args[0] ?? '';
   if (!isVerb(verb)) return { error: 'unknown desktop verb' };
   const map = new Map<string, string>();
   let json = false;
+  let includeImage = false;
   for (let i = 1; i < args.length; i += 1) {
     const token = args[i] ?? '';
     if (token === '--json') {
       json = true;
+      continue;
+    }
+    if (token === '--include-image') {
+      if (verb !== 'screenshot') return { error: '--include-image applies to screenshot only' };
+      includeImage = true;
       continue;
     }
     if (!token.startsWith('--')) return { error: 'unknown desktop argument' };
@@ -73,28 +85,28 @@ export function parseDesktopOperatorArgs(args: readonly string[]): { help: true 
     case 'list-apps':
     case 'doctor':
       if (map.size > 0) return { error: `${verb} takes no flags besides --json` };
-      return { json, request: { verb } };
+      return { json, includeImage, request: { verb } };
     case 'windows':
       if ([...map.keys()].some((flag) => flag !== '--app')) return { error: 'windows accepts --app' };
-      return { json, request: { verb, ...(app ? { app } : {}) } };
+      return { json, includeImage, request: { verb, ...(app ? { app } : {}) } };
     case 'focus':
     case 'read':
     case 'screenshot':
       if (!app) return { error: '--app is required' };
       if ([...map.keys()].some((flag) => flag !== '--app' && flag !== '--window')) return { error: `${verb} accepts --app and --window` };
-      return { json, request: { verb, app, ...withWindow } };
+      return { json, includeImage, request: { verb, app, ...withWindow } };
     case 'scroll': {
       if (!app) return { error: '--app is required' };
       const dx = integer(map, '--dx');
       const dy = integer(map, '--dy');
       if (dx === 'bad' || dy === 'bad') return { error: '--dx and --dy must be integers' };
-      return { json, request: { verb, app, dx: dx ?? 0, dy: dy ?? -3, ...withWindow } };
+      return { json, includeImage, request: { verb, app, dx: dx ?? 0, dy: dy ?? -3, ...withWindow } };
     }
     case 'type': {
       if (!app) return { error: '--app is required' };
       const text = take(map, '--text');
       if (text === undefined) return { error: '--text is required' };
-      return { json, request: { verb, app, text, ...withWindow } };
+      return { json, includeImage, request: { verb, app, text, ...withWindow } };
     }
     case 'click': {
       if (!app) return { error: '--app is required' };
@@ -105,6 +117,7 @@ export function parseDesktopOperatorArgs(args: readonly string[]): { help: true 
       if (!ref && (typeof x !== 'number' || typeof y !== 'number')) return { error: 'click needs --ref or both --x and --y' };
       return {
         json,
+        includeImage,
         request: {
           verb,
           app,
@@ -140,7 +153,8 @@ export async function cmdDesktopOperator(args: readonly string[], deps: DesktopO
     error(OPERATOR_USAGE);
     return 2;
   }
-  const result = await runDesktopOperator(parsed.request, deps);
+  const raw = await runDesktopOperator(parsed.request, deps);
+  const result = deliverScreenshot(raw, { includeImage: parsed.includeImage, ...(deps.writeScreenshot ? { write: deps.writeScreenshot } : {}) });
   const body = scrubOperatorJson(result);
   log(parsed.json ? JSON.stringify(body) : summary(result));
   return result.ok ? 0 : 1;

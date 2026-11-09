@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -6,7 +6,8 @@ import { describe, expect, it } from 'vitest';
 import { cmdDesktop, parseDesktopInstallArgs } from '../src/cli/desktop.js';
 import { cmdDesktopOperator } from '../src/cli/desktop-operator.js';
 import { desktopSessions } from '../src/core/desktop/desktop-sessions.js';
-import { deliverScreenshot, desktopOperatorTools } from '../src/core/desktop/operator-mcp.js';
+import { desktopOperatorTools } from '../src/core/desktop/operator-mcp.js';
+import { deliverScreenshot, writeScreenshotFile } from '../src/core/desktop/operator-screenshot.js';
 import {
   runDesktopOperator,
   scrubOperatorJson,
@@ -363,16 +364,89 @@ describe('desktop operator MCP tools', () => {
     for (const name of ['desktop_focus', 'desktop_scroll', 'desktop_type', 'desktop_click']) {
       expect(nativeToolSafety(name)).toBe('append');
     }
-    const delivered = deliverScreenshot({
-      ok: true,
-      verb: 'screenshot',
-      data: { base64: Buffer.from('png').toString('base64'), ocrText: 'seen', mime: 'image/png' },
-    }, () => '/private/shot.png');
+  });
+
+  it('advertises include_image on the screenshot tool, off by default', () => {
+    const shot = desktopOperatorTools.find((tool) => tool.name === 'desktop_screenshot');
+    expect(JSON.stringify(shot?.inputSchema)).toContain('include_image');
+    expect(shot?.description).toContain('Local-only by default');
+  });
+});
+
+describe('desktop screenshots are local-only by default', () => {
+  const png = Buffer.from('png-bytes');
+  const raw = () => ({
+    ok: true as const,
+    verb: 'screenshot' as const,
+    data: { base64: png.toString('base64'), ocrText: 'seen', mime: 'image/png' },
+  });
+
+  it('returns only a path and metadata without the opt-in', () => {
+    const delivered = deliverScreenshot(raw(), { write: () => '/private/shot.png' });
     expect(delivered.ok).toBe(true);
     if (delivered.ok) {
       expect(delivered.data['path']).toBe('/private/shot.png');
+      expect(delivered.data['bytes']).toBe(png.length);
+      expect(delivered.data['imageIncluded']).toBe(false);
       expect(delivered.data['base64']).toBeUndefined();
     }
+    expect(JSON.stringify(delivered)).not.toContain(png.toString('base64'));
+  });
+
+  it('keeps the image only when the per-call opt-in is set', () => {
+    const delivered = deliverScreenshot(raw(), { includeImage: true, write: () => '/private/shot.png' });
+    expect(delivered.ok && delivered.data['base64']).toBe(png.toString('base64'));
+    expect(delivered.ok && delivered.data['imageIncluded']).toBe(true);
+  });
+
+  it('fails closed without the image when local storage fails', () => {
+    const delivered = deliverScreenshot(raw(), { includeImage: true, write: () => { throw new Error('disk full'); } });
+    expect(delivered).toMatchObject({ ok: false, code: 'failed' });
+    expect(JSON.stringify(delivered)).not.toContain(png.toString('base64'));
+  });
+
+  it('writes the file mode 0600 in a 0700 directory', () => {
+    const path = writeScreenshotFile(png);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    expect(statSync(join(path, '..')).mode & 0o777).toBe(0o700);
+    expect(readFileSync(path).equals(png)).toBe(true);
+  });
+
+  it('CLI --json omits base64 by default, scrubs OCR, and posts nothing to the bus', async () => {
+    const secret = ['sk', 'ant', 'api03', 'A'.repeat(40)].join('-');
+    const surface = mockSurface();
+    const shot = surface.screenshot.bind(surface);
+    surface.screenshot = async (input) => {
+      const result = await shot(input);
+      return result.ok ? { ok: true, value: { ...result.value, base64: png.toString('base64'), ocrText: `seen ${secret}` } } : result;
+    };
+    const run = async (extra: string[]) => {
+      const logs: string[] = [];
+      const code = await cmdDesktopOperator(['screenshot', '--app', 'Cursor', '--json', ...extra], {
+        ...deps(surface),
+        log: (line) => logs.push(line),
+        writeScreenshot: () => '/private/shot.png',
+      });
+      return { code, body: JSON.parse(logs[0] ?? '{}') as { data: Record<string, unknown> } };
+    };
+    const local = await run([]);
+    expect(local.code).toBe(0);
+    expect(local.body.data['path']).toBe('/private/shot.png');
+    expect(local.body.data['base64']).toBeUndefined();
+    expect(local.body.data['ocrText']).toContain('[REDACTED]');
+    expect(JSON.stringify(local.body)).not.toContain(secret);
+    const opted = await run(['--include-image']);
+    expect(opted.body.data['base64']).toBe(png.toString('base64'));
+    expect(JSON.stringify(opted.body)).not.toContain(secret);
+  });
+
+  it('rejects --include-image on other verbs and documents the default in help', async () => {
+    const errors: string[] = [];
+    expect(await cmdDesktopOperator(['read', '--app', 'Cursor', '--include-image'], { error: (line) => errors.push(line) })).toBe(2);
+    const logs: string[] = [];
+    await cmdDesktopOperator(['screenshot', '--help'], { log: (line) => logs.push(line) });
+    expect(logs.join('\n')).toMatch(/local-only by default/);
+    expect(logs.join('\n')).toContain('--include-image');
   });
 });
 
