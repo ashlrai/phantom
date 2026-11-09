@@ -14,6 +14,7 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { groupByRepo, ideasHeadline, rankIdeas, sourceCounts, type RepoGroup } from './ideas-model.js';
 import { IdeaSteer } from './IdeaSteer.js';
 import styles from './ideas.module.css';
+import { NextIdeas } from './NextIdeas.js';
 
 export const IDEAS_POLL_MS = 30_000;
 const PER_REPO = 5;
@@ -57,7 +58,7 @@ export function IdeasPane({ visible = true }: { visible?: boolean }) {
     </>;
   }
 
-  return <div className={styles.root} aria-label="Ideas">{body}</div>;
+  return <div className={styles.root} aria-label="Ideas"><NextIdeas visible={visible} />{body}</div>;
 }
 
 function RepoCard({ group, all, expanded, onToggle }: { group: RepoGroup; all: RepoGroup; expanded: boolean; onToggle: () => void }) {
