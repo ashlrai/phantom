@@ -6,8 +6,8 @@ const DETAIL_MAX = 300;
 /** The CLI twin of this card. */
 export const UNIFIED_INBOX_COMMAND = 'phm comms inbox';
 
-const SOURCES = ['needs-you', 'imessage', 'drafts', 'bus', 'gmail'] as const;
-const KINDS = ['needs-you', 'teammate-text', 'draft-approval', 'bus-work', 'gmail-over-target'] as const;
+const SOURCES = ['needs-you', 'imessage', 'drafts', 'bus', 'gmail', 'linkedin'] as const;
+const KINDS = ['needs-you', 'teammate-text', 'draft-approval', 'bus-work', 'gmail-over-target', 'linkedin-message'] as const;
 const SEVERITIES = ['info', 'warn', 'high'] as const;
 const STATES = ['healthy', 'missing', 'degraded', 'unavailable'] as const;
 const EXPIRES_SOON_MS = 30 * 60_000;
@@ -72,8 +72,8 @@ export function readUnifiedInboxView(data: unknown): UnifiedInboxView | null {
   return { total: data.total, omitted: data.omitted, sources, items };
 }
 
-const SOURCE_NAMES: Record<InboxSource, string> = { 'needs-you': 'Needs you', imessage: 'iMessage', drafts: 'Drafts', bus: 'Bus', gmail: 'Gmail' };
-const ITEM_LABELS: Record<InboxSource, string> = { 'needs-you': 'Needs you', imessage: 'Teammate text', drafts: 'Draft', bus: 'Bus work', gmail: 'Gmail inbox' };
+const SOURCE_NAMES: Record<InboxSource, string> = { 'needs-you': 'Needs you', imessage: 'iMessage', drafts: 'Drafts', bus: 'Bus', gmail: 'Gmail', linkedin: 'LinkedIn' };
+const ITEM_LABELS: Record<InboxSource, string> = { 'needs-you': 'Needs you', imessage: 'Teammate text', drafts: 'Draft', bus: 'Bus work', gmail: 'Gmail inbox', linkedin: 'LinkedIn message' };
 
 /** "Needs you 3 · iMessage 1 · Drafts 0 · Bus degraded 2"; a missing source shows "—", never 0. */
 export function sourceSummary(sources: UnifiedInboxSources): string {
@@ -105,7 +105,7 @@ export function itemLine(item: UnifiedInboxEntry, nowMs: number): { label: strin
 
 const SOURCE_COMMANDS: Record<InboxSource, string> = {
   'needs-you': 'phm fleet needs', imessage: 'phm fleet teammate-texts', drafts: 'phm drafts list --status pending',
-  bus: 'phm fleet bus-claim', gmail: 'phm fleet gmail-archive-plan',
+  bus: 'phm fleet bus-claim', gmail: 'phm fleet gmail-archive-plan', linkedin: 'phm drafts list --status pending',
 };
 const STATE_MEANINGS: Record<Exclude<InboxSourceState, 'healthy'>, string> = {
   missing: 'not set up on this Mac', degraded: 'read partly; some items may be missing', unavailable: 'could not be read',
