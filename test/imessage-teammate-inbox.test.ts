@@ -91,6 +91,17 @@ describe('readTeammateTexts', () => {
     const got = readTeammateTexts({ runsDir, sinceMs: 10 * 60_000, now: () => NOW_MS });
     expect(got.texts.map((t) => t.rowid)).toEqual([2]);
   });
+
+  it('bounds the read: a journal past the cap reports degraded and keeps the newest rows', () => {
+    mkdirSync(dir());
+    // Junk rows past the 8×1024×1024-byte tail cap, then one live row at the tail.
+    const junk = `{"v":1,"at":"${NOW.toISOString()}","rowid":1,"senderId":"${senderIdFor(HANDLE)}","text":"${'x'.repeat(1024)}"}\n`.repeat(9000);
+    appendFileSync(file(), junk);
+    recordTeammateText({ rowid: 777, handle: HANDLE, text: 'live tail row' }, runsDir, NOW);
+    const got = readTeammateTexts({ runsDir, now: () => NOW_MS });
+    expect(got.sourceState).toBe('degraded');
+    expect(got.texts.map((t) => t.rowid)).toContain(777);
+  });
 });
 
 describe('markTeammateTextsAnswered', () => {
