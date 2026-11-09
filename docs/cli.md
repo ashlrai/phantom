@@ -10,6 +10,18 @@ longer matches current help output. Non-ASCII dashes are written as `-`
 and ANSI styling is stripped; `phm <command> --help` stays the
 per-command detail surface.
 
+## Common tasks
+
+Each command also supports details through `phm help --all`.
+
+| Task | Example |
+| --- | --- |
+| Summarize local metrics. | `phm metrics summary --json` |
+| Check the release train. | `phm release status --json` |
+| Preview cleanup of finished worktrees. | `phm worktrees prune --dry-run --json` |
+| Explain dispatcher routes. | `phm route explain --json` |
+| Show usage by engine. | `phm usage` |
+
 ## `phm --help`
 
 Topic summary and discovery hints.
@@ -132,7 +144,7 @@ Every command, grouped by topic.
     select [--json] [--dry-run] [--top <n>]                                                                                                                       Rank candidates by value x leverage / (time + usage), fund the top 5 as READY lines, record picks with predicted value.
     backlog refresh                                                                                                                                               Re-scan all enrolled repos and rebuild the backlog.
     release-articles status|enable|disable|import|sync [--json]                                                                                                   Configure release-backed article task handoffs; sync verifies public GitHub/npm evidence and never publishes directly.
-    release status [--json] [--file <release-state.json>]                                                                                                         Read the continuous release train state and per-stage timings. Without a state file, reports that the state is unavailable.
+    release status [--json] [--file <release-state.json>]                                                                                                         Show release tags, assets, unreleased commits and updater status for Ashlr repositories. Use --file to read release train state.
     backlog --source <src>                                                                                                                                        Filter backlog by source: issue|todo|test|dep|doc|security|plugin|self|lint|goal|hygiene|invent.
     backlog --repo <path>                                                                                                                                         Filter backlog to a specific enrolled repo.
     backlog --limit <n>                                                                                                                                           Show only the top N items.
