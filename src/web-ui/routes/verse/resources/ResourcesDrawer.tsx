@@ -58,6 +58,7 @@ import { devinQuery } from '../devin/devin-queries.js';
 import { verseAccountsQuery, verseLocalModelsQuery } from '../usage/usage-queries.js';
 import { setVerseSection, type VerseSectionId } from '../verse-ui-store.js';
 import { CloudCredits } from './CloudCredits.js';
+import { UsagePace } from './UsagePace.js';
 import { CreditPools } from './CreditPools.js';
 import { DevinResource } from './DevinResource.js';
 import { JevResource } from './JevResource.js';
@@ -468,6 +469,7 @@ export function ResourcesDrawer({ mode, compact = false, now: fixedNow }: Resour
         ) : !data.rosterUnavailable && paid.length === 0 && devinRows.length === 0 ? (
           <p className={styles.subtle}>{RESOURCES_EMPTY_TEXT}</p>
         ) : null}
+        <UsagePace />
         <CreditPools accountNames={new Map(data.seats.map(seat => [seat.id, seat.label]))} />
         <div className={styles.groupingControls} role="group" aria-label="Resource grouping">
           <button type="button" aria-pressed={grouping === 0} onClick={() => setGrouping(0)}>By tier</button>
