@@ -2,8 +2,11 @@ import { isAbsolute } from 'node:path';
 import { busV2ContractSummary } from '../core/agents/bus-v2-schema.js';
 import { listChannelRegistry, probeRegisteredChannel } from '../core/agents/channel-registry.js';
 import { CHANNEL_IDS, type ChannelId } from '../core/agents/channel-policy.js';
+import { readFleetEdges } from '../core/fleet/fleet-edges.js';
+import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const HELP = `ashlr agents bus contract [--json]
+const HELP = `ashlr agents edges [--json]
+ashlr agents bus contract [--json]
 ashlr agents bus channels list [--json]
 ashlr agents bus channels test <id> [--root <abs>] [--json]
 
@@ -41,6 +44,11 @@ export async function runAgentsCli(
       continue;
     }
     rest.push(arg);
+  }
+  if (rest.length === 1 && rest[0] === 'edges' && root === undefined) {
+    const result = readFleetEdges();
+    out(JSON.stringify(sanitizePublicJson(result), null, json ? undefined : 2));
+    return result.source === 'unavailable' ? 1 : 0;
   }
   if (rest[0] === 'bus' && rest[1] === 'channels') {
     if (rest.length === 3 && rest[2] === 'list' && root === undefined) {
