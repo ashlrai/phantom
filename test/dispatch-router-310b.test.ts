@@ -934,6 +934,29 @@ describe('land-first scheduling', () => {
       expect(ordered).toEqual(['land', 'fixup', 'normal', 'feature']);
     });
 
+    it('paces Codex down when included usage would run dry, and ignores an unknown burn', () => {
+      const resetAt = new Date(NOW + 10 * 3_600_000).toISOString();
+      const early = planLanes({
+        policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {},
+        nowMs: NOW,
+        sensorPace: { codex: { remaining: 10, resetAt, burnPerHour: 40 } },
+      });
+      expect(early.codex.slots).toBe(0);
+      const unknown = planLanes({
+        policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {},
+        nowMs: NOW,
+        sensorPace: { codex: { remaining: 80, resetAt, burnPerHour: null } },
+      });
+      expect(unknown.codex.slots).toBe(LANE_DEFAULT_SLOTS.codex);
+    });
+
+    it('zeroes every lane when KILL is on', () => {
+      const plan = planLanes({
+        policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {}, killed: true,
+      });
+      expect(Object.values(plan).every((lane) => lane.slots === 0)).toBe(true);
+    });
+
     it('changes nothing while counts are healthy or never taken', () => {
       for (const counts of [undefined, {}, { [REPO]: LAND_FIRST_OPEN_PR_LIMIT }]) {
         const context = ctx([grok()], { openPrsByRepo: counts });

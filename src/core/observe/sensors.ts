@@ -61,13 +61,24 @@ function windowFrom(raw: Record<string, unknown>, nowMs: number): UsageWindow | 
       if (projectedUnused > 0) alert = 'unused-before-reset';
     }
   }
+  const verdict = raw['forecastVsReset'];
+  const forecastVsReset = verdict === 'early' || verdict === 'on-pace' || verdict === 'underuse' ? verdict : 'unknown';
+  const remainingField = finite(raw['remaining']);
+  const remaining = measuredFresh ? remainingField ?? (used !== null && limit !== null ? Math.max(0, limit - used) : null) : null;
+  const burnRate = measuredFresh ? finite(raw['burnRate']) ?? burnPerHour : null;
   return {
     lane,
-    status: measuredFresh && headroom !== null ? 'fresh' : 'unknown',
+    status: measuredFresh && (headroom !== null || lane === 'local') ? 'fresh' : 'unknown',
     headroom: measuredFresh ? headroom : null,
     used, limit,
     unit: measuredFresh && (raw['unit'] === 'percent' || raw['unit'] === 'acu') ? raw['unit'] : null,
-    resetAt, observedAt, source, staleAfter, burnPerHour, projectedUnused, alert,
+    resetAt, observedAt, source, staleAfter, burnPerHour: burnRate, projectedUnused, alert,
+    remaining,
+    remainingUnit: remaining === null ? null : typeof raw['remainingUnit'] === 'string' ? raw['remainingUnit'] : raw['unit'] === 'percent' || raw['unit'] === 'acu' ? raw['unit'] : null,
+    burnRate,
+    forecastExhaustAt: measuredFresh ? iso(raw['forecastExhaustAt']) : null,
+    forecastVsReset: measuredFresh ? forecastVsReset : 'unknown',
+    idleIncludedWastedPerWeek: measuredFresh ? finite(raw['idleIncludedWastedPerWeek']) : null,
   };
 }
 

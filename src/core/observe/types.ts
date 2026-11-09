@@ -21,6 +21,7 @@ export const OBSERVE_BASELINE = {
 
 export type ReadingState = 'live' | 'unknown' | 'pending';
 export type ResourceState = 'coordinated' | 'idle' | 'duplicated' | 'no-headroom' | 'unknown';
+export type ForecastVsReset = 'early' | 'on-pace' | 'underuse' | 'unknown';
 
 export interface UsageWindow {
   lane: string;
@@ -36,6 +37,21 @@ export interface UsageWindow {
   burnPerHour: number | null;
   projectedUnused: number | null;
   alert: 'unused-before-reset' | null;
+  remaining: number | null;
+  remainingUnit: string | null;
+  burnRate: number | null;
+  forecastExhaustAt: string | null;
+  forecastVsReset: ForecastVsReset;
+  idleIncludedWastedPerWeek: number | null;
+}
+
+export interface ResourceGauge {
+  remaining: number | null;
+  unit: string | null;
+  burnRate: number | null;
+  forecastExhaustAt: string | null;
+  forecastVsReset: ForecastVsReset;
+  idleIncludedWastedPerWeek: number | null;
 }
 
 export interface RepoHeadline {
@@ -85,6 +101,7 @@ export interface ResourceRow {
   headroom: number | null;
   sessions: number | null;
   claims: number | null;
+  gauge: ResourceGauge;
 }
 
 export interface ReleaseStage {

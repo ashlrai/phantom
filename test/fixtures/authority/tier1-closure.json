@@ -1155,6 +1155,7 @@
     "src/core/universe/seed-context.ts",
     "src/core/universe/store.ts",
     "src/core/usage/frontier-usage.ts",
+    "src/core/usage/sensor-pace.ts",
     "src/core/usage/sensor-reading.ts",
     "src/core/util/case-folded-ownership.ts",
     "src/core/util/durability.ts",

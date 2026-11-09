@@ -119,6 +119,7 @@ function countFields(snapshot: Omit<ObserveSnapshot, 'coverage'>): { live: numbe
   if (snapshot.roster.state !== 'live') unknown += 1;
   for (const window of snapshot.usage.windows) {
     mark(window.headroom); mark(window.burnPerHour); mark(window.projectedUnused);
+    mark(window.remaining); mark(window.forecastExhaustAt); mark(window.forecastVsReset); mark(window.idleIncludedWastedPerWeek);
   }
   if (snapshot.usage.state !== 'live') unknown += 1;
   mark(snapshot.resources.counts.coordinated);
