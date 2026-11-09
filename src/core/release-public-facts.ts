@@ -274,6 +274,10 @@ const COMPLETE_SKIPPED_JOBS = Object.freeze(['Prepare unsigned desktop release',
 // exhaustive role set remains unchanged; fast execution cannot qualify here.
 const COMBINED_COMPLETE_CI_WORKFLOW_SHA256 = new Set([
   '846f957410fcaf44b5002833fd21e59dacbf6972ccc7603b2898e7dcd2d78692',
+  // Reviewed current workflow. Its site, docs and full lanes also exclude
+  // release_gate, and the merge gate needs release-build. Exact bytes only:
+  // the structural fast suffix still refuses every other revision.
+  '7848b7dada5af97f30978ae171692f58cac9253370fae183663b80959df37e46',
 ]);
 const completeSkippedJobs = (topology: CiAncillaryTopology): readonly string[] => topology === 'gate-complete-combined'
   ? COMPLETE_SKIPPED_JOBS.filter(name => name !== 'Prepare unsigned desktop release') : COMPLETE_SKIPPED_JOBS;
