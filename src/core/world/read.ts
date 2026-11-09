@@ -183,8 +183,7 @@ export async function buildWorldModel(options: ReadObserveOptions = {}): Promise
     outcomes,
     growth: growthSnapshot(await loadGrowthFacts({
       nowMs,
-      pulls: parsedPulls?.pulls ?? null,
-      pullsComplete: parsedPulls?.complete === true,
+      ...(parsedPulls ? { pulls: parsedPulls.pulls, pullsComplete: parsedPulls.complete === true } : {}),
     })),
   });
   observe.coverage = {

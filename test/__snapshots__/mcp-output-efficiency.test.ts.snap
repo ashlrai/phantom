@@ -273,6 +273,14 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "safety": "read",
     },
     {
+      "name": "ashlr_comms_thread",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_comms_send_owner",
+      "safety": "append",
+    },
+    {
       "name": "ashlr_desktop_open",
       "safety": "proposal",
     },
@@ -310,6 +318,18 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
     },
     {
       "name": "desktop_click",
+      "safety": "append",
+    },
+    {
+      "name": "ashlr_comms_agent_status",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_comms_agent_drafts",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_comms_agent_run",
       "safety": "append",
     },
   ],
@@ -2190,6 +2210,37 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
   {
     "inputSchema": {
       "properties": {
+        "limit": {
+          "type": "number",
+        },
+      },
+      "type": "object",
+    },
+    "name": "ashlr_comms_thread",
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+        },
+        "replyTo": {
+          "type": "string",
+        },
+        "text": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "text",
+      ],
+      "type": "object",
+    },
+    "name": "ashlr_comms_send_owner",
+  },
+  {
+    "inputSchema": {
+      "properties": {
         "action_type": {
           "description": "<description>",
           "enum": [
@@ -2398,6 +2449,34 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "desktop_click",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "ashlr_comms_agent_status",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "ashlr_comms_agent_drafts",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "lanes": {
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "ashlr_comms_agent_run",
   },
 ]
 `;
