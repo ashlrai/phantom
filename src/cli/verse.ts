@@ -365,9 +365,14 @@ export async function cmdVerse(args: string[]): Promise<number> {
       const { startRemoteRuntime } = await import('../core/web/remote-runtime.js');
       remote = await startRemoteRuntime(remoteConfig, handle);
     } catch (error) {
-      console.error(red('error: ') + 'Remote gateway could not start: ' + String(error));
-      await handle.close();
-      return 1;
+      if (error instanceof Error && error.name === 'PhoneGatewayKilledError') {
+        console.error(red('error: ') + 'Phone gateway stayed off while KILL is set. The desktop server is still running.');
+        remote = null;
+      } else {
+        console.error(red('error: ') + 'Remote gateway could not start: ' + String(error));
+        await handle.close();
+        return 1;
+      }
     }
   }
 

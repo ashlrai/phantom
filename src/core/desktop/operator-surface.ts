@@ -20,6 +20,10 @@ export function resolveDesktopOperatorBinary(home = userInfo().homedir): string 
   if (!isAbsolute(home) || typeof process.getuid !== 'function') return null;
   const binary = join(home, '.ashlr', 'bin', 'desktop-operator');
   try {
+    for (const directory of [join(home, '.ashlr'), join(home, '.ashlr', 'bin')]) {
+      const stat = lstatSync(directory);
+      if (!stat.isDirectory() || stat.uid !== process.getuid() || (stat.mode & 0o022) !== 0) return null;
+    }
     const stat = lstatSync(binary);
     return stat.isFile() && stat.uid === process.getuid() && (stat.mode & 0o022) === 0 ? binary : null;
   } catch {

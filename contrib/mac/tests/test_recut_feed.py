@@ -43,6 +43,12 @@ class RecutFeedTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             feed.plan([pr()], '', 6)
 
+    def test_pool_stamp_replaces_reference_pool(self):
+        line = feed.plan([pr()], TEMPLATE, 6, pool='devin')[0]
+        self.assertIn('pool=devin', line)
+        self.assertNotIn('pool=codex-personal', line)
+        self.assertTrue(line.startswith('- READY RQ-RCFP1Q8 (P0, pool=devin,'))
+
     def test_dedupe_queue_and_supersedes(self):
         queue = ('- READY OTHER (repo=phantom): PR #1\n'
                  '- CLAIMED NEXT (repo=phantom): https://github.com/ashlrai/phantom/pull/2\n'
