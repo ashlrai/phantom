@@ -2,12 +2,17 @@
  * Pure world-model projection. Callers pass readings they already have.
  * This file does not open files, spawn processes, or call the network.
  */
+import { createHash } from 'node:crypto';
 import type { BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import type { AgentRoster } from '../fleet/agent-roster.js';
 import type { UsageSensorReport } from '../usage/sensor-reading.js';
 import type { RepoHeadline } from '../observe/types.js';
 import { GROWTH_FIELD_NEEDS, type GrowthSeriesId, type GrowthSnapshot } from '../growth/series.js';
 import { stableFieldId, WORLD_CACHE_TTL_MS, WORLD_SCHEMA, type BlindSpot, type Field, type Freshness, type WorldModel } from './types.js';
+
+/** Bound on per-directive stale blind spots. The stale count stays exact. */
+export const MAX_STALE_INTENT_SPOTS = 20;
+const INTENT_SOURCE = 'ashlr.intent-ledger/v1';
 
 const PACE_NEED = 'RQ-SENSORS-PACE-1 adds pacePerHour, requiredPacePerHour, and runwayHours on usage.sensors.v1. Those keys are absent, so pace stays unknown.';
 
@@ -31,6 +36,22 @@ export interface WorldProjectInput {
   outcomes: readonly RepoHeadline[] | null;
   /** Latest growth-series readings. Null leaves every growth field unknown. */
   growth?: GrowthSnapshot | null;
+  /** intentSummary reading. Null or absent leaves every intents field unknown. */
+  intents?: IntentWorldReading | null;
+}
+
+/** The slice of intentSummary the world model keeps. Titles are not part of it. */
+export interface IntentWorldReading {
+  sourceQuality: 'readable' | 'missing' | 'unavailable';
+  countQuality: 'observed' | 'unknown';
+  items: number;
+  tracked: number;
+  merged: number;
+  shipped: number;
+  verified: number;
+  stale: number;
+  partial: number;
+  staleItems: ReadonlyArray<{ id: string }>;
 }
 
 function iso(nowMs: number): string {
@@ -82,6 +103,8 @@ function needFor(path: string): string {
   if (path === 'bottlenecks.count') return 'Eng Ops writes ~/.ashlr-runs/export/bottlenecks.json (bottlenecks.v1).';
   if (path === 'humanSteps.remaining') return 'Eng Ops writes ~/.ashlr-runs/export/human-steps.json (ashlr.human-steps/v1).';
   if (path.startsWith('outcomes.')) return 'A complete pull export. Merged-per-day needs mergedAt. Change-failure rate needs reverted, fixForward, and failedRelease on every merged pull.';
+  if (path.startsWith('intents.stale.')) return 'This directive is past its stale timer. Review with phm fleet intent-sweep --json. It is not closed automatically.';
+  if (path.startsWith('intents.')) return 'A readable local ashlr.intent-ledger/v1 at ~/.ashlr-runs/intent/ledger.json. A missing or unreadable ledger is unknown, not zero.';
   if (path.startsWith('growth.')) return GROWTH_FIELD_NEEDS[path] ?? `A fresh reading for ${path}.`;
   return `A fresh reading for ${path}.`;
 }
@@ -230,6 +253,40 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
       costPerMergedPr: growthField('costPerMergedPr'),
       bottleneckTrends: growthField('bottleneckTrends'),
     },
+    intents: intentFields(input.intents, now),
   };
-  return { ...draft, blindSpots: blindSpotsFrom(draft).spots };
+  const spots = blindSpotsFrom(draft).spots;
+  if (intentsObserved(input.intents)) {
+    const ids = [...new Set(input.intents.staleItems.map((item) => opaqueIntentId(item.id)))].sort().slice(0, MAX_STALE_INTENT_SPOTS);
+    for (const id of ids) {
+      const path = `intents.stale.${id}`;
+      spots.push({ id: stableFieldId(path), path, freshness: 'stale', need: needFor(path) });
+    }
+    spots.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  }
+  return { ...draft, blindSpots: spots };
+}
+
+/** Stable, non-reversible handle so blind spots never echo ledger content. */
+function opaqueIntentId(id: string): string {
+  return `i-${createHash('sha256').update(id).digest('hex').slice(0, 10)}`;
+}
+
+function intentsObserved(snapshot: WorldProjectInput['intents']): snapshot is IntentWorldReading {
+  return !!snapshot && snapshot.sourceQuality === 'readable' && snapshot.countQuality === 'observed';
+}
+
+function intentFields(snapshot: WorldProjectInput['intents'], now: string): WorldModel['intents'] {
+  if (!intentsObserved(snapshot)) {
+    const none = (): Field<number> => unknown<number>(INTENT_SOURCE);
+    return { items: none(), tracked: none(), merged: none(), shipped: none(), verified: none(), stale: none(), partial: none() };
+  }
+  const count = (value: number): Field<number> => Number.isFinite(value) && value >= 0
+    ? reading(value, INTENT_SOURCE, now, 'fresh')
+    : unknown<number>(INTENT_SOURCE);
+  return {
+    items: count(snapshot.items), tracked: count(snapshot.tracked), merged: count(snapshot.merged),
+    shipped: count(snapshot.shipped), verified: count(snapshot.verified), stale: count(snapshot.stale),
+    partial: count(snapshot.partial),
+  };
 }

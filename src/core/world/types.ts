@@ -74,5 +74,19 @@ export interface WorldModel {
     costPerMergedPr: Field<number>;
     bottleneckTrends: Field<number>;
   };
+  /**
+   * Counts from the local intent ledger. Null value and freshness `unknown`
+   * means the ledger is missing, unreadable, or not ashlr.intent-ledger/v1.
+   * Merged is never promoted to shipped. No directive text is carried here.
+   */
+  intents: {
+    items: Field<number>;
+    tracked: Field<number>;
+    merged: Field<number>;
+    shipped: Field<number>;
+    verified: Field<number>;
+    stale: Field<number>;
+    partial: Field<number>;
+  };
   blindSpots: BlindSpot[];
 }
