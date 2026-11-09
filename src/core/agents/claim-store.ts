@@ -36,6 +36,8 @@ interface StoredClaim {
   repo: string | null;
   branch: string | null;
   path: string | null;
+  /** Set when a work claim is acquired. Older rows omit it. */
+  started?: string | null;
 }
 
 interface StoredStatus {
@@ -60,6 +62,7 @@ export interface CoordinationView {
   repo: string | null;
   branch: string | null;
   path: string | null;
+  started: string | null;
 }
 
 export interface WorkStatusView {
@@ -88,6 +91,7 @@ export interface CoordinationAcquire {
   sourceId: string;
   teamTarget?: ClaimTarget;
   now?: number;
+  started?: string | null;
 }
 
 const empty = (): StoreFile => ({ version: 1, claims: [], statuses: [] });
@@ -200,7 +204,8 @@ function claimOk(row: unknown): row is StoredClaim {
     LABEL.test(value.sourceId) && validLease(value.origin, value.leaseMs) && integer(value.leaseUntil) &&
     (value.repo === null || typeof value.repo === 'string') &&
     (value.branch === null || typeof value.branch === 'string') &&
-    (value.path === null || typeof value.path === 'string');
+    (value.path === null || typeof value.path === 'string') &&
+    (value.started === undefined || value.started === null || (typeof value.started === 'string' && Number.isFinite(Date.parse(value.started))));
 }
 
 function statusOk(row: unknown): row is StoredStatus {
@@ -265,6 +270,7 @@ function view(row: StoredClaim, now: number): CoordinationView {
   return {
     origin: row.origin, key: row.key, owner: row.owner, leaseUntil: row.leaseUntil, sourceId: row.sourceId,
     live: live(row, now), repo: row.repo, branch: row.branch, path: row.path,
+    started: typeof row.started === 'string' ? row.started : null,
   };
 }
 
@@ -322,7 +328,7 @@ export function observeQueuedPaths(claims: ReadonlyMap<string, readonly string[]
     if (!parseClaimKey(key)) continue;
     rows.push({
       origin: 'queue', key, owner: jobs.join(','), leaseUntil: 0, sourceId: `queued:${normPath(path)}`,
-      live: false, repo, branch: null, path: normPath(path),
+      live: false, repo, branch: null, path: normPath(path), started: null,
     });
   }
   return rows;
@@ -351,6 +357,7 @@ export function acquireCoordination(input: CoordinationAcquire): CoordinationRes
     origin: input.origin, key: input.key, owner: input.owner, token: randomBytes(32).toString('hex'),
     leaseMs: input.leaseMs, leaseUntil: input.leaseUntil, state: 'live', sourceId: input.sourceId,
     repo: target?.repo ?? null, branch: target?.branch ?? null, path: target?.path ?? null,
+    started: input.started ?? null,
   };
   const outcome = withStore(input.root, now, data => {
     const conflict = data.claims.find(row => overlaps(row, drafted, now) &&
@@ -434,6 +441,23 @@ export function upsertBoardLease(input: {
 export function clearBoardLease(sourceId: string, root?: string, now = Date.now()): CoordinationResult {
   const result = releaseCoordinationBySource({ root, origin: 'board', sourceId, now });
   return result.status === 'lost' ? { status: 'released' } : result;
+}
+
+/** Drop one live lease when the caller is the owner. A different holder is a conflict. The token stays in the store. */
+export function releaseLiveClaimByOwner(input: { root?: string; key: string; owner: string; now?: number }): CoordinationResult {
+  const now = input.now ?? Date.now();
+  if (!LABEL.test(input.key) || !LABEL.test(input.owner)) return { status: 'invalid' };
+  const outcome = withStore(input.root, now, data => {
+    const index = data.claims.findIndex(row => row.key === input.key && live(row, now));
+    const row = index >= 0 ? data.claims[index] : undefined;
+    if (!row) return { status: 'lost' as const };
+    if (row.owner !== input.owner) {
+      return { status: 'conflict' as const, holder: { owner: row.owner, key: row.key, leaseUntil: row.leaseUntil } };
+    }
+    data.claims.splice(index, 1);
+    return { status: 'released' as const };
+  });
+  return outcome as CoordinationResult;
 }
 
 export function setWorkStatus(input: {

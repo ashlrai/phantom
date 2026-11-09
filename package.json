@@ -1,6 +1,6 @@
 {
   "name": "@ashlr/phantom",
-  "version": "3.30.27",
+  "version": "3.30.28",
   "description": "Phantom by AshlrAI: the open-source engineering agent workbench for CLI accounts, local models and autonomous fleets.",
   "publishConfig": {
     "access": "public"
@@ -143,6 +143,7 @@
     "node": ">=22.15.0"
   },
   "scripts": {
+    "authority:regen": "node scripts/authority-regen.mjs",
     "version:sync": "node scripts/sync-candidate-version.mjs",
     "check:version": "node scripts/sync-candidate-version.mjs --check",
     "prepublishOnly": "npm run build && npm run check:first-paint:built && npm run check:docs && npm run typecheck && npm run lint && npm run test:web && npm run test:ci:sharded",

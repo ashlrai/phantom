@@ -31,11 +31,12 @@ Approval cards record consent and do not collect credentials.
 - [Desktop control](DESKTOPCTL.md): Drive Claude, Codex and Devin desktop apps as interchangeable resources through the `computer_*` tools (`~/.ashlr/desktopctl.json`, off by default). Commands: `phm desktopctl capabilities|status|run <resource> [--json]`. Reports TCC grant state per resource, never prompts for or changes grants; `browser` is read-only.
 - [Desktop operator](DESKTOP-OPERATOR.md): Read and drive Phantom, Devin, Codex, Claude, Grok and Cursor on this Mac. Commands: `phm desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]`. Writes post a bus intent first. `phm desktop doctor --json` reports Accessibility and Screen Recording for the `desktop-operator` binary.
 - [Drafts](DRAFTS.md): Outbound mail to anyone but you is written as a draft and surfaces as a needs-you item. Commands: `phm drafts list|show|approve|reject --json`. Example: `phm drafts list --status pending --json`. Approve records your decision and does not send.
+- [Comms agent](COMMS-AGENT.md): Comms role under the Leader. Commands: `phm comms-agent status|run|drafts --json`. Example: `phm comms-agent status --json`. The router picks the lane. Sends need an owner standing approval.
 - [Import scheduled routines](VERSE.md#automations-315): `ashlr automations import --from routines.json --dry-run --json` previews disabled imports from a local JSON array.
 
 - [Docs Radar](RADAR.md): Public source list, bounded unauthenticated reads, private snapshots and offline diffs. Commands: `phm radar list|run|diff --json`. Individual fetch failures are warnings; the last successful snapshot is retained.
 - [Human observe](OBSERVE.md): One `phm observe --json` snapshot for roster, sensor headroom, resource coordination, pull headlines, bottlenecks, and human steps. Unknown stays unknown.
-- [World model](WORLD.md): `phm world --json` is the cached `ashlr.world-model/v1` snapshot the scheduler reads. `phm world get <path> --json` is the tick read. Unknown is never zero.
+- [World model](WORLD.md): `phm world --json` is the cached `ashlr.world-model/v1` snapshot the scheduler reads. `phm world get <path> --json` is the tick read. Unknown is never zero. `phm context --for-agent <lane> --json` is the under-4KB brief. `phm claim acquire <work-key> --lane <lane> --json` refuses a live claim or open pull on that key.
 
 - [CLI reference](CLI-REFERENCE.md): Generated from `phm --help` and `phm help --all`. The checkout is the authority.
 - [CLI docs](cli.md): Regenerated from `phm --help` by `scripts/generate-cli-docs.mjs`. Do not edit by hand.
@@ -407,3 +408,5 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Agent network](AGENT-NETWORK.md): SSH multi-Mac node pool; first join needs explicit aliases and owner, repeat node join --json reuses config; RAM/disk pressure admission, local auth, mobile control only, split-brain fencing and primary-only publication.
 
 - [Repository ranking](REPO-RANK.md): `phm repos rank --json`, `phm repos rank --recompute --json` and `phm repos rank proposals --json`; daily local evidence, manual enrollment, read-only restock weights.
+
+- [PR triage](PR-TRIAGE.md): read-only open PR verdicts and JSON schema.

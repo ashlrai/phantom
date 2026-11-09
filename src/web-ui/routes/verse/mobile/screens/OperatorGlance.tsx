@@ -91,6 +91,7 @@ export function OperatorGlance() {
         <Button variant="tinted" onClick={() => navigate({ screen: 'agents' })}>Sessions{workingCount === null ? '' : ` · ${workingCount}`}</Button>
         <Button variant="tinted" onClick={() => navigate({ screen: 'needs' })}>Approvals{needsCount === null ? '' : ` · ${needsCount}`}</Button>
         <Button variant="tinted" onClick={() => navigate({ screen: 'inbox' })}>Comms inbox</Button>
+        <Button variant="tinted" onClick={() => navigate({ screen: 'watch' })}>Watch</Button>
       </nav>
       <MobileInterject title="Order" placeholder="Tell the leaders in plain language." />
       <HomeRuns />
