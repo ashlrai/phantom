@@ -1,4 +1,5 @@
 import { readGoals } from '../fleet/goals.js';
+import { readMetricsPanel } from '../fleet/metrics-panel.js';
 import { readOrdersView } from './fleet-orders-view.js';
 import { readInboxAckStates, type InboxAckState } from '../fleet/inbox-ack-state.js';
 import { getLaneModelSnapshot, type LaneModelSnapshot } from '../fleet/lane-models.js';
@@ -290,6 +291,11 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     catch { return emptyMission(now()); }
   }
   return async (ctx, req, res, path, method) => {
+    if (path === '/api/verse/fleet/runs/metrics') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      sendJson(res, 200, await readMetricsPanel(deps.runsDir ?? defaultRunsDir()));
+      return true;
+    }
     if (path === '/api/verse/fleet/runs/goals') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
       sendJson(res, 200, await readGoals(deps.runsDir ?? defaultRunsDir()));

@@ -217,6 +217,14 @@ describe('daemon doctor', () => {
 });
 
 describe('daemon status --json', () => {
+  it('reports the last tick age in seconds and preserves an unknown age', async () => {
+    writeRecord({ lastTickAt: new Date(Date.now() - 10_000).toISOString() });
+    const known = JSON.parse((await run(['status', '--json'])).stdout) as { last_tick_age_s: number | null };
+    expect(known.last_tick_age_s).toBeGreaterThanOrEqual(10);
+    writeRecord({ lastTickAt: null });
+    const unknown = JSON.parse((await run(['status', '--json'])).stdout) as { last_tick_age_s: number | null };
+    expect(unknown.last_tick_age_s).toBeNull();
+  });
   it.skipIf(runnerIsRoot)('says what liveness PROVES next to what daemon.json claims (pid reused by a root process)', async () => {
     writeRecord({ running: true, pid: FOREIGN_PID });
     writeLock(FOREIGN_PID, '2026-09-01T19:10:00.000Z');
