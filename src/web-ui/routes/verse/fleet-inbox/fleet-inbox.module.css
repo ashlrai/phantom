@@ -22,3 +22,4 @@
 .unifiedItem[data-severity="warn"] { border-left-color: var(--status-warning-solid); }
 .unifiedItem[data-severity="high"] { border-left-color: var(--status-danger-solid); }
 .unifiedTitle { overflow-wrap: anywhere; flex: 1 1 12rem; }
+.cos[data-over-target] { border-color: var(--status-warning-solid); }
