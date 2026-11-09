@@ -297,6 +297,10 @@ for i, j, attrs, text, raw in ranked_records(recs):
     if pool == "any" and devin_default(tm, attrs): pool = "devin"   # frontier/long-horizon -> devin by default
     if pool == "any": pool = max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
     if pool not in CODEX: skip(j, "lane-" + pool); continue
+    if pool == "codex-local":
+        size = re.search(r"(?:^|[,;\s])size<=([0-9]+)(?=[,;\s]|$)", attrs)
+        if not size or int(size.group(1)) > 60:
+            skip(j, "local-size"); continue
     prp = set(re.findall(r"github\.com/[A-Za-z0-9._-]+/([A-Za-z0-9._-]+)/pull/(\d+)", raw))
     prp |= {(rm.group(1), n) for n in re.findall(r"(?:pull/|PR=|#)(\d+)", attrs + " " + text)}
     if prp & held_pr or any(("*", n) in held_pr for _, n in prp): skip(j, "hold-list-pr"); continue
