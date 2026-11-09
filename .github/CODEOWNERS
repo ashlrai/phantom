@@ -949,6 +949,7 @@
 /test/merge-backlog-read.test.ts @masonwyatt23
 /test/merge-gate-latency.test.ts @masonwyatt23
 /test/merge-gates-310b.test.ts @masonwyatt23
+/test/merge-graph.test.ts @masonwyatt23
 /test/merge-temp-worktree-reaper.test.ts @masonwyatt23
 /test/metrics-boundary.test.ts @masonwyatt23
 /test/metrics-pillar.test.ts @masonwyatt23
