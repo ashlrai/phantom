@@ -17,6 +17,7 @@ import type {
   FleetActivitySnapshot,
   FleetLaneSnapshot,
   FleetStatus,
+  VerifiedCompletionReport,
   ApprovalRequest,
   Proposal,
   ProposalStatus,
@@ -133,6 +134,17 @@ export const fleetActivityQuery: QueryDef<FleetActivitySnapshot> = {
 export const fleetLanesQuery: QueryDef<FleetLaneSnapshot> = {
   key: 'fleet-lanes',
   fetch: (signal) => apiGet<FleetLaneSnapshot>('/api/fleet/lanes', signal),
+};
+
+/**
+ * Verified-completion-rate metric — completed tasks passing an independent
+ * outcome check vs eligible claims, plus coordination failures. Read-only
+ * bounded ledger projection (GET /api/fleet/verified-completion →
+ * readVerifiedCompletion()).
+ */
+export const verifiedCompletionQuery: QueryDef<VerifiedCompletionReport> = {
+  key: 'fleet-verified-completion',
+  fetch: (signal) => apiGet<VerifiedCompletionReport>('/api/fleet/verified-completion', signal),
 };
 
 /**

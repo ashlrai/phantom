@@ -939,9 +939,20 @@ async function stepWatch(
   w.ci = await safeCi(deps, landing.repo, landing.mergeSha);
   w.lastCheckedAt = iso(nowMs);
 
+  // ── attribute red CI before paying for the suite ───────────────────────
+  // Failing checks the first parent did not also fail convict the landing on
+  // their own: the suite cannot change that verdict, so it is skipped and
+  // onRed reuses this attribution instead of reading GitHub a second time.
+  // (A red revert escalates before attribution is used — leave its path as is.)
+  const attribution = w.ci.state === 'red' && landing.kind === 'merge'
+    ? await readRedAttribution(deps, landing.repo, landing.mergeSha, w.ci)
+    : null;
+  const ciConvicts = (attribution?.culpritChecks.length ?? 0) > 0;
+
   // ── run the suite (bounded; never while Stop is on) ──────────────────
-  const suiteWanted = (w.suite.state === 'pending' && w.suite.infraAttempts < MAX_SUITE_INFRA_ATTEMPTS) ||
-    (w.suite.state === 'not-run' && w.suite.infraAttempts < MAX_SUITE_INFRA_ATTEMPTS);
+  const suiteWanted = !ciConvicts &&
+    ((w.suite.state === 'pending' && w.suite.infraAttempts < MAX_SUITE_INFRA_ATTEMPTS) ||
+      (w.suite.state === 'not-run' && w.suite.infraAttempts < MAX_SUITE_INFRA_ATTEMPTS));
   if (suiteWanted && !killed && budget.suiteRuns > 0 && !signal?.aborted) {
     budget.suiteRuns--;
     pass.suiteRuns++;
@@ -987,7 +998,7 @@ async function stepWatch(
   const suiteRed = w.suite.state === 'fail';
 
   if (ciRed || suiteRed) {
-    await onRed(w, current.history, deps, budget, pass, signal);
+    await onRed(w, current.history, deps, budget, pass, signal, attribution);
     return;
   }
 
@@ -1184,6 +1195,40 @@ async function revokeMergesAfterSoftKill(deps: PostMergeWatchDeps, reason: strin
   }
 }
 
+/**
+ * What onRed needs from GitHub to attribute red: the merge commit (its first
+ * parent for attribution, its trailers for the authorship proof) and the CI
+ * checks the parent did NOT also fail. Read once per pass — stepWatch reads
+ * it before the suite so a convicting CI can skip the suite entirely.
+ */
+interface RedAttribution {
+  commit: CommitInfo | null;
+  parent: string | null;
+  culpritChecks: string[];
+}
+
+async function readRedAttribution(
+  deps: PostMergeWatchDeps,
+  repo: string,
+  mergeSha: string,
+  ci: CiObservation | null,
+): Promise<RedAttribution> {
+  const commit = await safeReadCommit(deps, repo, mergeSha);
+  const parent = commit && commit.parents.length >= 1 ? commit.parents[0]! : null;
+  let culpritChecks: string[] = [];
+  if (ci?.state === 'red') {
+    culpritChecks = ci.failing;
+    if (parent) {
+      const parentCi = await safeCi(deps, repo, parent);
+      if (parentCi.state === 'red') {
+        const inherited = new Set(parentCi.failing);
+        culpritChecks = ci.failing.filter((name) => !inherited.has(name));
+      }
+    }
+  }
+  return { commit, parent, culpritChecks };
+}
+
 async function onRed(
   w: PostMergeWatch,
   history: EscalationHistory,
@@ -1191,6 +1236,7 @@ async function onRed(
   budget: { suiteRuns: number },
   pass: PostMergeWatchPassResult,
   signal: AbortSignal | undefined,
+  prefetched: RedAttribution | null = null,
 ): Promise<void> {
   const landing = w.landing;
   const nowMs = deps.now();
@@ -1211,21 +1257,15 @@ async function onRed(
   }
 
   // ── attribute against the first parent ──────────────────────────────────
-  const commit = await safeReadCommit(deps, landing.repo, landing.mergeSha);
-  const parent = commit && commit.parents.length >= 1 ? commit.parents[0]! : null;
-  let culpritChecks: string[] = [];
-  if (w.ci?.state === 'red') {
-    culpritChecks = w.ci.failing;
-    if (parent) {
-      const parentCi = await safeCi(deps, landing.repo, parent);
-      if (parentCi.state === 'red') {
-        const inherited = new Set(parentCi.failing);
-        culpritChecks = w.ci.failing.filter((name) => !inherited.has(name));
-      }
-    }
-  }
+  const attr = prefetched ?? await readRedAttribution(deps, landing.repo, landing.mergeSha, w.ci);
+  const commit = attr.commit;
+  const parent = attr.parent;
+  const culpritChecks = attr.culpritChecks;
   let suiteCulprit = false;
-  if (w.suite.state === 'fail') {
+  // The parent suite only exists to excuse a suite failure the CI evidence
+  // did not already convict: when culpritChecks is non-empty the revert
+  // verdict cannot change, so the run is skipped.
+  if (w.suite.state === 'fail' && culpritChecks.length === 0) {
     if (w.suite.parent === null && parent && !safeKillActive(deps) && budget.suiteRuns > 0 && !signal?.aborted) {
       budget.suiteRuns--;
       pass.suiteRuns++;
@@ -1599,23 +1639,29 @@ async function githubGet(repo: string, path: string, fetchImpl: FetchLike): Prom
 /** CI on `sha`: check runs (≤ 300) plus combined commit statuses. */
 export async function githubCiStatus(repo: string, sha: string, fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike): Promise<CiObservation> {
   if (!GIT_SHA_RE.test(sha)) return { state: 'unknown', failing: [], detail: 'malformed SHA' };
-  const runs: { name: string; status: string; conclusion: string | null }[] = [];
-  for (let page = 1; page <= 3; page++) {
-    const body = await githubGet(repo, `/commits/${sha}/check-runs?per_page=100&page=${page}`, fetchImpl) as
-      { total_count?: unknown; check_runs?: unknown };
-    const list = Array.isArray(body?.check_runs) ? body.check_runs : [];
-    for (const item of list) {
-      const r = item as Record<string, unknown>;
-      runs.push({
-        name: typeof r['name'] === 'string' ? r['name'] : 'unnamed check',
-        status: typeof r['status'] === 'string' ? r['status'] : 'unknown',
-        conclusion: typeof r['conclusion'] === 'string' ? r['conclusion'] : null,
-      });
+  // The combined status is independent of the check-run pages: read it while
+  // they paginate instead of queueing a second round-trip behind them.
+  const statusRead = githubGet(repo, `/commits/${sha}/status?per_page=100`, fetchImpl) as Promise<{ statuses?: unknown }>;
+  const runsRead = (async () => {
+    const runs: { name: string; status: string; conclusion: string | null }[] = [];
+    for (let page = 1; page <= 3; page++) {
+      const body = await githubGet(repo, `/commits/${sha}/check-runs?per_page=100&page=${page}`, fetchImpl) as
+        { total_count?: unknown; check_runs?: unknown };
+      const list = Array.isArray(body?.check_runs) ? body.check_runs : [];
+      for (const item of list) {
+        const r = item as Record<string, unknown>;
+        runs.push({
+          name: typeof r['name'] === 'string' ? r['name'] : 'unnamed check',
+          status: typeof r['status'] === 'string' ? r['status'] : 'unknown',
+          conclusion: typeof r['conclusion'] === 'string' ? r['conclusion'] : null,
+        });
+      }
+      const total = typeof body?.total_count === 'number' ? body.total_count : list.length;
+      if (list.length < 100 || runs.length >= total) break;
     }
-    const total = typeof body?.total_count === 'number' ? body.total_count : list.length;
-    if (list.length < 100 || runs.length >= total) break;
-  }
-  const status = await githubGet(repo, `/commits/${sha}/status?per_page=100`, fetchImpl) as { statuses?: unknown };
+    return runs;
+  })();
+  const [status, runs] = await Promise.all([statusRead, runsRead]);
   const statuses = (Array.isArray(status?.statuses) ? status.statuses : []).map((s) => {
     const r = s as Record<string, unknown>;
     return { context: typeof r['context'] === 'string' ? r['context'] : 'status', state: typeof r['state'] === 'string' ? r['state'] : 'unknown' };

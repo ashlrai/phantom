@@ -52,6 +52,7 @@ def build(md):
     (q / 'slots.json').write_text(json.dumps(slots))
     (q / 'claimed.tsv').write_text('')
     (q / 'ready.tsv').write_text('')
+    (q / 'admission.json').write_text(json.dumps({'cap': 1000}))
     return tmp
 
 

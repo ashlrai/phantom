@@ -1,0 +1,6 @@
+{
+  "schema": "spend.budget.v1",
+  "entries": [
+    { "provider": "claude-api", "period": "month", "usd": 0 }
+  ]
+}

@@ -81,14 +81,16 @@ def set_daemon_tick(home, value):
         f.write_text(value)
 
 
-def tick(home, env_extra=None):
+def tick(home, env_extra=None, script=None):
     env = {'HOME': str(home),
            'PATH': str(Path(home) / 'stubbin') + ':' + os.environ.get('PATH', '/usr/bin:/bin'),
            'LANG': 'C', 'LOADGATE_LOADAVG': '1.0', 'LOADGATE_NCPU': '18', 'LOADGATE_PRESSURE': '1', 'LOADGATE_SWAP_GB': '0',
            'DISKGUARD_FREE_GB': '500'}
     if env_extra:
         env.update(env_extra)
-    return subprocess.run([sys.executable, '-B', str(SCRIPT)], env=env,
+    env.setdefault('PYTHONPATH', str(Path(home) / 'stubbin') + ':' + str(SCRIPT.parent))
+    script = script or SCRIPT
+    return subprocess.run([sys.executable, '-B', str(script)], env=env,
                           capture_output=True, text=True, timeout=120)
 
 
@@ -171,6 +173,59 @@ def dispatched(home, job):
 def auth_mark(home, job):
     f = home / '.ashlr-runs' / 'queue' / 'run' / f'{job}.authfail.seen'
     return f.read_text().strip() if f.exists() else None
+
+
+class DispatchClaimTests(unittest.TestCase):
+    def test_tick_claim_recovers_after_owner_exit(self):
+        tmp = build(); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+        env = launch_stubs(home); queue_job(home, 'RQ-CLAIM', lane='devin')
+        lock = home / '.ashlr-runs/queue/dispatchd.tick.lock'
+        owner = subprocess.Popen([sys.executable, '-c',
+            'import fcntl,sys,time; f=open(sys.argv[1], "a"); fcntl.flock(f, fcntl.LOCK_EX); print("locked", flush=True); time.sleep(60)',
+            str(lock)], stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(owner.stdout.readline().strip(), 'locked')
+            self.assertEqual(tick(home, env).returncode, 0)
+            self.assertFalse(dispatched(home, 'RQ-CLAIM'))
+        finally:
+            owner.kill(); owner.wait(); owner.stdout.close()
+        self.assertEqual(tick(home, env).returncode, 0)
+        self.assertTrue(dispatched(home, 'RQ-CLAIM'))
+        self.assertEqual(tick(home, env).returncode, 0)
+        rows = [json.loads(x) for x in (home / '.ashlr-runs/metrics/jobs.jsonl').read_text().splitlines()]
+        self.assertEqual(sum(x.get('event') == 'launch' and x.get('job') == 'RQ-CLAIM' for x in rows), 1)
+
+    def test_interrupted_claim_is_retried(self):
+        tmp = build(); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+        env = launch_stubs(home); queue_job(home, 'RQ-CRASH', lane='devin')
+        q = home / '.ashlr-runs/queue'; line = (q / 'ready.tsv').read_text()
+        (q / 'ready.tsv').write_text('')
+        (q / 'run/RQ-CRASH.line').write_text(line)
+        receipt = q / 'run/RQ-CRASH.dispatched'; receipt.write_text('0')
+        os.utime(receipt, (time.time() - 300, time.time() - 300))
+        self.assertEqual(tick(home, env).returncode, 0)
+        self.assertTrue(dispatched(home, 'RQ-CRASH'))
+        self.assertIn('LAUNCH_INTERRUPTED RQ-CRASH', events(home))
+
+    def test_candidate_worker_cwd_prevents_duplicate_after_grace(self):
+        candidate = SCRIPT.parent / 'host-integration/dispatchd.candidate.py'
+        for lane in ('grok', 'cursor'):
+            with self.subTest(lane=lane):
+                tmp = build(); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+                env = launch_stubs(home); queue_job(home, 'RQ-LIVE', lane=lane)
+                (home / 'stubbin/router_queue.py').write_text('def load(path): return ({}, set())\ndef read_metadata(path): return open(path).read()\n')
+                (home / '.ashlr-runs/bin/router.py').write_text('def load(path): return ({}, {})\n')
+                (home / '.ashlr-runs/queue/ROUTER_OFF').touch()
+                r = home / '.ashlr-runs'; wt = home / 'Projects/ashlrai/wt/RQ-LIVE'; wt.mkdir()
+                (r / 'RQ-LIVE.base').write_text(f'phantom branch {wt} {lane}\n')
+                receipt = r / 'queue/run/RQ-LIVE.dispatched'; receipt.write_text('0')
+                os.utime(receipt, (time.time() - 300, time.time() - 300))
+                (home / 'stubbin/lsof').write_text(f'#!/bin/sh\necho n{wt}\n')
+                result = tick(home, env, script=candidate)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(receipt.exists())
+                rows = [json.loads(x) for x in (r / 'metrics/jobs.jsonl').read_text().splitlines()]
+                self.assertFalse(any(x.get('event') == 'launch' and x.get('job') == 'RQ-LIVE' for x in rows))
 
 
 class SlotDefaultTests(unittest.TestCase):
@@ -671,6 +726,17 @@ class DispatchPriorityTests(unittest.TestCase):
         result = tick(home, env)
         self.assertEqual(result.returncode, 0, result.stderr)
         return result
+
+    def test_local_oversized_and_unknown_jobs_remain_queued(self):
+        home, env = self.fixture(('codex-local', 'codex-cmp'))
+        for job, size in [('RQ-LOCAL-LARGE', 61), ('RQ-LOCAL-UNKNOWN', None), ('RQ-LOCAL-BAD', 'oops')]:
+            queue_job(home, job, 'codex-local', size=size)
+        queue_job(home, 'RQ-OTHER', 'codex-cmp', size=200)
+        self.run_tick(home, env)
+        self.assertEqual(self.claims(home), ['RQ-OTHER'])
+        remaining = '\n'.join(ready_lines(home))
+        for job in ('RQ-LOCAL-LARGE', 'RQ-LOCAL-UNKNOWN', 'RQ-LOCAL-BAD'):
+            self.assertIn(job, remaining)
 
     def test_launch_buckets_override_queue_order_and_lane_cursor(self):
         home, env = self.fixture(('codex-cmp', 'codex-personal', 'devin'))
@@ -1243,3 +1309,122 @@ class SnapshotSafetyTests(unittest.TestCase):
         home, root, wt = self.preserved_fixture('claude')
         (home / 'stubbin/lsof').write_text('#!/bin/bash\nexit 124\n')
         self.assert_preserved(home, root, wt, (root / 'queue/ready.tsv').read_text())
+
+
+class VerifiedCompletionTests(unittest.TestCase):
+    """RQ-SWE5-VERIFY-METRIC: status.json verified_completion block — independently
+    reconciled PR outcomes vs completion claims, plus coordination failures."""
+
+    @staticmethod
+    def ts(offset_s=0):
+        return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() + offset_s))
+
+    @staticmethod
+    def pr(n, repo='ashlrai/phantom'):
+        return f'https://github.com/{repo}/pull/{n}'
+
+    def vc(self, home):
+        status = json.loads((home / '.ashlr-runs' / 'queue' / 'status.json').read_text())
+        return status['verified_completion']
+
+    def run_tick(self, rows):
+        tmp = build(slots=held_lanes(), finishes=[], publishes=[])
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name).resolve()
+        ledger = home / '.ashlr-runs' / 'metrics' / 'jobs.jsonl'
+        ledger.write_text(''.join(json.dumps(r) + '\n' for r in rows))
+        result = tick(home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return self.vc(home)
+
+    def test_empty_ledger_reports_healthy_zero_claims(self):
+        vc = self.run_tick([])
+        self.assertEqual(vc['schema'], 'dispatchd.verified-completion.v1')
+        self.assertEqual(vc['window_hours'], 24)
+        self.assertEqual(vc['source_state'], 'healthy')
+        self.assertEqual(vc['eligible'], 0)
+        self.assertIsNone(vc['rate'])
+        self.assertEqual(vc['claims'], {'published': 0, 'batch_members': 0, 'outcomes': 0})
+
+    def test_eventless_producer_and_reconciler_rows_verify_a_merge(self):
+        pr = self.pr(501)
+        rows = [
+            {'event': 'launch', 'job': 'RQ-VC-1', 'lane': 'devin', 'repo': 'phantom', 'ts': self.ts(-60)},
+            {'event': 'finish', 'job': 'RQ-VC-1', 'exit_code': 0, 'empty': False, 'ts': self.ts(-50)},
+            {'jobId': 'RQ-VC-1', 'prUrl': pr, 'outcome': 'PUBLISHED', 'ts': self.ts(-40), 'lane': 'devin'},
+            {'jobId': 'RQ-VC-1', 'prUrl': pr, 'outcome': 'MERGED', 'ts': self.ts(-30),
+             'mergedAt': self.ts(-30), 'source': 'metrics-outcomes-reconciler'},
+        ]
+        vc = self.run_tick(rows)
+        self.assertEqual(vc['eligible'], 1)
+        self.assertEqual(vc['verified'], 1)
+        self.assertEqual(vc['failed'], 0)
+        self.assertEqual(vc['pending'], 0)
+        self.assertEqual(vc['rate'], 1.0)
+        self.assertEqual(vc['claims']['published'], 1)
+        self.assertEqual(vc['by_lane']['devin'], {'eligible': 1, 'verified': 1, 'failed': 0, 'pending': 0})
+
+    def test_closed_pr_is_a_false_completion(self):
+        pr = self.pr(502)
+        rows = [
+            {'event': 'publish', 'job': 'RQ-VC-2', 'url': pr, 'lane': 'devin', 'ts': self.ts(-60)},
+            {'event': 'outcome', 'job': 'RQ-VC-2', 'url': pr, 'state': 'CLOSED', 'ts': self.ts(-30)},
+        ]
+        vc = self.run_tick(rows)
+        self.assertEqual(vc['eligible'], 1)
+        self.assertEqual(vc['failed'], 1)
+        self.assertEqual(vc['false_completions'], 1)
+        self.assertEqual(vc['rate'], 0.0)
+        self.assertEqual(vc['detail']['false_completion_jobs'], ['RQ-VC-2'])
+
+    def test_publish_without_reconciled_outcome_stays_pending(self):
+        rows = [{'event': 'publish', 'job': 'RQ-VC-3', 'url': self.pr(503), 'lane': 'devin', 'ts': self.ts(-60)}]
+        vc = self.run_tick(rows)
+        self.assertEqual(vc['eligible'], 1)
+        self.assertEqual(vc['pending'], 1)
+        self.assertIsNone(vc['rate'])
+
+    def test_unpublished_nonempty_finish_is_not_a_claim(self):
+        rows = [{'event': 'finish', 'job': 'RQ-VC-4', 'lane': 'devin', 'exit_code': 0, 'empty': False, 'ts': self.ts(-60)}]
+        vc = self.run_tick(rows)
+        self.assertEqual(vc['eligible'], 0)
+        self.assertEqual(vc['completed_unpublished'], 1)
+
+    def test_duplicates_and_unauthorized_actions_are_counted(self):
+        shared = self.pr(510)
+        rows = [
+            {'event': 'claim', 'job': 'RQ-DUP-1', 'repo': 'phantom', 'lane': 'devin', 'ts': self.ts(-300)},
+            {'event': 'publish', 'job': 'RQ-DUP-1', 'url': self.pr(511), 'ts': self.ts(-200)},
+            {'event': 'publish', 'job': 'RQ-DUP-1', 'url': self.pr(512), 'ts': self.ts(-190)},
+            {'event': 'claim', 'job': 'RQ-SHR-1', 'lane': 'devin', 'ts': self.ts(-300)},
+            {'event': 'publish', 'job': 'RQ-SHR-1', 'url': shared, 'ts': self.ts(-200)},
+            {'event': 'claim', 'job': 'RQ-SHR-2', 'lane': 'devin', 'ts': self.ts(-300)},
+            {'event': 'publish', 'job': 'RQ-SHR-2', 'url': shared, 'ts': self.ts(-200)},
+            {'event': 'claim', 'job': 'RQ-BAD-1', 'repo': 'phantom', 'lane': 'devin', 'ts': self.ts(-300)},
+            {'event': 'publish', 'job': 'RQ-BAD-1', 'url': self.pr(513, 'ashlrai/lexicon'), 'ts': self.ts(-200)},
+        ]
+        vc = self.run_tick(rows)
+        self.assertEqual(vc['eligible'], 4)
+        self.assertEqual(vc['pending'], 4)
+        self.assertEqual(vc['duplicates'], {'multi_pr_jobs': 1, 'shared_pr_urls': 1})
+        self.assertEqual(vc['detail']['multi_pr_jobs'], ['RQ-DUP-1'])
+        self.assertEqual(vc['unauthorized_actions'], 1)
+        self.assertEqual(vc['detail']['unauthorized_jobs'], ['RQ-BAD-1'])
+
+    def test_batch_member_done_verifies_through_batch_pr(self):
+        pr = self.pr(520)
+        rows = [
+            {'event': 'batch_claim', 'job': 'RQ-MEM-1', 'batch': 'RQ-BATCH-phantom-t-1', 'repo': 'phantom',
+             'lane': 'devin', 'ts': self.ts(-300)},
+            {'event': 'task_outcome', 'job': 'RQ-MEM-1', 'batch': 'RQ-BATCH-phantom-t-1', 'lane': 'devin',
+             'repo': 'phantom', 'outcome': 'done', 'ts': self.ts(-200)},
+            {'event': 'launch', 'job': 'RQ-BATCH-phantom-t-1', 'lane': 'devin', 'repo': 'phantom', 'ts': self.ts(-290)},
+            {'event': 'publish', 'job': 'RQ-BATCH-phantom-t-1', 'url': pr, 'ts': self.ts(-100)},
+            {'jobId': 'RQ-BATCH-phantom-t-1', 'prUrl': pr, 'outcome': 'MERGED', 'ts': self.ts(-50),
+             'source': 'metrics-outcomes-reconciler'},
+        ]
+        vc = self.run_tick(rows)
+        self.assertEqual(vc['claims']['batch_members'], 1)
+        self.assertEqual(vc['claims']['published'], 0)   # the batch session itself is infrastructure
+        self.assertEqual(vc['eligible'], 1)
+        self.assertEqual(vc['verified'], 1)
