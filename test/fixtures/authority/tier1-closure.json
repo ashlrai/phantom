@@ -493,6 +493,7 @@
     "src/core/fabric/resource-view-store.ts",
     "src/core/fabric/resource-view.ts",
     "src/core/fabric/usage-api.ts",
+    "src/core/feed.ts",
     "src/core/fleet/agent-action-ledger.ts",
     "src/core/fleet/agent-activity.ts",
     "src/core/fleet/agent-roster.ts",

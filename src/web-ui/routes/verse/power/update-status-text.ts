@@ -17,7 +17,7 @@ export function updateStatusText(state: DesktopUpdateState): { badge: string; de
   if (state.phase === 'idle' || state.phase === 'current') {
     return {
       badge: v ? `Up to date · ${v}` : 'No newer signed release',
-      detail: state.phase === 'idle' ? `No signed release newer than ${v ?? 'the installed version'} has been published yet.` : null,
+      detail: state.phase === 'idle' ? `No installable signed release newer than ${v ?? 'the installed version'} is on the update feed.` : null,
     };
   }
   return { badge: v ? `${labels[state.phase]} · ${v}` : labels[state.phase], detail: null };

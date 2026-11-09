@@ -97,7 +97,12 @@ describe('included waste forecast', () => {
     const unusedAfter = 100 - (20.2 + pacedJobs * 0.1 * 168);
     expect(unusedAfter).toBeCloseTo(12.6, 5);
     expect(includedWastePerWeek(presentUsageSensors([], NOW))).toBeNull();
-    const journal = readFileSync(new URL('../usage-readings.log', import.meta.url), 'utf8');
+    // RQ-ROOT-ARTIFACTS-1 removed the repo-root journal. These two unknown
+    // readings were that file; they must still not count as zero waste.
+    const journal = [
+      '{"observedAt":"2026-10-26T20:54:04Z","pool":"codex-personal","source":"codex-reader","status":"unknown","resetAt":null,"reason":"reader-and-personal-home-unavailable"}',
+      '{"observedAt":"2026-10-26T20:54:04Z","pool":"terra@personal","source":"codex-reader","status":"unknown","resetAt":null,"reason":"reader-and-personal-home-unavailable"}',
+    ].join('\n');
     const fleet = readFileSync(new URL('./fixtures/fleet-lanes/queue/usage-readings.log', import.meta.url), 'utf8');
     const historical = [...journal.split('\n'), ...fleet.split('\n')].flatMap((line) => {
       if (!line.trim()) return [];
