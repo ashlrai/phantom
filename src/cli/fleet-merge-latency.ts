@@ -68,11 +68,13 @@ export interface QueueTimeline {
   repo: string; pr: number; enqueued_at: string | null; eligible_at: string | null; merged_at: string | null;
   blocked: { at: string; reason: BlockerReason }[];
   enqueue_to_eligible_s: number | null; eligible_to_merge_s: number | null;
+  /** Current queue dwell for an open PR with exactly one timed enqueue. */
+  current_dwell_s: number | null;
   wait_by_reason_s: Partial<Record<BlockerReason, number>> | null;
   checks: { required_failures: number; unrelated_failures: number; unknown_failures: number } | null;
 }
 
-function timeline(events: MergeEvent[]): QueueTimeline {
+function timeline(events: MergeEvent[], now: number): QueueTimeline {
   const one = (type: MergeEventType) => {
     const matches = events.filter(e => e.type === type);
     return matches.length === 1 && matches[0]!.at ? matches[0]!.at! : null;
@@ -102,6 +104,8 @@ function timeline(events: MergeEvent[]): QueueTimeline {
     unknown_failures: failures.filter(e => e.required === undefined).length } : null;
   return { repo: events[0]!.repo, pr: events[0]!.pr, enqueued_at, eligible_at, merged_at, blocked,
     wait_by_reason_s: measurable ? wait : null, checks,
+    current_dwell_s: enqueued_at && !events.some(e => e.type === 'merged' || e.type === 'closed')
+      ? gap(Date.parse(enqueued_at), now) : null,
     enqueue_to_eligible_s: valid ? gap(Date.parse(enqueued_at!), Date.parse(eligible_at!)) : null,
     eligible_to_merge_s: valid ? gap(Date.parse(eligible_at!), Date.parse(merged_at!)) : null };
 }
@@ -184,7 +188,7 @@ export async function fleetMergeLatency(read: MergeEventReader, now = Date.now()
     const first = (type: MergeEventType) => { const e = events.find(x => x.type === type); return e?.at ? eventTime(e) : undefined; };
     const { repo, pr } = last;
     const mergedAt = first('merged');
-    if (events.some(e => e.type === 'queued' || e.type === 'eligible' || e.type === 'blocked' || e.type === 'check_observed')) timelines.push(timeline(events));
+    if (events.some(e => e.type === 'queued' || e.type === 'eligible' || e.type === 'blocked' || e.type === 'check_observed')) timelines.push(timeline(events, now));
     if (events.some(e => e.type === 'merged')) {
       if (mergedAt !== undefined && mergedAt < since) continue;
       merged++;

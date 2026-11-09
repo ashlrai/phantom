@@ -217,3 +217,9 @@ it('reports observed check failures and queue wait by reason without guessing mi
     { pr: 4, wait_by_reason_s: null, checks: null },
   ]);
 });
+
+it('reports current dwell only for a single observed enqueue on an open PR', async () => {
+  const report = await fleetMergeLatency(reader(ev(1, 'queued', 100), ev(2, 'queued', 90), ev(2, 'queued', 50),
+    ev(3, 'queued', 80), ev(3, 'merged', 10), ev(4, 'queued', 70), ev(4, 'closed', 10)), now);
+  expect(report.queue_timelines?.map(t => [t.pr, t.current_dwell_s])).toEqual([[1, 100], [2, null], [3, null], [4, null]]);
+});
