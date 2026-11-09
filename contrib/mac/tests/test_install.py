@@ -13,7 +13,7 @@ import unittest
 MAC = Path(__file__).resolve().parents[1]
 INSTALL = MAC / 'install.sh'
 FILES = ('process_snapshot.py', 'dispatchd.py', 'concurrency.py', 'batcher.py', 'local_job.py', 'restock.py', 'launch_precheck.py', 'install-gate.py',
-         'launch-gate.sh')
+         'launch-gate.sh', 'action_classes.py', 'action-classes.json')
 
 
 def sha(p):

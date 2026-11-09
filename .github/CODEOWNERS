@@ -251,6 +251,7 @@
 /test/agent-network-policy.test.ts @masonwyatt23
 /test/anthropic-messages-client.test.ts @masonwyatt23
 /test/ask-fanout-budget.test.ts @masonwyatt23
+/test/authority-action-classes.test.ts @masonwyatt23
 /test/authority-api-310b.test.ts @masonwyatt23
 /test/authority-capability-310b.test.ts @masonwyatt23
 /test/authority-clamp-310b.test.ts @masonwyatt23

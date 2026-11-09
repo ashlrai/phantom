@@ -64,6 +64,7 @@ import type {
   LedgerReadOptions,
   LedgerReadResult,
 } from '../authority/types.js';
+import { actionClassDisposition, actionClassForLeaderKind } from '../authority/action-classes.js';
 import type {
   CancelTaskRequest,
   CancelTaskResult,
@@ -955,6 +956,19 @@ function escalate(reason: string, spendRaising = false): LeaderClassification {
  */
 export function classifyLeaderAction(draft: AnyLeaderActionDraft, ctx: LeaderPolicyContext): LeaderClassification {
   const policy = ctx.policy;
+  // RQ-SWE5-ACTION-CLASSES: a kind that lands in a registry action class may not
+  // run past that class's gate — `forbidden` refuses outright, `operator`
+  // escalates to Mason. Pure: the registry is a compiled constant.
+  const actionClass = actionClassForLeaderKind(draft.kind);
+  if (actionClass !== null) {
+    const disposition = actionClassDisposition(actionClass);
+    if (disposition === 'forbidden') {
+      return refuse('C', `Action class ${actionClass} is forbidden to autonomy.`);
+    }
+    if (disposition === 'operator') {
+      return escalate(`Action class ${actionClass} is operator-only.`);
+    }
+  }
   // 3.15 founder-mode kinds: same purity, same context (leader-powers.ts).
   const power = classifyPowerAction(draft, ctx);
   if (power) return power;
