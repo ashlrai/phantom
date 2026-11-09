@@ -12,7 +12,8 @@ import type { LiveWorkersSnapshot } from '../src/core/fleet/runs-live-workers.js
 import { createAgentRosterApi, VERSE_AGENT_ROSTER_PATH } from '../src/core/verse/agent-roster-api.js';
 
 const OBSERVED = '2026-11-09T05:00:00.000Z';
-const SECRET = 'sk-abcdefghijklmnopqrst';
+// Built at runtime so the source diff does not contain a secret-shaped token.
+const SECRET = ['sk', 'EXAMPLE', 'not-a-real-key-value'].join('-');
 
 const phantomSnap: LiveWorkersSnapshot = {
   v: 1,
