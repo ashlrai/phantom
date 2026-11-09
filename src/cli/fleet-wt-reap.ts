@@ -110,8 +110,22 @@ export async function cmdFleetWtReap(args: string[], deps: WtReapDeps = {}): Pro
       }
       try {
         await runner('git', ['-C', path, 'worktree', 'remove', '--', path]);
-        r.removals.push({ id: w.id, status: 'removed' });
+        try {
+          await lstat(path);
+          r.removals.push({ id: w.id, status: 'failed', reason: 'worktree-remains' });
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          r.removals.push({ id: w.id, status: 'removed' });
+        }
       } catch (error) {
+        // Another reaper can remove the directory after our path check or while
+        // Git is running. Only absence proves that this attempt converged.
+        try { await lstat(path); } catch (statError) {
+          if ((statError as NodeJS.ErrnoException).code === 'ENOENT') {
+            r.removals.push({ id: w.id, status: 'already-removed' });
+            continue;
+          }
+        }
         // Git output can contain private paths or file names; expose only fixed codes.
         const e = error as { stderr?: unknown; code?: unknown; killed?: unknown };
         const stderr = typeof e?.stderr === 'string' ? e.stderr : '';
