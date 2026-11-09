@@ -195,8 +195,7 @@ export interface DesktopctlCapabilities {
 
 function matchTaskResource(id: DesktopAppId, bundleOverride: string | undefined, apps: readonly RunningApp[]): RunningApp | null {
   if (bundleOverride) {
-    const hit = apps.find((a) => a.bundleId?.toLowerCase() === bundleOverride.toLowerCase());
-    if (hit) return hit;
+    return apps.find((a) => a.bundleId?.toLowerCase() === bundleOverride.toLowerCase()) ?? null;
   }
   const { names, bundleIds } = DESKTOP_APP_PROFILES[id];
   return apps.find((a) =>
