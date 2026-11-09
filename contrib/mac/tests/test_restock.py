@@ -42,6 +42,7 @@ def build(md, repos=('phantom',), running=0, queued=0, slots=None, lanes_status=
     (q / 'slots.json').write_text(json.dumps(slots))
     (q / 'claimed.tsv').write_text('')
     (q / 'ready.tsv').write_text('')
+    (q / 'admission.json').write_text(json.dumps({'cap': 1000}))
     return tmp
 
 
@@ -894,3 +895,23 @@ class MergeRateRecoveryTests(unittest.TestCase):
         (q / 'mergerate-recovery-at').write_text(str(time.time() - 3601))
         self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
         self.assertNotIn('PARKED-MERGERATE', (q / 'ready.tsv').read_text())
+
+class QueueDepthGateTests(unittest.TestCase):
+    def test_full_and_partial_queue(self):
+        candidates = '\n'.join(line(f'RQ-GATE-{n}', pool='devin', tier='mid', repo='phantom') for n in range(60))
+        for depth in (10, 100):
+            with self.subTest(depth=depth):
+                tmp = build(candidates)
+                try:
+                    home = Path(tmp.name)
+                    q = home / '.ashlr-runs' / 'queue'
+                    (q / 'admission.json').write_text(json.dumps({'cap': 18}))
+                    before = ''.join(f'RQ-OLD-{n}\tphantom\tdevin\tmid\t/prompt\n' for n in range(depth))
+                    (q / 'ready.tsv').write_text(before)
+                    result = restock(home, '--per-lane', '100')
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    after = (q / 'ready.tsv').read_text().splitlines()
+                    self.assertTrue(set(before.splitlines()).issubset(after))
+                    self.assertLessEqual(len(after) - depth, max(0, 45 - depth))
+                finally:
+                    tmp.cleanup()

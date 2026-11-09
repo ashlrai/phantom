@@ -1215,13 +1215,16 @@ jsave(Q + "/slots.json", slots)
 concurrency.save(CONC_PATH, CONC)
 
 # ---- restock trigger: a codex lane's queue below 3x its free slots -> Mac-side deterministic restocker (no LLM)
+import queue_gate
+_gate = queue_gate.read_gate(Q)
+ev("QUEUE_GATE allow=%s depth=%s target=%s src=dispatchd" % (_gate["allow"], _gate["depth"], _gate["target"]))
 rate_parked = any("PARKED-MERGERATE." in l for l in rest)
 if rate_parked: _ph_open_prs()
 for lane in ("codex-cmp", "codex-personal", "devin", "claude-api", "codex-local"):
     sl = slots[lane]
     if sl.get("held") or lane in hold: continue
     qn = sum(1 for l in rest if not parked_row(l) and l.split("\t")[2:3] == [lane])
-    if (rate_parked or qn < 3 * max(sl["target"] - running[lane], 4)) and os.path.exists(Q + "/router-queue.md") and not os.path.exists(Q + "/RESTOCK_OFF"):
+    if _gate["allow"] and (rate_parked or qn < 3 * max(sl["target"] - running[lane], 4)) and os.path.exists(Q + "/router-queue.md") and not os.path.exists(Q + "/RESTOCK_OFF"):
         subprocess.Popen(["/bin/bash", R + "/bin/restock.sh"], stdin=subprocess.DEVNULL, stdout=open(Q + "/restock.log", "a"),
                          stderr=subprocess.STDOUT, start_new_session=True)
         break

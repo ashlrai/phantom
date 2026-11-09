@@ -6,7 +6,11 @@
 import os, re, sys, json, time, fcntl, subprocess, math
 from datetime import datetime
 from launch_precheck import precheck, park, parked as precheck_parked, park_key
+import queue_gate
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; EV = R + "/dispatch-events.log"
+gate = queue_gate.read_gate(Q)
+print("QUEUE_GATE allow=%s depth=%s target=%s src=restock" % (gate["allow"], gate["depth"], gate["target"]), file=sys.stderr)
+if not gate["allow"]: sys.exit(0)
 DRY = "--dry-run" in sys.argv
 PER = int(sys.argv[sys.argv.index("--per-lane") + 1]) if "--per-lane" in sys.argv else None
 TS = time.strftime("%F %T"); HM = time.strftime("%H:%M")
@@ -276,7 +280,7 @@ def ranked_records(records):
     except (ValueError, KeyError, TypeError, AttributeError, ZeroDivisionError, OverflowError):
         return ordered
 
-for i, j, attrs, text, raw in ranked_records(recs):
+for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re.search(r"A\d{6,}Q8$", r[1]))):
     if all(len(picks[l]) >= need[l] for l in CODEX): break
     if i in parked: continue
     if re.search(r"(?i)not bridge|owner-authored|\bowners?\b|RETIRED|folds into|reuse the kept worktree|repos=|standing|tier=local", attrs + " " + text[:200]): skip(j, "not-bridge/fold/kept-reuse"); continue
@@ -352,6 +356,8 @@ for lane in CODEX:
         p = prompt_body(j, repo, l, tier, attrs, text)
         pf = f"{Q}/prompts/{j}.md"
         out.append((j, repo, l, tier, pf, p, i))
+out.sort(key=lambda row: bool(re.search(r"A\d{6,}Q8$", row[0])))
+out = out[:gate["allow"]]
 dep_out = []   # PARKED-DEP rows to append (job, repo, lane, tier, pf, prompt, i, deps)
 for j, repo, l, tier, attrs, text, i, deps in dep_parks:
     pf = f"{Q}/prompts/{j}.md"
@@ -401,6 +407,14 @@ if out or unparks or dep_out or rate_candidates:
     with ready_lock() as lk:
         # Locked snapshot: apply UNPARK rewrites, then append new READY and PARKED-DEP rows.
         snap = rd(Q + "/ready.tsv").splitlines()
+        gate = queue_gate.read_gate(Q)
+        print("QUEUE_GATE allow=%s depth=%s target=%s src=restock-locked" % (gate["allow"], gate["depth"], gate["target"]), file=sys.stderr)
+        # A competing producer may have filled the queue since selection.
+        budget_ready = gate["allow"]
+        unparks = unparks[:budget_ready]
+        budget_ready -= len(unparks)
+        out = out[:budget_ready]
+        budget_ready -= len(out)
         repl = {old: new for _j, _ids, old, new in unparks}
         cooldown = Q + "/mergerate-recovery-at"
         try: last = float(rd(cooldown))
@@ -446,7 +460,7 @@ if out or unparks or dep_out or rate_candidates:
             reserved = max(0, reserved - (increase - consumed))
         budget = max(0, 150 - count - reserved - len(reservations)) if count is not None else 0
         probe = count is not None and budget == 0 and 0 <= last <= now - 3600
-        if budget or probe:
+        if budget_ready and (budget or probe):
             # claimed.tsv is enqueue history, not an active lease.
             # Preserve age across queue rewrites; Python's stable sort keeps file
             # order for jobs first observed in the same tick.
@@ -462,7 +476,7 @@ if out or unparks or dep_out or rate_candidates:
                         and "RESULT PR" not in rd("%s/%s.publish" % (R, j))):
                     repl[old] = new; rate_unpark.append((j, max(0, int(now - first.pop(j, now)))))
                     reservations[j] = now
-                    if len(rate_unpark) >= (budget or 1): break
+                    if len(rate_unpark) >= min(budget_ready, budget or 1): break
             if rate_unpark:
                 # Record reservations before rewriting the queue: a crash can delay recovery, never duplicate capacity.
                 open(cooldown + ".tmp", "w").write(str(now)); os.replace(cooldown + ".tmp", cooldown)
