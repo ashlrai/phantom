@@ -208,3 +208,17 @@ waiting job has missing or conflicting enqueue timestamps. The command reads
 at most 2 MiB of metrics and treats a larger ledger as unavailable. Without
 `--json`, the same command prints a plain-language report. Use `--root /path`
 to inspect a different runs directory.
+
+## Incident pipeline
+
+`phm incident report --kind error --repo ashlrai/phantom --message "<text>"` turns a
+production signal (`error`, `log-anomaly` or `bug-notice`) into one bounded READY fix
+job. The message is scrubbed and fingerprinted like `phm issues` (ids, times and long
+numbers ignored), so repeats join the open incident instead of queueing again. Severity
+comes from `--severity` or is inferred from the text and `--count`: sev1 is P0 frontier,
+sev2 P1 mid, sev3 P2 fast, and sev4 is only recorded. Each repo may open 2 jobs an hour
+and the fleet 6 (sev1 skips the repo cap and may use a hard cap of 12). `phm incident
+receipts` messages the reporter once per incident whose job is DONE; a recurrence within
+24 hours reopens it as a regression (`INC-<fingerprint>-<n>`). Messages go to Telegram
+only when proactive comms are on. State lives in `~/.ashlr-runs/incidents`; `--dir` picks
+the queue directory. Both verbs take `--json`.
