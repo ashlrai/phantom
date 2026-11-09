@@ -323,6 +323,7 @@ canonical release guide for required hosted qualification and publication.
 - [Verify a worktree change](https://github.com/ashlrai/phantom/blob/master/docs/VERIFY-CHANGE.md): local toolchain checks and safe verdicts.
 
 - [Agent checkpoints](AGENT-CHECKPOINT.md): explicit durable state and resume format.
+- [Stigmergic coordination](STIGMERGY.md): `phm trail` file markers — claim/lease, heartbeats, resumable checkpoints; agents pick up stalled work.
 - [Engineering receipt](https://github.com/ashlrai/phantom/blob/master/docs/ENGINEERING-RECEIPT.md): evidence from tool events vs model claims; `PHANTOM_RECEIPTS=1`.
 
 - [Local model tuning data and evaluation](https://github.com/ashlrai/phantom/blob/master/docs/TUNE.md) — offline dataset preparation and paired evaluation.
