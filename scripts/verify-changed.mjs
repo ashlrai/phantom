@@ -1,3 +1,4 @@
+import { enterHeavy } from './fleet-heavy.mjs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -414,6 +415,7 @@ export function verifyForceRequested(argv, env = process.env) {
 }
 
 function main() {
+  enterHeavy();
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   let dedupe = null;
   try {

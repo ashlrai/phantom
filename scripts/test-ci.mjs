@@ -22,6 +22,9 @@ import {
 } from 'node:timers';
 import { setTimeout as delay } from 'node:timers/promises';
 
+import { enterHeavy } from './fleet-heavy.mjs';
+enterHeavy();
+
 // A direct unsharded local run contains 700+ modules and several intentionally
 // adversarial durability suites whose measured combined runtime exceeds 15 minutes.
 // Hosted CI and prepublish both use --shard=1/3..3/3. This ceiling remains for

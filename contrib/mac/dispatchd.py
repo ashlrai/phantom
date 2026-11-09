@@ -390,6 +390,31 @@ def _autopilot():
         return json.loads(subprocess.run(["/usr/bin/python3", R + "/bin/autopilot.py"], capture_output=True, text=True, timeout=20).stdout)
     except Exception: return None
 # ---- memory
+def cpu_by_class(snapshot):
+    """Sum ps CPU percentages (100 = one core); unknown sampling stays null."""
+    totals = dict.fromkeys(("tsc", "bun", "cargo", "node", "codex", "omlx/ollama", "other"), 0.0)
+    commands = {}
+    for line in snapshot.splitlines():
+        fields = line.strip().split(None, 1)
+        if len(fields) == 2: commands[fields[0]] = fields[1]
+    try:
+        result = subprocess.run(["ps", "-axo", "pid=,%cpu=,comm="],
+                                capture_output=True, text=True, timeout=5)
+        if result.returncode or not result.stdout.strip(): return None
+        for line in result.stdout.splitlines():
+            pid, value, command = line.strip().split(None, 2)
+            name = os.path.basename(command).lower()
+            args = commands.get(pid, command)
+            if name in ("tsc", "tsgo") or (name == "node" and re.search(r"(?:^|[/\s])(?:tsc|tsgo)(?:$|\s)", args)): key = "tsc"
+            elif name in ("rustc", "rustdoc"): key = "cargo"
+            elif name in ("omlx", "ollama"): key = "omlx/ollama"
+            elif name in totals: key = name
+            else: key = "other"
+            totals[key] += float(value.replace(",", "."))
+        return {key: round(value, 2) for key, value in totals.items()}
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+
 def mem():
     free = swap = None
     try:
@@ -1543,6 +1568,7 @@ pubs.sort(reverse=True)
 evs = logtail(EV, 65536).splitlines()[-25:]   # tail read: the events log grows unbounded
 st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "paused": pause or None,
       "mem_free_pct": free, "swap_gb": round(swap, 2) if swap is not None else None,
+      "machine_sample": {"schema": "dispatchd.machine-sample.v1", "cpu_by_class": cpu_by_class(ps)},
       "autopilot": AP,
       "lanes": {l: {"running": running[l], "target": slots[l]["target"], "floor": slots[l]["floor"],
                     "ceiling": slots[l]["ceiling"], "hard_cap": slots[l]["hard_cap"], "held": bool(slots[l].get("held") or l in hold),
