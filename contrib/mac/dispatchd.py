@@ -1606,6 +1606,32 @@ if not os.path.exists(stamp) or NOW - os.path.getmtime(stamp) > 600:
     open(stamp, "w").close()
     subprocess.Popen(["/bin/bash", R + "/bin/metrics-outcomes.sh"], stdin=subprocess.DEVNULL, stdout=open(MD + "/outcomes.log", "a"),
                      stderr=subprocess.STDOUT, start_new_session=True)
+# ---- scheduled EO reports (RQ-REPORTS-NO-GROK-1): the 07:30 AM and 8:00 PM ET
+# reads must not depend on Grok. Once a slot's build time (07:25 / 19:55
+# America/New_York) passes, spawn the deterministic builder until the day's
+# file exists — at most 3 launches per slot per day. The report's own day
+# marker is the idempotence; the tries stamp only bounds retries. Kill switch:
+# export/REPORTS_OFF. Fixtures: REPORTS_TEST + REPORTS_NOW_EPOCH pin the clock.
+_et_tz = _et()
+if _et_tz is not None and os.path.exists(R + "/bin/report-export.sh") and not os.path.exists(R + "/export/REPORTS_OFF"):
+    _rnow = NOW
+    if os.path.exists(R + "/REPORTS_TEST"):
+        try: _rnow = float(os.environ.get("REPORTS_NOW_EPOCH", NOW))
+        except ValueError: pass
+    _now_et = datetime.datetime.fromtimestamp(_rnow, _et_tz)
+    _today_et = _now_et.strftime("%F")
+    for _rh, _rm, _rname in ((7, 25, "0730"), (19, 55, "2000")):
+        if (_now_et.hour, _now_et.minute) < (_rh, _rm): continue
+        if ("day=%s" % _today_et) in rd(R + "/export/report-%s.md" % _rname)[:400]: continue
+        _rtries = rd(R + "/export/.report-%s.tries" % _rname).strip().split(":")
+        _tn = int(_rtries[1]) if len(_rtries) == 2 and _rtries[0] == _today_et and _rtries[1].isdigit() else 0
+        if _tn >= 3: continue
+        os.makedirs(R + "/export", exist_ok=True)
+        try: open(R + "/export/.report-%s.tries" % _rname, "w").write("%s:%d" % (_today_et, _tn + 1))
+        except OSError: pass
+        subprocess.Popen(["/bin/bash", R + "/bin/report-export.sh", _rname], stdin=subprocess.DEVNULL,
+                         stdout=open(R + "/export/report-export.log", "a"), stderr=subprocess.STDOUT,
+                         start_new_session=True)
 _at_cap = "at_cap running %d >= cap %d" % (sum(running.values()), GCAP) if sum(running.values()) >= GCAP else None
 _block = [x for x in (_now_reason, "paused" if pause else None, _at_cap) if x]   # same verdict `phm pool admission` computes
 adm = {"schema": "dispatchd.admission.v2", "ts": st["last_tick"], "admit": not _block, "gate_reason": _now_reason, "warnings": GATE["warnings"], "reason": "; ".join(_block) or None,

@@ -276,6 +276,29 @@ temporary HOME and never touch the live queue:
 HOME=$(mktemp -d) python3 -B -m unittest discover -s contrib/mac/tests -v
 ```
 
+## Scheduled EO reports (no LLM)
+
+The 7:30 AM and 8:00 PM ET fleet reports are built by
+`~/.ashlr-runs/bin/report-export.sh` — a thin wrapper over
+`phm fleet report-export` that finds `phm` (or `ashlr`) on PATH and appends
+to `~/.ashlr-runs/export/report-export.log`. It ships through the normal
+machinery path: a `managed` entry in `fleet/manifest.json`, installed by
+`python3 fleet/sync.py` like every other managed file.
+
+The schedule lives in `dispatchd.py` itself (LaunchAgent-free): once each
+slot's build time passes in America/New_York — 07:25 for `report-0730.md`,
+19:55 for `report-2000.md` — a tick spawns the wrapper until the day's report
+exists. The report's own `day=YYYY-MM-DD` marker is the idempotence; retries
+after a failed build are bounded at 3 launches per slot per day by
+`export/.report-<slot>.tries`. Kill switch: `export/REPORTS_OFF`. Test
+fixtures pin the clock with the `REPORTS_TEST` sentinel plus
+`REPORTS_NOW_EPOCH`.
+
+Adoption: the wrapper installs via `fleet/sync.py`; the dispatchd schedule is
+a pinned-file change — it goes live only after Security re-pins and installs
+with `contrib/mac/install.sh`. Do not run any install against the live
+directory. See [docs/REPORT-EXPORT.md](../../docs/REPORT-EXPORT.md).
+
 # Job outcome reconciliation
 
 Run `./contrib/mac/metrics-outcomes reconcile --jobs /path/to/jobs.jsonl` before

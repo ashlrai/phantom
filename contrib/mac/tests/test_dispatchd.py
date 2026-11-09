@@ -1428,3 +1428,100 @@ class VerifiedCompletionTests(unittest.TestCase):
         self.assertEqual(vc['claims']['published'], 0)   # the batch session itself is infrastructure
         self.assertEqual(vc['eligible'], 1)
         self.assertEqual(vc['verified'], 1)
+
+
+class ScheduledReportTests(unittest.TestCase):
+    """RQ-REPORTS-NO-GROK-1: the dispatcher fires bin/report-export.sh at
+    07:25 and 19:55 America/New_York — once per slot per day, bounded retries,
+    marker-gated. REPORTS_TEST + REPORTS_NOW_EPOCH pin the schedule clock."""
+
+    GOOD_STUB = ('#!/bin/bash\n'
+                 'd=$(TZ="America/New_York" date +%F)\n'
+                 'mkdir -p "$HOME/.ashlr-runs/export"\n'
+                 'printf \'<!-- ashlr.report-export/v1 slot=%s day=%s -->\\n# stub\\n\' "$1" "$d" '
+                 '> "$HOME/.ashlr-runs/export/report-$1.md"\n')
+    FAIL_STUB = '#!/bin/bash\nexit 3\n'
+
+    def _home(self, stub=GOOD_STUB):
+        tmp = build()
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name).resolve()
+        if stub is not None:
+            script = home / '.ashlr-runs' / 'bin' / 'report-export.sh'
+            script.write_text(stub)
+            script.chmod(0o755)
+        (home / '.ashlr-runs' / 'REPORTS_TEST').write_text('')
+        return home
+
+    def _at(self, hour, minute):
+        """Today's epoch at hour:minute in America/New_York."""
+        import datetime as dt
+        from zoneinfo import ZoneInfo
+        now = dt.datetime.now(ZoneInfo('America/New_York'))
+        return str(now.replace(hour=hour, minute=minute, second=0, microsecond=0).timestamp())
+
+    def _tick(self, home, hour, minute):
+        return tick(home, {'REPORTS_NOW_EPOCH': self._at(hour, minute)})
+
+    def _report(self, home, slot):
+        f = home / '.ashlr-runs' / 'export' / f'report-{slot}.md'
+        return f.read_text() if f.exists() else None
+
+    def _tries(self, home, slot):
+        f = home / '.ashlr-runs' / 'export' / f'.report-{slot}.tries'
+        return f.read_text().strip() if f.exists() else None
+
+    def _await_report(self, home, slot, timeout=15):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if (home / '.ashlr-runs' / 'export' / f'report-{slot}.md').exists():
+                return True
+            time.sleep(0.25)
+        return False
+
+    def test_morning_slot_fires_once_then_marker_gates(self):
+        home = self._home()
+        self.assertEqual(self._tick(home, 7, 26).returncode, 0)
+        self.assertTrue(self._await_report(home, '0730'))
+        report = self._report(home, '0730')
+        self.assertIn('slot=0730', report)
+        import datetime as dt
+        from zoneinfo import ZoneInfo
+        today = dt.datetime.now(ZoneInfo('America/New_York')).strftime('%F')
+        self.assertEqual(self._tries(home, '0730'), f'{today}:1')
+        self.assertIsNone(self._report(home, '2000'))   # evening slot not due
+        self.assertEqual(self._tick(home, 8, 0).returncode, 0)
+        time.sleep(1)
+        self.assertEqual(self._tries(home, '0730'), f'{today}:1')   # no respawn once built
+
+    def test_evening_slot_fires_both_and_not_before_0725(self):
+        home = self._home()
+        self.assertEqual(self._tick(home, 7, 20).returncode, 0)
+        self.assertIsNone(self._tries(home, '0730'))
+        self.assertFalse((home / '.ashlr-runs' / 'export').exists())
+        self.assertEqual(self._tick(home, 19, 56).returncode, 0)
+        self.assertTrue(self._await_report(home, '0730'))
+        self.assertTrue(self._await_report(home, '2000'))
+
+    def test_failure_retries_bounded_at_three(self):
+        home = self._home(stub=self.FAIL_STUB)
+        import datetime as dt
+        from zoneinfo import ZoneInfo
+        today = dt.datetime.now(ZoneInfo('America/New_York')).strftime('%F')
+        for i in range(4):
+            self.assertEqual(self._tick(home, 7, 26).returncode, 0)
+        time.sleep(1)
+        self.assertEqual(self._tries(home, '0730'), f'{today}:3')
+        self.assertIsNone(self._report(home, '0730'))
+
+    def test_reports_off_flag_and_missing_script(self):
+        home = self._home()
+        (home / '.ashlr-runs' / 'export').mkdir()
+        (home / '.ashlr-runs' / 'export' / 'REPORTS_OFF').write_text('')
+        self.assertEqual(self._tick(home, 7, 26).returncode, 0)
+        time.sleep(0.5)
+        self.assertIsNone(self._tries(home, '0730'))
+        home = self._home(stub=None)
+        self.assertEqual(self._tick(home, 7, 26).returncode, 0)
+        time.sleep(0.5)
+        self.assertIsNone(self._tries(home, '0730'))

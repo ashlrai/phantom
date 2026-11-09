@@ -56,6 +56,7 @@ Approval cards record consent and do not collect credentials.
 - [Channel guide](CHANNELS.md): Six inbound channels — `phm channels add <kind>` writes config only; `phm channels status --json` reads the rollup.
 - [iMessage intake](IMESSAGE.md): `phm imessage doctor --json` checks Full Disk Access, sqlite3 and config; `phm imessage poll --json` is a counts-only dry run, `--apply` receipts allowlisted messages as channel `imessage` (replies are recorded, not sent).
 - [Fleet brief-send](BRIEF-SEND.md): Morning (7:30 ET) and overnight (22:30 ET) fleet briefs with a needs-you list of at most 5 items; `phm fleet brief-send --json` dry-runs, `--apply` sends.
+- [Fleet report-export](REPORT-EXPORT.md): Deterministic 07:30/20:00 ET fleet reports to `~/.ashlr-runs/export/report-*.md` — world, growth, intents, PR/Actions evidence, no LLM; dispatchd builds them at 07:25/19:55 ET.
 - [Fleet API](FLEET-API.md): Loopback HTTP projections for desktop, phone, and Leader coordination.
 - [Cloud lane](CLOUD.md): Claude Code cloud sessions from chat, Command, or CLI.
 - [Add a computer in 60 seconds](add-a-computer.md): install, join, choose capabilities, verify, and leave.
