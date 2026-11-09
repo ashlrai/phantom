@@ -599,6 +599,7 @@
     "src/core/fleet/lane-empty-streak.ts",
     "src/core/fleet/lane-lock.ts",
     "src/core/fleet/lane-truth.ts",
+    "src/core/fleet/leader-facts.ts",
     "src/core/fleet/leader-journal.ts",
     "src/core/fleet/local-store-lock.ts",
     "src/core/fleet/machine.ts",
