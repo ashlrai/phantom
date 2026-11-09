@@ -1,7 +1,8 @@
 /**
- * routes/verse/ideas/IdeasPane.tsx: what the fleet will pick next. A read-only
+ * routes/verse/ideas/IdeasPane.tsx: what the fleet will pick next. A
  * view of the ranked backlog (`GET /api/backlog`, via the same query the
  * Autonomy panel uses), grouped by repo, each row saying where it came from.
+ * Each row can be sent to the Leader as "Do next" / "Not now" (IdeaSteer).
  * Backlog text is untrusted, so it renders as plain text only.
  */
 import { Fragment, useId, useMemo, useState } from 'react';
@@ -11,6 +12,7 @@ import { Card, CardNote } from '../command/Surface.js';
 import { verseBacklogQuery } from '../autonomy/control-queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { groupByRepo, ideasHeadline, rankIdeas, sourceCounts, type RepoGroup } from './ideas-model.js';
+import { IdeaSteer } from './IdeaSteer.js';
 import styles from './ideas.module.css';
 
 export const IDEAS_POLL_MS = 30_000;
@@ -68,6 +70,7 @@ function RepoCard({ group, all, expanded, onToggle }: { group: RepoGroup; all: R
           <span className={styles.title}>{row.title}</span>
           <span className={styles.meta}>{row.scoreText} · {row.source}</span>
           {row.goal ? <button type="button" className={styles.toggle} onClick={() => openDockPane('goals')}>from goal: {row.goal.name}</button> : null}
+          <IdeaSteer idea={row} repo={group.repo} />
         </li>)}
       </ol>
       {group.more > 0 ? <button type="button" className={styles.toggle} aria-expanded={expanded} aria-controls={listId} onClick={onToggle}>
