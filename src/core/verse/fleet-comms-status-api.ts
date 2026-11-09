@@ -10,6 +10,7 @@ import { diagnoseEmailDrop, type EmailDiagnosisDeps } from '../comms/email-diagn
 import { checkIMessagePath } from '../comms/imessage-path-check.js';
 import { readImessageAckEvidence } from '../comms/imessage-ack-evidence.js';
 import { readEmailOutbox } from '../comms/email-outbox.js';
+import { readLocalSendPolicy } from '../agents/send-gate.js';
 
 export const VERSE_FLEET_COMMS_STATUS_PATH = '/api/verse/fleet/comms-status';
 
@@ -22,6 +23,8 @@ export interface FleetCommsStatusApiDeps {
   emailDiagnosisDeps?: EmailDiagnosisDeps;
   imessagePath?: typeof checkIMessagePath;
   imessageAcks?: typeof readImessageAckEvidence;
+  /** Send-policy reader (read-only). Default: ~/.ashlr/comms.toml and agent-network.toml. */
+  sendPolicy?: typeof readLocalSendPolicy;
   /** Clock seam for tests; stamps generatedAt. */
   now?: () => Date;
 }
@@ -115,6 +118,20 @@ export function createFleetCommsStatusApi(deps: FleetCommsStatusApiDeps = {}): A
       imessageSource = 'degraded';
     }
 
+    // Counts and channel names only: never identity ids, addresses or the home path.
+    let sendPolicy: { confirmed: boolean; teamIdentities: number; channels: string[] } | null = null;
+    let sendPolicySource: 'healthy' | 'degraded' = 'healthy';
+    try {
+      const policy = (deps.sendPolicy ?? readLocalSendPolicy)();
+      sendPolicy = {
+        confirmed: policy.confirmedByMason === true,
+        teamIdentities: policy.teamIdentities.length,
+        channels: [...new Set(policy.teamIdentities.map(identity => String(identity.channel)))].sort(),
+      };
+    } catch {
+      sendPolicySource = 'degraded';
+    }
+
     sendJson(res, 200, {
       version: 1,
       generatedAt: generatedAt.toISOString(),
@@ -122,7 +139,8 @@ export function createFleetCommsStatusApi(deps: FleetCommsStatusApiDeps = {}): A
       emailOutbox,
       emailDiagnosis,
       imessage,
-      sources: { drafts: draftsSource, emailOutbox: emailOutboxSource, imessage: imessageSource },
+      sendPolicy,
+      sources: { drafts: draftsSource, emailOutbox: emailOutboxSource, imessage: imessageSource, sendPolicy: sendPolicySource },
     });
   }
 
