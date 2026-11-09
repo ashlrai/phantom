@@ -37,7 +37,7 @@ class PrecheckBackoff(unittest.TestCase):
                 queue_job(home, job, 'codex-cmp')
                 (q / f'prompts/{job}.md').write_text(f'{job} (P0): task')
             script = home / '.ashlr-runs/bin/precheck.sh'
-            script.write_text('echo "$1" >> "$HOME/checks"\ncase "$1" in BLOCKED*) exit 13;; esac\n')
+            script.write_text('echo "$1" >> "$HOME/checks"\ncase "$1" in BLOCKED*) echo "SKIP BLOCKED code=13 reason=files_and_tests_exist"; exit 13;; esac\n')
             for _ in range(2):
                 result = tick(home, env)
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -47,6 +47,7 @@ class PrecheckBackoff(unittest.TestCase):
             self.assertEqual((home / 'checks').read_text().count('BLOCKED'), 1)
             metrics = [json.loads(x) for x in (home / '.ashlr-runs/metrics/jobs.jsonl').read_text().splitlines()]
             self.assertEqual(sum(m['event'] == 'precheck_parked' for m in metrics), 1)
+            self.assertEqual(next(m for m in metrics if m['event'] == 'precheck_parked')['reason'], 'files_and_tests_exist')
             self.assertEqual(sum(m['event'] == 'precheck_skip' for m in metrics), 0)
             # A due retry is held when the optional budget is exhausted.
             state_path = q / 'precheck-parked.json'
@@ -62,7 +63,8 @@ class PrecheckBackoff(unittest.TestCase):
             self.assertEqual((home / 'checks').read_text().count('BLOCKED'), 2)
             self.assertEqual(json.loads(state_path.read_text())['BLOCKED']['count'], 2)
             metrics = [json.loads(x) for x in (home / '.ashlr-runs/metrics/jobs.jsonl').read_text().splitlines()]
-            self.assertEqual(sum(m['event'] == 'precheck_parked' for m in metrics), 1)
+            self.assertEqual(sum(m['event'] == 'precheck_parked' for m in metrics), 2)
+            self.assertEqual(json.loads(state_path.read_text())['BLOCKED']['reason'], 'files_and_tests_exist')
             # A changed precondition can launch immediately, without waiting an hour.
             (q / 'prompts/BLOCKED.md').write_text('BLOCKED (P0): revised task')
             script.write_text('exit 0\n')

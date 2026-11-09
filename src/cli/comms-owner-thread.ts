@@ -8,12 +8,15 @@ import { liveOwnerTransports } from '../core/comms/owner-live-transport.js';
 import {
   readOwnerCommsStatus,
   readOwnerThread,
+  sendOwnerHello,
   sendOwnerReply,
   type OwnerThreadOptions,
 } from '../core/comms/owner-thread.js';
 
 const THREAD_USAGE = 'usage: phm comms thread [--limit <1..200>] [--json]';
 const SEND_USAGE = 'usage: phm comms send-owner --text <message> [--reply-to <key>] [--idempotency-key <key>] [--json]';
+
+const HELLO_USAGE = 'usage: phm comms owner hello [--json]';
 
 function runsDir(): string {
   return fixedOwnerRunsDir();
@@ -81,7 +84,17 @@ export async function cmdCommsOwner(args: string[], options = ownerThreadOptions
     emit(json, result, `${result.status}${result.reason ? `: ${result.reason}` : ''}`);
     return result.status === 'sent' || result.status === 'duplicate' || result.status === 'partial' ? 0 : 1;
   }
+  if (verb === 'hello') {
+    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json'] });
+    if (bad) { console.error(bad.message); console.error(HELLO_USAGE); return 2; }
+    const result = await sendOwnerHello(options);
+    const lines = result.deliveries.map(row => `${row.channel}: ${
+      row.status === 'sent' ? 'sent' : row.status === 'duplicate' ? 'already sent' : `skipped (${row.reason})`}`);
+    emit(args.includes('--json'), result, lines.join('\n') || result.status);
+    return result.status === 'sent' || result.status === 'duplicate' || result.status === 'partial' ? 0 : 1;
+  }
   console.error(THREAD_USAGE);
   console.error(SEND_USAGE);
+  console.error(HELLO_USAGE);
   return 2;
 }
