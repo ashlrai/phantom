@@ -7,6 +7,7 @@ import { CopyPill } from '../apps/CopyPill.js';
 import { UNIFIED_INBOX_ALL_PATH, UNIFIED_INBOX_COMMAND, UNIFIED_INBOX_PATH, itemLine, readUnifiedInboxView, sourceProblems, sourceSummary } from './unified-inbox-model.js';
 import { TEAMMATE_REPLY_PATH, teammateReplyOutcome, teammateRowid } from './teammate-reply-model.js';
 import { NEEDS_YOU_RESOLVE_PATH, needsYouLedgerId, needsYouResolveOutcome } from './needs-you-resolve.js';
+import { LINKEDIN_ANSWERED_PATH, linkedInAnsweredOutcome, linkedInMessageId } from './linkedin-answered.js';
 import styles from './fleet-inbox.module.css';
 
 const unifiedInboxQuery: QueryDef<unknown> = { key: 'verse-fleet-comms-unified-inbox', fetch: s => apiGet(UNIFIED_INBOX_PATH, s) };
@@ -71,6 +72,29 @@ function NeedsYouResolve({ itemId, onResolved }: { itemId: string; onResolved: (
   </form>;
 }
 
+/** Clears a LinkedIn row by recording it answered locally. Nothing is sent to LinkedIn. */
+function LinkedInAnswered({ id, onMarked }: { id: string; onMarked: () => void }) {
+  const { token, touch } = useMutationHold();
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
+  async function mark() {
+    if (busy) return;
+    if (!token) { setNote('Unlock to mark answered.'); return; }
+    setBusy(true);
+    try {
+      await apiPost<unknown>(LINKEDIN_ANSWERED_PATH, { id }, token);
+      touch();
+      onMarked();
+    } catch (reason) {
+      setNote(linkedInAnsweredOutcome(reason instanceof ApiError ? reason.status : 0));
+    } finally { setBusy(false); }
+  }
+  return <span>
+    <button type="button" disabled={busy} onClick={() => { void mark(); }}>{busy ? 'Marking' : 'Mark answered'}</button>
+    {note && <span className={styles.meta} role="status">{note}</span>}
+  </span>;
+}
+
 export function UnifiedInboxCard({ visible }: { visible: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const inbox = useQuery(unifiedInboxQuery, { enabled: visible });
@@ -101,6 +125,7 @@ export function UnifiedInboxCard({ visible }: { visible: boolean }) {
       const line = itemLine(item, now);
       const rowid = teammateRowid(item);
       const ledgerId = needsYouLedgerId(item);
+      const linkedInId = linkedInMessageId(item);
       return <div key={item.id} className={styles.unifiedItem} data-severity={item.severity}>
         <span className={styles.meta}>{line.label}</span>
         <span className={styles.unifiedTitle}>{item.title}</span>
@@ -109,6 +134,7 @@ export function UnifiedInboxCard({ visible }: { visible: boolean }) {
         {item.blocking && <span className={styles.meta}>blocking</span>}
         {item.act[0] !== undefined && <CopyPill text={item.act[0]} what="the command for this item" />}
         {rowid !== null && <TeammateReply rowid={rowid} onSent={refetch} />}
+        {linkedInId !== null && <LinkedInAnswered id={linkedInId} onMarked={refetch} />}
         {ledgerId !== null && <NeedsYouResolve itemId={ledgerId} onResolved={refetch} />}
       </div>;
     })}

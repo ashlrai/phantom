@@ -4,11 +4,13 @@
  * threadUrl? }` — becomes an item in the unified comms inbox. A message is
  * answered when `<runsDir>/comms/linkedin/answered/<id>` exists.
  *
- * Read-only: no network, no writes, no sends. File contents are untrusted
+ * Reading is side-effect free: no network, no writes, no sends. The one write
+ * is `markLinkedInAnswered`, an owner action that drops the answered marker.
+ * File contents are untrusted
  * (scrubbed, single-lined, length-capped). Bounded: at most MAX_FILES files of
  * at most MAX_FILE_BYTES each. Never throws.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
@@ -91,4 +93,23 @@ export function readLinkedInDrop(options: LinkedInDropOptions = {}): LinkedInDro
     } catch { skipped++; }
   }
   return { sourceState: skipped > 0 ? 'degraded' : 'healthy', messages, skipped };
+}
+
+/**
+ * Mark a LinkedIn message answered by writing `<runsDir>/comms/linkedin/answered/<id>`
+ * (mode 0600, ISO time) exclusively. Nothing is sent anywhere. The id is checked
+ * against the same pattern the reader uses, so it cannot escape the answered
+ * directory. Never throws for a bad id.
+ */
+export function markLinkedInAnswered(runsDir: string, id: string, now: () => Date = () => new Date()): 'marked' | 'already' | 'invalid' {
+  if (typeof id !== 'string' || id.length === 0 || id.length > ID_MAX || !ID_PATTERN.test(id)) return 'invalid';
+  const dir = join(linkedInDropDir(runsDir), 'answered');
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try {
+    writeFileSync(join(dir, id), `${now().toISOString()}\n`, { flag: 'wx', mode: 0o600 });
+    return 'marked';
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return 'already';
+    throw error;
+  }
 }
