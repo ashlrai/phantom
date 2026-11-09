@@ -8,6 +8,8 @@ its exact input hash before adoption. Current-host changes under
 permission to overwrite the whole controller with an older copy. Changes land
 by PR review and the adoption owner verifies immutable source hashes before any
 live install. The queue scripts are deterministic and do not create tokens.
+The candidate launcher denies Devin model IDs ending in `-lightning`, logs
+`PAID_MODEL_BLOCKED`, and uses `swe-2-max` instead; host adoption needs a Security pin.
 
 `restock.py` claims eligible `READY` lines from `router-queue.md` into lane
 prompts (`ready.tsv`/`claimed.tsv`) for the fleet allowlist repos only, keeping
@@ -39,6 +41,30 @@ supervisor: it reaps finished jobs, adapts per-lane slot targets inside
 `slots.json`, launches queued lines, and fires the restocker when a lane's queue
 runs shallow. Restock changes need a Security re-pin before the live `bin/` copy
 is installed; do not install into `bin/` from an agent.
+
+## Self-supply: refill idle lanes between leader passes
+
+`self-supply.py` watches `queue/status.json`. When a lane is unheld and has
+free slots (`target - running - queued` above zero) it asks the feed scripts
+beside it — `recut-feed.py`, and `salvage-feed.py` when present — for up to
+that many `READY` lines with `pool=<lane>`. Ids already in the router queue or
+claimed rows are dropped, the run caps at 12 lines, and `--apply` appends the
+lines to `router-queue.md` under `ready.lock`, logging
+`SELF_SUPPLY <lane> free=<n> added=<m>` to `dispatch-events.log`. The next
+shallow-queue pass runs `restock.py`, which claims the lines into lane prompts.
+It is a dry run by default and prints the plan as JSON; `--apply` writes.
+
+```sh
+python3 contrib/mac/self-supply.py --apply    # top up idle lanes now
+```
+
+Cron-style scheduling, no launchd (the installed copy lands via the Security
+pin path like the other queue scripts; the file is not executable, so call it
+through `python3`):
+
+```cron
+*/15 * * * * python3 "$HOME/.ashlr-runs/bin/self-supply.py" --apply >>"$HOME/.ashlr-runs/self-supply.log" 2>&1
+```
 
 Devin routing policy (RQ-DEVINROUTEDEFAULTQ7, DEVIN-LEVERAGE-20261026): a line
 that leaves its pool open (`pool=any` or no `pool=` attr) and is `tier=frontier`
