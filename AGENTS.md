@@ -31,6 +31,7 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 ## Tools for agents working here
 - This repo's `.mcp.json` declares five companion MCP servers: `phantom-secrets`, `locus`, `lexicon`, `stack`, `ashlr` (Ashlr.AI Plugin). What each is for, its limits, and how to approve it: [docs/AGENT-TOOLCHAIN.md](docs/AGENT-TOOLCHAIN.md).
 - In a Phantom cloud task, list the companion tools you actually called in the report's `toolsUsed` field (an empty list if none); `phm cloud list` shows it as the session's claim.
+- Team org: `phm org show --json`, `phm org join --member <id> --machine <id> --lane <lane>[=<share>] --json` (each co-founder on their own machine; opt-in per lane, no auth read, nothing sent) and `phm org plan --json` (proposes queue assignments and roles within each member's contributed limits from the router's usage and reset data; the leader reads it each planning pass). Private data is never pooled; spending stays with each member. See [docs/AGENT-NETWORK.md](docs/AGENT-NETWORK.md#team-org).
 - Team membership: `phm team invite <gh-user>`, `phm team join <invite>` and `phm team remove <gh-user>` are human-terminal commands for owners/admins and invitees (agent processes are refused); an invite grants membership only and never credentials. See [docs/TEAM.md](docs/TEAM.md#invite-join-and-remove-a-teammate).
 
 ## Agents may
@@ -54,12 +55,15 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 - Node `>=22.15.0`. Install trusted local worktrees with `npm run install:worktree` (pnpm 10.28.2, shared same-volume store; CI/releases keep `npm ci`), build with `npm run build`, run the CLI from source with `npm run dev -- <command>`.
 - Backend tests: `npm test` for all backend suites, or `npm run test:ci -- test/<file>.test.ts` for affected suites with the hermetic runner. Run tests with a temporary HOME, for example `HOME=$(mktemp -d) npm run test:ci -- test/agents-md-audit.test.ts`.
 - Before a PR: automated workers run `node scripts/verify-changed.mjs` once, in the foreground; do not poll it. Repeat runs on an unchanged tree exit early (`SKIP verify-changed`); pass `--force` to rerun. This replaces worker runs of full `npm run typecheck` and `npm run lint`. Humans may still use `npm run lint` and `npm run typecheck`. Also run `npm run check:docs` and the affected tests (`npm run test:ci -- test/<file>.test.ts`, `npm run test:web` for `src/web-ui`). `npm run gate` runs build, static checks and related tests together. Its import graph cannot select tests that read changed files as text; run those test files explicitly. Merge Gate stays the full check; local checks do not replace required hosted CI.
+- When authority drift fails, run `npm run authority:regen` and list each new Tier-1 root in the PR body for CODEOWNERS review.
 - Queue tiers: router-queue `tier=` must be `frontier`, `work`, `mid` or `fast`. `queuegen` and `router-lint` refuse any other value (`standard` means `work`), because dispatchd skips unknown tiers silently. See [docs/QUEUE.md](docs/QUEUE.md#tier-values).
 - Layout: `src/cli/` command dispatchers, `src/core/` logic, `src/web-ui/` console, `test/` backend suites (`m<N>.<topic>.test.ts`), `docs/` guides indexed by `docs/README.md`.
 - Mac dispatcher: `contrib/mac/dispatchd.py` is the single source for the live `~/.ashlr-runs/bin/dispatchd.py`. Change it here, never on the host. `contrib/mac/install.sh` diffs and installs it (plus `install-gate.py` and `launch-gate.sh`) with timestamped backups, but only after Security has reviewed and re-pinned the files; agents preview with `contrib/mac/install.sh --dry-run --json` and never run it against the live directory. Copy-paste install, once pinned: `contrib/mac/install.sh --json`. See [contrib/mac/README.md](contrib/mac/README.md#installing-the-dispatcher).
+- Fleet machinery: `fleet/manifest.json` (`fleet.machinery.v1`) inventories every `~/.ashlr-runs/bin` file by class — `managed` installs via `python3 fleet/sync.py`, `manual`/`pinned` are report-only (pinned GATES v3 files stay ops-side). Agents preview with `fleet/sync.py --json` or `--bin <scratch>` and never `--apply` live. Migration plan: [docs/MACHINERY-MIGRATION.md](docs/MACHINERY-MIGRATION.md).
 - Agent Bus v2: the provider contract (participants, body kinds, claim keys and overlap rules, work feed) is in [docs/AGENT-BUS.md](docs/AGENT-BUS.md#v2); `ashlr agents bus contract --json` prints its schema version and kinds. Claims coordinate and grant no execution authority. Schemas: `src/core/agents/bus-v2-schema.ts`.
 - Learned skills: `phm skills list --json` shows skills written from merged PR outcomes (metadata only, scrubbed, capped; counts real or `"unknown"`). See [docs/SKILLS.md](docs/SKILLS.md).
 - Channels: `phm channels add <kind>` writes config only (credentials stay in existing custody, never printed); `phm channels status --json` reports real counts or `"unknown"`. See [docs/CHANNELS.md](docs/CHANNELS.md).
+- Owner thread (RQ-COMMS-UNIFIED-1): `phm comms status --json`, `phm comms thread --json` and `phm comms send-owner --text "<reply>" --json` are one ordered thread for desktop, Telegram, email, iMessage and Slack. Replies go only to the configured owner, on the channel they used and on the desktop thread. Adapters stay disabled until configured; credentials are Phantom Secrets handle names. KILL halts them. See [docs/OWNER-THREAD.md](docs/OWNER-THREAD.md).
 - Slack bridge: `phm channels slack status --json` reads the `[slack]` section of `~/.ashlr/agent-network.toml`, token `phm_` reference names (never values) and journal counts; `phm channels slack map --json` dry-runs the topic/channel mapping and, with `--snapshot <file>`, the team-only audience gates. Read-only; the socket, token injection and post path are the separately reviewed `-sec` change. See [docs/AGENT-NETWORK.md](docs/AGENT-NETWORK.md#slack-bridge).
 - iMessage intake: `phm imessage doctor --json` reports permission and config state (no handles printed); `phm imessage poll --json` is a counts-only dry run and `--apply` receipts allowlisted messages as channel `imessage`. Acks are recorded, never sent, until RQ-IMSG-REPLY-1 lands. Never read or print message text or handles. See [docs/IMESSAGE.md](docs/IMESSAGE.md).
 - Briefs: the fleet brief-send verb (dry run by default, `--json` for the plan) plans the morning (7:30 ET) or overnight (22:30 ET) brief with a needs-you list of at most 5 items; `--apply` sends to your own channels, one per slot per local day. See [docs/BRIEF-SEND.md](docs/BRIEF-SEND.md).
@@ -91,6 +95,15 @@ Docker, client trees, `~/Documents`, git internals, auth, secrets) applies at
 plan and apply time; gated classes (`venvs`, `hub-claude`) need `--allow`.
 See [DISK-MAINT](docs/DISK-MAINT.md).
 
+pass^k eval: `phm eval passk [--lane <lane:engine>]... [--trials N] [--k K]`
+runs the pinned golden set in `benchmarks/passk/` N times per task in clean
+worktrees and reports pass@1/pass@k/pass^k per lane/model. `scores` and
+`alerts` read the published projection and regression journal;
+`schedule [--install]` prints or installs the nightly per-user job.
+`--gate` exits 3 on a regression vs the baseline. Outputs are advisory for
+lane routing; nothing routes, reserves or merges. See
+[EVAL-PASSK](docs/EVAL-PASSK.md).
+
 ## Publish subscription capacity
 
 Copy-paste: `phm capacity publish --json`. Run on each node with its own local auth;
@@ -114,6 +127,25 @@ jobs. Records use `job` (or `job_id`/`jobId`), `event` and `ts` (or
 ambiguous repeated boundaries are reported as unmeasured, not estimated;
 phase totals need not cover the whole wall time. Existing ledgers may not yet
 contain all boundaries.
+
+Fleet IQ: `phm fleet eval-report [--days 7] [--prs prs.json] --json` scores
+merged PRs post-merge: revert, regression and follow-up rates, CI-failure
+correlation, and time-to-merge, rolled up by lane, tier, lane+tier and repo
+(`fleet.eval-report.v1`). Evidence comes from `~/.ashlr-runs/metrics/jobs.jsonl`,
+repeatable `--prs` files of `gh pr list --state merged --json url,number,title,
+mergedAt,mergeCommit,files,statusCheckRollup,commits,body` output, and the
+signed post-merge observation ledger. A merge counts `stable` only when the
+72 h window elapsed under a covering evidence channel; uncovered merges are
+`unobserved`, and `ranked` sorts groups on the Wilson lower bound. Read-only;
+nothing merges, routes or releases credit.
+
+Research loop (RQ-SWE5-RESEARCH-LOOP): `phm fleet research-digest --file
+<digest.md> --json` scores a digest's `## Proposals` bullets (impact x
+confidence - effort), dedups them against the queue and shipped work, and
+runs each rendered `- READY` line through the admission lint. Dry-run by
+default; `--apply --queue <ready.md>` appends only the reviewed subset, and
+`--approve <id,...>` narrows it. See [the research loop](docs/RESEARCH-LOOP.md)
+and the [Spawn fleet synthesis](docs/strategy/spawn-fleet-model.md).
 
 Merge queue drift protection: the Quick typecheck job runs the CODEOWNERS and
 Tier-1 import closure checks on every PR and merge queue candidate, including
@@ -193,9 +225,25 @@ phm desktopctl run claude --task "summarise this repo" --json
 
 `capabilities` (the doctor) always runs and reports the connection, each macOS
 TCC grant and per-resource reasons for what is blocked. `run` needs a `full`
-grant and returns untrusted screen text. `browser` is read-only — act on the
+grant and returns untrusted screen text. `browser` is read-only; act on the
 web through the Phantom Browser pane. Nothing prompts for or changes TCC
 grants; every action is feed-logged and refuses to run unlogged.
+
+## Desktop operator
+
+`phm desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]`
+operates desktop apps on this Mac through the `desktop-operator` helper.
+Accessibility is the reader. A window screenshot plus OCR is the fallback.
+Reads do not post to the bus. `focus`, `scroll`, `type` and `click` post a
+bus intent, then act. The fleet KILL switch and comms pause block those writes.
+The roster hook is `desktopSessions()` in `src/core/desktop/desktop-sessions.ts`.
+See [DESKTOP-OPERATOR](docs/DESKTOP-OPERATOR.md).
+
+```sh
+phm desktop doctor --json
+phm desktop list-apps --json
+phm desktop read --app Cursor --json
+```
 
 ## Drafts
 
@@ -212,6 +260,33 @@ Anything addressed to someone other than the owner's verified channel is a
 draft first. Approve records the decision and does not send; an agent never
 treats an approved draft as send authority. Drafts live in
 `~/.ashlr-runs/drafts/drafts.jsonl` with mode 0600 and never hold credentials.
+
+## Comms agent
+
+`phm comms-agent status|run|drafts --json` runs the Comms role under the
+Leader. The router picks the lane; the role names none. Bulk and bot mail is
+archived, never deleted. A send needs an owner standing approval. See
+[COMMS-AGENT](docs/COMMS-AGENT.md):
+
+```sh
+phm comms-agent status --json
+phm comms-agent run --lanes claude,local --json
+phm comms-agent drafts --json
+```
+
+## Agent sessions
+
+`phm sessions create|show|resume|terminate --json` runs resumable agent
+sessions. A session pairs an agent profile id and version with an environment
+id and an append-only event log. Each turn is one `phm queue` job, and dispatchd
+is unchanged. The statuses are idle, running, rescheduling and terminated. See
+[SESSIONS](docs/SESSIONS.md):
+
+```sh
+phm sessions create --agent helper --agent-version 1 --environment local --job J1 --json
+phm sessions show sesn_0123456789abcdef --json
+phm sessions resume sesn_0123456789abcdef --scope "Address review comments" --json
+```
 
 ## Docs Radar
 
@@ -254,7 +329,7 @@ or installed-app acceptance. See [recovery evidence](docs/contracts/CONTRACT-M52
 
 The release autonomy command is awaiting top-level CLI wiring. Once wired, it will read the enrolled repositories' release gates and the local publish switch and offer a Markdown report for one repository. It proposes classifications without changing settings. Unknown evidence is not evidence of an absent gate. See [release autonomy](docs/RELEASE-AUTONOMY.md).
 
-Desktop update status: `phm app update status [--json]` inspects the local signed stage and reports host deferral and lease counts. Unknown app and job identities are null. See [desktop updates](DESKTOP.md#background-update-discovery-and-local-status).
+Desktop update status: `phm app update status [--json]` reads the installed app bundle version and reports a staged candidate only when it is newer, plus host deferral and lease counts. Unknown job identities stay null. See [desktop updates](DESKTOP.md#background-update-discovery-and-local-status).
 
 ## Multi-Mac node pool
 
@@ -270,7 +345,7 @@ over and fences the returning primary. Publication remains primary-only. No
 production dispatchd cutover or runner installation is performed. See
 [Agent network](docs/AGENT-NETWORK.md) and [Nodes](docs/NODES.md).
 
-Agent network channels: `phm agents bus channels list --json` and `phm agents bus channels test email --json` are offline dry runs. See [agent network channels](docs/AGENT-NETWORK-CHANNELS.md) for the default-deny policy and adapter contract.
+Agent network channels: `phm agents bus channels list --json` reports which adapters are registered. `phm agents bus channels test bus --json` and `test handoff` record a local probe. Other channels stay refused until an adapter exists. See [agent network channels](docs/AGENT-NETWORK-CHANNELS.md).
 
 Repository ranking: `phm repos rank --json` blends seed priority with local merged
 PR recency and autonomy leverage, at most daily. `phm repos rank --recompute --json`

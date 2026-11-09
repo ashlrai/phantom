@@ -24,7 +24,8 @@ a suite and keep text free of real PRs, paths outside this repo, names and
 credentials.
 
 Run the bench against a local serving runtime (loopback endpoints only —
-anything else is refused before a request is made):
+anything else is refused before a request is made, and redirect replies are
+refused rather than followed):
 
 ```sh
 npx tsx scripts/radar-local-bench.ts \
@@ -39,5 +40,5 @@ engineering-cycle dashboard — an estimate at the repo's would-be-cloud
 reference price, accuracy-weighted, never a billing claim. Offline tests:
 
 ```sh
-HOME=$(mktemp -d) npx vitest run test/radar-local-bench.test.ts
+HOME=$(mktemp -d) npx vitest run test/radar-local-bench.test.ts test/radar-local-bench-redirect.test.ts
 ```

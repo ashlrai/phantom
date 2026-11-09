@@ -113,6 +113,22 @@ tier name itself. The vocabulary lives in
 [`queue-tier.ts`](../src/core/drive/queue-tier.ts). Keep it identical to
 `TIERS` in `contrib/mac/dispatchd.py`.
 
+### Stage delegation (bottleneck-only)
+
+Router/leader policy: frontier lanes plan and verify; cheap lanes implement;
+only the stage that is the actual bottleneck earns delegated extra capacity.
+`plan` and `verify` are judgment stages — they never take the free-first
+implement ordering in `tierPreference`, whatever the labelled difficulty,
+because a cheap verify proves nothing. `implement` (router task kinds `code`
+and `bulk`) is the cheap-lane stage and escalates to frontier ordering only
+when it is the declared bottleneck. A delegated run may declare its stage in
+`DelegationScope.stage` (`plan` | `implement` | `verify`), which the worker
+prompt renders with the stage's lane class. The vocabulary and lane-class
+policy live in
+[`stage-delegation.ts`](../src/core/routing/stage-delegation.ts) and
+[`delegation.ts`](../src/core/types/delegation.ts); the stage-aware ranking is
+in [`router.ts`](../src/core/routing/router.ts).
+
 `exportMarkdown` round-trips unchanged imports byte-for-byte. State changes
 update the status while retaining original text and append a comment with claim,
 PR and block metadata. JSON export is the complete backup and restore format.
@@ -208,3 +224,17 @@ waiting job has missing or conflicting enqueue timestamps. The command reads
 at most 2 MiB of metrics and treats a larger ledger as unavailable. Without
 `--json`, the same command prints a plain-language report. Use `--root /path`
 to inspect a different runs directory.
+
+## Incident pipeline
+
+`phm incident report --kind error --repo ashlrai/phantom --message "<text>"` turns a
+production signal (`error`, `log-anomaly` or `bug-notice`) into one bounded READY fix
+job. The message is scrubbed and fingerprinted like `phm issues` (ids, times and long
+numbers ignored), so repeats join the open incident instead of queueing again. Severity
+comes from `--severity` or is inferred from the text and `--count`: sev1 is P0 frontier,
+sev2 P1 mid, sev3 P2 fast, and sev4 is only recorded. Each repo may open 2 jobs an hour
+and the fleet 6 (sev1 skips the repo cap and may use a hard cap of 12). `phm incident
+receipts` messages the reporter once per incident whose job is DONE; a recurrence within
+24 hours reopens it as a regression (`INC-<fingerprint>-<n>`). Messages go to Telegram
+only when proactive comms are on. State lives in `~/.ashlr-runs/incidents`; `--dir` picks
+the queue directory. Both verbs take `--json`.

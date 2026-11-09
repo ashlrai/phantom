@@ -184,8 +184,8 @@ describe('M50 registry — buildEngineCommand argv PARITY (byte-identical)', () 
       GOAL,
       '--autonomous',
       '--dangerously-skip-permissions',
-      '--surgical',
     ]);
+    expect(cmd!.args).not.toContain('--surgical');
   });
 
   it('empty model string is treated as absent', () => {

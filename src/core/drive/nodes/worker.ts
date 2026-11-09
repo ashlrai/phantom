@@ -4,18 +4,21 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { checkDriveExecutable } from '../script-bridge.js';
 import type { JobClaim } from './index.js';
+import { probeLocalModelCaps, type LocalLaneProbeDeps } from './local-model-caps.js';
 import { callPool, type PoolConfig } from './pool-host.js';
 import { validId } from './state.js';
 import { readNodeCapacity } from './capacity.js';
 
-/** Native sign-in checks only. No auth-file reads, API tokens or output retention. */
-export function probeNodeLanes(run: typeof spawnSync = spawnSync): string[] {
-  return ([['codex', ['login', 'status']], ['claude', ['auth', 'status', '--json']]] as const)
+/** Native sign-in checks plus the local oMLX lane plan. No auth-file reads, API tokens or output retention. */
+export function probeNodeLanes(run: typeof spawnSync = spawnSync, localDeps: LocalLaneProbeDeps = {}): string[] {
+  const providers = ([['codex', ['login', 'status']], ['claude', ['auth', 'status', '--json']]] as const)
     .filter(([command, args]) => {
       const result = run(command, [...args], { timeout: 5000, stdio: 'ignore',
         env: { PATH: process.env['PATH'], HOME: homedir() } });
       return !result.error && result.status === 0;
     }).map(([command]) => command);
+  // Local model caps are planned, not probed: enabled config + RAM class + live headroom.
+  return [...providers, ...probeLocalModelCaps(localDeps)];
 }
 
 /** Missing sentinels mean open; unreadable/unsafe control paths hold admission. */

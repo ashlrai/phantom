@@ -25,6 +25,29 @@ export interface LeaderboardEntry {
 export interface OutputReport { version: 1; entries: LeaderboardEntry[] }
 export interface Regression { lane: string; model: string; taskId: string; dimension: 'tests' | 'diffQuality' | 'instructions' }
 
+/** The task fields golden-output scoring reads (satisfied by GoldenTask and
+ * the pass^k suite's PassKTask). */
+export interface GoldenTaskScoringView {
+  id: string;
+  required: string[];
+  forbidden: string[];
+  maxChangedLines: number;
+}
+
+/** Score one golden-task attempt across the three output dimensions. Shared
+ * by evaluateOutputs (one attempt per task) and the pass^k suite (N trials). */
+export function scoreGoldenOutput(task: GoldenTaskScoringView, diff: string, resolved: boolean, error?: string): OutputScore {
+  const changedLines = diff.split('\n').filter(line => /^[+-]/.test(line) && !/^(\+\+\+|---)/.test(line)).length;
+  const valid = !error && changedLines > 0;
+  return {
+    taskId: task.id,
+    tests: resolved && !!valid,
+    diffQuality: !!valid && changedLines <= task.maxChangedLines,
+    instructions: !!valid && task.required.every(s => diff.includes(s)) && task.forbidden.every(s => !diff.includes(s)),
+    ...(error ? { error } : {}),
+  };
+}
+
 /** Runs sequentially to keep model usage and workspace isolation predictable. */
 export async function evaluateOutputs(tasks: GoldenTask[], lanes: EvalLane[]): Promise<OutputReport> {
   if (!tasks.length || !lanes.length) throw new Error('at least one task and lane are required');
@@ -33,18 +56,8 @@ export async function evaluateOutputs(tasks: GoldenTask[], lanes: EvalLane[]): P
   const entries: LeaderboardEntry[] = [];
   for (const lane of lanes) {
     const report = await runBenchmark(tasks, { engine: lane.model, engineRunner: lane.runner });
-    const scores = report.perTask.map((result, i): OutputScore => {
-      const task = tasks[i]!;
-      const changedLines = result.diff.split('\n').filter(line => /^[+-]/.test(line) && !/^(\+\+\+|---)/.test(line)).length;
-      const valid = !result.error && changedLines > 0;
-      return {
-        taskId: task.id,
-        tests: result.resolved && !!valid,
-        diffQuality: !!valid && changedLines <= task.maxChangedLines,
-        instructions: !!valid && task.required.every(s => result.diff.includes(s)) && task.forbidden.every(s => !result.diff.includes(s)),
-        ...(result.error ? { error: result.error } : {}),
-      };
-    });
+    const scores = report.perTask.map((result, i): OutputScore =>
+      scoreGoldenOutput(tasks[i]!, result.diff, result.resolved, result.error));
     entries.push({ lane: lane.lane, model: lane.model, scores, passRate: scores.filter(s => s.tests && s.diffQuality && s.instructions).length / scores.length });
   }
   entries.sort((a, b) => b.passRate - a.passRate || a.lane.localeCompare(b.lane) || a.model.localeCompare(b.model));

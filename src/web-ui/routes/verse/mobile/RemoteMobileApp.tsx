@@ -17,6 +17,12 @@ function stored(key: string): string {
   try { return (localStorage.getItem(key) ?? '').slice(0, 200); } catch { return ''; }
 }
 
+function pairingCodeFromLocation(): string {
+  if (typeof window === 'undefined') return '';
+  const match = /^#\/pair\/([A-Za-z0-9_-]{43})$/.exec(window.location.hash);
+  return match?.[1] ?? '';
+}
+
 function pendingPairing(): string {
   try { return (sessionStorage.getItem(PENDING_KEY) ?? '').slice(0, 200); } catch { return ''; }
 }
@@ -49,8 +55,13 @@ export function RemoteMobileApp({ shell, Button, ui }: { shell: ReactNode; Butto
   const [view, setView] = useState<View>({ kind: 'loading' });
   const [deviceId, setDeviceId] = useState(() => stored(DEVICE_KEY));
   const [pendingId, setPendingId] = useState(() => pendingPairing());
-  const [pairing, setPairing] = useState(false);
-  const [code, setCode] = useState('');
+  const scannedCode = pairingCodeFromLocation();
+  const [pairing, setPairing] = useState(scannedCode.length > 0);
+  const [code, setCode] = useState(scannedCode);
+  useEffect(() => {
+    if (!scannedCode) return;
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+  }, [scannedCode]);
   const [label, setLabel] = useState('My phone');
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);

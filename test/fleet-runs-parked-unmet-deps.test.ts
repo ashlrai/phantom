@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +8,44 @@ import {
   readFleetQueue,
 } from '../src/core/fleet/runs-parked-queue.js';
 import { fleetStatusApi } from '../src/core/fleet/status-api.js';
+
+/**
+ * Deterministic namespace-flip seam for the intermediate-symlink TOCTOU test:
+ * each mocked syscall on the attacked path first retargets the symlink to the
+ * side the exploit needed at that point — outside for open() and lstat(),
+ * inside for realpath() — with no timing dependence.
+ */
+const raceCtl = vi.hoisted(() => ({
+  active: false,
+  resolved: '',
+  link: '',
+  inside: '',
+  outside: '',
+}));
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('node:fs/promises')>();
+  const point = async (target: string) => {
+    await orig.unlink(raceCtl.link).catch(() => undefined);
+    await orig.symlink(target, raceCtl.link);
+  };
+  const underAttack = (path: unknown) => raceCtl.active && String(path) === raceCtl.resolved;
+  return {
+    ...orig,
+    open: (async (path: string, flags: number, mode: number) => {
+      if (underAttack(path)) await point(raceCtl.outside);
+      return orig.open(path, flags, mode);
+    }) as unknown as typeof orig.open,
+    realpath: (async (path: string, options: never) => {
+      if (underAttack(path)) await point(raceCtl.inside);
+      return orig.realpath(path, options);
+    }) as unknown as typeof orig.realpath,
+    lstat: (async (path: string, options: never) => {
+      if (underAttack(path)) await point(raceCtl.outside);
+      return orig.lstat(path, options);
+    }) as unknown as typeof orig.lstat,
+  };
+});
 
 const now = new Date(2026, 10, 3, 12).getTime();
 
@@ -144,11 +182,51 @@ describe('fleet parked unmet deps prompt path safety (RQ-SWE3-SEC-PATHS-1)', () 
   it('reads only the first 64 KiB of an oversized in-root prompt', async () => {
     const { base, runsDir } = await seed();
     try {
-      const body = `DEPENDENCY GATE: RQ-BIG\n${'x'.repeat(256 * 1024)}`;
+      // Read-byte assertions: RQ-IN ends inside the 64 KiB window while
+      // RQ-TAIL sits wholly past it, so the former unbounded readFile — which
+      // passed the old version of this test — would have surfaced RQ-TAIL.
+      const first = 'DEPENDENCY GATE: RQ-BIG ';
+      const pad = 'x'.repeat(64 * 1024 - first.length - ' RQ-IN '.length);
+      const body = `${first}${pad} RQ-IN ${'y'.repeat(200)}RQ-TAIL\n`;
       await writeFile(join(runsDir, 'queue', 'prompts', 'big.md'), body);
       await writeFile(join(runsDir, 'queue', 'ready.tsv'), `${row('prompts/big.md')}\n`);
       const result = await readFleetQueue({ runsDir, now: () => now });
-      expect(result.unmetDeps).toEqual([{ job: 'RQ-WAIT', lane: 'devin', unmet: ['RQ-BIG'] }]);
+      expect(result.unmetDeps).toEqual([{ job: 'RQ-WAIT', lane: 'devin', unmet: ['RQ-BIG', 'RQ-IN'] }]);
+      expect(JSON.stringify(result)).not.toContain('RQ-TAIL');
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a prompt whose intermediate symlink flips between open and the containment checks', async () => {
+    const { base, runsDir, outside } = await seed();
+    try {
+      // Deterministic replay of the reported race: the mocked syscalls retarget
+      // runsDir/queue/link to outside for open() and lstat() but to inside for
+      // realpath(), so the vulnerable sequence read an outside file whose
+      // lstat matched the opened descriptor. The fixed reader must not emit
+      // RQ-LEAK no matter which side each syscall observed.
+      const insidePool = join(runsDir, 'queue', 'inside-pool');
+      const outsidePool = join(outside, 'pool');
+      await mkdir(insidePool);
+      await mkdir(outsidePool);
+      await writeFile(join(insidePool, 'leak.md'), 'DEPENDENCY GATE: RQ-DECOY\n');
+      await writeFile(join(outsidePool, 'leak.md'), 'DEPENDENCY GATE: RQ-LEAK\n');
+      const link = join(runsDir, 'queue', 'link');
+      await symlink(outsidePool, link);
+      raceCtl.link = link;
+      raceCtl.inside = insidePool;
+      raceCtl.outside = outsidePool;
+      raceCtl.resolved = join(runsDir, 'queue', 'link', 'leak.md');
+      raceCtl.active = true;
+      try {
+        await writeFile(join(runsDir, 'queue', 'ready.tsv'), `${row('link/leak.md')}\n`);
+        const result = await readFleetQueue({ runsDir, now: () => now });
+        expect(result.unmetDeps).toEqual([]);
+        expect(JSON.stringify(result)).not.toContain('RQ-LEAK');
+      } finally {
+        raceCtl.active = false;
+      }
     } finally {
       await rm(base, { recursive: true, force: true });
     }

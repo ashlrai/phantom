@@ -124,6 +124,26 @@ report ready; `mobile` needs the `~/.ashlr/verse-remote.json` gateway file
   `phm comms inbox read` reads the inbox file directly.
 - **API** — the `GET /api/verse/fleet/runs/inbox` route exposes the inbox in JSON.
 
+## One owner thread
+
+`phm comms status --json`, `phm comms thread --json` and `phm comms send-owner --text "<reply>" --json` are the single owner thread across desktop, Telegram, email, iMessage and Slack. Inbound messages from the configured owner land in one ordered thread. A reply goes back to that channel and to the desktop thread, and nowhere else. Adapters stay disabled until configured. Secret fields are Phantom Secrets handle names. KILL and the comms pause halt every adapter. See [Owner thread](OWNER-THREAD.md).
+
+## Unified inbox
+
+`phm comms inbox [--json]`
+([`unified-inbox.ts`](../src/core/comms/unified-inbox.ts)) is the read-only
+roll-up of everything still pending, ranked the way Needs-you ranks: severity
+band, then priority, then expiry, then newest. It aggregates four local sources
+— unresolved `NEEDS-MASON.md` items, unanswered allowlisted teammate texts,
+outbound drafts awaiting approval, and live bus `kind:"work"` envelopes with no
+live claim — and each item carries `act` deep-link commands (`phm fleet
+needs-resolve`, `phm fleet teammate-texts --answered`, `phm drafts approve`,
+`phm fleet bus-claim acquire`). It never claims, replies, or mutates; a source
+that cannot be read reports `missing`, `degraded`, or `unavailable` in
+`sources` instead of pretending to be empty, and the list is capped at 200
+items with the remainder counted in `omitted`. `phm comms inbox read` and
+`post` keep their original meaning for Mason's local inbox file.
+
 ## Gmail triage building block
 
 [`pollGmailBridge`](../src/core/comms/gmail-bridge.ts) is a local programmatic
