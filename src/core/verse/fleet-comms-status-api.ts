@@ -7,6 +7,8 @@ import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { listDrafts } from '../cos/drafts.js';
 import { diagnoseEmailDrop, type EmailDiagnosisDeps } from '../comms/email-diagnosis.js';
+import { checkIMessagePath } from '../comms/imessage-path-check.js';
+import { readImessageAckEvidence } from '../comms/imessage-ack-evidence.js';
 import { readEmailOutbox } from '../comms/email-outbox.js';
 
 export const VERSE_FLEET_COMMS_STATUS_PATH = '/api/verse/fleet/comms-status';
@@ -18,6 +20,8 @@ export interface FleetCommsStatusApiDeps {
   outboxDir?: string;
   /** Collector seams for tests. */
   emailDiagnosisDeps?: EmailDiagnosisDeps;
+  imessagePath?: typeof checkIMessagePath;
+  imessageAcks?: typeof readImessageAckEvidence;
   /** Clock seam for tests; stamps generatedAt. */
   now?: () => Date;
 }
@@ -91,13 +95,34 @@ export function createFleetCommsStatusApi(deps: FleetCommsStatusApiDeps = {}): A
         ? { configured: true, ...emailDiagnosis.counts, stuckReasons }
         : null;
 
+    const generatedAt = now();
+    let imessage: { configuration: { state: string; reason: string }; chatDb: { state: string; reason: string }; cursor: { state: string; reason: string }; ackSource: string; lastAckAt: string | null; acks24h: number; nextStep: string | null } | null = null;
+    let imessageSource: 'healthy' | 'degraded' = 'healthy';
+    try {
+      const path = (deps.imessagePath ?? checkIMessagePath)({ runsRoot: runsDir });
+      const acks = await (deps.imessageAcks ?? readImessageAckEvidence)(262144, runsDir);
+      const fields = [path.configuration, path.chatDb, path.cursor];
+      const firstProblem = fields.find((field, index) => field.state !== ['configured', 'readable', 'present'][index]);
+      const timestamps = acks.rows.map(row => row.timestamp).filter(at => Number.isFinite(Date.parse(at)) && Date.parse(at) <= generatedAt.getTime());
+      const project = ({ state, reason }: { state: string; reason: string }) => ({ state, reason });
+      imessage = {
+        configuration: project(path.configuration), chatDb: project(path.chatDb), cursor: project(path.cursor),
+        ackSource: acks.sourceState, lastAckAt: timestamps.sort().at(-1) ?? null,
+        acks24h: timestamps.filter(at => Date.parse(at) >= generatedAt.getTime() - 86_400_000).length,
+        nextStep: firstProblem?.nextStep ?? null,
+      };
+    } catch {
+      imessageSource = 'degraded';
+    }
+
     sendJson(res, 200, {
       version: 1,
-      generatedAt: now().toISOString(),
+      generatedAt: generatedAt.toISOString(),
       drafts,
       emailOutbox,
       emailDiagnosis,
-      sources: { drafts: draftsSource, emailOutbox: emailOutboxSource },
+      imessage,
+      sources: { drafts: draftsSource, emailOutbox: emailOutboxSource, imessage: imessageSource },
     });
   }
 
