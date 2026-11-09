@@ -24,21 +24,37 @@ export interface SpendBudgetPolicy {
   entries: SpendBudgetEntry[];
 }
 
-/** Hash pinned by a verified authority-ledger note. */
+/**
+ * Shapes a file may carry. None of these is a trust root: a ledger note and an
+ * operator approval are both writable by the same account, and this repo has
+ * no mode-444 Security pin-chain verifier and no Masbot or owner signature
+ * verifier for a spend budget. A nonzero amount therefore stays 0.
+ */
 export interface SpendBudgetPinAttestation {
   kind: 'pin-chain';
   hash: string;
   chain: string;
+  epoch: number;
 }
 
-/** Digest bound to a Mason approval record. */
 export interface SpendBudgetApprovalAttestation {
   kind: 'mason-approval';
   id: string;
   digest: string;
+  epoch: number;
 }
 
-export type SpendBudgetAttestation = SpendBudgetPinAttestation | SpendBudgetApprovalAttestation;
+/** What `phm budget set` records. It does not authorize spend. */
+export interface SpendBudgetRecordedAttestation {
+  kind: 'recorded';
+  hash: string;
+  epoch: number;
+}
+
+export type SpendBudgetAttestation =
+  | SpendBudgetPinAttestation
+  | SpendBudgetApprovalAttestation
+  | SpendBudgetRecordedAttestation;
 
 export interface SpendBudgetDocument {
   policy: SpendBudgetPolicy;
@@ -62,30 +78,46 @@ export function spendBudgetChangeRefused(env: NodeJS.ProcessEnv): string | null 
   return AGENT_ENV_MARKERS.find((key) => env[key] !== undefined && env[key] !== '') ?? null;
 }
 
-export function spendBudgetPolicyHash(policy: SpendBudgetPolicy): string {
+function epochOf(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+export function spendBudgetPolicyHash(policy: SpendBudgetPolicy, epoch: number): string {
   const entries = [...policy.entries].sort((left, right) => left.provider.localeCompare(right.provider) || left.period.localeCompare(right.period));
   return createHash('sha256')
-    .update(SPEND_BUDGET_HASH_DOMAIN + canonicalJson({ schema: policy.schema, entries }))
+    .update(SPEND_BUDGET_HASH_DOMAIN + canonicalJson({ schema: policy.schema, entries, epoch }))
     .digest('hex');
 }
 
 export function parseSpendBudgetAttestation(value: unknown): SpendBudgetAttestation | null {
   if (!isRecord(value)) return null;
   const kind = value['kind'];
+  const epoch = epochOf(value['epoch']);
+  if (epoch === null) return null;
   if (kind === 'pin-chain') {
-    if (Object.keys(value).some((key) => key !== 'kind' && key !== 'hash' && key !== 'chain')) return null;
+    if (Object.keys(value).some((key) => key !== 'kind' && key !== 'hash' && key !== 'chain' && key !== 'epoch')) return null;
     if (typeof value['hash'] !== 'string' || !SHA256_HEX.test(value['hash'])) return null;
     if (typeof value['chain'] !== 'string' || !SHA256_HEX.test(value['chain'])) return null;
-    return { kind: 'pin-chain', hash: value['hash'], chain: value['chain'] };
+    return { kind: 'pin-chain', hash: value['hash'], chain: value['chain'], epoch };
   }
   if (kind === 'mason-approval') {
-    if (Object.keys(value).some((key) => key !== 'kind' && key !== 'id' && key !== 'digest')) return null;
+    if (Object.keys(value).some((key) => key !== 'kind' && key !== 'id' && key !== 'digest' && key !== 'epoch')) return null;
     if (typeof value['id'] !== 'string' || !SHA256_HEX.test(value['id'])) return null;
     if (typeof value['digest'] !== 'string' || !SHA256_HEX.test(value['digest'])) return null;
     if (value['id'] !== value['digest']) return null;
-    return { kind: 'mason-approval', id: value['id'], digest: value['digest'] };
+    return { kind: 'mason-approval', id: value['id'], digest: value['digest'], epoch };
+  }
+  if (kind === 'recorded') {
+    if (Object.keys(value).some((key) => key !== 'kind' && key !== 'hash' && key !== 'epoch')) return null;
+    if (typeof value['hash'] !== 'string' || !SHA256_HEX.test(value['hash'])) return null;
+    return { kind: 'recorded', hash: value['hash'], epoch };
   }
   return null;
+}
+
+/** No in-repo verifier can prove a spend budget. Ledger notes and operator approvals are not roots. */
+export function spendBudgetRootHonors(_attestation: SpendBudgetAttestation): boolean {
+  return false;
 }
 
 /** Entries at 0 need no attestation. Any higher amount needs one that verifies. */
