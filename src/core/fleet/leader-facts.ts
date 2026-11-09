@@ -7,7 +7,7 @@ import type { CloudGh } from '../cloud/pr-actions.js';
 type Row = Record<string, unknown>;
 export interface LeaderFacts {
   schema: 'leader.facts.v1'; generated_at: string;
-  sources: { queue: 'ok' | 'unknown'; jobs: 'ok' | 'unknown' | 'partial' };
+  sources: { queue: 'ok' | 'unknown'; jobs: 'ok' | 'unknown' | 'partial'; github: 'ok' | 'partial' };
   jobs: { id: string; repo: string | null; publish_result: string | null; pr_url: string | null; pr_state: 'open' | 'merged' | 'closed' | null; merged_at: string | null }[];
   repos: { repo: string; merged_24h: number | null; latest_release_tag: string | null }[];
 }
@@ -60,6 +60,30 @@ export async function writeLeaderFacts(root: string, gh: CloudGh = defaultCloudG
     }
     jobs.push(job);
   }
+  // Search independently of the local queue: completed jobs may have been rotated out.
+  // Search is paginated and incomplete or unavailable results are reported as partial.
+  let github: 'ok' | 'partial' = 'ok';
+  const seen = new Set(jobs.map(job => job.pr_url).filter(Boolean));
+  const since = new Date(now - 48 * 3600000).toISOString();
+  for (let page = 1; page <= 10; page++) {
+    const result = await api(gh, ['api', 'search/issues', '-X', 'GET', '-f', `q=org:ashlrai is:pr created:>=${since}`, '-f', 'per_page=100', '-f', `page=${page}`]);
+    if (!object(result) || !Array.isArray(result.items) || result.incomplete_results !== false) { github = 'partial'; break; }
+    for (const item of result.items) {
+      if (!object(item) || typeof item.title !== 'string' || typeof item.html_url !== 'string') { github = 'partial'; continue; }
+      const id = /\b(RQ-[A-Za-z0-9-]*Q8)\b/i.exec(item.title)?.[1];
+      const match = urlPattern.exec(item.html_url);
+      if (!id || !match || seen.has(item.html_url)) continue;
+      const pr = await api(gh, ['api', `repos/${match[1]}/pulls/${match[2]}`]);
+      let state: 'open' | 'merged' | 'closed' | null = null, merged: string | null = null;
+      if (object(pr) && (pr.state === 'open' || pr.state === 'closed') && (pr.merged_at === null || Number.isFinite(date(pr.merged_at)))) {
+        state = pr.merged_at ? 'merged' : pr.state; merged = typeof pr.merged_at === 'string' ? pr.merged_at : null;
+      } else github = 'partial';
+      jobs.push({ id, repo: match[1]!, publish_result: 'published', pr_url: item.html_url, pr_state: state, merged_at: merged });
+      seen.add(item.html_url);
+    }
+    if (result.items.length < 100) break;
+    if (page === 10) github = 'partial';
+  }
   const repos: LeaderFacts['repos'] = [];
   for (const repo of [...new Set(jobs.map(j => j.repo).filter((r): r is string => r !== null))].sort()) {
     const start = new Date(now - 24 * 3600000).toISOString(), end = new Date(now).toISOString();
@@ -70,7 +94,7 @@ export async function writeLeaderFacts(root: string, gh: CloudGh = defaultCloudG
     repos.push({ repo, merged_24h: object(search) && search.incomplete_results === false && Number.isSafeInteger(search.total_count) && (search.total_count as number) >= 0 ? search.total_count as number : null,
       latest_release_tag: object(release) && typeof release.tag_name === 'string' && release.tag_name ? release.tag_name : null });
   }
-  const facts: LeaderFacts = { schema: 'leader.facts.v1', generated_at: new Date(now).toISOString(), sources: { queue: queue === null ? 'unknown' : 'ok', jobs: ledger === null ? 'unknown' : damaged ? 'partial' : 'ok' }, jobs, repos };
+  const facts: LeaderFacts = { schema: 'leader.facts.v1', generated_at: new Date(now).toISOString(), sources: { queue: queue === null ? 'unknown' : 'ok', jobs: ledger === null ? 'unknown' : damaged ? 'partial' : 'ok', github }, jobs, repos };
   const dir = join(root, 'leader'); await mkdir(dir, { recursive: true });
   const temp = join(dir, `.facts.${randomUUID()}.tmp`);
   try { await writeFile(temp, `${JSON.stringify(facts, null, 2)}\n`, { mode: 0o600, flag: 'wx' }); await rename(temp, join(dir, 'facts.json')); } finally { await unlink(temp).catch(() => {}); }
