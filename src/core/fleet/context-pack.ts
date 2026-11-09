@@ -7,6 +7,7 @@ import { dispatchEventsCandidates } from './dispatch-events-path.js';
 import { sanitizePublicJson } from '../util/public-json.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { learnOutcomes, outcomeLearningView } from '../routing/outcome-learning.js';
+import { pinnedContextRows } from './library-pins.js';
 
 export interface ContextPackOptions extends BusInboxOptions {
   job: string; lane: string; runsDir: string; maxTokens?: number; merges?: number;
@@ -86,6 +87,7 @@ export async function buildContextPack(options: ContextPackOptions): Promise<str
     .map(({ cursor: at, envelope: { id, from, to, priority, body } }) => ({ source: 'bus-inbox', cursor: at, id, from, to, priority, body }));
   const merges = events.text.split(/\r?\n/).filter(line => /\b(?:MERGED|MERGE)\b|\bOUTCOME \S+ merged\b|\bstate=merged\b|"state"\s*:\s*"merged"/.test(line)).reverse().slice(0, count);
   const learning = outcomeLearningView(learnOutcomes(events.text));
+  const pins = pinnedContextRows();
   const json = compactContext(job, lane, [
     { name: 'fleet', rows: [{ lastTick: state.lastTick, sources: state.sources, paused: state.paused, lanes: state.lanes.sort((a, b) => a.lane.localeCompare(b.lane)).map(({ lane, running, target, queued, held }) => ({ lane, running, target, queued, held })), finished: learning.finished }] },
     { name: 'blockers', rows: [...state.lanes.filter(row => row.held).map(row => ({ lane: row.lane, reason: row.heldReason })),
@@ -93,6 +95,8 @@ export async function buildContextPack(options: ContextPackOptions): Promise<str
         !projectBusThread(rows, row.id).some(reply => reply.cursor > row.cursor && reply.envelope.body && typeof reply.envelope.body === 'object' && !Array.isArray(reply.envelope.body) &&
           ['resolved', 'closed', 'unblocked'].includes(String(reply.envelope.body['status']))))] },
     { name: 'merges', rows: merges.map(text => ({ source: events.path, text })) }, { name: 'threads', rows: threads },
+    // Last, so the byte budget trims Mason's pins before fleet state; omitted when nothing is pinned.
+    ...(pins.length ? [{ name: 'pinned-by-mason', rows: pins }] : []),
   ], cap);
   let log: Awaited<ReturnType<typeof open>> | undefined;
   try {
