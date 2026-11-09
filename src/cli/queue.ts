@@ -5,6 +5,7 @@ import { estimateQueueStats } from '../core/queue/stats.js';
 
 const HELP = `Usage: phm queue stats [--json] [--window <seconds>]
        phm queue report --events <file> [--json]
+       phm queue dedupe [--file <router-queue.md>] [--apply] [--json]
        phm queue add|claim|done|block|replay|list|import|export [options]
 
 stats: sliding windows over the local visit journal (~/.ashlr/queue/visits.jsonl).
@@ -85,6 +86,7 @@ export async function cmdQueue(args: string[]): Promise<number> {
     if (valueOptions.has(arg)) { i++; continue; }
     if (!arg.startsWith('-')) { command = arg; break; }
   }
+  if (command === 'dedupe') return (await import('./queue-dedupe.js')).cmdQueueDedupe(args.slice(args.indexOf('dedupe') + 1));
   if (['add', 'claim', 'done', 'block', 'replay', 'list', 'import', 'export'].includes(command ?? '') ||
       args.some(arg => arg === '--dir' || arg.startsWith('--dir='))) {
     return (await import('./job-queue.js')).cmdJobQueue(args);
