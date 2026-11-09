@@ -158,6 +158,7 @@ Every command, grouped by topic.
     daemon recover-state --dry-run|--execute                                                                                                                      Preview or explicitly execute one exact quarantine of a malformed daemon state (the fix when `daemon status` shows a state issue).
     daemon resolve-state --dry-run|--execute                                                                                                                      Preview or explicitly resolve one exact quarantine, restoring daemon state after `daemon recover-state`.
     worker setup                                                                                                                                                  Temporarily unavailable and fail-closed before config, enrollment, queue, wizard, or service mutation.
+    prs triage [--repo ashlrai/<name>] [--limit N] --json                                                                                                         Read-only classification of open pull requests.
     fleet status [--json]                                                                                                                                         Read-only fleet snapshot: daemon, per-backend dispatches+quota, queue, proposals, merges, paused state.
     fleet evidence doctor <source>                                                                                                                                Bounded read-only diagnosis for one decisions, judge, action, dispatch, manifest, or candidate ledger.
     fleet direction [--json]                                                                                                                                      Read-only autonomous direction report: mode, resource posture, guard blocks, and next actions.
@@ -270,6 +271,7 @@ Every command, grouped by topic.
     chain verify [--json]                                                                      Synthetic in-memory chain checks. Does not verify live transports.
     incident report|receipts [--json]                                                          Turn a production signal into one bounded fix job, or send receipts for finished incidents.
     router rank --tier <local|mid|frontier> [--routes FILE] [--slots pool=count ...] [--json]  Rank supplied router decisions by pool budget reset; advisory, no writes.
+    router serve|models|pick|config [--json]                                                   Loopback OpenAI-compatible endpoint over routeSeat, its model list, a routing preview and the versioned config. See docs/ROUTER-GATEWAY.md.
     router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]                    Compare recorded router predictions with outcomes and usage.
     queue report --events <file> [--json]                                                      Local per-station lambda, mu, rho, W and bottleneck; queue --help describes event input.
     signals [--json]                                                                           Read real repository adoption signals.

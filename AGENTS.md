@@ -207,6 +207,25 @@ Allowlisted apps only, through the desktop adapter, every action logged to the
 feed. A quit with unsaved work goes to needs-you (exit 3). No keystrokes, no
 reading app contents, no TCC changes.
 
+## Router gateway
+
+One routed model call for any agent. `phm run --model auto` asks the seat
+router to pick a granted seat under the budget mode and reserves; a pinned
+`<lane>:<model>` passes the same checks. The loopback endpoint runs the same
+code, and the read-only `phm_router_plan` MCP tool previews the same decision.
+Copy and paste these commands; see [Router gateway](docs/ROUTER-GATEWAY.md):
+
+```sh
+phm router pick --model auto --json
+phm run --model auto "Summarize this diff in three bullets." --json
+phm router serve --json
+```
+
+The endpoint binds 127.0.0.1 only and needs the bearer token in
+`~/.ashlr/router/token`; read the file, never print it. Provider auth stays in
+each lane CLI. Local models must be on loopback. Nothing is called while the
+kill switch is on.
+
 ## Desktop control
 
 `phm desktopctl capabilities|status|run <resource> [--json]` drives the Claude,

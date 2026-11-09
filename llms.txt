@@ -1,4 +1,5 @@
 
+- [Router gateway](docs/ROUTER-GATEWAY.md): `phm run --model auto "<prompt>" --json`, `phm router serve|models|pick|config --json`; loopback-only OpenAI-compatible endpoint, one CLI call over `routeSeat`, and the read-only `phm_router_plan` MCP preview, one versioned config, provider auth stays in each lane CLI.
 - [Node router](docs/NODE-ROUTER.md): `phm node join|pull|plan|status --json`; computers join as nodes, jobs carry an owner scope, per-job leases with fencing tokens so no job runs twice.
 - [Lane health](docs/LANE-HEALTH.md): `phm lanes health --json`, calls, error rate, p50 latency and deployed commit per lane over 12 h, with a stuck badge and phase age past a phase timeout.
 - [Standing lane freshness](docs/FLEET-LANE-FRESHNESS.md): `phm fleet lane-slots --json`, observations during mirror prep, per-repo timeout and unknown capacity.

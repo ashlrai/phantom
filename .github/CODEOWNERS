@@ -1074,6 +1074,7 @@
 /test/router-calibration.test.ts @masonwyatt23
 /test/router-current-claude-models.test.ts @masonwyatt23
 /test/router-eval-harness.test.ts @masonwyatt23
+/test/router-gateway.test.ts @masonwyatt23
 /test/router-lint.test.ts @masonwyatt23
 /test/router-queue-events.test.ts @masonwyatt23
 /test/router-queue-utf8-input-31k7.test.ts @masonwyatt23

@@ -66,6 +66,9 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
   { usage: 'phm chain verify [--json]', description: 'Exercise synthetic in-memory chain paths; never sends or checks live transport. Exit 0 pass, 1 failure, 2 usage.', safety: 'read', jsonShape: 'phantom.chain.verify.v1; per-link status and latency' },
   { usage: 'phm route explain [--json]', description: 'Read persisted dispatcher pools and accepted route moves in the trailing hour.', safety: 'read', jsonShape: '{available, route-moves-per-hour: number|null, lines}' },
   { usage: 'ashlr router rank --tier <local|mid|frontier> [--routes FILE] [--slots pool=count ...] [--json]', description: 'Rank eligible lanes by forecast exhaustion, then nearest reset; missing slots or budgets exclude a lane. No dispatch or state writes.', safety: 'read', jsonShape: '{ schema: fleet.lane-rank.v1, tier, lanes: RankedLane[] }' },
+  { usage: 'phm router pick --model auto|<lane:model> [--task T] [--difficulty D] [--json]', description: 'Show which seats a routed call would try, in order, and why. Calls no model and writes no decision log. Exit 0 routable, 1 no route, 2 bad request.', safety: 'read', jsonShape: 'RouterPlan {schema:"router.plan.v1", ok, steps[], ruledOut[], decision, reason}' },
+  { usage: 'phm run --model auto|<lane:model> "<prompt>" [--json]', description: 'One routed completion through the router gateway code path (same admission as the endpoint and MCP tool). Spends included usage of the chosen seat. Exit 0 answered, 1 no route or every seat failed, 2 bad request.', safety: 'append', jsonShape: 'RoutedCompletionResult {schema:"router.completion.v1", ok, text|reason, seatId, model, attempts[]}' },
+  { usage: 'phm router serve [--port N] [--json]', description: 'Start the loopback-only OpenAI-compatible endpoint (127.0.0.1; bearer token in ~/.ashlr/router/token). Runs until stopped.', safety: 'append', jsonShape: '{schema:"router.gateway.v1", url, port, config, tokenFile}' },
   { usage: 'phm router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]', description: 'Compare recorded router predictions with matched outcomes and usage offline.', safety: 'read', jsonShape: 'CalibrationReport (schemaVersion 1)' },
   {
     usage: 'phm context --for-agent <lane> --json',
@@ -696,6 +699,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'chain verify [--json]', desc: 'Synthetic in-memory chain checks. Does not verify live transports.', topic: 'observability' },
   { cmd: 'incident report|receipts [--json]', desc: 'Turn a production signal into one bounded fix job, or send receipts for finished incidents.', topic: 'observability' },
   { cmd: 'router rank --tier <local|mid|frontier> [--routes FILE] [--slots pool=count ...] [--json]', desc: 'Rank supplied router decisions by pool budget reset; advisory, no writes.', topic: 'observability' },
+  { cmd: 'router serve|models|pick|config [--json]', desc: 'Loopback OpenAI-compatible endpoint over routeSeat, its model list, a routing preview and the versioned config. See docs/ROUTER-GATEWAY.md.', topic: 'observability' },
   { cmd: 'router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]', desc: 'Compare recorded router predictions with outcomes and usage.', topic: 'observability' },
   { cmd: 'index [--refresh]',            desc: 'Build or refresh the desktop index; show counts by category.', topic: 'core' },
   { cmd: 'go [query] [--open|--cd]',     desc: 'Find a repo or item; open in editor (--open) or print path for cd (--cd).', topic: 'core' },

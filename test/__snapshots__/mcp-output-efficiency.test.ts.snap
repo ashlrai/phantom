@@ -85,6 +85,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "safety": "read",
     },
     {
+      "name": "phantom_spend_budget",
+      "safety": "read",
+    },
+    {
       "name": "phantom_observe_session",
       "safety": "read",
     },
@@ -230,6 +234,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
     },
     {
       "name": "ashlr_routing",
+      "safety": "read",
+    },
+    {
+      "name": "phm_router_plan",
       "safety": "read",
     },
     {
@@ -828,6 +836,14 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "phantom_observe",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "phantom_spend_budget",
   },
   {
     "inputSchema": {
@@ -2055,6 +2071,41 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "ashlr_routing",
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "difficulty": {
+          "enum": [
+            "low",
+            "medium",
+            "high",
+          ],
+          "type": "string",
+        },
+        "model": {
+          "type": "string",
+        },
+        "promptChars": {
+          "type": "number",
+        },
+        "task": {
+          "enum": [
+            "code",
+            "review",
+            "plan",
+            "bulk",
+            "leader",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "model",
+      ],
+      "type": "object",
+    },
+    "name": "phm_router_plan",
   },
   {
     "inputSchema": {

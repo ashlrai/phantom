@@ -60,6 +60,7 @@ const ADDED_NATIVE_NAMES = [
   'phantom_fleet_orders',
   'world_model',
   'phantom_observe',
+  'phantom_spend_budget',
   'phantom_observe_session',
   'phantom_fleet_graph',
   'phantom_fleet_session',
@@ -67,6 +68,7 @@ const ADDED_NATIVE_NAMES = [
   'phm_context_brief',
   'phm_claim_acquire',
   'phm_claim_release',
+  'phm_router_plan',
   'desktop_list_apps',
   'desktop_windows',
   'desktop_read',
@@ -77,6 +79,10 @@ const ADDED_NATIVE_NAMES = [
   'desktop_type',
   'desktop_click',
 ] as const;
+
+/** Later single tools, each on its own measured cap (object bytes plus a comma):
+ * phantom_spend_budget measured 236, phm_router_plan 474. */
+const SINGLE_TOOL_BYTES: Readonly<Record<string, number>> = { phantom_spend_budget: 260, phm_router_plan: 500 };
 
 function classifyNativeNames(names: readonly string[]): { old: string[]; added: string[]; unallocated: string[] } {
   const oldNames = new Set<string>(OLD_NATIVE_NAMES);
@@ -114,7 +120,7 @@ describe('native MCP tool inventory', () => {
     const tools = listNativeTools();
     const names = tools.map(tool => tool.name);
     const classified = classifyNativeNames(names);
-    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(70);
+    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(72);
     expect(new Set(names).size).toBe(names.length);
     expect(classified.old).toEqual([...OLD_NATIVE_NAMES]);
     expect(classified.added).toEqual([...ADDED_NATIVE_NAMES]);
@@ -144,11 +150,19 @@ describe('native MCP tool inventory', () => {
     const observeTools = addedTools.filter(tool => tool.name === 'world_model' || tool.name === 'phantom_observe' || tool.name === 'phantom_observe_session');
     const observeBytes = observeTools.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(observeBytes).toBeLessThanOrEqual(2500);
-    const addedBytes = addedTools.filter(tool => tool !== doctor && tool !== roster && !visibility.includes(tool) && !desktop.includes(tool) && !observeTools.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
+    const singles = addedTools.filter(tool => Object.hasOwn(SINGLE_TOOL_BYTES, tool.name));
+    expect(singles.map(tool => tool.name).sort()).toEqual(Object.keys(SINGLE_TOOL_BYTES).sort());
+    let singleBytes = 0;
+    for (const tool of singles) {
+      const bytes = Buffer.byteLength(JSON.stringify(tool)) + 1;
+      expect(bytes, tool.name).toBeLessThanOrEqual(SINGLE_TOOL_BYTES[tool.name]!);
+      singleBytes += bytes;
+    }
+    const addedBytes = addedTools.filter(tool => tool !== doctor && tool !== roster && !singles.includes(tool) && !visibility.includes(tool) && !desktop.includes(tool) && !observeTools.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(addedBytes).toBeLessThanOrEqual(9195);
     // 24,205 + 9,195 preserves the historical headroom. The doctor and roster
     // tools are measured on their own caps above.
-    expect(responseBytes(tools)).toBeLessThan(33400 + doctorBytes + rosterBytes + visibilityBytes + desktopBytes + observeBytes);
+    expect(responseBytes(tools)).toBeLessThan(33400 + doctorBytes + rosterBytes + visibilityBytes + desktopBytes + observeBytes + singleBytes);
   });
 });
 

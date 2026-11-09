@@ -138,12 +138,14 @@ imports, individual files, semantics or contract coverage.
 - `src/core/release/`
 - `src/core/research/`
 - `src/core/resources/`
+- `src/core/router-gateway/`
 - `src/core/routing/`
 - `src/core/run/`
 - `src/core/sandbox/`
 - `src/core/seams/`
 - `src/core/security/`
 - `src/core/spec/`
+- `src/core/spend/`
 - `src/core/steward/`
 - `src/core/strategy/`
 - `src/core/swarm/`

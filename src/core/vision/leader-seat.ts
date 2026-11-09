@@ -596,7 +596,7 @@ export function ollamaLeaderTransport(
   model: string,
   cfg: AshlrConfig | undefined,
   timeoutMs = 15 * 60_000,
-  opts: { maxOutputTokens?: number; contextTokens?: number | null } = {},
+  opts: { maxOutputTokens?: number; contextTokens?: number | null; json?: boolean } = {},
 ): LeaderComplete {
   return async (system, user) => {
     const url = `${baseUrl.replace(/\/+$/, '').replace(/\/v1$/, '')}/api/chat`;
@@ -620,7 +620,8 @@ export function ollamaLeaderTransport(
           stream: true,
           // JSON-constrained decoding: the memo parser fails closed on prose,
           // so asking the runtime for an object is the cheap way to not fail.
-          format: 'json',
+          // Free-text callers (the router gateway) pass json: false.
+          ...(opts.json === false ? {} : { format: 'json' }),
           think: false,
           options,
         }),

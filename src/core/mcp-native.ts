@@ -26,6 +26,7 @@ import { existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import type { AshlrConfig, NativeToolDef, NativeToolSafety, ProposalStatus } from './types.js';
+import type { RoutingDifficulty, RoutingTask } from './routing/types.js';
 import { loadConfig } from './config.js';
 import { collectAgentRoster } from './fleet/agent-roster.js';
 import { PROACTIVE_PROFILE_INPUT_SCHEMA, PROACTIVE_PROFILE_PATCH_SCHEMA } from './proactive/schema.js';
@@ -1186,6 +1187,37 @@ const TOOLS: NativeToolImpl[] = [
       const rawLimit = typeof args['limit'] === 'number' ? args['limit'] : 50;
       const limit = Math.max(1, Math.min(100, Math.floor(rawLimit)));
       return deriveRoutingData(limit);
+    },
+  },
+
+  {
+    name: 'phm_router_plan',
+    description:
+      'Router gateway preview: which granted seats a routed call would try, in order, and why. model: "auto", ' +
+      '"<lane>:<model>" or a config alias. Calls no model. Read-only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        model: { type: 'string' },
+        task: { type: 'string', enum: ['code', 'review', 'plan', 'bulk', 'leader'] },
+        difficulty: { type: 'string', enum: ['low', 'medium', 'high'] },
+        promptChars: { type: 'number' },
+      },
+      required: ['model'],
+    },
+    safety: 'read',
+    handler: async (args) => {
+      // Completions stay on `phm run --model` and the loopback endpoint: native
+      // MCP tools never reach a cloud model (CONTRACT-M31 invariant 3).
+      const { planViaRouter } = await import('./router-gateway/index.js');
+      const chars = typeof args['promptChars'] === 'number' && Number.isSafeInteger(args['promptChars'])
+        ? Math.min(Math.max(1, args['promptChars']), 400_000) : 1;
+      const plan = await planViaRouter({
+        model: String(args['model']), system: '', prompt: 'x'.repeat(chars),
+        ...(typeof args['task'] === 'string' ? { task: args['task'] as RoutingTask } : {}),
+        ...(typeof args['difficulty'] === 'string' ? { difficulty: args['difficulty'] as RoutingDifficulty } : {}),
+      });
+      return plan.ok ? plan : { error: plan.reason, plan };
     },
   },
 
