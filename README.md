@@ -229,6 +229,24 @@ phm authority status --json
 
 Commissioning steps: [Autonomy setup](docs/AUTONOMY-SETUP.md).
 
+### Command table
+
+Every top-level `phm` command, grouped by what it is for. `ashlr` runs the same commands. A test fails when this table and the CLI disagree.
+
+| Group | Commands |
+| --- | --- |
+| Core | `index`, `go`, `status`, `ls`, `open`, `tidy`, `config`, `doctor`, `tune`, `init`, `setup`, `app`, `desktop`, `apps`, `desktopctl`, `desktop-update`, `self-swap`, `update`, `upgrade`, `orient`, `docs`, `completions`, `plugins`, `x`, `runtime`, `version`, `help` |
+| Run | `run`, `runs`, `eval`, `skills`, `models`, `local-runtime` |
+| Swarm | `spec`, `swarm`, `swarms` |
+| Memory | `recall`, `learn`, `genome`, `memory` |
+| Knowledge | `graph`, `ask`, `knowledge`, `wiki` |
+| Autonomy | `route`, `metrics`, `trail`, `issues`, `select`, `pool`, `benchmark`, `enroll`, `backlog`, `inbox`, `daemon`, `drive`, `worker`, `prs`, `fleet`, `bus`, `recovery`, `manager`, `vision`, `goal`, `loop`, `conductor-permit`, `roadmap`, `reflect`, `health`, `goals`, `sweep`, `digest`, `release-articles`, `release`, `drafts`, `comms`, `comms-agent`, `imessage`, `connectors`, `channels`, `director`, `best-of-n`, `invent`, `universe`, `website`, `authority`, `org`, `leader`, `mirror`, `cloud`, `playbook`, `jev`, `devin`, `openai-agents`, `agents`, `automations` |
+| Observability | `chain`, `router`, `context`, `claim`, `router-calibration`, `jobs`, `lanes`, `queue`, `incident`, `daily-fix`, `pulse`, `pulse-export`, `pulse-test`, `telemetry`, `audit`, `repos`, `receipt`, `radar`, `observe`, `growth`, `world`, `resource`, `resources`, `capacity`, `estates`, `signals`, `friction`, `budget`, `ci-metrics`, `main`, `usage` |
+| Integrations | `autopilot`, `improve`, `steward`, `team`, `companions`, `mcp`, `checkpoint`, `sessions`, `gh`, `vercel`, `wire`, `notify`, `stack`, `ecosystem` |
+| Safety | `worktrees`, `disk`, `disk-maint`, `node`, `sandbox`, `seams`, `verify`, `engineering-receipt`, `verify-safety`, `verify-pr`, `preflight`, `onboard`, `demo` |
+| Web | `top`, `tui`, `dash`, `dashboard`, `serve`, `verse` |
+| Scaffold | `new`, `ship` |
+
 ## The Phantom ecosystem
 
 Phantom is the workbench. These projects stay useful on their own. The [ecosystem page](https://verse.ashlr.ai/ecosystem) charts a dated GitHub star history for six repositories. The chart adds the six totals. It is not a count of unique people. Each repo has its own install and its own live star count.

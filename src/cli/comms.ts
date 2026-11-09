@@ -635,6 +635,7 @@ export async function cmdComms(args: string[]): Promise<number> {
   if (args[0] === 'inbox') return cmdCommsInbox(args.slice(1));
   if (args[0] === 'email-drop') return cmdCommsEmailDrop(args.slice(1));
   if (args[0] === 'thread' || args[0] === 'send-owner') return cmdCommsOwner(args);
+  if (args[0] === 'owner') return cmdCommsOwner(args.slice(1));
   if (args.includes('--help') || args.includes('-h')) {
     printCommsHelp();
     return 0;
