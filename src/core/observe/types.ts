@@ -140,6 +140,8 @@ export interface ObserveSnapshot {
     panels: number;
     sources: { id: string; state: ReadingState }[];
     fields: { live: number; unknown: number };
+    /** One row per unknown or stale field. `id` is stable for the path. */
+    unknownFields: { id: string; path: string; freshness: 'unknown' | 'stale' }[];
   };
 }
 

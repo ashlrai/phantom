@@ -29,7 +29,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'roadmap', 'stack', 'ecosystem', 'digest', 'sweep', 'seams', 'verify', 'engineering-receipt', 'verify-safety', 'verify-pr', 'release-articles', 'release', 'preflight',
   'conductor-permit', 'signals', 'friction',
   'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms',
-  'channels', 'context', 'connectors', 'imessage', 'memory', 'route', 'radar', 'observe', 'drafts',
+  'channels', 'context', 'connectors', 'imessage', 'memory', 'route', 'radar', 'observe', 'world', 'drafts',
   'director', 'best-of-n', 'invent', 'resource', 'resources', 'repos', 'usage', 'version', 'help',
   'skills', 'universe', 'runtime', 'tune',
   // Dispatched by index.ts but previously missing here, so completion and
@@ -82,6 +82,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   radar: ['list', 'run', 'diff', '--json', '--help'],
   usage: ['sensors', 'validate', '--json', '--refresh', '--file', '--help'],
   observe: ['session', '--json', '--human-steps', '--bottlenecks', '--prs', '--days', '--claim-minutes', '--help'],
+  world: ['get', '--json', '--refresh', '--help'],
   chain: ['verify', '--json', '--help'],
   incident: ['report', 'receipts', '--json', '--help'],
   apps: ['list', 'open', 'quit', 'focus', 'status', '--json', '--help'],

@@ -152,6 +152,7 @@ describe('native MCP tool surface lock', () => {
       'phm_team_publish:append',
       'phm_team_register:append',
       'phm_team_view:read',
+      'world_model:read',
     ]);
   });
 

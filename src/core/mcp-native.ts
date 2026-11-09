@@ -461,6 +461,18 @@ const TOOLS: NativeToolImpl[] = [
     },
   },
   {
+    name: 'world_model',
+    description: 'Read the cached ashlr.world-model/v1 snapshot. Every signal has source, observedAt and freshness. Unknown is never zero. blindSpots lists each unknown field by path with a stable id.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string' }, refresh: { type: 'boolean' } }, additionalProperties: false },
+    safety: 'read',
+    handler: async (args) => {
+      const { readWorldModel } = await import('./world/read.js');
+      const { worldGet } = await import('./world/path.js');
+      const model = await readWorldModel({ force: args['refresh'] === true });
+      return typeof args['path'] === 'string' && args['path'].length > 0 ? worldGet(model, args['path']) : model;
+    },
+  },
+  {
     name: 'phantom_observe',
     description: 'Read the human observe snapshot: roster, sensor headroom, resource coordination, pull headlines, bottlenecks, and human steps. Unknown stays unknown. No credentials.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },

@@ -118,6 +118,12 @@ or control apps.
 | `desktop_type` | Type into an app. Posts a bus intent before any keystroke. The typed text is not stored on the bus. |
 | `desktop_click` | Click a point or an accessibility ref. Posts a bus intent before the click. |
 
+## `world_` — World model
+
+| Tool | Description |
+| --- | --- |
+| `world_model` | Read the cached ashlr.world-model/v1 snapshot. Every signal has source, observedAt and freshness. Unknown is never zero. blindSpots lists each unknown field by path with a stable id. |
+
 ## `phantom-fleet` — Isolated Fleet Server (`phm mcp fleet`)
 
 The standalone read-only server started by `phm mcp fleet`, separate from the

@@ -5,12 +5,14 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sendJson } from '../web/api.js';
 import { readObserveSession, readObserveSnapshot } from '../observe/read.js';
+import { readWorldModel } from '../world/read.js';
 
 export const OBSERVE_PATH = '/api/verse/observe';
 export const OBSERVE_SESSION_PATH = '/api/verse/observe/session';
+export const WORLD_PATH = '/api/verse/world';
 
 export function isObservePath(path: string): boolean {
-  return path === OBSERVE_PATH || path === OBSERVE_SESSION_PATH;
+  return path === OBSERVE_PATH || path === OBSERVE_SESSION_PATH || path === WORLD_PATH;
 }
 
 function queryId(req: IncomingMessage): string | null {
@@ -24,6 +26,10 @@ export async function handleObserveApi(req: IncomingMessage, res: ServerResponse
   if (!isObservePath(path)) return false;
   if (method !== 'GET') {
     sendJson(res, 405, { error: 'method not allowed' });
+    return true;
+  }
+  if (path === WORLD_PATH) {
+    sendJson(res, 200, await readWorldModel());
     return true;
   }
   if (path === OBSERVE_SESSION_PATH) {

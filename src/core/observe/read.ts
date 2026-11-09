@@ -7,10 +7,9 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { desktopSessions, type DesktopSessionsResult } from '../desktop/desktop-sessions.js';
 import { collectAgentRoster, type AgentRoster, type RosterSession, type RosterSourceId } from '../fleet/agent-roster.js';
-import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
+import type { BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import { presentUsageSensors } from '../usage/sensor-reading.js';
-import { assembleObserve, sessionFromRoster, type ObserveInput } from './assemble.js';
-import { parsePullExport } from './pulls.js';
+import { sessionFromRoster, type ObserveInput } from './assemble.js';
 import type { ObserveSnapshot, SessionDetail } from './types.js';
 
 const DESKTOP_SOURCE: Partial<Record<string, RosterSourceId>> = {
@@ -91,41 +90,16 @@ export interface ReadObserveOptions {
   readClaims?: () => BusWorkClaimsInspection;
   loadRoster?: () => Promise<unknown>;
   loadSensors?: () => Promise<unknown>;
+  /** Skip the world-model cache. Tests and an explicit refresh use this. */
+  force?: boolean;
 }
 
 export async function readObserveSnapshot(options: ReadObserveOptions = {}): Promise<ObserveSnapshot> {
-  const nowMs = options.nowMs ?? Date.now();
-  const [humanSteps, bottlenecks, pullFile, roster, sensors] = await Promise.all([
-    readJsonFile(options.humanStepsFile ?? humanStepsPath()),
-    readJsonFile(options.bottlenecksFile ?? bottlenecksPath()),
-    options.pullsFile ? readJsonFile(options.pullsFile) : Promise.resolve(null),
-    options.loadRoster ? options.loadRoster().catch(() => undefined) : loadRoster(),
-    options.loadSensors ? options.loadSensors().catch(() => undefined) : loadSensors(nowMs),
-  ]);
-  const parsedPulls = pullFile === null ? null : parsePullExport(pullFile);
-  let claims: BusWorkClaimsInspection | null = null;
-  try {
-    claims = (options.readClaims ?? (() => inspectBusWorkClaims()))();
-  } catch {
-    claims = { source: 'unavailable', claims: [] };
-  }
-  return assembleObserve({
-    nowMs,
-    windowMs: options.windowMs,
-    windowDays: options.windowDays,
-    roster,
-    sensors,
-    claims,
-    humanSteps: humanSteps ?? undefined,
-    bottlenecks: bottlenecks ?? undefined,
-    pulls: options.pulls ?? parsedPulls?.pulls,
-    pullsComplete: options.pullsComplete ?? parsedPulls?.complete,
-    pullsReason: options.pulls || parsedPulls ? null : 'No pull export was provided',
-    updatePhase: options.updatePhase,
-  });
+  const { readWorldModel } = await import('../world/read.js');
+  return (await readWorldModel(options)).views.observe;
 }
 
-async function loadRoster(): Promise<AgentRoster | undefined> {
+export async function loadMergedRoster(): Promise<AgentRoster | undefined> {
   try {
     const roster = await collectAgentRoster();
     try {
@@ -138,7 +112,7 @@ async function loadRoster(): Promise<AgentRoster | undefined> {
   }
 }
 
-async function loadSensors(nowMs: number): Promise<unknown> {
+export async function loadSensorReport(nowMs: number): Promise<unknown> {
   // Same projection as `phm usage sensors --json` with no snapshot file:
   // every lane is unmeasured until a reading is supplied, and headroom is null.
   return presentUsageSensors([], nowMs);
@@ -146,6 +120,6 @@ async function loadSensors(nowMs: number): Promise<unknown> {
 
 export async function readObserveSession(sessionId: string, options: ReadObserveOptions = {}): Promise<SessionDetail> {
   const nowMs = options.nowMs ?? Date.now();
-  const roster = options.loadRoster ? await options.loadRoster().catch(() => undefined) : await loadRoster();
+  const roster = options.loadRoster ? await options.loadRoster().catch(() => undefined) : await loadMergedRoster();
   return sessionFromRoster(roster, sessionId, nowMs);
 }
