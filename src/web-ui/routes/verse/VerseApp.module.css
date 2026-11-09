@@ -365,3 +365,14 @@
    strip in <main> is the navigation. */
 .shell[data-home-narrow] { grid-template-columns: minmax(0, 1fr); }
 .shell[data-home-narrow] > .rail { display: none; }
+
+/* Narrow layout (<960px, or pinned in Settings ▸ Appearance ▸ Layout). The
+   rail is icon-only (VerseApp never expands it), the tab row sits above the
+   Leader conversation, and Resources floats as a drawer instead of docking
+   (VerseApp withholds data-resources="docked"). Same tree as wide. */
+.shell[data-layout='narrow'] > .section > .workModes {
+  gap: 0;
+  padding-inline: var(--space-2);
+  padding-left: max(var(--space-2), calc(var(--app-traffic-light-inset, 0px) - var(--rail-width, 56px) + var(--space-2)));
+}
+.shell[data-layout='narrow'] .workMode { padding-inline: var(--space-2); }

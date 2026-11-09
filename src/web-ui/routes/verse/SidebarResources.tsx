@@ -5,6 +5,7 @@ import { Dialog } from '../../components/primitives/Dialog.js';
 import { apiGet } from '../../data/client.js';
 import { openFleetWorkspace } from './dock/dock-store.js';
 import { curatedWorkspace } from './fleet-hub/fleet-hub-model.js';
+import { DotResourceRow } from './resources/DotResourceRow.js';
 import { usePanes } from './panes/pane-registry.js';
 import { setFocusMode } from './shell/focus-mode.js';
 import { usePollWhileVisible } from './shell/section-visibility.js';
@@ -48,6 +49,10 @@ export const SidebarResources = memo(function SidebarResources() {
       <section aria-label="Fleet">
         <h2 className={styles.heading}>Fleet</h2>
         <button type="button" className={styles.entry} disabled={fleetIds.length === 0} title={fleetIds.length === 0 ? 'Fleet panes are not in this build' : undefined} onClick={openFleet}>Open fleet workspace</button>
+      </section>
+      <section aria-label="Dot">
+        <h2 className={styles.heading}>Dot</h2>
+        <DotResourceRow />
       </section>
       <section aria-label="Machine">
         <h2 className={styles.heading}>Machine</h2>
