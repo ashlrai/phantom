@@ -8,7 +8,11 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFile
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { readEnvironmentCredential } from '../integrations/secrets.js';
+
+// The hosted workflow executes this file directly with Node's type stripping.
+function readEnvironmentCredential(envKey: string): string | undefined {
+  return process.env[envKey];
+}
 
 export const TRAIN_SCHEMA = 'phantom.release-train.v1';
 export const HOURLY_MINUTES = 60;

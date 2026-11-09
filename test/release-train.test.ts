@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cmdRelease } from '../src/cli/release.js';
 import {
@@ -52,6 +53,22 @@ function observation(overrides: Partial<TrainObservation> = {}): TrainObservatio
 describe('release train', () => {
   const dirs: string[] = [];
   afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+
+  it('runs the workflow commands directly under Node type stripping', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'train-node-'));
+    dirs.push(dir);
+    const run = (...args: string[]) => spawnSync(process.execPath,
+      ['--experimental-strip-types', 'src/core/release/train.ts', ...args],
+      { encoding: 'utf8', env: { HOME: dir, GITHUB_ACTIONS: 'true' } });
+    const guard = run('guard');
+    expect(guard.status).toBe(1);
+    expect(JSON.parse(guard.stdout)).toMatchObject({ proceed: false, reason: 'repo-variable-unset' });
+    expect(guard.stderr).not.toContain('ERR_MODULE_NOT_FOUND');
+    const train = run('run', '--apply', '--out', join(dir, 'release-state.json'));
+    expect(train.status).toBe(1);
+    expect(train.stderr).toContain('github token unavailable');
+    expect(train.stderr).not.toContain('ERR_MODULE_NOT_FOUND');
+  });
 
   it('fails closed on the hosted repo variable unless it is on', () => {
     expect(hostedTrainGate({ GITHUB_ACTIONS: 'true' })).toEqual({ proceed: false, reason: 'repo-variable-unset' });
