@@ -2,17 +2,17 @@
  * M264 — Elite Context Injection for local models.
  *
  * Tests:
- *   1. buildLocalContextBundle assembles all four sections (northStar, ecosystem,
- *      genome, repoTree) and degrades gracefully when any source throws/is absent.
- *   2. renderLocalContextBundle is length-bounded (≤ MAX_BUNDLE_CHARS = 2 400 chars).
+ *   1. buildLocalContextBundle assembles genome recall and repo orientation,
+ *      and does not spend the prefix on north-star or ecosystem-map text.
+ *   2. renderLocalContextBundle is length-bounded (≤ MAX_BUNDLE_CHARS = 2 400 chars)
+ *      and keeps genome ahead of the repo tree when the cap cuts.
  *   3. isLocalContextEnabled: true for local-coder/local-agent, false for frontier
  *      engines (claude, codex); flag-off (localContext: false) disables injection.
  *   4. systemPrefix is injected into agent-loop runTask when provided.
  *   5. Flag-off: systemPrefix absent → runTask system content unchanged (byte-identical).
  *   6. No-regression: sandboxed-engine imports are unaffected.
  *
- * Hermetic: mocks recall + northStarDocSummary + ecosystemSummary via vi.fn.
- * No real filesystem or network calls.
+ * Hermetic: mocks genome recall via vi.fn. No real filesystem or network calls.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -26,16 +26,6 @@ vi.mock('../src/core/genome/recall.js', () => ({
   recall: vi.fn().mockResolvedValue([]),
 }));
 
-// Mock the ecosystem/map helpers
-vi.mock('../src/core/ecosystem/map.js', () => ({
-  northStarDocSummary: vi.fn().mockReturnValue(''),
-  ecosystemSummary: vi.fn().mockReturnValue(''),
-  loadNorthStarDoc: vi.fn().mockReturnValue(null),
-  loadEcosystemMap: vi.fn().mockReturnValue(null),
-  _resetNorthStarDocCache: vi.fn(),
-  _resetEcosystemMapCache: vi.fn(),
-}));
-
 import {
   buildLocalContextBundle,
   renderLocalContextBundle,
@@ -44,10 +34,6 @@ import {
 } from '../src/core/run/local-context.js';
 import type { AshlrConfig } from '../src/core/types.js';
 import { recall as mockRecall } from '../src/core/genome/recall.js';
-import {
-  northStarDocSummary as mockNorthStar,
-  ecosystemSummary as mockEcosystem,
-} from '../src/core/ecosystem/map.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -94,13 +80,11 @@ function makeRecallHit(title: string, text: string, tags: string[] = []) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. buildLocalContextBundle — assembles four sections
+// 1. buildLocalContextBundle — task evidence only
 // ---------------------------------------------------------------------------
 
-describe('M264 buildLocalContextBundle — four sections assembled', () => {
+describe('M264 buildLocalContextBundle — task evidence only', () => {
   beforeEach(() => {
-    vi.mocked(mockNorthStar).mockReturnValue('=== NORTH-STAR: GRAND VISION ===\nVision: Build an elite engineering fleet.');
-    vi.mocked(mockEcosystem).mockReturnValue('=== ECOSYSTEM MAP ===\nashlr-hub: fleet orchestrator');
     vi.mocked(mockRecall).mockResolvedValue([
       makeRecallHit('Fix local-coder context', 'Injected genome recall for goal', ['local', 'context']),
     ]);
@@ -110,18 +94,20 @@ describe('M264 buildLocalContextBundle — four sections assembled', () => {
     vi.clearAllMocks();
   });
 
-  it('returns non-empty northStar when northStarDocSummary returns content', async () => {
-    const cfg = makeConfig();
-    const bundle = await buildLocalContextBundle('add tests for M264', '/repo', cfg);
-    expect(bundle.northStar).toContain('NORTH-STAR');
-    expect(bundle.northStar.length).toBeGreaterThan(0);
+  it('does not put vision or ecosystem-map text on the coding prefix', async () => {
+    const bundle = await buildLocalContextBundle('add tests for M264', '/repo', makeConfig());
+    const rendered = renderLocalContextBundle(bundle);
+    expect(rendered).not.toMatch(/NORTH-STAR|GRAND VISION|ECOSYSTEM MAP|PLATFORM MAP/);
+    expect(bundle).not.toHaveProperty('northStar');
+    expect(bundle).not.toHaveProperty('ecosystem');
   });
 
-  it('returns non-empty ecosystem when ecosystemSummary returns content', async () => {
-    const cfg = makeConfig();
-    const bundle = await buildLocalContextBundle('add tests for M264', '/repo', cfg);
-    expect(bundle.ecosystem).toContain('ECOSYSTEM MAP');
-    expect(bundle.ecosystem.length).toBeGreaterThan(0);
+  it('keeps more than the old 80-character hit excerpt', async () => {
+    const text = 'evidence '.repeat(40);
+    vi.mocked(mockRecall).mockResolvedValue([makeRecallHit('Long hit', text, ['local'])]);
+    const bundle = await buildLocalContextBundle('goal', '/repo', makeConfig());
+    expect(bundle.genome.length).toBeGreaterThan(80);
+    expect(bundle.genome).toContain('evidence evidence');
   });
 
   it('returns non-empty genome when recall returns hits', async () => {
@@ -148,24 +134,6 @@ describe('M264 buildLocalContextBundle — graceful degradation', () => {
     vi.clearAllMocks();
   });
 
-  it('northStar is "" when northStarDocSummary returns ""', async () => {
-    vi.mocked(mockNorthStar).mockReturnValue('');
-    vi.mocked(mockEcosystem).mockReturnValue('');
-    vi.mocked(mockRecall).mockResolvedValue([]);
-
-    const bundle = await buildLocalContextBundle('goal', '/repo', makeConfig());
-    expect(bundle.northStar).toBe('');
-  });
-
-  it('ecosystem is "" when ecosystemSummary returns ""', async () => {
-    vi.mocked(mockNorthStar).mockReturnValue('');
-    vi.mocked(mockEcosystem).mockReturnValue('');
-    vi.mocked(mockRecall).mockResolvedValue([]);
-
-    const bundle = await buildLocalContextBundle('goal', '/repo', makeConfig());
-    expect(bundle.ecosystem).toBe('');
-  });
-
   it('genome is "" when recall returns no hits', async () => {
     vi.mocked(mockRecall).mockResolvedValue([]);
     const bundle = await buildLocalContextBundle('goal', '/repo', makeConfig());
@@ -178,26 +146,13 @@ describe('M264 buildLocalContextBundle — graceful degradation', () => {
     expect(bundle.genome).toBe('');
   });
 
-  it('northStar is "" when northStarDocSummary throws', async () => {
-    vi.mocked(mockNorthStar).mockImplementation(() => { throw new Error('fs error'); });
-    vi.mocked(mockEcosystem).mockReturnValue('');
-    vi.mocked(mockRecall).mockResolvedValue([]);
-
-    const bundle = await buildLocalContextBundle('goal', '/repo', makeConfig());
-    expect(bundle.northStar).toBe('');
-  });
-
-  it('resolves even when all sources are absent — never rejects', async () => {
-    vi.mocked(mockNorthStar).mockReturnValue('');
-    vi.mocked(mockEcosystem).mockReturnValue('');
+  it('resolves even when recall is absent — never rejects', async () => {
     vi.mocked(mockRecall).mockResolvedValue([]);
 
     const bundle = await buildLocalContextBundle('goal', '/nonexistent/repo', makeConfig());
-    // Should resolve cleanly with all empty strings
-    expect(bundle).toHaveProperty('northStar');
-    expect(bundle).toHaveProperty('ecosystem');
     expect(bundle).toHaveProperty('genome');
     expect(bundle).toHaveProperty('repoTree');
+    expect(bundle.genome).toBe('');
   });
 });
 
@@ -210,56 +165,47 @@ describe('M264 renderLocalContextBundle — length-bounded', () => {
 
   it('total rendered length is ≤ MAX_BUNDLE_CHARS (2 400)', () => {
     const bundle = {
-      northStar: 'N'.repeat(800),
-      ecosystem: 'E'.repeat(800),
-      genome: 'G'.repeat(800),
-      repoTree: 'R'.repeat(800),
+      genome: 'G'.repeat(1_800),
+      repoTree: 'R'.repeat(1_800),
     };
     const rendered = renderLocalContextBundle(bundle);
     expect(rendered.length).toBeLessThanOrEqual(MAX_BUNDLE_CHARS);
+    expect(rendered.startsWith('G')).toBe(true);
+    expect(rendered).not.toContain('R'.repeat(1_800));
   });
 
   it('returns "" when all sections are empty', () => {
-    const bundle = { northStar: '', ecosystem: '', genome: '', repoTree: '' };
+    const bundle = { genome: '', repoTree: '' };
     expect(renderLocalContextBundle(bundle)).toBe('');
   });
 
   it('omits empty sections (no blank headings)', () => {
     const bundle = {
-      northStar: '=== NORTH-STAR ===\nVision: great',
-      ecosystem: '',
-      genome: '',
+      genome: '=== GENOME RECALL ===\n- prior fix',
       repoTree: '',
     };
     const rendered = renderLocalContextBundle(bundle);
-    expect(rendered).toContain('NORTH-STAR');
-    expect(rendered).not.toContain('ECOSYSTEM');
-    expect(rendered).not.toContain('GENOME');
+    expect(rendered).toContain('GENOME RECALL');
+    expect(rendered).not.toContain('REPO ORIENTATION');
   });
 
   it('includes all non-empty sections separated by blank lines', () => {
     const bundle = {
-      northStar: 'NORTH',
-      ecosystem: 'ECO',
       genome: 'GENOME',
       repoTree: 'TREE',
     };
     const rendered = renderLocalContextBundle(bundle);
-    expect(rendered).toContain('NORTH');
-    expect(rendered).toContain('ECO');
-    expect(rendered).toContain('GENOME');
-    expect(rendered).toContain('TREE');
+    expect(rendered).toBe('GENOME\n\nTREE');
   });
 
   it('handles a single very long section gracefully (truncated to cap)', () => {
     const bundle = {
-      northStar: 'X'.repeat(5_000),
-      ecosystem: '',
-      genome: '',
+      genome: 'X'.repeat(5_000),
       repoTree: '',
     };
     const rendered = renderLocalContextBundle(bundle);
     expect(rendered.length).toBeLessThanOrEqual(MAX_BUNDLE_CHARS);
+    expect(rendered).toBe('X'.repeat(MAX_BUNDLE_CHARS));
   });
 });
 
@@ -270,12 +216,10 @@ describe('M264 renderLocalContextBundle — length-bounded', () => {
 describe('M264 summarizeLocalContextBundle — metadata-only telemetry', () => {
   it('emits counts and ratios without raw prompt, diff, stdout, or file contents', () => {
     const bundle = {
-      northStar: '=== NORTH ===\nRAW_PROMPT_SENTINEL secret strategy text',
-      ecosystem: '=== ECO ===\ndiff --git a/src/private.ts b/src/private.ts',
       genome: [
         '=== GENOME RECALL (prior work relevant to this goal) ===',
-        '- [secret] stdout RAW_STDOUT_SENTINEL',
-        '- [diff] file contents should not persist',
+        '- [secret] stdout RAW_STDOUT_SENTINEL RAW_PROMPT_SENTINEL',
+        '- [diff] diff --git a/src/private.ts file contents should not persist',
       ].join('\n'),
       repoTree: '=== REPO ORIENTATION ===\nsrc/private.ts',
     };
@@ -314,7 +258,7 @@ describe('M264 summarizeLocalContextBundle — metadata-only telemetry', () => {
 
   it('still records a zero-hit local-context attempt when all sections are empty', () => {
     const summary = summarizeLocalContextBundle(
-      { northStar: '', ecosystem: '', genome: '', repoTree: '' },
+      { genome: '', repoTree: '' },
       { toolCount: 0 },
     );
 

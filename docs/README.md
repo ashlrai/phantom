@@ -42,7 +42,7 @@ A zero exit code is not a merge and not permission to spend. `phm docs --agent -
 | Use the console | [Phantom user guide](VERSE.md) |
 | Choose chat or fleet work | [Automatic work](AUTOMATIC-OUTCOMES.md) |
 
-Synthetic integration checks: [Chain verification](CHAIN-VERIFY.md).
+Synthetic integration checks: [Chain verification](https://github.com/ashlrai/phantom/blob/master/docs/CHAIN-VERIFY.md).
 
 ## All tasks
 
@@ -54,7 +54,12 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Inspect changed-file and test dependency relationships | [PR impact map](https://github.com/ashlrai/phantom/blob/master/docs/CI-IMPACT-MAP.md) |
 | Check fleet health, starting with doctor | [Fleet health](https://github.com/ashlrai/phantom/blob/master/docs/fleet-health.md) |
 | Drive and watch the fleet from any agent or script | [Fleet API](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-API.md) |
+| Move ops-side fleet machinery into the repo deploy pipeline | [Machinery-as-code migration](https://github.com/ashlrai/phantom/blob/master/docs/MACHINERY-MIGRATION.md) |
 | Inspect stage percentiles, queue wait and CI time in Grafana | [Cycle dashboard contract](https://github.com/ashlrai/phantom/blob/master/docs/observability/README.md) |
+| Read roster, sensor headroom, pull headlines, bottlenecks, and human steps | [Human observe](https://github.com/ashlrai/phantom/blob/master/docs/OBSERVE.md) (`phm observe --json`) |
+| Read the scheduler world model | [World model](https://github.com/ashlrai/phantom/blob/master/docs/WORLD.md) (`phm world --json`) |
+| Read the Growth chart series | [Growth charts](GROWTH.md) (`phm growth --json`) |
+| Triage mail and hold sends for the owner | [Comms agent](COMMS-AGENT.md) (`phm comms-agent status --json`) |
 | Quarantine a flaky test only with a tracked, expiring ledger row | [Quarantine ledger](https://github.com/ashlrai/phantom/blob/master/docs/QUARANTINE-LEDGER.md) |
 | See real candidates, rejection and parent-linked improvement without model credentials | [Executable demo](DEMO.md) |
 | Understand the objective and how progress is measured | [Phantom North Star](NORTH-STAR.md) |
@@ -63,6 +68,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Exercise signed graph execution and a deliberately lying candidate | [Firm graph fixture](FIRM-DEMO.md) |
 | Connect autonomy research to engineering acceptance | [Autonomy engineering brief](UNIVERSE-AUTONOMY-RESEARCH.md) |
 | Configure offline daily research queue restocking | [Research topics and restock contract](https://github.com/ashlrai/phantom/blob/master/docs/research/TOPICS.md) |
+| Turn research digests into scored, gated job proposals | [Research loop](https://github.com/ashlrai/phantom/blob/master/docs/RESEARCH-LOOP.md) |
 | Evaluate swarm coordination and recursive self-improvement experiments | [Agent swarms and RSI research](https://github.com/ashlrai/phantom/blob/master/docs/research/agent-swarms-rsi.md) |
 | Compare Phantom with current agent platforms using measurable acceptance gates | [Competitive acceptance](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-COMPETITIVE-ACCEPTANCE.md) |
 | Connect a resource and make a first useful turn | [Quickstart](QUICKSTART.md) |
@@ -72,6 +78,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Choose chat or fleet work, understand routing and inspect results | [Automatic work](AUTOMATIC-OUTCOMES.md) |
 | Compare router predictions with recorded outcomes | [Router calibration](https://github.com/ashlrai/phantom/blob/master/docs/router/calibration.md) |
 | Replay policies over frozen router lines with known outcomes | [Router eval harness](https://github.com/ashlrai/phantom/blob/master/docs/router/eval.md) |
+| Measure lane/model reliability across N clean-worktree trials and feed routing | [pass^k offline eval suite](EVAL-PASSK.md) |
 | Navigate source entry points, subsystems and contracts | [Code map (source guide)](https://github.com/ashlrai/phantom/blob/master/docs/CODEMAP.md) |
 | A/B test prompt variants per job class and promote only significant winners | [Prompt-variant A/B eval](https://github.com/ashlrai/phantom/blob/master/docs/router/prompt-ab.md) |
 | Understand the current components and their boundaries | [Architecture](ARCHITECTURE.md#current-runtime-map) |
@@ -232,6 +239,7 @@ canonical release guide for required hosted qualification and publication.
 - [Agent network channels](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-NETWORK-CHANNELS.md)
 - [Group chat rooms, topics, subscriptions, and presence](https://github.com/ashlrai/phantom/blob/master/docs/GROUP-CHAT.md)
 - [Durable agent bus: read, write, envelope, and conventions](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-BUS.md)
+- [Agent roster](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-ROSTER.md)
 - [ASHLR Agentic Inference Fabric — Definitive Architecture Specification](https://github.com/ashlrai/phantom/blob/master/docs/SPEC-INFERENCE-FABRIC.md)
 - [Agent OS Doctrine](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-OS-DOCTRINE.md)
 - [Agent OS Observation Sandbox V1](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-OS-OBSERVATION-SANDBOX-V1.md)
@@ -254,6 +262,7 @@ canonical release guide for required hosted qualification and publication.
 - [Choosing graph context](https://github.com/ashlrai/phantom/blob/master/docs/GRAPH-CONTEXT-CHOICES.md)
 - [DIAGNOSIS: Why 23 Proposals Are Stuck Pending (Never Drain)](https://github.com/ashlrai/phantom/blob/master/docs/DIAGNOSIS-MERGE-DRAIN.md)
 - [Dependency security policy](https://github.com/ashlrai/phantom/blob/master/docs/DEPENDENCY-SECURITY.md)
+- [DeepWiki grounding: `.devin/wiki.json` config and the context fetch script](https://github.com/ashlrai/phantom/blob/master/docs/DEEPWIKI.md)
 - [Duration-balanced Bun shards](https://github.com/ashlrai/phantom/blob/master/docs/BUN-SHARDS.md)
 - [Elite agent efficiency roadmap](ELITE-AGENT-EFFICIENCY.md)
 - [Execution Identity V1](https://github.com/ashlrai/phantom/blob/master/docs/EXECUTION-IDENTITY-V1.md)
@@ -323,6 +332,7 @@ canonical release guide for required hosted qualification and publication.
 - [Verify a worktree change](https://github.com/ashlrai/phantom/blob/master/docs/VERIFY-CHANGE.md): local toolchain checks and safe verdicts.
 
 - [Agent checkpoints](AGENT-CHECKPOINT.md): explicit durable state and resume format.
+- [Stigmergic coordination](STIGMERGY.md): `phm trail` file markers — claim/lease, heartbeats, resumable checkpoints; agents pick up stalled work.
 - [Engineering receipt](https://github.com/ashlrai/phantom/blob/master/docs/ENGINEERING-RECEIPT.md): evidence from tool events vs model claims; `PHANTOM_RECEIPTS=1`.
 
 - [Local model tuning data and evaluation](https://github.com/ashlrai/phantom/blob/master/docs/TUNE.md) — offline dataset preparation and paired evaluation.

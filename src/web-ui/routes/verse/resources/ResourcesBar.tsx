@@ -40,12 +40,15 @@ import { formatResetInstant } from '../seat-subscription.js';
 import { bindingLeftPercent } from '../usage/binding-left.js';
 import { buildCapacityRows, type AccountStatus, type CapacityRow } from '../usage/capacity-strip-model.js';
 import { formatUsd, localObservationAge } from './resources-model.js';
+import { observeQuery } from '../fleet-observe/observe-queries.js';
 import { cloudCreditsQuery } from './resources-queries.js';
+import { applySensorHeadroom } from './sensor-headroom.js';
 import { creditPoolsQuery } from './credit-pools-query.js';
 import { apiGrantDisplay } from './credit-pool-model.js';
 import { devinConsumptionEvidence, devinUsageEvidence, formatAcu } from '../devin/devin-model.js';
 import { DEVIN_POLL_MS, devinQuery } from '../devin/devin-queries.js';
 import { closeResources, openResources, setResourcesCompact, useResourcesUi } from './resources-store.js';
+import { WorldLaneRows } from './WorldLaneRows.js';
 import { moveResource, orderedResources, useResourceOrder } from './resource-order.js';
 import { proactiveProfilesQuery } from '../proactive/proactive-queries.js';
 import { setVerseSection } from '../verse-ui-store.js';
@@ -263,6 +266,10 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   const devinRead = useQuery(devinQuery);
   const refreshDevin = useRefetch(devinQuery);
   const resources = useResourcesUi();
+  const [worldLive, setWorldLive] = useState(false);
+  const onWorldLive = useCallback((live: boolean) => {
+    setWorldLive((prev) => (prev === live ? prev : live));
+  }, []);
   const sectionVisible = useSectionVisible();
   const documentVisible = useDocumentVisible();
   const [personalQuery] = useState(() => {
@@ -283,6 +290,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   usePollWhileVisible(() => { refreshPersonal(); if (runsWarm) refreshRuns(); }, 30_000, { enabled: resources.bar && !personalRead.data?.missing });
   const proactiveRead = useQuery(proactiveProfilesQuery, { enabled: resources.bar });
   const creditRead = useQuery(creditPoolsQuery, { enabled: resources.bar, freshMs: 15_000 });
+  const observeRead = useQuery(observeQuery, { enabled: resources.bar, freshMs: 60_000 });
   const refreshCredits = useRefetch(creditPoolsQuery);
   const devin = devinRead.data?.value ?? null;
   const [coldStartedAt] = useState(() => Date.now());
@@ -317,8 +325,8 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
     windows: [{ resetsAt: personal?.resetsAt }],
   }]);
   const rows = useMemo(
-    () => (data.loading ? [] : barRows(buildCapacityRows(data.seats, { health: data.health, budget: data.budget, local: 'collapse', now }), { healthRead: data.health !== null, now, maxAgeMs: data.budget?.readingMaxAgeMs, localReadFailed: data.localReadFailed, pendingSeatIds: data.pendingSeatIds, devinConsumption: devin?.consumption })),
-    [data.loading, data.seats, data.health, data.budget, data.localReadFailed, data.pendingSeatIds, now, devin?.consumption],
+    () => (data.loading ? [] : applySensorHeadroom(barRows(buildCapacityRows(data.seats, { health: data.health, budget: data.budget, local: 'collapse', now }), { healthRead: data.health !== null, now, maxAgeMs: data.budget?.readingMaxAgeMs, localReadFailed: data.localReadFailed, pendingSeatIds: data.pendingSeatIds, devinConsumption: devin?.consumption }), observeRead.data?.usage.windows ?? null)),
+    [data.loading, data.seats, data.health, data.budget, data.localReadFailed, data.pendingSeatIds, now, devin?.consumption, observeRead.data],
   );
   const cloud = cloudRead.data?.credits ?? null;
   const cloudLeft = cloud && cloud.totalUsd > 0 ? (cloud.remainingUsd / cloud.totalUsd) * 100 : null;
@@ -571,8 +579,11 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   const primaryIds = new Set(rows.map(row => `account:${row.key}`));
   // Recorded API funding is a distinct resource, unlike a session-log view or estimate.
   primaryIds.add('budget:claude-api-promotions');
-  const evidenceCount = ordered.filter(entry => !primaryIds.has(entry.key)).length;
-  const visible = ordered.filter(entry => primaryIds.has(entry.key) || !expanded || showEvidence);
+  // Once the world snapshot is in hand, subscription batteries are evidence.
+  // The glance is one world-model lane per row.
+  const demotedAccount = (key: string) => worldLive && key.startsWith('account:');
+  const evidenceCount = ordered.filter(entry => demotedAccount(entry.key) || !primaryIds.has(entry.key)).length;
+  const visible = ordered.filter(entry => demotedAccount(entry.key) ? expanded && showEvidence : primaryIds.has(entry.key) || !expanded || showEvidence);
   const ids = visible.map(entry => entry.key);
   const providerOf = (engine: string) => engine === 'codex' ? 'openai' : engine === 'claude' ? 'anthropic' : engine === 'grok' ? 'xai' : engine === 'devin' ? 'devin' : 'local';
   const descriptors: ProviderResourceDescriptor[] = ordered.map(entry => {
@@ -638,6 +649,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
         {providerView ? 'Show account view' : 'Group by provider'}
       </button> : null}
       <span className={styles.visuallyHidden} role="status">{announcement}</span>
+      <WorldLaneRows expanded={expanded} enabled={resources.bar} now={fixedNow} onLive={onWorldLive} />
       {providerView && expanded ? <Suspense fallback={null}>
         <LazyProviderResourceGroups resources={descriptors} nowMs={now} maxAgeMs={data.budget?.readingMaxAgeMs} kind="bar" ready={providerView === 2} onReady={setProviderView}
           classes={{ group: styles.providerGroup, account: styles.accountGroup, note: styles.coverageNote }}

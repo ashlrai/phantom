@@ -10,6 +10,7 @@ Agents start here. Humans can use the same commands.
 [Full agent reference](https://github.com/ashlrai/phantom/blob/master/docs/llms-full.txt) ·
 [Onboarding](https://phm.dev/connect) ·
 [User guide](docs/VERSE.md) ·
+[Repository tools](tools/README.md) ·
 [GitHub](https://github.com/ashlrai/phantom)
 
 [![CI](https://github.com/ashlrai/phantom/actions/workflows/ci.yml/badge.svg)](https://github.com/ashlrai/phantom/actions/workflows/ci.yml)
@@ -27,7 +28,7 @@ phm --version
 phm docs --agent --json
 ```
 
-This source tree targets version 3.30.27; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.28; check canonical release availability and exact matching assets before installation.
 
 Patch release PRs are evaluated every 30 minutes when master has new green CI.
 `RELEASE_CADENCE_MINUTES` configures the minimum interval; the release PR keeps
@@ -48,6 +49,11 @@ The page is [http://127.0.0.1:7777/verse/](http://127.0.0.1:7777/verse/). Paste 
 Adding a node? Follow [Add a computer in 60 seconds](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md).
 
 New here? [phm.dev/connect](https://phm.dev/connect) is the guided onboarding path. The [first-run guide](docs/QUICKSTART.md#open-verse) covers the same ground in this repository.
+
+`connect` is not a Phantom command in this checkout. For a new Phantom Secrets
+name, use `phantom add NAME` in a trusted terminal. Keep credentials out of
+chat and agent transcripts. Approval cards record decisions; they do not
+collect credentials.
 
 ### Commands that print JSON
 

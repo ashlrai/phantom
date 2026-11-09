@@ -68,6 +68,9 @@ describe('canonical npm publication admission', () => {
     expect(workflow.permissions).toEqual({});
     expect(workflow.jobs.admit.permissions['id-token']).toBeUndefined();
     expect(workflow.jobs.publish.needs).toBe('admit');
+    const tagCheck = workflow.jobs.admit.steps.find((step: {name?: string}) => step.name === 'Verify release tag before publication');
+    expect(tagCheck.run).toContain('scripts/verify-release-policy.mjs --prepublish-tag');
+    expect(tagCheck.run).toContain('set -euo pipefail');
     expect(workflow.jobs.publish.permissions['id-token']).toBe('write');
     expect(workflow.jobs.publish.environment).toBe('phantom-npm');
     expect(workflow.jobs.consumer.permissions['id-token']).toBeUndefined();
