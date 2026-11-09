@@ -1,5 +1,12 @@
 /** Bounded, observe-only polling until a managed app is running or stopped. */
 
+/** Fixed list of managed desktop apps the fleet apps control surface may target.
+ * This module stays a zero-import leaf on purpose: schema/validation consumers
+ * (mcp-native, CLIs, recovery-history validators) need only these names, and
+ * importing them from fleet-apps-api.ts would pull the whole web/api ->
+ * effective-config -> fleet/status graph into every consumer's module closure. */
+export const FLEET_APPS = ['Phantom', 'Codex', 'Claude', 'Grok Bot', 'ChatGPT', 'Cursor', 'Safari', 'Google Chrome'] as const;
+
 export type AppAwaitTarget = 'running' | 'stopped';
 export type AppAwaitOutcome = 'reached' | 'timeout' | 'cancelled' | 'unavailable';
 

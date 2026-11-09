@@ -1,6 +1,6 @@
 import { statfsSync } from 'node:fs';
 import { homedir, platform, totalmem } from 'node:os';
-import { readMacHostHeadroom, type HostHeadroom } from '../../run/host-headroom.js';
+import { assessHostHeadroom, readMacHostHeadroom, type HostHeadroom } from '../../run/host-headroom.js';
 
 const GIB = 1024 ** 3;
 export interface NodeCapacity {
@@ -17,9 +17,9 @@ export function nodeRamSlots(bytes: number): number {
 
 export function assessNodeCapacity(ramBytes: number, memory: HostHeadroom | null, freeDiskBytes: number | null): NodeCapacity {
   let held: NodeCapacity['held'] = null;
-  if (!memory || !Number.isFinite(memory.freePercent) || memory.freePercent < 0 || memory.freePercent > 100 ||
-      !Number.isFinite(memory.swapGb) || memory.swapGb < 0) held = 'memory-unmeasured';
-  else if (!nodeRamSlots(ramBytes) || memory.freePercent < 30 || memory.swapGb > 0) held = 'memory-pressure';
+  const headroom = assessHostHeadroom(memory);
+  if (!headroom.reading) held = 'memory-unmeasured';
+  else if (!nodeRamSlots(ramBytes) || !headroom.allowed) held = 'memory-pressure';
   else if (freeDiskBytes === null || !Number.isFinite(freeDiskBytes) || freeDiskBytes < 0) held = 'disk-unmeasured';
   else if (freeDiskBytes < 20_000_000_000) held = 'disk-pressure';
   return { ramBytes, slots: held ? 0 : nodeRamSlots(ramBytes), held };

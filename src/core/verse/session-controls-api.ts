@@ -14,6 +14,8 @@
  *   POST /api/verse/queue/:id/:queueId/delete            → VerseQueueResponse
  *   POST /api/verse/queue/:id/:queueId/send              → VerseQueueResponse + sentTurnId
  *   GET  /api/verse/files?sessionId=&q=                  → VerseFilesResponse
+ *   POST /api/verse/files/browse {sessionId, root?, path?} → VerseFileBrowseResponse
+ *   POST /api/verse/files/read   {sessionId, root?, path}   → VerseFileReadResponse
  *
  * Posture (verse-api.ts's, applied by the C0 mount BEFORE this module runs):
  * every non-GET passes `allowDispatch` and the mutation gate (constant-time
@@ -36,13 +38,16 @@ import { sharedFileIndex, type VerseFileIndex } from './file-index.js';
 import { withFolderIo } from './folder-io.js';
 import { checkWorkspaceRootPathAsync } from './path-guard.js';
 import { parseControlsUpdate, parseDefaultsUpdate } from './session-controls.js';
+import { browseSessionFiles, readSessionFile, SessionFilesError } from './session-files.js';
 import type { VerseEngineHandle } from './session-engine.js';
 import { verseSessionRoots } from './types.js';
 import { getVerseEngine, type VerseApiContext } from './verse-api.js';
 import {
   VERSE_ATTACHMENT_MAX_BYTES,
   VERSE_ATTACHMENTS_PATH,
+  VERSE_FILES_BROWSE_PATH,
   VERSE_FILES_PATH,
+  VERSE_FILES_READ_PATH,
   VERSE_QUEUE_PATH,
   VERSE_SESSION_CONTROL_DEFAULTS_PATH,
   VERSE_SESSION_CONTROLS_PATH,
@@ -65,12 +70,16 @@ export const ATTACHMENT_BODY_MAX_BYTES = Math.ceil((VERSE_ATTACHMENT_MAX_BYTES *
 /** Longest `q` the file finder takes. */
 const FILES_QUERY_MAX = 200;
 
-type ErrorCode = 'VERSE_SESSION_NOT_FOUND' | 'VERSE_SESSION_BUSY' | 'VERSE_INVALID' | 'VERSE_TOO_LARGE';
+type ErrorCode = 'VERSE_SESSION_NOT_FOUND' | 'VERSE_SESSION_BUSY' | 'VERSE_INVALID' | 'VERSE_TOO_LARGE'
+  | 'VERSE_FILE_NOT_FOUND' | 'VERSE_FILE_LIMIT' | 'VERSE_FILE_UNAVAILABLE';
 const STATUS: Record<ErrorCode, number> = {
   VERSE_SESSION_NOT_FOUND: 404,
   VERSE_SESSION_BUSY: 409,
   VERSE_INVALID: 400,
   VERSE_TOO_LARGE: 413,
+  VERSE_FILE_NOT_FOUND: 404,
+  VERSE_FILE_LIMIT: 413,
+  VERSE_FILE_UNAVAILABLE: 503,
 };
 
 // ---------------------------------------------------------------------------
@@ -347,7 +356,76 @@ async function handleQueue(req: IncomingMessage, res: ServerResponse, path: stri
   return false;
 }
 
+/**
+ * The Files pane's privileged reads (browse one directory, preview one file).
+ * Both are POSTs, so the mount's mutation gate has already run; the body is
+ * the small capped JSON every route on this family reads. The session lookup
+ * and root re-validation live in session-files.ts.
+ */
+async function handleFilesReadRoute(
+  req: IncomingMessage,
+  res: ServerResponse,
+  kind: 'browse' | 'read',
+): Promise<void> {
+  const body = await readJson(req, res);
+  if (!body) return;
+  if (rejectUnknownKeys(res, body, ['sessionId', 'root', 'path'])) return;
+  const sessionId = body['sessionId'];
+  if (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)) {
+    sendError(res, 'VERSE_INVALID', 'sessionId is required');
+    return;
+  }
+  const root = body['root'];
+  const relPath = body['path'];
+  if (root !== undefined && typeof root !== 'string') {
+    sendError(res, 'VERSE_INVALID', 'root must be a string');
+    return;
+  }
+  if (kind === 'read' && typeof relPath !== 'string') {
+    sendError(res, 'VERSE_INVALID', 'path is required');
+    return;
+  }
+  if (relPath !== undefined && typeof relPath !== 'string') {
+    sendError(res, 'VERSE_INVALID', 'path must be a string');
+    return;
+  }
+  const handle = await engine();
+  const session = handle.getSession(sessionId);
+  if (!session) {
+    sendError(res, 'VERSE_SESSION_NOT_FOUND', `session not found: ${sessionId}`);
+    return;
+  }
+  try {
+    const target = { session, ...(typeof root === 'string' ? { root } : {}) };
+    if (kind === 'browse') {
+      const result = await browseSessionFiles(target, relPath as string | undefined);
+      sendJson(res, 200, { sessionId, ...result });
+    } else {
+      const result = await readSessionFile(target, relPath as string);
+      sendJson(res, 200, { sessionId, ...result });
+    }
+  } catch (err) {
+    if (err instanceof SessionFilesError) {
+      const code: ErrorCode = err.code === 'INVALID' ? 'VERSE_INVALID'
+        : err.code === 'NOT_FOUND' ? 'VERSE_FILE_NOT_FOUND'
+          : err.code === 'LIMIT' ? 'VERSE_FILE_LIMIT'
+            : 'VERSE_FILE_UNAVAILABLE';
+      sendError(res, code, err.message);
+      return;
+    }
+    throw err;
+  }
+}
+
 async function handleFiles(req: IncomingMessage, res: ServerResponse, path: string, method: string): Promise<boolean> {
+  if (path === VERSE_FILES_BROWSE_PATH && method === 'POST') {
+    await handleFilesReadRoute(req, res, 'browse');
+    return true;
+  }
+  if (path === VERSE_FILES_READ_PATH && method === 'POST') {
+    await handleFilesReadRoute(req, res, 'read');
+    return true;
+  }
   if (path !== VERSE_FILES_PATH || method !== 'GET') return false;
   const params = searchParams(req);
   const sessionId = params.get('sessionId') ?? '';
@@ -412,6 +490,6 @@ export const handleSessionControlsApi: ApiModule = async (
   if (path === VERSE_QUEUE_PATH || path.startsWith(`${VERSE_QUEUE_PATH}/`)) {
     return handleQueue(req, res, path, method);
   }
-  if (path === VERSE_FILES_PATH) return handleFiles(req, res, path, method);
+  if (path === VERSE_FILES_PATH || path.startsWith(`${VERSE_FILES_PATH}/`)) return handleFiles(req, res, path, method);
   return false;
 };

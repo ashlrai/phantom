@@ -1,3 +1,4 @@
+import { nodeFixtureHeader } from './helpers/node-fixture.js';
 /** Independent profile review with inert native executables. Never vendor authentication or inference. */
 import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -12,7 +13,7 @@ const CODEX_AUTH_FLAGS = ['-c', 'cli_auth_credentials_store="file"', '-c', 'forc
 beforeEach(() => {
   root = realpathSync(mkdtempSync(join(tmpdir(), 'ashlr-profile-independent-')));
   executable = join(root, 'native fixture.cjs');
-  writeFileSync(executable, `#!${realpathSync(process.execPath)}\nlet input='';process.stdin.on('data',chunk=>input+=chunk);
+  writeFileSync(executable, `${nodeFixtureHeader(realpathSync(process.execPath))}let input='';process.stdin.on('data',chunk=>input+=chunk);
 process.stdin.on('end',()=>{process.stdout.write(JSON.stringify({pid:process.pid,argv:process.argv.slice(2),cwd:process.cwd(),env:process.env,input}));
 if(process.argv.includes('--fixture-exit'))process.exitCode=23;});\n`, { mode: 0o755 });
 });

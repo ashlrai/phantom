@@ -123,7 +123,7 @@ it('propagates per-id result truncation and scan-bound truncation honestly', asy
   expect(bound.jobs[1]).toMatchObject({ jobId: 'RQ-Z-9', commits: 0, paths: 0 });
 });
 
-it('validates ids and limit before invoking git, and propagates git failure', async () => {
+it('job-overlap validates ids and limit before invoking git, and propagates git failure', async () => {
   const run = vi.fn(async () => 'x');
   for (const [ids, limit] of [
     [[], 20],

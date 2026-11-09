@@ -351,6 +351,8 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     const f = fixture(fixerBody);
     git(f.clone, 'checkout', '-q', '-b', 'side', f.head);
     writeFileSync(join(f.clone, 'sum.js'), 'module.exports = (a, b) => b - a;\n');
+    writeFileSync(join(f.clone, 'main-only.js'), 'module.exports = 42;\n');
+    git(f.clone, 'add', 'main-only.js');
     git(f.clone, 'commit', '-qam', 'base change');
     git(f.clone, 'push', '-q', 'origin', 'HEAD:main');
     const base = git(f.clone, 'rev-parse', 'HEAD');
@@ -365,7 +367,7 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     let recut42: { state: 'open' | 'closed'; merged: boolean } | null = null;
     let closed7 = false;
     const recutSha = () => git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut').split('\t')[0] || head;
-    const pr42 = () => ({ number: 42, state: recut42?.state ?? 'open', merged: recut42?.merged ?? false, draft: false, title: 'the change', user: { login: 'bot' }, head: { ref: 'improve/sum-recut', sha: recutSha(), repo: { full_name: 'o/r' } }, base: { ref: 'main', sha: base }, mergeable: true, mergeable_state: 'clean' });
+    const pr42 = () => ({ number: 42, state: recut42?.state ?? 'open', merged: recut42?.merged ?? false, auto_merge: null, draft: false, title: 'the change', user: { login: 'bot' }, head: { ref: 'improve/sum-recut', sha: recutSha(), repo: { full_name: 'o/r' } }, base: { ref: 'main', sha: base }, mergeable: true, mergeable_state: 'clean' });
     const gh: Gh = async (args) => {
       const path = args[args.length - 1]!;
       calls.push(args.join(' '));
@@ -385,6 +387,12 @@ describe('autopilot tick (real git, fake GitHub)', () => {
 
   it('recuts a conflicting lane onto the current base, waits on the replacement, then closes the old PR once it merges', async () => {
     const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`);
+    git(f.clone, 'checkout', '-q', '--detach', f.base);
+    writeFileSync(join(f.clone, 'later-main.js'), 'module.exports = 99;\n');
+    git(f.clone, 'add', 'later-main.js');
+    git(f.clone, 'commit', '-qm', 'main advanced after observation');
+    git(f.clone, 'push', '-q', 'origin', 'HEAD:main');
+    const currentBase = git(f.clone, 'rev-parse', 'HEAD');
     const opts = { repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [] as string[][], ownedPrefixes: ['improve/'], gh: f.gh as Gh, guards: () => ({ killSwitch: false, paused: false }) };
 
     const r = await tick(opts);
@@ -393,9 +401,12 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     const recutSha = git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut').split('\t')[0];
     expect(recutSha).toBe(r.newHead);
     git(f.clone, 'fetch', '-q', 'origin', 'refs/heads/improve/sum-recut:refs/remotes/origin/improve/sum-recut');
-    expect(git(f.clone, 'rev-parse', 'origin/improve/sum-recut^')).toBe(f.base);
+    expect(git(f.clone, 'rev-parse', 'origin/improve/sum-recut^')).toBe(currentBase);
     expect(git(f.clone, 'show', 'origin/improve/sum-recut:sum.js')).toContain('a + b');
     expect(git(f.clone, 'show', 'origin/improve/sum-recut:other.js')).toContain('module.exports = 1');
+    expect(git(f.clone, 'show', 'origin/improve/sum-recut:main-only.js')).toContain('module.exports = 42');
+    expect(git(f.clone, 'show', 'origin/improve/sum-recut:later-main.js')).toContain('module.exports = 99');
+    expect(git(f.clone, 'diff', '--name-only', currentBase, 'origin/improve/sum-recut').split('\n').sort()).toEqual(['other.js', 'sum.js']);
     // The old head is untouched, and the opened PR carries the fresh branch and the provenance.
     expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum').split('\t')[0]).toBe(f.head);
     expect(f.calls.some((c) => c.includes('POST repos/o/r/pulls') && c.includes('head=improve/sum-recut') && c.includes('base=main'))).toBe(true);
@@ -413,6 +424,35 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     expect(f.closed7()).toBe(true);
     // The next tick sees the PR closed and reports done — nothing re-opens it.
     expect((await tick(opts)).plan).toBe('done');
+  });
+
+  it.each(['main', 'improve/sum'])('refuses a recut when %s moves during verification', async (branch) => {
+    const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`, { queued: true });
+    let reads = 0;
+    const r = await tick({ repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [['true']],
+      ownedPrefixes: ['improve/'], gh: f.gh, guards: () => {
+        if (++reads === 2) {
+          git(f.clone, 'checkout', '-q', '--detach', branch === 'main' ? f.base : f.head);
+          writeFileSync(join(f.clone, 'concurrent.js'), 'concurrent change\n');
+          git(f.clone, 'add', 'concurrent.js');
+          git(f.clone, 'commit', '-qm', 'concurrent update');
+          git(f.clone, 'push', '-q', 'origin', `HEAD:${branch}`);
+        }
+        return { killSwitch: false, paused: false };
+      } });
+    expect(r).toMatchObject({ result: 'refused', detail: expect.arrayContaining([expect.stringContaining('moved during recut')]) });
+    expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut')).toBe('');
+    expect(f.calls.some(c => c.startsWith('pr merge'))).toBe(false);
+  });
+
+  it('explains how to retry an unresolved recut without pushing a branch', async () => {
+    const f = conflicting('exit 99');
+    const opts = { repo: 'o/r', number: 7, checkout: f.clone, apply: true, verify: [] as string[][], ownedPrefixes: ['improve/'], gh: f.gh, guards: () => ({ killSwitch: false, paused: false }) };
+    const result = await tick(opts);
+    expect(result).toMatchObject({ result: 'refused', detail: expect.arrayContaining([expect.stringContaining('resolve them on improve/sum and push the updated head')]) });
+    expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut')).toBe('');
+    const retry = await tick(opts);
+    expect(retry).toMatchObject({ plan: 'stop', reason: expect.stringContaining('push an updated head to retry') });
   });
 
   it('opens the recut PR next tick when the branch was pushed but the open call failed', async () => {
@@ -490,6 +530,42 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     expect(f.calls.filter((c) => c.includes('POST repos/o/r/pulls'))).toHaveLength(1);
   });
 
+  it('backs off rate limits across ticks and recovers without opening another PR', async () => {
+    const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`, { queued: true });
+    let calls = 0;
+    let time = Date.parse('2026-01-01T00:00:00Z');
+    const gh: Gh = async (args) => {
+      if (args[0] === 'pr' && args[1] === 'merge' && ++calls === 1) throw new Error('HTTP 429 rate limit');
+      return f.gh(args);
+    };
+    const opts = { repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [] as string[][], ownedPrefixes: ['improve/'], gh, guards: () => ({ killSwitch: false, paused: false }), now: () => new Date(time) };
+    expect((await tick(opts)).detail.join(' ')).toContain('retry after 2026-01-01T00:00:30.000Z');
+    expect((await tick(opts)).detail.join(' ')).toContain('rate limited');
+    expect(calls).toBe(1);
+    time += 30_000;
+    expect(await tick(opts)).toMatchObject({ result: 'requeued' });
+    await tick(opts);
+    expect(calls).toBe(2);
+    expect(f.calls.filter((c) => c.includes('POST repos/o/r/pulls'))).toHaveLength(1);
+  });
+
+  it('reconciles an accepted submission after a lost response without submitting twice', async () => {
+    const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`, { queued: true });
+    let calls = 0;
+    let accepted = false;
+    const gh: Gh = async (args) => {
+      if (args[0] === 'pr' && args[1] === 'merge') { calls++; accepted = true; throw new Error('connection lost'); }
+      const response = await f.gh(args);
+      if (accepted && args[args.length - 1]?.endsWith('/pulls/42')) return JSON.stringify({ ...JSON.parse(response), auto_merge: { enabled_by: { login: 'bot' } } });
+      return response;
+    };
+    const opts = { repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [] as string[][], ownedPrefixes: ['improve/'], gh, guards: () => ({ killSwitch: false, paused: false }) };
+    await tick(opts);
+    expect((await tick(opts)).detail.join(' ')).toContain('already has auto-merge enabled');
+    await tick(opts);
+    expect(calls).toBe(1);
+  });
+
   it('gives up requeueing after three refusals and says a person queues it, still without a second PR', async () => {
     const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`, { queued: true });
     let mergeCalls = 0;
@@ -520,6 +596,65 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     expect(r2).toMatchObject({ plan: 'recut', result: 'recut' });
     const recutSha = git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut').split('\t')[0];
     expect(f.calls.filter((c) => c.startsWith('pr merge'))).toEqual([`pr merge 42 --repo o/r --squash --auto --match-head-commit ${recutSha}`]);
+  });
+
+  it('refuses an oversized conflict resolution before pushing a recut', async () => {
+    const f = conflicting(`node -e "require('fs').writeFileSync('sum.js', 'const value = 1;\\n'.repeat(2100))"`);
+    const r = await tick({ repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [], ownedPrefixes: ['improve/'], gh: f.gh, guards: () => ({ killSwitch: false, paused: false }) });
+    expect(r).toMatchObject({ result: 'refused', detail: expect.arrayContaining([expect.stringContaining('2000 changed lines')]) });
+    expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut')).toBe('');
+  });
+
+  it.each(['merge', 'oversized'] as const)('refuses %s source history before resolving conflicts', async (kind) => {
+    const f = conflicting(`exit 99`);
+    git(f.clone, 'checkout', '-q', '--detach', f.head);
+    if (kind === 'merge') {
+      git(f.clone, 'checkout', '-q', '-b', 'unrelated-work');
+      writeFileSync(join(f.clone, 'unrelated.js'), 'module.exports = 42;\n');
+      git(f.clone, 'add', 'unrelated.js');
+      git(f.clone, 'commit', '-qm', 'unrelated work');
+      git(f.clone, 'checkout', '-q', '--detach', f.head);
+      git(f.clone, 'merge', '--no-ff', '-qm', 'merge unrelated work', 'unrelated-work');
+    } else {
+      writeFileSync(join(f.clone, 'large.js'), 'const value = 1;\n'.repeat(2100));
+      git(f.clone, 'add', 'large.js');
+      git(f.clone, 'commit', '-qm', 'oversized source');
+    }
+    const head = git(f.clone, 'rev-parse', 'HEAD');
+    git(f.clone, 'push', '-q', 'origin', 'HEAD:improve/sum');
+    const gh: Gh = async (args) => {
+      const raw = await f.gh(args);
+      if (!args.at(-1)?.endsWith('/pulls/7')) return raw;
+      const pr = JSON.parse(raw);
+      return JSON.stringify({ ...pr, head: { ...pr.head, sha: head } });
+    };
+    const r = await tick({ repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [], ownedPrefixes: ['improve/'], gh, guards: () => ({ killSwitch: false, paused: false }) });
+    expect(r).toMatchObject({ result: 'refused', detail: expect.arrayContaining([expect.stringContaining(kind === 'merge' ? 'without merge commits' : '2000 changed lines')]) });
+    expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut')).toBe('');
+  });
+
+  it('refuses when the fetched base absorbed the head after observation', async () => {
+    const f = conflicting(`exit 99`);
+    git(f.clone, 'checkout', '-q', '--detach', f.base);
+    git(f.clone, 'merge', '-s', 'ours', '--no-ff', '-qm', 'absorb lane', f.head);
+    git(f.clone, 'push', '-q', 'origin', 'HEAD:main');
+    const r = await tick({ repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [], ownedPrefixes: ['improve/'], gh: f.gh, guards: () => ({ killSwitch: false, paused: false }) });
+    expect(r).toMatchObject({ result: 'refused', detail: expect.arrayContaining([expect.stringContaining('PR merge base changed')]) });
+    expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut')).toBe('');
+  });
+
+  it('refuses a rewritten base history rather than replaying unrelated changes', async () => {
+    const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`);
+    git(f.clone, 'checkout', '-q', '--orphan', 'unrelated');
+    git(f.clone, 'commit', '-qm', 'unrelated root');
+    const unrelated = git(f.clone, 'rev-parse', 'HEAD');
+    const gh: Gh = async (args) => {
+      const raw = await f.gh(args);
+      return args.at(-1)?.endsWith('/pulls/7') ? JSON.stringify({ ...JSON.parse(raw), base: { ref: 'main', sha: unrelated } }) : raw;
+    };
+    const r = await tick({ repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [], ownedPrefixes: ['improve/'], gh, guards: () => ({ killSwitch: false, paused: false }) });
+    expect(r).toMatchObject({ result: 'refused', detail: expect.arrayContaining([expect.stringContaining('base history diverged')]) });
+    expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut')).toBe('');
   });
 
   it('pushes a conflict resolution that touches only the conflicted files', async () => {

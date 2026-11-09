@@ -177,6 +177,8 @@ describe('two concurrent fragment PRs merge clean', () => {
       env: { ...process.env, HOME: dir, GIT_CONFIG_NOSYSTEM: '1' },
     }).trim();
     git('init', '--quiet', '-b', 'main');
+    git('config', 'user.name', 'Fixture');
+    git('config', 'user.email', 'fixture@example.invalid');
     git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
       'commit', '--quiet', '--allow-empty', '-m', 'initial');
     writeFileSync(join(dir, 'CHANGELOG.md'), '# Changelog\n\n## [1.0.0] - 2026-10-01\n\n### Added\n- shipped\n');

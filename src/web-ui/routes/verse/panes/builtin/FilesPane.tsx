@@ -1,8 +1,10 @@
 /**
- * routes/verse/panes/builtin/FilesPane.tsx — the first-party Files pane
- * (a registry STUB): the chat's folders, with a terminal or the changes one
- * click away, and every file the chat has read or changed. A file tree and
- * editor can replace it by registering the id `files` (../README.md).
+ * routes/verse/panes/builtin/FilesPane.tsx — the first-party Files pane:
+ * a real browser over the chat's folders (FileBrowser.tsx — lazy tree +
+ * bounded preview through POST /api/verse/files/{browse,read}), the chat's
+ * folders with a terminal or the changes one click away, and every file the
+ * chat has read or changed. A different file surface can replace it by
+ * registering the id `files` (../README.md).
  */
 import { useMemo } from 'react';
 import { EmptyState } from '../../../../components/primitives/EmptyState.js';
@@ -12,6 +14,7 @@ import { FilesGlyph } from '../../dock/dock-icons.js';
 import { useVerseTranscript } from '../../useVerseTranscript.js';
 import { formatRelative } from '../../verse-model.js';
 import type { PaneProps } from '../pane-registry.js';
+import { FileBrowser } from './FileBrowser.js';
 import { touchedFiles, type FileTouch } from './pane-models.js';
 import styles from './stub-panes.module.css';
 
@@ -28,7 +31,7 @@ function rootOf(path: string, roots: readonly string[]): string | null {
   return best;
 }
 
-export function FilesPane({ sessionId, roots, host }: PaneProps) {
+export function FilesPane({ sessionId, roots, host, visible }: PaneProps) {
   const transcript = useVerseTranscript(sessionId);
   const files = useMemo(() => touchedFiles(transcript.items), [transcript.items]);
   const changed = files.filter((f) => f.touch !== 'read');
@@ -46,6 +49,7 @@ export function FilesPane({ sessionId, roots, host }: PaneProps) {
 
   return (
     <div className={styles.pane} aria-label="Files">
+      <FileBrowser sessionId={sessionId} roots={roots} host={host} visible={visible} />
       <section className={styles.section} aria-labelledby="pane-files-roots">
         <h3 id="pane-files-roots" className={styles.sectionTitle}>Folders <span className={styles.count}>{roots.length || ''}</span></h3>
         {roots.length === 0 ? <p className={styles.muted}>This chat has no folders yet.</p> : (
@@ -67,7 +71,7 @@ export function FilesPane({ sessionId, roots, host }: PaneProps) {
       {files.length === 0 ? (
         <section className={styles.section}>
           <EmptyState compact title="No files yet"
-            body="Files this chat reads or changes appear here as it works — changed ones first. Click a changed file to see its diff, or a read one to mention it in your message." />
+            body="Browse above lists the chat's folders; files it reads or changes also appear here as it works — changed ones first. Click a changed file to see its diff, or a read one to mention it in your message." />
         </section>
       ) : null}
 

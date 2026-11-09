@@ -6,8 +6,11 @@ import { ApiError } from '../../../data/client.js';
 import { stubSurfaceFetch } from '../command/fetch-stub.test-support.js';
 import { activitySnapshot, needsYouItems } from '../command/fixtures.test-support.js';
 import { msg } from '../leader/thread-fixtures.test-support.js';
-import { resetActivityForTest } from '../shell/useActivity.js';
+import { refreshActivity, resetActivityForTest } from '../shell/useActivity.js';
 import { FeedSection } from './FeedSection.js';
+
+const navigation = vi.hoisted(() => ({ openChat: vi.fn() }));
+vi.mock('../command/nav.js', () => navigation);
 
 const now = Date.now();
 const at = (minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
@@ -31,6 +34,36 @@ beforeEach(() => { evictAll(); });
 afterEach(() => { resetActivityForTest(); vi.unstubAllGlobals(); });
 
 describe('FeedSection', () => {
+  it('shows running activity and opens the selected chat', async () => {
+    stubSurfaceFetch({ routes: { '/api/verse/leader/thread': thread, '/api/verse/fleet/runs': runs } });
+    resetActivityForTest(async () => activity());
+    render(<FeedSection visible />);
+    const chat = await screen.findByRole('button', { name: /Refactor the ledger reader/ });
+    expect(chat).toHaveTextContent('claude · npm test');
+    fireEvent.click(chat);
+    expect(navigation.openChat).toHaveBeenCalledWith('s1');
+  });
+
+  it('labels retained activity stale after a failed refresh', async () => {
+    stubSurfaceFetch({ routes: { '/api/verse/leader/thread': thread, '/api/verse/fleet/runs': runs } });
+    const fetchActivity = vi.fn().mockResolvedValueOnce(activity()).mockRejectedValueOnce(new Error('offline'));
+    resetActivityForTest(fetchActivity);
+    render(<FeedSection visible />);
+    await screen.findByRole('button', { name: /Refactor the ledger reader/ });
+    await refreshActivity();
+    expect(await screen.findByText(/Activity is stale/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Refactor the ledger reader/ })).toBeInTheDocument();
+  });
+
+  it('does not report an empty running list when the chat source failed', async () => {
+    stubSurfaceFetch({ routes: { '/api/verse/leader/thread': thread, '/api/verse/fleet/runs': runs } });
+    const snapshot = activity();
+    resetActivityForTest(async () => ({ ...snapshot, running: [], sources: { ...snapshot.sources, chats: 'error' } }));
+    render(<FeedSection visible />);
+    expect(await screen.findByText('Chat activity could not be fully read.')).toBeInTheDocument();
+    expect(screen.queryByText(/No chats running/)).not.toBeInTheDocument();
+  });
+
   it('merges three sources newest first, and the chips filter them', async () => {
     stubSurfaceFetch({ routes: { '/api/verse/leader/thread': thread, '/api/verse/fleet/runs': runs } });
     resetActivityForTest(async () => activity());

@@ -57,7 +57,8 @@ vi.mock('../src/core/vision/strategist.js', () => ({
 }));
 
 const mockListGoals = vi.fn((_filter?: { status?: string }) => [] as Goal[]);
-vi.mock('../src/core/goals/store.js', () => ({
+vi.mock('../src/core/goals/store.js', async (importOriginal) => ({
+  DEFAULT_STALE_GOAL_MILESTONE_MS: (await importOriginal<typeof import('../src/core/goals/store.js')>()).DEFAULT_STALE_GOAL_MILESTONE_MS,
   listGoals: (...args: unknown[]) => mockListGoals(...args),
 }));
 

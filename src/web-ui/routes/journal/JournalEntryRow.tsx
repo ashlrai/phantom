@@ -24,11 +24,16 @@ const SOURCE_LABEL: Record<JournalEntry['source'], string> = {
 
 function formatWhen(iso: string): string {
   const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return 'Invalid Date';
   return `${formatDateTime(d, undefined, { month: 'short', day: 'numeric' })} ${formatDateTime(d, undefined, { hour: '2-digit', minute: '2-digit' })}`;
 }
 
 export function JournalEntryRow({ entry }: { entry: JournalEntry }) {
   const hasDrillIn = Boolean(entry.drillIn);
+  const date = new Date(entry.ts);
+  const tooltip = Number.isNaN(date.getTime())
+    ? `Invalid date: ${entry.ts}`
+    : `${formatDateTime(date, undefined, { dateStyle: 'full', timeStyle: 'long' })} (${Intl.DateTimeFormat().resolvedOptions().timeZone})\nSource: ${entry.ts}`;
   // Older journal sources carry no attribution. Never infer a person from
   // the source, repository or prose; only display an explicit actor string.
   const actor = 'actor' in entry && typeof entry.actor === 'string'
@@ -57,7 +62,7 @@ export function JournalEntryRow({ entry }: { entry: JournalEntry }) {
         <span className={styles.sourceTag} data-source={entry.source}>
           {SOURCE_LABEL[entry.source]}
         </span>
-        <span className={styles.when} title={entry.ts}>
+        <span className={styles.when} title={tooltip}>
           {formatWhen(entry.ts)}
         </span>
         <StatusBadge status={entry.statusLabel} />

@@ -189,7 +189,7 @@ describe('RQ untrusted snapshot validation', () => {
     { repo: 'ashlrai/outside' }, { repo: 'ashlrai/repo-0\n$(touch /tmp/no)' },
     { status: 'approve' }, { v: 2 }, { id: 'bad\nrow' }, { title: 'bad\nrow' },
     { prompt: 'bad\x1b[31m' }, { source: 'shell' }, { sourceId: '' },
-  ])('rejects poisoned queue fields %s', (fields) => {
+  ])('rejects poisoned queue fields %s (%#)', (fields) => {
     expect(() => planRqBacklog(config, sources(), formatRqQueue([{ ...queue(1)[0]!, ...fields } as RqJob]))).toThrow();
   });
 

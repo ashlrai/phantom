@@ -43,6 +43,10 @@ vi.mock('../src/core/daemon/state.js', () => ({
     running: false, pid: null, startedAt: null, lastTickAt: null,
     todaySpentUsd: 0, itemsProcessed: 0, ticks: [],
   })),
+  loadDaemonStateStrict: vi.fn(() => ({
+    running: false, pid: null, startedAt: null, lastTickAt: null,
+    todaySpentUsd: 0, itemsProcessed: 0, ticks: [],
+  })),
 }));
 
 // Fleet digest
@@ -118,7 +122,7 @@ vi.mock('../src/core/comms/requests.js', () => ({
 }));
 
 // Import AFTER mocks are registered.
-import { makeFixture, makeCfg, type H1Fixture } from './helpers/h1-fixture.js';
+import { makeFixture, type H1Fixture } from './helpers/h1-fixture.js';
 import { nativeToolDefs, callNativeTool } from '../src/core/mcp-native.js';
 
 // ---------------------------------------------------------------------------

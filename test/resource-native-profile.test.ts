@@ -1,3 +1,4 @@
+import { nodeFixtureHeader } from './helpers/node-fixture.js';
 /** Fresh private profile fixtures and inert native executables only. */
 import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -15,7 +16,7 @@ vi.mock('node:fs', async (importOriginal) => {
 let base: string; let binary: string;
 beforeEach(() => {
   base = realpathSync(mkdtempSync(join(tmpdir(), 'native-profile-'))); binary = join(base, 'inert-native');
-  writeFileSync(binary, `#!${process.execPath}\nconsole.log(JSON.stringify({args:process.argv.slice(2),pid:process.pid,env:process.env}));`, { mode: 0o700 });
+  writeFileSync(binary, `${nodeFixtureHeader()}console.log(JSON.stringify({args:process.argv.slice(2),pid:process.pid,env:process.env}));`, { mode: 0o700 });
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); rmSync(base, { recursive: true, force: true }); });
 const options = (provider: 'codex' | 'claude' | 'grok' = 'codex'): ResourceNativeProfileOptions => ({ provider, directory: join(base, 'new-profile'), executable: binary });

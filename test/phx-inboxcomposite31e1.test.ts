@@ -56,12 +56,13 @@ describe('fleet composite with the real inbox reader', () => {
     const api = makeApi();
     expect(await request(api, RUNS)).toMatchObject({ handled: true, status: 200, wire: {
       sources: { inbox: 'healthy', workers: 'healthy' }, workers,
-      inbox: [{ at: '2026-10-31 08:00', source: 'Fake desktop', text: 'fake shared order' }],
+      inbox: [{ at: '2026-10-31 08:00', source: `desktop (${appended.ok ? appended.id : ''})`, text: 'fake shared order' }],
     } });
     const composite = (await request(api, RUNS)).wire as { inbox: object[] };
-    expect(Object.keys(composite.inbox[0]!).sort()).toEqual(['at', 'source', 'text']);
+    expect(Object.keys(composite.inbox[0]!).sort()).toEqual(['ack', 'at', 'channel', 'id', 'source', 'text']);
+    expect(composite.inbox[0]).toMatchObject({ channel: 'desktop', id: appended.ok ? appended.id : '', ack: 'pending' });
     expect(await request(api, INBOX)).toMatchObject({ status: 200, wire: {
-      sourceState: 'healthy', entries: [{ at: '2026-10-31 08:00', source: 'Fake desktop', priority: 'P0', text: 'fake shared order' }],
+      sourceState: 'healthy', entries: [{ at: '2026-10-31 08:00', source: `desktop (${appended.ok ? appended.id : ''})`, priority: null, text: 'fake shared order' }],
     } });
   });
 
@@ -70,8 +71,8 @@ describe('fleet composite with the real inbox reader', () => {
     expect(await request(api, RUNS)).toMatchObject({ status: 200, wire: { sources: { inbox: 'missing', workers: 'healthy' }, inbox: [], workers } });
     expect(await request(api, INBOX)).toMatchObject({ status: 200, wire: { sourceState: 'missing', entries: [] } });
     expect(await request(api, INBOX, 'POST', { text: 'fake posted order', source: 'Fake desktop' })).toMatchObject({ status: 201, wire: { ok: true, accepted: true } });
-    expect(await request(api, RUNS)).toMatchObject({ status: 200, wire: { sources: { inbox: 'healthy' }, inbox: [{ source: 'Fake desktop', text: 'fake posted order' }] } });
-    expect(await request(api, INBOX)).toMatchObject({ status: 200, wire: { sourceState: 'healthy', entries: [{ text: 'fake posted order', priority: 'P0' }] } });
+    expect(await request(api, RUNS)).toMatchObject({ status: 200, wire: { sources: { inbox: 'healthy' }, inbox: [{ source: expect.stringMatching(/^desktop \(desk-[a-f0-9]{16}\)$/), text: 'fake posted order' }] } });
+    expect(await request(api, INBOX)).toMatchObject({ status: 200, wire: { sourceState: 'healthy', entries: [{ text: 'fake posted order', priority: null }] } });
   });
 
   it('isolates an unreadable inbox source from healthy workers', async () => {

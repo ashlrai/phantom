@@ -86,6 +86,12 @@ describe('M77 EXECUTOR_ROLE', () => {
   it('terse variant stays concise (under 120 chars)', () => {
     expect(EXECUTOR_ROLE.terse.length).toBeLessThan(120);
   });
+
+  it('does not impose a smallest-change or no-adjacent scope lock', () => {
+    const text = `${EXECUTOR_ROLE.terse}\n${EXECUTOR_ROLE.standard}\n${EXECUTOR_ROLE.rich}`;
+    expect(text).not.toMatch(/smallest change|no adjacent|unrelated code|this task only/i);
+    expect(text).toMatch(/style/);
+  });
 });
 
 describe('M77 SYNTHESIZER_ROLE', () => {

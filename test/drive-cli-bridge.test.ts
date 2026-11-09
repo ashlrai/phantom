@@ -108,7 +108,7 @@ describe('drive bridge transport', () => {
     await expect(bridge.publish('/owned/publish.sh', 'job', 'lease')).rejects.toThrow('no durable reservation');
   });
 
-  it.each([{ argv: 'shell string' }, { argv: [23] }, { argv: ['a\0b'] }, { argv: Array(33).fill('a') }])('rejects invalid publication arguments', async result => {
+  it.each([{ argv: 'shell string' }, { argv: [23] }, { argv: ['a\0b'] }, { argv: Array(33).fill('a') }])('rejects invalid publication arguments (%#)', async result => {
     const bridge = new ScriptDriveBridge('/bridge', async () => reply(result), async () => {});
     await expect(bridge.reservePublish('lease', 'job')).rejects.toThrow('publication reservation');
   });
@@ -132,7 +132,7 @@ describe('drive CLI', () => {
     expect(parseDriveOptions(['--once', '--dry-run', '--tick', '5', '--bridge', '/bridge', '--publisher', '/publish.sh', '--pause-file', '/PAUSE']))
       .toMatchObject({ once: true, dryRun: true, tickMs: 5_000, bridge: '/bridge', publisher: '/publish.sh', pauseFile: '/PAUSE' });
   });
-  it.each([['--tick', '0'], ['--tick', 'NaN'], ['--tick', '1.5'], ['--tick', '86401'], ['--tick'], ['--wat'], ['--once', '--once'], ['--bridge', 'relative']])('rejects bad arguments %j', (...args) => {
+  it.each([['--tick', '0'], ['--tick', 'NaN'], ['--tick', '1.5'], ['--tick', '86401'], ['--tick'], ['--wat'], ['--once', '--once'], ['--bridge', 'relative']])('rejects bad arguments %j (%#)', (...args) => {
     expect(() => parseDriveOptions(args)).toThrow();
   });
   it('once dry-run is read-only and restores signal handlers', async () => {

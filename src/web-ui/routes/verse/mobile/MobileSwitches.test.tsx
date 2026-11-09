@@ -68,7 +68,7 @@ describe('MobileSwitches read-only', () => {
     });
     mount();
     const group = await screen.findByRole('group', { name: 'Switches on the Mac' });
-    expect(within(group).getByText('Hold all dispatch').closest('div,button')).toHaveTextContent('On');
+    expect(within(group).getByText('Saved lane holds').closest('div,button')).toHaveTextContent('On');
     expect(within(group).getAllByText('Off')).toHaveLength(5);
     expect(screen.queryByRole('switch')).not.toBeInTheDocument();
     expect(await screen.findByText('Switches can be changed from the Mac in this build.')).toBeInTheDocument();
@@ -126,15 +126,29 @@ describe('MobileSwitches writes', () => {
 
   it('turns a switch off too: POST {id, on:false} after its own confirmation', async () => {
     const stub = stubFetch({
-      'GET /api/verse/fleet/runs': () => runsSnapshot(['HOLD']),
-      'GET /api/verse/fleet/control/switches': () => controlResponse({ HOLD: true }),
-      'POST /api/verse/fleet/control/switches': (body: Record<string, unknown> | null) => controlResponse({ HOLD: body?.['on'] === true }),
+      'GET /api/verse/fleet/runs': () => runsSnapshot(['queue/DISABLE']),
+      'GET /api/verse/fleet/control/switches': () => controlResponse({ QUEUE_DISABLE: true }),
+      'POST /api/verse/fleet/control/switches': (body: Record<string, unknown> | null) => controlResponse({ QUEUE_DISABLE: body?.['on'] === true }),
     });
     mount();
-    fireEvent.click(await screen.findByRole('switch', { name: 'Hold all dispatch' }));
-    const sheet = await screen.findByRole('alertdialog', { name: 'Lift the dispatch hold?' });
-    fireEvent.click(within(sheet).getByRole('button', { name: 'Lift hold' }));
-    await waitFor(() => expect(stub.posts()[0]?.body).toEqual({ id: 'HOLD', on: false }));
+    fireEvent.click(await screen.findByRole('switch', { name: 'Disable the queue' }));
+    const sheet = await screen.findByRole('alertdialog', { name: 'Enable the queue on your Mac?' });
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Enable the queue' }));
+    await waitFor(() => expect(stub.posts()[0]?.body).toEqual({ id: 'QUEUE_DISABLE', on: false }));
+  });
+
+  it('preserves saved lane holds as status even when other controls are writable', async () => {
+    const stub = stubFetch({
+      'GET /api/verse/fleet/runs': runsSnapshot(['HOLD']),
+      'GET /api/verse/fleet/control/switches': controlResponse({ HOLD: true }),
+    });
+    mount();
+    const label = await screen.findByText('Saved lane holds');
+    expect(screen.queryByRole('switch', { name: 'Saved lane holds' })).not.toBeInTheDocument();
+    fireEvent.click(label);
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(stub.posts()).toEqual([]);
+    expect(await screen.findByRole('switch', { name: 'Disable the queue' })).toBeInTheDocument();
   });
 
   it('keeps the state and toasts the reason when the POST fails', async () => {

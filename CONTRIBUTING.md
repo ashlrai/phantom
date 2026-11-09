@@ -50,7 +50,7 @@ To install the CLI while developing:
 | Command | What it does |
 |---------|-------------|
 | `npm run dev` | Run the CLI from source via `tsx` (no compile step). E.g. `npm run dev -- status` |
-| `npm test` | Run the backend unit and real-I/O lanes once (`vitest run`); web tests are separate |
+| `npm test` | Run the backend unit, real-I/O and serial-CPU projects once (`vitest run`); web tests are separate |
 | `npm run test:serial` | Run tests without file parallelism — required for tests that touch the same home dir |
 | `npm run test:ci` | Run backend lanes locally with isolated test homes, inactivity detection and a hard runtime cap |
 | `npm run test:ci:balanced` | Run the complete backend suite as four concurrent shards balanced by measured file durations |
@@ -60,6 +60,7 @@ To install the CLI while developing:
 | `npm run lint` | ESLint plus real-I/O membership and Phantom console synchronous-I/O guards |
 | `node scripts/verify-changed.mjs` | Lint only the files changed against origin/master and run one type check; the fast local gate before pushing. Repeats on an unchanged tree are skipped (`--force` reruns). Merge Gate still runs the full check. |
 | `npm run check:docs` | Validate operator documentation file links and anchors locally, without network requests |
+| `npm run docs:sync` | Regenerate every generated docs surface (freshness blocks, site pages, CODEMAP inventory, llms indexes); `-- --check` reports drift without writing |
 | `node scripts/check-test-names.mjs` | Flag duplicate test names across `test/` that collide in name-keyed reports |
 | `node scripts/generate-cli-docs.mjs` | Regenerate `docs/cli.md` from `phm --help` output; `--check` compares without writing |
 | `npm run typecheck` | Strict backend and web type checks, without emitting files |
@@ -197,6 +198,22 @@ inactive process from an actively progressing suite that reaches the hard cap;
 only inactivity after Vitest's final summary is evidence of a possible leaked
 handle. The runner preserves the separate worker limits of the unit and
 serialized real-I/O lanes defined in [vitest.config.ts](vitest.config.ts).
+
+The complete synthetic memory performance file runs in the `serial-cpu` Vitest project after the unit and real-I/O groups. It keeps one worker and the same five-second case bound; all 1,024 events, alternating raw/prepared observations and receipts remain. Raw Ubuntu shards and Mac collection include this project automatically. `lint:realio-lane` accounts for the separate manifest and refuses overlapping or missing members.
+
+The Ubuntu authority 1/3 producer has a 60-minute outer job limit: it runs the
+complete web suite before the existing 30-minute backend wrapper, then verifies
+and uploads the original package. Measured setup/build took three minutes and
+web took eleven minutes; a 25-minute combined job cancelled healthy backend work.
+Other matrix roles retain their 25-minute limits. Test and worker bounds are unchanged.
+
+Hosted Mac general jobs use a 90-minute outer limit, matching their existing
+90-minute hermetic wrapper. Complete measured single-worker partitions took
+60–65 minutes; a 45-minute outer job could not finish them. Per-test deadlines,
+worker memory limits, idle detection and required qualification roles are unchanged.
+Hosted Darwin runs print numeric capacity observations after the worker policy:
+raw free/available memory, VM free/inactive/speculative/purgeable pages and kernel
+pressure stay separate; diagnostic values never change admission or worker count.
 
 Hosted CI includes exhaustive Ubuntu shards, named Windows portability contracts,
 four exhaustive Mac partitions, a separate Mac lane for all isolated suites

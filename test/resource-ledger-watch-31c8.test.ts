@@ -111,7 +111,7 @@ describe('resource ledger watch', () => {
     ['--watch', '--interval-ms', '-1000'], ['--watch', '--interval-ms', '1e3'],
     ['--watch', '--interval-ms', '1000', '--interval-ms', '2000'],
     ['--watch', '--watch'], ['--watch', '--bad'], ['--help', '--interval-ms', '1000'],
-  ])('rejects invalid arguments %j without reading', async (...args) => {
+  ])('rejects invalid arguments %j without reading (%#)', async (...args) => {
     vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const read = vi.fn();
     expect(await cmdResourceLedger(args, read)).toBe(2);

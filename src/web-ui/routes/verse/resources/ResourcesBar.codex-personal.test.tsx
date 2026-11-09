@@ -32,10 +32,37 @@ function mount(value: unknown, state = 'healthy', visible = true) {
   const fetch = installFetch(call => call.path === '/api/verse/fleet/runs'
     ? json({ sources: { codex: state }, codexPersonal: value }) : json({}));
   const view = render(<SectionVisibilityProvider visible={visible}><ResourcesBar expanded now={NOW} /></SectionVisibilityProvider>);
+  // Session readings are supporting evidence, opened explicitly beside the account rows.
+  fireEvent.click(screen.getByRole('button', { name: /Usage sources and budgets/ }));
   return { ...view, calls: fetch.calls };
 }
 
 describe('personal Codex session log resource', () => {
+  it.each(['observation expiry', 'reset'])('invalidates at the exact %s between display polls without restamping or fetching', async kind => {
+    const value = { ...reading,
+      asOf: new Date(NOW - (kind === 'observation expiry' ? 15 * 60_000 - 1000 : 60_000)).toISOString(),
+      resetsAt: new Date(NOW + (kind === 'reset' ? 1000 : 86_400_000)).toISOString() };
+    const warm = mount(value);
+    await warm.findByRole('button', { name: /Personal Codex weekly · 87% used/ });
+    warm.unmount();
+    vi.useFakeTimers(); vi.setSystemTime(NOW);
+    try {
+      const view = render(<SectionVisibilityProvider visible><ResourcesBar expanded /></SectionVisibilityProvider>);
+      fireEvent.click(within(view.container).getByRole('button', { name: /Usage sources and budgets/ }));
+      const row = view.container.querySelector('[data-resource-id="codex-personal:sessions"]')!;
+      expect(row).toHaveTextContent('87% used');
+      const reads = warm.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(999); });
+      expect(row.querySelector('button')).toHaveAttribute('data-level', 'low');
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      expect(row.querySelector('button')).toHaveAttribute('data-level', 'unknown');
+      expect(row).toHaveTextContent('87% used · last');
+      expect(row.querySelector('button')).toHaveAccessibleName(/Last session reading · current usage unconfirmed/);
+      expect(warm.calls).toHaveLength(reads);
+      expect(value.asOf).toBe(new Date(NOW - (kind === 'observation expiry' ? 15 * 60_000 - 1000 : 60_000)).toISOString());
+    } finally { vi.useRealTimers(); }
+  });
+
   it('shows the weekly reading, its provenance, remaining capacity and the existing seat', async () => {
     const view = mount(reading);
     const row = await waitFor(() => {

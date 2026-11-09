@@ -11,12 +11,12 @@ const worker = (model: string, quotaScope: ResourceWorker['quotaScope']): Resour
 });
 
 describe('Terra catalog and quota', () => {
-  it('records API limits without silently changing automatic selection', () => {
+  it('records API limits and exposes Terra to automatic selection', () => {
     const model = KNOWN_MODELS.find(m => m.id === 'codex:gpt-6.1-terra');
     expect(model).toMatchObject({ tier: 'mid', costPerMTokIn: 1, costPerMTokOut: 5,
-      apiModelId: 'gpt-6.1-terra', apiContextWindow: 1_050_000, toolApi: 'responses', explicitOnly: true });
-    expect(catalogFor('codex')).not.toContain(model);
-    expect(pickModel({ engine: 'codex', preferCheap: true })?.id).not.toBe(model?.id);
+      apiModelId: 'gpt-6.1-terra', apiContextWindow: 1_050_000, toolApi: 'responses' });
+    expect(catalogFor('codex')).toContain(model);
+    expect(pickModel({ engine: 'codex', preferCheap: true })?.id).toBe(model?.id);
   });
   it('uses the seat catalog for native windows, not API context as a CLI promise', () => {
     const [option] = codexModelOptions([{ slug: 'gpt-6.1-terra', displayName: 'Terra', visibility: 'list',

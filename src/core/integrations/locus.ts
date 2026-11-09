@@ -70,7 +70,7 @@
  */
 
 import { execFile, execFileSync, spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { getLocusJobEnv, hasLocusJobEnv, runInLocusJobEnv, withLocusJobChildEnv } from "./locus-job-env.js";
@@ -83,6 +83,8 @@ import type { AshlrConfig } from "../types.js";
 
 const LOCUS_BIN = process.env.LOCUS_BIN ?? "locus";
 const TIMEOUT_MS = 12_000;
+/** MCP config files are small JSON; 4 MiB is a hard ceiling on the read. */
+const MCP_CONFIG_READ_BYTES = 4 * 1024 * 1024;
 const EXECUTOR_CAPABILITY_ENV = "LOCUS_EXECUTOR_CAPABILITY";
 const CONTROL_CAPABILITY_ENV = "LOCUS_CONTROL_CAPABILITY";
 
@@ -2281,6 +2283,11 @@ export function registerLocusInMcpConfig(
   let raw = "";
   if (!created) {
     try {
+      // MCP configs are KB-sized; refuse to read a pathological file whole.
+      const size = statSync(path).size;
+      if (size > MCP_CONFIG_READ_BYTES) {
+        throw new Error(`file too large (${size} bytes)`);
+      }
       raw = readFileSync(path, "utf8");
     } catch (e) {
       throw new LocusMcpConfigError(

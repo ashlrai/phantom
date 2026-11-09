@@ -28,6 +28,18 @@ describe('KNOWN_SWITCHES', () => {
       expect(k.meaning).toBeTruthy();
     }
   });
+
+  it('never names a provider: planning runs on any declared login', () => {
+    const PROVIDER_NAME = /\b(claude|anthropic|opus|fable|sonnet|sol|codex|openai|gpt|grok|xai|gemini|google|glm|zhipu|devin|swe|qwen|kimi|nim)\b/i;
+    const texts = KNOWN_SWITCHES.flatMap((k) => [k.label, k.meaning]);
+    for (const k of KNOWN_SWITCHES.filter((row) => row.id !== 'HOLD')) {
+      for (const on of [true, false]) {
+        const text = confirmText(k.id, on);
+        texts.push(text.title, text.body, text.confirmLabel, text.done);
+      }
+    }
+    for (const text of texts) expect(text).not.toMatch(PROVIDER_NAME);
+  });
 });
 
 describe('readSwitches', () => {
@@ -106,12 +118,12 @@ describe('confirmText', () => {
 
   it('has a distinct resume wording for the off direction', () => {
     expect(confirmText('PAUSE', false).title).toBe('Resume workers on your Mac?');
-    expect(confirmText('HOLD', true).title).toBe('Hold all dispatch on your Mac?');
-    expect(confirmText('HOLD', false).title).toBe('Lift the dispatch hold?');
+    expect(() => confirmText('HOLD', true)).toThrow('read-only');
+    expect(() => confirmText('HOLD', false)).toThrow('read-only');
   });
 
   it('covers every known switch in both directions', () => {
-    for (const k of KNOWN_SWITCHES) {
+    for (const k of KNOWN_SWITCHES.filter(row => row.id !== 'HOLD')) {
       for (const on of [true, false]) {
         const text = confirmText(k.id, on);
         expect(text.title.endsWith('?')).toBe(true);

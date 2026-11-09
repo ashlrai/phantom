@@ -30,7 +30,8 @@
 import { execFile } from 'node:child_process';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
-import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, renameSync, writeFileSync } from 'node:fs';
+import { readPrivateFileCapped } from '../verse/preferences.js';
 import type { AshlrConfig } from '../types.js';
 
 // ---------------------------------------------------------------------------
@@ -364,10 +365,15 @@ function writePrivateJson(file: string, value: unknown): void {
   renameSync(tmp, file);
 }
 
-/** Persisted ROWID cursor, or null when absent or invalid (caller re-baselines). */
+/** Cursor / last-send state files are <200 B; 64 KiB is a hard ceiling. */
+const STATE_READ_BYTES = 64 * 1024;
+
+/** Persisted ROWID cursor, or null when absent, oversized or invalid (caller re-baselines). */
 export function readCursor(runsDir?: string): number | null {
   try {
-    const parsed = JSON.parse(readFileSync(join(imessageStateDir(runsDir), 'cursor.json'), 'utf8')) as { rowid?: unknown };
+    const read = readPrivateFileCapped(join(imessageStateDir(runsDir), 'cursor.json'), STATE_READ_BYTES);
+    if (read === null || read.truncated) return null;
+    const parsed = JSON.parse(read.text) as { rowid?: unknown };
     return typeof parsed.rowid === 'number' && Number.isSafeInteger(parsed.rowid) && parsed.rowid >= 0 ? parsed.rowid : null;
   } catch {
     return null;
@@ -396,7 +402,9 @@ function recordLastSend(errorCode: string | null): void {
 
 export function readLastSend(runsDir?: string): { ok: boolean; errorCode?: string; at?: string } | null {
   try {
-    const p = JSON.parse(readFileSync(join(imessageStateDir(runsDir), 'last-send.json'), 'utf8')) as Record<string, unknown>;
+    const read = readPrivateFileCapped(join(imessageStateDir(runsDir), 'last-send.json'), STATE_READ_BYTES);
+    if (read === null || read.truncated) return null;
+    const p = JSON.parse(read.text) as Record<string, unknown>;
     if (typeof p['ok'] !== 'boolean') return null;
     return { ok: p['ok'], ...(typeof p['errorCode'] === 'string' ? { errorCode: p['errorCode'] } : {}),
       ...(typeof p['at'] === 'string' ? { at: p['at'] } : {}) };

@@ -28,6 +28,12 @@ vi.mock('node:child_process', async (importOriginal) => {
   };
 });
 
+vi.mock('../src/core/comms/imessage-outbox.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/core/comms/imessage-outbox.js')>();
+  return { ...actual, sendIMessageOutbox: (...args: Parameters<typeof actual.sendIMessageOutbox>) =>
+    withDarwin(() => actual.sendIMessageOutbox(...args)) };
+});
+
 import { imessageAllowlist, pollInboundSince, readCursor, readOnlyUri, writeCursor } from '../src/core/integrations/imessage.js';
 import { imessageChannelMessage, ingestIMessages, senderIdFor } from '../src/core/comms/imessage-inbox-bridge.js';
 import { QueueStore } from '../src/core/queue/store.js';
@@ -48,7 +54,15 @@ const row = (rowid: number, text: string, handle = MASON) =>
 let home = '';
 let runsDir = '';
 let previousHome: string | undefined;
-let platform: PropertyDescriptor;
+// Intake/native transport availability is simulated only at the mocked process boundary.
+// Durable queue/receipt/lock operations must observe the real filesystem platform.
+async function withDarwin<T>(run: () => Promise<T>): Promise<T> {
+  const original = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  Object.defineProperty(process, 'platform', { ...original, value: 'darwin' });
+  try { return await run(); } finally { Object.defineProperty(process, 'platform', original); }
+}
+const pollAsDarwin: typeof pollInboundSince = (...args) => withDarwin(() => pollInboundSince(...args));
+const ingestDeps = () => ({ runsDir, platform: 'darwin' as const, poll: pollAsDarwin });
 
 const sqliteCalls = () => calls.filter((c) => c.file === 'sqlite3');
 const inbox = () => readFileSync(join(runsDir, 'leader', 'MASON-INBOX.md'), 'utf8');
@@ -61,13 +75,10 @@ beforeEach(() => {
   process.env['HOME'] = home;
   mkdirSync(join(home, 'Library', 'Messages'), { recursive: true });
   writeFileSync(join(home, 'Library', 'Messages', 'chat.db'), '');
-  platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
-  Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
   stdoutFor = () => '[]';
 });
 
 afterEach(() => {
-  Object.defineProperty(process, 'platform', platform);
   if (previousHome === undefined) delete process.env['HOME']; else process.env['HOME'] = previousHome;
   rmSync(home, { recursive: true, force: true });
   rmSync(runsDir, { recursive: true, force: true });
@@ -88,7 +99,7 @@ describe('imessageAllowlist', () => {
 
 describe('pollInboundSince', () => {
   it('opens chat.db read-only via execFile argv, with the allowlist and cursor in the SQL', async () => {
-    await pollInboundSince(41, cfg({ imessageAllow: [MASON, OTHER] }));
+    await pollAsDarwin(41, cfg({ imessageAllow: [MASON, OTHER] }));
     const [call] = sqliteCalls();
     expect(call!.args[0]).toBe('-readonly');
     const uri = call!.args.find((a) => a.startsWith('file:'))!;
@@ -102,20 +113,22 @@ describe('pollInboundSince', () => {
 
   it('drops rows from non-allowlisted handles even if the database returned them', async () => {
     stdoutFor = () => JSON.stringify([row(5, 'mine'), row(6, 'not yours', OTHER), row(7, 'again mine', MASON.toUpperCase())]);
-    const polled = await pollInboundSince(4, cfg());
+    const polled = await pollAsDarwin(4, cfg());
     expect(polled.ok && polled.messages.map((m) => m.rowid)).toEqual([5, 7]);
   });
 
   it('keeps newlines and pipes in text inside one record', async () => {
     stdoutFor = () => JSON.stringify([row(9, 'a|b\nc|d')]);
-    const polled = await pollInboundSince(8, cfg());
+    const polled = await pollAsDarwin(8, cfg());
     expect(polled.ok && polled.messages).toHaveLength(1);
   });
 
   it('is disabled without comms.enabled and unsupported off darwin', async () => {
     expect(await pollInboundSince(0, cfg({ enabled: false }))).toEqual({ ok: false, state: 'disabled' });
-    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
-    expect(await pollInboundSince(0, cfg())).toEqual({ ok: false, state: 'unsupported' });
+    const original = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { ...original, value: 'linux' });
+    try { expect(await pollInboundSince(0, cfg())).toEqual({ ok: false, state: 'unsupported' }); }
+    finally { Object.defineProperty(process, 'platform', original); }
     expect(sqliteCalls()).toHaveLength(0);
   });
 });
@@ -135,7 +148,7 @@ describe('cursor file', () => {
 describe('ingestIMessages', () => {
   it('first run baselines to the newest ROWID and ingests no history', async () => {
     stdoutFor = (args) => (args.some((a) => /MAX\(ROWID\)/.test(a)) ? '120\n' : JSON.stringify([row(1, 'old history')]));
-    const result = await ingestIMessages(cfg(), { runsDir });
+    const result = await ingestIMessages(cfg(), ingestDeps());
     expect(result).toMatchObject({ ok: true, state: 'baselined', cursor: 120, accepted: 0 });
     expect(readCursor(runsDir)).toBe(120);
     expect(existsSync(join(runsDir, 'leader', 'MASON-INBOX.md'))).toBe(false);
@@ -145,7 +158,7 @@ describe('ingestIMessages', () => {
   it('receipts allowlisted messages as channel imessage and advances the ROWID cursor', async () => {
     writeCursor(10, runsDir);
     stdoutFor = () => JSON.stringify([row(11, 'focus the fleet on billing'), row(14, 'also check the queue')]);
-    const result = await ingestIMessages(cfg(), { runsDir });
+    const result = await ingestIMessages(cfg(), ingestDeps());
     expect(result).toMatchObject({ ok: true, state: 'ingested', scanned: 2, accepted: 2, duplicate: 0, refused: 0, cursor: 14 });
     expect(readCursor(runsDir)).toBe(14);
 
@@ -165,7 +178,7 @@ describe('ingestIMessages', () => {
   it('records the shared ack text and delivers it only through the self-only outbox', async () => {
     writeCursor(0, runsDir);
     stdoutFor = () => JSON.stringify([row(3, 'hello fleet')]);
-    await ingestIMessages(cfg(), { runsDir });
+    await ingestIMessages(cfg(), ingestDeps());
     const lines = readFileSync(join(runsDir, 'imessage', 'acks.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatchObject({ rowid: 3, status: 'accepted', delivery: 'recorded-not-sent' });
@@ -180,7 +193,7 @@ describe('ingestIMessages', () => {
   it('a repeat of the same words is a duplicate, not a second entry', async () => {
     writeCursor(0, runsDir);
     stdoutFor = () => JSON.stringify([row(1, 'same words twice'), row(2, 'same words twice')]);
-    const result = await ingestIMessages(cfg(), { runsDir });
+    const result = await ingestIMessages(cfg(), ingestDeps());
     expect(result).toMatchObject({ accepted: 1, duplicate: 1, cursor: 2 });
     expect(inbox().match(/\[src:imessage id:/g)).toHaveLength(1);
   });
@@ -188,20 +201,20 @@ describe('ingestIMessages', () => {
   it('refuses secret-shaped text without storing it, and still moves the cursor past it', async () => {
     writeCursor(0, runsDir);
     stdoutFor = () => JSON.stringify([row(1, 'password=plainly-fake-example'), row(2, 'a normal note')]);
-    const result = await ingestIMessages(cfg(), { runsDir });
+    const result = await ingestIMessages(cfg(), ingestDeps());
     expect(result).toMatchObject({ accepted: 1, refused: 1, cursor: 2 });
     expect(inbox()).not.toContain('plainly-fake-example');
   });
 
   it('does nothing when disabled or without an allowlist', async () => {
-    expect(await ingestIMessages(cfg({ enabled: false }), { runsDir })).toMatchObject({ ok: false, state: 'disabled' });
-    expect(await ingestIMessages({ comms: { enabled: true } } as AshlrConfig, { runsDir })).toMatchObject({ state: 'disabled' });
+    expect(await ingestIMessages(cfg({ enabled: false }), ingestDeps())).toMatchObject({ ok: false, state: 'disabled' });
+    expect(await ingestIMessages({ comms: { enabled: true } } as AshlrConfig, ingestDeps())).toMatchObject({ state: 'disabled' });
     expect(sqliteCalls()).toHaveLength(0);
   });
 
   it('reports a blocked chat.db and leaves the cursor alone', async () => {
     writeCursor(7, runsDir);
-    const result = await ingestIMessages(cfg(), { runsDir, poll: async () => ({ ok: false, state: 'blocked_full_disk_access' }) });
+    const result = await ingestIMessages(cfg(), { ...ingestDeps(), poll: async () => ({ ok: false, state: 'blocked_full_disk_access' }) });
     expect(result).toMatchObject({ ok: false, state: 'blocked_full_disk_access', cursor: 7 });
     expect(readCursor(runsDir)).toBe(7);
   });

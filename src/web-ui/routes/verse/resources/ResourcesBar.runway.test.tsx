@@ -1,4 +1,4 @@
-import { cleanup, render, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { evictAll } from '../../../data/cache.js';
 import { installFetch, json } from '../context/context-fixtures.test-support.js';
@@ -35,7 +35,9 @@ afterEach(() => {
 });
 
 function mount() {
-  return render(<SectionVisibilityProvider visible><ResourcesBar expanded now={NOW} /></SectionVisibilityProvider>);
+  const view = render(<SectionVisibilityProvider visible><ResourcesBar expanded now={NOW} /></SectionVisibilityProvider>);
+  fireEvent.click(within(view.container).getByRole('button', { name: /Usage sources and budgets/ }));
+  return view;
 }
 
 describe('personal Codex runway in the resources bar', () => {

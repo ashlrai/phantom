@@ -1,0 +1,30 @@
+{
+  "v": 1,
+  "id": "prompt-ab-2026-10-28",
+  "note": "Frozen prompt-variant A/B experiment: per job class, replay the control (prompt:plain) and challenger (prompt:adaptive) arms over the logged day and promote only on a significant, guardrailed lift.",
+  "classes": [
+    {
+      "id": "docs",
+      "match": { "task": "docs|readme|changelog|copy|freshness|content" },
+      "control": "prompt:plain",
+      "challengers": ["prompt:adaptive"]
+    },
+    {
+      "id": "tests",
+      "match": { "task": "test|ci|flake|shard|vitest|regression" },
+      "control": "prompt:plain",
+      "challengers": ["prompt:adaptive"]
+    },
+    {
+      "id": "secrets",
+      "match": { "task": "secrets|rotation|credential|custody|attestation" },
+      "control": "prompt:plain",
+      "challengers": ["prompt:adaptive"]
+    }
+  ],
+  "gate": {
+    "minResolvedPerArm": 8,
+    "maxUnobservedShare": 0.25,
+    "costRegressionTolerance": 0.5
+  }
+}

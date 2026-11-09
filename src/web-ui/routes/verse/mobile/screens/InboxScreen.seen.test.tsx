@@ -37,15 +37,17 @@ it('shows each acknowledgment, counts the filtered rows, and updates after a pas
   const waiting = screen.getByText('Still waiting');
   await waitFor(() => expect(within(seen.closest('article')!).getByText(`Seen by leaders ${mobileTime('2026-10-31T04:15:00Z')}`)).toBeInTheDocument());
   expect(within(waiting.closest('article')!).getByText('Waiting · next pass due in about 6 min')).toBeInTheDocument();
-  expect(screen.getByRole('status')).toHaveTextContent('1 waiting for a leader pass');
+  expect(screen.getByText(/^(1 waiting for a leader pass|All messages seen by a leader)/)).toHaveTextContent('1 waiting for a leader pass');
+  expect(screen.getByText(/^1 waiting for a leader pass/)).toHaveAttribute('role', 'status');
   const filters = screen.getByRole('group', { name: 'Filter by source' });
   fireEvent.click(within(filters).getByRole('button', { name: 'desktop' }));
   // The status remains visible when every displayed message has been seen.
-  expect(screen.getByRole('status')).toHaveTextContent('All messages seen by a leader');
+  expect(screen.getByText(/^(1 waiting for a leader pass|All messages seen by a leader)/)).toHaveTextContent('All messages seen by a leader');
+  expect(screen.getByText('All messages seen by a leader')).toHaveAttribute('role', 'status');
   fireEvent.click(within(filters).getByRole('button', { name: 'All' }));
   ageSeconds = 0;
   await act(() => refetchQuery(inboxTailQuery.key, () => inboxTailQuery.fetch(), true));
   expect(within(screen.getByText('Still waiting').closest('article')!).getByText(`Seen by leaders ${mobileTime('2026-10-31T04:20:00Z')}`)).toBeInTheDocument();
   // The status remains visible when every displayed message has been seen.
-  expect(screen.getByRole('status')).toHaveTextContent('All messages seen by a leader');
+  expect(screen.getByText(/^(1 waiting for a leader pass|All messages seen by a leader)/)).toHaveTextContent('All messages seen by a leader');
 });
