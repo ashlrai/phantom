@@ -168,15 +168,22 @@ export interface RegisteredPane {
 // ===========================================================================
 
 /** Every chord that is live while a pane's key would be (the composer layer: composer + chat + global). */
-function catalogChords(): Map<string, string> {
+function catalogChords(): ReadonlyMap<string, string> {
+  // COMMAND_KEYS is a frozen module constant, so the map is built once. Every
+  // publish() vets each pane's shortcut, and the post-first-paint warm-up
+  // registers ~36 panes: rebuilding it per call was ~0.3 s of the post-render
+  // long tasks (scripts/measure-desktop-perf.mjs --profile, 3.30.28).
+  if (catalog) return catalog;
   const live = SCOPE_LAYERS.composer;
   const out = new Map<string, string>();
   for (const [id, spec] of Object.entries(COMMAND_KEYS)) {
     if (!live.includes(spec.scope)) continue;
     for (const chord of spec.keys) out.set(chordId(chord), id);
   }
+  catalog = out;
   return out;
 }
+let catalog: ReadonlyMap<string, string> | null = null;
 
 const RESERVED = new Set(SYSTEM_RESERVED_CHORDS.map(chordId));
 
