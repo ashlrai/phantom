@@ -757,8 +757,34 @@ try:
         UIA = {l: {k: u[k] for k in UIA_KEYS if k in u and isinstance(u[k], (bool, int, float, str)) and len(str(u[k])) <= 40}
                for l, u in _p["lanes"].items() if l in UIA_OK and l in LANES and isinstance(u, dict)}
 except Exception: UIA = {}
-for _l, _u in UIA.items():
-    if _u.get("stale") is True: ev("STALE_BUDGET %s reset passed; ask Mason for a fresh reading" % _l)
+def refresh_stale_budget(lane, reading):
+    """Re-read stale evidence; never use an expired projection to accelerate a lane."""
+    if reading.get("stale") is not True: return reading
+    unknown = {"known": False, "stale": True, "behind": False, "reason": "Usage refresh unavailable"}
+    try:
+        if lane != "codex-personal":
+            result = _run(["/usr/bin/python3", "-I", R + "/bin/use-it-all.py"], timeout=20)
+            projection = json.loads(result.stdout)
+            fresh = projection["lanes"][lane]
+            if (result.returncode != 0 or projection.get("schema") != "use-it-all.v1" or
+                    not isinstance(projection.get("ts"), int) or abs(time.time() - projection["ts"]) > 120 or
+                    not isinstance(fresh, dict) or fresh.get("known") is not True or fresh.get("stale") is not False): return unknown
+            return {k: v for k, v in fresh.items() if k in UIA_KEYS and isinstance(v, (bool, int, float, str)) and len(str(v)) <= 40}
+        result = _run(["phm", "resources", "personal", "--refresh", "--json"], timeout=12)
+        if result.returncode != 0: return unknown
+        report = json.loads(result.stdout)
+        resource = report["resources"][0]
+        window = resource.get("weekly") or resource.get("session")
+        used = window["usedPct"]
+        if (resource.get("state") != "current" or isinstance(used, bool) or
+                not isinstance(used, (int, float)) or not 0 <= used <= 100): return unknown
+        return {"known": True, "stale": False, "behind": False, "used_pct": used,
+                "reset_at": window.get("resetsAt"), "reason": "Refreshed from Codex app-server"}
+    except (OSError, ValueError, KeyError, IndexError, TypeError, subprocess.TimeoutExpired): return unknown
+for _l, _u in list(UIA.items()):
+    if _u.get("stale") is True:
+        UIA[_l] = refresh_stale_budget(_l, _u)
+        ev("STALE_BUDGET %s %s" % (_l, "refreshed" if UIA[_l]["known"] else "usage unknown; refresh unavailable"))
 for lane in LANES:
     try: ab_scan(lane, alive)
     except Exception as e: log("autobackoff err %s %s" % (lane, type(e).__name__))
