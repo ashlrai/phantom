@@ -17,7 +17,7 @@ Topic summary and discovery hints.
 ```text
   Phantom - phm, the CLI for agentic engineers (ashlr remains compatible)
 
-    core            Core - index, navigate, configure (index, go, status, …)
+    core            Core - index, navigate, configure (tune, index, go, …)
     run             Run - local-first agent runs (run, runs, …)
     swarm           Swarm - specs + multi-agent fleets (spec, …)
     memory          Memory - shared genome (memory, recall, learn, …)
@@ -26,7 +26,7 @@ Topic summary and discovery hints.
     observability   Observability - cost, telemetry, audit (radar, router, router-calibration, …)
     integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, checkpoint, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
-    web             Surfaces - TUI + web dashboard (top, tui, dash, …)
+    web             Surfaces - TUI + web dashboard (top, tui, …)
     scaffold        Scaffold - new projects + shipping (new, ship, …)
 
   phm init · phm doctor · phm verse  start here: onboard, health check, console
@@ -44,6 +44,7 @@ Every command, grouped by topic.
   Phantom - every command (phm or ashlr)
 
   Core - index, navigate, configure
+    tune <prepare|evaluate>                                                                                        Prepare scrub-gated local model datasets or evaluate paired evidence.
     index [--refresh]                                                                                              Build or refresh the desktop index; show counts by category.
     go [query] [--open|--cd]                                                                                       Find a repo or item; open in editor (--open) or print path for cd (--cd).
     status [--json]                                                                                                Attention board: dirty, off-sync, and stale repos; ecosystem summary.
@@ -61,6 +62,7 @@ Every command, grouped by topic.
     desktopctl capabilities|status|run <resource> [--json]                                                         Drive Claude, Codex, Devin and a browser as interchangeable desktop resources. Flag-gated by ~/.ashlr/desktopctl.json; reports missing TCC grants, never prompts. Logged to the feed.
     desktop-update inspect|apply --stage <32hex> --json                                                            Verify signed paired updates; apply after native exit, Stop/drain and unchanged active grant. Never resumes the resident.
     app update status [--json]                                                                                     Inspect local desktop update status without downloading or installing. Read-only: reports current stage, available version, deferred reason, running job counts. Exit 0 success, 2 bad usage.
+    app restart --json                                                                                             Report a held restart while the native UI owns live runtime state; does not quit or update the app.
     update [--check] [--json]                                                                                      Self-update; mutation requires service registration proven absent and not running. --check remains read-only.
     self-swap [--plan | --apply --supervised] [--json]                                                             Plan a versioned install swap; apply builds, probes, flips current and drains the old supervised process.
     upgrade [--check] [--json]                                                                                     Same as update.
@@ -89,6 +91,7 @@ Every command, grouped by topic.
     context read | write [--json]                                         Read current company context or save a sourced note.
     eval [--limit N]                                                      Local-agent eval harness: adaptive prompts OFF vs ON, steps/done/tokens (M44).
     eval attention [--window 1d|7d|30d]                                   Metadata-only fleet attention report: context pressure, retrieval, yield, routing, and traces.
+    eval checkpoints --file <fixture.json> [--json]                       Compare scripted context retention and input-token estimates; requires PHANTOM_CHECKPOINTS=1.
     skills list [--status <s>] [--limit N] [--json]                       List skills learned from merged PRs (newest revision each; counts are real or "unknown").
     eval prompts --dataset <jobs.jsonl>                                   Per-class prompt-variant A/B replay; promotes a variant only on a significant lift.
     skills audit <pack-path> [--json]                                     Read-only quarantine audit for external skill structure, trigger routing, collisions, and behavioral fixtures.
@@ -155,6 +158,9 @@ Every command, grouped by topic.
     daemon recover-state --dry-run|--execute                                                                                                                      Preview or explicitly execute one exact quarantine of a malformed daemon state (the fix when `daemon status` shows a state issue).
     daemon resolve-state --dry-run|--execute                                                                                                                      Preview or explicitly resolve one exact quarantine, restoring daemon state after `daemon recover-state`.
     worker setup                                                                                                                                                  Temporarily unavailable and fail-closed before config, enrollment, queue, wizard, or service mutation.
+    worker --dry-run                                                                                                                                              Print a draft-PR plan for route-labelled issues. Spawns nothing.
+    worker plan                                                                                                                                                   Print a draft-PR plan for route-labelled issues. Spawns nothing.
+    worker drain                                                                                                                                                  Reserved. This slice refuses execution and tells you to re-run with --dry-run.
     fleet status [--json]                                                                                                                                         Read-only fleet snapshot: daemon, per-backend dispatches+quota, queue, proposals, merges, paused state.
     fleet evidence doctor <source>                                                                                                                                Bounded read-only diagnosis for one decisions, judge, action, dispatch, manifest, or candidate ledger.
     fleet direction [--json]                                                                                                                                      Read-only autonomous direction report: mode, resource posture, guard blocks, and next actions.
@@ -332,6 +338,7 @@ Every command, grouped by topic.
 
   Surfaces - TUI + web dashboard
     top [--once] [--json]         Read-only per-pool capacity and reset pressure snapshot.
+    top --v1 [--fleet <path>]     Read-only top.v1 fleet, pool usage and required reset pace snapshot (schema/top.v1.schema.json).
     tui [--once]                  Interactive terminal dashboard (alias: dash). --once renders one frame and exits.
     dash [--once]                 Alias of `tui` - interactive terminal dashboard.
     dashboard [--stop|--status]   Open the persistent fleet dashboard service (ai.ashlr.serve); --status/--stop inspect or unload it (no install/repair - resident mutation is withheld).

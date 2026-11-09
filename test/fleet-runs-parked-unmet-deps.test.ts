@@ -52,6 +52,7 @@ const now = new Date(2026, 10, 3, 12).getTime();
 describe('fleet parked unmet deps (RQ-QUEUE-AUTOUNPARK-1)', () => {
   it('parses DEPENDENCY GATE ids and MERGED outcomes', () => {
     expect(parseDependencyGateIds('DEPENDENCY GATE: RQ-A, RQ-B\nbody')).toEqual(['RQ-A', 'RQ-B']);
+    expect(parseDependencyGateIds('DEPENDENCY GATE: RQ-A, RQ-B MERGED\nbody')).toEqual(['RQ-A', 'RQ-B']);
     expect(parseDependencyGateIds('no gate here')).toEqual([]);
     expect(mergedJobsFromJsonl(
       `${JSON.stringify({ event: 'outcome', state: 'MERGED', job: 'RQ-A' })}\n`

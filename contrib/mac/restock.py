@@ -1,10 +1,12 @@
 #!/usr/bin/python3
-# restock.py — Mac-side deterministic restocker for the router queue (no LLM, no network of its own).
+# restock.py: deterministic Mac queue restocker (no LLM; bounded GitHub evidence).
 # Installed to ~/.ashlr-runs/bin/restock.py via swap.sh and sha-pinned by selfrun.sh (G1-CODE-PIN); run as
 # `restock.py [--dry-run] [--per-lane N]`. RQ-QUEUEGEN-BOLD-30 + SPEC-AMEND Security #5 + RQ-DEVINROUTEDEFAULTQ7
 # + RQ-QUEUE-AUTOUNPARK-1 (PARKED-DEP / DEPENDENCY GATE / UNPARK). Security must re-pin before live bin/ install.
 import os, re, sys, json, time, fcntl, subprocess, math
 from datetime import datetime
+from pathlib import Path
+from queue_autounpark import promote as promote_parked, capacity as repo_capacity, plan as plan_parked
 from launch_precheck import precheck, park, parked as precheck_parked, park_key
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; EV = R + "/dispatch-events.log"
 DRY = "--dry-run" in sys.argv
@@ -64,6 +66,8 @@ for l in CODEX:
     free = max(t - s.get("running", 0), 0)
     want = PER if PER is not None else 3 * max(free, 4)
     need[l] = want
+# Run even when the author queue is empty. Dry runs never mutate queue files.
+parked_tsv_result = plan_parked(Path(Q)) if DRY else promote_parked(Path(Q))
 lines = rd(Q + "/router-queue.md").splitlines()
 status = {}; recs = []; held_pr = set()
 for i, l in enumerate(lines):
@@ -92,6 +96,7 @@ def ready_job_id(line):
     if PARK_DEP.match(f[0]) or PARK_RATE.match(f[0]): return f[1] if len(f) > 1 else None
     return f[0]
 inq = {j for j in (ready_job_id(x) for x in ready_raw) if j}
+inq.update(x.split("\t")[0] for x in rd(Q + "/parked.tsv").splitlines() if x.strip())
 # Count only distinct launchable rows. Dispatcher status can count parked or malformed
 # rows and is a previous-tick snapshot, so it cannot measure replenishment demand.
 queue_diagnostics = {"parked": 0, "invalid": 0, "empty_prompt": 0, "duplicate": 0}
@@ -136,7 +141,7 @@ def gate_ids(text):
     if not m: return []
     out, seen = [], set()
     for tok in JID_TOK.findall(m.group(1)):
-        if tok.upper() in ("DEPENDENCY", "GATE", "AND", "OR", "NONE", "N/A") or tok in seen: continue
+        if tok.upper() in ("DEPENDENCY", "GATE", "AND", "OR", "NONE", "N/A", "MERGED") or tok in seen: continue
         seen.add(tok); out.append(tok)
     return out
 def parse_parked_dep(line):
@@ -156,7 +161,7 @@ def parse_parked_dep(line):
     return None
 def prio(a): m = re.search(r"\bP(\d)\b", a); return int(m.group(1)) if m else 3
 def prompt_body(j, repo, l, tier, attrs, text, gate=None):
-    gate_line = ("DEPENDENCY GATE: %s\n\n" % ", ".join(gate)) if gate else ""
+    gate_line = ("DEPENDENCY GATE: %s MERGED\n\n" % ", ".join(gate)) if gate else ""
     pin_line = ("\n%s\n" % PIN_MERGE) if PIN_MERGE in (attrs + " " + text) else ""
     return (f"Job {j} (pool {l}, tier {tier}, repo {repo}). Task from the Ashlr router queue, verbatim:\n\n"
             f"{gate_line}{j} ({attrs}): {text}\n\n"
@@ -164,6 +169,8 @@ def prompt_body(j, repo, l, tier, attrs, text, gate=None):
             "that meets every acceptance item above, with new or updated tests that you run. Never print environment variables, secrets or tokens; "
             "solve any secrets need through Phantom Secrets and any MCP/CLI access need through Locus. Do not commit or push, and do not edit .github/."
             f"{pin_line}")
+repo_caps = {}
+repo_picks = {}
 noops = load_noops(); seen_pr = set(); seen_file = set()   # seen_*: PRs / target files already picked this pass
 skips = {}; picks = {l: [] for l in CODEX}; dep_parks = []; done = []; checked = set(); task_keys = {}; ts = int(time.time())   # after-unlanded -> PARKED-DEP rows this pass
 # Bound network prechecks while allowing skipped rows to backfill lane demand.
@@ -343,6 +350,16 @@ for i, j, attrs, text, raw in ranked_records(recs):
     park_state.pop(j, None)
     if pc:
         done.append((i, j, pc)); skip(j, "done-noop"); continue
+    # Adaptive open bridge admission, retaining skipped author rows in place.
+    # Unknown GitHub evidence fails closed; queue_autounpark documents the floor.
+    repo = rm.group(1)
+    if repo not in repo_caps:
+        repo_caps[repo] = repo_capacity(repo)
+        repo_picks[repo] = sum(len(f) >= 5 and f[1] == repo for f in (x.split("\t") for x in ready_raw))
+    cap = repo_caps[repo]
+    if cap["open"] is None or cap["open"] + repo_picks[repo] >= cap["cap"]:
+        skip(j, "merge-cap"); continue
+    repo_picks[repo] += 1
     picks[lane].append((j, rm.group(1), lane, tier, attrs, text, i))
     seen_pr |= prp
     if fkey: seen_file.add(fkey)
@@ -371,7 +388,8 @@ if "--json" in sys.argv:
     print(json.dumps({"dry_run": DRY, "queued": len(out), "done_noop": [j for _, j, _ in done], "skips": skips,
                       "queue_diagnostics": queue_diagnostics, "parked_diagnostics": parked_diagnostics,
                       "unpark": [{"job": j, "deps": ids} for j, ids, _, _ in unparks],
-                      "parked_dep": [{"job": j, "deps": deps} for j, *_r, deps in dep_out]}))
+                      "parked_dep": [{"job": j, "deps": deps} for j, *_r, deps in dep_out],
+                      "parked_tsv": parked_tsv_result}))
 if not DRY:
     # A separate state file avoids racing dispatch's launch retry ledger.
     ready_ids = {r[1] for r in recs}
@@ -470,9 +488,11 @@ if out or unparks or dep_out or rate_candidates:
                 x = repl.pop(x, x)
                 if x.strip(): f.write(x + "\n")
             for j, repo, l, tier, pf, p, i in out: f.write("\t".join([j, repo, l, tier, pf]) + "\n")
-            for j, repo, l, tier, pf, p, i, deps in dep_out:
-                f.write("\t".join(["PARKED-DEP.%s" % l, j, l, tier, repo, pf]) + "\n")
         os.replace(Q + "/ready.tsv.tmp", Q + "/ready.tsv")
+        if dep_out:
+            with open(Q + "/parked.tsv", "a") as f:
+                for j, repo, l, tier, pf, p, i, deps in dep_out:
+                    f.write("\t".join([j, repo, l, tier, pf]) + "\n")
 if out:
     with open(Q + "/claimed.tsv", "a") as f:
         for j, repo, l, tier, pf, p, i in out: f.write("\t".join([j, l, tier, HM, str(ts)]) + "\n")

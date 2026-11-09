@@ -157,3 +157,5 @@ Multi-Mac node pool: see docs/AGENT-NETWORK.md and docs/NODES.md. Configure expl
 Agent network channels: see AGENT-NETWORK-CHANNELS.md for channel metadata, default-deny policy, and offline CLI examples.
 
 Small-Mac oMLX lanes: see docs/OMLX-SMALL-MACS.md. Enable with ~/.ashlr/local-lanes.json {"schemaVersion":1,"enabled":true}; phm node lanes --json prints the evidence-picked model, slots, backoff and suggested caps, and phm node join/worker advertise the omlx/omlx-work caps automatically. HF/oMLX weight caches under protected model roots are never deleted by disk maintenance by default; sharded inference stays off until a measured comparison beats per-node.
+
+- [App restart](APP-RESTART.md): Held restart command, process ownership audit, and remaining zero-downtime acceptance work.

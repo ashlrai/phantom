@@ -1,0 +1,15 @@
+{
+  "pools": {
+    "codex-cmp": { "engine": "codex", "seatId": "codex-cmp", "credential": "fixture-private-value" },
+    "claude-main": { "engine": "claude", "seatId": "claude-main" }
+  },
+  "agents": {
+    "agent-b": { "poolId": "codex-cmp", "jobId": "RQ-PLAN-TOP-A", "state": "running", "env": { "PRIVATE": "fixture-private-value" } },
+    "agent-a": { "poolId": "claude-main", "jobId": null, "state": "idle" }
+  },
+  "jobs": {
+    "RQ-PLAN-TOP-A": { "poolId": "codex-cmp", "agentId": "agent-b", "state": "running", "prompt": "fixture-private-value", "command": "fixture-private-value" },
+    "RQ-NEXT": { "poolId": "claude-main", "agentId": null, "state": "queued" }
+  },
+  "metadata": { "private": "fixture-private-value" }
+}

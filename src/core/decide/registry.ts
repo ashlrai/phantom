@@ -86,6 +86,10 @@ export const ENGINE_ERROR_LABELS = [
 
 export const COMPLETION_CLAIMS = ['claims-change', 'reports-blocked', 'answers-only', 'unknown'] as const;
 
+export const JOB_BANDS = ['low', 'medium', 'high'] as const;
+export const JOB_LATENCIES = ['interactive', 'batch'] as const;
+export const JOB_CONTEXT_BANDS = ['small', 'medium', 'large'] as const;
+
 const spec = (s: DecisionKindSpec): DecisionKindSpec => s;
 
 export const DECISION_KINDS: Readonly<Record<DecisionKind, DecisionKindSpec>> = {
@@ -95,6 +99,16 @@ export const DECISION_KINDS: Readonly<Record<DecisionKind, DecisionKindSpec>> = 
     primary: 'resource_choice', labels: [], threshold: 0.8, timeoutMs: 8_000,
     safetyAdjacent: false,
     callSites: ['src/core/decide/resource-choice.ts adviseResourceChoice'],
+  }),
+  'job-shape': spec({
+    kind: 'job-shape',
+    description: 'Issue text → complexity, risk, context band and latency. Risk is escalate-only.',
+    primary: 'complexity',
+    labels: JOB_BANDS,
+    threshold: 0.75,
+    timeoutMs: 8_000,
+    safetyAdjacent: true,
+    callSites: ['src/core/decide/job-shape.ts classifyJob'],
   }),
   'engine-error': spec({
     kind: 'engine-error',

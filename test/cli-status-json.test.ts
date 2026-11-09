@@ -6,18 +6,20 @@
  * gh / vercel / phantom reads degrade to null instead of touching the network.
  */
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { stripAnsi } from '../src/cli/ui.js';
 import { outputContractShape } from './output-contract-shape.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const homes: string[] = [];
 afterEach(() => { for (const h of homes.splice(0)) rmSync(h, { recursive: true, force: true }); });
 
-function runStatus(args: string[], writeConfig: (home: string) => void = () => {}, inventory = false) {
+function runStatus(args: string[], writeConfig: (home: string) => void = () => {}, inventory = false,
+  installed = false, failure?: string, observeImports = false) {
   const home = mkdtempSync(join(tmpdir(), 'phantom-status-json-')); homes.push(home);
   writeConfig(home);
   const env: NodeJS.ProcessEnv = { HOME: home, USERPROFILE: home, PATH: dirname(process.execPath), TMPDIR: process.env.TMPDIR };
@@ -42,13 +44,32 @@ function runStatus(args: string[], writeConfig: (home: string) => void = () => {
       getIdentity: load('./src/core/integrations/identity.ts', 'getIdentity'),
     });
   `;
+  const preloads: string[] = [];
+  if (installed && (observeImports || failure !== undefined)) {
+    const observer = join(home, 'observe.mjs');
+    writeFileSync(observer, `import { registerHooks } from 'node:module';
+registerHooks({ load(url, context, nextLoad) {
+  if (/\\/cli\\/(index|picker|open|doctor-init)\\.js$/.test(url) || url.endsWith('/core/tidy.js') ||
+      url.endsWith('/sandbox/claude-broker-tool-invocation.js')) throw Error('Unrelated CLI graph loaded');
+  if (${JSON.stringify(failure)} !== undefined && url.endsWith('/core/index-store.js')) {
+    return { format: 'module', shortCircuit: true, source:
+      'export function loadIndex() { throw Error(' + JSON.stringify(${JSON.stringify(failure)}) + '); }' +
+      'export function writeIndex() {}' };
+  }
+  return nextLoad(url, context);
+}});`);
+    preloads.push('--import', observer);
+  }
+  const sourceEntry = ['--import', 'tsx', 'src/cli/index.ts'];
+  const execute = (entry: string[], imports: string[] = []) => spawnSync(process.execPath,
+    [...imports, ...entry, 'status', ...args], { cwd: root, encoding: 'utf8', timeout: 20_000, env });
   const argv = inventory
     ? ['--import', 'tsx', '--input-type=module', '-e', inventoryScript]
     : ['--import', 'tsx', 'src/cli/index.ts', 'status', ...args];
-  const result = spawnSync(process.execPath, argv, {
+  const result = installed ? execute(['bin/ashlr'], preloads) : spawnSync(process.execPath, argv, {
     cwd: root, encoding: 'utf8', timeout: 20_000, env,
   });
-  return { home, result };
+  return { home, result, source: () => execute(sourceEntry) };
 }
 
 describe('CLI: phm status --json', () => {
@@ -59,7 +80,7 @@ describe('CLI: phm status --json', () => {
     expect(result.stdout).not.toContain('\u001b');
     const data = JSON.parse(result.stdout);
     expect(result.stdout).toBe(JSON.stringify(data, null, 2) + '\n');
-    expect(Object.keys(data).sort()).toEqual(['v', 'generatedAt', 'state', 'reason', 'running', 'merged', 'blocked', 'spent'].sort());
+    expect(Object.keys(data).sort()).toEqual(['v', 'generatedAt', 'state', 'reason', 'summary', 'lanes', 'repos', 'running', 'merged', 'blocked', 'spent'].sort());
     expect(data.v).toBe(1);
     expect(Number.isFinite(Date.parse(data.generatedAt))).toBe(true);
     expect(data.state).toBe('dark');
@@ -138,4 +159,97 @@ describe('CLI: phm status --json', () => {
     if (process.platform !== 'win32') expect(result.stdout).not.toContain('PowerShell');
     expect(() => JSON.parse(result.stdout)).toThrow();
   });
+});
+
+function writeBucketIndex(home: string): void {
+  mkdirSync(join(home, '.ashlr'), { recursive: true });
+  writeFileSync(join(home, '.ashlr', 'config.json'), JSON.stringify({ version: 1, roots: [], staleDays: 7 }));
+  const items = ['dirty', 'off-sync', 'stale', 'clean'].map((name, i) => ({
+    id: name, name, path: join(home, name), kind: 'repo',
+    lastModified: new Date(Date.now() - (i === 2 ? 30 : 1) * 86_400_000).toISOString(),
+    git: { branch: 'main', dirty: i === 0 ? 2 : 0, ahead: i === 1 ? 1 : 0, behind: 0, lastCommit: null },
+  }));
+  writeFileSync(join(home, '.ashlr', 'index.json'), JSON.stringify({ version: 1, items }));
+}
+
+// bin/ashlr's status fast path imports dist/cli/status.js — skipped when the
+// build output is absent (environment issue, not a regression).
+const distStatusBuilt = existsSync(join(root, 'dist', 'cli', 'status.js'));
+
+describe('installed status fast path', () => {
+  it('renders empty status without loading the dispatcher or unrelated commands', () => {
+    if (!distStatusBuilt) return;
+    const { result } = runStatus([], () => {}, false, true, undefined, true);
+    expect(result.error).toBeUndefined(); expect(result.status).toBe(0);
+    expect(result.stdout).toContain('No git repos are being tracked yet.');
+    expect(result.stdout).toContain('phm config set roots --json');
+    expect(result.stderr).not.toContain('Unrelated CLI graph loaded');
+  });
+  it('retains index auto-build for invalid cached data', () => {
+    if (!distStatusBuilt) return;
+    const { home, result } = runStatus([], home => {
+      mkdirSync(join(home, '.ashlr'), { recursive: true });
+      writeFileSync(join(home, '.ashlr', 'index.json'), '{invalid');
+    }, false, true);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain('No index found');
+    expect(JSON.parse(readFileSync(join(home, '.ashlr', 'index.json'), 'utf8')).items).toEqual([]);
+  });
+  it('preserves the populated human attention board', () => {
+    if (!distStatusBuilt) return;
+    const { result } = runStatus([], writeBucketIndex, false, true);
+    expect(result.error).toBeUndefined(); expect(result.status).toBe(0);
+    // The Phantom Secrets PATH warning is a deliberate one-off diagnostic when
+    // credential CLIs run without `phantom exec`; it is not a fast-path error.
+    expect(result.stderr).not.toContain('error');
+    expect(result.stderr).not.toContain('Unrelated CLI graph loaded');
+    const output = stripAnsi(result.stdout);
+    for (const text of ['4 repos tracked', 'Dirty (1)', 'Off-sync (1)', 'Stale', '1 clean', '1 dirty', '1 off-sync', '1 stale']) {
+      expect(output).toContain(text);
+    }
+  });
+  it('matches the source live-status JSON payload', () => {
+    if (!distStatusBuilt) return;
+    const { result, source } = runStatus(['--json'], writeBucketIndex, false, true);
+    const direct = source();
+    for (const child of [result, direct]) {
+      expect(child.error).toBeUndefined(); expect(child.status).toBe(0); expect(child.stderr).toBe('');
+      expect(child.stdout).not.toContain('\u001b');
+    }
+    const normalize = (s: string) => { const d = JSON.parse(s) as Record<string, unknown>; d.generatedAt = '<ts>'; return d; };
+    expect(normalize(result.stdout)).toEqual(normalize(direct.stdout));
+  });
+  it.each(['fixture status failure', 'fixture not implemented'])(
+    'keeps shared CLI error formatting for %s', failure => {
+      if (!distStatusBuilt) return;
+      const { result } = runStatus([], () => {}, false, true, failure);
+      expect(result.error).toBeUndefined(); expect(result.status).toBe(1); expect(result.stdout).toBe('');
+      const detail = failure.includes('not implemented')
+        ? `Module not yet implemented: ${failure}\nThis command depends on a core module that hasn't been built yet.`
+        : failure;
+      expect(stripAnsi(result.stderr)).toBe(`error: ${detail}\n`);
+    });
+});
+
+it('reads a cached status without loading scanners, tidy or picker modules', () => {
+  const home2 = mkdtempSync(join(tmpdir(), 'phantom-status-cached-')); homes.push(home2);
+  mkdirSync(join(home2, '.ashlr'));
+  writeFileSync(join(home2, '.ashlr', 'config.json'), JSON.stringify({ version: 1, roots: [] }));
+  writeFileSync(join(home2, '.ashlr', 'index.json'), JSON.stringify({ version: 1, items: [], generatedAt: new Date().toISOString() }));
+  const observer = join(home2, 'observe.mjs');
+  writeFileSync(observer, `import { registerHooks } from 'node:module';
+registerHooks({ load(url, context, nextLoad) {
+  if (/\\/(?:index-engine|classify|tidy|picker|open)\\.ts$/.test(url)) throw Error('Cached status loaded: ' + url);
+  return nextLoad(url, context);
+}});`);
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home2, USERPROFILE: home2, PATH: dirname(process.execPath) };
+  delete env.ASHLR_HOME;
+  delete env.NO_COLOR;
+  delete env.FORCE_COLOR;
+  const result = spawnSync(process.execPath, ['--import', 'tsx', '--import', observer, 'src/cli/index.ts', 'status'], {
+    cwd: root, encoding: 'utf8', timeout: 20_000, env,
+  });
+  expect(result.error).toBeUndefined();
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toContain('No git repos are being tracked yet.');
 });

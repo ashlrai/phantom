@@ -252,6 +252,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'reap-marks': () => import('./fleet-reap-marks.js'),
   'reassign': () => import('./fleet-reassign.js'),
   'reassign-stdin': () => import('./fleet-reassign-stdin.js'),
+  'rebase-plan': () => import('./fleet-rebase-plan.js'),
   'rebase-status': () => import('./fleet-rebase-status.js'),
   'recut-sweep': () => import('./fleet-recut-sweep.js'),
   'red-blame': () => import('./fleet-red-blame.js'),

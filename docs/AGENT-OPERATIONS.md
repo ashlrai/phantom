@@ -364,6 +364,7 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `phm automations ...` | Turn triggers (labels, red CI, schedules, webhooks) into fleet tasks |
 | `phm website status\|auto\|pause\|off` | Inspect or pause automatic phm.dev publication |
 | `phm top [--once] [--json]` | Read-only per-account pool capacity and reset-pressure snapshot; always includes codex-personal. JSON schemaVersion is 1; missing telemetry stays unknown. Local subscription readings are engine-wide, with no account attribution. |
+| `phm top --v1 [--fleet <path>]` | Read-only `top.v1` snapshot of the saved fleet map (pools, agents, jobs) plus per-pool usage, engine-window quota counts, reset assessment and required pace-to-reset. Exit 0 means the fleet map was read, 1 means it was unavailable, 2 means invalid arguments. The closed output contract is [schema/top.v1.schema.json](../schema/top.v1.schema.json); IDs are bounded identifiers and measurements stay `null` when a source is unavailable. |
 | `phm resources [--json]`, `phm usage` | Per-backend capacity and usage, read-only |
 | `phm audit [N] [--json]` | Tail the append-only audit trail |
 
@@ -812,3 +813,44 @@ refix, review or ok. A failed open-PR read still emits the versioned shape
 with `reads.open: 'failed'` (exit 1); a failed merged or prompts read degrades
 only the superseded leg. Read-only — `gh pr list` calls only. See
 [pr-hygiene](fleet/pr-hygiene.md) for the report shape.
+
+## Fleet dashboard metrics feed
+
+`phm fleet status --json` includes an additive `metrics` object with schema
+`fleet-metrics.v1`. Existing status fields are unchanged. The text status and
+watch views render the same rollups, retirement candidates, impact scoreboard,
+production and exploration shares, and per-pool budget projections.
+
+The local RQ-METRICS-ROUTER-FEED and RQ-BUDGET-LEDGER seam lives in
+`src/core/fleet/metrics-feed.ts`. Its reader currently returns unavailable until
+those upstream modules are integrated. Consumers must check `sourceState`:
+unknown rollups and shares are `null`, and unavailable rankings and pools are
+empty arrays. A healthy empty work window has zero counts and null shares.
+`observedAt` and `windowHours` describe the measurement, not the CLI read time.
+
+Each input work row represents one unique PR. Shares count all work in the
+window; impact rankings count merged work only. Scores are supplied by the
+upstream feed, never inferred from diff size. Retirement candidates have zero
+realized impact and are advisory only, ranked by work count. Rankings contain
+at most ten entries with deterministic ties. No routing or retirement is applied.
+
+Each pool carries its own unit and reset time. Remaining capacity is clamped at
+zero; burn per hour is used capacity divided by observed hours. Exhaustion
+projects that average forward from the observation time and is compared with
+reset. Zero burn has no exhaustion date; missing observation duration gives
+unknown burn. Expired reset windows and invalid or duplicate evidence degrade
+the metrics slice. Projections are observations and grant no spending authority.
+
+### Production stack-trace hot patches
+
+Set `PHM_HOT_PATCH_LOG` in the Phantom server's environment to the path of a
+local, regular log file to opt in. With cloud self-improvement enabled, its
+normal discovery pass reads the last 256 KiB and queues up to ten distinct Node.js
+error stacks for the configured repository. It extracts only exception class
+names and relative `src/` or `lib/` stack locations; log messages, absolute paths,
+and function names are not sent to the agent. Configure the log producer to emit
+repository-relative frames. The fix agent is asked to reproduce the failure with
+a regression test and deliver a small draft PR, or report no-change when the
+signal is insufficient. Existing cloud budgets, backlog deduplication, and PR
+review gates apply. Unset the variable to disable intake; already queued items
+remain in the backlog.

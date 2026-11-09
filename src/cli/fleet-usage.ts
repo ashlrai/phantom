@@ -4,6 +4,7 @@ const usage = 'Usage: phm fleet usage [--json] | usage add <pool> <pct> --at <ti
 
 export async function cmdFleetUsage(args: string[]): Promise<number> {
   try {
+    if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(usage); return 0; }
     if (args.length === 0 || (args.length === 1 && args[0] === '--json')) {
       const report = fleetUsageReport(readFleetUsage());
       if (args[0] === '--json') console.log(JSON.stringify(report));
