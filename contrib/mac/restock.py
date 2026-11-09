@@ -5,14 +5,14 @@
 # + RQ-QUEUE-AUTOUNPARK-1 (PARKED-DEP / DEPENDENCY GATE / UNPARK). Security must re-pin before live bin/ install.
 import os, re, sys, json, time, fcntl, subprocess, math
 from datetime import datetime
-from launch_precheck import precheck, park, parked as precheck_parked, park_key
+from launch_precheck import precheck, park, parked as precheck_parked, park_key, attempt_identity, empty_reason, read_attempts
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; EV = R + "/dispatch-events.log"
 DRY = "--dry-run" in sys.argv
 PER = int(sys.argv[sys.argv.index("--per-lane") + 1]) if "--per-lane" in sys.argv else None
 TS = time.strftime("%F %T"); HM = time.strftime("%H:%M")
-CODEX = ["codex-cmp", "codex-personal", "devin", "codex-local"]  # restockable lanes (devin unheld 2:25 PM per Mason; codex-local RQ-LOCAL-LANE)
+CODEX = ["codex-cmp", "codex-personal", "devin", "codex-local", "omlx"]  # restockable lanes (devin unheld 2:25 PM per Mason; codex-local RQ-LOCAL-LANE)
 CODEX.append("claude-api")  # paced by claude-api.py via slots.json target (0 when no credit pool is open)
-GENERAL = [l for l in CODEX if l != "codex-local"]  # rev1.1: local models are not a general fallback; only pool=codex-local goes there
+GENERAL = [l for l in CODEX if l not in ("codex-local", "omlx")]  # rev1.1: local models are not a general fallback; only explicitly local pools go there
 # RQ-QUEUEGEN-BOLD-30 (SPEC-AMEND Security #5): GS_REPOS is the fleet allowlist — the core-fleet spine that is
 # checked out under ~/Projects/ashlrai (docs/ECOSYSTEM-MAP.md). measurably and ashlar-landing live there too but
 # are not fleet: a directory existing is never enough to make a line selectable, and restock never creates for them.
@@ -60,7 +60,7 @@ for l in CODEX:
     s = lanes.get(l, {}); t = slots.get(l, {}).get("target", DEVIN_T if l == "devin" else 10)
     if l == "devin" and isinstance(t, int): t = min(t, DEVIN_C)   # leverage ceiling 16 caps restock need
     if slots.get(l, {}).get("held") or l in hold: need[l] = 0; continue
-    if l == "claude-api" and not slots.get(l, {}).get("target"): need[l] = 0; continue   # paced to 0: no credit pool open
+    if l in ("claude-api", "omlx") and not slots.get(l, {}).get("target"): need[l] = 0; continue   # disabled local pool or no credit pool open
     free = max(t - s.get("running", 0), 0)
     want = PER if PER is not None else 3 * max(free, 4)
     need[l] = want
@@ -331,7 +331,7 @@ for i, j, attrs, text, raw in ranked_records(recs):
     if fkey and fkey in seen_file: skip(j, "dup-file"); continue
     if j in checked: skip(j, "dup-line"); continue
     # balance codex lanes: line pool first, else the lane with more unmet need (cmp wins ties)
-    lane = pool if len(picks[pool]) < need[pool] or pool == "codex-local" else max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
+    lane = pool if len(picks[pool]) < need[pool] or pool in ("codex-local", "omlx") else max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
     if len(picks[lane]) >= need[lane]: continue
     if pc_left <= 0: break
     checked.add(j); pc_left -= 1
@@ -347,9 +347,18 @@ for i, j, attrs, text, raw in ranked_records(recs):
     seen_pr |= prp
     if fkey: seen_file.add(fkey)
 out = []
+empty_attempts = read_attempts(R)
 for lane in CODEX:
     for j, repo, l, tier, attrs, text, i in picks[lane]:
         p = prompt_body(j, repo, l, tier, attrs, text)
+        reason = empty_reason(j, attempt_identity(repo, p, H), empty_attempts, ts)
+        if reason:
+            skip(j, reason)
+            if not DRY:
+                with open(R + '/metrics/jobs.jsonl', 'a') as stream:
+                    stream.write(json.dumps(dict(event='skipped_empty', job=j, repo=repo,
+                                                 lane=l, reason=reason, ts=time.strftime('%Y-%m-%dT%H:%M:%S%z'))) + '\n')
+            continue
         pf = f"{Q}/prompts/{j}.md"
         out.append((j, repo, l, tier, pf, p, i))
 dep_out = []   # PARKED-DEP rows to append (job, repo, lane, tier, pf, prompt, i, deps)
