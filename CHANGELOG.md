@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.26 |
-| Latest dated changelog release (2026-11-08) | 3.30.26 |
+| Source package | 3.30.27 |
+| Latest dated changelog release (2026-11-09) | 3.30.27 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -16,7 +16,9 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
-## [3.30.27](https://github.com/ashlrai/phantom/compare/v3.30.26...v3.30.27) (2026-11-09)
+## [Unreleased]
+
+## [3.30.27] - 2026-11-09
 
 
 ### Changes
@@ -32,8 +34,6 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 * **RQ-SWE4-TERRA-CLI-PH:** RQ-SWE4-TERRA-CLI-PH ([#4123](https://github.com/ashlrai/phantom/issues/4123)) ([5449b94](https://github.com/ashlrai/phantom/commit/5449b94af61a257ba460ce41bf01b50d7b94ae5e))
 * **RQ-SWE4-TERRA-SECBUS:** RQ-SWE4-TERRA-SECBUS ([#4120](https://github.com/ashlrai/phantom/issues/4120)) ([0da1acd](https://github.com/ashlrai/phantom/commit/0da1acd79bf26931e92a78d16f4bf74eab41c770))
 * **RQ-SWE4-TERRA-TESTS-PH:** Bridge notes — RQ-SWE4-TERRA-TESTS-PH ([#4119](https://github.com/ashlrai/phantom/issues/4119)) ([5992379](https://github.com/ashlrai/phantom/commit/5992379074ca85a3b0c6acf5f0c777e00db7a943))
-
-## [Unreleased]
 
 ## [3.30.26] - 2026-11-08
 
