@@ -2055,6 +2055,9 @@ export async function handleVerseApi(
       if (path !== `${VERSE_API_PREFIX}/fleet/grok-ultra`) { sendJson(res, 404, { error: 'Grok usage route not found.' }); return true; }
       return (await import('./grok-ultra-api.js')).handleGrokUltraApi(req, res, path, method);
     }
+    if (path === `${VERSE_API_PREFIX}/fleet/release-lag`) {
+      return (await import('./release-lag-api.js')).handleReleaseLagApi(req, res, path, method);
+    }
     if (path === `${VERSE_API_PREFIX}/adoption` || path.startsWith(`${VERSE_API_PREFIX}/adoption/`)) {
       // Metadata reads cannot evaluate legacy scheduler-owning mounted modules.
       if (path !== `${VERSE_API_PREFIX}/adoption` && path !== `${VERSE_API_PREFIX}/adoption/refresh`) {

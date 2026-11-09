@@ -199,6 +199,14 @@ stocked feeds is chosen by highest semver. Creation time, list order, and a
 cached older asset do not win. Installed 3.30.24 must not be offered 3.29.3
 while 3.30.28 is stocked.
 
+`phm release lag --json` reports how far the installed app trails the last
+real release: `latestTag`, `assetCount`, `feedOk` (whether
+`releases/latest/download/latest.json` answers 200), `installedVersion` (read
+only from `/Applications/Phantom.app` Info.plist) and `mergedSince` (pull
+requests merged after that release). A value it could not read is the string
+`"unknown"`. Without `--json` it prints the same numbers as one line, which the
+Fleet header also shows (`GET /api/verse/fleet/release-lag`).
+
 `phm release status --json --file <phantom-release-state.json>` prints the
 uploaded train state. The same JSON is the `phantom-release-state` workflow
 artifact. Stage keys are `merge`, `tag`, `build`, `attest`, `sign`,

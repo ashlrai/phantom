@@ -124,7 +124,7 @@ describe('shared native readback', () => {
 
 describe('automatic control polling', () => {
   function stubControlFetch(fetcher: (path: string, init: RequestInit) => Promise<Response>): void {
-    vi.stubGlobal('fetch', (path: string, init: RequestInit) => path === '/api/verse/fleet/runs'
+    vi.stubGlobal('fetch', (path: string, init: RequestInit) => path === '/api/verse/fleet/runs' || path === '/api/verse/fleet/release-lag'
       ? Promise.resolve(json(null, 404)) : path === '/api/verse/fleet/control/switches'
       ? Promise.resolve(json({ v: 1, switches: [], sourceState: 'missing' })) : fetcher(path, init));
   }
@@ -170,6 +170,18 @@ describe('automatic control polling', () => {
       expect(Array.from(region.children)).toEqual(layout);
       expect(region.querySelector('dl')).toBe(facts);
     }
+    unmount();
+  });
+
+  it('shows the release lag line from the same JSON as phm release lag', async () => {
+    const lag = { schema: 'phantom.release-lag/v1', checkedAt: '2026-11-09T10:00:00.000Z', latestTag: 'v3.31.2', assetCount: 7,
+      feedOk: true, installedVersion: 'unknown', mergedSince: 12 };
+    vi.stubGlobal('fetch', (path: string) => Promise.resolve(path === '/api/verse/fleet/release-lag' ? json(lag)
+      : path === '/api/verse/fleet/control' ? json(fleetControl('live')) : json(null, 404)));
+    const { unmount } = render(panel());
+    await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+    expect(screen.getByTestId('release-lag-line')).toHaveTextContent(
+      'Release · latest v3.31.2 · assets 7 · feed 200 · installed unknown · merged since 12');
     unmount();
   });
 
