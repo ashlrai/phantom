@@ -473,7 +473,22 @@ function replyDelivery(channel: LeaderThreadChannel): LeaderThreadMessage['deliv
  * before `before` (a message id, or an ISO time) when given. Memos written
  * since the last read are synced in first.
  */
-export function listThread(opts: { limit?: number; before?: string } = {}): LeaderThreadMessage[] {
+export interface LeaderThreadQuery {
+  limit?: number;
+  before?: string;
+  q?: string;
+  channel?: LeaderThreadChannel;
+  from?: 'mason' | 'leader';
+}
+
+function matchesThreadQuery(message: LeaderThreadMessage, opts: LeaderThreadQuery): boolean {
+  const terms = (opts.q ?? '').slice(0, 200).toLowerCase().split(/\s+/).filter(Boolean);
+  return (!opts.channel || message.channel === opts.channel)
+    && (!opts.from || message.from === opts.from)
+    && terms.every(term => message.text.toLowerCase().includes(term));
+}
+
+export function listThread(opts: LeaderThreadQuery = {}): LeaderThreadMessage[] {
   const limit = Math.max(1, Math.min(THREAD_LIMITS.listMax, Math.floor(opts.limit ?? THREAD_LIMITS.listDefault)));
   try { syncLeaderMemosToThread(); } catch { /* the thread still reads */ }
   const index = readIndex();
@@ -488,13 +503,22 @@ export function listThread(opts: { limit?: number; before?: string } = {}): Lead
       log = log.filter((m) => Date.parse(m.at) < ms);
     }
   }
-  return log.slice(-limit).map((m) => withDelivery(m, index));
+  return log.filter(m => matchesThreadQuery(m, opts)).slice(-limit).map((m) => withDelivery(m, index));
 }
 
 /** File replies are projected only: reading never copies them into the thread log. */
-export async function listLeaderThread(opts: { limit?: number; before?: string } = {}): Promise<LeaderThreadMessage[]> {
+export async function listLeaderThread(opts: LeaderThreadQuery = {}): Promise<LeaderThreadMessage[]> {
   const limit = Math.max(1, Math.min(THREAD_LIMITS.listMax, Math.floor(opts.limit ?? THREAD_LIMITS.listDefault)));
-  const posts = listThread({ limit: THREAD_LIMITS.listMax });
+  // Search the complete live log before limiting; retain the usual tail for
+  // unfiltered reads and preserve cursor lookup against the unfiltered log.
+  let posts: LeaderThreadMessage[];
+  if (opts.q !== undefined || opts.channel !== undefined || opts.from !== undefined) {
+    try { syncLeaderMemosToThread(); } catch { /* the thread still reads */ }
+    const index = readIndex();
+    posts = readLog().map(message => withDelivery(message, index));
+  } else {
+    posts = listThread({ limit: THREAD_LIMITS.listMax });
+  }
   const { entries } = await readOutboxEntries({ limit: THREAD_LIMITS.listMax });
   const seen = new Set(posts.filter(post => post.from === 'leader').map(post => replyTextHash(post.text)));
   const files: LeaderThreadMessage[] = entries.filter(entry => !seen.has(replyTextHash(entry.text))).map(entry => ({
@@ -511,7 +535,7 @@ export async function listLeaderThread(opts: { limit?: number; before?: string }
       messages = messages.filter(message => Date.parse(message.at) < Date.parse(opts.before!));
     }
   }
-  return messages.slice(-limit);
+  return messages.filter(message => matchesThreadQuery(message, opts)).slice(-limit);
 }
 
 /** One message by id (with its delivery state), or null. */
