@@ -18,6 +18,8 @@ import { filterEntries, groupByDay, quoteForMessage, readInboxEntries } from './
 import { fleetInboxQuery, fleetRunsQuery, ordersTraceQuery } from './fleet-inbox-queries.js';
 import { githubUrl, jobsForEntry, narrowOrderTrace, orderJobsLine, stateWord } from './order-trace-model.js';
 import { CommsStatusCard } from './CommsStatusCard.js';
+import { GmailTriageCard } from './GmailTriageCard.js';
+import { UnifiedInboxCard } from './UnifiedInboxCard.js';
 import { CosDraftsCard } from './CosDraftsCard.js';
 import { InboxPostBox } from './InboxPostBox.js';
 import { matchesPosted } from './inbox-post-model.js';
@@ -88,7 +90,9 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
   }
   return <div className={styles.pane}>
     {draftStatus && <p role="status">{draftStatus}</p>}
+    <UnifiedInboxCard visible={visible} />
     <CommsStatusCard visible={visible} />
+    <GmailTriageCard visible={visible} />
     <CosDraftsCard visible={visible} />
     <InboxPostBox snapshot={snapshot.data} onPosted={postedText => {
       setSource(''); setChannel(null); setText(''); setPosted({ text: postedText, until: Date.now() + 5_000 }); setPostedForAck(postedText);
