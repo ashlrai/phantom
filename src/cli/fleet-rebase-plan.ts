@@ -46,7 +46,7 @@ import {
 } from '../core/fleet/rebase-plan.js';
 
 const USAGE = `Usage: phm fleet rebase-plan [--input <file>|-] [--repo <owner/name>] [--root <abs>]
-  [--queue-dir <abs>] [--hold-file <path>] [--no-coverage]
+  [--queue-dir <abs>] [--hold-file <path>] [--no-coverage] [--defer-behind-clean]
   [--pool <lane>] [--tier <tier>] [--priority <P0-P3>] [--max-prs <1-16>]
   [--emit json|lines|rows] [--json]
 Cluster conflicting bridge PRs by file overlap and emit rebase-job specs:
@@ -56,6 +56,8 @@ gh pr list array, a merge-backlog read or a fleet.pr-hygiene.v1 report via
 <queue-dir>/router-queue.md and ready.tsv rows cover PRs already queued;
 hold-list.txt entries skip held PRs. --emit lines prints router-queue rows;
 --emit rows prints ready.tsv rows (writer creates the prompt files).
+Conflicting PRs replaced by an open RQ-RECUT rework PR are dropped;
+--defer-behind-clean also waits out PRs sharing a file with a clean PR.
 Read-only: never calls gh, never writes. Exit 1 when no usable snapshot.`;
 
 const REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
@@ -63,7 +65,7 @@ const PRIORITY_RE = /^P[0-3]$/;
 const POOL_RE = /^[a-z][a-z-]{0,30}$/;
 /** Status-first parked row cell: PARKED-DEP.lane, PARKED-MERGERATE.lane, PARKED-SPLIT.lane, … */
 const PARK_DEP = /^PARKED-[A-Z][A-Z-]*(?:\.|$)/i;
-const REBASE_ID = /RQ-REBASE[A-Za-z0-9._-]*/;
+const REBASE_ID = /RQ-(?:REBASE|RECUT)[A-Za-z0-9._-]*/;
 const LINE_STATUS = /^- ([A-Z][A-Z-]*)\b/;
 const REPO_ATTR = /\brepo=(?:[A-Za-z0-9._-]+\/)?([A-Za-z0-9._-]+)/;
 const EMIT = new Set(['json', 'lines', 'rows']);
@@ -172,7 +174,7 @@ function failedPlan(repo: string | null, now: Date, input: Record<string, unknow
   return {
     schema: REBASE_PLAN_SCHEMA, v: 1, repo, generatedAt: now.toISOString(),
     input, error,
-    counts: { open: 0, unreadable: 0, duplicates: 0, conflicting: 0, held: 0, covered: 0, jobs: 0, clusters: 0, singles: 0, chunks: 0, chained: 0, pinned: 0, noFileData: 0 },
+    counts: { open: 0, unreadable: 0, duplicates: 0, conflicting: 0, held: 0, covered: 0, superseded: 0, deferred: 0, jobs: 0, clusters: 0, singles: 0, chunks: 0, chained: 0, pinned: 0, noFileData: 0 },
     coverage: { state: 'skipped', coveredPrs: [] },
     jobs: [],
   };
@@ -193,12 +195,14 @@ export async function cmdFleetRebasePlan(args: string[], deps: FleetRebasePlanDe
   let tier = 'work';
   let priority = 'P1';
   let maxPrs: number | null = null;
+  let deferBehindClean = false;
   let root = deps.root;
   let queueDir = deps.queueDir;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--json' && !json) { json = true; continue; }
     if (arg === '--no-coverage' && coverage) { coverage = false; continue; }
+    if (arg === '--defer-behind-clean') { deferBehindClean = true; continue; }
     if (arg === '--emit') {
       const value = args[++i];
       if (!EMIT.has(value ?? '')) { err(`error: --emit requires json|lines|rows, got: ${value ?? '(missing)'}\n${USAGE}\n`); return 2; }
@@ -326,6 +330,7 @@ export async function cmdFleetRebasePlan(args: string[], deps: FleetRebasePlanDe
       now: now(),
       pool, tier, priority,
       ...(maxPrs === null ? {} : { maxPrs }),
+      deferBehindClean,
       existing, existingState, hold,
     });
   } catch (error) {
@@ -359,7 +364,7 @@ export async function cmdFleetRebasePlan(args: string[], deps: FleetRebasePlanDe
   const { counts } = report;
   out(`rebase-plan${report.repo ? ` ${report.repo}` : ''}: ${counts.open} open → ${counts.conflicting} conflicting bridge PRs → `
     + `${counts.jobs} job(s) (${counts.clusters} cluster, ${counts.singles} single${counts.chained ? `, ${counts.chained} chained` : ''})`
-    + `${counts.covered ? `; ${counts.covered} already queued` : ''}${counts.held ? `; ${counts.held} held` : ''}${counts.pinned ? `; ${counts.pinned} pinned` : ''}\n`);
+    + `${counts.covered ? `; ${counts.covered} already queued` : ''}${counts.held ? `; ${counts.held} held` : ''}${counts.superseded ? `; ${counts.superseded} superseded by rework` : ''}${counts.deferred ? `; ${counts.deferred} deferred behind clean PRs` : ''}${counts.pinned ? `; ${counts.pinned} pinned` : ''}\n`);
   if (upstreamBad) out(`  snapshot upstream read is '${parsed.upstream}' — items may be incomplete\n`);
   if (resolvedRepo === null) out('  repo unknown — pass --repo so queue coverage and the hold list can attribute rows\n');
   if (existingState === 'missing') out('  queue coverage not read (no router-queue.md/ready.tsv) — specs may duplicate live jobs\n');
