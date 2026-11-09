@@ -43,6 +43,7 @@ import { quietSinceStatus } from '../fleet/dark-since.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { GrowthCharts } from '../growth/GrowthCharts.js';
 import { EmptyJobsPanel } from '../growth/EmptyJobsPanel.js';
+import { CapabilityGapsPanel } from '../growth/CapabilityGapsPanel.js';
 import { OUTCOME_SEGMENTS, costPerMerge, forestRows, harnessSteps, modelOutcomes, weeklyBins } from '../growth/growth-model.js';
 import { HARNESS_ADOPTION_GATE } from '../../../../core/learn/harness-types.js';
 
@@ -126,6 +127,7 @@ export function GrowthSection() {
     <Surface title="Growth" actions={[history, learning].some((q) => q.status === 'refreshing') ? <RefreshIndicator /> : null}>
       <Cell span={12}><GrowthCharts /></Cell>
       <Cell span={12}><EmptyJobsPanel /></Cell>
+      <Cell span={12}><CapabilityGapsPanel /></Cell>
       {off ? (
         <Cell span={12}>
           <AutonomyOffState state={off} here="growth" title={onlyState ? 'Growth starts with the first fleet run.' : undefined} />
