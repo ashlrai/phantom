@@ -260,6 +260,8 @@ function printUsage(): void {
   console.log('  prints each lane reading, its age and whether it is stale.');
   console.log('  A reading at or after staleAfter is unknown and is not headroom.');
   console.log('  --refresh uses official APIs and CLIs only.');
+  console.log('  Reading a snapshot automatically refreshes stale Codex personal usage');
+  console.log('  when its pool home is configured; the snapshot is not rewritten.');
   console.log('  Codex refresh uses PHANTOM_SENSOR_CODEX_CMP_HOME and');
   console.log('  PHANTOM_SENSOR_CODEX_PERSONAL_HOME when those pool homes are set.');
   console.log('  Operator credential directories are refused.');
