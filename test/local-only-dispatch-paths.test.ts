@@ -245,6 +245,7 @@ describe('§A dispatch-path inventory', () => {
     // Director is retired and the dialogue delegates to the Leader thread,
     // whose replies go through leader-seat.ts (gated per transport).
     'core/fleet/manager.ts',         // ollamaDirectComplete — the local judge, 3-min timeout
+    'core/radar/local-bench.ts',     // loopback-only bench; assertLoopbackBaseUrl runs before fetch
     'core/genome/playbook.ts',       // LM Studio playbook synthesis (documented LOCAL-ONLY)
     'core/vision/strategist.ts',     // ollamaDirectComplete — mirrors manager.ts
     'core/visual/grounding.ts',      // completionsUrl() — the only one that can carry a token
