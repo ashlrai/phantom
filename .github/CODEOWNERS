@@ -243,10 +243,14 @@
 /test/fixtures/memory/** @masonwyatt23
 /vitest.config* @masonwyatt23
 /vitest.workspace* @masonwyatt23
+# comms-agent: Comms send policy decides what may leave the machine
+/src/core/comms-agent/ @masonwyatt23
 # tier1-test: this test guards Tier-1 authority code; weakening it would weaken the gate it tests
 # (every test G1 holds by name, safety suite or Tier-1 import; test/authority-codeowners-310b.test.ts regenerates this list)
 /test/activation-readiness-package.test.ts @masonwyatt23
 /test/activation-readiness-windows.test.ts @masonwyatt23
+/test/adaptive-throughput.test.ts @masonwyatt23
+/test/agent-bus-adapters.test.ts @masonwyatt23
 /test/agent-bus-api-mirror.test.ts @masonwyatt23
 /test/agent-network-policy.test.ts @masonwyatt23
 /test/anthropic-messages-client.test.ts @masonwyatt23
@@ -264,6 +268,7 @@
 /test/authority-grant-scope-315.test.ts @masonwyatt23
 /test/authority-ledger-310b.test.ts @masonwyatt23
 /test/authority-no-file-trust-310b.test.ts @masonwyatt23
+/test/authority-regen.test.ts @masonwyatt23
 /test/authority-release-truth.test.ts @masonwyatt23
 /test/authority-repository-binding.test.ts @masonwyatt23
 /test/authority-resident-admission.test.ts @masonwyatt23
@@ -304,6 +309,7 @@
 /test/cloud-timeline.test.ts @masonwyatt23
 /test/codex-selected-producer.test.ts @masonwyatt23
 /test/codex-session-usage.test.ts @masonwyatt23
+/test/comms-agent-send-policy.test.ts @masonwyatt23
 /test/comms-telegram-leader-314.test.ts @masonwyatt23
 /test/comms-telegram-leader-thread-real-314.test.ts @masonwyatt23
 /test/completeness-gate-stash-hardening-310b.test.ts @masonwyatt23
@@ -335,6 +341,7 @@
 /test/desktop-artifact-installer.test.ts @masonwyatt23
 /test/desktop-consumer-install.test.ts @masonwyatt23
 /test/desktop-metadata-launch-trust.test.ts @masonwyatt23
+/test/desktop-operator.test.ts @masonwyatt23
 /test/desktop-qualified-update.test.ts @masonwyatt23
 /test/desktop-update-cli.test.ts @masonwyatt23
 /test/desktop-update-manifest.test.ts @masonwyatt23
@@ -369,6 +376,7 @@
 /test/fixtures/m518/visionquality-gate-robustness-false-positive-mer-c9c62c.json.b64 @masonwyatt23
 /test/fixtures/queue/router-queue-live.md @masonwyatt23
 /test/fixtures/queue/router-queue.md @masonwyatt23
+/test/fixtures/radar-local-bench/routing.json @masonwyatt23
 /test/fixtures/top-pools/capacity.ts @masonwyatt23
 /test/fleet-apps-ensure-wall-budget-03.test.ts @masonwyatt23
 /test/fleet-apps-watch-attempt-budget-03-sonz1.test.ts @masonwyatt23
@@ -394,6 +402,7 @@
 /test/fleet-companion-mcp.test.ts @masonwyatt23
 /test/fleet-control-315.test.ts @masonwyatt23
 /test/fleet-daily-reds.test.ts @masonwyatt23
+/test/fleet-dep-gate.test.ts @masonwyatt23
 /test/fleet-gate-run.test.ts @masonwyatt23
 /test/fleet-graph-agent-live-01.test.ts @masonwyatt23
 /test/fleet-graph-context-budget-01.test.ts @masonwyatt23
@@ -409,10 +418,12 @@
 /test/fleet-live-api-310b.test.ts @masonwyatt23
 /test/fleet-local-gate.test.ts @masonwyatt23
 /test/fleet-merge-age.test.ts @masonwyatt23
+/test/fleet-merge-delay.test.ts @masonwyatt23
 /test/fleet-merge-latency.test.ts @masonwyatt23
 /test/fleet-merge-pace-core-02.test.ts @masonwyatt23
 /test/fleet-merge-pace.test.ts @masonwyatt23
 /test/fleet-merge-queue-age.test.ts @masonwyatt23
+/test/fleet-merge-recover.test.ts @masonwyatt23
 /test/fleet-merge-state-class.test.ts @masonwyatt23
 /test/fleet-post-merge-verify-31.test.ts @masonwyatt23
 /test/fleet-self-loop-02soly1.test.ts @masonwyatt23
@@ -428,6 +439,8 @@
 /test/fleet-self-loop-stream-02solc1.test.ts @masonwyatt23
 /test/fleet-ship-gap-31.test.ts @masonwyatt23
 /test/fleet-ship-gap-stage.test.ts @masonwyatt23
+/test/fleet-staging-budget-reconcile-05-stf2.test.ts @masonwyatt23
+/test/fleet-sticky-loop.test.ts @masonwyatt23
 /test/fleet-stray-slots-gate-sole3.test.ts @masonwyatt23
 /test/fleet-superseded-read.test.ts @masonwyatt23
 /test/gate.test.ts @masonwyatt23
@@ -917,6 +930,7 @@
 /test/manager-scope.test.ts @masonwyatt23
 /test/mcp-context-pack-31y1.test.ts @masonwyatt23
 /test/mcp-firm-resources.test.ts @masonwyatt23
+/test/mcp-fleet-doctor.test.ts @masonwyatt23
 /test/mcp-fleet-observations.test.ts @masonwyatt23
 /test/mcp-gateway-discovery.test.ts @masonwyatt23
 /test/mcp-gateway-policy.test.ts @masonwyatt23
@@ -997,6 +1011,7 @@
 /test/quarantine-ledger.test.ts @masonwyatt23
 /test/receipt-key.test.ts @masonwyatt23
 /test/receipt-later-hooks.test.ts @masonwyatt23
+/test/recut-loop-attempts.test.ts @masonwyatt23
 /test/recut-loop-landed-03.test.ts @masonwyatt23
 /test/red-team-routing-310.test.ts @masonwyatt23
 /test/redact-known.test.ts @masonwyatt23
@@ -1092,6 +1107,7 @@
 /test/scrub-310.test.ts @masonwyatt23
 /test/scrub-corpus.test.ts @masonwyatt23
 /test/skill-library-wire-31.test.ts @masonwyatt23
+/test/spend-budget.test.ts @masonwyatt23
 /test/stale-git-locks.test.ts @masonwyatt23
 /test/standing-merge-pass-310b.test.ts @masonwyatt23
 /test/standing-wiring-310b.test.ts @masonwyatt23
@@ -1138,6 +1154,7 @@
 /test/universe-supervisor-enrollment-stop.test.ts @masonwyatt23
 /test/universe-value-allocation-store.test.ts @masonwyatt23
 /test/universe-value-allocation.test.ts @masonwyatt23
+/test/usage-sensors.test.ts @masonwyatt23
 /test/verify-check-run-313.test.ts @masonwyatt23
 /test/verify-commands-confine-310b.test.ts @masonwyatt23
 /test/verify-confinement-310b.test.ts @masonwyatt23

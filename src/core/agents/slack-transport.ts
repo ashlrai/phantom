@@ -10,6 +10,8 @@ import { evaluateSlackAudience, slackOutboundPlan, slackSendDecision, type Slack
 import { ingestSlackSocketMessage, slackEventToBus, unwrapSlackSocketEnvelope, type SlackIngestContext } from './slack-inbound.js';
 import { isSlackChannelId, isSlackTs, type SlackBridgeConfig } from './slack-network.js';
 import type { TeamIdentity } from './channel-policy.js';
+import type { LeaderChannelAdapter } from './leader-channel-adapter.js';
+import type { SlackInboundDecision } from './slack-inbound.js';
 
 type RecordValue = Record<string, unknown>;
 const record = (value: unknown): value is RecordValue => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -213,6 +215,7 @@ export async function openSlackSocket(input: {
   signal?: AbortSignal;
   readIngest?: () => SlackIngestContext | undefined;
   owner?: (envelope: BusEnvelope) => Promise<{ owned: boolean; durable: boolean }>;
+  leaderAdapter?: LeaderChannelAdapter<unknown, SlackIngestContext, SlackInboundDecision>;
 }): Promise<SlackSocketSession> {
   if (input.signal?.aborted) throw new Error('slack-session-expired');
   await verifySlackIdentity(input.call, input.config);
@@ -232,13 +235,14 @@ export async function openSlackSocket(input: {
       const ctx = input.readIngest ? input.readIngest() : input.ingest;
       if (!ctx) return;
       const ack = (id: string): void => { if (!input.signal?.aborted) socket.send(JSON.stringify({ envelope_id: id })); };
-      if (input.owner) {
+      const routeOwner = input.leaderAdapter?.route ?? input.owner;
+      if (routeOwner) {
         // Owner input is written once by the existing Leader network, rather
         // than first appending a competing raw peer envelope to the bus.
         const unwrapped = unwrapSlackSocketEnvelope(raw);
-        const decision = 'event' in unwrapped ? slackEventToBus(unwrapped.event, ctx) : null;
+        const decision = 'event' in unwrapped ? (input.leaderAdapter?.normalize ?? slackEventToBus)(unwrapped.event, ctx) : null;
         if (decision?.status === 'ingest') {
-          void input.owner(decision.envelope).then(result => {
+          void routeOwner(decision.envelope).then(result => {
             if (result.owned) { if (result.durable && 'envelopeId' in unwrapped && unwrapped.envelopeId !== 'unknown') ack(unwrapped.envelopeId); }
             else receiveSlackSocketEnvelope(raw, ctx, ack);
           }).catch(() => {});

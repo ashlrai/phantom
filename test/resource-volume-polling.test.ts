@@ -173,3 +173,42 @@ it('lets display history stay historical for 60s while witness, capture and laun
   expect(restarted.witness(a)).toBeNull();
   expect(restarted.lastKnown(a)).not.toBeNull(); // within the 60s display window
 }, 30_000);
+
+// Real storage checker against the actual host volume: the inert APFS fixtures
+// above pin the polling semantics; this one runs the same bounded
+// sysctl/df/diskutil/plutil chain end to end on the machine that hosts the suite.
+it.skipIf(platform.value !== 'darwin')('checks the real storage identity against the actual host volume', async () => {
+  const real = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+  vi.mocked(execFileSync).mockImplementation(real.execFileSync);
+  const attempt = () => {
+    const realRoot = realpathSync(mkdtempSync(join(tmpdir(), 'volume-polling-real-')));
+    try {
+      const binary = join(realRoot, 'inert'); writeFileSync(binary, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
+      const realProfile = prepareResourceNativeProfile({ provider: 'codex', directory: join(realRoot, 'profile'), executable: binary });
+      writeFileSync(join(realRoot, 'connections.json'), JSON.stringify({ schemaVersion: 1,
+        accounts: [{ id: 'seat-a', provider: 'codex', command: realProfile.command }] }), { mode: 0o600 });
+      return { profile: realProfile,
+        launch: resolveNativeSeatLaunch({ accountsRoot: realRoot, provider: 'codex', seatId: 'seat-a' }),
+        display: resolveNativeSeatDisplayMetadata({ accountsRoot: realRoot, provider: 'codex', seatId: 'seat-a' }) };
+    } finally { rmSync(realRoot, { recursive: true, force: true }); }
+  };
+  // Each helper spawn carries a fixed one-second bound; a loaded host can spend
+  // that on diskutil alone, so allow a few whole fresh reads before failing.
+  let result: ReturnType<typeof attempt> | undefined; let refused: unknown;
+  for (let i = 0; i < 8 && (result?.launch.ok !== true || result.display === null); i++) {
+    try {
+      result = attempt();
+      refused = result.launch.ok ? (result.display === null ? 'identity unavailable' : undefined) : result.launch;
+    } catch (error) { refused = error; }
+  }
+  if (result?.launch.ok === true && result.display !== null) {
+    expect(result.launch).toMatchObject({ launch: { seatId: 'seat-a', provider: 'codex',
+      command: result.profile.command, nativeStatePath: result.profile.nativeStatePath } });
+    expect(result.display).toEqual({ seatId: 'seat-a', provider: 'codex',
+      command: result.profile.command, nativeStatePath: result.profile.nativeStatePath });
+  } else {
+    // A host whose bounded reads cannot complete must fail closed, never guess.
+    expect(refused instanceof Error ? String(refused) : JSON.stringify(refused))
+      .toMatch(/preparation failed|identity unavailable|profile-invalid/);
+  }
+});

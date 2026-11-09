@@ -16,6 +16,7 @@
  * limits all apply; `--dry-run` reads GitHub and writes nothing.
  */
 import { readFile } from 'node:fs/promises';
+import { importRoutines } from '../core/automations/import.js';
 
 import {
   AUTOMATION_LANES,
@@ -40,6 +41,7 @@ export const AUTOMATIONS_USAGE = [
   '  templates [--json]                    Starting points for `add --template`',
   '  add --template <id> [--name "…"] [--repos o/n,o/n|*] [--lane <lane>] [--enable]',
   '  add --file <automation.json> [--enable]',
+  '  import --from <routines.json> [--dry-run] [--json]',
   '  enable <id> | disable <id> | remove <id>',
   '  fire <id> [--dry-run] [--repo o/n] [--text "…"] [--title "…"]',
   '',
@@ -60,7 +62,7 @@ interface Parsed {
   flags: Map<string, string | true>;
 }
 
-const VALUE_FLAGS = new Set(['--template', '--name', '--repos', '--lane', '--file', '--repo', '--text', '--title']);
+const VALUE_FLAGS = new Set(['--template', '--name', '--repos', '--lane', '--file', '--repo', '--text', '--title', '--from']);
 const BOOL_FLAGS = new Set(['--json', '--enable', '--dry-run']);
 
 /** `--help` / `-h` anywhere after the verb, outside a flag value. */
@@ -191,6 +193,19 @@ async function cmdAdd(deps: AutomationsCliDeps, p: Parsed): Promise<number> {
   return 0;
 }
 
+async function cmdImport(deps: AutomationsCliDeps, p: Parsed): Promise<number> {
+  if (p.positional.length || [...p.flags.keys()].some((flag) => !['--from', '--dry-run', '--json'].includes(flag))) throw new UsageError('import takes --from, --dry-run and --json only.');
+  const path = str(p, '--from');
+  if (!path) throw new UsageError('import needs --from <routines.json>.');
+  let data: unknown;
+  try { data = JSON.parse(await deps.readFile(path)); }
+  catch { deps.err('Could not read routines file as JSON.'); return 1; }
+  const result = await importRoutines(data, p.flags.has('--dry-run'));
+  if (p.flags.has('--json')) deps.out(JSON.stringify(result, null, 2));
+  else deps.out(`${result.dryRun ? 'Would import' : 'Imported'} ${result.imported.length} disabled automations; skipped ${result.skipped.length} existing or duplicate names.`);
+  return 0;
+}
+
 async function cmdSwitch(deps: AutomationsCliDeps, p: Parsed, verb: 'enable' | 'disable' | 'remove'): Promise<number> {
   const [id, extra] = p.positional;
   if (!id || extra !== undefined) throw new UsageError(`${verb} needs exactly one automation id.`);
@@ -262,6 +277,7 @@ export async function runAutomationsCli(argv: string[], injected: Partial<Automa
       case 'ls': return await cmdList(deps, p);
       case 'templates': return cmdTemplates(deps, p);
       case 'add': return await cmdAdd(deps, p);
+      case 'import': return await cmdImport(deps, p);
       case 'enable': return await cmdSwitch(deps, p, 'enable');
       case 'disable': return await cmdSwitch(deps, p, 'disable');
       case 'remove': return await cmdSwitch(deps, p, 'remove');

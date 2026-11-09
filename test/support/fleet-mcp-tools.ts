@@ -5,6 +5,7 @@
  * inventory assertions instead of silently matching production.
  */
 export const FLEET_MCP_TOOL_NAMES: readonly string[] = Object.freeze([
+  'fleet_staging_inventory',
   'fleet_staging_inventory_retry',
   'fleet_staging_inventory_batch',
   'fleet_status',
@@ -22,6 +23,7 @@ export const FLEET_MCP_TOOL_NAMES: readonly string[] = Object.freeze([
   'fleet_job_history',
   'fleet_job_history_batch',
   'fleet_job_overlap',
+  'fleet_job_current_batch',
   'fleet_job_current',
   'fleet_job_patch',
   'fleet_path_history',

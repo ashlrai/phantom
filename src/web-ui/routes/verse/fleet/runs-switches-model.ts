@@ -1,7 +1,7 @@
 import type { RunsSwitch } from './runs-switches-queries.js';
 
 const LABELS: Record<string, string> = {
-  ORCH_OFF: 'Scheduled planning passes', OPUS_LEADER_OFF: 'Claude planning loop', PAUSE: 'Launches',
+  ORCH_OFF: 'Scheduled planning passes', OPUS_LEADER_OFF: 'Leader planning loop', PAUSE: 'Launches',
   PUBLISH_HOLD: 'Publishing', HOLD: 'Saved lane holds', QUEUE_DISABLE: 'Queue',
 };
 

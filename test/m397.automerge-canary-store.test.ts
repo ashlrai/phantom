@@ -283,6 +283,23 @@ describe('bounded shadow auto-merge canary store', () => {
     expect(fs.existsSync(automergeCanarySigningKeyPath())).toBe(false);
   });
 
+  it('pins one admission, one merge and one in-flight canary per epoch (issue #27)', () => {
+    const before = metadataSnapshot(home);
+    for (const key of ['maxAdmissions', 'maxMerges', 'maxInFlight'] as const) {
+      for (const value of [0, 2, 64]) {
+        const input = activationInput();
+        input.budgets = { ...input.budgets, [key]: value };
+        expect(activateShadow(input)).toEqual({ ok: false, reason: 'invalid' });
+      }
+    }
+    // An unreachable mode with widened budgets is still rejected as invalid, not activated.
+    const widened = activationInput('enforce');
+    widened.budgets = { ...widened.budgets, maxInFlight: 2 };
+    expect(activateShadow(widened)).toEqual({ ok: false, reason: 'invalid' });
+    expect(metadataSnapshot(home)).toEqual(before);
+    expect(fs.existsSync(automergeCanarySigningKeyPath())).toBe(false);
+  });
+
   it('reports invalid ASHLR_HOME as degraded and refuses activation without throwing', () => {
     process.env.ASHLR_HOME = 'relative/controller-state';
 

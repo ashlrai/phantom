@@ -8,6 +8,8 @@ its exact input hash before adoption. Current-host changes under
 permission to overwrite the whole controller with an older copy. Changes land
 by PR review and the adoption owner verifies immutable source hashes before any
 live install. The queue scripts are deterministic and do not create tokens.
+The candidate launcher denies Devin model IDs ending in `-lightning`, logs
+`PAID_MODEL_BLOCKED`, and uses `swe-2-max` instead; host adoption needs a Security pin.
 
 `restock.py` claims eligible `READY` lines from `router-queue.md` into lane
 prompts (`ready.tsv`/`claimed.tsv`) for the fleet allowlist repos only, keeping
@@ -19,11 +21,50 @@ as `PARKED-DEP.<lane>` rows with a `DEPENDENCY GATE:` id list in the prompt
 normal launch line and logs `UNPARK <job> deps=<ids>`. Unpark never rewrites the
 prompt body, so prose like `no merge without Security pin` stays put — unpark is
 not a merge. `phm fleet parked --json` lists the same parked rows and reports
-still-unmet gate ids under `unmetDeps`. `dispatchd.py` is the per-tick
+still-unmet gate ids under `unmetDeps`. Merge-rate parked Phantom rows recover promptly up to the available capacity below 150 open PRs, with reservations preventing repeated ticks from spending the same capacity. A reservation for a vanished job is released after an hour; queued, running, worktree and published jobs keep their reservations. Legacy aggregate reservations remain conservative until the observed PR count rises. At saturation, one hourly probe can recover. The dispatcher’s count must be less than 10 minutes old. Missing, stale or
+invalid counts leave rows parked; the count measures backlog, not merge rate.
+Eligible jobs are reconsidered by first observed parking time, with queue order
+breaking ties. A re-parked job keeps its reservation for an hour before retry;
+it cannot spend a second reservation while the first is outstanding.
+The dispatcher refreshes that count and wakes the restocker while such rows
+remain, even when normal lane queues are full. Concurrent queue rewrites preserve
+recovered rows; recovery shares its capacity reservations and probe cooldown.
+Rows are considered in queue order. Duplicate identities, active claims,
+worktrees, published jobs and recorded merges stay parked while later eligible
+rows can recover. Resolve duplicate rows before retrying that job.
+Recovery keeps the prompt and normal checks intact, and logs `UNPARK <job>
+reason=MERGERATE` and `observed_wait_seconds` (time since first observed parked, a lower bound on actual wait). The restocker needs a Security re-pin before live installation.
+The enqueue history in `claimed.tsv` does not block recovery; duplicate queue rows,
+dispatch and batch markers, worktrees, published jobs and recorded merges still do.
+`dispatchd.py` is the per-tick
 supervisor: it reaps finished jobs, adapts per-lane slot targets inside
 `slots.json`, launches queued lines, and fires the restocker when a lane's queue
 runs shallow. Restock changes need a Security re-pin before the live `bin/` copy
 is installed; do not install into `bin/` from an agent.
+
+## Self-supply: refill idle lanes between leader passes
+
+`self-supply.py` watches `queue/status.json`. When a lane is unheld and has
+free slots (`target - running - queued` above zero) it asks the feed scripts
+beside it — `recut-feed.py`, and `salvage-feed.py` when present — for up to
+that many `READY` lines with `pool=<lane>`. Ids already in the router queue or
+claimed rows are dropped, the run caps at 12 lines, and `--apply` appends the
+lines to `router-queue.md` under `ready.lock`, logging
+`SELF_SUPPLY <lane> free=<n> added=<m>` to `dispatch-events.log`. The next
+shallow-queue pass runs `restock.py`, which claims the lines into lane prompts.
+It is a dry run by default and prints the plan as JSON; `--apply` writes.
+
+```sh
+python3 contrib/mac/self-supply.py --apply    # top up idle lanes now
+```
+
+Cron-style scheduling, no launchd (the installed copy lands via the Security
+pin path like the other queue scripts; the file is not executable, so call it
+through `python3`):
+
+```cron
+*/15 * * * * python3 "$HOME/.ashlr-runs/bin/self-supply.py" --apply >>"$HOME/.ashlr-runs/self-supply.log" 2>&1
+```
 
 Devin routing policy (RQ-DEVINROUTEDEFAULTQ7, DEVIN-LEVERAGE-20261026): a line
 that leaves its pool open (`pool=any` or no `pool=` attr) and is `tier=frontier`
@@ -139,6 +180,11 @@ current launch, including one linked through its published PR URL, prevents a
 leftover `.base` from triggering another publication. Repeated handoffs for an
 unfinished attempt record its finish only once; a later launch starts a new
 attempt. These records do not remove the worktree or replace publisher recovery.
+The shared ledger reader also recognizes terminal records written by
+`metrics-outcomes reconcile`, including records written before a restart; their
+position in the ledger preserves the same launch boundaries. Reconciled PR outcomes
+are matched to the current attempt by URL, including when reconciliation finishes
+after a retry has launched; a previous PR cannot complete the new attempt.
 
 ## Adaptive concurrency and batching
 
@@ -238,6 +284,12 @@ contrib/mac/install.sh --dry-run --json   # machine-readable plan
 contrib/mac/install.sh                    # install with timestamped backups
 contrib/mac/install.sh --json             # same, one JSON object (schema macdispatch.install.v1)
 ```
+
+`install.sh` covers the dispatcher lane only. [fleet/sync.py](../../fleet/README.md)
+is the manifest-driven generalization for all `~/.ashlr-runs/bin` machinery —
+same diff/backup/sha-verify semantics plus rollback, pinned-file drift reports
+and an unmanaged-file sweep; it is the adoption path once Security re-reviews
+the installer.
 
 Afterwards `shasum -a 256 contrib/mac/dispatchd.py ~/.ashlr-runs/bin/dispatchd.py`
 prints the same digest twice, and a second `install.sh` run reports every file
@@ -356,8 +408,11 @@ dispatcher. The adapters below are installation steps for that external bridge;
 adding these files alone does not activate a service. No launcher, publisher,
 release configuration, or CI configuration is changed by this contribution.
 
-Copy `wt-prune.sh` and `wt-prune.py` together to the bridge directory, then run
-`wt-prune.sh --dry-run` before enabling cleanup. At the existing `WT_REMOVED`
+`wt-prune.sh` and `wt-prune.py` are class `managed` in
+[fleet/manifest.json](../../fleet/manifest.json): install them together to the
+bridge directory with `python3 fleet/sync.py --apply` (dry-run first, same
+Security re-pin rule as `install.sh`), then run `wt-prune.sh --dry-run` before
+enabling cleanup. At the existing `WT_REMOVED`
 handler, after releasing the worktree lease and leaving its cwd, invoke:
 
 ```sh
@@ -753,6 +808,37 @@ Every completed per-source rc remains final. A started record without a
 completion is uncertain and blocks before network or signing; no automatic
 replay or legacy-state migration occurs. Existing seen records are preserved.
 
+rev2 adds a post-selection update-channel pass. When no candidate needs signing
+on a tick, each completed successful signing outcome (`sha-<sha>.rc` = 0)
+without a `feed-<sha>.rc` marker gets a bounded published-state proof through
+the same GET-only `gh` reads plus one unauthenticated public download:
+
+- the tag's public release must be non-draft, non-prerelease and target the
+  signed sha (`releases/tags/<tag>`; drafts answer 404 and stay pending);
+- its asset inventory must be exactly the seven signed desktop artifacts —
+  `Phantom_<v>_aarch64.app.tar.gz` + `.sig`, `ashlr-phantom-<v>.tgz` + `.sig`,
+  `manifest.json` + `.sig` and `latest.json` — all `uploaded` with populated
+  `sha256:` digests (still-populating digests stay pending);
+- the four small signed bodies are fetched through `gh api` with
+  `Accept: application/octet-stream` and byte-hashed against the recorded
+  digests; `latest.json` must bind `platforms["darwin-aarch64"].url` and
+  `.signature` to the tag's app asset and `.sig` bytes, and its `phantom`
+  envelope must carry the exact `manifest.json` text and `manifest.json.sig`
+  bytes, whose fields must bind the source sha and both artifact digests;
+- while that release is `releases/latest`, the configured public endpoint
+  `releases/latest/download/latest.json` must answer HTTP 200 with the same
+  feed bytes (followed redirects, 15 s cap).
+
+`feed-<sha>.rc` outcomes are final once written: `0` verified-live (receipt
+`feed-<sha>.json`), `21` verified-but-superseded (a newer published release is
+latest; no operator action), `22` inconsistent (receipt plus
+`NEEDS-MASON-<tag>-feed`; `rm` the rc to allow one manual recheck). Pending
+states — release absent, digests still populating, endpoint not serving — are
+re-read each tick and never write markers. This pass never signs, publishes,
+mutates a release or touches the keychain; signature-level minisign
+verification stays with the consumer/finalizer path. See
+[the update channel](../../docs/DESKTOP-UPDATE-CHANNEL.md).
+
 `RELEASE_AUTORUN_OFF`, the existing observer/signer locks and keychain gate remain
 unchanged. `install.sh` intentionally does not install this observer. Adoption
 requires review of the exact merged source and current host input, an unchanged
@@ -769,3 +855,57 @@ inside private temporary roots; they never contact a real publisher or keychain:
 python3 -I contrib/mac/tests/test_release_autorun.py
 bash -n contrib/mac/release-autorun.sh
 ```
+
+## Recut feed
+
+Preview conflict recuts with one command from the repository root:
+
+```sh
+python3 contrib/mac/recut-feed.py --dry-run
+```
+
+The JSON report (`schemaVersion`, `dryRun`, `count`, `lines`) lists at most six
+READY jobs, oldest PR first, across the seven fleet repositories. It copies
+the wording and attributes of the queue’s `RQ-RC3401N9Q8` reference line,
+changing only the repository, PR number and job ID. A missing reference stops
+the run without writing. Only open PRs
+whose public REST detail says `mergeable_state=dirty` qualify. Unknown states
+wait for the next run. No credentials are used; an API error stops the run.
+READY and CLAIMED references in the queue and Supersedes links in open PR bodies
+or queue notes suppress duplicates. Job IDs are stable across runs.
+Replace `--dry-run` with `--apply` to append; use `--max N` to change the cap.
+Apply rechecks the queue under the existing `ready.lock`, waiting at most ten
+seconds (`--lock-timeout` overrides). `--queue PATH` selects a scratch queue;
+the default is `~/.ashlr-runs/queue/router-queue.md`. The queue must already exist.
+This supplies jobs only; it does not recut, merge, install, or publish anything.
+
+### Disk growth
+
+Run `python3 contrib/mac/disk-growth.py --json` periodically to sample free disk
+space and directory sizes. `--budget-seconds` bounds the total time spent in
+`du` (default 10 seconds). The sampler retains 48 readings under
+`~/.ashlr-runs/queue`; it does not delete sampled files. The dispatcher copies
+its latest report to `autopilot.disk` in `status.json` on the next tick. Install
+and schedule the sampler through the normal reviewed host machinery; this source
+change does not install it. Rates compare against the oldest retained reading;
+missing or timed-out directory measurements are omitted, and a null projection
+means there is not yet evidence of a positive disk burn rate. Directory sizes
+overlap: worktree totals include their `node_modules` and `target` directories.
+
+### Read merge latency
+
+Run `python3 contrib/mac/merge-latency.py --jobs jobs.jsonl` for JSON evidence
+(`merge-latency.v1`). Optional `--now <ISO timestamp>` makes replays repeatable;
+`--stale-hours 24` sets the inactivity threshold. This offline CLI reads only the
+supplied ledger; it never requests merges or bypasses required checks.
+
+Queue-to-merge seconds use nearest-rank p50/p90/p95/p99 for jobs with exactly one
+queued and one merged observation. Exact duplicate rows count once. Missing,
+reversed, future, repeated-attempt or conflicting boundaries remain unmeasured;
+empty percentiles are null. Use attempt-specific job IDs. Blocking seconds sum
+explicit HELD/BLOCKED reason intervals until the next timestamped observation
+(or now for unresolved jobs); unobserved time is not inferred. Candidates flag
+PRs with stale observations, conflicting outcomes/PR identities or a latest
+CONFLICTING mergeability observation. These are investigation candidates, not
+merge eligibility decisions. Inputs support job/jobId/job_id, ts/timestamp/at,
+state/outcome/status and prUrl/url/pr; reconciled mergedAt/closedAt take priority.

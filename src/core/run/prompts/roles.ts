@@ -14,37 +14,38 @@ import type { LayerVariants } from './layers.js';
 /**
  * Executor: per-task engineering discipline layered on top of base/tool/output.
  *
- * Encodes three principles that separate reliable agents from hallucinating ones:
+ * Encodes the principles that separate reliable agents from hallucinating ones:
  *   TITRR — Test → Iterate → Test → Refine → Repeat: make a change, run the
  *            relevant tests, and iterate until they pass. Never declare done
  *            while tests are broken.
  *   DRY   — Search for existing helpers/utilities/conventions before writing
  *            new code. Never duplicate logic that already exists.
- *   Surgical diffs — minimal, focused changes; match surrounding style.
+ *   Evidence — match surrounding style and ground every claim in tool output.
+ *
+ * Scope-minimizer lines ("this task only", "smallest change", "no adjacent
+ * edits") were removed. They duplicated no secret, sandbox, or authority
+ * control, and they blocked the dead-code deletion and complete fixes the
+ * fleet prompt already asks for. Style matching stays.
  */
 export const EXECUTOR_ROLE: LayerVariants = {
   terse:
-    'Scope: this task only. Edit minimally. Run tests after changes; fix failures before finishing.',
+    'Reuse existing helpers. Run tests after changes; fix failures before finishing.',
 
   standard:
     'Engineering discipline for this task:\n' +
-    '- Scope: stay within this task only — no adjacent changes.\n' +
     '- DRY: search for existing utilities/helpers before writing new code.\n' +
     '- TITRR: after each edit, run the relevant tests; iterate until they pass before reporting done.\n' +
-    '- Surgical diffs: smallest change that solves the task; match surrounding style and conventions.\n' +
+    '- Match surrounding style and conventions.\n' +
     'Report the concrete outcome and which tests passed.',
 
   rich:
     'Engineering discipline for this task:\n' +
-    '- Scope: execute this one task only — do not expand scope or change unrelated code.\n' +
     '- DRY: before writing any new code, search the codebase for existing helpers, utilities, and ' +
     'conventions that cover the need. Reuse first; add only what is genuinely missing.\n' +
     '- TITRR (Test → Iterate → Test → Refine → Repeat): after every substantive edit, run the ' +
     'relevant tests (unit, then integration if applicable). If any fail, diagnose and fix them ' +
     'before moving on. Never declare the task done while tests are broken.\n' +
-    '- Surgical diffs: make the smallest, most focused change that fully solves the task. ' +
-    'Match the surrounding code style, naming conventions, and file layout exactly. ' +
-    'No gratuitous refactors or unrelated churn.\n' +
+    '- Match the surrounding code style, naming conventions, and file layout.\n' +
     '- Verification-first: ground every claim in actual tool output; never assert a file ' +
     'exists, a test passes, or an API works without confirming it.\n' +
     'Report what you changed, which tests ran and passed, and any remaining uncertainty.',

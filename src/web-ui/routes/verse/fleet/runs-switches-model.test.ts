@@ -4,9 +4,16 @@ import type { RunsSwitch } from './runs-switches-queries.js';
 
 describe('fleet switches model', () => {
   it.each([
-    ['ORCH_OFF', 'Scheduled planning passes'], ['OPUS_LEADER_OFF', 'Claude planning loop'], ['PAUSE', 'Launches'],
+    ['ORCH_OFF', 'Scheduled planning passes'], ['OPUS_LEADER_OFF', 'Leader planning loop'], ['PAUSE', 'Launches'],
     ['PUBLISH_HOLD', 'Publishing'], ['HOLD', 'Saved lane holds'], ['QUEUE_DISABLE', 'Queue'], ['NEW_FLAG', 'NEW_FLAG'], ['toString', 'toString'],
   ])('labels %s', (id, label) => expect(switchLabel(id)).toBe(label));
+
+  it('never names a provider in a switch label — planning is provider-agnostic', () => {
+    const PROVIDER_NAME = /\b(claude|anthropic|opus|fable|sonnet|sol|codex|openai|gpt|grok|xai|gemini|google|glm|zhipu|devin|swe|qwen|kimi|nim)\b/i;
+    for (const id of ['ORCH_OFF', 'OPUS_LEADER_OFF', 'PAUSE', 'PUBLISH_HOLD', 'HOLD', 'QUEUE_DISABLE']) {
+      expect(switchLabel(id)).not.toMatch(PROVIDER_NAME);
+    }
+  });
 
   it('summarizes the disabled running states', () => {
     const row = (id: string, on: boolean): RunsSwitch => ({ id, on, since: null, effect: '' });

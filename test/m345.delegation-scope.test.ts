@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  mergeDelegationScope,
   normalizeDelegationScope,
   renderDelegationScopeForPrompt,
   scopeFromWorkItem,
@@ -128,6 +129,26 @@ describe('M345 delegation scope contract', () => {
     expect(prefix).toContain('Focus files: src/fleet/status.ts');
     expect(prefix).toContain('Avoid files: .env');
     expect(prefix).not.toContain('/Users/mason/project');
+  });
+
+  it('carries a declared pipeline stage and drops unknown stage values', () => {
+    const staged = normalizeDelegationScope({ origin: 'run', stage: 'verify' });
+    expect(staged?.stage).toBe('verify');
+    expect(summarizeDelegationScope({ origin: 'run', stage: 'implement' })?.stage).toBe('implement');
+    for (const bogus of ['verifyy', 'VERIFY', '', 7, {}]) {
+      expect(normalizeDelegationScope({ origin: 'run', stage: bogus as never })?.stage).toBeUndefined();
+    }
+    // Merging a child scope inherits the parent's stage unless overridden.
+    const merged = mergeDelegationScope({ stage: 'plan' }, { stage: 'implement' });
+    expect(merged?.stage).toBe('implement');
+    expect(mergeDelegationScope({ stage: 'plan' }, {})?.stage).toBe('plan');
+  });
+
+  it('renders the stage with its policy lane class in the prompt prefix', () => {
+    const prefix = renderDelegationScopeForPrompt({ origin: 'run', stage: 'verify', memoryMode: 'none' });
+    expect(prefix).toContain('Stage: verify (frontier lane class');
+    expect(prefix).toContain('bottleneck');
+    expect(renderDelegationScopeForPrompt({ origin: 'run' })).not.toContain('Stage:');
   });
 
   it('derives a daemon proposal scope from a work item', () => {

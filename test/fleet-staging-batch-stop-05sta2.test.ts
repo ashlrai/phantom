@@ -47,9 +47,12 @@ describe('staging batch graceful stop', () => {
       expect(JSON.parse(lines[1]!)).toMatchObject({ interrupted: true, signal: 'SIGTERM', requested: 2, attempted: 1, completed: 1, remaining: 1, complete: false });
     } else if (mode === '--json') {
       expect(lines).toHaveLength(1);
-      expect(JSON.parse(lines[0]!)).toMatchObject({ interrupted: true, signal: 'SIGTERM', requested: 2, attempted: 1, completed: 1, remaining: 1, reports: [{ root: '/fake/a' }] });
+      expect(JSON.parse(lines[0]!)).toMatchObject({ interrupted: true, signal: 'SIGTERM', requested: 2, attempted: 1, completed: 1, remaining: 1,
+        reports: [{ root: '/fake/a', complete: true, source: 'ok' },
+          { root: '/fake/b', complete: false, source: 'unattempted', cleanupEligibility: ELIGIBILITY }] });
     } else {
       expect(lines.join('\n')).toContain('"/fake/a": complete');
+      expect(lines.join('\n')).toContain('"/fake/b": skipped (unattempted)');
       expect(lines.join('\n')).toContain('Interrupted by SIGTERM: 1 attempted, 1 remaining');
     }
     expect(signals.eventNames()).toEqual([]);

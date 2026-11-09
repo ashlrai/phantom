@@ -115,7 +115,7 @@ describe('package files allowlist', () => {
       .not.toThrow();
   });
 
-  it.each(['docs/SIGNALS.md', 'docs/LEADER-NETWORK.md', 'docs/DISK-MAINT.md', 'scripts/lib/docs-pages.mjs', 'scripts/lib/docs-pages.d.mts'])(
+  it.each(['docs/SIGNALS.md', 'docs/LEADER-NETWORK.md', 'docs/DISK-MAINT.md', 'docs/AGENT-CHECKPOINT.md', 'scripts/lib/docs-pages.mjs', 'scripts/lib/docs-pages.d.mts'])(
     'admits the shipped documentation member: %s',
     (entry) => {
       const candidate = {
