@@ -400,6 +400,11 @@ test('legitimate untagged draft URLs do not block a complete published fallback'
   assert.equal((await f.run()).served, 'v3.30.7');
 });
 
+test('historical feed rejects a size mismatch even when its digest matches', async () => {
+  const f = feedFixture(); f.stocked.assets[0].size = 1;
+  await assert.rejects(f.run, /stocked feed bytes differ from asset/);
+});
+
 for (const change of [{size: 128 * 1024 + 1}, {digest: null}, {digest: `sha256:${'f'.repeat(64)}`}]) {
   test('historical feed bytes require bounded exact asset size and digest', async () => {
     const f = feedFixture(); Object.assign(f.stocked.assets[0], change);
