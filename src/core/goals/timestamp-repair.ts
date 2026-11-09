@@ -64,6 +64,7 @@ interface StableDirectoryIdentity {
   trackMembership: boolean;
   mtimeNs: bigint;
   ctimeNs: bigint;
+  entryNames: readonly string[] | null;
 }
 
 interface SourceAncestrySnapshot {
@@ -413,19 +414,43 @@ function pinSourceAncestry(): SourceAncestrySnapshot {
     }
     if (!safeSourceDirectory(stat)) throw new Error(`goal source ancestry is unsafe: ${path}`);
     assureDarwinSourcePath(path, 'directory');
+    const trackMembership = path === goals;
     present.push({
       path,
       dev: stat.dev,
       ino: stat.ino,
-      trackMembership: path === goals,
+      trackMembership,
       mtimeNs: stat.mtimeNs,
       ctimeNs: stat.ctimeNs,
+      entryNames: trackMembership ? directoryEntryNames(path) : null,
     });
   }
   const ashlrPresent = present.some((identity) => identity.path === ashlr);
   const goalsPresent = present.some((identity) => identity.path === goals);
   if (goalsPresent && !ashlrPresent) throw new Error('goal source ancestry changed while being pinned');
   return { present, absent, goalsPresent };
+}
+
+function directoryEntryNames(path: string): string[] {
+  const handle = opendirSync(path);
+  const names: string[] = [];
+  try {
+    for (;;) {
+      const entry = handle.readSync();
+      if (entry === null) break;
+      names.push(entry.name);
+      if (names.length > MAX_DIRECTORY_ENTRIES) throw new Error('goal source directory entry limit exceeded');
+    }
+  } finally {
+    handle.closeSync();
+  }
+  names.sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+  return names;
+}
+
+function sameEntryNames(before: readonly string[] | null, after: readonly string[]): boolean {
+  if (before === null || before.length !== after.length) return false;
+  return before.every((name, index) => name === after[index]);
 }
 
 function verifySourceAncestry(snapshot: SourceAncestrySnapshot): void {
@@ -438,7 +463,8 @@ function verifySourceAncestry(snapshot: SourceAncestrySnapshot): void {
     if (
       !safeSourceDirectory(stat) || stat.dev !== identity.dev || stat.ino !== identity.ino ||
       (identity.trackMembership && (
-        stat.mtimeNs !== identity.mtimeNs || stat.ctimeNs !== identity.ctimeNs
+        stat.mtimeNs !== identity.mtimeNs || stat.ctimeNs !== identity.ctimeNs ||
+        !sameEntryNames(identity.entryNames, directoryEntryNames(identity.path))
       ))
     ) throw new Error(`goal source ancestry changed during read: ${identity.path}`);
     assureDarwinSourcePath(identity.path, 'directory');

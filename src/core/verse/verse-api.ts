@@ -484,6 +484,9 @@ const WORKBENCH_IMPORTS: Readonly<Record<WorkbenchRouteFamilyId, () => Promise<W
   'gmail-triage': async () => {
     try { return (await import('./gmail-triage-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'gmail-triage-api.js'); }
   },
+  'release-stages': async () => {
+    try { return (await import('./release-stages-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'release-stages-api.js'); }
+  },
   'comms-inbox': async () => {
     try { return (await import('./comms-inbox-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'comms-inbox-api.js'); }
   },

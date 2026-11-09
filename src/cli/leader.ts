@@ -666,7 +666,7 @@ export async function runLeaderCli(argv: string[]): Promise<number> {
         const { readPlanLogReplies } = await import('../core/fleet/mason-outbox.js');
         const result = await readPlanLogReplies({ limit: limit === null ? 30 : Number(limit) });
         result.entries.reverse();
-        console.log(json ? JSON.stringify(result) : result.entries.map(entry => `${entry.at}  ${entry.text}`).join('\n\n') || 'No replies yet.');
+        console.log(json ? JSON.stringify(result) : result.entries.map(entry => `${entry.at}  ${entry.text}`).join('\n\n') || (result.sourceState === 'unknown' ? 'Leader replies are unavailable.' : 'No replies yet.'));
         return result.sourceState === 'unknown' ? 1 : 0;
       }
       const { syncLeaderReplies } = await import('../core/vision/leader-thread.js');

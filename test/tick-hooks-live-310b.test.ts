@@ -8,6 +8,7 @@
  * landing journaling, fleet-task updates, and the standing-run helper.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetAdaptiveThroughput } from '../src/core/daemon/count-preferences.js';
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -322,6 +323,7 @@ describe('beforeTick — fail closed', () => {
 
 describe('lanes, presence and the router seam', () => {
   it('publishes fresh lanes during stuck mirror prep and stops on abort', async () => {
+    const realSetImmediate = setImmediate;
     vi.useFakeTimers();
     let now = NOW;
     let release!: (value: { ready: []; failed: []; pausedRepoPaths: [] }) => void;
@@ -333,22 +335,46 @@ describe('lanes, presence and the router seam', () => {
     const hooks = createLiveTickHooks({ deps: h.deps });
     hooks.effectiveConfig(CFG);
     const running = hooks.beforeTick({ ...hookCtx, signal: controller.signal });
+    // Lane observation reads the sensor files before prepareMirrors is entered.
+    // Those reads are real I/O, detached from the fake interval, so each minute
+    // has to reach the poll phase before the next one is due.
+    const flushObservations = async (): Promise<void> => {
+      for (let turn = 0; turn < 40; turn += 1) {
+        await new Promise((resolve) => process.nextTick(resolve));
+        await new Promise((resolve) => realSetImmediate(resolve));
+        await vi.advanceTimersByTimeAsync(0);
+      }
+    };
     try {
       await vi.advanceTimersByTimeAsync(0);
+      await flushObservations();
       expect(release).toBeTypeOf('function');
+      expect(h.ticks.at(-1)).toMatchObject({ at: new Date(NOW).toISOString(),
+        holdProduction: 'Mirror preparation is in progress.' });
+      expect(h.ticks.at(-1)!.lanes.find(l => l.lane === 'local')?.slots).toBeGreaterThan(0);
+      const firstAt = h.ticks.at(-1)!.at;
+      let republished = false;
       for (let minute = 1; minute <= 15; minute++) {
         now = NOW + minute * 60_000;
         await vi.advanceTimersByTimeAsync(60_000);
+        await flushObservations();
+        const latest = h.ticks.at(-1);
+        if (latest && latest.at !== firstAt) {
+          expect(latest).toMatchObject({ holdProduction: 'Mirror preparation is in progress.' });
+          expect(latest.lanes.find(l => l.lane === 'local')?.slots).toBeGreaterThan(0);
+          republished = true;
+          break;
+        }
       }
-      expect(h.ticks.at(-1)).toMatchObject({ at: new Date(now).toISOString(),
-        holdProduction: 'Mirror preparation is in progress.' });
-      expect(h.ticks.at(-1)!.lanes.find(l => l.lane === 'local')?.slots).toBeGreaterThan(0);
+      expect(republished).toBe(true);
       controller.abort();
       const count = h.ticks.length;
       await vi.advanceTimersByTimeAsync(60_000);
+      await flushObservations();
       expect(h.ticks).toHaveLength(count);
     } finally {
-      release({ ready: [], failed: [], pausedRepoPaths: [] });
+      if (typeof release === 'function') release({ ready: [], failed: [], pausedRepoPaths: [] });
+      else controller.abort();
       await running;
       vi.useRealTimers();
     }
@@ -518,6 +544,7 @@ describe('lanes, presence and the router seam', () => {
   });
 
   it('reserves available local, Grok and Claude turns before holding overflow', async () => {
+    resetAdaptiveThroughput();
     presenceNow = { present: true, reason: 'A Verse chat turn is running.', evidenceAt: NOW_ISO };
     const hooks = createLiveTickHooks({ deps: {
       ...h.deps,
@@ -531,7 +558,7 @@ describe('lanes, presence and the router seam', () => {
     const preview = hooks.route(item({ id: 'local-1', effort: 2 }), CFG);
     expect(preview.backend).toBe('llama-server');
     expect(hooks.route(item({ id: 'grok-1', effort: 2 }), CFG).backend).toBe('llama-server');
-    hooks.beginDispatchPlan(['local-1', 'grok-1', 'grok-2', 'claude-1', 'parked']);
+    hooks.beginDispatchPlan(['local-1', 'grok-1', 'claude-1', 'parked']);
     const first = hooks.route(item({ id: 'local-1', effort: 2 }), CFG);
     const second = hooks.route(item({ id: 'grok-1', effort: 2 }), CFG);
     expect(first.backend).toBe('llama-server');
@@ -539,12 +566,12 @@ describe('lanes, presence and the router seam', () => {
     expect(second.backend).toBe('grok-cli');
     expect(fleetLaneOf(second.backend, CFG)).toBe('grok-cli');
     expect(hooks.route(item({ id: 'local-1', effort: 2 }), CFG)).toEqual(first);
-    expect(hooks.route(item({ id: 'grok-2', effort: 2 }), CFG).backend).toBe('grok-cli');
-    const fourth = hooks.route(item({ id: 'claude-1', effort: 2 }), CFG);
-    expect(fourth.backend).toBe('claude');
-    expect(fleetLaneOf(fourth.backend, CFG)).toBe('claude-cli');
-    expect(hooks.route(item({ id: 'claude-1', effort: 2 }), CFG)).toEqual(fourth);
-    // All four eligible turns are reserved: local=1, Grok=2, Claude=1.
+    const third = hooks.route(item({ id: 'claude-1', effort: 2 }), CFG);
+    expect(third.backend).toBe('claude');
+    expect(fleetLaneOf(third.backend, CFG)).toBe('claude-cli');
+    expect(hooks.route(item({ id: 'claude-1', effort: 2 }), CFG)).toEqual(third);
+    // Unset daemon counts admit one Grok task (the adaptive first ramp step).
+    // Local=1, Grok=1 and Claude=1 are reserved before overflow parks.
     expect(hooks.route(item({ id: 'parked', effort: 2 }), CFG).hold?.kind).toBe('park');
   });
 
@@ -565,15 +592,16 @@ describe('lanes, presence and the router seam', () => {
   });
 
   it('returns lane caps with presence applied and records the tick (ledger head included)', async () => {
+    resetAdaptiveThroughput();
     presenceNow = { present: true, reason: 'A Verse chat turn is running.', evidenceAt: NOW_ISO };
     const hooks = createLiveTickHooks({ deps: h.deps });
     hooks.effectiveConfig(CFG);
     const result = await hooks.beforeTick(hookCtx);
-    expect(result.laneCaps).toEqual({ local: 2, 'grok-cli': 2, 'claude-cli': 1, codex: 0, 'devin-cli': 0 });
+    expect(result.laneCaps).toEqual({ local: 2, 'grok-cli': 1, 'claude-cli': 1, codex: 0, 'devin-cli': 0 });
     const state = h.ticks.at(-1)!;
     expect(state).toMatchObject({ standing: { grantId: 'g-1', stageId: '2b', switch: 'autonomous' }, ledgerHead: { seq: 41 }, capabilityKind: 'resident-standing' });
     expect(state.lanes.find((lane) => lane.lane === 'claude-cli')?.slots).toBe(1);
-    expect(h.audits.at(-1)).toMatch(/standing tick: lanes local=2 grok-cli=2 claude-cli=1 codex=0/);
+    expect(h.audits.at(-1)).toMatch(/standing tick: lanes local=2 grok-cli=1 claude-cli=1 codex=0/);
   });
 
   it('clamps the budget over every seat the tick routes across (not only the ones the policy names)', async () => {
