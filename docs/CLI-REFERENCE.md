@@ -190,6 +190,7 @@ Phantom - every command (phm or ashlr)
     authority ledger verify|tail                                                                                                                                  Verify or read the hash-chained authority ledger (~/.ashlr/authority/ledger.jsonl).
     authority protect --print|--apply                                                                                                                             Print (or apply after confirmation) the GitHub rulesets for the grant's server-enforced repos.
     authority setup [--dry-run [--json]]                                                                                                                          Guided Phase 0: custody key, trust-root PR, GitHub App, Claude token, canary, rulesets, first grant, switch, daemon service - asks before every step; --dry-run --json prints the checklist as JSON.
+    feed [--json] [--limit N]                                                                                                                                     Read recent fleet events, newest first; unavailable sources remain unknown.
     leader show|run|tick|veto                                                                                                                                     The Leader (Visionary): show the latest memo and actions, run it now, apply due class-B actions (tick), veto an action or a whole memo (--memo).
     org show|join|plan [--file <org.toml>] [--json]                                                                                                               Declarative co-founder org model: show members and lanes, opt your own machine into lanes with join, or propose queue assignments with plan. Nothing is sent on join.
     leader status|ask|org|assign [--json]                                                                                                                         Digital co-founder: world-backed status, owner ask, declarative org chart, and RQ assignment. Escalates only for secrets, money, outside sends, and owner-data destruction. KILL stops it. No new model spend.
@@ -259,6 +260,7 @@ Phantom - every command (phm or ashlr)
     issues [--retry] [--dir <queue-directory>] [--json]                                                                                                           Group failed queue jobs by error; --retry queues one READY retry per failed job without duplicates.
     route explain [--json]                                                                                                                                        Read dispatcher pools and route-moves-per-hour.
     pool admission [--json]                                                                                                                                       Read-only load gate: loadavg, ncpu, running cap, install-lock holder and admit true/false with the reason.
+    queue dedupe [--file <router-queue.md>] [--apply] [--json]                                                                                                    Find repeated READY jobs; preview by default, or mark repeats superseded with --apply.
     trail claim|beat|release <claim-key> [--json]                                                                                                                 Stigmergic work-item markers: claim a key, heartbeat progress, release. File-based coordination; no execution authority. See docs/STIGMERGY.md.
     trail list|show|resume|sweep|save [--json]                                                                                                                    Read claim markers, pick up a stalled claim with its saved checkpoint, or evaporate expired markers. See docs/STIGMERGY.md.
     sessions create|show|resume|terminate [sesn_id] [--json]                                                                                                      Resumable agent sessions: agent profile id and version, environment id and an append-only event log; each turn is one phm queue job. Statuses idle, running, rescheduling, terminated.
@@ -296,7 +298,7 @@ Phantom - every command (phm or ashlr)
     daily-fix validate|filter|dispatch|parse-fixup [--json]                                    Daily CI re-run helper: validate dispatch inputs against the allowlist, preview the job/test filter, emit the gh workflow command, or aggregate fixup-queue lines.
     budget <show|add> [--json]                                                                 Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.
     budget get [--json]                                                                        Read the owner spend budget in USD. A missing provider is 0 for the month. This does not change the budget.
-    budget set --provider <id> --period day|week|month --usd <n> [--json]                      Owner-only spend budget change with one audit line. Agent processes are refused. The committed default stays 0.
+    budget set --provider <id> --period day|week|month --usd <n> [--json]                      Owner-only spend budget change from an interactive terminal, with one audit line. A budget above 0 needs a pin-chain or Mason approval attestation. Agents and non-TTY calls are refused. The committed default stays 0.
     usage                                                                                      Frontier usage table: per-engine calls/tokens/cost + window state.
     usage sensors [--json] [--refresh] [--file <snapshot>]                                     Per-lane usage readings with age and stale status. A reading at or after staleAfter is unknown and is not headroom. Refresh uses official APIs and CLIs only.
     queue stats [--json] [--window <seconds>]                                                  Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.
@@ -305,7 +307,9 @@ Phantom - every command (phm or ashlr)
     telemetry test                                                                             Emit a synthetic metadata-only test span; report sink+ok.
     audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]         Tail the append-only audit trail; --team lists workspace actions (read-only).
     receipt list|status|show <run>|verify <run>|timeline <run> [--json]                        Read and verify signed run receipts (same as fleet receipt); timeline lists custody spawns in the run window, value-free (read-only).
+    lanes fit --lane <lane> [--json]                                                           Show job kinds to send or avoid from measured PR rates.
     lanes health [--json]                                                                      Per-lane calls, error rate, p50 latency and deployed commit over 12 h; flags runs stuck past their phase timeout.
+    goals [--json]                                                                             Show dispatcher throughput, empty rates and resource resets.
 
   Integrations - MCP, GitHub, Vercel, editors
     mcp                                                                              Run the MCP aggregation gateway on stdio (point any agent here; includes the native ashlr_* tools; list them with tools/list).
@@ -335,6 +339,7 @@ Phantom - every command (phm or ashlr)
   Safety - sandboxes, invariants, activation
     daemon activation-preflight --request <path> [--json]                                 Read-only verification of operator-custodied signed candidate and rollback artifacts; grants no service authority.
     daemon activate --request <path> --authorize <digest> --confirm <digest> [--json]     Dormant permit-gated 3.2.7 selection; preserves loaded=false and the exact disabled bit, and never starts a service.
+    worktrees prune [--dry-run | --apply] [--json]                                        Preview or remove clean finished job worktrees older than two hours.
     worktrees report [--dir <path>] [--json]                                              Report worktree age, size, last log time and job state.
     disk [--wt-dir <abs>] [--json]                                                        Read-only disk report for agent worktrees: sizes, lifecycle state, and the bytes safe to reclaim.
     disk-maint [--apply] [--json] [--only <class>] [--allow <class>]                      Standing disk maintenance: rotate/compress quiet logs, prune dead session leftovers, stale staging and recovery dirs, and remove merged worktrees. Dry run unless --apply; protect-list never touches ~/.codex*, model weights, Docker, client trees or secrets.
@@ -346,6 +351,7 @@ Phantom - every command (phm or ashlr)
     sandbox gc                                                                            Reclaim STALE orphan sandboxes (crash leftovers); H5 explicit human repair surface for the orphan sweep.
     seams                                                                                 Cloud-ready seam diagnostic: every v2 store, active=local, cloud=gated (read-only).
     seams status                                                                          Same as `seams`: list seams + active impl; proves local-first + cloud gated on Mason.
+    test --changed [--base <ref>] [--json]                                                Run tests related to changed files, or the full suite when unknown.
     verify change --worktree <path> [--checks typecheck,unit,lint,secrets]                Run trusted worktree checks; JSON verdict and ten-line handoff.
     engineering-receipt --events <file.jsonl> [--claims <file>] [--task <text>] [--json]  Engineering receipt from tool events (Evidence) vs model statements (Claims); needs PHANTOM_RECEIPTS=1.
     verify-safety                                                                         Read-only self-check of the hard safety invariants (enrollment/kill-switch/daemon/scrub/cloud-gate); mutates nothing.

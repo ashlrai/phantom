@@ -571,7 +571,17 @@ export function agentDocsText(): string {
   lines.push('phantom_agent_bus_post, phantom_fleet_drop_job, phantom_fleet_job_reassign,');
   lines.push('phantom_fleet_planner_run, phantom_fleet_apps_ensure, phantom_fleet_apps_changes,');
   lines.push('phantom_fleet_apps_status, phantom_fleet_apps_await, phantom_fleet_orders,');
-  lines.push('phantom_fleet_graph, phantom_fleet_session. Tool discovery is not authorization.');
+  lines.push('phantom_fleet_graph, phantom_fleet_session, phantom_fleet_doctor.');
+  lines.push('Tool discovery is not authorization. phantom_fleet_doctor only reads fleet health.');
+  lines.push('Read-only observation tools: world_model, phantom_observe, phantom_observe_session,');
+  lines.push('phantom_spend_budget, phm_context_brief, phm_claim_acquire, phm_claim_release,');
+  lines.push('phantom_leader_status, phantom_leader_org, phantom_leader_inbox, phantom_leader_ask,');
+  lines.push('phantom_leader_assign, ashlr_comms_agent_status, ashlr_comms_agent_drafts,');
+  lines.push('ashlr_comms_agent_run. Unknown evidence stays unknown and grants no send or spend.');
+  lines.push('Desktop operator tools: desktop_list_apps, desktop_windows, desktop_read,');
+  lines.push('desktop_screenshot, desktop_doctor, desktop_focus, desktop_scroll, desktop_type,');
+  lines.push('desktop_click. Reads do not post to the bus. Focus, scroll, type and click post');
+  lines.push('a bus intent first. KILL and comms pause block those writes.');
   lines.push('App recovery observation tools: phantom_fleet_apps_history,');
   lines.push('phantom_fleet_apps_follow, phantom_fleet_apps_recovery_wait,');
   lines.push('phantom_fleet_apps_recovery_check, phantom_fleet_apps_recovery_batch.');
@@ -842,6 +852,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'authority ledger verify|tail',  desc: 'Verify or read the hash-chained authority ledger (~/.ashlr/authority/ledger.jsonl).', topic: 'autonomy' },
   { cmd: 'authority protect --print|--apply', desc: 'Print (or apply after confirmation) the GitHub rulesets for the grant\'s server-enforced repos.', topic: 'autonomy' },
   { cmd: 'authority setup [--dry-run [--json]]', desc: 'Guided Phase 0: custody key, trust-root PR, GitHub App, Claude token, canary, rulesets, first grant, switch, daemon service — asks before every step; --dry-run --json prints the checklist as JSON.', topic: 'autonomy' },
+  { cmd: 'feed [--json] [--limit N]', desc: 'Read recent fleet events, newest first; unavailable sources remain unknown.', topic: 'autonomy' },
   { cmd: 'leader show|run|tick|veto',     desc: 'The Leader (Visionary): show the latest memo and actions, run it now, apply due class-B actions (tick), veto an action or a whole memo (--memo).', topic: 'autonomy' },
   { cmd: 'org show|join|plan [--file <org.toml>] [--json]', desc: 'Declarative co-founder org model: show members and lanes, opt your own machine into lanes with join, or propose queue assignments with plan. Nothing is sent on join.', topic: 'autonomy' },
   { cmd: 'leader status|ask|org|assign [--json]', desc: 'Digital co-founder: world-backed status, owner ask, declarative org chart, and RQ assignment. Escalates only for secrets, money, outside sends, and owner-data destruction. KILL stops it. No new model spend.', topic: 'autonomy' },
@@ -937,7 +948,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'daily-fix validate|filter|dispatch|parse-fixup [--json]', desc: 'Daily CI re-run helper: validate dispatch inputs against the allowlist, preview the job/test filter, emit the gh workflow command, or aggregate fixup-queue lines.', topic: 'observability' },
   { cmd: 'budget <show|add> [--json]', desc: 'Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.', topic: 'observability' },
   { cmd: 'budget get [--json]', desc: 'Read the owner spend budget in USD. A missing provider is 0 for the month. This does not change the budget.', topic: 'observability' },
-  { cmd: 'budget set --provider <id> --period day|week|month --usd <n> [--json]', desc: 'Owner-only spend budget change with one audit line. Agent processes are refused. The committed default stays 0.', topic: 'observability' },
+  { cmd: 'budget set --provider <id> --period day|week|month --usd <n> [--json]', desc: 'Owner-only spend budget change from an interactive terminal, with one audit line. A budget above 0 needs a pin-chain or Mason approval attestation. Agents and non-TTY calls are refused. The committed default stays 0.', topic: 'observability' },
   { cmd: 'usage',                        desc: 'Frontier usage table: per-engine calls/tokens/cost + window state.', topic: 'observability' },
   { cmd: 'usage sensors [--json] [--refresh] [--file <snapshot>]', desc: 'Per-lane usage readings with age and stale status. A reading at or after staleAfter is unknown and is not headroom. Refresh uses official APIs and CLIs only.', topic: 'observability' },
   { cmd: 'route explain [--json]', desc: 'Read dispatcher pools and route-moves-per-hour.', topic: 'autonomy' },
@@ -1001,6 +1012,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'onboard --rollback <repo>',    desc: 'One-command undo of a first activation: unenroll + sweep orphan sandboxes + optional --kill. Inward cleanup only; H6-audited.', topic: 'safety' },
   { cmd: 'demo [--no-cleanup] [--json]', desc: 'Watch the FULL autonomous chain run on a DISPOSABLE tmp repo (isolated tmp ~/.ashlr; proposal-only; auto-cleans). NEVER touches your portfolio or applies anything.', topic: 'safety' },
 
+  { cmd: 'goals [--json]', desc: 'Show dispatcher throughput, empty rates and resource resets.', topic: 'observability' },
   { cmd: 'top [--once] [--json]', desc: 'Read-only per-pool capacity and reset pressure snapshot.', topic: 'web' },
   { cmd: 'tui [--once]',                 desc: 'Interactive terminal dashboard (alias: dash). --once renders one frame and exits.', topic: 'web' },
   { cmd: 'dash [--once]',                desc: 'Alias of `tui` — interactive terminal dashboard.', topic: 'web' },
