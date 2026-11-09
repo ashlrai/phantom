@@ -133,10 +133,12 @@ report ready; `mobile` needs the `~/.ashlr/verse-remote.json` gateway file
 `phm comms inbox [--json]`
 ([`unified-inbox.ts`](../src/core/comms/unified-inbox.ts)) is the read-only
 roll-up of everything still pending, ranked the way Needs-you ranks: severity
-band, then priority, then expiry, then newest. It aggregates four local sources
+band, then priority, then expiry, then newest. It aggregates local sources
 — unresolved `NEEDS-MASON.md` items, unanswered allowlisted teammate texts,
 outbound drafts awaiting approval, and live bus `kind:"work"` envelopes with no
-live claim — and each item carries `act` deep-link commands (`phm fleet
+live claim — plus Gmail archive-plan overages and LinkedIn messages saved as
+JSON files under `<runsDir>/comms/linkedin/inbox/` (answered when a file of the
+same id exists in `.../linkedin/answered/`; replies stay drafts) — and each item carries `act` deep-link commands (`phm fleet
 needs-resolve`, `phm fleet teammate-texts --answered`, `phm drafts approve`,
 `phm fleet bus-claim acquire`). It never claims, replies, or mutates; a source
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
