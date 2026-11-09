@@ -14,6 +14,8 @@ Schema: `ashlr.world-model/v1`. Every signal has `value`, `source`, `observedAt`
 
 The snapshot is cached in the process and at `~/.ashlr-runs/world/model.json` for 15 seconds. `phm world get` on a warm cache is the tick read. The tick does not call gh and does not read credential files.
 
+The desktop resource bar reads this same snapshot from `GET /api/verse/world`. There is no world-model event stream, so the bar polls that route once per cache window while it is on screen. Each lane row shows usage, remaining, reset, burn rate, and the exhaustion-versus-reset gauge, plus the field's source and `observedAt`. A missing key, a null, or a reading past the 15-minute usage-sensor staleness window is unknown. The bar does not invent a number. Reset time and `forecastVsReset` are taken from the lane when a pacing row includes them, and otherwise from that snapshot's observe window.
+
 A path that is not in the snapshot returns `{ "path", "freshness": "unknown", "value": null }`.
 
 ```sh
