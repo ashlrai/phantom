@@ -100,6 +100,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/driver/`
 - `src/core/ecosystem/`
 - `src/core/eval/`
+- `src/core/events/`
 - `src/core/fabric/`
 - `src/core/fleet/`
 - `src/core/foundry/`
@@ -114,6 +115,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/inbox/`
 - `src/core/incident/`
 - `src/core/integrations/`
+- `src/core/intent/`
 - `src/core/knowledge/`
 - `src/core/learn/`
 - `src/core/learning/`
@@ -123,10 +125,12 @@ imports, individual files, semantics or contract coverage.
 - `src/core/mcp/`
 - `src/core/memory/`
 - `src/core/metrics/`
+- `src/core/nodes/`
 - `src/core/observability/`
 - `src/core/observe/`
 - `src/core/onboard/`
 - `src/core/openai-agents/`
+- `src/core/org/`
 - `src/core/playbooks/`
 - `src/core/plugins/`
 - `src/core/policy/`
