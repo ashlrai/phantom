@@ -152,18 +152,28 @@ jobs:
         if: steps.history.outputs.equal != 'true'
         uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
-          path: node_modules/.cache/phantom-backend.tsbuildinfo
-          key: master-typecheck-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json') }}-${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
-          restore-keys: master-typecheck-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json') }}-
+          path: |
+            node_modules/.cache/phantom-backend.tsbuildinfo
+            node_modules/.cache/phantom-web.tsbuildinfo
+          key: master-typecheck-v2-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json', 'src/web-ui/tsconfig.json') }}-${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          restore-keys: master-typecheck-v2-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json', 'src/web-ui/tsconfig.json') }}-
       - name: Core no-emit type check
         if: steps.history.outputs.equal != 'true'
-        run: npx tsc --noEmit -p tsconfig.json
+        # Both projects enable incremental/no-emit checking in their tsconfig.
+        # Keep this step name stable for release evidence consumers.
+        run: |
+          started=$SECONDS
+          npm run typecheck
+          elapsed=$((SECONDS - started))
+          echo "Incremental backend + web typecheck: ${elapsed}s" >> "$GITHUB_STEP_SUMMARY"
       - name: Save protected-branch compiler state
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/master'
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
-          path: node_modules/.cache/phantom-backend.tsbuildinfo
-          key: master-typecheck-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json') }}-${{ github.sha }}
+          path: |
+            node_modules/.cache/phantom-backend.tsbuildinfo
+            node_modules/.cache/phantom-web.tsbuildinfo
+          key: master-typecheck-v2-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json', 'src/web-ui/tsconfig.json') }}-${{ github.sha }}
       # Full authority shards are deferred; drift must still fail the required gate.
       - name: Check authority drift (hermetic)
         if: steps.history.outputs.equal != 'true'
