@@ -14,6 +14,8 @@ export interface IdeaRow {
   score: number | null;
   scoreText: string;
   source: string;
+  /** Set on goal-drift ideas: the goal they came from. */
+  goal?: { id: string; name: string };
 }
 
 export interface RepoGroup {
@@ -40,6 +42,9 @@ export function rankIdeas(items: readonly VerseBacklogItem[]): IdeaRow[] {
     const title = text(item.title) ?? id;
     if (title === undefined) return;
     const repo = text(item.repo);
+    const goalId = text((item as { goalId?: unknown }).goalId);
+    const goalName = text((item as { goalName?: unknown }).goalName);
+    const source = text(item.source) ?? UNKNOWN_SOURCE;
     const score = typeof item.score === 'number' && Number.isFinite(item.score) ? item.score : null;
     rows.push({
       key: `${id ?? title}#${order}`,
@@ -47,7 +52,8 @@ export function rankIdeas(items: readonly VerseBacklogItem[]): IdeaRow[] {
       repo: repo ? repoDisplayName(repo) : UNASSIGNED,
       score,
       scoreText: score === null ? 'unscored' : `score ${score}`,
-      source: text(item.source) ?? UNKNOWN_SOURCE,
+      source,
+      ...(source === 'goal-drift' && goalId ? { goal: { id: goalId, name: goalName ?? goalId } } : {}),
       order,
     });
   });

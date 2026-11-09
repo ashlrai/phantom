@@ -929,6 +929,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'resources [--json] [--watch]', desc: 'Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).', topic: 'observability' },
   { cmd: 'capacity publish [--json]', desc: 'Refresh local subscription usage metadata once with this node’s local authentication.', topic: 'observability' },
   { cmd: 'estates [--json] [--repo <repo-id>]', desc: 'Per-repo estate cards: health, CI, security. Read-only portfolio view.', topic: 'observability' },
+  { cmd: 'main blame --good <sha> --check "<cmd>" [--bad <sha>] [--repo <path>] [--json]', desc: 'Name the first merge that turned the default branch red. Bisects in a temp worktree; read-only.', topic: 'observability' },
   { cmd: 'ci-metrics [--json]', desc: 'Per-repo daily turn-time (red to green) metrics; writes ~/.ashlr/ci-metrics.json.', topic: 'observability' },
   { cmd: 'daily-fix validate|filter|dispatch|parse-fixup [--json]', desc: 'Daily CI re-run helper: validate dispatch inputs against the allowlist, preview the job/test filter, emit the gh workflow command, or aggregate fixup-queue lines.', topic: 'observability' },
   { cmd: 'budget <show|add> [--json]', desc: 'Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.', topic: 'observability' },
