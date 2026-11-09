@@ -102,11 +102,15 @@ export function defaultDeliver(options: CommsRunOptions): (attempt: SendAttempt)
       if (!connector || connector.mode !== mode) {
         return { status: 'drafted', reason: 'No sanctioned LinkedIn connector is registered.' };
       }
+      const stopped = halted(options);
+      if (stopped) return stopped;
       return connector.deliver(attempt);
     }
     if (!isChannelId(attempt.transport)) return { status: 'drafted', reason: 'No channel adapter is available.' };
     const adapter = options.adapters?.[attempt.transport] ?? getChannelAdapter(attempt.transport);
     if (!adapter || adapter.id !== attempt.transport) return { status: 'drafted', reason: 'No channel adapter is available.' };
+    const stopped = halted(options);
+    if (stopped) return stopped;
     return adapter.deliver(envelope(attempt, attempt.transport, teamFrom(options)));
   };
 }
@@ -149,6 +153,13 @@ function gate(options: CommsRunOptions): { kill: KillState; paused: boolean } {
   };
 }
 
+function halted(options: CommsRunOptions): DeliverResult | null {
+  const now = gate(options);
+  if (now.kill !== 'inactive') return { status: 'refused', reason: 'KILL halts all sends.' };
+  if (now.paused) return { status: 'refused', reason: 'Communications are paused.' };
+  return null;
+}
+
 async function approvalsFor(options: CommsRunOptions): Promise<OwnerApprovals | DeliverResult> {
   if ((options.approvalsSource ?? 'owner-file') !== 'injected') {
     if (options.approvals !== undefined || options.owners !== undefined) {
@@ -174,14 +185,12 @@ export async function executeSend(
     if (decision.status === 'drafted') await rememberDraft(options.runsDir, attempt, at, options.messageId ?? attempt.recipient);
     return decision;
   }
-  const freshGate = gate(options);
-  if (freshGate.kill !== 'inactive') return { status: 'refused', reason: 'KILL halts all sends.' };
-  if (freshGate.paused) return { status: 'refused', reason: 'Communications are paused.' };
   const freshApprovals = (options.approvalsSource ?? 'owner-file') === 'injected' ? loaded : await readOwnerApprovals();
   if ('accepted' in freshApprovals && !freshApprovals.accepted && freshApprovals.reason !== 'missing' && freshApprovals.reason !== 'malformed') {
     return { status: 'refused', reason: 'Standing approvals file is not a private owner file.' };
   }
-  const confirmed = decideSend(attempt, { ...freshGate, approvals: freshApprovals.approvals });
+  const lastGate = gate(options);
+  const confirmed = decideSend(attempt, { ...lastGate, approvals: freshApprovals.approvals });
   if (confirmed.status !== 'sent') {
     if (confirmed.status === 'drafted') await rememberDraft(options.runsDir, attempt, at, options.messageId ?? attempt.recipient);
     return confirmed;
