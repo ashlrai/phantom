@@ -85,6 +85,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "safety": "read",
     },
     {
+      "name": "phantom_spend_budget",
+      "safety": "read",
+    },
+    {
       "name": "phantom_observe_session",
       "safety": "read",
     },
@@ -130,6 +134,26 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
     },
     {
       "name": "phm_claim_release",
+      "safety": "append",
+    },
+    {
+      "name": "phantom_leader_status",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_leader_org",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_leader_inbox",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_leader_ask",
+      "safety": "append",
+    },
+    {
+      "name": "phantom_leader_assign",
       "safety": "append",
     },
     {
@@ -832,6 +856,14 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
   {
     "inputSchema": {
       "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "phantom_spend_budget",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
       "properties": {
         "sessionId": {
           "type": "string",
@@ -1450,6 +1482,77 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "phm_claim_release",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "phantom_leader_status",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "phantom_leader_org",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "phantom_leader_inbox",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "text",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_leader_ask",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "due": {
+          "type": "string",
+        },
+        "outcome": {
+          "type": "string",
+        },
+        "owner": {
+          "type": "string",
+        },
+        "rq": {
+          "type": "string",
+        },
+        "status": {
+          "type": "string",
+        },
+        "summary": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "rq",
+        "owner",
+        "summary",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_leader_assign",
   },
   {
     "inputSchema": {

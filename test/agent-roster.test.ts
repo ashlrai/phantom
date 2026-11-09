@@ -1,8 +1,12 @@
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { ServerResponse } from 'node:http';
 import { describe, expect, it } from 'vitest';
 import { runAgentsRosterCli } from '../src/cli/agents-roster.js';
 import {
   collectAgentRoster,
+  readRosterClaims,
   validateAgentRoster,
   type AgentRosterDeps,
   type RosterExecResult,
@@ -74,7 +78,7 @@ function harness(over: AgentRosterDeps = {}, calls: string[] = []): AgentRosterD
     listPhantom: async () => phantomSnap,
     listDevinCloud: async () => devinPage,
     readClaims: () => ({
-      source: 'available',
+      source: 'bus-work-fallback',
       claims: [
         { id: 'job-1', cursor: 1, receivedAt: 1, owner: 'mason', leaseUntil: Date.parse(OBSERVED), completedAt: null },
         { id: 'other-claim', cursor: 2, receivedAt: 1, owner: 'ada', leaseUntil: Date.parse(OBSERVED), completedAt: 2 },
@@ -124,7 +128,7 @@ describe('agent roster probes', () => {
       ['omlx', 'local-coder', 'listed'],
     ]);
     const job = roster.sessions.find((item) => item.sessionId === 'job-1');
-    expect(job?.claims).toEqual([{ store: 'bus-work', id: 'job-1', owner: 'mason', leaseUntil: OBSERVED, completed: false }]);
+    expect(job?.claims).toEqual([{ store: 'bus-work-fallback', id: 'job-1', owner: 'mason', leaseUntil: OBSERVED, completed: false }]);
     expect(job?.ownership).toBe('claude');
     expect(roster.claims.items.map((item) => item.id)).toEqual(['job-1', 'other-claim']);
     expect(JSON.stringify(roster)).not.toContain('token');
@@ -162,17 +166,40 @@ describe('agent roster probes', () => {
     });
     expect(acquired.status).toBe('acquired');
     try {
+      expect(acquireCoordination({ origin: 'message', key: 'queue:job-1', owner: 'ada', leaseMs: 60_000,
+        leaseUntil: now + 60_000, sourceId: 'job-1:2:1', now }).status).toBe('conflict');
       const deps = harness();
       delete deps.readClaims;
       const roster = await collectAgentRoster(deps);
       const job = roster.sessions.find((item) => item.sessionId === 'job-1');
-      expect(job?.claims).toContainEqual(expect.objectContaining({ store: 'bus-work', id: 'job-1', owner: 'mason', completed: false }));
+      expect(roster.claims.source).toBe('claim-store');
+      expect(job?.claims).toEqual([expect.objectContaining({ store: 'claim-store', id: 'job-1', owner: 'mason', completed: false })]);
       expect(JSON.stringify(roster)).not.toContain(acquired.status === 'acquired' ? acquired.token : 'token');
     } finally {
       if (acquired.status === 'acquired' && acquired.token) {
         settleCoordination({ key: 'queue:job-1', token: acquired.token, outcome: 'released', now });
       }
     }
+  });
+
+  it('falls back read-only to the bus work table when coordination is unavailable', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'roster-claims-'));
+    try {
+      mkdirSync(join(root, 'coordination'), { mode: 0o700 });
+      writeFileSync(join(root, 'coordination', 'claims.json'), 'invalid', { mode: 0o600 });
+      mkdirSync(join(root, 'bus-work-claims'), { mode: 0o700 });
+      const file = join(root, 'bus-work-claims', 'claims.json');
+      const rows = JSON.stringify([{ id: 'job-1', cursor: 1, receivedAt: 1, ttl: 60000,
+        token: 'a'.repeat(64), owner: 'mason', leaseMs: 60000, leaseUntil: 60001, completedAt: null }]);
+      writeFileSync(file, rows, { mode: 0o600 });
+      const roster = await collectAgentRoster(harness({ readClaims: () => readRosterClaims(2, root) }));
+      expect(roster.claims.source).toBe('bus-work-fallback');
+      expect(roster.sessions.find(item => item.sessionId === 'job-1')?.claims).toEqual([
+        expect.objectContaining({ store: 'bus-work-fallback', id: 'job-1', owner: 'mason' }),
+      ]);
+      expect(validateAgentRoster(roster)).toBeNull();
+      expect(readFileSync(file, 'utf8')).toBe(rows);
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
   it('does not treat a desktop-shaped help text as a session list', async () => {
