@@ -32,6 +32,8 @@ import { fleetInbox, fleetOutbox, lineChannel, lineSourceLabel, mergeThread, typ
 import { canSend, scrollTargetIndex, trimReply } from './thread-reply-model.js';
 import { mentionedRefs } from './thread-refs.js';
 import { leaderCeoSummary } from './leader-ceo-model.js';
+import { LeaderOfficeStrip } from './LeaderOfficeStrip.js';
+import { leaderOfficeQuery } from './leader-office-data.js';
 import { sendLeaderInboxMessage } from './leader-inbox-data.js';
 
 /** Shared 'verse-fleet-runs' key so the pane rides the same cache and SSE invalidation as the other fleet panes. */
@@ -101,6 +103,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const leader = useQuery(leaderQuery, { enabled: visible, freshMs: 30_000 });
   const fleet = useQuery(fleetLiveQuery, { enabled: visible, freshMs: 30_000 });
   const directives = useQuery(leaderDirectivesQuery, { enabled: visible, freshMs: 30_000 });
+  const office = useQuery(leaderOfficeQuery, { enabled: visible, freshMs: 30_000 });
   const busStatus = useQuery(agentBusStatusQuery, { enabled: visible && !agentBusMissing(), freshMs: 10_000 });
   const after = Math.max(0, (busStatus.data?.retainedCount ?? 0) - 100);
   const busPageQuery = useMemo(() => agentBusPageQuery(after, 100), [after]);
@@ -111,6 +114,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const refetchLeader = useRefetch(leaderQuery);
   const refetchFleet = useRefetch(fleetLiveQuery);
   const refetchDirectives = useRefetch(leaderDirectivesQuery);
+  const refetchOffice = useRefetch(leaderOfficeQuery);
   const refetchBusStatus = useRefetch(agentBusStatusQuery);
   const refetchBusPage = useRefetch(busPageQuery);
   const actions = useSurfaceActions();
@@ -129,7 +133,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
 
   usePollWhileVisible(() => { refetchThread(); refetchRuns(); }, 5_000, { enabled: visible });
   usePollWhileVisible(refetchDirectives, 30_000, { enabled: visible });
-  usePollWhileVisible(() => { refetchJournal(); refetchLeader(); refetchFleet(); }, 30_000, { enabled: visible });
+  usePollWhileVisible(() => { refetchJournal(); refetchLeader(); refetchFleet(); refetchOffice(); }, 30_000, { enabled: visible });
   usePollWhileVisible(() => {
     if (!agentBusMissing()) { refetchBusStatus(); if (busStatus.data?.source === 'available') refetchBusPage(); }
   }, 10_000, { enabled: visible && !agentBusMissing() });
@@ -243,6 +247,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       {summary.lines.length ? <ul aria-label="CEO summary">{summary.lines.map((line, index) => <li key={index}>{line}</li>)}</ul>
         : <p>CEO summary unavailable.</p>}
       <p><strong>Current bottleneck:</strong> {bottleneck ?? 'Unknown'}</p>
+      <LeaderOfficeStrip view={office.data?.value ?? null} />
       <details>
         <summary>Lane health</summary>
         {health?.lanes.length ? <ul>{health.lanes.map(lane => <li key={lane.lane}>

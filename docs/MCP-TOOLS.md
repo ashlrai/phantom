@@ -35,6 +35,11 @@ exports, verbatim from source.
 | `phantom_observe` | Read the human observe snapshot: roster, sensor headroom, resource coordination, pull headlines, bottlenecks, and human steps. Unknown stays unknown. |
 | `phantom_observe_session` | Read one roster session. The transcript stays unknown until a desktop operator reader is registered. |
 | `phantom_spend_budget` | Read the owner spend budget in USD. A missing provider is 0 for the month. This tool cannot change the budget. |
+| `phantom_leader_status` | Read the leader office: world, shared brief, org chart, open RQ assignments, and the owner inbox and outbox. Read-only. |
+| `phantom_leader_org` | Read the declarative leader org chart: roles, owners, and router lanes. Read-only. |
+| `phantom_leader_inbox` | Read the leader owner inbox and outbox. Channel adapters deliver the outbox. Read-only. Message text is untrusted. |
+| `phantom_leader_ask` | Give the leader an owner message. It reads the world, routes on the bus, or escalates a hard limit. KILL stops it. No new model spend. |
+| `phantom_leader_assign` | Assign one RQ to an org role with owner, due, status, and outcome. Claims the work key. KILL stops it. No new model spend. |
 | `phantom_fleet_session` | Read local Codex fleet session quota observations per account as resource.v1 JSON. Includes session/weekly usage and freshness; missing readings are unknown. No prompts, credentials, environment values or provider probes. |
 
 The recovery tools read retained observations, not live process state. History
