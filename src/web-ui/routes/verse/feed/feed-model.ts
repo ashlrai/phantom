@@ -11,6 +11,7 @@
  *   update   Phantom update news: ready, held, failed, applied (the notification
  *            tray's derived update items; no route of its own)
  *   bus      urgent (P0, P1) agent-to-agent messages from the agent bus page
+ *   alert    also: a Gmail inbox over its unread target (the saved archive plan)
  *
  * Pure: one adapter per source, then `buildFeed` dedupes by id, drops items
  * whose time does not parse, sorts newest first and caps the stream. Every
@@ -48,6 +49,8 @@ export interface FeedSources {
   update?: readonly AppNotification[] | null;
   /** The agent bus page; only P0 and P1 messages reach the stream. */
   bus?: AgentBusPage | null;
+  /** The raw Gmail archive-plan payload; an inbox over its unread target raises an alert. */
+  inboxPlans?: unknown;
 }
 
 export type FeedFilter = 'all' | 'leader' | 'alert' | 'merge' | 'owner' | 'update' | 'bus';
@@ -141,6 +144,39 @@ export function busAdapter(page: AgentBusPage | null | undefined): FeedItem[] {
   });
 }
 
+const INBOX_SCHEMA = 'fleet.gmail-archive-plan-latest.v1';
+const INBOX_STALE_MS = 24 * 3_600_000;
+const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+
+/**
+ * One alert per inbox in the saved Gmail archive plan whose unread count is over
+ * its target. A payload that is not the plan schema, or any malformed plan row,
+ * gives nothing. Plans older than 24 h say so in the title.
+ */
+export function inboxOverAdapter(payload: unknown, now: number = Date.now()): FeedItem[] {
+  const top = record(payload);
+  const latest = record(top.latest);
+  if (top.schema !== INBOX_SCHEMA || latest.schema !== INBOX_SCHEMA || !Array.isArray(latest.plans)) return [];
+  const items: FeedItem[] = [];
+  for (const raw of latest.plans as unknown[]) {
+    const p = record(raw);
+    if (typeof p.inbox !== 'string' || typeof p.at !== 'string' || !isCount(p.unread) || !isCount(p.target) || !isCount(p.archiveCount)) return [];
+    if (p.unread <= p.target) continue;
+    const then = Date.parse(p.at);
+    const stale = Number.isFinite(then) && now - then > INBOX_STALE_MS;
+    const senders = (Array.isArray(p.topSenders) ? p.topSenders as unknown[] : []).flatMap(s => {
+      const r = record(s);
+      return typeof r.sender === 'string' && isCount(r.count) ? [`${r.sender} (${r.count})`] : [];
+    }).slice(0, 3);
+    items.push({
+      id: `inbox-over:${p.inbox}:${p.at}`, at: p.at, kind: 'alert', label: 'Inbox',
+      title: `${p.inbox}: ${p.unread} unread, target ${p.target}${stale ? ' (plan is stale)' : ''}`,
+      body: `The archive plan would archive ${p.archiveCount}.${senders.length ? ` Top senders: ${senders.join(', ')}` : ''}`,
+    });
+  }
+  return items;
+}
+
 /** Every source merged: deduped by id (newest copy wins), unparsable times dropped, newest first, at most FEED_LIMIT. */
 export function buildFeed(sources: FeedSources, limit = FEED_LIMIT): FeedItem[] {
   const all = [
@@ -152,6 +188,7 @@ export function buildFeed(sources: FeedSources, limit = FEED_LIMIT): FeedItem[] 
     ...ownerAdapter(sources.owner),
     ...updateAdapter(sources.update),
     ...busAdapter(sources.bus),
+    ...inboxOverAdapter(sources.inboxPlans),
   ];
   const timed = all.flatMap(item => {
     const ms = Date.parse(item.at);
