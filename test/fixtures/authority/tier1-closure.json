@@ -913,6 +913,7 @@
     "src/core/queue/stacksync.ts",
     "src/core/queue/store.ts",
     "src/core/readiness.ts",
+    "src/core/real-home.ts",
     "src/core/reasoning/extractors.ts",
     "src/core/reasoning/ingest-codex.ts",
     "src/core/reasoning/ingest-fleet.ts",

@@ -4,8 +4,8 @@
  * Secrets handle names, never values.
  */
 import { join } from 'node:path';
-import { realAccountHome } from '../config.js';
 import { parse } from 'smol-toml';
+import { realHome } from '../real-home.js';
 import type { TeamIdentity } from '../agents/channel-policy.js';
 import { parseCommsConfirmation, parseTeamIdentities } from '../agents/channel-policy.js';
 import { parseMasonIdentities } from '../agents/leader-network.js';
@@ -27,13 +27,13 @@ export type OwnerSecretChannel = keyof typeof OWNER_SECRET_HANDLES;
 
 /** Real owner config. `$HOME` and `ASHLR_CONFIG_DIR` cannot retarget this path. */
 export function fixedOwnerConfigDir(): string {
-  const home = realAccountHome();
+  const home = realHome();
   return home ? join(home, '.ashlr') : join('/owner-home-unavailable');
 }
 
 /** Real runs directory. `$HOME` and `ASHLR_RUNS_DIR` cannot retarget email-drop. */
 export function fixedOwnerRunsDir(): string {
-  const home = realAccountHome();
+  const home = realHome();
   return home ? join(home, '.ashlr-runs') : join('/owner-home-unavailable');
 }
 
