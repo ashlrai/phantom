@@ -89,7 +89,7 @@ import {
   submitLeaderQuestion,
   syncLeaderMemosToThread,
 } from '../vision/leader-thread.js';
-import { parseLeaderQuestionSubmission } from '../vision/leader-thread-types.js';
+import { LEADER_THREAD_CHANNELS, parseLeaderQuestionSubmission, type LeaderThreadChannel } from '../vision/leader-thread-types.js';
 import { runPlannerPass, type RunPlannerPassOpts, type PlannerRunResult } from '../fleet/planner-run.js';
 import { readPlannerCandidates } from '../fleet/planner-candidates.js';
 import { readPlannerPromptPath } from '../fleet/planner-prompt.js';
@@ -523,11 +523,11 @@ function sendThreadError(res: ServerResponse, err: unknown): boolean {
   return true;
 }
 
-function parseThreadQuery(req: IncomingMessage): { limit?: number; before?: string } | string {
+function parseThreadQuery(req: IncomingMessage): import('../vision/leader-thread.js').LeaderThreadQuery | string {
   const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
-  const out: { limit?: number; before?: string } = {};
+  const out: import('../vision/leader-thread.js').LeaderThreadQuery = {};
   for (const key of new Set(params.keys())) {
-    if (key !== 'limit' && key !== 'before') return `unknown query parameter: ${key}`;
+    if (!['limit', 'before', 'q', 'channel', 'from'].includes(key)) return `unknown query parameter: ${key}`;
     if (params.getAll(key).length > 1) return `${key} may appear once`;
   }
   const limit = params.get('limit');
@@ -539,6 +539,18 @@ function parseThreadQuery(req: IncomingMessage): { limit?: number; before?: stri
   if (before !== null) {
     if (before.length === 0 || before.length > 64) return 'before must be a message id or an ISO time';
     out.before = before;
+  }
+  const q = params.get('q');
+  if (q !== null) out.q = q;
+  const channel = params.get('channel');
+  if (channel !== null) {
+    if (!(LEADER_THREAD_CHANNELS as readonly string[]).includes(channel)) return 'invalid channel';
+    out.channel = channel as LeaderThreadChannel;
+  }
+  const from = params.get('from');
+  if (from !== null) {
+    if (from !== 'mason' && from !== 'leader') return 'from must be mason or leader';
+    out.from = from;
   }
   return out;
 }
