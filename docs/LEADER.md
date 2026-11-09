@@ -440,6 +440,12 @@ reads it.
 
 ## From the CLI
 
+`phm leader thread --json` shows the ordered conversation, including replies in
+`leader/MASON-OUTBOX.md` and every “Reply for Mason” block in `leader/PLAN-LOG.md`
+under your runs directory. Reply blocks use their heading time; identical text
+appears once. These journals are read only. The desktop Leader pane and phone
+view show the same replies, including when the outbox cannot be written.
+
 ```sh
 ashlr leader say "focus: the flaky retry test in binshield"
 ashlr leader thread [--limit 20] [--json]
