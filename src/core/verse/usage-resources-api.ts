@@ -7,6 +7,7 @@
  * number. Read-only, behind the same read-session boundary as every other
  * /api/verse GET.
  */
+import { readUsagePace } from '../usage/pace.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readUsageResources, type UsageResourcesSnapshot } from '../usage/resource-usage.js';
 import { sendJson } from '../web/api.js';
@@ -41,6 +42,7 @@ export async function handleUsageResourcesApi(
     const url = new URL(req.url ?? path, 'http://localhost');
     if (url.search) { sendJson(res, 400, { error: 'Usage resources do not accept query parameters.' }); return true; }
   } catch { sendJson(res, 400, { error: 'Invalid query string.' }); return true; }
-  sendJson(res, 200, await (readForTest ?? realRead)(ctx));
+  const [snapshot, pace] = await Promise.all([(readForTest ?? realRead)(ctx), readUsagePace()]);
+  sendJson(res, 200, { ...snapshot, pace });
   return true;
 }
