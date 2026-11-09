@@ -91,6 +91,15 @@ Docker, client trees, `~/Documents`, git internals, auth, secrets) applies at
 plan and apply time; gated classes (`venvs`, `hub-claude`) need `--allow`.
 See [DISK-MAINT](docs/DISK-MAINT.md).
 
+pass^k eval: `phm eval passk [--lane <lane:engine>]... [--trials N] [--k K]`
+runs the pinned golden set in `benchmarks/passk/` N times per task in clean
+worktrees and reports pass@1/pass@k/pass^k per lane/model. `scores` and
+`alerts` read the published projection and regression journal;
+`schedule [--install]` prints or installs the nightly per-user job.
+`--gate` exits 3 on a regression vs the baseline. Outputs are advisory for
+lane routing; nothing routes, reserves or merges. See
+[EVAL-PASSK](docs/EVAL-PASSK.md).
+
 ## Publish subscription capacity
 
 Copy-paste: `phm capacity publish --json`. Run on each node with its own local auth;
@@ -116,8 +125,8 @@ phase totals need not cover the whole wall time. Existing ledgers may not yet
 contain all boundaries.
 
 Fleet IQ: `phm fleet eval-report [--days 7] [--prs prs.json] --json` scores
-merged PRs post-merge — revert, regression and follow-up rates, CI-failure
-correlation, and time-to-merge — rolled up by lane, tier, lane+tier and repo
+merged PRs post-merge: revert, regression and follow-up rates, CI-failure
+correlation, and time-to-merge, rolled up by lane, tier, lane+tier and repo
 (`fleet.eval-report.v1`). Evidence comes from `~/.ashlr-runs/metrics/jobs.jsonl`,
 repeatable `--prs` files of `gh pr list --state merged --json url,number,title,
 mergedAt,mergeCommit,files,statusCheckRollup,commits,body` output, and the
@@ -204,7 +213,7 @@ phm desktopctl run claude --task "summarise this repo" --json
 
 `capabilities` (the doctor) always runs and reports the connection, each macOS
 TCC grant and per-resource reasons for what is blocked. `run` needs a `full`
-grant and returns untrusted screen text. `browser` is read-only — act on the
+grant and returns untrusted screen text. `browser` is read-only; act on the
 web through the Phantom Browser pane. Nothing prompts for or changes TCC
 grants; every action is feed-logged and refuses to run unlogged.
 

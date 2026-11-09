@@ -7,13 +7,21 @@ export const LANE_BACKENDS: Readonly<Record<BudgetPool, EngineId | null>> = {
   'grok-build': 'grok', 'grok-ultra': 'grok', 'local-omlx': 'local-coder',
 };
 export type LaneSlots = Partial<Record<BudgetPool, number | null>>;
+/** Advisory measured quality from the pass^k suite (eval.lane-scores.v1); a
+ * pool without a measured row stays unknown — null, never defaulted. */
+export interface LaneEvalScore { pass1: number; passPowK: number | null; trials: number }
+export type LaneEvalScores = Partial<Record<BudgetPool, LaneEvalScore>>;
 export interface LaneResourceSnapshot {
   budgets: PoolBudgetSnapshot;
   /** Collected by routeBackend outside this pure projection; missing routes are unknown. */
   routes: Partial<Record<BudgetPool, RouteDecision>>;
+  /** Optional pass^k evidence per pool; advisory only, never creates capacity. */
+  evalScores?: LaneEvalScores;
 }
 export interface RankedLane { pool: BudgetPool; backend: EngineId; availableSlots: number; resetAt: string | null;
-  projectedExhaustion: string | null; spillRecommended: boolean }
+  projectedExhaustion: string | null; spillRecommended: boolean;
+  /** Latest pass^k evidence for this lane's pool, when published. */
+  evalScore: LaneEvalScore | null }
 
 /** Prefer another eligible lane when exhaustion is expected within one hour. */
 const SPILL_HORIZON_MS = 60 * 60 * 1000;
@@ -21,7 +29,7 @@ const MAX_OBSERVATION_AGE_MS = 2 * 60 * 60 * 1000;
 
 /** Advisory only: no reservation or dispatch authority. Unknown evidence never creates capacity. */
 export function rankLanes(tier: EngineTier, resourceSnapshot: LaneResourceSnapshot, laneSlots: LaneSlots): RankedLane[] {
-  const { budgets, routes } = resourceSnapshot;
+  const { budgets, routes, evalScores } = resourceSnapshot;
   const now = Date.parse(budgets.timestamp);
   if (!['local', 'mid', 'frontier'].includes(tier) || budgets.sourceState !== 'healthy' || !Number.isFinite(now)) return [];
   const ranked: RankedLane[] = [];
@@ -49,7 +57,8 @@ export function rankLanes(tier: EngineTier, resourceSnapshot: LaneResourceSnapsh
     ranked.push({ pool, backend: route.backend, availableSlots: slots!,
       resetAt: resets.length ? new Date(Math.min(...resets)).toISOString() : null,
       projectedExhaustion: exhaustion === null ? null : new Date(exhaustion).toISOString(),
-      spillRecommended: exhaustion !== null && exhaustion <= now + SPILL_HORIZON_MS });
+      spillRecommended: exhaustion !== null && exhaustion <= now + SPILL_HORIZON_MS,
+      evalScore: evalScores?.[pool] ?? null });
   }
   return ranked.sort((a, b) => Number(a.spillRecommended) - Number(b.spillRecommended) || (a.resetAt === null ? Infinity : Date.parse(a.resetAt)) -
     (b.resetAt === null ? Infinity : Date.parse(b.resetAt)) || BUDGET_POOLS.indexOf(a.pool) - BUDGET_POOLS.indexOf(b.pool));
