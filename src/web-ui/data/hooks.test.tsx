@@ -3,7 +3,7 @@ import { renderToString } from 'react-dom/server';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { evictAll, getQuerySnapshot, invalidateObserved, refetchQuery, runQuery } from './cache.js';
-import { useAuthPhase, useMutationHold, useQuery } from './hooks.js';
+import { useAuthPhase, useMutationHold, useQuery, warmQuery } from './hooks.js';
 import { clearMutationToken, getAuthSnapshot, markCheckComplete, setMutationToken } from './auth-store.js';
 
 const strict = ({ children }: { children: ReactNode }) => <StrictMode>{children}</StrictMode>;
@@ -167,5 +167,30 @@ describe('useQuery optional admission', () => {
     rendered.innerHTML = renderToString(<ServerProbe />);
     expect(rendered.textContent).toBe('idle:undefined');
     expect(query.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('warmQuery', () => {
+  it('starts the read early and the mount joins it instead of issuing a second request', async () => {
+    const gate = deferred<string>();
+    const fetch = vi.fn(() => gate.promise);
+    const def = { key: 'warm-test', fetch };
+    warmQuery(def);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const hook = renderHook(() => useQuery(def));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await act(async () => { gate.resolve('ready'); await gate.promise; });
+    await waitFor(() => expect(hook.result.current).toMatchObject({ status: 'success', data: 'ready' }));
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('is a no-op while the cached read is still fresh, and swallows a failed read', async () => {
+    await runQuery('warm-fresh', async () => 'x');
+    const fresh = vi.fn(async () => 'y');
+    warmQuery({ key: 'warm-fresh', fetch: fresh });
+    expect(fresh).not.toHaveBeenCalled();
+    expect(() => warmQuery({ key: 'warm-fails', fetch: async () => { throw new Error('boom'); } })).not.toThrow();
+    await settle();
+    expect(getQuerySnapshot('warm-fails').status).toBe('error');
   });
 });
