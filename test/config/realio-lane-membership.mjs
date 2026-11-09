@@ -44,6 +44,8 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  */
 export const REAL_IO_TEST_FILES = [
   'test/agent-tools-registry.test.ts', // Spawns a real child to read the tool registry.
+  'test/real-home-child.test.ts', // Spawns a Node child to prove the test preload keeps KILL and enrollment inside HOME.
+  'test/release-train.test.ts', // Spawns node --experimental-strip-types against the release-train guard.
   'test/main-blame.test.ts', // Spawns git bisect children against a real temporary repository.
   'test/mcp/fleet-current-replay-preservation-09stm2.test.ts', // Spawns the fleet CLI child for replay preservation.
   'test/mcp/fleet-path-cochanges-04-sqd1.test.ts', // Spawns the fleet CLI child for path co-change reads.
