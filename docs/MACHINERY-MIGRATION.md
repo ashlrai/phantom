@@ -85,3 +85,18 @@ inventory; `fleet/sync.py` is the recipe.
   unchanged this PR).
 - `sync.py` dry-run against the live bin dir is the ongoing audit: zero
   unexplained `unmanaged` entries is the migration's done condition.
+
+### Compare the live scripts
+
+From a Phantom checkout, run `phm fleet bin-diff` for a plain-language count,
+ or add `--json` for the `fleet.bin-diff.v1` report. Use `--repo <checkout>`
+when outside the checkout and `--bin <directory>` to inspect another bin.
+The command reads the fleet manifest and hashes each source-backed runs-bin
+entry and its live copy; it never installs or changes files. Manifest-pinned
+entries and names in the bin's optional `SHA256SUMS` file are reported as
+pinned even when missing or drifted; both hashes remain available in JSON.
+Use `--pins <file>` for a different SHA256SUMS-format pin file. A missing pin
+file is treated as empty; unreadable or malformed files fail the command.
+Ops-only manifest entries without a source are excluded. Pins held elsewhere,
+including embedded pins in host wrappers, are not discovered automatically;
+Security must check those before installation.

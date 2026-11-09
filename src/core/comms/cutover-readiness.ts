@@ -5,7 +5,7 @@
  * the email/iMessage cutover are ready?" from local evidence alone. This
  * module folds the two established readers — diagnoseEmailDrop and
  * checkIMessagePath — into one versioned per-capability report, and marks the
- * capabilities no local reader can evidence (Gmail inbox triage, LinkedIn)
+ * capabilities no local reader can evidence (LinkedIn)
  * explicitly unverified. Saved config is never proof of delivery, so overall
  * cutover stays incomplete while any capability is not ready and this report
  * can never claim Commsbot is retirable.
@@ -18,6 +18,8 @@
  */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { readGmailTriageLatest } from './gmail-triage-latest.js';
+import { readGmailArchivePlanLatest } from './gmail-archive-plan-latest.js';
 import { diagnoseEmailDrop, type EmailDiagnosis } from './email-diagnosis.js';
 import { checkIMessagePath, type IMessagePathDeps } from './imessage-path-check.js';
 
@@ -65,6 +67,9 @@ export interface CommsCutoverReadinessDeps {
   diagnoseEmail?: (runsDir: string) => Promise<EmailDiagnosis>;
   /** iMessage path reader; default checkIMessagePath (test seam). */
   checkIMessage?: (deps: IMessagePathDeps) => IMessagePathReport;
+  readGmailTriage?: typeof readGmailTriageLatest;
+  readGmailPlans?: typeof readGmailArchivePlanLatest;
+  now?: () => number;
   /** Extra deps forwarded to the iMessage path reader (test seam). */
   imessage?: IMessagePathDeps;
 }
@@ -151,6 +156,23 @@ function teammate(finding: Finding | undefined, readerDown: boolean): CutoverCap
     : { state: 'unverified', reason: imsgReason(finding), nextStep: NEXT_IMSG_DOCTOR };
 }
 
+function gmailInboxTriage(
+  triage: ReturnType<typeof readGmailTriageLatest>, plans: ReturnType<typeof readGmailArchivePlanLatest>, nowMs: number,
+): CutoverCapability {
+  const entries = plans?.plans ?? [];
+  if (!triage && entries.length === 0)
+    return { state: 'unverified', reason: 'gmail-triage-evidence-missing', nextStep: 'phm fleet gmail-triage' };
+  if (entries.some(p => p.unread > p.target))
+    return { state: 'blocked', reason: 'gmail-inbox-over-target', nextStep: 'phm fleet gmail-archive-plan' };
+  const times = [...(triage ? [triage.at] : []), ...entries.map(p => p.at)].map(at => Date.parse(at));
+  const newest = Math.max(...times);
+  if (!Number.isFinite(newest) || newest > nowMs || nowMs - newest > 24 * 60 * 60 * 1000)
+    return { state: 'unverified', reason: 'gmail-triage-evidence-stale', nextStep: 'phm fleet gmail-triage' };
+  return entries.length > 0
+    ? { state: 'ready', reason: 'gmail-inboxes-within-target', nextStep: 'phm fleet gmail-archive-plan' }
+    : { state: 'unverified', reason: 'gmail-unread-not-evidenced', nextStep: 'phm fleet gmail-archive-plan' };
+}
+
 /**
  * Read-only comms cutover readiness for `ashlr fleet comms-readiness`.
  * Never throws; never sends, mutates config or touches Messages itself.
@@ -166,6 +188,14 @@ export async function buildCommsCutoverReadiness(deps: CommsCutoverReadinessDeps
     imessage = (deps.checkIMessage ?? checkIMessagePath)({ runsRoot: runsDir, ...deps.imessage });
   } catch { /* A reader failure degrades to 'unverified', never to 'ready'. */ }
 
+  let gmail: CutoverCapability;
+  try {
+    gmail = gmailInboxTriage((deps.readGmailTriage ?? readGmailTriageLatest)(runsDir),
+      (deps.readGmailPlans ?? readGmailArchivePlanLatest)(runsDir), (deps.now ?? Date.now)());
+  } catch {
+    gmail = { state: 'unverified', reason: 'gmail-triage-evidence-missing', nextStep: 'phm fleet gmail-triage' };
+  }
+
   const capabilities: CommsCutoverCapabilities = {
     emailPolling: emailPolling(email),
     emailOutbox: emailOutbox(email),
@@ -173,9 +203,7 @@ export async function buildCommsCutoverReadiness(deps: CommsCutoverReadinessDeps
     ownerImessageDelivery: ownerImessageDelivery(imessage),
     teammateImessageIntake: teammate(imessage?.collaboratorIntake, !imessage),
     teammateImessageDelivery: teammate(imessage?.collaboratorDelivery, !imessage),
-    // No local reader evidences these surfaces; absence of evidence is
-    // 'unverified', never inferred healthy.
-    gmailInboxTriage: { state: 'unverified', reason: 'no-local-evidence-for-gmail-triage', nextStep: NEXT_DIAGNOSE },
+    gmailInboxTriage: gmail,
     linkedin: { state: 'unverified', reason: 'no-local-evidence-for-linkedin', nextStep: NEXT_DIAGNOSE },
   };
   const blockers = (Object.keys(capabilities) as (keyof CommsCutoverCapabilities)[])
