@@ -258,6 +258,19 @@ draft first. Approve records the decision and does not send; an agent never
 treats an approved draft as send authority. Drafts live in
 `~/.ashlr-runs/drafts/drafts.jsonl` with mode 0600 and never hold credentials.
 
+## Comms agent
+
+`phm comms-agent status|run|drafts --json` runs the Comms role under the
+Leader. The router picks the lane; the role names none. Bulk and bot mail is
+archived, never deleted. A send needs an owner standing approval. See
+[COMMS-AGENT](docs/COMMS-AGENT.md):
+
+```sh
+phm comms-agent status --json
+phm comms-agent run --lanes claude,local --json
+phm comms-agent drafts --json
+```
+
 ## Docs Radar
 
 `phm radar list|run|diff --json` observes public docs and package metadata.
