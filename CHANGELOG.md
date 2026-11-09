@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.27 |
-| Latest dated changelog release (2026-11-09) | 3.30.27 |
+| Source package | 3.30.28 |
+| Latest dated changelog release (2026-11-09) | 3.30.28 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -16,7 +16,9 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
-## [3.30.28](https://github.com/ashlrai/phantom/compare/v3.30.27...v3.30.28) (2026-11-09)
+## [Unreleased]
+
+## [3.30.28] - 2026-11-09
 
 
 ### Fixes
@@ -64,8 +66,6 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 * **RQ-SWE5-SELF-TOOLS:** RQ-SWE5-SELF-TOOLS handoff ([#4156](https://github.com/ashlrai/phantom/issues/4156)) ([902cebf](https://github.com/ashlrai/phantom/commit/902cebffd90f7535d0dfb59c648c4180c1f3374b))
 * **RQ-SWE5-STIGMERGY:** BRIDGE_NOTES — RQ-SWE5-STIGMERGY ([#4160](https://github.com/ashlrai/phantom/issues/4160)) ([afcafe6](https://github.com/ashlrai/phantom/commit/afcafe6b85008eb62c112661b7f98c83aff43a6a))
 * **RQ-SWE5-VERIFY-METRIC:** BRIDGE_NOTES — RQ-SWE5-VERIFY-METRIC ([#4184](https://github.com/ashlrai/phantom/issues/4184)) ([50f0fc3](https://github.com/ashlrai/phantom/commit/50f0fc312f64d22c990e663bfc73a2c1817bdb90))
-
-## [Unreleased]
 
 ## [3.30.27] - 2026-11-09
 
