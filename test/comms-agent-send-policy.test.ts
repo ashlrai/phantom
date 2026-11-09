@@ -5,14 +5,17 @@
  */
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { COMMS_AGENT_ROLE } from '../src/core/comms-agent/role.js';
 import { COMMS_TRANSPORTS, decideSend, type CommsTransport, type SendAttempt } from '../src/core/comms-agent/policy.js';
 import { selectCommsLane } from '../src/core/comms-agent/route.js';
 import { envelopeExternal, executeSend, preservedIds, runCommsAgent } from '../src/core/comms-agent/run.js';
-import { appendSendLog, ownerApprovalsPath, privateOwnerFile, readInbox, readSendLog, writeInbox } from '../src/core/comms-agent/store.js';
+import { accountHome, appendSendLog, ownerApprovalsPath, privateOwnerFile, readApprovalsFile, readInbox, readOwnerApprovals, readSendLog, writeInbox } from '../src/core/comms-agent/store.js';
+import { readLocalSendPolicy } from '../src/core/agents/send-gate.js';
+import { isPaused } from '../src/core/comms/pause.js';
+import { userInfo } from 'node:os';
 import { triageInbox, type InboxMessage } from '../src/core/comms-agent/triage.js';
 
 const roots: string[] = [];
@@ -22,7 +25,6 @@ const temp = (): string => {
   return root;
 };
 afterEach(() => {
-  rmSync(ownerApprovalsPath(), { force: true });
   roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true }));
 });
 
@@ -178,11 +180,11 @@ describe('Comms role and triage', () => {
 });
 
 describe('owner approvals file', () => {
-  function writeOwnerFile(mode: number, body: unknown): void {
-    const file = ownerApprovalsPath();
-    mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  function writeOwnerFile(dir: string, mode: number, body: unknown): string {
+    const file = join(dir, 'standing-approvals.json');
     writeFileSync(file, JSON.stringify(body), { mode });
     chmodSync(file, mode);
+    return file;
   }
 
   it('ignores approvals passed by the caller and a file under --dir', async () => {
@@ -216,38 +218,54 @@ describe('owner approvals file', () => {
     })).rejects.toThrow('Approval overrides are refused.');
   });
 
-  it('sends only when the fixed file is mode 0600 and owned by this user', async () => {
-    const runsDir = temp();
-    const calls: string[] = [];
-    const deliver = async () => { calls.push('sent'); return { status: 'sent' as const, reason: 'accepted' }; };
-    writeOwnerFile(0o644, { approvals: [{ transport: 'email', recipient: 'ada@example.com' }] });
-    const loose = await executeSend(attempt('email'), { runsDir, ...quiet, approvalsSource: 'owner-file', deliver });
-    expect(loose.status).toBe('refused');
-    expect(loose.reason).toContain('private owner file');
-    expect(calls).toEqual([]);
-
-    writeOwnerFile(0o600, { approvals: [{ transport: 'email', recipient: 'ada@example.com' }] });
-    const trusted = await executeSend(attempt('email'), { runsDir, ...quiet, approvalsSource: 'owner-file', deliver });
-    expect(trusted.status).toBe('sent');
-    expect(calls).toEqual(['sent']);
+  it('trusts a 0600 owner file opened no-follow and refuses a looser mode', async () => {
+    const dir = temp();
+    const body = { approvals: [{ transport: 'email', recipient: 'ada@example.com' }] };
+    const loose = writeOwnerFile(dir, 0o644, body);
+    expect(await readApprovalsFile(loose)).toMatchObject({ accepted: false, reason: 'mode', approvals: [] });
+    const trusted = writeOwnerFile(dir, 0o600, body);
+    expect(await readApprovalsFile(trusted)).toMatchObject({
+      accepted: true,
+      reason: 'ok',
+      approvals: [{ transport: 'email', recipient: 'ada@example.com' }],
+    });
   });
 
   it('refuses a symlink approvals file without reading its target', async () => {
     const runsDir = temp();
     const target = join(runsDir, 'elsewhere.json');
     writeFileSync(target, JSON.stringify({ approvals: [{ transport: 'email', recipient: 'ada@example.com' }] }));
-    mkdirSync(dirname(ownerApprovalsPath()), { recursive: true, mode: 0o700 });
-    symlinkSync(target, ownerApprovalsPath());
-    const calls: string[] = [];
-    const result = await executeSend(attempt('email'), {
-      runsDir,
-      ...quiet,
-      approvalsSource: 'owner-file',
-      deliver: async () => { calls.push('sent'); return { status: 'sent', reason: 'no' }; },
-    });
-    expect(result.status).toBe('refused');
-    expect(calls).toEqual([]);
+    const link = join(runsDir, 'standing-approvals.json');
+    symlinkSync(target, link);
+    expect(await readApprovalsFile(link)).toMatchObject({ accepted: false, reason: 'symlink', approvals: [] });
     expect(readFileSync(target, 'utf8')).toContain('ada@example.com');
+  });
+
+  it('ignores HOME for approvals, team identities and the comms pause file', async () => {
+    const decoy = temp();
+    mkdirSync(join(decoy, '.ashlr', 'comms-agent'), { recursive: true, mode: 0o700 });
+    mkdirSync(join(decoy, '.ashlr', 'comms'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(decoy, '.ashlr', 'comms-agent', 'standing-approvals.json'), JSON.stringify({
+      approvals: [{ transport: 'email', recipient: 'home-ignored@example.com' }],
+    }), { mode: 0o600 });
+    chmodSync(join(decoy, '.ashlr', 'comms-agent', 'standing-approvals.json'), 0o600);
+    writeFileSync(join(decoy, '.ashlr', 'agent-network.toml'), '[team]\nidentities = [{ channel = "email", id = "home-ignored-id" }]\n', { mode: 0o600 });
+    const beforePause = isPaused();
+    writeFileSync(join(decoy, '.ashlr', 'comms', 'pause.json'), JSON.stringify({ paused: !beforePause }), { mode: 0o600 });
+    const previous = process.env.HOME;
+    process.env.HOME = decoy;
+    try {
+      expect(ownerApprovalsPath()).toBe(join(accountHome(), '.ashlr', 'comms-agent', 'standing-approvals.json'));
+      expect(accountHome()).toBe(userInfo().homedir);
+      expect(ownerApprovalsPath().startsWith(decoy)).toBe(false);
+      const loaded = await readOwnerApprovals();
+      expect(loaded.approvals.some(approval => approval.recipient === 'home-ignored@example.com')).toBe(false);
+      expect(readLocalSendPolicy().teamIdentities.some(identity => identity.id === 'home-ignored-id')).toBe(false);
+      expect(isPaused()).toBe(beforePause);
+    } finally {
+      if (previous === undefined) delete process.env.HOME;
+      else process.env.HOME = previous;
+    }
   });
 
   it('classifies trust from owner, mode and symlink', () => {
@@ -291,6 +309,31 @@ describe('delivery guards', () => {
     expect(paused.reason).toContain('paused');
     expect(pauseReads).toBeGreaterThanOrEqual(2);
     expect(calls).toEqual([]);
+  });
+
+  it('re-reads KILL immediately before the channel adapter delivers', async () => {
+    const runsDir = temp();
+    const calls: string[] = [];
+    let killReads = 0;
+    const result = await executeSend(attempt('email'), {
+      runsDir,
+      approvalsSource: 'injected',
+      approvals: [{ transport: 'email', recipient: 'ada@example.com' }],
+      paused: () => false,
+      teamIdentities: [],
+      kill: () => { killReads += 1; return killReads < 3 ? 'inactive' : 'active'; },
+      adapters: {
+        email: {
+          id: 'email',
+          ingest: async function* () {},
+          deliver: async () => { calls.push('sent'); return { status: 'sent', reason: 'no' }; },
+        },
+      },
+    });
+    expect(result.status).toBe('refused');
+    expect(result.reason).toContain('KILL');
+    expect(calls).toEqual([]);
+    expect(killReads).toBeGreaterThanOrEqual(3);
   });
 
   it('labels outside recipients external and team recipients internal', async () => {

@@ -1,5 +1,5 @@
 /** Fail-closed gates for local probes and outbound agent sends. Never delivers. */
-import { homedir } from 'node:os';
+import { userInfo } from 'node:os';
 import { join } from 'node:path';
 import { isPaused } from '../comms/pause.js';
 import { killSwitchOn } from '../sandbox/policy.js';
@@ -17,7 +17,7 @@ export function localWriteGate(): DeliverResult | null {
 }
 
 export function readLocalSendPolicy(): { teamIdentities: TeamIdentity[]; confirmedByMason: boolean } {
-  const directory = join(homedir(), '.ashlr');
+  const directory = join(userInfo().homedir, '.ashlr');
   const read = (name: string): string => {
     const result = readStableRegularFile(join(directory, name), {
       anchorPath: directory, maxFileBytes: 64 * 1024, remainingBytes: 64 * 1024,
