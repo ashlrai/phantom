@@ -1235,6 +1235,25 @@ class DiffMetricsTests(unittest.TestCase):
         rows = [json.loads(line) for line in (r / 'metrics/jobs.jsonl').read_text().splitlines()]
         return next(row for row in rows if row.get('event') == 'finish' and row.get('job') == job)
 
+    def test_claude_result_usage_is_recorded_once(self):
+        transcript = '\n'.join(json.dumps(row) for row in [
+            {'type': 'assistant', 'message': {'usage': {'input_tokens': 999}}},
+            {'type': 'result', 'usage': {'input_tokens': 10, 'output_tokens': 5,
+             'cache_read_input_tokens': 20, 'cache_creation_input_tokens': 3}},
+        ])
+        row = self.measure(lambda wt, git: None, lane='claude', log=transcript)
+        self.assertEqual([row[k] for k in ('tokens_in', 'tokens_out', 'tokens_cache_read', 'tokens_cache_write', 'tokens_total')],
+                         [33, 5, 20, 3, 38])
+
+    def test_claude_missing_and_invalid_usage_remains_unknown(self):
+        for transcript in ('plain output', json.dumps({'type': 'result', 'usage': {
+                'input_tokens': 0, 'output_tokens': 0, 'cache_read_input_tokens': -1}})):
+            row = self.measure(lambda wt, git: None, lane='claude', log=transcript)
+            self.assertIsNone(row['tokens_total'])
+            self.assertIsNone(row['tokens_in'])
+            self.assertIsNone(row['tokens_cache_read'])
+        self.assertEqual(row['tokens_out'], 0)
+
     def test_committed_job_diff_excludes_prior_repository_work(self):
         def scenario(wt, git):
             (wt / 'job-file').write_text('after\n')
