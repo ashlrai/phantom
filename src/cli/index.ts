@@ -2175,6 +2175,11 @@ async function main(): Promise<void> {
         process.exitCode = await (await import('./tune.js')).cmdTune(rest);
         break;
       }
+      case 'org': {
+        const { cmdOrg } = await import('./org.js');
+        process.exitCode = await cmdOrg(rest);
+        break;
+      }
       case 'team': {
         const { cmdTeam } = await import('./team.js');
         process.exitCode = await cmdTeam(rest);

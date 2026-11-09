@@ -1,0 +1,37 @@
+# Copy to ~/.ashlr/org.toml. Metadata only: ids, lanes, shares and reporting lines.
+# No tokens, mail or messages belong here; each member signs in to their own provider CLIs.
+version = 1
+leader = "mason-wyatt"
+
+[[members]]
+id = "mason-wyatt"
+name = "Mason Wyatt"
+role = "founder"
+machines = [{ id = "mason-mac" }]
+contributions = [
+  { lane = "claude", share = 100, pool = "claude-max" },
+  { lane = "codex-personal", share = 100, pool = "codex-personal" },
+]
+agents = [
+  { id = "leader", lane = "claude", machine = "mason-mac", roles = ["leader"] },
+  { id = "mason-claude-1", lane = "claude", machine = "mason-mac", roles = ["implementer", "reviewer"], reports_to = "leader" },
+  { id = "mason-claude-2", lane = "claude", machine = "mason-mac", roles = ["implementer", "reviewer"], reports_to = "leader" },
+  { id = "mason-codex-1", lane = "codex-personal", machine = "mason-mac", roles = ["implementer"], reports_to = "leader" },
+]
+
+[[members]]
+id = "evan-deloria"
+name = "Evan DeLoria"
+role = "cofounder"
+machines = [{ id = "evan-mac" }]
+contributions = [{ lane = "claude", share = 30 }]
+agents = [{ id = "evan-claude-1", lane = "claude", machine = "evan-mac", roles = ["implementer", "reviewer"], reports_to = "leader" }]
+
+[[members]]
+id = "mason-scofield"
+name = "Mason Scofield"
+nickname = "Sco"
+role = "cofounder"
+machines = [{ id = "sco-mac" }]
+contributions = [{ lane = "codex-personal", share = 30 }]
+agents = [{ id = "sco-codex-1", lane = "codex-personal", machine = "sco-mac", roles = ["implementer"], reports_to = "leader" }]
