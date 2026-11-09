@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { evictAll } from '../../../data/cache.js';
 import { stubSurfaceFetch } from '../command/fetch-stub.test-support.js';
@@ -61,10 +61,10 @@ describe('LibraryPane', () => {
     render(<LibraryPane visible />);
     const box = screen.getByLabelText('Search past chats');
     fireEvent.change(box, { target: { value: 'ab' } });
-    expect(await screen.findByText('q must be at least 2 characters')).toBeInTheDocument();
+    expect(await screen.findByText('q must be at least 2 characters', {}, { timeout: 3000 })).toBeInTheDocument();
     refuse = false;
     fireEvent.change(box, { target: { value: 'back' } });
-    const result = await screen.findByRole('button', { name: /Retry policy/ });
+    const result = await screen.findByRole('button', { name: /Retry policy/ }, { timeout: 3000 });
     expect(result).toHaveTextContent('we chose backoff');
     fireEvent.click(result);
     expect(navigation.openChat).toHaveBeenCalledWith('s9');

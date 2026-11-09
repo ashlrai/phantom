@@ -25,6 +25,7 @@ function errorSentence(err: unknown): string {
 }
 
 function MemoryCard({ project, visible }: { project: RecentProject; visible: boolean }) {
+  const [expanded, setExpanded] = useState(false);
   const def = useMemo(() => verseProjectMemoryQuery(project.path), [project.path]);
   const memory = useQuery(def, { enabled: visible });
   const summary = memory.data ? memorySummary(memory.data) : null;
@@ -44,6 +45,12 @@ function MemoryCard({ project, visible }: { project: RecentProject; visible: boo
           </ul>
           <span className={styles.meta}>{summary.lines} {summary.lines === 1 ? 'line' : 'lines'}</span>
           {summary.sanitized ? <CardNote>Some text was redacted.</CardNote> : null}
+          <div><button type="button" className={styles.button} aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+            {expanded ? 'Close memory preview' : 'Open memory preview'}
+          </button></div>
+          {expanded && memory.data ? <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }} aria-label={`${project.name} memory preview`}>
+            {memory.data.content.split(/\r?\n/).slice(0, 200).join('\n')}
+          </pre> : null}
         </>
       )}
     </Card>
