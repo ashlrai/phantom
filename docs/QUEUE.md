@@ -119,6 +119,49 @@ PR and block metadata. JSON export is the complete backup and restore format.
 `export --md` writes `queue.mirror.md` with a read-only notice and mode 0444 on
 POSIX. It never overwrites `router-queue.md`; the mirror is not an input channel.
 
+## Self-decomposition (spawn.v1)
+
+A worker that holds a CLAIMED or PR-OPEN job may propose bounded children
+through a `spawn.v1` document — agent self-decomposition without dispatch
+authority. The proposer names `parent` and `owner` (which must hold the
+parent's active claim) plus 1-8 `jobs` carrying `scope`, `acceptance`,
+optional `deps` (existing or sibling ids, never self), and optional `tier`
+and `priority` fields. Child ids are `RQ-*`; omitting `id` derives a
+deterministic content hash so replays dedup. Intake is atomic: any policy
+violation fails the whole proposal, while ids already present in the queue
+(any status) or in the `jobs.jsonl` merged ledger are skipped as duplicates.
+
+Children land as PROPOSED with `parent` and `depth` lineage recorded on the
+job and emitted as `parent=`/`depth=` fields on exported lines. The intake
+is fail-closed bounded: at most 8 children per parent ever, at most 4
+accepted proposals per parent per 24 h (a `spawn-proposals.jsonl` journal
+beside the snapshot; a corrupt journal refuses rather than unlocking the
+cap), and a decomposition depth cap of 2 — grandchildren cannot spawn
+further. There is no credential or lane escalation: children always inherit
+the parent's `pool` and `repo`, may only take an equal-or-lower tier
+(`fast < work < mid < frontier`) and equal-or-lower urgency (`P0`-`P9`, the
+digit must not beat the parent's), and must satisfy the standing pool-kind
+routing policy. Scope and acceptance are prompt data: bounded to 4 000 and
+2 000 characters, free of control characters, and refused outright when they
+carry secret-shaped material — the rejection never echoes the text.
+
+```sh
+phm queue spawn ./spawn.json --dir <queue-directory> --json
+cat spawn.json | phm queue spawn - --json
+phm queue serve --port 8471 --token-file ~/.ashlr-runs/queue/spawn-ingest.token --json
+```
+
+`phm queue serve` exposes the same planner as a small loopback-only ingest
+API (`POST /v1/spawn` on 127.0.0.1, `GET /v1/health` for liveness), gated by
+a bearer token kept in a mode-0600 file that is created on first run and
+never printed. The API is value-blind: request bodies are never logged and
+error bodies carry rejection codes only (`invalid-document`,
+`unknown-parent`, `parent-not-active`, `owner-mismatch`, `depth-cap`,
+`children-cap`, `rate-limited`, `tier-escalation`, `priority-escalation`,
+`pool-routing`, `unknown-dep`) — never submitted text. PROPOSED children are
+not claimable; promotion to READY is the operator act `phm queue promote <id>`,
+and no ready.tsv or dispatchd wiring is implied.
+
 ## Storage and failure behavior
 
 Every mutation and mirror export acquires `queue.v1.lock` with exclusive file
