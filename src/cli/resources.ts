@@ -166,6 +166,7 @@ function printResourcesHelp(): void {
   console.log(dim('  Phantom CLI (ashlr remains compatible)'));
   console.log('');
   console.log('  Usage: phm resources [--json] [--watch] [--ledger]');
+  console.log('         phm resources stale [--json]');
   console.log('         phm resources sample [--json]');
   console.log('         phm resources ledger [--json]');
   console.log('         phm resources usage [--json]');
@@ -184,6 +185,10 @@ function printResourcesHelp(): void {
 }
 
 export async function cmdResources(args: string[]): Promise<number> {
+  if (args[0] === 'stale') {
+    const { cmdResourceStale } = await import('./resource-stale.js');
+    return cmdResourceStale(args.slice(1));
+  }
   if (args[0] === 'sample') {
     if (args.length > 2 || args[1] !== undefined && !['--json', '--help', '-h'].includes(args[1])) {
       process.stderr.write('Usage: phm resources sample [--json]\n');
