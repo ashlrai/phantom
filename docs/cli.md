@@ -23,7 +23,7 @@ Topic summary and discovery hints.
     memory          Memory - shared genome (memory, recall, learn, …)
     knowledge       Knowledge - portfolio RAG + graph (graph, knowledge, ask, …)
     autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (metrics, enroll, …)
-    observability   Observability - cost, telemetry, audit (radar, observe, world, …)
+    observability   Observability - cost, telemetry, audit (radar, observe, context, …)
     integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, checkpoint, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
     web             Surfaces - TUI + web dashboard (top, tui, dash, …)
@@ -262,6 +262,9 @@ Every command, grouped by topic.
   Observability - cost, telemetry, audit
     radar list|run|diff [--json]                                                               Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.
     observe [--json]                                                                           Human observe snapshot: roster, sensor headroom, pull headlines, bottlenecks, and human steps. Unknown stays unknown. See docs/OBSERVE.md.
+    context --for-agent <lane> [--json]                                                        Compact under-4KB brief for one lane: claims, open pulls, bottlenecks, blind spots, and pacing. See docs/WORLD.md.
+    claim acquire <work-key> --lane <lane> [--json]                                            Claim a work key before starting. Refuses a live claim or open pull on that key and returns the holder.
+    claim release <work-key> --lane <lane> --reason open|merge|abandon [--json]                Release this lane claim when a pull opens, merges, or is abandoned.
     world [--json] [--refresh]                                                                 Cached ashlr.world-model/v1 for the scheduler and leaders. blindSpots lists each unknown field by path with a stable id. See docs/WORLD.md.
     world get <path> [--json]                                                                  Read one node from the cached world model. A missing path is unknown, not zero.
     chain verify [--json]                                                                      Synthetic in-memory chain checks. Does not verify live transports.

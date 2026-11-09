@@ -35,7 +35,7 @@ Approval cards record consent and do not collect credentials.
 
 - [Docs Radar](RADAR.md): Public source list, bounded unauthenticated reads, private snapshots and offline diffs. Commands: `phm radar list|run|diff --json`. Individual fetch failures are warnings; the last successful snapshot is retained.
 - [Human observe](OBSERVE.md): One `phm observe --json` snapshot for roster, sensor headroom, resource coordination, pull headlines, bottlenecks, and human steps. Unknown stays unknown.
-- [World model](WORLD.md): `phm world --json` is the cached `ashlr.world-model/v1` snapshot the scheduler reads. `phm world get <path> --json` is the tick read. Unknown is never zero.
+- [World model](WORLD.md): `phm world --json` is the cached `ashlr.world-model/v1` snapshot the scheduler reads. `phm world get <path> --json` is the tick read. Unknown is never zero. `phm context --for-agent <lane> --json` is the under-4KB brief. `phm claim acquire <work-key> --lane <lane> --json` refuses a live claim or open pull on that key.
 
 - [CLI reference](CLI-REFERENCE.md): Generated from `phm --help` and `phm help --all`. The checkout is the authority.
 - [CLI docs](cli.md): Regenerated from `phm --help` by `scripts/generate-cli-docs.mjs`. Do not edit by hand.

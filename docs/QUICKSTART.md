@@ -6,7 +6,7 @@
 Latest dated changelog release (verify promoted package availability before installing):
 
 ```sh
-npm install -g @ashlr/phantom@3.30.26
+npm install -g @ashlr/phantom@3.30.27
 phm --version
 ```
 <!-- fresh:end -->
