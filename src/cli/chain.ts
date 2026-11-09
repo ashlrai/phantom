@@ -1,7 +1,7 @@
 import { verifyChain } from '../core/chain-verify.js';
 
 export async function cmdChain(args: string[]): Promise<number> {
-  if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
+  if (args.includes('--help') || args.includes('-h')) {
     console.log('Usage: phm chain verify [--json]\nSynthetic, in-memory checks only; does not verify live transports.');
     return 0;
   }
