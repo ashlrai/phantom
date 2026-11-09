@@ -79,7 +79,7 @@ it('keeps every report on the original OID with one shared log scan while origin
     // One ref resolution and one shared bounded log scan, both on the immutable OID.
     expect(calls.filter(call => call[0] === 'rev-parse')).toEqual([['rev-parse', '--verify', 'origin/master^{commit}']]);
     expect(calls.filter(call => call[0] === 'log')).toEqual([
-      ['log', '-n1000', '--format=%H%x00%cI%x00%s%x00', repo.oid, '--']]);
+      ['log', '-n1000', '--first-parent', '--format=%H%x00%cI%x00%s%x00', repo.oid, '--']]);
     // Read-only verbs only; never a fetch or mutation.
     expect(new Set(calls.map(call => call[0]))).toEqual(new Set(['rev-parse', 'log', 'diff-tree', 'ls-tree']));
   } finally { rmSync(repo.dir, { recursive: true, force: true }); }

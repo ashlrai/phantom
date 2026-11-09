@@ -100,7 +100,8 @@ vi.mock('../src/core/inbox/store.js', () => ({
   createProposal: vi.fn((data: unknown) => ({ id: 'revert-prop-1', status: 'pending', ...((data as object) ?? {}) })),
 }));
 
-vi.mock('../src/core/goals/store.js', () => ({
+vi.mock('../src/core/goals/store.js', async (importOriginal) => ({
+  DEFAULT_STALE_GOAL_MILESTONE_MS: (await importOriginal<typeof import('../src/core/goals/store.js')>()).DEFAULT_STALE_GOAL_MILESTONE_MS,
   listGoals: vi.fn().mockReturnValue([]),
   createGoal: vi.fn(),
   loadGoal: vi.fn().mockReturnValue(null),

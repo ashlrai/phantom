@@ -13,7 +13,9 @@ import { claudeBrokerCommand, claudeBrokerNativeEnvironment, startClaudeNativeBr
 import { claudeBrokerToolExecutor } from './claude-broker-executor.js';
 import { assertHostNativeAccountContext } from '../integrations/locus-job-env.js';
 
-const NATIVE_AUTH_HELPERS = ['/usr/bin/security','/bin/sh'] as const;
+// Allow the fixed Apple bash target used by the macOS sh trampoline;
+// other selected variants remain denied by this explicit helper closure.
+const NATIVE_AUTH_HELPERS = ['/usr/bin/security','/bin/sh','/bin/bash'] as const;
 // The witnessed profile launcher reads the current boot/APFS identity through
 // these fixed system tools before it execs Claude inside the outer jail.
 const NATIVE_IDENTITY_HELPERS = ['/usr/sbin/sysctl','/bin/df','/usr/sbin/diskutil','/usr/bin/plutil'] as const;

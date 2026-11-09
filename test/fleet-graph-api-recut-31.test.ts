@@ -168,9 +168,10 @@ async function boot(opts: Partial<WebServerOptions> = {}) {
 // ---------------------------------------------------------------------------
 
 describe('the fleet-graph mount on the real verse-api router', () => {
-  it('is the last entry of the real mount table and resolves to the production handler', async () => {
+  it('is mounted exactly once in the real mount table and resolves to the production handler', async () => {
+    // Later fleet modules (merge-pace, landed-closes) mount after it; position is not part of the contract.
     const modules = mountedApiModules();
-    expect(modules[modules.length - 1]?.id).toBe('fleet-graph');
+    expect(modules.filter((m) => m.id === 'fleet-graph')).toHaveLength(1);
     const entry = modules.find((m) => m.id === 'fleet-graph');
     expect(entry).toBeDefined();
     expect(await entry!.load()).toBe(handleFleetGraphApi);

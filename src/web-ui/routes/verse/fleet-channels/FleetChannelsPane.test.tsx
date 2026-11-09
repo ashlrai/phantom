@@ -19,9 +19,9 @@ afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 it('shows the channel board and opens the shared inbox', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json(fixture())));
   render(<FleetChannelsPane {...props} />);
-  expect(await screen.findByText('3 of 7 channels heard from · 3 messages in 24 h')).toBeInTheDocument();
+  expect(await screen.findByText('3 of 8 channels heard from · 3 messages in 24 h')).toBeInTheDocument();
   const rows = within(screen.getByRole('list', { name: 'Channels' })).getAllByRole('listitem');
-  expect(rows).toHaveLength(7);
+  expect(rows).toHaveLength(8);
   expect(rows[0]).toHaveTextContent('Telegram last 1m ago');
   expect(rows[0]).toHaveTextContent('1 / 1 h · 1 / 24 h');
   expect(within(rows[0]).getByText('fake telegram message')).toBeInTheDocument();
@@ -29,7 +29,7 @@ it('shows the channel board and opens the shared inbox', async () => {
   expect(rows[1]).toHaveTextContent('Phantom page');
   expect(rows[2]).toHaveTextContent('Desktop app');
   expect(rows[2]).toHaveTextContent('0 / 1 h · 1 / 24 h');
-  expect(screen.getByText('Silent: Terminal, Email, Fleet-say, Mobile')).toBeInTheDocument();
+  expect(screen.getByText('Silent: Terminal, Email, iMessage, Fleet-say, Mobile')).toBeInTheDocument();
   fireEvent.click(within(rows[0]).getByRole('button', { name: 'Open inbox' }));
   expect(openPane).toHaveBeenCalledWith('fleet-inbox');
 });

@@ -61,7 +61,7 @@
  * Every dependency is injectable (`LiveHooksDeps`) so the whole tick can be
  * exercised in a HOME-isolated test with no seat, no GitHub and no model.
  */
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { lstat, readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { buildSchedulingView, readWorkHistory, taskForecast } from '../routing/scheduling.js';
@@ -72,7 +72,9 @@ import type { ResetSpendingStatus } from '../routing/reset-spending-types.js';
 import { hasResetDeadline, opportunityPriority } from '../routing/reset-pressure.js';
 import type { ResourceChoiceCandidate, AccountSchedulingView } from '../routing/scheduling-types.js';
 import type { WorkHistorySample } from '../routing/work-estimates.js';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
+import { fleetPaceAdvice } from '../usage/sensor-pace.js';
+import { parseUsageSensorSnapshot, presentUsageSensors } from '../usage/sensor-reading.js';
 
 import type { AshlrConfig, EngineId, EngineTier, WorkItem } from '../types.js';
 import type { DaemonActivationCapability } from '../daemon/activation-permit.js';
@@ -703,6 +705,25 @@ async function insightsDefault(): Promise<ReasoningInsight[]> {
   const { computeReasoningDigest } = await import('../reasoning/reasoning-api.js');
   const digest = await computeReasoningDigest(14);
   return digest.insights;
+}
+
+/** Included-usage pace for this tick. A missing snapshot or a missing burn stays unknown. */
+async function loadSchedulerPace(nowMs: number): Promise<{ nowMs: number; killed: boolean; sensorPace: ReturnType<typeof fleetPaceAdvice> }> {
+  let killed = false;
+  try {
+    const mark = await lstat(join(homedir(), '.ashlr', 'KILL'));
+    killed = mark.isFile() && !mark.isSymbolicLink();
+  } catch { killed = false; }
+  const root = process.env['ASHLR_HOME'] && isAbsolute(process.env['ASHLR_HOME']) ? process.env['ASHLR_HOME'] : join(homedir(), '.ashlr');
+  let readings: unknown[] = [];
+  try {
+    const path = join(root, 'usage-sensors.json');
+    const info = await lstat(path);
+    if (info.isFile() && !info.isSymbolicLink() && info.size <= 1024 * 1024) {
+      readings = parseUsageSensorSnapshot(JSON.parse(await readFile(path, 'utf8')));
+    }
+  } catch { readings = []; }
+  return { nowMs, killed, sensorPace: fleetPaceAdvice(presentUsageSensors(readings, nowMs)) };
 }
 
 export function defaultLiveHooksDeps(): LiveHooksDeps {
@@ -1394,6 +1415,7 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
                 policy: currentPolicy,
                 directives: clampLeaderDirectives(deps.directives(), currentPolicy),
                 presence: await deps.presence(at),
+                ...(await loadSchedulerPace(at)),
                 localServingSlots: reading.reachable === true ? reading.slots : null,
                 engineUnavailable: resolveLaneEngines({
                   allowedBackends: cfg.foundry?.allowedBackends ?? ['builtin'],
@@ -1802,6 +1824,7 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
         policy,
         directives,
         presence,
+        ...(await loadSchedulerPace(nowMs)),
         localServingSlots: local.slots,
         engineUnavailable: laneEngines.unavailable,
         leaderPreferences,

@@ -16,14 +16,15 @@
  * browser cannot accumulate an unbounded map. Every access is wrapped: a
  * private window with storage blocked still runs the app.
  *
- * Split from composer-state.ts (which re-exports all of it) so the modules on
- * the chat first-paint path that only FORGET or CLEAR this memory (the Chat
- * section on delete, auth-store on logout) do not pull the cost estimator and
- * context-math into the chat first-paint critical JS.
+ * Split from composer-state.ts (which re-exports all of it) so the cost
+ * estimator and context-math stay out of the chat first-paint critical JS.
+ * Forgetting and clearing this memory live in composer-forget.ts and
+ * composer-wipe.ts, which the Chat section (on delete) and auth-store (on
+ * logout) use without loading this file.
  */
 
-const DRAFT_KEY = 'ashlr.verse.drafts.v1';
-const SENT_KEY = 'ashlr.verse.sent.v1';
+import { forgetComposerMemory, onComposerForget } from './composer-forget.js';
+import { DRAFT_KEY, SENT_KEY, onComposerWipe, wipeComposerMemory } from './composer-wipe.js';
 
 /** Sessions remembered, newest last. */
 const SESSION_LIMIT = 40;
@@ -87,6 +88,8 @@ const asHistory = (value: unknown): string[] | null => {
  * later write that lands removes it, so storage is the answer again.
  */
 const unsavedDrafts = new Map<string, string>();
+onComposerWipe(() => unsavedDrafts.clear());
+onComposerForget((sessionId) => unsavedDrafts.delete(sessionId));
 
 /** The unsent draft for this chat, or `''`. */
 export function loadDraft(sessionId: string | null | undefined): string {
@@ -129,28 +132,6 @@ export function pushHistory(sessionId: string | null | undefined, text: string):
 }
 
 /**
- * Forget everything this chat remembered — its unsent draft and its sent
- * messages.
- *
- * Deleting a chat removes its transcript from disk, but the verbatim prompts
- * stayed in browser storage under the dead session id until forty newer
- * sessions rotated them out.
- */
-export function forgetComposerMemory(sessionId: string | null | undefined): void {
-  if (!sessionId) return;
-  unsavedDrafts.delete(sessionId);
-  for (const [key, parse] of [
-    [DRAFT_KEY, asText],
-    [SENT_KEY, asHistory],
-  ] as const) {
-    const map: Record<string, unknown> = readMap(key, parse as (v: unknown) => unknown);
-    if (!(sessionId in map)) continue;
-    delete map[sessionId];
-    writeMap(key, map);
-  }
-}
-
-/**
  * Drop every remembered draft and sent message, for every session.
  *
  * Called on disconnect/logout alongside the query cache's `evictAll`, whose
@@ -158,16 +139,8 @@ export function forgetComposerMemory(sessionId: string | null | undefined): void
  * paint. Prompt text is precisely the content that wipe exists for, and it is
  * the one thing that used to survive it.
  */
-export function clearComposerMemory(): void {
-  unsavedDrafts.clear();
-  for (const key of [DRAFT_KEY, SENT_KEY]) {
-    try {
-      localStorage.removeItem(key);
-    } catch {
-      /* storage unavailable — nothing to clear */
-    }
-  }
-}
+export const clearComposerMemory: () => void = wipeComposerMemory;
+export { forgetComposerMemory };
 
 export const VERSE_DRAFT_STORAGE_KEY = DRAFT_KEY;
 export const VERSE_SENT_STORAGE_KEY = SENT_KEY;

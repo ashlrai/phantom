@@ -1,6 +1,6 @@
 /**
  * routes/control/fleet/LanesPanel.tsx — RQ-PHANTOM-ENG-CONSOLE: the
- * per-lane engineering console (GET /api/fleet/lanes → fleet.lanes.v1).
+ * per-lane engineering console (GET /api/fleet/lanes · fleet.lanes.v1).
  *
  * One row per router lane: credit left (budget ledger / usage journal),
  * ready-queue depth and live jobs (ready.tsv / queue.v1.json), and merges
@@ -9,6 +9,7 @@
  * directory renders honest "—" cells plus the source line, never invented
  * zeros.
  */
+import { useState } from 'react';
 import { fleetLanesQuery } from '../../../data/queries.js';
 import { useQuery } from '../../../data/hooks.js';
 import type { FleetLaneSnapshot, FleetLaneView } from '../../../data/api-types.js';
@@ -74,9 +75,11 @@ function LaneRow({ lane }: { lane: FleetLaneView }) {
 }
 
 export function LanesPanel() {
+  const [selectedLane, setSelectedLane] = useState<string | null>(null);
   const query = useQuery(fleetLanesQuery);
   const snapshot = query.data;
   const lanes = snapshot?.lanes ?? [];
+  const selected = lanes.find((lane) => lane.lane === selectedLane);
 
   return (
     <section className={styles.section} aria-label="Engineering lanes">
@@ -89,6 +92,30 @@ export function LanesPanel() {
         </p>
       ) : snapshot ? (
         <>
+          <p className={styles.sources}>
+            Snapshot: {snapshot.generatedAt} {query.status === 'refreshing' ? '· refreshing' : query.status === 'error' ? '· refresh failed; showing last snapshot' : ''}
+          </p>
+          {lanes.length > 0 ? (
+            <div className={styles.map} aria-label="Lane activity map">
+              {lanes.map((lane) => (
+                <button key={lane.lane} type="button" className={styles.mapLane}
+                  aria-pressed={selectedLane === lane.lane}
+                  onClick={() => setSelectedLane(selectedLane === lane.lane ? null : lane.lane)}>
+                  <strong>{lane.lane}</strong>
+                  <span>Queue {cell(lane.queueDepth)} · Live {cell(lane.liveJobs)} · Merges/h {cell(lane.mergesPerHour)}</span>
+                  <span>Credit: {lane.credit.state === 'observed' || lane.credit.state === 'reset-pending' ? lane.credit.label : 'unknown'}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {selected ? (
+            <div className={styles.detail} role="region" aria-label={`${selected.lane} lane detail`}>
+              <strong>{selected.lane}</strong>
+              <p>Credit source: {selected.credit.source ?? 'unknown'} · Observed: {selected.credit.observedAt ?? 'unknown'}</p>
+              <p>Burn: {formatBurn(selected)} · Reset: {formatReset(selected.credit.resetAt)} · Projected exhaustion: {selected.credit.projectedExhaustionAt ?? 'unknown'}</p>
+              <p>Merge rate covers the trailing {snapshot.mergeWindowMinutes} minutes. Counts are observations, not necessarily transitions between stages.</p>
+            </div>
+          ) : null}
           <div className={styles.tableWrap}>
             <table className={styles.table}>
               <caption className={styles.caption}>

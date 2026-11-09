@@ -19,6 +19,8 @@ export interface BudgetBucketView {
   state: 'unknown' | 'observed' | 'reset-pending';
   burnPerHour: { last2: number | null; last12h: number | null };
   projectedExhaustion: string | null;
+  /** Observed delta within [reset - 1h, reset), not an extrapolated full-hour total. */
+  usageInLastHourBeforeReset: { used: number; from: string; to: string } | null;
 }
 export interface PoolBudgetView {
   mode: 'metered' | 'held' | 'capacity-only';
@@ -63,7 +65,7 @@ export function validateBudgetReading(value: unknown): BudgetReading {
 }
 function bucketView(readings: BudgetReading[], now: number, capacity: boolean): BudgetBucketView {
   const unknown: BudgetBucketView = { remaining: null, resetAt: null, timestamp: null, source: null,
-    state: 'unknown', burnPerHour: { last2: null, last12h: null }, projectedExhaustion: null };
+    state: 'unknown', burnPerHour: { last2: null, last12h: null }, projectedExhaustion: null, usageInLastHourBeforeReset: null };
   // A manual reading wins until its explicit reset, or until another manual reading.
   const sorted = readings.filter(r => Date.parse(r.timestamp) <= now).sort((a, b) =>
     a.timestamp.localeCompare(b.timestamp) || Number(a.source === 'manual') - Number(b.source === 'manual') ||
@@ -82,7 +84,7 @@ function bucketView(readings: BudgetReading[], now: number, capacity: boolean): 
   const view: BudgetBucketView = { ...unknown, remaining: expired ? null : latest.remaining,
     resetAt: latest.resetAt, timestamp: latest.timestamp, source: latest.source,
     state: expired ? 'reset-pending' : 'observed' };
-  if (expired || capacity) return view;
+  if (capacity) return view;
   // Never interpret a refill or a window boundary as negative burn or bridge it.
   let start = effective.length - 1;
   while (start > 0) {
@@ -92,6 +94,12 @@ function bucketView(readings: BudgetReading[], now: number, capacity: boolean): 
     start--;
   }
   const epoch = effective.slice(start);
+  const finalHour = latest.resetAt === null ? [] : epoch.filter(r => Date.parse(r.timestamp) >= Date.parse(latest.resetAt!) - HOUR);
+  const first = finalHour[0];
+  if (first && first.timestamp !== latest.timestamp) {
+    view.usageInLastHourBeforeReset = { used: first.remaining - latest.remaining, from: first.timestamp, to: latest.timestamp };
+  }
+  if (expired) return view;
   const rate = (first: BudgetReading | undefined): number | null => {
     if (!first || first.timestamp === latest.timestamp) return null;
     return (first.remaining - latest.remaining) / ((Date.parse(latest.timestamp) - Date.parse(first.timestamp)) / HOUR);

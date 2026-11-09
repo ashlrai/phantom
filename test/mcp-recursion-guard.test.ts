@@ -44,7 +44,7 @@ describe('MCP recursion guard', () => {
     ['bun', ['/project/bin/phm', 'mcp']],
     ['node', [fileURLToPath(new URL('../dist/cli/index.js', import.meta.url)), 'mcp']],
     ['tsx', [fileURLToPath(new URL('../src/cli/index.ts', import.meta.url)), 'mcp']],
-  ] as Array<[string, string[]]>)('refuses direct probes of %s before creating a transport', async (command, args) => {
+  ] as Array<[string, string[]]>)('refuses direct probes of %s before creating a transport (%#)', async (command, args) => {
     const configured = spec({ command, args });
     expect(isSelfGateway(configured)).toBe(true);
     expect(await probeServer(configured)).toMatchObject({ ok: false, toolCount: 0, error: expect.stringContaining('recurse') });

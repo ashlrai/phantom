@@ -18,8 +18,8 @@ const detail = { schema: 'fleet.job.v1', job: 'job-one', state: 'running', lane:
   notes: { hasNotes: true }, log: { source: 'live', tail: ['Scrubbed line one', 'Scrubbed line two'], truncated: true },
   sources: { launch: 'healthy', base: 'healthy', meta: 'healthy', publish: 'healthy', log: 'healthy' } };
 function stub(status = 200, source = 'healthy') {
-  const fetcher = vi.fn(async (url: RequestInfo | URL) => String(url).startsWith('/api/fleet/job')
-    ? Response.json(detail, { status }) : Response.json({ ...snapshot, sources: { workers: source } }));
+  const fetcher = vi.fn(async (url: RequestInfo | URL) => String(url).startsWith('/api/fleet/job?')
+    ? Response.json(detail, { status }) : String(url).startsWith('/api/fleet/job/') ? new Response(null, { status: 404 }) : Response.json({ ...snapshot, sources: { workers: source } }));
   vi.stubGlobal('fetch', fetcher);
   return fetcher;
 }
@@ -35,7 +35,7 @@ it('renders workers and safe PR links, opens read-only facts and log tail', asyn
   fireEvent.click(screen.getByRole('button', { name: 'Job job-one' }));
   const sheet = await screen.findByRole('dialog', { name: 'job-one' });
   await within(sheet).findByText('running');
-  for (const text of ['example-model', 'abc1234', 'example-branch', 'Auto-merge off', 'Notes present: yes']) expect(within(sheet).getByText(text)).toBeInTheDocument();
+  for (const text of ['example-model', 'abc1234', 'example-branch', 'Auto-merge off', 'Notes not in this build']) expect(within(sheet).getByText(text)).toBeInTheDocument();
   expect(within(sheet).getByText(/Scrubbed line one/)).toHaveTextContent('Scrubbed line two');
   expect(within(sheet).getByText('Log tail (live, 2 lines, truncated)')).toBeInTheDocument();
   expect(fetcher.mock.calls.some(([url]) => url === '/api/fleet/job?id=job-one')).toBe(true);
@@ -45,14 +45,14 @@ it('polls only while visible and stops detail polling on close', async () => {
   await act(async () => {});
   fireEvent.click(screen.getByRole('button', { name: 'Job job-one' })); await act(async () => {});
   await act(() => vi.advanceTimersByTimeAsync(5_000));
-  expect(fetcher.mock.calls.filter(([url]) => String(url).startsWith('/api/fleet/job'))).toHaveLength(2);
+  expect(fetcher.mock.calls.filter(([url]) => String(url).startsWith('/api/fleet/job?'))).toHaveLength(2);
   view.rerender(card(false)); await act(() => vi.advanceTimersByTimeAsync(10_000));
-  expect(fetcher).toHaveBeenCalledTimes(4);
+  expect(fetcher.mock.calls.filter(([url]) => url === '/api/verse/fleet/runs')).toHaveLength(2);
   view.rerender(card()); await act(async () => {});
   fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-  const count = fetcher.mock.calls.filter(([url]) => String(url).startsWith('/api/fleet/job')).length;
+  const count = fetcher.mock.calls.filter(([url]) => String(url).startsWith('/api/fleet/job?')).length;
   await act(() => vi.advanceTimersByTimeAsync(5_000));
-  expect(fetcher.mock.calls.filter(([url]) => String(url).startsWith('/api/fleet/job'))).toHaveLength(count);
+  expect(fetcher.mock.calls.filter(([url]) => String(url).startsWith('/api/fleet/job?'))).toHaveLength(count);
 });
 it('reports missing workers without a table', async () => {
   stub(200, 'missing'); render(card());
@@ -70,5 +70,5 @@ it('memoizes missing detail across rerenders, polls and reopening', async () => 
   view.rerender(card()); await act(() => vi.advanceTimersByTimeAsync(10_000));
   fireEvent.click(screen.getByRole('button', { name: 'Close' }));
   fireEvent.click(screen.getByRole('button', { name: 'Job job-two' })); await act(async () => {});
-  expect(fetcher.mock.calls.filter(([url]) => String(url).startsWith('/api/fleet/job'))).toHaveLength(1);
+  expect(fetcher.mock.calls.filter(([url]) => String(url).startsWith('/api/fleet/job?'))).toHaveLength(1);
 });

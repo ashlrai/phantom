@@ -29,7 +29,7 @@ function status(at: string | null, weekly: number | null): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'status.json'), JSON.stringify({ last_tick: at,
     lanes: { 'codex-personal': { running: 1, target: 1 } },
-    budget: { 'codex-personal': { weekly_used_pct: weekly, source: 'status' } },
+    budget: { 'codex-personal': { weekly_used_pct: weekly, source: 'status', observed_at: at } },
   }));
 }
 

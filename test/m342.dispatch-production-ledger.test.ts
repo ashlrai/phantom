@@ -3088,7 +3088,7 @@ describe('M342 dispatch production ledger', () => {
       trajectoryId: 'run:attempt-generation-history-capacity',
     });
     expect(recordDispatchProduction(fresh)).toEqual({ attempted: 1, recorded: 1, failed: 0 });
-  }, 15_000);
+  });
 
   it('sustains failure-only receipt churn at the shared 2,048-artifact capacity', () => {
     const receiptDir = join(dispatchProductionDir(), 'repair-attempt-proofs');
@@ -3368,7 +3368,6 @@ describe('M342 dispatch production ledger', () => {
         { anchorPath: dispatchProductionDir() },
       ).ok).toBe(true);
     },
-    15_000,
   );
 
   it('rejects a deleted retired generation after restoring the pre-retention protocol', () => {

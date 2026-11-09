@@ -119,7 +119,7 @@ describe('graph upgrade audit', () => {
 
   it.each([[], ['--node'], ['--node', ''], ['--node', '--help'], ['--node', ' x'],
     ['--node', 'x\ny'], ['--node', 'x'.repeat(161)], ['--node', 'x', '--node', 'y']])(
-    'rejects invalid arguments before reading: %j', async (...args) => {
+    'rejects invalid arguments before reading: %j (%#)', async (...args) => {
       const load = vi.fn(async () => graph);
       expect(await audit(args, load)).toMatchObject({ exit: 2, result: { error: { code: 'GRAPH_USAGE' } } });
       expect(load).not.toHaveBeenCalled();

@@ -204,7 +204,7 @@ it.each([
   ['--after-record'],
   ['--after-record', '--apply'],
   ['--after-record', ''],
-] as const)('rejects bad --after-record usage %j', async (...extra) => {
+] as const)('rejects bad --after-record usage %j (%#)', async (...extra) => {
   expect(spool(reply('reply-target'))).toBe('saved');
   expect(await cmdFleetContextDrain(drainArgs(...extra), io(), { root: busRoot })).toBe(2);
   expect(out).toBe('');

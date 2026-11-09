@@ -97,10 +97,10 @@ describe('fleet self-tick read route', () => {
     expect((await call(api, '/api/verse/fleet/memory')).handled).toBe(false);
   });
 
-  it('is mounted next to fleet-memory and answers through the default loader', async () => {
+  it('is mounted exactly once and answers through the default loader', async () => {
     setMountedApiModulesForTest(null);
     const ids = mountedApiModules().map((m) => m.id);
-    expect(ids.indexOf('fleet-self-tick')).toBe(ids.indexOf('fleet-memory') + 1);
+    expect(ids.filter((id) => id === 'fleet-self-tick')).toHaveLength(1);
     const previous = process.env.ASHLR_RUNS_DIR;
     process.env.ASHLR_RUNS_DIR = runsDir;
     try {

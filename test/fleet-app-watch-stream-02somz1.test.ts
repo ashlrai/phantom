@@ -34,7 +34,7 @@ describe('app-watch JSONL', () => {
     { code: 0, stdout: 'fake-marker malformed' },
     { code: 0, stdout: JSON.stringify({ app: 'Claude', outcome: 'running', running: true, marker: 'fake-marker' }) },
     { code: 1, stdout: JSON.stringify({ app: 'Cursor', outcome: 'running', running: true, marker: 'fake-marker' }) },
-  ])('normalizes invalid child output', async result => {
+  ])('normalizes invalid child output (%#)', async result => {
     const runner = vi.fn<AppsEnsureChildRunner>().mockResolvedValue(result);
     expect(await cmdFleetAppWatch(['Cursor', '--duration-ms', '100', '--jsonl'], { runChild: runner, now: () => 0 })).toBe(1);
     expect(events()).toEqual([

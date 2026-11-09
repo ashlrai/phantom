@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { test } from 'node:test';
+import { test } from 'vitest';
 import { parseInbox } from '../src/core/fleet/mason-inbox.js';
 import { orderKey } from '../src/core/fleet/order-trace.js';
 

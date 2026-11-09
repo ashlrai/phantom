@@ -599,7 +599,7 @@ focus.
 | Terminal | ⌃` (⌃⇧` new tab) | Your shells in the chat's folders, with command blocks, and a read-only Agent tab |
 | Browser | ⇧⌘B | A browser you and the chat's agents share |
 | Changes | ⇧⌘D | Every turn's checkpoint, a diff review, Accept / Reject, Undo and Redo |
-| Files | ⇧⌘O | The chat's folders, and the files it read or changed (a simple list for now) |
+| Files | ⇧⌘O | Browse the chat's folders and preview text files (bounded, behind the mutation token), plus the files it read or changed |
 | Sources | ⇧⌘S | Everything the chat's answers drew on, de-duplicated across the chat |
 | Reasoning | ⇧⌘Y | Every turn's reasoning in one scroll, with what the turn did |
 | Tasks, Context | — | Running tools and subagents; this chat's memory, roots and handoff |
@@ -1275,9 +1275,38 @@ ashlr automations list [--json]
 ashlr automations templates
 ashlr automations add --template <id> [--name "…"] [--repos o/n,o/n|*] [--lane <lane>] [--enable]
 ashlr automations add --file <automation.json> [--enable]
+ashlr automations import --from <routines.json> [--dry-run] [--json]
 ashlr automations enable <id> | disable <id> | remove <id>
 ashlr automations fire <id> [--dry-run] [--repo o/n] [--text "…"] [--title "…"]
 ```
+
+Import scheduled routines from a JSON array. For example, create `routines.json`
+with the local machine's IANA timezone:
+
+```json
+[
+  {
+    "name": "Daily review",
+    "schedule": "0 9 * * 1-5",
+    "timezone": "America/New_York",
+    "prompt": "Review the open work.",
+    "limits": []
+  }
+]
+```
+
+```sh
+ashlr automations import --from routines.json --dry-run --json
+ashlr automations import --from routines.json --json
+```
+
+The dry run validates and previews without writing. Imported automations start
+disabled; names already present are skipped. The prompt is preserved as written,
+and secret-shaped content is rejected. Schedules use the machine's local time,
+so the supplied timezone must match it. The importer accepts the supported RRULE
+subset and five-field cron with numeric lists, ranges and steps where the schedule
+can be represented faithfully. Unsupported forms are rejected. `limits` must be
+an empty array; imports use the fleet lane, all granted repositories, a zero spend cap, and the other standard automation defaults. Do not run imports concurrently: name deduplication is not atomic across processes.
 
 ## The Jev decision layer (3.15)
 
@@ -1493,15 +1522,18 @@ Secret-shaped text is refused rather than redacted. The equivalent CLI/API call
 is `POST /api/verse/fleet/runs/inbox` with `{"text": "..."}` and the mutation
 token; the entry is also logged to `dispatch-events.log`.
 
-The view shows kill switches as red chips. Each is a file whose existence stops
-its named activity: `~/.ashlr-runs/HOLD` stops the Claude lane; `PAUSE`,
-`ORCH_OFF`, `OPUS_LEADER_OFF`, `PUBLISH_HOLD`, and `queue/DISABLE` (dispatcher)
-are under `~/.ashlr-runs`. Removing a switch file resumes its activity.
+The view shows the fleet's existing control files. `HOLD` contains individual
+lane IDs, so **Saved lane holds** is status-only and preserves that selection.
+Use **Queue** (`queue/DISABLE`) to pause all new dispatches while running workers
+finish. `PAUSE`, `ORCH_OFF`, `OPUS_LEADER_OFF`, and `PUBLISH_HOLD` control their
+named activities under `~/.ashlr-runs`.
 
 In **Settings ▸ Desktop ▸ Updates**, you can see the running version and short
 commit, how far it is behind or ahead of `origin/master`, whether a fast-forward
 is possible, and the native updater phase. Use **Check now** to refresh. The
-browser never installs anything.
+view also lists up to three local change paths when available, with a count of
+additional changes. Local changes block a fast-forward update; inspect them
+before deciding how to resolve them. The browser never installs anything.
 
 - `GET /api/verse/fleet/runs` reads the fleet runs view.
 - `GET /api/verse/ops/self-update` reads update status.
@@ -1882,8 +1914,12 @@ clear it or remove a surviving lease merely to make a status look healthy.
   per-turn MCP grant; they
   act in the page only in the desktop app on macOS. See
   [VERSE-BROWSER.md](VERSE-BROWSER.md).
-- The Files pane is a simple list of folders and touched files, not a file
-  browser yet. Side chats and split sessions are not built yet.
+- The Files pane browses and previews the chat's own folders — one directory
+  listing at a time (256 entries max) and a 64 KiB UTF-8 text preview behind
+  the mutation token — but it is read-only: no editing, search inside files,
+  or images/binary previews. Listings are fetched on expand and can be stale
+  while the agent works; collapse and re-expand an errored directory to retry.
+  Side chats and split sessions are not built yet.
 - Past 40 turns the transcript renders far-away turns as placeholders, but a
   very long session still costs context — continue in a fresh chat when the
   handoff banner appears.

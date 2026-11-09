@@ -24,9 +24,10 @@
  * runs once. Never throws.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { readPrivateFileCapped } from '../verse/preferences.js';
 import { expireRequestsWhere, type CommsRequest } from './requests.js';
 
 /** Persisted wire kind of the legacy Strategist briefing AND the pre-3.14 Leader memo question. */
@@ -57,7 +58,9 @@ function migrationsPath(): string {
 function loadMigrations(): MigrationsFile {
   try {
     if (!existsSync(migrationsPath())) return { v: 1, done: {} };
-    const parsed = JSON.parse(readFileSync(migrationsPath(), 'utf8')) as Partial<MigrationsFile>;
+    const read = readPrivateFileCapped(migrationsPath(), 64 * 1024);
+    if (read === null || read.truncated) return { v: 1, done: {} };
+    const parsed = JSON.parse(read.text) as Partial<MigrationsFile>;
     return { v: 1, done: parsed.done && typeof parsed.done === 'object' ? parsed.done : {} };
   } catch {
     return { v: 1, done: {} };

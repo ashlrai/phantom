@@ -1,0 +1,166 @@
+/* Live lane rows inside the rail resource bar. The parent bar scrolls. */
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  width: 100%;
+  min-width: 0;
+  padding: 5px var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  text-align: left;
+}
+.row:hover { background: var(--bg-hover); color: var(--text-primary); }
+.row:focus-visible { outline: 2px solid var(--focus-ring, var(--accent-500)); outline-offset: 1px; }
+.row[data-freshness='stale'] {
+  background: color-mix(in srgb, var(--status-warning-bg) 80%, transparent);
+  color: var(--text-secondary);
+}
+
+.line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs-size, 12px);
+  color: var(--text-primary);
+}
+.meta, .source {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-2xs-size, 11px);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+.source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  white-space: normal;
+  overflow: visible;
+}
+.group:not([data-expanded]) .meta,
+.group:not([data-expanded]) .source,
+.group:not([data-expanded]) .name { display: none; }
+.group:not([data-expanded]) .row {
+  align-items: center;
+  width: calc(var(--control-h) + var(--space-1));
+  padding: 3px 0;
+}
+.group:not([data-expanded]) { align-items: center; }
+
+.monogram {
+  flex: none;
+  width: 14px;
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  color: var(--text-secondary);
+}
+
+.badge {
+  flex: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+.source .badge { margin-left: 2px; }
+.badge[data-freshness='fresh'] { color: var(--status-success-fg); border-color: color-mix(in srgb, var(--status-success-solid) 45%, var(--border-subtle)); }
+.badge[data-freshness='stale'] { color: var(--status-warning-fg); border-color: var(--status-warning-solid); }
+.badge[data-freshness='unknown'] { color: var(--text-tertiary); border-style: dashed; }
+.group:not([data-expanded]) .badge {
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  font-size: 9px;
+}
+
+.gauge {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+.track {
+  position: relative;
+  flex: 1 1 auto;
+  height: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 99px;
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+.fill {
+  position: absolute;
+  inset: 1px auto 1px 1px;
+  width: max(0px, calc(var(--fill, 0%) - 2px));
+  border-radius: 99px;
+  background: var(--status-success-solid);
+}
+.gauge[data-forecast='early'] .fill { background: var(--status-danger-solid); }
+.gauge[data-forecast='on-pace'] .fill { background: var(--status-success-solid); }
+.gauge[data-forecast='underuse'] .fill { background: var(--status-warning-solid); }
+.mark, .resetMark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--text-primary);
+}
+.resetMark { right: 0; }
+.gauge[data-forecast='unknown'] .track {
+  border-style: dashed;
+  background: repeating-linear-gradient(135deg, transparent 0 3px, color-mix(in srgb, var(--text-tertiary) 22%, transparent) 3px 5px);
+}
+.group:not([data-expanded]) .gauge { width: 14px; flex: none; }
+.group:not([data-expanded]) .track { width: 9px; height: 16px; }
+.group:not([data-expanded]) .fill {
+  inset: auto 1px 1px 1px;
+  width: auto;
+  height: max(0px, calc(var(--fill, 0%) - 2px));
+}
+
+.forecast {
+  flex: none;
+  max-width: 58%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-2xs-size, 11px);
+  color: var(--text-secondary);
+}
+.group:not([data-expanded]) .forecast { display: none; }
+
+.tip { display: flex; flex-direction: column; gap: 3px; max-width: 280px; }
+.tipHead { display: flex; align-items: center; gap: 6px; }
+.tipLine { color: var(--text-secondary); font-size: var(--text-2xs-size, 11px); }
+
+@media (prefers-reduced-motion: reduce) {
+  .fill { transition: none; }
+}

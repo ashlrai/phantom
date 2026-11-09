@@ -52,6 +52,27 @@
         "responses": { "200": { "$ref": "#/components/responses/InboxDecisionResult" }, "default": { "$ref": "#/components/responses/Error" } }
       }
     },
+    "/api/verse/version": {
+      "get": { "operationId": "getVerseVersion", "summary": "Read the running Phantom version.", "responses": { "200": { "description": "Version information" }, "default": { "description": "Request rejected or service unavailable" } } }
+    },
+    "/api/verse/fleet/runs/glance": {
+      "get": { "operationId": "getFleetRunsGlance", "summary": "Read a compact fleet runs snapshot.", "responses": { "200": { "description": "Fleet glance" }, "default": { "description": "Request rejected or service unavailable" } } }
+    },
+    "/api/verse/fleet/ci-runs": {
+      "get": { "operationId": "getFleetCiRuns", "summary": "Read recent CI run facts.", "parameters": [{ "name": "hours", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 168 }, "description": "Lookback window in hours; defaults to 24." }], "responses": { "200": { "description": "CI run facts and availability" }, "default": { "description": "Request rejected or service unavailable" } } }
+    },
+    "/api/verse/fleet/live/drop-jobs": {
+      "get": { "operationId": "listFleetDropJobs", "summary": "List queued fleet drop jobs.", "responses": { "200": { "description": "Drop jobs" }, "default": { "description": "Request rejected or service unavailable" } } },
+      "post": { "operationId": "createFleetDropJob", "summary": "Submit a fleet drop job.", "x-phantom-step-up": true, "security": [{ "mutationToken": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["id", "lane", "tier", "body"], "properties": { "id": { "type": "string", "pattern": "^[A-Z0-9]{3,40}$" }, "lane": { "type": "string", "enum": ["claude", "codex-personal", "devin", "codex-local"] }, "tier": { "type": "string", "enum": ["frontier", "work", "mid", "fast"] }, "body": { "type": "string", "minLength": 1, "description": "Nonblank text; control characters other than newline and tab and denied content are refused. The composed job file is limited to 8000 UTF-8 bytes." } } } } } },
+        "responses": { "201": { "description": "Job written" }, "default": { "description": "Request rejected or service unavailable" } } }
+    },
+    "/api/verse/agent-bus": {
+      "get": { "operationId": "listAgentBus", "summary": "Read a cursor page of agent bus messages.", "parameters": [{ "name": "after", "in": "query", "schema": { "type": "integer", "minimum": 0 } }, { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } }], "responses": { "200": { "description": "Bus page" }, "default": { "description": "Request rejected or service unavailable" } } },
+      "post": { "operationId": "postAgentBus", "summary": "Append an agent bus envelope.", "x-phantom-step-up": false, "security": [{ "mutationToken": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["id", "from", "to", "priority", "ttl", "body"], "properties": { "id": { "$ref": "#/components/schemas/BusToken" }, "from": { "$ref": "#/components/schemas/BusToken" }, "to": { "$ref": "#/components/schemas/BusToken" }, "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"] }, "ttl": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }, "body": {}, "channel": { "type": "string", "enum": ["bus", "slack", "imessage", "email", "telegram", "handoff"] }, "channel_ref": { "type": "string", "minLength": 1, "maxLength": 1024, "pattern": "^[^\\u0000-\\u001f\\u007f]+$" }, "sender": { "type": "object", "additionalProperties": false, "required": ["agent_id", "vendor", "human", "team"], "properties": { "agent_id": { "$ref": "#/components/schemas/BusToken" }, "vendor": { "$ref": "#/components/schemas/BusToken" }, "human": { "type": "boolean" }, "team": { "type": "boolean" } } }, "external": { "type": "boolean" }, "origin_bridge": { "$ref": "#/components/schemas/BusToken" } }, "dependentRequired": { "channel": ["channel_ref", "sender", "external"], "channel_ref": ["channel", "sender", "external"], "sender": ["channel", "channel_ref", "external"], "external": ["channel", "channel_ref", "sender"], "origin_bridge": ["channel", "channel_ref", "sender", "external"] }, "description": "Routing labels do not authenticate identities. A sender outside the team requires external=true. The complete JSON envelope is limited to 65536 bytes and depth 32." } } } },
+        "responses": { "201": { "description": "Envelope posted" }, "200": { "description": "Duplicate envelope" }, "default": { "description": "Request rejected or service unavailable" } } }
+    },
     "/api/verse/activity": {
       "get": {
         "operationId": "getVerseActivity", "tags": ["activity"],
@@ -888,6 +909,7 @@
       "VerseTurnResponse": { "description": "VerseTurnResponse — see src/core/verse/types.ts.", "content": { "application/json": { "schema": { "type": "object" } } } }
     },
     "schemas": {
+      "BusToken": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[!-~]+(?![\\s\\S])" },
       "ErrorEnvelope": {
         "type": "object",
         "description": "Most routes answer { code, error }; a few answer { code, reason } or { error } alone.",
