@@ -2484,8 +2484,13 @@ async function main(): Promise<void> {
       }
 
       case 'worktrees': {
-        const { cmdWorktrees } = await import('./worktrees.js');
-        process.exitCode = cmdWorktrees(rest);
+        if (rest[0] === 'prune') {
+          const { cmdWorktreesPrune } = await import('./worktrees-prune.js');
+          process.exitCode = await cmdWorktreesPrune(rest.slice(1));
+        } else {
+          const { cmdWorktrees } = await import('./worktrees.js');
+          process.exitCode = cmdWorktrees(rest);
+        }
         break;
       }
 
