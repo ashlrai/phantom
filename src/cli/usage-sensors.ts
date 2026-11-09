@@ -5,7 +5,7 @@
  */
 import { readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
-import { pullOfficialUsageSensors } from '../core/usage/sensor-pull.js';
+import { pullOfficialUsageSensors, refreshStalePersonalUsage } from '../core/usage/sensor-pull.js';
 import {
   USAGE_SENSOR_SCHEMA,
   parseUsageSensorSnapshot,
@@ -36,7 +36,7 @@ function render(report: UsageSensorReport): void {
     const remaining = lane.remaining === null ? 'unknown' : `${lane.remaining}${lane.remainingUnit ? ` ${lane.remainingUnit}` : ''}`;
     const burn = lane.burnRate === null ? 'unknown' : String(lane.burnRate);
     const waste = lane.idleIncludedWastedPerWeek === null ? 'unknown' : String(lane.idleIncludedWastedPerWeek);
-    console.log(`${lane.lane} ${lane.status} age=${age(lane.ageMs)} stale=${lane.stale} headroom=${room} remaining=${remaining} burn=${burn} forecast=${lane.forecastVsReset} wastePerWeek=${waste}`);
+    console.log(`${lane.lane} ${lane.status} age=${age(lane.ageMs)} stale=${lane.stale} headroom=${room} remaining=${remaining} burn=${burn} forecast=${lane.forecastVsReset} wastePerWeek=${waste}${lane.reason ? ` reason=${lane.reason}` : ''}`);
   }
 }
 
@@ -91,6 +91,9 @@ export async function cmdUsageSensors(args: string[]): Promise<number> {
     }
   } else if (file) {
     readings = await readSnapshot(file);
+    readings = await refreshStalePersonalUsage(readings, {
+      codexPersonalHome: process.env['PHANTOM_SENSOR_CODEX_PERSONAL_HOME'],
+    });
   } else {
     readings = [];
   }
