@@ -7,6 +7,7 @@ import { createLeaderMailbox } from '../src/core/comms/leader-mailbox.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings, type OwnerChannelTransport, type OwnerDelivery, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { liveOwnerTransports, proveOwnerDirectMessage, resolveLiveEmailRecipient, resolveLiveIMessageHandle, resolveLiveSlackOwnerId } from '../src/core/comms/owner-live-transport.js';
 import { acceptOwnerInbound, pullOwnerChannel, readOwnerThread, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
+import { useAccountHomeForTest } from '../src/core/real-home.js';
 import { listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 
 const roots: string[] = [];
@@ -181,6 +182,7 @@ describe('owner thread', () => {
   });
 
   it('keeps email, Slack and iMessage on the account home when HOME is forged', async () => {
+    useAccountHomeForTest();
     const forged = mkdtempSync(join(tmpdir(), 'owner-forged-home-'));
     roots.push(forged);
     const outsider = 'outsider@example.invalid';
