@@ -18,6 +18,27 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ## [Unreleased]
 
+### Added
+
+- Add one owner thread that joins desktop, Telegram, email, iMessage and Slack, with replies returning only to the channel the owner used ([#4233](https://github.com/ashlrai/phantom/pull/4233)). See `docs/OWNER-THREAD.md`.
+- Add `phm fleet owner-pull` to pull configured remote owner channels into the thread ([#4295](https://github.com/ashlrai/phantom/pull/4295)) and `phm fleet owner-history` to page archived messages after rotation ([#4302](https://github.com/ashlrai/phantom/pull/4302), [#4316](https://github.com/ashlrai/phantom/pull/4316)).
+- Show the owner thread and a channel strip inline in the desktop Leader pane ([#4287](https://github.com/ashlrai/phantom/pull/4287), [#4296](https://github.com/ashlrai/phantom/pull/4296)), and open the desktop on a Leader-first home surface ([#4328](https://github.com/ashlrai/phantom/pull/4328)).
+- Add the leader office, one co-founder that routes work ([#4232](https://github.com/ashlrai/phantom/pull/4232)).
+- Add the Comms agent role with an enforced send policy ([#4230](https://github.com/ashlrai/phantom/pull/4230)). See `docs/COMMS-AGENT.md`.
+- Add `phm growth` and Robinhood-style Growth charts built from real ledgers, with Engineering Ops growth exports read into the charts ([#4243](https://github.com/ashlrai/phantom/pull/4243), [#4248](https://github.com/ashlrai/phantom/pull/4248)).
+- Add a phone watch view on the existing loopback gateway ([#4234](https://github.com/ashlrai/phantom/pull/4234)).
+- Show live world-model lanes in the desktop resource bar ([#4231](https://github.com/ashlrai/phantom/pull/4231)).
+- Add Goals, Ideas and Library panes to the desktop dock ([#4315](https://github.com/ashlrai/phantom/pull/4315), [#4313](https://github.com/ashlrai/phantom/pull/4313), [#4310](https://github.com/ashlrai/phantom/pull/4310)).
+- Add resumable agent sessions with an append-only event log to `phm sessions` ([#4289](https://github.com/ashlrai/phantom/pull/4289)). See `docs/SESSIONS.md`.
+- Add `phm fleet done-plan` (read-only preview) and `phm fleet done-evaluate` (runs the checks, needs `--trust-worktree`) for a job's frozen done-contract, with `schema/done-contract.v1.schema.json` ([#4308](https://github.com/ashlrai/phantom/pull/4308), [#4317](https://github.com/ashlrai/phantom/pull/4317), [#4329](https://github.com/ashlrai/phantom/pull/4329)).
+- Add `npm run perf:desktop` to measure desktop startup and render cost ([#4294](https://github.com/ashlrai/phantom/pull/4294)).
+
+### Fixes
+
+- Make leader office writes, scrubbing and escalation fail closed ([#4240](https://github.com/ashlrai/phantom/pull/4240)).
+- Keep Comms owner files under the account home ([#4269](https://github.com/ashlrai/phantom/pull/4269)) and count the three Comms MCP tools in the output budget ([#4252](https://github.com/ashlrai/phantom/pull/4252)).
+- Regenerate the fleet subcommand registry so `fleet done-plan` and `fleet done-evaluate` dispatch.
+
 ## [3.30.28] - 2026-11-09
 
 
