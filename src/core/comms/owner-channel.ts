@@ -73,6 +73,7 @@ export interface OwnerAdapterStatus {
   halted: boolean;
   secretHandle: string | null;
   reason: string;
+  nextStep: string | null;
 }
 
 export function emptyOwnerSettings(): OwnerThreadSettings {
@@ -95,13 +96,17 @@ export function adapterStatus(channel: OwnerChannel, settings: OwnerThreadSettin
     : null;
   let configured = Boolean(ownerId);
   let reason = configured ? 'Owner identity is configured.' : 'Disabled until an owner identity is configured.';
+  const identityStep = `Add { channel = "${ownerChannelToBus(channel)}", id = "${channel === 'desktop' ? 'local-owner' : '<your id>'}" } to [mason] and [team] in ~/.ashlr/agent-network.toml.`;
+  let nextStep: string | null = configured ? null : identityStep;
   if (channel === 'telegram' || channel === 'email' || channel === 'slack') {
     if (!secretHandle) {
       configured = false;
       reason = 'Disabled until the Phantom Secrets handle is named.';
+      nextStep = `Name ${OWNER_SECRET_HANDLES[channel]} under [${channel}] secretHandle in ~/.ashlr/comms/owner-adapters.toml.`;
     } else if (!ownerId) {
       configured = false;
       reason = 'Disabled until an owner identity is configured.';
+      nextStep = identityStep;
     } else {
       reason = 'Owner identity and secret handle are configured.';
     }
@@ -110,18 +115,25 @@ export function adapterStatus(channel: OwnerChannel, settings: OwnerThreadSettin
     if (settings.imessageBridge !== 'loopback') {
       configured = false;
       reason = 'iMessage is loopback-only and stays disabled until the local bridge is selected.';
+      nextStep = 'Set [imessage] bridge = "loopback" in ~/.ashlr/comms/owner-adapters.toml.';
     } else if (!ownerId) {
       configured = false;
       reason = 'Disabled until an owner identity is configured.';
+      nextStep = identityStep;
     } else {
       reason = 'Loopback bridge and owner identity are configured.';
     }
   }
   if (channel === 'desktop' && ownerId) reason = 'Native desktop thread is configured.';
   const enabled = configured && !halted && !paused;
-  if (halted) reason = 'Kill switch halted this adapter.';
-  else if (paused && configured) reason = 'Communications are paused.';
-  return { id: channel, configured, enabled, halted, secretHandle, reason };
+  if (halted) {
+    reason = 'Kill switch halted this adapter.';
+    nextStep = 'Remove ~/.ashlr/KILL or resume comms to deliver.';
+  } else if (paused && configured) {
+    reason = 'Communications are paused.';
+    nextStep = 'Remove ~/.ashlr/KILL or resume comms to deliver.';
+  }
+  return { id: channel, configured, enabled, halted, secretHandle, reason, nextStep };
 }
 
 export function ownerAllowed(channel: OwnerChannel, senderId: string, settings: OwnerThreadSettings): boolean {
