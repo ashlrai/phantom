@@ -204,6 +204,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'launch-stall': () => import('./fleet-launch-stall.js'),
   'launchable': () => import('./fleet-launchable.js'),
   'leader': () => import('./fleet-leader.js'),
+  'leader-facts': () => import('./fleet-leader-facts.js'),
   'leader-health': () => import('./fleet-leader-health.js'),
   'leader-score': () => import('./fleet-leader-score.js'),
   'leader-search': () => import('./fleet-leader-search.js'),
