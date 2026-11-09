@@ -50,6 +50,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 
 | Your task | Canonical guide |
 |-----------|-----------------|
+| Run tests for changed files | [Test changed files](TEST-CHANGED.md) |
 | Replay CI test feedback and order failures first | [CI test feedback](https://github.com/ashlrai/phantom/blob/master/docs/CI-TEST-FEEDBACK.md) |
 | Inspect changed-file and test dependency relationships | [PR impact map](https://github.com/ashlrai/phantom/blob/master/docs/CI-IMPACT-MAP.md) |
 | Explain empty jobs | [Empty jobs](EMPTY-JOBS.md) |
@@ -111,6 +112,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Change code and verify it locally | [Contributing — source guide](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md) |
 | Queue Mac bridge builds and tests within a shared memory budget | [Memory admission — source guide](https://github.com/ashlrai/phantom/blob/master/scripts/mac-bridge/MEMORY.md) |
 | Bound Mac bridge disk growth and clean published worktrees | [Mac bridge disk lifecycle](https://github.com/ashlrai/phantom/blob/master/docs/BRIDGE-WORKTREES.md) |
+| Preview or remove finished job worktrees | [Worktree prune](WORKTREE-PRUNE.md) |
 | Reclaim rebuildable disk bytes by class, or install the daily maintenance job | [Standing disk maintenance](DISK-MAINT.md) |
 | Build release evidence and distinguish distribution from activation | [Releasing — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING.md) |
 | Understand the signed desktop updater feed and its published-state verification | [Desktop update channel](https://github.com/ashlrai/phantom/blob/master/docs/DESKTOP-UPDATE-CHANNEL.md) |

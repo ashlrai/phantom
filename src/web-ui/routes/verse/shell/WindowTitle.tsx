@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from 'react';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
+import { isDismissed, useFeedDismissals } from '../feed/feed-dismiss-store.js';
 import { buildFeed } from '../feed/feed-model.js';
 import { leaderThreadQuery } from '../leader/thread-data.js';
 import { fleetMergesQuery } from '../fleet-merges/fleet-merges-queries.js';
@@ -42,6 +43,7 @@ export function HomeUnread({ viewing, onCounts }: { viewing: SeenView | null; on
   const refetchOwner = useRefetch(ownerThreadQuery);
   usePollWhileVisible(() => { refetchThread(); refetchRuns(); refetchOwner(); }, UNREAD_POLL_MS);
   const seen = useLastSeen();
+  const { map: dismissed } = useFeedDismissals();
 
   const messages = thread.data?.value?.messages ?? NO_MESSAGES;
   const ownerRead = owner.data ?? NO_OWNER_THREAD;
@@ -52,6 +54,8 @@ export function HomeUnread({ viewing, onCounts }: { viewing: SeenView | null; on
     const feedItems = buildFeed({ leader: messages, runs: runs.data, needsYou: activity.data?.needsYou, owner: ownerRead.paused ? undefined : ownerRead.lines });
     return { leaderLines, feedItems };
   }, [messages, runs.data, ownerRead, activity.data?.needsYou]);
+  // A dismissed item is dealt with, so it is not unread.
+  const unreadFeed = useMemo(() => model.feedItems.filter(i => !isDismissed(i, dismissed)), [model.feedItems, dismissed]);
 
   // Looking at a view means everything in it up to now (or its newest item) is seen.
   const newest = useMemo(() => {
@@ -61,7 +65,7 @@ export function HomeUnread({ viewing, onCounts }: { viewing: SeenView | null; on
   }, [viewing, model]);
   useMarkSeenWhileViewing(viewing, newest);
 
-  const counts = useMemo(() => unreadCounts({ ...model, seen }), [model, seen]);
+  const counts = useMemo(() => unreadCounts({ leaderLines: model.leaderLines, feedItems: unreadFeed, seen }), [model.leaderLines, unreadFeed, seen]);
   useEffect(() => { onCounts(counts); }, [counts, onCounts]);
   return null;
 }

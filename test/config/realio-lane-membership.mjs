@@ -43,6 +43,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/worktrees-prune.test.ts', // Real Git worktree fixtures.
   'test/ecosystem-changelog-generator.test.ts', // Runs the generator in a real Node child process.
   'test/verse-standby-python-contract-02somp1.test.ts', // Runs the Python lease helper in a real child process.
   'test/company-context-store.test.ts', // concurrent context writer processes
@@ -784,5 +785,6 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-graph-process-tree-stop-nov01.test.ts', // spawns real node children to exercise process-tree stop
   'test/phx-graph-node-stream01.test.ts', // spawn and spawnSync run the real `fleet graph-run` CLI
   'test/planner-cycle-single-01solc5.test.ts', // spawnSync runs a real node child for the single-cycle planner fixture
+  'test/test-changed.test.ts', // real Git repositories and npm child processes for changed-test selection
   'test/verify-changed-dedupe.test.ts', // spawnSync node scripts/verify-changed.mjs and execFileSync git in real temp repos
 ];
