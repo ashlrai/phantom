@@ -405,6 +405,14 @@ describe('helper protocol', () => {
       expect(resolveDesktopOperatorBinary(home)).toBeNull();
       chmodSync(binary, 0o755);
       expect(resolveDesktopOperatorBinary(home)).toBe(binary);
+      for (const directory of [join(home, '.ashlr'), join(home, '.ashlr', 'bin')]) {
+        chmodSync(directory, 0o775);
+        expect(resolveDesktopOperatorBinary(home)).toBeNull();
+        chmodSync(directory, 0o777);
+        expect(resolveDesktopOperatorBinary(home)).toBeNull();
+        chmodSync(directory, 0o755);
+      }
+      expect(resolveDesktopOperatorBinary(home)).toBe(binary);
     } finally {
       process.chdir(previousCwd);
       if (previous === undefined) delete process.env['PHANTOM_DESKTOP_OPERATOR'];
