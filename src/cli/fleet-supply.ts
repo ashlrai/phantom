@@ -81,8 +81,12 @@ export function formatSupply(report: SupplyReport): string {
 }
 
 export async function cmdFleetSupply(args: string[], read: SupplyReader = readTaskCheckJobs, now = Date.now()): Promise<number> {
+  if (args.some(arg => arg === '--lane' || arg === '--n')) {
+    const { cmdFleetSupplyWork } = await import('../core/fleet/supply-command.js');
+    return cmdFleetSupplyWork(args);
+  }
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log(`${usage}\nCounts launches, skipped_empty, precheck_skip, opened PRs and MERGED outcomes per batch (job id minus its trailing number) and hour over the last 24 hours. Reads ~/.ashlr-runs/metrics/jobs.jsonl; an unreadable file prints unknown, never zero. --json adds the per-hour rows.`);
+    console.log(`${usage}\nUse --lane <lane> --n <N> to suggest queue work. Counts launches, skipped_empty, precheck_skip, opened PRs and MERGED outcomes per batch (job id minus its trailing number) and hour over the last 24 hours. Reads ~/.ashlr-runs/metrics/jobs.jsonl; an unreadable file prints unknown, never zero. --json adds the per-hour rows.`);
     return 0;
   }
   if (args.some(arg => arg !== '--json') || args.length > 1) {
