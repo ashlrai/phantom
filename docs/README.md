@@ -346,3 +346,5 @@ canonical release guide for required hosted qualification and publication.
 - [Merge queue latency](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-LATENCY.md) — record observed queue transitions and inspect blocker and eligibility timing.
 - [Merge-batch planner](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-BATCH.md) — read-only file-overlap batching of open PRs with a least-rebase-churn order.
 - [Rebase-plan](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-REBASE-PLAN.md) — read-only conflict-to-queue wiring: clusters conflicting bridge PRs by file overlap and emits ready.tsv-ready rebase-job specs.
+
+- [Empty job reasons](FLEET-EMPTIES.md): group recorded empty outcomes and review filler suggestions.
