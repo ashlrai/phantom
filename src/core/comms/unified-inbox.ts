@@ -33,6 +33,7 @@ import { BUS_INBOX_MAX_BYTES, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspec
 import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import { readNeedsMason, type NeedsMasonItem, type NeedsMasonReadResult } from '../fleet/needs-mason-resolve.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { readLinkedInPending } from './linkedin-drop.js';
 import { classifyTeammateIntent, readTeammateTexts, type TeammateText } from './imessage-teammate-inbox.js';
 
 export const UNIFIED_INBOX_MAX_ITEMS = 200;
@@ -40,9 +41,9 @@ const TITLE_MAX = 160;
 const DETAIL_MAX = 300;
 const SUGGESTED_LEASE_MS = 600_000;
 
-export type UnifiedInboxSource = 'needs-you' | 'imessage' | 'drafts' | 'bus';
+export type UnifiedInboxSource = 'needs-you' | 'imessage' | 'linkedin' | 'drafts' | 'bus';
 export type UnifiedInboxSourceState = 'healthy' | 'missing' | 'degraded' | 'unavailable';
-export type UnifiedInboxKind = 'needs-you' | 'teammate-text' | 'draft-approval' | 'bus-work';
+export type UnifiedInboxKind = 'needs-you' | 'teammate-text' | 'outside-message' | 'draft-approval' | 'bus-work';
 
 export interface UnifiedInboxItem extends AttentionItem {
   /** Stable, namespaced: `<source>:<ref>` (e.g. `drafts:d-0123…`). */
@@ -85,6 +86,8 @@ export interface UnifiedInboxOptions {
   /** Private bus store root (`~/.ashlr/fleet` by default). */
   busRoot?: string;
   now?: () => number;
+  /** LinkedIn inbound drop folder. */
+  linkedinDir?: string;
   /** Trusted test seams; defaults read the real stores. */
   readNeeds?: (options: { runsDir?: string }) => NeedsMasonReadResult;
   readTexts?: typeof readTeammateTexts;
@@ -133,6 +136,24 @@ function teammateItems(read: typeof readTeammateTexts, runsDir: string | undefin
     expiresAt: null,
     act: [`phm fleet teammate-texts --answered ${text.rowid}`,
       `phm fleet bus-claim acquire --id imessage-teammate-${text.rowid} --owner <label> --lease-ms ${SUGGESTED_LEASE_MS}`],
+  }));
+  return { report: { state: result.sourceState, pending: items.length }, items };
+}
+
+function linkedinItems(dir: string | undefined, now: () => number): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let result: ReturnType<typeof readLinkedInPending>;
+  try { result = readLinkedInPending({ dir, now }); } catch { result = { sourceState: 'degraded', messages: [], badFiles: 0 }; }
+  const items = result.messages.map((message): Omit<UnifiedInboxItem, 'priority'> => ({
+    id: `linkedin:${message.id}`,
+    source: 'linkedin',
+    kind: 'outside-message',
+    severity: 'info',
+    blocking: false,
+    title: oneLine(message.text, TITLE_MAX),
+    detail: oneLine(`${message.from.name} · Draft only: outside contact`, DETAIL_MAX),
+    since: message.receivedAt,
+    expiresAt: null,
+    act: [],
   }));
   return { report: { state: result.sourceState, pending: items.length }, items };
 }
@@ -221,16 +242,18 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const now = options.now ?? Date.now;
   const needs = needsYouItems(options.readNeeds ?? readNeedsMason, options.runsDir);
   const teammates = teammateItems(options.readTexts ?? readTeammateTexts, options.runsDir, now);
+  const linkedin = linkedinItems(options.linkedinDir, now);
   const drafts = await draftItems(options.listPendingDrafts ?? listDrafts, options.runsDir);
   const bus = busItems(options);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
     imessage: teammates.report,
+    linkedin: linkedin.report,
     drafts: drafts.report,
     bus: bus.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...teammates.items, ...drafts.items, ...bus.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...teammates.items, ...linkedin.items, ...drafts.items, ...bus.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };
