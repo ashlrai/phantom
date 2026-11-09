@@ -24,7 +24,9 @@ The policy is code, not prompt text. A prompt cannot approve a recipient.
 - Everyone else, including a novel recipient, becomes a draft for the owner.
   Email drafts are also copied into `phm drafts` so the desktop drafts card
   can show them. Every draft is recorded on the local owner thread.
-- KILL and the comms pause refuse every send.
+- KILL and the comms pause refuse every send. Both are read from the account
+  home (`os.userInfo().homedir`), so a process with a relocated `$HOME` still
+  sees `~/.ashlr/KILL` and `~/.ashlr/comms/pause.json`.
 - Every completed send is appended to the send log. The log stores a Phantom
   Secrets handle (`phm_…`) when one was named, never a credential value.
 - A raw credential is refused.

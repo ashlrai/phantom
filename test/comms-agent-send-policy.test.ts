@@ -4,19 +4,20 @@
  * scraping never reach a transport.
  */
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { tmpdir, userInfo } from 'node:os';
+import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { readLocalSendPolicy } from '../src/core/agents/send-gate.js';
+import { COMMS_TRANSPORTS, decideSend, readKillState, type CommsTransport, type SendAttempt } from '../src/core/comms-agent/policy.js';
 import { COMMS_AGENT_ROLE } from '../src/core/comms-agent/role.js';
-import { COMMS_TRANSPORTS, decideSend, type CommsTransport, type SendAttempt } from '../src/core/comms-agent/policy.js';
 import { selectCommsLane } from '../src/core/comms-agent/route.js';
 import { envelopeExternal, executeSend, preservedIds, runCommsAgent } from '../src/core/comms-agent/run.js';
-import { accountHome, appendSendLog, ownerApprovalsPath, privateOwnerFile, readApprovalsFile, readInbox, readOwnerApprovals, readSendLog, writeInbox } from '../src/core/comms-agent/store.js';
-import { readLocalSendPolicy } from '../src/core/agents/send-gate.js';
-import { isPaused } from '../src/core/comms/pause.js';
-import { userInfo } from 'node:os';
+import { appendSendLog, ownerApprovalsPath, privateOwnerFile, readApprovalsFile, readInbox, readOwnerApprovals, readSendLog, writeInbox } from '../src/core/comms-agent/store.js';
 import { triageInbox, type InboxMessage } from '../src/core/comms-agent/triage.js';
+import { isPaused } from '../src/core/comms/pause.js';
+import { realHome, useAccountHomeForTest } from '../src/core/real-home.js';
+import { killSwitchPath } from '../src/core/sandbox/policy.js';
 
 const roots: string[] = [];
 const temp = (): string => {
@@ -242,6 +243,7 @@ describe('owner approvals file', () => {
   });
 
   it('ignores HOME for approvals, team identities and the comms pause file', async () => {
+    useAccountHomeForTest();
     const decoy = temp();
     mkdirSync(join(decoy, '.ashlr', 'comms-agent'), { recursive: true, mode: 0o700 });
     mkdirSync(join(decoy, '.ashlr', 'comms'), { recursive: true, mode: 0o700 });
@@ -255,14 +257,47 @@ describe('owner approvals file', () => {
     const previous = process.env.HOME;
     process.env.HOME = decoy;
     try {
-      expect(ownerApprovalsPath()).toBe(join(accountHome(), '.ashlr', 'comms-agent', 'standing-approvals.json'));
-      expect(accountHome()).toBe(userInfo().homedir);
+      expect(realHome()).toBe(resolve(userInfo().homedir));
+      expect(ownerApprovalsPath()).toBe(join(realHome() ?? '', '.ashlr', 'comms-agent', 'standing-approvals.json'));
       expect(ownerApprovalsPath().startsWith(decoy)).toBe(false);
       const loaded = await readOwnerApprovals();
       expect(loaded.approvals.some(approval => approval.recipient === 'home-ignored@example.com')).toBe(false);
       expect(readLocalSendPolicy().teamIdentities.some(identity => identity.id === 'home-ignored-id')).toBe(false);
       expect(isPaused()).toBe(beforePause);
     } finally {
+      if (previous === undefined) delete process.env.HOME;
+      else process.env.HOME = previous;
+    }
+  });
+
+  it('reads KILL from the account home when HOME is a decoy and refuses deliver', async () => {
+    useAccountHomeForTest();
+    const account = resolve(userInfo().homedir);
+    const decoy = temp();
+    const kill = join(account, '.ashlr', 'KILL');
+    const runsDir = temp();
+    const calls: string[] = [];
+    const previous = process.env.HOME;
+    mkdirSync(join(account, '.ashlr'), { recursive: true, mode: 0o700 });
+    mkdirSync(join(decoy, '.ashlr'), { recursive: true, mode: 0o700 });
+    process.env.HOME = decoy;
+    try {
+      writeFileSync(kill, 'kill switch active\n', { mode: 0o600 });
+      chmodSync(kill, 0o600);
+      expect(killSwitchPath()).toBe(join(account, '.ashlr', 'KILL'));
+      expect(killSwitchPath().startsWith(decoy)).toBe(false);
+      expect(readKillState()).toBe('active');
+      const refused = await executeSend(attempt('email'), {
+        runsDir,
+        approvalsSource: 'injected',
+        approvals: [{ transport: 'email', recipient: 'ada@example.com' }],
+        paused: () => false,
+        deliver: async () => { calls.push('sent'); return { status: 'sent', reason: 'no' }; },
+      });
+      expect(refused).toMatchObject({ status: 'refused', reason: expect.stringContaining('KILL') });
+      expect(calls).toEqual([]);
+    } finally {
+      rmSync(kill, { force: true });
       if (previous === undefined) delete process.env.HOME;
       else process.env.HOME = previous;
     }

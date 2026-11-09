@@ -4,28 +4,21 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isPaused, loadPauseState, setPause } from '../src/core/comms/pause.js';
 
-const pauseHome = vi.hoisted(() => ({ current: '' }));
-
-vi.mock('node:os', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:os')>();
-  return {
-    ...actual,
-    userInfo: () => ({ ...actual.userInfo(), homedir: pauseHome.current || actual.userInfo().homedir }),
-  };
-});
-
 describe('comms pause fails closed', () => {
   let home: string;
   let path: string;
+  let previousHome: string | undefined;
 
   beforeEach(() => {
+    previousHome = process.env.HOME;
     home = mkdtempSync(join(tmpdir(), 'comms-pause-'));
-    pauseHome.current = home;
+    process.env.HOME = home;
     path = join(home, '.ashlr', 'comms', 'pause.json');
     mkdirSync(join(home, '.ashlr', 'comms'), { recursive: true });
   });
   afterEach(() => {
-    pauseHome.current = '';
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
     rmSync(home, { recursive: true, force: true });
   });
 

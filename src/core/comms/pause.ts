@@ -11,8 +11,8 @@
  */
 
 import { lstatSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { userInfo } from 'node:os';
 import { join } from 'node:path';
+import { realHome } from '../real-home.js';
 import { readPrivateFileCapped } from '../verse/preferences.js';
 
 export interface PauseState {
@@ -20,8 +20,14 @@ export interface PauseState {
   since?: number;
 }
 
+function commsHome(): string {
+  const home = realHome();
+  if (!home) throw new Error('Account home is unavailable.');
+  return home;
+}
+
 function pauseJsonPath(): string {
-  return join(userInfo().homedir, '.ashlr', 'comms', 'pause.json');
+  return join(commsHome(), '.ashlr', 'comms', 'pause.json');
 }
 
 const MAX_PAUSE_BYTES = 64 * 1024;
@@ -71,7 +77,7 @@ export function loadPauseState(): PauseState {
 
 export function savePauseState(s: PauseState): void {
   try {
-    const dir = join(userInfo().homedir, '.ashlr', 'comms');
+    const dir = join(commsHome(), '.ashlr', 'comms');
     mkdirSync(dir, { recursive: true });
     writeFileSync(pauseJsonPath(), JSON.stringify(s, null, 2) + '\n', 'utf8');
   } catch { /* best-effort */ }

@@ -6,8 +6,9 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { chmod, lstat, mkdir, open, rename, rm } from 'node:fs/promises';
-import { homedir, userInfo } from 'node:os';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { realHome } from '../real-home.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { isCommsTransport, type CommsTransport, type StandingApproval } from './policy.js';
 import { parseInboxDocument, type InboxMessage } from './triage.js';
@@ -72,16 +73,11 @@ export function commsDir(runsDir: string): string {
   return join(runsDir, 'comms-agent');
 }
 
-/** Passwd account home. `$HOME` cannot redirect this. */
-export function accountHome(): string {
-  const home = userInfo().homedir;
-  if (typeof home !== 'string' || home.length === 0) throw new Error('Account home is unavailable.');
-  return home;
-}
-
 /** Owner-only. Callers cannot point this at another directory, and `$HOME` is ignored. */
-export function ownerApprovalsPath(home: string = accountHome()): string {
-  return join(home, '.ashlr', 'comms-agent', 'standing-approvals.json');
+export function ownerApprovalsPath(home?: string): string {
+  const root = home ?? realHome();
+  if (!root) throw new Error('Account home is unavailable.');
+  return join(root, '.ashlr', 'comms-agent', 'standing-approvals.json');
 }
 
 /** A private regular file owned by this user. Mode 0600 is required where the platform records it. */

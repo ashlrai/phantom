@@ -31,7 +31,8 @@ import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs
 import { enableCompileCache } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
-import { vi } from 'vitest';
+import { beforeEach, vi } from 'vitest';
+import { useProcessHomeForTest } from '../../src/core/real-home.js';
 
 const workerHomeKey = 'ASHLR_VITEST_WORKER_HOME';
 const workerPidKey = 'ASHLR_VITEST_WORKER_PID';
@@ -214,4 +215,11 @@ vi.mock('node:os', async (importOriginal) => {
     userInfo,
     default: { ...actual.default, homedir: guardedHomedir, userInfo },
   };
+});
+
+beforeEach(() => {
+  // Fixtures relocate HOME and expect KILL, enrollment and pause to follow.
+  // Production realHome() stays on the passwd entry; a test that must prove
+  // that calls useAccountHomeForTest().
+  useProcessHomeForTest();
 });
