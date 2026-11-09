@@ -23,6 +23,7 @@
  *   runs [--json]              List past runs.
  *   signals [--json]          Real repository adoption signals; missing sources stay explicit.
  *   ci-metrics [--json]          Per-repo daily turn-time (red→green) metrics; writes ~/.ashlr/ci-metrics.json.
+ *   main blame --good <sha> --check "<cmd>"  First merge that turned the default branch red (read-only bisect).
  *   friction [--json]         Dispatch→merge friction ledger: 7d counts, evidence, scores, before/after.
  *   pulse [--json] [--window]  Local observability dashboard: tokens, cost, activity.
  *   skills list [--json]       List skills learned from merged PRs (read-only).
@@ -2158,6 +2159,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'jobs': {
+        const { cmdJobs } = await import('./jobs-empty.js');
+        process.exitCode = await cmdJobs(rest);
+        break;
+      }
+
       case 'metrics': {
         const { cmdMetrics } = await import('./metrics.js');
         process.exitCode = await cmdMetrics(rest);
@@ -3037,6 +3044,12 @@ async function main(): Promise<void> {
       case 'ci-metrics': {
         const cmdCiMetrics = await loadCiMetricsCmd();
         process.exitCode = await cmdCiMetrics(rest);
+        break;
+      }
+
+      case 'main': {
+        const { cmdMain } = await import('./main-blame.js');
+        process.exitCode = await cmdMain(rest);
         break;
       }
 
