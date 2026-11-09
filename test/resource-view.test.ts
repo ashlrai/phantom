@@ -58,21 +58,6 @@ describe('resource.v1 projection', () => {
     const next = buildResourceView({ resources: { devin: { ...devin, fetchedAt: iso(0), pctUsed: 26 }, view: prior } }, NOW);
     expect(next.pools.find(row => row.pool === 'devin')).toMatchObject({ burnRatePerHour: 30, fetchedAt: iso(0) });
   });
-  it('shows a real Devin percentage reading from the org-cycle source', () => {
-    const devin = { pool: 'devin', acuUsed: 20, acuLimit: 50, pctUsed: 40, fetchedAt: iso(0), resetAt: iso(1), source: 'devin-api-v3-org-cycle' };
-    expect(projectPoolResource('devin', devin, null, NOW)).toMatchObject({ pctUsed: 40, source: 'devin-api-v3-org-cycle', fetchedAt: iso(0), resetAt: iso(1) });
-  });
-  it('keeps a zero-limit Devin reading honest: the provider reported, no percentage exists, none is invented', () => {
-    const free = { pool: 'devin', acuUsed: 20, acuLimit: 0, pctUsed: null, fetchedAt: iso(0), resetAt: iso(1), source: 'devin-api-v3-org-cycle' };
-    expect(projectPoolResource('devin', free, null, NOW)).toEqual({
-      pool: 'devin', pctUsed: null, burnRatePerHour: null, resetAt: iso(1),
-      projectedExhaustionAt: null, paceRatio: null, status: 'unknown', source: 'devin-api-v3-org-cycle', fetchedAt: iso(0),
-    });
-    const view = buildResourceView({ resources: { devin: free } }, NOW);
-    const row = view.pools.find(pool => pool.pool === 'devin');
-    expect(row).toMatchObject({ pctUsed: null, status: 'unknown', source: 'devin-api-v3-org-cycle', resetAt: iso(1), fetchedAt: iso(0) });
-    expect(JSON.stringify(view)).not.toContain('acuUsed');
-  });
   it('snapshots the complete unknown schema, never numeric zero fallbacks', () => {
     expect(buildResourceView({}, NOW)).toMatchSnapshot();
   });

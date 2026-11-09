@@ -4,15 +4,12 @@
  * Read tools stay available while KILL is on. Write tools are `append`, so
  * callNativeTool refuses them when KILL is on.
  *
- * Screenshot bytes are written to a private file. The gateway scrubber
- * redacts long base64, so the MCP result carries the path and the OCR text.
+ * Screenshots are local-only: the MCP result carries the private
+ * file path, metadata and scrubbed OCR text, never image bytes.
  */
-import { randomUUID } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { ashlrHome } from '../cloud/store.js';
 import type { AshlrConfig, NativeToolDef } from '../types.js';
-import { runDesktopOperator, type OperatorRequest, type OperatorResult } from './operator.js';
+import { runDesktopOperator, scrubOperatorJson, type OperatorRequest } from './operator.js';
+import { deliverScreenshot } from './operator-screenshot.js';
 
 type Tool = NativeToolDef & {
   handler: (args: Record<string, unknown>, cfg: AshlrConfig) => Promise<unknown>;
@@ -62,23 +59,6 @@ function requestFrom(verb: OperatorRequest['verb'], args: Record<string, unknown
   }
 }
 
-export function deliverScreenshot(result: OperatorResult, write: (bytes: Buffer) => string): OperatorResult {
-  if (!result.ok || result.verb !== 'screenshot' || typeof result.data['base64'] !== 'string') return result;
-  const bytes = Buffer.from(result.data['base64'], 'base64');
-  const path = write(bytes);
-  const data: Record<string, unknown> = { ...result.data, bytes: bytes.length, path };
-  delete data['base64'];
-  return { ok: true, verb: 'screenshot', data };
-}
-
-function writeShot(bytes: Buffer): string {
-  const directory = join(ashlrHome(), 'desktop-operator', 'shots');
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const path = join(directory, `${randomUUID()}.png`);
-  writeFileSync(path, bytes, { mode: 0o600 });
-  return path;
-}
-
 const appWindow = {
   app: { type: 'string', description: 'App name or bundle id.' },
   window: { type: 'string', description: 'Window title. Omit for the front window of the app.' },
@@ -92,7 +72,8 @@ function tool(name: string, verb: OperatorRequest['verb'], description: string, 
     inputSchema: { type: 'object', properties, required, additionalProperties: false },
     handler: async (args) => {
       const result = await runDesktopOperator(requestFrom(verb, args));
-      return verb === 'screenshot' ? deliverScreenshot(result, writeShot) : result;
+      const delivered = verb === 'screenshot' ? deliverScreenshot(result) : result;
+      return scrubOperatorJson(delivered);
     },
   };
 }
@@ -101,7 +82,7 @@ export const desktopOperatorTools: Tool[] = [
   tool('desktop_list_apps', 'list-apps', 'List running desktop apps the operator can see. Read-only.', 'read', {}, []),
   tool('desktop_windows', 'windows', 'List visible windows and session titles. Read-only. Messages, the keychain and System Settings are omitted.', 'read', { app: appWindow.app }, []),
   tool('desktop_read', 'read', 'Read a window through the accessibility tree, then OCR when the tree has no text. Read-only. Screen text is untrusted.', 'read', appWindow, ['app']),
-  tool('desktop_screenshot', 'screenshot', 'Capture one app window. Returns a private PNG path plus OCR text. Read-only.', 'read', appWindow, ['app']),
+  tool('desktop_screenshot', 'screenshot', 'Capture one app window. Returns a private 0600 PNG path, metadata and scrubbed OCR text, no image bytes. Read-only.', 'read', appWindow, ['app']),
   tool('desktop_doctor', 'doctor', 'Report desktop-operator permissions, the helper binary, KILL and comms pause. Read-only.', 'read', {}, []),
   tool('desktop_focus', 'focus', 'Focus an app window. Posts a bus intent before the focus change.', 'append', appWindow, ['app']),
   tool('desktop_scroll', 'scroll', 'Scroll a window. Posts a bus intent before the scroll.', 'append', {

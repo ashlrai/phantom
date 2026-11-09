@@ -6,15 +6,14 @@
  * shape degrades to unknown. It never invents sessions and never reads app
  * databases, session stores, or credential files.
  *
- * Claims come from the coordination table (claim-store). Message-id rows
- * project back to the bus message id. Fencing tokens never leave the store.
+ * Claims come from inspectBusWorkClaims, the observer read of the bus work
+ * claim table. Fencing tokens stay inside that module.
  */
 import { execFile } from 'node:child_process';
 import type { DevinSession, DevinSessionPage } from '../devin/client.js';
 import { connectedClient } from '../devin/service.js';
 import { scrubSecrets } from '../util/scrub.js';
-import { listCoordination } from '../agents/claim-store.js';
-import type { BusWorkClaimView, BusWorkClaimsInspection } from './bus-work-claims.js';
+import { inspectBusWorkClaims, type BusWorkClaimView, type BusWorkClaimsInspection } from './bus-work-claims.js';
 import { listLiveWorkers, type LiveWorkersSnapshot } from './runs-live-workers.js';
 
 export const AGENT_ROSTER_SCHEMA = 'agent-roster.v1' as const;
@@ -122,19 +121,6 @@ function isoMillis(ms: number): string | null {
   if (!Number.isSafeInteger(ms)) return null;
   const date = new Date(ms);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
-/** Live coordination leases in the bus-work claim shape the roster already renders. */
-export function readRosterClaims(now = Date.now()): BusWorkClaimsInspection {
-  const listed = listCoordination(undefined, now);
-  if (listed.source !== 'available') return { source: listed.source, claims: [] };
-  const claims: BusWorkClaimView[] = [];
-  for (const row of listed.claims) {
-    if (!row.live) continue;
-    const id = row.origin === 'message' && row.key.startsWith('queue:') ? row.key.slice('queue:'.length) : row.key;
-    claims.push({ id, cursor: 0, receivedAt: 0, owner: row.owner, leaseUntil: row.leaseUntil, completedAt: null });
-  }
-  return { source: 'available', claims };
 }
 
 function claimRef(row: BusWorkClaimView): RosterClaimRef | null {
@@ -533,7 +519,7 @@ export async function collectAgentRoster(deps: AgentRosterDeps = {}): Promise<Ag
   )));
   let claims: AgentRoster['claims'];
   try {
-    const inspection = (deps.readClaims ?? readRosterClaims)();
+    const inspection = (deps.readClaims ?? inspectBusWorkClaims)();
     claims = {
       source: inspection.source,
       items: inspection.claims.flatMap((row) => {

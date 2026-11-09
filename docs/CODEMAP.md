@@ -42,7 +42,7 @@ Check actual imports for a change rather than assuming an acyclic architecture.
 | Memory, indexing, retrieval | `src/core/memory/`, `genome/`, `knowledge/`, `ask/`, `index-engine.ts` | [Memory](MEMORY.md), [memory foundation](MEMORY-FOUNDATION.md) |
 | Integrations and MCP | `src/core/integrations/`, `connectors/`, `mcp/`, `mcp-gateway.ts`, `src/mcp/` | [Toolchain](AGENT-TOOLCHAIN.md), [connectors](CONNECTORS.md) |
 | Release and local runtime | `src/core/release/`, `local-runtime/`, `scripts/` | [Releasing](RELEASING.md), [M523 release contract](contracts/CONTRACT-M523.md) |
-| Metrics and observation | `src/core/metrics/`, `observe/`, `world/`, `observability/`, `usage/`, `radar/` | [Human observe](OBSERVE.md), [World model](WORLD.md), [Lane health](LANE-HEALTH.md), [Radar](RADAR.md) |
+| Metrics and observation | `src/core/metrics/`, `observe/`, `observability/`, `usage/`, `radar/` | [Human observe](OBSERVE.md), [Lane health](LANE-HEALTH.md), [Radar](RADAR.md) |
 
 Contract documents in `docs/contracts/` include milestone-specific acceptance
 and security boundaries; their presence alone does not establish activation.
@@ -160,5 +160,4 @@ imports, individual files, semantics or contract coverage.
 - `src/core/web/`
 - `src/core/website/`
 - `src/core/workbench/`
-- `src/core/world/`
 <!-- codemap:core:end -->

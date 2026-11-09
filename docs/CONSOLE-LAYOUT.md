@@ -21,9 +21,7 @@ phm serve
 
 The same live state renders at every width: pool usage, burn and pace, daemon
 state, and the machine's memory, swap and disk. Numbers come only from
-recorded readings, plus the Devin pool's independent bounded live read (the
-same custody-wrapped `devin-api-v3-org-cycle` reader the usage panel uses).
-A reading that is missing, stale or unreachable prints `unknown`, never
+recorded readings. A reading that is missing or stale prints `unknown`, never
 an invented percentage, and no secret values are rendered.
 
 The same numbers without a browser:

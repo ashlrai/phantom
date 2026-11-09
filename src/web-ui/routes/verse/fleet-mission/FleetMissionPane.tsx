@@ -3,7 +3,6 @@ import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { missionQuery, type MissionControl, type MissionDecision, type MissionHealth, type MissionJob, type MissionMain, type MissionResource } from './mission-queries.js';
-import { ProviderLogo, providerEngine } from '../../../components/primitives/ProviderLogo.js';
 import styles from './fleet-mission.module.css';
 
 type Detail = 'jobs' | 'choices' | 'time' | 'mains' | 'incidents' | 'memory' | 'plan';
@@ -76,10 +75,7 @@ function DetailView({ data, detail }: { data: MissionControl; detail: Detail }) 
         : <ul className={styles.rows}>{data.decisions.map((row, index) => <li className={styles.row} key={`${row.at}:${index}`}><span>{choiceLine(row)}</span><span className={styles.meta}>{row.why || 'No reason recorded.'}</span></li>)}</ul>;
     case 'time':
       return data.resources.length === 0 ? <p className={styles.quiet}>Not reported yet.</p>
-        : <ul className={styles.rows}>{data.resources.map((row) => {
-          const mark = providerEngine(row.id);
-          return <li className={styles.row} key={row.id}><span className={styles.lane}>{mark ? <ProviderLogo engine={mark} /> : null}{row.label}</span><span className={styles.meta}>{timeLeft(row)}</span></li>;
-        })}</ul>;
+        : <ul className={styles.rows}>{data.resources.map((row) => <li className={styles.row} key={row.id}><span>{row.label}</span><span className={styles.meta}>{timeLeft(row)}</span></li>)}</ul>;
     case 'mains':
       return data.mains.length === 0 ? <p className={styles.quiet}>Not reported yet.</p>
         : <ul className={styles.rows}>{data.mains.map((row) => <li className={`${styles.row} ${styles.main}`} data-health={row.health} key={row.repo}><span>{mainLine(row)}</span>{row.note ? <span className={styles.meta}>{row.note}</span> : null}</li>)}</ul>;
@@ -115,7 +111,7 @@ export function FleetMissionPane({ visible }: Pick<PaneProps, 'visible'>) {
   const read = useQuery(missionQuery, { enabled: active, freshMs: 0 });
   const refetch = useRefetch(missionQuery);
   const refresh = useRefresh(missionQuery);
-  usePollWhileVisible(refetch, 4_000, { enabled: visible, refreshOnShow: false });
+  usePollWhileVisible(refetch, 5_000, { enabled: visible, refreshOnShow: false });
   const [detail, setDetail] = useState<Detail | null>(null);
   const data = read.data;
   const open = (id: Detail) => setDetail((current) => current === id ? null : id);

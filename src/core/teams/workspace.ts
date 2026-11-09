@@ -2,7 +2,6 @@
 import { assertLocalHuman } from './identity.js';
 import { validId, type TeamActor } from './protocol.js';
 import { appendUnlocked, readEvents, withTeamLock } from './store.js';
-import { releaseCoordinationBySource } from '../agents/claim-store.js';
 import { teamState } from './state.js';
 
 export type WorkspaceAction =
@@ -38,10 +37,6 @@ export function updateWorkspace(team: string, actor: TeamActor, action: Workspac
       if (member.role === 'owner') throw new Error('An owner cannot be removed.');
       const drainedClaims = state.claims.filter(c => c.holder === member.id).map(c => c.id).sort();
       const reopenedHandoffs = state.handoffs.filter(h => h.state === 'accepted' && h.assignee === member.id).map(h => h.id).sort();
-      for (const claimId of drainedClaims) {
-        const released = releaseCoordinationBySource({ origin: 'team', sourceId: claimId });
-        if (released.status === 'unavailable') throw new Error('Claim store unavailable.');
-      }
       return appendUnlocked(team, actor, action.type, { memberId: member.id, drainedClaims, reopenedHandoffs });
     }
     if (member.id === actor.id) throw new Error('Use another owner/admin to change your role.');

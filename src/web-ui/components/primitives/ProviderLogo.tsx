@@ -16,17 +16,6 @@ import type { CSSProperties } from 'react';
 
 export type ProviderEngine = 'claude' | 'codex' | 'grok' | 'local' | 'devin';
 
-/** Lane or pool id → provider mark, when one exists. Unknown names get no logo, never a wrong one. */
-export function providerEngine(name: string): ProviderEngine | null {
-  const lane = name.toLowerCase();
-  if (lane.includes('claude')) return 'claude';
-  if (lane.includes('codex')) return 'codex';
-  if (lane.includes('grok')) return 'grok';
-  if (lane.includes('devin')) return 'devin';
-  if (lane === 'local' || lane.includes('ollama')) return 'local';
-  return null;
-}
-
 interface Mark { viewBox?: string; d: string; fill: string | null; rule: 'evenodd' | 'nonzero'; name: string }
 
 const MARKS: Readonly<Record<ProviderEngine, Mark>> = {

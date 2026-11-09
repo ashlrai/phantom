@@ -7,7 +7,6 @@ import { headlinesFor, type PullFact } from './pulls.js';
 import { classifyResources, resourceCounts, type RosterSessionInput, type RosterSourceInput } from './resources.js';
 import { projectSensors } from './sensors.js';
 import type { BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
-import { stableFieldId } from '../world/types.js';
 import {
   OBSERVE_BASELINE,
   OBSERVE_CLAIM_WINDOW_MS,
@@ -120,7 +119,6 @@ function countFields(snapshot: Omit<ObserveSnapshot, 'coverage'>): { live: numbe
   if (snapshot.roster.state !== 'live') unknown += 1;
   for (const window of snapshot.usage.windows) {
     mark(window.headroom); mark(window.burnPerHour); mark(window.projectedUnused);
-    mark(window.remaining); mark(window.forecastExhaustAt); mark(window.forecastVsReset); mark(window.idleIncludedWastedPerWeek);
   }
   if (snapshot.usage.state !== 'live') unknown += 1;
   mark(snapshot.resources.counts.coordinated);
@@ -231,50 +229,8 @@ export function assembleObserve(input: ObserveInput): ObserveSnapshot {
   ];
   return {
     ...snapshot,
-    coverage: { panels: 12, sources, fields, unknownFields: observeUnknownFields(snapshot) },
+    coverage: { panels: 12, sources, fields },
   };
-}
-
-function observeUnknownFields(snapshot: Omit<ObserveSnapshot, 'coverage'>): ObserveSnapshot['coverage']['unknownFields'] {
-  const rows: ObserveSnapshot['coverage']['unknownFields'] = [];
-  const add = (path: string, freshness: 'unknown' | 'stale' = 'unknown') => {
-    rows.push({ id: stableFieldId(path), path, freshness });
-  };
-  if (snapshot.roster.state !== 'live') add('roster');
-  for (const session of snapshot.roster.sessions) {
-    if (session.role === null) add(`roster.sessions.${session.sessionId}.role`);
-    if (session.task === null) add(`roster.sessions.${session.sessionId}.task`);
-    if (session.claim === null) add(`roster.sessions.${session.sessionId}.claim`);
-    if (session.model === null) add(`roster.sessions.${session.sessionId}.model`);
-    if (session.ageSeconds === null) add(`roster.sessions.${session.sessionId}.ageSeconds`);
-  }
-  for (const window of snapshot.usage.windows) {
-    if (window.headroom === null) add(`usage.windows.${window.lane}.headroom`);
-    if (window.used === null) add(`usage.windows.${window.lane}.used`);
-    if (window.limit === null) add(`usage.windows.${window.lane}.limit`);
-    if (window.remaining === null) add(`usage.windows.${window.lane}.remaining`);
-    if (window.burnPerHour === null) add(`usage.windows.${window.lane}.burnPerHour`);
-    if (window.projectedUnused === null) add(`usage.windows.${window.lane}.projectedUnused`);
-    if (window.forecastExhaustAt === null) add(`usage.windows.${window.lane}.forecastExhaustAt`);
-    if (window.forecastVsReset === 'unknown') add(`usage.windows.${window.lane}.forecastVsReset`);
-    if (window.idleIncludedWastedPerWeek === null) add(`usage.windows.${window.lane}.idleIncludedWastedPerWeek`);
-  }
-  if (snapshot.resources.counts.coordinated === null) add('resources.counts.coordinated');
-  if (snapshot.resources.counts.idle === null) add('resources.counts.idle');
-  if (snapshot.resources.counts.duplicated === null) add('resources.counts.duplicated');
-  if (snapshot.resources.counts.unknown === null) add('resources.counts.unknown');
-  if (snapshot.pulls.state !== 'live') add('pulls');
-  for (const repo of snapshot.pulls.repos) {
-    if (repo.mergedPerDay === null) add(`pulls.repos.${repo.repo}.mergedPerDay`);
-    if (repo.changeFailureRate === null) add(`pulls.repos.${repo.repo}.changeFailureRate`);
-  }
-  if (snapshot.bottlenecks.state !== 'live') add('bottlenecks');
-  if (snapshot.humans.stepsRemaining === null) add('humans.stepsRemaining');
-  for (const stage of snapshot.graph.stages) {
-    if (stage.state === 'unknown') add(`graph.stages.${stage.id}`);
-  }
-  rows.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  return rows;
 }
 
 export function sessionFromRoster(roster: unknown, sessionId: string, _nowMs: number): SessionDetail {

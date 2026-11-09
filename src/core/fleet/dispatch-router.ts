@@ -76,7 +76,6 @@ import {
   DEVIN_CLI_LANE_DEFAULT_SLOTS,
   resolveDevinCliFleetModel,
 } from '../devin/cli-engine.js';
-import { paceAgainstCeiling, paceReason, type SchedulerPaceAdvice } from '../usage/sensor-pace.js';
 import {
   DEVIN_CLI_LANE,
   FLEET_ENGINES,
@@ -203,12 +202,6 @@ export interface LanePlanInput {
   leaderPreferences?: ResolvedLeaderPreferences;
   /** Finite selected-batch/journal/pool bound, never a business preference or account-count clamp. */
   admittedBatchCapacity?: number;
-  /** Included-usage pace. Absent leaves the existing ceilings alone. */
-  sensorPace?: Readonly<Partial<Record<FleetEngine, SchedulerPaceAdvice>>>;
-  /** Clock for the pace. Required before sensorPace can narrow a lane. */
-  nowMs?: number;
-  /** ~/.ashlr/KILL. Zeroes every lane after the other ceilings. */
-  killed?: boolean;
 }
 
 export interface LanePlan {
@@ -386,18 +379,6 @@ export function planLanes(input: LanePlanInput): Record<FleetEngine, LanePlan> {
       narrow(0, lane === DEVIN_CLI_LANE
         ? "The grant's current rollout stage does not include Devin."
         : `The grant's current rollout stage does not include ${FLEET_LANE_LABEL[lane]}.`);
-    }
-    const advice = input.sensorPace?.[lane];
-    if (slots > 0 && advice && typeof input.nowMs === 'number') {
-      const paced = paceAgainstCeiling(advice, slots, input.nowMs, false);
-      if (paced.target !== null && paced.target < slots) {
-        slots = paced.target;
-        capReason = paceReason(paced.reason, paced.target);
-      }
-    }
-    if (input.killed === true) {
-      slots = 0;
-      capReason = paceReason('kill', 0);
     }
     out[lane] = { lane, slots, capReason };
   }

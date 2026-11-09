@@ -42,7 +42,6 @@ def build(md, repos=('phantom',), running=0, queued=0, slots=None, lanes_status=
     (q / 'slots.json').write_text(json.dumps(slots))
     (q / 'claimed.tsv').write_text('')
     (q / 'ready.tsv').write_text('')
-    (q / 'admission.json').write_text(json.dumps({'cap': 1000}))
     return tmp
 
 
@@ -452,7 +451,7 @@ class AutoUnparkTests(unittest.TestCase):
 
 class ReplenishmentDiagnosticsTests(unittest.TestCase):
     def test_local_and_personal_parked_rows_do_not_fill_lanes_or_loop(self):
-        rows = [line('RQ-LOCAL-NEW', pool='codex-local', repo='phantom', **{'size<': 60}),
+        rows = [line('RQ-LOCAL-NEW', pool='codex-local', repo='phantom'),
                 line('RQ-PERSONAL-NEW', pool='codex-personal', repo='phantom')]
         slots = {l: {'held': True} for l in LANES}
         slots.update({'codex-local': {'target': 1}, 'codex-personal': {'target': 1}})
@@ -481,23 +480,6 @@ class ReplenishmentDiagnosticsTests(unittest.TestCase):
         again = json.loads(restock(home, '--per-lane', '1', '--json').stdout)
         self.assertEqual(again['queued'], 0)
         self.assertEqual((q / 'ready.tsv').read_text(), ready)
-
-    def test_local_requires_bounded_size_at_most_60(self):
-        rows = [line('RQ-LOCAL-' + suffix, pool='codex-local', repo='phantom', **attrs)
-                for suffix, attrs in [('SMALL', {'size<': 59}), ('EDGE', {'size<': 60}),
-                                      ('LARGE', {'size<': 61}), ('MISSING', {}), ('BAD', {'size<': 'oops'})]]
-        slots = {lane: {'held': True} for lane in LANES}
-        slots['codex-local'] = {'target': 10}
-        tmp = build('\n'.join(rows) + '\n', slots=slots)
-        self.addCleanup(tmp.cleanup)
-        home = Path(tmp.name)
-        result = restock(home, '--per-lane', '10', '--json')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        ready = (home / '.ashlr-runs/queue/ready.tsv').read_text()
-        for suffix in ('SMALL', 'EDGE'):
-            self.assertIn('RQ-LOCAL-' + suffix, ready)
-        for suffix in ('LARGE', 'MISSING', 'BAD'):
-            self.assertNotIn('RQ-LOCAL-' + suffix, ready)
 
     def test_duplicate_parked_rows_unpark_once(self):
         tmp = build('')
@@ -912,23 +894,3 @@ class MergeRateRecoveryTests(unittest.TestCase):
         (q / 'mergerate-recovery-at').write_text(str(time.time() - 3601))
         self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
         self.assertNotIn('PARKED-MERGERATE', (q / 'ready.tsv').read_text())
-
-class QueueDepthGateTests(unittest.TestCase):
-    def test_full_and_partial_queue(self):
-        candidates = '\n'.join(line(f'RQ-GATE-{n}', pool='devin', tier='mid', repo='phantom') for n in range(60))
-        for depth in (10, 100):
-            with self.subTest(depth=depth):
-                tmp = build(candidates)
-                try:
-                    home = Path(tmp.name)
-                    q = home / '.ashlr-runs' / 'queue'
-                    (q / 'admission.json').write_text(json.dumps({'cap': 18}))
-                    before = ''.join(f'RQ-OLD-{n}\tphantom\tdevin\tmid\t/prompt\n' for n in range(depth))
-                    (q / 'ready.tsv').write_text(before)
-                    result = restock(home, '--per-lane', '100')
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    after = (q / 'ready.tsv').read_text().splitlines()
-                    self.assertTrue(set(before.splitlines()).issubset(after))
-                    self.assertLessEqual(len(after) - depth, max(0, 45 - depth))
-                finally:
-                    tmp.cleanup()

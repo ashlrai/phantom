@@ -8,7 +8,6 @@ import {
   coveredPrNumbers,
   parseHoldList,
   planRebaseJobs,
-  rebaseAttemptsSpent,
   type RebasePlanExistingJob,
 } from '../src/core/fleet/rebase-plan.js';
 
@@ -276,63 +275,6 @@ describe('planRebaseJobs', () => {
     // 10 is replaced; rework 20 is older than 21; 21 (conflicting) is rebased.
     expect(result.counts).toMatchObject({ conflicting: 4, superseded: 2, jobs: 2 });
     expect(result.jobs.flatMap(j => j.prs).sort()).toEqual([11, 21]);
-  });
-
-  describe('one rebase attempt per original PR', () => {
-    const rebasePr = (number: number, title: string, overrides: Partial<MergeBatchPr> = {}) =>
-      conflictedBridge(number, { title: `bridge: ${title}`, ...overrides });
-
-    it('refuses a rebase PR that conflicts again, including hand-run batch ids', () => {
-      const result = plan([
-        rebasePr(54, 'RQ-REBASE-PH-00'),
-        rebasePr(64, 'RQ-REBASE2-PH-00'),
-        conflictedBridge(9, { files: ['z.ts'] }),
-      ]);
-      expect(result.exhausted).toEqual([
-        { number: 54, reason: 'is-rebase', via: 54 },
-        { number: 64, reason: 'is-rebase', via: 64 },
-      ]);
-      expect(result.counts).toMatchObject({ conflicting: 3, exhausted: 2, jobs: 1 });
-      expect(result.jobs.flatMap(j => j.prs)).toEqual([9]);
-    });
-
-    it('refuses an origin an open single or batch rebase PR already names', () => {
-      const result = plan([
-        conflictedBridge(7, { files: ['a.ts'] }),
-        conflictedBridge(8, { files: ['b.ts'] }),
-        conflictedBridge(9, { files: ['c.ts'] }),
-        conflictedBridge(10, { files: ['d.ts'] }),
-        rebasePr(70, 'RQ-REBASE-phantom-7-abc1234', { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' }),
-        rebasePr(71, 'RQ-REBASE-BATCH-phantom-8-9-abcdef', { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' }),
-      ]);
-      expect(result.exhausted).toEqual([
-        { number: 7, reason: 'already-rebased', via: 70 },
-        { number: 8, reason: 'already-rebased', via: 71 },
-        { number: 9, reason: 'already-rebased', via: 71 },
-      ]);
-      expect(result.jobs.flatMap(j => j.prs)).toEqual([10]);
-    });
-
-    it('names the rebase PR itself, not its origin, when both conflict', () => {
-      const spent = rebaseAttemptsSpent([
-        conflictedBridge(7),
-        rebasePr(70, 'RQ-REBASE-phantom-7-abc1234'),
-      ], 'ashlrai/phantom');
-      expect(spent.get(70)).toEqual({ number: 70, reason: 'is-rebase', via: 70 });
-      expect(spent.get(7)).toEqual({ number: 7, reason: 'already-rebased', via: 70 });
-    });
-
-    it('ignores rebase PRs of another repo and does nothing without a repo', () => {
-      const prs = [conflictedBridge(7, { files: ['a.ts'] }), rebasePr(70, 'RQ-REBASE-other-7-abc1234', { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' })];
-      expect(plan(prs).counts.exhausted).toBe(0);
-      expect(rebaseAttemptsSpent(prs, null).size).toBe(0);
-    });
-
-    it('leaves first-time rebases and rework PRs alone', () => {
-      const result = plan([conflictedBridge(7, { files: ['a.ts'] }), conflictedBridge(8, { title: 'bridge: RQ-RECUT-phantom-99-abc1234', files: ['b.ts'] })]);
-      expect(result.exhausted).toEqual([]);
-      expect(result.jobs.flatMap(j => j.prs).sort()).toEqual([7, 8]);
-    });
   });
 
   it('defers conflicting PRs behind an overlapping clean PR only when asked', () => {

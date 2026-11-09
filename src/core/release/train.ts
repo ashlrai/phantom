@@ -338,9 +338,7 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   if (!input.build && !input.buildPending && !input.buildCooldown && !(row?.draft === false && input.npmPublished === true)) {
     writes.push({
       method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/ci.yml/dispatches`,
-      // ci.yml types release_gate as boolean. The dispatch API stores inputs as
-      // strings; Actions then exposes inputs.release_gate as a boolean.
-      body: { ref: headTag.name, inputs: { release_gate: 'true' } },
+      body: { ref: headTag.name, inputs: { release_gate: true } },
     });
   }
   if (input.build && !input.attest && !input.attestPending) {
@@ -667,27 +665,19 @@ export function readReleaseState(path: string): TrainState {
   return parsed as TrainState;
 }
 
-/** Argv and stdin for one `gh api` call. A body is sent only with `--input -`. */
-export function releaseGithubCall(method: string, path: string, body?: unknown): { args: string[]; input?: string } {
-  const args = ['api', '--hostname', 'github.com', '--method', method];
-  if (body === undefined) return { args: [...args, path] };
-  return { args: [...args, '--input', '-', path], input: JSON.stringify(body) };
-}
-
 function gh(method: string, path: string, body?: unknown): string {
   const appWrite = method === 'PATCH' || path === 'graphql';
   const token = appWrite ? process.env.RELEASE_APP_TOKEN : process.env.GH_TOKEN;
   if (!token) throw new Error(appWrite ? 'release app token unavailable' : 'github token unavailable');
   const env: NodeJS.ProcessEnv = { ...process.env, GH_TOKEN: token };
   delete env.RELEASE_APP_TOKEN;
-  const call = releaseGithubCall(method, path, body);
   try {
-    return execFileSync('gh', call.args, {
-      encoding: 'utf8', input: call.input,
+    return execFileSync('gh', ['api', '--hostname', 'github.com', '--method', method, path], {
+      encoding: 'utf8', input: body === undefined ? undefined : JSON.stringify(body),
       maxBuffer: 8 * 1024 * 1024, env,
     });
   } catch {
-    throw new Error(`github ${method} ${path} failed`);
+    throw new Error(`github ${method} failed`);
   }
 }
 

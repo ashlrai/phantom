@@ -56,23 +56,6 @@ function checkedRow(row: BusInboxReceipt, ids: Set<string>): BusInboxReceipt {
   ids.add(checked.value.id);
   return { cursor: row.cursor, receivedAt: row.receivedAt, envelope: checked.value };
 }
-/** Thrown when concurrent appends keep replacing the snapshot under a reader. */
-export class BusInboxChurnError extends Error {}
-/** Every append locks, stages and renames inside bus-inbox/, which changes the
- * snapshot inode and the directory mtime that the stable reader pins. An
- * overlapping post is therefore an expected race, not damage: re-read a
- * bounded number of times, then report churn so callers retry rather than
- * treating a busy inbox as unavailable. */
-const BUS_INBOX_READ_ATTEMPTS = 3;
-function readSnapshotText(file: string, root: string): { text: string; bytesRead: number } {
-  for (let attempt = 1; ; attempt++) {
-    privatePath(file, 'file', root);
-    const read = readStableRegularFile(file, { anchorPath: root, maxFileBytes: BUS_INBOX_MAX_BYTES, remainingBytes: BUS_INBOX_MAX_BYTES });
-    if (read.ok) return read;
-    if (read.reason !== 'changed-during-read') throw new Error('Unavailable');
-    if (attempt >= BUS_INBOX_READ_ATTEMPTS) throw new BusInboxChurnError('Bus inbox changed during read');
-  }
-}
 function loadSnapshot(root: string): BusInboxStore {
   const directory = join(root, 'bus-inbox'), file = join(directory, 'messages.json');
   const absent: BusInboxStore = { source: 'missing', rows: [], highWater: 0, bytes: null };
@@ -81,7 +64,9 @@ function loadSnapshot(root: string): BusInboxStore {
   if (missing(directory)) return absent;
   privatePath(directory, 'directory', root);
   if (missing(file)) return absent;
-  const read = readSnapshotText(file, root);
+  privatePath(file, 'file', root);
+  const read = readStableRegularFile(file, { anchorPath: root, maxFileBytes: BUS_INBOX_MAX_BYTES, remainingBytes: BUS_INBOX_MAX_BYTES });
+  if (!read.ok) throw new Error('Unavailable');
   const snapshot: unknown = JSON.parse(read.text);
   const ids = new Set<string>();
   if (Array.isArray(snapshot)) {
@@ -196,5 +181,5 @@ export function listBusInboxAfter(after = 0, limit = 50, options: BusInboxOption
     // pruned or expired tail never makes consumers re-scan dead cursors.
     if (messages.length < limit) nextCursor = Math.max(nextCursor, snapshot.highWater);
     return { status: 'ok', messages, nextCursor };
-  } catch (error) { return { status: error instanceof BusInboxChurnError ? 'retryable' : 'unavailable' }; }
+  } catch { return { status: 'unavailable' }; }
 }

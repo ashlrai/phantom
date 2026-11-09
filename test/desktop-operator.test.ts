@@ -1,5 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -7,7 +6,8 @@ import { describe, expect, it } from 'vitest';
 import { cmdDesktop, parseDesktopInstallArgs } from '../src/cli/desktop.js';
 import { cmdDesktopOperator } from '../src/cli/desktop-operator.js';
 import { desktopSessions } from '../src/core/desktop/desktop-sessions.js';
-import { deliverScreenshot, desktopOperatorTools } from '../src/core/desktop/operator-mcp.js';
+import { desktopOperatorTools } from '../src/core/desktop/operator-mcp.js';
+import { deliverScreenshot, screenshotDirectory, writeScreenshotFile } from '../src/core/desktop/operator-screenshot.js';
 import {
   runDesktopOperator,
   scrubOperatorJson,
@@ -287,6 +287,9 @@ describe('runDesktopOperator', () => {
     expect(unsupported).toMatchObject({ ok: false, code: 'unsupported' });
     const missing = await runDesktopOperator({ verb: 'list-apps' }, {
       platform: 'darwin',
+      exists: () => false,
+      env: {},
+      cwd: '/tmp/none',
     });
     expect(missing).toMatchObject({ ok: false, code: 'helper_missing', binary: 'desktop-operator' });
     expect(JSON.stringify(missing)).toContain(ACCESSIBILITY_PANE);
@@ -361,55 +364,117 @@ describe('desktop operator MCP tools', () => {
     for (const name of ['desktop_focus', 'desktop_scroll', 'desktop_type', 'desktop_click']) {
       expect(nativeToolSafety(name)).toBe('append');
     }
-    const delivered = deliverScreenshot({
-      ok: true,
-      verb: 'screenshot',
-      data: { base64: Buffer.from('png').toString('base64'), ocrText: 'seen', mime: 'image/png' },
-    }, () => '/private/shot.png');
+  });
+
+  it('does not advertise image output', () => {
+    const shot = desktopOperatorTools.find((tool) => tool.name === 'desktop_screenshot');
+    expect(JSON.stringify(shot?.inputSchema)).not.toContain('include_image');
+    expect(shot?.description).toContain('no image bytes');
+  });
+});
+
+describe('desktop screenshots are local-only by default', () => {
+  const png = Buffer.from('png-bytes');
+  const raw = () => ({
+    ok: true as const,
+    verb: 'screenshot' as const,
+    data: { base64: png.toString('base64'), ocrText: 'seen', mime: 'image/png' },
+  });
+
+  it('returns only a path and metadata without the opt-in', () => {
+    const delivered = deliverScreenshot(raw(), { write: () => '/private/shot.png' });
     expect(delivered.ok).toBe(true);
     if (delivered.ok) {
       expect(delivered.data['path']).toBe('/private/shot.png');
+      expect(delivered.data['bytes']).toBe(png.length);
       expect(delivered.data['base64']).toBeUndefined();
     }
+    expect(JSON.stringify(delivered)).not.toContain(png.toString('base64'));
+  });
+
+  it('fails closed without the image when local storage fails', () => {
+    const delivered = deliverScreenshot(raw(), { write: () => { throw new Error('disk full'); } });
+    expect(delivered).toMatchObject({ ok: false, code: 'failed' });
+    expect(JSON.stringify(delivered)).not.toContain(png.toString('base64'));
+  });
+
+  it('writes the file mode 0600 in a 0700 directory', () => {
+    const path = writeScreenshotFile(png);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    expect(statSync(join(path, '..')).mode & 0o777).toBe(0o700);
+    expect(readFileSync(path).equals(png)).toBe(true);
+  });
+
+  it('rejects unsafe directories and retains only recent bounded screenshots', () => {
+    const dir = screenshotDirectory();
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    chmodSync(dir, 0o777);
+    expect(() => writeScreenshotFile(png)).toThrow();
+    chmodSync(dir, 0o700);
+    for (let i = 0; i < 102; i++) {
+      const path = join(dir, `${i.toString(16).padStart(36, '0')}.png`);
+      writeFileSync(path, png);
+      const time = new Date(Date.now() - (i === 0 ? 8 * 86400000 : i * 1000));
+      utimesSync(path, time, time);
+    }
+    writeScreenshotFile(png);
+    expect(readdirSync(dir).length).toBeLessThanOrEqual(100);
+    expect(readdirSync(dir)).not.toContain(`${'0'.repeat(36)}.png`);
+    rmSync(dir, { recursive: true });
+    symlinkSync('/tmp', dir);
+    expect(() => writeScreenshotFile(png)).toThrow();
+    rmSync(dir);
+  });
+
+  it('CLI --json omits base64 by default, scrubs OCR, and posts nothing to the bus', async () => {
+    const secret = ['sk', 'ant', 'api03', 'A'.repeat(40)].join('-');
+    const surface = mockSurface();
+    const shot = surface.screenshot.bind(surface);
+    surface.screenshot = async (input) => {
+      const result = await shot(input);
+      return result.ok ? { ok: true, value: { ...result.value, base64: png.toString('base64'), ocrText: `seen ${secret}` } } : result;
+    };
+    const run = async (extra: string[]) => {
+      const logs: string[] = [];
+      const code = await cmdDesktopOperator(['screenshot', '--app', 'Cursor', '--json', ...extra], {
+        ...deps(surface),
+        log: (line) => logs.push(line),
+        writeScreenshot: () => '/private/shot.png',
+      });
+      return { code, body: JSON.parse(logs[0] ?? '{}') as { data: Record<string, unknown> } };
+    };
+    const local = await run([]);
+    expect(local.code).toBe(0);
+    expect(local.body.data['path']).toBe('/private/shot.png');
+    expect(local.body.data['base64']).toBeUndefined();
+    expect(local.body.data['ocrText']).toContain('[REDACTED]');
+    expect(JSON.stringify(local.body)).not.toContain(secret);
+
+  });
+
+  it('rejects --include-image and documents local-only output', async () => {
+    const errors: string[] = [];
+    expect(await cmdDesktopOperator(['screenshot', '--app', 'Phantom', '--include-image'], { error: (line) => errors.push(line) })).toBe(2);
+    const logs: string[] = [];
+    await cmdDesktopOperator(['screenshot', '--help'], { log: (line) => logs.push(line) });
+    expect(logs.join('\n')).toMatch(/local-only/);
+    expect(logs.join('\n')).not.toContain('--include-image');
   });
 });
 
 describe('helper protocol', () => {
-  it('parses permission_required', () => {
+  it('parses permission_required and ignores a configured binary that is absent', () => {
     expect(parseHelperPayload('{"ok":false,"code":"permission_required","permission":"accessibility"}')).toEqual({
-      ok: false, code: 'permission_required', permission: 'accessibility',
+      ok: false,
+      code: 'permission_required',
+      permission: 'accessibility',
     });
     expect(parseHelperPayload('nope')).toMatchObject({ ok: false, code: 'failed' });
-  });
-
-  it('uses only the installed regular, owner-controlled helper', () => {
-    const home = mkdtempSync(join(tmpdir(), 'operator-pin-'));
-    const binary = join(home, '.ashlr', 'bin', 'desktop-operator');
-    const cwdBinary = join(home, 'tools', 'desktop-operator', 'desktop-operator');
-    const previous = process.env['PHANTOM_DESKTOP_OPERATOR'];
-    const previousCwd = process.cwd();
-    try {
-      mkdirSync(join(home, '.ashlr', 'bin'), { recursive: true });
-      mkdirSync(join(home, 'tools', 'desktop-operator'), { recursive: true });
-      writeFileSync(cwdBinary, 'untrusted');
-      process.chdir(home);
-      process.env['PHANTOM_DESKTOP_OPERATOR'] = cwdBinary;
-      expect(resolveDesktopOperatorBinary(home)).toBeNull();
-      symlinkSync(cwdBinary, binary);
-      expect(resolveDesktopOperatorBinary(home)).toBeNull();
-      rmSync(binary);
-      writeFileSync(binary, 'installed', { mode: 0o755 });
-      chmodSync(binary, 0o775);
-      expect(resolveDesktopOperatorBinary(home)).toBeNull();
-      chmodSync(binary, 0o757);
-      expect(resolveDesktopOperatorBinary(home)).toBeNull();
-      chmodSync(binary, 0o755);
-      expect(resolveDesktopOperatorBinary(home)).toBe(binary);
-    } finally {
-      process.chdir(previousCwd);
-      if (previous === undefined) delete process.env['PHANTOM_DESKTOP_OPERATOR'];
-      else process.env['PHANTOM_DESKTOP_OPERATOR'] = previous;
-      rmSync(home, { recursive: true, force: true });
-    }
+    expect(resolveDesktopOperatorBinary(
+      { PHANTOM_DESKTOP_OPERATOR: '/missing/desktop-operator', HOME: '/tmp/home' },
+      '/repo',
+      (path) => path === '/tmp/home/.ashlr/bin/desktop-operator',
+    )).toBeNull();
+    expect(resolveDesktopOperatorBinary({ HOME: '/tmp/home' }, '/repo', (path) => path.endsWith('/.ashlr/bin/desktop-operator'))).toMatch(/desktop-operator$/);
   });
 });

@@ -5,7 +5,7 @@
  * settings instead of dumping arbitrary config. Secret-like values are omitted;
  * API credentials are represented only by env var names.
  */
-import { currentThroughputLevel, resolveDaemonCountPreferences } from './daemon/count-preferences.js';
+import { resolveDaemonCountPreferences } from './daemon/count-preferences.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -520,7 +520,7 @@ export function buildEffectiveConfigSnapshot(
         cache: boolValue(raw, 'foundry.fabric.cache', fabric?.cache === true),
         resourceAware: boolValue(raw, 'foundry.fabric.resourceAware', fabric?.resourceAware === true),
         concurrentDispatch: boolValue(raw, 'foundry.fabric.concurrentDispatch', fabric?.concurrentDispatch === true),
-        maxSlotsPerBackend: value(raw, 'foundry.fabric.maxSlotsPerBackend', typeof fabric?.maxSlotsPerBackend === 'number' ? fabric.maxSlotsPerBackend : currentThroughputLevel().level),
+        maxSlotsPerBackend: value(raw, 'foundry.fabric.maxSlotsPerBackend', typeof fabric?.maxSlotsPerBackend === 'number' ? fabric.maxSlotsPerBackend : 3),
         workhorseDispatch: boolValue(raw, 'foundry.fabric.workhorseDispatch', fabric?.workhorseDispatch === true),
       },
       local: {

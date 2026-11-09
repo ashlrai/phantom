@@ -36,12 +36,12 @@ describe('resolveDaemonCountPreferences', () => {
   it('returns sensible defaults when raw is empty', () => {
     const cfg = {} as Partial<DaemonConfig>;
     const result = resolveDaemonCountPreferences(cfg);
-    expect(result.perTickItems).toBe(1);
-    expect(result.parallel).toBe(1);
-    expect(result.maxConcurrent).toBe(1);
-    expect(result.concurrency.local).toBe(1);
-    expect(result.concurrency.cloud).toBe(1);
-    expect(result.concurrency.total).toBe(1);
+    expect(result.perTickItems).toBe(3);
+    expect(result.parallel).toBe(2);
+    expect(result.maxConcurrent).toBe(8); // inherits total (default 8)
+    expect(result.concurrency.local).toBe(2);
+    expect(result.concurrency.cloud).toBe(6);
+    expect(result.concurrency.total).toBe(8);
   });
 
   it('honours explicit numeric overrides and null ceilings (edge: null overrides total)', () => {

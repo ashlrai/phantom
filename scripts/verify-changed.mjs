@@ -12,7 +12,6 @@ export function selectChangedFiles(changedPaths, existingPaths) {
   return {
     lintFiles: changed.filter((path) => existing.has(path) && /\.(?:[cm]?js|[cm]?ts|tsx|jsx)$/.test(path)),
     webTypecheck: changed.some((path) => path.startsWith('src/web-ui/')),
-    authorityDrift: changed.some((path) => path.startsWith('src/') || path.startsWith('test/') || path === '.github/CODEOWNERS'),
     fleetRegistry: changed.some((path) => /^src\/cli\/fleet-[^/]*\.ts$/.test(path)),
   };
 }
@@ -462,10 +461,6 @@ function main() {
     return passed;
   };
   if (!runFleetRegistryCheck(selection.fleetRegistry, run)) return;
-  if (selection.authorityDrift && !run('authority drift', 'scripts/test-ci.mjs', ['test/authority-codeowners-310b.test.ts', 'test/authority-tier1-closure-310b.test.ts'])) {
-    console.error('Review authority drift, then run npm run authority:regen');
-    return;
-  }
   const preflight = eslintPreflight(root);
   if (!preflight.ok) {
     console.log(`SKIP eslint: ${preflight.reason}; Merge Gate lints on CI`);

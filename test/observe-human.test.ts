@@ -243,7 +243,7 @@ describe('sensor headroom on the resource bar', () => {
   it('replaces a stale percent when headroom is null', () => {
     const [row] = applySensorHeadroom([
       { engine: 'devin', name: 'Devin (cloud)', leftPercent: 80, level: 'ok', value: '0 ACUs reported', summary: 'current' },
-    ], [{ lane: 'devin', status: 'unknown', headroom: null, used: null, limit: null, unit: null, resetAt: null, observedAt: null, source: null, staleAfter: null, burnPerHour: null, projectedUnused: null, alert: null, remaining: null, remainingUnit: null, burnRate: null, forecastExhaustAt: null, forecastVsReset: 'unknown', idleIncludedWastedPerWeek: null }]);
+    ], [{ lane: 'devin', status: 'unknown', headroom: null, used: null, limit: null, unit: null, resetAt: null, observedAt: null, source: null, staleAfter: null, burnPerHour: null, projectedUnused: null, alert: null }]);
     expect(row?.value).toBe('unknown');
     expect(row?.leftPercent).toBeNull();
   });

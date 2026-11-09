@@ -29,8 +29,6 @@ import type { AshlrConfig, NativeToolDef, NativeToolSafety, ProposalStatus } fro
 import { loadConfig } from './config.js';
 import { collectAgentRoster } from './fleet/agent-roster.js';
 import { PROACTIVE_PROFILE_INPUT_SCHEMA, PROACTIVE_PROFILE_PATCH_SCHEMA } from './proactive/schema.js';
-import { listChannelRegistry } from './agents/channel-registry.js';
-import { coordinationSummary } from './agents/claim-store.js';
 import { killSwitchOn } from './sandbox/policy.js';
 import { audit } from './sandbox/audit.js';
 import {
@@ -188,11 +186,7 @@ const TOOLS: NativeToolImpl[] = [
     description: 'Inspect local durable bus capacity and live/expired counts. Missing or unavailable sources have unknown counts.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     safety: 'read',
-    handler: async () => ({
-      ...(await import('./fleet/bus-inbox.js')).inspectBusInbox(),
-      adapters: listChannelRegistry(),
-      coordination: coordinationSummary(),
-    }),
+    handler: async () => (await import('./fleet/bus-inbox.js')).inspectBusInbox(),
   },
   {
     name: 'phantom_agent_bus_post',
@@ -467,34 +461,11 @@ const TOOLS: NativeToolImpl[] = [
     },
   },
   {
-    name: 'world_model',
-    description: 'Read the cached ashlr.world-model/v1 snapshot. Every signal has source, observedAt and freshness. Unknown is never zero. blindSpots lists each unknown field by path with a stable id.',
-    inputSchema: { type: 'object', properties: { path: { type: 'string' }, refresh: { type: 'boolean' } }, additionalProperties: false },
-    safety: 'read',
-    handler: async (args) => {
-      const { readWorldModel } = await import('./world/read.js');
-      const { worldGet } = await import('./world/path.js');
-      const model = await readWorldModel({ force: args['refresh'] === true });
-      return typeof args['path'] === 'string' && args['path'].length > 0 ? worldGet(model, args['path']) : model;
-    },
-  },
-  {
     name: 'phantom_observe',
     description: 'Read the human observe snapshot: roster, sensor headroom, resource coordination, pull headlines, bottlenecks, and human steps. Unknown stays unknown. No credentials.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     safety: 'read',
     handler: async () => (await import('./observe/read.js')).readObserveSnapshot(),
-  },
-  {
-    name: 'phantom_spend_budget',
-    description: 'Read the owner spend budget in USD. A missing provider is 0 for the month. This tool cannot change the budget.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    safety: 'read',
-    handler: async () => {
-      const { readSpendBudget } = await import('./spend/budget-store.js');
-      const read = await readSpendBudget();
-      return { schema: read.policy.schema, source: read.source, entries: read.policy.entries };
-    },
   },
   {
     name: 'phantom_observe_session',
@@ -564,49 +535,6 @@ const TOOLS: NativeToolImpl[] = [
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     safety: 'read',
     handler: async () => collectAgentRoster(),
-  },
-  {
-    name: 'phm_context_brief',
-    description: 'Compact under-4KB brief for one lane: live claims, open pulls, bottlenecks, blind spots, and that lane pacing. Read-only.',
-    inputSchema: { type: 'object', properties: { lane: { type: 'string' } }, required: ['lane'], additionalProperties: false },
-    safety: 'read',
-    handler: async (args) => (await import('./agents/work-visibility.js')).buildContextBrief({
-      nowMs: Date.now(),
-      lane: String(args['lane'] ?? ''),
-      world: await (await import('./world/read.js')).readWorldModel(),
-      claims: (await import('./agents/claim-store.js')).listCoordination().claims,
-      pulls: [],
-      bottlenecks: [],
-    }),
-  },
-  {
-    name: 'phm_claim_acquire',
-    description: 'Claim a work key before starting. Refuses a live claim or open pull on that key and returns the holder. Grants no execution authority.',
-    inputSchema: { type: 'object', properties: {
-      workKey: { type: 'string' }, lane: { type: 'string' }, repo: { type: 'string' }, pr: { type: 'number' }, branch: { type: 'string' },
-    }, required: ['workKey', 'lane'], additionalProperties: false },
-    safety: 'append',
-    handler: async (args) => (await import('./agents/work-visibility.js')).acquireWorkClaim({
-      workKey: String(args['workKey'] ?? ''), lane: String(args['lane'] ?? ''),
-      repo: typeof args['repo'] === 'string' ? args['repo'] : null,
-      pr: typeof args['pr'] === 'number' ? args['pr'] : null,
-      branch: typeof args['branch'] === 'string' ? args['branch'] : null,
-    }),
-  },
-  {
-    name: 'phm_claim_release',
-    description: 'Release this lane claim when a pull opens, merges, or is abandoned. Another holder is returned, not overridden.',
-    inputSchema: { type: 'object', properties: {
-      workKey: { type: 'string' }, lane: { type: 'string' }, reason: { type: 'string', enum: ['open', 'merge', 'abandon'] },
-    }, required: ['workKey', 'lane', 'reason'], additionalProperties: false },
-    safety: 'append',
-    handler: async (args) => {
-      const reason = args['reason'];
-      if (reason !== 'open' && reason !== 'merge' && reason !== 'abandon') return { schema: 'ashlr.work-claim/v1', status: 'invalid' };
-      return (await import('./agents/work-visibility.js')).releaseWorkClaim({
-        workKey: String(args['workKey'] ?? ''), lane: String(args['lane'] ?? ''), reason,
-      });
-    },
   },
   {
     name: 'phm_team_register', description: 'Register an agent and its capabilities on the local team bus. Identity only; grants no authority.',

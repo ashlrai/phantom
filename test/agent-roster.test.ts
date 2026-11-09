@@ -10,7 +10,6 @@ import {
 import type { DevinSessionPage } from '../src/core/devin/client.js';
 import type { LiveWorkersSnapshot } from '../src/core/fleet/runs-live-workers.js';
 import { createAgentRosterApi, VERSE_AGENT_ROSTER_PATH } from '../src/core/verse/agent-roster-api.js';
-import { acquireCoordination, settleCoordination } from '../src/core/agents/claim-store.js';
 
 const OBSERVED = '2026-11-09T05:00:00.000Z';
 // Built at runtime so the source diff does not contain a secret-shaped token.
@@ -152,27 +151,6 @@ describe('agent roster probes', () => {
     expect(calls).not.toContain('cursor-agent ls');
     expect(calls).not.toContain('agent ls');
     expect(urls.sort()).toEqual(['http://127.0.0.1:11434/api/ps', 'http://127.0.0.1:8123/v1/models']);
-  });
-
-  it('reads live coordination claims when no claim table is injected', async () => {
-    const now = Date.now();
-    const acquired = acquireCoordination({
-      origin: 'message', key: 'queue:job-1', owner: 'mason', leaseMs: 60_000,
-      leaseUntil: now + 60_000, sourceId: 'job-1:1:1', now,
-    });
-    expect(acquired.status).toBe('acquired');
-    try {
-      const deps = harness();
-      delete deps.readClaims;
-      const roster = await collectAgentRoster(deps);
-      const job = roster.sessions.find((item) => item.sessionId === 'job-1');
-      expect(job?.claims).toContainEqual(expect.objectContaining({ store: 'bus-work', id: 'job-1', owner: 'mason', completed: false }));
-      expect(JSON.stringify(roster)).not.toContain(acquired.status === 'acquired' ? acquired.token : 'token');
-    } finally {
-      if (acquired.status === 'acquired' && acquired.token) {
-        settleCoordination({ key: 'queue:job-1', token: acquired.token, outcome: 'released', now });
-      }
-    }
   });
 
   it('does not treat a desktop-shaped help text as a session list', async () => {

@@ -289,65 +289,6 @@ running. `resolveFrontierJudgeClient` checks `allowedBackends` and
 and `claude` is in `allowedBackends`, so the judge runs via Claude CLI
 subprocess regardless of the ollama-only provider chain for engine runs.
 
-## Rebase or close
-
-Evidence (2026-11-09, master `eb7bd106`): rebase lines produced PRs that went
-conflicting themselves (#4054, #4055, #4064, #4078, #4082), each with auto-merge
-armed and failing checks, and 82 of the newest 117 open phantom PRs were
-conflicting with failing checks. A rebase is only worth its queue slot if the
-result lands; a rebase of a rebase spends the slot again against a base that
-has moved again.
-
-### Verdicts
-
-Every conflicting `bridge:` PR gets exactly one verdict:
-
-| Verdict | When | Action |
-| --- | --- | --- |
-| **Re-queue** | First conflict, no rebase PR names it, no live queue job covers it, and no clean PR that touches the same files is about to land | One rebase job (`phm fleet rebase-plan`). |
-| **Supersede** | An open rework (recut) PR replaces it, or a newer rework PR of the same origin exists | Close the older PR with a link to its replacement. |
-| **Close as obsolete** | Its rebase attempt is spent and it conflicts again, its intent already landed on master, or it conflicts with a pinned surface it has no authority to touch | Close with the reason. Recut from the current master only if the work is still wanted. |
-
-### Max one rebase attempt per PR
-
-An original PR id gets one rebase. After that the PR is fixed by hand, recut as
-a fresh job from the current master, or closed. Concretely:
-
-- A rebase PR (`bridge: RQ-REBASE...`) that conflicts again is never rebased.
-- An origin PR that an open rebase PR already names (single
-  `RQ-REBASE-<repo>-<pr>-<head7>` or batch `RQ-REBASE-BATCH-<repo>-<n>-...`) is
-  not queued a second time.
-
-`planRebaseJobs` enforces this (`rebaseAttemptsSpent` in
-`src/core/fleet/rebase-plan.ts`). Refused PRs appear in the plan's `exhausted`
-list with a reason (`is-rebase` or `already-rebased`) and the rebase PR that
-spent the attempt; `phm fleet rebase-plan` prints one `refused #<n>` line per
-PR. The guard reads the PR snapshot only, so a rebase PR that was already
-closed leaves no trace; the queue-side coverage check still guards in-flight
-jobs, and closing a spent rebase PR should be paired with a recut, not a
-second rebase line.
-
-### Rebase PRs run the authority drift tests before publish
-
-A rebase moves a PR onto a newer master, which is exactly when authority
-surfaces can drift (a pinned path, a CODEOWNERS entry, or an authority doc
-changed underneath it). Before publish, a rebase PR must run the authority
-drift tests with a temporary HOME and publish only when they pass:
-
-```bash
-HOME=$(mktemp -d) npx vitest run test/doc-facts.test.ts $(git ls-files 'test/*authority*.test.ts')
-```
-
-A failure means the rebase is not publishable: close it as obsolete or recut.
-Do not resolve a drift failure by editing the test. Merge Gate stays the full
-check; this rule only stops a rebase from publishing blind.
-
-### Deferral
-
-When a conflicting PR shares a file with a clean, non-draft PR that will land
-on its own, wait for the landing (`--defer-behind-clean`) instead of spending
-the one attempt on a base that is about to move.
-
 ## Captured merge throughput diagnostic
 
 Run `npm run dev -- fleet merge-throughput --input snapshot.json --json`

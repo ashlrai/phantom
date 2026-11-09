@@ -52,7 +52,7 @@ phm desktop doctor --json
 
 The fleet KILL switch and comms pause refuse those writes. Password managers, the keychain, Messages, System Settings and the custody helper stay closed. Writes are allowed only for the exact bundle ids of Devin, Codex, Claude, Grok Bot and Cursor. A display name or a missing bundle id does not unlock a write. Mail, Slack, Notes, browsers and Terminal stay read-only. Phantom stays read-only: agents drive it through `phm` and MCP, not by clicking its approval UI. The `computer_*` tools and `phm desktopctl` keep their own grants.
 
-Screen text in CLI JSON and on the bus is passed through the secret-shape scrubber. Screenshot base64 stays in the CLI result. The MCP screenshot tool writes a mode 0600 PNG under `~/.ashlr/desktop-operator/shots/` and returns that path, because the gateway scrubber redacts long base64.
+Screen text in CLI JSON and on the bus is passed through the secret-shape scrubber. Screenshots are local-only because pixels cannot be scrubbed. `phm desktop screenshot` and the MCP `desktop_screenshot` tool write a mode 0600 PNG under `~/.ashlr/desktop-operator/shots/` and return its path, metadata and scrubbed OCR text, never image bytes. No bus message, MCP result or export carries the image. The screenshot directory must be owned by the current user and not group- or world-writable or a symlink. On capture, screenshots older than seven days and those exceeding 100 files are removed.
 
 ## Roster hook
 

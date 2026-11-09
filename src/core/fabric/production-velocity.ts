@@ -7,7 +7,7 @@
  * local/API caps, and queue selection sized to real slot capacity.
  */
 
-import { countForInventory, currentThroughputLevel, resolveDaemonCountPreferences } from '../daemon/count-preferences.js';
+import { countForInventory, resolveDaemonCountPreferences } from '../daemon/count-preferences.js';
 import type { AshlrConfig } from '../types.js';
 import type { ResourceSnapshot } from './resource-monitor.js';
 import { slotsForBackendState } from './concurrent-dispatch.js';
@@ -82,21 +82,20 @@ export function resolveProductionVelocityProfile(cfg: AshlrConfig): EffectivePro
   const pendingPolicy = resolveProductionVelocityPendingPolicy(cfg);
   const enabled = pendingPolicy.enabled;
 
-  const adaptive = currentThroughputLevel().level;
   const maxSlotsPerBackend = positiveInt(
     rawObj['maxSlotsPerBackend'],
-    positiveInt(fabric['maxSlotsPerBackend'], adaptive),
+    positiveInt(fabric['maxSlotsPerBackend'], 3),
   );
 
   const localMaxConcurrent = positiveIntOrNull(rawObj['localMaxConcurrent'])
     ?? positiveIntOrNull(local['maxConcurrent'])
-    ?? (enabled ? adaptive : null);
+    ?? (enabled ? 1 : null);
   const nimMaxConcurrent = positiveIntOrNull(rawObj['nimMaxConcurrent'])
     ?? positiveIntOrNull(nim['maxConcurrent'])
-    ?? (enabled ? adaptive : null);
+    ?? (enabled ? 2 : null);
   const kimiMaxConcurrent = positiveIntOrNull(rawObj['kimiMaxConcurrent'])
     ?? positiveIntOrNull(kimi['maxConcurrent'])
-    ?? (enabled ? adaptive : null);
+    ?? (enabled ? 2 : null);
 
   return {
     enabled,

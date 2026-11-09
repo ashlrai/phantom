@@ -3,6 +3,7 @@
  */
 import type { OperatorDeps, OperatorRequest, OperatorResult } from '../core/desktop/operator.js';
 import { runDesktopOperator, scrubOperatorJson } from '../core/desktop/operator.js';
+import { deliverScreenshot } from '../core/desktop/operator-screenshot.js';
 
 export const OPERATOR_USAGE = `Usage: phm desktop list-apps [--json]
        phm desktop windows [--app <name>] [--json]
@@ -17,6 +18,9 @@ export const OPERATOR_USAGE = `Usage: phm desktop list-apps [--json]
 macOS desktop operator. Accessibility reads come first. A window screenshot
 plus OCR is the fallback. focus, scroll, type and click post a bus intent
 before they change another app. KILL and comms pause block those writes.
+Screenshots are local-only: the PNG is written mode 0600 under
+~/.ashlr/desktop-operator/shots/ and the result carries its path, metadata and
+scrubbed OCR text, never image bytes.
 Exit 0 when ok is true, 1 when ok is false, 2 for usage.
 `;
 
@@ -26,6 +30,7 @@ type Verb = (typeof VERBS)[number];
 export interface DesktopOperatorCliDeps extends OperatorDeps {
   log?: (line: string) => void;
   error?: (line: string) => void;
+  writeScreenshot?: (bytes: Buffer) => string;
 }
 
 function isVerb(value: string): value is Verb {
@@ -140,7 +145,8 @@ export async function cmdDesktopOperator(args: readonly string[], deps: DesktopO
     error(OPERATOR_USAGE);
     return 2;
   }
-  const result = await runDesktopOperator(parsed.request, deps);
+  const raw = await runDesktopOperator(parsed.request, deps);
+  const result = deliverScreenshot(raw, { ...(deps.writeScreenshot ? { write: deps.writeScreenshot } : {}) });
   const body = scrubOperatorJson(result);
   log(parsed.json ? JSON.stringify(body) : summary(result));
   return result.ok ? 0 : 1;

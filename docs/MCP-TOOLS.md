@@ -34,7 +34,6 @@ exports, verbatim from source.
 | `phantom_fleet_graph` | Read the local graph.v1 fleet inventory: repositories, lanes, seats and holds. Observation only; incomplete sources are flagged. No launcher environment values. |
 | `phantom_observe` | Read the human observe snapshot: roster, sensor headroom, resource coordination, pull headlines, bottlenecks, and human steps. Unknown stays unknown. |
 | `phantom_observe_session` | Read one roster session. The transcript stays unknown until a desktop operator reader is registered. |
-| `phantom_spend_budget` | Read the owner spend budget in USD. A missing provider is 0 for the month. This tool cannot change the budget. |
 | `phantom_fleet_session` | Read local Codex fleet session quota observations per account as resource.v1 JSON. Includes session/weekly usage and freshness; missing readings are unknown. No prompts, credentials, environment values or provider probes. |
 
 The recovery tools read retained observations, not live process state. History
@@ -64,9 +63,6 @@ or control apps.
 | Tool | Description |
 | --- | --- |
 | `phm_agent_roster` | Read the unified live session roster across Phantom jobs, Devin cloud, Devin Desktop, Codex, Claude, Cursor, Grok, Ollama and oMLX. Unknown sources stay unknown. Read-only; prints no secrets. |
-| `phm_claim_acquire` | Claim a work key before starting. Refuses a live claim or open pull on that key and returns the holder. Grants no execution authority. |
-| `phm_claim_release` | Release this lane claim when a pull opens, merges, or is abandoned. Another holder is returned, not overridden. |
-| `phm_context_brief` | Compact under-4KB brief for one lane: live claims, open pulls, bottlenecks, blind spots, and that lane pacing. Read-only. |
 | `phm_proactive_agents_list` | List personal-agent profiles and readiness. Profiles do not verify adapters or authorize spending. |
 | `phm_proactive_agents_create` | Save private agent identity, capabilities and assignment preferences. Does not connect an adapter or authorize dispatch or spending. |
 | `phm_proactive_agents_update` | Edit agent metadata using patch.expectedVersion from a fresh read. Identity and connection verification cannot change. |
@@ -121,12 +117,6 @@ or control apps.
 | `desktop_scroll` | Scroll a window. Posts a bus intent before the scroll. |
 | `desktop_type` | Type into an app. Posts a bus intent before any keystroke. The typed text is not stored on the bus. |
 | `desktop_click` | Click a point or an accessibility ref. Posts a bus intent before the click. |
-
-## `world_` — World model
-
-| Tool | Description |
-| --- | --- |
-| `world_model` | Read the cached ashlr.world-model/v1 snapshot. Every signal has source, observedAt and freshness. Unknown is never zero. blindSpots lists each unknown field by path with a stable id. |
 
 ## `phantom-fleet` — Isolated Fleet Server (`phm mcp fleet`)
 

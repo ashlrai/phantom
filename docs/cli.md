@@ -23,7 +23,7 @@ Topic summary and discovery hints.
     memory          Memory - shared genome (memory, recall, learn, …)
     knowledge       Knowledge - portfolio RAG + graph (graph, knowledge, ask, …)
     autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (metrics, enroll, …)
-    observability   Observability - cost, telemetry, audit (radar, observe, context, …)
+    observability   Observability - cost, telemetry, audit (radar, observe, chain, …)
     integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, checkpoint, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
     web             Surfaces - TUI + web dashboard (top, tui, dash, …)
@@ -132,7 +132,6 @@ Every command, grouped by topic.
     select [--json] [--dry-run] [--top <n>]                                                                                                                       Rank candidates by value x leverage / (time + usage), fund the top 5 as READY lines, record picks with predicted value.
     backlog refresh                                                                                                                                               Re-scan all enrolled repos and rebuild the backlog.
     release-articles status|enable|disable|import|sync [--json]                                                                                                   Configure release-backed article task handoffs; sync verifies public GitHub/npm evidence and never publishes directly.
-    release status [--json] [--file <release-state.json>]                                                                                                         Read the continuous release train state and per-stage timings. Without a state file, reports that the state is unavailable.
     backlog --source <src>                                                                                                                                        Filter backlog by source: issue|todo|test|dep|doc|security|plugin|self|lint|goal|hygiene|invent.
     backlog --repo <path>                                                                                                                                         Filter backlog to a specific enrolled repo.
     backlog --limit <n>                                                                                                                                           Show only the top N items.
@@ -196,7 +195,7 @@ Every command, grouped by topic.
     cloud launch "<task>" [--repo o/n] [--base b]                                                                                                                 Start a Claude Code cloud session that delivers a draft PR (spends Claude credits; never merges). Repo defaults to this folder's GitHub origin.
     playbook list|show|new|edit|run <id>                                                                                                                          Versioned task templates every lane runs under (`!fix-bug` in any task text): list them, show one with per-version outcomes, write a new version in $EDITOR, or run one in the cloud / Devin lane (`--repo o/n --lane cloud|devin`).
     openai-agents sessions|inspect|turns [session-id] [--json]                                                                                                    Read bounded managed OpenAI Agents API metadata. API access is separate from subscriptions; no execution qualification or mutations.
-    agents bus channels list|test <id> [--json]                                                                                                                   List registered channel adapters and probe the local bus or handoff store.
+    agents bus channels list|test <id> [--json]                                                                                                                   List or test channel types offline without sending.
     agents bus contract [--json]                                                                                                                                  Print the Agent Bus v2 contract: schema version, providers, body kinds, work statuses, claim key forms. Read-only.
     agents roster [--json]                                                                                                                                        Unified live session roster. One probe per source, about 5s each, unknown on timeout or an unverified command. Read-only.
     bus thread|task <verb> [--peer <id>] [--json]                                                                                                                 Shared task board: local threads plus task claim, handoff, renew and release tied to fenced fleet queue claims. Cooperative labels only; no execution authority.
@@ -262,11 +261,6 @@ Every command, grouped by topic.
   Observability - cost, telemetry, audit
     radar list|run|diff [--json]                                                               Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.
     observe [--json]                                                                           Human observe snapshot: roster, sensor headroom, pull headlines, bottlenecks, and human steps. Unknown stays unknown. See docs/OBSERVE.md.
-    context --for-agent <lane> [--json]                                                        Compact under-4KB brief for one lane: claims, open pulls, bottlenecks, blind spots, and pacing. See docs/WORLD.md.
-    claim acquire <work-key> --lane <lane> [--json]                                            Claim a work key before starting. Refuses a live claim or open pull on that key and returns the holder.
-    claim release <work-key> --lane <lane> --reason open|merge|abandon [--json]                Release this lane claim when a pull opens, merges, or is abandoned.
-    world [--json] [--refresh]                                                                 Cached ashlr.world-model/v1 for the scheduler and leaders. blindSpots lists each unknown field by path with a stable id. See docs/WORLD.md.
-    world get <path> [--json]                                                                  Read one node from the cached world model. A missing path is unknown, not zero.
     chain verify [--json]                                                                      Synthetic in-memory chain checks. Does not verify live transports.
     incident report|receipts [--json]                                                          Turn a production signal into one bounded fix job, or send receipts for finished incidents.
     router rank --tier <local|mid|frontier> [--routes FILE] [--slots pool=count ...] [--json]  Rank supplied router decisions by pool budget reset; advisory, no writes.
@@ -288,8 +282,6 @@ Every command, grouped by topic.
     ci-metrics [--json]                                                                        Per-repo daily turn-time (red to green) metrics; writes ~/.ashlr/ci-metrics.json.
     daily-fix validate|filter|dispatch|parse-fixup [--json]                                    Daily CI re-run helper: validate dispatch inputs against the allowlist, preview the job/test filter, emit the gh workflow command, or aggregate fixup-queue lines.
     budget <show|add> [--json]                                                                 Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.
-    budget get [--json]                                                                        Read the owner spend budget in USD. A missing provider is 0 for the month. This does not change the budget.
-    budget set --provider <id> --period day|week|month --usd <n> [--json]                      Owner-only spend budget change with one audit line. Agent processes are refused. The committed default stays 0.
     usage                                                                                      Frontier usage table: per-engine calls/tokens/cost + window state.
     usage sensors [--json] [--refresh] [--file <snapshot>]                                     Per-lane usage readings with age and stale status. A reading at or after staleAfter is unknown and is not headroom. Refresh uses official APIs and CLIs only.
     queue stats [--json] [--window <seconds>]                                                  Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.

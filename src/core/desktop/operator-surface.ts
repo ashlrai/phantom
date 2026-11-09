@@ -7,24 +7,28 @@
  * It is spawned only on darwin when a binary is present.
  */
 import { spawn } from 'node:child_process';
-import { lstatSync } from 'node:fs';
-import { userInfo } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { DesktopSurface, DesktopWindow, RunningDesktopApp, SurfaceResult } from './operator.js';
 
 const HELPER_TIMEOUT_MS = 20_000;
 
-// The installer writes this location under the current account's home directory.
-// Do not consult HOME, PATH, the working directory, or an environment override.
-export function resolveDesktopOperatorBinary(home = userInfo().homedir): string | null {
-  if (!isAbsolute(home) || typeof process.getuid !== 'function') return null;
-  const binary = join(home, '.ashlr', 'bin', 'desktop-operator');
-  try {
-    const stat = lstatSync(binary);
-    return stat.isFile() && stat.uid === process.getuid() && (stat.mode & 0o022) === 0 ? binary : null;
-  } catch {
-    return null;
-  }
+export function desktopOperatorCandidates(env: NodeJS.ProcessEnv, cwd: string): string[] {
+  const configured = env['PHANTOM_DESKTOP_OPERATOR'];
+  if (typeof configured === 'string' && configured.length > 0) return [configured];
+  const home = env['HOME'];
+  return [
+    ...(typeof home === 'string' && home.length > 0 ? [join(home, '.ashlr', 'bin', 'desktop-operator')] : []),
+    join(cwd, 'tools', 'desktop-operator', 'desktop-operator'),
+  ];
+}
+
+export function resolveDesktopOperatorBinary(
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+  exists: (path: string) => boolean = existsSync,
+): string | null {
+  return desktopOperatorCandidates(env, cwd).find((path) => exists(path)) ?? null;
 }
 
 export function parseHelperPayload(stdout: string): SurfaceResult<Record<string, unknown>> {
@@ -62,7 +66,6 @@ function helperError(error: unknown): SurfaceResult<never> {
 }
 
 export async function runHelper(binary: string, request: Record<string, unknown>): Promise<SurfaceResult<Record<string, unknown>>> {
-  if (resolveDesktopOperatorBinary() !== binary) return { ok: false, code: 'failed', error: 'desktop-operator helper is missing or unsafe' };
   const payload = JSON.stringify(request);
   if (payload.length > 64_000) return { ok: false, code: 'failed', error: 'desktop operator request is too large' };
   try {

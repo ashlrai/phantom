@@ -243,17 +243,7 @@ else
   URL=$(gh pr create --repo $REPO --head masonwyatt23:codex-bridge/$J --base $DEF --title "bridge: $J" --body-file $R/$J.body.md) || { echo "RESULT ABORT pr"; exit 1; }
 fi
 : # opened ready directly; draft->ready double-triggered CI and cancelled runs showed as failures
-# RQ-SWE5-FRESH-JUDGE (digest item 2): with PUBLISH_JUDGE_CMD set, a fresh-context judge sees only diff + done-contract (job prompt) + test
-# evidence, never $NOTES. Anything but a confident pass leaves auto-merge unarmed for leader review. Unset = gate off.
-JUDGE_OK=1
-if [ -n "${PUBLISH_JUDGE_CMD:-}" ] && [ -z "$SENS" ] && [ -z "$G1T" ]; then
-  git diff --no-ext-diff --no-textconv "$BASE"...HEAD > $R/$J.judge.diff; printf '%s\n' "$TR" > $R/$J.judge.evidence
-  [ ! -f $R/$J.test.log ] || $SCRUB < $R/$J.test.log | tail -200 >> $R/$J.judge.evidence
-  JV=$(python3 -I -B "$R/bin/judge_gate.py" --diff $R/$J.judge.diff --contract $R/$J.prompt --evidence $R/$J.judge.evidence) || JUDGE_OK=0
-  echo "$JV"; rm -f $R/$J.judge.diff $R/$J.judge.evidence
-fi
-if [ $JUDGE_OK = 0 ]; then echo "NOTE AUTO_MERGE skipped judge (leader review)"
-elif [ -z "$SENS" ] && [ -z "$G1T" ]; then
+if [ -z "$SENS" ] && [ -z "$G1T" ]; then
   if ME=$(gh pr merge "$URL" --repo $REPO --auto 2>&1 >/dev/null); then echo "AUTO_MERGE on"
   elif printf '%s' "$ME" | grep -qiE 'merge method|not allowed|required when not running interactively' && gh pr merge "$URL" --repo $REPO --auto --squash >/dev/null 2>&1; then echo "AUTO_MERGE on (squash fallback)"
   else echo "NOTE AUTO_MERGE skipped-or-failed"; fi

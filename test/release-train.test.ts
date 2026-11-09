@@ -6,7 +6,7 @@ import { cmdRelease } from '../src/cli/release.js';
 import {
   admitCiRun, assertReleaseWrite, buildTrain, cappedCadenceMinutes, docsCarriersSynced, ENQUEUE_PULL_REQUEST,
   enqueueReleasePullRequest, failedBuildWithin, hostedTrainGate, isReleasePleaseCommit,
-  markWritesApplied, mergeStageDone, observeTrain, pauseReleaseTrain, readSentinel, releaseGithubCall, releaseKillDecision, selectUpdaterFeed,
+  markWritesApplied, mergeStageDone, observeTrain, pauseReleaseTrain, readSentinel, releaseKillDecision, selectUpdaterFeed,
   TRAIN_SCHEMA, updaterFeedMatches, WEBSITE_HOOK,
   type ReleaseWrite, type TrainObservation,
 } from '../src/core/release/train.js';
@@ -170,48 +170,6 @@ describe('release train', () => {
     expect(published.state.stages.sign.sinceMergeMs).toBeNull();
     expect(published.state.website).toEqual(WEBSITE_HOOK);
     expect(published.state.steps.website).toMatchObject({ status: 'hooked' });
-  });
-
-  it('posts workflow dispatch JSON on stdin with gh api --input -', () => {
-    const ci = buildTrain(observation()).writes.find((write) => write.path.endsWith('/ci.yml/dispatches'));
-    const ciBody = { ref: 'v3.30.27', inputs: { release_gate: 'true' } };
-    expect(ci).toEqual({ method: 'POST', path: 'repos/ashlrai/phantom/actions/workflows/ci.yml/dispatches', body: ciBody });
-    expect(releaseGithubCall('POST', 'repos/ashlrai/phantom/actions/workflows/ci.yml/dispatches', ciBody)).toEqual({
-      args: ['api', '--hostname', 'github.com', '--method', 'POST', '--input', '-', 'repos/ashlrai/phantom/actions/workflows/ci.yml/dispatches'],
-      input: '{"ref":"v3.30.27","inputs":{"release_gate":"true"}}',
-    });
-    const attestBody = {
-      ref: 'master',
-      inputs: { ci_run_id: '11', ci_run_attempt: '2', candidate_sha: head, build_artifact_id: '101' },
-    };
-    const attest = buildTrain(observation({
-      build: { runId: 11, attempt: 2, artifactId: 101, completedAt: '2026-11-09T03:00:00.000Z' },
-    })).writes.find((write) => write.path.endsWith('/attest-ci-build.yml/dispatches'));
-    expect(attest).toEqual({ method: 'POST', path: 'repos/ashlrai/phantom/actions/workflows/attest-ci-build.yml/dispatches', body: attestBody });
-    expect(releaseGithubCall('POST', 'repos/ashlrai/phantom/actions/workflows/attest-ci-build.yml/dispatches', attestBody)).toEqual({
-      args: ['api', '--hostname', 'github.com', '--method', 'POST', '--input', '-', 'repos/ashlrai/phantom/actions/workflows/attest-ci-build.yml/dispatches'],
-      input: JSON.stringify(attestBody),
-    });
-    const npmBody = {
-      ref: 'master',
-      inputs: {
-        candidate_sha: head, ci_run_id: '11', ci_run_attempt: '2',
-        attestor_run_id: '22', attestor_run_attempt: '1', attested_artifact_id: '202', version: '3.30.27',
-        audit_run_id: '33', audit_run_attempt: '1',
-      },
-    };
-    const npm = buildTrain(observation({
-      build: { runId: 11, attempt: 2, artifactId: 101, completedAt: '2026-11-09T03:00:00.000Z' },
-      attest: { runId: 22, attempt: 1, artifactId: 202, completedAt: '2026-11-09T03:10:00.000Z' },
-      audit: { runId: 33, attempt: 1 },
-      npmPublished: false,
-    })).writes.find((write) => write.path.endsWith('/publish-canonical-npm.yml/dispatches'));
-    expect(npm).toEqual({ method: 'POST', path: 'repos/ashlrai/phantom/actions/workflows/publish-canonical-npm.yml/dispatches', body: npmBody });
-    expect(releaseGithubCall('POST', 'repos/ashlrai/phantom/actions/workflows/publish-canonical-npm.yml/dispatches', npmBody).input).toBe(JSON.stringify(npmBody));
-    expect(releaseGithubCall('GET', 'repos/ashlrai/phantom')).toEqual({
-      args: ['api', '--hostname', 'github.com', '--method', 'GET', 'repos/ashlrai/phantom'],
-    });
-    for (const body of [ciBody, attestBody, npmBody]) expect(JSON.stringify(body)).not.toContain('null');
   });
 
   it('rejects writes outside the sanctioned release paths', () => {

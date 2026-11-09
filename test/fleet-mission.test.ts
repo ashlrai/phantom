@@ -114,45 +114,6 @@ describe('fleet mission briefing', () => {
     expect(wire).not.toContain('/Users/mason');
   });
 
-  it('reads the router used_frac contract per lane, including devin, and never invents a percentage', async () => {
-    const dir = await root();
-    await mkdir(join(dir, 'queue'), { recursive: true });
-    await writeFile(join(dir, 'queue/resources.json'), JSON.stringify({
-      devin: { used_frac: 0.42, reset_at: '2026-11-30T00:00:00Z' },
-      'codex-personal': { used_frac: 1.25, reset_at: '2026-11-05T06:00:00Z' },
-      claude: { used_frac: 0, reset_at: '2026-11-04T00:00:00Z' },
-      grok: { reset_at: '2026-11-05T00:00:00Z' },
-      terra: { used_frac: 'unmetered', reset_at: null },
-    }));
-    const view = await readMissionControl({ runsDir: dir, now: () => NOW });
-    expect(view.sources.resources).toBe('healthy');
-    // The devin lane reports its real window: 42% consumed is 58% left, not "has not reported".
-    expect(view.resources.find((row) => row.id === 'devin')).toMatchObject({
-      label: 'Devin', leftPct: 58, creditsLeft: null, resetAt: '2026-11-30T00:00:00Z', source: 'resources.json' });
-    // A fraction at or past 1 is an exhausted window; a real 0 is 100% left, not a fabricated number.
-    expect(view.resources.find((row) => row.id === 'codex-personal')?.leftPct).toBe(0);
-    expect(view.resources.find((row) => row.id === 'claude')?.leftPct).toBe(100);
-    // An unmetered or unmeasured lane stays null; the pane never invents a percentage.
-    expect(view.resources.find((row) => row.id === 'grok')).toMatchObject({ leftPct: null, creditsLeft: null });
-    expect(view.resources.find((row) => row.id === 'terra')).toMatchObject({ leftPct: null, creditsLeft: null });
-  });
-
-  it('reads lanes-wrapped resources.json the same as the flat router map', async () => {
-    const dir = await root();
-    await mkdir(join(dir, 'queue'), { recursive: true });
-    await writeFile(join(dir, 'queue/resources.json'), JSON.stringify({
-      generatedAt: '2026-11-02T04:00:00Z',
-      lanes: { devin: { used_frac: 0.42, reset_at: '2026-11-30T00:00:00Z' } },
-    }));
-    const view = await readMissionControl({ runsDir: dir, now: () => NOW });
-    expect(view.sources.resources).toBe('healthy');
-    // No bogus "lanes" row: the wrapper key is a container, not a lane.
-    expect(view.resources.some((row) => row.id === 'lanes')).toBe(false);
-    expect(view.resources.find((row) => row.id === 'devin')).toMatchObject({
-      label: 'Devin', leftPct: 58, resetAt: '2026-11-30T00:00:00Z',
-    });
-  });
-
   it('stays unknown when the directory is missing and falls back to the usage journal', async () => {
     const missing = await readMissionControl({ runsDir: join(await root(), 'absent'), now: () => NOW });
     expect(missing.overview.health).toBe('unknown');

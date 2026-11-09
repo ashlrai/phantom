@@ -36,8 +36,6 @@ export interface AdmissionReport {
   load: { load1: number; max: number }; ncpu: number; procs: number; worktrees: number;
   daemon: { tickAgeSeconds: number | null; maxAgeSeconds: number; error: string | null };
   cap: number; hardCap: number | null; adaptiveCap: number | null; running: number; installLock: { holder: InstallLockHolder | null };
-  /** Set when an admission.v2 snapshot exists but is missing its `ts` or older than DAEMON_TICK_MAX_S; the report then comes from live probes. */
-  staleSnapshot?: { ts: string | null; ageSeconds: number | null };
 }
 
 const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
@@ -115,20 +113,9 @@ export async function readAdmission(opts: ReadAdmissionOptions = {}): Promise<Ad
   const queue = join(root, 'queue');
   // v2 is the dispatcher verdict, including starvation probes and its rolling swap window.
   // Keep the legacy probe path for hosts that have not installed the pinned dispatcher yet.
-  const now = (opts.now ?? Date.now)();
-  let staleSnapshot: AdmissionReport['staleSnapshot'];
   try {
     const a = JSON.parse(await text(join(queue, 'admission.json')) ?? '{}') as Record<string, unknown>;
-    // dispatchd rewrites the snapshot every tick. One it stopped refreshing is a dead dispatcher's last
-    // verdict (with its tick age frozen at write time), so it must not be reported as the current decision.
-    const ts = typeof a.ts === 'string' ? a.ts : null;
-    const writtenAt = ts === null ? NaN : Date.parse(ts);
-    // A timestamp far ahead of this clock proves nothing about freshness either.
-    const rawAgeS = (now - writtenAt) / 1000;
-    const fresh = Number.isFinite(rawAgeS) && Math.abs(rawAgeS) <= DAEMON_TICK_MAX_S;
-    const ageSeconds = Number.isFinite(rawAgeS) ? Math.max(0, rawAgeS) : null;
-    if (a.schema === 'dispatchd.admission.v2' && typeof a.admit === 'boolean' && !fresh) staleSnapshot = { ts, ageSeconds };
-    if (a.schema === 'dispatchd.admission.v2' && typeof a.admit === 'boolean' && fresh) return {
+    if (a.schema === 'dispatchd.admission.v2' && typeof a.admit === 'boolean') return {
       admit: a.admit, reason: typeof a.reason === 'string' ? a.reason : null,
       reasons: Array.isArray(a.reasons) ? a.reasons as string[] : [], disabled: a.disabled === true,
       load: { load1: Number(a.load1), max: Number(a.load_max) }, ncpu: Number(a.ncpu),
@@ -140,6 +127,7 @@ export async function readAdmission(opts: ReadAdmissionOptions = {}): Promise<Ad
       installLock: { holder: a.install_lock_holder as InstallLockHolder | null }, snapshot: a,
     };
   } catch { /* Older hosts use the legacy probes below. */ }
+  const now = (opts.now ?? Date.now)();
   const alive = opts.pidAlive ?? defaultAlive;
 
   let slots: Record<string, unknown> = {};
@@ -181,9 +169,8 @@ export async function readAdmission(opts: ReadAdmissionOptions = {}): Promise<Ad
     if (h && Number.isInteger(h.pid) && h.pid > 0 && alive(h.pid)) holder = h;
   } catch { /* garbage content is no holder */ }
 
-  const report = evaluateAdmission({
+  return evaluateAdmission({
     load1: (opts.load1 ?? (() => loadavg()[0]!))(), ncpu: (opts.ncpu ?? availableParallelism)(),
     procs, worktrees, daemonTickAgeS, daemonWhy, slots, running, holder, adaptiveCap, disabled: await exists(join(queue, 'LOADGATE_OFF')),
   });
-  return staleSnapshot ? { ...report, staleSnapshot } : report;
 }

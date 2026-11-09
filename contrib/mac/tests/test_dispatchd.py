@@ -727,17 +727,6 @@ class DispatchPriorityTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return result
 
-    def test_local_oversized_and_unknown_jobs_remain_queued(self):
-        home, env = self.fixture(('codex-local', 'codex-cmp'))
-        for job, size in [('RQ-LOCAL-LARGE', 61), ('RQ-LOCAL-UNKNOWN', None), ('RQ-LOCAL-BAD', 'oops')]:
-            queue_job(home, job, 'codex-local', size=size)
-        queue_job(home, 'RQ-OTHER', 'codex-cmp', size=200)
-        self.run_tick(home, env)
-        self.assertEqual(self.claims(home), ['RQ-OTHER'])
-        remaining = '\n'.join(ready_lines(home))
-        for job in ('RQ-LOCAL-LARGE', 'RQ-LOCAL-UNKNOWN', 'RQ-LOCAL-BAD'):
-            self.assertIn(job, remaining)
-
     def test_launch_buckets_override_queue_order_and_lane_cursor(self):
         home, env = self.fixture(('codex-cmp', 'codex-personal', 'devin'))
         jobs = [('RQ-OTHER', 'codex-cmp'), ('LAND-A', 'codex-cmp'),

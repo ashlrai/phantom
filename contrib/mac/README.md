@@ -829,26 +829,3 @@ inside private temporary roots; they never contact a real publisher or keychain:
 python3 -I contrib/mac/tests/test_release_autorun.py
 bash -n contrib/mac/release-autorun.sh
 ```
-
-## Recut feed
-
-Preview conflict recuts with one command from the repository root:
-
-```sh
-python3 contrib/mac/recut-feed.py --dry-run
-```
-
-The JSON report (`schemaVersion`, `dryRun`, `count`, `lines`) lists at most six
-READY jobs, oldest PR first, across the seven fleet repositories. It copies
-the wording and attributes of the queue’s `RQ-RC3401N9Q8` reference line,
-changing only the repository, PR number and job ID. A missing reference stops
-the run without writing. Only open PRs
-whose public REST detail says `mergeable_state=dirty` qualify. Unknown states
-wait for the next run. No credentials are used; an API error stops the run.
-READY and CLAIMED references in the queue and Supersedes links in open PR bodies
-or queue notes suppress duplicates. Job IDs are stable across runs.
-Replace `--dry-run` with `--apply` to append; use `--max N` to change the cap.
-Apply rechecks the queue under the existing `ready.lock`, waiting at most ten
-seconds (`--lock-timeout` overrides). `--queue PATH` selects a scratch queue;
-the default is `~/.ashlr-runs/queue/router-queue.md`. The queue must already exist.
-This supplies jobs only; it does not recut, merge, install, or publish anything.

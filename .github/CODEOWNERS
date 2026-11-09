@@ -247,8 +247,6 @@
 # (every test G1 holds by name, safety suite or Tier-1 import; test/authority-codeowners-310b.test.ts regenerates this list)
 /test/activation-readiness-package.test.ts @masonwyatt23
 /test/activation-readiness-windows.test.ts @masonwyatt23
-/test/adaptive-throughput.test.ts @masonwyatt23
-/test/agent-bus-adapters.test.ts @masonwyatt23
 /test/agent-bus-api-mirror.test.ts @masonwyatt23
 /test/agent-network-policy.test.ts @masonwyatt23
 /test/anthropic-messages-client.test.ts @masonwyatt23
@@ -266,7 +264,6 @@
 /test/authority-grant-scope-315.test.ts @masonwyatt23
 /test/authority-ledger-310b.test.ts @masonwyatt23
 /test/authority-no-file-trust-310b.test.ts @masonwyatt23
-/test/authority-regen.test.ts @masonwyatt23
 /test/authority-release-truth.test.ts @masonwyatt23
 /test/authority-repository-binding.test.ts @masonwyatt23
 /test/authority-resident-admission.test.ts @masonwyatt23
@@ -338,6 +335,7 @@
 /test/desktop-artifact-installer.test.ts @masonwyatt23
 /test/desktop-consumer-install.test.ts @masonwyatt23
 /test/desktop-metadata-launch-trust.test.ts @masonwyatt23
+/test/desktop-operator-screenshot-mcp.test.ts @masonwyatt23
 /test/desktop-operator.test.ts @masonwyatt23
 /test/desktop-qualified-update.test.ts @masonwyatt23
 /test/desktop-update-cli.test.ts @masonwyatt23
@@ -1104,7 +1102,6 @@
 /test/scrub-310.test.ts @masonwyatt23
 /test/scrub-corpus.test.ts @masonwyatt23
 /test/skill-library-wire-31.test.ts @masonwyatt23
-/test/spend-budget.test.ts @masonwyatt23
 /test/stale-git-locks.test.ts @masonwyatt23
 /test/standing-merge-pass-310b.test.ts @masonwyatt23
 /test/standing-wiring-310b.test.ts @masonwyatt23

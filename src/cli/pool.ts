@@ -7,8 +7,7 @@ admission: what dispatchd would decide about new claims right now, read-only.
   holder and admit true/false with the reason. Exit 0 either way; 2 on bad arguments.
   Updated hosts report the dispatcher's admission.v2 snapshot, including its timestamp,
   starvation signals, warnings and claim limit. Critical pressure, rapid swap growth
-  or low disk stop claims; high load halves claims. Older hosts use legacy probes, as
-  does a snapshot without a timestamp or older than 15 minutes (reported as stale).
+  or low disk stop claims; high load halves claims. Older hosts use legacy probes.
   Cap = min(sum of unheld lane targets, adaptive cap, optional hard_cap in queue/slots.json).
   The adaptive cap (queue/concurrency.json) rises on headroom and backs off on pressure;
   hosts without it fall back to ncpu.
@@ -22,7 +21,6 @@ function render(r: AdmissionReport): string {
     `load1=${r.load.load1.toFixed(2)} max=${r.load.max.toFixed(1)} ncpu=${r.ncpu} procs=${r.procs} worktrees=${r.worktrees}`,
     `running=${r.running} cap=${r.cap} adaptive_cap=${r.adaptiveCap ?? 'none'} hard_cap=${r.hardCap ?? 'none'}`,
     `daemon tick age=${r.daemon.tickAgeSeconds === null ? 'unknown' : `${Math.floor(r.daemon.tickAgeSeconds)}s`}`,
-    ...(r.staleSnapshot ? [`dispatchd snapshot stale (ts=${r.staleSnapshot.ts ?? 'missing'}${r.staleSnapshot.ageSeconds === null ? '' : `, age=${Math.floor(r.staleSnapshot.ageSeconds)}s`}); live probes shown`] : []),
     `install lock holder=${holder ? `pid ${holder.pid}${holder.job ? ` job ${holder.job}` : ''}${holder.command ? ` (${holder.command})` : ''}` : 'none'}`,
   ].join('\n');
 }

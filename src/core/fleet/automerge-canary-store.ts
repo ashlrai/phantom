@@ -54,8 +54,6 @@ const O_NOFOLLOW = typeof fsConstants.O_NOFOLLOW === 'number' ? fsConstants.O_NO
 const O_DIRECTORY = typeof fsConstants.O_DIRECTORY === 'number' ? fsConstants.O_DIRECTORY : 0;
 
 export const AUTOMERGE_CANARY_ENFORCE_SUPPORTED = false as const;
-/** Issue #27: one admission, one merge and one in-flight canary per epoch. Not configurable. */
-export const AUTOMERGE_CANARY_EPOCH_ADMISSION_LIMIT = 1 as const;
 export const AUTOMERGE_CANARY_MAX_REVISIONS_PER_EPOCH = 64;
 export const AUTOMERGE_CANARY_MAX_TERMINAL_EPOCHS = 32;
 
@@ -425,10 +423,9 @@ function strictRepository(value: unknown): value is AutoMergeCanaryRepositoryV1 
 function strictBudgets(value: unknown): value is AutoMergeCanaryBudgetsV1 {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const row = value as Record<string, unknown>;
-  return exactKeys(row, BUDGET_KEYS) &&
-    row['maxAdmissions'] === AUTOMERGE_CANARY_EPOCH_ADMISSION_LIMIT &&
-    row['maxMerges'] === AUTOMERGE_CANARY_EPOCH_ADMISSION_LIMIT &&
-    row['maxInFlight'] === AUTOMERGE_CANARY_EPOCH_ADMISSION_LIMIT &&
+  return exactKeys(row, BUDGET_KEYS) && safeInteger(row['maxAdmissions'], 64) &&
+    safeInteger(row['maxMerges'], 64) && safeInteger(row['maxInFlight'], 64) &&
+    Number(row['maxAdmissions']) > 0 && Number(row['maxMerges']) > 0 && Number(row['maxInFlight']) > 0 &&
     safeInteger(row['minMergeIntervalMs'], MAX_DURATION_MS) &&
     safeInteger(row['leaseDurationMs'], MAX_DURATION_MS) && Number(row['leaseDurationMs']) > 0 &&
     safeInteger(row['observationDurationMs'], MAX_DURATION_MS) && Number(row['observationDurationMs']) > 0;

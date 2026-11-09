@@ -1,4 +1,3 @@
-import { currentThroughputLevel } from '../daemon/count-preferences.js';
 import { parseLeaderPreferences, resolveLeaderPreferences, unavailableLeaderPreferences } from '../vision/leader-preferences.js';
 import { resolveLeaderCadence } from '../vision/leader-cadence.js';
 import { goalFocusModeEnabled, goalFocusActiveThreshold } from '../goals/focus.js';
@@ -411,8 +410,8 @@ export const VERSE_CAPS_DEFAULTS: Pick<
   'dailyBudgetUsd' | 'perTickItems' | 'parallel' | 'intervalMs'
 > = {
   dailyBudgetUsd: 1.0,
-  perTickItems: 1,
-  parallel: 1,
+  perTickItems: 3,
+  parallel: 2,
   intervalMs: 5 * 60_000,
 };
 
@@ -452,9 +451,8 @@ export function readVerseCaps(cfg: AshlrConfig): VerseCaps {
     return configured ?? fallback;
   };
   const dailyBudgetUsd = scalar('dailyBudgetUsd');
-  const adaptive = currentThroughputLevel().level;
-  const perTickItems = count('perTickItems', daemon.perTickItems, adaptive);
-  const parallel = count('parallel', daemon.parallel, adaptive);
+  const perTickItems = count('perTickItems', daemon.perTickItems, VERSE_CAPS_DEFAULTS.perTickItems);
+  const parallel = count('parallel', daemon.parallel, VERSE_CAPS_DEFAULTS.parallel);
   const intervalMs = scalar('intervalMs');
 
   const mode: 'batch' | 'continuous' = daemon.mode === 'continuous' ? 'continuous' : 'batch';

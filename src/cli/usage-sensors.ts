@@ -33,10 +33,7 @@ function render(report: UsageSensorReport): void {
   console.log(USAGE_SENSOR_SCHEMA);
   for (const lane of report.lanes) {
     const room = lane.headroom === null ? 'unknown' : String(lane.headroom);
-    const remaining = lane.remaining === null ? 'unknown' : `${lane.remaining}${lane.remainingUnit ? ` ${lane.remainingUnit}` : ''}`;
-    const burn = lane.burnRate === null ? 'unknown' : String(lane.burnRate);
-    const waste = lane.idleIncludedWastedPerWeek === null ? 'unknown' : String(lane.idleIncludedWastedPerWeek);
-    console.log(`${lane.lane} ${lane.status} age=${age(lane.ageMs)} stale=${lane.stale} headroom=${room} remaining=${remaining} burn=${burn} forecast=${lane.forecastVsReset} wastePerWeek=${waste}`);
+    console.log(`${lane.lane} ${lane.status} age=${age(lane.ageMs)} stale=${lane.stale} headroom=${room}`);
   }
 }
 

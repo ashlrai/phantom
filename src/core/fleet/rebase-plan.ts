@@ -27,11 +27,6 @@
  * materialization. Jobs touching a security-pinned surface carry
  * `[Security pin required]` so the line enters as HOLD-SECURITY downstream.
  *
- * ONE ATTEMPT. A bridge PR gets at most one rebase (docs/DIAGNOSIS-MERGE-DRAIN.md,
- * "Rebase or close"). A conflicting rebase PR is never rebased again, and an
- * origin PR that already has a rebase PR is not queued a second time:
- * `rebaseAttemptsSpent` names each refusal and the plan reports it.
- *
  * COVERAGE. An active queue job (READY / CLAIMED / RUNNING / PARKED-*) whose
  * id or text already names a conflicting PR covers it: covered PRs are
  * excluded and re-clustered, so a re-run never re-queues in-flight work.
@@ -195,8 +190,6 @@ export interface RebasePlan {
     covered: number;
     /** Conflicting PRs skipped because an open rework (recut) PR replaces them. */
     superseded: number;
-    /** Conflicting PRs refused a second rebase (one attempt per original PR). */
-    exhausted: number;
     /** Conflicting PRs deferred behind an overlapping clean PR (deferBehindClean). */
     deferred: number;
     jobs: number;
@@ -214,18 +207,7 @@ export interface RebasePlan {
     /** Conflicting PRs the active queue already covers (bounded list). */
     coveredPrs: number[];
   };
-  /** Refused second rebases, bounded: close or recut these, do not rebase them. */
-  exhausted: RebaseRefusal[];
   jobs: RebaseJobSpec[];
-}
-
-/** Why a conflicting PR got no rebase job under the one-attempt rule. */
-export interface RebaseRefusal {
-  number: number;
-  /** 'is-rebase': the PR is itself a rebase PR. 'already-rebased': an open rebase PR names it. */
-  reason: 'is-rebase' | 'already-rebased';
-  /** The rebase PR that spent the attempt (the PR itself for 'is-rebase'). */
-  via: number;
 }
 
 export interface RebasePlanInput extends RebasePlanOptions {
@@ -363,33 +345,6 @@ export function reworkSuperseded(prs: readonly MergeBatchPr[], repo: string | nu
   for (const pr of prs) {
     const origin = reworkOrigin(pr, repo);
     if (origin !== null && latest.get(origin) !== pr.number) out.add(pr.number);
-  }
-  return out;
-}
-
-/** `bridge: RQ-REBASE…` titles: PRs a rebase job produced (singles, batches and hand-run PH lines). */
-const isRebasePr = (pr: MergeBatchPr): boolean => /^bridge: RQ-REBASE[A-Za-z0-9]*-/.test(pr.title);
-
-/**
- * One rebase attempt per original PR. Refuses (a) a rebase PR that conflicts
- * again, and (b) an origin PR an open rebase PR already names (single or batch
- * id). Hand-run ids (`RQ-REBASE-PH-00`) name no origin, so only (a) reaches
- * them. Pure over the snapshot: a closed rebase PR leaves no trace here, so
- * the queue-side `existing` coverage still guards in-flight jobs.
- */
-export function rebaseAttemptsSpent(prs: readonly MergeBatchPr[], repo: string | null): Map<number, RebaseRefusal> {
-  const out = new Map<number, RebaseRefusal>();
-  if (repo === null) return out;
-  const short = shortName(repo);
-  for (const pr of prs) {
-    if (!isRebasePr(pr)) continue;
-    const id = pr.title.slice('bridge: '.length).trim();
-    const origins = [singleJobPr(id, short), ...batchJobPrs(id, short)].filter((n): n is number => n !== null);
-    for (const origin of origins) {
-      if (origin !== pr.number && !out.has(origin)) out.set(origin, { number: origin, reason: 'already-rebased', via: pr.number });
-    }
-    // Direct refusal wins over a derived one: this PR is a rebase PR.
-    if (conflicted(pr)) out.set(pr.number, { number: pr.number, reason: 'is-rebase', via: pr.number });
   }
   return out;
 }
@@ -550,14 +505,9 @@ export function planRebaseJobs(input: RebasePlanInput): RebasePlan {
   const unheld = conflicting.filter(pr => !held(pr, hold, repoFull));
   const heldCount = conflicting.length - unheld.length;
 
-  // One attempt: a rebase PR, or an origin that already has one, is not rebased again.
-  const spent = rebaseAttemptsSpent(prs, repoFull);
-  const exhausted = unheld.filter(pr => spent.has(pr.number)).map(pr => spent.get(pr.number)!);
-  const rebasable = unheld.filter(pr => !spent.has(pr.number));
-
   // Coverage: drop PRs an active queue job already covers, then re-cluster the rest.
   const superseded = reworkSuperseded(prs, repoFull);
-  const live = rebasable.filter(pr => !superseded.has(pr.number));
+  const live = unheld.filter(pr => !superseded.has(pr.number));
   const covered = input.existing === undefined ? new Set<number>() : coveredPrNumbers(input.existing, repoFull);
   const uncovered = live.filter(pr => !covered.has(pr.number));
   const coveredPrs = live.filter(pr => covered.has(pr.number)).map(pr => pr.number);
@@ -620,8 +570,7 @@ export function planRebaseJobs(input: RebasePlanInput): RebasePlan {
       conflicting: conflicting.length,
       held: heldCount,
       covered: coveredPrs.length,
-      superseded: rebasable.length - live.length,
-      exhausted: exhausted.length,
+      superseded: unheld.length - live.length,
       deferred: deferredPrs.length,
       jobs: jobs.length,
       clusters: jobs.filter(j => j.kind !== 'single').length,
@@ -635,7 +584,6 @@ export function planRebaseJobs(input: RebasePlanInput): RebasePlan {
       state: input.existingState ?? (input.existing === undefined ? 'skipped' : 'ok'),
       coveredPrs: coveredPrs.slice(0, MAX_COVERED_LIST),
     },
-    exhausted: exhausted.slice(0, MAX_COVERED_LIST),
     jobs,
   };
 }

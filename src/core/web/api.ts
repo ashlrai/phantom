@@ -68,7 +68,6 @@ function canonForCompare(p: string): string {
 
 import type { AshlrConfig, DaemonState, ProposalStatus } from '../types.js';
 import { buildSnapshot, type DashboardSnapshotWithSourceQuality } from '../dashboard.js';
-import { currentThroughputLevel, noteThroughputSample } from '../daemon/count-preferences.js';
 import { loadEffectiveConfigSnapshot } from '../effective-config.js';
 import { listRuns, loadRun, runGoal } from '../run/orchestrator.js';
 import { listSwarms, loadSwarm } from '../swarm/store.js';
@@ -1238,21 +1237,18 @@ async function handleDispatch(
   // Local-first budget ceilings — never elevated by caller input.
   const MAX_TOKENS_CEILING = 200_000;
   const MAX_STEPS_CEILING = 40;
+  const MAX_PARALLEL_CEILING = 4;
 
   const rawMaxTokens =
     typeof obj['maxTokens'] === 'number' ? obj['maxTokens'] : MAX_TOKENS_CEILING;
   const rawMaxSteps =
     typeof obj['maxSteps'] === 'number' ? obj['maxSteps'] : MAX_STEPS_CEILING;
-  const throughput = currentThroughputLevel();
   const rawParallel =
-    typeof obj['parallel'] === 'number' ? obj['parallel'] : throughput.level;
+    typeof obj['parallel'] === 'number' ? obj['parallel'] : 2;
 
   const maxTokens = Math.min(Math.max(1, Math.floor(rawMaxTokens)), MAX_TOKENS_CEILING);
   const maxSteps = Math.min(Math.max(1, Math.floor(rawMaxSteps)), MAX_STEPS_CEILING);
-  const requestedParallel = Math.max(1, Math.floor(rawParallel));
-  const parallel = throughput.measuredLimit === null
-    ? Math.min(requestedParallel, throughput.level)
-    : Math.min(requestedParallel, throughput.measuredLimit);
+  const parallel = Math.min(Math.max(1, Math.floor(rawParallel)), MAX_PARALLEL_CEILING);
 
   // Run goal (local-first, never cloud).
   try {
@@ -1267,7 +1263,6 @@ async function handleDispatch(
       json: true,
     });
 
-    noteThroughputSample({ saturated: false });
     sendJson(res, 200, {
       id: runState.id,
       status: runState.status,
@@ -1276,7 +1271,6 @@ async function handleDispatch(
       result: runState.result,
     });
   } catch (err) {
-    noteThroughputSample({ saturated: true });
     const msg = err instanceof Error ? err.message : String(err);
     send500(res, `run failed: ${msg}`);
   }
