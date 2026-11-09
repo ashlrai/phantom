@@ -272,6 +272,20 @@ phm comms-agent run --lanes claude,local --json
 phm comms-agent drafts --json
 ```
 
+## Agent sessions
+
+`phm sessions create|show|resume|terminate --json` runs resumable agent
+sessions. A session pairs an agent profile id and version with an environment
+id and an append-only event log. Each turn is one `phm queue` job, and dispatchd
+is unchanged. The statuses are idle, running, rescheduling and terminated. See
+[SESSIONS](docs/SESSIONS.md):
+
+```sh
+phm sessions create --agent helper --agent-version 1 --environment local --job J1 --json
+phm sessions show sesn_0123456789abcdef --json
+phm sessions resume sesn_0123456789abcdef --scope "Address review comments" --json
+```
+
 ## Docs Radar
 
 `phm radar list|run|diff --json` observes public docs and package metadata.
