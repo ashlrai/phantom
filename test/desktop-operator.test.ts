@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -286,9 +287,6 @@ describe('runDesktopOperator', () => {
     expect(unsupported).toMatchObject({ ok: false, code: 'unsupported' });
     const missing = await runDesktopOperator({ verb: 'list-apps' }, {
       platform: 'darwin',
-      exists: () => false,
-      env: {},
-      cwd: '/tmp/none',
     });
     expect(missing).toMatchObject({ ok: false, code: 'helper_missing', binary: 'desktop-operator' });
     expect(JSON.stringify(missing)).toContain(ACCESSIBILITY_PANE);
@@ -377,18 +375,41 @@ describe('desktop operator MCP tools', () => {
 });
 
 describe('helper protocol', () => {
-  it('parses permission_required and ignores a configured binary that is absent', () => {
+  it('parses permission_required', () => {
     expect(parseHelperPayload('{"ok":false,"code":"permission_required","permission":"accessibility"}')).toEqual({
-      ok: false,
-      code: 'permission_required',
-      permission: 'accessibility',
+      ok: false, code: 'permission_required', permission: 'accessibility',
     });
     expect(parseHelperPayload('nope')).toMatchObject({ ok: false, code: 'failed' });
-    expect(resolveDesktopOperatorBinary(
-      { PHANTOM_DESKTOP_OPERATOR: '/missing/desktop-operator', HOME: '/tmp/home' },
-      '/repo',
-      (path) => path === '/tmp/home/.ashlr/bin/desktop-operator',
-    )).toBeNull();
-    expect(resolveDesktopOperatorBinary({ HOME: '/tmp/home' }, '/repo', (path) => path.endsWith('/.ashlr/bin/desktop-operator'))).toMatch(/desktop-operator$/);
+  });
+
+  it('uses only the installed regular, owner-controlled helper', () => {
+    const home = mkdtempSync(join(tmpdir(), 'operator-pin-'));
+    const binary = join(home, '.ashlr', 'bin', 'desktop-operator');
+    const cwdBinary = join(home, 'tools', 'desktop-operator', 'desktop-operator');
+    const previous = process.env['PHANTOM_DESKTOP_OPERATOR'];
+    const previousCwd = process.cwd();
+    try {
+      mkdirSync(join(home, '.ashlr', 'bin'), { recursive: true });
+      mkdirSync(join(home, 'tools', 'desktop-operator'), { recursive: true });
+      writeFileSync(cwdBinary, 'untrusted');
+      process.chdir(home);
+      process.env['PHANTOM_DESKTOP_OPERATOR'] = cwdBinary;
+      expect(resolveDesktopOperatorBinary(home)).toBeNull();
+      symlinkSync(cwdBinary, binary);
+      expect(resolveDesktopOperatorBinary(home)).toBeNull();
+      rmSync(binary);
+      writeFileSync(binary, 'installed', { mode: 0o755 });
+      chmodSync(binary, 0o775);
+      expect(resolveDesktopOperatorBinary(home)).toBeNull();
+      chmodSync(binary, 0o757);
+      expect(resolveDesktopOperatorBinary(home)).toBeNull();
+      chmodSync(binary, 0o755);
+      expect(resolveDesktopOperatorBinary(home)).toBe(binary);
+    } finally {
+      process.chdir(previousCwd);
+      if (previous === undefined) delete process.env['PHANTOM_DESKTOP_OPERATOR'];
+      else process.env['PHANTOM_DESKTOP_OPERATOR'] = previous;
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

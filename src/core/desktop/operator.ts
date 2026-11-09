@@ -133,9 +133,6 @@ export interface OperatorDeps {
   commsPaused?: () => boolean;
   postIntent?: (envelope: BusEnvelope) => { status: string };
   id?: () => string;
-  env?: NodeJS.ProcessEnv;
-  cwd?: string;
-  exists?: (path: string) => boolean;
   helperPath?: string | null;
 }
 
@@ -285,7 +282,7 @@ async function resolveSurface(deps: OperatorDeps, status: { kill: boolean; comms
       details: details(null),
     });
   }
-  const helperPath = deps.helperPath ?? resolveDesktopOperatorBinary(deps.env ?? process.env, deps.cwd ?? process.cwd(), deps.exists);
+  const helperPath = resolveDesktopOperatorBinary();
   if (!helperPath) {
     return fail('doctor', 'helper_missing', 'The desktop-operator binary is not installed. Build it, then grant Accessibility and Screen Recording to that binary.', {
       binary: DESKTOP_OPERATOR_BINARY,
