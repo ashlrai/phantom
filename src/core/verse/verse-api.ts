@@ -20,6 +20,7 @@
  *   POST /api/verse/sessions/:id/delete      → { ok: true }
  *   POST /api/verse/sessions/:id/rename      → VerseSession
  *   GET  /api/verse/sessions/:id/events      → SSE (verse-stream.ts)
+ *   GET  /api/verse/comms/owner-thread[?limit=1..200] → owner thread + status (owner-thread-api.ts; local read session only)
  *  V3.9 context orchestration — every one of these is ZERO SPEND: none starts
  *  a model call; the only way a token is spent is still POST .../turns.
  *   POST /api/verse/sessions/:id/context-mode    → VerseSession
@@ -2067,6 +2068,12 @@ export async function handleVerseApi(
       // legacy mounted modules (including the active cloud scheduler).
       if (path !== `${VERSE_API_PREFIX}/resources/credit-pools`) { sendJson(res, 404, { error: 'Credit pool route not found.' }); return true; }
       return (await import('./credit-pools-api.js')).handleCreditPoolsApi(ctx, req, res, path, method);
+    }
+    if (path === `${VERSE_API_PREFIX}/comms/owner-thread` || path.startsWith(`${VERSE_API_PREFIX}/comms/owner-thread/`)) {
+      // Local read session only (never the phone allow list); unknown children
+      // 404 here rather than evaluating the mounted modules.
+      if (path !== `${VERSE_API_PREFIX}/comms/owner-thread`) { sendJson(res, 404, { error: 'Owner thread route not found.' }); return true; }
+      return (await import('./owner-thread-api.js')).handleOwnerThreadApi(req, res, path, method);
     }
     if (path === `${VERSE_API_PREFIX}/usage-resources` || path.startsWith(`${VERSE_API_PREFIX}/usage-resources/`)) {
       // Read-only resource-usage aggregate; unknown children 404 here rather
