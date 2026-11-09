@@ -96,6 +96,7 @@ const defaultGh: CloudGh = async args => {
 
 function describe(pr: DirtyLandedPr): string {
   const where = pr.base || 'master';
+  if (pr.diffAnomaly) return `diff anomaly: ${pr.diffAnomaly.files} zero-line files (${pr.diffAnomaly.causes.join(', ')}); automatic recut skipped`;
   switch (pr.class) {
     case 'landed': return `landed: all ${pr.changedPaths.length} changed path(s) already on ${where}`;
     case 'partly-landed': return `partly-landed: ${pr.remainingPaths.length} of ${pr.changedPaths.length} changed path(s) still differ from ${where}`;

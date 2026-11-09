@@ -1,4 +1,5 @@
 import { performance } from 'node:perf_hooks';
+import { lstatSync } from 'node:fs';
 import { abortableSleep, isAwaitMs } from './needs-mason-answer-await.js';
 import { readUsageResets, type UsageResetRow } from './usage-reset-detect.js';
 import { scrubPrivateText } from '../util/scrub.js';
@@ -16,6 +17,7 @@ export interface ResetAwaitDeps {
   now?: () => number;
   wallNow?: () => number;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  probe?: (path: string) => 'stop' | 'go' | 'error';
 }
 
 /** A watermark is a full RFC 3339 timestamp carrying its own offset. */
@@ -28,13 +30,20 @@ export function parseResetAwaitWatermarkMs(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+const probePath = (path: string): 'stop' | 'go' | 'error' => {
+  try { lstatSync(path); return 'stop'; } catch (error) {
+    return (error as NodeJS.ErrnoException | null)?.code === 'ENOENT' ? 'go' : 'error';
+  }
+};
+
 /** Read-only evidence: neither the result nor a detected reset releases a hold. */
 export async function awaitResetEvidence(options: { lane: string; timeoutMs: number; pollMs?: number;
-  runsDir?: string; signal?: AbortSignal; after?: string }, deps: ResetAwaitDeps = {}): Promise<ResetAwaitResult> {
-  const { lane, timeoutMs, pollMs = 60_000, runsDir, signal, after } = options;
+  runsDir?: string; signal?: AbortSignal; after?: string; stopFile?: string }, deps: ResetAwaitDeps = {}): Promise<ResetAwaitResult> {
+  const { lane, timeoutMs, pollMs = 60_000, runsDir, signal, after, stopFile } = options;
   const result: ResetAwaitResult = { v: 1, authority: 'none', outcome: 'deadline',
     lane: scrubPrivateText(lane, { emails: true }), checks: 0, evidence: null };
-  if (!isAwaitMs(timeoutMs, RESET_AWAIT_MAX_TIMEOUT_MS) || !isAwaitMs(pollMs, RESET_AWAIT_MAX_POLL_MS)) {
+  if (!isAwaitMs(timeoutMs, RESET_AWAIT_MAX_TIMEOUT_MS) || !isAwaitMs(pollMs, RESET_AWAIT_MAX_POLL_MS)
+      || (stopFile !== undefined && (stopFile === '' || stopFile.includes('\0')))) {
     result.outcome = 'failed'; return result;
   }
   const now = deps.now ?? (() => performance.now());
@@ -52,6 +61,11 @@ export async function awaitResetEvidence(options: { lane: string; timeoutMs: num
     boundary = parsed;
   }
   const deadline = now() + timeoutMs;
+  const checkStop = (): 'cancelled' | 'failed' | undefined => {
+    if (stopFile === undefined) return undefined;
+    const state = (deps.probe ?? probePath)(stopFile);
+    return state === 'stop' ? 'cancelled' : state === 'go' ? undefined : 'failed';
+  };
   const controller = new AbortController();
   const cancel = (): void => controller.abort();
   process.on('SIGINT', cancel); process.on('SIGTERM', cancel);
@@ -59,7 +73,7 @@ export async function awaitResetEvidence(options: { lane: string; timeoutMs: num
   if (signal?.aborted) cancel();
   // Race each operation against both cancellation and the remaining deadline.
   // Promise.race attaches rejection handlers even to a reader that finishes late.
-  const bounded = async <T>(operation: () => Promise<T>, limit: number): Promise<
+  const bounded = async <T>(operation: () => Promise<T>): Promise<
     { kind: 'value'; value: T } | { kind: 'deadline' | 'cancelled' | 'failed' }> => {
     const timer = new AbortController();
     let onAbort: () => void = () => {};
@@ -69,19 +83,35 @@ export async function awaitResetEvidence(options: { lane: string; timeoutMs: num
       if (controller.signal.aborted) onAbort();
     });
     try {
+      const monitor = async (): Promise<{ kind: 'deadline' | 'cancelled' | 'failed' }> => {
+        while (!timer.signal.aborted) {
+          const remaining = deadline - now();
+          if (remaining <= 0) return { kind: 'deadline' };
+          await sleep(stopFile === undefined ? remaining : Math.min(250, remaining), timer.signal);
+          if (timer.signal.aborted) return { kind: 'failed' };
+          if (now() >= deadline) return { kind: 'deadline' };
+          const stop = checkStop();
+          if (stop) return { kind: stop };
+        }
+        return { kind: 'failed' };
+      };
       return await Promise.race([
         Promise.resolve().then(operation).then(value => ({ kind: 'value' as const, value }), () => ({ kind: 'failed' as const })),
-        sleep(limit, timer.signal).then(() => ({ kind: 'deadline' as const }), () => ({ kind: 'failed' as const })),
+        monitor().catch(() => ({ kind: 'failed' as const })),
         cancelled,
       ]);
     } finally { timer.abort(); controller.signal.removeEventListener('abort', onAbort); }
   };
   try {
     while (!controller.signal.aborted && now() < deadline) {
-      const read = await bounded(() => (deps.read ?? readUsageResets)({ runsDir }), deadline - now());
+      const stop = checkStop();
+      if (stop) { result.outcome = stop; break; }
+      const read = await bounded(() => (deps.read ?? readUsageResets)({ runsDir }));
       if (controller.signal.aborted) { result.outcome = 'cancelled'; break; }
       if (now() >= deadline || read.kind === 'deadline') break;
       if (read.kind !== 'value') { result.outcome = read.kind; break; }
+      const afterRead = checkStop();
+      if (afterRead) { result.outcome = afterRead; break; }
       result.checks++;
       const source = read.value;
       const row = source.rows.find(item => item.lane === lane);
@@ -94,9 +124,10 @@ export async function awaitResetEvidence(options: { lane: string; timeoutMs: num
           && timestamp > boundary && timestamp <= wallNow()) {
         result.outcome = 'observed'; break;
       }
-      const wait = await bounded(() => sleep(Math.min(pollMs, deadline - now()), controller.signal), deadline - now());
+      const wait = await bounded(() => sleep(Math.min(pollMs, deadline - now()), controller.signal));
       if (controller.signal.aborted) { result.outcome = 'cancelled'; break; }
       if (wait.kind === 'failed') { result.outcome = 'failed'; break; }
+      if (wait.kind === 'cancelled') { result.outcome = 'cancelled'; break; }
       if (wait.kind === 'deadline' || now() >= deadline) break;
     }
     if (controller.signal.aborted) result.outcome = 'cancelled';

@@ -11,7 +11,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "@ashlrai/locus-mcp@0.6.2"
+        "@ashlrai/locus-mcp@0.7.0"
       ]
     },
     "lexicon": {
@@ -19,7 +19,7 @@
       "args": [
         "-y",
         "-p",
-        "@ashlr/lexicon@0.5.4",
+        "@ashlr/lexicon@0.5.9",
         "lexicon-mcp"
       ]
     },
@@ -28,9 +28,9 @@
       "args": [
         "-y",
         "-p",
-        "@ashlr/stack@0.1.1",
+        "@ashlr/stack@0.3.6",
         "-p",
-        "ashlr-stack-mcp@0.1.1",
+        "ashlr-stack-mcp@0.3.6",
         "-p",
         "phantom-secrets@0.7.9",
         "ashlr-stack-mcp"

@@ -88,7 +88,7 @@ describe('grokbot contract and loopback webhook', () => {
       .rejects.toThrow('delivery-uncertain');
   });
   it.each([undefined, 'phm_placeholder', 'https://example.invalid/hook', 'http://localhost:99/grokbot/',
-    'http://127.0.0.1:99/grokbot/_phantom/fixture/?token=value'])('refuses unavailable or unsafe proxy routes', async url => {
+    'http://127.0.0.1:99/grokbot/_phantom/fixture/?token=value'])('refuses unavailable or unsafe proxy routes (%#)', async url => {
     await expect(postGrokbotTask(task(), url, now)).rejects.toThrow('secrets-route-unavailable');
   });
 });

@@ -77,7 +77,7 @@ describe('fleet workers CLI', () => {
   it.each([
     ['--bogus'], ['--lane'], ['--lane', '--json'], ['--repo', '../fake'],
     ['--lane', 'BAD'], ['--repo', 'fake', '--repo', 'other'], ['unexpected'], ['--json', '--json'],
-  ])('rejects invalid arguments %j before reading processes', async (...args) => {
+  ])('rejects invalid arguments %j before reading processes (%#)', async (...args) => {
     expect(await cmdFleet(['workers', ...args])).toBe(2);
     expect(fake.reads).toBe(0);
     expect(errors.join('')).toContain('invalid fleet workers arguments');

@@ -169,7 +169,7 @@ environment dumps, prompts or auth material in any reply.
 | `snapshot` | optional `lease` | Normalized snapshot below. Without a lease this must be strictly read-only. Present READY candidates only when every dependency is present and DONE. Include every active worker, including dispatchd and uncertain STARTING work. |
 | `acquire` | none | An opaque 16-160 character `[A-Za-z0-9_-]` lease, or `null` when held. Must exclude dispatchd and all other driver instances using the real shared ownership mechanism. Never independently create a second scheduler lock. |
 | `reap` | `lease` | `true` after idempotently reconciling completion evidence, updating queue state and appending native `jobs.jsonl` records. A missing PID alone is not completion evidence. |
-| `launch` | `lease`, `job` | `"launched"` or `"held"`. Recheck shared ownership, pool/global counts and PAUSE; atomically claim READY with all dependencies DONE using the queue claim owner. Persist STARTING execution evidence before invoking the existing sandboxed runner with #1014 heavy-step gating. Do not reserve a heavy slot for the worker's entire lifetime. |
+| `launch` | `lease`, `job` | `"launched"` or `"held"`. Recheck shared ownership, pool/global counts, PAUSE and host memory pressure; on macOS hold unless kernel pressure is known normal and the existing host headroom gate permits launch; other platforms retain their existing admission behavior without macOS telemetry. Recheck inside the host admission transaction immediately before invoking the runner; atomically claim READY with all dependencies DONE using the queue claim owner. Persist STARTING execution evidence before invoking the existing sandboxed runner with #1014 heavy-step gating. Do not reserve a heavy slot for the worker's entire lifetime. |
 | `reserve-publish` | `lease`, `job` | `null` if not eligible; otherwise `{"argv":["literal","arguments"]}` after durably recording PUBLISHING. Use the existing publish.sh argument contract. |
 | `finish-publish` | `lease`, `job`, `outcome` | `true` after durably recording `published` or `unknown` and its native ledger event. |
 | `write-status` | `lease`, `report` | `true` after atomically writing `status.json` in the dispatchd format. Map the normalized report; never replace native schema with the CLI report. |
@@ -207,6 +207,18 @@ floors cannot exceed ceilings and their sum cannot exceed `maxRunning`. Job and
 pool identifiers use ASCII letters, digits, dots, underscores and hyphens, start
 with a letter or digit, and are at most 160 characters. Jobs have unique IDs and
 must reference a configured pool. Priorities are safe integers; higher goes first.
+
+Pools may additionally carry `paused` (boolean) and `admission`
+(`open`, `closed`, or `unknown`) from the current lane controls and probes.
+Omitted fields preserve the bridge's existing global admission contract; an
+explicit unknown probe holds that lane. Refresh these fields with every snapshot.
+The atomic launch operation must still recheck lane controls, probes and capacity.
+
+Tick reports include `skipped` entries with job, pool and a fixed reason for
+READY jobs blocked by lane pause, probe admission, routing, capacity or paced
+share in the latest snapshot. Lane breaker details are reported separately. A tick with no eligible work sets `held` to
+the first blocking reason, or `no-ready-jobs` for an empty READY queue. The CLI
+logs this report as JSON; the bridge maps it into its native status schema.
 
 States are READY, HELD, STARTING, RUNNING, FINISHED, FAILED, PUBLISHING, PUBLISHED
 and PUBLISH_UNKNOWN. HELD is not launchable. FINISHED requires an integer
@@ -318,3 +330,5 @@ live publisher, real auth store or active fleet. Run it with an isolated HOME:
 ```sh
 HOME=$(mktemp -d) npx vitest run test/drive-supervisor.test.ts test/drive-cli-bridge.test.ts
 ```
+
+On macOS the built-in driver samples kernel pressure and existing headroom before planning and again at its subprocess launch boundary; unknown macOS telemetry holds. Other platforms retain existing admission behavior without a macOS sysctl probe. These checks do not replace the host bridge transaction recheck. `pauseWorkers` is advisory only; the driver does not pause or signal workers.

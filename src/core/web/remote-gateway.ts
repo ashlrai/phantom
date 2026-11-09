@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { createRemoteAccessVerifier, parseRemoteAccessConfig, verifyRemoteAccessHeader, type RemoteAccessConfig, type RemoteAccessIdentity } from './remote-access.js';
 import { checkRemoteEnvelope, classifyRemoteRoute, validateRemoteMutation, type RemoteRouteDecision } from './remote-gateway-policy.js';
 import type { RemoteDeviceStore } from './remote-device-store.js';
+import type { PhoneSessionCustody } from './phone-session-custody.js';
 import type { createRemotePairing } from './remote-pairing.js';
 import type { createRemotePush } from './remote-push.js';
 import { isImmutableAssetPath, serveStatic } from './static.js';
@@ -45,9 +46,13 @@ export interface RemoteReadGatewayOptions {
   /** Test-only pinned local JWKS verifier. Production derives it from access. */
   verifier?: AccessVerifier;
   now?: () => number;
+  /** When this returns true, every phone request is refused. KILL uses it. */
+  killed?: () => boolean;
+  /** Durable record is a phm_ handle. The cookie value is not written there. */
+  sessionCustody?: PhoneSessionCustody;
 }
 
-interface DeviceSession { deviceId: string; subject: string; expiresAt: number; csrf: string }
+interface DeviceSession { deviceId: string; subject: string; expiresAt: number; csrf: string; handle?: string }
 interface PreauthSession { subject: string; expiresAt: number; csrf: string }
 
 function json(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
@@ -179,8 +184,15 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
     try { return await localCookiePending; } finally { localCookiePending = null; }
   }
 
+  function forgetSession(key: string): void {
+    const current = sessions.get(key);
+    if (!current) return;
+    sessions.delete(key);
+    if (current.handle) options.sessionCustody?.drop(current.handle);
+  }
+
   function liveSession(req: IncomingMessage, identity: RemoteAccessIdentity): DeviceSession | null {
-    for (const [key, value] of sessions) if (value.expiresAt <= now()) sessions.delete(key);
+    for (const [key, value] of [...sessions]) if (value.expiresAt <= now()) forgetSession(key);
     const value = cookieValue(req);
     const session = value ? sessions.get(hash(value)) : undefined;
     if (!session || session.expiresAt <= now() || session.subject !== identity.subject) return null;
@@ -206,14 +218,22 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
   }
 
   function issueDeviceSession(identity: RemoteAccessIdentity, deviceId: string) {
-    if (identity.expiresAt <= now() || !config.allowedSubjects.includes(identity.subject)
-      || !options.devices.getActive(deviceId, identity.subject)) return null;
+    const device = options.devices.getActive(deviceId, identity.subject);
+    if (identity.expiresAt <= now() || !config.allowedSubjects.includes(identity.subject) || !device) return null;
     const secret = randomBytes(32).toString('base64url');
     const csrfToken = randomBytes(32).toString('base64url');
     const expiresAt = Math.min(identity.expiresAt, now() + SESSION_MS);
-    for (const [key, value] of sessions) if (value.expiresAt <= now()
-      || (value.deviceId === deviceId && value.subject === identity.subject)) sessions.delete(key);
-    sessions.set(hash(secret), { subject: identity.subject, deviceId, csrf: csrfToken, expiresAt });
+    for (const [key, value] of [...sessions]) if (value.expiresAt <= now()
+      || (value.deviceId === deviceId && value.subject === identity.subject)) forgetSession(key);
+    let handle: string | undefined;
+    if (options.sessionCustody) {
+      try {
+        handle = options.sessionCustody.issue({
+          deviceId, subject: identity.subject, scope: device.scopes.act ? 'act' : 'read', expiresAt, token: secret,
+        }).handle;
+      } catch { return null; }
+    }
+    sessions.set(hash(secret), { subject: identity.subject, deviceId, csrf: csrfToken, expiresAt, handle });
     return { cookie: `${COOKIE_NAME}=${secret}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${Math.max(1, Math.floor((expiresAt - now()) / 1000))}`,
       csrfToken, expiresAt };
   }
@@ -248,6 +268,10 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Security-Policy', "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'");
     void (async () => {
+      if (options.killed?.()) {
+        json(res, 503, { code: 'PHONE_DISABLED', error: 'Phone gateway is off while KILL is set' });
+        return;
+      }
       // Check Host/Origin before a JWKS fetch, then CSRF after resolving the
       // Access-bound preauth or device session. No forwarded header is trusted.
       const preliminary = checkRemoteEnvelope({ method: 'GET', headers: req.headers }, config.publicOrigin);
@@ -306,7 +330,7 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
         if (target === '/remote/logout') {
           if (!session) { json(res, 401, { code: 'DEVICE_SESSION_REQUIRED', error: 'Device authentication required' }); return; }
           const value = cookieValue(req);
-          if (value) sessions.delete(hash(value));
+          if (value) forgetSession(hash(value));
           res.writeHead(204, { 'Set-Cookie': `${COOKIE_NAME}=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0` }); res.end(); return;
         }
         if (target === '/remote/pair/claim' || target === '/remote/pair/complete'
@@ -487,7 +511,7 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
         const close = () => { controller.abort(); if (!res.writableEnded) res.end(); };
         const timer = setTimeout(close, Math.max(1, deadline - now()));
         const poll = setInterval(() => {
-          try { if (!options.devices.getActive(session.deviceId, identity.subject)) close(); }
+          try { if (options.killed?.() || !options.devices.getActive(session.deviceId, identity.subject)) close(); }
           catch { close(); }
         }, 1_000);
         streams.set(res, { deviceId: session.deviceId, close });

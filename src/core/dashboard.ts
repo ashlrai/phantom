@@ -922,6 +922,7 @@ export async function buildSnapshot(cfg: AshlrConfig): Promise<DashboardSnapshot
   let activityTokens = 0;
   let activityCostUsd = 0;
   let activityCommits = 0;
+  let hopEfficiency: DashboardSnapshot['activity']['hopEfficiency'];
 
   try {
     const rollup = buildRollup('7d', cfg);
@@ -929,6 +930,7 @@ export async function buildSnapshot(cfg: AshlrConfig): Promise<DashboardSnapshot
     activityTokens = rollup.totals.tokensIn + rollup.totals.tokensOut;
     activityCostUsd = rollup.totals.estCostUsd;
     activityCommits = rollup.totals.commits;
+    hopEfficiency = rollup.hopEfficiency;
   } catch {
     // Degrade to zeros.
   }
@@ -1138,6 +1140,7 @@ export async function buildSnapshot(cfg: AshlrConfig): Promise<DashboardSnapshot
       tokens: activityTokens,
       estCostUsd: activityCostUsd,
       commits: activityCommits,
+      ...(hopEfficiency ? { hopEfficiency } : {}),
     },
     runs,
     swarms,

@@ -53,7 +53,7 @@ it('accepts reset-time-passed after a fresh reading arrives', async () => {
   expect((await pending).outcome).toBe('observed');
 });
 
-it('rejects invalid and duplicate flags before reading', async () => {
+it('reset-await rejects invalid and duplicate flags before reading', async () => {
   const read = vi.fn(async () => snapshot());
   vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
   for (const args of [[], ['--lane', 'a', '--timeout-ms', '0'], ['--lane', 'a', '--lane', 'b', '--timeout-ms', '1'],
@@ -72,7 +72,7 @@ it('bounds a pending read and handles its late rejection', async () => {
   reject(new Error('private')); await Promise.resolve();
 });
 
-it.each(['read', 'sleep'])('cancels during %s and cleans listeners', async phase => {
+it.each(['read', 'sleep'])('reset-await cancels during %s and cleans listeners', async phase => {
   const before = process.listenerCount('SIGINT');
   const controller = new AbortController();
   const read = phase === 'read' ? () => new Promise<UsageResetsV1>(() => {}) : async () => snapshot([]);

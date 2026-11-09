@@ -143,3 +143,41 @@ absence of a suitable official CLI require verification in the later line.
 Official JSON-output references: [GitHub](https://cli.github.com/manual/gh_repo_list),
 [Vercel](https://github.com/vercel/vercel/blob/main/skills/vercel-cli/references/monitoring-and-debugging.md),
 and [Supabase](https://supabase.com/docs/reference/cli/global-flags).
+
+## Tool mesh
+
+`phm connectors mesh --json` combines the gateway's native tool descriptions,
+input schemas and safety classes with connector profile metadata. Connector
+descriptions are optional user-supplied metadata (`--description` on add);
+`tools` are agent selectors, not a remotely discovered tool list. Scope, agent and lane selectors and credential binding names describe
+requirements, not grants. The output omits executable arguments, endpoints and
+vault names. Executable availability checks PATH presence only; an HTTP endpoint
+and the gateway remain unknown until separately tested. No connector is started.
+
+The existing `phm wire claude|cursor|codex --json` commands register the gateway
+with clients. Use `phm connectors import --json` to import supported client
+metadata; profile entries are not automatically installed in a client or gateway.
+Native tools are invoked through the gateway and retain its authorization checks.
+Connector CLI execution remains denied pending Security review; plugin and MCP
+entries need their respective hosts. This registry does not create permissions.
+
+### Lane view and shared tool registry
+
+`phm connectors mesh --lane <lane> --json` omits connectors restricted to other
+lanes (an empty lane list is unrestricted for discovery only; running a
+connector still needs an explicitly listed lane). It adds `capabilities`: MCP
+and CLI connector ids, web search (client-provided or a registered MCP
+connector; the hub does not proxy it) and the gateway's computer-use hooks,
+each of which keeps its own confirmation checks.
+
+Agents can extend the mesh with `phm connectors tool create --spec '<json>'`.
+Entries are declarative data stored in `~/.phantom/connectors/registry.json`
+(mode 0600), never code. A `skill` renders a parameter template and returns it
+flagged `untrusted` (agent-authored text is not an owner instruction). A
+`connector-call` needs an existing `cli` connector and routes through
+`phm connectors run`, so it stays denied pending Security review. Entries are
+schema-validated, secret-shaped text is refused at create and invoke, ids may
+not collide with native gateway tools, and placeholders must be declared.
+`createdBy` is a caller-declared label, not an authenticated identity.
+`phm connectors tool list|show|invoke|revoke|remove` manage them; a revoked
+entry is neither discoverable nor invocable. The registry grants no permissions.

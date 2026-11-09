@@ -8,6 +8,7 @@ import * as fs from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
+import { performance } from 'node:perf_hooks';
 import { observeBuild, validateBuild, sourceDesktopUpdateProfile } from '../.github/scripts/ci-pack-smoke.mjs';
 import { requireProducerEnvironment, requireManifestProducer, requireRepositoryMetadata, requireRepositoryReference } from '../.github/scripts/github-repository-binding.mjs';
 import { readBoundedJson } from './verify-npm-release-provenance.mjs';
@@ -790,6 +791,50 @@ function publicationObservation(manifest, read) {
   return JSON.parse(JSON.stringify({ identity, branch, rules, current, release: { id: release.id, tag: release.tag_name, publishedAt: release.published_at }, assets, tag: object.sha }));
 }
 
+/** Prefetch independent public metadata into a per-observation map. The
+ * existing validator remains the only authority-producing interpretation. */
+export async function publicationObservationSnapshot(manifest, readMany) {
+  const repository=manifest.repository.nameWithOwner, version=manifest.version, revision=manifest.source.revision,
+    attestor=manifest.qualification.attestor.revision, base=`repos/${repository}`;
+  assert.ok(['ashlrai/phantom','ashlrai/ashlr-hub'].includes(repository));
+  assert.match(version,/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/);
+  assert.match(revision,SHA);assert.match(attestor,SHA);
+  const data=new Map();
+  const fetch=async endpoints=>{
+    const missing=[...new Set(endpoints)].filter(endpoint=>!data.has(endpoint));
+    for(let i=0;i<missing.length;i+=3) {
+      const batch=missing.slice(i,i+3), rows=await readMany(batch);
+      assert.ok(Array.isArray(rows) && rows.length===batch.length,'incomplete publication batch');
+      for(let j=0;j<batch.length;j++) data.set(batch[j],JSON.parse(JSON.stringify(rows[j])));
+    }
+  };
+  const rules=`${base}/rules/branches/master`, release=`${base}/releases/tags/v${version}`,
+    ref=`${base}/git/ref/tags/v${version}`, page=(url,n)=>`${url}?per_page=100&page=${n}`;
+  await fetch([base,`${base}/branches/master`,page(rules,1),release,ref,`${base}/git/commits/${revision}`]);
+  const branch=data.get(`${base}/branches/master`), published=data.get(release), tagRef=data.get(ref);
+  assert.match(branch?.commit?.sha ?? '',SHA);assert.ok(Number.isSafeInteger(published?.id) && published.id>0);
+  const assets=`${base}/releases/${published.id}/assets`;
+  await fetch([`${base}/git/commits/${branch.commit.sha}`,`${base}/compare/${attestor}...${branch.commit.sha}`,page(assets,1)]);
+  async function pages(url) {
+    for(let n=1;n<=10;n++) {
+      const endpoint=page(url,n);await fetch([endpoint]);const rows=data.get(endpoint);
+      assert.ok(Array.isArray(rows) && rows.length<=100,'incomplete bounded publication metadata');
+      if(rows.length<100)return;
+    }
+    assert.fail('publication metadata pagination limit');
+  }
+  let object=tagRef?.object;const seen=new Set();
+  for(let depth=0;object?.type==='tag';depth++) {
+    assert.ok(depth<4 && SHA.test(object.sha) && !seen.has(object.sha),'invalid release tag chain');seen.add(object.sha);
+    const endpoint=`${base}/git/tags/${object.sha}`;await fetch([endpoint]);const tag=data.get(endpoint);
+    assert.equal(tag?.sha,object.sha);object=tag.object;
+  }
+  const pageResults=await Promise.allSettled([pages(rules),pages(assets)]);
+  const pageError=pageResults.find(row=>row.status==='rejected');if(pageError)throw pageError.reason;
+  const read=endpoint=>{assert.ok(data.has(endpoint),'missing publication snapshot endpoint');return data.get(endpoint);};
+  return publicationObservation(manifest,read);
+}
+
 async function publicationImplementation() {
   const revision = git(IMPLEMENTATION_ROOT, ['rev-parse', 'HEAD']);
   const snapshot = () => ({ source: sourceBinding(IMPLEMENTATION_ROOT, revision), build: observeBuild(IMPLEMENTATION_ROOT, revision) });
@@ -805,12 +850,19 @@ async function publicationImplementation() {
 
 /** Fixed own-code loader; only transport reads can be inert in tests. Keys,
  * parsers, profile selection and closure admission are never caller inputs. */
-export async function inspectCommissionedManualPublication({ manifestText, signature, githubRead, downloadRead }) {
+export async function inspectCommissionedManualPublication({ manifestText, signature, githubRead, githubReadMany, downloadRead, onObservationTiming }) {
   assert.ok(typeof manifestText === 'string' && Buffer.byteLength(manifestText) <= 65536 && typeof signature === 'string' && Buffer.byteLength(signature) <= 8192, 'invalid publication envelope');
   const own = await publicationImplementation();
   const verified = own.parser.verifyCompatibleUpdateManifest({ manifestText, signature }, own.trust), manifest = verified.manifest;
   const read = githubRead ?? ((endpoint) => JSON.parse(command('gh', ['api', '--hostname', 'github.com', endpoint])));
-  const before = publicationObservation(manifest, read);
+  const observe=async()=>{
+    const clock=()=>{try {const n=performance.now();return Number.isFinite(n)?n:null;}catch{return null;}};
+    const started=onObservationTiming?clock():null;let outcome='threw';
+    try {const value=githubReadMany?await publicationObservationSnapshot(manifest,githubReadMany):publicationObservation(manifest,read);outcome='returned';return value;}
+    finally {if(onObservationTiming)try {const end=clock(), durationMs=started===null || end===null || end<started?null:end-started;
+      onObservationTiming({outcome,durationMs,mode:githubReadMany?'bounded':'serial'});} catch {/* diagnostics are inert */}}
+  };
+  const before = await observe();
   const download = downloadRead ?? own.download;
   for (const [name, expected, maximum] of [['manifest.json', manifestText, 65536], ['manifest.json.sig', signature, 8192]]) {
     const asset = before.assets.find(a => a.name === name), bytes = Buffer.from(await download(asset.url, maximum)); own.unchanged();
@@ -818,7 +870,7 @@ export async function inspectCommissionedManualPublication({ manifestText, signa
     assert.equal(bytes.length, asset.size); assert.equal(`sha256:${sha(bytes)}`, asset.digest);
   }
   own.parser.verifyCompatibleUpdateManifest({ manifestText, signature }, own.trust);
-  assert.deepEqual(publicationObservation(manifest, read), before, 'publication or protection changed during observation'); own.unchanged();
+  assert.deepEqual(await observe(), before, 'publication or protection changed during observation'); own.unchanged();
   const capability = Object.freeze({});
   publications.set(capability, { manifest, digest: verified.digest, before, read, unchanged: own.unchanged });
   return capability;

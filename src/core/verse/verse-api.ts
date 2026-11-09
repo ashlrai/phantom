@@ -39,6 +39,7 @@
  *   /api/verse/cloud/tasks/<id>/timeline → cloud/timeline-api.ts (CloudTimelineResponse)
  *   /api/verse/cloud*         → cloud/cloud-api.ts     (cloud lane)
  *   /api/verse/devin*         → devin/devin-api.ts     (Devin lane, 3.15)
+ *   /api/verse/fleet/slow-prs → slow-prs-api.ts        (read-only slow-PR report)
  *  They are consulted only after every V1 route above has declined, every
  *  non-GET to them passes the V1 dispatch + mutation gate first, and a module
  *  that fails to load turns an otherwise-unmatched path into a 503
@@ -256,14 +257,14 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   // Self-tick last-run record: GET /api/verse/fleet/self-tick (core/verse/fleet-self-tick-api.ts); read-only, never takes the tick lock.
   { id: 'fleet-self-tick', load: async () => (await import('./fleet-self-tick-api.js')).handleFleetSelfTickApi },
   // Fleet graph registry: GET /api/verse/fleet/graph (core/verse/fleet-graph-api.ts); read-only.
-  // Exact path only, so it cannot claim /api/verse/fleet/graph/live. Last so the
-  // registry mount stays visible beside the modules already on master.
+  // Exact path only, so it cannot claim /api/verse/fleet/graph/live.
   { id: 'fleet-graph', load: async () => (await import('./fleet-graph-api.js')).handleFleetGraphApi },
   // Main guardian per-repo red-age: GET /api/verse/fleet/main-red-age
   // (core/verse/fleet-main-red-age-api.ts); read-only.
   { id: 'fleet-main-red-age', load: async () => (await import('./fleet-main-red-age-api.js')).handleFleetMainRedAgeApi },
   { id: 'fleet-merge-pace' as MountedApiModuleId, load: async () => (await import('./merge-pace-api.js')).handleMergePaceApi },
   { id: 'fleet-landed-closes' as MountedApiModuleId, load: async () => (await import('./landed-closes-api.js')).handleLandedClosesApi },
+  { id: 'fleet-slow-prs' as MountedApiModuleId, load: async () => (await import('./slow-prs-api.js')).handleSlowPrsApi },
 ];
 
 let mountedModules: readonly MountedApiModule[] = DEFAULT_API_MODULES;
@@ -465,6 +466,9 @@ const WORKBENCH_IMPORTS: Readonly<Record<WorkbenchRouteFamilyId, () => Promise<W
   'fleet-cos': async () => {
     try { return (await import('./fleet-cos-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-cos-api.js'); }
   },
+  'app-update': async () => {
+    try { return (await import('./app-update-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'app-update-api.js'); }
+  },
   'cos-memory': async () => {
     try { return (await import('./cos-memory-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'cos-memory-api.js'); }
   },
@@ -473,6 +477,9 @@ const WORKBENCH_IMPORTS: Readonly<Record<WorkbenchRouteFamilyId, () => Promise<W
   },
   'fleet-comms-status': async () => {
     try { return (await import('./fleet-comms-status-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-comms-status-api.js'); }
+  },
+  'agent-roster': async () => {
+    try { return (await import('./agent-roster-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'agent-roster-api.js'); }
   },
   'fleet-control': async () => {
     try { return (await import('./fleet-control-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-control-api.js'); }
@@ -2174,6 +2181,25 @@ export async function handleVerseApi(
     const contextRoute = contextRouteOf(path);
     if (contextRoute !== null) {
       return await handleContextRoutes(ctx, req, res, path, method, contextRoute);
+    }
+
+    // Registry records reference the existing, gated session operations.  Do
+    // not duplicate their dispatch, readiness, or spend checks here.
+    if (path === `${VERSE_API_PREFIX}/session-registry` && method === 'GET') {
+      const engine = await getVerseEngine();
+      sendJson(res, 200, {
+        schema: 'verse.session-registry.v1',
+        start: `${VERSE_API_PREFIX}/sessions`,
+        sessions: engine.listSessions().map((session) => {
+          const base = `${VERSE_API_PREFIX}/sessions/${encodeURIComponent(session.id)}`;
+          return {
+            id: session.id, provider: session.engine, title: session.title,
+            status: session.status, createdAt: session.createdAt, updatedAt: session.updatedAt,
+            inspect: base, message: `${base}/turns`, stop: `${base}/cancel`,
+          };
+        }),
+      });
+      return true;
     }
 
     // ── /api/verse/sessions ──────────────────────────────────────────────

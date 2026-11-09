@@ -60,7 +60,7 @@ describe('credential subprocess boundary', () => {
     ['-C', '/repo', '-c', 'core.hooksPath=/dev/null', 'push', 'origin'],
     ['--git-dir=/repo/.git', 'ls-remote', 'origin'], ['remote', 'update'], ['remote', '--verbose', 'update'], ['remote', 'add', '-f', 'origin', 'url'],
     ['remote', 'set-head', 'origin', '--auto'], ['custom-alias'],
-  ])('wraps remote Git invocation %j', (...args) => {
+  ])('wraps remote Git invocation %j (%#)', (...args) => {
     credentialExecFileSync('git', args, options);
     expect(fakes.execFileSync).toHaveBeenCalledExactlyOnceWith(phantom, ['exec', '--', 'git', ...args], options);
   });

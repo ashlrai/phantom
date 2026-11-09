@@ -1,0 +1,27 @@
+.board { display: flex; flex-direction: column; gap: var(--space-3); }
+.header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: var(--space-2); }
+.header h2 { font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); }
+.eyebrow { color: var(--text-tertiary); font-size: var(--text-xs-size); letter-spacing: .12em; }
+.live { color: var(--status-success-fg); font-size: var(--text-xs-size); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr)); gap: var(--space-3); }
+.panel { min-width: 0; padding: var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--bg-surface); }
+.panel h3 { font-weight: var(--font-weight-semibold); }
+.caption, .meta { color: var(--text-tertiary); font-size: var(--text-xs-size); }
+.caption { margin: var(--space-2) 0; overflow-wrap: anywhere; }
+.lanes, .feed, .merges { list-style: none; padding: 0; margin: 0; }
+.lane { padding: var(--space-3) 0; border-bottom: 1px solid var(--border-subtle); }
+.row, .meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-2); }
+.row strong { display: inline-flex; align-items: center; gap: var(--space-2); }
+.row span { font-variant-numeric: tabular-nums; }
+.track, .unknown { margin: var(--space-2) 0; border-radius: 999px; background: var(--border-subtle); }
+.track { height: 8px; overflow: hidden; }
+.fill { height: 100%; border-radius: inherit; background: var(--status-success-fg); transition: width .4s ease; }
+.unknown { padding: 3px var(--space-2); color: var(--text-tertiary); font-size: var(--text-xs-size); }
+.meta span { overflow-wrap: anywhere; }
+.feed li { display: flex; gap: var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--border-subtle); }
+.feed strong, .merges strong { font-size: var(--text-sm-size); overflow-wrap: anywhere; }
+.feed p, .merges span { color: var(--text-tertiary); font-size: var(--text-xs-size); overflow-wrap: anywhere; }
+.dot { flex: none; width: 7px; height: 7px; margin-top: 7px; border-radius: 50%; background: var(--status-success-fg); }
+.mergeTitle { margin-top: var(--space-4); }
+.merges li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--border-subtle); }
+@media (prefers-reduced-motion: reduce) { .fill { transition: none; } }

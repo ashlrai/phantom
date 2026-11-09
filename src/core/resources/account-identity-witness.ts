@@ -2,7 +2,7 @@
 import { lstatSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { canonical, digest, inspectPrivateDirectory } from '../universe/artifacts.js';
-import { resolveNativeSeatLaunch } from './native-profile.js';
+import { resolveNativeSeatDisplayMetadata, resolveNativeSeatLaunch } from './native-profile.js';
 import { readResourceJson } from './pool-runtime.js';
 import type { ResourceConnectionConfig } from './connection-monitor.js';
 
@@ -17,6 +17,10 @@ export interface ResourceAccountIdentityWitness {
   source: 'native-account-checked' | 'native-account-checked-local-epoch';
 }
 export interface ResourceAccountLocalEpoch { profileDigest: string; epochDigest: string; accountDigest?: string }
+/** The same file-epoch digest, resolved with a possibly 60 s old APFS volume read. Its digest
+ * field is deliberately named differently, so it is not assignable to ResourceAccountLocalEpoch
+ * (the witness input); it only qualifies historical display. */
+export interface ResourceAccountDisplayEpoch { scope: 'historical-display-only'; profileDigest: string; displayEpochDigest: string; accountDigest?: string }
 export interface ResourceAccountIdentitySnapshot {
   witness: ResourceAccountIdentityWitness;
   localEpoch: ResourceAccountLocalEpoch | null;
@@ -55,9 +59,24 @@ export function resourceAccountProfileDigest(account: ResourceConnectionConfig['
 export function readResourceAccountLocalEpoch(accountsRoot: string, account: ResourceConnectionConfig['accounts'][number]): ResourceAccountLocalEpoch | null {
   try {
     const result = resolveNativeSeatLaunch({ accountsRoot, provider: account.provider, seatId: account.id });
-    if (!result.ok || canonical(result.launch.command) !== canonical(account.command)) return null;
-    inspectPrivateDirectory(result.launch.nativeStatePath);
-    const file = join(result.launch.nativeStatePath, account.provider === 'claude' ? '.claude.json' : 'auth.json');
+    return result.ok ? readEpochFields(account, result.launch.command, result.launch.nativeStatePath) : null;
+  } catch { return null; }
+}
+/** Display-only twin: identical file checks, volume identity may be up to 60 s old. Never
+ * feeds witness(), captureEpoch, remember or recheckResourceAccountIdentitySnapshot. */
+export function readResourceAccountDisplayEpoch(accountsRoot: string, account: ResourceConnectionConfig['accounts'][number]): ResourceAccountDisplayEpoch | null {
+  try {
+    const seat = resolveNativeSeatDisplayMetadata({ accountsRoot, provider: account.provider, seatId: account.id });
+    const fields = seat ? readEpochFields(account, seat.command, seat.nativeStatePath) : null;
+    return fields ? { scope: 'historical-display-only', profileDigest: fields.profileDigest, displayEpochDigest: fields.epochDigest,
+      ...(fields.accountDigest === undefined ? {} : { accountDigest: fields.accountDigest }) } : null;
+  } catch { return null; }
+}
+function readEpochFields(account: ResourceConnectionConfig['accounts'][number], command: readonly string[], nativeStatePath: string): ResourceAccountLocalEpoch | null {
+  try {
+    if (canonical(command) !== canonical(account.command)) return null;
+    inspectPrivateDirectory(nativeStatePath);
+    const file = join(nativeStatePath, account.provider === 'claude' ? '.claude.json' : 'auth.json');
     const stat = lstatSync(file, { bigint: true });
     if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1n || (stat.mode & 511n) !== 384n ||
       stat.size < 2n || stat.size > 2n * 1024n * 1024n || realpathSync(file) !== file ||

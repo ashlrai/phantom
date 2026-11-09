@@ -1,0 +1,47 @@
+/**
+ * The standalone fleet MCP server's complete advertised tool contract, in
+ * tools/list order. Independently specified here — never derived from
+ * src/mcp/fleet-server.ts — so a renamed, dropped or reordered tool fails the
+ * inventory assertions instead of silently matching production.
+ */
+export const FLEET_MCP_TOOL_NAMES: readonly string[] = Object.freeze([
+  'fleet_staging_inventory',
+  'fleet_staging_inventory_retry',
+  'fleet_staging_inventory_batch',
+  'fleet_status',
+  'fleet_loop',
+  'fleet_bus_hops',
+  'fleet_host_runs',
+  'fleet_bus_inbox',
+  'fleet_lanes',
+  'fleet_usage_resets',
+  'fleet_reset_await',
+  'fleet_reset_group_await',
+  'fleet_reset_release_await',
+  'fleet_reset_history',
+  'fleet_reset_follow',
+  'fleet_job_history',
+  'fleet_job_history_batch',
+  'fleet_job_overlap',
+  'fleet_job_current_batch',
+  'fleet_job_current',
+  'fleet_job_patch',
+  'fleet_path_history',
+  'fleet_job_precheck',
+  'fleet_job_precheck_batch',
+  'fleet_main_health',
+  'fleet_waste_risk',
+  'fleet_kept',
+  'fleet_trim',
+  'fleet_email_outbox',
+  'fleet_email_outbox_await',
+  'fleet_comms_readiness',
+  'fleet_email_outbox_batch_await',
+  'fleet_email_diagnosis',
+  'fleet_imessage_path',
+  'fleet_imessage_acks',
+  'fleet_ci_resume_inputs',
+  'fleet_ci_receipt_await',
+  'fleet_ci_receipt_await_batch',
+  'fleet_release_candidate',
+]);

@@ -101,7 +101,7 @@ describe('artifact pack CLI', () => {
     ['--job', 'NEXT', '--upstream', 'FIRST', '--byte-budget', '1.5'],
     ['--job', 'NEXT', '--upstream', 'FIRST', '--phm-bin'],
     ['--job', 'NEXT', ...Array.from({ length: 21 }, (_, i) => ['--upstream', `ID${i}`]).flat()],
-  ])('rejects invalid arguments before starting a child: %j', (...args) => {
+  ])('rejects invalid arguments before starting a child: %j (%#)', (...args) => {
     expect(run(...args).status).toBe(2);
     expect(calls()).toEqual([]);
   });

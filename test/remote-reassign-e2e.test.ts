@@ -108,7 +108,7 @@ it('paired phone reassign reaches dispatcher ready.tsv exactly once with device 
   expect(rows[0]?.slice(0, 4)).toEqual([JOB, 'phantom', 'devin', 'work']);
   const audit = readFileSync(join(f.root, 'queue/reassign.log'), 'utf8').trim().split('\n');
   expect(audit).toHaveLength(1);
-  expect(audit[0]).toContain(`\t${JOB}\tcodex-personal\tdevin\tmobile-device:${DEVICE}\t`);
+  expect(audit[0]!.split('\t').slice(1)).toEqual([JOB, 'codex-personal', 'devin', `mobile-device:${DEVICE}`]);
   expect(Date.parse(audit[0]!.split('\t')[0]!)).toBeGreaterThanOrEqual(before);
   expect(Date.parse(audit[0]!.split('\t')[0]!)).toBeLessThanOrEqual(Date.now());
 });
