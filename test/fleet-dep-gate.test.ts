@@ -193,7 +193,7 @@ describe('fleet dep-gate (RQ-DEPGATEQ8)', () => {
     ['--runs-dir'],
     ['--runs-dir', 'relative'],
     ['--json', '--json'],
-  ])('rejects invalid arguments %j', async (...args) => {
+  ])('rejects invalid arguments %j (row %#)', async (...args) => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     expect(await cmdFleetDepGate(args)).toBe(2);
     expect(error).toHaveBeenCalledWith('Usage: ashlr fleet dep-gate [--json] [--runs-dir <abs>]');

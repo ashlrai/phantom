@@ -35,7 +35,7 @@ it('finds unfinished filename IDs on explicitly idle lanes, strictly over the th
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-it.each([['--minutes'], ['--minutes', '-1'], ['--minutes', 'NaN'], ['--minutes', '1e3'], ['--json', '--json'], ['--bad']])('rejects invalid arguments %j', async (...args) => {
+it.each([['--minutes'], ['--minutes', '-1'], ['--minutes', 'NaN'], ['--minutes', '1e3'], ['--json', '--json'], ['--bad']])('rejects invalid arguments %j (row %#)', async (...args) => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   expect(await cmdFleetStranded(args)).toBe(2);
 });

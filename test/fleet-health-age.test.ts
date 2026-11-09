@@ -63,7 +63,7 @@ describe('fleet health-age', () => {
     [true, 'no exit recorded', 'loaded', null],
     [false, 'Could not find service', 'not-loaded', null],
     [false, 'permission denied', 'unknown', null],
-  ])('classifies launchd evidence without exposing it', async (ok, output, state, code) => {
+  ])('classifies launchd evidence without exposing it (row %#)', async (ok, output, state, code) => {
     const probe = vi.fn().mockResolvedValue({ ok, output });
     const service = await readGuardianServiceHealth({ platform: 'darwin', uid: 123, probe });
     expect(probe).toHaveBeenCalledWith('gui/123/ai.ashlr.main-guardian');

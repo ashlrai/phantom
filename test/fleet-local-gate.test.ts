@@ -110,7 +110,7 @@ describe('fleet local-gate', () => {
     ['unknown', { headRefOid: 'c'.repeat(40) }, 'gh pr view'],
     ['unknown', { statusCheckRollup: [] }, 'gh pr view'],
     ['unknown', { statusCheckRollup: null }, 'gh pr view'],
-  ])('reports %s with an actionable next step', async (kind, state, action) => {
+  ])('reports %s with an actionable next step (row %#)', async (kind, state, action) => {
     const { exec, deps } = fixture();
     const fallback = exec.getMockImplementation()!;
     exec.mockImplementation(async (command, args) => command === 'gh'

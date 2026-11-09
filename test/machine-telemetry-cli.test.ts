@@ -26,7 +26,7 @@ describe('resources sample CLI', () => {
   it.each([
     ['sample', '--sudo'], ['sample', '--json', '--json'], ['sample', '--bind', '0.0.0.0'],
     ['sample', '--url', 'https://TEST.example'], ['sample', '--watch'],
-  ])('rejects unknown or repeated arguments before reading configuration: %j', async (...args) => {
+  ])('rejects unknown or repeated arguments before reading configuration: %j (row %#)', async (...args) => {
     expect(await cmdResources(args)).toBe(2);
     expect(mocks.loadConfig).not.toHaveBeenCalled();
     expect(mocks.sample).not.toHaveBeenCalled();

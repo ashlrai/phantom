@@ -92,6 +92,8 @@ This source tree targets version 3.30.26; check canonical release availability a
 Canonical releases use `ashlrai/phantom` and `@ashlr/phantom`.
 Its fixed discovery endpoint is
 `https://github.com/ashlrai/phantom/releases/latest/download/latest.json`.
+[The update channel](../docs/DESKTOP-UPDATE-CHANNEL.md) describes the feed,
+asset set, publication boundary and post-publication verification.
 The commissioned public key, `ai.ashlr.desktop` bundle identifier, signer,
 sidecar and saved-data identities stay unchanged. The signed legacy and
 canonical profiles remain distinct; transport redirects do not choose a profile.
