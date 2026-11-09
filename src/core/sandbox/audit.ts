@@ -9,8 +9,8 @@
  *   - audit() never throws; readAudit() skips malformed lines, never throws.
  */
 
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { realHome } from '../real-home.js';
 import {
   existsSync,
   mkdirSync,
@@ -30,7 +30,9 @@ import { scrubSecrets } from '../util/scrub.js';
  * Created lazily by audit() — this function itself does NOT create it.
  */
 export function auditDir(): string {
-  return join(homedir(), '.ashlr', 'audit');
+  const home = realHome();
+  if (!home) throw new Error('Account home is unavailable.');
+  return join(home, '.ashlr', 'audit');
 }
 
 // ---------------------------------------------------------------------------

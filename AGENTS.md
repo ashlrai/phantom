@@ -31,6 +31,7 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 ## Tools for agents working here
 - This repo's `.mcp.json` declares five companion MCP servers: `phantom-secrets`, `locus`, `lexicon`, `stack`, `ashlr` (Ashlr.AI Plugin). What each is for, its limits, and how to approve it: [docs/AGENT-TOOLCHAIN.md](docs/AGENT-TOOLCHAIN.md).
 - In a Phantom cloud task, list the companion tools you actually called in the report's `toolsUsed` field (an empty list if none); `phm cloud list` shows it as the session's claim.
+- Team org: `phm org show --json`, `phm org join --member <id> --machine <id> --lane <lane>[=<share>] --json` (each co-founder on their own machine; opt-in per lane, no auth read, nothing sent) and `phm org plan --json` (proposes queue assignments and roles within each member's contributed limits from the router's usage and reset data; the leader reads it each planning pass). Private data is never pooled; spending stays with each member. See [docs/AGENT-NETWORK.md](docs/AGENT-NETWORK.md#team-org).
 - Team membership: `phm team invite <gh-user>`, `phm team join <invite>` and `phm team remove <gh-user>` are human-terminal commands for owners/admins and invitees (agent processes are refused); an invite grants membership only and never credentials. See [docs/TEAM.md](docs/TEAM.md#invite-join-and-remove-a-teammate).
 
 ## Agents may
@@ -271,6 +272,20 @@ archived, never deleted. A send needs an owner standing approval. See
 phm comms-agent status --json
 phm comms-agent run --lanes claude,local --json
 phm comms-agent drafts --json
+```
+
+## Agent sessions
+
+`phm sessions create|show|resume|terminate --json` runs resumable agent
+sessions. A session pairs an agent profile id and version with an environment
+id and an append-only event log. Each turn is one `phm queue` job, and dispatchd
+is unchanged. The statuses are idle, running, rescheduling and terminated. See
+[SESSIONS](docs/SESSIONS.md):
+
+```sh
+phm sessions create --agent helper --agent-version 1 --environment local --job J1 --json
+phm sessions show sesn_0123456789abcdef --json
+phm sessions resume sesn_0123456789abcdef --scope "Address review comments" --json
 ```
 
 ## Docs Radar
