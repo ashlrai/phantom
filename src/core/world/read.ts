@@ -22,6 +22,7 @@ import {
 } from '../observe/read.js';
 import type { UsageSensorReport } from '../usage/sensor-reading.js';
 import type { AgentRoster } from '../fleet/agent-roster.js';
+import { writeWorldExport } from './export.js';
 import { projectWorldModel } from './project.js';
 import { WORLD_CACHE_TTL_MS, type WorldModel } from './types.js';
 import type { ObserveSnapshot } from '../observe/types.js';
@@ -183,7 +184,9 @@ export async function buildWorldModel(options: ReadObserveOptions = {}): Promise
     ...observe.coverage,
     unknownFields: model.blindSpots.map((spot) => ({ id: spot.id, path: spot.path, freshness: spot.freshness })),
   };
-  return { ...model, views: { observe } };
+  const snapshot = { ...model, views: { observe } };
+  writeWorldExport(model, { nowMs });
+  return snapshot;
 }
 
 function isSensorReport(value: unknown): value is UsageSensorReport {
