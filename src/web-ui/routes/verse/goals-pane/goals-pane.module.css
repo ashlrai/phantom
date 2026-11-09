@@ -6,3 +6,8 @@
 .fill { height: 100%; background: var(--accent-500); }
 .percent { color: var(--text-secondary); font-size: var(--text-xs-size); min-width: 3ch; text-align: right; }
 .meta { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); overflow-wrap: anywhere; }
+.metric { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); color: var(--text-secondary); font-size: var(--text-xs-size); }
+.metricValue { color: var(--text-primary); font-weight: var(--font-weight-semibold); }
+.badge { padding: 0 var(--space-1); border: 1px solid var(--border-subtle); border-radius: var(--radius-full); text-transform: uppercase; }
+.metric[data-state='stale'] .badge { color: var(--warning-500, var(--text-secondary)); }
+.metric[data-state='unknown'] .badge { font-style: italic; }
