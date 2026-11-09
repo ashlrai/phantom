@@ -408,3 +408,16 @@ workflows. Release Please and auto-tag can temporarily create empty drafts;
 those are not by themselves failed releases or evidence of a settled published
 release with signed assets. SIGN-PUBLISH-3311 and the desktop, Terra and Dot
 lanes retain their separate ownership.
+
+### Check release status
+
+Run `phm release status` for a read-only table across the seven enrolled Ashlr
+repositories, or add `--json` for the `phantom.release-status.v1` report. The
+latest tag is GitHub's most recently listed tag; assets belong to the release
+for that tag, and unreleased commits count commits on the default branch ahead
+of it. The Phantom row also shows the HTTP status of the public updater feed.
+`Unknown` (JSON `null`) means the observation could not be made, including when
+a tag has no GitHub release. Other repositories have no updater feed check.
+GitHub access uses the existing `gh` authentication. The command changes no
+release settings. `phm release status --file <path>` continues to inspect a
+local release-train state file.
