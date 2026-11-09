@@ -166,7 +166,7 @@ describe('native MCP tool inventory', () => {
     expect(ownerCommsBytes).toBeLessThanOrEqual(1600);
     const agentComms = addedTools.filter(tool => tool.name.startsWith('ashlr_comms_agent_'));
     const agentCommsBytes = agentComms.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
-    expect(agentCommsBytes).toBeLessThanOrEqual(2200);
+    expect(agentCommsBytes).toBeLessThanOrEqual(746);
     const addedBytes = addedTools.filter(tool => tool !== doctor && tool !== roster && tool !== spend && !visibility.includes(tool) && !leaderTools.includes(tool) && !desktop.includes(tool) && !observeTools.includes(tool) && !ownerComms.includes(tool) && !agentComms.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(addedBytes).toBeLessThanOrEqual(9195);
     // 24,205 + 9,195 preserves the historical headroom. Later tool groups are
