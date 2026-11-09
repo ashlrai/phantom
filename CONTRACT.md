@@ -327,6 +327,30 @@ Both are implemented in `src/cli/doctor-init.ts` and loaded lazily from the disp
 
 ---
 
+## Native seat resolution — fresh authority vs historical display
+
+`src/core/resources/native-profile.ts`, `account-identity-witness.ts`, `reading-cache.ts`.
+
+- `resolveNativeSeatLaunch(options) -> NativeSeatLaunchResult` — **unchanged signature.**
+  Every call reads the APFS volume identity afresh. Launch, admission, `captureEpoch`,
+  `remember`, `witness`, `readResourceAccountLocalEpoch` and
+  `recheckResourceAccountIdentitySnapshot` use only this path.
+- `resolveNativeSeatDisplayMetadata({ accountsRoot, provider, seatId? }) -> NativeSeatDisplayMetadata | null` — **new.**
+  Same manifest/launcher/directory/inode/template checks, but the volume identity may be
+  a private per-device observation up to 60 s old (failures cached too, 32 entries).
+  `NativeSeatDisplayMetadata` is `{ seatId, provider, command, nativeStatePath }`: no
+  `ok`, `launch` or `executable`, so it is not a `NativeSeatLaunchResult`/`NativeSeatLaunch`.
+- `readResourceAccountDisplayEpoch(accountsRoot, account) -> ResourceAccountDisplayEpoch | null` — **new.**
+  `{ scope: 'historical-display-only', profileDigest, displayEpochDigest, accountDigest? }`;
+  deliberately not assignable to `ResourceAccountLocalEpoch`.
+- `createResourceReadingCache` gains optional `readDisplayEpoch`; `ResourceReadingCache.lastKnown`
+  uses the display epoch and no longer calls `witness()`. `witness()` stays fresh, and cached
+  volume data never mints a witness, capacity or financial evidence. Historical labels are unchanged.
+- Consequence: after a volume change, `witness()`, `captureEpoch` and launch reject at once,
+  while `lastKnown` display may stay historical for up to 60 s.
+
+---
+
 ## Build / run
 
 - `npm run build` → tsc → `dist/`
@@ -334,3 +358,22 @@ Both are implemented in `src/cli/doctor-init.ts` and loaded lazily from the disp
 - Install: `npm install -g @ashlr/phantom` (provides `phm` and `ashlr`), or from a
   checkout run `./install.sh`, which builds and links `phm` and `ashlr` into `~/.local/bin`
 - Config/index home: `~/.ashlr/` (created on first run)
+
+## Fleet status API v1
+
+`phm fleet status-api --json` emits one `fleet.status-api.v1` object and exits 0;
+invalid arguments exit 2 and an unexpected read failure exits 1. It reads the
+local `~/.ashlr-runs` dispatcher state only, without starting work. `sources`
+reports `healthy`, `missing`, or `degraded` for status, claimed, queue and
+metrics. Missing or degraded queue counts and incomplete hourly publication
+counts are null (including when the 50-record publication cap is reached). `sessions` lists up to 200 validated claimed job identifiers,
+lane, tier and claim time; this is a claim observation, not proof of a live
+process. `lanes` lists up to 200 observed lanes, running and target counts,
+held state, 24-hour merge count and available slots. Availability is null unless
+status is healthy, unpaused and observed within 60 seconds; it is not a slot
+reservation. Truncation flags describe each list. `observedAt` is the producer's
+last tick; `generatedAt` is the read time. Recent outcomes are the producer's
+24-hour lane merge counts and the number of publication records in the last hour
+(null at the underlying 50-record cap). No free text, environment,
+credentials, paths, or job contents are returned. Partial source health must be
+checked before interpreting observations as complete.

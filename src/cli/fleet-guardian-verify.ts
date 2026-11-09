@@ -15,6 +15,8 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 // states under the output directory without touching the source. --json reports
 // {verify, retry, retrySkipped, latestState, recovered, final}; recovered counts
 // verified attempts, never merely a drain that ran.
+export const usage = 'Usage: ashlr fleet guardian-verify --manifest <file> --state <file> [--max-passes <n>] [--interval-ms <ms>] [--timeout-ms <ms>] [--retry-infra <1..20> --retry-output-dir <abs>] [--json]';
+
 export async function cmdFleetGuardianVerify(
   args: string[],
   run = runGuardianVerifyLoop,

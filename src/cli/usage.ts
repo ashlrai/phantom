@@ -15,6 +15,7 @@
  * With --json: prints the raw FrontierUsage JSON object.
  */
 
+import { cmdUsageSensors } from './usage-sensors.js';
 import { makeColors, isTty } from './ui.js';
 
 const { bold, dim, cyan, green, yellow, red } = makeColors(isTty());
@@ -177,6 +178,7 @@ function renderTable(usage: import('../core/usage/frontier-usage.js').FrontierUs
 // ---------------------------------------------------------------------------
 
 export async function cmdUsage(args: string[]): Promise<number> {
+  if (args[0] === 'sensors') return cmdUsageSensors(args.slice(1));
   if (args[0] === 'validate') {
     if ((args.length !== 2 && args.length !== 3) || !args[1] || args[1].startsWith('-') ||
         (args.length === 3 && args[2] !== '--json')) {
@@ -244,6 +246,13 @@ function printUsage(): void {
   console.log('');
   console.log('  Show per-engine frontier usage: calls, tokens, cost, and window state.');
   console.log('  phm usage validate <file> [--json] checks usage-reading.v1 JSONL records.');
+  console.log('  phm usage sensors --json [--refresh] [--file <snapshot>]');
+  console.log('  prints each lane reading, its age and whether it is stale.');
+  console.log('  A reading at or after staleAfter is unknown and is not headroom.');
+  console.log('  --refresh uses official APIs and CLIs only.');
+  console.log('  Codex refresh uses PHANTOM_SENSOR_CODEX_CMP_HOME and');
+  console.log('  PHANTOM_SENSOR_CODEX_PERSONAL_HOME when those pool homes are set.');
+  console.log('  Operator credential directories are refused.');
   console.log('');
   console.log('  ' + b('Options:'));
   console.log(`    ${c('--json')}   Print raw JSON instead of the table`);

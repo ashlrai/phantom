@@ -14,7 +14,7 @@ import {
 import { isAwaitMs } from '../core/fleet/needs-mason-answer-await.js';
 import type { GitRunner } from '../core/verse/git-ops.js';
 
-const USAGE = 'usage: ashlr fleet ci-receipt-await-batch --stdin --timeout-ms N [--poll-ms N] [--json | --ndjson]';
+const USAGE = 'usage: ashlr fleet ci-receipt-await-batch --stdin --timeout-ms N [--poll-ms N] [--target-timeout-ms N] [--json | --ndjson]';
 const HELP = `${USAGE}
 \`ci-receipt-await-batch\` waits for a bounded batch of explicitly named
 receipts artifacts — the RESUME-FROM-FAILURE and t1626u batching orders — so
@@ -33,6 +33,8 @@ the batch moves on while time remains; targets the deadline never reached
 get explicit "not-started" entries and a prior is never fabricated.
 --timeout-ms is required and bounded at one hour; --poll-ms is a positive
 interval of at least ${CI_RECEIPT_AWAIT_MIN_POLL_MS}ms (default ${CI_RECEIPT_AWAIT_DEFAULT_POLL_MS}).
+--target-timeout-ms optionally caps each wait at the lesser of that value
+and the remaining batch time; a local timeout fails only that target.
 
 By default stdout is one formatted JSON report; --json emits the same report
 on one line. --ndjson emits one line per settled target as
@@ -87,7 +89,7 @@ export async function cmdFleetCiReceiptAwaitBatch(
     if (arg === '--stdin' && !stdin) { stdin = true; continue; }
     if (arg === '--json' && !json) { json = true; continue; }
     if (arg === '--ndjson' && !ndjson) { ndjson = true; continue; }
-    if (!['--timeout-ms', '--poll-ms'].includes(arg) || values.has(arg)
+    if (!['--timeout-ms', '--poll-ms', '--target-timeout-ms'].includes(arg) || values.has(arg)
       || !args[i + 1] || args[i + 1]!.startsWith('--')) {
       return invalid('unexpected_argument');
     }
@@ -97,9 +99,11 @@ export async function cmdFleetCiReceiptAwaitBatch(
   const pollMs = values.has('--poll-ms')
     ? boundedMs(values.get('--poll-ms'), CI_RECEIPT_AWAIT_MAX_POLL_MS)
     : CI_RECEIPT_AWAIT_DEFAULT_POLL_MS;
+  const targetTimeoutMs = values.has('--target-timeout-ms')
+    ? boundedMs(values.get('--target-timeout-ms'), CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS) : undefined;
   if (json && ndjson) return invalid('conflicting_output_flags');
   if (!stdin) return invalid('missing_stdin_flag');
-  if (timeoutMs === null || pollMs === null || pollMs < CI_RECEIPT_AWAIT_MIN_POLL_MS) {
+  if (timeoutMs === null || pollMs === null || pollMs < CI_RECEIPT_AWAIT_MIN_POLL_MS || targetTimeoutMs === null) {
     return invalid('invalid_flags');
   }
   const input = deps.input ?? process.stdin;
@@ -139,7 +143,7 @@ export async function cmdFleetCiReceiptAwaitBatch(
   };
   try {
     const { report, diagnostics } = await awaitCiReceiptBatch(parsed.targets,
-      { timeoutMs, pollMs, signal: ndjson
+      { timeoutMs, pollMs, targetTimeoutMs, signal: ndjson
         ? (deps.signal ? AbortSignal.any([deps.signal, outputAbort.signal]) : outputAbort.signal) : deps.signal,
         onEntry: ndjson ? (entry) => writeEvent({ version: 1, type: 'entry', entry }) : undefined },
       { gh: deps.gh, now: deps.now, sleep: deps.sleep });

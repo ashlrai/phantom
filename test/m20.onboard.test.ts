@@ -22,6 +22,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { onboard } from '../src/core/onboard.js';
 
 // ---------------------------------------------------------------------------
 // Hermetic HOME — redirect all home-relative paths to a tmp dir
@@ -45,15 +48,25 @@ afterEach(() => {
 // Mock child_process — capture all spawn/execFile calls for NO_AUTO_PULL
 // ---------------------------------------------------------------------------
 
-const mockExecFile = vi.fn();
+const mockExecFile = vi.fn((...args: unknown[]) => {
+  const callback = args.at(-1);
+  if (typeof callback === 'function') queueMicrotask(() => callback(new Error('ENOENT'), '', ''));
+  return { stdin: null };
+});
 const mockExecFileSync = vi.fn();
 const mockSpawnSync = vi.fn(() => ({ status: 1, stdout: '', stderr: '' }));
-const mockSpawn = vi.fn(() => ({
-  stdout: { on: vi.fn() },
-  stderr: { on: vi.fn() },
-  on: vi.fn(),
-  pid: 12345,
-}));
+const mockSpawn = vi.fn(() => {
+  const child = Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(), stderr: new PassThrough(),
+    stdin: null, pid: undefined, unref: vi.fn(),
+  });
+  // Match a missing executable: asynchronous error followed by close.
+  queueMicrotask(() => {
+    child.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }));
+    child.emit('close', -1, null);
+  });
+  return child;
+});
 
 vi.mock('node:child_process', () => ({
   execFile: (...args: unknown[]) => mockExecFile(...args),
@@ -119,17 +132,6 @@ function allSpawnedArgs(): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// Import under test (AFTER mocks are in place)
-// ---------------------------------------------------------------------------
-
-// Lazy import to pick up mocked modules
-async function importOnboard() {
-  // Clear module cache so HOME env change is picked up by config.ts
-  const mod = await import('../src/core/onboard.js');
-  return mod.onboard;
-}
-
-// ---------------------------------------------------------------------------
 // Basic shape + NON-TTY-safe
 // ---------------------------------------------------------------------------
 
@@ -138,7 +140,6 @@ describe('onboard — basic shape', () => {
     mockFetch.mockRejectedValue(new Error('offline'));
     mockExecFileSync.mockImplementation(() => { throw new Error('not found'); });
 
-    const onboard = await importOnboard();
     const cfg = makeConfig();
     const result = await onboard(cfg, { wire: false, yes: false });
 
@@ -150,7 +151,6 @@ describe('onboard — basic shape', () => {
 
   it('nextSteps always contains the try: ashlr run / ashlr swarm / ashlr tui line', async () => {
     mockFetch.mockRejectedValue(new Error('offline'));
-    const onboard = await importOnboard();
     const result = await onboard(makeConfig(), { wire: false, yes: false });
 
     const combined = result.nextSteps.join('\n');
@@ -161,7 +161,6 @@ describe('onboard — basic shape', () => {
 
   it('step names include config, models, editors, symlink, genome', async () => {
     mockFetch.mockRejectedValue(new Error('offline'));
-    const onboard = await importOnboard();
     const result = await onboard(makeConfig(), { wire: false, yes: false });
 
     const names = result.steps.map((s) => s.name);
@@ -174,7 +173,6 @@ describe('onboard — basic shape', () => {
 
   it('each step has name, status, detail fields', async () => {
     mockFetch.mockRejectedValue(new Error('offline'));
-    const onboard = await importOnboard();
     const result = await onboard(makeConfig(), { wire: false, yes: false });
 
     for (const step of result.steps) {
@@ -193,7 +191,6 @@ describe('onboard — basic shape', () => {
 describe('onboard — NON-TTY-safe (no prompt/hang)', () => {
   it('never calls readline.createInterface', async () => {
     mockFetch.mockRejectedValue(new Error('offline'));
-    const onboard = await importOnboard();
     await onboard(makeConfig(), { wire: false, yes: false });
     expect(mockCreateInterface).not.toHaveBeenCalled();
   });
@@ -201,14 +198,12 @@ describe('onboard — NON-TTY-safe (no prompt/hang)', () => {
   it('does not hang — completes synchronously within the test timeout', async () => {
     // If this test times out, onboard is not NON-TTY-safe
     mockFetch.mockRejectedValue(new Error('offline'));
-    const onboard = await importOnboard();
     const result = await onboard(makeConfig(), { wire: false, yes: true });
     expect(result).toBeDefined();
   });
 
   it('completes when opts.yes = false (defaults are safe)', async () => {
     mockFetch.mockRejectedValue(new Error('offline'));
-    const onboard = await importOnboard();
     const result = await onboard(makeConfig(), { wire: false, yes: false });
     expect(result).toBeDefined();
   });
@@ -221,7 +216,6 @@ describe('onboard — NON-TTY-safe (no prompt/hang)', () => {
 describe('onboard — config step', () => {
   it('config step status is ok', async () => {
     mockFetch.mockRejectedValue(new Error('offline'));
-    const onboard = await importOnboard();
     const result = await onboard(makeConfig(), { wire: false, yes: false });
 
     const configStep = result.steps.find((s) => s.name === 'config');
@@ -231,7 +225,6 @@ describe('onboard — config step', () => {
 
   it('idempotent — running twice does not throw', async () => {
     mockFetch.mockRejectedValue(new Error('offline'));
-    const onboard = await importOnboard();
     const cfg = makeConfig();
 
     const r1 = await onboard(cfg, { wire: false, yes: false });
@@ -250,7 +243,6 @@ describe('onboard — config step', () => {
 describe('onboard — models step (NO_AUTO_DOWNLOAD)', () => {
   it('models step is present', async () => {
     mockFetch.mockRejectedValue(new Error('offline'));
-    const onboard = await importOnboard();
     const result = await onboard(makeConfig(), { wire: false, yes: false });
 
     const modelsStep = result.steps.find((s) => s.name === 'models');
@@ -262,7 +254,6 @@ describe('onboard — models step (NO_AUTO_DOWNLOAD)', () => {
     mockFetch.mockRejectedValue(new Error('connection refused'));
     mockExecFileSync.mockImplementation(() => { throw new Error('not found'); });
 
-    const onboard = await importOnboard();
     const result = await onboard(makeConfig(), { wire: false, yes: false });
 
     const modelsStep = result.steps.find((s) => s.name === 'models');
@@ -277,7 +268,6 @@ describe('onboard — models step (NO_AUTO_DOWNLOAD)', () => {
 
   it('CRITICAL — NO_AUTO_DOWNLOAD: onboard never invokes execFile/spawn with "pull"', async () => {
     mockFetch.mockRejectedValue(new Error('offline'));
-    const onboard = await importOnboard();
 
     vi.clearAllMocks();
     await onboard(makeConfig(), { wire: false, yes: true });
@@ -291,7 +281,6 @@ describe('onboard — models step (NO_AUTO_DOWNLOAD)', () => {
 
   it('NO_AUTO_DOWNLOAD: onboard with --wire never invokes pull either', async () => {
     mockFetch.mockRejectedValue(new Error('offline'));
-    const onboard = await importOnboard();
 
     vi.clearAllMocks();
     await onboard(makeConfig(), { wire: true, yes: true });
@@ -319,7 +308,6 @@ describe('onboard — models step (NO_AUTO_DOWNLOAD)', () => {
     });
     mockExecFileSync.mockReturnValue('/usr/local/bin/ollama\n');
 
-    const onboard = await importOnboard();
     const result = await onboard(makeConfig(), { wire: false, yes: false });
 
     const modelsStep = result.steps.find((s) => s.name === 'models');
@@ -336,7 +324,6 @@ describe('onboard — models step (NO_AUTO_DOWNLOAD)', () => {
 describe('onboard — editors step', () => {
   it('editors step is present', async () => {
     mockFetch.mockRejectedValue(new Error('offline'));
-    const onboard = await importOnboard();
     const result = await onboard(makeConfig(), { wire: false, yes: false });
 
     const editorsStep = result.steps.find((s) => s.name === 'editors');
@@ -345,7 +332,6 @@ describe('onboard — editors step', () => {
 
   it('editors step is not "wired" without opts.wire (detect only)', async () => {
     mockFetch.mockRejectedValue(new Error('offline'));
-    const onboard = await importOnboard();
     const result = await onboard(makeConfig(), { wire: false, yes: false });
 
     const editorsStep = result.steps.find((s) => s.name === 'editors');
@@ -355,7 +341,6 @@ describe('onboard — editors step', () => {
 
   it('editors step may be wired when opts.wire === true and an editor is detected', async () => {
     mockFetch.mockRejectedValue(new Error('offline'));
-    const onboard = await importOnboard();
 
     // Run with wire:true — should not throw regardless of whether an editor is present
     const result = await onboard(makeConfig(), { wire: true, yes: true });
@@ -374,7 +359,6 @@ describe('onboard — editors step', () => {
 describe('onboard — genome step', () => {
   it('genome step is present and ok', async () => {
     mockFetch.mockRejectedValue(new Error('offline'));
-    const onboard = await importOnboard();
     const result = await onboard(makeConfig(), { wire: false, yes: false });
 
     const genomeStep = result.steps.find((s) => s.name === 'genome');
@@ -384,7 +368,6 @@ describe('onboard — genome step', () => {
 
   it('genome step is idempotent — running twice stays ok', async () => {
     mockFetch.mockRejectedValue(new Error('offline'));
-    const onboard = await importOnboard();
     const cfg = makeConfig();
 
     await onboard(cfg, { wire: false, yes: false });
@@ -430,8 +413,7 @@ describe('onboard — Phantom Secrets observations', () => {
       throw new Error('Unexpected Phantom command');
     });
     try {
-      const onboard = await importOnboard();
-      const result = await onboard(makeConfig(), { wire: false, yes: false });
+        const result = await onboard(makeConfig(), { wire: false, yes: false });
       const observed = result.steps.find((step) => step.name === 'phantom');
       expect(observed?.status).toBe(status);
       expect(observed?.detail).toContain(detail);
@@ -461,8 +443,7 @@ describe('onboard — Phantom Secrets observations', () => {
     const previous = mockSpawnSync.getMockImplementation()!;
     mockSpawnSync.mockImplementation(() => ({ status: 1, stdout: '', stderr: '' }));
     try {
-      const onboard = await importOnboard();
-      const result = await onboard(makeConfig(), { wire: false, yes: false });
+        const result = await onboard(makeConfig(), { wire: false, yes: false });
       const observed = result.steps.find((step) => step.name === 'phantom');
       expect(observed?.status).toBe('manual');
       expect(observed?.detail).toContain('https://github.com/ashlrai/phantom-secrets#installation');
@@ -476,14 +457,12 @@ describe('onboard — Phantom Secrets observations', () => {
 describe('onboard — ready flag', () => {
   it('ready is a boolean', async () => {
     mockFetch.mockRejectedValue(new Error('offline'));
-    const onboard = await importOnboard();
     const result = await onboard(makeConfig(), { wire: false, yes: false });
     expect(typeof result.ready).toBe('boolean');
   });
 
   it('ready is true after a clean onboard with config ensured', async () => {
     mockFetch.mockRejectedValue(new Error('offline'));
-    const onboard = await importOnboard();
     const result = await onboard(makeConfig(), { wire: false, yes: false });
     // Config is ensured; doctor may warn but should not have a hard blocking fail
     // after a fresh onboard on a clean tmp HOME
@@ -499,13 +478,11 @@ describe('onboard — never throws', () => {
   it('does not throw when all providers are down', async () => {
     mockFetch.mockRejectedValue(new Error('all down'));
     mockExecFileSync.mockImplementation(() => { throw new Error('not found'); });
-    const onboard = await importOnboard();
     await expect(onboard(makeConfig(), { wire: false, yes: false })).resolves.toBeDefined();
   });
 
   it('does not throw when opts.wire is true but no editors are detected', async () => {
     mockFetch.mockRejectedValue(new Error('offline'));
-    const onboard = await importOnboard();
     await expect(onboard(makeConfig(), { wire: true, yes: true })).resolves.toBeDefined();
   });
 });
@@ -517,7 +494,6 @@ describe('onboard — never throws', () => {
 describe('onboard — idempotency (second run no-ops ensures)', () => {
   it('calling onboard twice produces the same config step status', async () => {
     mockFetch.mockRejectedValue(new Error('offline'));
-    const onboard = await importOnboard();
     const cfg = makeConfig();
 
     const r1 = await onboard(cfg, { wire: false, yes: false });
@@ -531,7 +507,6 @@ describe('onboard — idempotency (second run no-ops ensures)', () => {
 
   it('calling onboard twice produces the same genome step status', async () => {
     mockFetch.mockRejectedValue(new Error('offline'));
-    const onboard = await importOnboard();
     const cfg = makeConfig();
 
     const r1 = await onboard(cfg, { wire: false, yes: false });
@@ -543,7 +518,6 @@ describe('onboard — idempotency (second run no-ops ensures)', () => {
 
   it('second run does not pull any models', async () => {
     mockFetch.mockRejectedValue(new Error('offline'));
-    const onboard = await importOnboard();
     const cfg = makeConfig();
 
     await onboard(cfg, { wire: false, yes: false });

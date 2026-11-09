@@ -93,7 +93,7 @@ describe('CI annotations', () => {
     expect(result.source.outputTruncated).toBe(true);
   });
   it.each([[], ['--repo', '../bad', '--job', '42'], ['--repo', 'ashlrai/phantom', '--job', '0'],
-    ['--repo', 'ashlrai/phantom', '--job', '9007199254740992'], [...args, '--job', '1'], [...args, '--json', '--json']])('rejects bad arguments without network %j', async (...bad) => {
+    ['--repo', 'ashlrai/phantom', '--job', '9007199254740992'], [...args, '--job', '1'], [...args, '--json', '--json']])('rejects bad arguments without network %j (%#)', async (...bad) => {
     const f = fake([]); expect(await cmdFleetCiAnnotations(bad, f)).toBe(2); expect(f.calls).toHaveLength(0);
   });
 });

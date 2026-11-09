@@ -81,7 +81,7 @@ describe('agent usage delta probe', () => {
     [], ['--lane', 'claude'], ['--lane', '../bad', '--interval-ms', '1000'],
     ['--lane', 'claude', '--interval-ms', '999'], ['--lane', 'claude', '--interval-ms', '60001'],
     ['--lane', 'claude', '--interval-ms', '1e3'], ['--lane', 'claude', '--interval-ms', '1000', '--lane', 'x'],
-  ])('rejects invalid arguments without reading: %j', async (...args) => {
+  ])('rejects invalid arguments without reading: %j (%#)', async (...args) => {
     const readLedger = vi.fn(); const output = vi.fn();
     expect(await runUsageDeltaProbe(args, { readLedger, output })).toBe(2);
     expect(JSON.parse(output.mock.calls[0]![0] as string)).toEqual({ v: 1, error: 'invalid_arguments' });

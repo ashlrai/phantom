@@ -36,7 +36,7 @@
  * address is ever printed or returned.
  */
 
-import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { needsYouItems, refreshAutomationsNeedsYou } from '../automations/needs-you.js';
 import { loadConfigReadOnly } from '../config.js';
@@ -45,8 +45,9 @@ import { readNeedsMason } from '../fleet/needs-mason-resolve.js';
 import { sendTelegramMessage, telegramEnabled } from '../integrations/telegram.js';
 import type { AshlrConfig } from '../types.js';
 import { scrubSecrets } from '../util/scrub.js';
-import { ensurePrivateDirectory, writePrivateFileAtomic } from '../verse/preferences.js';
+import { ensurePrivateDirectory, readPrivateFileCapped, writePrivateFileAtomic } from '../verse/preferences.js';
 import { readEmailDropConfig } from './email-drop-config.js';
+import { leaderDailyBrief } from './leader-daily-brief.js';
 import { emailFleetStatus, type EmailFleetStatusReaders } from './email-fleet-status.js';
 import { telegramFleetStatus, type TelegramFleetStatusDeps } from './telegram-fleet-status.js';
 
@@ -160,11 +161,13 @@ export function dailyBriefText(needs: number | null, status: string, list: reado
   return cut ? `${head}\n${cut}` : head;
 }
 
-/** Malformed or absent stamps dedupe nothing. */
+/** Malformed, oversized or absent stamps dedupe nothing. */
 export function readDailyBriefStamp(runsDir: string): DailyBriefLastSent {
   let raw: unknown;
   try {
-    raw = JSON.parse(readFileSync(join(runsDir, DAILY_BRIEF_STAMP), 'utf8'));
+    const read = readPrivateFileCapped(join(runsDir, DAILY_BRIEF_STAMP), 64 * 1024);
+    if (read === null || read.truncated) return {};
+    raw = JSON.parse(read.text);
   } catch {
     return {};
   }
@@ -261,6 +264,8 @@ export interface DailyBriefPlanDeps {
   slotTimes?: Partial<Record<DailyBriefSlot, string>>;
   /** Pending draft titles to list under needs-you; absent skips the section. */
   drafts?: DailyBriefDraftsSource;
+  /** Override the morning leader composer. */
+  leaderBrief?: () => Promise<string>;
   /** Test seams — production defaults read the real config and composers. */
   isConfigured?: (channel: DailyBriefChannel) => boolean | Promise<boolean>;
   composeStatus?: (channel: DailyBriefChannel) => Promise<string>;
@@ -279,7 +284,9 @@ export async function planDailyBrief(opts: { runsDir: string } & DailyBriefPlanD
     for (const channel of opts.channels ?? DAILY_BRIEF_CHANNELS) entries.push({ channel, send: false, reason: 'slot-not-due' });
     return { slot, day, entries };
   }
-  const raw = opts.needsYou ? await opts.needsYou() : await defaultNeeds(opts.runsDir, opts.drafts);
+  const leaderMorning = slot === 'morning' && !opts.composeStatus && !opts.needsYou && !opts.readers && !opts.drafts;
+  const raw = leaderMorning ? 0 : opts.needsYou ? await opts.needsYou() : await defaultNeeds(opts.runsDir, opts.drafts);
+  let leaderText: Promise<string> | undefined;
   const needs: DailyBriefNeeds = raw !== null && typeof raw === 'object' ? raw : { total: raw, lines: [] };
   for (const channel of opts.channels ?? DAILY_BRIEF_CHANNELS) {
     if (opts.lastSent?.[dailyBriefStampKey(channel, slot)] === day) {
@@ -292,8 +299,10 @@ export async function planDailyBrief(opts: { runsDir: string } & DailyBriefPlanD
       continue;
     }
     try {
-      const status = await (opts.composeStatus ?? ((c: DailyBriefChannel) => defaultComposeStatus(opts.runsDir, c, now, opts.readers)))(channel);
-      entries.push({ channel, send: true, text: dailyBriefText(needs.total, status, needs.lines, slot) });
+      const status = leaderMorning
+        ? await (leaderText ??= (opts.leaderBrief ?? (() => leaderDailyBrief(opts.runsDir, now())))())
+        : await (opts.composeStatus ?? ((c: DailyBriefChannel) => defaultComposeStatus(opts.runsDir, c, now, opts.readers)))(channel);
+      entries.push({ channel, send: true, text: leaderMorning ? scrubSecrets(status).slice(0, DAILY_BRIEF_MAX_CHARS) : dailyBriefText(needs.total, status, needs.lines, slot) });
     } catch {
       entries.push({ channel, send: false, reason: 'status-unavailable' });
     }

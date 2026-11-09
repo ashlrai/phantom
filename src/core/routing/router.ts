@@ -8,6 +8,7 @@ import { assessSeat, HEADROOM_READING_MAX_AGE_MS, type SeatCapacity } from './he
 import { CLAUDE_API_SEAT_ID, effectiveSeatPolicy } from './policy.js';
 import { listSeatIds, reasonSentences } from './seat-reasons.js';
 import { COST_BASIS_RANK, costBasisOf, engineTier, RESOURCE_TIERS, type ResourceTier } from './tiers.js';
+import { isJudgmentRoutingTask, JUDGMENT_STAGE_ORDER } from './stage-delegation.js';
 import type {
   BudgetMode,
   BudgetPolicy,
@@ -96,8 +97,17 @@ export interface RankOrder {
 export function tierPreference(mode: BudgetMode, req: RoutingRequest): RankOrder {
   const quality: RankOrder = { by: 'tier', order: QUALITY_FIRST };
   const cheap: RankOrder = { by: 'cost', order: CHEAP_FIRST };
+  /** Bottleneck-only delegation: judgment stages (plan/verify) stay frontier-first, free last. */
+  const judgment: RankOrder = { by: 'tier', order: JUDGMENT_STAGE_ORDER };
   if (!req.autonomous) return quality;
   const difficulty: RoutingDifficulty = req.task === 'leader' && req.difficulty !== 'high' ? 'high' : req.difficulty;
+  // Judgment stages (plan/verify/leader) never take a free-first implement
+  // ordering — a cheap verify proves nothing. Whatever the labelled
+  // difficulty they keep the autonomy frontier order; hard judgment outside
+  // reserve still gets full quality order.
+  if (isJudgmentRoutingTask(req.task)) {
+    return difficulty === 'high' && mode !== 'reserve' ? quality : judgment;
+  }
   if (req.task === 'bulk' || difficulty === 'low') return cheap;
   if (mode === 'reserve') {
     // Free first for everything but genuinely hard work, and even that only

@@ -77,3 +77,17 @@ it('returns failure when the final summary cannot be delivered', async () => {
   expect(await cmdFleetAppsFollow([...args, '--max-events', '1'], { reader, emit })).toBe(1);
   expect(cursor(checkpoint)).toBe(1);
 });
+
+
+it('recognizes an uppercase invocation filter at its delivered summary', async () => {
+  const { args, checkpoint } = setup();
+  const reader = vi.fn<typeof readAppsRecoveryHistory>().mockReturnValue(page([event(1, 'apps-watch.summary.v1'), event(2)], 2));
+  const lines: string[] = [];
+  expect(await cmdFleetAppsFollow([...args, '--invocation-id', id.toUpperCase(), '--until-summary'], {
+    reader, emit: line => { lines.push(line); },
+  })).toBe(0);
+  expect(cursor(checkpoint)).toBe(1);
+  expect(lines.map(line => JSON.parse(line).type)).toEqual(['event', 'summary']);
+  expect(JSON.parse(lines[0]!).event.invocationId).toBe(id);
+  expect(JSON.parse(lines[1]!)).toMatchObject({ reason: 'invocation_finished', nextCursor: 1 });
+});

@@ -72,6 +72,28 @@ const LAUNCHER_BOOT_PREFIX = 'const preparedBootId=';
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 type DirectoryBinding = { path: string; dev: string; ino: string; birthtimeNs?: string; volumeUuid?: string };
 
+type VolumeIdentity = { bootId: string; volumeUuid: string };
+/** Private bounded cache of APFS observations. It is reachable only through the
+ * display-metadata resolver below; every launch, admission, capture and witness path
+ * calls macIdentity directly and so always makes a fresh read. */
+const volumeObservations = new Map<string, { at: number; value: VolumeIdentity | null }>();
+const VOLUME_OBSERVATION_MS = 60_000;
+
+function observeVolumeIdentityForDisplay(directory: string): VolumeIdentity {
+  const device = lstatSync(directory, { bigint: true }).dev.toString();
+  const now = performance.now();
+  let observation = volumeObservations.get(device);
+  if (!observation || now < observation.at || now - observation.at >= VOLUME_OBSERVATION_MS) {
+    // Cache failures too: an unavailable disk must not become a busy retry loop.
+    observation = { at: now, value: null };
+    if (volumeObservations.size >= 32 && !volumeObservations.has(device)) volumeObservations.delete(volumeObservations.keys().next().value!);
+    volumeObservations.set(device, observation);
+    try { observation.value = macIdentity(directory); } catch { /* Unavailable remains fail-closed. */ }
+  }
+  if (!observation.value) throw new Error('Native profile identity unavailable');
+  return { ...observation.value };
+}
+
 /** Bounded OS reads. A missing or ambiguous APFS identity must never relax a binding. */
 function macIdentity(path: string): { bootId: string; volumeUuid: string } {
   const env = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'C', LC_ALL: 'C' };
@@ -443,7 +465,7 @@ function launcherWithExecutable(state: RepinInspection, executable: string): str
  * Read-only. Throws `invalid` for directory/file-mode problems and
  * `inconsistent` for content that is not prepare's own output.
  */
-function inspectRepinTarget(directory: string): RepinInspection {
+function inspectRepinTarget(directory: string, readVolume: (directory: string) => VolumeIdentity = macIdentity): RepinInspection {
   let parent: string; let parentStat: BigIntStats; let directoryStat: BigIntStats;
   let paths: RepinInspection['paths']; let files: RepinInspection['files'];
   try {
@@ -498,7 +520,7 @@ function inspectRepinTarget(directory: string): RepinInspection {
     const preparedBootId = witnessed ? embedded(bootIndexes[0]!, LAUNCHER_BOOT_PREFIX) : undefined;
     if (witnessed && (typeof preparedBootId !== 'string' || !UUID.test(preparedBootId) ||
       preparedBootId === '00000000-0000-0000-0000-000000000000')) throw new Error();
-    const current = witnessed ? macIdentity(directory) : null;
+    const current = witnessed ? readVolume(directory) : null;
     const profileStat = witnessed ? lstatSync(directory, { bigint: true }) : null;
     directories.forEach((row: unknown, index) => {
       if (!isRecord(row) || row['path'] !== expectedDirectories[index] || typeof row['dev'] !== 'string' ||
@@ -1028,6 +1050,42 @@ export function resolveNativeSeatLaunch(options: {
   /** Host-owned broker requires the current fixed safety environment. */
   requireClaudeBrokerSafety?: boolean;
 }): NativeSeatLaunchResult {
+  return resolveSeat(options, macIdentity);
+}
+
+/** Locators of one seat's prepared profile for historical display only. It has no
+ * `ok`/`launch`/`executable`, so it is not assignable to NativeSeatLaunchResult or
+ * NativeSeatLaunch and cannot authorize or start anything. */
+export interface NativeSeatDisplayMetadata {
+  seatId: string;
+  provider: ResourceNativeProfileProvider;
+  command: readonly [string, string];
+  nativeStatePath: string;
+}
+
+/**
+ * Same checks as resolveNativeSeatLaunch except that the APFS volume identity may be
+ * a read up to 60 s old (shared per device, failures included). Every manifest,
+ * launcher, directory, inode, birth-time and template check still runs on each call.
+ * Only for historical display polling; null on any failure.
+ */
+export function resolveNativeSeatDisplayMetadata(options: {
+  accountsRoot: string;
+  provider: ResourceNativeProfileProvider;
+  seatId?: string | null;
+}): NativeSeatDisplayMetadata | null {
+  const result = resolveSeat(options, observeVolumeIdentityForDisplay);
+  if (!result.ok) return null;
+  const { seatId, provider, command, nativeStatePath } = result.launch;
+  return { seatId, provider, command: [command[0], command[1]], nativeStatePath };
+}
+
+function resolveSeat(options: {
+  accountsRoot: string;
+  provider: ResourceNativeProfileProvider;
+  seatId?: string | null;
+  requireClaudeBrokerSafety?: boolean;
+}, readVolume: (directory: string) => VolumeIdentity): NativeSeatLaunchResult {
   const { accountsRoot, provider } = options;
   const seatId = options.seatId ?? null;
   let rows: Array<{ id: string; command: unknown }>;
@@ -1049,7 +1107,7 @@ export function resolveNativeSeatLaunch(options: {
   if (!isStringArray(command) || command.length !== 2 || !path(command[0]) || !path(command[1]) ||
     basename(command[1]!) !== 'launcher.mjs') return seatFailure('not-a-profile-launcher');
   let state: RepinInspection;
-  try { state = inspectRepinTarget(dirname(command[1]!)); } catch { return seatFailure('profile-invalid'); }
+  try { state = inspectRepinTarget(dirname(command[1]!), readVolume); } catch { return seatFailure('profile-invalid'); }
   const manifestCommand = state.manifest['command'];
   if (!state.identityConsistent || state.provider !== provider || state.launcherExecutable !== state.manifestExecutable ||
     !isStringArray(manifestCommand) || manifestCommand.length !== 2 ||

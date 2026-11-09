@@ -69,6 +69,10 @@ describe('usage reader execution envelope', () => {
 });
 
 describe('bridge usage CLI', () => {
+  it('refuses hourly runs without a complete Mac reader configuration', async () => {
+    await expect(runUsageSignal(['--directory', root, '--event', 'hourly'])).rejects.toThrow();
+    expect(stubs.write).not.toHaveBeenCalled();
+  });
   it('passes the requested event and pools to a one-shot writer and prints only its result', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     await runUsageSignal(['--directory', root, '--event', '429', '--pool', 'terra', '--pool', 'codex-cmp']);

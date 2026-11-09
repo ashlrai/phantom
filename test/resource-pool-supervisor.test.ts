@@ -455,7 +455,9 @@ describe.skipIf(process.platform === 'win32')('durable foreground resource super
     const f = await fixture(); const limit = await nearCapacityFixture(f, false);
     const supervisor = await f.start(); const before = readFileSync(limit.statePath);
     expect(() => supervisor.submit(limit.input)).toThrow(expect.objectContaining({ code: 'CAPACITY' }));
-    expect(readFileSync(limit.statePath)).toEqual(before);
+    const after = readFileSync(limit.statePath);
+    expect(Buffer.isBuffer(after)).toBe(true);
+    expect(after.equals(before)).toBe(true);
     expect(supervisor.snapshot()).toMatchObject({ paused: true, error: null, queuedCount: 22 });
     expect(f.requests).toHaveLength(0); expect(existsSync(join(f.root, 'pool-state.json'))).toBe(false);
     // Capacity rejection leaves controls and prior identities usable.

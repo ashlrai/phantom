@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react';
+import { fireEvent, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { evictAll } from '../../../../data/cache.js';
 import { renderMobile, stubFetch } from '../mobile.test-support.js';
@@ -28,12 +28,19 @@ describe('phone glance', () => {
       'GET /api/verse/fleet/runs': { v: 1, lastTick: null, claudeLane: null, switches: [], lanes: [], mergesLastHour: { count: 0 }, codexPersonal: null, inbox: [] },
       'GET /api/verse/fleet/runs/inbox': { sourceState: 'healthy', entries: [] },
     });
-    renderMobile(<OperatorGlance />);
+    const { context } = renderMobile(<OperatorGlance />);
     expect(await screen.findByText('Running 4 of 6.')).toBeInTheDocument();
     expect(screen.getByText('Usage 62%, resets in 3 h.')).toBeInTheDocument();
     expect(screen.getByText('Merges 2 today.')).toBeInTheDocument();
     expect(screen.getByText('Main needs you.')).toBeInTheDocument();
     expect(screen.getByText('Incidents: Ship needs a human.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Sessions · 0' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Approvals · 0' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Comms inbox' }));
+    expect(context.navigate).toHaveBeenNthCalledWith(1, { screen: 'agents' });
+    expect(context.navigate).toHaveBeenNthCalledWith(2, { screen: 'needs' });
+    expect(context.navigate).toHaveBeenNthCalledWith(3, { screen: 'inbox' });
+    expect(screen.getByText('0 merged last hour')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('Tell the leaders in plain language.')).toBeInTheDocument();
   });
 });

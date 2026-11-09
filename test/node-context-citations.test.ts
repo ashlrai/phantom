@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
 import { buildNodeContextPack } from '../src/core/fleet/node-context-pack.js';
 import { readNodeContextCitations } from '../src/core/fleet/node-context-citations.js';

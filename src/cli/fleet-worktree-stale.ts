@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile);
 
 const USAGE =
   'Usage: ashlr fleet worktree-stale [--root <dir>] [--apply] [--json]\n' +
-  'Lists job worktrees under <root> (default ~/Projects/ashlrai/wt) that are safe to clean up: the job has a MERGED outcome row in metrics/jobs.jsonl, or it has no row in the last 72 hours. Oldest first. Dry run unless --apply; --apply runs `git worktree remove` (no --force) only for MERGED ones. guardian-* dirs are never listed or touched. Exits 0 ok, 1 when a removal failed, 2 bad usage.';
+  'Lists job worktrees under <root> (default ~/Projects/ashlrai/wt) that are safe to clean up: the current attempt has a MERGED outcome or a published PR with a MERGED outcome in metrics/jobs.jsonl, or it has no row in the last 72 hours. Oldest first. Dry run unless --apply; --apply runs `git worktree remove` (no --force) only for MERGED ones. guardian-* dirs are never listed or touched. Exits 0 ok, 1 when a removal failed, 2 bad usage.';
 
 const STALE_MS = 72 * 3_600_000;
 
@@ -54,8 +54,13 @@ const defaultFs: FleetWorktreeStaleFs = {
     return (await readdir(root, { withFileTypes: true })).filter(e => e.isDirectory()).map(e => e.name);
   },
   async mtimeMs(path) {
-    const s = await stat(path);
-    return s.isDirectory() ? s.mtimeMs : null;
+    try {
+      const s = await stat(path);
+      return s.isDirectory() ? s.mtimeMs : null;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
   },
 };
 
@@ -68,22 +73,31 @@ function defaultReadJobs(): () => Promise<string> {
   };
 }
 
-/** Per job: newest row time and whether any outcome row says MERGED. */
+/** Index current attempts and match reconciled outcomes by PR, as dispatchd does. */
 function indexJobs(text: string): Map<string, { last: number; merged: boolean }> {
-  const jobs = new Map<string, { last: number; merged: boolean }>();
+  const jobs = new Map<string, { last: number; merged: boolean; urls: Set<string> }>();
+  const mergedUrls = new Set<string>();
   for (const line of text.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    let row: unknown;
-    try { row = JSON.parse(line); } catch { continue; }
-    if (row === null || typeof row !== 'object') continue;
-    const r = row as Record<string, unknown>;
-    const id = r.job ?? r.job_id ?? r.id;
-    const at = typeof r.ts === 'string' ? Date.parse(r.ts) : NaN;
-    if (typeof id !== 'string' || !Number.isFinite(at)) continue;
-    const entry = jobs.get(id) ?? { last: 0, merged: false };
-    entry.last = Math.max(entry.last, at);
-    if (r.event === 'outcome' && String(r.state).toUpperCase() === 'MERGED') entry.merged = true;
+    let row: Record<string, unknown>;
+    try { row = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+    const merged = row.event === 'outcome' && String(row.state ?? row.outcome ?? '').toUpperCase() === 'MERGED';
+    const outcomeUrl = typeof row.url === 'string' ? row.url.replace(/\/+$/, '') : '';
+    if (merged && outcomeUrl) mergedUrls.add(outcomeUrl);
+    const published = (row.outcome ?? row.status) === 'PUBLISHED';
+    const id = published ? (row.jobId ?? row.job ?? row.id) : (row.job ?? row.job_id ?? row.id);
+    if (typeof id !== 'string') continue;
+    let entry = jobs.get(id) ?? { last: 0, merged: false, urls: new Set<string>() };
+    if (row.event === 'launch') entry = { last: 0, merged: false, urls: new Set<string>() };
+    const at = typeof row.ts === 'string' ? Date.parse(row.ts) : NaN;
+    if (Number.isFinite(at)) entry.last = Math.max(entry.last, at);
+    const url = published ? (row.prUrl ?? row.pr) : row.event === 'publish' ? row.url : null;
+    if (typeof url === 'string' && url) entry.urls.add(url.replace(/\/+$/, ''));
+    if (merged && !outcomeUrl) entry.merged = true;
     jobs.set(id, entry);
+  }
+  for (const entry of jobs.values()) {
+    if ([...entry.urls].some(url => mergedUrls.has(url))) entry.merged = true;
   }
   return jobs;
 }
@@ -162,6 +176,9 @@ export async function cmdFleetWorktreeStale(args: string[], deps: FleetWorktreeS
         const common = (await git(['-C', item.path, 'rev-parse', '--path-format=absolute', '--git-common-dir'])).trim();
         const repo = common.endsWith('/.git') ? common.slice(0, -'/.git'.length) : common;
         await git(['-C', repo, 'worktree', 'remove', item.path]);
+        if (await (deps.fs ?? defaultFs).mtimeMs(item.path) !== null) {
+          throw new Error('worktree remains after Git removal');
+        }
         item.removed = true;
       } catch (error) {
         item.removed = false;

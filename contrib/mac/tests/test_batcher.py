@@ -23,6 +23,54 @@ def ts(t):
     return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(t))
 
 
+class LedgerTests(unittest.TestCase):
+    def test_parse_rows_decodes_only_and_skips_bad_lines(self):
+        reconciler = {"source": "metrics-outcomes-reconciler", "jobId": "RQ-B",
+                      "prUrl": "https://example.invalid/9", "outcome": "MERGED"}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "jobs.jsonl"
+            path.write_text('{"event": "finish", "job": "RQ-A"}\nnot-json\n'
+                            + json.dumps(reconciler) + "\n")
+            parsed = b.parse_rows(path)
+            self.assertEqual(len(parsed), 2)
+            self.assertIsNone(parsed[1].get("event"))   # parse does not project
+            self.assertEqual(parsed[1]["jobId"], "RQ-B")
+            projected = b.project_rows(parsed)
+            self.assertEqual(projected[1]["event"], "outcome")
+            self.assertEqual((projected[1]["job"], projected[1]["url"]),
+                             ("RQ-B", "https://example.invalid/9"))
+            self.assertEqual(b.read_rows(path), projected)
+            self.assertEqual(b.parse_rows(path.parent / "absent.jsonl"), [])
+            self.assertEqual(b.project_rows([]), [])
+
+    def test_project_row_leaves_dispatcher_rows_unchanged(self):
+        row = {"event": "finish", "job": "RQ-X", "lane": "devin"}
+        self.assertIs(b.project_row(row), row)
+        for source in ("metrics-outcomes-reconciler",):
+            missing_job = {"source": source, "outcome": "MERGED", "prUrl": "https://x/1"}
+            missing_url = {"source": source, "outcome": "MERGED", "jobId": "RQ-Y"}
+            pending = {"source": source, "jobId": "RQ-Z", "prUrl": "https://x/2", "outcome": "OPEN"}
+            self.assertIs(b.project_row(missing_job), missing_job)
+            self.assertIs(b.project_row(missing_url), missing_url)
+            self.assertIs(b.project_row(pending), pending)
+
+    def test_reconciled_legacy_outcomes_are_projected_without_changing_other_rows(self):
+        terminal = {"source": "metrics-outcomes-reconciler", "job": "RQ-A",
+                    "pr": "https://github.com/ashlrai/phantom/pull/1/", "status": "CLOSED"}
+        unrelated = {"jobId": "RQ-B", "prUrl": "https://example.invalid/1", "outcome": "MERGED"}
+        incomplete = {"source": "metrics-outcomes-reconciler", "outcome": "MERGED"}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "jobs.jsonl"
+            original = "\n".join(json.dumps(row) for row in (terminal, unrelated, incomplete))
+            path.write_text(original)
+            rows = b.read_rows(path)
+            self.assertEqual(rows[0]["event"], "outcome")
+            self.assertEqual((rows[0]["job"], rows[0]["state"], rows[0]["url"]),
+                             ("RQ-A", "CLOSED", terminal["pr"].rstrip("/")))
+            self.assertEqual(rows[1:], [unrelated, incomplete])
+            self.assertEqual(path.read_text(), original)
+
+
 class IdentityTests(unittest.TestCase):
     def test_solo_kinds_never_batch(self):
         for job in ("RQ-FIX-MAIN-phantom", "RQ-REL-1", "RQ-DESK-2", "RQ-BATCH-PHANTOM-X-1", "RQ-LAND-9",

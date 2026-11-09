@@ -30,7 +30,7 @@ export async function cmdFleetPathHistory(args: string[], deps: { log?: Paramete
     else { console.error(usage); return 2; }
     seen.add(arg);
   }
-  if ((!path && !job) || (path && job) || (before !== undefined && (!job || !validCommitSha(before))) || (job && (!validJobId(job) || !validJobRef(ref) || limit > JOB_LIMIT_MAX))) { console.error(usage); return 2; }
+  if ((!path && !job) || (path && job) || (before !== undefined && (!job || !validCommitSha(before))) || (limit > JOB_LIMIT_MAX) || (job && (!validJobId(job) || !validJobRef(ref)))) { console.error(usage); return 2; }
   try {
     if (job) {
       const result = await jobPathHistory(job, ref, limit, undefined, { before });
@@ -48,7 +48,7 @@ export async function cmdFleetPathHistory(args: string[], deps: { log?: Paramete
     }
     let skipped = 0;
     const rows = await pathJobHistory(path!, { log: deps.log ?? (async (file, count) => {
-      const { stdout } = await exec('git', ['log', `-n${count * 3}`, '--format=%h%x09%cI%x09%s', ref, '--', file],
+      const { stdout } = await exec('git', ['--literal-pathspecs', 'log', `-n${count * 3}`, '--format=%h%x09%cI%x09%s', ref, '--', file],
         { encoding: 'utf8', timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
       return Promise.all(stdout.split('\n').filter(Boolean).map(async line => {
         const [sha = '', date = '', ...subject] = line.split('\t');

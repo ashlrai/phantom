@@ -32,6 +32,7 @@ import {
   DEFAULT_REQUEST_TTL_HOURS,
   expireStaleRequests,
   listRequests,
+  markSent,
   outstanding,
   type CommsRequest,
 } from '../src/core/comms/requests.js';
@@ -136,6 +137,32 @@ describe('expireStaleRequests', () => {
 
   it('never throws when the store is absent', () => {
     expect(expireStaleRequests(NOW, HOUR)).toEqual({ expiredSent: 0, expiredPending: 0 });
+  });
+
+  it('bounds the store read: live requests at the tail survive a file grown past the cap', () => {
+    const dir = join(tmpHome, '.ashlr', 'comms');
+    mkdirSync(dir, { recursive: true });
+    // Historical rows past the 8×1024×1024-byte tail cap, then the live request at the tail.
+    const junk = `{"id":"hist","kind":"test","type":"report","text":"${'h'.repeat(1024)}","options":[],"status":"answered","createdAt":"${iso(NOW - 999 * HOUR)}"}\n`.repeat(9000);
+    seed([]);
+    writeFileSync(join(dir, 'requests.jsonl'), junk, 'utf8');
+    seed([{ id: 'live-q', status: 'pending', createdAt: iso(NOW - HOUR) }]);
+    // live-q is appended to the junk-filled file.
+    const merged = `${junk}${JSON.stringify({ id: 'live-q', kind: 'test', type: 'question', text: 'live', options: ['y', 'n'], status: 'pending', createdAt: iso(NOW - HOUR) })}\n`;
+    writeFileSync(join(dir, 'requests.jsonl'), merged, 'utf8');
+
+    const all = listRequests();
+    // The tail window is bounded: it cannot hold all 9000 history rows.
+    expect(all.length).toBeLessThan(9000);
+    expect(all.at(-1)?.id).toBe('live-q');
+    expect(expireStaleRequests(NOW, 48 * HOUR)).toEqual({ expiredSent: 0, expiredPending: 0 });
+    expect(statusOf('live-q')).toBe('pending');
+    // A rewrite leaves only the bounded tail — the journal shrinks to the cap.
+    markSent('live-q');
+    const after = readFileSync(join(dir, 'requests.jsonl'), 'utf8');
+    expect(Buffer.byteLength(after)).toBeLessThanOrEqual(8 * 1024 * 1024);
+    expect(after).toContain('"status":"sent"');
+    expect(statusOf('live-q')).toBe('sent');
   });
 });
 

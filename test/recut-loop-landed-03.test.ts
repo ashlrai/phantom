@@ -73,6 +73,12 @@ describe('recutLoopTick landed guard', () => {
     expect(dropped()).toHaveLength(1);
   });
 
+  it('skips a confirmed diff anomaly', async () => {
+    const result = await recutLoopTick(deps([item(23)], { readLanded: async () => 'diff-anomaly' }));
+    expect(result.skipped).toEqual([{ pr: 23, reason: 'diff-anomaly' }]);
+    expect(result.written).toEqual([]);
+  });
+
   it('does not spend per-tick allowance on a landed skip', async () => {
     const result = await recutLoopTick(deps([item(31), item(32), item(33)], {
       readLanded: async ({ number }) => (number === 31 ? 'landed' : 'partly-landed'),

@@ -72,12 +72,12 @@ describe('all discovered panes together', () => {
     openDockPane('tasks');
     render(<Dock presentation="column" windowWidth={1440} columnWidth={440} pane={context} />);
     fireEvent.click(screen.getByRole('button', { name: 'Add a pane' }));
-    const menu = screen.getByRole('menu', { name: 'Add a pane' });
+    const menu = screen.getByRole('dialog', { name: 'Add a pane' });
     const unreachable = registry.listPanes().filter((pane) => !getDockState().tabs.includes(pane.id)
-      && !within(menu).queryByRole('menuitem', { name: pane.title })).map((pane) => pane.id);
+      && !within(menu).queryByRole('button', { name: pane.title })).map((pane) => pane.id);
     expect(unreachable).toEqual([]);
     const first = registry.listPanes().find((pane) => !getDockState().tabs.includes(pane.id))!;
-    fireEvent.click(within(menu).getByRole('menuitem', { name: first.title }));
+    fireEvent.click(within(menu).getByRole('button', { name: first.title }));
     expect(getDockState().active).toBe(first.id);
   }, 120_000);
 

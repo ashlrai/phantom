@@ -63,6 +63,7 @@ draft; rerun only after the sanctioned publisher completes its work.
 This read-only Linux verifier does not reconstruct the hosted desktop bundle or
 run Apple `codesign`, update or launch checks. Closure of the desktop quarantine
 root cause is an external prerequisite owned by
+`RQ-RELEASE-DESKTOP-UNQUARANTINE-2`, superseding
 `RQ-RELEASE-DESKTOP-UNQUARANTINE-1`; finalization cannot certify that closure.
 
 The workflow does not upload assets or create a release. It locates the existing
@@ -91,7 +92,12 @@ The effect job rechecks mutable state immediately before the PATCH and verifies
 that the same release is public, stable and latest afterward, with unchanged
 notes and assets. Its preflight receipt expires after one hour; if protected
 environment approval takes longer, redispatch for fresh verification. It records
-the preflight identity and post-effect evidence.
+the preflight identity and post-effect evidence. After all pre-write checks,
+a bounded attempt records the request and preflight hash. An exit record retains
+phase, status and response size/hash, never raw transport output. Evidence
+uploads run on failure too. An attempt does not prove execution: an ambiguous
+response stays unknown, and a failed postcheck requires reconciliation without
+replay. Successful completion still requires the postverified success receipt.
 There is no npm mutation, OIDC permission, npm token, new secret reference, tag
 write, installation, runtime activation, provider, communication or spend
 authority. The GitHub token's broad `contents: write` capability does not grant
@@ -112,7 +118,8 @@ publisher's live-feed refusal remains intact. Fix forward on the next free
 patch, preferring `3.30.9` only if npm, GitHub tags and release records still show
 it is available immediately before candidate selection.
 
-Recovery coordinates with `RQ-RELEASE-DESKTOP-UNQUARANTINE-1`; signed binary
+Recovery coordinates with `RQ-RELEASE-DESKTOP-UNQUARANTINE-2`, which supersedes
+`RQ-RELEASE-DESKTOP-UNQUARANTINE-1`; signed binary
 publication belongs to that task. This workflow change is a Security pin-review
 `-sec` change: the PR title starts with `[SECURITY REVIEW]`, auto-merge stays off,
 and the workflow/permissions diff waits for Security review. Re-enable workflow

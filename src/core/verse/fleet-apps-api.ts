@@ -3,12 +3,14 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { awaitAppState, type AppAwaitTarget } from '../fleet/app-await.js';
+import { readAppsRecoveryInvocations } from '../fleet/apps-recovery-invocations.js';
+import { appsRecoveryVerdict } from '../fleet/apps-recovery-verdict.js';
+import { awaitAppState, FLEET_APPS, type AppAwaitTarget } from '../fleet/app-await.js';
 import { findAppControlScript, findInstalledAppControlScript, type FleetAppExec } from '../../cli/fleet-app.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import type { ApiModule } from './api-modules.js';
 
-export const FLEET_APPS = ['Phantom', 'Codex', 'Claude', 'Grok Bot', 'ChatGPT', 'Cursor', 'Safari', 'Google Chrome'] as const;
+export { FLEET_APPS };
 const PATH = '/api/verse/fleet/apps';
 // One finite budget covers the action and any running confirmation; waitRunningMs only caps the confirmation part.
 const ACTION_BUDGET_MS = 30_000;
@@ -20,6 +22,7 @@ export interface FleetAppsApiDeps {
   locateScript?: () => string | null;
   now?: () => number;
   runsDir?: string;
+  readRecoveryInvocations?: typeof readAppsRecoveryInvocations;
 }
 interface AppsView {
   v: 1;
@@ -179,6 +182,26 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
     return seen.outcome === 'reached' ? respond('launched', true, true) : respond('timeout', seen.running, true);
   }
   return async (ctx, req, res, path, method) => {
+    if (path === `${PATH}/history`) {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      try {
+        const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+        const keys = ['after', 'limit', 'invocationId'];
+        const decimal = (value: string): boolean => /^\d+$/.test(value) && Number.isSafeInteger(Number(value));
+        const after = params.get('after') ?? '0', limit = params.get('limit') ?? '100';
+        const id = params.get('invocationId');
+        if ([...params.keys()].some(key => !keys.includes(key) || params.getAll(key).length !== 1) ||
+          !decimal(after) || !decimal(limit) || Number(limit) < 1 || Number(limit) > 100 ||
+          (id !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))) {
+          sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid history query' }); return true;
+        }
+        const { readAppsRecoveryHistory } = await import('../fleet/apps-recovery-history.js');
+        const page = readAppsRecoveryHistory(root, Number(after), Number(limit), id ?? undefined);
+        if (page.availability === 'unavailable') sendJson(res, 503, { error: 'fleet apps history unavailable' });
+        else sendJson(res, page.availability === 'invalid-cursor' ? 400 : 200, page);
+      } catch { sendJson(res, 503, { error: 'fleet apps history unavailable' }); }
+      return true;
+    }
     if (path === PATH && method === 'GET') {
       try {
         const requested = new URL(req.url ?? '/', 'http://localhost').searchParams.getAll('app');
@@ -192,6 +215,25 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
         sendJson(res, 200, view);
       }
       catch { sendJson(res, 503, { error: 'fleet apps unavailable' }); }
+      return true;
+    }
+    if (path === `${PATH}/recovery/check`) {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+      const invocation = params.get('invocation') ?? '';
+      const age = params.get('maxAgeMs') ?? '';
+      const maxAgeMs = /^\d+$/.test(age) ? Number(age) : 0;
+      if ([...params.keys()].some(key => key !== 'invocation' && key !== 'maxAgeMs') ||
+        params.getAll('invocation').length !== 1 || params.getAll('maxAgeMs').length !== 1 ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(invocation) ||
+        !Number.isSafeInteger(maxAgeMs) || maxAgeMs <= 0) {
+        sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid recovery check' }); return true;
+      }
+      try {
+        const projection = (deps.readRecoveryInvocations ?? readAppsRecoveryInvocations)(root);
+        if (!projection || projection.availability !== 'available') throw new Error('unavailable');
+        sendJson(res, 200, appsRecoveryVerdict(projection, invocation, maxAgeMs, now()));
+      } catch { sendJson(res, 503, { error: 'recovery evidence unavailable' }); }
       return true;
     }
     if (path !== `${PATH}/action`) return false;

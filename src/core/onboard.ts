@@ -11,7 +11,6 @@
  * crisp nextSteps guidance.
  */
 
-import { readEnvironmentCredential } from './integrations/secrets.js';
 import { existsSync, mkdirSync, symlinkSync, readlinkSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -19,22 +18,16 @@ import { fileURLToPath } from 'node:url';
 
 import type { AshlrConfig, OnboardResult, OnboardStep } from './types.js';
 import { loadConfig, saveConfig, defaultConfig, INDEX_PATH } from './config.js';
-import { buildIndex, writeIndex } from './index-engine.js';
 import { RESOURCE_CATALOG, type CatalogResource } from './onboard/catalog.js';
-import { envKeyPresent, probeCliLogin, probeLoopbackEndpoint, resolveCliOnPath, type CliLoginVerdict } from './readiness.js';
-import { getFrontierUsage } from './usage/frontier-usage.js';
+import type { CliLoginVerdict } from './readiness.js';
 import { listLocalModels, ollamaInstalled } from './run/model-manager.js';
 import { detectEditors, wireEditor } from './integrations/editors.js';
 import { getPhantomStatus } from './phantom.js';
-import { runDoctor } from './doctor.js';
-import { serviceStatus, install } from './daemon/service.js';
-import {
-  assertResidentServiceInstallAuthorized,
-  RESIDENT_SERVICE_DORMANT_RUNTIME_GUIDANCE,
-} from './daemon/service-install-authority.js';
-import { serviceActivity } from './daemon/service-activity.js';
-import { fleetReadiness } from './fleet/engine-readiness.js';
-import { listEnrolled, enroll } from './sandbox/policy.js';
+import { runDoctor, prewarmDoctor } from './doctor.js';
+
+// Modules only needed by the extended setup/status surfaces load lazily inside
+// their step functions. onboard() itself keeps this file's static graph to a
+// handful of small modules so the first-run path stays quick to load.
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -219,6 +212,7 @@ async function stepIndex(cfg: AshlrConfig): Promise<OnboardStep> {
         'No repo roots yet. Point phm at the folder that holds your repos: phm config set roots --json \'["<folder>"]\', then phm index',
       );
     }
+    const { buildIndex, writeIndex } = await import('./index-engine.js');
     const index = buildIndex(cfg);
     writeIndex(index);
     const repos = index.items.filter((item) => item.kind === 'repo').length;
@@ -282,6 +276,7 @@ async function stepPhantom(): Promise<OnboardStep> {
  */
 export async function stepDaemonService(): Promise<OnboardStep> {
   try {
+    const { assertResidentServiceInstallAuthorized } = await import('./daemon/service-install-authority.js');
     assertResidentServiceInstallAuthorized();
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
@@ -294,6 +289,10 @@ export async function stepDaemonService(): Promise<OnboardStep> {
   }
 
   try {
+    const [{ serviceStatus, install }, { serviceActivity }] = await Promise.all([
+      import('./daemon/service.js'),
+      import('./daemon/service-activity.js'),
+    ]);
     const status = serviceStatus();
     if (status.installed) {
       const activity = serviceActivity(status);
@@ -325,6 +324,7 @@ export async function stepDaemonService(): Promise<OnboardStep> {
  */
 export async function stepEngines(cfg: AshlrConfig): Promise<OnboardStep> {
   try {
+    const { fleetReadiness } = await import('./fleet/engine-readiness.js');
     const results = fleetReadiness(cfg);
     const total = results.length;
     const ready = results.filter((r) => r.ready).length;
@@ -355,6 +355,7 @@ export async function stepEngines(cfg: AshlrConfig): Promise<OnboardStep> {
  */
 export async function stepEnroll(cfg: AshlrConfig, opts: { yes: boolean }): Promise<OnboardStep> {
   try {
+    const { listEnrolled, enroll } = await import('./sandbox/policy.js');
     const already = listEnrolled();
     const roots: string[] = Array.isArray(cfg.roots) ? cfg.roots : [];
 
@@ -565,6 +566,7 @@ export async function stepPulse(cfg: AshlrConfig): Promise<OnboardStep> {
   try {
     const pulseEnabled = cfg.pulse?.enabled === true;
     const pulseEndpoint = cfg.pulse?.endpoint ?? 'http://localhost:3000';
+    const { readEnvironmentCredential } = await import('./integrations/secrets.js');
     const patPresent = Boolean(readEnvironmentCredential('ASHLR_PULSE_PAT'));
 
     if (!pulseEnabled) {
@@ -673,6 +675,9 @@ export async function onboard(
   // Run all steps sequentially so each can feed into ready computation.
   // Steps that are independent in principle are still sequential here to avoid
   // interleaved output and to keep the order deterministic and predictable.
+  // Doctor's probe modules begin loading now so their cost overlaps the
+  // earlier steps; this runs no probes and changes no behavior.
+  prewarmDoctor();
 
   const configStep = await stepConfig();
   const modelsStep = await stepModels(cfg);
@@ -746,7 +751,11 @@ export async function setupWizard(
   cfg: AshlrConfig,
   opts: { wire: boolean; yes: boolean; userName?: string; userId?: string },
 ): Promise<OnboardResult> {
+  let guidance = '';
   try {
+    const { assertResidentServiceInstallAuthorized, RESIDENT_SERVICE_DORMANT_RUNTIME_GUIDANCE } =
+      await import('./daemon/service-install-authority.js');
+    guidance = RESIDENT_SERVICE_DORMANT_RUNTIME_GUIDANCE;
     assertResidentServiceInstallAuthorized();
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
@@ -754,7 +763,7 @@ export async function setupWizard(
       steps: [step(
         'daemon-service',
         'manual',
-        `setup refused before onboarding: ${reason}. ${RESIDENT_SERVICE_DORMANT_RUNTIME_GUIDANCE}`,
+        `setup refused before onboarding: ${reason}. ${guidance}`,
       )],
       ready: false,
       nextSteps: [
@@ -901,6 +910,8 @@ export interface OnboardStatusReport {
  * contents). Probed in parallel, each bounded. Never throws.
  */
 export async function detectOnboardResources(cfg: AshlrConfig): Promise<OnboardResourceStatus[]> {
+  const { envKeyPresent, probeCliLogin, probeLoopbackEndpoint, resolveCliOnPath } =
+    await import('./readiness.js');
   return Promise.all(RESOURCE_CATALOG.map(async (entry) => {
     const binaryPath = entry.cliBinary ? resolveCliOnPath(entry.cliBinary) : null;
     const pick = cfg.onboard?.planTiers?.[entry.id];
@@ -984,9 +995,10 @@ export async function summarizeOnboardBalance(
   agents: OnboardAgentsReport,
 ): Promise<OnboardBalanceSummary> {
   const enabledAgents = agents.agents.filter((a) => a.enabled).length;
-  let usage: Awaited<ReturnType<typeof getFrontierUsage>> | null = null;
+  let usage: Awaited<ReturnType<typeof import('./usage/frontier-usage.js').getFrontierUsage>> | null = null;
   try {
     // waitForRollup:false - a polled status route must never compute a rollup.
+    const { getFrontierUsage } = await import('./usage/frontier-usage.js');
     usage = await getFrontierUsage(cfg, { waitForRollup: false });
   } catch {
     usage = null;

@@ -2,17 +2,19 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { planCiDaily } from '../core/fleet/ci-daily-plan.js';
 
+const usage = 'Usage: ashlr fleet ci-plan [--patch | --json] [--cron "expr"]';
+
 /** Read-only owner handoff; patch mode emits no prose on stdout. */
 export async function cmdFleetCiPlan(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: ashlr fleet ci-plan [--patch | --json] [--cron "expr"]');
+    console.log(usage);
     return;
   }
   const cronIndex = args.indexOf('--cron');
   if (args.some((arg, index) => !['--patch', '--json', '--cron'].includes(arg) && !(cronIndex >= 0 && index === cronIndex + 1))
     || (cronIndex >= 0 && (!args[cronIndex + 1] || args[cronIndex + 1]!.startsWith('--')))
     || (args.includes('--patch') && args.includes('--json'))) {
-    console.error('Usage: ashlr fleet ci-plan [--patch | --json] [--cron "expr"]');
+    console.error(usage);
     process.exitCode = 2;
     return;
   }

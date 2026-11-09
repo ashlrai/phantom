@@ -146,3 +146,16 @@ describe('phm friction command', () => {
     expect(await cmdFriction(['--runs-dir'])).toBe(2);
   });
 });
+
+it('reports large and inconsistent finish diffs without guessing their cause', () => {
+  const ts = new Date().toISOString();
+  const jobs = [
+    { event: 'finish', job: 'RQ-LARGE', ts, diff_files: 2, diff_lines: 500, empty: false },
+    { event: 'finish', job: 'RQ-INCONSISTENT', ts, diff_files: 0, diff_lines: 1, empty: true },
+    { event: 'finish', job: 'RQ-NORMAL', ts, diff_files: 1, diff_lines: 10, empty: false },
+  ].map(row => JSON.stringify(row)).join('\n');
+  const item = mineFriction({ jobs }).items.find(row => row.id === 'anomalous-diffs');
+  expect(item?.signals.finishes).toBe(2);
+  expect(item?.evidence).toHaveLength(2);
+  expect(mineFriction({}).items.find(row => row.id === 'anomalous-diffs')?.signals.finishes).toBeNull();
+});

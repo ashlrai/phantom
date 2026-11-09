@@ -102,10 +102,10 @@ function schemaViolations(schema: JsonSchema, value: unknown, root: JsonSchema =
 }
 
 /**
- * Known producer-side drift in Locus 0.5.0 (unchanged on Locus main at 98e7020): doctor
+ * Historical producer-side drift in captured Locus 0.5.0: doctor
  * emits `severity: "info"` for `control_capability_persisted`, but doctor.schema.json only
- * allows "warn" | "unsafe". Phantom does not read severity. Listed exactly so a schema fix,
- * or any new drift, fails this test and forces a fixture refresh.
+ * allows "warn" | "unsafe". Phantom does not read severity. Retained exactly for the old capture. Current 0.7.0 output must satisfy its
+ * published schemas without this historical exception.
  */
 const KNOWN_DOCTOR_DRIFT: Record<string, string[]> = {
   'fresh-home': [],
@@ -136,9 +136,9 @@ describe.each(scenarios)('locus %s output', scenario => {
   const rawReport = read(scenario, 'agent-report.json');
   const json = JSON.parse(rawReport) as Record<string, unknown>;
 
-  it('agent report satisfies the published schemas (apart from known drift) and parses with no missing keys', () => {
+  it('agent report satisfies both published schemas and parses with no missing keys', () => {
     expect(schemaViolations(agentReportSchema, json)).toEqual([]);
-    expect(schemaViolations(doctorSchema, json.doctor)).toEqual(KNOWN_DOCTOR_DRIFT[scenario]);
+    expect(schemaViolations(doctorSchema, json.doctor)).toEqual([]);
     expect(missingAgentReportKeys(json)).toEqual([]);
     const report = parseAgentReportJson(rawReport);
     expect(report.version).toBe(locusRelease.version);
@@ -185,13 +185,34 @@ describe('locus pin states Phantom must tell apart', () => {
     expect(parseWatchHeartbeat(read('fresh-home', 'watch-once.json')).safe_next).toBe('init');
   });
 
-  it('a pin without the exported control capability reads invalid in the agent report', () => {
-    // `locus status --oneline` still prints alias:tenant here; the agent report, which the
-    // fleet gate uses, marks the pin invalid because the authority anchor is unverified.
-    expect(report('pinned-capability-not-exported').status_oneline).toBe('invalid');
+  it('preserves the displayed pin while withholding authority when the capability is not exported', () => {
+    // Locus 0.7.0 deliberately distinguishes a displayable pin from verified authority.
+    const raw = JSON.parse(read('pinned-capability-not-exported', 'agent-report.json'));
+    expect(raw.status_oneline).toBe('personal:personal');
+    expect(raw.pin.authority_anchor_verified).toBe(false);
+    expect(raw.doctor.runtime.authority_anchor_ok).toBe(false);
+    expect(raw.doctor.runtime.ok).toBe(false);
+    expect(raw.doctor.runtime.issues).toContain('executor_authority_unavailable');
     expect(parseStatusOneline(read('pinned-capability-not-exported', 'status-oneline.txt')).healthy).toBe(true);
     const gate = evaluateFleetGate(report('pinned-capability-not-exported'));
+    expect(gate.allowDispatch).toBe(false);
+    expect(gate.gateOk).toBe(false);
+    expect(gate.blockers).toContain('ready=false');
+  });
+
+  it('retains the historical 0.5.0 unverified-pin refusal and exact known schema drift', () => {
+    const historical = (...parts: string[]) => readFileSync(join(__dirname, 'fixtures', 'locus-contract', '0.5.0', ...parts), 'utf8');
+    const oldDoctorSchema = JSON.parse(historical('doctor.schema.json')) as JsonSchema;
+    for (const scenario of scenarios) {
+      const raw = JSON.parse(historical(scenario, 'agent-report.json'));
+      expect(schemaViolations(oldDoctorSchema, raw.doctor)).toEqual(KNOWN_DOCTOR_DRIFT[scenario]);
+    }
+    const oldReport = parseAgentReportJson(historical('pinned-capability-not-exported', 'agent-report.json'));
+    expect(oldReport.status_oneline).toBe('invalid');
+    expect(parseStatusOneline(historical('pinned-capability-not-exported', 'status-oneline.txt')).healthy).toBe(true);
+    const gate = evaluateFleetGate(oldReport);
     expect(gate.blockers).toContain('pin unhealthy: invalid (invalid)');
+    expect(gate.allowDispatch).toBe(false);
   });
 
   it('a pin with the exported capability is healthy but still not ready without Phantom or MCP setup', () => {

@@ -78,7 +78,7 @@ describe('fleet lane-filtered reads', () => {
     expect(personal.laneFilter.global).toContain('drop.done');
 
     const personalQueue = await json('parked', ['--lane', 'codex-personal']);
-    expect(personalQueue.byLane).toEqual([{ lane: 'codex-personal', ready: 0, parked: 1 }]);
+    expect(personalQueue.byLane).toEqual([{ lane: 'codex-personal', ready: 0, parked: 1, phantom: 0, other: 0, otherRepos: [] }]);
     expect(personalQueue.groups).toMatchObject([{ lane: 'codex-personal', jobs: ['JOB-PERSONAL'] }]);
     expect(personalQueue).toMatchObject({ total: 2, ready: 1, parked: 1, skipsLast24h: 1, skips: [], sources: allParked.sources });
     expect(personalQueue.laneFilter.global).toContain('total');
@@ -88,7 +88,7 @@ describe('fleet lane-filtered reads', () => {
     expect(devin.lanes).toMatchObject([{ lane: 'devin', held: false }]);
     expect(devin.claimed.map((row: { job: string }) => row.job)).toEqual(['JOB-DEVIN']);
     const devinQueue = await json('parked', ['--lane', 'devin']);
-    expect(devinQueue.byLane).toEqual([{ lane: 'devin', ready: 1, parked: 0 }]);
+    expect(devinQueue.byLane).toEqual([{ lane: 'devin', ready: 1, parked: 0, phantom: 0, other: 1, otherRepos: ['unknown'] }]);
     expect(devinQueue.groups).toEqual([]);
     expect(devinQueue.total).toBe(2);
   });
