@@ -8,6 +8,7 @@ import {
   coveredPrNumbers,
   parseHoldList,
   planRebaseJobs,
+  rebaseAttemptsSpent,
   type RebasePlanExistingJob,
 } from '../src/core/fleet/rebase-plan.js';
 
@@ -253,6 +254,115 @@ describe('planRebaseJobs', () => {
     const result = plan([conflictedBridge(5, { files: [] })]);
     expect(result.jobs[0]!.evidence).toBe('no-file-data');
     expect(result.counts.noFileData).toBe(1);
+  });
+
+  it('covers a PR whose rework job is in flight (RQ-RECUT id)', () => {
+    const result = plan([conflictedBridge(7, { files: ['a.ts'] }), conflictedBridge(8, { files: ['b.ts'] })], {
+      existing: [existing('RQ-RECUT-phantom-7-abc1234', 'RUNNING'), existing('RQ-RECUT-phantom-8-abc1234', 'DONE')],
+    });
+    expect(result.coverage.coveredPrs).toEqual([7]);
+    expect(result.jobs.flatMap(j => j.prs)).toEqual([8]);
+  });
+
+  it('drops a conflicting origin replaced by an open rework PR, keeping the rework PR', () => {
+    const rework = (number: number, origin: number) =>
+      conflictedBridge(number, { title: `bridge: RQ-RECUT-phantom-${origin}-abc1234`, files: ['s.ts'] });
+    const result = plan([
+      conflictedBridge(10, { files: ['s.ts'] }),
+      rework(20, 10),
+      rework(21, 10),
+      conflictedBridge(11, { files: ['t.ts'] }),
+    ]);
+    // 10 is replaced; rework 20 is older than 21; 21 (conflicting) is rebased.
+    expect(result.counts).toMatchObject({ conflicting: 4, superseded: 2, jobs: 2 });
+    expect(result.jobs.flatMap(j => j.prs).sort()).toEqual([11, 21]);
+  });
+
+  describe('one rebase attempt per original PR', () => {
+    const rebasePr = (number: number, title: string, overrides: Partial<MergeBatchPr> = {}) =>
+      conflictedBridge(number, { title: `bridge: ${title}`, ...overrides });
+
+    it('refuses a rebase PR that conflicts again, including hand-run batch ids', () => {
+      const result = plan([
+        rebasePr(54, 'RQ-REBASE-PH-00'),
+        rebasePr(64, 'RQ-REBASE2-PH-00'),
+        conflictedBridge(9, { files: ['z.ts'] }),
+      ]);
+      expect(result.exhausted).toEqual([
+        { number: 54, reason: 'is-rebase', via: 54 },
+        { number: 64, reason: 'is-rebase', via: 64 },
+      ]);
+      expect(result.counts).toMatchObject({ conflicting: 3, exhausted: 2, jobs: 1 });
+      expect(result.jobs.flatMap(j => j.prs)).toEqual([9]);
+    });
+
+    it('refuses an origin an open single or batch rebase PR already names', () => {
+      const result = plan([
+        conflictedBridge(7, { files: ['a.ts'] }),
+        conflictedBridge(8, { files: ['b.ts'] }),
+        conflictedBridge(9, { files: ['c.ts'] }),
+        conflictedBridge(10, { files: ['d.ts'] }),
+        rebasePr(70, 'RQ-REBASE-phantom-7-abc1234', { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' }),
+        rebasePr(71, 'RQ-REBASE-BATCH-phantom-8-9-abcdef', { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' }),
+      ]);
+      expect(result.exhausted).toEqual([
+        { number: 7, reason: 'already-rebased', via: 70 },
+        { number: 8, reason: 'already-rebased', via: 71 },
+        { number: 9, reason: 'already-rebased', via: 71 },
+      ]);
+      expect(result.jobs.flatMap(j => j.prs)).toEqual([10]);
+    });
+
+    it('names the rebase PR itself, not its origin, when both conflict', () => {
+      const spent = rebaseAttemptsSpent([
+        conflictedBridge(7),
+        rebasePr(70, 'RQ-REBASE-phantom-7-abc1234'),
+      ], 'ashlrai/phantom');
+      expect(spent.get(70)).toEqual({ number: 70, reason: 'is-rebase', via: 70 });
+      expect(spent.get(7)).toEqual({ number: 7, reason: 'already-rebased', via: 70 });
+    });
+
+    it('ignores rebase PRs of another repo and does nothing without a repo', () => {
+      const prs = [conflictedBridge(7, { files: ['a.ts'] }), rebasePr(70, 'RQ-REBASE-other-7-abc1234', { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' })];
+      expect(plan(prs).counts.exhausted).toBe(0);
+      expect(rebaseAttemptsSpent(prs, null).size).toBe(0);
+    });
+
+    it('leaves first-time rebases and rework PRs alone', () => {
+      const result = plan([conflictedBridge(7, { files: ['a.ts'] }), conflictedBridge(8, { title: 'bridge: RQ-RECUT-phantom-99-abc1234', files: ['b.ts'] })]);
+      expect(result.exhausted).toEqual([]);
+      expect(result.jobs.flatMap(j => j.prs).sort()).toEqual([7, 8]);
+    });
+  });
+
+  it('defers conflicting PRs behind an overlapping clean PR only when asked', () => {
+    const prs = [
+      conflictedBridge(1, { files: ['hot.ts'] }),
+      conflictedBridge(2, { files: ['cold.ts'] }),
+      conflictedBridge(3, { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', files: ['hot.ts'] }),
+      conflictedBridge(4, { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', isDraft: true, files: ['cold.ts'] }),
+    ];
+    expect(plan(prs).counts).toMatchObject({ deferred: 0, jobs: 2 });
+    const result = plan(prs, { deferBehindClean: true });
+    expect(result.counts).toMatchObject({ conflicting: 2, deferred: 1, jobs: 1 });
+    expect(result.jobs[0]!.prs).toEqual([2]);
+  });
+
+  it('measures the rebase work saved on a hot-file backlog', () => {
+    // 12 conflicting PRs on one hot file, 2 already replaced by rework PRs,
+    // 3 clean PRs on the same file about to land: the baseline rebases all 12
+    // (and again after each landing), the convergent plan only the survivors.
+    const prs: MergeBatchPr[] = [];
+    for (let n = 1; n <= 12; n++) prs.push(conflictedBridge(n, { files: ['hot.ts', `own${n}.ts`] }));
+    for (let n = 1; n <= 2; n++) {
+      prs.push(conflictedBridge(100 + n, { title: `bridge: RQ-RECUT-phantom-${n}-abc1234`, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', files: ['hot.ts'] }));
+    }
+    const baseline = plan(prs.map(pr => ({ ...pr, title: pr.title.replace('RQ-RECUT', 'RQ-OTHER') })));
+    const convergent = plan(prs, { deferBehindClean: true });
+    const rebased = (p: ReturnType<typeof plan>) => p.jobs.flatMap(j => j.prs).length;
+    expect(rebased(baseline)).toBe(12);
+    expect(convergent.counts).toMatchObject({ superseded: 2, deferred: 10 });
+    expect(rebased(convergent)).toBe(0);
   });
 
   it('rejects an unknown tier and a bad pool', () => {

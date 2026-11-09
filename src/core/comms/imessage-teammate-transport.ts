@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { AshlrConfig } from '../types.js';
-import { imessageAllowlist, isSelfIMessageHandle } from '../integrations/imessage.js';
+import { chatDbPath, imessageAllowlist, isSelfIMessageHandle, readOnlyUri } from '../integrations/imessage.js';
 import { checkSendPolicy, parseCommsConfirmation, parseTeamIdentities } from '../agents/channel-policy.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { isPaused } from './pause.js';
@@ -61,7 +61,9 @@ export async function reconcileTeammateMessage(text: string, senderId: string, a
   const hex = Buffer.from(text).toString('hex').toUpperCase();
   const appleDate = Math.max(0, Math.floor((afterMs - 978307200000) * 1000000));
   const sql = `SELECT m.ROWID AS rowid,m.is_sent AS sent,m.is_delivered AS delivered,m.error AS error FROM message m JOIN handle h ON m.handle_id=h.ROWID WHERE m.is_from_me=1 AND lower(h.id)=lower(${quote(handle)}) AND m.date>=${appleDate} AND (m.text=${quote(text)} OR instr(hex(m.attributedBody),'${hex}')>0) ORDER BY m.ROWID DESC LIMIT 1;`;
-  const result = await run('/usr/bin/sqlite3', ['-readonly', '-json', `file:${join(homedir(), 'Library/Messages/chat.db')}?mode=ro`, sql], 5000);
+  // readOnlyUri escapes '?'/'#' in the path so a URI-significant HOME cannot
+  // smuggle query parameters past mode=ro or redirect the read.
+  const result = await run('/usr/bin/sqlite3', ['-readonly', '-json', readOnlyUri(chatDbPath()), sql], 5000);
   try {
     const row = (JSON.parse(result.stdout) as Array<Record<string, unknown>>)[0];
     return result.ok && row && Number.isSafeInteger(row.rowid) && Number(row.rowid) > 0

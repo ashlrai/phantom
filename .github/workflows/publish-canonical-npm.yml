@@ -79,6 +79,12 @@ jobs:
         with:
           node-version: '24.19.0'
           package-manager-cache: false
+      - name: Verify release tag before publication
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" > "$RUNNER_TEMP/release-tag.json"
+          node scripts/verify-release-policy.mjs --prepublish-tag "$RUNNER_TEMP/release-tag.json" "$VERSION" "$CANDIDATE_SHA"
       - name: Resolve original signed closure
         id: prepare
         run: node scripts/canonical-npm-publisher.mjs prepare
@@ -106,6 +112,7 @@ jobs:
           retention-days: 7
 
   publish:
+    if: vars.PHANTOM_RELEASE_TRAIN == 'on'
     needs: admit
     runs-on: ubuntu-latest
     timeout-minutes: 25

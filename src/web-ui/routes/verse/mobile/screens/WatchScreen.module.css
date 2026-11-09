@@ -1,0 +1,39 @@
+.stack {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.card h2 {
+  margin: 0 0 var(--space-2);
+  font-size: 1rem;
+}
+
+.row,
+.muted {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
+.muted {
+  color: var(--text-secondary);
+}
+
+.thread {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.bubble {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface-sunken, var(--surface-2, transparent));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.bubble[data-from="mason"] {
+  justify-self: end;
+  max-width: 85%;
+}

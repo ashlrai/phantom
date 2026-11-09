@@ -7,6 +7,7 @@ const runner = vi.hoisted(() => vi.fn());
 vi.mock('node:child_process', async original => ({ ...await original<typeof import('node:child_process')>(), execFile: runner }));
 import { approvedTeammateHandle, sendApprovedTeammateMessage, reconcileTeammateMessage } from '../src/core/comms/imessage-teammate-transport.js';
 import { senderIdFor } from '../src/core/comms/imessage-teammate-inbox.js';
+import { chatDbPath, readOnlyUri } from '../src/core/integrations/imessage.js';
 
 let configDir: string;
 const agent = 'agent@example.test';
@@ -59,5 +60,15 @@ describe('approved teammate transport', () => {
     expect(args).toContain('-readonly'); expect(args[args.length - 1]).toContain("m.text='owner''s reply'");
     expect(args[args.length - 1]).toContain('instr(hex(m.attributedBody)');
     expect(args[args.length - 1]).toContain("lower(h.id)=lower('agent@example.test')");
+  });
+  it('opens chat.db through the escaped read-only URI, never a raw path', async () => {
+    runner.mockImplementation((_file, _args, _options, cb) => cb(null, '[]', ''));
+    await reconcileTeammateMessage('x', sender, 1_793_933_400_000, cfg, { configDir, loadConfig: () => cfg });
+    const args = runner.mock.calls[0]?.[1] as string[];
+    const dbArg = args.find((a) => a.startsWith('file:'));
+    expect(dbArg).toBe(readOnlyUri(chatDbPath()));
+    expect(dbArg).toMatch(/^file:.*\?mode=ro$/);
+    // URI-significant path bytes can never smuggle sqlite query parameters.
+    expect(readOnlyUri('/tmp/a?mode=rw/x#y')).toBe('file:/tmp/a%3Fmode=rw/x%23y?mode=ro');
   });
 });
