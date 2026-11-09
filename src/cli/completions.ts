@@ -43,7 +43,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'devin',
   'openai-agents',
   'agents',
-  'benchmark', 'queue', 'issues', 'select', 'pool',
+  'benchmark', 'queue', 'issues', 'incident', 'select', 'pool',
   // 3.15 automations.
   'automations',
   // 3.15 Jev decision layer.

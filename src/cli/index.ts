@@ -2236,6 +2236,11 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'incident': {
+        process.exitCode = await (await import('./incident.js')).cmdIncident(rest);
+        break;
+      }
+
       case 'select': {
         process.exitCode = await (await import('./select.js')).cmdSelect(rest);
         break;
