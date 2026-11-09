@@ -8,7 +8,11 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFile
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { readEnvironmentCredential } from '../integrations/secrets.js';
+
+// The hosted workflow executes this file directly with Node's type stripping.
+function readEnvironmentCredential(envKey: string): string | undefined {
+  return process.env[envKey];
+}
 
 export const TRAIN_SCHEMA = 'phantom.release-train.v1';
 export const HOURLY_MINUTES = 60;
@@ -57,7 +61,8 @@ export interface TrainObservation {
    * It carries that release commit's message when it is an ancestor of the tag
    * and package.json at the tag still carries the tag version.
    */
-  head: { tag: string; sha: string; message: string; releaseMessage?: string; ancestry: Ancestry; committedAt: string | null } | null;
+  head: { tag: string; sha: string; message: string; releaseMessage?: string; ancestry: Ancestry; compareStatus?: string; committedAt: string | null } | null;
+  skippedTags?: { tag: string; reason: string }[];
   releases: ReleaseRow[];
   openReleasePr: { number: number; nodeId: string; version: string; headSha: string; headRef: string; mergeable: string; state: 'OPEN' | 'MERGED'; queued: boolean } | null;
   pullChecks: { pending: number; failing: number } | null;
@@ -85,6 +90,7 @@ export interface TrainState {
   sha: string | null;
   next: string | null;
   superseded: string[];
+  skippedTags?: { tag: string; reason: string }[];
   website: typeof WEBSITE_HOOK;
   steps: Record<string, { status: StepStatus; reason?: string }>;
   stages: Record<string, StageTiming>;
@@ -190,6 +196,10 @@ export function isReleasePleaseCommit(message: string, version: string): boolean
   return `${match[1]}.${match[2]}.${match[3]}` === version;
 }
 
+function releaseMismatch(tag: string, message: string): string {
+  return `release_message_mismatch: tag=${tag} first_line=${JSON.stringify(message.split(/\r?\n/, 1)[0] ?? '')} expected=chore(<scope>): release ${tag.slice(1)}`;
+}
+
 export function docsCarriersSynced(message: string, version: string): boolean {
   return message.includes(`chore(release): sync candidate version carriers to ${version}`);
 }
@@ -291,7 +301,7 @@ export function buildTrain(input: TrainObservation): TrainPlan {
     writes: [],
     state: {
       schema: TRAIN_SCHEMA, stopped: true, reason, version: null, tag: null, sha: null, next: null,
-      superseded: [], website: WEBSITE_HOOK,
+      superseded: [], skippedTags: input.skippedTags ?? [], website: WEBSITE_HOOK,
       steps: { kill: { status: 'stopped', reason } },
       stages: emptyStages(null),
     },
@@ -302,6 +312,9 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   let headTag: { name: string; sha: string } | null;
   try { headTag = newestTag(input.tags); }
   catch { return stopped('duplicate-tag'); }
+  if (input.head && input.head.sha === '') return stopped('candidate-refused: tag_sha_empty');
+  const eligibleTags = input.tags.filter((tag) => !input.skippedTags?.some((skipped) => skipped.tag === tag.name));
+  try { headTag = newestTag(eligibleTags); } catch { return stopped('duplicate-tag'); }
   if (!input.head || !headTag || input.head.tag !== headTag.name || input.head.sha !== headTag.sha) {
     return stopped(input.head ? 'candidate-not-newest' : 'no-release-tag');
   }
@@ -309,7 +322,12 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   const admitted = (input.head.ancestry === 'ancestor' || input.head.ancestry === 'identical')
     && input.head.sha !== ''
     && (isReleasePleaseCommit(input.head.message, version) || isReleasePleaseCommit(input.head.releaseMessage ?? '', version));
-  if (!admitted) return stopped('candidate-refused');
+  if (!admitted) {
+    const detail = input.head.ancestry !== 'ancestor' && input.head.ancestry !== 'identical'
+      ? `compare_not_ahead: ${input.head.compareStatus ?? input.head.ancestry}`
+      : releaseMismatch(input.head.tag, input.head.message);
+    return stopped(`candidate-refused: ${detail}`);
+  }
 
   const marker = supersedeMarker(headTag.name);
   const superseded: string[] = [];
@@ -329,6 +347,11 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   const elapsed = input.lastTaggedAt ? Date.parse(input.now) - Date.parse(input.lastTaggedAt) : Number.NaN;
   const cadenceDue = input.aheadBy > 0 && Number.isFinite(elapsed) && elapsed >= minutes * 60_000;
   const expected = nextPatch(input.masterVersion);
+  if (input.tags.some((tag) => {
+    const version = versionOf(tag.name);
+    const next = versionOf(`v${expected}`);
+    return version !== null && next !== null && compareVersion(version, next) >= 0;
+  })) return stopped('duplicate_tag');
   const pr = input.openReleasePr;
   const checks = input.pullChecks;
   if (cadenceDue && pr && checks && pr.state === 'OPEN' && !pr.queued && pr.version === expected && pr.headRef.startsWith('release-please--')
@@ -423,7 +446,7 @@ export function buildTrain(input: TrainObservation): TrainPlan {
     writes,
     state: {
       schema: TRAIN_SCHEMA, stopped: false, reason: kill.reason, version, tag: headTag.name, sha: headTag.sha,
-      next, superseded, website: WEBSITE_HOOK, steps, stages,
+      next, superseded, skippedTags: input.skippedTags ?? [], website: WEBSITE_HOOK, steps, stages,
     },
   };
 }
@@ -506,21 +529,38 @@ export async function observeTrain(
   const tags = tagRows.map((row) => {
     const item = record(row);
     return { name: text(item?.name) ?? '', sha: text(record(item?.commit)?.sha) ?? '' };
-  }).filter((tag) => TAG.test(tag.name) && SHA.test(tag.sha));
-  const newest = newestTag(tags);
+  }).filter((tag) => TAG.test(tag.name));
+  // Validate each candidate after the ancestor walk; a newer unrelated tag
+  // must not hide the latest actual release.
+  const skippedTags: { tag: string; reason: string }[] = [];
   let head: TrainObservation['head'] = null;
-  if (newest) {
+  let firstRejected: TrainObservation['head'] = null;
+  const remaining = [...tags];
+  while (remaining.length > 0) {
+    const newest = newestTag(remaining);
+    if (!newest) break;
     const commit = record(await read(`repos/${REPOSITORY}/commits/${newest.sha}`));
     const message = text(record(commit?.commit)?.message) ?? '';
     const committedAt = text(record(record(commit?.commit)?.committer)?.date);
     const compare = record(await read(`repos/${REPOSITORY}/compare/${newest.sha}...${masterSha}`));
     const status = text(compare?.status);
     const ancestry: Ancestry = status === 'ahead' ? 'ancestor' : status === 'identical' ? 'identical' : status === 'diverged' ? 'diverged' : status === 'behind' ? 'behind' : 'unknown';
-    head = { tag: newest.name, sha: newest.sha, message, ancestry, committedAt };
+    const candidate: NonNullable<TrainObservation['head']> = { tag: newest.name, sha: newest.sha, message, ancestry, compareStatus: status ?? 'unknown', committedAt };
     if (!isReleasePleaseCommit(message, newest.name.slice(1))) {
       const releaseMessage = await ancestorReleaseMessage(read, newest);
-      if (releaseMessage) head.releaseMessage = releaseMessage;
+      if (releaseMessage) candidate.releaseMessage = releaseMessage;
     }
+    if (isReleasePleaseCommit(message, newest.name.slice(1)) || candidate.releaseMessage) {
+      head = candidate;
+      break;
+    }
+    firstRejected ??= candidate;
+    skippedTags.push({ tag: newest.name, reason: releaseMismatch(newest.name, message) });
+    remaining.splice(remaining.findIndex((tag) => tag.name === newest.name), 1);
+  }
+  if (!head && firstRejected) {
+    head = firstRejected;
+    skippedTags.splice(skippedTags.findIndex((item) => item.tag === head?.tag), 1);
   }
   const releaseRows = await pages(read, `repos/${REPOSITORY}/releases`);
   const releases: ReleaseRow[] = releaseRows.map((row) => {
@@ -584,7 +624,7 @@ export async function observeTrain(
   const docsSynced = head ? docsCarriersSynced(head.message, version) : false;
   return {
     now, fleetKill: kill.fleet, autorunOff: kill.autorun,
-    masterSha, masterVersion, cadenceMinutes, lastTaggedAt, aheadBy, tags, head, releases,
+    masterSha, masterVersion, cadenceMinutes, lastTaggedAt, aheadBy, tags, head, skippedTags, releases,
     openReleasePr, pullChecks, build: found.build, buildPending: found.pending, buildCooldown: found.cooldown,
     attest: attested.attest, attestPending: attested.pending, audit,
     npmPublished: npm === null ? false : npmRecord?.version === version ? true : null,
@@ -778,7 +818,12 @@ async function main(): Promise<number> {
     }
     if (plan.writes.some((write) => write.method === 'PATCH')) state = markWritesApplied(state);
   }
+  state = { ...state, skippedTags: observed.skippedTags ?? [] };
   const json = `${JSON.stringify(state, null, 2)}\n`;
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    const { appendFileSync } = await import('node:fs');
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Release train\n\n${state.reason}\n\n${(state.skippedTags ?? []).map((item) => `- ${item.reason}`).join('\n')}\n`);
+  }
   if (out) writeFileSync(out, json, { mode: 0o644 });
   process.stdout.write(json);
   return plan.exitCode;
