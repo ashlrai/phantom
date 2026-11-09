@@ -111,7 +111,7 @@ export async function composeLeaderInbox(text: string, options: LeaderRuntimeOpt
 }
 
 /** Circular with the owner-thread store, which calls back into this runtime's leader network. */
-async function noteUnifiedOwner(channel: 'desktop' | 'telegram' | 'email' | 'imessage' | 'slack', senderId: string, text: string, idempotencyKey: string, at: number, options: LeaderRuntimeOptions, channelRef?: string): Promise<void> {
+export async function noteUnifiedOwner(channel: 'desktop' | 'telegram' | 'email' | 'imessage' | 'slack', senderId: string, text: string, idempotencyKey: string, at: number, options: LeaderRuntimeOptions, channelRef?: string): Promise<void> {
   try {
     const [{ noteOwnerReceipt }, { loadOwnerThreadSettings }] = await Promise.all([
       import('../comms/owner-thread.js'),

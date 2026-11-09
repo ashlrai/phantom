@@ -239,13 +239,25 @@ Every top-level `phm` command, grouped by what it is for. `ashlr` runs the same 
 | Run | `run`, `runs`, `eval`, `skills`, `models`, `local-runtime` |
 | Swarm | `spec`, `swarm`, `swarms` |
 | Memory | `recall`, `learn`, `genome`, `memory` |
-| Knowledge | `graph`, `ask`, `knowledge`, `wiki` |
-| Autonomy | `route`, `metrics`, `trail`, `issues`, `select`, `pool`, `benchmark`, `enroll`, `backlog`, `inbox`, `daemon`, `drive`, `worker`, `prs`, `fleet`, `bus`, `recovery`, `manager`, `vision`, `goal`, `loop`, `conductor-permit`, `roadmap`, `reflect`, `health`, `goals`, `sweep`, `digest`, `feed`, `release-articles`, `release`, `drafts`, `comms`, `comms-agent`, `imessage`, `connectors`, `channels`, `director`, `best-of-n`, `invent`, `universe`, `website`, `authority`, `org`, `leader`, `mirror`, `cloud`, `playbook`, `jev`, `devin`, `openai-agents`, `agents`, `automations` |
-| Observability | `chain`, `router`, `context`, `claim`, `router-calibration`, `jobs`, `lanes`, `queue`, `incident`, `daily-fix`, `pulse`, `pulse-export`, `pulse-test`, `telemetry`, `audit`, `repos`, `receipt`, `radar`, `observe`, `growth`, `world`, `resource`, `resources`, `capacity`, `estates`, `signals`, `friction`, `budget`, `ci-metrics`, `main`, `usage` |
+| Knowledge | `graph`, `ask`, `knowledge`, `wiki`, `library` |
+| Autonomy | `route`, `metrics`, `trail`, `issues`, `select`, `pool`, `benchmark`, `enroll`, `backlog`, `inbox`, `daemon`, `drive`, `worker`, `prs`, `fleet`, `bus`, `recovery`, `manager`, `vision`, `goal`, `loop`, `conductor-permit`, `roadmap`, `reflect`, `health`, `goals`, `sweep`, `digest`, `release-articles`, `release`, `drafts`, `comms`, `comms-agent`, `imessage`, `connectors`, `channels`, `director`, `best-of-n`, `invent`, `universe`, `website`, `authority`, `org`, `leader`, `mirror`, `cloud`, `playbook`, `jev`, `devin`, `openai-agents`, `agents`, `automations` |
+| Observability | `feed`, `worklog`, `chain`, `router`, `context`, `claim`, `router-calibration`, `jobs`, `lanes`, `queue`, `incident`, `daily-fix`, `pulse`, `pulse-export`, `pulse-test`, `telemetry`, `audit`, `repos`, `receipt`, `radar`, `observe`, `growth`, `world`, `resource`, `resources`, `capacity`, `estates`, `signals`, `friction`, `budget`, `ci-metrics`, `main`, `usage` |
 | Integrations | `autopilot`, `improve`, `steward`, `team`, `companions`, `mcp`, `checkpoint`, `sessions`, `gh`, `vercel`, `wire`, `notify`, `stack`, `ecosystem` |
 | Safety | `worktrees`, `disk`, `disk-maint`, `node`, `sandbox`, `seams`, `test`, `verify`, `engineering-receipt`, `verify-safety`, `verify-pr`, `preflight`, `onboard`, `demo` |
 | Web | `top`, `tui`, `dash`, `dashboard`, `serve`, `verse` |
 | Scaffold | `new`, `ship` |
+
+### Common CLI tasks
+
+| Task | Example |
+| --- | --- |
+| Summarize local metrics. | `phm metrics summary --json` |
+| Check the release train. | `phm release status --json` |
+| Preview cleanup of finished worktrees. | `phm worktrees prune --dry-run --json` |
+| Explain dispatcher routes. | `phm route explain --json` |
+| Show usage by engine. | `phm usage` |
+
+See the [CLI reference](docs/cli.md) for all commands.
 
 ## The Phantom ecosystem
 
