@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""Run a command within the host's shared CPU budget."""
+import argparse
+import fcntl
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def acquire(root, count):
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    for index in range(count):
+        # Never unlink slot files: contenders must lock the same inode.
+        fd = os.open(root / f"slot-{index}", os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(fd)
+            continue
+        previous = os.read(fd, 64).strip()
+        # A dead pid is stale metadata. The kernel lock is authoritative even
+        # if a killed wrapper's child is still running with its inherited fd.
+        if previous.isdigit() and not alive(int(previous)):
+            os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.ftruncate(fd, 0)
+        os.write(fd, str(os.getpid()).encode())
+        return fd
+    return None
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--slots", type=int, default=max(1, (os.cpu_count() or 1) // 2))
+    parser.add_argument("--job", default=Path.cwd().name)
+    parser.add_argument("command", nargs=argparse.REMAINDER)
+    args = parser.parse_args()
+    command = args.command[1:] if args.command[:1] == ["--"] else args.command
+    if args.slots < 1 or not command:
+        parser.error("use --slots N -- command [args], with N at least 1")
+    root = Path.home() / ".ashlr-runs/queue/heavy"
+    start = time.monotonic()
+    fd = None
+    child = None
+
+    def interrupted(signum, _frame):
+        if child is None:
+            raise SystemExit(128 + signum)
+        child.send_signal(signum)
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, interrupted)
+    try:
+        while fd is None:
+            fd = acquire(root, args.slots)
+            if fd is None:
+                time.sleep(0.1)
+        running = time.monotonic()
+        child = subprocess.Popen(command, pass_fds=(fd,))
+        code = child.wait()
+        row = {"event": "HEAVY", "job": args.job,
+               "wait_s": round(running - start, 3),
+               "run_s": round(time.monotonic() - running, 3)}
+        line = json.dumps(row) + "\n"
+        print(line.rstrip(), file=sys.stderr)
+        log = os.open(root / "events.jsonl", os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        try:
+            os.write(log, line.encode())
+        finally:
+            os.close(log)
+        return code if code >= 0 else 128 - code
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
