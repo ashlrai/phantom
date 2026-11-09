@@ -126,6 +126,14 @@ signed post-merge observation ledger. A merge counts `stable` only when the
 `unobserved`, and `ranked` sorts groups on the Wilson lower bound. Read-only;
 nothing merges, routes or releases credit.
 
+Research loop (RQ-SWE5-RESEARCH-LOOP): `phm fleet research-digest --file
+<digest.md> --json` scores a digest's `## Proposals` bullets (impact x
+confidence - effort), dedups them against the queue and shipped work, and
+runs each rendered `- READY` line through the admission lint. Dry-run by
+default; `--apply --queue <ready.md>` appends only the reviewed subset, and
+`--approve <id,...>` narrows it. See [the research loop](docs/RESEARCH-LOOP.md)
+and the [Spawn fleet synthesis](docs/strategy/spawn-fleet-model.md).
+
 Merge queue drift protection: the Quick typecheck job runs the CODEOWNERS and
 Tier-1 import closure checks on every PR and merge queue candidate, including
 docs-only changes. A new Tier-1 test needs its generated CODEOWNERS entry in the
