@@ -4,6 +4,7 @@ import { MACHINE_MAX_AGE_MS } from '../../../core/fabric/resource-view.js';
 import { apiGet } from '../../data/client.js';
 import { useQuery, useRefetch, useRefresh } from '../../data/hooks.js';
 import type { QueryDef } from '../../data/queries.js';
+import { usePollWhileVisible } from '../verse/shell/section-visibility.js';
 import styles from './ResourcePanel.module.css';
 
 export const resourceViewQuery: QueryDef<ResourceView> = {
@@ -18,10 +19,7 @@ export function ResourcePanel() {
   const [, expireControllerMemory] = useState(0);
   const refresh = useRefetch(resourceViewQuery);
   const manualRefresh = useRefresh(resourceViewQuery);
-  useEffect(() => {
-    const timer = window.setInterval(refresh, 15_000);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
+  usePollWhileVisible(refresh, 4_000);
   const view = query.data;
   const observedAt = view?.controllerMemory?.observedAt;
   useEffect(() => {

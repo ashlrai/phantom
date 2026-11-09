@@ -1263,8 +1263,9 @@ async function cmdStatus(args: string[]): Promise<void> {
   if (args.includes('--json')) {
     const { buildFleetLiveSnapshot } = await import('../core/verse/fleet-live-api.js');
     const { readResourceView } = await import('../core/fabric/resource-view-store.js');
+    const { readDevinUsage } = await import('../core/fabric/readers/devin-usage.js');
     const { projectLiveStatus } = await import('../core/fleet/live-status.js');
-    const [live, resources] = await Promise.all([buildFleetLiveSnapshot(), readResourceView()]);
+    const [live, resources] = await Promise.all([buildFleetLiveSnapshot(), readResourceView(undefined, undefined, undefined, readDevinUsage)]);
     console.log(JSON.stringify(projectLiveStatus(live.snapshot, resources), null, 2));
     return;
   }

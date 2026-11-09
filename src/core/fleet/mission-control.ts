@@ -82,6 +82,10 @@ export function prose(text: string, max = 240): string {
     .slice(0, max);
 }
 
+function fraction(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
 function percent(value: unknown): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 100) return null;
   return Math.round(value * 10) / 10;
@@ -124,11 +128,16 @@ export function parseResources(value: unknown, source: MissionResource['source']
         const row = record(item);
         if (row) take(row.id ?? row.resource ?? row.pool ?? row.lane, row);
       }
-    } else if (obj) {
-      for (const [key, item] of Object.entries(obj)) {
-        if (key === 'v' || key === 'schema' || key === 'generatedAt') continue;
-        const row = record(item);
-        if (row) take(row.id ?? key, row);
+    } else {
+      // `{lanes: {devin: {...}}}` is a real router shape too — a nested lane map,
+      // not an array. Fall back to the object itself for the flat `{devin: ...}` form.
+      const map = record(nested) ?? obj;
+      if (map) {
+        for (const [key, item] of Object.entries(map)) {
+          if (key === 'v' || key === 'schema' || key === 'generatedAt' || key === 'resources' || key === 'lanes' || key === 'pools') continue;
+          const row = record(item);
+          if (row) take(row.id ?? key, row);
+        }
       }
     }
   }
@@ -138,7 +147,11 @@ export function parseResources(value: unknown, source: MissionResource['source']
     if (seen.has(id)) continue;
     seen.add(id);
     const left = percent(row.left_pct ?? row.leftPct ?? row.remaining_pct ?? row.remainingPct ?? row.usage_left ?? row.usageLeft ?? row.left);
-    const used = percent(row.weekly_used_pct ?? row.used_pct ?? row.usedPct ?? row.pctUsed);
+    // The router's own entry is a fraction (`used_frac`: 0..1+, over 1 is exhausted);
+    // percent keys are accepted for override-style writers. A fraction past 1 clamps at 0 left.
+    const frac = fraction(row.used_frac ?? row.usedFrac);
+    const used = frac === null ? percent(row.weekly_used_pct ?? row.used_pct ?? row.usedPct ?? row.pctUsed)
+      : Math.min(frac * 100, 100);
     out.push({
       id,
       label: resourceLabel(id),
