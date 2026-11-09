@@ -85,6 +85,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "safety": "read",
     },
     {
+      "name": "phantom_spend_budget",
+      "safety": "read",
+    },
+    {
       "name": "phantom_observe_session",
       "safety": "read",
     },
@@ -119,6 +123,18 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
     {
       "name": "phm_agent_roster",
       "safety": "read",
+    },
+    {
+      "name": "phm_context_brief",
+      "safety": "read",
+    },
+    {
+      "name": "phm_claim_acquire",
+      "safety": "append",
+    },
+    {
+      "name": "phm_claim_release",
+      "safety": "append",
     },
     {
       "name": "phm_team_register",
@@ -828,6 +844,14 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
   {
     "inputSchema": {
       "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "phantom_spend_budget",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
       "properties": {
         "sessionId": {
           "type": "string",
@@ -1375,6 +1399,77 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "phm_agent_roster",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "lane": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "lane",
+      ],
+      "type": "object",
+    },
+    "name": "phm_context_brief",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "type": "string",
+        },
+        "lane": {
+          "type": "string",
+        },
+        "pr": {
+          "type": "number",
+        },
+        "repo": {
+          "type": "string",
+        },
+        "workKey": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "workKey",
+        "lane",
+      ],
+      "type": "object",
+    },
+    "name": "phm_claim_acquire",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "lane": {
+          "type": "string",
+        },
+        "reason": {
+          "enum": [
+            "open",
+            "merge",
+            "abandon",
+          ],
+          "type": "string",
+        },
+        "workKey": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "workKey",
+        "lane",
+        "reason",
+      ],
+      "type": "object",
+    },
+    "name": "phm_claim_release",
   },
   {
     "inputSchema": {

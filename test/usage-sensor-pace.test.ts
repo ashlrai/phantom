@@ -52,12 +52,27 @@ describe('lane pace', () => {
     expect(paceLane({ ...base, remaining: 100, burnPerJob: 1, resetAt: null }).reason).toBe('unknown');
   });
 
-  it('keeps pay-per-use at 0 until a fresh balance is approved, and honors KILL', () => {
+  it('keeps a 0 budget at 0, and allows pay-per-use only under a fresh balance and a higher budget', () => {
     expect(paceLane({ ...base, lane: 'claude-api', remaining: 40, burnPerJob: 1, payPerUse: true }).target).toBe(0);
     expect(paceLane({
-      ...base, lane: 'claude-api', remaining: 50, burnPerJob: 1, payPerUse: true, balanceFresh: true, spendApproved: true, ceiling: 3,
+      ...base, lane: 'claude-api', remaining: 50, burnPerJob: 1, payPerUse: true,
+      balanceFresh: true, budgetUsd: 0, spentUsd: 0, ceiling: 3,
+    }).target).toBe(0);
+    expect(paceLane({
+      ...base, lane: 'claude-api', remaining: 50, burnPerJob: 1, payPerUse: true,
+      balanceFresh: true, budgetUsd: 100, spentUsd: 1, ceiling: 3,
     }).target).toBe(3);
-    expect(paceLane({ ...base, remaining: 100, burnPerJob: 1, killed: true })).toEqual({ lane: 'codex-personal', target: 0, reason: 'kill' });
+    expect(paceLane({
+      ...base, lane: 'claude-api', remaining: 50, burnPerJob: 1, payPerUse: true,
+      balanceFresh: true, budgetUsd: 100, spentUsd: 100,
+    }).target).toBe(0);
+    expect(paceLane({
+      ...base, lane: 'claude-api', remaining: 50, burnPerJob: 1, payPerUse: true,
+      balanceFresh: false, budgetUsd: 100, spentUsd: 1,
+    }).target).toBe(0);
+    expect(paceLane({
+      ...base, remaining: 100, burnPerJob: 1, killed: true, payPerUse: true, balanceFresh: true, budgetUsd: 100, spentUsd: 1,
+    })).toEqual({ lane: 'codex-personal', target: 0, reason: 'kill' });
   });
 
   it('reports local throughput without an allowance', () => {

@@ -2087,8 +2087,16 @@ async function main(): Promise<void> {
         break;
       }
       case 'context': {
+        if (rest.includes('--for-agent')) {
+          process.exitCode = await (await import('./work-visibility.js')).cmdAgentContext(rest);
+          break;
+        }
         const { cmdCompanyContext } = await import('./company-context.js');
         cmdCompanyContext(rest);
+        break;
+      }
+      case 'claim': {
+        process.exitCode = await (await import('./work-visibility.js')).cmdWorkClaim(rest);
         break;
       }
       case 'router-calibration': {
@@ -2531,6 +2539,12 @@ async function main(): Promise<void> {
         // M112: one-command spare-Mac worker provisioning (keepAwake daemon + identity)
         const cmdWorker = await loadWorkerCmd();
         process.exitCode = await cmdWorker(rest);
+        break;
+      }
+
+      case 'prs': {
+        const { cmdPrs } = await import('./prs.js');
+        process.exitCode = await cmdPrs(rest);
         break;
       }
 
