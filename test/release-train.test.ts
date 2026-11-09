@@ -96,6 +96,14 @@ describe('release train', () => {
     expect(buildTrain(observation({ buildCooldown: true })).writes.some((write) => write.path.includes('/ci.yml/'))).toBe(false);
   });
 
+  it('only dispatches a candidate still at master, using the branch ref', () => {
+    const stale = buildTrain(observation());
+    expect(stale.writes.some((write) => write.path.endsWith('/ci.yml/dispatches'))).toBe(false);
+    expect(stale.state.steps.build.reason).toBe('candidate-not-master-head');
+    const current = buildTrain(observation({ masterSha: head }));
+    expect(current.writes.find((write) => write.path.endsWith('/ci.yml/dispatches'))?.body).toEqual({ ref: 'master', inputs: { release_gate: 'true' } });
+  });
+
   it('fails closed unless both kill sentinels are proven absent', () => {
     expect(releaseKillDecision('inactive', 'inactive')).toEqual({ proceed: true, reason: 'kill-inactive' });
     expect(releaseKillDecision('active', 'inactive').proceed).toBe(false);
@@ -269,12 +277,12 @@ describe('release train', () => {
   });
 
   it('posts workflow dispatch JSON on stdin with gh api --input -', () => {
-    const ci = buildTrain(observation()).writes.find((write) => write.path.endsWith('/ci.yml/dispatches'));
-    const ciBody = { ref: 'v3.30.27', inputs: { release_gate: 'true' } };
+    const ci = buildTrain(observation({ masterSha: head })).writes.find((write) => write.path.endsWith('/ci.yml/dispatches'));
+    const ciBody = { ref: 'master', inputs: { release_gate: 'true' } };
     expect(ci).toEqual({ method: 'POST', path: 'repos/ashlrai/phantom/actions/workflows/ci.yml/dispatches', body: ciBody });
     expect(releaseGithubCall('POST', 'repos/ashlrai/phantom/actions/workflows/ci.yml/dispatches', ciBody)).toEqual({
       args: ['api', '--hostname', 'github.com', '--method', 'POST', '--input', '-', 'repos/ashlrai/phantom/actions/workflows/ci.yml/dispatches'],
-      input: '{"ref":"v3.30.27","inputs":{"release_gate":"true"}}',
+      input: '{"ref":"master","inputs":{"release_gate":"true"}}',
     });
     const attestBody = {
       ref: 'master',

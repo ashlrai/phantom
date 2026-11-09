@@ -49,4 +49,6 @@ export const FLEET_MCP_TOOL_NAMES: readonly string[] = Object.freeze([
   'fleet_ci_receipt_await_batch',
   'fleet_release_candidate',
   'fleet_gmail_triage_latest',
+  'fleet_disk_forecast',
+  'fleet_gmail_archive_plan_latest',
 ]);
