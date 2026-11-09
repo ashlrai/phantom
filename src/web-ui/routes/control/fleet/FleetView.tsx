@@ -1,3 +1,4 @@
+import { LiveFleetBoard } from './LiveFleetBoard.js';
 /**
  * routes/control/fleet/FleetView.tsx — queue depth, lease health, and the
  * kill switch (GET /api/fleet, GET /api/fleet-activity; POST
@@ -41,7 +42,17 @@ function formatDate(iso: string | null | undefined): string {
   return d.toLocaleString();
 }
 
-export function FleetView() {
+function formatQueueAge(iso: string | null, now: number): string {
+  const timestamp = iso ? Date.parse(iso) : NaN;
+  if (!Number.isFinite(timestamp) || !Number.isFinite(now)) return '—';
+  const seconds = Math.floor(Math.max(0, now - timestamp) / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86400)}d`;
+}
+
+export function FleetView({ now = Date.now }: { now?: () => number } = {}) {
   const containerRef = useRef<HTMLDivElement>(null);
   useScrollRestore('/control/fleet', containerRef);
 
@@ -101,6 +112,7 @@ export function FleetView() {
     ? { sourceState: killSwitch.sourceState, complete: killSwitch.sourceState === 'healthy', reason: killSwitch.reason }
     : undefined;
   const isPaused = fleet?.killed === true;
+  const observedNow = now();
 
   return (
     <div ref={containerRef} className={styles.view}>
@@ -172,6 +184,18 @@ export function FleetView() {
                   <dt>Pending</dt>
                   <dd className={styles.numeric}>{fleet.queue.pendingItems}</dd>
                 </div>
+              ) : null}
+              {fleet.queue.sources ? (
+                <>
+                  <div>
+                    <dt>Cached backlog observation age</dt>
+                    <dd>{formatQueueAge(fleet.queue.sources.cachedBacklog.observedAt, observedNow)}</dd>
+                  </div>
+                  <div>
+                    <dt>Queued autonomy observation age</dt>
+                    <dd>{formatQueueAge(fleet.queue.sources.queuedAutonomy.observedAt, observedNow)}</dd>
+                  </div>
+                </>
               ) : null}
               {fleet.queue.nextEligibleAt !== undefined ? (
                 <div>
@@ -286,6 +310,8 @@ export function FleetView() {
           </section>
         </>
       )}
+
+      <LiveFleetBoard />
 
       <LanesPanel />
 

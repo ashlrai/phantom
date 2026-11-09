@@ -91,6 +91,9 @@ describe('RRULE subset', () => {
   it('every template names a playbook that exists (built-in)', async () => {
     const { getPlaybook } = await import('../src/core/playbooks/index.js');
     for (const t of AUTOMATION_TEMPLATES) {
+      // Only a read-only watch trigger (it drafts a notification) runs without a playbook;
+      // every other template must name one, and a named playbook must exist.
+      if (t.input.trigger.kind === 'watch') { expect(t.input.playbookId, t.id).toBeNull(); continue; }
       expect(t.input.playbookId, t.id).not.toBeNull();
       expect(await getPlaybook(t.input.playbookId!), t.id).not.toBeNull();
     }

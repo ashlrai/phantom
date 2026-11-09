@@ -44,12 +44,13 @@ it('assigns every fleet destination and keeps section fallbacks', () => {
   const items = variants.flatMap(value => deriveFleetNeedsYou(value, NOW).items);
   const expected = {
     'claude-lane-down': { kind: 'terminal', command: '~/.ashlr-runs/bin/fix-claude-lane.sh' },
-    'lane-held:fake-lane': { kind: 'pane', paneId: 'fleet-lanes' },
+    'lane-held:fake-lane': { kind: 'pane', paneId: 'fleet-lanes', lane: 'fake-lane' },
     'stall-incident': { kind: 'pane', paneId: 'leader-journal' },
     'leader-overdue': { kind: 'pane', paneId: 'leader-journal' },
     'supply-personal-out': { kind: 'pane', paneId: 'fleet-supply' },
     'supply-personal-low': { kind: 'pane', paneId: 'fleet-supply' },
     'host-pressure': { kind: 'pane', paneId: 'fleet-host' },
+    'host-disk-low': { kind: 'pane', paneId: 'fleet-host' },
   };
   for (const [id, open] of Object.entries(expected)) expect(items.find(item => item.id === id)?.open).toEqual(open);
   for (const id of ['switches-on', 'runs-dir-missing']) expect(items.find(item => item.id === id)?.open).toBeUndefined();

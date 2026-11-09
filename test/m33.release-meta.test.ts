@@ -108,6 +108,12 @@ describe('release scripts', () => {
     expect(ok).toContain('ok');
 
     expect(() =>
+      execFileSync('node', [join(REPO_ROOT, 'scripts/check-version.mjs'), version], {
+        encoding: 'utf8', stdio: 'pipe',
+      }),
+    ).toThrow();
+
+    expect(() =>
       execFileSync('node', [join(REPO_ROOT, 'scripts/check-version.mjs'), 'v0.0.1-nope'], {
         encoding: 'utf8', stdio: 'pipe',
       }),
@@ -292,7 +298,13 @@ describe('release workflow', () => {
       '.github/tests/release-train.test.mjs',
       '.github/tests/fast-hosted-artifact.test.mjs',
       '.github/tests/release-fast-smoke.test.mjs',
+      '.github/tests/release-local-input.test.mjs',
+      '.github/tests/release-smoke-phase.test.mjs',
+      '.github/tests/ci-release-same-runner.test.mjs',
       '.github/tests/release-cadence.test.mjs',
+      '.github/tests/ci-history-source.test.mjs',
+      '.github/tests/ci-test-feedback.test.mjs',
+      '.github/tests/ci-impact-map.test.mjs',
     ].join(' '));
     expect(releaseScripts['check:release:fast']).toBe('npm run check:pack-contracts && npm run check:release');
     expect(snapshot?.run).toContain('npm run check:pack-contracts');

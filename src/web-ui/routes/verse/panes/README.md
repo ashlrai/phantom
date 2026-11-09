@@ -128,7 +128,7 @@ not the dock.
 | `terminal`  | Terminal  | ⌃\`  | C4 `dock/terminal/TerminalPane.tsx` (slot) |
 | `browser`   | Browser   | ⇧⌘B  | C4 `dock/preview/PreviewPane.tsx` (slot) — the old id `preview` still opens it |
 | `diff`      | Changes   | ⇧⌘D  | C5 `git/DiffPane.tsx` (slot) |
-| `files`     | Files     | ⇧⌘O  | stub: folders + files read / changed |
+| `files`     | Files     | ⇧⌘O  | folder browser + text preview (POST /api/verse/files/{browse,read}), plus files read / changed |
 | `sources`   | Sources   | ⇧⌘S  | stub: pages, searches, files read |
 | `reasoning` | Reasoning | ⇧⌘Y  | stub: the chat's thinking, by turn |
 | `tasks`     | Tasks     | —    | this turn's calls + other running chats |

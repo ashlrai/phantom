@@ -6,7 +6,7 @@
  *   - Desktop renders from what the desktop app REPORTS (C8), never from what
  *     was asked: a chord another app holds shows as not active, with why;
  *     script delivery says banners come from Script Editor; a browser says
- *     it needs the desktop app and offers no switch;
+ *     those native controls need the desktop app and are absent in a browser;
  *   - Keyboard is the catalog's own table (it cannot drift from the keys);
  *   - the page holds at 375 in dark mode.
  */
@@ -240,10 +240,12 @@ describe('Settings ▸ Chat', () => {
 });
 
 describe('Settings ▸ Desktop', () => {
-  it('in a browser says it needs the desktop app and offers no switch', () => {
+  it('in a browser explains desktop-only settings and offers no native switches', () => {
     renderSettings();
     const desktop = panel('Desktop');
-    expect(within(desktop).queryByRole('switch')).not.toBeInTheDocument();
+    expect(within(desktop).queryByRole('switch', { name: 'System-wide shortcut' })).not.toBeInTheDocument();
+    expect(within(desktop).queryByRole('switch', { name: 'Notifications' })).not.toBeInTheDocument();
+    expect(within(desktop).getByRole('switch', { name: /Update automatically/ })).toBeInTheDocument();
     expect(within(desktop).getByText(/available in the Phantom desktop app/)).toBeInTheDocument();
   });
 

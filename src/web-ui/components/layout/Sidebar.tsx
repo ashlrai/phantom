@@ -4,7 +4,7 @@
  * drift from what the command palette offers.
  */
 import { VerseMark } from '../../routes/verse/rail-icons.js';
-import { NavLink } from 'react-router-dom';
+import { NavLink, type NavLinkRenderProps } from 'react-router-dom';
 import { NAV_GROUPS } from '../../app/nav-config.js';
 import styles from './Sidebar.module.css';
 
@@ -25,7 +25,7 @@ export function Sidebar() {
               <li key={leaf.path}>
                 <NavLink
                   to={leaf.path}
-                  className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
+                  className={({ isActive }: NavLinkRenderProps) => `${styles.link} ${isActive ? styles.active : ''}`}
                 >
                   {leaf.label}
                   {!leaf.implemented ? <span className={styles.soon}>soon</span> : null}

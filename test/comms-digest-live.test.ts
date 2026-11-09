@@ -20,8 +20,8 @@ it('counts exactly the mocked gh merged window and dispatch state, then stays si
     writeFileSync(join(root, 'queue', 'admission.json'), JSON.stringify({ ts: new Date(now).toISOString(), running: 4 }));
     writeFileSync(join(root, 'queue', 'ready.tsv'), 'status\tpool\tid\nREADY\tcodex\ta\nREADY\tclaude\tb\nBLOCKED\tcodex\tc\nREADY\tPARKED-DEP.codex\td\nDONE\tclaude\te\n');
     const rows = Array.from({ length: 17 }, (_, i) => ({
-      repository: { nameWithOwner: `ashlrai/repo-${i % 2}` }, number: i + 1,
-      title: 'Merged work', closedAt: new Date(now - 60_000 - i * 1000).toISOString(),
+      repository_url: `https://api.github.com/repos/ashlrai/repo-${i % 2}`, number: i + 1,
+      title: 'Merged work', pull_request: { merged_at: new Date(now - 60_000 - i * 1000).toISOString() },
     }));
     const sources: DigestSources = {
       ledger: async () => [{ kind: 'merge:landed', at: new Date(now - 1000).toISOString(), repo: 'ashlrai/stale', data: { prNumber: 999 } }],
@@ -31,10 +31,9 @@ it('counts exactly the mocked gh merged window and dispatch state, then stays si
         nowMs: end, fresh: true, githubOnly: true, runsDir: root,
         ledgerMerges: () => { throw new Error('must not consult ledger'); },
         gh: async (args) => {
-          expect(args.slice(0, 2)).toEqual(['search', 'prs']);
-          expect(args).toContain('--merged');
-          expect(args[args.indexOf('--merged-at') + 1]).toBe(`${new Date(since).toISOString()}..${new Date(now).toISOString()}`);
-          return JSON.stringify(rows);
+          expect(args.slice(0, 2)).toEqual(['api', 'search/issues']);
+          expect(args).toContain(`q=user:ashlrai is:pr is:merged merged:${new Date(since).toISOString()}..${new Date(now).toISOString()}`);
+          return JSON.stringify({ total_count: rows.length, incomplete_results: false, items: rows });
         },
       }),
     };
@@ -45,9 +44,9 @@ it('counts exactly the mocked gh merged window and dispatch state, then stays si
     expect(plan.text).toContain('Merged (17):');
     expect(plan.text).toContain('Window merges: 17 (ashlrai/repo-0: 9, ashlrai/repo-1: 8)');
     expect(plan.text).toContain('4 running, 2 ready, 2 blocked');
-    expect(plan.text).toContain('Source: gh search prs');
+    expect(plan.text).toContain('Source: GitHub search visible to the current credential');
     expect(plan.text).toContain(`as-of ${new Date(now).toISOString()}`);
-    expect(plan.next.lastActivityAt).toBe(rows[0]!.closedAt);
+    expect(plan.next.lastActivityAt).toBe(rows[0]!.pull_request.merged_at);
     expect(planChangeDigest(plan.next, facts, now + 1000).text).toBeNull();
     const empty = await collectDigestFacts(since, { ...sources, fleetTruth: async () => ({
       windowStartMs: since, windowEndMs: now, merged: [], mergeCountState: 'ok', truncated: false,

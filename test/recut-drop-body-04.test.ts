@@ -11,7 +11,7 @@ it('builds a valid UTC desktop-compatible drop with exact paths and bound', () =
   expect(job.id).toBe('RECUT121102');
   expect(validateDropJob(job)).toEqual({ ok: true });
   for (const path of pr.remainingPaths) expect(job.body).toContain(JSON.stringify(path));
-  expect(job.body).toContain('at most 4 files');
+  expect(job.body).toContain('node scripts/verify-recut-paths.mjs origin/master <paths.json>');
   expect(job.body).toContain('Closes #12');
 });
 it.each([

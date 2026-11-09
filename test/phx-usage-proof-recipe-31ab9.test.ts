@@ -59,15 +59,15 @@ function rollout(home: string, name: string, opts: { at: string; sessionPct: num
   utimesSync(path, at, at);
 }
 
-/** A dispatch status tick: lane running/target plus the status weekly figure. */
+/** This fixture captures the quota and publishes its controller tick together. */
 function status(tick: string | null, personalWeekly: number | null): void {
   const dir = join(runsDir, 'queue');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'status.json'), JSON.stringify({ last_tick: tick,
     lanes: { 'codex-personal': { running: 1, target: 1 },
       'codex-cmp': { running: 2, target: 2 }, claude: { running: 0, target: 2 } },
-    budget: { 'codex-personal': { weekly_used_pct: personalWeekly, source: 'status' },
-      claude: { weekly_used_pct: 30, source: 'status' } } }));
+    budget: { 'codex-personal': { weekly_used_pct: personalWeekly, source: 'status', observed_at: tick },
+      claude: { weekly_used_pct: 30, source: 'status', observed_at: tick } } }));
 }
 
 async function personal(): Promise<{ code: number; resource: CodexAccountResource }> {

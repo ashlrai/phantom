@@ -9,7 +9,7 @@
  *   - Error and empty states are explicit, never invented zeros.
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { LanesPanel } from './LanesPanel.js';
 import { evictAll } from '../../../data/cache.js';
 
@@ -83,18 +83,30 @@ describe('LanesPanel', () => {
     vi.stubGlobal('fetch', respond(SNAPSHOT));
     render(<LanesPanel />);
 
-    await waitFor(() => expect(screen.getByText('devin')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: /devin/ })).toBeInTheDocument());
     expect(screen.getByText('12.5 ACU')).toBeInTheDocument();
     expect(screen.getByText('0.5 ACU/h')).toBeInTheDocument();
     expect(screen.getByText('64% window')).toBeInTheDocument();
-    expect(screen.getByText('grok-ultra')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /grok-ultra/ })).toBeInTheDocument();
     // local-omlx has no evidence — every metric cell is an honest em dash.
-    const localRow = screen.getByText('local-omlx').closest('tr')!;
+    const localRow = screen.getByRole('rowheader', { name: 'local-omlx' }).closest('tr')!;
     expect(localRow.querySelectorAll('td')[4]!.textContent).toBe('—'); // merges/h
     expect(localRow.textContent).toContain('unknown');
     // Source-health line keeps "empty" distinguishable from "unreadable".
     expect(screen.getByText(/ready\.tsv healthy \(6 rows\)/)).toBeInTheDocument();
     expect(screen.getByText(/budgets healthy/)).toBeInTheDocument();
+  });
+
+  it('opens and closes lane evidence without treating unknown metrics as zero', async () => {
+    vi.stubGlobal('fetch', respond(SNAPSHOT));
+    render(<LanesPanel />);
+    const lane = await screen.findByRole('button', { name: /local-omlx/ });
+    expect(lane).toHaveTextContent('Queue — · Live — · Merges/h —');
+    fireEvent.click(lane);
+    expect(lane).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('region', { name: 'local-omlx lane detail' })).toHaveTextContent('Credit source: unknown');
+    fireEvent.click(lane);
+    expect(screen.queryByRole('region', { name: 'local-omlx lane detail' })).not.toBeInTheDocument();
   });
 
   it('renders the failure reason when the API read fails', async () => {

@@ -9,8 +9,6 @@ import type { InboundEvent, TelegramSendOpts, TelegramSendResult } from '../src/
 import type { AshlrConfig } from '../src/core/types.js';
 import { telegramFleetStatus } from '../src/core/comms/telegram-fleet-status.js';
 import type { StatusSupply } from '../src/core/comms/status-supply-line.js';
-// The root Vitest project includes test/ files, so register the colocated suite here.
-import '../src/core/comms/status-supply-line.test.js';
 
 const at = new Date('2026-11-01T04:08:00.000Z');
 const cfg = { comms: { enabled: true, channel: 'telegram', telegram: { botToken: 'fake-token', chatId: '12345' } } } as AshlrConfig;

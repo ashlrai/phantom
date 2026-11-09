@@ -87,3 +87,9 @@
   color: var(--status-danger-fg);
   font-size: var(--text-sm-size);
 }
+
+.map { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-2); }
+.mapLane { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); padding: var(--space-3); text-align: left; color: var(--text-primary); background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); cursor: pointer; }
+.mapLane[aria-pressed="true"] { outline: 2px solid currentColor; outline-offset: 2px; }
+.mapLane span { font-size: var(--text-xs-size); }
+.detail { padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--bg-surface); font-size: var(--text-sm-size); }

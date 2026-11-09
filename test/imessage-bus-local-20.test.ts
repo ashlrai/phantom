@@ -17,7 +17,6 @@ const cfg = { comms: { enabled: true, imessageHandle: HANDLE, imessageAllow: [HA
 const row = (rowid: number): IntakeMsg => ({ rowid, handle: HANDLE, text: 'same local note', ts: 1 });
 
 let tmp: string;
-let platform: PropertyDescriptor;
 const saved: Record<string, string | undefined> = {};
 
 beforeEach(() => {
@@ -25,19 +24,17 @@ beforeEach(() => {
   for (const k of ['HOME', 'ASHLR_RUNS_DIR']) saved[k] = process.env[k];
   process.env['HOME'] = tmp;
   process.env['ASHLR_RUNS_DIR'] = tmp;
-  platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
-  Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
   vi.mocked(publishChannelEnvelope).mockClear();
   writeCursor(10, tmp, now);
 });
 afterEach(() => {
-  Object.defineProperty(process, 'platform', platform);
   for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
   rmSync(tmp, { recursive: true, force: true });
 });
 
 const ingest = (messages: IntakeMsg[], runsDir: string | undefined) => ingestIMessages(cfg, {
-  runsDir, now, poll: async () => ({ ok: true, state: 'ok', messages }),
+  // Select mocked intake availability without spoofing real filesystem custody.
+  runsDir, now, platform: 'darwin', poll: async () => ({ ok: true, state: 'ok', messages }),
   maxRowId: async () => ({ ok: true, state: 'ok', rowid: 10 }),
 });
 const inbox = () => join(tmp, 'leader', 'MASON-INBOX.md');

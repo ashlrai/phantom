@@ -7,7 +7,7 @@
  * back a screen instead of leaving the app. Nothing secret ever goes in it —
  * only screen names and chat ids the read session can list anyway.
  */
-import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
+import { JOB_ID_RE } from '../fleet-job-log/job-id.js';
 import { useCallback, useSyncExternalStore } from 'react';
 
 export type MobileTab = 'home' | 'agents' | 'needs' | 'leader' | 'more';
@@ -26,9 +26,10 @@ export type MobileRoute =
   | { screen: 'runs' }
   | { screen: 'worker'; job: string }
   | { screen: 'inbox' }
-  | { screen: 'drop-job' };
+  | { screen: 'drop-job' }
+  | { screen: 'watch' };
 
-const SIMPLE = new Set(['agents', 'new', 'needs', 'leader', 'more', 'fleet', 'runs', 'inbox', 'drop-job']);
+const SIMPLE = new Set(['agents', 'new', 'needs', 'leader', 'more', 'fleet', 'runs', 'inbox', 'drop-job', 'watch']);
 
 /** `#/agents/abc/changes` → the route. Anything unrecognised is Home, never an error. */
 export function parseMobileHash(hash: string): MobileRoute {
@@ -73,6 +74,7 @@ export function formatMobileHash(route: MobileRoute): string {
 export function tabOf(route: MobileRoute): MobileTab {
   switch (route.screen) {
     case 'home':
+    case 'watch':
       return 'home';
     case 'agents':
     case 'agent':
@@ -89,6 +91,10 @@ export function tabOf(route: MobileRoute): MobileTab {
     case 'drop-job':
     case 'inbox':
       return 'more';
+    default: {
+      const unexpected: never = route;
+      throw new Error(`Unhandled mobile route: ${JSON.stringify(unexpected)}`);
+    }
   }
 }
 

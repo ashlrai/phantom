@@ -16,6 +16,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { cmdFleetWatch, tailErrLog } from '../src/cli/fleet.js';
+// cmdFleetWatch lazy-imports these on first call; loading them here keeps the
+// one-time module transform out of each test's budget (same convention as
+// test/m49.fleet-status.test.ts, which statically imports the status graph).
+import '../src/core/config.js';
+import '../src/core/fleet/status.js';
+import '../src/core/sandbox/audit.js';
 
 // ---------------------------------------------------------------------------
 // HOME isolation

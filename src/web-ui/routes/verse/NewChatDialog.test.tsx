@@ -142,7 +142,10 @@ describe('NewChatDialog — capacity at the point of choice', () => {
   it('does not treat measured windows without original quota expiry as current', () => {
     const seat = { ...CLAUDE_TIGHT_SEAT, capacity: { ...CLAUDE_TIGHT_SEAT.capacity!, quotaExpiresAt: undefined } };
     render(<NewChatDialog initialManual open onClose={() => {}} projects={boot.projects} seats={[seat]} onCreate={() => {}} />);
-    expect(screen.getAllByRole('img', { name: /last reading; current usage and resets unconfirmed/ })).toHaveLength(3);
+    expect(screen.getAllByRole('img', { name: /last reading; current usage and resets unconfirmed/ })).toHaveLength(2);
+    expect(screen.getByRole('img', { name: /weekly window:.*last reading; current usage and resets unconfirmed/ })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: /weekly fable window:.*last reading; current usage and resets unconfirmed/ })).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: /5.hour window/ })).not.toBeInTheDocument();
     expect(screen.queryByText('Usable now')).not.toBeInTheDocument();
     expect(screen.queryByText(/^0%$/)).not.toBeInTheDocument();
   });

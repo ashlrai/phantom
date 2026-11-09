@@ -1,0 +1,11 @@
+{"schemaVersion":1,"id":"hop-1","kind":"hop.completed","ts":"2026-10-25T10:00:00.000Z","repo":"example/phantom","tokensIn":100,"tokensOut":50,"costUsd":2}
+{"schemaVersion":1,"id":"hop-2","kind":"hop.completed","ts":"2026-10-25T11:00:00.000Z","repo":"example/phantom","tokensIn":200,"tokensOut":100,"costUsd":1}
+{"schemaVersion":1,"id":"failed-hop","kind":"hop.completed","ts":"2026-10-25T12:00:00.000Z","repo":"example/phantom","tokensIn":400,"tokensOut":150,"costUsd":3,"outcome":"failed"}
+{"schemaVersion":1,"id":"hop-1","kind":"hop.completed","ts":"2026-10-25T13:00:00.000Z","repo":"example/other","tokensIn":500,"tokensOut":500,"costUsd":4}
+{"schemaVersion":1,"id":"merge-7","kind":"pr.merged","ts":"2026-10-25T14:00:00.000Z","repo":"example/phantom","prNumber":7}
+{"schemaVersion":1,"id":"merge-8","kind":"pr.merged","ts":"2026-10-25T15:00:00.000Z","repo":"example/phantom","prNumber":8}
+{"schemaVersion":1,"id":"merge-7","kind":"pr.merged","ts":"2026-10-25T16:00:00.000Z","repo":"example/other","prNumber":7}
+{"schemaVersion":1,"id":"hop-1","kind":"hop.completed","ts":"2026-10-25T10:00:00.000Z","repo":"EXAMPLE/PHANTOM","tokensIn":100,"tokensOut":50,"costUsd":2}
+{"schemaVersion":1,"id":"merge-7-replay","kind":"pr.merged","ts":"2026-10-25T17:00:00.000Z","repo":"example/phantom","prNumber":7}
+{"schemaVersion":1,"id":"old-hop","kind":"hop.completed","ts":"2026-10-23T10:00:00.000Z","repo":"example/phantom","tokensIn":999,"tokensOut":999,"costUsd":999}
+{"schemaVersion":1,"id":"future-hop","kind":"hop.completed","ts":"2026-10-27T10:00:00.000Z","repo":"example/phantom","tokensIn":999,"tokensOut":999,"costUsd":999}

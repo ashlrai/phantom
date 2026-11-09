@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -37,7 +37,7 @@ function passGate(): { exec: ReturnType<typeof vi.fn>; deps: LocalGateDeps } {
 }
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'context-checked-run-'));
+  root = realpathSync(await mkdtemp(join(tmpdir(), 'context-checked-run-')));
   vi.stubEnv('HOME', root); vi.stubEnv('ASHLR_RUNS_DIR', join(root, '.ashlr-runs')); vi.stubEnv('ASHLR_HOME', join(root, '.ashlr'));
   await mkdir(join(root, '.ashlr-runs'), { mode: 0o700 });
   snapshot = join(root, 'snapshot.json'); prompt = join(root, 'prompt.txt'); out = ''; err = ''; events = [];

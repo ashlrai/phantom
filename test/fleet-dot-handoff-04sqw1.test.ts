@@ -48,11 +48,14 @@ describe('fleet dot-handoff', () => {
     expect(byId['plugin-mcp-events'].status).toBe('separate-product');
   });
 
-  it('states the self-only transport boundary and the needs-you fallback', async () => {
+  it('distinguishes native teammate source support from unverified host delivery', async () => {
     const { out } = capture();
     await cmdFleetDotHandoff(['--json']);
     const summary = JSON.parse(String(out.mock.calls[0]![0]));
-    expect(summary.transport.phantomToDot).toBe('blocked');
+    expect(summary.transport.phantomToDot).toBe('unverified');
+    expect(summary.transport.teammateTransport).toBe('available-in-source');
+    expect(summary.transport.hostQualification).toBe('not-observed');
+    expect(summary.repositoryObservedAt).toBe('2026-11-08');
     expect(summary.transport.reason).toContain('self-only');
     expect(summary.transport.unsupportedStep).toBe('needs-you');
     expect(summary.busContract).toMatchObject({ provider: 'openai-dot', status: 'recognized-label-only' });
@@ -66,7 +69,7 @@ describe('fleet dot-handoff', () => {
     expect(await cmdFleetDotHandoff([])).toBe(0);
     const text = String(out.mock.calls[0]![0]);
     expect(text).not.toContain('fleet.dot-handoff.v1');
-    expect(text).toContain('blocked');
+    expect(text).toContain('Transport Phantom→dot: unverified');
     expect(text).toContain('docs/DOT-HANDOFF.md');
     expect(text).toContain('[unverified] personal-dot-api');
   });

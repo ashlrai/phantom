@@ -45,6 +45,7 @@ const distWeb = join(repoRoot, 'dist', 'core', 'web', 'public');
 const entry   = join(distBin, '_entry.js');
 const workerEntry = join(distBin, 'read-projection-worker.js');
 const engineeringWorkerEntry = join(distBin, 'engineering-background-worker.js');
+const quotaEvidenceWorkerEntry = join(distBin, 'quota-evidence-worker.js');
 const engineeringReadWorkerEntry = join(distBin, 'engineering-successor-read-worker.js');
 // V3.10: fleet-history.ts resolves `./fleet-history-worker.js` next to the main
 // entry, like read-projections.ts does. Without this sibling the bundled
@@ -170,6 +171,14 @@ await import('../dist/core/resources/engineering-background-worker.js');
 `;
 }
 
+/** Fixed quota custody validator. Publication stays on the owning main thread. */
+export function createSeaQuotaEvidenceWorkerShim({ buildIdentityJson }) {
+  return `// Fixed quota evidence worker; no provider transport or publication.
+Reflect.set(globalThis, Symbol.for('ashlr.build-identity.v1'), ${javascriptStringLiteral(buildIdentityJson)});
+await import('../dist/core/resources/quota-evidence-worker.js');
+`;
+}
+
 export function createSeaEngineeringReadWorkerShim({ buildIdentityJson }) {
   return `// Fixed read-only successor journal worker.
 Reflect.set(globalThis, Symbol.for('ashlr.build-identity.v1'), ${javascriptStringLiteral(buildIdentityJson)});
@@ -194,15 +203,15 @@ await import('../dist/core/verse/outcomes-worker.js');
 
 /**
  * @param {{ entry: string, workerEntry: string, engineeringWorkerEntry?: string,
- *   engineeringReadWorkerEntry?: string, fleetHistoryWorkerEntry?: string, outcomesWorkerEntry?: string, outBin: string }} args
+ *   engineeringReadWorkerEntry?: string, quotaEvidenceWorkerEntry?: string, fleetHistoryWorkerEntry?: string, outcomesWorkerEntry?: string, outBin: string }} args
  */
 export function createSeaCompileArgs({
-  entry, workerEntry, engineeringWorkerEntry, engineeringReadWorkerEntry, fleetHistoryWorkerEntry, outcomesWorkerEntry, outBin,
+  entry, workerEntry, engineeringWorkerEntry, engineeringReadWorkerEntry, quotaEvidenceWorkerEntry, fleetHistoryWorkerEntry, outcomesWorkerEntry, outBin,
 }) {
   // Bun does not discover Worker URLs automatically. All shims must be
   // siblings: bundled import.meta.url resolves relative to the main entry.
   return ['build', '--compile', entry, workerEntry, ...(engineeringWorkerEntry ? [engineeringWorkerEntry] : []),
-    ...(engineeringReadWorkerEntry ? [engineeringReadWorkerEntry] : []),
+    ...(engineeringReadWorkerEntry ? [engineeringReadWorkerEntry] : []), ...(quotaEvidenceWorkerEntry ? [quotaEvidenceWorkerEntry] : []),
     ...(fleetHistoryWorkerEntry ? [fleetHistoryWorkerEntry] : []), ...(outcomesWorkerEntry ? [outcomesWorkerEntry] : []), '--outfile', outBin];
 }
 
@@ -301,6 +310,7 @@ writeFileSync(entry, shimSrc, 'utf8');
 writeFileSync(workerEntry, createSeaWorkerShim({ buildIdentityJson }), 'utf8');
 writeFileSync(outcomesWorkerEntry, createSeaOutcomesWorkerShim({ buildIdentityJson }), 'utf8');
 writeFileSync(engineeringWorkerEntry, createSeaEngineeringWorkerShim({ buildIdentityJson }), 'utf8');
+writeFileSync(quotaEvidenceWorkerEntry, createSeaQuotaEvidenceWorkerShim({ buildIdentityJson }), 'utf8');
 writeFileSync(engineeringReadWorkerEntry, createSeaEngineeringReadWorkerShim({ buildIdentityJson }), 'utf8');
 writeFileSync(fleetHistoryWorkerEntry, createSeaFleetHistoryWorkerShim({ buildIdentityJson }), 'utf8');
 console.log(`[build-sea] Wrote shim entry: ${entry}`);
@@ -312,7 +322,7 @@ if (existsSync(outBin)) rmSync(outBin);
 console.log(`[build-sea] Compiling → ${outBin} …`);
 const result = spawnSync(
   BUN,
-  createSeaCompileArgs({ entry, workerEntry, engineeringWorkerEntry, engineeringReadWorkerEntry, fleetHistoryWorkerEntry, outcomesWorkerEntry, outBin }),
+  createSeaCompileArgs({ entry, workerEntry, engineeringWorkerEntry, engineeringReadWorkerEntry, quotaEvidenceWorkerEntry, fleetHistoryWorkerEntry, outcomesWorkerEntry, outBin }),
   { cwd: repoRoot, encoding: 'utf8' },
 );
 if (result.stdout) process.stdout.write(result.stdout);

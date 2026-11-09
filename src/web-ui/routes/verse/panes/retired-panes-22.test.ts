@@ -16,7 +16,8 @@
  * the copy-to-clipboard affordance itself via "Copy fleet digest".
  */
 import { beforeEach, describe, expect, it } from 'vitest';
-import { DEFAULT_DOCK_STATE, DOCK_PANES, REGISTERED_DOCK_PANE_GROUPS, type DockState } from '../shell/dock-catalog.js';
+import { DEFAULT_DOCK_STATE, type DockState } from '../shell/dock-catalog.js';
+import { DOCK_PANES, REGISTERED_DOCK_PANE_GROUPS } from '../shell/dock-pane-catalog.js';
 import { getDockState, hydrateDockState, resetDockStore } from '../dock/dock-store.js';
 import { hubTiles } from '../fleet-hub/fleet-hub-model.js';
 import { VERSE_SECTIONS } from '../verse-ui-store.js';

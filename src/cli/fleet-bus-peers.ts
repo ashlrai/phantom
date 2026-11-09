@@ -11,6 +11,9 @@ export interface FleetBusPeersDeps {
   busRoot?: string;
 }
 
+const usage = `Usage: ashlr fleet bus-peers [--session-id <id>] [--to <recipient>]
+Reports the Codex transport; --to delivers one untrusted session snapshot to the bus.`;
+
 /** Session ids are bounded before any I/O — the same limit the peers adapter enforces. */
 const PEERS_SESSION_ID = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/;
 
@@ -24,7 +27,7 @@ const PEERS_SESSION_ID = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/;
  */
 export async function cmdFleetBusPeers(args: string[], deps: FleetBusPeersDeps = {}): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log('Usage: ashlr fleet bus-peers [--session-id <id>] [--to <recipient>]\nReports the Codex transport; --to delivers one untrusted session snapshot to the bus.');
+    console.log(usage);
     return 0;
   }
   const emit = async (result: Record<string, unknown>, code: number): Promise<number> => {

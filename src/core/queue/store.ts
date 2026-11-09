@@ -54,10 +54,17 @@ export class QueueStore {
         await delay(10);
       }
     }
+    const token = randomUUID();
     try {
-      await lock.writeFile(JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() }));
+      await lock.writeFile(JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString(), token }));
       return await operation();
-    } finally { await lock.close(); await unlink(lockPath); }
+    } finally {
+      // A failed close must not leave a stale lock behind, and release must never delete a lock
+      // another process acquired after an operator cleared ours.
+      await lock.close().catch(() => undefined);
+      const held = await readFile(lockPath, 'utf8').catch(() => undefined);
+      if (held?.includes(token)) await unlink(lockPath).catch(error => { if (!missing(error)) throw error; });
+    }
   }
   private async mutate<T>(change: (doc: QueueDocument) => T): Promise<T> {
     return this.locked(async () => {

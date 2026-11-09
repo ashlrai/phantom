@@ -26,6 +26,24 @@ function run(deps: FleetStandbyAwaitDeps, timeout = 1000) {
 function report() { return JSON.parse(writes.join('')) as { outcome: string; attempts: number; lastReport: unknown }; }
 
 describe('standby-await wall deadline', () => {
+  it('cancels a hung probe without launching another', async () => {
+    const controller = new AbortController();
+    const exec = vi.fn(() => new Promise<ReturnType<typeof output>>(() => {}));
+    const result = run({ locateScript: () => '/fake/script', exec, signal: controller.signal });
+    await vi.advanceTimersByTimeAsync(1);
+    controller.abort();
+    expect(await result).toBe(4);
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(report()).toMatchObject({ outcome: 'cancelled', attempts: 1 });
+  });
+
+  it('does no discovery for a pre-aborted signal', async () => {
+    const controller = new AbortController(); controller.abort();
+    const locateScript = vi.fn(() => '/fake/script');
+    expect(await run({ locateScript, signal: controller.signal })).toBe(4);
+    expect(locateScript).not.toHaveBeenCalled();
+  });
+
   it('times out hung discovery without spawning', async () => {
     const exec = vi.fn();
     const result = run({ locateScript: () => new Promise(() => {}), exec });

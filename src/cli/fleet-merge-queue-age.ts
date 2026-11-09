@@ -6,6 +6,13 @@ export { mergeQueueAge };
 export type { MergeQueueAgeInput };
 const usage = 'Usage: phm fleet merge-queue-age --input <snapshot.json> [--json]\nRead queued PR age, oldest first. Snapshot: {prs:[{number,state?,mergeable?,reviewDecision?}],queue:[{number,enteredAt?,requiredChecks?:[{name,status}]}]}. State: OPEN, MERGED or CLOSED. Check status: success, pending, failure or missing. Merged and closed PRs are excluded; missing evidence stays unknown. Read-only; required checks stay in place.';
 
+export function validMergeQueueAgeInput(input: unknown): input is MergeQueueAgeInput {
+  return validMergeAgeInput(input) && input.prs.every(pr => {
+    const state = (pr as MergeQueueAgeInput['prs'][number]).state;
+    return state === undefined || ['OPEN', 'MERGED', 'CLOSED'].includes(state);
+  });
+}
+
 export async function cmdFleetMergeQueueAge(args: string[]): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(usage); return 0; }
   let path: string | undefined, json = false;
@@ -17,10 +24,7 @@ export async function cmdFleetMergeQueueAge(args: string[]): Promise<number> {
   if (!path) { console.error(usage); return 2; }
   try {
     const input: unknown = JSON.parse(await readFile(path, 'utf8'));
-    if (!validMergeAgeInput(input) || !input.prs.every(pr => {
-      const state = (pr as MergeQueueAgeInput['prs'][number]).state;
-      return state === undefined || ['OPEN', 'MERGED', 'CLOSED'].includes(state);
-    })) throw new Error('Invalid snapshot');
+    if (!validMergeQueueAgeInput(input)) throw new Error('Invalid snapshot');
     const report = mergeQueueAge(input);
     if (json) console.log(JSON.stringify(report));
     else if (!report.entries.length) console.log('No queued PRs.');

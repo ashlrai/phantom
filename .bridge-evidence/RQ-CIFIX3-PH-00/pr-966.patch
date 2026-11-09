@@ -1,0 +1,13 @@
+--- a/src/web-ui/routes/verse/replay/replay-security.test.ts
++++ b/src/web-ui/routes/verse/replay/replay-security.test.ts
+@@ -2,7 +2,9 @@
+ import { decodeReplay, parseReplayJson, seekReplay } from './replay-model.js';
+ import { fixtureRecording } from './fixture.test-support.js';
+ 
+-function turn(turnId: string, offset: number) {
++// Keep the fixture's open event shape: a bare spread loses the index signature, so
++// writing a payload field (text/input/output) on a turn's events fails to type-check.
++function turn(turnId: string, offset: number): Record<string, unknown>[] {
+   return fixtureRecording().events.map((event) => ({ ...event, turnId, seq: (event.seq as number) + offset }));
+ }
+ 

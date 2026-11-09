@@ -21,26 +21,23 @@ const row = (rowid: number, handle: string): IntakeMsg => ({ rowid, handle, text
 let home: string;
 let runsDir: string;
 let previousHome: string | undefined;
-let platform: PropertyDescriptor;
 
 beforeEach(() => {
   previousHome = process.env['HOME'];
   home = mkdtempSync(join(tmpdir(), 'imsg-home-'));
   runsDir = mkdtempSync(join(tmpdir(), 'imsg-runs-'));
   process.env['HOME'] = home;
-  platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
-  Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
   writeCursor(10, runsDir, now);
 });
 afterEach(() => {
-  Object.defineProperty(process, 'platform', platform);
   if (previousHome === undefined) delete process.env['HOME']; else process.env['HOME'] = previousHome;
   rmSync(home, { recursive: true, force: true });
   rmSync(runsDir, { recursive: true, force: true });
 });
 
 const ingest = (messages: IntakeMsg[], config = cfg()) => ingestIMessages(config, {
-  runsDir, now, poll: async () => ({ ok: true, state: 'ok', messages }),
+  // Select mocked intake availability without spoofing real filesystem custody.
+  runsDir, now, platform: 'darwin', poll: async () => ({ ok: true, state: 'ok', messages }),
   maxRowId: async () => ({ ok: true, state: 'ok', rowid: 10 }),
 });
 const inboxPath = () => join(runsDir, 'leader', 'MASON-INBOX.md');
