@@ -103,10 +103,14 @@ never executes in the attestor.
 **Current limits:** the trusted tree must still equal the candidate tree, and
 finalization still requires the attestor revision to equal live master. Merges
 between preparation, attestation and signing can therefore defer a release.
-The host `release-autorun` consumer and published signed updater acceptance
-must be verified separately before claiming continuous release operation.
-The one-minute smoke-body limit is a budget, not a measured hosted runtime.
-The phase deadline does not shorten the build job or weaken qualification.
+The host `release-autorun` consumer now includes a rev2 published-state pass:
+after a completed successful signing outcome it proves the tag's seven-asset
+set, feed binding and live `latest.json` endpoint through GET-only reads and
+writes a final `feed-<sha>.rc` receipt (see
+[the desktop update channel](DESKTOP-UPDATE-CHANNEL.md)). Installed-app
+startup acceptance remains a separate gate. The one-minute smoke-body limit is
+a budget, not a measured hosted runtime. The phase deadline does not shorten
+the build job or weaken qualification.
 
 The pinned immutable input upload binds the same four local files before and
 after upload to the exact source/run/attempt and artifact ID/digest. Smoke
@@ -279,7 +283,10 @@ Updater recovery additionally requires actual fleet job ID/lane/start timestamp
 from sanctioned Mac read surfaces, sanctioned signed seven-asset publication
 after quarantine repair, and HTTP 200 after redirects from the configured
 `releases/latest/download/latest.json` with publisher-equivalent signature and
-provenance verification. File handoff, inbox messages, npm `latest` and GitHub
+provenance verification. The rev2 `release-autorun` pass performs the endpoint
+HTTP 200 and signed-feed checks for each completed signing outcome; see
+[the desktop update channel](DESKTOP-UPDATE-CHANNEL.md). File handoff, inbox
+messages, npm `latest` and GitHub
 release metadata are insufficient. Installed-app version/update and successful
 launch remain unverified until supported tooling is used with authorized Mac
 access. See the [complete evidence checklist](contracts/CONTRACT-M523.md#recovery-evidence).

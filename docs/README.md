@@ -102,6 +102,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Bound Mac bridge disk growth and clean published worktrees | [Mac bridge disk lifecycle](https://github.com/ashlrai/phantom/blob/master/docs/BRIDGE-WORKTREES.md) |
 | Reclaim rebuildable disk bytes by class, or install the daily maintenance job | [Standing disk maintenance](DISK-MAINT.md) |
 | Build release evidence and distinguish distribution from activation | [Releasing — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING.md) |
+| Understand the signed desktop updater feed and its published-state verification | [Desktop update channel](https://github.com/ashlrai/phantom/blob/master/docs/DESKTOP-UPDATE-CHANNEL.md) |
 | Inspect release dependencies and unresolved publisher ownership across repositories | [Ecosystem release planning](https://github.com/ashlrai/phantom/blob/master/docs/ECOSYSTEM-RELEASE-CONTRACTS.md) |
 | Diagnose daemon liveness and prepare the protected Mac revival handoff | [Daemon revival source guide](https://github.com/ashlrai/phantom/blob/master/docs/DAEMON-REVIVE.md) |
 | Read the resident tick's bounded phases, outcomes and per-stage errors | [Daemon tick phases](https://github.com/ashlrai/phantom/blob/master/docs/daemon-tick-phases.md) |

@@ -770,6 +770,37 @@ Every completed per-source rc remains final. A started record without a
 completion is uncertain and blocks before network or signing; no automatic
 replay or legacy-state migration occurs. Existing seen records are preserved.
 
+rev2 adds a post-selection update-channel pass. When no candidate needs signing
+on a tick, each completed successful signing outcome (`sha-<sha>.rc` = 0)
+without a `feed-<sha>.rc` marker gets a bounded published-state proof through
+the same GET-only `gh` reads plus one unauthenticated public download:
+
+- the tag's public release must be non-draft, non-prerelease and target the
+  signed sha (`releases/tags/<tag>`; drafts answer 404 and stay pending);
+- its asset inventory must be exactly the seven signed desktop artifacts —
+  `Phantom_<v>_aarch64.app.tar.gz` + `.sig`, `ashlr-phantom-<v>.tgz` + `.sig`,
+  `manifest.json` + `.sig` and `latest.json` — all `uploaded` with populated
+  `sha256:` digests (still-populating digests stay pending);
+- the four small signed bodies are fetched through `gh api` with
+  `Accept: application/octet-stream` and byte-hashed against the recorded
+  digests; `latest.json` must bind `platforms["darwin-aarch64"].url` and
+  `.signature` to the tag's app asset and `.sig` bytes, and its `phantom`
+  envelope must carry the exact `manifest.json` text and `manifest.json.sig`
+  bytes, whose fields must bind the source sha and both artifact digests;
+- while that release is `releases/latest`, the configured public endpoint
+  `releases/latest/download/latest.json` must answer HTTP 200 with the same
+  feed bytes (followed redirects, 15 s cap).
+
+`feed-<sha>.rc` outcomes are final once written: `0` verified-live (receipt
+`feed-<sha>.json`), `21` verified-but-superseded (a newer published release is
+latest; no operator action), `22` inconsistent (receipt plus
+`NEEDS-MASON-<tag>-feed`; `rm` the rc to allow one manual recheck). Pending
+states — release absent, digests still populating, endpoint not serving — are
+re-read each tick and never write markers. This pass never signs, publishes,
+mutates a release or touches the keychain; signature-level minisign
+verification stays with the consumer/finalizer path. See
+[the update channel](../../docs/DESKTOP-UPDATE-CHANNEL.md).
+
 `RELEASE_AUTORUN_OFF`, the existing observer/signer locks and keychain gate remain
 unchanged. `install.sh` intentionally does not install this observer. Adoption
 requires review of the exact merged source and current host input, an unchanged
