@@ -83,17 +83,15 @@ for i, l in enumerate(lines):
         for n in re.findall(r"(?:pull/|PR=|#)(\d+)", l): held_pr.add((hr.group(1) if hr else "*", n))
         for rr, n in re.findall(r"github\.com/[A-Za-z0-9._-]+/([A-Za-z0-9._-]+)/pull/(\d+)", l): held_pr.add((rr, n))
     if m2: recs.append((i, m2.group(1), m2.group(2), m2.group(3), l))
-# Only suppress narrowly identified author filler; unknown or stale-looking rollups do
-# not invent an empty rate. Group by repo and explicit test path, not job ID.
+# Match only identical author requests for one explicit test file. File identity
+# alone is not evidence that two requests have the same acceptance criteria.
 def single_case_group(job, attrs, text):
     if not re.search(r"A\d{6,}Q8$", job) or re.search(r"guardian", job + " " + attrs + " " + text, re.I): return None
     if not re.search(r"\b(?:single|one|1)[ -](?:test[ -])?case\b", text, re.I): return None
     repo = re.search(r"\brepo=(?:ashlrai/)?([a-z0-9-]+)", attrs)
     files = set(re.findall(r"(?<![\w./-])((?:[\w.-]+/)+[\w.-]+(?:\.test|\.spec)\.[A-Za-z0-9]+)\b", text))
-    return (repo.group(1), next(iter(files))) if repo and len(files) == 1 else None
+    return (repo.group(1), next(iter(files)), " ".join(attrs.split()), " ".join(text.split())) if repo and len(files) == 1 else None
 
-personal_rate = st.get("rollup_24h", {}).get("by_lane", {}).get("codex-personal", {}).get("empty_rate")
-quality_active = isinstance(personal_rate, (int, float)) and not isinstance(personal_rate, bool) and math.isfinite(personal_rate) and 0.25 < personal_rate <= 1
 claimed = {x.split("\t")[0] for x in rd(Q + "/claimed.tsv").splitlines() if x}
 ready_raw = [x for x in rd(Q + "/ready.tsv").splitlines() if x.strip() and not x.strip().startswith("#")]
 # RQ-QUEUE-AUTOUNPARK-1: PARKED-DEP[.lane] may lead the row (fleet parked status-first) or sit in the lane column.
@@ -110,12 +108,11 @@ def ready_job_id(line):
 inq = {j for j in (ready_job_id(x) for x in ready_raw) if j}
 # Include active rows from earlier passes so the group survives restock cycles.
 quality_groups = set()
-if quality_active:
-    for raw in lines:
-        m = re.match(r"^- (?:READY|CLAIMED) (?:\S+ \S+ )?([A-Za-z0-9._-]+)(?: r\d+)? \((.*?)\):\s*(.*)$", raw)
-        if m and m.group(1) in (inq | claimed):
-            group = single_case_group(*m.groups())
-            if group: quality_groups.add(group)
+for raw in lines:
+    m = re.match(r"^- (?:READY|CLAIMED) (?:\S+ \S+ )?([A-Za-z0-9._-]+)(?: r\d+)? \((.*?)\):\s*(.*)$", raw)
+    if m and m.group(1) in (inq | claimed):
+        group = single_case_group(*m.groups())
+        if group: quality_groups.add(group)
 # Count only distinct launchable rows. Dispatcher status can count parked or malformed
 # rows and is a previous-tick snapshot, so it cannot measure replenishment demand.
 queue_diagnostics = {"parked": 0, "invalid": 0, "empty_prompt": 0, "duplicate": 0}
@@ -147,6 +144,15 @@ for x in rd(R + "/metrics/jobs.jsonl").splitlines():
         if repo is None or isinstance(repo, str):
             # Legacy outcomes omit repo; job IDs are fleet-wide identities.
             completed.add((repo.removeprefix("ashlrai/") if repo is not None else None, d["job"]))
+# A merged outcome plus the original identical task is evidence for suppressing
+# a later copy. Missing or ambiguous history never proves completion.
+completed_groups = set()
+for raw in lines:
+    m = re.match(r"^- (?:READY|CLAIMED|DONE|MERGED|LANDED) ([A-Za-z0-9._-]+)(?: r\d+)? \((.*?)\):\s*(.*)$", raw)
+    if m:
+        group = single_case_group(*m.groups())
+        if group and ((group[0], m.group(1)) in completed or (None, m.group(1)) in completed):
+            completed_groups.add(group)
 try: ps = subprocess.run(["ps", "-axo", "command="], capture_output=True, text=True).stdout
 except Exception: ps = ""   # sandboxed callers may refuse ps; the worktree-dir check in busy() still applies
 def landed(dep): return dep in merged or status.get(dep, "") in ("DONE", "MERGED", "LANDED")
@@ -190,7 +196,7 @@ def prompt_body(j, repo, l, tier, attrs, text, gate=None):
             "Never print environment variables, secrets or tokens; "
             "solve any secrets need through Phantom Secrets and any MCP/CLI access need through Locus. Do not commit or push, and do not edit .github/."
             f"{pin_line}")
-noops = load_noops(); seen_pr = set(); seen_file = set()   # seen_*: PRs / target files already picked this pass
+noops = load_noops(); seen_pr = set()   # target PRs already picked this pass
 skips = {}; picks = {l: [] for l in CODEX}; dep_parks = []; done = []; checked = set(); task_keys = {}; ts = int(time.time())   # after-unlanded -> PARKED-DEP rows this pass
 # Bound network prechecks while allowing skipped rows to backfill lane demand.
 pc_left = max(20, sum(need.values()))
@@ -355,12 +361,12 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re
     key = park_key(raw, ""); task_keys[j] = key
     if noop_parked(noops, j, key, ts): skip(j, "noop-streak"); continue
     if precheck_parked(park_state, j, key, ts): skip(j, "precheck-parked"); continue
-    # dedupe by target PR and target file: sibling lines for the same PR or file would retire as NOOP together
-    fm = re.search(r"\bfile=(\S+)", attrs + " " + text); fkey = (rm.group(1), fm.group(1)) if fm else None
+    # A target PR identifies the same repair; a file alone does not.
     if prp & seen_pr: skip(j, "dup-pr"); continue
-    if fkey and fkey in seen_file: skip(j, "dup-file"); continue
     if j in checked: skip(j, "dup-line"); continue
-    quality_group = single_case_group(j, attrs, text) if quality_active else None
+    quality_group = single_case_group(j, attrs, text)
+    if quality_group and quality_group in completed_groups:
+        skip(j, "acceptance-already-merged"); continue
     if quality_group and quality_group in quality_groups:
         skip(j, "duplicate-single-case-test-file"); continue
     # balance codex lanes: line pool first, else the lane with more unmet need (cmp wins ties)
@@ -379,7 +385,6 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re
     picks[lane].append((j, rm.group(1), lane, tier, attrs, text, i))
     if quality_group: quality_groups.add(quality_group)
     seen_pr |= prp
-    if fkey: seen_file.add(fkey)
 out = []
 for lane in CODEX:
     for j, repo, l, tier, attrs, text, i in picks[lane]:
