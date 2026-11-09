@@ -357,6 +357,13 @@ export function assertCommandAllowed(command: string): void {
     { re: /\bmkfs\b/, why: 'mkfs (filesystem format)' },
     { re: /\bdd\s+if=/, why: 'dd if= (raw device write)' },
     { re: />\s*\/dev\//, why: 'redirect to /dev/ device' },
+    // macOS automation sends outside the send gate (Messages, Mail, any app),
+    // matching the autonomous lane profile's denied executables (sandbox/confine.ts).
+    { re: /\bosascript\b/, why: 'osascript (AppleScript send primitive)' },
+    { re: /\bosacompile\b/, why: 'osacompile (AppleScript send primitive)' },
+    { re: commandWord('shortcuts'), why: 'shortcuts (automation send primitive)' },
+    { re: commandWord('automator'), why: 'automator (automation send primitive)' },
+    { re: commandWord('open'), why: 'open (LaunchServices launch outside the tool)' },
     { re: /\bshutdown\b/, why: 'shutdown' },
     { re: /\breboot\b/, why: 'reboot' },
     // Windows destructive / egress verbs (defense in depth; matched lowercased).
@@ -378,6 +385,16 @@ export function assertCommandAllowed(command: string): void {
       throw new Error(`command refused by deny-list: ${d.why}`);
     }
   }
+}
+
+/**
+ * `name` in command position (line start, after a shell separator or a
+ * command-running prefix, optionally path-qualified), so a common word like
+ * `open` inside an argument or a file name is not refused.
+ */
+function commandWord(name: string): RegExp {
+  return new RegExp(String.raw`(?:^|[;&|(\x60\n]|\$\(|\b(?:xargs|env|exec|nohup|command|time|then|do|else)\s+|\b(?:ba|z|da|k)?sh\s+-c\s+['"]?)\s*(?:\w+=\S*\s+)*(?:[\w.-]*/)*`
+    + name + String.raw`(?=$|[\s;&|)\x60])`);
 }
 
 /** Hostnames that count as "localhost" for the curl/wget egress allow. */

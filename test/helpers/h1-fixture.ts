@@ -33,6 +33,11 @@
  *   before invoking them is sufficient to isolate their state. USERPROFILE is
  *   relocated alongside HOME because os.homedir() uses it on Windows.
  *
+ *   Authority paths (KILL, enrollment, leases, comms pause, config.json) come
+ *   from the ACCOUNT home (src/core/util/real-home.ts), which HOME never moves.
+ *   makeFixture() pins that through the test seam (__setRealHomeForTests) to
+ *   the same tmp dir and restores it in cleanup().
+ *
  *   src/core/config.ts is the ONE exception: it captures CONFIG_DIR /
  *   CONFIG_PATH from homedir() at MODULE-LOAD time. The H1 chain does not depend
  *   on those frozen constants (the daemon tick reads/writes via the call-time
@@ -67,6 +72,7 @@ import {
   isEnrolled,
   setKill,
 } from '../../src/core/sandbox/policy.js';
+import { __restoreRealHomeForTests, __setRealHomeForTests, realHome } from '../../src/core/util/real-home.js';
 
 // ===========================================================================
 // Types
@@ -503,6 +509,9 @@ export function makeFixture(): H1Fixture {
   process.env.HOME = home;
   process.env.USERPROFILE = home;
   process.env.ASHLR_HOME = join(home, '.ashlr');
+  // Authority (KILL, enrollment, leases) resolves from the account home, which
+  // HOME does not move; pin the test seam to the same isolated dir.
+  const prevRealHome = __setRealHomeForTests(home);
   delete process.env.ASHLR_IN_DAEMON;
   delete process.env.ASHLR_IN_SWARM;
 
@@ -518,7 +527,7 @@ export function makeFixture(): H1Fixture {
   // broken on this platform and the fixture MUST NOT proceed (it would risk the
   // real ~/.ashlr). On macOS/Linux homedir() follows $HOME; this guard fails
   // loudly rather than silently mutating real state.
-  if (resolve(homedir()) !== resolve(home)) {
+  if (resolve(homedir()) !== resolve(home) || resolve(realHome()) !== resolve(home)) {
     // Restore + abort. Restore HOME *and* the re-entrancy env (ASHLR_IN_DAEMON /
     // ASHLR_IN_SWARM) symmetrically with cleanup(): the setup above cleared both
     // before this guard, so the abort path must put them back exactly as it found
@@ -534,6 +543,7 @@ export function makeFixture(): H1Fixture {
     else process.env.ASHLR_IN_DAEMON = prevInDaemon;
     if (prevInSwarm === undefined) delete process.env.ASHLR_IN_SWARM;
     else process.env.ASHLR_IN_SWARM = prevInSwarm;
+    __restoreRealHomeForTests(prevRealHome);
     rmSync(home, { recursive: true, force: true });
     throw new Error(
       'H1 fixture: HOME relocation did not take effect (homedir() != tmp HOME); ' +
@@ -588,6 +598,7 @@ export function makeFixture(): H1Fixture {
       else process.env.ASHLR_IN_DAEMON = prevInDaemon;
       if (prevInSwarm === undefined) delete process.env.ASHLR_IN_SWARM;
       else process.env.ASHLR_IN_SWARM = prevInSwarm;
+      __restoreRealHomeForTests(prevRealHome);
     },
   };
 

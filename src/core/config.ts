@@ -2,10 +2,13 @@
  * Config + path constants for ashlr-hub.
  *
  * Handles reading, writing, and defaulting the ~/.ashlr/config.json file.
- * All ~ paths are expanded to the real homedir at module load time.
+ * ~/.ashlr is the ACCOUNT home (util/real-home.ts), not HOME: config.json
+ * carries comms.* owner identity (iMessage handle, Telegram chat and token),
+ * so a child with a relocated HOME must not be able to substitute its own.
  */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { realHome } from './util/real-home.js';
 import { randomUUID } from 'node:crypto';
 import {
   closeSync,
@@ -32,10 +35,11 @@ import { localInferenceConfigProblems, parseLocalInferenceConfig } from './run/l
 // Path constants (exported, resolved immediately)
 // ---------------------------------------------------------------------------
 
+// HOME, not the account home: only the Desktop tidy-rule destinations below use it.
 const HOME = homedir();
 
-/** Absolute path to the hub's config/index home: ~/.ashlr */
-export const CONFIG_DIR: string = join(HOME, '.ashlr');
+/** Absolute path to the hub's config/index home: <account home>/.ashlr. Throws at load without an account home. */
+export const CONFIG_DIR: string = join(realHome(), '.ashlr');
 
 /** Absolute path to the config file: ~/.ashlr/config.json */
 export const CONFIG_PATH: string = join(CONFIG_DIR, 'config.json');
@@ -47,13 +51,12 @@ export const INDEX_PATH: string = join(CONFIG_DIR, 'index.json');
 // Runtime path resolution
 // ---------------------------------------------------------------------------
 // The exported constants above are resolved once at module load for external
-// consumers. The functions below re-resolve from homedir() at call time so a
-// changed HOME (e.g. in tests, or a relocated home dir) is always honored.
-// This keeps the public constants stable while making load/save correct under
-// a moving HOME.
+// consumers. The functions below re-resolve the account home at call time so
+// the test seam (util/real-home.ts) can move it between suites. HOME never
+// moves it.
 
 function resolveConfigDir(): string {
-  return join(homedir(), '.ashlr');
+  return join(realHome(), '.ashlr');
 }
 
 function resolveConfigPath(): string {
@@ -62,8 +65,8 @@ function resolveConfigPath(): string {
 
 /**
  * Absolute path to the M26 self-improvement / meta-learning home:
- * `~/.ashlr/learn`. Re-resolved from `homedir()` at call time so tests that
- * relocate HOME work. This is the ONLY directory `ashlr reflect` writes to for
+ * `~/.ashlr/learn`. Re-resolved from the account home at call time
+ * (test seam honored). This is the ONLY directory `ashlr reflect` writes to for
  * its reports/snapshots — it NEVER writes CONFIG_PATH / router policy / prompts.
  * This function does NOT create the directory; the learn store creates it lazily.
  */
@@ -73,7 +76,7 @@ export function learnDir(): string {
 
 /**
  * Absolute path to the M27 quality / health-review home: `~/.ashlr/quality`.
- * Re-resolved from `homedir()` at call time so tests that relocate HOME work.
+ * Re-resolved from the account home at call time (test seam honored).
  * This is the ONLY directory `ashlr health` writes to for its HealthReport
  * snapshots (trend tracking) — it NEVER writes CONFIG_PATH / router policy /
  * prompts, and NEVER touches a user repo working tree. This function does NOT
@@ -85,7 +88,7 @@ export function qualityDir(): string {
 
 /**
  * Absolute path to the M28 goal planning/tracking home: `~/.ashlr/goals`.
- * Re-resolved from `homedir()` at call time so tests that relocate HOME work.
+ * Re-resolved from the account home at call time (test seam honored).
  * This is the ONLY directory `ashlr goals` writes its planning/tracking data
  * to — it NEVER writes CONFIG_PATH / router policy / prompts, and NEVER touches
  * a user repo working tree. This function does NOT create the directory; the
@@ -97,7 +100,7 @@ export function goalsDir(): string {
 
 /**
  * Absolute path to the M29 portfolio-digest home: `~/.ashlr/digests`.
- * Re-resolved from `homedir()` at call time so tests that relocate HOME work.
+ * Re-resolved from the account home at call time (test seam honored).
  * This is the ONLY directory `ashlr digest` writes to (JSON + markdown digest
  * artifacts for day-over-day trend) — it NEVER writes CONFIG_PATH / router
  * policy / prompts, and NEVER touches a user repo working tree. This function

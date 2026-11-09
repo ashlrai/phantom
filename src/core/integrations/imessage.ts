@@ -29,6 +29,8 @@
 
 import { execFile } from 'node:child_process';
 import { homedir } from 'node:os';
+import { realHome } from '../util/real-home.js';
+import { outsideSendBlock } from '../comms/transport-gate.js';
 import { basename, join } from 'node:path';
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, renameSync, writeFileSync } from 'node:fs';
 import { readPrivateFileCapped } from '../verse/preferences.js';
@@ -103,7 +105,9 @@ export function isVerifiedMasonHandle(handle: string, cfg: AshlrConfig): boolean
 
 export function sendIMessage(
   text: string, cfg: AshlrConfig, to: string = cfg.comms?.imessageHandle ?? '',
-): Promise<{ ok: boolean; reason?: 'not_self' }> {
+): Promise<{ ok: boolean; reason?: 'not_self' | 'blocked' }> {
+  // KILL and pause are checked here, not trusted to callers (transport-gate.ts).
+  if (outsideSendBlock() !== null) return Promise.resolve({ ok: false, reason: 'blocked' });
   if (!isSelfIMessageHandle(to, cfg)) return Promise.resolve({ ok: false, reason: 'not_self' });
   if (!commsEnabled(cfg)) return Promise.resolve({ ok: false });
   if (process.platform !== 'darwin') return Promise.resolve({ ok: false });
@@ -353,7 +357,7 @@ export async function pollInboundSince(afterRowId: number, cfg: AshlrConfig): Pr
 // ---------------------------------------------------------------------------
 
 export function imessageStateDir(runsDir?: string): string {
-  return join(runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs'), 'imessage');
+  return join(runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(realHome(), '.ashlr-runs'), 'imessage');
 }
 
 function writePrivateJson(file: string, value: unknown): void {

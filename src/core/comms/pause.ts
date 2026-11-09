@@ -11,8 +11,8 @@
  */
 
 import { lstatSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { realHome } from '../util/real-home.js';
 import { readPrivateFileCapped } from '../verse/preferences.js';
 
 export interface PauseState {
@@ -21,7 +21,7 @@ export interface PauseState {
 }
 
 function pauseJsonPath(): string {
-  return join(homedir(), '.ashlr', 'comms', 'pause.json');
+  return join(realHome(), '.ashlr', 'comms', 'pause.json');
 }
 
 const MAX_PAUSE_BYTES = 64 * 1024;
@@ -71,7 +71,7 @@ export function loadPauseState(): PauseState {
 
 export function savePauseState(s: PauseState): void {
   try {
-    const dir = join(homedir(), '.ashlr', 'comms');
+    const dir = join(realHome(), '.ashlr', 'comms');
     mkdirSync(dir, { recursive: true });
     writeFileSync(pauseJsonPath(), JSON.stringify(s, null, 2) + '\n', 'utf8');
   } catch { /* best-effort */ }

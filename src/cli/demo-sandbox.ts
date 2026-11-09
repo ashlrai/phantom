@@ -15,7 +15,11 @@
  *     (~/.ashlr/enrollment.json = { repos: [] }) is NEVER touched. The prior
  *     HOME + re-entrancy env (ASHLR_IN_DAEMON / ASHLR_IN_SWARM) are snapshotted
  *     and RESTORED on dispose().
- *   - A sanity guard asserts homedir() resolves to the tmp HOME before the demo
+ *   - Authority (enrollment, KILL, leases, audit) follows the ACCOUNT home, not
+ *     HOME (src/core/util/real-home.ts), so the context also scopes it to the
+ *     tmp HOME with enterIsolatedAuthorityHome(), after refusing to start while
+ *     the account-home KILL is on.
+ *   - A sanity guard asserts homedir() and realHome() resolve to the tmp HOME before the demo
  *     proceeds; if relocation did not take effect it RESTORES + ABORTS rather
  *     than risk mutating the real ~/.ashlr (mirrors makeFixture's guard).
  *   - The throwaway repo is a real git repo under os.tmpdir(), seeded with a
@@ -44,7 +48,8 @@ import {
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
-import { unenroll } from '../core/sandbox/policy.js';
+import { killSwitchOn, unenroll } from '../core/sandbox/policy.js';
+import { enterIsolatedAuthorityHome, realHome } from '../core/util/real-home.js';
 import { sweepRepoSandboxes } from '../core/sandbox/worktree.js';
 
 export interface DemoDisposeResult {
@@ -114,14 +119,23 @@ export function makeDemoContext(opts?: MakeDemoContextOptions): DemoContext {
   // PID in the prefix so concurrent processes (e.g. vitest's parallel forks)
   // never collide in the shared os.tmpdir() and a prefix-scoped sweep can target
   // only its own process's dirs. Real-world hygiene + race-free test cleanup.
+  // KILL is read from the account home BEFORE the demo scopes authority away
+  // from it: an armed KILL stops the demo too.
+  if (killSwitchOn()) {
+    throw new Error('ashlr demo: the kill switch is on; refusing to run');
+  }
   const home = mkdtempSync(join(tmpdir(), `ashlr-h8-demo-home-${process.pid}-`));
   process.env.HOME = home;
   delete process.env.ASHLR_IN_DAEMON;
   delete process.env.ASHLR_IN_SWARM;
+  // Authority (enrollment, KILL, leases, audit) follows the account home, not
+  // HOME, so the demo scopes it to the same throwaway dir explicitly.
+  const leaveAuthorityHome = enterIsolatedAuthorityHome(home);
 
   // Restore env to EXACTLY the snapshotted state. Shared by the abort guard and
   // dispose() so isolation is symmetric and never leaks a cleared var.
   const restoreEnv = (): void => {
+    leaveAuthorityHome();
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;
     if (prevInDaemon === undefined) delete process.env.ASHLR_IN_DAEMON;
@@ -134,7 +148,7 @@ export function makeDemoContext(opts?: MakeDemoContextOptions): DemoContext {
   //    isolation is broken on this platform and we MUST NOT proceed (it would
   //    risk the real ~/.ashlr). Restore env + rm the tmp dir + fail loudly —
   //    exactly as the H1 fixture's guard does.
-  if (resolve(homedir()) !== resolve(home)) {
+  if (resolve(homedir()) !== resolve(home) || resolve(realHome()) !== resolve(home)) {
     restoreEnv();
     try {
       rmSync(home, { recursive: true, force: true });

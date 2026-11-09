@@ -244,9 +244,10 @@ export async function cmdDemo(
     process.once('SIGINT', onSignal);
     process.once('SIGTERM', onSignal);
 
-    // ── Step 3: enroll the DISPOSABLE repo (the explicit gate). Resolves state
-    //    via homedir() at call time, so it writes ONLY into the isolated tmp
-    //    ~/.ashlr and targets ONLY the throwaway repo — never a real path.
+    // ── Step 3: enroll the DISPOSABLE repo (the explicit gate). The demo
+    //    context scoped authority to its tmp home (enterIsolatedAuthorityHome),
+    //    so this writes ONLY into the isolated tmp ~/.ashlr and targets ONLY
+    //    the throwaway repo, never a real path.
     const enrollment = enroll(ctx.repoDir);
     if (enrollment !== undefined && (!enrollment.ok || !enrollment.quiesced)) {
       throw new Error(`ashlr demo: disposable repo enrollment failed: ${enrollment.reason}`);

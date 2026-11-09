@@ -38,6 +38,7 @@
 import { execFile } from 'node:child_process';
 import { lstatSync, mkdirSync, readFileSync, readdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
+import { outsideSendBlock } from './transport-gate.js';
 import { createDraft } from '../cos/drafts.js';
 
 /** Replies larger than this are stuck, not sent — a reply is ack text, not a payload. */
@@ -113,6 +114,8 @@ export interface EmailOutboxSendResult {
   /** Never sent: symlink, oversized, unreadable, or a crashed-run claim. */
   stuck: number;
   details: EmailOutboxSendDetail[];
+  /** Set when KILL or comms pause stopped the pass before it touched the outbox. */
+  blocked?: string;
 }
 
 interface ParsedReply {
@@ -227,6 +230,10 @@ export function readEmailOutbox(dir: string): EmailOutboxListing {
  * `drafted` (someone else's address, awaiting approval), `queued` (claimed by a concurrent run, still pending, never double-sent).
  */
 export async function sendEmailOutbox(opts: EmailOutboxSendOptions): Promise<EmailOutboxSendResult> {
+  // KILL and pause are checked here, not trusted to callers (transport-gate.ts).
+  // Nothing is claimed, drafted or moved while blocked; the next pass resumes.
+  const blocked = outsideSendBlock();
+  if (blocked !== null) return { queued: 0, sent: 0, drafted: 0, refused: 0, failed: 0, stuck: 0, details: [], blocked };
   const sending = join(opts.dir, SENDING_DIR);
   const sentDir = join(opts.dir, SENT_DIR);
   mkdirSync(sending, { recursive: true });
@@ -354,6 +361,8 @@ const MAIL_SCRIPT = [
  */
 export function macMailTransport(runner: OsaScriptRunner = execFileRunner): EmailTransport {
   return async (message) => {
+    const blocked = outsideSendBlock();
+    if (blocked !== null) return { ok: false, error: blocked };
     if (process.platform !== 'darwin') return { ok: false, error: 'mac-mail requires darwin' };
     let ran: MailRunnerResult;
     try {

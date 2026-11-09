@@ -281,8 +281,12 @@ async function handleTelegramText(event: InboundEvent, text: string, cfg: AshlrC
   // M212: pause/resume commands (comms soft-pause).
   if (/^\s*pause(\s+fleet)?\s*$/i.test(text)) {
     const { setPause } = await import('./pause.js');
-    setPause(true);
-    await sendTelegramMessage('⏸ Fleet messages paused. Send "resume" to resume messages.', replyOpts(event), cfg);
+    // Acknowledge first: the transport refuses every send once paused (transport-gate.ts).
+    try {
+      await sendTelegramMessage('⏸ Fleet messages paused. Send "resume" to resume messages.', replyOpts(event), cfg);
+    } finally {
+      setPause(true);
+    }
     return;
   }
   if (/^\s*resume(\s+fleet)?\s*$/i.test(text)) {

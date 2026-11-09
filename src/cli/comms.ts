@@ -34,6 +34,7 @@ import { runChangeDigest, readDigestState, type ChangeDigestResult } from '../co
 import { LEGACY_BRIEFING_KIND, type CommsMigrationSummary } from '../core/comms/migrations.js';
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { realHome } from '../core/util/real-home.js';
 import { join, resolve } from 'node:path';
 import { ashlrHome } from '../core/cloud/store.js';
 import { normalizeEmailDropAddress, readEmailDropConfig, writeEmailDropConfig } from '../core/comms/email-drop-config.js';
@@ -359,7 +360,7 @@ async function cmdCycle(): Promise<number> {
 /** Shared configured email pass, also used by the scheduled comms cycle. */
 async function cmdEmailCycle(): Promise<number> {
   try {
-    const runsDir = join(homedir(), '.ashlr-runs');
+    const runsDir = join(realHome(), '.ashlr-runs');
     const email = await readEmailDropConfig(runsDir);
     if (email.state === 'invalid') {
       console.error(`cycle: email-drop config invalid at ${email.path}`);
@@ -383,6 +384,7 @@ async function cmdEmailCycle(): Promise<number> {
         try {
           const { macMailTransport, sendEmailOutbox } = await import('../core/comms/email-outbox.js');
           const outbox = await sendEmailOutbox({ dir: outDir, allowedRecipients: new Set(from), transport: macMailTransport(), draftsRunsDir: runsDir });
+          if (outbox.blocked) console.error(`cycle: email-outbox not sent: ${outbox.blocked}`);
           console.log(`cycle: email-outbox queued=${outbox.queued} sent=${outbox.sent} refused=${outbox.refused} failed=${outbox.failed} stuck=${outbox.stuck}${outbox.drafted ? ` drafted=${outbox.drafted}` : ''}`);
         } catch {
           console.error('cycle: email-outbox send failed');
@@ -398,7 +400,7 @@ async function cmdEmailCycle(): Promise<number> {
 }
 
 async function cmdSetupEmail(): Promise<number> {
-  const runsDir = join(homedir(), '.ashlr-runs');
+  const runsDir = join(realHome(), '.ashlr-runs');
   const saved = await readEmailDropConfig(runsDir);
   if (saved.state === 'invalid') {
     console.error(`email-drop config invalid at ${saved.path}`);
@@ -767,7 +769,7 @@ async function cmdCommsEmailDrop(args: string[]): Promise<number> {
   };
   try {
     if (saveConfig) {
-      savedConfig = await writeEmailDropConfig(join(homedir(), '.ashlr-runs'), {
+      savedConfig = await writeEmailDropConfig(join(realHome(), '.ashlr-runs'), {
         v: 1, inboxDir: resolve(options.inboxDir), outboxDir: resolve(options.outboxDir),
         processedDir: resolve(options.processedDir), from: [...senders],
         ...(sendReplies ? { sendReplies: true } : {}),

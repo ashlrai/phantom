@@ -6,8 +6,8 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { chmod, lstat, mkdir, open, rename, rm } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
+import { realHome } from '../util/real-home.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { isCommsTransport, type CommsTransport, type StandingApproval } from './policy.js';
 import { parseInboxDocument, type InboxMessage } from './triage.js';
@@ -65,7 +65,7 @@ const noFollow = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW
 
 export function commsRunsRoot(override?: string): string {
   if (override && override.trim()) return override;
-  return process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  return process.env.ASHLR_RUNS_DIR ?? join(realHome(), '.ashlr-runs');
 }
 
 export function commsDir(runsDir: string): string {
@@ -73,7 +73,7 @@ export function commsDir(runsDir: string): string {
 }
 
 /** Owner-only. Callers cannot point this at another directory. */
-export function ownerApprovalsPath(home: string = homedir()): string {
+export function ownerApprovalsPath(home: string = realHome()): string {
   return join(home, '.ashlr', 'comms-agent', 'standing-approvals.json');
 }
 
@@ -301,9 +301,10 @@ function parseApprovals(text: string): OwnerApprovals {
 
 /** Read the fixed owner file. A missing file grants nothing. An unsafe file is refused. */
 export async function readOwnerApprovals(): Promise<OwnerApprovals> {
-  const file = ownerApprovalsPath();
+  const home = realHome();
+  const file = ownerApprovalsPath(home);
   let walked: 'missing' | 'ok';
-  try { walked = await walkNoSymlink(homedir(), file); }
+  try { walked = await walkNoSymlink(home, file); }
   catch (error) {
     if (error instanceof Error && error.message === 'Refusing a symlink.') {
       return { approvals: [], owners: [], accepted: false, reason: 'symlink' };

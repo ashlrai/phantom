@@ -73,6 +73,7 @@ import { hasResetDeadline, opportunityPriority } from '../routing/reset-pressure
 import type { ResourceChoiceCandidate, AccountSchedulingView } from '../routing/scheduling-types.js';
 import type { WorkHistorySample } from '../routing/work-estimates.js';
 import { isAbsolute, join, resolve } from 'node:path';
+import { realHome } from '../util/real-home.js';
 import { fleetPaceAdvice } from '../usage/sensor-pace.js';
 import { parseUsageSensorSnapshot, presentUsageSensors } from '../usage/sensor-reading.js';
 
@@ -711,7 +712,7 @@ async function insightsDefault(): Promise<ReasoningInsight[]> {
 async function loadSchedulerPace(nowMs: number): Promise<{ nowMs: number; killed: boolean; sensorPace: ReturnType<typeof fleetPaceAdvice> }> {
   let killed = false;
   try {
-    const mark = await lstat(join(homedir(), '.ashlr', 'KILL'));
+    const mark = await lstat(join(realHome(), '.ashlr', 'KILL'));
     killed = mark.isFile() && !mark.isSymbolicLink();
   } catch { killed = false; }
   const root = process.env['ASHLR_HOME'] && isAbsolute(process.env['ASHLR_HOME']) ? process.env['ASHLR_HOME'] : join(homedir(), '.ashlr');

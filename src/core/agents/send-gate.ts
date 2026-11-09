@@ -1,8 +1,7 @@
 /** Fail-closed gates for local probes and outbound agent sends. Never delivers. */
-import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { isPaused } from '../comms/pause.js';
-import { killSwitchOn } from '../sandbox/policy.js';
+import { realHome } from '../util/real-home.js';
+import { outsideSendBlock } from '../comms/transport-gate.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { scrubSecrets } from '../util/scrub.js';
 import {
@@ -11,13 +10,14 @@ import {
 } from './channel-policy.js';
 
 export function localWriteGate(): DeliverResult | null {
-  if (killSwitchOn()) return { status: 'refused', reason: 'Kill switch is on.' };
-  if (isPaused()) return { status: 'refused', reason: 'Communications are paused.' };
-  return null;
+  const reason = outsideSendBlock();
+  return reason === null ? null : { status: 'refused', reason };
 }
 
+/** Team identities and the owner confirmation, read from the account home. Unreadable grants nothing. */
 export function readLocalSendPolicy(): { teamIdentities: TeamIdentity[]; confirmedByMason: boolean } {
-  const directory = join(homedir(), '.ashlr');
+  let directory: string;
+  try { directory = join(realHome(), '.ashlr'); } catch { return { teamIdentities: [], confirmedByMason: false }; }
   const read = (name: string): string => {
     const result = readStableRegularFile(join(directory, name), {
       anchorPath: directory, maxFileBytes: 64 * 1024, remainingBytes: 64 * 1024,

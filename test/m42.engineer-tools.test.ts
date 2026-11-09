@@ -377,6 +377,16 @@ describe('assertCommandAllowed (deny-list)', () => {
     expect(() => assertCommandAllowed('echo aGk= | base64 -d')).toThrow(/deny-list/);
   });
 
+  it('rejects osascript, osacompile and open in command position, not the word open in arguments', () => {
+    expect(() => assertCommandAllowed('osascript -e "1"')).toThrow(/osascript/);
+    expect(() => assertCommandAllowed('echo x | osacompile -o /tmp/a.scpt')).toThrow(/osacompile/);
+    expect(() => assertCommandAllowed('open https://example.com')).toThrow(/open/);
+    expect(() => assertCommandAllowed('xargs open < list')).toThrow(/open/);
+    expect(() => assertCommandAllowed('cat open.txt')).not.toThrow();
+    expect(() => assertCommandAllowed('grep -rn open src')).not.toThrow();
+    expect(() => assertCommandAllowed('git commit -m "reopen the issue"')).not.toThrow();
+  });
+
   it('rejects ln -s (symlink-escape primitive)', () => {
     expect(() => assertCommandAllowed('ln -s /Users/victim/.ssh evil')).toThrow(/deny-list/);
   });
@@ -479,6 +489,22 @@ describe('bash (runBash)', () => {
 
   it('refuses a deny-listed command without spawning', async () => {
     const out = await callEngineerTool('bash', { command: 'git push' }, fullCtx());
+    expect(out).toContain('deny-list');
+  });
+
+  // RQ-SEC-REALHOME-1: AppleScript and LaunchServices reach Messages and Mail
+  // outside the send gate, so the engineer shell refuses them like the lane profile.
+  it.each([
+    'osascript -e \'tell application "Messages" to send "x" to buddy "y"\'',
+    '/usr/bin/osascript /tmp/send.scpt',
+    'osacompile -o /tmp/x.scpt /tmp/x.applescript',
+    'open -a Mail',
+    'ls && /usr/bin/open mailto:x@example.com',
+    'bash -c "open -a Messages"',
+    'FOO=1 open .',
+    'shortcuts run Send',
+  ])('refuses the macOS send primitive %s without spawning', async (command) => {
+    const out = await callEngineerTool('bash', { command }, fullCtx());
     expect(out).toContain('deny-list');
   });
 

@@ -44,8 +44,8 @@
 
 import { readEnvironmentCredential } from './secrets.js';
 import { lstatSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { realHome } from '../util/real-home.js';
 import type { DepEdge } from './dep-parser.js';
 import {
   acquireOutwardMutationFence,
@@ -199,7 +199,7 @@ function resolveReadPat(explicit?: string): string | null {
 /** Match policy.killSwitchOn(): only a proven ENOENT is permissive. */
 function globalKillSwitchOn(): boolean {
   try {
-    lstatSync(join(homedir(), '.ashlr', 'KILL'));
+    lstatSync(join(realHome(), '.ashlr', 'KILL'));
     return true;
   } catch (error) {
     return (error as NodeJS.ErrnoException).code !== 'ENOENT';

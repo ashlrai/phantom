@@ -61,6 +61,9 @@ function run(argv: string[]): ReturnType<typeof spawnSync> {
       ASHLR_HOME: join(home, '.ashlr'),
       NO_COLOR: '1',
       NODE_NO_WARNINGS: '1',
+      // Keep the test seam (test/setup/home.ts) so authority resolves under this HOME, not the account home.
+      VITEST: process.env['VITEST'] ?? '',
+      NODE_OPTIONS: process.env['NODE_OPTIONS'] ?? '',
     },
   });
 }

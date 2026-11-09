@@ -1,6 +1,7 @@
 /** iMessage outbox: owner and locally registered agents send directly. */
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { realHome } from '../util/real-home.js';
+import { outsideSendBlock } from './transport-gate.js';
 import { commsEnabled, isSelfIMessageHandle, sendIMessage } from '../integrations/imessage.js';
 import { readPrivateFileCapped } from '../verse/preferences.js';
 import type { AshlrConfig } from '../types.js';
@@ -15,7 +16,7 @@ async function isAgentTeammate(to: string): Promise<boolean> {
   try {
     // The registry confers send authority, so it gets the same verified read as
     // every other authority file: no symlinks, regular file only, bounded size.
-    const read = readPrivateFileCapped(join(homedir(), '.phantom', 'agents', 'teammates.json'), TEAMMATES_MAX_BYTES);
+    const read = readPrivateFileCapped(join(realHome(), '.phantom', 'agents', 'teammates.json'), TEAMMATES_MAX_BYTES);
     if (!read || read.truncated) return false;
     const entries: unknown = JSON.parse(read.text);
     return Array.isArray(entries) && entries.some((entry: unknown) => {
@@ -31,8 +32,9 @@ async function isAgentTeammate(to: string): Promise<boolean> {
 
 export async function sendIMessageOutbox(text: string, cfg: AshlrConfig, to: string): Promise<{
   ok: boolean;
-  reason?: 'not_self' | 'drafts_unavailable';
+  reason?: 'not_self' | 'drafts_unavailable' | 'blocked';
 }> {
+  if (outsideSendBlock() !== null) return { ok: false, reason: 'blocked' };
   if (isSelfIMessageHandle(to, cfg)) return sendIMessage(text, cfg, to);
   if (!await isAgentTeammate(to)) return { ok: false, reason: 'drafts_unavailable' };
   if (!commsEnabled(cfg)) return { ok: false };

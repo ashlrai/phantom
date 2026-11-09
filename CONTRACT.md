@@ -70,9 +70,11 @@ export interface TidyPlan { moves: TidyMove[]; skipped: { path: string; reason: 
 ## src/core/config.ts — config + path constants
 
 Responsibility: own `~/.ashlr/`, load/save config, provide defaults seeded from the real Desktop layout.
+`~` here is the ACCOUNT home from `src/core/util/real-home.ts` (`os.userInfo().homedir`),
+not `HOME`: config.json carries comms owner identity, so a relocated `HOME` must not replace it.
 
 ```ts
-export const CONFIG_DIR: string;                 // ~/.ashlr
+export const CONFIG_DIR: string;                 // <account home>/.ashlr (realHome(), never HOME)
 export const CONFIG_PATH: string;                // ~/.ashlr/config.json
 export const INDEX_PATH: string;                 // ~/.ashlr/index.json
 export function defaultConfig(): AshlrConfig;     // seed roots/categories/keepers/tidyRules, resolve tool paths
@@ -80,7 +82,37 @@ export function loadConfig(): AshlrConfig;        // read CONFIG_PATH; create di
 export function saveConfig(c: AshlrConfig): void; // write CONFIG_PATH (mkdir -p CONFIG_DIR)
 ```
 
-Imports: `node:os`, `node:fs`, `node:path`, `./types.js`.
+Imports: `node:os`, `node:fs`, `node:path`, `./types.js`, `./util/real-home.js`.
+
+---
+
+## src/core/util/real-home.ts: account home for authority
+
+Responsibility: the one resolver for operator authority paths (KILL, outward fence,
+execution leases, comms pause, send policy, owner and team identity, standing approvals,
+outbox recipients). No environment variable moves it (HOME, USERPROFILE, ASHLR_HOME,
+ASHLR_RUNS_DIR). win32 falls back to `os.homedir()` (documented follow-up).
+
+```ts
+export function realHome(): string;                   // os.userInfo().homedir; throws if not absolute
+export function canonicalRealHome(): string | null;   // resolve(realHome()) or null; callers fail closed
+/** @internal */ export function __setRealHomeForTests(home: string | 'homedir' | null): RealHomeTestOverride | null; // throws unless VITEST
+/** @internal */ export function __restoreRealHomeForTests(previous: RealHomeTestOverride | null): void;
+export function enterIsolatedAuthorityHome(home: string): () => void; // in-process scope for `phm demo` only
+export function isolatedAuthorityHomeActive(): boolean;
+```
+
+`enterIsolatedAuthorityHome` is a function call, not an environment variable, so no
+child can select it. `phm demo` (src/cli/demo-sandbox.ts) refuses to start while the
+account-home KILL is on, then scopes authority to its throwaway home so the demo's
+enrollment and audit never touch the operator's ~/.ashlr. Every outside transport is
+blocked while a scope is active.
+
+The outside transports check KILL and comms pause themselves through
+`outsideSendBlock(): string | null` (`src/core/comms/transport-gate.ts`, fail closed).
+A refused send reports it: `sendIMessage` / `sendIMessageOutbox` return `reason: 'blocked'`,
+`sendTelegramMessage` returns `blocked: true`, `sendEmailOutbox` returns `blocked: <reason>`
+and `macMailTransport` returns `{ ok: false, error: <reason> }`, each without spawning or a request.
 
 ---
 

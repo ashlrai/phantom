@@ -248,13 +248,16 @@ async function handleManagerApproval(req: CommsRequest, cfg: AshlrConfig): Promi
     // SAFETY: the flag is honored by the comms dispatch cycle (runCommsCycle
     // short-circuits while paused); it sets DIRECTION only and triggers no
     // merge/push/destructive op. Resolved via "resume" text or setPause(false).
+    // Acknowledge first: the transport refuses every send once paused
+    // (transport-gate.ts). The pause is saved whether or not the reply lands.
     try {
-      savePauseState({ paused: true, since: Date.now() });
       const { loadProposal } = await import('../inbox/store.js');
       const proposal = loadProposal(proposalId);
       await sendReply(`Fleet paused${proposal ? ` — "${proposal.title}" stays pending` : ''}. Text "resume" to restart.`, cfg);
     } catch {
       // Best-effort.
+    } finally {
+      savePauseState({ paused: true, since: Date.now() });
     }
     return;
   }

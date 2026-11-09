@@ -39,6 +39,7 @@ import { existsSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { outsideSendBlock } from '../comms/transport-gate.js';
 import { readPrivateFileCapped } from '../verse/preferences.js';
 import { scrubSecrets } from '../util/scrub.js';
 import type { AshlrConfig } from '../types.js';
@@ -73,6 +74,8 @@ export interface TelegramSendOpts {
 
 export interface TelegramSendResult {
   ok: boolean;
+  /** Refused before any request because KILL or comms pause is on (or unreadable). */
+  blocked?: true;
   /** Validated Bot API error metadata; descriptions/credential-bearing URLs stay internal. */
   errorCode?: number;
   retryAfterSeconds?: number;
@@ -707,6 +710,8 @@ export async function sendTelegramMessage(
   opts?: TelegramSendOpts,
   cfg?: AshlrConfig,
 ): Promise<TelegramSendResult> {
+  // KILL and pause are checked here, not trusted to callers (transport-gate.ts).
+  if (outsideSendBlock() !== null) return { ok: false, blocked: true };
   if (!cfg || !telegramEnabled(cfg)) return { ok: false };
 
   const token = resolveToken(cfg);

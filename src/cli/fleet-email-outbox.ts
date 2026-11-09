@@ -1,5 +1,5 @@
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { realHome } from '../core/util/real-home.js';
 import { readEmailDropConfig } from '../core/comms/email-drop-config.js';
 import { macMailTransport, readEmailOutbox, sendEmailOutbox, type EmailTransport } from '../core/comms/email-outbox.js';
 import {
@@ -74,13 +74,13 @@ export async function cmdFleetEmailOutbox(args: string[], deps: FleetEmailOutbox
     // Numeric strings pass through as numbers; anything else reaches the parser as a string and is rejected there.
     const parsed = parseFleetEmailOutboxArgs(limit === undefined ? {} : { limit: /^\d+$/.test(limit) ? Number(limit) : limit });
     if (!parsed) return badUsage(`--limit requires an integer from 1 to ${MAX_FLEET_EMAIL_OUTBOX_ENTRIES}`);
-    const report = await readFleetEmailOutbox(parsed, { runsDir: deps.runsDir ?? join(homedir(), '.ashlr-runs') });
+    const report = await readFleetEmailOutbox(parsed, { runsDir: deps.runsDir ?? join(realHome(), '.ashlr-runs') });
     printMetadataReport(report, json);
     return metadataExitCode(report.sourceState);
   }
   if (limit !== undefined) return badUsage('--limit requires --metadata-only');
 
-  const config = await readEmailDropConfig(deps.runsDir ?? join(homedir(), '.ashlr-runs'));
+  const config = await readEmailDropConfig(deps.runsDir ?? join(realHome(), '.ashlr-runs'));
   if (config.state === 'invalid') {
     if (json) console.log(JSON.stringify({ error: `invalid email-drop config at ${config.path}` }));
     else console.error(`email-outbox: invalid email-drop config at ${config.path}`);
@@ -114,7 +114,7 @@ export async function cmdFleetEmailOutbox(args: string[], deps: FleetEmailOutbox
       dir: outboxDir,
       allowedRecipients: new Set(allowed),
       transport: deps.transport ?? macMailTransport(),
-      draftsRunsDir: deps.runsDir ?? join(homedir(), '.ashlr-runs'),
+      draftsRunsDir: deps.runsDir ?? join(realHome(), '.ashlr-runs'),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -123,8 +123,9 @@ export async function cmdFleetEmailOutbox(args: string[], deps: FleetEmailOutbox
     return 1;
   }
   if (json) console.log(JSON.stringify({ dir: outboxDir, ...result }));
+  else if (result.blocked) console.error(`email-outbox: not sent: ${result.blocked}`);
   else console.log(`email-outbox: queued=${result.queued} sent=${result.sent} refused=${result.refused} failed=${result.failed} stuck=${result.stuck}${result.drafted ? ` drafted=${result.drafted}` : ''}`);
-  return result.failed > 0 || result.stuck > 0 || result.refused > 0 ? 1 : 0;
+  return result.blocked || result.failed > 0 || result.stuck > 0 || result.refused > 0 ? 1 : 0;
 }
 
 /** Config problems exit 2 (like the listing); an unreadable or missing outbox exits 1. */

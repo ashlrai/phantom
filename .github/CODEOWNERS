@@ -1007,6 +1007,7 @@
 /test/proposal-spans.test.ts @masonwyatt23
 /test/protected-paths-310b.test.ts @masonwyatt23
 /test/quarantine-ledger.test.ts @masonwyatt23
+/test/real-home-authority.test.ts @masonwyatt23
 /test/receipt-key.test.ts @masonwyatt23
 /test/receipt-later-hooks.test.ts @masonwyatt23
 /test/recut-loop-attempts.test.ts @masonwyatt23

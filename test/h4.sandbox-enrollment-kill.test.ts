@@ -109,6 +109,7 @@ import { applyProposal } from '../src/core/inbox/apply.js';
 import { setStatus } from '../src/core/inbox/store.js';
 import type { StreamSink } from '../src/core/run/streaming.js';
 import type { AuditEntry } from '../src/core/types.js';
+import { __restoreRealHomeForTests, __setRealHomeForTests } from '../src/core/util/real-home.js';
 
 // A no-op sink — the abort paths log to it but we assert on the returned run.
 const sink: StreamSink = () => {};
@@ -708,11 +709,14 @@ describe('H4 · ENROLLMENT · default-empty registry', () => {
     mkdirSync(alternateHome, { mode: 0o700 });
     process.env.HOME = alternateHome;
     process.env.USERPROFILE = alternateHome;
+    // Authority follows the account home, not HOME (RQ-SEC-REALHOME-1): move the seam too.
+    const pinnedHome = __setRealHomeForTests(alternateHome);
     try {
       const differentRoot = withPlatform('win32', () => acquireOutwardMutationFence(100));
       expect(differentRoot).not.toBeNull();
       releaseOutwardMutationFence(differentRoot);
     } finally {
+      __restoreRealHomeForTests(pinnedHome);
       if (originalHome === undefined) delete process.env.HOME;
       else process.env.HOME = originalHome;
       if (originalUserProfile === undefined) delete process.env.USERPROFILE;

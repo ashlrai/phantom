@@ -34,8 +34,8 @@ import {
   type Stats,
 } from 'node:fs';
 import { lstat as lstatAsync, readdir as readdirAsync, realpath as realpathAsync } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { basename, dirname, isAbsolute, join, resolve, win32 } from 'node:path';
+import { basename, dirname, join, resolve, win32 } from 'node:path';
+import { canonicalRealHome } from '../util/real-home.js';
 import {
   currentProcessStartIdentity,
   type ProcessStartIdentitySource,
@@ -73,16 +73,6 @@ import { audit } from './audit.js';
 // ---------------------------------------------------------------------------
 // Path helpers (re-resolved at call time so tests can relocate HOME)
 // ---------------------------------------------------------------------------
-
-function canonicalHome(): string | null {
-  try {
-    const home = homedir();
-    if (typeof home !== 'string' || home.length === 0 || !isAbsolute(home)) return null;
-    return resolve(home);
-  } catch {
-    return null;
-  }
-}
 
 function canonicalWindowsPath(value: string, foldCase: boolean): string | null {
   let normalized = win32.normalize(value);
@@ -269,7 +259,7 @@ export function canonicalEnrollmentPathAsync(value: string): Promise<string | nu
 }
 
 function ashlrDir(): string {
-  const home = canonicalHome();
+  const home = canonicalRealHome();
   if (!home) throw new Error('invalid home directory for policy authority');
   return join(home, '.ashlr');
 }
@@ -433,7 +423,7 @@ function readAshlrDirectorySnapshot(): AuthorityDirectorySnapshot {
   if (!safeAuthorityDirectory(identity)) return { state: 'unsafe' };
   if (process.platform !== 'win32') return { state: 'safe', identity };
 
-  const home = canonicalHome();
+  const home = canonicalRealHome();
   if (!home || !assurePrivateStoragePath(
     ashlrDir(),
     'directory',
@@ -558,7 +548,7 @@ function assureAshlrDir(): boolean {
       chmodSync(dir, 0o700);
       return true;
     }
-    const home = canonicalHome();
+    const home = canonicalRealHome();
     if (!home || !assurePrivateStoragePath(
       dir,
       'directory',
@@ -1778,7 +1768,7 @@ function auditKill(on: boolean, result: PolicyMutationResult): void {
   // we audit the requested intent). repo is null (not repo-scoped); summary is
   // metadata only. audit() swallows its own errors, so the "never throws"
   // contract of setKill is preserved.
-  if (canonicalHome()) {
+  if (canonicalRealHome()) {
     audit({
       action: on ? 'kill:on' : 'kill:off',
       repo: null,
@@ -2033,7 +2023,7 @@ export function enroll(
   // H6 (§A.2): audit AFTER the (idempotent) write so a no-op re-enroll STILL
   // records the requested intent. The repo abs path is metadata, never a secret;
   // audit() swallows its own errors so enroll's "never throws" contract holds.
-  if (canonicalHome()) {
+  if (canonicalRealHome()) {
     audit({
       action: 'enroll:add',
       repo: abs ?? lexical,
@@ -2128,7 +2118,7 @@ function auditUnenroll(abs: string | null, lexical: string, result: PolicyMutati
   // H6 (§A.2): audit AFTER the (idempotent) write so a no-op unenroll STILL
   // records the requested intent. Metadata only (abs path is not a secret);
   // audit() swallows its own errors so unenroll's "never throws" contract holds.
-  if (canonicalHome()) {
+  if (canonicalRealHome()) {
     audit({
       action: 'enroll:remove',
       repo: abs ?? lexical,

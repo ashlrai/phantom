@@ -20,8 +20,8 @@ import {
   writeSync,
   type BigIntStats,
 } from 'node:fs';
-import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { realHome } from '../util/real-home.js';
 
 import type { AshlrConfig } from '../types.js';
 import { fsyncDirectory } from '../util/durability.js';
@@ -206,7 +206,7 @@ function exactPrivateDirectory(path: string): boolean {
 
 function canonicalHome(): string | null {
   try {
-    const requested = resolve(homedir());
+    const requested = resolve(realHome());
     const canonical = realpathSync(requested);
     return requested === canonical ? canonical : null;
   } catch {
@@ -550,7 +550,7 @@ function immutableReleaseReason(context: GoalConductorActivationContext, revisio
     || context.buildIdentity.revision !== revision) {
     return 'goal-conductor-runtime-build-identity-not-exact-github-actions-release';
   }
-  const canonicalHome = realpathSync(resolve(homedir()));
+  const canonicalHome = realpathSync(resolve(realHome()));
   const expectedRoot = join(canonicalHome, '.local', 'share', 'ashlr', 'releases', revision);
   if (context.releaseTree.path !== expectedRoot || basename(context.releaseTree.path) !== revision) {
     return 'goal-conductor-runtime-is-not-exact-installed-release';
@@ -895,7 +895,7 @@ const permitPublicationCodec: ImmutablePrivateRecordCodec<GoalConductorActivatio
 };
 
 export function goalConductorPermitPublicationRootPath(): string {
-  return join(homedir(), '.ashlr', 'control', PUBLICATION_ROOT_NAME);
+  return join(realHome(), '.ashlr', 'control', PUBLICATION_ROOT_NAME);
 }
 
 function permitPublicationConfig(
