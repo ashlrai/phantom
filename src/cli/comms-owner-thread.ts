@@ -45,6 +45,7 @@ export async function cmdCommsOwnerStatus(json: boolean, options = ownerThreadOp
   console.log(`kill: ${status.kill}  paused: ${status.paused}`);
   for (const adapter of status.adapters) {
     console.log(`  ${adapter.id}: ${adapter.enabled ? 'enabled' : 'disabled'} — ${adapter.reason}`);
+    if (adapter.nextStep !== null) console.log(`    next: ${adapter.nextStep}`);
   }
   return 0;
 }
