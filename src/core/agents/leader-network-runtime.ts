@@ -98,12 +98,35 @@ export async function composeLeaderInbox(text: string, options: LeaderRuntimeOpt
     sender: { agent_id: 'mason', vendor: 'phantom', human: true, team: true }, external: false,
   }, verifiedSender: LOCAL_LEADER_IDENTITY });
   if (result.status !== 'accepted' && result.status !== 'duplicate' && !result.recorded) return { ok: false as const, reason: result.reason ?? 'Leader inbox is unavailable or local-owner is not verified.', status: result.status };
+  await noteUnifiedOwner('desktop', LOCAL_LEADER_IDENTITY.id, text, `desk-${(result.requestId ?? 'local').slice(0, 64)}`, at, options, 'local-owner');
   return { ok: true as const, at: new Date(at).toISOString(), id: result.requestId, bytes: Buffer.byteLength(text), mirror: result.recorded ? 'pending' as const : 'published' as const };
+}
+
+/** Circular with the owner-thread store, which calls back into this runtime's leader network. */
+async function noteUnifiedOwner(channel: 'desktop' | 'telegram' | 'email' | 'imessage' | 'slack', senderId: string, text: string, idempotencyKey: string, at: number, options: LeaderRuntimeOptions, channelRef?: string): Promise<void> {
+  try {
+    const [{ noteOwnerReceipt }, { loadOwnerThreadSettings }] = await Promise.all([
+      import('../comms/owner-thread.js'),
+      import('../comms/owner-channel.js'),
+    ]);
+    const key = idempotencyKey.replace(/[^A-Za-z0-9._:-]/g, '').slice(0, 80);
+    await noteOwnerReceipt({
+      channel, senderId, text, idempotencyKey: key.length >= 8 ? key : `receipt-${key}`.padEnd(8, '0'), at,
+      ...(channelRef ? { channelRef } : {}),
+    }, {
+      runsDir: runsRoot(options), busRoot: options.busRoot, now: options.now,
+      settings: loadOwnerThreadSettings(options.configDir ?? join(homedir(), '.ashlr')),
+    });
+  } catch { /* A unified-thread miss never unwrites the leader receipt. */ }
 }
 
 /** Called after an existing authenticated receiver has durably written INBOX.
  * iMessage intentionally stays local and never enters the bus. */
 export async function receiptLeaderChannel(envelope: ChannelEnvelope, options: LeaderRuntimeOptions = {}): Promise<'published' | 'ignored' | 'failed'> {
+  if (envelope.channel === 'telegram' || envelope.channel === 'email' || envelope.channel === 'imessage') {
+    const at = Date.parse(envelope.receivedAt);
+    await noteUnifiedOwner(envelope.channel, envelope.verifiedSenderId, envelope.body, envelope.dedupeKey, Number.isNaN(at) ? (options.now ?? Date.now)() : at, options, envelope.threadId);
+  }
   if (envelope.channel !== 'telegram' && envelope.channel !== 'email') return 'ignored';
   const sources = leaderNetworkSources(options);
   const identity: TeamIdentity = { channel: envelope.channel, id: envelope.verifiedSenderId };
