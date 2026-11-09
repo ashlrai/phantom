@@ -49,6 +49,7 @@ fi
 { cat; cat <<'F'
 
 RULES: You are working in a fresh git worktree of ashlrai/REPO_ at its default branch. Work autonomously to a complete, tested, shippable change; be ambitious and high-leverage, and delete dead code you find in the area you touch. Add or update tests and run the repo's typecheck, lint and the touched tests (use a temporary HOME for any test run, e.g. HOME=$(mktemp -d); for cargo keep RUSTUP_HOME/CARGO_HOME pointing at the real toolchain). Never weaken, skip or delete tests to go green, and never weaken security controls. Without a security pass, do not add widened workflow permissions or id-token, new secrets.* refs, pull_request_target or workflow_run triggers, or third-party actions not pinned to a 40-hex commit SHA; other .github/**, CODEOWNERS and release config edits are allowed. Never print secrets or tokens. Do NOT commit, push, tag or publish: leave every change uncommitted in the worktree. When done, write BRIDGE_NOTES.md at the worktree root with a summary, commands run, pass/fail counts and net LOC.
+If the full goal cannot be verified, ship the smallest correct, useful part with honest output (for example, age: unknown) and list the gap in BRIDGE_NOTES.md for the PR body. Use EMPTY only when already done or truly impossible.
 F
 [ "$NOWT" = 1 ] && echo "NOTE: this worktree is index-only (no files on disk, by design). Read files with git show HEAD:<path>. Do not change code; this job only decides and closes PRs."
 } | sed "s/REPO_/$REPO/" > $R/$J.prompt

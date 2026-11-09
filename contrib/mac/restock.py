@@ -166,7 +166,9 @@ def prompt_body(j, repo, l, tier, attrs, text, gate=None):
     return (f"Job {j} (pool {l}, tier {tier}, repo {repo}). Task from the Ashlr router queue, verbatim:\n\n"
             f"{gate_line}{j} ({attrs}): {text}\n\n"
             "Treat the task as the minimum: be ambitious and high-leverage, and finish one complete, self-contained, mergeable change "
-            "that meets every acceptance item above, with new or updated tests that you run. Never print environment variables, secrets or tokens; "
+            "with new or updated tests that you run. If the full goal cannot be verified, ship the smallest correct, useful part with honest output "
+            "(for example, age: unknown) and list the gap in BRIDGE_NOTES.md for the PR body. Use EMPTY only when already done or truly impossible. "
+            "Never print environment variables, secrets or tokens; "
             "solve any secrets need through Phantom Secrets and any MCP/CLI access need through Locus. Do not commit or push, and do not edit .github/."
             f"{pin_line}")
 noops = load_noops(); seen_pr = set(); seen_file = set()   # seen_*: PRs / target files already picked this pass
