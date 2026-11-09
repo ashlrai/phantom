@@ -21,6 +21,7 @@
 import { estimatedCreditValue, formatNativeCreditUnits, nativeCreditBalanceTitle, CODEX_CREDIT_VALUE_SOURCE, CODEX_CREDIT_VALUE_CHECKED } from './codex-credit-value.js';
 import type { BudgetMode } from '../../../../core/routing/types.js';
 import { Button } from '../../../components/primitives/Button.js';
+import { readingAge } from './reading-age.js';
 import { relativePhrase } from '../context/context-model.js';
 import { accountActions, type AccountAction } from '../apps/apps-model.js';
 import { MonogramTile } from '../apps/MonogramTile.js';
@@ -162,7 +163,7 @@ export function ResourceCard({ row, status, display, settled, mode, busy, onActi
       <StatusLine status={status} />
       {display ? <p className={styles.subtle} data-resource-usage-label>{display.usage.label}</p> : null}
       {display?.usage.state === 'missing' ? <WorldReadingLine seatId={row.seatId} engine={row.engine} /> : null}
-      {display?.usage.observedAt && display.usage.state !== 'historical' ? <p className={styles.stamp}>Usage observed <time dateTime={display.usage.observedAt} title={display.usage.observedAt}>{new Date(display.usage.observedAt).toLocaleString()}</time></p> : null}
+      {display ? <p className={styles.stamp}>{display.usage.observedAt ? <time dateTime={display.usage.observedAt} title={display.usage.observedAt}>{readingAge(display.usage.observedAt)}</time> : 'Reading age unknown'}</p> : null}
       {creditText !== null ? <p className={styles.subtle}>{creditText}</p> : null}
       {!creditCurrent && row.engine === 'codex' && row.creditState !== undefined && row.creditState !== 'unknown' ? <p className={styles.subtle}>Credits unconfirmed · current balance and availability are unknown.</p> : null}
       {display?.connection.checkedAt ? <p className={styles.stamp}><span>Connection </span><time dateTime={display.connection.checkedAt} title={display.connection.checkedAt}>{connectionPhrase ? `checked ${connectionPhrase}` : 'check time unconfirmed'}</time></p>

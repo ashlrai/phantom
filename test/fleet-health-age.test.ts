@@ -82,6 +82,32 @@ describe('fleet health-age', () => {
     const service = vi.fn().mockResolvedValue({ state: 'loaded', lastExitCode: 0, diagnostic: 'OK' });
     expect(await cmdFleetHealthAge(['--service'], { runsDir, now: () => now() + 3600_000, service })).toBe(1);
   });
+  it('reports recent log errors and uncertain evidence without exposing contents', async () => {
+    mkdirSync(join(runsDir, 'guardian'));
+    writeFileSync(join(runsDir, 'supervisor/status-main-guardian.md'), '# Main guardian status (2026-11-03 11:59:00)\n');
+    const log = join(runsDir, 'guardian/guardian.log');
+    const fixture = [
+      '2026-11-03 11:00:00 ERROR private detail',
+      '2026-11-01 11:00:00 failed old',
+      '2026-11-03 12:01:00 failure future',
+      'error without a timestamp',
+      '2026-11-03 11:59:00 normal',
+    ].join('\n');
+    writeFileSync(log, fixture);
+    expect(await cmdFleetHealthAge(['--log', '--json'], { runsDir, now })).toBe(1);
+    const output = vi.mocked(console.log).mock.lastCall![0] as string;
+    expect(JSON.parse(output).log).toEqual({ source: 'healthy', windowSeconds: 86400, recentErrors: 1, unparseableErrors: 2 });
+    expect(output).not.toContain('private detail');
+    expect(readFileSync(log, 'utf8')).toBe(fixture);
+    writeFileSync(log, '2026-11-03 11:59:00 normal\n');
+    expect(await cmdFleetHealthAge(['--log', '--json'], { runsDir, now })).toBe(0);
+    rmSync(log);
+    expect(await cmdFleetHealthAge(['--log', '--json'], { runsDir, now })).toBe(1);
+    expect(JSON.parse(vi.mocked(console.log).mock.lastCall![0]).log).toMatchObject({ source: 'missing', recentErrors: null });
+    mkdirSync(log);
+    expect(await cmdFleetHealthAge(['--log', '--json'], { runsDir, now })).toBe(1);
+    expect(JSON.parse(vi.mocked(console.log).mock.lastCall![0]).log.source).toBe('degraded');
+  });
   it('reports unsupported systems and failed probes as unknown', async () => {
     expect((await readGuardianServiceHealth({ platform: 'linux' })).state).toBe('unknown');
     expect((await readGuardianServiceHealth({ platform: 'darwin', uid: 1, probe: async () => { throw new Error('private'); } })).state).toBe('unknown');

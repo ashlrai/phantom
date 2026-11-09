@@ -33,6 +33,8 @@ import { JOB_LIMIT_MAX } from '../core/fleet/job-path-history.js';
 import { JOB_OVERLAP_MIN_IDS } from '../core/fleet/job-overlap.js';
 import { parseFleetJobOverlapArgs, readFleetJobOverlap, type FleetJobOverlapArgs } from './fleet-job-overlap.js';
 import { MAX_FLEET_JOB_CURRENT_BATCH_IDS, parseFleetJobCurrentBatchArgs, readFleetJobCurrentBatch, type FleetJobCurrentBatchArgs } from './fleet-job-current-batch.js';
+import { DEFAULT_FLEET_INTENT_LIMIT, MAX_FLEET_INTENT_LIMIT, parseFleetIntentReadArgs, readFleetIntent, type FleetIntentReadArgs } from './fleet-intent-read.js';
+import { INTENT_STATUSES } from '../core/intent/schema.js';
 import { parseFleetJobCurrentArgs, readFleetJobCurrent,
   type FleetJobCurrentArgs } from './fleet-job-current.js';
 import { parseFleetJobCurrentSnapshotArgs, readFleetJobCurrentSnapshot, type FleetJobCurrentSnapshotArgs } from './fleet-job-current-snapshot.js';
@@ -54,6 +56,7 @@ import { MAX_FLEET_EMAIL_OUTBOX_AWAIT_MS, MIN_FLEET_EMAIL_OUTBOX_AWAIT_POLL_MS, 
 import { MAX_FLEET_EMAIL_OUTBOX_BATCH_AWAIT_NAMES, parseFleetEmailOutboxBatchAwaitArgs,
   readFleetEmailOutboxBatchAwait, type FleetEmailOutboxBatchAwaitArgs } from './fleet-email-outbox-batch-await.js';
 import { parseFleetEmailDiagnosisArgs, readFleetEmailDiagnosis } from './fleet-email-diagnosis.js';
+import { parseFleetCommsInboxArgs, readFleetCommsInbox, type FleetCommsInboxArgs } from './fleet-comms-inbox.js';
 import { parseFleetCommsReadinessArgs, readFleetCommsReadiness } from '../core/mcp/fleet-comms-readiness.js';
 import { MAX_FLEET_IMESSAGE_ACKS, parseFleetImessageAcksArgs, parseFleetImessagePathArgs,
   readFleetImessageAcks, readFleetImessagePath, type FleetImessageAcksArgs } from './fleet-imessage-evidence.js';
@@ -112,6 +115,7 @@ export interface FleetReaders {
   emailOutboxAwait?: (input: FleetEmailOutboxAwaitArgs, signal: AbortSignal) => Promise<unknown>;
   emailOutboxBatchAwait?: (input: FleetEmailOutboxBatchAwaitArgs, signal: AbortSignal) => Promise<unknown>;
   emailDiagnosis?: () => Promise<unknown>;
+  commsInbox?: (input: FleetCommsInboxArgs) => Promise<unknown>;
   commsReadiness?: () => Promise<unknown>;
   imessagePath?: () => Promise<unknown>;
   imessageAcks?: (input: FleetImessageAcksArgs) => Promise<unknown>;
@@ -119,6 +123,7 @@ export interface FleetReaders {
   ciReceiptAwait?: (input: FleetCiReceiptAwaitArgs, signal: AbortSignal) => Promise<unknown>;
   ciReceiptAwaitBatch?: (input: FleetCiReceiptAwaitBatchArgs, signal: AbortSignal) => Promise<unknown>;
   releaseCandidate?: (input: FleetReleaseCandidateArgs) => Promise<unknown>;
+  intentRead?: (input: FleetIntentReadArgs) => Promise<unknown>;
 }
 
 /** SDK transport injection permits a real protocol round trip without a child. */
@@ -339,6 +344,22 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       annotations,
     },
     {
+      name: 'fleet_intent_read',
+      description: 'Read the local owner-directive intent ledger (ashlr.intent-ledger/v1) through the same store as `ashlr fleet intent-read`. action "list" returns compact rows (id, title, status, source, owner, RQ keys, partial, lastTouchedAt), optionally for one status, with the total matching count and a truncated flag (default limit 25, max 100). action "get" returns one directive in full — pulls, evidence and provenance — or found:false for an unknown id. A missing ledger is an empty result; a corrupt, oversized or symlinked ledger is a tool error, never an empty success. No caller path, root, environment or command is accepted, and the tool never writes or changes a directive status.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['list', 'get'], description: 'list directives or get one by id.' },
+          status: { type: 'string', enum: [...INTENT_STATUSES], description: 'list only: keep directives with this exact status.' },
+          id: { type: 'string', description: 'get only: exact directive id.' },
+          limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_INTENT_LIMIT, default: DEFAULT_FLEET_INTENT_LIMIT, description: 'list only: maximum rows returned.' },
+        },
+        required: ['action'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
       name: 'fleet_job_current_snapshot',
       description: 'Replay the fleet_job_current audit at one recorded immutable commit: for the newest bridge commit on origin/master whose subject id exactly equals the requested job, the git tree entry — mode, type and object id — each touched path held at the commit versus the pinned snapshot tree, from the same bounded reader as `phm fleet job-current-snapshot` — never a second scanner. The snapshot must be a full lowercase 40- or 64-character commit OID and is verified as a commit and an ancestor of origin/master before any scan; later origin/master moves never change the findings, so an MCP agent sees exactly what a CLI planner recorded. At most the newest 1000 commits are scanned and at most 200 touched paths compared; empty or truncated evidence proves only what the bounded scan saw and does not prove the job never landed. This is replay evidence, not a live reading: statuses are object identity only — unchanged, changed, absent-now and absent-at-both, where a landed deletion still absent is consistency evidence, never missing work — and none of it is a correctness, live lane, dispatch or merge-queue verdict. No caller ref, filesystem root or cwd is accepted, and no tool mutates anything.',
       inputSchema: {
@@ -496,6 +517,12 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       annotations,
     },
     {
+      name: 'fleet_comms_inbox',
+      description: 'Read the ranked unified comms inbox. Read-only; items quote private text.',
+      inputSchema: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 200, default: 50 } }, additionalProperties: false },
+      annotations,
+    },
+    {
       name: 'fleet_email_diagnosis',
       description: 'Diagnose why local email replies are not flowing, through the same shared diagnoseEmailDrop collector as `phm comms diagnose` — never a second classifier: fixed-code config, polling, sendReplies, outbox and replies states with observed outbox counts when readable, plus the email checks and the local-evidence-only coverage marker — never recipients, subjects, bodies, absolute paths, transport errors or raw exception text. The saved email-drop config resolves at the server-owned runs dir; a missing or invalid config, a paused poll, draft-only mode and a missing or unreadable outbox each report their own fixed state and never invent healthy counts, and a collector failure is reported as fixed unavailable evidence. This is local config/outbox observation only — never proof of Gmail triage, LinkedIn coverage, sending or end-to-end delivery. Takes no arguments: no caller directory, root, cwd, path or send option is accepted, and the tool never creates directories, sends, drafts, retries or alters comms configuration.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -598,7 +625,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate') {
+    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_intent_read') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -631,14 +658,17 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const emailOutboxAwait = name === 'fleet_email_outbox_await' ? parseFleetEmailOutboxAwaitArgs(args) : null;
     const emailOutboxBatchAwait = name === 'fleet_email_outbox_batch_await' ? parseFleetEmailOutboxBatchAwaitArgs(args) : null;
     const commsReadinessArgs = name === 'fleet_comms_readiness' ? parseFleetCommsReadinessArgs(args) : null;
+    const commsInboxArgs = name === 'fleet_comms_inbox' ? parseFleetCommsInboxArgs(args) : null;
     const emailDiagnosisArgs = name === 'fleet_email_diagnosis' ? parseFleetEmailDiagnosisArgs(args) : null;
     const imessagePathArgs = name === 'fleet_imessage_path' ? parseFleetImessagePathArgs(args) : null;
     const imessageAcks = name === 'fleet_imessage_acks' ? parseFleetImessageAcksArgs(args) : null;
     const ciResumeInputs = name === 'fleet_ci_resume_inputs' ? parseFleetCiResumeInputsArgs(args) : null;
     const ciReceiptAwait = name === 'fleet_ci_receipt_await' ? parseFleetCiReceiptAwaitArgs(args) : null;
     const ciReceiptAwaitBatch = name === 'fleet_ci_receipt_await_batch' ? parseFleetCiReceiptAwaitBatchArgs(args) : null;
+    const intentRead = name === 'fleet_intent_read' ? parseFleetIntentReadArgs(args) : null;
     const releaseCandidate = name === 'fleet_release_candidate' ? parseFleetReleaseCandidateArgs(args) : null;
-    if (name === 'fleet_release_candidate' ? releaseCandidate === null :
+    if (name === 'fleet_intent_read' ? intentRead === null :
+        name === 'fleet_release_candidate' ? releaseCandidate === null :
         name === 'fleet_staging_inventory' ? fleetStagingInventory === null :
         name === 'fleet_staging_inventory_retry' ? retry === null :
         name === 'fleet_staging_inventory_batch' ? stagingRoots === null :
@@ -649,6 +679,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_imessage_path' ? imessagePathArgs === null :
         name === 'fleet_imessage_acks' ? imessageAcks === null :
         name === 'fleet_email_diagnosis' ? emailDiagnosisArgs === null :
+        name === 'fleet_comms_inbox' ? commsInboxArgs === null :
         name === 'fleet_email_outbox_batch_await' ? emailOutboxBatchAwait === null :
         name === 'fleet_email_outbox_await' ? emailOutboxAwait === null :
         name === 'fleet_email_outbox' ? emailOutbox === null :
@@ -709,11 +740,13 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_email_outbox' ? await (readers.emailOutbox ?? readFleetEmailOutbox)(emailOutbox as FleetEmailOutboxArgs)
         : name === 'fleet_comms_readiness' ? await (readers.commsReadiness ?? readFleetCommsReadiness)()
         : name === 'fleet_email_diagnosis' ? await (readers.emailDiagnosis ?? readFleetEmailDiagnosis)()
+        : name === 'fleet_comms_inbox' ? await (readers.commsInbox ?? readFleetCommsInbox)(commsInboxArgs as FleetCommsInboxArgs)
         : name === 'fleet_imessage_path' ? await (readers.imessagePath ?? readFleetImessagePath)()
         : name === 'fleet_imessage_acks' ? await (readers.imessageAcks ?? readFleetImessageAcks)(imessageAcks as FleetImessageAcksArgs)
         : name === 'fleet_ci_resume_inputs' ? await (readers.ciResumeInputs ?? readFleetCiResumeInputs)(ciResumeInputs as FleetCiResumeInputsArgs)
         : name === 'fleet_ci_receipt_await' ? await (readers.ciReceiptAwait ?? readFleetCiReceiptAwait)(ciReceiptAwait as FleetCiReceiptAwaitArgs, extra.signal)
         : name === 'fleet_ci_receipt_await_batch' ? await (readers.ciReceiptAwaitBatch ?? readFleetCiReceiptAwaitBatch)(ciReceiptAwaitBatch as FleetCiReceiptAwaitBatchArgs, extra.signal)
+        : name === 'fleet_intent_read' ? await (readers.intentRead ?? readFleetIntent)(intentRead as FleetIntentReadArgs)
         : name === 'fleet_release_candidate' ? await (readers.releaseCandidate ?? readFleetReleaseCandidate)(releaseCandidate as FleetReleaseCandidateArgs)
         : await (readers.busInbox ?? readFleetBusInbox)(inbox as FleetBusInboxArgs);
       // Scrub values before serialization: redaction regexes operate on prose
