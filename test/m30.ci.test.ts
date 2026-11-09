@@ -209,6 +209,9 @@ describe('M30 CI workflow', () => {
       expect(execute(event, 'full', { ...releaseOk, ci: 'success' }, undefined, 'refs/heads/master', true)).toThrow();
       expect(execute(event, 'full', { ...ok, 'release-build': 'success' }, undefined, 'refs/heads/master', true, false)).not.toThrow();
       expect(execute(event, 'full', releaseOk, undefined, 'refs/heads/worker', true)).toThrow();
+      expect(execute('workflow_dispatch', 'full', releaseOk, undefined, 'refs/tags/v3.30.28', true)).not.toThrow();
+      expect(execute('schedule', 'full', releaseOk, undefined, 'refs/tags/v3.30.28', true)).toThrow();
+      expect(execute('push', 'full', releaseOk, undefined, 'refs/tags/v3.30.28', true)).toThrow();
     }
     expect(execute('pull_request', 'full', releaseOk, undefined, 'refs/heads/master', true)).toThrow();
     // Reusable call from a tag push: Windows service authority is deferred.
@@ -279,7 +282,10 @@ describe('M30 CI workflow', () => {
       // A condition form this evaluator does not know must fail loudly rather
       // than fall through to a guessed result.
       expect(expression).not.toMatch(/\$\{\{|\}\}|github\.|needs\.|always|contains|fromJSON/);
-      return Boolean(runInNewContext(`(${expression})`, { event, lane, draft: false, ref, release, ready }));
+      return Boolean(runInNewContext(`(${expression})`, {
+        event, lane, draft: false, ref, release, ready,
+        startsWith: (value: unknown, prefix: unknown) => String(value).startsWith(String(prefix)),
+      }));
     };
     const fastEvents = ['pull_request', 'merge_group'];
     const lanes = ['full', 'site', 'docs'];
@@ -342,6 +348,8 @@ describe('M30 CI workflow', () => {
         expect(evaluateIf(jobs[id]!.if, event, 'full', masterRef, 'true'), `release ${id}`).toBe(false);
       }
       expect(evaluateIf(jobs['release-build']!.if, event, 'full', masterRef, 'true')).toBe(true);
+      expect(evaluateIf(jobs['release-build']!.if, 'workflow_dispatch', 'full', 'refs/tags/v3.30.28', 'true')).toBe(true);
+      expect(evaluateIf(jobs['release-build']!.if, 'push', 'full', 'refs/tags/v3.30.28', 'false')).toBe(false);
     }
   });
 
