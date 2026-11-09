@@ -243,6 +243,8 @@
 /test/fixtures/memory/** @masonwyatt23
 /vitest.config* @masonwyatt23
 /vitest.workspace* @masonwyatt23
+# comms-agent: Comms send policy decides what may leave the machine
+/src/core/comms-agent/ @masonwyatt23
 # tier1-test: this test guards Tier-1 authority code; weakening it would weaken the gate it tests
 # (every test G1 holds by name, safety suite or Tier-1 import; test/authority-codeowners-310b.test.ts regenerates this list)
 /test/activation-readiness-package.test.ts @masonwyatt23
