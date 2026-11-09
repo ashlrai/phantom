@@ -17,6 +17,10 @@ export interface QueueJob {
   replayedAt?: string;
   prUrl?: string;
   blockedReason?: string;
+  /** Parent job id for spawn.v1 decomposition children; absent on top-level work. */
+  parent?: string;
+  /** Decomposition depth (0 = top-level); bounded by SPAWN_LIMITS.maxDepth at intake. */
+  depth?: number;
 }
 /** A job-shaped line that could not be parsed; retained verbatim instead of failing the import. */
 export interface QueueRawLine { line: number; text: string; warning: string }
@@ -52,6 +56,8 @@ export function validateQueue(value: unknown): asserts value is QueueDocument {
       if (url.username || url.password) throw new Error('PR URL must not contain credentials');
     }
     if (job.blockedReason !== undefined && !nonempty(job.blockedReason)) throw new Error(`Invalid block reason: ${job.id}`);
+    if (job.parent !== undefined && (!nonempty(job.parent) || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(job.parent) || job.parent === job.id)) throw new Error(`Invalid parent: ${job.id}`);
+    if (job.depth !== undefined && (!Number.isSafeInteger(job.depth) || (job.depth as number) < 0 || (job.depth as number) > 64)) throw new Error(`Invalid depth: ${job.id}`);
   }
   if (value.raw !== undefined) {
     if (!Array.isArray(value.raw)) throw new Error('Invalid raw records');
