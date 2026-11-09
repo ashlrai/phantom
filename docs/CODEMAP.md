@@ -42,7 +42,7 @@ Check actual imports for a change rather than assuming an acyclic architecture.
 | Memory, indexing, retrieval | `src/core/memory/`, `genome/`, `knowledge/`, `ask/`, `index-engine.ts` | [Memory](MEMORY.md), [memory foundation](MEMORY-FOUNDATION.md) |
 | Integrations and MCP | `src/core/integrations/`, `connectors/`, `mcp/`, `mcp-gateway.ts`, `src/mcp/` | [Toolchain](AGENT-TOOLCHAIN.md), [connectors](CONNECTORS.md) |
 | Release and local runtime | `src/core/release/`, `local-runtime/`, `scripts/` | [Releasing](RELEASING.md), [M523 release contract](contracts/CONTRACT-M523.md) |
-| Metrics and observation | `src/core/metrics/`, `observability/`, `usage/`, `radar/` | [Lane health](LANE-HEALTH.md), [Radar](RADAR.md) |
+| Metrics and observation | `src/core/metrics/`, `observe/`, `world/`, `observability/`, `usage/`, `radar/` | [Human observe](OBSERVE.md), [World model](WORLD.md), [Lane health](LANE-HEALTH.md), [Radar](RADAR.md) |
 
 Contract documents in `docs/contracts/` include milestone-specific acceptance
 and security boundaries; their presence alone does not establish activation.
@@ -90,6 +90,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/daemon/`
 - `src/core/dailyfix/`
 - `src/core/decide/`
+- `src/core/deepwiki/`
 - `src/core/desktop/`
 - `src/core/devin/`
 - `src/core/digest/`
@@ -109,6 +110,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/graph/`
 - `src/core/improve/`
 - `src/core/inbox/`
+- `src/core/incident/`
 - `src/core/integrations/`
 - `src/core/knowledge/`
 - `src/core/learn/`
@@ -120,6 +122,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/memory/`
 - `src/core/metrics/`
 - `src/core/observability/`
+- `src/core/observe/`
 - `src/core/onboard/`
 - `src/core/openai-agents/`
 - `src/core/playbooks/`
@@ -133,6 +136,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/reasoning/`
 - `src/core/receipt/`
 - `src/core/release/`
+- `src/core/research/`
 - `src/core/resources/`
 - `src/core/routing/`
 - `src/core/run/`
@@ -156,4 +160,5 @@ imports, individual files, semantics or contract coverage.
 - `src/core/web/`
 - `src/core/website/`
 - `src/core/workbench/`
+- `src/core/world/`
 <!-- codemap:core:end -->

@@ -36,6 +36,7 @@ import {
   policyEpochDigest,
   untrustedText,
   publishVerifiedTree,
+  readHeadChecks,
   readPr,
   readRequiredChecks,
   reopenFleetPr,
@@ -325,6 +326,48 @@ describe('publishing the verified tree through the Git Data API', () => {
     const enforced = harness({ required: [], classic: { enforcement_level: 'everyone', contexts: ['ci/legacy'] } });
     // The classic summary on GET /branches omits the up-to-date flag: unknown, not "off".
     expect(await readRequiredChecks(enforced.repo, 'main', enforced.deps)).toMatchObject({ required: [{ context: 'ci/legacy', appId: null }], strict: null });
+  });
+
+  it('readRequiredChecks fetches rulesets and branch protection concurrently', async () => {
+    const h = harness();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const inner = h.deps.transport;
+    h.deps.transport = async (call) => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return await inner(call);
+      } finally {
+        inFlight--;
+      }
+    };
+    const read = await readRequiredChecks(h.repo, 'main', h.deps);
+    expect(read).toMatchObject({ required: [{ context: 'ci/test', appId: '15368' }] });
+    expect(maxInFlight).toBeGreaterThan(1);
+  });
+
+  it('readHeadChecks fetches check runs and commit statuses concurrently', async () => {
+    const h = harness();
+    const sha = h.fake.head()!;
+    h.fake.setCheck(sha, 'ci/test', 'success');
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const inner = h.deps.transport;
+    h.deps.transport = async (call) => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return await inner(call);
+      } finally {
+        inFlight--;
+      }
+    };
+    const read = await readHeadChecks(h.repo, sha, h.deps);
+    expect(read).toMatchObject({ runs: [expect.objectContaining({ name: 'ci/test' })] });
+    expect(maxInFlight).toBeGreaterThan(1);
   });
 });
 
