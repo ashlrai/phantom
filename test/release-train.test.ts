@@ -144,12 +144,23 @@ describe('release train', () => {
     expect(isReleasePleaseCommit(message, '3.30.27')).toBe(true);
     expect(docsCarriersSynced(message, '3.30.27')).toBe(true);
     expect(buildTrain(observation({ head: { tag: 'v3.30.27', sha: head, message: 'feat: something\n', ancestry: 'ancestor', committedAt: null } })).exitCode).toBe(1);
-    expect(buildTrain(observation({ head: { tag: 'v3.30.27', sha: head, message, ancestry: 'diverged', committedAt: null } })).state.reason).toBe('candidate-refused');
+    expect(buildTrain(observation({ head: { tag: 'v3.30.27', sha: head, message, ancestry: 'diverged', committedAt: null } })).state.reason).toContain('candidate-refused');
+  });
+
+  it('explains each candidate refusal and refuses an existing next tag', () => {
+    const base = observation();
+    expect(buildTrain({ ...base, head: { ...base.head!, ancestry: 'diverged', compareStatus: 'diverged' } }).state.reason).toContain('compare_not_ahead: diverged');
+    expect(buildTrain({ ...base, head: { ...base.head!, sha: '' } }).state.reason).toContain('tag_sha_empty');
+    const reason = buildTrain({ ...base, head: { ...base.head!, message: 'bridge: unrelated\nbody' } }).state.reason;
+    expect(reason).toContain('release_message_mismatch: tag=v3.30.27');
+    expect(reason).toContain('first_line="bridge: unrelated"');
+    expect(reason).toContain('expected=chore(<scope>): release 3.30.27');
+    expect(buildTrain({ ...base, tags: [...base.tags, { name: 'v3.30.28', sha: head }], skippedTags: [{ tag: 'v3.30.28', reason: 'release_message_mismatch' }] }).state.reason).toBe('duplicate_tag');
   });
 
   it('admits a tag on a later merge when the release-please commit is its ancestor', () => {
     const later = { tag: 'v3.30.27', sha: head, message: 'bridge(RQ-X): notes (#1)\n', ancestry: 'ancestor' as const, committedAt: null };
-    expect(buildTrain(observation({ head: later })).state.reason).toBe('candidate-refused');
+    expect(buildTrain(observation({ head: later })).state.reason).toContain('candidate-refused');
     expect(buildTrain(observation({ head: { ...later, releaseMessage: message } })).exitCode).toBe(0);
     expect(buildTrain(observation({ head: { ...later, releaseMessage: 'chore(master): release 3.30.26 (#1)', ancestry: 'diverged' } })).exitCode).toBe(1);
   });
@@ -180,6 +191,39 @@ describe('release train', () => {
     expect((await run('3.30.27', rows)).head?.releaseMessage).toBe(message);
     expect((await run('3.30.26', rows)).head?.releaseMessage).toBeUndefined();
     expect((await run('3.30.27', [{ commit: { message: 'bridge: notes' } }])).head?.releaseMessage).toBeUndefined();
+  });
+
+  it.each([
+    ['v3.30.28', '5d9e9350', 'bridge(RQ-SWE5-FRESH-JUDGE): changes (#4153)', 'v3.30.27', message],
+    ['v3.30.25', 'e18df2ff', 'bridge: changes (#4098)', 'v3.30.24', 'chore(master): release 3.30.24 (#1)'],
+  ])('skips unrelated tag %s after checking its ancestors', async (badTag, prefix, badMessage, goodTag, goodMessage) => {
+    const badSha = prefix.padEnd(40, '0');
+    const goodSha = 'd'.repeat(40);
+    const pkg = (version: string) => ({ encoding: 'base64', content: Buffer.from(JSON.stringify({ name: '@ashlr/phantom', version })).toString('base64') });
+    const data: Record<string, unknown> = {
+      'repos/ashlrai/phantom': { id: 1263526319, full_name: 'ashlrai/phantom' },
+      'repos/ashlrai/phantom/commits/master': { sha },
+      [`repos/ashlrai/phantom/contents/package.json?ref=${sha}`]: pkg(badTag.slice(1)),
+      [`repos/ashlrai/phantom/git/ref/tags/${badTag}`]: { ref: `refs/tags/${badTag}`, object: { type: 'commit', sha: badSha } },
+      [`repos/ashlrai/phantom/commits/${badSha}`]: { commit: { message: badMessage, committer: { date: '2026-11-09T02:30:00Z' } } },
+      [`repos/ashlrai/phantom/commits/${goodSha}`]: { commit: { message: goodMessage, committer: { date: '2026-11-09T01:30:00Z' } } },
+      [`repos/ashlrai/phantom/compare/${badSha}...${sha}`]: { status: 'ahead', ahead_by: 1 },
+      [`repos/ashlrai/phantom/compare/${goodSha}...${sha}`]: { status: 'ahead', ahead_by: 240 },
+      [`repos/ashlrai/phantom/contents/package.json?ref=${badSha}`]: pkg(badTag.slice(1)),
+      [`repos/ashlrai/phantom/commits?sha=${badSha}&per_page=30`]: [{ commit: { message: badMessage } }],
+      'repos/ashlrai/phantom/tags?per_page=100&page=1': [{ name: badTag, commit: { sha: badSha } }, { name: goodTag, commit: { sha: goodSha } }],
+      'repos/ashlrai/phantom/releases?per_page=100&page=1': [],
+      'repos/ashlrai/phantom/pulls?state=open&per_page=100&page=1': [],
+    };
+    const observed = await observeTrain(async (path) => {
+      if (Object.hasOwn(data, path)) return data[path];
+      if (path.includes('/actions/workflows/')) return { total_count: 0, workflow_runs: [] };
+      if (path.startsWith('registry/')) return null;
+      throw new Error(`unexpected ${path}`);
+    }, '2026-11-09T06:00:00Z', 60, { fleet: 'inactive', autorun: 'inactive' });
+    expect(observed.head?.tag).toBe(goodTag);
+    expect(observed.skippedTags).toEqual([{ tag: badTag, reason: expect.stringContaining(`release_message_mismatch: tag=${badTag}`) }]);
+    expect(buildTrain(observed).state.tag).toBe(goodTag);
   });
 
   it('dispatches attest and npm for the tagged sha and leaves signing to the Mac wrapper', () => {
