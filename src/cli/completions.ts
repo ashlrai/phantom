@@ -66,6 +66,9 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'disk', 'app', 'radar',
   // Standing disk maintenance: plan/apply reclaim classes (RQ-DISKMAINT).
   'disk-maint',
+  // Changed-file tests and the fleet event feed.
+  'test', 'feed',
+  'worklog', 'library',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
@@ -103,7 +106,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   run: ['show'],
   spec: ['new', 'list', 'show', 'refine'],
   swarm: ['show', 'verify', 'approve', 'rollback'],
-  models: ['list', 'pull', 'start', 'inventory'],
+  models: ['list', 'pull', 'start', 'inventory', 'routing', 'verify'],
   gh: ['pr', 'issue', 'ci'],
   vercel: ['ls', 'logs'],
   website: ['status', 'auto', 'pause', 'off', 'request', 'run', 'prepare', 'commission'],
