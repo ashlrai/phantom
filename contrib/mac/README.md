@@ -852,3 +852,16 @@ Apply rechecks the queue under the existing `ready.lock`, waiting at most ten
 seconds (`--lock-timeout` overrides). `--queue PATH` selects a scratch queue;
 the default is `~/.ashlr-runs/queue/router-queue.md`. The queue must already exist.
 This supplies jobs only; it does not recut, merge, install, or publish anything.
+
+### Disk growth
+
+Run `python3 contrib/mac/disk-growth.py --json` periodically to sample free disk
+space and directory sizes. `--budget-seconds` bounds the total time spent in
+`du` (default 10 seconds). The sampler retains 48 readings under
+`~/.ashlr-runs/queue`; it does not delete sampled files. The dispatcher copies
+its latest report to `autopilot.disk` in `status.json` on the next tick. Install
+and schedule the sampler through the normal reviewed host machinery; this source
+change does not install it. Rates compare against the oldest retained reading;
+missing or timed-out directory measurements are omitted, and a null projection
+means there is not yet evidence of a positive disk burn rate. Directory sizes
+overlap: worktree totals include their `node_modules` and `target` directories.
