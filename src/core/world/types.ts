@@ -39,6 +39,9 @@ export interface WorldModel {
       headroom: Field<number>;
       used: Field<number>;
       limit: Field<number>;
+      remaining: Field<number>;
+      burnRate: Field<number>;
+      idleIncludedWastedPerWeek: Field<number>;
       pacePerHour: Field<number>;
       requiredPacePerHour: Field<number>;
       runwayHours: Field<number>;

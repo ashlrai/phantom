@@ -55,6 +55,8 @@ describe('ashlr.world-model/v1', () => {
     expect(pace).toMatchObject({ id: 'sensors-lanes-claude-max-pacePerHour', freshness: 'unknown' });
     expect(pace?.need).toContain('RQ-SENSORS-PACE-1');
     expect(model.blindSpots.filter((spot) => spot.path === 'sensors.lanes.claude-max.used')).toEqual([]);
+    expect(model.blindSpots.some((spot) => spot.path === 'sensors.lanes.claude-max.burnRate')).toBe(true);
+    expect(model.sensors.lanes.find((lane) => lane.lane === 'claude-max')?.remaining.value).toBe(90);
     expect(new Set(model.blindSpots.map((spot) => spot.id)).size).toBe(model.blindSpots.length);
     expect(model.blindSpots.some((spot) => spot.path === 'outcomes.repos')).toBe(true);
     expect(JSON.stringify(model.queue)).not.toContain('"value":0');
