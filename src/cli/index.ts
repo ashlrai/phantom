@@ -22,6 +22,7 @@
  *   runs [--json]              List past runs.
  *   signals [--json]          Real repository adoption signals; missing sources stay explicit.
  *   ci-metrics [--json]          Per-repo daily turn-time (red→green) metrics; writes ~/.ashlr/ci-metrics.json.
+ *   prs merges --since <ISO> [--json]  Count merges by actor class (automation vs human); read-only.
  *   friction [--json]         Dispatch→merge friction ledger: 7d counts, evidence, scores, before/after.
  *   pulse [--json] [--window]  Local observability dashboard: tokens, cost, activity.
  *   skills list [--json]       List skills learned from merged PRs (read-only).
@@ -2990,6 +2991,12 @@ async function main(): Promise<void> {
       case 'budget': {
         const { cmdBudget } = await import('./budget.js');
         process.exitCode = await cmdBudget(rest);
+        break;
+      }
+
+      case 'prs': {
+        const { cmdPrs } = await import('./prs.js');
+        process.exitCode = await cmdPrs(rest);
         break;
       }
 

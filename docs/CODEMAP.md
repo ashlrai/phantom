@@ -130,6 +130,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/policy/`
 - `src/core/portfolio/`
 - `src/core/proactive/`
+- `src/core/prs/`
 - `src/core/quality/`
 - `src/core/queue/`
 - `src/core/radar/`
