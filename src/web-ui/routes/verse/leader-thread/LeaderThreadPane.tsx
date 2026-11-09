@@ -28,7 +28,7 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import leaderStyles from '../leader/leader.module.css';
 import styles from './leader-thread.module.css';
 import { busRepliesToMason, mergeByTime, type BusReply } from './thread-bus-replies.js';
-import { fleetInbox, fleetOutbox, lineChannel, lineSourceLabel, mergeThread, type MergedLine } from './thread-merge-model.js';
+import { fleetInbox, fleetOutbox, lineChannel, lineSourceLabel, mergeThread } from './thread-merge-model.js';
 import { canSend, scrollTargetIndex, trimReply } from './thread-reply-model.js';
 import { mentionedRefs } from './thread-refs.js';
 import { leaderCeoSummary } from './leader-ceo-model.js';
