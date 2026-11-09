@@ -2,17 +2,20 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { archivePlan, classifyGmailHeuristic, holdingReply, readEmlInbox, summarizeUpdateLine } from '../core/comms/gmail-eml-adapter.js';
 import { pollGmailBridge } from '../core/comms/gmail-bridge.js';
+import { writeGmailTriageLatest } from '../core/comms/gmail-triage-latest.js';
 
-const USAGE = 'Usage: ashlr fleet gmail-triage --dir <eml dir> [--runs-dir <dir>] [--json]\nTriage up to 100 saved messages locally. The archive plan covers only this sample; no mail is moved or sent.';
+const USAGE = 'Usage: ashlr fleet gmail-triage --dir <eml dir> [--runs-dir <dir>] [--json] [--no-save]\nTriage up to 100 saved messages locally. The archive plan covers only this sample; no mail is moved or sent.\nThe latest counts are saved under <runs-dir>/comms/gmail-triage-latest.json; --no-save skips that.';
 
 export async function cmdFleetGmailTriage(args: string[]): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) { console.log(USAGE); return 0; }
   let dir: string | undefined;
   let runsDir = process.env.ASHLR_RUNS_DIR?.trim() || join(homedir(), '.ashlr-runs');
   let json = false;
+  let save = true;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--json') json = true;
+    else if (arg === '--no-save') save = false;
     else if ((arg === '--dir' || arg === '--runs-dir') && args[i + 1] && !args[i + 1]!.startsWith('--')) {
       const value = args[++i]!;
       if (arg === '--dir') dir = value; else runsDir = value;
@@ -27,6 +30,12 @@ export async function cmdFleetGmailTriage(args: string[]): Promise<number> {
     classify: async message => classifyGmailHeuristic(message), composeReply: async message => holdingReply(message),
     summarizeUpdate: async message => summarizeUpdateLine(message), runsDir });
   const plan = archivePlan(messages, classifications);
+  if (save) {
+    try {
+      writeGmailTriageLatest(runsDir, { dir, scanned: report.scanned, updates: report.updates.length, drafted: report.drafted, review: report.review,
+        failed: report.failed, unreadInSample: plan.unread, target: plan.target, archiveCandidateCount: plan.archiveCandidates.length });
+    } catch { console.error('Could not save the triage summary.'); }
+  }
   if (json) console.log(JSON.stringify({ schema: 'fleet.gmail-triage.v1', report, archivePlan: plan }));
   else {
     console.log(`Scanned: ${report.scanned}; updates: ${report.updates.length}; drafted: ${report.drafted}; review: ${report.review}; failed: ${report.failed}`);

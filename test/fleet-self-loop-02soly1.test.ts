@@ -64,6 +64,7 @@ const recordingSteps = () => {
     'planner-tick': stub('planner-tick'),
     'inbox-acks': stub('inbox-acks'),
     'order-notices': stub('order-notices'),
+    'needs-triage': stub('needs-triage'),
     'landed-sweep': stub('landed-sweep'),
   } };
 };
@@ -279,9 +280,9 @@ describe('fleet self-loop', () => {
       { steps: rec.steps, now: clock.now, sleep: clock.sleep });
     expect(code).toBe(0);
     expect(rec.order).toEqual([
-      'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'landed-sweep',
-      'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'landed-sweep',
-      'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'landed-sweep',
+      'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'needs-triage', 'landed-sweep',
+      'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'needs-triage', 'landed-sweep',
+      'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'needs-triage', 'landed-sweep',
     ]);
     for (const [index, argv] of rec.argvs.entries()) {
       const flag = rec.order[index] === 'inbox-acks' ? '--flush' : '--apply';
@@ -292,7 +293,7 @@ describe('fleet self-loop', () => {
     expect(outLines.length).toBe(1);
     expect(summary).toMatchObject({ ticks: 3, failures: 0, busy: 0, termination: 'duration' });
     expect(summary!.lastReport).toMatchObject({ mode: 'apply', state: 'ran' });
-    expect(summary!.lastReport!['steps']).toHaveLength(8);
+    expect(summary!.lastReport!['steps']).toHaveLength(9);
   });
 
   it('dry-run is the default: no --apply is forwarded and nothing is applied', async () => {
