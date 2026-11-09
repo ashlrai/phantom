@@ -1,3 +1,5 @@
+import { FABLE_ORCHESTRATOR_MODEL, type FableWork } from '../routing/fable-orchestrator.js';
+import { readFableAdmission } from '../routing/fable-admission.js';
 /** Host-owned native role completions. Account/model authority is rechecked
  * before contact and throughout the owned process. No global CLI login, API
  * credential fallback or model-authored transport configuration is accepted. */
@@ -30,6 +32,7 @@ export interface RoleCompletionRequest {
   cfg: AshlrConfig; role: AgentRole; seatId: string; engine: NativeRoleEngine; model: string; timeoutMs: number;
   /** Opaque principal of the selected native allowance; never a credential. */
   accountHint?: string;
+  orchestrationWork?: FableWork;
   /** Source-owned selected account/model capacity fence, never saved or parsed from a request. */
   admitted(): boolean;
   signal?: AbortSignal;
@@ -44,6 +47,8 @@ export interface RoleCompletionMetrics {
 const grantEngine = { claude:'claude-cli', codex:'codex', grok:'grok-cli', devin:'devin' } as const;
 function policyEpoch(req: RoleCompletionRequest): string | null {
   try {
+    if (req.model === FABLE_ORCHESTRATOR_MODEL && (req.engine !== 'claude' || req.role === 'worker' ||
+      !readFableAdmission(req.orchestrationWork ?? { role: req.role === 'leader' ? 'leader' : 'intent-triage' }).allowed)) return null;
     const p=currentStandingPolicy();
     const seat=p?.spend.seats[req.seatId];
     if (!p || !p.engines.includes(grantEngine[req.engine]) || !seat?.enabled ||
@@ -138,6 +143,7 @@ export function nativeRoleCompletion(req: RoleCompletionRequest, record?: (metri
       if (req.engine === 'claude') {
         result=await runClaudeNativeAdapter({cfg:req.cfg,runId,seatId:req.seatId,model:req.model,prompt,worktree:scratch,
           expectedAccountHint:req.accountHint,
+          fableWork:req.orchestrationWork ?? { role: req.role === 'leader' ? 'leader' : 'intent-triage' },
           signal,timeoutMs:req.timeoutMs,admission:current,recordEvidence:finish=>{
             if(finish.violations.length || !finish.violationsKnown)stop.abort();
           },retainCleanupFailure:()=>{retained=true;stop.abort();}});
