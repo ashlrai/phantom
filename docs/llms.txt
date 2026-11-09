@@ -34,6 +34,7 @@ Approval cards record consent and do not collect credentials.
 - [Import scheduled routines](VERSE.md#automations-315): `ashlr automations import --from routines.json --dry-run --json` previews disabled imports from a local JSON array.
 
 - [Docs Radar](RADAR.md): Public source list, bounded unauthenticated reads, private snapshots and offline diffs. Commands: `phm radar list|run|diff --json`. Individual fetch failures are warnings; the last successful snapshot is retained.
+- [Human observe](OBSERVE.md): One `phm observe --json` snapshot for roster, sensor headroom, resource coordination, pull headlines, bottlenecks, and human steps. Unknown stays unknown.
 
 - [CLI reference](CLI-REFERENCE.md): Generated from `phm --help` and `phm help --all`. The checkout is the authority.
 - [CLI docs](cli.md): Regenerated from `phm --help` by `scripts/generate-cli-docs.mjs`. Do not edit by hand.

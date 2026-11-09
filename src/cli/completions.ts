@@ -29,7 +29,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'roadmap', 'stack', 'ecosystem', 'digest', 'sweep', 'seams', 'verify', 'engineering-receipt', 'verify-safety', 'verify-pr', 'release-articles', 'preflight',
   'conductor-permit', 'signals', 'friction',
   'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms',
-  'channels', 'context', 'connectors', 'imessage', 'memory', 'route', 'radar', 'drafts',
+  'channels', 'context', 'connectors', 'imessage', 'memory', 'route', 'radar', 'observe', 'drafts',
   'director', 'best-of-n', 'invent', 'resource', 'resources', 'repos', 'usage', 'version', 'help',
   'skills', 'universe', 'runtime', 'tune',
   // Dispatched by index.ts but previously missing here, so completion and
@@ -43,7 +43,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'devin',
   'openai-agents',
   'agents',
-  'benchmark', 'queue', 'issues', 'incident', 'select', 'pool',
+  'benchmark', 'queue', 'issues', 'incident', 'chain', 'select', 'pool',
   // 3.15 automations.
   'automations',
   // 3.15 Jev decision layer.
@@ -81,6 +81,9 @@ const SUBCOMMANDS: Record<string, string[]> = {
   app: ['update', 'status', '--json', '--help'],
   radar: ['list', 'run', 'diff', '--json', '--help'],
   usage: ['sensors', 'validate', '--json', '--refresh', '--file', '--help'],
+  observe: ['session', '--json', '--human-steps', '--bottlenecks', '--prs', '--days', '--claim-minutes', '--help'],
+  chain: ['verify', '--json', '--help'],
+  incident: ['report', 'receipts', '--json', '--help'],
   apps: ['list', 'open', 'quit', 'focus', 'status', '--json', '--help'],
   // Mirrors the verb check in src/cli/repos-rank.ts (cmdReposRank).
   repos: ['rank', 'proposals', '--json', '--recompute', '--help'],

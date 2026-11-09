@@ -27,6 +27,7 @@ import { usedPercentText } from '../percent-text.js';
 import { verseAccountsQuery } from '../usage/usage-queries.js';
 import { projectAccountsSnapshot } from '../usage/usage-contract.js';
 import { VERSE_AGENT_ROSTER_PATH } from '../../../../core/verse/agent-roster-api.js';
+import { ObserveFacts } from './ObserveFacts.js';
 import { heldIncidents, readComms, readGauges, readLanes, readMerges, readRoster, readSessions } from './observe-model.js';
 import styles from './fleet-observe.module.css';
 
@@ -79,6 +80,7 @@ export function ObservePane({ visible, host }: PaneProps) {
       {runs.status === 'error' ? <p className={styles.notice} role="status">Could not refresh. Showing the last reading.</p> : null}
     </header>
 
+    <ObserveFacts visible={visible} />
     <section className={styles.region} aria-label="Sessions">
       <h3 className={styles.title}>Sessions</h3>
       {sessions.length === 0 ? <p className={styles.quiet}>No sessions running.</p> : <table className={styles.table}>
