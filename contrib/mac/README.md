@@ -21,6 +21,9 @@ prompt body, so prose like `no merge without Security pin` stays put — unpark 
 not a merge. `phm fleet parked --json` lists the same parked rows and reports
 still-unmet gate ids under `unmetDeps`. Merge-rate parked Phantom rows recover promptly up to the available capacity below 150 open PRs, with reservations preventing repeated ticks from spending the same capacity. A reservation for a vanished job is released after an hour; queued, running, worktree and published jobs keep their reservations. Legacy aggregate reservations remain conservative until the observed PR count rises. At saturation, one hourly probe can recover. The dispatcher’s count must be less than 10 minutes old. Missing, stale or
 invalid counts leave rows parked; the count measures backlog, not merge rate.
+Eligible jobs are reconsidered by first observed parking time, with queue order
+breaking ties. A re-parked job keeps its reservation for an hour before retry;
+it cannot spend a second reservation while the first is outstanding.
 The dispatcher refreshes that count and wakes the restocker while such rows
 remain, even when normal lane queues are full. Concurrent queue rewrites preserve
 recovered rows; recovery shares its capacity reservations and probe cooldown.

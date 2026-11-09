@@ -425,7 +425,10 @@ if out or unparks or dep_out or rate_candidates:
         # A reservation whose job vanished without producing a PR must not hold
         # capacity forever. Give dispatch and crash recovery an hour, and keep
         # reservations while any queue or execution evidence remains.
-        active = {ready_job_id(row) for row in snap}
+        def active_row(row):
+            fields = row.split("\t")
+            return not PARK_RATE.match(fields[0]) and not (len(fields) > 2 and PARK_RATE.match(fields[2]))
+        active = {ready_job_id(row) for row in snap if active_row(row)}
         reservations = {j: at for j, at in reservations.items()
                         if isinstance(j, str) and re.fullmatch(r"[A-Za-z0-9._-]+", j)
                         and isinstance(at, (int, float)) and not isinstance(at, bool) and math.isfinite(at)
@@ -445,9 +448,12 @@ if out or unparks or dep_out or rate_candidates:
         probe = count is not None and budget == 0 and 0 <= last <= now - 3600
         if budget or probe:
             # claimed.tsv is enqueue history, not an active lease.
-            for j, old, new in rate_candidates:
+            # Preserve age across queue rewrites; Python's stable sort keeps file
+            # order for jobs first observed in the same tick.
+            for j, old, new in sorted(rate_candidates, key=lambda row: first.get(row[0], now)):
                 occurrences = sum(ready_job_id(x) == j for x in snap)
                 if (old in snap and occurrences == 1
+                        and j not in reservations
                         and ("phantom", j) not in completed and (None, j) not in completed
                         and not os.path.isdir(H + "/Projects/ashlrai/wt/" + j)
                         and not os.path.exists(Q + "/run/" + j + ".reaping")
