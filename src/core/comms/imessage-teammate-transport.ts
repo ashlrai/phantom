@@ -1,7 +1,7 @@
 /** Team-only native transport. Owner-only sendIMessage remains unchanged. */
 import { execFile } from 'node:child_process';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { realHome } from '../real-home.js';
 import type { AshlrConfig } from '../types.js';
 import { chatDbPath, imessageAllowlist, isSelfIMessageHandle, readOnlyUri } from '../integrations/imessage.js';
 import { checkSendPolicy, parseCommsConfirmation, parseTeamIdentities } from '../agents/channel-policy.js';
@@ -18,7 +18,8 @@ async function currentConfig(options: TeamTransportOptions): Promise<AshlrConfig
 }
 
 function readConfig(name: string, options: TeamTransportOptions): string {
-  const dir = options.configDir ?? join(homedir(), '.ashlr');
+  const home = realHome();
+  const dir = options.configDir ?? join(home ?? '/owner-home-unavailable', '.ashlr');
   const result = readStableRegularFile(join(dir, name), { anchorPath: dir, maxFileBytes: 65536, remainingBytes: 65536 });
   return result.ok ? result.text : '';
 }
