@@ -15,8 +15,19 @@ export interface CommsEmailOutboxStatus {
   stuckReasons: Record<string, number>;
 }
 
+export interface IMessageStatus {
+  configuration: { state: string; reason: string };
+  chatDb: { state: string; reason: string };
+  cursor: { state: string; reason: string };
+  ackSource: string;
+  lastAckAt: string | null;
+  acks24h: number;
+  nextStep: string | null;
+}
+
 export interface CommsStatus {
   generatedAt: string;
+  imessage: IMessageStatus | null;
   drafts: CommsDraftsStatus | null;
   emailOutbox: CommsEmailOutboxStatus | null;
   sources: {
@@ -56,6 +67,19 @@ function readEmailOutbox(value: unknown): CommsEmailOutboxStatus | null {
   return { configured: value.configured, queued: value.queued, drafted: value.drafted, sent: value.sent, stuck: value.stuck, stuckReasons: reasons };
 }
 
+function readIMessage(value: unknown): IMessageStatus | null {
+  if (!isRecord(value)) return null;
+  const field = (v: unknown): v is { state: string; reason: string } =>
+    isRecord(v) && typeof v.state === 'string' && typeof v.reason === 'string';
+  if (!field(value.configuration) || !field(value.chatDb) || !field(value.cursor)
+    || typeof value.ackSource !== 'string' || !isCount(value.acks24h)
+    || (value.lastAckAt !== null && (typeof value.lastAckAt !== 'string' || !Number.isFinite(Date.parse(value.lastAckAt))))
+    || (value.nextStep !== null && typeof value.nextStep !== 'string')) return null;
+  return { configuration: value.configuration, chatDb: value.chatDb, cursor: value.cursor,
+    ackSource: value.ackSource, lastAckAt: value.lastAckAt as string | null,
+    acks24h: value.acks24h, nextStep: value.nextStep as string | null };
+}
+
 /** Strict narrowing: a response that fails the shape is absent, never repaired. */
 export function readCommsStatus(data: unknown): CommsStatus | null {
   if (!isRecord(data) || data.version !== 1 || typeof data.generatedAt !== 'string') return null;
@@ -67,6 +91,7 @@ export function readCommsStatus(data: unknown): CommsStatus | null {
   if (sources.emailOutbox !== 'healthy' && sources.emailOutbox !== 'missing' && sources.emailOutbox !== 'degraded') return null;
   return {
     generatedAt: data.generatedAt,
+    imessage: readIMessage(data.imessage),
     drafts: data.drafts === null ? null : readDrafts(data.drafts),
     emailOutbox: data.emailOutbox === null ? null : readEmailOutbox(data.emailOutbox),
     sources: { drafts: sources.drafts, emailOutbox: sources.emailOutbox },
@@ -114,4 +139,20 @@ export function commsStatusLines(status: CommsStatus, now: number): CommsStatusL
   }
 
   return { drafts, email, stuckReasons, showEmailDropHint };
+}
+
+export function imessageStatusLine(status: IMessageStatus, now: number): string {
+  if (status.configuration.state === 'configured' && status.chatDb.state === 'readable' && status.cursor.state === 'present') {
+    const ack = status.ackSource === 'ok' && status.lastAckAt !== null
+      ? `last ack ${ageText(status.lastAckAt, now)} ago` : 'last ack unknown';
+    return `iMessage · reading Messages · ${ack}`;
+  }
+  let problem = 'unknown';
+  if (status.configuration.state === 'disabled') problem = 'not configured';
+  else if (status.configuration.state === 'unknown') problem = 'configuration unknown';
+  else if (status.chatDb.reason === 'DB_ACCESS_BLOCKED') problem = "can't read Messages (Full Disk Access)";
+  else if (status.chatDb.state === 'unavailable') problem = "can't read Messages";
+  else if (status.chatDb.state !== 'readable') problem = 'Messages access unknown';
+  else if (status.cursor.state !== 'present') problem = 'reading position unknown';
+  return `iMessage · ${problem}${status.nextStep ? ` · ${status.nextStep}` : ''}`;
 }
