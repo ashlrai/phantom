@@ -14,6 +14,7 @@ import importlib.machinery
 import importlib.util
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -1235,6 +1236,20 @@ class DiffMetricsTests(unittest.TestCase):
         rows = [json.loads(line) for line in (r / 'metrics/jobs.jsonl').read_text().splitlines()]
         return next(row for row in rows if row.get('event') == 'finish' and row.get('job') == job)
 
+    def write_sessions_db(self, home, sessions):
+        """A minimal devin-cli sessions.db: the columns dispatchd reads, nothing more."""
+        d = home / '.local/share/devin/cli'; d.mkdir(parents=True, exist_ok=True)
+        con = sqlite3.connect(str(d / 'sessions.db'))
+        con.execute('CREATE TABLE sessions (id TEXT PRIMARY KEY, working_directory TEXT NOT NULL, metadata TEXT)')
+        con.execute('CREATE TABLE message_nodes (node_id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, chat_message TEXT NOT NULL)')
+        for s in sessions:
+            con.execute('INSERT INTO sessions (id, working_directory, metadata) VALUES (?,?,?)',
+                        (s['id'], s['wd'], json.dumps(s.get('meta', {}))))
+            for msg in s['messages']:
+                con.execute('INSERT INTO message_nodes (session_id, chat_message) VALUES (?,?)',
+                            (s['id'], json.dumps(msg)))
+        con.commit(); con.close()
+
     def test_claude_result_usage_is_recorded_once(self):
         transcript = '\n'.join(json.dumps(row) for row in [
             {'type': 'assistant', 'message': {'usage': {'input_tokens': 999}}},
@@ -1244,15 +1259,92 @@ class DiffMetricsTests(unittest.TestCase):
         row = self.measure(lambda wt, git: None, lane='claude', log=transcript)
         self.assertEqual([row[k] for k in ('tokens_in', 'tokens_out', 'tokens_cache_read', 'tokens_cache_write', 'tokens_total')],
                          [33, 5, 20, 3, 38])
+        self.assertEqual(row['usage_source'], 'claude-result-json')
+        self.assertIsNone(row['usage_missing'])
+        self.assertIsNone(row['acus'])
 
     def test_claude_missing_and_invalid_usage_remains_unknown(self):
-        for transcript in ('plain output', json.dumps({'type': 'result', 'usage': {
-                'input_tokens': 0, 'output_tokens': 0, 'cache_read_input_tokens': -1}})):
-            row = self.measure(lambda wt, git: None, lane='claude', log=transcript)
-            self.assertIsNone(row['tokens_total'])
-            self.assertIsNone(row['tokens_in'])
-            self.assertIsNone(row['tokens_cache_read'])
+        row = self.measure(lambda wt, git: None, lane='claude', log='plain output')
+        self.assertIsNone(row['tokens_total'])
+        self.assertEqual(row['usage_missing'], 'claude-result-not-in-log')
+        row = self.measure(lambda wt, git: None, lane='claude', log=json.dumps({'type': 'result', 'usage': {
+                'input_tokens': 0, 'output_tokens': 0, 'cache_read_input_tokens': -1}}))
+        self.assertIsNone(row['tokens_total'])
+        self.assertIsNone(row['tokens_in'])
+        self.assertIsNone(row['tokens_cache_read'])
         self.assertEqual(row['tokens_out'], 0)
+        self.assertEqual(row['usage_missing'], 'claude-usage-incomplete')
+
+    def test_devin_session_usage_records_tokens_and_acus(self):
+        def scenario(wt, git):
+            wd = os.path.realpath(str(wt))   # the CLI stores the resolved worktree path
+            self.write_sessions_db(wt.parents[3], [
+                {'id': 'devin-s1', 'wd': wd, 'meta': {'total_acu_cost': 0.75, 'total_credit_cost': 0}, 'messages': [
+                    {'role': 'user', 'metadata': {'is_user_input': True}},
+                    # the CLI stores every response twice; request_id dedupes
+                    {'role': 'assistant', 'metadata': {'request_id': 'req-1', 'metrics': {
+                        'input_tokens': 12910, 'output_tokens': 27, 'cache_read_tokens': 2368, 'cache_creation_tokens': None}}},
+                    {'role': 'assistant', 'metadata': {'request_id': 'req-1', 'metrics': {
+                        'input_tokens': 12910, 'output_tokens': 27, 'cache_read_tokens': 2368, 'cache_creation_tokens': None}}},
+                ]},
+                {'id': 'devin-s2', 'wd': wd, 'meta': {'total_acu_cost': 1.5}, 'messages': [
+                    {'role': 'assistant', 'metadata': {'request_id': 'req-2', 'metrics': {
+                        'input_tokens': 50, 'output_tokens': 5, 'cache_read_tokens': 10}}},
+                ]},
+                {'id': 'devin-foreign', 'wd': '/elsewhere', 'meta': {'total_acu_cost': 99}, 'messages': [
+                    {'role': 'assistant', 'metadata': {'request_id': 'req-9', 'metrics': {'input_tokens': 1, 'output_tokens': 1}}},
+                ]},
+            ])
+        row = self.measure(scenario, lane='devin')
+        self.assertEqual([row[k] for k in ('tokens_in', 'tokens_out', 'tokens_cache_read', 'tokens_cache_write', 'tokens_total')],
+                         [15338, 32, 2378, 0, 15370])
+        self.assertEqual(row['acus'], 2.25)
+        self.assertEqual(row['usage_source'], 'devin-sessions-db')
+        self.assertIsNone(row['usage_missing'])
+
+    def test_devin_missing_usage_stays_null_with_reason(self):
+        # No sessions.db on the host at all.
+        row = self.measure(lambda wt, git: None, lane='devin')
+        self.assertIsNone(row['tokens_total']); self.assertIsNone(row['acus'])
+        self.assertEqual(row['usage_missing'], 'devin-session-db-missing')
+
+        # A database that knows other worktrees but not this job's.
+        row = self.measure(lambda wt, git: self.write_sessions_db(wt.parents[3], [
+            {'id': 'devin-foreign', 'wd': '/elsewhere', 'meta': {'total_acu_cost': 1}, 'messages': []}]), lane='devin')
+        self.assertIsNone(row['tokens_total']); self.assertIsNone(row['acus'])
+        self.assertEqual(row['usage_missing'], 'devin-no-session-for-worktree')
+
+        # A session that ended before any served response: ACUs still settle.
+        def no_response(wt, git):
+            self.write_sessions_db(wt.parents[3], [
+                {'id': 'devin-s1', 'wd': os.path.realpath(str(wt)), 'meta': {'total_acu_cost': 0.5}, 'messages': [
+                    {'role': 'user', 'metadata': {'is_user_input': True}}]}])
+        row = self.measure(no_response, lane='devin')
+        self.assertIsNone(row['tokens_total'])
+        self.assertEqual(row['acus'], 0.5)
+        self.assertEqual(row['usage_missing'], 'devin-usage-not-reported')
+
+        # A served response without metrics: the token total is unknowable, not zero.
+        def unmeasured(wt, git):
+            self.write_sessions_db(wt.parents[3], [
+                {'id': 'devin-s1', 'wd': os.path.realpath(str(wt)), 'meta': {'total_acu_cost': 0.5}, 'messages': [
+                    {'role': 'assistant', 'metadata': {'request_id': 'req-1', 'metrics': None}}]}])
+        row = self.measure(unmeasured, lane='devin')
+        self.assertIsNone(row['tokens_total']); self.assertIsNone(row['tokens_in'])
+        self.assertEqual(row['acus'], 0.5)
+        self.assertEqual(row['usage_missing'], 'devin-usage-incomplete')
+
+        # Other lanes keep the 'tokens used' line; its absence is named too.
+        row = self.measure(lambda wt, git: None, lane='codex-cmp')
+        self.assertIsNone(row['tokens_total'])
+        self.assertEqual(row['usage_missing'], 'tokens-line-not-in-log')
+
+    def test_devin_tokens_line_fallback(self):
+        # sessions.db absent but the log still carries a 'tokens used' line.
+        row = self.measure(lambda wt, git: None, lane='devin', log='output\ntokens used\n 12,345\n')
+        self.assertEqual(row['tokens_total'], 12345)
+        self.assertEqual(row['usage_source'], 'tokens-line')
+        self.assertIsNone(row['usage_missing'])
 
     def test_committed_job_diff_excludes_prior_repository_work(self):
         def scenario(wt, git):
