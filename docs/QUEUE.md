@@ -238,3 +238,18 @@ receipts` messages the reporter once per incident whose job is DONE; a recurrenc
 24 hours reopens it as a regression (`INC-<fingerprint>-<n>`). Messages go to Telegram
 only when proactive comms are on. State lives in `~/.ashlr-runs/incidents`; `--dir` picks
 the queue directory. Both verbs take `--json`.
+
+## Plan restock batches
+
+Run `phm fleet restock plan --json` to check READY candidates in
+`~/.ashlr-runs/queue/router-queue.md` and plan one job per 6–10 eligible items
+from the same repository. This is read-only: it does not enqueue or launch jobs.
+The planner runs the dispatcher's installed `bin/precheck.sh` before grouping;
+code 13 items are excluded, not declared completed. Unavailable checks also
+exclude items for this plan. Re-run planning after restoring the precheck.
+
+The typed `fleet.restock-plan.v1` response contains `jobs` (stable job ids,
+repository, original items and combined prompt), `excluded` (id, precheck code
+and reason), `held` (ids waiting for enough items), and `invalid` (admission
+lint drops). Groups smaller than six wait for more work. No candidate task text
+is executed by the planner. The planner does not install or change host scripts.
