@@ -170,6 +170,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{schemaVersion, providers[], wakeKinds[], bodyKinds[], workStatuses[], claimKeyForms[], claimLeaseMs:{min,max}, claimsGrantExecutionAuthority:false}',
   },
   {
+    usage: 'ashlr agents roster [--json]',
+    description: 'Unified live session roster across Phantom jobs, Devin cloud, Devin Desktop, Codex, Claude, Cursor, Grok, Ollama and oMLX. Each probe times out in about 5s and degrades to unknown. Read-only; no secrets.',
+    safety: 'read',
+    jsonShape: 'agent-roster.v1 {schema, observedAt, latencyMs, sources[{source, ok, availability, sessions, error, observedAt, truncated}], sessions[], claims}',
+  },
+  {
     usage: 'ashlr runtime status --store <absolute> --json',
     description: 'Verify the explicitly selected local candidate and rollback slot without installing, publishing, or starting services.',
     safety: 'read',
@@ -515,6 +521,7 @@ export function agentDocsText(): string {
   lines.push('planning preferences, not provider connections or verified dispatch capability.');
   lines.push('phm_task_context reads current and historical task evidence for exact outcomeId and');
   lines.push('taskId; inspect coverage, omitted counts and observation time before treating it as complete.');
+  lines.push('phm_agent_roster reads the unified live session roster. Unknown sources stay unknown.');
   lines.push('Team tools (docs/architecture/teams.md): phm_team_register, phm_team_publish,');
   lines.push('phm_team_view, phm_team_claim, phm_team_handoff, phm_team_context_add and');
   lines.push('phm_team_context_get. Claims are leases; consequential handoffs wait for human approval.');
@@ -796,6 +803,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'openai-agents sessions|inspect|turns [session-id] [--json]', desc: 'Read bounded managed OpenAI Agents API metadata. API access is separate from subscriptions; no execution qualification or mutations.', topic: 'autonomy' },
   { cmd: 'agents bus channels list|test <id> [--json]', desc: 'List or test channel types offline without sending.', topic: 'autonomy' },
   { cmd: 'agents bus contract [--json]', desc: 'Print the Agent Bus v2 contract: schema version, providers, body kinds, work statuses, claim key forms. Read-only.', topic: 'autonomy' },
+  { cmd: 'agents roster [--json]', desc: 'Unified live session roster. One probe per source, about 5s each, unknown on timeout or an unverified command. Read-only.', topic: 'autonomy' },
   { cmd: 'bus thread|task <verb> [--peer <id>] [--json]', desc: 'Shared task board: local threads plus task claim, handoff, renew and release tied to fenced fleet queue claims. Cooperative labels only; no execution authority.', topic: 'autonomy' },
   { cmd: 'metrics ingest --jobs <file> --status <file>', desc: 'Read local lane and tier merge metrics and advisory routing priors; always JSON.', topic: 'autonomy' },
   { cmd: 'metrics levers [--window <7d|30d>] [--json]', desc: 'Rank three opportunity proxies from local activity and fleet rollups.', topic: 'autonomy' },

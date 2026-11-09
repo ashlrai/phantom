@@ -828,6 +828,12 @@ const loadAgentsCmd = lazyCmd(
   'agents command requires a current build of src/cli/agents-bus-contract.ts.',
 );
 
+const loadAgentsRosterCmd = lazyCmd(
+  () => import('./agents-roster.js'),
+  (m) => m.runAgentsRosterCli as Cmd,
+  'agents roster command requires a current build of src/cli/agents-roster.ts.',
+);
+
 // ─── 3.15 Automations ───────────────────────────────────────────────
 const loadAutomationsCmd = lazyCmd(
   () => import('./automations.js'),
@@ -2900,6 +2906,12 @@ async function main(): Promise<void> {
       }
 
       case 'agents': {
+        // Roster is a separate dispatcher so the bus-contract command stays untouched.
+        if (rest[0] === 'roster') {
+          const cmdRoster = await loadAgentsRosterCmd();
+          process.exitCode = await cmdRoster(rest.slice(1));
+          break;
+        }
         // Agent Bus v2 contract (docs/AGENT-BUS.md "v2"); read-only, no bus access.
         const cmdAgents = await loadAgentsCmd();
         process.exitCode = await cmdAgents(rest);

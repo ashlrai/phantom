@@ -27,6 +27,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import type { AshlrConfig, NativeToolDef, NativeToolSafety, ProposalStatus } from './types.js';
 import { loadConfig } from './config.js';
+import { collectAgentRoster } from './fleet/agent-roster.js';
 import { PROACTIVE_PROFILE_INPUT_SCHEMA, PROACTIVE_PROFILE_PATCH_SCHEMA } from './proactive/schema.js';
 import { killSwitchOn } from './sandbox/policy.js';
 import { audit } from './sandbox/audit.js';
@@ -512,6 +513,13 @@ const TOOLS: NativeToolImpl[] = [
       if (!validOutcomeTaskContextRequest(input)) throw new Error('Use an exact saved outcome/task ID and valid context query fields.');
       return (await import('./verse/outcomes-io.js')).runOutcomeTaskContext(input);
     },
+  },
+  {
+    name: 'phm_agent_roster',
+    description: 'Read the unified live session roster across Phantom jobs, Devin cloud, Devin Desktop, Codex, Claude, Cursor, Grok, Ollama and oMLX. Unknown sources stay unknown. Read-only; prints no secrets.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => collectAgentRoster(),
   },
   {
     name: 'phm_team_register', description: 'Register an agent and its capabilities on the local team bus. Identity only; grants no authority.',
@@ -1597,6 +1605,9 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       ('unservedOnly' in args && typeof args.unservedOnly !== 'boolean') ||
       ('limit' in args && (!Number.isSafeInteger(args.limit) || (args.limit as number) < 1 || (args.limit as number) > 100))
       ? 'invalid orders arguments' : null;
+  } else if (name === 'phm_agent_roster') {
+    const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
+    invalid = !object || Object.keys(args).length > 0 ? 'invalid roster arguments' : null;
   } else if (name === 'phantom_agent_bus_read' || name === 'phantom_agent_bus_status') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
     const keys = Object.keys(args);

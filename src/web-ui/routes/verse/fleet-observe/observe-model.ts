@@ -100,6 +100,63 @@ export function readComms(busPage: unknown): { comms: FeedItem[]; incidents: Fee
   return { comms: items.filter((i) => i.kind === 'bus'), incidents: items.filter((i) => i.kind === 'ci') };
 }
 
+export interface ObserveRosterRow {
+  provider: string;
+  sessionId: string;
+  title: string | null;
+  state: string;
+  ownership: string | null;
+  claims: number;
+  lastActivity: string | null;
+  blockers: string;
+}
+
+export interface ObserveRosterSourceLine {
+  source: string;
+  availability: 'known' | 'unknown';
+  error: string | null;
+  sessions: number;
+}
+
+/** The agent-roster.v1 feed. A payload that is not that schema is null. */
+export function readRoster(raw: unknown): { rows: ObserveRosterRow[]; sources: ObserveRosterSourceLine[] } | null {
+  const data = record(raw);
+  if (data.schema !== 'agent-roster.v1' || !Array.isArray(data.sessions) || !Array.isArray(data.sources)) return null;
+  const rows: ObserveRosterRow[] = [];
+  for (const item of data.sessions) {
+    const s = record(item);
+    const provider = str(s.provider);
+    const sessionId = str(s.sessionId);
+    const state = str(s.state);
+    if (!provider || !sessionId || !state) return null;
+    const blockers = Array.isArray(s.blockers) ? s.blockers.filter((part): part is string => typeof part === 'string') : [];
+    rows.push({
+      provider,
+      sessionId,
+      title: str(s.title),
+      state,
+      ownership: str(s.ownership),
+      claims: Array.isArray(s.claims) ? s.claims.length : 0,
+      lastActivity: str(s.lastActivity),
+      blockers: blockers.join('; '),
+    });
+  }
+  const sources: ObserveRosterSourceLine[] = [];
+  for (const item of data.sources) {
+    const s = record(item);
+    const source = str(s.source);
+    const availability = s.availability === 'known' || s.availability === 'unknown' ? s.availability : null;
+    if (!source || !availability) return null;
+    sources.push({
+      source,
+      availability,
+      error: str(s.error),
+      sessions: Array.isArray(s.sessions) ? s.sessions.length : 0,
+    });
+  }
+  return { rows, sources };
+}
+
 /** Lanes that cannot take work are incidents too — the reason comes from the lane itself. */
 export function heldIncidents(lanes: readonly ObserveLane[]): string[] {
   return lanes.filter((l) => l.held).map((l) => `${l.lane} held: ${l.heldReason ?? 'reason unknown'}`);
