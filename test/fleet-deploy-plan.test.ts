@@ -48,3 +48,22 @@ it('refuses symlinks and invalid arguments and exposes typed JSON through the CL
   expect(await cmdFleetDeployPlan(['--since', 'bad'])).toBe(2);
   await expect(buildFleetDeployPlan(repo, bin, '--all')).rejects.toThrow('commit SHA');
 });
+it('maps the pinned launcher candidate to its live launcher', async () => {
+  const { repo, bin, since } = fixture();
+  const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { stdio: 'pipe' });
+  mkdirSync(join(repo, 'contrib/mac/host-integration'));
+  writeFileSync(join(repo, 'contrib/mac/host-integration/launch.candidate.sh'), 'candidate\n');
+  writeFileSync(join(repo, 'fleet/manifest.json'), JSON.stringify({ schema: 'fleet.machinery.v1', files: [
+    { src: 'contrib/mac/host-integration/launch.candidate.sh', name: 'launch.sh', root: 'runs-bin', class: 'pinned' },
+  ] }));
+  git('add', '.'); git('commit', '-qm', 'launcher candidate');
+  expect((await buildFleetDeployPlan(repo, bin, since)).files).toContainEqual(expect.objectContaining({
+    repoPath: 'contrib/mac/host-integration/launch.candidate.sh', livePath: join(bin, 'launch.sh'),
+    shaPinned: true, status: 'missing', action: 'security-review',
+  }));
+  const output = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  expect(await cmdFleetDeployPlan(['--since', since, '--repo', repo, '--bin', bin, '--json'])).toBe(0);
+  expect(JSON.parse(output.mock.calls[0]![0]).files).toContainEqual(expect.objectContaining({
+    repoPath: 'contrib/mac/host-integration/launch.candidate.sh', livePath: join(bin, 'launch.sh'), action: 'security-review',
+  }));
+});
