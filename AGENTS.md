@@ -299,7 +299,7 @@ or installed-app acceptance. See [recovery evidence](docs/contracts/CONTRACT-M52
 
 The release autonomy command is awaiting top-level CLI wiring. Once wired, it will read the enrolled repositories' release gates and the local publish switch and offer a Markdown report for one repository. It proposes classifications without changing settings. Unknown evidence is not evidence of an absent gate. See [release autonomy](docs/RELEASE-AUTONOMY.md).
 
-Desktop update status: `phm app update status [--json]` inspects the local signed stage and reports host deferral and lease counts. Unknown app and job identities are null. See [desktop updates](DESKTOP.md#background-update-discovery-and-local-status).
+Desktop update status: `phm app update status [--json]` reads the installed app bundle version and reports a staged candidate only when it is newer, plus host deferral and lease counts. Unknown job identities stay null. See [desktop updates](DESKTOP.md#background-update-discovery-and-local-status).
 
 ## Multi-Mac node pool
 
