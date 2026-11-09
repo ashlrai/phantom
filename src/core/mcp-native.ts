@@ -486,6 +486,17 @@ const TOOLS: NativeToolImpl[] = [
     handler: async () => (await import('./observe/read.js')).readObserveSnapshot(),
   },
   {
+    name: 'phantom_spend_budget',
+    description: 'Read the owner spend budget in USD. A missing provider is 0 for the month. This tool cannot change the budget.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => {
+      const { readSpendBudget } = await import('./spend/budget-store.js');
+      const read = await readSpendBudget();
+      return { schema: read.policy.schema, source: read.source, entries: read.policy.entries };
+    },
+  },
+  {
     name: 'phantom_observe_session',
     description: 'Read one roster session from the observe snapshot. The transcript stays unknown until a desktop operator reader is registered.',
     inputSchema: { type: 'object', properties: { sessionId: { type: 'string' } }, required: ['sessionId'], additionalProperties: false },

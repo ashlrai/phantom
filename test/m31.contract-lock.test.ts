@@ -139,6 +139,7 @@ describe('native MCP tool surface lock', () => {
       'phantom_fleet_session:read',
       'phantom_observe:read',
       'phantom_observe_session:read',
+      'phantom_spend_budget:read',
       'phm_agent_roster:read',
       'phm_proactive_agents_create:append',
       'phm_proactive_agents_delete:append',
