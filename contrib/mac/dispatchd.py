@@ -136,6 +136,11 @@ MD = R + "/metrics"; os.makedirs(MD, exist_ok=True)
 JOBS_RAW, JOBS = [], []
 _JOBS_LIVE = False
 def metric(d):
+    # launch.sh owns the pick; carry its exact tag without treating it as a new pool.
+    job = d.get("job", "")
+    if d.get("lane") == "claude" and re.fullmatch(r"[A-Za-z0-9_.-]+", job):
+        if "SUBLANE claude:fable" in rd(R + "/" + job + ".base.meta").splitlines():
+            d["sublane"] = "fable"
     d.setdefault("ts", time.strftime("%Y-%m-%dT%H:%M:%S%z"))
     if d.get("job") and "ab" not in d:   # Masbot 16:35: tag A/B arm from the router line (TERRA-AB-1)
         try:
