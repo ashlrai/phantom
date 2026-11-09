@@ -9,6 +9,9 @@
  * note that some updates are missing. Only when every source is down does it
  * say the Feed is unavailable.
  */
+import type { FeedReport } from '../../../../core/feed.js';
+import { apiGet } from '../../../data/client.js';
+import type { QueryDef } from '../../../data/queries.js';
 import { useMemo, useState } from 'react';
 import { useDesktopUpdates } from '../../../app/desktop-updates.js';
 import { deriveUpdateNotifications } from '../../../components/notifications/deriveUpdateNotifications.js';
@@ -29,6 +32,8 @@ import { buildFeed, filterFeed, type FeedFilter, type FeedKind } from './feed-mo
 import { isDismissed, useFeedDismissals } from './feed-dismiss-store.js';
 import styles from './feed.module.css';
 
+const sharedFeedQuery: QueryDef<FeedReport> = { key: 'shared-feed', fetch: signal => apiGet<FeedReport>('/api/feed', signal) };
+
 const FILTERS: readonly { id: FeedFilter; label: string }[] = [
   { id: 'all', label: 'All' },
   { id: 'leader', label: 'Leader' },
@@ -42,6 +47,7 @@ const KIND_LABEL: Record<FeedKind, string> = { leader: 'Leader', alert: 'Alert',
 export const FEED_POLL_MS = 15_000;
 
 export function FeedSection({ visible = true }: { visible?: boolean }) {
+  const shared = useQuery(sharedFeedQuery, { enabled: visible, freshMs: 15_000 });
   const leader = useQuery(leaderThreadQuery, { enabled: visible, freshMs: 15_000 });
   const runs = useQuery(fleetMergesQuery, { enabled: visible, freshMs: 15_000 });
   const owner = useQuery(ownerThreadQuery, { enabled: visible, freshMs: 15_000 });
@@ -51,11 +57,12 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
   const bus = useQuery(agentBusPageQuery(0, 50), { enabled: visible, freshMs: 15_000 });
   const nativeUpdates = useDesktopUpdates();
   const activity = useActivity();
+  const refetchShared = useRefetch(sharedFeedQuery);
   const refetchLeader = useRefetch(leaderThreadQuery);
   const refetchRuns = useRefetch(fleetMergesQuery);
   const refetchOwner = useRefetch(ownerThreadQuery);
   const refetchBus = useRefetch(agentBusPageQuery(0, 50));
-  usePollWhileVisible(() => { refetchLeader(); refetchRuns(); refetchOwner(); refetchBus(); }, FEED_POLL_MS, { enabled: visible });
+  usePollWhileVisible(() => { refetchShared(); refetchLeader(); refetchRuns(); refetchOwner(); refetchBus(); }, FEED_POLL_MS, { enabled: visible });
   const now = useNow(30_000);
   const [filter, setFilter] = useState<FeedFilter>('all');
   const { map: dismissedMap, dismissItem, restoreItem } = useFeedDismissals();
@@ -70,7 +77,7 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
   const ownerLines = ownerPaused ? undefined : owner.data?.lines;
   const failed = [leaderFailed, runsFailed, alertsFailed, ownerFailed].filter(Boolean).length;
   // Down means no source gave anything: the owner source only counts as up when it returned lines.
-  const allDown = leaderFailed && runsFailed && alertsFailed && (ownerFailed || !ownerLines?.length);
+  const allDown = !shared.data && leaderFailed && runsFailed && alertsFailed && (ownerFailed || !ownerLines?.length);
   const loading = leader.data === undefined && !leaderFailed && runs.data === undefined && !runsFailed && !activity.data && !alertsFailed && owner.data === undefined && !ownerFailed;
 
   const updateItems = useMemo(
@@ -78,13 +85,14 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
     [update.data, nativeUpdates]);
 
   const feed = useMemo(() => buildFeed({
+    shared: shared.data,
     leader: leader.data?.value?.messages,
     runs: runsFailed ? undefined : runs.data,
     needsYou: activity.data?.needsYou,
     owner: ownerLines,
     update: updateItems,
     bus: bus.data,
-  }), [leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data]);
+  }), [shared.data, leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data]);
   const filtered = filterFeed(feed, filter);
   const shown = filtered.filter(item => !isDismissed(item, dismissedMap));
   const dismissed = filtered.filter(item => isDismissed(item, dismissedMap));
@@ -111,6 +119,7 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
     {allDown
       ? <CardNote tone="unknown">The Feed is unavailable: none of its sources answered. It retries on its own.</CardNote>
       : failed > 0 ? <CardNote tone="unknown">Some updates could not be loaded.</CardNote> : null}
+    <CardNote tone="unknown">{shared.data ? `Unknown sources: ${Object.entries(shared.data.sources).filter(([, state]) => state === 'unknown').map(([name]) => name === 'leaderReplies' ? 'leader replies' : name).join(', ') || 'none'}.` : 'Shared feed sources are unknown.'}</CardNote>
     {ownerPaused ? <CardNote tone="unknown">Owner channels are paused; their messages are hidden.</CardNote> : null}
     {loading ? <CardNote>Loading the feed…</CardNote>
       : !allDown && shown.length === 0
