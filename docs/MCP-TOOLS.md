@@ -34,6 +34,7 @@ exports, verbatim from source.
 | `phantom_fleet_graph` | Read the local graph.v1 fleet inventory: repositories, lanes, seats and holds. Observation only; incomplete sources are flagged. No launcher environment values. |
 | `phantom_observe` | Read the human observe snapshot: roster, sensor headroom, resource coordination, pull headlines, bottlenecks, and human steps. Unknown stays unknown. |
 | `phantom_observe_session` | Read one roster session. The transcript stays unknown until a desktop operator reader is registered. |
+| `phantom_spend_budget` | Read the owner spend budget in USD. A missing provider is 0 for the month. This tool cannot change the budget. |
 | `phantom_fleet_session` | Read local Codex fleet session quota observations per account as resource.v1 JSON. Includes session/weekly usage and freshness; missing readings are unknown. No prompts, credentials, environment values or provider probes. |
 
 The recovery tools read retained observations, not live process state. History

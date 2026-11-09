@@ -6,6 +6,7 @@ import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { listBusInboxAfter } from '../fleet/bus-inbox.js';
+import { coordinationSummary } from '../agents/claim-store.js';
 import { inspectBusWorkClaims } from '../fleet/bus-work-claims.js';
 import { ashlrHome } from '../cloud/store.js';
 import { assembleObserve, type ObserveInput } from '../observe/assemble.js';
@@ -111,6 +112,15 @@ async function readCi(nowMs: number): Promise<{ repos: number; medianDailyTtgSec
   }
 }
 
+function readClaimStore(nowMs: number): { source: 'available' | 'missing' | 'unavailable'; live: number | null } {
+  try {
+    const summary = coordinationSummary(undefined, nowMs);
+    return { source: summary.source, live: summary.liveClaims };
+  } catch {
+    return { source: 'unavailable', live: null };
+  }
+}
+
 function busReadable(): boolean | null {
   try {
     const page = listBusInboxAfter(0, 1);
@@ -158,6 +168,7 @@ export async function buildWorldModel(options: ReadObserveOptions = {}): Promise
     sensorRows: isSensorReport(sensors) ? sensors.lanes : [],
     roster: isRoster(roster) ? roster : null,
     claims,
+    claimStore: readClaimStore(nowMs),
     busReadable: busReadable(),
     queue,
     ci,

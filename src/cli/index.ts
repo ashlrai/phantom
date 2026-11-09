@@ -2534,6 +2534,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'prs': {
+        const { cmdPrs } = await import('./prs.js');
+        process.exitCode = await cmdPrs(rest);
+        break;
+      }
+
       case 'repos': {
         const { cmdReposRank } = await import('./repos-rank.js');
         process.exitCode = cmdReposRank(rest);

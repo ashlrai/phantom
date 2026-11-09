@@ -17,6 +17,8 @@ export interface WorldProjectInput {
   sensorRows?: readonly unknown[];
   roster: AgentRoster | null;
   claims: BusWorkClaimsInspection | null;
+  /** coordinationSummary. When set, it is the claims.live source. */
+  claimStore?: { source: 'available' | 'missing' | 'unavailable'; live: number | null } | null;
   busReadable: boolean | null;
   queue: { ready: number; claimed: number } | null;
   ci: { repos: number; medianDailyTtgSeconds: number | null; observedAt: string | null } | null;
@@ -64,7 +66,10 @@ function needFor(path: string): string {
   if (path === 'sensors.lanes') return 'phm usage sensors --json with a snapshot file or a fresh refresh.';
   if (path === 'roster.sessions' || path === 'roster') return 'phm agents roster --json with at least one probe whose availability is known.';
   if (path.startsWith('roster.sources.')) return 'That roster probe needs a machine-readable session list. Devin Desktop, Cursor, and Grok stay unknown until desktopSessions() can read them.';
-  if (path === 'claims.live') return 'inspectBusWorkClaims must return source available. A missing claim file is unknown, not zero.';
+  if (path === 'claims.live') return 'coordinationSummary from the claim store. A missing store is unknown, not zero. The older bus claims file is not used as a stand-in.';
+  if (path.endsWith('.burnRate')) return 'Two fresh usage samples in the same reset window. burnRate stays unknown until they agree.';
+  if (path.endsWith('.remaining')) return 'A fresh usage.sensors.v1 reading with used and limit.';
+  if (path.endsWith('.idleIncludedWastedPerWeek')) return 'A fresh burn rate, a reset time, and included allowance. Pay-per-use lanes stay unknown.';
   if (path === 'bus.readable') return 'A readable local bus inbox. Message totals are not estimated from one page.';
   if (path.startsWith('queue.')) return 'A regular queue.v1.json under ~/.ashlr-runs/queue. A missing file is unknown, not zero.';
   if (path === 'ci.repos') return 'A local ~/.ashlr/ci-metrics.json. The tick does not call gh.';
@@ -126,6 +131,15 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
     const headroom = reading(fresh ? lane.headroom : null, source, observedAt, fresh ? 'fresh' : lane.stale ? 'stale' : 'unknown');
     const used = reading(fresh ? lane.used : null, source, observedAt, headroom.freshness);
     const limit = reading(fresh ? lane.limit : null, source, observedAt, headroom.freshness);
+    const laneNumber = (value: number | null): Field<number> => {
+      if (headroom.freshness !== 'fresh' || value === null) {
+        return { value: null, source: source ?? 'usage.sensors.v1', observedAt, freshness: headroom.freshness === 'fresh' ? 'unknown' : headroom.freshness };
+      }
+      return reading(value, source ?? 'usage.sensors.v1', observedAt, 'fresh');
+    };
+    const remaining = laneNumber(lane.remaining);
+    const burnRate = laneNumber(lane.burnRate);
+    const idleIncludedWastedPerWeek = laneNumber(lane.idleIncludedWastedPerWeek);
     const paceFreshness: Freshness = fresh ? 'fresh' : 'unknown';
     const pacePerHour = pace(input.sensorRows, lane.lane, 'pacePerHour');
     const requiredPacePerHour = pace(input.sensorRows, lane.lane, 'requiredPacePerHour');
@@ -137,7 +151,7 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
     const paceHour = paceField(pacePerHour);
     const required = paceField(requiredPacePerHour);
     const runway = paceField(runwayHours);
-    return { lane: lane.lane, headroom, used, limit, pacePerHour: paceHour, requiredPacePerHour: required, runwayHours: runway };
+    return { lane: lane.lane, headroom, used, limit, remaining, burnRate, idleIncludedWastedPerWeek, pacePerHour: paceHour, requiredPacePerHour: required, runwayHours: runway };
   });
 
   const knownSources = input.roster?.sources.filter((source) => source.availability === 'known') ?? [];
@@ -151,9 +165,13 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
       : unknown<number>('agent-roster.v1');
     return { source: source.source, availability, sessions };
   });
-  const liveClaims = input.claims?.source === 'available'
-    ? reading(input.claims.claims.length, 'inspectBusWorkClaims', now, 'fresh')
-    : unknown<number>('inspectBusWorkClaims');
+  const liveClaims = input.claimStore?.source === 'available' && typeof input.claimStore.live === 'number'
+    ? reading(input.claimStore.live, 'claim-store', now, 'fresh')
+    : input.claimStore
+      ? unknown<number>('claim-store')
+      : input.claims?.source === 'available'
+        ? reading(input.claims.claims.length, 'inspectBusWorkClaims', now, 'fresh')
+        : unknown<number>('claim-store');
   const bus = input.busReadable === null ? unknown<boolean>('bus-inbox')
     : reading(input.busReadable, 'listBusInboxAfter', now, 'fresh');
   const ready = input.queue ? reading(input.queue.ready, 'queue.v1', now, 'fresh') : unknown<number>('queue.v1');
