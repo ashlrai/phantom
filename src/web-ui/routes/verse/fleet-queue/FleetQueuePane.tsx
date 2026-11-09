@@ -78,6 +78,12 @@ export function FleetQueuePane({ visible, host }: PaneProps) {
     {holds.status === 'error' && <p className={styles.notice} role="alert">Lane holds could not refresh.</p>}
     {read.status === 'error' && <p className={styles.notice} role="status">Queue could not refresh. Showing the last reading.</p>}
     {Object.values(data.sources).some((source) => source !== 'healthy') && <p className={styles.notice} role="status">Queue data may be incomplete.</p>}
+    <section aria-label="Waiting to launch"><h3 className={styles.heading}>Waiting to launch</h3>
+      {!data.stuck ? <p className={styles.message}>Waiting jobs are unavailable.</p> : <>
+        {!data.stuck.eventsAvailable && <p className={styles.notice}>Dispatch events are unavailable; some jobs may have launched.</p>}
+        {data.stuck.jobs.length === 0 ? <p className={styles.message}>No waiting jobs found.</p> : <ul className={styles.list}>{data.stuck.jobs.map((job, index) => <li className={styles.row} key={`${job.id}:${index}`}><JobRefs text={job.id} onOpenJob={openJob} /> · {job.age_s === undefined ? 'age unknown' : `${job.age_s} seconds`}</li>)}</ul>}
+      </>}
+    </section>
     <section aria-label="By lane"><h3 className={styles.heading}>By lane</h3>
       {data.byLane.length === 0 ? <p className={styles.message}>No lane counts available.</p> : <ul className={styles.list}>{laneRows(data).map((lane) => {
         const drain = laneDrainText(lane, snapshotLanes.find((snapshotLane) => snapshotLane.lane === lane.lane));

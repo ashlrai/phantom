@@ -21,6 +21,7 @@ export interface FleetQueueV1 {
   groups: ParkedGroup[];
   /** Parked dependency rows still waiting on MERGED outcomes (RQ-QUEUE-AUTOUNPARK-1). */
   unmetDeps?: ParkedUnmetDep[];
+  stuck?: import('../queue/stuck.js').StuckQueue | null;
   skips: PrecheckSkip[];
   skipsLast24h: number | null;
 }
@@ -262,6 +263,7 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
   const skips = parseSkips(skipsSource.text, now, opts.limit);
   if (skips.dropped) skipsSource.state = 'degraded';
   const unmetDeps = await readUnmetDeps(root, depPromptByJob);
+  const stuck = await import('../queue/stuck.js').then(({ readStuckQueue }) => readStuckQueue(root, now)).catch(() => null);
   return {
     v: 1, generatedAt: new Date(now).toISOString(), sources: { ready: readySource.state, skips: skipsSource.state },
     total: ready + parked, ready, parked, malformed,
@@ -269,7 +271,7 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     nextUp: [...nextUp.entries()].map(([lane, jobs]) => ({ lane, jobs })).sort((a, b) => a.lane.localeCompare(b.lane)),
     groups: [...groups.values()].map((group) => ({ ...group, jobs: group.jobs.sort().slice(0, 8) }))
       .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason) || (a.lane ?? '').localeCompare(b.lane ?? '')),
-    unmetDeps,
+    unmetDeps, stuck,
     skips: skips.skips, skipsLast24h: skipsSource.state === 'degraded' && !skipsSource.text ? null : skips.last24h,
   };
 }
