@@ -1,6 +1,8 @@
 import { listThread } from '../core/vision/leader-thread.js';
 import { LEADER_THREAD_CHANNELS, type LeaderThreadChannel } from '../core/vision/leader-thread-types.js';
 
+const usage = 'Usage: ashlr fleet leader-search <terms...> [--channel CHANNEL] [--from mason|leader] [--limit 20] [--json]';
+
 export async function cmdFleetLeaderSearch(args: string[]): Promise<number> {
   const terms: string[] = [];
   let channel: LeaderThreadChannel | undefined;
@@ -10,7 +12,7 @@ export async function cmdFleetLeaderSearch(args: string[]): Promise<number> {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--help' || arg === '-h') {
-      console.log('Usage: ashlr fleet leader-search <terms...> [--channel CHANNEL] [--from mason|leader] [--limit 20] [--json]');
+      console.log(usage);
       return 0;
     }
     if (arg === '--json') { json = true; continue; }
