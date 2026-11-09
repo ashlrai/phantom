@@ -131,13 +131,17 @@ the leader directory replaces it. Work is addressed to a role's lane so the
 existing router can admit it. The office does not call a model and does not
 spend.
 
-Escalation to the owner is only for secrets or keys, money, outside sends, and
-destruction of owner data. Anything else is routed. With no standing grant the
-work is recorded as a proposal and is not put on the bus. KILL stops ask and
-assign; status still reads.
+A request is routed only when its words are ordinary work and a role keyword,
+or an explicit owner, picks the lane. The hard-limit regex only labels a match.
+It does not decide escalation. A paraphrase, or any wording that is not clearly
+ordinary work, escalates to the owner. Stored and posted text goes through
+`scrubSecrets`. With no standing grant the work is recorded as a proposal and
+is not put on the bus. KILL is checked at entry and again immediately before
+the office file is written and before each bus post.
 
 Channel adapters do not live here. After they authenticate the owner they call
-`acceptOwnerMessage` and drain `readLeaderOutbox`. The desktop Leader pane
+`acceptOwnerMessage` and drain `readLeaderOutbox`. A raw channel payload is not
+a caller. The desktop Leader pane
 shows the conversation, the open assignments and the org.
 
 ```sh
