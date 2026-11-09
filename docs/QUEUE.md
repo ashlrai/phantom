@@ -282,3 +282,16 @@ lines, gap and each source's status. An unavailable source is `unknown`;
 if the queue is unavailable no lines are emitted because deduplication cannot
 be verified. GitHub reads are public and may be unavailable or incomplete.
 Without `--lane` and `--n`, `fleet supply` retains its batch activity report.
+
+### Generator yield
+
+Run `phm queue yield --since 24h --json` to compare generators from the local
+`metrics/jobs.jsonl` ledger. The Metrics screen shows the same 24-hour report.
+Events in the window are joined by job ID. An explicit `src` takes precedence
+over the job ID pattern; unrecognized sources are `unknown`. PRs and merges
+count jobs with recorded PRs and merges. Empty rate uses jobs with a recorded
+empty result. Median diff lines uses recorded `diff_lines`. Tokens per merged PR
+is the sum of recorded job tokens divided by merged PRs; it is unknown if any
+job in the group lacks a token total or no PR merged. Missing measurements are
+unknown, and malformed lines are skipped and counted. The report describes
+recorded evidence, not necessarily every job or PR.

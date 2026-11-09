@@ -46,8 +46,9 @@ const FILTERS: readonly { id: FeedFilter; label: string }[] = [
   { id: 'update', label: 'Updates' },
   { id: 'bus', label: 'Bus' },
   { id: 'teammate', label: 'Dot' },
+  { id: 'comms', label: 'Comms' },
 ];
-const KIND_LABEL: Record<FeedKind, string> = { leader: 'Leader', alert: 'Alert', merge: 'Merge', fleet: 'Fleet', owner: 'Channel', update: 'Update', bus: 'Bus', teammate: 'Dot' };
+const KIND_LABEL: Record<FeedKind, string> = { leader: 'Leader', alert: 'Alert', merge: 'Merge', fleet: 'Fleet', owner: 'Channel', update: 'Update', bus: 'Bus', teammate: 'Dot', comms: 'Comms' };
 export const FEED_POLL_MS = 15_000;
 
 export function FeedSection({ visible = true }: { visible?: boolean }) {
@@ -90,6 +91,19 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
     () => deriveUpdateNotifications(update.data ?? null, Date.now(), nativeUpdates),
     [update.data, nativeUpdates]);
 
+  const inboxView = useMemo(() => {
+    const raw = teammate?.data;
+    const view = readUnifiedInboxView(raw);
+    if (!view || view.unavailable || !raw || typeof raw !== 'object') return view;
+    const data = raw as { generatedAt?: unknown; items?: unknown };
+    const rawItems = Array.isArray(data.items) ? data.items : [];
+    return { ...view, generatedAt: typeof data.generatedAt === 'string' ? data.generatedAt : undefined,
+      items: view.items.map(item => {
+        const original = rawItems.find((row: unknown) => row && typeof row === 'object' && 'id' in row && row.id === item.id) as { since?: unknown } | undefined;
+        return typeof original?.since === 'string' ? { ...item, since: original.since } : item;
+      }) };
+  }, [teammate?.data]);
+
   const feed = useMemo(() => buildFeed({
     shared: shared.data,
     leader: leader.data?.value?.messages,
@@ -98,8 +112,8 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
     owner: ownerLines,
     update: updateItems,
     bus: bus.data,
-    teammate: teammate?.error ? null : readUnifiedInboxView(teammate?.data),
-  }), [shared.data, leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data, teammate?.data, teammate?.error]);
+    teammate: teammate?.error ? null : inboxView,
+  }), [shared.data, leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data, inboxView, teammate?.error]);
   const filtered = filterFeed(feed, filter);
   const shown = filtered.filter(item => !isDismissed(item, dismissedMap));
   const dismissed = filtered.filter(item => isDismissed(item, dismissedMap));
