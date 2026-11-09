@@ -615,6 +615,7 @@
     "src/core/fleet/merge-backlog-read.ts",
     "src/core/fleet/merge-contract-resolution-witness.ts",
     "src/core/fleet/merge-gates.ts",
+    "src/core/fleet/merge-graph.ts",
     "src/core/fleet/merge-pace.ts",
     "src/core/fleet/meter-incident.ts",
     "src/core/fleet/mirrors.ts",

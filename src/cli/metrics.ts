@@ -1,3 +1,5 @@
+import { readTaskCheckJobs } from './fleet-task-check.js';
+import { mergeGraph } from '../core/fleet/merge-graph.js';
 import { cmdMetricsIdle } from './metrics-idle.js';
 /** `phm metrics [summary|dashboard|record|recommend|ingest]` — local telemetry + value metrics. */
 import { join } from 'node:path';
@@ -10,7 +12,8 @@ import { ensurePrivateDirectory, writePrivateFileAtomic } from '../core/verse/pr
 import { defaultStewardPolicy, runSteward } from '../core/steward/disk.js';
 import { ingestMetrics, MetricsInputError } from '../core/fleet/metrics-ingest.js';
 
-const USAGE = `Usage: phm metrics <summary|dashboard [--out file]|record <json>|recommend <taskType> <arm...>|idle --status <snapshot.json> --jobs <jobs.jsonl>|ingest --jobs <jobs.jsonl> --status <status.json>|levers [--window <7d|30d>]> [--json]
+const USAGE = `Usage: phm metrics <merges|summary|dashboard [--out file]|record <json>|recommend <taskType> <arm...>|idle --status <snapshot.json> --jobs <jobs.jsonl>|ingest --jobs <jobs.jsonl> --status <status.json>|levers [--window <7d|30d>]> [--json]
+phm metrics merges [--json] reads the last 24 hourly buckets from the local jobs ledger.
 phm metrics ingest reads two explicit local files and prints deterministic lane and tier metrics as JSON.
 phm metrics levers ranks opportunity proxies from local activity and fleet rollups.
 No network, writes, provider calls or operational routing changes. See docs/METRICS-ROUTER-FEED.md for schemas.
@@ -54,6 +57,14 @@ export function cmdMetrics(argv: string[], io?: CliIo): number | Promise<number>
   const [sub = 'summary', ...rest] = argv.filter((a) => a !== '--json');
   if (sub === 'help') { io.out(USAGE); return 0; }
   if (sub === 'ingest') return cmdIngest(rest, io);
+  if (sub === 'merges') {
+    if (rest.length) { io.err(USAGE); return 2; }
+    return readTaskCheckJobs().then(raw => {
+      const report = mergeGraph(raw);
+      io.out(json ? JSON.stringify(report, null, 2) : !report.known ? 'Merge metrics: unknown' : report.lanes!.length ? report.lanes!.map(lane => `${lane.lane}: ${lane.buckets.reduce((sum, bucket) => sum + bucket.merges, 0)} merges`).join('\n') : 'No merges in the last 24 hours');
+      return 0;
+    });
+  }
   if (rejectUnknownOptions(rest, sub === 'dashboard' ? { values: ['--out'] } : {})) { io.err(USAGE); return 2; }
   try {
     switch (sub) {
