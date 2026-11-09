@@ -27,50 +27,11 @@ import { join } from 'node:path';
 
 import { TOP_LEVEL_COMMANDS } from '../src/cli/completions.js';
 import { HELP_ENTRIES } from '../src/cli/help.js';
+import { dispatchedCommands } from './helpers/cli-command-table.js';
 
 const INDEX_TS_PATH = join(__dirname, '..', 'src', 'cli', 'index.ts');
 
-/**
- * Extract the literal top-level command names dispatched by main()'s
- * `switch (cmd) { case '...': ... }`. Bounded to the switch body (between
- * `switch (cmd) {` and the `} catch (err) {` that closes main()'s try block)
- * so we never pick up an unrelated `case` from a different switch elsewhere
- * in the file. Case labels are always plain identifiers here (`case 'foo':`)
- * — flag-shaped aliases like `--version`/`-h` and the internal
- * `__skills-audit-worker` worker entry point don't start with a letter, so
- * the regex excludes them by construction (a real user-facing command name
- * always starts with a-z).
- */
-function extractDispatchedCommands(): string[] {
-  const src = readFileSync(INDEX_TS_PATH, 'utf8');
-
-  const switchStart = src.indexOf('switch (cmd) {');
-  if (switchStart === -1) {
-    throw new Error(
-      'cli-registry-drift: could not find `switch (cmd) {` in src/cli/index.ts — ' +
-      'has main() been restructured? Update extractDispatchedCommands() to match.',
-    );
-  }
-  const catchMarker = '\n  } catch (err) {';
-  const switchEnd = src.indexOf(catchMarker, switchStart);
-  if (switchEnd === -1) {
-    throw new Error(
-      'cli-registry-drift: could not find the end of the dispatch switch ' +
-      '(`} catch (err) {`) in src/cli/index.ts — update the boundary marker.',
-    );
-  }
-
-  const switchBody = src.slice(switchStart, switchEnd);
-  const caseRe = /case '([a-zA-Z][a-zA-Z0-9-]*)':/g;
-  const found = new Set<string>();
-  let m: RegExpExecArray | null;
-  while ((m = caseRe.exec(switchBody)) !== null) {
-    found.add(m[1]!);
-  }
-  return [...found];
-}
-
-const dispatched = extractDispatchedCommands();
+const dispatched = dispatchedCommands(readFileSync(INDEX_TS_PATH, 'utf8'));
 
 describe('CLI registry anti-drift (structural, parses src/cli/index.ts)', () => {
   it('sanity: extraction finds a plausible number of commands', () => {
