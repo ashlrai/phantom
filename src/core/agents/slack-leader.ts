@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { realHome } from '../real-home.js';
 import { validateBusEnvelope, type BusEnvelope } from '../fleet/bus-envelope.js';
 import { leaderInboxAppender, leaderNetworkSources, readLeaderNetworkConfig, type LeaderRuntimeOptions } from './leader-network-runtime.js';
 import { createLeaderNetwork, parseMasonIdentities } from './leader-network.js';
@@ -27,7 +28,8 @@ export function createSlackLeaderAdapter(options: SlackLeaderOptions = {}): Lead
 
 /** Config is trusted host state, never an identity field supplied in a Slack message. */
 export function readSlackDeliveryPolicy(options: LeaderRuntimeOptions = {}): SlackDeliveryPolicy | undefined {
-  const configDir = options.configDir ?? join(homedir(), '.ashlr');
+  const home = realHome();
+  const configDir = options.configDir ?? join(home ?? '/owner-home-unavailable', '.ashlr');
   const parsed = loadAgentNetworkConfig({ path: join(configDir, 'agent-network.toml') });
   if (parsed.state !== 'ok' || !parsed.slack || parsed.slack === 'invalid') return undefined;
   const sources = readLeaderNetworkConfig(options);
