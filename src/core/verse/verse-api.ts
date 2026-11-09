@@ -265,6 +265,7 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   { id: 'fleet-merge-pace' as MountedApiModuleId, load: async () => (await import('./merge-pace-api.js')).handleMergePaceApi },
   { id: 'fleet-landed-closes' as MountedApiModuleId, load: async () => (await import('./landed-closes-api.js')).handleLandedClosesApi },
   { id: 'fleet-slow-prs' as MountedApiModuleId, load: async () => (await import('./slow-prs-api.js')).handleSlowPrsApi },
+  { id: 'owner-thread' as MountedApiModuleId, load: async () => (await import('./owner-thread-api.js')).handleOwnerThreadApi },
 ];
 
 let mountedModules: readonly MountedApiModule[] = DEFAULT_API_MODULES;

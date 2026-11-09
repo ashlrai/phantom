@@ -74,6 +74,8 @@ export interface FleetRunsApiDeps {
   reassign?: typeof reassignQueuedJobs;
   /** Briefing behind GET .../runs/mission. Default reads the runs directory. */
   readMission?: () => Promise<MissionControlV1>;
+  /** Owner-thread mirror roots (tests); default is the fixed owner dirs. */
+  ownerThread?: import('./owner-thread-api.js').OwnerThreadApiDeps;
 }
 
 /** ASHLR_RUNS_DIR overrides ~/.ashlr-runs — the fleet runs-dir convention. */
@@ -451,8 +453,13 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
           if (outcome.status === 'stopped' || outcome.status === 'moved') { generation++; cached = undefined; }
           command = { status: outcome.status, reply: renderJobCommandReply(outcome) };
         }
+        // Best-effort copy onto the owner thread; KILL, pause or any failure
+        // leaves the inbox response exactly as it was.
+        const ownerThread = await import('./owner-thread-api.js')
+          .then(m => m.mirrorInboxToOwnerThread(result.envelope.body, result.ack.dedupeKey, { now, ...deps.ownerThread }))
+          .catch(() => ({ status: 'unavailable' }));
         sendJson(res, result.ack.status === 'accepted' ? 201 : 200, {
-          ok: true, at: result.envelope.receivedAt,
+          ok: true, ownerThread, at: result.envelope.receivedAt,
           ...(ticket.id === undefined ? {} : { id: project(ticket.id, 'string') }),
           accepted: result.ack.status === 'accepted', duplicate: result.ack.status === 'duplicate',
           // The receiver's key is a bare 64-hex SHA-256 — a secret shape the
