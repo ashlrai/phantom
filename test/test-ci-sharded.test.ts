@@ -394,6 +394,35 @@ describe('local exhaustive prepublish shards', () => {
     expect(result.stderr).toContain('second.test.ts | second test | Error: second failure');
   });
 
+  it('runs and reports real failing files in a shard', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ashlr-real-shard-')); roots.push(root);
+    mkdirSync(join(root, 'scripts'));
+    mkdirSync(join(root, 'test'));
+    const policy = join(root, 'src', 'core', 'run', 'tool-path.ts');
+    mkdirSync(dirname(policy), { recursive: true });
+    copyFileSync(resolve(sourceScripts, '..', 'src', 'core', 'run', 'tool-path.ts'), policy);
+    for (const file of ['test-ci.mjs', 'test-ci-sharded.mjs', 'test-shard-plan.mjs']) {
+      copyFileSync(join(sourceScripts, file), join(root, 'scripts', file));
+    }
+    copyFileSync(join(sourceScripts, 'vitest-progress-reporter.mjs'), join(root, 'scripts', 'vitest-progress-reporter.mjs'));
+    symlinkSync(resolve(sourceScripts, '..', 'node_modules'), join(root, 'node_modules'), 'dir');
+    writeFileSync(join(root, 'vitest.config.mjs'), "export default { test: { include: ['test/*.test.ts'] } };\n");
+    for (let i = 0; i < 8; i++) {
+      writeFileSync(join(root, 'test', `failure-${i}.test.ts`),
+        `import { it } from 'vitest';\nit('case ${i}', () => { throw new Error('failure ${i}'); });\n`);
+    }
+    const result = spawnSync(process.execPath, [join(root, 'scripts', 'test-ci-sharded.mjs'), '--general-shard=1/4'], {
+      cwd: root, encoding: 'utf8', timeout: 60_000,
+      env: { ...process.env, ASHLR_TEST_CI_REPORT_DIRECTORY: undefined },
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    const summary = result.stderr.split('[test-ci:sharded] Failure summary:')[1] ?? '';
+    const failures = [...summary.matchAll(/failure-(\d)\.test\.ts \| case \1 \| Error: failure \1/g)];
+    expect(failures, result.stderr).toHaveLength(2);
+    expect(new Set(failures.map((match) => match[1])).size).toBe(2);
+  }, 70_000);
+
   it('fails closed when the isolated campaign acceptance fails', () => {
     const result = runFixture('isolated');
     expect(result.error).toBeUndefined(); expect(result.status).toBe(9);
@@ -453,21 +482,20 @@ describe('paired isolated acceptance', () => {
     expect(result.stderr).toContain('[test-ci:sharded] PASS (isolated 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)');
   });
 
-  it('stops the running sibling and launches nothing more when a paired case fails', () => {
-    const result = runFixture('successor', { ASHLR_TEST_CI_ISOLATED_CONCURRENCY: '2', ASHLR_FAKE_ISOLATED_DELAY_MS: '3000' }, ['--isolated-only']);
+  it('continues the paired cases when one fails', () => {
+    const result = runFixture('successor', { ASHLR_TEST_CI_ISOLATED_CONCURRENCY: '2', ASHLR_FAKE_ISOLATED_DELAY_MS: '150' }, ['--isolated-only']);
     expect(result.error).toBeUndefined(); expect(result.status).toBe(11);
     const starts = events(result.stderr).filter(event => event.kind === 'start').map(event => event.label);
-    expect(starts).toEqual(longestFirst.slice(0, 2));
-    expect(result.stderr).toMatch(/isolated test\/resource-engineering-setup-acceptance\.test\.ts exited (?!0\b)/);
+    expect(starts).toEqual(longestFirst);
     expect(result.stderr).not.toContain('[test-ci:sharded] PASS');
   });
 
-  it('never launches the exclusive capacity ledger after a later pooled failure', () => {
+  it('still launches the exclusive capacity ledger after a pooled failure', () => {
     const result = runFixture('isolated', { ASHLR_TEST_CI_ISOLATED_CONCURRENCY: '2', ASHLR_FAKE_ISOLATED_DELAY_MS: '150' }, ['--isolated-only']);
     expect(result.error).toBeUndefined(); expect(result.status).toBe(9);
     const starts = events(result.stderr).filter(event => event.kind === 'start').map(event => event.label);
     expect(starts).toContain('campaign true');
-    expect(starts).not.toContain(isolatedFiles[0]);
+    expect(starts).toContain(isolatedFiles[0]);
     expect(result.stderr).not.toContain('[test-ci:sharded] PASS');
   });
 
