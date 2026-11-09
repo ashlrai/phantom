@@ -4,7 +4,7 @@
  * leader-thread.ts / leader-operator.ts. The Verse UI and the Telegram
  * transport import THIS module, which is why it holds nothing else.
  *
- *   GET    /api/verse/leader/thread?limit=&before=           → { messages } (oldest first;
+ *   GET    /api/verse/leader/thread?limit=&before=&q=&channel=&from=           → { messages } (oldest first;
  *                                                               before = a message id, or an ISO time)
  *   POST   /api/verse/leader/thread { text, replyTo? }        → AppendMasonMessageResult
  *   GET    /api/verse/leader/questions/<questionId>        → { question: LeaderQuestionProjection, typedQuestionsSupported: true }
