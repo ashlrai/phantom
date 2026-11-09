@@ -2534,10 +2534,6 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
 };
 
 export async function cmdFleet(args: string[]): Promise<number> {
-  if (args[0] === 'act') {
-    const { cmdFleetAct } = await import('./fleet-act.js');
-    return cmdFleetAct(args.slice(1));
-  }
   if (args[0] === 'merge-throughput') {
     const { cmdMergeThroughput } = await import('./telemetry.js');
     return cmdMergeThroughput(args.slice(1));
@@ -2747,6 +2743,7 @@ function printFleetHelp(): void {
   console.log(`    phm fleet job <id> [--json] [--changes] ${cyan('# host worker evidence')}`);
   console.log(`    phm fleet journal [--json]    ${cyan('# leader journal and ingest decisions')}`);
   console.log(`    phm fleet deploy-plan --since <sha> [--json]  ${cyan('# find fleet scripts awaiting deployment; read-only')}`);
+  console.log(`    phm fleet supply --lane <lane> --n <N> [--json]  ${cyan('# suggest queue work from open sources')}`);
   console.log(`    phm fleet parked [--json]     ${cyan('# ready/parked host work; unmetDeps lists PARKED-DEP gates')}`);
   console.log(`    ashlr fleet direction [--json] ${cyan('# read-only autonomous direction report')}`);
   console.log(`    ashlr fleet init [--write]    ${cyan('# print/merge a starter cfg.foundry')}`);

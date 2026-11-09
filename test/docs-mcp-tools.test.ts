@@ -13,10 +13,13 @@ describe('MCP tools documentation', () => {
     expect(toolNames.length).toBeGreaterThan(20);
   });
 
-  it.each(toolNames)('tool "%s" declared in src/core/mcp-native.ts', toolName => {
-    const source = readFileSync(join(root, 'src/core/mcp-native.ts'), 'utf8');
-    const pattern = new RegExp(`name:\\s*['"]${escapeRegex(toolName)}['"]`);
-    expect(source, `${toolName} missing from mcp-native.ts`).toMatch(pattern);
+  it.each(toolNames)('tool "%s" declared in the native or desktop operator registry', toolName => {
+    const sources = [
+      readFileSync(join(root, 'src/core/mcp-native.ts'), 'utf8'),
+      readFileSync(join(root, 'src/core/desktop/operator-mcp.ts'), 'utf8'),
+    ].join('\n');
+    const pattern = new RegExp(`name:\\s*['"]${escapeRegex(toolName)}['"]|tool\\(\\s*['"]${escapeRegex(toolName)}['"]`);
+    expect(sources, `${toolName} missing from the native and desktop operator registries`).toMatch(pattern);
   });
 });
 

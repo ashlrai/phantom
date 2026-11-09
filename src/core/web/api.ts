@@ -2143,6 +2143,12 @@ export async function handleApi(
       return true;
     }
 
+    if (path === '/api/feed' && method === 'GET') {
+      const { readFeed } = await import('../feed.js');
+      sendJson(res, 200, await readFeed());
+      return true;
+    }
+
     // ── GET /api/fleet-activity ──────────────────────────────────────────────
     // M90: Fleet Activity panel — per-repo digest, recent merges, engine
     // readiness (throttled 10s), subscription burn-down, cooldown count, recent
