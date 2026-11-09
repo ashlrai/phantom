@@ -195,11 +195,23 @@ function guardedHomedir(): string {
   return raw;
 }
 
+function accountHomedir(): string {
+  // The passwd home is stable for this worker. It does not follow a later
+  // HOME change, matching os.userInfo().homedir outside the test harness.
+  return workerHome as string;
+}
+
 vi.mock('node:os', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:os')>();
+  const userInfo = ((options?: { encoding?: 'utf8' | 'buffer' }) => {
+    const info = actual.userInfo(options as { encoding: 'buffer' });
+    const home = accountHomedir();
+    return { ...info, homedir: options?.encoding === 'buffer' ? Buffer.from(home) : home };
+  }) as typeof actual.userInfo;
   return {
     ...actual,
     homedir: guardedHomedir,
-    default: { ...actual.default, homedir: guardedHomedir },
+    userInfo,
+    default: { ...actual.default, homedir: guardedHomedir, userInfo },
   };
 });
