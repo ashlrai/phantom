@@ -20,6 +20,8 @@
  * Sources are injectable for tests. Never throws.
  */
 
+import { commsBriefFacts, type CommsBriefFacts } from './leader-brief-comms.js';
+import type { UnifiedInbox } from './unified-inbox.js';
 import { autonomyLine, collectDigestFacts, type DigestSources } from './change-digest.js';
 
 export type BriefKind = 'morning' | 'evening' | 'instant';
@@ -39,6 +41,8 @@ export interface BriefFacts {
   mergeCountUnavailable?: boolean;
   /** Fleet-wide running/queued from the runs dir; null/absent = unknown. */
   fleet?: { running: number | null; queued: number | null } | null;
+  /** Comms line + overdue-Dot blocker; null/absent = no comms facts. */
+  comms?: CommsBriefFacts | null;
   running: BriefItem[];
   blockers: string[];
   next: string[];
@@ -75,6 +79,8 @@ export interface BriefSources {
   driveReport?: () => string | null;
   holds?: () => Array<{ repo: string; kind: string; reason: string }>;
   autonomy?: () => { on: boolean; mode: string | null };
+  /** The unified comms inbox (read-only), or null when unavailable. */
+  comms?: () => Promise<UnifiedInbox | null> | UnifiedInbox | null;
 }
 
 const ACTIVE = new Set(['queued', 'launching', 'running', 'blocked', 'pr-open']);
@@ -94,8 +100,11 @@ function call<T>(fn: (() => T) | undefined, fallback: T): T {
   }
 }
 
-async function defaults(): Promise<Required<Omit<BriefSources, 'digest'>>> {
-  const base: Required<Omit<BriefSources, 'digest'>> = {
+type ResolvedSources = Required<Omit<BriefSources, 'digest' | 'comms'>> & Pick<BriefSources, 'comms'>;
+
+async function defaults(): Promise<ResolvedSources> {
+  const base: ResolvedSources = {
+    comms: () => null,
     leader: () => null,
     cloudTasks: () => [],
     devinTasks: () => [],
@@ -108,6 +117,10 @@ async function defaults(): Promise<Required<Omit<BriefSources, 'digest'>>> {
     try { await fn(); } catch { /* keep the empty default */ }
   };
   await Promise.all([
+    safe(async () => {
+      const { readUnifiedInbox } = await import('./unified-inbox.js');
+      base.comms = () => readUnifiedInbox();
+    }),
     safe(async () => {
       const leader = await import('../vision/leader.js');
       base.leader = () => leader.buildLeaderState(Date.now());
@@ -159,7 +172,7 @@ function hhmm(iso: string, timeZone: string): string {
 /** Gather the brief from recorded state since `sinceMs`. Never throws. */
 export async function gatherBriefFacts(sinceMs: number, nowMs: number, overrides: BriefSources = {}, timeZone = 'America/New_York'): Promise<BriefFacts> {
   const base = await defaults();
-  const src = { ...base, ...Object.fromEntries(Object.entries(overrides).filter(([k, v]) => k !== 'digest' && typeof v === 'function')) } as Required<Omit<BriefSources, 'digest'>>;
+  const src = { ...base, ...Object.fromEntries(Object.entries(overrides).filter(([k, v]) => k !== 'digest' && typeof v === 'function')) } as ResolvedSources;
 
   let digest: Awaited<ReturnType<typeof collectDigestFacts>> | null = null;
   try {
@@ -184,8 +197,17 @@ export async function gatherBriefFacts(sinceMs: number, nowMs: number, overrides
     }
   }
 
+  let comms: CommsBriefFacts | null = null;
+  try {
+    const inbox = await src.comms?.();
+    comms = inbox ? commsBriefFacts(inbox) : null;
+  } catch {
+    comms = null;
+  }
+
   const leader = call(src.leader, null);
   const blockers: string[] = [];
+  if (comms?.blocker) blockers.push(comms.blocker);
   const health = leader?.health;
   if (health && (health.status === 'degraded' || health.status === 'down')) blockers.push(`Leader ${health.status}: ${clip(health.summary, 120)}`);
   for (const e of events) {
@@ -215,6 +237,7 @@ export async function gatherBriefFacts(sinceMs: number, nowMs: number, overrides
     prsOpened,
     mergeCountUnavailable,
     fleet: digest?.fleet ?? null,
+    comms,
     running,
     blockers,
     next,
@@ -265,6 +288,7 @@ export function composeBrief(kind: BriefKind, facts: BriefFacts, opts: { narrati
     lines.push(`Fleet: ${fleet.running ?? '?'} running, ${fleet.queued ?? '?'} queued`);
   }
   if (facts.running.length > 0) lines.push(`Running: ${facts.running.length} — ${items(facts.running)}`);
+  if (facts.comms?.line) lines.push(facts.comms.line);
   lines.push(facts.blockers.length > 0 ? `Blockers: ${facts.blockers.slice(0, 3).join('; ')}` : 'Blockers: none.');
   if (facts.next.length > 0) lines.push(`Next: ${facts.next.slice(0, 3).join(' · ')}`);
   if (facts.question) lines.push(`Q: ${clip(facts.question.text, 200)} (reply to answer)`);
