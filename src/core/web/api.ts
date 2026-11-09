@@ -109,6 +109,7 @@ import { handleVerseControlApi, isVerseControlPath } from '../verse/control-api.
 // GitHub, reachable from Verse (docs/VERSE-WORKSPACES.md §2) — also BEFORE handleVerseApi.
 import { handleVerseGithubApi, isVerseGithubPath } from '../verse/github-api.js';
 import { handleObserveApi, isObservePath } from '../verse/observe-api.js';
+import { handleGrowthApi, isGrowthPath } from '../verse/growth-api.js';
 // MCP + per-account CLI management (mounted BEFORE both — see handleApi).
 import { handleVerseMcpApi, isVerseMcpPath } from '../verse/mcp-control-api.js';
 // Desktop native-shell read API (GET /api/wb/v1/*).
@@ -2471,6 +2472,10 @@ export async function handleApi(
 
     if (isObservePath(path)) {
       return handleObserveApi(req, res, path, method);
+    }
+
+    if (isGrowthPath(path)) {
+      return handleGrowthApi(req, res, path, method);
     }
 
     // ── /api/verse/* (Ashlr Verse — src/core/verse/verse-api.ts) ────────────

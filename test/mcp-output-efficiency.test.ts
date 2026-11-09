@@ -68,6 +68,11 @@ const ADDED_NATIVE_NAMES = [
   'phm_context_brief',
   'phm_claim_acquire',
   'phm_claim_release',
+  'phantom_leader_status',
+  'phantom_leader_org',
+  'phantom_leader_inbox',
+  'phantom_leader_ask',
+  'phantom_leader_assign',
   'ashlr_comms_thread',
   'ashlr_comms_send_owner',
   'desktop_list_apps',
@@ -79,6 +84,9 @@ const ADDED_NATIVE_NAMES = [
   'desktop_scroll',
   'desktop_type',
   'desktop_click',
+  'ashlr_comms_agent_status',
+  'ashlr_comms_agent_drafts',
+  'ashlr_comms_agent_run',
 ] as const;
 
 function classifyNativeNames(names: readonly string[]): { old: string[]; added: string[]; unallocated: string[] } {
@@ -117,7 +125,7 @@ describe('native MCP tool inventory', () => {
     const tools = listNativeTools();
     const names = tools.map(tool => tool.name);
     const classified = classifyNativeNames(names);
-    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(73);
+    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(81);
     expect(new Set(names).size).toBe(names.length);
     expect(classified.old).toEqual([...OLD_NATIVE_NAMES]);
     expect(classified.added).toEqual([...ADDED_NATIVE_NAMES]);
@@ -141,6 +149,12 @@ describe('native MCP tool inventory', () => {
     const visibility = addedTools.filter(tool => tool.name === 'phm_context_brief' || tool.name === 'phm_claim_acquire' || tool.name === 'phm_claim_release');
     const visibilityBytes = visibility.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(visibilityBytes).toBeLessThanOrEqual(1400);
+    const spend = addedTools.find(tool => tool.name === 'phantom_spend_budget')!;
+    const spendBytes = Buffer.byteLength(JSON.stringify(spend)) + 1;
+    expect(spendBytes).toBeLessThanOrEqual(400);
+    const leaderTools = addedTools.filter(tool => tool.name.startsWith('phantom_leader_'));
+    const leaderBytes = leaderTools.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
+    expect(leaderBytes).toBeLessThanOrEqual(2800);
     const desktop = addedTools.filter(tool => tool.name.startsWith('desktop_'));
     const desktopBytes = desktop.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(desktopBytes).toBeLessThanOrEqual(4500);
@@ -150,11 +164,14 @@ describe('native MCP tool inventory', () => {
     const ownerComms = addedTools.filter(tool => tool.name === 'ashlr_comms_thread' || tool.name === 'ashlr_comms_send_owner');
     const ownerCommsBytes = ownerComms.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(ownerCommsBytes).toBeLessThanOrEqual(1600);
-    const addedBytes = addedTools.filter(tool => tool !== doctor && tool !== roster && !visibility.includes(tool) && !desktop.includes(tool) && !observeTools.includes(tool) && !ownerComms.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
+    const agentComms = addedTools.filter(tool => tool.name.startsWith('ashlr_comms_agent_'));
+    const agentCommsBytes = agentComms.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
+    expect(agentCommsBytes).toBeLessThanOrEqual(2200);
+    const addedBytes = addedTools.filter(tool => tool !== doctor && tool !== roster && tool !== spend && !visibility.includes(tool) && !leaderTools.includes(tool) && !desktop.includes(tool) && !observeTools.includes(tool) && !ownerComms.includes(tool) && !agentComms.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(addedBytes).toBeLessThanOrEqual(9195);
-    // 24,205 + 9,195 preserves the historical headroom. The doctor, roster,
-    // visibility, desktop, observe and owner-thread tools are measured above.
-    expect(responseBytes(tools)).toBeLessThan(33400 + doctorBytes + rosterBytes + visibilityBytes + desktopBytes + observeBytes + ownerCommsBytes);
+    // 24,205 + 9,195 preserves the historical headroom. Later tool groups are
+    // measured on their own caps above.
+    expect(responseBytes(tools)).toBeLessThan(33400 + doctorBytes + rosterBytes + visibilityBytes + spendBytes + leaderBytes + desktopBytes + observeBytes + ownerCommsBytes + agentCommsBytes);
   });
 });
 

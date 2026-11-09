@@ -10,6 +10,16 @@ import { startRemoteAdminSocket } from './remote-admin.js';
 import { createRemotePush } from './remote-push.js';
 import { createRemotePushWatcher } from './remote-push-watcher.js';
 import { loadOrCreateRemoteVapid } from './remote-push-vapid.js';
+import { createPhoneSessionCustody } from './phone-session-custody.js';
+import { killSwitchOn } from '../sandbox/policy.js';
+
+/** KILL is on, so the phone gateway does not listen. The desktop server stays up. */
+export class PhoneGatewayKilledError extends Error {
+  constructor() {
+    super('Phone gateway stays off while KILL is set');
+    this.name = 'PhoneGatewayKilledError';
+  }
+}
 
 function readConfig(path: string) {
   const stat = lstatSync(path);
@@ -30,7 +40,10 @@ function readConfig(path: string) {
 }
 
 /** Must be called only from an explicit Mac operator command. */
-export async function startRemoteRuntime(configPath: string, hub: { port: number; readToken: string; token: string }) {
+export async function startRemoteRuntime(configPath: string, hub: { port: number; readToken: string; token: string },
+  options: { killed?: () => boolean } = {}) {
+  const killed = options.killed ?? (() => killSwitchOn());
+  if (killed()) throw new PhoneGatewayKilledError();
   const { access, gatewayPort } = readConfig(configPath);
   if (gatewayPort === hub.port) throw new Error('Remote gateway must use a separate loopback port');
   const devices = createRemoteDeviceStore();
@@ -45,7 +58,8 @@ export async function startRemoteRuntime(configPath: string, hub: { port: number
   let gateway: Awaited<ReturnType<typeof startRemoteReadGateway>>;
   try {
     gateway = await startRemoteReadGateway({ access, hub: { port: hub.port, readToken: hub.readToken,
-      mutationToken: hub.token }, devices, pairing, push, mobileAssetsEnabled: true, port: gatewayPort });
+      mutationToken: hub.token }, devices, pairing, push, mobileAssetsEnabled: true, port: gatewayPort,
+      killed, sessionCustody: createPhoneSessionCustody() });
   } catch (error) { push.close(); throw error; }
   let admin: Awaited<ReturnType<typeof startRemoteAdminSocket>> | null = null;
   try {

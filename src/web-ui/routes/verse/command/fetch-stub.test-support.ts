@@ -40,6 +40,41 @@ export interface StubHandle {
 
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 
+/** A real-shaped growth.series.v1 body so Growth's warm-up is not a 404. */
+function growthSeriesFixture(now: number) {
+  const series = (id: string, label: string, status: 'ready' | 'no-data-source') => ({
+    id,
+    label,
+    unit: id === 'mergesPerHour' ? 'merges_per_hour' : 'count',
+    source: status === 'ready' ? 'metrics/jobs.jsonl' : null,
+    status,
+    reason: status === 'ready' ? null : 'no data source',
+    need: status === 'ready' ? null : 'missing',
+    caveat: null,
+    points: status === 'ready'
+      ? [{ t: new Date(now - 3_600_000).toISOString(), y: 1 }, { t: new Date(now).toISOString(), y: 2 }]
+      : [],
+  });
+  return {
+    schema: 'growth.series.v1',
+    generatedAt: new Date(now).toISOString(),
+    readOnly: true,
+    range: '1D',
+    ranges: ['1H', '1D', '1W', '1M'],
+    primaryId: 'mergesPerHour',
+    series: [
+      series('mergesPerHour', 'Merges per hour', 'ready'),
+      series('pullsOpened', 'PRs opened', 'no-data-source'),
+      series('pullsMerged', 'PRs merged', 'no-data-source'),
+      series('releases', 'Releases', 'no-data-source'),
+      series('laneUtilization', 'Lane utilization', 'no-data-source'),
+      series('costPerMergedPr', 'Cost per merged PR', 'no-data-source'),
+      series('bottleneckTrends', 'Bottleneck trend', 'no-data-source'),
+    ],
+    blindSpots: [],
+  };
+}
+
 /**
  * The grant draft's refusal before setup (core/verse/authority-api.ts
  * AuthorityDraftError): no custody key is compiled in, so no grant can be
@@ -69,6 +104,7 @@ export function surfaceRoutes(kind: FixtureKind, now: number): Record<string, un
     '/api/reasoning/digest': reasoningDigest(kind, now),
     '/api/verse/overnight': { armed: false, run: null, repos: null, gate: null },
     '/api/models': { window: '30d', models: [], bestOfNSource: { sourceState: 'missing', sourcePresent: false, complete: true, stopReasons: [], filesRead: 0, bytesRead: 0, rowsScanned: 0, invalidRows: 0, unreadableFiles: 0 } },
+    '/api/verse/growth': growthSeriesFixture(now),
   };
 }
 

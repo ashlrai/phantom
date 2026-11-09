@@ -137,6 +137,26 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "safety": "append",
     },
     {
+      "name": "phantom_leader_status",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_leader_org",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_leader_inbox",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_leader_ask",
+      "safety": "append",
+    },
+    {
+      "name": "phantom_leader_assign",
+      "safety": "append",
+    },
+    {
       "name": "phm_team_register",
       "safety": "append",
     },
@@ -298,6 +318,18 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
     },
     {
       "name": "desktop_click",
+      "safety": "append",
+    },
+    {
+      "name": "ashlr_comms_agent_status",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_comms_agent_drafts",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_comms_agent_run",
       "safety": "append",
     },
   ],
@@ -1474,6 +1506,77 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
   {
     "inputSchema": {
       "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "phantom_leader_status",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "phantom_leader_org",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "phantom_leader_inbox",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "text",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_leader_ask",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "due": {
+          "type": "string",
+        },
+        "outcome": {
+          "type": "string",
+        },
+        "owner": {
+          "type": "string",
+        },
+        "rq": {
+          "type": "string",
+        },
+        "status": {
+          "type": "string",
+        },
+        "summary": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "rq",
+        "owner",
+        "summary",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_leader_assign",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
       "properties": {
         "agentId": {
           "description": "<description>",
@@ -2346,6 +2449,34 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "desktop_click",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "ashlr_comms_agent_status",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "ashlr_comms_agent_drafts",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "lanes": {
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "ashlr_comms_agent_run",
   },
 ]
 `;
