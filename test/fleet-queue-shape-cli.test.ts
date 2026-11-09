@@ -17,6 +17,7 @@ beforeEach(async () => {
   await mkdir(queueDir);
 });
 afterEach(async () => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   await rm(root, { recursive: true, force: true });
 });
@@ -51,10 +52,34 @@ it('emits the v1 JSON report and honours --factor', async () => {
   expect(report).toMatchObject({ v: 1, totalReady: 5, totalTarget: 2, overDeep: [] });
   expect(report.lanes).toEqual([
     { lane: 'devin', ready: 5, target: 2, ratio: 2.5, overDeep: false, held: false,
-      topRepos: [{ repo: 'example/side-repo', ready: 5, share: 1 }] },
+      topRepos: [{ repo: 'example/side-repo', ready: 5, share: 1 }], oldestReadyAgeSeconds: null, untimedReady: 5 },
   ]);
   expect(await cmdFleetQueueShape(['--queue-dir', queueDir, '--json', '--factor', '2'])).toBe(0);
   expect(JSON.parse(String(log.mock.calls[1]![0])).overDeep).toEqual(['devin']);
+});
+
+it('shows each lane\'s oldest READY age in plain words and JSON; untimed rows are counted, not aged', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(Date.parse('2026-11-09T12:00:00Z'));
+  await writeFile(join(queueDir, 'ready.tsv'), [
+    'READY\tj-1\tdevin\tat=2026-11-09T09:00:00Z',
+    'READY\tj-2\tdevin\tat=2026-11-09T11:59:30Z',
+    'READY\tj-3\tdevin',
+    'READY\tj-4\tcodex\tat=2026-11-09T11:58:00Z',
+    'READY\tj-5\tcodex\tat=not-a-date',
+  ].join('\n'));
+  await writeFile(join(queueDir, 'slots.json'), JSON.stringify({ devin: slot(3), codex: slot(2) }));
+  const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  expect(await cmdFleetQueueShape(['--queue-dir', queueDir])).toBe(0);
+  const out = log.mock.calls.map(call => String(call[0]));
+  expect(out.some(line => line.startsWith('devin  ready 3 / target 3 (1.0x)  oldest ready 3h  top: '))).toBe(true);
+  expect(out.some(line => line.startsWith('codex  ready 2 / target 2 (1.0x)  oldest ready 2m  top: '))).toBe(true);
+  expect(await cmdFleetQueueShape(['--queue-dir', queueDir, '--json'])).toBe(0);
+  const report = JSON.parse(String(log.mock.calls.at(-1)![0]));
+  expect(report.lanes).toEqual([
+    expect.objectContaining({ lane: 'devin', ready: 3, oldestReadyAgeSeconds: 10800, untimedReady: 1 }),
+    expect.objectContaining({ lane: 'codex', ready: 2, oldestReadyAgeSeconds: 120, untimedReady: 1 }),
+  ]);
 });
 
 it('reports a missing ready.tsv as an empty queue, exit 0', async () => {
