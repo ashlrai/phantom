@@ -111,6 +111,8 @@ or control apps.
 | `ashlr_self_heal` | Read-only self-heal queue summary: whether self-heal is enabled, the enrolled repo count, and up to 10 queued heal work items from ~/.ashlr/self-heal-queue.json. Never triggers a heal cycle — purely observational. Read-only. |
 | `ashlr_racing` | Model-racing distillation stats: total races persisted, frontier-engine win rate, average score delta (frontier − local), and local win count. Reads from ~/.ashlr/racing/. Read-only. |
 | `ashlr_comms` | Comms channel status: whether the channel is enabled, which transport is configured (imessage/telegram/none), and pending/outstanding request counts. Secret-safe — the bot token and handle are NEVER included in the output. Read-only. |
+| `ashlr_comms_thread` | Read the single owner thread across desktop, Telegram, email, iMessage and Slack. No credentials. Read-only. |
+| `ashlr_comms_send_owner` | Fan a leader reply to the channel the owner used and the desktop thread. Refused unless the recipient is the configured owner. KILL halts it. |
 | `ashlr_comms_agent_status` | Comms role status: parent Leader role, unset lane, KILL, pause, draft count and registered channel adapters. Read-only. No send. |
 | `ashlr_comms_agent_drafts` | List Comms drafts waiting for the owner. Read-only. Approval is not a send. |
 | `ashlr_comms_agent_run` | Triage the Comms inbox and draft replies. The router picks a lane only from the lanes argument. Sends follow the Comms send policy. |
