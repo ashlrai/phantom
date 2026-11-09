@@ -215,6 +215,7 @@ interface InputReceipt {
 }
 
 interface ThreadIndexV1 {
+  planReplies?: Record<string, 'pending' | 'posted'>;
   /** Channel/event hashes; retained across log rotation, never silently evicted. */
   inputs?: Record<string, InputReceipt>;
   v: 1;
@@ -261,6 +262,7 @@ function readIndex(): ThreadIndexV1 {
   if (read.truncated) throw new LeaderThreadError(409, 'Leader thread index is oversized');
   try {
     const parsed = JSON.parse(read.text) as Partial<ThreadIndexV1>;
+    if (parsed.planReplies !== undefined && (!isRecord(parsed.planReplies) || Object.entries(parsed.planReplies).some(([k, v]) => !/^[a-f0-9]{64}$/.test(k) || !['pending', 'posted'].includes(v)))) throw new Error('invalid reply receipts');
     if (parsed.v !== 1 || (parsed.inputs !== undefined && !isRecord(parsed.inputs))) throw new Error('invalid index');
     for (const [key, receipt] of Object.entries(parsed.inputs ?? {})) {
       const result = receipt?.result;
@@ -273,6 +275,7 @@ function readIndex(): ThreadIndexV1 {
     return {
       v: 1,
       inputs: parsed.inputs,
+      planReplies: parsed.planReplies,
       updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date(0).toISOString(),
       delivery: isRecord(parsed.delivery) ? parsed.delivery as ThreadIndexV1['delivery'] : {},
       memosPosted: Array.isArray(parsed.memosPosted) ? parsed.memosPosted.filter((m): m is string => typeof m === 'string') : [],
@@ -1224,3 +1227,39 @@ export async function approveLeaderAction(
 // ---------------------------------------------------------------------------
 
 export { OPERATOR_DIRECTIVE_KINDS };
+
+/** Typed API shared by the CLI. Receipts survive rotation; uncertain writes never replay. */
+export async function syncLeaderReplies(): Promise<{ sourceState: 'healthy' | 'missing' | 'unknown'; posted: string[]; skipped: string[]; unknown: string[] }> {
+  const { readPlanLogReplies, replyTextHash } = await import('../fleet/mason-outbox.js');
+  const source = await readPlanLogReplies();
+  const result = { sourceState: source.sourceState, posted: [] as string[], skipped: [] as string[], unknown: [] as string[] };
+  withThreadLock(() => {
+    const index = readIndex();
+    index.planReplies ??= {};
+    for (const entry of source.entries) {
+      const id = replyTextHash(entry.heading!);
+      if (index.planReplies[id]) {
+        result.skipped.push(id);
+        if (index.planReplies[id] === 'pending') result.unknown.push(id);
+        continue;
+      }
+      const now = deps().now();
+      rotateIfNeeded(index);
+      // Reserve first: a crash after append must never post a duplicate.
+      index.planReplies[id] = 'pending';
+      writeIndex(index, now);
+      try {
+        const message = leaderMessage(now, { channel: 'system', kind: 'answer', text: entry.text, delivery: { telegram: 'pending' } });
+        appendLines([JSON.stringify(message)]);
+        index.delivery[message.id] = { telegram: 'pending', attempts: 0 };
+        index.planReplies[id] = 'posted';
+        writeIndex(index, now);
+        result.posted.push(id);
+      } catch {
+        result.unknown.push(id);
+        break;
+      }
+    }
+  });
+  return result;
+}
