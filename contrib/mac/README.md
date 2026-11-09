@@ -8,6 +8,8 @@ its exact input hash before adoption. Current-host changes under
 permission to overwrite the whole controller with an older copy. Changes land
 by PR review and the adoption owner verifies immutable source hashes before any
 live install. The queue scripts are deterministic and do not create tokens.
+The candidate launcher denies Devin model IDs ending in `-lightning`, logs
+`PAID_MODEL_BLOCKED`, and uses `swe-2-max` instead; host adoption needs a Security pin.
 
 `restock.py` claims eligible `READY` lines from `router-queue.md` into lane
 prompts (`ready.tsv`/`claimed.tsv`) for the fleet allowlist repos only, keeping
