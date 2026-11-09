@@ -22,13 +22,21 @@ export interface OwnerThreadLine {
   fanout?: string[];
 }
 
+export interface OwnerChannelState {
+  id: string;
+  enabled: boolean;
+  reason: string;
+  nextStep: string | null;
+}
+
 export interface OwnerThreadRead {
+  channels: OwnerChannelState[];
   lines: OwnerThreadLine[];
   /** The owner channels are killed or paused: the pane says so and shows no owner lines. */
   paused: boolean;
 }
 
-export const NO_OWNER_THREAD: OwnerThreadRead = { lines: [], paused: false };
+export const NO_OWNER_THREAD: OwnerThreadRead = { lines: [], paused: false, channels: [] };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -50,7 +58,12 @@ export function parseOwnerThread(value: unknown): OwnerThreadLine[] {
 
 export function parseOwnerThreadRead(value: unknown): OwnerThreadRead {
   const status = isRecord(value) && isRecord(value.status) ? value.status : null;
-  return { lines: parseOwnerThread(value), paused: status?.kill === true || status?.paused === true };
+  const channels = Array.isArray(status?.adapters) ? status.adapters.flatMap((row: unknown): OwnerChannelState[] => {
+    if (!isRecord(row) || typeof row.id !== 'string' || typeof row.enabled !== 'boolean' ||
+      typeof row.reason !== 'string' || (row.nextStep !== null && typeof row.nextStep !== 'string')) return [];
+    return [{ id: row.id, enabled: row.enabled, reason: row.reason, nextStep: row.nextStep }];
+  }) : [];
+  return { lines: parseOwnerThread(value), paused: status?.kill === true || status?.paused === true, channels };
 }
 
 export const ownerThreadQuery: QueryDef<OwnerThreadRead> = {
