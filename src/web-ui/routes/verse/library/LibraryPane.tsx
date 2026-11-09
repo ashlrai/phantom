@@ -12,7 +12,9 @@ import { Card, CardNote } from '../command/Surface.js';
 import { openChat } from '../command/nav.js';
 import { verseProjectMemoryQuery, searchSessions } from '../context/context-queries.js';
 import { openDockPane } from '../dock/dock-store.js';
+import { agentBusMissing, agentBusPageQuery, agentBusStatusQuery } from '../fleet-bus/agent-bus-queries.js';
 import { verseSessionsQuery } from '../verse-queries.js';
+import { libraryBusLines, withReceiptTtl } from './library-bus-model.js';
 import { memorySummary, recentProjects, searchQueryValid, type RecentProject } from './library-model.js';
 import styles from './library.module.css';
 
@@ -112,6 +114,54 @@ function PastChats() {
   );
 }
 
+const BUS_PAGE_LIMIT = 50;
+
+function AgentConversation({ visible }: { visible: boolean }) {
+  const status = useQuery(agentBusStatusQuery, { enabled: visible && !agentBusMissing(), freshMs: 10_000 });
+  // The newest messages sit at the end of the log, as in the bus pane.
+  const after = Math.max(0, (status.data?.retainedCount ?? 0) - BUS_PAGE_LIMIT);
+  const pageQuery = useMemo(() => agentBusPageQuery(after, BUS_PAGE_LIMIT), [after]);
+  const page = useQuery(pageQuery, { enabled: visible && !!status.data && !agentBusMissing(), freshMs: 10_000 });
+  const lines = useMemo(() => {
+    const now = Date.now();
+    return libraryBusLines(page.data ? withReceiptTtl(page.data, now) : null, now);
+  }, [page.data]);
+  const missing = agentBusMissing() || (status.error instanceof ApiError && status.error.status === 404);
+  const error = status.error ?? page.error;
+  return (
+    <section className={styles.section} aria-label="Agent conversation">
+      <h2>Agent conversation</h2>
+      <p className={styles.meta}>Agents talk to each other and to the Leader on the bus.</p>
+      {missing ? (
+        <CardNote>This Phantom build has no agent bus yet.</CardNote>
+      ) : error && !page.data ? (
+        <CardNote tone="danger">{errorSentence(error)}</CardNote>
+      ) : !page.data && status.data?.source !== 'missing' ? (
+        <CardNote>Loading…</CardNote>
+      ) : lines.length === 0 ? (
+        <CardNote>No agent messages yet.</CardNote>
+      ) : (
+        <ul className={styles.bus} aria-label="Recent agent messages">
+          {lines.map((line) => (
+            <li key={line.id} className={styles.busRow}>
+              <span className={styles.busWho}>
+                {line.from} → {line.to}
+                {line.priority === 'P0' || line.priority === 'P1' ? <span className={styles.chip}>{line.priority}</span> : null}
+              </span>
+              <span className={styles.busText}>{line.text}</span>
+              <span className={styles.meta}>{line.age}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className={styles.actions}>
+        <button type="button" className={styles.button} onClick={() => openDockPane('fleet-bus')}>Open the bus</button>
+        <button type="button" className={styles.button} onClick={() => openDockPane('leader-thread')}>Open the Leader thread</button>
+      </div>
+    </section>
+  );
+}
+
 export function LibraryPane({ visible = true }: { visible?: boolean }) {
   const sessions = useQuery(verseSessionsQuery, { enabled: visible });
   const projects = useMemo(() => recentProjects(sessions.data ?? []), [sessions.data]);
@@ -130,14 +180,7 @@ export function LibraryPane({ visible = true }: { visible?: boolean }) {
         )}
       </section>
       <PastChats />
-      <section className={styles.section} aria-label="Agent conversation">
-        <h2>Agent conversation</h2>
-        <p className={styles.meta}>Agents talk to each other and to the Leader on the bus.</p>
-        <div className={styles.actions}>
-          <button type="button" className={styles.button} onClick={() => openDockPane('fleet-bus')}>Open the bus</button>
-          <button type="button" className={styles.button} onClick={() => openDockPane('leader-thread')}>Open the Leader thread</button>
-        </div>
-      </section>
+      <AgentConversation visible={visible} />
     </div>
   );
 }

@@ -360,3 +360,8 @@
 .workMode:focus-visible { outline: 2px solid var(--accent-500); outline-offset: 2px; }
 .shell[data-focus='on'] .workModes { display: none; }
 .shell[data-compact] .workModes { padding-top: var(--space-2); }
+
+/* Narrow window on the landing view: the thread fills the window; the compact
+   strip in <main> is the navigation. */
+.shell[data-home-narrow] { grid-template-columns: minmax(0, 1fr); }
+.shell[data-home-narrow] > .rail { display: none; }
