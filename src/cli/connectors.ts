@@ -2,10 +2,13 @@ import { ConnectorError, importClients, readProfile, updateProfile, validateProf
 
 import { runConnector } from '../core/connectors/run.js';
 import { buildToolMesh } from '../core/connectors/mesh.js';
+import { createTool, discoverTools, invokeTool, readRegistry, removeTool, revokeTool, type NewTool } from '../core/connectors/registry.js';
 
 const USAGE = `phm connectors list|show <id>|remove <id> [--json]
 phm connectors add <id> --kind mcp-stdio|mcp-http|cli|plugin [--description <text>] [--command <executable> | --url <https-url>] [--arg <argument>] [--scope <scope>] [--tool <tool>] [--lane <lane>] [--credential <binding=vault-name>] [--json]
-phm connectors import|mesh [--json]
+phm connectors import [--json]
+phm connectors mesh [--lane <lane>] [--json]
+phm connectors tool list [--lane <lane>]|show <id>|remove <id>|revoke <id> --reason <text>|create --spec <json>|invoke <id> --lane <lane> [--param name=value] [--json]
 phm connectors run <id> --scope <scope> --tool <tool> --lane <lane> [--json] -- <args>
 Run is denied pending Security review; credentials are Phantom Secrets names. See docs/CONNECTORS.md.`;
 
@@ -33,9 +36,11 @@ export async function cmdConnectors(args: string[]): Promise<number> {
     }
     if (separator >= 0) throw new ConnectorError('Argument separator is supported only for run.');
     if (verb === 'mesh') {
-      if (a.length) throw new ConnectorError('Unexpected arguments. Run phm connectors --help.');
-      emit(await buildToolMesh()); return 0;
+      const lane = a[0] === '--lane' ? a[1] : undefined;
+      if (a.length !== (lane ? 2 : 0)) throw new ConnectorError('Unexpected arguments. Run phm connectors --help.');
+      emit(await buildToolMesh(undefined, undefined, lane)); return 0;
     }
+    if (verb === 'tool') { await cmdTool(a, emit); return 0; }
     if (verb === 'list' || verb === 'import') {
       if (a.length) throw new ConnectorError('Unexpected arguments. Run phm connectors --help.');
       if (verb === 'list') { emit(await readProfile()); return 0; }
@@ -83,4 +88,47 @@ export async function cmdConnectors(args: string[]): Promise<number> {
     if (json) emit({ ok: false, error }); else console.error(error);
     return 2;
   }
+}
+
+
+/** Flags may appear in any order; `--param` repeats. */
+function flags(a: string[], allowed: string[]): { values: Record<string, string>; params: Record<string, string> } {
+  const values: Record<string, string> = {}; const params: Record<string, string> = {};
+  while (a.length) {
+    const flag = a.shift()!; const value = a.shift();
+    if (!allowed.includes(flag) || !value) throw new ConnectorError('Unknown option or missing value. Run phm connectors --help.');
+    if (flag === '--param') {
+      const i = value.indexOf('=');
+      if (i < 1 || Object.hasOwn(params, value.slice(0, i))) throw new ConnectorError('Use --param name=value once per parameter.');
+      params[value.slice(0, i)] = value.slice(i + 1);
+    } else if (Object.hasOwn(values, flag)) throw new ConnectorError('Repeated option. Run phm connectors --help.');
+    else values[flag] = value;
+  }
+  return { values, params };
+}
+
+async function cmdTool(a: string[], emit: (v: unknown) => void): Promise<void> {
+  const verb = a.shift();
+  const id = verb === 'list' || verb === 'create' ? undefined : a.shift();
+  if (verb === 'list') { const { values } = flags(a, ['--lane']); emit(await discoverTools(undefined, values['--lane'])); return; }
+  if (verb === 'create') {
+    const { values } = flags(a, ['--spec']);
+    let spec: unknown;
+    try { spec = JSON.parse(values['--spec'] ?? ''); } catch { throw new ConnectorError('--spec must be a JSON object.'); }
+    emit(await createTool(spec as NewTool)); return;
+  }
+  if (!id || !/^[a-zA-Z][a-zA-Z0-9_.-]{0,79}$/.test(id)) throw new ConnectorError('Supply a tool id. Run phm connectors --help.');
+  if (verb === 'show') {
+    const t = (await readRegistry()).tools.find(x => x.id === id);
+    if (!t) throw new ConnectorError('Tool not found. Run phm connectors tool list.');
+    emit(t); return;
+  }
+  if (verb === 'remove') { if (a.length) throw new ConnectorError('Unexpected arguments.'); await removeTool(id); emit({ removed: id }); return; }
+  if (verb === 'revoke') { const { values } = flags(a, ['--reason']); await revokeTool(id, values['--reason'] ?? 'revoked'); emit({ revoked: id }); return; }
+  if (verb === 'invoke') {
+    const { values, params } = flags(a, ['--lane', '--param']);
+    if (!values['--lane']) throw new ConnectorError('invoke requires --lane.');
+    emit(await invokeTool(id, values['--lane'], params)); return;
+  }
+  throw new ConnectorError('Unknown tool command. Run phm connectors --help.');
 }
