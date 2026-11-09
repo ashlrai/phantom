@@ -26,7 +26,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'router', 'router-calibration', 'node', 'sandbox', 'audit',
   'enroll', 'backlog', 'inbox', 'daemon', 'worker', 'ask', 'knowledge', 'reflect',
   'health', 'goals', 'fleet', 'recovery', 'manager', 'vision', 'goal', 'loop',
-  'roadmap', 'stack', 'ecosystem', 'digest', 'sweep', 'seams', 'verify', 'engineering-receipt', 'verify-safety', 'verify-pr', 'release-articles', 'preflight',
+  'roadmap', 'stack', 'ecosystem', 'digest', 'sweep', 'seams', 'verify', 'engineering-receipt', 'verify-safety', 'verify-pr', 'release-articles', 'release', 'preflight',
   'conductor-permit', 'signals', 'friction',
   'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms',
   'channels', 'context', 'connectors', 'imessage', 'memory', 'route', 'radar', 'drafts',
@@ -85,6 +85,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   // Mirrors the verb check in src/cli/repos-rank.ts (cmdReposRank).
   repos: ['rank', 'proposals', '--json', '--recompute', '--help'],
   'release-articles': ['status', 'enable', 'disable', 'import', 'sync', '--help'],
+  release: ['status', '--json', '--file', '--help'],
   agents: ['bus', 'help'],
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
   queue: ['stats', 'report', 'add', 'claim', 'done', 'block', 'list', 'import', 'export', '--help'],

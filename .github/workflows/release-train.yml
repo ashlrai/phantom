@@ -1,0 +1,69 @@
+# Continuous release train. Cuts at most hourly, builds the tagged SHA, and
+# resumes the sanctioned attest and npm workflows. Signing and notarization
+# stay on the Mac wrapper. KILL fails closed. See docs/RELEASING.md.
+name: Release train
+
+on:
+  schedule:
+    - cron: '7 * * * *'
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Release PR", "Auto-tag", "CI"]
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  group: phantom-release-train
+  cancel-in-progress: false
+
+jobs:
+  train:
+    if: >-
+      github.repository == 'ashlrai/phantom' &&
+      (github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.head_branch == 'master' || startsWith(github.event.workflow_run.head_branch, 'v'))))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+      actions: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          package-manager-cache: false
+      - name: Stop unless KILL is proven off
+        run: node --experimental-strip-types src/core/release/train.ts guard
+      - name: Mint ashlr-release App token (contents and pull requests, this repo only)
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.ASHLR_RELEASE_APP_ID }}
+          private-key: ${{ secrets.ASHLR_RELEASE_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Plan and apply the release train
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_APP_TOKEN: ${{ steps.app.outputs.token }}
+          RELEASE_TRAIN_DISPATCH_BUILD: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.name != 'Auto-tag' && 'false' || 'true' }}
+        run: node --experimental-strip-types src/core/release/train.ts run --apply --out release-state.json
+      - name: Upload release state
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phantom-release-state
+          path: release-state.json
+          if-no-files-found: ignore
+          retention-days: 14

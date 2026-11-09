@@ -672,6 +672,12 @@ const loadReleaseArticlesCmd = lazyCmd(
   'release-articles requires the release-backed content maintenance module.',
 );
 
+const loadReleaseCmd = lazyCmd(
+  () => import('./release.js'),
+  (m) => m.cmdRelease as Cmd,
+  'release status requires the release train module.',
+);
+
 // ─── H7 command loaders ─────────────────────────────────────────────
 // preflight + onboard, matching the reflect/health/seams/verify-safety/audit
 // loaders — see docs/contracts/CONTRACT-H7.md.
@@ -2699,6 +2705,12 @@ async function main(): Promise<void> {
       case 'release-articles': {
         const cmdReleaseArticles = await loadReleaseArticlesCmd();
         process.exitCode = await cmdReleaseArticles(rest);
+        break;
+      }
+
+      case 'release': {
+        const cmdRelease = await loadReleaseCmd();
+        process.exitCode = await cmdRelease(rest);
         break;
       }
 
