@@ -255,6 +255,7 @@ canonical release guide for required hosted qualification and publication.
 - [Choosing graph context](https://github.com/ashlrai/phantom/blob/master/docs/GRAPH-CONTEXT-CHOICES.md)
 - [DIAGNOSIS: Why 23 Proposals Are Stuck Pending (Never Drain)](https://github.com/ashlrai/phantom/blob/master/docs/DIAGNOSIS-MERGE-DRAIN.md)
 - [Dependency security policy](https://github.com/ashlrai/phantom/blob/master/docs/DEPENDENCY-SECURITY.md)
+- [DeepWiki grounding: `.devin/wiki.json` config and the context fetch script](https://github.com/ashlrai/phantom/blob/master/docs/DEEPWIKI.md)
 - [Duration-balanced Bun shards](https://github.com/ashlrai/phantom/blob/master/docs/BUN-SHARDS.md)
 - [Elite agent efficiency roadmap](ELITE-AGENT-EFFICIENCY.md)
 - [Execution Identity V1](https://github.com/ashlrai/phantom/blob/master/docs/EXECUTION-IDENTITY-V1.md)
