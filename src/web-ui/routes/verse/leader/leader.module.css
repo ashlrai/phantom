@@ -882,3 +882,18 @@
   color: var(--status-warning-fg);
   font-weight: 600;
 }
+
+.composerChip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.composerChipThumb {
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: 4px;
+}
