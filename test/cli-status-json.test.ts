@@ -59,7 +59,7 @@ describe('CLI: phm status --json', () => {
     expect(result.stdout).not.toContain('\u001b');
     const data = JSON.parse(result.stdout);
     expect(result.stdout).toBe(JSON.stringify(data, null, 2) + '\n');
-    expect(Object.keys(data).sort()).toEqual(['v', 'generatedAt', 'state', 'reason', 'running', 'merged', 'blocked', 'spent'].sort());
+    expect(Object.keys(data).sort()).toEqual(['v', 'generatedAt', 'state', 'reason', 'running', 'merged', 'blocked', 'spent', 'lanes', 'repos', 'summary'].sort());
     expect(data.v).toBe(1);
     expect(Number.isFinite(Date.parse(data.generatedAt))).toBe(true);
     expect(data.state).toBe('dark');

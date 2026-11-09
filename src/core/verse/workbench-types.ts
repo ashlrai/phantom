@@ -1657,6 +1657,7 @@ export const WORKBENCH_ROUTE_FAMILIES = [
   { id: 'fleet-comms-status', owner: 'desktop-command', module: 'src/core/verse/fleet-comms-status-api.ts', handler: 'handleFleetCommsStatusApi', prefixes: ['/api/verse/fleet/comms-status'] },
   { id: 'owner-thread', owner: 'desktop-command', module: 'src/core/verse/owner-thread-api.ts', handler: 'handleOwnerThreadApi', prefixes: ['/api/verse/comms/owner-thread'] },
   { id: 'gmail-triage', owner: 'desktop-command', module: 'src/core/verse/gmail-triage-api.ts', handler: 'handleGmailTriageApi', prefixes: ['/api/verse/comms/gmail-triage'] },
+  { id: 'release-stages', owner: 'desktop-command', module: 'src/core/verse/release-stages-api.ts', handler: 'handleReleaseStagesApi', prefixes: ['/api/verse/release/stages'] },
   { id: 'comms-inbox', owner: 'desktop-command', module: 'src/core/verse/comms-inbox-api.ts', handler: 'handleCommsInboxApi', prefixes: ['/api/verse/comms/inbox'] },
   { id: 'comms-teammate-reply', owner: 'desktop-command', module: 'src/core/verse/comms-teammate-reply-api.ts', handler: 'handleCommsTeammateReplyApi', prefixes: ['/api/verse/comms/teammate-reply'] },
   { id: 'agent-roster', owner: 'desktop-command', module: 'src/core/verse/agent-roster-api.ts', handler: 'handleAgentRosterApi', prefixes: ['/api/verse/fleet/agent-roster'] },
