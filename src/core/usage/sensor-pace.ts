@@ -2,10 +2,11 @@
  * Pace a lane so included usage is spent as the window resets.
  * target = remaining * (1 - margin) / hoursLeft / burnPerJob.
  * Missing inputs stay unknown. They are not zero and they are not idle room.
- * Pay-per-use stays at 0 unless a fresh balance exists and spend is approved.
+ * Pay-per-use stays at 0 unless measured spend is below the owner budget and a fresh balance exists. The default budget is 0.
  * KILL and the caller's ceiling always win.
  */
 import type { FleetEngine } from '../fleet/fleet-types.js';
+import { spendAllowsPayPerUse } from '../spend/budget-policy.js';
 import type { UsageSensorLaneView, UsageSensorReport } from './sensor-reading.js';
 
 export const PACE_SAFETY_MARGIN = 0.15;
@@ -25,7 +26,10 @@ export interface PaceInput {
   margin?: number;
   payPerUse?: boolean;
   balanceFresh?: boolean;
-  spendApproved?: boolean;
+  /** Owner budget for this provider and period. Missing means 0. */
+  budgetUsd?: number;
+  /** Measured spend in that period. Null is unknown and is not under the budget. */
+  spentUsd?: number | null;
   /** Local models have no allowance. The target is the throughput ceiling. */
   uncapped?: boolean;
 }
@@ -50,8 +54,14 @@ export function paceLane(input: PaceInput): PaceDecision {
   }
   const ceiling = Math.floor(input.ceiling);
   const floor = Number.isFinite(input.floor) && input.floor > 0 ? Math.floor(input.floor) : 0;
-  if (input.payPerUse === true && !(input.balanceFresh === true && input.spendApproved === true)) {
-    return { lane, target: 0, reason: 'pay-per-use' };
+  if (input.payPerUse === true) {
+    const gate = spendAllowsPayPerUse({
+      killed: false,
+      budgetUsd: input.budgetUsd ?? 0,
+      spentUsd: input.spentUsd === undefined ? null : input.spentUsd,
+      balanceFresh: input.balanceFresh === true,
+    });
+    if (!gate.allow) return { lane, target: 0, reason: 'pay-per-use' };
   }
   if (input.uncapped === true) return { lane, target: clamp(ceiling, floor, ceiling), reason: 'uncapped' };
   const resetMs = input.resetAt ? Date.parse(input.resetAt) : NaN;
@@ -74,7 +84,8 @@ export interface SchedulerPaceAdvice {
   burnPerHour: number | null;
   payPerUse?: boolean;
   balanceFresh?: boolean;
-  spendApproved?: boolean;
+  budgetUsd?: number;
+  spentUsd?: number | null;
   uncapped?: boolean;
 }
 
@@ -114,7 +125,7 @@ export function paceReason(reason: PaceReason, target: number): string {
     case 'kill':
       return 'The fleet KILL switch is on.';
     case 'pay-per-use':
-      return 'This pay-per-use lane stays at 0 until a fresh balance exists and spend is approved.';
+      return 'This pay-per-use lane stays at 0 until measured spend is below the owner budget and a fresh balance exists.';
     case 'uncapped':
       return `Local throughput allows ${target}.`;
     case 'paced':
@@ -143,7 +154,8 @@ export function paceAgainstCeiling(advice: SchedulerPaceAdvice, ceiling: number,
     nowMs,
     payPerUse: advice.payPerUse,
     balanceFresh: advice.balanceFresh,
-    spendApproved: advice.spendApproved,
+    budgetUsd: advice.budgetUsd,
+    spentUsd: advice.spentUsd,
     uncapped: advice.uncapped,
   });
 }
