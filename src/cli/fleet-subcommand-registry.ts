@@ -105,6 +105,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'dot-handoff': () => import('./fleet-dot-handoff.js'),
   'draft-check': () => import('./fleet-draft-check.js'),
   'drip': () => import('./fleet-drip.js'),
+  'edges': () => import('./fleet-edges.js'),
   'edit-collisions': () => import('./fleet-edit-collisions.js'),
   'email-outbox': () => import('./fleet-email-outbox.js'),
   'email-outbox-await': () => import('./fleet-email-outbox-await.js'),
