@@ -5,6 +5,7 @@
  * Backlog text is untrusted, so it renders as plain text only.
  */
 import { Fragment, useId, useMemo, useState } from 'react';
+import { openDockPane } from '../dock/dock-store.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { Card, CardNote } from '../command/Surface.js';
 import { verseBacklogQuery } from '../autonomy/control-queries.js';
@@ -66,6 +67,7 @@ function RepoCard({ group, all, expanded, onToggle }: { group: RepoGroup; all: R
         {shown.map(row => <li key={row.key} className={styles.row}>
           <span className={styles.title}>{row.title}</span>
           <span className={styles.meta}>{row.scoreText} · {row.source}</span>
+          {row.goal ? <button type="button" className={styles.toggle} onClick={() => openDockPane('goals')}>from goal: {row.goal.name}</button> : null}
         </li>)}
       </ol>
       {group.more > 0 ? <button type="button" className={styles.toggle} aria-expanded={expanded} aria-controls={listId} onClick={onToggle}>
