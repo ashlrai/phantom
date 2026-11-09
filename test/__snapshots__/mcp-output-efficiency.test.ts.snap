@@ -77,6 +77,18 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "safety": "read",
     },
     {
+      "name": "world_model",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_observe",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_observe_session",
+      "safety": "read",
+    },
+    {
       "name": "phantom_fleet_graph",
       "safety": "read",
     },
@@ -225,8 +237,52 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "safety": "read",
     },
     {
+      "name": "ashlr_comms_thread",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_comms_send_owner",
+      "safety": "append",
+    },
+    {
       "name": "ashlr_desktop_open",
       "safety": "proposal",
+    },
+    {
+      "name": "desktop_list_apps",
+      "safety": "read",
+    },
+    {
+      "name": "desktop_windows",
+      "safety": "read",
+    },
+    {
+      "name": "desktop_read",
+      "safety": "read",
+    },
+    {
+      "name": "desktop_screenshot",
+      "safety": "read",
+    },
+    {
+      "name": "desktop_doctor",
+      "safety": "read",
+    },
+    {
+      "name": "desktop_focus",
+      "safety": "append",
+    },
+    {
+      "name": "desktop_scroll",
+      "safety": "append",
+    },
+    {
+      "name": "desktop_type",
+      "safety": "append",
+    },
+    {
+      "name": "desktop_click",
+      "safety": "append",
     },
   ],
   "registryFields": [
@@ -745,6 +801,44 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "phantom_fleet_orders",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+        },
+        "refresh": {
+          "type": "boolean",
+        },
+      },
+      "type": "object",
+    },
+    "name": "world_model",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "phantom_observe",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "sessionId": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "sessionId",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_observe_session",
   },
   {
     "inputSchema": {
@@ -1918,6 +2012,37 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
   {
     "inputSchema": {
       "properties": {
+        "limit": {
+          "type": "number",
+        },
+      },
+      "type": "object",
+    },
+    "name": "ashlr_comms_thread",
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+        },
+        "replyTo": {
+          "type": "string",
+        },
+        "text": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "text",
+      ],
+      "type": "object",
+    },
+    "name": "ashlr_comms_send_owner",
+  },
+  {
+    "inputSchema": {
+      "properties": {
         "action_type": {
           "description": "<description>",
           "enum": [
@@ -1954,6 +2079,178 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "ashlr_desktop_open",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object",
+    },
+    "name": "desktop_list_apps",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "app": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "required": [],
+      "type": "object",
+    },
+    "name": "desktop_windows",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "app": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "window": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "required": [
+        "app",
+      ],
+      "type": "object",
+    },
+    "name": "desktop_read",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "app": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "window": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "required": [
+        "app",
+      ],
+      "type": "object",
+    },
+    "name": "desktop_screenshot",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object",
+    },
+    "name": "desktop_doctor",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "app": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "window": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "required": [
+        "app",
+      ],
+      "type": "object",
+    },
+    "name": "desktop_focus",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "app": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "dx": {
+          "type": "number",
+        },
+        "dy": {
+          "type": "number",
+        },
+        "window": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "required": [
+        "app",
+      ],
+      "type": "object",
+    },
+    "name": "desktop_scroll",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "app": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "text": {
+          "type": "string",
+        },
+        "window": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "required": [
+        "app",
+        "text",
+      ],
+      "type": "object",
+    },
+    "name": "desktop_type",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "app": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "ref": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "window": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "x": {
+          "type": "number",
+        },
+        "y": {
+          "type": "number",
+        },
+      },
+      "required": [
+        "app",
+      ],
+      "type": "object",
+    },
+    "name": "desktop_click",
   },
 ]
 `;

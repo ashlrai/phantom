@@ -49,6 +49,7 @@ import { listProposals } from './inbox/store.js';
 import { FLEET_APPS } from './fleet/app-await.js';
 import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
 import { desktopOperatorTools } from './desktop/operator-mcp.js';
+import type { OwnerThreadSettings } from './comms/owner-channel.js';
 
 // Handler-only dependencies are imported lazily inside each handler so
 // `tools/list` pays for schemas and the safety gate only — not the ~300-file
@@ -68,6 +69,28 @@ const MAX_DIFF_CHARS = 4 * 1024;
 
 /** Internal privilege tags that external MCP callers may not persist. */
 const RESERVED_LEARN_TAGS = new Set(['m243:skill']);
+
+function ownerConfigDir(): string {
+  return process.env.ASHLR_CONFIG_DIR ?? join(homedir(), '.ashlr');
+}
+
+function ownerRunsDir(): string {
+  return process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+}
+
+function ownerThreadRuntime(settings: OwnerThreadSettings) {
+  return { runsDir: ownerRunsDir(), settings, halted: killSwitchOn() };
+}
+
+async function ownerThreadStatus(): Promise<unknown> {
+  try {
+    const { readOwnerCommsStatus } = await import('./comms/owner-thread.js');
+    const { loadOwnerThreadSettings } = await import('./comms/owner-channel.js');
+    return readOwnerCommsStatus(ownerThreadRuntime(loadOwnerThreadSettings(ownerConfigDir())));
+  } catch {
+    return { schema: 'comms.owner-thread.status.v1', available: false };
+  }
+}
 
 function externalLearnTags(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
@@ -1286,6 +1309,7 @@ const TOOLS: NativeToolImpl[] = [
         const outstandingReq = (() => {
           try { return outstanding(); } catch { return undefined; }
         })();
+        const ownerThread = await ownerThreadStatus();
 
         return {
           enabled,
@@ -1294,6 +1318,7 @@ const TOOLS: NativeToolImpl[] = [
           hasOutstanding: outstandingReq !== undefined,
           outstandingKind: outstandingReq?.kind ?? null,
           outstandingType: outstandingReq?.type ?? null,
+          ownerThread,
         };
       } catch {
         return {
@@ -1306,6 +1331,42 @@ const TOOLS: NativeToolImpl[] = [
           _unavailable: true,
         };
       }
+    },
+  },
+
+  {
+    name: 'ashlr_comms_thread',
+    description: 'Read the single owner thread (desktop, Telegram, email, iMessage, Slack). No credentials. Read-only.',
+    inputSchema: { type: 'object', properties: { limit: { type: 'number' } } },
+    safety: 'read',
+    handler: async args => {
+      const { readOwnerThread } = await import('./comms/owner-thread.js');
+      const { loadOwnerThreadSettings } = await import('./comms/owner-channel.js');
+      const limit = typeof args.limit === 'number' ? args.limit : 50;
+      return readOwnerThread(ownerThreadRuntime(loadOwnerThreadSettings(ownerConfigDir())), limit);
+    },
+  },
+  {
+    name: 'ashlr_comms_send_owner',
+    description: 'Fan a leader reply to the owner channel they used and the desktop thread. Refused unless the recipient is the configured owner. KILL halts it.',
+    inputSchema: {
+      type: 'object',
+      properties: { text: { type: 'string' }, replyTo: { type: 'string' }, idempotencyKey: { type: 'string' } },
+      required: ['text'],
+    },
+    safety: 'append',
+    handler: async args => {
+      const { sendOwnerReply } = await import('./comms/owner-thread.js');
+      const { loadOwnerThreadSettings } = await import('./comms/owner-channel.js');
+      const { liveOwnerTransports } = await import('./comms/owner-live-transport.js');
+      const settings = loadOwnerThreadSettings(ownerConfigDir());
+      const text = typeof args.text === 'string' ? args.text : '';
+      const replyTo = typeof args.replyTo === 'string' ? args.replyTo : undefined;
+      const idempotencyKey = typeof args.idempotencyKey === 'string' ? args.idempotencyKey : undefined;
+      return sendOwnerReply({ text, ...(replyTo ? { replyTo } : {}), ...(idempotencyKey ? { idempotencyKey } : {}) }, {
+        ...ownerThreadRuntime(settings),
+        transports: liveOwnerTransports(settings, ownerRunsDir()),
+      });
     },
   },
 
