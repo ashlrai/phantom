@@ -11,9 +11,10 @@
  * Never throws.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { readPrivateFileCapped } from '../verse/preferences.js';
 
 export interface PauseState {
   paused: boolean;
@@ -27,8 +28,9 @@ function pauseJsonPath(): string {
 export function loadPauseState(): PauseState {
   try {
     if (!existsSync(pauseJsonPath())) return { paused: false };
-    const raw = readFileSync(pauseJsonPath(), 'utf8');
-    const parsed = JSON.parse(raw) as Partial<PauseState>;
+    const read = readPrivateFileCapped(pauseJsonPath(), 64 * 1024);
+    if (read === null || read.truncated) return { paused: false };
+    const parsed = JSON.parse(read.text) as Partial<PauseState>;
     return {
       paused: parsed.paused === true,
       since: typeof parsed.since === 'number' ? parsed.since : undefined,
