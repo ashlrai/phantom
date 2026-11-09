@@ -57,7 +57,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // Shared task board: `bus` is the same as `fleet bus`.
   'bus',
   // Dispatched by index.ts but missing here (caught by cli-registry-drift).
-  'worktrees', 'drive', 'budget', 'capacity', 'top', 'sessions', 'checkpoint',
+  'worktrees', 'drive', 'budget', 'capacity', 'top', 'sessions', 'checkpoint', 'chain',
   // Estate cards and daily CI metrics (RQ-ESTATES, RQ-CIMETRICS).
   'estates', 'ci-metrics', 'daily-fix',
   // Read-only disk report for agent worktrees (RQ-DISKFLOW).
@@ -92,6 +92,8 @@ const SUBCOMMANDS: Record<string, string[]> = {
   run: ['show'],
   spec: ['new', 'list', 'show', 'refine'],
   swarm: ['show', 'verify', 'approve', 'rollback'],
+  chain: ['verify', '--json', '--help'],
+  verify: ['change', 'done', '--worktree', '--checks', '--contract', '--plan', '--help'],
   models: ['list', 'pull', 'start', 'inventory'],
   gh: ['pr', 'issue', 'ci'],
   vercel: ['ls', 'logs'],
