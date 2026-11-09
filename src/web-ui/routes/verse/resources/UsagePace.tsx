@@ -23,9 +23,11 @@ export function UsagePace() {
       const row: unknown = rows.find((value: unknown) => object(value) && value.pool === pool);
       const pct = object(row) ? row.projectedPercent : null;
       const hours = object(row) ? row.hoursLeft : null;
+      const slots = object(row) ? row.recommendedSlots : null;
       const known = fresh && typeof pct === 'number' && Number.isFinite(pct) && pct >= 0 && pct <= 100
         && typeof hours === 'number' && Number.isFinite(hours) && hours > 0;
-      return <li key={pool}><strong>{pool}</strong>: {known ? `on pace to use ${pct}% before reset (${hours} h left)` : 'unknown'}</li>;
+      const slotText = fresh && typeof slots === 'number' && Number.isInteger(slots) && slots >= 0 ? String(slots) : 'unknown';
+      return <li key={pool}><strong>{pool}</strong>: {known ? `on pace to use ${pct}% before reset (${hours} h left)` : 'unknown'} · suggested running slots: {slotText}</li>;
     })}
   </ul></section>;
 }
