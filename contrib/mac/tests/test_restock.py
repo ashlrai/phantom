@@ -445,6 +445,15 @@ class AutoUnparkTests(unittest.TestCase):
         self.assertIn('PARKED-DEP.devin\tRQ-NEED\t', ready)
         prompt = (home / '.ashlr-runs' / 'queue' / 'prompts' / 'RQ-NEED.md').read_text()
         self.assertIn('DEPENDENCY GATE: RQ-UPSTREAM', prompt)
+        rule = ('If the full goal cannot be verified, ship the smallest correct, useful part with honest output '
+                '(for example, age: unknown) and list the gap in BRIDGE_NOTES.md for the PR body. '
+                'Use EMPTY only when already done or truly impossible.')
+        self.assertIn(rule, prompt)
+        self.assertIn(rule, (SCRIPT.parent / 'host-integration' / 'launch.candidate.sh').read_text())
+        manifest = json.loads((SCRIPT.parents[2] / 'fleet' / 'manifest.json').read_text())
+        self.assertIn({'src': 'contrib/mac/host-integration/launch.candidate.sh', 'name': 'launch.sh',
+                       'root': 'runs-bin', 'class': 'pinned',
+                       'note': 'host-managed launcher candidate; Security pin required before adoption'}, manifest['files'])
         md = (home / '.ashlr-runs' / 'queue' / 'router-queue.md').read_text()
         self.assertIn('CLAIMED', md)
         self.assertIn('RQ-NEED', md)
