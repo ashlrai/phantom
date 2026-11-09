@@ -239,6 +239,19 @@ receipts` messages the reporter once per incident whose job is DONE; a recurrenc
 only when proactive comms are on. State lives in `~/.ashlr-runs/incidents`; `--dir` picks
 the queue directory. Both verbs take `--json`.
 
+## Repeated single-case work
+
+When the dispatcher's 24-hour `codex-personal` empty rate exceeds 25%, the
+Mac restocker admits at most one active author-filler job for a repository and
+explicitly named test file when the task says it adds one test case. Other
+matching rows remain READY for a later pass, with the skip reason
+`duplicate-single-case-test-file`. Guardian jobs, substantive jobs, different
+files, and an unknown rate are unaffected. This groups admission by test file;
+it does not merge task text or mark skipped rows complete. The current narrow
+match uses filler IDs ending in `A` plus at least six digits and `Q8`, and
+`.test` or `.spec` paths. Restocker changes need a Security re-pin before live
+installation.
+
 ## Plan restock batches
 
 Run `phm fleet restock plan --json` to check READY candidates in
