@@ -7,6 +7,7 @@ import { FLEET_RUNS_INBOX_MAX_CHARS } from '../verse/fleet-runs-types.js';
 
 export interface OutboxEntry {
   at: string;
+  heading?: string;
   text: string;
 }
 
@@ -62,13 +63,14 @@ export function parseOutbox(markdown: string, limit = 30): OutboxEntry[] {
 }
 
 /** Extract only explicit leader replies, retaining their section's wall-clock time. */
-function parsePlanLog(markdown: string): OutboxEntry[] {
+export function parsePlanLog(markdown: string): OutboxEntry[] {
   const entries: OutboxEntry[] = [];
   let at = '';
+  let heading = '';
   let body: string[] | null = null;
   const finish = (): void => {
     const text = body?.join('\n').trim();
-    if (text) entries.push({ at, text: cap(text) });
+    if (text) entries.push({ at, heading, text: cap(text) });
     body = null;
   };
   for (const line of markdown.replace(/\r\n/g, '\n').split('\n')) {
@@ -78,7 +80,10 @@ function parsePlanLog(markdown: string): OutboxEntry[] {
       body = [marker[1]!];
     } else if (/^#{1,6} /.test(line)) {
       finish();
-      if (line.startsWith('## ')) at = HEADING_TIME.exec(line)?.[0] ?? /^## (\d{4}-\d{2}-\d{2}) ET/.exec(line)?.[1] ?? '';
+      if (line.startsWith('## ')) {
+        heading = line.slice(3).trim();
+        at = HEADING_TIME.exec(line)?.[0] ?? /^## (\d{4}-\d{2}-\d{2}) ET/.exec(line)?.[1] ?? '';
+      }
     } else if (body !== null) {
       body.push(line);
     }
@@ -137,7 +142,7 @@ export async function readOutboxEntries(opts: { runsDir?: string; limit?: number
   for (const name of ['MASON-OUTBOX.md', 'PLAN-LOG.md']) {
     try {
       const markdown = await readTail(join(runsDir, 'leader', name));
-      entries.push(...(name === 'PLAN-LOG.md' ? parsePlanLog(markdown) : parseOutbox(markdown, Number.MAX_SAFE_INTEGER)));
+      entries.push(...(name === 'PLAN-LOG.md' ? parsePlanLog(markdown).map(({ at, text }) => ({ at, text })) : parseOutbox(markdown, Number.MAX_SAFE_INTEGER)));
       if (sourceState !== 'degraded') sourceState = 'healthy';
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') sourceState = 'degraded';
@@ -152,4 +157,14 @@ export async function readOutboxEntries(opts: { runsDir?: string; limit?: number
   }).sort((a, b) => (replyTime(a.at) || 0) - (replyTime(b.at) || 0));
   const limit = opts.limit ?? 30;
   return { sourceState, entries: Number.isFinite(limit) && limit > 0 ? unique.slice(-Math.floor(limit)) : [] };
+}
+
+/** Only explicit dated PLAN-LOG replies; no outbox fallback or text deduplication. */
+export async function readPlanLogReplies(): Promise<{ sourceState: 'healthy' | 'missing' | 'unknown'; entries: OutboxEntry[] }> {
+  const root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  try {
+    return { sourceState: 'healthy', entries: parsePlanLog(await readTail(join(root, 'leader', 'PLAN-LOG.md'))).filter(e => e.at && e.heading).slice(-30) };
+  } catch (error) {
+    return { sourceState: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unknown', entries: [] };
+  }
 }
