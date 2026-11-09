@@ -87,8 +87,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Select MCP output contract test
+        id: mcp_selection
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          ASHLR_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          ASHLR_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          node --test .github/tests/ci-mcp-selection.test.mjs
+          node .github/scripts/ci-mcp-selection.mjs
       - name: Set up Node.js 22
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -134,7 +144,7 @@ jobs:
           if [ "$verdict" = equal ]; then echo "equal=true" >> "$GITHUB_OUTPUT"; else echo "equal=false" >> "$GITHUB_OUTPUT"; fi
           exit 0
       - name: Install dependencies
-        if: steps.history.outputs.equal != 'true'
+        if: steps.history.outputs.equal != 'true' || steps.mcp_selection.outputs.mcp_output == 'true'
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Restore protected-branch compiler state
         # Read the protected base's incremental graph; tsc still validates the
@@ -161,6 +171,9 @@ jobs:
           HOME=$(mktemp -d) npm run test:ci -- --maxWorkers=1 --fileParallelism=false
           test/authority-codeowners-310b.test.ts
           test/authority-tier1-closure-310b.test.ts
+      - name: Test MCP output contract
+        if: steps.mcp_selection.outputs.mcp_output == 'true'
+        run: HOME=$(mktemp -d) npm run test:ci -- test/mcp-output-efficiency.test.ts
 
   classify:
     name: Classify PR site lane
