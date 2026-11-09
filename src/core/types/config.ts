@@ -1341,5 +1341,14 @@ export interface AshlrConfig {
   router?: {
     /** Enable the contextual Thompson sampler in routeTask. Default false. */
     bandit?: boolean;
+    /**
+     * Censored reward for the dispatch-log learner (outcome-learning.ts). Off
+     * unless exactly true. When on, an assignment with no outcome that is older
+     * than the horizon counts as a failed attempt instead of missing data.
+     * See docs/router/censored-reward.md.
+     */
+    censorUnmerged?: boolean;
+    /** Horizon in hours. Default: twice the p95 time to merge in the log, at least 24. */
+    censorHorizonHours?: number;
   };
 }
