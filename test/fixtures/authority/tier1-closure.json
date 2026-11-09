@@ -600,6 +600,7 @@
     "src/core/fleet/lane-truth.ts",
     "src/core/fleet/leader-journal.ts",
     "src/core/fleet/local-store-lock.ts",
+    "src/core/fleet/machine.ts",
     "src/core/fleet/main-health.ts",
     "src/core/fleet/main-red-age.ts",
     "src/core/fleet/maintainer-cargo-dependencies.ts",

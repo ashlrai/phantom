@@ -217,3 +217,12 @@ The longest measured delays come first; ongoing waits are not estimated.
 Acceptance: as simple and intuitive as possible, fewer steps, plain words,
 one obvious path, and every human surface backed by a typed API or CLI
 that agents can use (code-first, agent-native).
+
+### Machine load
+
+`phm fleet machine --json` and `GET /api/fleet/machine` expose the same
+read-only `fleet.machine.v1` projection of dispatchd's `queue/status.json`.
+Load per CPU uses the one-minute load average and CPU count; the Machine card
+warns above four times the CPU count. Swap and free disk are in GB. Missing or
+invalid measurements are `null` in JSON and shown as “unknown” in the card.
+Worktrees are the dispatcher's active worker worktrees, not all Git worktrees.

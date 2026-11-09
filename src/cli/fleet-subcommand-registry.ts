@@ -210,6 +210,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'load-why': () => import('./fleet-load-why.js'),
   'local-gate': () => import('./fleet-local-gate.js'),
   'login-health': () => import('./fleet-login-health.js'),
+  'machine': () => import('./fleet-machine.js'),
   'main-health': () => import('./fleet-main-health.js'),
   'main-red-age': () => import('./fleet-main-red-age.js'),
   'main-red-notify': () => import('./fleet-main-red-notify.js'),
