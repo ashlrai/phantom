@@ -1,4 +1,6 @@
 /** Immutable local enrollment custody. No provider calls or credential contents. */
+/** Host OS at load. A simulated platform must not drop the reboot witness. */
+const HOST_PLATFORM: NodeJS.Platform = process.platform;
 import { lstatSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { canonical, digest, inspectPrivateDirectory } from '../universe/artifacts.js';
@@ -31,8 +33,10 @@ export function commissioningProfileMetadata(accountsRoot: string, provider: 'co
   if (!result.ok || canonical(result.launch.command) !== canonical(command)) throw new Error('Commissioning profile unavailable');
   }
   const directory = dirname(command[1]!);
-  const profile = readCommissioningData(join(directory, 'profile.json'), directory) as { schemaVersion?: number };
-  if (profile.schemaVersion !== 2) throw new Error('Commissioning profile requires a reboot witness');
+  const profile = readCommissioningData(join(directory, 'profile.json'), directory) as { schemaVersion?: number; identity?: unknown };
+  if (profile.schemaVersion !== 2 && (profile.schemaVersion !== 1 || HOST_PLATFORM === 'darwin' || profile.identity !== undefined)) {
+    throw new Error('Commissioning profile requires a reboot witness');
+  }
   return commissioningHash({ profile, command, launcher: readCommissioningText(join(directory, 'launcher.mjs'), directory),
     commandFile: readCommissioningData(join(directory, 'command.json'), directory) });
 }
