@@ -755,6 +755,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'run show <id>',                desc: 'Print a past run in detail.', topic: 'run' },
   { cmd: 'runs [--json]',                desc: 'List past runs (newest first).', topic: 'run' },
   { cmd: 'models [--json]',              desc: 'List local models (Ollama/LM Studio); marks the active one.', topic: 'run' },
+  { cmd: 'models verify [--json]',       desc: 'Check registry model IDs against official provider documentation.', topic: 'run' },
   { cmd: 'models pull <name> [--yes]',   desc: 'Explicitly pull an Ollama model (large download; confirm first).', topic: 'run' },
   { cmd: 'models start',                 desc: 'Best-effort start a locally-installed Ollama (never downloads).', topic: 'run' },
   { cmd: 'local-runtime <status|start|stop|restart|reshape|logs|resolve-model>', desc: 'Supervise the loopback llama-server serving runtime (parallel local fleet engine); manual and attended.', topic: 'run' },
