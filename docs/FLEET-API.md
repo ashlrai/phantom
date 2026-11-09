@@ -169,6 +169,16 @@ The snapshot contains `prs` and `queue`; `--help` lists their fields.
 Merged and closed PRs are excluded. Missing evidence stays unknown. Required
 checks remain in place; this command only reads the supplied file.
 
+To prioritize conflict recovery by that same evidence, run `phm fleet
+merge-recover --queue-input snapshot.json --json`. The report includes the
+observation time, queue waits, and check blockers. Measured, unique entries are
+processed oldest first; unknown or duplicate queue entries are not prioritized.
+The snapshot is an observation, so the oldest reported PR is only the oldest
+measured entry in that snapshot. Add `--apply` to queue recuts and, after a
+replacement is published, request head-pinned GitHub auto-merge. GitHub still
+enforces required checks and the merge queue. Retry the command after a failed
+request or publication; it reuses the recovery identity.
+
 Acceptance: keep the interface as simple and intuitive as possible, with fewer
 steps, plain words, one obvious path, and every human surface backed by a typed
 API or CLI that agents can use (code-first, agent-native).
