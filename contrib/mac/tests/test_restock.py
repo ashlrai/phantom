@@ -941,3 +941,40 @@ class QueueDepthGateTests(unittest.TestCase):
                     self.assertLessEqual(len(after) - depth, max(0, 45 - depth))
                 finally:
                     tmp.cleanup()
+
+class QueueQualityTests(unittest.TestCase):
+    def test_single_case_filler_grouped_only_above_threshold(self):
+        rows = [
+            line('RQ-TEST1A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add one test case in test/example.test.ts'),
+            line('RQ-TEST2A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add a single test case in test/example.test.ts'),
+            line('RQ-TEST3A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add one test case in test/other.test.ts'),
+            line('RQ-SUBSTANTIVE', pool='codex-personal', tier='work', repo='phantom', text='Fix behavior and add tests in test/example.test.ts'),
+            line('RQ-GUARDIAN1A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Guardian: add one test case in test/example.test.ts'),
+        ]
+        for rate, expected in [(0.26, False), (0.25, True), (None, True)]:
+            with self.subTest(rate=rate):
+                tmp = build('\n'.join(rows) + '\n', slots={**{l: {'held': True} for l in LANES}, 'codex-personal': {'target': 6}})
+                self.addCleanup(tmp.cleanup)
+                q = Path(tmp.name) / '.ashlr-runs' / 'queue'
+                (q / 'status.json').write_text(json.dumps({'lanes': {}, 'rollup_24h': {'by_lane': {'codex-personal': {'empty_rate': rate}}}}))
+                r = restock(Path(tmp.name), '--dry-run', '--per-lane', '10')
+                self.assertEqual(r.returncode, 0, r.stderr)
+                ids = dry_ids(r.stdout)
+                self.assertEqual('RQ-TEST2A123456Q8' in ids, expected, r.stdout)
+                self.assertTrue({'RQ-TEST1A123456Q8', 'RQ-TEST3A123456Q8', 'RQ-SUBSTANTIVE', 'RQ-GUARDIAN1A123456Q8'} <= set(ids), r.stdout)
+                if not expected: self.assertEqual(skips(r.stdout).get('duplicate-single-case-test-file'), 1)
+
+    def test_existing_queued_group_survives_next_pass(self):
+        rows = [line('RQ-TEST1A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add one test case in test/example.test.ts'),
+                line('RQ-TEST2A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add one test case in test/example.test.ts')]
+        tmp = build('\n'.join(rows) + '\n', slots={**{l: {'held': True} for l in LANES}, 'codex-personal': {'target': 6}})
+        self.addCleanup(tmp.cleanup)
+        q = Path(tmp.name) / '.ashlr-runs' / 'queue'
+        (q / 'status.json').write_text(json.dumps({'lanes': {}, 'rollup_24h': {'by_lane': {'codex-personal': {'empty_rate': 0.5}}}}))
+        prompt = q / 'prompts' / 'existing.md'
+        prompt.write_text('existing work')
+        (q / 'ready.tsv').write_text(f'RQ-TEST1A123456Q8\tphantom\tcodex-personal\twork\t{prompt}\n')
+        r = restock(Path(tmp.name), '--dry-run', '--per-lane', '10')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn('RQ-TEST2A123456Q8', dry_ids(r.stdout))
+        self.assertEqual(skips(r.stdout).get('duplicate-single-case-test-file'), 1)
