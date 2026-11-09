@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.26 |
-| Latest dated changelog release (2026-11-08) | 3.30.26 |
+| Source package | 3.30.27 |
+| Latest dated changelog release (2026-11-09) | 3.30.27 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -17,6 +17,23 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ---
 
 ## [Unreleased]
+
+## [3.30.27] - 2026-11-09
+
+
+### Changes
+
+* **RQ-CIFIX3-PH-01:** RQ-CIFIX3-PH-01 ([#4125](https://github.com/ashlrai/phantom/issues/4125)) ([79e8614](https://github.com/ashlrai/phantom/commit/79e86140000433c7248a166490f5395c273e659c))
+* **RQ-CIFIX3-PH-03:** RQ-CIFIX3-PH-03 ([#4124](https://github.com/ashlrai/phantom/issues/4124)) ([5c1484f](https://github.com/ashlrai/phantom/commit/5c1484fc80510e5769eb4a3ab3acf7e6890e861e))
+* **RQ-CIFIX3-PH-04:** RQ-CIFIX3-PH-04 ([#4126](https://github.com/ashlrai/phantom/issues/4126)) ([4aec52e](https://github.com/ashlrai/phantom/commit/4aec52e0167c54fb83a215522927a9fe56ca3f29))
+* **RQ-DRAIN3-PH-10:** RQ-DRAIN3-PH-10 ([#4121](https://github.com/ashlrai/phantom/issues/4121)) ([9a5a50c](https://github.com/ashlrai/phantom/commit/9a5a50c84e05269f67c3096428f17d042b3e5b90))
+* **RQ-SWE4-API-FLEET-RACE:** RQ-SWE4-API-FLEET-RACE ([#4116](https://github.com/ashlrai/phantom/issues/4116)) ([192a74a](https://github.com/ashlrai/phantom/commit/192a74a4a5c48419dbb7d1c755fda4dcc04648fc))
+* **RQ-SWE4-API-RESBAR:** RQ-SWE4-API-RESBAR handoff ([#4117](https://github.com/ashlrai/phantom/issues/4117)) ([bdda6a4](https://github.com/ashlrai/phantom/commit/bdda6a49d8876130d8c769fcddfb4d52a76e1d1a))
+* **RQ-SWE4-API-SEC-PROXY:** RQ-SWE4-API-SEC-PROXY ([#4118](https://github.com/ashlrai/phantom/issues/4118)) ([75378fc](https://github.com/ashlrai/phantom/commit/75378fcea6c9d1c8a5aa2076695fc0920980dc50))
+* **RQ-SWE4-RELEASETAG-1:** RQ-SWE4-RELEASETAG-1 handoff ([#4127](https://github.com/ashlrai/phantom/issues/4127)) ([de42a64](https://github.com/ashlrai/phantom/commit/de42a64958a664d19b5c96c7e874a4284398b508))
+* **RQ-SWE4-TERRA-CLI-PH:** RQ-SWE4-TERRA-CLI-PH ([#4123](https://github.com/ashlrai/phantom/issues/4123)) ([5449b94](https://github.com/ashlrai/phantom/commit/5449b94af61a257ba460ce41bf01b50d7b94ae5e))
+* **RQ-SWE4-TERRA-SECBUS:** RQ-SWE4-TERRA-SECBUS ([#4120](https://github.com/ashlrai/phantom/issues/4120)) ([0da1acd](https://github.com/ashlrai/phantom/commit/0da1acd79bf26931e92a78d16f4bf74eab41c770))
+* **RQ-SWE4-TERRA-TESTS-PH:** Bridge notes — RQ-SWE4-TERRA-TESTS-PH ([#4119](https://github.com/ashlrai/phantom/issues/4119)) ([5992379](https://github.com/ashlrai/phantom/commit/5992379074ca85a3b0c6acf5f0c777e00db7a943))
 
 ## [3.30.26] - 2026-11-08
 
