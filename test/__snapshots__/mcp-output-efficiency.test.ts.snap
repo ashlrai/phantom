@@ -273,6 +273,14 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "safety": "read",
     },
     {
+      "name": "ashlr_comms_thread",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_comms_send_owner",
+      "safety": "append",
+    },
+    {
       "name": "ashlr_desktop_open",
       "safety": "proposal",
     },
@@ -2198,6 +2206,37 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "ashlr_comms",
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "type": "number",
+        },
+      },
+      "type": "object",
+    },
+    "name": "ashlr_comms_thread",
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+        },
+        "replyTo": {
+          "type": "string",
+        },
+        "text": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "text",
+      ],
+      "type": "object",
+    },
+    "name": "ashlr_comms_send_owner",
   },
   {
     "inputSchema": {

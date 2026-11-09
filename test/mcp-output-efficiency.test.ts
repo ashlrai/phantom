@@ -73,6 +73,8 @@ const ADDED_NATIVE_NAMES = [
   'phantom_leader_inbox',
   'phantom_leader_ask',
   'phantom_leader_assign',
+  'ashlr_comms_thread',
+  'ashlr_comms_send_owner',
   'desktop_list_apps',
   'desktop_windows',
   'desktop_read',
@@ -123,7 +125,7 @@ describe('native MCP tool inventory', () => {
     const tools = listNativeTools();
     const names = tools.map(tool => tool.name);
     const classified = classifyNativeNames(names);
-    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(79);
+    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(81);
     expect(new Set(names).size).toBe(names.length);
     expect(classified.old).toEqual([...OLD_NATIVE_NAMES]);
     expect(classified.added).toEqual([...ADDED_NATIVE_NAMES]);
@@ -156,17 +158,20 @@ describe('native MCP tool inventory', () => {
     const desktop = addedTools.filter(tool => tool.name.startsWith('desktop_'));
     const desktopBytes = desktop.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(desktopBytes).toBeLessThanOrEqual(4500);
-    const observeTools = addedTools.filter(tool => tool.name === 'world_model' || tool.name === 'phantom_observe' || tool.name === 'phantom_observe_session');
+    const observeTools = addedTools.filter(tool => tool.name === 'world_model' || tool.name === 'phantom_observe' || tool.name === 'phantom_observe_session' || tool.name === 'phantom_spend_budget');
     const observeBytes = observeTools.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(observeBytes).toBeLessThanOrEqual(2500);
-    const commsTools = addedTools.filter(tool => tool.name.startsWith('ashlr_comms_agent_'));
-    const commsBytes = commsTools.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
-    expect(commsBytes).toBeLessThanOrEqual(746);
-    const addedBytes = addedTools.filter(tool => tool !== doctor && tool !== roster && tool !== spend && !visibility.includes(tool) && !leaderTools.includes(tool) && !desktop.includes(tool) && !observeTools.includes(tool) && !commsTools.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
+    const ownerComms = addedTools.filter(tool => tool.name === 'ashlr_comms_thread' || tool.name === 'ashlr_comms_send_owner');
+    const ownerCommsBytes = ownerComms.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
+    expect(ownerCommsBytes).toBeLessThanOrEqual(1600);
+    const agentComms = addedTools.filter(tool => tool.name.startsWith('ashlr_comms_agent_'));
+    const agentCommsBytes = agentComms.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
+    expect(agentCommsBytes).toBeLessThanOrEqual(746);
+    const addedBytes = addedTools.filter(tool => tool !== doctor && tool !== roster && tool !== spend && !visibility.includes(tool) && !leaderTools.includes(tool) && !desktop.includes(tool) && !observeTools.includes(tool) && !ownerComms.includes(tool) && !agentComms.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(addedBytes).toBeLessThanOrEqual(9195);
-    // 24,205 + 9,195 preserves the historical headroom. The doctor and roster
-    // tools are measured on their own caps above.
-    expect(responseBytes(tools)).toBeLessThan(33400 + doctorBytes + rosterBytes + visibilityBytes + spendBytes + leaderBytes + desktopBytes + observeBytes + commsBytes);
+    // 24,205 + 9,195 preserves the historical headroom. Later tool groups are
+    // measured on their own caps above.
+    expect(responseBytes(tools)).toBeLessThan(33400 + doctorBytes + rosterBytes + visibilityBytes + spendBytes + leaderBytes + desktopBytes + observeBytes + ownerCommsBytes + agentCommsBytes);
   });
 });
 

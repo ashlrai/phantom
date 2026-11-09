@@ -61,5 +61,18 @@ export interface WorldModel {
   outcomes: {
     repos: Array<{ repo: string; mergedPerDay: Field<number>; changeFailureRate: Field<number> }>;
   };
+  /**
+   * Latest reading of each Growth chart series. Null value and freshness
+   * `unknown` means that series has no source. It is never stored as 0.
+   */
+  growth: {
+    mergesPerHour: Field<number>;
+    pullsOpened: Field<number>;
+    pullsMerged: Field<number>;
+    releases: Field<number>;
+    laneUtilization: Field<number>;
+    costPerMergedPr: Field<number>;
+    bottleneckTrends: Field<number>;
+  };
   blindSpots: BlindSpot[];
 }

@@ -8,9 +8,13 @@
  * and does not spend. Channel adapters are not here: they call
  * `acceptOwnerMessage` and drain `readLeaderOutbox`.
  *
- * KILL stops every mutation. With no standing grant, ordinary work is recorded
- * as a proposal and is not put on the bus. Hard limits (secrets/keys, money,
- * outside sends, destruction of owner data) escalate to the owner instead.
+ * KILL stops every mutation. It is read at entry and again immediately before
+ * the office file is written and before each bus post. With no standing grant,
+ * ordinary work is recorded as a proposal and is not put on the bus.
+ *
+ * A request is routed only when its words are ordinary work and a role keyword
+ * or an explicit owner picks the lane. The hard-limit regex only labels a
+ * match for the owner. It does not decide escalation. Anything else escalates.
  */
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -21,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { currentStandingPolicy } from '../authority/effective-config.js';
 import { appendBusInbox } from '../fleet/bus-inbox.js';
 import { killSwitchOn } from '../sandbox/policy.js';
+import { scrubSecrets } from '../util/scrub-secrets.js';
 import { readWorldModel } from '../world/read.js';
 import type { WorldModel } from '../world/types.js';
 import { listCoordination } from './claim-store.js';
@@ -38,7 +43,7 @@ const ROUTER_LANES = ['frontier', 'work', 'mid', 'fast'] as const;
 export type RouterLane = typeof ROUTER_LANES[number];
 const ASSIGNMENT_STATUSES = ['proposed', 'assigned', 'in_progress', 'blocked', 'done', 'escalated'] as const;
 export type AssignmentStatus = typeof ASSIGNMENT_STATUSES[number];
-export const ESCALATION_CATEGORIES = ['secrets', 'money', 'outside-send', 'owner-data-destruction'] as const;
+export const ESCALATION_CATEGORIES = ['secrets', 'money', 'outside-send', 'owner-data-destruction', 'unsure'] as const;
 export type EscalationCategory = typeof ESCALATION_CATEGORIES[number];
 const RQ = /^RQ-[A-Z0-9]+(?:-[A-Z0-9]+)+$/;
 const DUE = /^\d{4}-\d{2}-\d{2}$/;
@@ -198,6 +203,7 @@ export function escalationLabel(category: EscalationCategory): string {
     case 'money': return 'money';
     case 'outside-send': return 'outside sends';
     case 'owner-data-destruction': return 'destruction of owner data';
+    case 'unsure': return 'a hard limit';
     default: {
       const exhaustive: never = category;
       return exhaustive;
@@ -205,7 +211,11 @@ export function escalationLabel(category: EscalationCategory): string {
   }
 }
 
-/** Hard-limit classification. Ordinary engineering text does not escalate. */
+/**
+ * Label a phrase that already matches a hard-limit pattern.
+ * This does not decide escalation. The office escalates unless the text is
+ * clearly ordinary work; a miss here stays `unsure` and still goes to the owner.
+ */
 export function classifyEscalation(text: string): LeaderEscalation | null {
   for (const rule of RULES) {
     if (rule.patterns.some((pattern) => pattern.test(text))) return { category: rule.category, reason: rule.reason };
@@ -271,8 +281,22 @@ export function loadLeaderOrg(deps: LeaderOfficeDeps = {}): { ok: true; org: Lea
   return { ok: true, org: DEFAULT_LEADER_ORG, source: 'default' };
 }
 
-function redact(text: string): string {
-  return text.replace(/\b(?:sk-|ghp_|github_pat_|xox[baprs]-|phm_)[A-Za-z0-9-]{8,}/gi, '[redacted]');
+const FUNCTION_WORDS = new Set(['a', 'an', 'the', 'to', 'for', 'in', 'on', 'of', 'and', 'or', 'with', 'this', 'that', 'please', 'our', 'it', 'its', 'then']);
+const WORK_WORDS = new Set(['fix', 'flaky', 'test', 'tests', 'build', 'leader', 'office', 'panel', 'open', 'pr', 'review', 'code', 'bug', 'repo', 'implement', 'audit', 'release', 'publish', 'ship', 'disk', 'context', 'resource', 'cleanup', 'engineering']);
+
+/** Positive ordinary-work check. Unknown words are doubt, not a clearance. */
+export function isClearOrdinaryWork(text: string): boolean {
+  const words = text.replace(/\bRQ-[A-Z0-9]+(?:-[A-Z0-9]+)+\b/g, ' ').toLowerCase().match(/[a-z][a-z0-9-]*/g) ?? [];
+  return words.length > 0 && words.every((word) => FUNCTION_WORDS.has(word) || WORK_WORDS.has(word));
+}
+
+function hasRouteKeyword(org: LeaderOrg, text: string): boolean {
+  return org.roles.some((role) => role.id !== 'leader' && role.routes.some((word) => new RegExp(`\\b${word}\\b`, 'i').test(text)));
+}
+
+function escalationFor(text: string, explicitRole: LeaderRole | null, org: LeaderOrg): LeaderEscalation | null {
+  if (isClearOrdinaryWork(text) && (explicitRole !== null || hasRouteKeyword(org, text))) return null;
+  return classifyEscalation(text) ?? { category: 'unsure', reason: 'This is not clearly ordinary work, so it comes to you.' };
 }
 
 function blankWorld(reason: string | null, model?: WorldModel): LeaderWorldView {
@@ -312,12 +336,18 @@ function readStore(deps: LeaderOfficeDeps): Store | null {
   }
 }
 
-function writeStore(deps: LeaderOfficeDeps, store: Store): void {
+function killedNow(deps: LeaderOfficeDeps): boolean {
+  return deps.killed ? deps.killed() : killSwitchOn();
+}
+
+function writeStore(deps: LeaderOfficeDeps, store: Store): boolean {
+  if (killedNow(deps)) return false;
   const root = officeRoot(deps);
   mkdirSync(root, { recursive: true, mode: 0o700 });
   store.assignments = store.assignments.slice(-STORE_CAP);
   store.messages = store.messages.slice(-STORE_CAP);
   writeFileSync(storePath(deps), JSON.stringify(store), { mode: 0o600 });
+  return true;
 }
 
 function routeRole(org: LeaderOrg, text: string): LeaderRole {
@@ -369,9 +399,16 @@ async function look(deps: LeaderOfficeDeps, now: number): Promise<{ world: Leade
   }
 }
 
-function postBus(deps: LeaderOfficeDeps, now: number, envelope: { id: string; from: string; to: string; priority: 'P0' | 'P1'; body: Record<string, string | null> }): boolean {
-  const posted = appendBusInbox({ ...envelope, ttl: BUS_TTL_MS }, { root: deps.busRoot, now: () => now });
-  return posted.status === 'posted' || posted.status === 'duplicate';
+function scrubBody(body: Record<string, string | null>): Record<string, string | null> {
+  const scrubbed: Record<string, string | null> = {};
+  for (const [key, value] of Object.entries(body)) scrubbed[key] = value === null ? null : scrubSecrets(value);
+  return scrubbed;
+}
+
+function postBus(deps: LeaderOfficeDeps, now: number, envelope: { id: string; from: string; to: string; priority: 'P0' | 'P1'; body: Record<string, string | null> }): 'posted' | 'killed' | 'skipped' {
+  if (killedNow(deps)) return 'killed';
+  const posted = appendBusInbox({ ...envelope, ttl: BUS_TTL_MS, body: scrubBody(envelope.body) }, { root: deps.busRoot, now: () => now });
+  return posted.status === 'posted' || posted.status === 'duplicate' ? 'posted' : 'skipped';
 }
 
 export interface LeaderAskInput { text: string }
@@ -403,8 +440,10 @@ async function decide(deps: LeaderOfficeDeps, input: {
   const now = deps.now?.() ?? Date.now();
   const grant = grantOf(deps);
   const seen = await look(deps, now);
-  if (deps.killed ? deps.killed() : killSwitchOn()) return stopped(seen.world, seen.context, grant);
-  const escalation = classifyEscalation(`${input.summary}\n${input.text}`);
+  if (killedNow(deps)) return stopped(seen.world, seen.context, grant);
+  const loadedOrg = loadLeaderOrg(deps);
+  const org = loadedOrg.ok ? loadedOrg.org : DEFAULT_LEADER_ORG;
+  const escalation = escalationFor(`${input.summary}\n${input.text}`, input.role, org);
   const store = readStore(deps);
   if (!store) {
     return {
@@ -416,19 +455,22 @@ async function decide(deps: LeaderOfficeDeps, input: {
   const id = randomBytes(8).toString('hex');
   const ids: string[] = [];
   const remember = (direction: 'in' | 'out', text: string, to: string, decision: string): void => {
-    store.messages.push({ id: `lo-${direction}-${id}`, at, direction, text: redact(text).slice(0, TEXT_MAX), to, rq: input.rq, decision });
+    store.messages.push({ id: `lo-${direction}-${id}`, at, direction, text: scrubSecrets(text).slice(0, TEXT_MAX), to, rq: input.rq, decision });
   };
-  remember('in', escalation?.category === 'secrets' ? 'Escalated to the owner (secrets/keys).' : input.text, 'leader', escalation ? 'escalated' : 'accepted');
-  const mirrorIn = (): void => {
+  const inboundText = escalation?.category === 'secrets' ? 'Escalated to the owner (secrets/keys).' : input.text;
+  remember('in', inboundText, 'leader', escalation ? 'escalated' : 'accepted');
+  const mirrorIn = (): 'killed' | 'open' => {
     const inbound = postBus(deps, now, {
       id: `lo-in-${id}`, from: 'owner', to: 'leader', priority: 'P0',
-      body: { kind: 'leader.owner-message', rq: input.rq, text: escalation?.category === 'secrets' ? 'escalated' : redact(input.text).slice(0, 500) },
+      body: { kind: 'leader.owner-message', rq: input.rq, text: scrubSecrets(inboundText).slice(0, 500) },
     });
-    if (inbound) ids.push(`lo-in-${id}`);
+    if (inbound === 'killed') return 'killed';
+    if (inbound === 'posted') ids.push(`lo-in-${id}`);
+    return 'open';
   };
 
   if (escalation) {
-    mirrorIn();
+    if (mirrorIn() === 'killed') return stopped(seen.world, seen.context, grant);
     const assignment = input.rq ? upsert(store, {
       rq: input.rq, owner: 'leader', lane: 'frontier', due: input.due, status: 'escalated', outcome: null,
       summary: escalationLabel(escalation.category), updatedAt: at,
@@ -439,8 +481,9 @@ async function decide(deps: LeaderOfficeDeps, input: {
       id: `lo-out-${id}`, from: 'leader', to: 'owner', priority: 'P0',
       body: { kind: 'leader.escalation', rq: input.rq, category: escalation.category, text: reply },
     });
-    if (out) ids.push(`lo-out-${id}`);
-    writeStore(deps, store);
+    if (out === 'killed') return stopped(seen.world, seen.context, grant);
+    if (out === 'posted') ids.push(`lo-out-${id}`);
+    if (!writeStore(deps, store)) return stopped(seen.world, seen.context, grant);
     return {
       schema: LEADER_OFFICE_SCHEMA, status: 'escalated', killed: false, world: seen.world, context: seen.context, grant,
       escalation, route: null, assignment, holder: null, reply: { id: `lo-out-${id}`, text: reply, to: 'owner' },
@@ -448,8 +491,7 @@ async function decide(deps: LeaderOfficeDeps, input: {
     };
   }
 
-  const loaded = loadLeaderOrg(deps);
-  const role = input.role ?? routeRole(loaded.ok ? loaded.org : DEFAULT_LEADER_ORG, input.text);
+  const role = input.role ?? routeRole(org, input.text);
   const route: LeaderRoute = { via: 'existing-router', tier: role.lane, roleId: role.id, busTo: role.owner, spend: 'none' };
   if (grant.mode === 'propose') {
     const assignment = input.rq ? upsert(store, {
@@ -458,7 +500,7 @@ async function decide(deps: LeaderOfficeDeps, input: {
     }) : null;
     const reply = `Recorded as a proposal for ${role.title}. A standing grant is required before I put it on the bus.`;
     remember('out', reply, 'owner', 'proposed');
-    writeStore(deps, store);
+    if (!writeStore(deps, store)) return stopped(seen.world, seen.context, grant);
     return {
       schema: LEADER_OFFICE_SCHEMA, status: 'proposed', killed: false, world: seen.world, context: seen.context, grant,
       escalation: null, route, assignment, holder: null, reply: { id: `lo-out-${id}`, text: reply, to: 'owner' },
@@ -466,7 +508,7 @@ async function decide(deps: LeaderOfficeDeps, input: {
     };
   }
 
-  mirrorIn();
+  if (mirrorIn() === 'killed') return stopped(seen.world, seen.context, grant);
   let holder: WorkHolder | null = null;
   let status: AssignmentStatus = input.nextStatus ?? 'assigned';
   if (input.rq && status !== 'done') {
@@ -492,16 +534,18 @@ async function decide(deps: LeaderOfficeDeps, input: {
   if (status !== 'blocked') {
     const routed = postBus(deps, now, {
       id: `lo-route-${id}`, from: 'leader', to: role.owner, priority: 'P1',
-      body: { kind: 'leader.assignment', rq: input.rq, lane: role.lane, text: redact(input.summary).slice(0, 500) },
+      body: { kind: 'leader.assignment', rq: input.rq, lane: role.lane, text: scrubSecrets(input.summary).slice(0, 500) },
     });
-    if (routed) ids.push(`lo-route-${id}`);
+    if (routed === 'killed') return stopped(seen.world, seen.context, grant);
+    if (routed === 'posted') ids.push(`lo-route-${id}`);
   }
   const out = postBus(deps, now, {
     id: `lo-out-${id}`, from: 'leader', to: 'owner', priority: 'P1',
     body: { kind: 'leader.reply', rq: input.rq, text: reply },
   });
-  if (out) ids.push(`lo-out-${id}`);
-  writeStore(deps, store);
+  if (out === 'killed') return stopped(seen.world, seen.context, grant);
+  if (out === 'posted') ids.push(`lo-out-${id}`);
+  if (!writeStore(deps, store)) return stopped(seen.world, seen.context, grant);
   return {
     schema: LEADER_OFFICE_SCHEMA, status: status === 'blocked' ? 'blocked' : 'routed', killed: false,
     world: seen.world, context: seen.context, grant, escalation: null, route, assignment, holder,
@@ -512,11 +556,12 @@ async function decide(deps: LeaderOfficeDeps, input: {
 function upsert(store: Store, next: LeaderAssignment): LeaderAssignment {
   const index = store.assignments.findIndex((row) => row.rq === next.rq);
   const prior = index >= 0 ? store.assignments[index]! : null;
+  const outcome = next.outcome ?? prior?.outcome ?? null;
   const merged: LeaderAssignment = {
     ...next,
     due: next.due ?? prior?.due ?? null,
-    outcome: next.outcome ?? prior?.outcome ?? null,
-    summary: next.summary || prior?.summary || next.rq,
+    summary: scrubSecrets(next.summary || prior?.summary || next.rq),
+    outcome: outcome === null ? null : scrubSecrets(outcome),
   };
   if (index >= 0) store.assignments[index] = merged;
   else store.assignments.push(merged);
@@ -527,7 +572,7 @@ function cleanText(text: string): string | null {
   const trimmed = text.trim();
   if (trimmed.length < 1 || trimmed.length > TEXT_MAX) return null;
   if ([...trimmed].some((char) => char.charCodeAt(0) < 32 && char !== '\n' && char !== '\t')) return null;
-  return trimmed;
+  return scrubSecrets(trimmed);
 }
 
 export async function leaderAsk(input: LeaderAskInput, deps: LeaderOfficeDeps = {}): Promise<LeaderDecision> {
@@ -603,7 +648,10 @@ export function leaderOrg(deps: LeaderOfficeDeps = {}): { schema: typeof LEADER_
   return { schema: LEADER_OFFICE_SCHEMA, org: org.org, source: org.source };
 }
 
-/** Owner message in. Channel adapters call this after they have authenticated the owner. */
+/**
+ * Owner message in. The caller must already have authenticated the owner.
+ * Do not pass a raw channel payload; verified-sender adapters are the only callers.
+ */
 export async function acceptOwnerMessage(message: { text: string; receivedAt?: string }, deps: LeaderOfficeDeps = {}): Promise<LeaderDecision> {
   if (message.receivedAt !== undefined && Number.isNaN(Date.parse(message.receivedAt))) {
     return leaderAsk({ text: '' }, deps);

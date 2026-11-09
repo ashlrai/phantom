@@ -58,6 +58,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Inspect stage percentiles, queue wait and CI time in Grafana | [Cycle dashboard contract](https://github.com/ashlrai/phantom/blob/master/docs/observability/README.md) |
 | Read roster, sensor headroom, pull headlines, bottlenecks, and human steps | [Human observe](https://github.com/ashlrai/phantom/blob/master/docs/OBSERVE.md) (`phm observe --json`) |
 | Read the scheduler world model | [World model](https://github.com/ashlrai/phantom/blob/master/docs/WORLD.md) (`phm world --json`) |
+| Read the Growth chart series | [Growth charts](GROWTH.md) (`phm growth --json`) |
 | Triage mail and hold sends for the owner | [Comms agent](COMMS-AGENT.md) (`phm comms-agent status --json`) |
 | Quarantine a flaky test only with a tracked, expiring ledger row | [Quarantine ledger](https://github.com/ashlrai/phantom/blob/master/docs/QUARANTINE-LEDGER.md) |
 | See real candidates, rejection and parent-linked improvement without model credentials | [Executable demo](DEMO.md) |
