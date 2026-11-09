@@ -25,6 +25,7 @@ import type { AgentRoster } from '../fleet/agent-roster.js';
 import { writeWorldExport } from './export.js';
 import { loadGrowthFacts } from '../growth/read.js';
 import { growthSnapshot } from '../growth/series.js';
+import { intentSummary, type IntentSummary } from '../intent/summary.js';
 import { projectWorldModel } from './project.js';
 import { WORLD_CACHE_TTL_MS, type WorldModel } from './types.js';
 import type { ObserveSnapshot } from '../observe/types.js';
@@ -59,7 +60,7 @@ async function readDisk(nowMs: number): Promise<CachedWorld | null> {
     const ageMs = nowMs - stat.mtimeMs;
     if (ageMs < 0 || ageMs >= WORLD_CACHE_TTL_MS) return null;
     const parsed = JSON.parse(await readFile(path, 'utf8')) as CachedWorld;
-    if (parsed?.schema !== 'ashlr.world-model/v1' || !parsed.views?.observe || !parsed.growth?.mergesPerHour) return null;
+    if (parsed?.schema !== 'ashlr.world-model/v1' || !parsed.views?.observe || !parsed.growth?.mergesPerHour || !parsed.intents?.items) return null;
     return stamp(parsed, true, ageMs);
   } catch {
     return null;
@@ -133,6 +134,15 @@ function busReadable(): boolean | null {
   }
 }
 
+/** Read-only. intentSummary never writes or sweeps; a failure leaves the intent fields unknown. */
+async function readIntents(nowMs: number): Promise<IntentSummary | null> {
+  try {
+    return await intentSummary({ nowMs });
+  } catch {
+    return null;
+  }
+}
+
 export async function buildWorldModel(options: ReadObserveOptions = {}): Promise<CachedWorld> {
   const nowMs = options.nowMs ?? Date.now();
   const [humanSteps, bottlenecks, pullFile, roster, sensors, queue, ci] = await Promise.all([
@@ -185,6 +195,7 @@ export async function buildWorldModel(options: ReadObserveOptions = {}): Promise
       nowMs,
       ...(parsedPulls ? { pulls: parsedPulls.pulls, pullsComplete: parsedPulls.complete === true } : {}),
     })),
+    intents: await readIntents(nowMs),
   });
   observe.coverage = {
     ...observe.coverage,

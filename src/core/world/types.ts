@@ -74,5 +74,18 @@ export interface WorldModel {
     costPerMergedPr: Field<number>;
     bottleneckTrends: Field<number>;
   };
+  /**
+   * Counts from the local intent ledger. A missing, unreadable, or malformed
+   * ledger is unknown. An observed valid empty ledger is a real zero.
+   */
+  intents: {
+    items: Field<number>;
+    tracked: Field<number>;
+    merged: Field<number>;
+    shipped: Field<number>;
+    verified: Field<number>;
+    stale: Field<number>;
+    partial: Field<number>;
+  };
   blindSpots: BlindSpot[];
 }
