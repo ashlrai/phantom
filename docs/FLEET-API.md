@@ -202,6 +202,17 @@ Acceptance: as simple and intuitive as possible, fewer steps, plain words,
 one obvious path, and every human surface backed by a typed API or CLI
 that agents can use (code-first, agent-native).
 
+## Repeated queue lines
+
+Run `phm fleet queue-repeats --lines lines.json --json` for one number: how many
+READY or CLAIMED lines from the last 24 hours repeat an earlier line with the
+same repo, target file and acceptance, plus the top 5 examples. Omit `--json`
+for plain words. Supply `QueueLine` records (`id`, `status`, `repo`, `at`,
+`text`); the typed `queueRepeats(lines)` API returns the same report. Text must
+name a target file before an `Acceptance:` clause, and lines without both are
+never matched. Read-only. Gap: it matches exact normalized acceptance, not
+reworded duplicates, and does not yet read `ready.tsv` directly.
+
 ## PR creation and queue delays
 
 Run `phm fleet queue-age --events events.json --json` to rank PR delays from
@@ -217,3 +228,12 @@ The longest measured delays come first; ongoing waits are not estimated.
 Acceptance: as simple and intuitive as possible, fewer steps, plain words,
 one obvious path, and every human surface backed by a typed API or CLI
 that agents can use (code-first, agent-native).
+
+### Machine load
+
+`phm fleet machine --json` and `GET /api/fleet/machine` expose the same
+read-only `fleet.machine.v1` projection of dispatchd's `queue/status.json`.
+Load per CPU uses the one-minute load average and CPU count; the Machine card
+warns above four times the CPU count. Swap and free disk are in GB. Missing or
+invalid measurements are `null` in JSON and shown as “unknown” in the card.
+Worktrees are the dispatcher's active worker worktrees, not all Git worktrees.

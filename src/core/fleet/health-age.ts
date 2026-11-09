@@ -77,3 +77,24 @@ export async function readFleetHealthAge(opts: { runsDir?: string; now?: () => n
   report.status = ageMs < 0 ? 'future timestamp' : ageMs > MAIN_HEALTH_STALE_MS ? 'stale' : 'fresh';
   return report;
 }
+
+/** Counts timestamped error lines in the bounded log tail without exposing log contents. */
+export async function readGuardianLogHealth(opts: { runsDir?: string; now?: () => number } = {}): Promise<{
+  source: 'healthy' | 'missing' | 'degraded'; windowSeconds: number; recentErrors: number | null; unparseableErrors: number | null;
+}> {
+  const source = await readSource(join(opts.runsDir ?? join(homedir(), '.ashlr-runs'), 'guardian', 'guardian.log'), 256 * 1024, true);
+  const result = { source: source.state, windowSeconds: 86400, recentErrors: null as number | null, unparseableErrors: null as number | null };
+  if (source.state !== 'healthy') return result;
+  result.recentErrors = 0;
+  result.unparseableErrors = 0;
+  const now = (opts.now ?? Date.now)();
+  for (const line of source.text.split('\n')) {
+    if (!/\b(?:error|failed|failure|exception)\b/i.test(line)) continue;
+    const match = /^(?:\[)?(\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)?)/.exec(line);
+    const raw = match?.[1];
+    const time = raw && /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(raw) ? localTimestamp(raw).ms : raw ? Date.parse(raw) : NaN;
+    if (!Number.isFinite(time) || time > now) result.unparseableErrors++;
+    else if (time >= now - result.windowSeconds * 1000) result.recentErrors++;
+  }
+  return result;
+}

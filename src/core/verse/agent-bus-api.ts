@@ -11,6 +11,7 @@
  * to the stored envelope. No caller may choose the storage root or clock.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { readFleetEdges } from '../fleet/fleet-edges.js';
 import { parseBusEnvelope } from '../fleet/bus-envelope.js';
 import { appendBusInbox, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter } from '../fleet/bus-inbox.js';
 import { getBusMirrorState, startBusMirrorLoop } from '../fleet/bus-mirror-dispatch.js';
@@ -41,7 +42,7 @@ export interface AgentBusApiDeps {
 export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
   let mirrorStarted = false;
   return async (ctx, req: IncomingMessage, res: ServerResponse, path, method) => {
-    if (path !== PATH && path !== `${PATH}/status` && path !== NEEDS_MASON && path !== NEEDS_MASON_RESOLVE) return false;
+    if (path !== PATH && path !== `${PATH}/status` && path !== `${PATH}/edges` && path !== NEEDS_MASON && path !== NEEDS_MASON_RESOLVE) return false;
     if (method !== (path === NEEDS_MASON_RESOLVE ? 'POST' : 'GET') && !(method === 'POST' && path === PATH)) {
       sendJson(res, 404, { error: 'not found' }); return true;
     }
@@ -61,7 +62,10 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
       sendJson(res, 400, { error: 'Invalid query.' }); return true;
     }
     try {
-      if (path === NEEDS_MASON) {
+      if (path === `${PATH}/edges`) {
+        const result = readFleetEdges();
+        sendJson(res, result.source === 'unavailable' ? 503 : 200, result);
+      } else if (path === NEEDS_MASON) {
         sendJson(res, 200, { v: 1, items: (deps.needsMason?.list ?? listNeedsMason)() });
       } else if (path === NEEDS_MASON_RESOLVE) {
         let raw: string;
