@@ -663,6 +663,21 @@ loaded at run time); older macOS answers `unsupported`.
 
 ---
 
+## Measuring startup and render cost
+
+`npm run perf:desktop` (after `npm run build`) starts `phm verse` on a scratch
+HOME, opens `/verse/` in a fresh headless Chrome profile with the tokens
+injected the way the shell does (`window.__ASHLR_TOKENS__`), and reports, as
+medians over cold runs: time to the first meaningful render of a section,
+the long tasks, requests and JS files before it, the post-render warm-up burst
+(`shell/warmup.ts`), and steady-state frame interval, long tasks and main-thread
+busy time. `--section command` picks the surface, `--runs N` and `--steady-ms N`
+size the sample, `--json --out FILE` keeps the result, and `--profile` adds CPU
+hotspots per phase plus `.cpuprofile` files DevTools can load. Chromium stands
+in for the system webview, so compare before and after on one machine; the
+numbers move with machine load, so use several runs and the medians. Add
+`--chrome-no-sandbox` only where Chrome's own sandbox cannot start.
+
 ## Window behaviour
 
 - **Overlay title bar, hidden title.** `titleBarStyle: "Overlay"` +
