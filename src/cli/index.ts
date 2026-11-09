@@ -2922,6 +2922,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'feed': {
+        const { cmdFeed } = await import('./feed.js');
+        process.exitCode = await cmdFeed(rest);
+        break;
+      }
+
       case 'leader': {
         // V3.10: the Leader (Visionary) — show / run / tick / veto (src/cli/leader.ts).
         const cmdLeader = await loadLeaderCmd();
