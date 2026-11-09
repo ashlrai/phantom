@@ -6,7 +6,7 @@ import type { BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import type { AgentRoster } from '../fleet/agent-roster.js';
 import type { UsageSensorReport } from '../usage/sensor-reading.js';
 import type { RepoHeadline } from '../observe/types.js';
-import { GROWTH_FIELD_NEEDS, type GrowthSnapshot } from '../growth/series.js';
+import { GROWTH_FIELD_NEEDS, type GrowthSeriesId, type GrowthSnapshot } from '../growth/series.js';
 import { stableFieldId, WORLD_CACHE_TTL_MS, WORLD_SCHEMA, type BlindSpot, type Field, type Freshness, type WorldModel } from './types.js';
 
 const PACE_NEED = 'RQ-SENSORS-PACE-1 adds pacePerHour, requiredPacePerHour, and runwayHours on usage.sensors.v1. Those keys are absent, so pace stays unknown.';
@@ -192,12 +192,15 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
     : reading(input.bottlenecks, 'bottlenecks.v1', input.bottlenecksObservedAt, 'fresh');
   const steps = input.stepsRemaining === null ? unknown<number>('ashlr.human-steps/v1')
     : reading(input.stepsRemaining, 'ashlr.human-steps/v1', input.stepsObservedAt, 'fresh');
-  const growthAt = input.growth?.observedAt ?? null;
-  const growthValue = (value: number | null): Field<number> => {
-    if (value === null || !growthAt) return unknown<number>('growth.series.v1');
-    return reading(value, 'growth.series.v1', growthAt, 'fresh');
-  };
   const growth = input.growth;
+  const growthField = (id: GrowthSeriesId): Field<number> => {
+    const value = growth?.[id] ?? null;
+    const freshness = growth?.freshness?.[id] ?? 'unknown';
+    const observedAt = growth?.observedAt ?? null;
+    if (freshness === 'fresh' && value !== null && observedAt) return reading(value, 'growth.series.v1', observedAt, 'fresh');
+    if (freshness === 'stale') return { value: null, source: 'growth.series.v1', observedAt, freshness: 'stale' };
+    return unknown<number>('growth.series.v1');
+  };
   const outcomeRepos = (input.outcomes ?? []).filter((repo) => repo.state === 'live').map((repo) => {
     const merged = repo.mergedPerDay === null ? unknown<number>('pull-export') : reading(repo.mergedPerDay, 'pull-export', now, 'fresh');
     const cfr = repo.changeFailureRate === null ? unknown<number>('pull-export') : reading(repo.changeFailureRate, 'pull-export', now, 'fresh');
@@ -219,13 +222,13 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
     humanSteps: { remaining: steps },
     outcomes: { repos: outcomeRepos },
     growth: {
-      mergesPerHour: growthValue(growth?.mergesPerHour ?? null),
-      pullsOpened: growthValue(growth?.pullsOpened ?? null),
-      pullsMerged: growthValue(growth?.pullsMerged ?? null),
-      releases: growthValue(growth?.releases ?? null),
-      laneUtilization: growthValue(growth?.laneUtilization ?? null),
-      costPerMergedPr: growthValue(growth?.costPerMergedPr ?? null),
-      bottleneckTrends: growthValue(growth?.bottleneckTrends ?? null),
+      mergesPerHour: growthField('mergesPerHour'),
+      pullsOpened: growthField('pullsOpened'),
+      pullsMerged: growthField('pullsMerged'),
+      releases: growthField('releases'),
+      laneUtilization: growthField('laneUtilization'),
+      costPerMergedPr: growthField('costPerMergedPr'),
+      bottleneckTrends: growthField('bottleneckTrends'),
     },
   };
   return { ...draft, blindSpots: blindSpotsFrom(draft).spots };
