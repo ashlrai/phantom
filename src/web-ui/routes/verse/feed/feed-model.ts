@@ -16,6 +16,7 @@
  * whose time does not parse, sorts newest first and caps the stream. Every
  * text is untrusted (model output, PR titles) and is rendered as plain text.
  */
+import type { FeedReport } from '../../../../core/feed.js';
 import type { AppNotification } from '../../../components/notifications/types.js';
 import type { NeedsYouItem } from '../../../../core/verse/workbench-types.js';
 import type { AgentBusPage } from '../fleet-bus/agent-bus-queries.js';
@@ -40,6 +41,7 @@ export interface FeedItem {
 }
 
 export interface FeedSources {
+  shared?: FeedReport;
   leader?: readonly LeaderThreadMessage[] | null;
   /** The raw /api/verse/fleet/runs snapshot (outbox, merges and events). */
   runs?: unknown;
@@ -143,7 +145,8 @@ export function busAdapter(page: AgentBusPage | null | undefined): FeedItem[] {
 
 /** Every source merged: deduped by id (newest copy wins), unparsable times dropped, newest first, at most FEED_LIMIT. */
 export function buildFeed(sources: FeedSources, limit = FEED_LIMIT): FeedItem[] {
-  const all = [
+  const all: FeedItem[] = [
+    ...(sources.shared?.items ?? []).map((item, index): FeedItem => ({ id: `shared:${item.kind}:${item.at}:${index}`, at: item.at, kind: item.kind === 'merge' ? 'merge' : 'leader', ...headline(item.text) })),
     ...leaderAdapter(sources.leader),
     ...outboxAdapter(sources.runs),
     ...alertAdapter(sources.needsYou),
