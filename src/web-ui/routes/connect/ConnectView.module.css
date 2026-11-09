@@ -16,3 +16,18 @@
 .notice { color: var(--text-secondary); }
 .card code { background: var(--bg-code); border-radius: 4px; padding: 1px 5px; font-size: var(--text-sm-size); }
 .plan { display: block; margin-top: 4px; font: inherit; color: inherit; background: var(--bg-input); border: 1px solid var(--border-strong); border-radius: 6px; padding: 2px 6px; }
+.keyBody { min-width: 0; flex: 1; }
+.keyForm { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); align-items: center; }
+.keyInput { flex: 1 1 160px; min-width: 0; padding: var(--space-1) var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-input); color: var(--text-primary); font-family: var(--font-mono); font-size: var(--text-sm-size); }
+.keyButton { padding: var(--space-1) var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--text-primary); font-size: var(--text-sm-size); cursor: pointer; }
+.keyButton:disabled { opacity: 0.5; cursor: default; }
+.keyStatus { flex: 1 0 100%; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-height: 1em; font-size: var(--text-sm-size); }
+.storedTag { color: var(--status-info-fg); }
+.keyResult { color: var(--text-secondary); }
+.keyResult code { font-family: var(--font-mono); }
+.ok { color: var(--status-success-fg); }
+.bad { color: var(--status-danger-fg); }
+.muted { color: var(--text-secondary); }
+.keyError { color: var(--status-danger-fg); }
+.localOnly { color: var(--text-secondary); }
+.srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }

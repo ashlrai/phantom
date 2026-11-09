@@ -1,8 +1,17 @@
-import { useEffect, useState } from 'react';
-import { RESOURCE_CATALOG, type ResourceKind } from '../../../core/onboard/catalog.js';
+import { useEffect, useId, useState, type FormEvent } from 'react';
+import { apiKeyCatalogResources, RESOURCE_CATALOG, type CatalogResource, type ResourceKind } from '../../../core/onboard/catalog.js';
 import { Switch } from '../../components/primitives/Switch.js';
-import { apiGet } from '../../data/client.js';
-import { setResourcePlanTier, setScheduledAgentEnabled } from '../../data/mutations.js';
+import { MutationTokenDialog } from '../../components/auth/MutationTokenDialog.js';
+import { apiGet, readFailureReason } from '../../data/client.js';
+import { useMutationHold, useQuery } from '../../data/hooks.js';
+import {
+  connectApiKey,
+  setResourcePlanTier,
+  setScheduledAgentEnabled,
+  type ConnectApiKeyResult,
+} from '../../data/mutations.js';
+import { connectKeysQuery } from '../../data/queries.js';
+import { isRemoteMobileMode } from '../../data/remote-mode.js';
 import type {
   OnboardBalanceRow,
   OnboardResourceStatus,
@@ -13,7 +22,7 @@ import styles from './ConnectView.module.css';
 
 const STEPS: readonly { kind: ResourceKind; title: string; description: string }[] = [
   { kind: 'subscription', title: 'Subscriptions', description: 'Explore coding tools you already use.' },
-  { kind: 'apikey', title: 'API keys', description: 'Explore model providers for API access.' },
+  { kind: 'apikey', title: 'API keys', description: 'Store model provider keys in Phantom Secrets.' },
   { kind: 'local', title: 'Local models', description: 'Run models on your own hardware.' },
   { kind: 'computer', title: 'This computer', description: 'Use the computer running Phantom.' },
   { kind: 'cloud', title: 'Cloud computer', description: 'Explore remote computing resources.' },
@@ -58,12 +67,77 @@ function usageText(usage: OnboardUsageReading | null): string {
   return parts.length > 0 ? parts.join(', ') : 'usage unknown';
 }
 
+interface ApiKeyFormProps {
+  resource: CatalogResource;
+  stored: boolean;
+  busy: boolean;
+  result?: ConnectApiKeyResult;
+  error?: string;
+  onSubmit: (resource: string, value: string) => void;
+}
+
+// Key entry for one provider. The field clears only once the key is stored;
+// nothing here ever renders the submitted value -- the only echo is the
+// server's masked last-4 plus the validation verdict.
+function ApiKeyForm({ resource, stored, busy, result, error, onSubmit }: ApiKeyFormProps) {
+  const inputId = useId();
+  const [value, setValue] = useState('');
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    const v = value.trim();
+    if (v && !busy) onSubmit(resource.id, v);
+  }
+
+  useEffect(() => { if (result?.stored) setValue(''); }, [result]);
+
+  return (
+    <form className={styles.keyForm} onSubmit={submit} aria-label={`Store ${resource.displayName} API key`}>
+      <label className={styles.srOnly} htmlFor={inputId}>{resource.displayName} API key</label>
+      <input
+        id={inputId}
+        className={styles.keyInput}
+        type="password"
+        autoComplete="off"
+        placeholder={stored ? 'Paste a key to replace' : 'Paste API key'}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        disabled={busy}
+      />
+      <button type="submit" className={styles.keyButton} disabled={busy || value.trim().length === 0}>
+        {busy ? 'Storing' : stored ? 'Replace' : 'Store'}
+      </button>
+      <div className={styles.keyStatus} aria-live="polite">
+        {stored ? <span className={styles.storedTag}>in vault</span> : null}
+        {result ? <span className={styles.keyResult}><code>{result.masked}</code>{' '}
+          {result.validated === true
+            ? <span className={styles.ok}>validated</span>
+            : result.validated === false
+              ? <span className={styles.bad}>rejected by provider</span>
+              : <span className={styles.muted}>stored; validation unavailable</span>}
+        </span> : null}
+        {error ? <span className={styles.keyError} role="alert">{error}</span> : null}
+      </div>
+    </form>
+  );
+}
+
 export function ConnectView() {
   const [report, setReport] = useState<OnboardStatusReport | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
   const [agentSaveFailed, setAgentSaveFailed] = useState(false);
   const [toggling, setToggling] = useState<ReadonlySet<string>>(new Set());
+  // Remote/gateway sessions never render key entry: the hub API behind it
+  // exists on loopback only, so the form is withheld rather than left to fail.
+  const remote = isRemoteMobileMode();
+  const keysQuery = useQuery(connectKeysQuery, { enabled: !remote });
+  const mutationHold = useMutationHold();
+  const [tokenOpen, setTokenOpen] = useState(false);
+  const [pending, setPending] = useState<{ resource: string; value: string } | null>(null);
+  const [busyResource, setBusyResource] = useState<string | null>(null);
+  const [results, setResults] = useState<Record<string, ConnectApiKeyResult>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -76,6 +150,7 @@ export function ConnectView() {
   const byId = new Map((report?.resources ?? []).map((r) => [r.id, r] as const));
   // POST routes only exist on a dispatch-enabled server.
   const picksLocked = report?.dispatchEnabled === false;
+  const storedByResource = new Map((keysQuery.data?.keys ?? []).map((k) => [k.resource, k.stored]));
 
   async function refresh() {
     setReport(await apiGet<OnboardStatusReport>('/api/onboard/status'));
@@ -104,6 +179,35 @@ export function ConnectView() {
     }
   }
 
+  async function submitKey(resource: string, value: string) {
+    setBusyResource(resource);
+    try {
+      const result = await connectApiKey(resource, value);
+      setResults((r) => ({ ...r, [resource]: result }));
+      setErrors((e) => ({ ...e, [resource]: '' }));
+    } catch (err) {
+      setErrors((e) => ({ ...e, [resource]: readFailureReason(err) }));
+    } finally {
+      setBusyResource(null);
+    }
+  }
+
+  function requestKey(resource: string, value: string) {
+    if (mutationHold.hasHold) void submitKey(resource, value);
+    else { setPending({ resource, value }); setTokenOpen(true); }
+  }
+
+  // Mirror FleetView: once the token dialog closes, run the pending submit
+  // only when a hold now exists; otherwise drop it so the plaintext does not
+  // linger in state.
+  useEffect(() => {
+    if (tokenOpen || !pending) return;
+    const next = pending;
+    setPending(null);
+    if (mutationHold.hasHold) void submitKey(next.resource, next.value);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires only on tokenOpen transitioning closed.
+  }, [tokenOpen]);
+
   const balance = report?.balance ?? null;
   const balanceRows = (balance?.resources ?? [])
     .filter((row) => row.connected || row.selectedPlanTier !== null || row.usage !== null);
@@ -113,7 +217,9 @@ export function ConnectView() {
       <h1>Connect Resources</h1>
       <p className={styles.intro}>
         Live detection reports which CLIs are installed and signed in. Pick the
-        plan tier you pay for; it saves to your local config.
+        plan tier you pay for; it saves to your local config. API keys are
+        written straight into Phantom Secrets from this local console; only a
+        masked form and a validation verdict come back.
       </p>
       {loadError && (
         <p role="status" className={styles.notice}>Live detection is unavailable.</p>
@@ -149,12 +255,15 @@ export function ConnectView() {
             <h2 id={`connect-${step.kind}`}>{step.title}</h2>
             <p>{step.description}</p>
             <ul>
-              {RESOURCE_CATALOG.filter((resource) => resource.kind === step.kind).map((resource) => {
+              {(step.kind === 'apikey'
+                ? apiKeyCatalogResources()
+                : RESOURCE_CATALOG.filter((resource) => resource.kind === step.kind)
+              ).map((resource) => {
                 const detected = step.kind === 'subscription' ? byId.get(resource.id) : undefined;
                 return (
                   <li key={resource.id}>
                     <span className={styles.badge} aria-hidden="true">{resource.displayName.slice(0, 1)}</span>
-                    <div>
+                    <div className={styles.keyBody}>
                       <a href={resource.docsUrl}>{resource.displayName}</a>
                       {resource.planTiers.length > 0 && <small>{resource.planTiers.join(' · ')}</small>}
                       {detected && resource.cliBinary && (
@@ -176,6 +285,20 @@ export function ConnectView() {
                             <option key={tier} value={tier}>{tier}</option>
                           ))}
                         </select>
+                      )}
+                      {step.kind === 'apikey' && (
+                        remote ? (
+                          <small className={styles.localOnly}>Key entry is only available in the local console on this computer.</small>
+                        ) : (
+                          <ApiKeyForm
+                            resource={resource}
+                            stored={storedByResource.get(resource.id) ?? false}
+                            busy={busyResource === resource.id}
+                            result={results[resource.id]}
+                            error={errors[resource.id]}
+                            onSubmit={requestKey}
+                          />
+                        )
                       )}
                     </div>
                   </li>
@@ -218,6 +341,11 @@ export function ConnectView() {
           </section>
         ))}
       </div>
+      <MutationTokenDialog
+        open={tokenOpen}
+        onClose={() => setTokenOpen(false)}
+        reason="Storing an API key writes to the Phantom Secrets vault and requires the dispatch token."
+      />
     </div>
   );
 }

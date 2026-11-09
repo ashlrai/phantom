@@ -1,0 +1,5 @@
+{"ts":"2026-10-28T10:00:00Z","kind":"task-start","text":"Implement fixture change"}
+{"ts":"2026-10-28T10:00:01Z","kind":"tool-call","text":"tool: Read test/example.ts"}
+{"ts":"2026-10-28T10:00:02Z","kind":"tool-call","text":"tool: Edit src/example.ts"}
+{"ts":"2026-10-28T10:00:03Z","kind":"verify","text":"npm run typecheck: passed"}
+{"ts":"2026-10-28T10:00:04Z","kind":"task-done","text":"Completed"}

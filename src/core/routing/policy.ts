@@ -39,6 +39,7 @@ import {
   type BudgetResponse,
   type BudgetUpdateRequest,
   type SeatBudgetPolicy,
+  type TaskBanditEngine,
 } from './types.js';
 
 /**
@@ -454,4 +455,119 @@ export function applyBudgetUpdate(
   if (parsed.kind === 'reset-spending') return { ...policy, resetSpending: { enabled: parsed.enabled }, updatedAt: nowIso };
   if (parsed.kind === 'mode') return applyModeSwitch(policy, parsed.mode, nowIso, engineOf);
   return applySeatPatch(policy, parsed.seatId, parsed.patch, nowIso, engineOf?.(parsed.seatId));
+}
+
+// ---------------------------------------------------------------------------
+// Task-aware bandit flag (RQ-PARITYROUTERTASKQ7, extends the #960 bandit lane)
+// ---------------------------------------------------------------------------
+
+/**
+ * Engines a task-aware arm may name — every `BudgetEngine` except `claude-api`
+ * (never commissioned). oMLX local runtimes ride the `local` engine. An engine
+ * outside this set is unknown: it is never an arm and is never selected.
+ */
+export const TASK_BANDIT_ENGINES: readonly TaskBanditEngine[] =
+  Object.freeze(['claude', 'codex', 'grok', 'devin', 'local']);
+
+/**
+ * The frontier subset — hosted engines a risky (`high` risk) class may still
+ * use per #926. `local` is absent: risky work never leaves the hosted lane.
+ */
+export const FRONTIER_TASK_ENGINES: readonly TaskBanditEngine[] =
+  Object.freeze(['claude', 'codex', 'grok', 'devin']);
+
+export function isTaskBanditEngine(engine: string): engine is TaskBanditEngine {
+  return (TASK_BANDIT_ENGINES as readonly string[]).includes(engine);
+}
+
+export function isFrontierTaskEngine(engine: string): engine is TaskBanditEngine {
+  return (FRONTIER_TASK_ENGINES as readonly string[]).includes(engine);
+}
+
+/** Feature-flag modes. `off` is the default; `enforce` applies the draw. */
+export type TaskBanditMode = 'off' | 'shadow' | 'enforce';
+
+/**
+ * The task-bandit flag and hyperparameters, supplied per invocation via
+ * `RouteOptions.taskBandit.config` — NOT the stored budget policy. Strictly
+ * parsed; anything absent or malformed keeps the lane off (fail closed).
+ */
+export interface TaskBanditConfig {
+  /** Master switch. Absent or false keeps routing byte-identical. */
+  enabled: boolean;
+  /**
+   * 'shadow' draws and annotates but applies the static route; 'enforce'
+   * applies the draw (and holds when no arm is eligible). 'off' === !enabled.
+   * An enabled flag with an absent or invalid mode parses to 'shadow'.
+   */
+  mode: TaskBanditMode;
+  /** PRNG seed; per-decision streams key on (seed, item key) deterministically. */
+  seed: number;
+  /** Observations a (cell × arm) posterior needs before a draw may use it. */
+  minCellSamples: number;
+  /** Beta prior mass on each side (Beta(prior, prior)); 1 = uniform. */
+  priorMass: number;
+  /** Total tokens a merged+green run may cost for FULL reward. */
+  tokenNorm: number;
+  /** Lower bound on token evidence, so a ~0-token merge is not infinitely good. */
+  tokenFloor: number;
+  /** Ascending context-token edges for the five size buckets (4 values). */
+  sizeEdges: readonly number[];
+  /**
+   * Minimum first-period LP-pacing allowance (window fraction, 0..1) an
+   * engine pool must hold for its arms to be eligible (#938 constraint).
+   * Default 0: any strictly positive allowance admits.
+   */
+  pacingFloor: number;
+}
+
+export const DEFAULT_TASK_BANDIT_CONFIG: Readonly<TaskBanditConfig> = Object.freeze({
+  enabled: false,
+  mode: 'off',
+  seed: 1,
+  minCellSamples: 4,
+  priorMass: 1,
+  tokenNorm: 250_000,
+  tokenFloor: 1_000,
+  sizeEdges: Object.freeze([25_000, 80_000, 200_000, 600_000]),
+  pacingFloor: 0,
+});
+
+const banditNum = (v: unknown, lo: number, hi: number, dflt: number): number =>
+  typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : dflt;
+
+/**
+ * Strict salvage of a `taskBandit` config object. Lenient like
+ * `sanitizeSeatPolicy`: an invalid optional field falls back to the default,
+ * never throws, and a missing/non-object value keeps the lane off. Unknown
+ * keys are ignored — forward-compatibility with newer flags.
+ */
+export function parseTaskBanditConfig(raw: unknown): TaskBanditConfig {
+  const d = DEFAULT_TASK_BANDIT_CONFIG;
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return { ...d, sizeEdges: d.sizeEdges };
+  const r = raw as Record<string, unknown>;
+  const enabled = r['enabled'] === true;
+  // An enabled flag without a valid mode lands in 'shadow', the on-state that
+  // cannot reroute — flipping the switch never silently changes a decision.
+  const mode = !enabled ? 'off'
+    : r['mode'] === 'enforce' ? 'enforce'
+    : r['mode'] === 'off' ? 'off'
+    : 'shadow';
+  const edges = r['sizeEdges'];
+  const sizeEdges = Array.isArray(edges) && edges.length === 4 && edges.every((e) => Number.isFinite(e) && e > 0)
+      && (edges as number[]).every((e, i) => i === 0 || e > (edges as number[])[i - 1]!)
+    ? Object.freeze((edges as number[]).map((e) => Math.floor(e)))
+    : d.sizeEdges;
+  return {
+    enabled,
+    mode,
+    seed: Number.isSafeInteger(r['seed']) ? r['seed'] as number : d.seed,
+    minCellSamples: Number.isSafeInteger(r['minCellSamples']) && (r['minCellSamples'] as number) >= 1 && (r['minCellSamples'] as number) <= 10_000
+      ? r['minCellSamples'] as number : d.minCellSamples,
+    priorMass: banditNum(r['priorMass'], 0.001, 1_000, d.priorMass),
+    tokenNorm: banditNum(r['tokenNorm'], 1, 1e12, d.tokenNorm),
+    tokenFloor: banditNum(r['tokenFloor'], 1, 1e12, d.tokenFloor),
+    sizeEdges,
+    pacingFloor: banditNum(r['pacingFloor'], 0, 1, d.pacingFloor),
+  };
 }

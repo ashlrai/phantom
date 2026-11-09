@@ -6,8 +6,10 @@
  *
  * @module resources/pacing
  */
-export {
+export type {
   HorizonKnobs, PacePoint, PoolPaceSeries, ReadingStamp, PacePlan, HorizonPlan,
+} from './pacing/index.js';
+export {
   safetyBuffer, paceWindow, planHorizon, stubSeries, seriesFromManual,
 } from './pacing/index.js';
 export type { PaceSolver, PaceSolverOutcome } from './pacing/index.js';
