@@ -54,6 +54,7 @@ import { proactiveProfilesQuery } from '../proactive/proactive-queries.js';
 import { setVerseSection } from '../verse-ui-store.js';
 import styles from './ResourcesBar.module.css';
 import type { ProviderResourceDescriptor } from '../../../../core/resources/provider-aggregation-types.js';
+import { readingAge } from './reading-age.js';
 import { projectResourceDisplay, type ResourceDisplayView } from './resource-display-model.js';
 import { LazyProviderResourceGroups } from './useResourceDisplayClock.js';
 
@@ -373,7 +374,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
                   <span className={styles.value}>{row.value}</span>
                 </span>
                 {row.display ? <span id={`usage-stamp-${row.key}`} className={styles.usageStamp}>{row.display.usage.label}
-                  {row.display.usage.observedAt ? <> · <time dateTime={row.display.usage.observedAt} title={row.display.usage.observedAt}>{new Date(row.display.usage.observedAt).toLocaleString()}</time></> : null}</span> : null}
+                  {row.display.usage.observedAt ? <> · <time dateTime={row.display.usage.observedAt} title={row.display.usage.observedAt}>{readingAge(row.display.usage.observedAt)}</time></> : <> · {readingAge(null)}</>}</span> : null}
                 {row.creditLabel ? <span className={styles.credits}>
                   <span>{row.creditLabel}</span>
                   {row.creditHeld ? <span className={styles.creditHold}>Held</span> : null}
