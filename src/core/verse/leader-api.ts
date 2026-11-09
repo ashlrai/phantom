@@ -793,6 +793,17 @@ export async function buildPlannerPlan(deps: PlannerPlanDeps = {}): Promise<Plan
 
 export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) => {
   if (path !== VERSE_LEADER_PATH && !path.startsWith(`${VERSE_LEADER_PATH}/`)) return false;
+  if (path === `${VERSE_LEADER_PATH}/office`) {
+    if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+    if (!ctx.readSession || !Number.isFinite(ctx.readSession.expiresAt) || ctx.readSession.expiresAt <= Date.now()) { sendJson(res, 401, { error: 'A current read session is required.' }); return true; }
+    try {
+      const { leaderStatus } = await import('../agents/leader-office.js');
+      sendJson(res, 200, await leaderStatus());
+    } catch {
+      sendJson(res, 503, { error: 'leader-office-unavailable' });
+    }
+    return true;
+  }
   if (path === `${VERSE_LEADER_PATH}/inbox`) {
     if (method === 'GET') {
       if (!ctx.readSession || !Number.isFinite(ctx.readSession.expiresAt) || ctx.readSession.expiresAt <= Date.now()) { sendJson(res, 401, { error: 'A current read session is required.' }); return true; }
