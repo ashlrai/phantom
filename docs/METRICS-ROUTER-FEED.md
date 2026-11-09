@@ -149,3 +149,20 @@ empty and failed jobs, incomplete jobs, a reverted merge and unknown costs.
 `test/metrics-ingest.test.ts` checks exact arithmetic, coverage, ordering,
 malformed evidence, duplicate credit, path refusal, UTF-8, read-only behavior
 and CLI exits. Run tests with a temporary HOME as required by the repository.
+
+### Merge leverage mix
+
+`phm metrics leverage-mix --json` reports the last 24 hours of merged fleet
+PRs from `~/.ashlr-runs/metrics/jobs.jsonl`. Add `--prs prs.json` to enrich
+those merges with paths from a GitHub export, for example
+`gh pr list --state merged --limit 1000 --json url,mergedAt,files > prs.json`.
+Export each relevant repository and combine the arrays for a fleet-wide view.
+The same `--prs` option on `phm metrics dashboard` adds file evidence to its
+merge mix chart. Unmatched exports do not count as fleet merges.
+
+The deterministic precedence is test-only, docs (including tests), fleet
+paths or job IDs, fix job IDs, feature job IDs, then unknown. The product or
+fleet share sums feature, fleet and fix over all observed merges, including
+unknowns in the denominator; it is a known minimum when classifications are
+missing. Missing ledgers and empty windows return null shares. The report
+reflects available ledger and export evidence, not proof of complete coverage.
