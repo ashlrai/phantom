@@ -33,6 +33,7 @@ import { canSend, scrollTargetIndex, trimReply } from './thread-reply-model.js';
 import { mentionedRefs } from './thread-refs.js';
 import { leaderCeoSummary } from './leader-ceo-model.js';
 import { LeaderOfficeStrip } from './LeaderOfficeStrip.js';
+import { OwnerChannelsStrip } from './OwnerChannelsStrip.js';
 import { leaderOfficeQuery } from './leader-office-data.js';
 import { mergeOwnerLines, ownerThreadLines, type LabeledLine } from './owner-thread-lines.js';
 import { NO_OWNER_THREAD, ownerThreadQuery } from './owner-thread-queries.js';
@@ -265,6 +266,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     <header><button type="button" aria-pressed={needsYouOnly} onClick={() => setNeedsYouOnly(value => !value)}>Needs you only</button></header>
     <p className={styles.note}>{busRows.length} bus replies</p>
     {busUnavailable ? <p className={styles.note} role="status">Durable bus unavailable</p> : null}
+    <OwnerChannelsStrip channels={ownerRead.channels} paused={ownerRead.paused} />
     <div ref={logRef} className={leaderStyles.log} role="log" aria-label="Conversation with the Leader" aria-live="polite" aria-relevant="additions" tabIndex={0}
       onScroll={() => {
         const el = logRef.current;
