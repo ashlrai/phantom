@@ -324,6 +324,7 @@ describe('beforeTick — fail closed', () => {
 describe('lanes, presence and the router seam', () => {
   it('publishes fresh lanes during stuck mirror prep and stops on abort', async () => {
     const realSetImmediate = setImmediate;
+    const realNextTick = process.nextTick;
     vi.useFakeTimers();
     let now = NOW;
     let release!: (value: { ready: []; failed: []; pausedRepoPaths: [] }) => void;
@@ -340,7 +341,7 @@ describe('lanes, presence and the router seam', () => {
     // has to reach the poll phase before the next one is due.
     const flushObservations = async (): Promise<void> => {
       for (let turn = 0; turn < 40; turn += 1) {
-        await new Promise((resolve) => process.nextTick(resolve));
+        await new Promise<void>((resolve) => realNextTick(resolve));
         await new Promise((resolve) => realSetImmediate(resolve));
         await vi.advanceTimersByTimeAsync(0);
       }
@@ -381,13 +382,20 @@ describe('lanes, presence and the router seam', () => {
   });
 
   it('stops lane observations when mirror preparation reaches its deadline', async () => {
+    const realSetImmediate = setImmediate;
     vi.useFakeTimers();
-    h.deps.prepareMirrors = () => new Promise(() => {});
+    let started = false;
+    h.deps.prepareMirrors = () => { started = true; return new Promise(() => {}); };
     const hooks = createLiveTickHooks({ deps: h.deps });
     hooks.effectiveConfig(CFG);
     const running = hooks.beforeTick(hookCtx);
     try {
       await vi.advanceTimersByTimeAsync(0);
+      for (let turn = 0; turn < 100 && !started; turn++) {
+        await new Promise((resolve) => realSetImmediate(resolve));
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      expect(started).toBe(true);
       await vi.advanceTimersByTimeAsync(17 * 60_000);
       await running;
       expect(h.ticks.at(-1)?.holdProduction).toContain('mirror-prep exceeded its deadline');
