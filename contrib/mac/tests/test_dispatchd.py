@@ -631,8 +631,9 @@ class QueueWaitTests(unittest.TestCase):
     def test_claim_limit_preserves_priority_across_ticks_and_skips_blocked_head(self):
         lanes = ['codex-cmp', 'codex-personal', 'claude', 'devin']
         home, env = self.fixture(lanes)
-        # Soft load limits claims to two. Priority persists across ticks even
-        # when several lanes remain backlogged; the blocked first path waits.
+        # Soft load halves the claim limit to four per tick. Priority persists
+        # across ticks even when several lanes remain backlogged; the blocked
+        # first path waits.
         env['LOADGATE_LOADAVG'] = '60'
         queue_job(home, 'RQ-BLOCKED', 'codex-cmp')
         (home / 'Projects/ashlrai/wt/RQ-BLOCKED').mkdir()
@@ -647,8 +648,9 @@ class QueueWaitTests(unittest.TestCase):
             r = tick(home, env)
             self.assertEqual(r.returncode, 0, r.stderr)
             claimed = [r for r in self.metrics(home) if r['event'] == 'claim']
-        self.assertEqual([r['job'] for r in claimed], sorted(jobs)[:4])
-        self.assertEqual(len(claimed), 4)
+        # Soft load halves the live-parity claim limit: 4 per tick, 8 across two ticks.
+        self.assertEqual([r['job'] for r in claimed], sorted(jobs)[:8])
+        self.assertEqual(len(claimed), 8)
         self.assertNotIn('RQ-BLOCKED', [r['job'] for r in claimed])
         self.assertIn('RQ-BLOCKED', [line.split('\t')[0] for line in ready_lines(home)])
 
@@ -680,8 +682,9 @@ class DispatchPriorityTests(unittest.TestCase):
         for job, lane in jobs:
             queue_job(home, job, lane)
         self.run_tick(home, env)
-        self.assertEqual(self.claims(home), ['RQ-FIX-MAIN-A', 'RQ-REL-A', 'RQ-DESK-A', 'LAND-A'])
-        self.assertEqual([line.split('\t')[0] for line in ready_lines(home)], ['RQ-OTHER'])
+        # Live-parity claim limit is 8: all five jobs launch in bucket order.
+        self.assertEqual(self.claims(home), ['RQ-FIX-MAIN-A', 'RQ-REL-A', 'RQ-DESK-A', 'LAND-A', 'RQ-OTHER'])
+        self.assertEqual([line.split('\t')[0] for line in ready_lines(home)], [])
 
     def test_land_fixup_and_recut_share_a_bucket_before_other_jobs(self):
         home, env = self.fixture()
