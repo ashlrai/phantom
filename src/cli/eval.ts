@@ -269,6 +269,12 @@ export async function cmdEval(args: string[]): Promise<number> {
     return cmdEvalPrompts(args.slice(1));
   }
 
+  // RQ-SWE5-PASSK-EVAL: pass^k golden-task eval suite + nightly scheduler.
+  if (args[0] === 'passk') {
+    const { cmdEvalPassK } = await import('./eval-passk.js');
+    return cmdEvalPassK(args.slice(1));
+  }
+
   if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
     printEvalHelp();
     return 0;
@@ -374,6 +380,7 @@ function printEvalHelp(): void {
   console.log(`    ashlr eval swe-bench [--fixtures] [--dataset <path>] [--engine <id>]`);
   console.log(`    ashlr eval router --dataset <jobs.jsonl> [--policy <name>] [--check <baseline.json>] [--json]`);
   console.log(`    ashlr eval prompts --dataset <jobs.jsonl> [--spec <experiment.json>] [--promote] [--json]`);
+  console.log(`    ashlr eval passk [--dataset <golden.jsonl>] [--lane <lane:engine>]... [--trials N] [--k K] [--json]`);
   console.log('');
   console.log('  ' + bold('Options:'));
   console.log('');

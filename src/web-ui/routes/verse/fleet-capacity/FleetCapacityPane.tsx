@@ -13,6 +13,7 @@ import { runsHistoryQuery, type CapacityHours } from './capacity-queries.js';
 import styles from './fleet-capacity.module.css';
 import { laneHeldText } from './lane-held-text.js';
 import { truthHeadline, verdictText, verdictTone } from './lane-truth-model.js';
+import { ObserveSlice } from '../fleet-observe/ObserveFacts.js';
 import { laneTruthQuery } from './lane-truth-queries.js';
 
 const WIDTH = 240;
@@ -79,6 +80,7 @@ export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> 
   const workerPoints = samples.map((sample) => ({ atMs: Date.parse(sample.at), running: sample.workers, target: sample.leaders }));
 
   return <div className={styles.pane} aria-label="Capacity">
+    <ObserveSlice visible={visible} part="capacity" />
     <header className={styles.header}>
       <p className={styles.headline}>{data && !noFleet ? headline(data, now) : 'Fleet capacity history'}</p>
       <button type="button" className={styles.button} onClick={() => { refresh(); refreshSnapshot(); refreshTruth(); refreshModels(); }}>Refresh</button>

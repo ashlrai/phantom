@@ -39,9 +39,10 @@ export function narrowRunsLanes(v: unknown): RunsLanes | null {
 }
 export const sortLanes = (lanes: RunsLane[]): RunsLane[] => [...lanes].sort((a, b) => b.running - a.running || a.lane.localeCompare(b.lane));
 export const laneFill = (lane: RunsLane): string => `${lane.running} / ${lane.target}`;
+/** Oct 31 median job durations, in minutes. */
+export const laneAvgJobMinutes = (lane: string): number => lane === 'codex-personal' ? 13 : lane === 'devin' ? 70 : 15;
 export function laneDrain(lane: RunsLane): ReturnType<typeof queueDrainEta> {
-  // Oct 31 median job durations, in minutes.
-  const avgJobMinutes = lane.lane === 'codex-personal' ? 13 : lane.lane === 'devin' ? 70 : 15;
+  const avgJobMinutes = laneAvgJobMinutes(lane.lane);
   const result = queueDrainEta({ ...lane, avgJobMinutes });
   // A lane with no capacity cannot drain until its target changes.
   if (!lane.held && lane.target === 0 && lane.queued > 0) {

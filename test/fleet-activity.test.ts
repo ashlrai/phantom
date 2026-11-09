@@ -259,6 +259,14 @@ describe('agentActivityLines', () => {
     const lines = agentActivityLines({
       v: 1, generatedAt: 'x', windowMs: 3_600_000, sourceState: 'healthy', scanned: 0, dropped: 0, truncated: false,
       byStage: { queued: 0, running: 1, finished: 0, published: 0, merged: 0, closed: 0, unknown: 0 },
+      verified: {
+        v: 1, schema: 'fleet.verified-completion.v1', generatedAt: 'x', sourceState: 'healthy',
+        scanned: 0, dropped: 0, truncated: false, windowMs: 86_400_000,
+        eligible: 0, verified: 0, failed: 0, pending: 0, rate: null,
+        claims: { published: 0, batchMembers: 0, outcomes: 0 }, completedUnpublished: 0,
+        duplicates: { multiPrJobs: 0, sharedPrUrls: 0 }, falseCompletions: 0, unauthorizedActions: 0,
+        byLane: {}, detail: { falseCompletionJobs: [], multiPrJobs: [], sharedPrUrls: [], unauthorizedJobs: [] },
+      },
       jobs: [
         { job: 'evil\njob', stage: 'running', lane: 'devin', repo: 'x', tier: null, model: null,
           queuedAt: null, launchedAt: 'a', finishedAt: null, publishedAt: null, outcomeAt: null,
@@ -270,8 +278,9 @@ describe('agentActivityLines', () => {
           wallS: null, ageS: 60, tokensTotal: null, exitCode: null, timeline: [], lastEventAt: 'a' },
       ],
     });
-    expect(lines).toHaveLength(2);
+    expect(lines).toHaveLength(3);
     expect(lines[1]).toContain('RQ-H-1 unknown -/r age 60s');
+    expect(lines[2]).toContain('Verified completion');
     expect(lines.join('\n')).not.toContain('evil');
   });
 });

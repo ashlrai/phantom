@@ -28,7 +28,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { appendBusInbox, type BusInboxOptions, type BusInboxPost } from '../fleet/bus-inbox.js';
 import { validateBusEnvelope, type BusEnvelope } from '../fleet/bus-envelope.js';
@@ -36,7 +36,7 @@ import { CHANNEL_BUS_TTL_MS } from '../fleet/channel-bus-publish.js';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { BUS_V2_TEXT_MAX } from '../agents/bus-v2-schema.js';
 import { imessageStateDir } from '../integrations/imessage.js';
-import { ensurePrivateDirectory } from '../verse/preferences.js';
+import { ensurePrivateDirectory, readPrivateFileCapped } from '../verse/preferences.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { readTeammateTexts, type TeammateText } from './imessage-teammate-inbox.js';
@@ -85,12 +85,20 @@ const empty = (state: FindingsBridgeReport['state'], lastRowid = 0): FindingsBri
 
 /** Highest rowid ever handed to the store, or 0 when unwritten. `null` means corrupt, never a silent reset. */
 function readWatermark(dir: string): number | null {
+  const path = join(dir, WATERMARK_FILE);
+  const read = readPrivateFileCapped(path, 64 * 1024);
+  // Absent (or a planted non-regular file) starts at 0; an unreadable or
+  // oversized file is corrupt — refusing keeps the watermark from resetting.
+  if (read === null) {
+    try { return statSync(path).isFile() ? null : 0; } catch { return 0; }
+  }
+  if (read.truncated) return null;
   try {
-    const parsed = JSON.parse(readFileSync(join(dir, WATERMARK_FILE), 'utf8')) as { v?: unknown; lastRowid?: unknown };
+    const parsed = JSON.parse(read.text) as { v?: unknown; lastRowid?: unknown };
     const lastRowid = parsed.lastRowid;
     return parsed.v === 1 && Number.isSafeInteger(lastRowid) && (lastRowid as number) >= 0 ? lastRowid as number : null;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 0 : null;
+  } catch {
+    return null;
   }
 }
 

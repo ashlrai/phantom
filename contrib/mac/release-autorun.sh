@@ -1,4 +1,5 @@
 #!/bin/bash
+# The live Mac copy is Security-pinned. Changes land only through a Security pin.
 # RELEASE-AUTORUN rev2 private selection proposal (GATES v4, Security 2026-11-04). launchd ai.ashlr.release-autorun, every 10 min, OUTSIDE every lane sandbox.
 # Finds the newest ready current-source successful attest-ci-build run on ashlrai/phantom, derives all release-sign.sh evidence by GET-only API reads,
 # and runs bin/release-sign.sh once per sha when that sha is the target of a v* tag. Never retries after rc=14 (or 0/5/16).
