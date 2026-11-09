@@ -8,6 +8,7 @@
  */
 import { useEffect, type ReactNode } from 'react';
 import type { FleetLaneState, FleetLiveSnapshotV1 } from '../../../../core/fleet/fleet-types.js';
+import { WORLD_CACHE_TTL_MS } from '../../../../core/world/types.js';
 import type { SeatDecision } from '../../../../core/routing/types.js';
 import type { BudgetView } from '../../../../core/routing/policy.js';
 import { BarStack } from '../../../components/charts/BarStack.js';
@@ -25,6 +26,9 @@ import { CloudLaneChip } from '../cloud/CloudLaneChip.js';
 import { Card, CardNote, MicroLabel } from '../command/Surface.js';
 import type { OptionalRead } from '../command/surface-data.js';
 import { computeLaneHealth, laneHealthLine, stuckBadge, type LaneHealthV1 } from '../../../../core/fleet/lane-health.js';
+import { worldLaneRows } from '../resources/world-lane-rows.js';
+import { worldModelQuery } from '../resources/world-query.js';
+import { worldLaneNote } from './world-lane-note.js';
 import { fleetDarkStatus } from './dark-since.js';
 import { laneFallback, STALE_STANDING_LANES, type FallbackRunsLane } from './lane-runsdir-fallback.js';
 import { LaneSparkline } from './LaneSparkline.js';
@@ -104,12 +108,14 @@ export function LanesStrip({ live }: { live: FleetLiveSnapshotV1 | null }) {
     if (live) recordLaneSamples(live);
   }, [live, timestamp]);
   const runs = useQuery(runsLanesQuery);
+  const world = useQuery(worldModelQuery, { freshMs: WORLD_CACHE_TTL_MS });
   const now = useNow();
   if (!live || live.lanes.length === 0) return null;
   const notes = laneNotes(live.lanes);
   const health = computeLaneHealth(live);
   const runsLanes = runs.data?.lanes ?? null;
   const runsReadAt = runs.data?.lastTick ?? null;
+  const worldRows = worldLaneRows(world.data, now);
   const fallback = live.lanes.map((l) => laneFallback(l, runsLanes, runsReadAt, now)).find((f) => f !== null) ?? null;
   return (
     <div className={styles.laneStrip}>
@@ -130,7 +136,7 @@ export function LanesStrip({ live }: { live: FleetLiveSnapshotV1 | null }) {
               {asSentence(n.reason === STALE_STANDING_LANES
                 ? fallback !== null
                   ? `Lane counts come ${fallback.note}`
-                  : 'Lane capacity is unobserved because no standing lane observation has arrived in the last 10 minutes. Active producer counts are shown when known.'
+                  : worldLaneNote(n.lanes, worldRows) ?? 'Lane capacity is unobserved because no standing lane observation has arrived in the last 10 minutes. Active producer counts are shown when known.'
                 : n.reason)}
             </li>
           ))}
