@@ -10,7 +10,7 @@ let dir: string, root: string, path: string, fixture: string;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'needs-triage-'));
   root = join(dir, 'bus'); path = join(dir, 'NEEDS-MASON.md');
-  fixture = '# Needs Mason\n- Release v3.30.1 is waiting on Merge Gate\n- unpark RQ-FOO-1\n- tokenizer refactor\n- Approve the $40/mo plan\n- send the LinkedIn reply to Jane\n';
+  fixture = '# Needs Mason\n- Release v3.30.1 is waiting on Merge Gate\n- unpark RQ-FOO-1\n- unpark RQ-FOO-2\n- Approve the $40/mo plan\n- send the LinkedIn reply to Jane\n';
   writeFileSync(path, fixture);
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
