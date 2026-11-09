@@ -1,7 +1,7 @@
 /**
  * routes/verse/feed/FeedSection.tsx: the Feed, one newest-first stream of the
  * Leader's messages and outbox answers, Needs-you alerts, merges, fleet
- * events and the owner thread (what came in on Telegram, Slack, email and
+ * events, Phantom update news and the owner thread (what came in on Telegram, Slack, email and
  * iMessage, and where the Leader's answer went). It reads what the Leader, Merges and Needs-you surfaces already
  * read (feed-model.ts), so it adds no route and, on a warm cache, no request.
  *
@@ -10,6 +10,8 @@
  * say the Feed is unavailable.
  */
 import { useMemo, useState } from 'react';
+import { useDesktopUpdates } from '../../../app/desktop-updates.js';
+import { deriveUpdateNotifications } from '../../../components/notifications/deriveUpdateNotifications.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { formatRelative } from '../autonomy/format.js';
 import { useNow } from '../autonomy/use-ticker.js';
@@ -19,6 +21,7 @@ import { liveLine } from '../chat/sidebar-model.js';
 import { fleetMergesQuery } from '../fleet-merges/fleet-merges-queries.js';
 import { leaderThreadQuery } from '../leader/thread-data.js';
 import { ownerThreadQuery } from '../leader-thread/owner-thread-queries.js';
+import { updateStatusQuery } from '../sections/update-status-queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { useActivity } from '../shell/useActivity.js';
 import { buildFeed, filterFeed, type FeedFilter, type FeedKind } from './feed-model.js';
@@ -30,14 +33,18 @@ const FILTERS: readonly { id: FeedFilter; label: string }[] = [
   { id: 'alert', label: 'Alerts' },
   { id: 'merge', label: 'Merges' },
   { id: 'owner', label: 'Channels' },
+  { id: 'update', label: 'Updates' },
 ];
-const KIND_LABEL: Record<FeedKind, string> = { leader: 'Leader', alert: 'Alert', merge: 'Merge', fleet: 'Fleet', owner: 'Channel' };
+const KIND_LABEL: Record<FeedKind, string> = { leader: 'Leader', alert: 'Alert', merge: 'Merge', fleet: 'Fleet', owner: 'Channel', update: 'Update' };
 export const FEED_POLL_MS = 15_000;
 
 export function FeedSection({ visible = true }: { visible?: boolean }) {
   const leader = useQuery(leaderThreadQuery, { enabled: visible, freshMs: 15_000 });
   const runs = useQuery(fleetMergesQuery, { enabled: visible, freshMs: 15_000 });
   const owner = useQuery(ownerThreadQuery, { enabled: visible, freshMs: 15_000 });
+  // The tray's own reads; a failed or missing update read just adds no update rows.
+  const update = useQuery(updateStatusQuery, { enabled: visible, freshMs: 60_000 });
+  const nativeUpdates = useDesktopUpdates();
   const activity = useActivity();
   const refetchLeader = useRefetch(leaderThreadQuery);
   const refetchRuns = useRefetch(fleetMergesQuery);
@@ -58,12 +65,17 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
   const allDown = leaderFailed && runsFailed && alertsFailed && (ownerFailed || !ownerLines?.length);
   const loading = leader.data === undefined && !leaderFailed && runs.data === undefined && !runsFailed && !activity.data && !alertsFailed && owner.data === undefined && !ownerFailed;
 
+  const updateItems = useMemo(
+    () => deriveUpdateNotifications(update.data ?? null, Date.now(), nativeUpdates),
+    [update.data, nativeUpdates]);
+
   const feed = useMemo(() => buildFeed({
     leader: leader.data?.value?.messages,
     runs: runsFailed ? undefined : runs.data,
     needsYou: activity.data?.needsYou,
     owner: ownerLines,
-  }), [leader.data, runs.data, runsFailed, activity.data, ownerLines]);
+    update: updateItems,
+  }), [leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems]);
   const shown = filterFeed(feed, filter);
 
   return <div className={styles.root}>
