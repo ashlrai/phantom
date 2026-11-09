@@ -2193,6 +2193,11 @@ async function main(): Promise<void> {
         process.exitCode = await cmdCheckpoint(rest);
         break;
       }
+      case 'trail': {
+        const { cmdTrail } = await import('./trail.js');
+        process.exitCode = await cmdTrail(rest);
+        break;
+      }
       case 'sessions': {
         const { cmdSessions } = await import('./sessions.js');
         process.exitCode = await cmdSessions(rest);

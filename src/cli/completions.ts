@@ -58,6 +58,8 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'bus',
   // Dispatched by index.ts but missing here (caught by cli-registry-drift).
   'worktrees', 'drive', 'budget', 'capacity', 'top', 'sessions', 'checkpoint',
+  // Stigmergic coordination markers (RQ-SWE5-STIGMERGY).
+  'trail',
   // Estate cards and daily CI metrics (RQ-ESTATES, RQ-CIMETRICS).
   'estates', 'ci-metrics', 'daily-fix',
   // Read-only disk report for agent worktrees (RQ-DISKFLOW).
@@ -159,6 +161,8 @@ const SUBCOMMANDS: Record<string, string[]> = {
   // Mirror the verb switch in src/cli/cloud.ts (runCloudCli).
   capacity: ['publish'],
   checkpoint: ['resume', '--json', '--help'],
+  // Mirror the verb switch in src/cli/trail.ts (cmdTrail).
+  trail: ['claim', 'beat', 'release', 'save', 'list', 'show', 'resume', 'sweep', '--json', '--help'],
   sessions: ['list', 'revoke', 'help'],
   cloud: ['launch', 'list', 'refresh', 'improve', 'budget', 'backlog', 'stats', 'help'],
   // Mirror the verb switch in src/cli/jev.ts (runJevCli).
