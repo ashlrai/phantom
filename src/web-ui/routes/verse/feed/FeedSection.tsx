@@ -1,7 +1,7 @@
 /**
  * routes/verse/feed/FeedSection.tsx: the Feed, one newest-first stream of the
  * Leader's messages and outbox answers, Needs-you alerts, merges, fleet
- * events, Phantom update news and the owner thread (what came in on Telegram, Slack, email and
+ * events, Phantom update news, the Comms digest and the owner thread (what came in on Telegram, Slack, email and
  * iMessage, and where the Leader's answer went). It reads what the Leader, Merges and Needs-you surfaces already
  * read (feed-model.ts), so it adds no route and, on a warm cache, no request.
  *
@@ -10,14 +10,17 @@
  * say the Feed is unavailable.
  */
 import { useMemo, useState } from 'react';
+import { apiGet } from '../../../data/client.js';
 import { useDesktopUpdates } from '../../../app/desktop-updates.js';
 import { deriveUpdateNotifications } from '../../../components/notifications/deriveUpdateNotifications.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
+import type { QueryDef } from '../../../data/queries.js';
 import { formatRelative } from '../autonomy/format.js';
 import { useNow } from '../autonomy/use-ticker.js';
 import { Card, CardNote } from '../command/Surface.js';
 import { openChat } from '../command/nav.js';
 import { liveLine } from '../chat/sidebar-model.js';
+import { COMMS_STATUS_PATH, readCommsStatus } from '../fleet-inbox/comms-status-model.js';
 import { fleetMergesQuery } from '../fleet-merges/fleet-merges-queries.js';
 import { leaderThreadQuery } from '../leader/thread-data.js';
 import { ownerThreadQuery } from '../leader-thread/owner-thread-queries.js';
@@ -36,6 +39,8 @@ const FILTERS: readonly { id: FeedFilter; label: string }[] = [
   { id: 'update', label: 'Updates' },
 ];
 const KIND_LABEL: Record<FeedKind, string> = { leader: 'Leader', alert: 'Alert', merge: 'Merge', fleet: 'Fleet', owner: 'Channel', update: 'Update' };
+// Same key and fetch as the Inbox pane's Comms card, so the two share one cached read.
+const commsStatusQuery: QueryDef<unknown> = { key: 'verse-fleet-comms-status', fetch: s => apiGet(COMMS_STATUS_PATH, s) };
 export const FEED_POLL_MS = 15_000;
 
 export function FeedSection({ visible = true }: { visible?: boolean }) {
@@ -44,6 +49,7 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
   const owner = useQuery(ownerThreadQuery, { enabled: visible, freshMs: 15_000 });
   // The tray's own reads; a failed or missing update read just adds no update rows.
   const update = useQuery(updateStatusQuery, { enabled: visible, freshMs: 60_000 });
+  const commsRead = useQuery(commsStatusQuery, { enabled: visible, freshMs: 60_000 });
   const nativeUpdates = useDesktopUpdates();
   const activity = useActivity();
   const refetchLeader = useRefetch(leaderThreadQuery);
@@ -69,13 +75,21 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
     () => deriveUpdateNotifications(update.data ?? null, Date.now(), nativeUpdates),
     [update.data, nativeUpdates]);
 
+  // The status route reports pending drafts only, so unread, archived and Dot stay "unknown";
+  // the draft batch (keyed by its oldest draft) is the run until a run reader exists.
+  const comms = useMemo(() => {
+    const drafts = !commsRead || commsRead.error ? null : readCommsStatus(commsRead.data)?.drafts;
+    return drafts?.oldestPendingAt ? { runId: `drafts:${drafts.oldestPendingAt}`, at: drafts.oldestPendingAt, drafts } : null;
+  }, [commsRead]);
+
   const feed = useMemo(() => buildFeed({
     leader: leader.data?.value?.messages,
     runs: runsFailed ? undefined : runs.data,
     needsYou: activity.data?.needsYou,
     owner: ownerLines,
     update: updateItems,
-  }), [leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems]);
+    comms,
+  }), [leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, comms]);
   const shown = filterFeed(feed, filter);
 
   return <div className={styles.root}>

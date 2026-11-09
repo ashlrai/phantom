@@ -10,11 +10,14 @@
  *            Leader's replies with where they went (owner thread)
  *   update   Phantom update news: ready, held, failed, applied (the notification
  *            tray's derived update items; no route of its own)
+ *   comms    the Comms agent's digest (fleet kind, or alert when an inbox is over
+ *            100 unread or a draft is over 12 h old)
  *
  * Pure: one adapter per source, then `buildFeed` dedupes by id, drops items
  * whose time does not parse, sorts newest first and caps the stream. Every
  * text is untrusted (model output, PR titles) and is rendered as plain text.
  */
+import { buildCommsDigestFeedItems, type CommsDigestInput } from '../../../../core/fleet/feed-comms-digest.js';
 import type { AppNotification } from '../../../components/notifications/types.js';
 import type { NeedsYouItem } from '../../../../core/verse/workbench-types.js';
 import type { LeaderThreadMessage } from '../leader/thread-types.js';
@@ -44,6 +47,8 @@ export interface FeedSources {
   needsYou?: readonly NeedsYouItem[] | null;
   owner?: readonly OwnerThreadLine[] | null;
   update?: readonly AppNotification[] | null;
+  /** The Comms agent's latest run reading; one digest item per run id. */
+  comms?: CommsDigestInput | null;
 }
 
 export type FeedFilter = 'all' | 'leader' | 'alert' | 'merge' | 'owner' | 'update';
@@ -121,7 +126,7 @@ export function updateAdapter(items: readonly AppNotification[] | null | undefin
 }
 
 /** Every source merged: deduped by id (newest copy wins), unparsable times dropped, newest first, at most FEED_LIMIT. */
-export function buildFeed(sources: FeedSources, limit = FEED_LIMIT): FeedItem[] {
+export function buildFeed(sources: FeedSources, limit = FEED_LIMIT, now = Date.now()): FeedItem[] {
   const all = [
     ...leaderAdapter(sources.leader),
     ...outboxAdapter(sources.runs),
@@ -130,6 +135,7 @@ export function buildFeed(sources: FeedSources, limit = FEED_LIMIT): FeedItem[] 
     ...fleetEventAdapter(sources.runs),
     ...ownerAdapter(sources.owner),
     ...updateAdapter(sources.update),
+    ...buildCommsDigestFeedItems(sources.comms, now),
   ];
   const timed = all.flatMap(item => {
     const ms = Date.parse(item.at);
