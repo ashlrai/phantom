@@ -25,7 +25,7 @@ describe('GoalsPane', () => {
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50');
     expect(screen.getByText('Next: Ship the draft')).toBeInTheDocument();
     expect(screen.getByText('1 of 2 done')).toBeInTheDocument();
-    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.getAllByRole('button').map(b => b.textContent)).toEqual(['Steer']);
   });
 
   it('keeps the mission line when goals fail', async () => {
