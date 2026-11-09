@@ -547,7 +547,7 @@ class NoopCutTests(unittest.TestCase):
     def state(self, home):
         return json.loads((home / '.ashlr-runs' / 'queue' / 'noop-streak.json').read_text())
 
-    def test_same_pr_and_same_file_collapse_to_one_pick(self):
+    def test_same_pr_collapses_but_distinct_prs_on_same_file_are_kept(self):
         home = self.make([
             line('RQ-A', P=1, pool='devin', repo='phantom', text='FIXUP phantom#7 file=src/a.ts fix'),
             line('RQ-B', P=1, pool='devin', repo='phantom', text='REBASE phantom#7 file=src/b.ts fix'),
@@ -555,9 +555,8 @@ class NoopCutTests(unittest.TestCase):
             line('RQ-D', P=1, pool='devin', repo='phantom', text='FIXUP phantom#9 file=src/d.ts fix'),
         ])
         r = restock(home, '--dry-run')
-        self.assertEqual(sorted(dry_ids(r.stdout)), ['RQ-A', 'RQ-D'], r.stdout)
+        self.assertEqual(sorted(dry_ids(r.stdout)), ['RQ-A', 'RQ-C', 'RQ-D'], r.stdout)
         self.assertEqual(skips(r.stdout).get('dup-pr'), 1)
-        self.assertEqual(skips(r.stdout).get('dup-file'), 1)
 
     def test_two_noops_park_the_line_for_24h(self):
         row = line('RQ-N', P=1, pool='devin', repo='phantom', text='stale work')
@@ -943,15 +942,15 @@ class QueueDepthGateTests(unittest.TestCase):
                     tmp.cleanup()
 
 class QueueQualityTests(unittest.TestCase):
-    def test_single_case_filler_grouped_only_above_threshold(self):
+    def test_identical_filler_grouped_at_any_rate_and_distinct_work_kept(self):
         rows = [
             line('RQ-TEST1A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add one test case in test/example.test.ts'),
-            line('RQ-TEST2A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add a single test case in test/example.test.ts'),
+            line('RQ-TEST2A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add one test case in test/example.test.ts'),
             line('RQ-TEST3A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add one test case in test/other.test.ts'),
             line('RQ-SUBSTANTIVE', pool='codex-personal', tier='work', repo='phantom', text='Fix behavior and add tests in test/example.test.ts'),
             line('RQ-GUARDIAN1A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Guardian: add one test case in test/example.test.ts'),
         ]
-        for rate, expected in [(0.26, False), (0.25, True), (None, True)]:
+        for rate, expected in [(0.26, False), (0.25, False), (None, False)]:
             with self.subTest(rate=rate):
                 tmp = build('\n'.join(rows) + '\n', slots={**{l: {'held': True} for l in LANES}, 'codex-personal': {'target': 6}})
                 self.addCleanup(tmp.cleanup)
@@ -978,3 +977,19 @@ class QueueQualityTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn('RQ-TEST2A123456Q8', dry_ids(r.stdout))
         self.assertEqual(skips(r.stdout).get('duplicate-single-case-test-file'), 1)
+
+    def test_merged_identical_filler_suppresses_stale_copy(self):
+        task = 'Add one test case in test/example.test.ts'
+        rows = [line('RQ-OLD1A123456Q8', pool='codex-personal', tier='work', repo='phantom', text=task),
+                line('RQ-NEW1A123456Q8', pool='codex-personal', tier='work', repo='phantom', text=task),
+                line('RQ-NEW2A123456Q8', pool='codex-personal', tier='work', repo='phantom', text=task + ' for invalid input')]
+        tmp = build('\n'.join(rows) + '\n', slots={**{l: {'held': True} for l in LANES}, 'codex-personal': {'target': 6}})
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        metrics = home / '.ashlr-runs/metrics/jobs.jsonl'
+        metrics.parent.mkdir(parents=True, exist_ok=True)
+        metrics.write_text(json.dumps({'event': 'outcome', 'state': 'MERGED', 'job': 'RQ-OLD1A123456Q8', 'repo': 'phantom'}) + '\n')
+        result = restock(home, '--dry-run', '--per-lane', '10')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(skips(result.stdout).get('acceptance-already-merged'), 1)
+        self.assertIn('RQ-NEW2A123456Q8', dry_ids(result.stdout))
