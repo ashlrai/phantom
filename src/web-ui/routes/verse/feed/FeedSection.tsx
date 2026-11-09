@@ -21,6 +21,8 @@ import { useNow } from '../autonomy/use-ticker.js';
 import { Card, CardNote } from '../command/Surface.js';
 import { openChat } from '../command/nav.js';
 import { liveLine } from '../chat/sidebar-model.js';
+import { openDockPane } from '../dock/dock-store.js';
+import { UNIFIED_INBOX_PATH, readUnifiedInboxView } from '../fleet-inbox/unified-inbox-model.js';
 import { agentBusPageQuery } from '../fleet-bus/agent-bus-queries.js';
 import { fleetMergesQuery } from '../fleet-merges/fleet-merges-queries.js';
 import { leaderThreadQuery } from '../leader/thread-data.js';
@@ -32,6 +34,7 @@ import { buildFeed, filterFeed, type FeedFilter, type FeedKind } from './feed-mo
 import { isDismissed, useFeedDismissals } from './feed-dismiss-store.js';
 import styles from './feed.module.css';
 
+const unifiedInboxQuery: QueryDef<unknown> = { key: 'verse-fleet-comms-unified-inbox', fetch: signal => apiGet(UNIFIED_INBOX_PATH, signal) };
 const sharedFeedQuery: QueryDef<FeedReport> = { key: 'shared-feed', fetch: signal => apiGet<FeedReport>('/api/feed', signal) };
 
 const FILTERS: readonly { id: FeedFilter; label: string }[] = [
@@ -42,8 +45,9 @@ const FILTERS: readonly { id: FeedFilter; label: string }[] = [
   { id: 'owner', label: 'Channels' },
   { id: 'update', label: 'Updates' },
   { id: 'bus', label: 'Bus' },
+  { id: 'teammate', label: 'Dot' },
 ];
-const KIND_LABEL: Record<FeedKind, string> = { leader: 'Leader', alert: 'Alert', merge: 'Merge', fleet: 'Fleet', owner: 'Channel', update: 'Update', bus: 'Bus' };
+const KIND_LABEL: Record<FeedKind, string> = { leader: 'Leader', alert: 'Alert', merge: 'Merge', fleet: 'Fleet', owner: 'Channel', update: 'Update', bus: 'Bus', teammate: 'Dot' };
 export const FEED_POLL_MS = 15_000;
 
 export function FeedSection({ visible = true }: { visible?: boolean }) {
@@ -55,14 +59,16 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
   const update = useQuery(updateStatusQuery, { enabled: visible, freshMs: 60_000 });
   // An older hub has no bus route: the query's 404 just means no bus rows, never an error note.
   const bus = useQuery(agentBusPageQuery(0, 50), { enabled: visible, freshMs: 15_000 });
+  const teammate = useQuery(unifiedInboxQuery, { enabled: visible, freshMs: 15_000 });
   const nativeUpdates = useDesktopUpdates();
   const activity = useActivity();
   const refetchShared = useRefetch(sharedFeedQuery);
   const refetchLeader = useRefetch(leaderThreadQuery);
   const refetchRuns = useRefetch(fleetMergesQuery);
   const refetchOwner = useRefetch(ownerThreadQuery);
+  const refetchTeammate = useRefetch(unifiedInboxQuery);
   const refetchBus = useRefetch(agentBusPageQuery(0, 50));
-  usePollWhileVisible(() => { refetchShared(); refetchLeader(); refetchRuns(); refetchOwner(); refetchBus(); }, FEED_POLL_MS, { enabled: visible });
+  usePollWhileVisible(() => { refetchShared(); refetchLeader(); refetchRuns(); refetchOwner(); refetchBus(); refetchTeammate(); }, FEED_POLL_MS, { enabled: visible });
   const now = useNow(30_000);
   const [filter, setFilter] = useState<FeedFilter>('all');
   const { map: dismissedMap, dismissItem, restoreItem } = useFeedDismissals();
@@ -92,7 +98,8 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
     owner: ownerLines,
     update: updateItems,
     bus: bus.data,
-  }), [shared.data, leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data]);
+    teammate: teammate?.error ? null : readUnifiedInboxView(teammate?.data),
+  }), [shared.data, leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data, teammate?.data, teammate?.error]);
   const filtered = filterFeed(feed, filter);
   const shown = filtered.filter(item => !isDismissed(item, dismissedMap));
   const dismissed = filtered.filter(item => isDismissed(item, dismissedMap));
@@ -130,6 +137,7 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
         <Card title={item.title} caption={<time dateTime={item.at} title={new Date(item.at).toLocaleString('en-US')}>{formatRelative(item.at, now)}</time>}
           actions={<span className={styles.kind} data-kind={item.kind}>{item.label ?? KIND_LABEL[item.kind]}</span>}>
           {item.body ? <p className={styles.body}>{item.body}</p> : null}
+          {item.kind === 'teammate' ? <button type="button" className={styles.link} onClick={() => openDockPane('fleet-inbox')}>Open inbox</button> : null}
           {item.href ? <a className={styles.link} href={item.href} target="_blank" rel="noopener noreferrer">Open</a> : null}
           <button type="button" className={styles.dismiss} aria-label={`Dismiss ${item.title}`} onClick={() => dismissItem(item)}>Dismiss</button>
         </Card>
