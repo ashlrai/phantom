@@ -10,7 +10,7 @@ import type { MergedLine } from './thread-merge-model.js';
 export type LabeledLine = MergedLine & { label?: string };
 
 const CHANNEL_NAME: Readonly<Record<string, string>> = { desktop: 'Desktop', telegram: 'Telegram', email: 'Email', imessage: 'iMessage', slack: 'Slack' };
-const channelName = (channel: string) => CHANNEL_NAME[channel] ?? channel;
+export const channelName = (channel: string) => CHANNEL_NAME[channel] ?? channel;
 const minute = (ms: number) => Math.floor(ms / 60_000);
 
 /**
