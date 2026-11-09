@@ -45,6 +45,7 @@ export function isDefaultAppearance(value: Appearance = getAppearance()): boolea
     value.uiScale === base.uiScale &&
     value.displayFont === base.displayFont &&
     value.radius === base.radius &&
+    value.layout === base.layout &&
     value.motion === base.motion
   );
 }

@@ -8,6 +8,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFile
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { readEnvironmentCredential } from '../integrations/secrets.js';
 
 export const TRAIN_SCHEMA = 'phantom.release-train.v1';
 export const HOURLY_MINUTES = 60;
@@ -701,7 +702,7 @@ export function releaseGithubCall(method: string, path: string, body?: unknown):
 
 function gh(method: string, path: string, body?: unknown): string {
   const appWrite = method === 'PATCH' || path === 'graphql';
-  const token = appWrite ? process.env.RELEASE_APP_TOKEN : process.env.GH_TOKEN;
+  const token = appWrite ? readEnvironmentCredential('RELEASE_APP_TOKEN') : readEnvironmentCredential('GH_TOKEN');
   if (!token) throw new Error(appWrite ? 'release app token unavailable' : 'github token unavailable');
   const env: NodeJS.ProcessEnv = { ...process.env, GH_TOKEN: token };
   delete env.RELEASE_APP_TOKEN;

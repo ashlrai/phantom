@@ -154,6 +154,8 @@ export async function readOutboxEntries(opts: { runsDir?: string; limit?: number
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') sourceState = 'degraded';
     }
   }
+  // Sort first so a duplicate keeps its newest timestamp across both journals.
+  entries.sort((a, b) => (replyTime(b.at) || 0) - (replyTime(a.at) || 0));
   const seen = new Set<string>();
   const unique = entries.filter(entry => {
     const hash = replyTextHash(entry.text);
@@ -165,14 +167,21 @@ export async function readOutboxEntries(opts: { runsDir?: string; limit?: number
   return { sourceState, entries: Number.isFinite(limit) && limit > 0 ? unique.slice(-Math.floor(limit)) : [] };
 }
 
-/** Only explicit dated PLAN-LOG replies; no outbox fallback or text deduplication. */
+/** Only explicit dated PLAN-LOG replies, keeping the newest copy of each text. */
 export async function readPlanLogReplies(opts: { limit?: number } = {}): Promise<{ sourceState: 'healthy' | 'missing' | 'unknown'; entries: OutboxEntry[] }> {
   const root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   try {
     const limit = opts.limit ?? 30;
+    const seen = new Set<string>();
     const entries = parsePlanLog(await readTail(join(root, 'leader', 'PLAN-LOG.md')))
       .filter(e => e.at && e.heading && Number.isFinite(replyTime(e.at)))
-      .sort((a, b) => replyTime(a.at) - replyTime(b.at));
+      .sort((a, b) => replyTime(b.at) - replyTime(a.at))
+      .filter(e => {
+        const hash = replyTextHash(e.text);
+        if (seen.has(hash)) return false;
+        seen.add(hash);
+        return true;
+      }).reverse();
     return { sourceState: 'healthy', entries: Number.isFinite(limit) && limit > 0 ? entries.slice(-Math.floor(limit)) : [] };
   } catch (error) {
     return { sourceState: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unknown', entries: [] };
