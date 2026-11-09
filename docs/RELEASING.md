@@ -305,3 +305,31 @@ retired and removed from `scripts/`; the archived procedure is evidence only,
 not a runnable lane. None of the archive replaces canonical release
 admission. Use [Authority](AUTHORITY.md) and the installed CLI help for current
 maintainer verification and account/Stop requirements.
+
+## Release PR enqueue pass
+
+On an authorized Mac with repository-scoped `gh` access, run
+`node scripts/release-enqueue.mjs` for a read-only pass and
+`node scripts/release-enqueue.mjs --apply` to enqueue eligible release PRs.
+Schedule the pass at least every 15 minutes using the existing operator-owned
+scheduler; this repository change does not install or activate a scheduler. The
+under-one-hour open-to-merge target depends on check duration, scheduler uptime,
+and merge queue dwell, and is not a guaranteed deadline.
+
+The pass discovers open `autorelease: pending` PRs and requires the master
+rules to require `Merge Gate`, successful head-specific gate evidence, a clean
+and mergeable non-draft PR, and no existing queue entry. Unknown, conflicting,
+or inaccessible evidence is refused. It repeats the checks immediately before
+calling exactly `gh pr merge <number> -R ashlrai/phantom`; GitHub's rules and
+merge queue remain authoritative if the PR changes in the remaining race.
+The pass makes one immediate observation of the queue event and merge time, then
+stops. If the event is not yet visible, inspect the PR timeline before retrying;
+a successful request alone does not prove enqueue. Record the event and eventual
+`mergedAt`, and calculate opening-to-merge time after the merge. PR #4130's
+baseline was 2h 29m 52s; report an after value only for a measured later PR.
+
+This lane does not publish, sign, stock assets, finalize releases, or dispatch
+workflows. Release Please and auto-tag can temporarily create empty drafts;
+those are not by themselves failed releases or evidence of a settled published
+release with signed assets. SIGN-PUBLISH-3311 and the desktop, Terra and Dot
+lanes retain their separate ownership.
