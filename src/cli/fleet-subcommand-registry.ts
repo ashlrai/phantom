@@ -219,6 +219,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'main-red-notify': () => import('./fleet-main-red-notify.js'),
   'main-repair-time': () => import('./fleet-main-repair-time.js'),
   'mains': () => import('./fleet-mains.js'),
+  'map': () => import('./fleet-map.js'),
   'memory': () => import('./fleet-memory.js'),
   'merge-age': () => import('./fleet-merge-age.js'),
   'merge-batch': () => import('./fleet-merge-batch.js'),
