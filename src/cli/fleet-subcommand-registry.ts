@@ -148,6 +148,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'imessage-acks': () => import('./fleet-imessage-acks.js'),
   'imessage-path': () => import('./fleet-imessage-path.js'),
   'inbox-acks': () => import('./fleet-inbox-acks.js'),
+  'incident-gate': () => import('./fleet-incident-gate.js'),
   'job-batch-audit': () => import('./fleet-job-batch-audit.js'),
   'job-class-share': () => import('./fleet-job-class-share.js'),
   'job-compare': () => import('./fleet-job-compare.js'),
