@@ -137,3 +137,25 @@ it('keeps the newest duplicate reply and its timestamp on the CLI, desktop and p
     ]);
   } finally { log.mockRestore(); vi.unstubAllEnvs(); }
 }, 30_000);
+
+it('reads --file and PHANTOM_PLAN_LOG, skips entries without a reply, and explains a missing file', async () => {
+  const { vi } = await import('vitest');
+  const { join } = await import('node:path');
+  vi.stubEnv('ASHLR_RUNS_DIR', runsDir);
+  await write('custom.md', '## 2026-11-07 09:00 ET\n**Reply for Mason**\n> First\n## 2026-11-08 09:00 ET\nNo reply here\n## 2026-11-09 09:00 ET\n**Reply for Mason**\n> Third');
+  const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  try {
+    const { runLeaderCli } = await import('../src/cli/leader.js');
+    const file = join(runsDir, 'leader', 'custom.md');
+    const texts = () => JSON.parse(String(log.mock.calls.at(-1)![0])).entries.map((e: { text: string }) => e.text);
+    expect(await runLeaderCli(['replies', '--json', '--file', file])).toBe(0);
+    expect(texts()).toEqual(['> Third', '> First']);
+    vi.stubEnv('PHANTOM_PLAN_LOG', file);
+    expect(await runLeaderCli(['replies', '--json'])).toBe(0);
+    expect(texts()).toEqual(['> Third', '> First']);
+    expect(await runLeaderCli(['replies', '--json', '--file', join(runsDir, 'nope.md')])).toBe(0);
+    const missing = JSON.parse(String(log.mock.calls.at(-1)![0]));
+    expect(missing.entries).toEqual([]);
+    expect(missing.reason).toMatch(/No PLAN-LOG file/);
+  } finally { log.mockRestore(); vi.unstubAllEnvs(); }
+}, 30_000);

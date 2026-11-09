@@ -167,13 +167,18 @@ export async function readOutboxEntries(opts: { runsDir?: string; limit?: number
   return { sourceState, entries: Number.isFinite(limit) && limit > 0 ? unique.slice(-Math.floor(limit)) : [] };
 }
 
+/** Where the PLAN-LOG lives: explicit path, then PHANTOM_PLAN_LOG, then the runs dir. */
+export function planLogPath(file?: string): string {
+  return file || process.env.PHANTOM_PLAN_LOG || join(process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'leader', 'PLAN-LOG.md');
+}
+
 /** Only explicit dated PLAN-LOG replies, keeping the newest copy of each text. */
-export async function readPlanLogReplies(opts: { limit?: number } = {}): Promise<{ sourceState: 'healthy' | 'missing' | 'unknown'; entries: OutboxEntry[] }> {
-  const root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+export async function readPlanLogReplies(opts: { limit?: number; file?: string } = {}): Promise<{ sourceState: 'healthy' | 'missing' | 'unknown'; entries: OutboxEntry[]; reason?: string }> {
+  const path = planLogPath(opts.file);
   try {
     const limit = opts.limit ?? 30;
     const seen = new Set<string>();
-    const entries = parsePlanLog(await readTail(join(root, 'leader', 'PLAN-LOG.md')))
+    const entries = parsePlanLog(await readTail(path))
       .filter(e => e.at && e.heading && Number.isFinite(replyTime(e.at)))
       .sort((a, b) => replyTime(b.at) - replyTime(a.at))
       .filter(e => {
@@ -184,6 +189,7 @@ export async function readPlanLogReplies(opts: { limit?: number } = {}): Promise
       }).reverse();
     return { sourceState: 'healthy', entries: Number.isFinite(limit) && limit > 0 ? entries.slice(-Math.floor(limit)) : [] };
   } catch (error) {
-    return { sourceState: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unknown', entries: [] };
+    const missing = (error as NodeJS.ErrnoException).code === 'ENOENT';
+    return { sourceState: missing ? 'missing' : 'unknown', entries: [], reason: missing ? `No PLAN-LOG file at ${path}, so there are no replies yet.` : `Could not read the PLAN-LOG at ${path}.` };
   }
 }
