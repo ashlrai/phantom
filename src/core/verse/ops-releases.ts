@@ -104,6 +104,15 @@ async function commitsSinceTag(path: string, tag: string | null, run: OpsRunner)
   }
 }
 
+async function tagDate(path: string, tag: string, run: OpsRunner): Promise<string | null> {
+  try {
+    const raw = await run('git', ['-C', path, 'log', '-1', '--format=%cI', tag]);
+    return raw && Number.isFinite(Date.parse(raw)) ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
 interface GhRelease { tagName?: unknown; name?: unknown; publishedAt?: unknown; isDraft?: unknown; isPrerelease?: unknown }
 interface GhRun { status?: unknown; conclusion?: unknown; createdAt?: unknown; displayTitle?: unknown }
 type GhReleaseInfo = NonNullable<OpsRepoReleaseV1['gh']>['latestRelease'];
@@ -180,6 +189,7 @@ export async function probeRepoRelease(path: string, deps: OpsReleaseProbeDeps =
     version,
     latestTag: tag ? scrubSecrets(tag).slice(0, 120) : null,
     commitsSinceTag: await commitsSinceTag(path, tag, run),
+    tagCommittedAt: tag ? await tagDate(path, tag, run) : null,
     releaseWorkflow: workflow,
     gh,
     notes: notes.map((n) => scrubSecrets(n).slice(0, 200)),

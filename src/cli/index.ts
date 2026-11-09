@@ -2484,8 +2484,13 @@ async function main(): Promise<void> {
       }
 
       case 'worktrees': {
-        const { cmdWorktrees } = await import('./worktrees.js');
-        process.exitCode = cmdWorktrees(rest);
+        if (rest[0] === 'prune') {
+          const { cmdWorktreesPrune } = await import('./worktrees-prune.js');
+          process.exitCode = await cmdWorktreesPrune(rest.slice(1));
+        } else {
+          const { cmdWorktrees } = await import('./worktrees.js');
+          process.exitCode = cmdWorktrees(rest);
+        }
         break;
       }
 
@@ -2704,6 +2709,12 @@ async function main(): Promise<void> {
       case 'seams': {
         const cmdSeams = await loadSeamsCmd();
         process.exitCode = await cmdSeams(rest);
+        break;
+      }
+
+      case 'test': {
+        const { cmdTest } = await import('./test-changed.js');
+        process.exitCode = cmdTest(rest);
         break;
       }
 

@@ -1,9 +1,12 @@
+import { lstat } from 'node:fs/promises';
 import { INTENT_LEDGER_SCHEMA, IntentError, emptyLedger, type IntentItem, type IntentLedger, type IntentStatus } from './schema.js';
-import { ledgerFilePresent, readLedger } from './store.js';
+import { intentLedgerPath, readLedger } from './store.js';
 
 export interface IntentSummary {
   schema: typeof INTENT_LEDGER_SCHEMA;
   present: boolean;
+  sourceQuality: 'readable' | 'missing' | 'unavailable';
+  countQuality: 'observed' | 'unknown';
   items: number;
   tracked: number;
   merged: number;
@@ -29,7 +32,8 @@ export function summarize(ledger: IntentLedger, nowMs: number, present = true): 
     id: item.id, title: item.title, status: item.status,
   }));
   return {
-    schema: INTENT_LEDGER_SCHEMA, present, items: ledger.items.length,
+    schema: INTENT_LEDGER_SCHEMA, present, sourceQuality: present ? 'readable' : 'missing',
+    countQuality: 'observed', items: ledger.items.length,
     tracked: ledger.items.filter((item) => item.rq.length > 0).length,
     merged: ledger.items.filter((item) => item.status === 'merged').length,
     shipped: ledger.items.filter((item) => item.status === 'shipped').length,
@@ -44,9 +48,17 @@ export async function intentSummary(opts: { root?: string; nowMs?: number } = {}
   const nowMs = opts.nowMs ?? Date.now();
   if (!Number.isFinite(nowMs)) throw new IntentError('Time must be valid.');
   try {
-    if (!await ledgerFilePresent(opts.root)) return summarize(emptyLedger(), nowMs, false);
-    return summarize(await readLedger(opts.root), nowMs);
+    await lstat(intentLedgerPath(opts.root));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return summarize(emptyLedger(), nowMs, false);
+    return { ...summarize(emptyLedger(), nowMs, false), sourceQuality: 'unavailable', countQuality: 'unknown' };
+  }
+  try {
+    const ledger = await readLedger(opts.root);
+    // readLedger treats a disappearing file as empty; do not report that as observed.
+    await lstat(intentLedgerPath(opts.root));
+    return summarize(ledger, nowMs);
   } catch {
-    return summarize(emptyLedger(), nowMs, false);
+    return { ...summarize(emptyLedger(), nowMs, false), sourceQuality: 'unavailable', countQuality: 'unknown' };
   }
 }

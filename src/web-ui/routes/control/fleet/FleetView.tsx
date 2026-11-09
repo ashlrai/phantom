@@ -1,3 +1,4 @@
+import { MachineCard } from './MachineCard.js';
 import { LiveFleetBoard } from './LiveFleetBoard.js';
 /**
  * routes/control/fleet/FleetView.tsx — queue depth, lease health, and the
@@ -310,6 +311,8 @@ export function FleetView({ now = Date.now }: { now?: () => number } = {}) {
           </section>
         </>
       )}
+
+      <MachineCard />
 
       <LiveFleetBoard />
 

@@ -372,7 +372,7 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re
     if pc and pc[0] in (11, 12, 13):
         # Open PRs and legacy existence heuristics are not acceptance evidence.
         # Keep the author row READY; unchanged retries share dispatch's backoff.
-        park(park_state, j, key, ts); skip(j, "precheck-parked"); continue
+        park(park_state, j, key, ts, pc[0], pc[1]); skip(j, "precheck-parked"); continue
     park_state.pop(j, None)
     if pc:
         done.append((i, j, pc)); skip(j, "done-noop"); continue
