@@ -204,3 +204,18 @@ JOB_LOOP='RQ-LOOP-1 (P1, pool=devin, repo=phantom) loop task'
   run_pc "$JOB_LOOP"
   [ "$status" -eq 0 ]
 }
+
+@test "invalid JSON and invalid response shape fail closed" {
+  export GH_JSON_MERGED='{'
+  run_pc "$JOB_LOOP"
+  [ "$status" -eq 75 ]; [[ "$output" == *"PRECHECK_UNSURE_merged"* ]]
+  export GH_JSON_MERGED='null'
+  run_pc "$JOB_LOOP"
+  [ "$status" -eq 75 ]; [[ "$output" == *"PRECHECK_UNSURE_merged"* ]]
+}
+
+@test "open lookup error fails closed even for an open target PR" {
+  export GH_JSON_VIEW='{"state":"OPEN","mergeStateStatus":"DIRTY","statusCheckRollup":[]}' GH_FAIL_STATE=open
+  run_pc 'RQ-FIXUP-T1 (P1, repo=phantom) FIXUP phantom #1322'
+  [ "$status" -eq 75 ]; [[ "$output" == *"PRECHECK_UNSURE_open"* ]]
+}
