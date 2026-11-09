@@ -2,6 +2,7 @@
  * lines in one ordered file) plus per-channel adapter state. Read-only: no
  * transports are passed, so this never sends, pulls or touches a channel. Owner
  * message bodies are private, so it answers only the local dispatch session. */
+import { instantBrief } from '../comms/leader-line.js';
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings } from '../comms/owner-channel.js';
@@ -16,6 +17,7 @@ export interface OwnerThreadApiDeps {
   runsDir?: string;
   /** Default: the fixed owner config dir. */
   configDir?: string;
+  statusBrief?: () => Promise<string>;
   /** Clock seam for tests. */
   now?: () => number;
 }
@@ -32,13 +34,22 @@ function parseLimit(raw: string | null): number | null {
 
 export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
   return async (ctx, req, res, path, method) => {
-    if (path !== VERSE_OWNER_THREAD_PATH) return false;
+    if (path !== VERSE_OWNER_THREAD_PATH && path !== `${VERSE_OWNER_THREAD_PATH}/status`) return false;
     if (method !== 'GET') {
       sendJson(res, 405, { error: 'The owner thread is read only here.' });
       return true;
     }
     if (!ctx.allowDispatch) {
       sendJson(res, 404, { error: 'not found' });
+      return true;
+    }
+    if (path === `${VERSE_OWNER_THREAD_PATH}/status`) {
+      try {
+        const text = await (deps.statusBrief ? deps.statusBrief() : instantBrief(ctx.cfg));
+        sendJson(res, 200, { schema: 'comms.owner-status.v1', text, at: new Date(deps.now?.() ?? Date.now()).toISOString() });
+      } catch {
+        sendJson(res, 200, { schema: 'comms.owner-status.v1', unavailable: true });
+      }
       return true;
     }
     let limit: number | null;
