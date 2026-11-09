@@ -93,6 +93,8 @@ describe('native MCP tool surface lock', () => {
       'ashlr_comms_agent_drafts:read',
       'ashlr_comms_agent_run:append',
       'ashlr_comms_agent_status:read',
+      'ashlr_comms_send_owner:append',
+      'ashlr_comms_thread:read',
       'ashlr_desktop_open:proposal',
       'ashlr_fleet_status:read',
       'ashlr_health:read',
