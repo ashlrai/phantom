@@ -2712,6 +2712,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'test': {
+        const { cmdTest } = await import('./test-changed.js');
+        process.exitCode = cmdTest(rest);
+        break;
+      }
+
       case 'verify': {
         const { cmdVerify } = await import('./verify.js');
         process.exitCode = await cmdVerify(rest);
