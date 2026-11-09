@@ -1,8 +1,10 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import type { ResourceView } from '../../../core/fabric/resource-view.js';
+import { MACHINE_MAX_AGE_MS } from '../../../core/fabric/resource-view.js';
 import { apiGet } from '../../data/client.js';
 import { useQuery, useRefetch, useRefresh } from '../../data/hooks.js';
 import type { QueryDef } from '../../data/queries.js';
+import { usePollWhileVisible } from '../verse/shell/section-visibility.js';
 import styles from './ResourcePanel.module.css';
 
 export const resourceViewQuery: QueryDef<ResourceView> = {
@@ -14,13 +16,22 @@ const date = (value: string | null) => value === null ? 'unknown' : new Date(val
 /** Both fleet surfaces read the same file projection; no client-side quota or admission math. */
 export function ResourcePanel() {
   const query = useQuery(resourceViewQuery);
+  const [, expireControllerMemory] = useState(0);
   const refresh = useRefetch(resourceViewQuery);
   const manualRefresh = useRefresh(resourceViewQuery);
-  useEffect(() => {
-    const timer = window.setInterval(refresh, 15_000);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
+  usePollWhileVisible(refresh, 4_000);
   const view = query.data;
+  const observedAt = view?.controllerMemory?.observedAt;
+  useEffect(() => {
+    if (!observedAt) return;
+    const remaining = Date.parse(observedAt) + MACHINE_MAX_AGE_MS - Date.now();
+    if (!Number.isFinite(remaining) || remaining <= 0 || remaining > MACHINE_MAX_AGE_MS) return;
+    const timer = window.setTimeout(() => expireControllerMemory(value => value + 1), remaining);
+    return () => window.clearTimeout(timer);
+  }, [observedAt]);
+  const sampleMs = observedAt ? Date.parse(observedAt) : NaN;
+  const age = Date.now() - sampleMs;
+  const controllerMemory = Number.isFinite(age) && age >= 0 && age < MACHINE_MAX_AGE_MS ? view?.controllerMemory : undefined;
   return <section className={styles.panel} aria-label="Resource capacity">
     <header className={styles.header}><h2>Resource capacity</h2><button type="button" onClick={manualRefresh}>Refresh</button></header>
     {query.status === 'error' ? <p role="alert">Resource capacity unavailable. Last readings are not current.</p>
@@ -38,6 +49,8 @@ export function ResourcePanel() {
         </table></div>
         <dl className={styles.machine}>
           <div><dt>Memory free</dt><dd>{pct(view.machine.memFreePct)}</dd></div>
+          <div><dt>macOS memory availability</dt><dd>{pct(controllerMemory?.pressureFreePct ?? null)}
+            <small>Memory pressure reading · sampled {date(controllerMemory?.observedAt ?? null)}</small></dd></div>
           <div><dt>Swap used</dt><dd>{pct(view.machine.swapUsedPct)}</dd></div>
           <div><dt>Disk free</dt><dd>{pct(view.machine.diskFreePct)}</dd></div>
           <div><dt>Machine admission</dt><dd>{view.machine.admission}</dd></div>

@@ -278,6 +278,14 @@ export async function queuePrMerge(repo: string, number: number, headSha: string
   await gh(['pr', 'merge', String(number), '--repo', assertRepo(repo), '--squash', '--auto', '--match-head-commit', headSha]);
 }
 
+/** Read explicit auto-merge state before retrying an uncertain submission. */
+export async function readMergeRequest(repo: string, number: number, gh: Gh = defaultGh): Promise<boolean> {
+  const raw = obj(await api(gh, `repos/${assertRepo(repo)}/pulls/${number}`));
+  if (raw['auto_merge'] === null) return false;
+  if (raw['auto_merge'] && typeof raw['auto_merge'] === 'object' && !Array.isArray(raw['auto_merge'])) return true;
+  throw new Error('Auto-merge state unavailable');
+}
+
 /** Leave one comment on a PR's conversation (the issues endpoint covers PRs). */
 export async function commentOnPr(repo: string, number: number, body: string, gh: Gh = defaultGh): Promise<void> {
   await gh(['api', '-X', 'POST', `repos/${assertRepo(repo)}/issues/${number}/comments`, '-f', `body=${body}`]);

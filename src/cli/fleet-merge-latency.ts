@@ -3,7 +3,8 @@
  * and which conflicts the recut automation can safely retry. Advisory only:
  * nothing here merges, requeues or skips a required check.
  */
-import { readFile, stat } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, stat } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { recutRequest, type MergeRecutRequest } from '../core/merge-eta.js';
@@ -17,11 +18,13 @@ const DEFAULT_STALLED_AFTER = 3600;
 /** After this many recut requests for one PR, a person should look at it. */
 const MAX_RECUTS = 3;
 
-export type MergeEventType = 'opened' | 'queued' | 'checks_passed' | 'conflict' | 'recut_requested' | 'merged' | 'closed' | 'auto_merge_enabled' | 'auto_merge_disabled';
-const TYPES: ReadonlySet<string> = new Set<MergeEventType>(['opened', 'queued', 'checks_passed', 'conflict', 'recut_requested', 'merged', 'closed', 'auto_merge_enabled', 'auto_merge_disabled']);
+export type MergeEventType = 'opened' | 'queued' | 'checks_passed' | 'conflict' | 'recut_requested' | 'merged' | 'closed' | 'auto_merge_enabled' | 'auto_merge_disabled' | 'eligible' | 'blocked' | 'check_observed';
+const TYPES: ReadonlySet<string> = new Set<MergeEventType>(['opened', 'queued', 'checks_passed', 'conflict', 'recut_requested', 'merged', 'closed', 'auto_merge_enabled', 'auto_merge_disabled', 'eligible', 'blocked', 'check_observed']);
 
 /** One JSON object per line. `head_sha` is read from conflict and recut_requested events. */
-export interface MergeEvent { repo: string; pr: number; type: MergeEventType; at?: string; head_sha?: string }
+export interface MergeEvent { repo: string; pr: number; type: MergeEventType; at?: string; head_sha?: string; reason?: BlockerReason; required?: boolean; conclusion?: 'success' | 'failure' | 'pending' }
+export type BlockerReason = 'required_checks' | 'review' | 'conflict' | 'queue' | 'other';
+const BLOCKER_REASONS: readonly BlockerReason[] = ['required_checks', 'review', 'conflict', 'queue', 'other'];
 const eventTime = (e: MergeEvent): number => Date.parse(e.at ?? '');
 
 export interface PendingAutoMerge {
@@ -57,6 +60,62 @@ export interface MergeLatencyReport {
   stalled_after_s: number;
   /** All pending auto-merges, including old PRs and unknown enable times. Never merge authority. */
   pending_auto_merge: PendingAutoMerge[] | null;
+  queue_timelines: QueueTimeline[] | null;
+}
+
+/** Recorded transitions are observations, not permission to merge. */
+export interface QueueTimeline {
+  repo: string; pr: number; enqueued_at: string | null; eligible_at: string | null; merged_at: string | null;
+  blocked: { at: string; reason: BlockerReason }[];
+  enqueue_to_eligible_s: number | null; eligible_to_merge_s: number | null;
+  /** Current queue dwell for an open PR with exactly one timed enqueue. */
+  current_dwell_s: number | null;
+  wait_by_reason_s: Partial<Record<BlockerReason, number>> | null;
+  checks: { required_failures: number; unrelated_failures: number; unknown_failures: number } | null;
+}
+
+function timeline(events: MergeEvent[], now: number): QueueTimeline {
+  const one = (type: MergeEventType) => {
+    const matches = events.filter(e => e.type === type);
+    return matches.length === 1 && matches[0]!.at ? matches[0]!.at! : null;
+  };
+  const enqueued_at = one('queued'), eligible_at = one('eligible'), merged_at = one('merged');
+  const blocked = events.filter(e => e.type === 'blocked' && e.at && e.reason)
+    .map(e => ({ at: e.at!, reason: e.reason! }));
+  // Reblocking after eligibility makes a single eligibility boundary ambiguous.
+  const valid = enqueued_at && eligible_at && merged_at && Date.parse(enqueued_at) <= Date.parse(eligible_at)
+    && Date.parse(eligible_at) <= Date.parse(merged_at)
+    && blocked.every(b => Date.parse(b.at) >= Date.parse(enqueued_at) && Date.parse(b.at) < Date.parse(eligible_at));
+  // A blocker starts an interval and the next blocker or eligibility ends it.
+  // Without an observation at enqueue, the preceding time has no known reason.
+  const wait: Partial<Record<BlockerReason, number>> = {};
+  const transitions = events.filter(e => e.type === 'blocked' || e.type === 'eligible');
+  const measurable = enqueued_at && eligible_at && Date.parse(enqueued_at) <= Date.parse(eligible_at)
+    && blocked.every(b => Date.parse(b.at) >= Date.parse(enqueued_at) && Date.parse(b.at) < Date.parse(eligible_at))
+    && events.filter(e => e.type === 'eligible').length === 1 && blocked.length > 0 && Date.parse(blocked[0]!.at) === Date.parse(enqueued_at)
+    && transitions.every((e, i) => i === 0 || eventTime(e) > eventTime(transitions[i - 1]!));
+  if (measurable) for (let i = 0; i < transitions.length - 1; i++) {
+    const e = transitions[i]!;
+    if (e.type === 'blocked' && e.reason) wait[e.reason] = (wait[e.reason] ?? 0) + (eventTime(transitions[i + 1]!) - eventTime(e)) / 1000;
+  }
+  const failures = events.filter(e => e.type === 'check_observed' && e.conclusion === 'failure');
+  const checks = events.some(e => e.type === 'check_observed') ? { required_failures: failures.filter(e => e.required === true).length,
+    unrelated_failures: failures.filter(e => e.required === false).length,
+    unknown_failures: failures.filter(e => e.required === undefined).length } : null;
+  return { repo: events[0]!.repo, pr: events[0]!.pr, enqueued_at, eligible_at, merged_at, blocked,
+    wait_by_reason_s: measurable ? wait : null, checks,
+    current_dwell_s: enqueued_at && !events.some(e => e.type === 'merged' || e.type === 'closed')
+      ? gap(Date.parse(enqueued_at), now) : null,
+    enqueue_to_eligible_s: valid ? gap(Date.parse(enqueued_at!), Date.parse(eligible_at!)) : null,
+    eligible_to_merge_s: valid ? gap(Date.parse(eligible_at!), Date.parse(merged_at!)) : null };
+}
+
+/** Append one validated observation; never runs a merge or changes checks. */
+export async function recordMergeEvent(path: string, value: unknown): Promise<void> {
+  const event = parseEvent(JSON.stringify(value));
+  if (!event || !event.at || !['queued', 'eligible', 'blocked', 'merged', 'check_observed'].includes(event.type)) throw new Error('Invalid merge observation');
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  await appendFile(path, `${JSON.stringify(event)}\n`, { mode: 0o600 });
 }
 
 /** Nearest-rank percentile of an ascending list. */
@@ -78,11 +137,17 @@ function parseEvent(line: string): MergeEvent | null {
   const r = raw as Record<string, unknown>;
   if (typeof r.repo !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(r.repo) || !Number.isSafeInteger(r.pr) || (r.pr as number) < 1 ||
       typeof r.type !== 'string' || !TYPES.has(r.type)) return null;
+  if (r.type === 'blocked' && (typeof r.reason !== 'string' || !BLOCKER_REASONS.includes(r.reason as BlockerReason))) return null;
+  if (r.type === 'check_observed' && (!['success', 'failure', 'pending'].includes(String(r.conclusion)) ||
+      (r.required !== undefined && typeof r.required !== 'boolean'))) return null;
   const at = typeof r.at === 'string' && Number.isFinite(Date.parse(r.at)) ? r.at : undefined;
   // Preserve state evidence with unknown timing; never invent an enable or merge time.
   if (!at && !['auto_merge_enabled', 'auto_merge_disabled', 'merged', 'closed'].includes(r.type)) return null;
   return { repo: r.repo.toLowerCase(), pr: r.pr as number, type: r.type as MergeEventType, at,
-    ...(typeof r.head_sha === 'string' ? { head_sha: r.head_sha } : {}) };
+    ...(typeof r.head_sha === 'string' ? { head_sha: r.head_sha } : {}),
+    ...(r.type === 'blocked' ? { reason: r.reason as BlockerReason } : {}),
+    ...(r.type === 'check_observed' ? { conclusion: r.conclusion as MergeEvent['conclusion'],
+      ...(typeof r.required === 'boolean' ? { required: r.required } : {}) } : {}) };
 }
 
 const gap = (from: number | undefined, to: number | undefined): number | null =>
@@ -94,7 +159,7 @@ export async function fleetMergeLatency(read: MergeEventReader, now = Date.now()
   try { text = await read(); } catch { text = null; }
   if (text === null) {
     return { ...base, known: false, merged: 0, merged_time_unknown: 0, open: 0, ignored_events: 0, opened_to_queue: null, queue_to_merge: null,
-      total: null, slowest_step: null, retryable_conflicts: null, blocked_conflicts: null, pending_auto_merge: null };
+      total: null, slowest_step: null, retryable_conflicts: null, blocked_conflicts: null, pending_auto_merge: null, queue_timelines: null };
   }
   const since = now - hours * 3_600_000;
   const byPr = new Map<string, MergeEvent[]>();
@@ -112,6 +177,7 @@ export async function fleetMergeLatency(read: MergeEventReader, now = Date.now()
   const retryable: RetryableConflict[] = [];
   const blocked: BlockedConflict[] = [];
   const pending: PendingAutoMerge[] = [];
+  const timelines: QueueTimeline[] = [];
   let merged = 0;
   let mergedTimeUnknown = 0;
   let open = 0;
@@ -122,6 +188,7 @@ export async function fleetMergeLatency(read: MergeEventReader, now = Date.now()
     const first = (type: MergeEventType) => { const e = events.find(x => x.type === type); return e?.at ? eventTime(e) : undefined; };
     const { repo, pr } = last;
     const mergedAt = first('merged');
+    if (events.some(e => e.type === 'queued' || e.type === 'eligible' || e.type === 'blocked' || e.type === 'check_observed')) timelines.push(timeline(events, now));
     if (events.some(e => e.type === 'merged')) {
       if (mergedAt !== undefined && mergedAt < since) continue;
       merged++;
@@ -167,7 +234,7 @@ export async function fleetMergeLatency(read: MergeEventReader, now = Date.now()
   return { ...base, known: true, merged, merged_time_unknown: mergedTimeUnknown, open, ignored_events: ignored, opened_to_queue: q, queue_to_merge: m, total: stats(total),
     slowest_step: q.p50_s === null || m.p50_s === null ? null : m.p50_s >= q.p50_s ? 'queue_to_merge' : 'opened_to_queue',
     retryable_conflicts: retryable.sort(byWait), blocked_conflicts: blocked.sort(byPrId),
-    pending_auto_merge: pending.sort((a, b) => (b.waiting_s ?? -1) - (a.waiting_s ?? -1) || byPrId(a, b)) };
+    queue_timelines: timelines.sort(byPrId), pending_auto_merge: pending.sort((a, b) => (b.waiting_s ?? -1) - (a.waiting_s ?? -1) || byPrId(a, b)) };
 }
 
 export const readMergeEvents = (path: string): MergeEventReader => async () => {
@@ -195,6 +262,7 @@ export function formatMergeLatency(r: MergeLatencyReport): string {
     `Last ${r.window_hours} hours: ${r.merged - r.merged_time_unknown} merged; ${r.merged_time_unknown} merged at an unknown time. Still open in ledger (all ages): ${r.open}.`,
     line('Waiting to join the queue', r.opened_to_queue),
     line('Queue to merge', r.queue_to_merge),
+    ...r.queue_timelines!.map(t => `${t.repo}#${t.pr}: enqueue to eligible ${secs(t.enqueue_to_eligible_s)}, eligible to merge ${secs(t.eligible_to_merge_s)}; blockers: ${t.blocked.map(b => b.reason).join(', ') || 'none recorded'}; wait by reason: ${t.wait_by_reason_s === null ? 'unknown' : Object.entries(t.wait_by_reason_s).map(([reason, seconds]) => `${reason} ${seconds}s`).join(', ')}; failed observations: ${t.checks ? `${t.checks.required_failures} required, ${t.checks.unrelated_failures} unrelated, ${t.checks.unknown_failures} unknown` : 'unknown'}.`),
     line('Open to merge', r.total),
     `Pending auto-merge: ${r.pending_auto_merge!.length} (${r.pending_auto_merge!.filter(p => p.stalled).length} stalled after ${r.stalled_after_s}s, ${r.pending_auto_merge!.filter(p => p.stalled === null).length} unknown waits).`,
     ...r.pending_auto_merge!.map(pendingLine),
@@ -215,7 +283,11 @@ export async function cmdFleetMergeLatency(args: string[], deps: MergeLatencyDep
       'Read-only: required checks are never skipped. No live GitHub query; results reflect the supplied ledger.',
       'Example: phm fleet merge-latency --events merge-events.jsonl --json',
       'Default ledger: ~/.ashlr-runs/metrics/merge-events.jsonl. One JSON event per line: repo, pr, type, at (ISO timestamp), head_sha (optional).',
-      'Types: opened, queued, checks_passed, conflict, recut_requested, merged, closed, auto_merge_enabled, auto_merge_disabled.',
+      'Record: phm fleet merge-latency --events <file> --record <JSON> (repo, pr, type, at; blocked also needs reason).',
+      'Recording types: queued, eligible, blocked, merged, check_observed. Blocker reasons: required_checks, review, conflict, queue, other.',
+      'Check observations require conclusion (success, failure, pending); required is true, false, or omitted if unknown.',
+      'Eligibility is an observed transition; missing, repeated or reblocked boundaries remain unknown. Required checks remain in place.',
+      'Types: opened, queued, eligible, blocked, check_observed, checks_passed, conflict, recut_requested, merged, closed, auto_merge_enabled, auto_merge_disabled.',
       'Merged window: --hours (default 24). Missing merge times count as missing samples, separately from dated merges.',
       'Open PRs and pending auto-merges include all ages. Enable/disable events describe transitions; queued alone does not imply auto-merge.',
       'Stall age starts at the latest enable transition; --stalled-after defaults to 3600 seconds. Missing or conflicting state times stay unknown.',
@@ -226,6 +298,7 @@ export async function cmdFleetMergeLatency(args: string[], deps: MergeLatencyDep
   let path = join(homedir(), '.ashlr-runs', 'metrics', 'merge-events.jsonl');
   let hours = DEFAULT_HOURS;
   let json = false;
+  let record: string | undefined;
   let stalledAfter = DEFAULT_STALLED_AFTER;
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
@@ -233,10 +306,17 @@ export async function cmdFleetMergeLatency(args: string[], deps: MergeLatencyDep
     if (seen.has(arg)) { console.error(`error: duplicate option\n${usage}`); return 2; }
     seen.add(arg);
     if (arg === '--json') json = true;
+    else if (arg === '--record' && args[i + 1]) record = args[++i]!;
     else if (arg === '--events' && args[i + 1] && !args[i + 1]!.startsWith('-')) path = args[++i]!;
     else if (arg === '--stalled-after' && /^[1-9]\d{0,7}$/.test(args[i + 1] ?? '')) stalledAfter = Number(args[++i]);
     else if (arg === '--hours' && /^[1-9]\d{0,3}$/.test(args[i + 1] ?? '') && Number(args[i + 1]) <= MAX_HOURS) hours = Number(args[++i]);
     else { console.error(`error: invalid fleet merge-latency arguments\n${usage}`); return 2; }
+  }
+  if (record !== undefined) {
+    try { await recordMergeEvent(path, JSON.parse(record)); }
+    catch { console.error('error: unable to record valid merge observation'); return 1; }
+    console.log(json ? JSON.stringify({ recorded: true }) : 'Merge observation recorded.');
+    return 0;
   }
   const report = await fleetMergeLatency(deps.read ?? readMergeEvents(path), deps.now ?? Date.now(), hours, stalledAfter);
   console.log(json ? JSON.stringify(report) : formatMergeLatency(report));

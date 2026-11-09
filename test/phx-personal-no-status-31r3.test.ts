@@ -56,6 +56,10 @@ describe('personal usage without a dispatch status lane', () => {
       usedPct: 73, creditsRemaining: null, resetAt: null, burnPctPerHour: null,
       tokensPerHour6h: null, projectedExhaustion: null, source: 'codex-personal-sessions',
       deadSignal: null, observation: { source: 'codex-personal-sessions', asOf: '2036-10-31T10:00:00.000Z' },
+      quotaEvidence: { holdConflict: null, maxAgeMs: 300000, measuredQuota: {
+        lane: 'codex-personal', observedAt: '2036-10-31T10:00:00.000Z', resetAt: null, source: 'codex-personal-sessions',
+        usedPct: 73, window: 'weekly',
+      }, reason: 'stale-or-invalid-reading', state: 'refresh-needed', statusQuota: null },
     }]);
     if (status === healthyStatus) expect(ledger.lanes.find(lane => lane.lane === 'claude')).toMatchObject({ running: 2 });
   });
@@ -77,7 +81,7 @@ describe('personal usage without a dispatch status lane', () => {
   it('preserves newer status for an existing lane', async () => {
     const opts = await setup(JSON.stringify({ last_tick: '2036-10-31T11:00:00Z',
       lanes: { 'codex-personal': { running: 2, target: 4, held: false } },
-      budget: { 'codex-personal': { weekly_used_pct: 41, source: 'fake status' } },
+      budget: { 'codex-personal': { weekly_used_pct: 41, source: 'fake status', observed_at: '2036-10-31T11:00:00Z' } },
     }));
     await session(opts.personalCodexHome, weekly);
     const ledger = await readResourceLedger({ ...opts, now: () => now });

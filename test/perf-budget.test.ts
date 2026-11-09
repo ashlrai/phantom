@@ -16,9 +16,12 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { loadBudgets, median, summarize, budgetMs } from '../scripts/perf-budget.mjs';
+import { quoteShellValue } from '../src/core/playbooks/command-template.js';
 
 const SCRIPT = fileURLToPath(new URL('../scripts/perf-budget.mjs', import.meta.url));
 const REPO = fileURLToPath(new URL('..', import.meta.url));
+// The benchmark intentionally invokes a shell; the pinned Node path is one word.
+const NODE_COMMAND = process.platform === 'win32' ? `"${process.execPath}"` : quoteShellValue(process.execPath);
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'perf-budget-')); });
@@ -59,7 +62,7 @@ describe('perf-budget budgets schema', () => {
     const spec = loadBudgets(join(REPO, 'perf/budgets.json'));
     expect(spec.tolerance).toBeCloseTo(0.2);
     const ids = spec.targets.map((t) => t.id);
-    expect(ids).toEqual(['phm-version', 'phm-status', 'phm-doctor', 'phantom-wrapper-warm']);
+    expect(ids).toEqual(['phm-version', 'phm-help', 'phm-status', 'phm-doctor', 'phm-mcp-tools-list', 'phantom-wrapper-warm']);
     for (const t of spec.targets) {
       expect(t.baselineMs).toBeGreaterThan(0);
       expect(t.command.length).toBeGreaterThan(0);
@@ -70,11 +73,17 @@ describe('perf-budget budgets schema', () => {
     expect(phantom.requiresBin).toBe('phantom');
     // The phm targets time the built wrapper, so a missing dist/ must error,
     // never fast-pass on an immediate non-zero exit.
-    for (const id of ['phm-version', 'phm-status', 'phm-doctor']) {
+    for (const id of ['phm-version', 'phm-help', 'phm-status', 'phm-doctor']) {
       const t = spec.targets.find((x) => x.id === id)!;
       expect(t.requiresFiles).toContain('dist/cli/index.js');
       expect(t.command).toContain('bin/ashlr');
     }
+    // The MCP target times the gateway handshake through its harness script.
+    const mcp = spec.targets.find((x) => x.id === 'phm-mcp-tools-list')!;
+    expect(mcp.requiresFiles).toEqual(
+      expect.arrayContaining(['dist/cli/index.js', 'scripts/perf-mcp-tools-list.mjs']),
+    );
+    expect(mcp.command).toContain('perf-mcp-tools-list.mjs');
   });
 
   it('rejects a malformed budgets file', () => {
@@ -98,14 +107,14 @@ describe('perf-budget check outcomes', () => {
     const budgets = budgetsFile([
       {
         id: 'slow-target',
-        command: `${process.execPath} -e "setTimeout(() => {}, 250)"`,
+        command: `${NODE_COMMAND} -e "setTimeout(() => {}, 250)"`,
         baseline_ms: 20,
         warmup: 0,
         runs: 2,
       },
       {
         id: 'fast-target',
-        command: `${process.execPath} -e ""`,
+        command: `${NODE_COMMAND} -e ""`,
         baseline_ms: 30_000,
         warmup: 0,
         runs: 1,
@@ -120,7 +129,7 @@ describe('perf-budget check outcomes', () => {
 
   it('passes when every required target is within budget', () => {
     const budgets = budgetsFile([
-      { id: 'quick', command: `${process.execPath} -e ""`, baseline_ms: 30_000, warmup: 0, runs: 2 },
+      { id: 'quick', command: `${NODE_COMMAND} -e ""`, baseline_ms: 30_000, warmup: 0, runs: 2 },
     ]);
     const r = run(['--budgets', budgets, '--runner', 'node']);
     expect(r.status).toBe(0);
@@ -129,7 +138,7 @@ describe('perf-budget check outcomes', () => {
 
   it('reports JSON with per-target medians and budgets', () => {
     const budgets = budgetsFile([
-      { id: 'slow-json', command: `${process.execPath} -e "setTimeout(() => {}, 200)"`, baseline_ms: 10, warmup: 0, runs: 2 },
+      { id: 'slow-json', command: `${NODE_COMMAND} -e "setTimeout(() => {}, 200)"`, baseline_ms: 10, warmup: 0, runs: 2 },
     ]);
     const r = run(['--budgets', budgets, '--runner', 'node', '--json']);
     expect(r.status).toBe(1);
@@ -139,6 +148,7 @@ describe('perf-budget check outcomes', () => {
     expect(report.runner).toBe('node');
     expect(report.results[0]).toMatchObject({ id: 'slow-json', status: 'fail', baseline_ms: 10 });
     expect(report.results[0].stats.median_ms).toBeGreaterThan(report.results[0].budget_ms);
+    expect(report.results[0].exitCodes).toEqual([0, 0]);
   });
 });
 
@@ -181,7 +191,7 @@ describe('perf-budget preflight', () => {
     const budgets = budgetsFile([
       {
         id: 'needs-dist',
-        command: `${process.execPath} -e "process.exit(1)"`,
+        command: `${NODE_COMMAND} -e "process.exit(1)"`,
         baseline_ms: 50,
         requires_files: ['dist/definitely-not-built-9q7.js'],
         warmup: 0,
@@ -198,8 +208,8 @@ describe('perf-budget preflight', () => {
 describe('perf-budget selection', () => {
   it('--only runs the named subset', () => {
     const budgets = budgetsFile([
-      { id: 'one', command: `${process.execPath} -e ""`, baseline_ms: 30_000, warmup: 0, runs: 1 },
-      { id: 'two', command: `${process.execPath} -e ""`, baseline_ms: 30_000, warmup: 0, runs: 1 },
+      { id: 'one', command: `${NODE_COMMAND} -e ""`, baseline_ms: 30_000, warmup: 0, runs: 1 },
+      { id: 'two', command: `${NODE_COMMAND} -e ""`, baseline_ms: 30_000, warmup: 0, runs: 1 },
     ]);
     const r = run(['--budgets', budgets, '--runner', 'node', '--only', 'two']);
     expect(r.status).toBe(0);

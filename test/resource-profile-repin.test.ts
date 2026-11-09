@@ -1,3 +1,4 @@
+import { nodeFixtureHeader } from './helpers/node-fixture.js';
 /**
  * `ashlr resources profile repin` — re-point an existing prepared native profile
  * at a different executable. Private temp profiles, a temp HOME and inert native
@@ -45,7 +46,7 @@ let base: string; let home: string; let oldBinary: string; let newBinary: string
 /** An inert "native CLI" that only reports which file ran, with what argv and environment. */
 function inertBinary(name: string): string {
   const file = join(base, name);
-  writeFileSync(file, `#!${realpathSync(process.execPath)}\nconsole.log(JSON.stringify({binary:${JSON.stringify(name)},args:process.argv.slice(2),env:process.env}));\n`,
+  writeFileSync(file, `${nodeFixtureHeader(realpathSync(process.execPath))}console.log(JSON.stringify({binary:${JSON.stringify(name)},args:process.argv.slice(2),env:process.env}));\n`,
     { mode: 0o700 });
   return file;
 }

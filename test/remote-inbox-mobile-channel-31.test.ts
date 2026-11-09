@@ -158,7 +158,8 @@ describe('remote inbox mobile channel (RQ-PHX-MOBILECHANNELEND2END31)', () => {
     expect(JSON.parse(forwarded[0]!.body)).toEqual({ text, source: 'Phantom mobile' });
 
     const inbox = await readInboxEntries({ runsDir, limit: 10 });
-    expect(inbox.entries.map((entry) => entry.source)).toEqual(['Phantom mobile']);
+    expect(inbox.entries.map((entry) => entry.source)).toEqual([expect.stringMatching(/^phone \(phone-[a-f0-9]{16}\)$/)]);
+    const phoneReceipt = inbox.entries[0]!.source;
     expect(inbox.entries[0]!.text).toBe(text);
 
     let bus = busEnvelopes();
@@ -178,7 +179,9 @@ describe('remote inbox mobile channel (RQ-PHX-MOBILECHANNELEND2END31)', () => {
     expect(directWire.dedupeKey).not.toBe(wire.dedupeKey);
 
     const after = await readInboxEntries({ runsDir, limit: 10 });
-    expect(after.entries.map((entry) => entry.source)).toEqual(['Phantom desktop', 'Phantom mobile']);
+    expect(after.entries.map((entry) => entry.source)).toEqual([
+      expect.stringMatching(/^desktop \(desk-[a-f0-9]{16}\)$/), phoneReceipt,
+    ]);
     bus = busEnvelopes();
     expect(bus).toHaveLength(2);
     expect(bus.map((row) => row.id)).toEqual([

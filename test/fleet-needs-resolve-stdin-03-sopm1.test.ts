@@ -35,7 +35,7 @@ it('accepts the UTF-8 limit with CRLF headroom', async () => {
   expect(resolve).toHaveBeenCalledWith({ itemId: id, reply }, { runsDir: undefined, source: 'cli' });
 });
 
-it.each(['', '\n', ' \r\n', 'a'.repeat(501), '界'.repeat(501)])('rejects empty or oversized input without resolving', async reply => {
+it.each(['', '\n', ' \r\n', 'a'.repeat(501), '界'.repeat(501)])('rejects empty or oversized input without resolving (%#)', async reply => {
   expect(await cmdFleetNeedsResolve([id, '--reply-stdin'], { stdin: Readable.from([reply]), resolve })).toBe(1);
   expect(resolve).not.toHaveBeenCalled();
 });

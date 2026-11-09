@@ -15,6 +15,10 @@ export interface DevinConsumptionSnapshot {
   state: 'not-checked' | 'reading' | 'ready' | 'unavailable';
   fetchedAt: string | null;
   checkedAt: string | null;
+  /** When this snapshot was observed. Same instant as fetchedAt. */
+  observedAt: string | null;
+  /** After this instant the report is unknown and is not headroom. Same instant as expiresAt. */
+  staleAfter: string | null;
   expiresAt: string | null;
   retryAt: string | null;
   stale: boolean;
@@ -25,7 +29,7 @@ export interface DevinConsumptionSnapshot {
 const empty = (): DevinConsumptionSnapshot => ({
   source: 'devin-v3-organization-daily', scope: 'organization', period: 'all-available-reporting-dates',
   dateUnit: 'provider-unspecified', dayBoundaryUtc: '08:00', state: 'not-checked',
-  fetchedAt: null, checkedAt: null, expiresAt: null, retryAt: null, stale: false, report: null, error: null,
+  fetchedAt: null, checkedAt: null, observedAt: null, staleAfter: null, expiresAt: null, retryAt: null, stale: false, report: null, error: null,
 });
 
 function reason(code: DevinFailureCode): string {
@@ -52,6 +56,8 @@ export class DevinConsumptionCache {
   peek(identity: string | null, now: Date = new Date()): DevinConsumptionSnapshot {
     this.sync(identity);
     const value = structuredClone(this.value);
+    value.observedAt = value.fetchedAt;
+    value.staleAfter = value.expiresAt;
     value.stale = value.report !== null && (value.state !== 'ready' || value.expiresAt === null || Date.parse(value.expiresAt) <= now.getTime());
     return value;
   }

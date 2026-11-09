@@ -87,7 +87,7 @@ describe('attempt-scoped CI evidence', () => {
 
   it.each([
     ok('', { code: 1 }), ok('', { timedOut: true }), ok('', { missing: true }),
-  ])('reports unavailable metadata without fetching jobs or logs', async (response) => {
+  ])('reports unavailable metadata without fetching jobs or logs (%#)', async (response) => {
     const f = fake([response]);
     expect((await readCiEvidence(repo, 10, 42, f.gh, 1)).source.status).toBe('attempt_unavailable');
     expect(f.calls).toHaveLength(1);

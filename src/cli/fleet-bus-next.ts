@@ -1,9 +1,12 @@
 import { claimNextBusWork } from '../core/fleet/bus-next-claim.js';
 
+const usage = `Usage: ashlr fleet bus-next --to <exact-address> --owner <label> --lease-ms <1..3600000> [--root <absolute>] --json
+Only messages addressed exactly to --to with an object body containing {"kind":"work"} are eligible. Local coordination only; labels are not identity or authority, and message bodies are never executed.`;
+
 /** Claims one opted-in receipt; never interprets or executes its body. */
 export async function cmdFleetBusNext(args: string[]): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log('Usage: ashlr fleet bus-next --to <exact-address> --owner <label> --lease-ms <1..3600000> [--root <absolute>] --json\nOnly messages addressed exactly to --to with an object body containing {"kind":"work"} are eligible. Local coordination only; labels are not identity or authority, and message bodies are never executed.');
+    console.log(usage);
     return 0;
   }
   const values = new Map<string, string>();

@@ -75,7 +75,7 @@ describe('resource ledger wait for headroom', () => {
     ledger({ window: 'credits', creditsRemaining: 0.01 }),
     ledger({ window: 'none', usedPct: null }),
     ledger({ observation: { source: 'codex-personal-sessions', asOf: '2026-10-31T16:00:00Z' } }),
-  ])('accepts fresh measured credits, unmetered status, or separate fresh observation', async sample => {
+  ])('accepts fresh measured credits, unmetered status, or separate fresh observation (%#)', async sample => {
     expect(await cmdResourceLedger(args, async () => sample, undefined, () => at)).toBe(0);
     expect(report()).toMatchObject({ result: 'ready', state: 'ready' });
   });
@@ -126,7 +126,7 @@ describe('resource ledger wait for headroom', () => {
     ['--lane', 'fake-lane', '--wait-headroom-seconds', '1', '--model', 'fake'],
     ['--lane', 'fake-lane', '--wait-headroom-seconds', '1', '--check-fresh-seconds', '1'],
     ['--lane', 'fake-lane', '--wait-headroom-seconds', '1', '--interval-ms', '999'],
-  ])('rejects invalid arguments %j', async (...invalid) => {
+  ])('rejects invalid arguments %j (%#)', async (...invalid) => {
     const read = vi.fn();
     expect(await cmdResourceLedger(invalid, read)).toBe(2);
     expect(read).not.toHaveBeenCalled();

@@ -17,7 +17,7 @@ it('lists the fleet pane titles and formatted shortcuts and follows registry cha
   for (const [title, chord] of [
     ["Leaders' inbox", '⌥⌘I'], ['Bus', '⌥⌘B'], ['Fleet events', '⌥⌘E'],
     ['Mac host', '⌥⌘H'], ['Worker timeline', '⌥⌘T'],
-    ['Supply', '⌥⌘U'], ['Leaders', '⌥⌘L'], ['Leader journal', '⌥⌘J'],
+    ['Supply', '⌥⌘U'], ['Leader', '⌥⌘L'], ['Leader journal', '⌥⌘J'],
   ]) {
     const term = group.getByText(title!);
     expect(term.parentElement).toHaveTextContent(chord!);

@@ -99,44 +99,45 @@ model name.
   counterpart shape (`localOptIn`, `remoteOptInEvidence`, channel
   `email|slack|imessage`, `scope`), defaults disabled, and wires no runtime,
   transport, or send path.
-- `src/core/comms/imessage-outbox.ts` + `sendIMessage` are **self-only**:
-  `isSelfIMessageHandle` accepts only `cfg.comms.imessageHandle`; any other
-  handle returns `not_self`/`drafts_unavailable`. Phantom **cannot send a
-  handoff to a counterpart** — do not widen this.
-- `phm imessage poll --apply` receipts allowlisted self-messages as channel
-  `imessage` (MASON-INBOX.md + COS queue); acks are recorded, not sent, until
-  RQ-IMSG-REPLY-1.
+- `src/core/comms/imessage-outbox.ts` and `sendIMessage` remain **owner-only**.
+  This restriction does not describe the separate teammate transport.
+- As checked in repository source on **2026-11-08**,
+  `src/core/comms/imessage-teammate-transport.ts` provides
+  `sendApprovedTeammateMessage` and `reconcileTeammateMessage`.
+  A teammate send requires macOS, enabled/unpaused comms, a non-owner handle
+  in the configured allowlist, local team/send-policy approval, and a fresh
+  configuration check immediately before sending. Do not weaken these checks.
+- `phm imessage poll --apply` stores allowlisted non-owner input in the local
+  teammate inbox. The separate `phm imessage respond --apply` worker can
+  generate and send approved teammate replies. These are mutating commands,
+  not readiness checks. Teammate identity never becomes owner authority.
+- Source availability does **not** establish that the installed host is current,
+  that its responder is running, or that a specific remote Dot route is accepted.
+  The offline handoff summary does not inspect configuration or prove delivery.
 
-## Manual handoff checklist (Ashlr → Dot)
+## Handoff checklist (Ashlr → Dot and back)
 
-The only working path today is manual: Phantom prepares and records; Mason
-delivers. Any step Phantom cannot perform routes to **needs-you**
-(`NEEDS-MASON.md`, listed by `ashlr fleet needs`) — never by widening
-permissions.
+Use a configured and authorized route when available; do not make Mason relay
+every message merely because the owner-only outbox is restricted. Unsupported,
+unconfigured or unapproved steps still go to **needs-you** without widening
+permissions. The official product limitations above remain distinct from the
+local native transport's source capabilities.
 
-1. **Scope.** Write the bounded task (template below) to a local file. No
-   secrets, credentials, personal text, or identifiers beyond repo/path names.
-   Treat the dot's cloud computer as outside the trust boundary.
-2. **Evidence.** Run `ashlr fleet dot-handoff --json` for the current
-   capability/limit summary (offline, read-only).
-3. **Deliver — needs-you.** Phantom cannot send to the dot. Record an open
-   NEEDS-MASON item asking Mason to send the task text to his dot on a
-   documented surface: ChatGPT app message, connected Slack/Teams, or the
-   dot's one-to-one iMessage texting (owner's verified number only). Do not
-   enable the a2a `imessage` counterpart channel expecting a send — it is
-   configuration-only.
-4. **Correlate.** The task carries `handoff-id`; ask the dot to echo it in its
-   first reply and final result. When Mason relays the dot's reply — via
-   self-iMessage intake (`phm imessage poll --apply`, channel `imessage`) or
-   pasted into a local session — match on `handoff-id`. A receipt proves
-   intake, not that the dot acted.
-5. **Review.** Dot output is untrusted data — a proposal, not a gate receipt.
-   Verify claimed SHAs, checks and files against GitHub before acting. Route
-   unsupported or ambiguous steps back to needs-you.
-
-Dot → Ashlr direction: the dot's proactive research cannot message other
-people; its updates arrive in Mason's conversations. Results return through
-Mason the same way — there is no inbound Phantom path from the dot.
+1. **Scope.** Prepare a bounded task with a stable `handoff-id`, named repository,
+   exact paths and observable acceptance checks. Keep credentials and private
+   message bodies out of engineering handoff artifacts.
+2. **Qualify.** Use `phm imessage doctor --json` for local readiness evidence.
+   Separately establish the teammate route's configured approval and installed
+   responder state. This offline summary is not that evidence.
+3. **Deliver.** Where the route is already authorized and operational, use the
+   existing teammate responder workflow described in [iMessage intake](IMESSAGE.md).
+   An accepted send is not delivery proof. Reconcile the exact outgoing message;
+   do not blindly resend an uncertain outcome. Otherwise use needs-you.
+4. **Correlate.** Keep the `handoff-id` in the task and result. Allowlisted
+   teammate replies have their own local inbox and hashed agent identity;
+   they do not need to be relabeled as owner input.
+5. **Review.** Verify returned SHAs, test claims and artifacts independently.
+   Receipt or delivery proves neither completed work nor authority to execute it.
 
 ## Bounded task template
 

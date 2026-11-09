@@ -52,6 +52,7 @@ import { scrubPrivateText } from '../util/scrub.js';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { ensurePrivateDirectory, readPrivateFileCapped, writePrivateFileAtomic } from '../verse/preferences.js';
 import type { BudgetPolicy } from '../routing/types.js';
+import { DELEGATION_DOCTRINE } from '../routing/stage-delegation.js';
 import type { SeatCapacity } from '../routing/headroom.js';
 import type { EffectivePolicy, LedgerEntry, LedgerReadOptions, LedgerReadResult } from '../authority/types.js';
 import type { RepoHold } from '../fleet/fleet-types.js';
@@ -154,6 +155,7 @@ OPERATING PRINCIPLES
 - Delete before you optimize: the best part is no part.
 - ONE bottleneck: name the single constraint that matters now. Not three.
 - ONE move: the highest-leverage action against that bottleneck, specific enough for an engineering agent.
+- ${DELEGATION_DOCTRINE}
 - ${focus}
 - Fast correction: you are graded on every move after ${LEADER_LIMITS.outcomeGradeDays} days against the metric you name. Your hit-rate is in the data. Mason's vetoes are lessons — do not repeat a vetoed move.
 - Standards: critique fleet work against written standards; add a standard when the evidence shows a repeated failure.
@@ -179,7 +181,7 @@ You propose; the system classifies and applies. Class A applies at once (Mason c
 - automation.upsert {name: slug, definition: {name, enabled, trigger: {kind: schedule|ci-red|github-issues|…}, lane, repos, instructions, maxConcurrent, maxPerDay, queueDepth, spendCapUsd, …}} (class B: a standing trigger that creates work; only where the automations API exists)
 - directive.self {text} (class A: a standing note to yourself — a commitment you will hold across memos)
 - escalate {request, argument} (anything else — Mason decides)
-Use work.dispatch for concrete engineering tasks and outcome.refine for coordinated work with dependencies. Let the model router and load balancer select eligible accounts and models across connected CLI subscriptions, local models and explicitly authorized API-credit pools. Choose by task fit, measured quality, available capacity, cost and latency; unknown measurements remain unknown. Do not assign a role or PR-sized work to a provider by brand. Decompose useful work into complete deliverables with testable acceptance, then refine from actual results.
+Use work.dispatch for concrete engineering tasks and outcome.refine for coordinated work with dependencies. Let the model router and load balancer select eligible accounts and models across connected CLI subscriptions, local models and explicitly authorized API-credit pools. Choose by task fit, measured quality, available capacity, cost and latency; unknown measurements remain unknown. Do not assign a role or PR-sized work to a provider by brand. Decompose useful work into complete deliverables with testable acceptance, then refine from actual results. When a task decomposes into stages, frontier lanes plan and verify while cheap lanes implement — delegate only the stage that is the actual bottleneck.
 cloud.launch and devin.launch are explicitly paid session actions, not prerequisites for larger tasks. Use them only when current grant and funding eligibility permit; otherwise use eligible fleet resources or backlog.add. Never infer permission to spend purchased credits or incur paid overages, and do not spend an API-credit pool with unknown balance or expiry. Subscriptions and API credits remain separate resources.
 Hypotheses you list are started as experiments automatically; do not add experiment.start actions. Goals, standards and focus/pause/archive priority changes you list become actions automatically.
 

@@ -36,6 +36,7 @@ vi.mock('../src/core/comms/telegram-channel.js', async (importOriginal) => ({
 }));
 
 import { runCommsCycle } from '../src/core/comms/dispatch.js';
+import { parseInbox } from '../src/core/fleet/mason-inbox.js';
 import { recordTelegramMessages } from '../src/core/comms/telegram-thread-map.js';
 import { setTelegramSendClockForTests, setTelegramTransportForTests } from '../src/core/integrations/telegram.js';
 import type { AshlrConfig } from '../src/core/types.js';
@@ -146,7 +147,7 @@ describe('Telegram status end to end', () => {
     const inbox = join(home, '.ashlr-runs', 'leader', 'MASON-INBOX.md');
     expect(existsSync(inbox)).toBe(true);
     const entries = readFileSync(inbox, 'utf8');
-    expect(entries.match(/^## /gm)).toHaveLength(1);
+    expect(parseInbox(entries)).toMatchObject([{ channel: 'telegram', text: 'what is blocking billing?' }]);
     expect(entries).toContain('what is blocking billing?');
     expect(sentTexts).toHaveLength(1);
     expect(sentTexts[0]).toContain('Inbox: what is blocking billing?');

@@ -32,7 +32,7 @@ import { openDropJobSheet } from '../fleet-queue/drop-job-sheet-store.js';
 import { mainRedFixDraft } from '../fleet-queue/main-red-fix-draft.js';
 import { requestLaneFocus } from '../fleet-lanes/lane-focus-request.js';
 import { postReleaseHold } from '../fleet-lanes/lane-hold-release.js';
-import { TERMINAL_PANE_ID } from '../terminal/terminal.pane.js';
+import { TERMINAL_PANE_ID } from '../dock/terminal-id.js';
 import { normalizePaneId } from './dock-catalog.js';
 import { setFocusMode } from './focus-mode.js';
 import { deriveCiNeedsYou } from './ci-needs-you.js';

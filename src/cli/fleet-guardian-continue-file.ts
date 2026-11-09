@@ -13,6 +13,7 @@ export interface GuardianContinueFileDependencies {
 
 // Same ceiling guardian-continue applies to its stdin summary.
 const LIMIT = 32 * 1024;
+export const usage = 'Usage: ashlr fleet guardian-continue-file --result-file <abs> [guardian-continue args]';
 
 // `fleet guardian-continue-file --result-file <abs path> [guardian-continue args]`
 // reads the private receipt written by `guardian-record` through the bounded

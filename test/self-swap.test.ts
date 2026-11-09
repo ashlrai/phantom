@@ -181,7 +181,7 @@ if (process.platform === 'win32') {
       expect(JSON.parse(log.mock.calls[0]![0])).toMatchObject({ mode: 'plan', previous: 'v1' });
       expect(readdirSync(root)).toEqual(before);
     });
-    it.each([['--apply'], ['--apply', '--plan', '--supervised'], ['--unknown'], ['--next'], ['--json', '--json']])('rejects unsafe or malformed options %j', async (...args) => {
+    it.each([['--apply'], ['--apply', '--plan', '--supervised'], ['--unknown'], ['--next'], ['--json', '--json']])('rejects unsafe or malformed options %j (%#)', async (...args) => {
       vi.spyOn(console, 'log').mockImplementation(() => {});
       expect(await cmdSelfSwap(args)).toBe(2);
       expect(selected()).toBe('versions/v1');

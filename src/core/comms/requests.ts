@@ -20,14 +20,13 @@
 
 import {
   appendFileSync,
-  existsSync,
   mkdirSync,
-  readFileSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { readPrivateFileTailCapped } from '../verse/preferences.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -90,11 +89,21 @@ function ensureDir(): void {
 // Low-level JSONL I/O
 // ---------------------------------------------------------------------------
 
+/** Only the newest records are live queue state; oldest rows are resolved history. */
+const STORE_READ_BYTES = 8 * 1024 * 1024;
+
 function loadAll(): CommsRequest[] {
   try {
-    const p = storePath();
-    if (!existsSync(p)) return [];
-    const raw = readFileSync(p, 'utf8');
+    const read = readPrivateFileTailCapped(storePath(), STORE_READ_BYTES);
+    if (read === null) return [];
+    let raw = read.text;
+    if (read.truncated) {
+      // The first retained line is torn mid-record — drop it. Live records
+      // are the newest; a queue row aged out of the window can no longer be
+      // sent anyway (TTL expiry is fail-closed).
+      const firstBreak = raw.indexOf('\n');
+      raw = firstBreak < 0 ? '' : raw.slice(firstBreak + 1);
+    }
     const results: CommsRequest[] = [];
     for (const line of raw.split('\n')) {
       const t = line.trim();

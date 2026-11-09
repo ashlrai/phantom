@@ -2,6 +2,7 @@
 /** Frozen installs for trusted sibling worktrees, with a same-volume store. */
 import { execFile } from 'node:child_process';
 import { mkdir, realpath, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -40,10 +41,40 @@ export async function installWorktree(root, io = {}) {
   return { packageManager: `pnpm@${PNPM_VERSION}`, store, durationMs: Math.round(performance.now() - started) };
 }
 
+/** Donor checkout for healing: PHANTOM_WT_DONOR, else the default sibling when present. */
+export async function healDonor(io = {}) {
+  const env = io.env ?? process.env;
+  const donor = env.PHANTOM_WT_DONOR || join(io.home ?? homedir(), 'Projects/ashlrai/wt/guardian-phantom');
+  try { await (io.stat ?? stat)(donor); return donor; } catch { return null; }
+}
+
+/** Best-effort: run wt-deps, then tsc-warm. A failing step logs one line and never throws. */
+export async function healWorktree(root, io = {}) {
+  const run = io.exec ?? exec;
+  const log = io.log ?? console.error;
+  const donor = await healDonor(io);
+  if (!donor) return { donor: null, steps: [] };
+  const steps = [];
+  for (const verb of ['wt-deps', 'tsc-warm']) {
+    try {
+      await run('pnpm', ['exec', 'tsx', 'src/cli/index.ts', 'fleet', verb, '--dir', root, '--from', donor, '--apply'], { cwd: root, timeout: 120_000, maxBuffer: 4 * 1024 * 1024 });
+      steps.push({ verb, ok: true });
+    } catch {
+      // Child output is never forwarded; one fixed line per failed step.
+      log(`Worktree heal step ${verb} failed; continuing (run \`ashlr fleet ${verb} --from <donor> --apply\` by hand)`);
+      steps.push({ verb, ok: false });
+    }
+  }
+  return { donor, steps };
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     if (process.argv.length > 3) throw new Error('Usage: node scripts/worktree-install.mjs [WORKTREE]');
-    console.log(JSON.stringify(await installWorktree(resolve(process.argv[2] ?? '.'))));
+    const root = resolve(process.argv[2] ?? '.');
+    const result = await installWorktree(root);
+    const heal = await healWorktree(root);
+    console.log(JSON.stringify({ ...result, heal: heal.steps }));
   } catch (error) {
     // Child output may include registry credentials; never forward it.
     console.error(error.cmd ? 'Worktree install failed (child process); check tool availability and lockfile consistency' : error.message);

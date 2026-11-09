@@ -77,7 +77,7 @@ it('rejects malformed and unavailable directories before claiming or starting a 
   expect(listBusInboxAfter(0, 100, { root })).toMatchObject({ status: 'ok', messages: [expect.objectContaining({ envelope: expect.objectContaining({ id: 'request' }) })] });
 });
 
-it('inherits the process directory when cwd is omitted', async () => {
+it('bus work loop inherits the process directory when cwd is omitted', async () => {
   post();
   const result = await run();
   expect(result.code).toBe(0);

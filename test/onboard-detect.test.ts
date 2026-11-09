@@ -23,7 +23,7 @@ import {
 } from '../src/core/onboard.js';
 import { RESOURCE_CATALOG } from '../src/core/onboard/catalog.js';
 import { envKeyPresent, probeCliLogin, probeLoopbackEndpoint, resolveCliOnPath } from '../src/core/readiness.js';
-import { saveAutomation } from '../src/core/automations/index.js';
+import { createAutomation } from '../src/core/automations/index.js';
 import { loadConfig } from '../src/core/config.js';
 import type { WebServerOptions } from '../src/core/types.js';
 
@@ -158,12 +158,12 @@ const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
 describe('scheduled agents + balance', () => {
   const seedAgents = async () => {
-    await saveAutomation({
+    await createAutomation({
       name: 'Nightly flaky test hunt', enabled: true,
       trigger: { kind: 'schedule', rrule: 'freq=daily;byhour=2' },
       lane: 'fleet', repos: ['*'],
     });
-    await saveAutomation({
+    await createAutomation({
       name: 'Issue watcher', enabled: true,
       trigger: { kind: 'github-issues', labels: ['ashlr'], query: null, includePrs: false, pollMinutes: 15 },
       lane: 'fleet', repos: ['*'],
@@ -236,7 +236,7 @@ describe('GET /api/onboard/status', () => {
 
   it('lists scheduled agents and the existing verse route toggles them', async () => {
     useFakeBin();
-    const { automation } = await saveAutomation({
+    const automation = await createAutomation({
       name: 'Nightly flaky test hunt', enabled: true,
       trigger: { kind: 'schedule', rrule: 'freq=daily;byhour=2' },
       lane: 'fleet', repos: ['*'],

@@ -157,7 +157,7 @@ describe('manual usage CLI', () => {
     ['record', '--remaining-points', '1', '--remaining-points', '1', '--total-points', '2'],
     ['status', '--file'], ['record', '--remaining-points', '0x10', '--total-points', '1000'],
     ['record', '--remaining-points', '-1', '--total-points', '1000'],
-  ])('refuses invalid arguments before persistence: %j', async (args) => {
+  ])('refuses invalid arguments before persistence: %j (%#)', async (args) => {
     vi.spyOn(process.stderr, 'write').mockReturnValue(true);
     expect(await cmdFleetGrokUsage(args)).not.toBe(0);
     expect(existsSync(file)).toBe(false);
