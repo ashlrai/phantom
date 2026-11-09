@@ -44,6 +44,7 @@
   border-radius: var(--radius-sm);
 }
 .orderItem .row { width: 100%; }
+.orderItem[hidden] { display: none; }
 .orderItem[data-dragging] { opacity: 0.5; }
 .orderItem[data-drop-target] { box-shadow: inset 0 0 0 1px var(--accent-500); }
 .moveControls { display: flex; flex-direction: column; opacity: 0; }

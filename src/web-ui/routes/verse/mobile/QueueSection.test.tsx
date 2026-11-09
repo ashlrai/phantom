@@ -26,12 +26,18 @@ afterEach(() => { evictAll(); vi.unstubAllGlobals(); });
 describe('QueueSection', () => {
   it('shows counts by lane, parked jobs and the latest precheck skip', async () => {
     stubQueue(() => json(queue));
-    renderMobile(<QueueSection />);
+    const { context } = renderMobile(<QueueSection />);
     const section = await screen.findByRole('region', { name: 'Queue' });
     expect(await within(section).findByText('2 ready · 5 parked · 1 skips/24 h')).toBeInTheDocument();
     expect(within(section).getByText('codex', { exact: true })).toBeInTheDocument();
     expect(within(section).getByText('Parked by hand')).toBeInTheDocument();
-    expect(within(section).getByText(/job-a, job-b, job-c, job-d/)).toHaveTextContent('+1 more');
+    const parked = within(section).getByLabelText('Parked groups');
+    expect(parked).toHaveTextContent('job-a, job-b, job-c, job-d · +1 more');
+    for (const job of ['job-a', 'job-b', 'job-c', 'job-d']) {
+      expect(within(parked).getByRole('button', { name: `Open worker ${job}` })).toBeInTheDocument();
+    }
+    fireEvent.click(within(parked).getByRole('button', { name: 'Open worker job-a' }));
+    expect(context.navigate).toHaveBeenCalledWith({ screen: 'worker', job: 'job-a' });
     expect(within(section).getByText('job-skip · 13 · files already exist')).toBeInTheDocument();
     expect(within(section).getByText(/^Updated /)).toBeInTheDocument();
   });

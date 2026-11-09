@@ -10,14 +10,15 @@ import { buildFleetPulseMessage } from '../src/core/comms/fleet-pulse.js';
 const NOW = Date.parse('2026-11-02T23:30:00Z');
 const ET_MIDNIGHT = Date.parse('2026-11-02T05:00:00Z');
 
+function searchRow(repo: string, number: number, at: number) {
+  return { repository_url: `https://api.github.com/repos/${repo}`, number, title: `change ${number}`,
+    pull_request: { merged_at: new Date(at).toISOString() } };
+}
+function response(items: unknown[], total = items.length, incomplete = false): string {
+  return JSON.stringify({ total_count: total, incomplete_results: incomplete, items });
+}
 function ghRows(n: number, firstAtMs = ET_MIDNIGHT + 60_000): string {
-  return JSON.stringify(Array.from({ length: n }, (_, i) => ({
-    repository: { nameWithOwner: `ashlrai/repo-${i % 5}` },
-    number: 1000 + i,
-    title: `change ${i}`,
-    url: `https://github.com/ashlrai/repo-${i % 5}/pull/${1000 + i}`,
-    closedAt: new Date(firstAtMs + i * 60_000).toISOString(),
-  })));
+  return response(Array.from({ length: n }, (_, i) => searchRow(`ashlrai/repo-${i % 5}`, 1000 + i, firstAtMs + i * 60_000)));
 }
 
 const emptyDigest = { ledger: async () => [] };
@@ -45,10 +46,94 @@ describe('startOfDayInZone', () => {
 });
 
 describe('getFleetTruth', () => {
+  it('recognizes an independently observed current Phantom merge at its actual merged_at', async () => {
+    const at = Date.parse('2026-11-07T02:43:07Z');
+    const truth = await getFleetTruth(at - 60_000, { nowMs: at + 60_000, fresh: true,
+      gh: async () => response([searchRow('ashlrai/phantom', 3848, at)]), ledgerMerges: () => [], runsDir: noRunsDir });
+    expect(truth.mergeCountState).toBe('ok');
+    expect(truth.merged).toMatchObject([{ repo: 'ashlrai/phantom', number: 3848, mergedAtMs: at }]);
+  });
+
+  it.each([
+    ['malformed row', response([{ number: 1 }])],
+    ['incomplete search', response([], 0, true)],
+    ['partial page', response([], 2)],
+    ['invalid envelope', '[]'],
+  ])('never treats %s as a complete empty search', async (_name, body) => {
+    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, fresh: true, gh: async () => body,
+      ledgerMerges: () => [], runsDir: noRunsDir });
+    expect(truth.mergeCountState).toBe('unavailable');
+    const facts = await gatherBriefFacts(ET_MIDNIGHT, NOW, { digest: { ...emptyDigest, fleetTruth: async () => truth } });
+    expect(composeBrief('evening', facts)).toContain('merge count unavailable');
+  });
+
+  it('keeps a valid first page as incomplete when the second page fails', async () => {
+    const first = Array.from({ length: 100 }, (_, i) => searchRow('ashlrai/phantom', i + 1, ET_MIDNIGHT + i * 1000));
+    let calls = 0;
+    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, fresh: true, gh: async () => {
+      if (++calls === 1) return response(first, 101); throw new Error('page unavailable');
+    }, ledgerMerges: () => [], runsDir: noRunsDir });
+    expect(truth.mergeCountState).toBe('unavailable'); expect(truth.merged).toHaveLength(100);
+  });
+
+  it('shares one deadline across pages and keeps already observed rows when time expires', async () => {
+    let clock = 0; const timeouts: number[] = [];
+    const first = Array.from({ length: 100 }, (_, i) => searchRow('ashlrai/phantom', i + 1, ET_MIDNIGHT + i * 1000));
+    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, fresh: true, monotonicNow: () => clock,
+      gh: async (_args, options) => { timeouts.push(options!.timeoutMs); clock = 30_000; return response(first, 101); },
+      ledgerMerges: () => [], runsDir: noRunsDir });
+    expect(timeouts).toEqual([30_000]); expect(truth.mergeCountState).toBe('unavailable');
+    expect(truth.merged).toHaveLength(100);
+  });
+
+  it('passes the remaining deadline to the next page and preserves partial results on timeout', async () => {
+    let clock = 0; const timeouts: number[] = [];
+    const first = Array.from({ length: 100 }, (_, i) => searchRow('ashlrai/phantom', i + 1, ET_MIDNIGHT + i * 1000));
+    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, fresh: true, monotonicNow: () => clock,
+      gh: async (_args, options) => { timeouts.push(options!.timeoutMs); if (timeouts.length === 1) { clock = 29_500; return response(first, 101); } throw new Error('timeout'); },
+      ledgerMerges: () => [], runsDir: noRunsDir });
+    expect(timeouts).toEqual([30_000, 500]); expect(truth.mergeCountState).toBe('unavailable');
+    expect(truth.merged).toHaveLength(100);
+  });
+
+  it('accepts two complete pages and binds each row to the requested window', async () => {
+    let page = 0;
+    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, fresh: true, gh: async () => {
+      page++; const count = page === 1 ? 100 : 1;
+      return response(Array.from({ length: count }, (_, i) => searchRow('ashlrai/phantom', (page - 1) * 100 + i + 1, ET_MIDNIGHT + i * 1000)), 101);
+    }, ledgerMerges: () => [], runsDir: noRunsDir });
+    expect(page).toBe(2); expect(truth.mergeCountState).toBe('ok'); expect(truth.merged).toHaveLength(101);
+  });
+
+  it('marks the search cap incomplete even when all ten pages arrive', async () => {
+    let page = 0;
+    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, fresh: true, gh: async () => {
+      page++; return response(Array.from({ length: 100 }, (_, i) => searchRow('ashlrai/phantom', (page - 1) * 100 + i + 1, ET_MIDNIGHT + i * 1000)), 1001);
+    }, ledgerMerges: () => [], runsDir: noRunsDir });
+    expect(truth.truncated).toBe(true); expect(truth.mergeCountState).toBe('unavailable'); expect(truth.merged).toHaveLength(1000);
+  });
+
+  it('does not treat a stale or mismatched returned window as complete', async () => {
+    const facts = await gatherBriefFacts(ET_MIDNIGHT, NOW, { digest: { ...emptyDigest, fleetTruth: async () => ({
+      windowStartMs: ET_MIDNIGHT + 1000, windowEndMs: NOW - 1000, merged: [], mergeCountState: 'ok', truncated: false, running: null, queued: null,
+    }) } });
+    const text = composeBrief('evening', facts);
+    expect(text).toContain('merge count unavailable'); expect(text).not.toContain('no GitHub-visible');
+  });
+
+  it('does not present native-ledger-only observations as complete GitHub coverage', async () => {
+    const facts = await gatherBriefFacts(ET_MIDNIGHT, NOW, { digest: { ...emptyDigest, fleetTruth: async () => ({
+      windowStartMs: ET_MIDNIGHT, windowEndMs: NOW, mergeCountState: 'ok', truncated: false, running: null, queued: null,
+      merged: [{ repo: 'ashlrai/phantom', number: 10, title: '', url: '', mergedAtMs: NOW - 1000, source: 'ledger' }],
+    }) } });
+    const text = composeBrief('evening', facts);
+    expect(text).toContain('recorded (merge search incomplete)');
+    expect(text).not.toContain('GitHub-visible ashlrai merges');
+  });
   it('excludes a merge one second before ET midnight and includes one at midnight', async () => {
-    const rows = JSON.stringify([
-      { repository: { nameWithOwner: 'ashlrai/a' }, number: 1, title: 'late yesterday', url: 'u1', closedAt: new Date(ET_MIDNIGHT - 1000).toISOString() },
-      { repository: { nameWithOwner: 'ashlrai/a' }, number: 2, title: 'first today', url: 'u2', closedAt: new Date(ET_MIDNIGHT).toISOString() },
+    const rows = response([
+      searchRow('ashlrai/a', 1, ET_MIDNIGHT - 1000),
+      searchRow('ashlrai/a', 2, ET_MIDNIGHT),
     ]);
     const truth = await getFleetTruthToday({ nowMs: NOW, gh: async () => rows, ledgerMerges: () => [], runsDir: noRunsDir });
     expect(truth.mergeCountState).toBe('ok');
@@ -75,8 +160,9 @@ describe('getFleetTruth', () => {
     const gh = async (): Promise<string> => { calls++; return ghRows(2); };
     const opts = { gh, ledgerMerges: () => [], runsDir: noRunsDir };
     await getFleetTruth(ET_MIDNIGHT, { ...opts, nowMs: NOW });
-    await getFleetTruth(ET_MIDNIGHT, { ...opts, nowMs: NOW + 119_000 });
+    const cached = await getFleetTruth(ET_MIDNIGHT, { ...opts, nowMs: NOW + 119_000 });
     expect(calls).toBe(1);
+    expect(cached.mergeCountState).toBe('unavailable'); expect(cached.windowEndMs).toBe(NOW);
     await getFleetTruth(ET_MIDNIGHT, { ...opts, nowMs: NOW + 121_000 });
     expect(calls).toBe(2);
   });
@@ -97,7 +183,7 @@ describe('getFleetTruth', () => {
     mkdirSync(join(root, 'queue'));
     writeFileSync(join(root, 'queue', 'ready.tsv'), 'READY\tclaude\tphantom\twork\tP0\tone\nREADY\tcodex-cmp\tphantom\twork\tP1\ttwo\n');
     writeFileSync(join(root, 'queue', 'admission.json'), JSON.stringify({ schema: 'dispatchd.admission.v1', ts: new Date(NOW - 30_000).toISOString(), running: 6 }));
-    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, gh: async () => '[]', ledgerMerges: () => [], runsDir: root, liveWorkers: async () => 99 });
+    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, gh: async () => response([]), ledgerMerges: () => [], runsDir: root, liveWorkers: async () => 99 });
     expect(truth.running).toBe(6);
     expect(truth.queued).toBe(2);
   });
@@ -106,7 +192,7 @@ describe('getFleetTruth', () => {
     const root = mkdtempSync(join(tmpdir(), 'fleet-truth-runs-'));
     mkdirSync(join(root, 'queue'));
     writeFileSync(join(root, 'queue', 'admission.json'), JSON.stringify({ ts: new Date(NOW - 3_600_000).toISOString(), running: 6 }));
-    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, gh: async () => '[]', ledgerMerges: () => [], runsDir: root, liveWorkers: async () => 3 });
+    const truth = await getFleetTruth(ET_MIDNIGHT, { nowMs: NOW, gh: async () => response([]), ledgerMerges: () => [], runsDir: root, liveWorkers: async () => 3 });
     expect(truth.running).toBe(3);
     expect(truth.queued).toBeNull();
   });
@@ -138,8 +224,8 @@ describe('evening brief', { timeout: 60_000 }, () => {
   });
 
   it('still says "nothing merged today" when gh answered with zero', async () => {
-    const facts = await gatherBriefFacts(ET_MIDNIGHT, NOW, sources(async () => '[]'));
-    expect(composeBrief('evening', facts)).toContain('Shipped: nothing merged today');
+    const facts = await gatherBriefFacts(ET_MIDNIGHT, NOW, sources(async () => response([])));
+    expect(composeBrief('evening', facts)).toContain('Shipped: no GitHub-visible ashlrai merges in this window');
   });
 
   it('shows fleet running/queued when known', () => {

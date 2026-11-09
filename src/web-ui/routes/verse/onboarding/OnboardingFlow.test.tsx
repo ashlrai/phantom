@@ -287,7 +287,7 @@ describe('OnboardingFlow — presence and dismissal', () => {
     screen.getByRole('button', { name: 'Back' }).focus();
     await user.keyboard(' ');
     expect(screen.getByRole('region', { name: 'Welcome to Phantom' })).toHaveFocus();
-    for (const title of ['Your seats', 'Local runtime', 'Turn on autonomy', 'Three ways to stop', 'Make it yours']) {
+    for (const title of ['Your seats', 'Local runtime', 'Turn on autonomy', 'Your fleet', 'Three ways to stop', 'Make it yours']) {
       screen.getByRole('button', { name: 'Next' }).focus();
       await user.keyboard('{Enter}');
       expect(screen.getByRole('region', { name: title })).toHaveFocus();
@@ -297,7 +297,7 @@ describe('OnboardingFlow — presence and dismissal', () => {
     expect(screen.getByRole('region', { name: 'Three ways to stop' })).toHaveFocus();
     await user.keyboard('{Escape}');
     expect(screen.getByRole('button', { name: /Getting started/ })).toHaveFocus();
-    expect(getOnboardingState()).toMatchObject({ step: 4, expanded: false, dismissedAt: null, completedAt: null });
+    expect(getOnboardingState()).toMatchObject({ step: 5, expanded: false, dismissedAt: null, completedAt: null });
   });
 
   it('the last step records completion and hands the shell a new-chat request', async () => {
@@ -540,6 +540,9 @@ describe('OnboardingPanel — replay from Settings', () => {
         <OnboardingFlow />
       </>,
     );
+    // TeamPanel reads its own data on mount; opening the guide must not fetch.
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/api/verse/team?'), expect.anything()));
+    vi.mocked(fetch).mockClear();
     const guide = screen.getByText('How Phantom works');
     expect(guide.closest('details')!.open).toBe(false);
     guide.focus();

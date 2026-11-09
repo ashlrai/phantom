@@ -174,14 +174,15 @@ describe('M254 fetchClaudeUsageApi — parse utilization', () => {
     expect(result!.weeklyResetAt).toBe(wkReset);
   });
 
-  it('returns null for malformed response (missing five_hour)', async () => {
+  it('preserves weekly evidence when five_hour is absent', async () => {
     process.env['CLAUDE_CODE_OAUTH_TOKEN'] = 'test-token-redacted';
     mockFetchWith({ seven_day: { utilization: 0.5, resets_at: 1700000000 } });
 
     const { fetchClaudeUsageApi } = await import('../src/core/fabric/usage-api.js');
     const result = await fetchClaudeUsageApi();
 
-    expect(result).toBeNull();
+    expect(result).toMatchObject({ fiveHourPct: null, fiveHourResetAt: null,
+      weeklyPct: 50, weeklyResetAt: 1700000000 });
   });
 
   it('returns null for malformed response (utilization not a number)', async () => {

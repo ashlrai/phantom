@@ -20,8 +20,8 @@ trusted: a version/help probe executes their code; this is not a sandbox.
 | Product | Executable | Reviewed release | Source commit |
 | --- | --- | --- | --- |
 | Phantom Secrets | `phantom` | [0.7.9](https://github.com/ashlrai/phantom-secrets/releases/tag/v0.7.9) | `7a51ce512ec4aee12cc29ff859036af63fbe93db` |
-| Locus | `locus` | [0.5.0](https://github.com/ashlrai/locus/releases/tag/v0.5.0) | `e7bced3cd4cb4adf08bbba020f2e05f163b55941` |
-| Lexicon | `lexicon` | [0.5.4](https://github.com/ashlrai/lexicon/releases/tag/v0.5.4) | `6ebc0721e33de2dafafbb54d89a6af50a362046a` |
+| Locus | `locus` | [0.7.0](https://github.com/ashlrai/locus/releases/tag/v0.7.0) | `94c3a0cc419faf348b635783c586c72388eee72f` |
+| Lexicon | `lexicon` | [0.5.9](https://github.com/ashlrai/lexicon/releases/tag/v0.5.9) | `d704451dce0247ae97b4f7b125e4780b22ba3e7b` |
 
 These pins describe reviewed CLI identity/version surfaces. They do not prove
 artifact provenance, runtime contract support or installed readiness. Verify
@@ -43,7 +43,7 @@ Stack, Cortex and Ashlr MD are independent tools outside this three-tool invento
 | Phantom Secrets | [Install — source guide](https://github.com/ashlrai/phantom-secrets/blob/59004c50ae3ceb7f2c292a5f532d6504cc0f96fc/docs/getting-started.md#install) · [MCP clients — reviewed unmerged source](https://github.com/ashlrai/phantom-secrets/blob/2cb7594a527e23f98f1aa8922bf5627af146cfd8/README.md#mcp-integration-claude-code-cursor-windsurf-codex) | Inventory does not initialize a project or inspect vault health. |
 | Locus | [Install — source guide](https://github.com/ashlrai/locus/blob/98e7020a7dbc02053525e66c02db83bc301564cf/README.md#install) · [MCP clients — reviewed unmerged source](https://github.com/ashlrai/locus/blob/35ce8b5763b04cbda68c19c5f8c40ed054332355/docs/mcp.md) | Registration does not establish a pinned, supervised execution session. |
 | Lexicon | [Agent installation — source guide](https://github.com/ashlrai/lexicon/blob/757f83976d63b5ffad91257cb1bae2bb555a6e96/llms-install.md) · [MCP and project trust — source guide](https://github.com/ashlrai/lexicon/blob/757f83976d63b5ffad91257cb1bae2bb555a6e96/docs/MCP.md) | Project-bound MCP and native voice-service setup remain separate. |
-| Ashlr Stack | [Install — reviewed unmerged source](https://github.com/ashlrai/ashlr-stack/blob/9912b271d454b34e2968cda4a134b05e81be96e2/README.md#install) · [MCP clients — reviewed unmerged source](https://github.com/ashlrai/ashlr-stack/blob/9912b271d454b34e2968cda4a134b05e81be96e2/README.md#connect-your-agent-mcp) | Independent; published 0.1.1 requires Bun 1.2+ and declares Node 20+. |
+| Ashlr Stack | [Install — reviewed unmerged source](https://github.com/ashlrai/ashlr-stack/blob/9912b271d454b34e2968cda4a134b05e81be96e2/README.md#install) · [MCP clients — reviewed unmerged source](https://github.com/ashlrai/ashlr-stack/blob/9912b271d454b34e2968cda4a134b05e81be96e2/README.md#connect-your-agent-mcp) | Independent; this repository qualifies Stack CLI and MCP 0.3.6. See [agent toolchain](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-TOOLCHAIN.md). |
 | Ashlr Cortex | [Source setup — reviewed unmerged source](https://github.com/ashlrai/ashlr-cortex/blob/0e83cd3f635ebb66d2f747dd78ffd05540253161/AGENTS.md#2-monorepo-map) · [MCP clients — reviewed unmerged source](https://github.com/ashlrai/ashlr-cortex/blob/0e83cd3f635ebb66d2f747dd78ffd05540253161/docs/mcp.md) | Independent; database, identity and MCP token setup are separate. |
 | Ashlr MD | [Install — source guide](https://github.com/ashlrai/ashlr-md/blob/ff75b57eb923a2c570e657c5c2c0eed720445a0e/docs/INSTALL.md) · [Agent and MCP setup — reviewed unmerged source](https://github.com/ashlrai/ashlr-md/blob/d8d3b18cf17eb8fe0c286f87465561dbdcd7e848/README.md#connect-your-agent-mcp) | Independent; verify the installed MCP executable for your OS and client. |
 

@@ -23,6 +23,7 @@ import {
   createFleetServer, MAX_FLEET_OUTPUT_BYTES, type FleetReaders,
 } from '../src/mcp/fleet-server.js';
 import { readFleetBusHops } from '../src/mcp/fleet.js';
+import { FLEET_MCP_TOOL_NAMES } from './support/fleet-mcp-tools.js';
 
 let root: string;
 const connections: Client[] = [];
@@ -72,7 +73,7 @@ describe('fleet_bus_hops MCP tool', () => {
   it('is listed beside the existing tools with a bounded read-only schema', async () => {
     const client = await connect();
     const { tools } = await client.listTools();
-    expect(tools.map(tool => tool.name)).toEqual(['fleet_status', 'fleet_loop', 'fleet_bus_hops']);
+    expect(tools.map(tool => tool.name)).toEqual([...FLEET_MCP_TOOL_NAMES]);
     const tool = tools.find(candidate => candidate.name === 'fleet_bus_hops');
     expect(tool?.annotations).toEqual({
       readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,

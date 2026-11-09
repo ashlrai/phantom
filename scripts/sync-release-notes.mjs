@@ -5,12 +5,13 @@ import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { syncCandidateVersion } from './sync-candidate-version.mjs';
+import { synchronize } from './site-freshness.mjs';
 
 export function normalizeReleaseNotes(text, version) {
   assert.match(version, /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
   const lines = text.split('\n');
   const prefix = `## [${version}]`;
-  const matches = lines.flatMap((line, i) => line === prefix || line.startsWith(`${prefix} — `) || line.startsWith(`${prefix}(`) ? [i] : []);
+  const matches = lines.flatMap((line, i) => line === prefix || line.startsWith(`${prefix} — `) || line.startsWith(`${prefix} - `) || line.startsWith(`${prefix}(`) ? [i] : []);
   assert.equal(matches.length, 1, 'release notes must contain one current version section');
   const start = matches[0];
   let end = lines.findIndex((line, i) => i > start && line.startsWith('## ['));
@@ -18,7 +19,7 @@ export function normalizeReleaseNotes(text, version) {
   const section = lines.slice(start, end);
   const date = /\b\d{4}-\d{2}-\d{2}\b/.exec(section[0])?.[0];
   assert.ok(date, 'release notes need a release date');
-  section[0] = `${prefix} — ${date}`;
+  section[0] = `${prefix} - ${date}`;
   assert.ok(section.slice(1).join('\n').trim().length > 50, 'release notes body is empty or too short');
   lines.splice(start, end - start);
   const unreleased = lines.findIndex(line => line === '## [Unreleased]');
@@ -44,6 +45,9 @@ export function syncReleaseNotes(root, version) {
   manifest['.'] = version;
   writeFileSync(path, notes);
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  // Managed site facts depend on the newly normalized dated heading as well
+  // as the candidate carriers; synchronize only after both sources are saved.
+  synchronize(root);
   return result;
 }
 

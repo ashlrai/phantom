@@ -41,6 +41,14 @@ describe('inbox read query and projection', () => {
     expect(result?.generatedAt).toEqual(expect.any(String));
     expect(JSON.stringify(result)).not.toContain('private');
   });
+  it('filters a channel by its bound receipt while rejecting spoofed metadata', () => {
+    const result = projectInboxRead({ sourceState: 'healthy', entries: [
+      { ...entry('valid', 'phone (phone-1)'), channel: 'phone', id: 'phone-1' },
+      { ...entry('spoof', 'desktop (desk-1)'), channel: 'phone', id: 'desk-1' },
+      { ...entry('near', 'phone-extra (phone-2)'), channel: 'phone-extra', id: 'phone-2' },
+    ] }, { limit: 50, source: 'PHONE' });
+    expect(result?.entries).toEqual([entry('valid', 'phone (phone-1)')]);
+  });
   it('scrubs secrets, rejects paths in all fields and invalid reader envelopes', () => {
     const result = projectInboxRead({ sourceState: 'missing', entries: [
       { ...entry('ok'), text: 'Bearer abcdefghijklmnopqrstuvwxyz0123456789' },
@@ -61,7 +69,7 @@ describe('fleet inbox read route', () => {
     expect(await request(api, INBOX)).toMatchObject({ handled: true, status: 200, wire: { limit: 50, source: null, entries: [entry('old', 'telegram'), entry('middle', 'desktop'), entry('new')] } });
     expect((await request(api, INBOX + '?limit=2')).wire).toMatchObject({ entries: [entry('middle', 'desktop'), entry('new')] });
     expect((await request(api, INBOX + '?source=Telegram')).wire).toMatchObject({ entries: [entry('old', 'telegram'), entry('new')] });
-    expect(readInbox.mock.calls.map(args => args[0])).toEqual([50, 2, 50]);
+    expect(readInbox.mock.calls.map(args => args[0])).toEqual([200, 200, 200]);
   });
   it.each(['limit=0', 'limit=201', 'limit=abc', 'source=a%2Fb'])('rejects %s before reading', async search => {
     const readInbox = vi.fn(async () => raw);

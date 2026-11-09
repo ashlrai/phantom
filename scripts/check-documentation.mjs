@@ -20,6 +20,8 @@ export const OPERATOR_DOCUMENTATION = Object.freeze([
   'docs/STANDING-AUTHORITY.md',
   'docs/CLOUD.md',
   'docs/LEADER.md',
+  'docs/LEADER-NETWORK.md',
+  'docs/DISK-MAINT.md',
   'docs/DEVIN.md',
   'docs/VERSE-CONTEXT.md',
   'docs/VERSE-BROWSER.md',

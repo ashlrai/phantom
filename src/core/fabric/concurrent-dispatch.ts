@@ -403,6 +403,10 @@ export function planConcurrentDispatch(
 // runConcurrentDispatch — async executor
 // ---------------------------------------------------------------------------
 
+// Shared across overlapping waves in this process. Cross-process fencing remains
+// the durable queue coordinator's responsibility; never substitute a lease here.
+const activeDispatchIds = new Set<string>();
+
 /**
  * Execute a DispatchPlan with full parallelism across backends.
  *
@@ -429,7 +433,18 @@ export async function runConcurrentDispatch(
   killSwitchFn: () => boolean,
   cfg: ConcurrentDispatchCfg,
 ): Promise<DispatchResult[]> {
-  if (cfg.admission) return runAdmittedDispatch(plan, dispatchFn, killSwitchFn, cfg.admission);
+  const seen = new Set<string>();
+  const claim = (id: string): boolean => {
+    if (seen.has(id) || activeDispatchIds.has(id)) return false;
+    seen.add(id);
+    activeDispatchIds.add(id);
+    return true;
+  };
+  const dispatch = async (item: WorkItem, backend: EngineId): Promise<unknown> => {
+    try { return await dispatchFn(item, backend); }
+    finally { activeDispatchIds.delete(item.id); }
+  };
+  if (cfg.admission) return runAdmittedDispatch(plan, dispatch, killSwitchFn, cfg.admission, claim);
 
   // Group assignments by backend.
   const byBackend = new Map<EngineId, DispatchAssignment[]>();
@@ -448,7 +463,7 @@ export async function runConcurrentDispatch(
   for (const [backend, group] of byBackend) {
     // Get slot count from plan's slotsMap (hard governor).
     const slotCount = measuredSlots(plan, backend);
-    backendTasks.push(runBackendGroup(backend, group, slotCount, dispatchFn, killSwitchFn));
+    backendTasks.push(runBackendGroup(backend, group, slotCount, dispatch, killSwitchFn, claim));
   }
 
   // All backend groups run in parallel; collect regardless of per-group failures.
@@ -473,6 +488,7 @@ async function runAdmittedDispatch(
   dispatchFn: (item: WorkItem, backend: EngineId) => Promise<unknown>,
   stopped: () => boolean,
   admission: NonNullable<ConcurrentDispatchCfg['admission']>,
+  claim: (id: string) => boolean,
 ): Promise<DispatchResult[]> {
   const results: DispatchResult[] = new Array(plan.assignments.length);
   const pending = new Set(plan.assignments.map((_assignment, index) => index));
@@ -491,6 +507,7 @@ async function runAdmittedDispatch(
         const slots = measuredSlots(plan, backend);
         if (slots === 0) { hold(index); continue; }
         if ((active.get(backend) ?? 0) >= slots || !admission.canStart(backend)) continue;
+        if (!claim(item.id)) { hold(index); continue; }
         pending.delete(index);
         admission.start(backend);
         active.set(backend, (active.get(backend) ?? 0) + 1);
@@ -531,6 +548,7 @@ async function runBackendGroup(
   slotCount: number,
   dispatchFn: (item: WorkItem, backend: EngineId) => Promise<unknown>,
   killSwitchFn: () => boolean,
+  claim: (id: string) => boolean,
 ): Promise<DispatchResult[]> {
   const results: DispatchResult[] = group.map(({ item }) => ({
     item, backend, attempted: false, settled: null,
@@ -540,7 +558,7 @@ async function runBackendGroup(
     while (next < group.length) {
       const index = next++;
       const { item } = group[index]!;
-      if (killSwitchFn()) continue;
+      if (killSwitchFn() || !claim(item.id)) continue;
       let settled: PromiseSettledResult<unknown>;
       try {
         settled = { status: 'fulfilled', value: await dispatchFn(item, backend) };

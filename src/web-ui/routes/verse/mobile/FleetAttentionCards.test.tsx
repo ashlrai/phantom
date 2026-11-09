@@ -7,8 +7,13 @@ import { json, renderMobile, stubFetch } from './mobile.test-support.js';
 import { NeedsYouScreen } from './screens/NeedsYouScreen.js';
 
 const fixture = {
-  v: 1, lastTick: new Date().toISOString(), claudeLane: 'down: quota', switches: [], lanes: [],
-  mergesLastHour: { count: 0 }, codexPersonal: null,
+  v: 1, generatedAt: new Date().toISOString(),
+  sources: { runsDir: 'healthy', workers: 'healthy', inbox: 'healthy', codex: 'healthy', merges: 'healthy' },
+  lastTick: new Date().toISOString(), paused: false, memFreePct: 50, diskFreeGb: 80,
+  claudeLane: 'down: quota', switches: [],
+  lanes: [{ lane: 'claude', running: 0, target: 1, queued: 0, held: false, heldReason: null, tokensLastHour: null, merged24h: null, mergeRate24h: null }],
+  workers: [], leaders: [{ label: 'leader', ageSeconds: 30 }], orchestratorAgents: 1,
+  publishesLastHour: [], mergesLastHour: { count: 1, items: [] }, events: [], codexPersonal: null, inbox: [], drop: null,
 };
 afterEach(() => { evictAll(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -16,8 +21,8 @@ describe('FleetAttentionCards', () => {
   it('shows the Claude lane and its Mac fix without issuing writes', async () => {
     const stub = stubFetch({ 'GET /api/verse/fleet/runs': fixture });
     renderMobile(<FleetAttentionCards />);
-    expect(await screen.findByRole('heading', { name: 'Claude lane down' })).toBeInTheDocument();
-    expect(screen.getByText('On the Mac run ~/.ashlr-runs/bin/fix-claude-lane.sh')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Claude lane is down: 1 slots idle' })).toBeInTheDocument();
+    expect(screen.getByText('~/.ashlr-runs/bin/fix-claude-lane.sh')).toBeInTheDocument();
     expect(stub.posts()).toHaveLength(0);
   });
   it('renders nothing when the endpoint is absent', async () => {
@@ -29,7 +34,7 @@ describe('FleetAttentionCards', () => {
   it('does not show All clear while fleet attention is present', async () => {
     stubFetch({ 'GET /api/verse/fleet/runs': fixture });
     renderMobile(<NeedsYouScreen />);
-    expect(await screen.findByRole('heading', { name: 'Claude lane down' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Claude lane is down: 1 slots idle' })).toBeInTheDocument();
     expect(screen.queryByText('All clear')).not.toBeInTheDocument();
   });
   it('fetches and polls only while visible', async () => {

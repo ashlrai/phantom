@@ -47,7 +47,7 @@ describe('bus reply stdin', { timeout: 30000 }, () => {
     expect(snapshot()).toBe(before);
   });
 
-  it.each(['', '  ', '{', 'null', '[]', 'true', '42', '"text"', '{"inReplyTo":"request"}', '{"x":1e999}'])('refuses invalid or reserved body without a receipt', async body => {
+  it.each(['', '  ', '{', 'null', '[]', 'true', '42', '"text"', '{"inReplyTo":"request"}', '{"x":1e999}'])('refuses invalid or reserved body without a receipt (%#)', async body => {
     post(); const before = snapshot();
     const result = await run(stream(body));
     expect(result).toMatchObject({ code: 2, result: { outcome: 'invalid-input' } });

@@ -7,6 +7,7 @@ import { clearMutationToken, getMutationToken, setMutationToken } from '../../..
 import { evictAll } from '../../../data/cache.js';
 import { FEATURE_FLAGS_STORAGE_KEY, resetFeatureFlagsForTests } from '../../../data/feature-flags.js';
 import { SettingsSection } from './SettingsSection.js';
+import { WorkspaceSettingsPanel } from './WorkspaceSettingsPanel.js';
 
 function WorkspaceConsumer() {
   return useFeatureFlag('agentWorkspace') ? <div>Workspace feature fixture</div> : null;
@@ -71,6 +72,39 @@ describe('Settings agent workspace opt-in', () => {
     expect(screen.getByRole('switch', { name: 'Agent workspace' })).toBeChecked();
     act(() => setFeatureFlag('agentWorkspace', false));
     expect(screen.getByRole('switch', { name: 'Agent workspace' })).not.toBeChecked();
+  });
+
+  it('keeps the control and consumers reactive when preference writes fail', async () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('Storage full', 'QuotaExceededError');
+    });
+    const user = userEvent.setup();
+    render(<><WorkspaceSettingsPanel /><WorkspaceConsumer /></>);
+    const toggle = screen.getByRole('switch', { name: 'Agent workspace' });
+    await user.click(toggle);
+    expect(toggle).toBeChecked();
+    expect(screen.getByText('Workspace feature fixture')).toBeInTheDocument();
+    await user.click(toggle);
+    expect(toggle).not.toBeChecked();
+    expect(screen.queryByText('Workspace feature fixture')).not.toBeInTheDocument();
+    expect(localStorage.getItem(FEATURE_FLAGS_STORAGE_KEY)).toBeNull();
+  });
+
+  it('does not call native preferences when a desktop bridge is present', async () => {
+    const setPreference = vi.fn(() => true);
+    const nativeBridge = { setPreference };
+    vi.stubGlobal('__ASHLR_DESKTOP__', nativeBridge);
+    expect(Reflect.get(window, '__ASHLR_DESKTOP__')).toBe(nativeBridge);
+    const user = userEvent.setup();
+    renderSettings();
+    const toggle = screen.getByRole('switch', { name: 'Agent workspace' });
+    await user.click(toggle);
+    expect(toggle).toBeChecked();
+    await user.click(toggle);
+    expect(toggle).not.toBeChecked();
+    expect(setPreference).not.toHaveBeenCalled();
+    expect(getMutationToken()).toBeNull();
+    expect(vi.mocked(fetch).mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
   });
 
   it('never renders or logs secret, token or capability values from stored flags', async () => {

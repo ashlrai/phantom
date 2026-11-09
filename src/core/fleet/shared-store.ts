@@ -1335,6 +1335,36 @@ export class SharedStore {
     }, []);
   }
 
+  /**
+   * Transfer an exact live, pre-execution claim under the queue lock. A fresh
+   * generation fences the previous holder without a release/reclaim window.
+   * Executing claims cannot be handed off: their effects require reconciliation.
+   */
+  handoffClaim(ref: QueueClaimRef, machineId: string): QueueClaimRef | null {
+    if (
+      !this.ensureDir() || typeof machineId !== 'string' || machineId.trim().length === 0 ||
+      Buffer.byteLength(machineId, 'utf8') > MAX_MACHINE_ID_BYTES || machineId === ref.machineId
+    ) return null;
+    return this.withLock<QueueClaimRef | null>((q) => {
+      const now = Date.now();
+      const epoch = q.nextClaimEpoch ?? 0;
+      if (
+        ref.phase !== 'claimed' || !this.claimMatches(q, ref) || ref.leaseUntil <= now ||
+        !Number.isSafeInteger(epoch) || epoch < 1 || epoch >= Number.MAX_SAFE_INTEGER
+      ) return { queue: q, result: null };
+      const ownerToken = randomUUID();
+      const phase: QueueClaimPhase = 'claimed';
+      const leaseUntil = now + this.leaseMs;
+      const ownerKey = encodeOwner({ machineId, ownerToken, epoch, phase, leaseUntil });
+      q.nextClaimEpoch = epoch + 1;
+      q.claims[ref.itemId] = { machineId: ownerKey, leaseUntil };
+      return {
+        queue: q,
+        result: { ...ref, machineId, ownerToken, epoch, phase, leaseUntil, ownerKey },
+      };
+    }, null, { retryLockMs: this.authorityMutationRetryMs() });
+  }
+
   /** Cross the durable pre-effect boundary for one exact active claim. */
   beginClaimExecution(ref: QueueClaimRef): QueueClaimRef | null {
     const result = this.beginClaimExecutionResult(ref);

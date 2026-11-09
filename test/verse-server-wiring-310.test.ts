@@ -623,6 +623,19 @@ describe('cli/verse: background services', () => {
     };
   }
 
+  it('owns configured teammate communications in the live sidecar and stops it with the server', async () => {
+    const order: string[] = [];
+    const stop = vi.fn();
+    const schedule = vi.fn(() => stop);
+    const cfg = { ...OPEN_CFG, comms: { enabled: true } } as AshlrConfig;
+    const deps = { ...fakes(order), loadTeammateComms: async () => ({ scheduleTeammateMessages: schedule }) };
+    const services = await startVerseBackgroundServices(cfg, deps);
+    expect(schedule).toHaveBeenCalledWith(cfg); expect(services.started).toContain('teammate-comms');
+    services.stop(); services.stop(); expect(stop).toHaveBeenCalledOnce();
+    const isolated = await startVerseBackgroundServices(cfg, { ...deps, accountServices: false });
+    expect(isolated.started).not.toContain('teammate-comms'); expect(schedule).toHaveBeenCalledOnce(); isolated.stop();
+  });
+
   it('starts all eight with the server config, without awaiting the usage prime or the Apps warm-up, and stops them newest first', async () => {
     const order: string[] = [];
     const services = await startVerseBackgroundServices(OPEN_CFG, fakes(order));

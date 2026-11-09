@@ -66,7 +66,7 @@ describe('email outbox sender', () => {
     const second = await sendEmailOutbox({ dir: outboxDir, allowedRecipients: allowedSenders, transport: okTransport(calls) });
     expect(second).toMatchObject({ queued: 0, sent: 0, refused: 0, failed: 0, stuck: 0 });
     expect(calls).toHaveLength(1);
-    expect(readEmailOutbox(outboxDir).counts).toEqual({ queued: 0, sent: 1, stuck: 0 });
+    expect(readEmailOutbox(outboxDir).counts).toEqual({ queued: 0, sent: 1, stuck: 0, drafted: 0 });
   });
 
   it('sends each file once under two concurrent passes', async () => {
@@ -129,10 +129,17 @@ describe('email outbox sender', () => {
     expect(calls).toHaveLength(0);
     expect(result.stuck).toBe(1);
     expect(result.details[0]).toMatchObject({ name: 'orphan.reply.eml', outcome: 'stuck', reason: 'interrupted-send' });
-    expect(readEmailOutbox(outboxDir).counts).toEqual({ queued: 0, sent: 0, stuck: 1 });
+    expect(readEmailOutbox(outboxDir).counts).toEqual({ queued: 0, sent: 0, stuck: 1, drafted: 0 });
     expect(readEmailOutbox(outboxDir).entries[0]).toMatchObject({ state: 'stuck', reason: 'interrupted-send' });
   });
 });
+
+/** Spoof only the mocked native transport call; keep filesystem custody on the host OS. */
+async function withDarwinTransport<T>(run: () => Promise<T>): Promise<T> {
+  const original = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  Object.defineProperty(process, 'platform', { ...original, value: 'darwin' });
+  try { return await run(); } finally { Object.defineProperty(process, 'platform', original); }
+}
 
 describe('macMailTransport', () => {
   it('passes a hostile subject only as an argv item, never in script source', async () => {
@@ -142,7 +149,7 @@ describe('macMailTransport', () => {
       seen.push({ argv, timeoutMs });
       return { code: 0 };
     };
-    const result = await macMailTransport(runner)({ to: sender, subject: hostile, body: 'ack body' });
+    const result = await withDarwinTransport(() => macMailTransport(runner)({ to: sender, subject: hostile, body: 'ack body' }));
     expect(result.ok).toBe(true);
     const { argv, timeoutMs } = seen[0]!;
     expect(argv[0]).toBe('osascript');
@@ -157,9 +164,9 @@ describe('macMailTransport', () => {
 
   it('returns a failure on a non-zero exit and never throws', async () => {
     const transport = macMailTransport(async () => ({ code: 1, stderr: 'Mail error' }));
-    expect(await transport({ to: sender, subject: 's', body: 'b' })).toEqual({ ok: false, error: 'Mail error' });
+    expect(await withDarwinTransport(() => transport({ to: sender, subject: 's', body: 'b' }))).toEqual({ ok: false, error: 'Mail error' });
     const thrown = macMailTransport(async () => { throw new Error('spawn died'); });
-    expect((await thrown({ to: sender, subject: 's', body: 'b' })).ok).toBe(false);
+    expect((await withDarwinTransport(() => thrown({ to: sender, subject: 's', body: 'b' }))).ok).toBe(false);
   });
 
   it('fails without spawning on non-darwin', async () => {
@@ -187,11 +194,11 @@ describe('fleet email-outbox verb', () => {
     await dropReply('order-1');
     expect(await cmdFleetEmailOutbox(['--json'], { runsDir })).toBe(0);
     const listed = JSON.parse(logs[0]!);
-    expect(listed.counts).toEqual({ queued: 1, sent: 0, stuck: 0 });
+    expect(listed.counts).toEqual({ queued: 1, sent: 0, stuck: 0, drafted: 0 });
     expect(listed.entries[0]).toMatchObject({ state: 'queued', to: sender });
     expect(logs[0]).not.toContain('Please check the fleet');
     expect(await cmdFleetEmailOutbox([], { runsDir })).toBe(0);
-    expect(logs[1]).toContain('email-outbox: queued=1 sent=0 stuck=0');
+    expect(logs[1]).toContain('email-outbox: queued=1 drafted=0 sent=0 stuck=0');
     expect(errors).toEqual([]);
   });
 

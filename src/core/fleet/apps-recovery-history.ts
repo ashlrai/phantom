@@ -1,6 +1,6 @@
 /** Read-only projection of retained apps-watch bus events. */
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter } from './bus-inbox.js';
-import { FLEET_APPS } from '../verse/fleet-apps-api.js';
+import { FLEET_APPS } from './app-await.js';
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const app = (v: unknown): v is string => typeof v === 'string' && (FLEET_APPS as readonly string[]).includes(v);
@@ -70,7 +70,7 @@ export function readAppsRecoveryHistory(root: string, after: number, limit: numb
       cursor = row.cursor;
       const body = row.envelope.body;
       if (row.envelope.from !== 'apps-watch' || row.envelope.to !== 'leaders' || !object(body) ||
-        (invocationId !== undefined && body.invocationId !== invocationId)) continue;
+        (invocationId !== undefined && (typeof body.invocationId !== 'string' || body.invocationId.toLowerCase() !== invocationId.toLowerCase()))) continue;
       const data = project(body);
       if (data) events.push({ cursor: row.cursor, receivedAt: row.receivedAt, invocationId: body.invocationId, ...data });
       if (events.length === limit) return { v: 1 as const, availability: 'available', events, nextCursor: cursor, hasMore: true };

@@ -17,6 +17,9 @@ export type {
 } from '../core/fleet/lane-truth.js';
 
 const laneName = /^[a-z][a-z0-9-]{1,40}$/;
+const usage = `ashlr fleet lane-truth [--lane NAME]... [--json] [--check]
+Read-only; stale or missing evidence is unknown. reset_detected is advisory.
+Checking never releases holds or grants dispatch authority.`;
 const checkReasons = {
   held_with_capacity: 'held despite available capacity; investigate the hold',
   idle_with_work: 'queued work with no running workers; investigate the stall',
@@ -32,9 +35,7 @@ const MAX_CHECK_ENTRIES = 256;
 
 export async function cmdFleetLaneTruth(args: string[], readers = defaultLaneTruthReaders()): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log('ashlr fleet lane-truth [--lane NAME]... [--json] [--check]\n' +
-      'Read-only; stale or missing evidence is unknown. reset_detected is advisory.\n' +
-      'Checking never releases holds or grants dispatch authority.');
+    console.log(usage);
     return 0;
   }
   let json = false;

@@ -9,7 +9,12 @@ import type { ResourceAccountConnection } from '../src/core/resources/connection
 import type { ResourceConnectionConfig } from '../src/core/resources/connection-monitor.js';
 
 const resolver = vi.hoisted(() => vi.fn());
-vi.mock('../src/core/resources/native-profile.js', () => ({ resolveNativeSeatLaunch: resolver }));
+// The display resolver shares the launch fixture's answer, projected to metadata only.
+vi.mock('../src/core/resources/native-profile.js', () => ({ resolveNativeSeatLaunch: resolver,
+  resolveNativeSeatDisplayMetadata: (options: unknown) => {
+    const r = resolver(options);
+    return r.ok ? { seatId: r.launch.seatId, provider: r.launch.provider, command: r.launch.command, nativeStatePath: r.launch.nativeStatePath } : null;
+  } }));
 const now = Date.parse('2026-01-01T00:00:00.000Z');
 const account: ResourceConnectionConfig['accounts'][number] = {
   id: 'claude-fixture', label: 'Fixture', provider: 'claude', command: ['/inert/claude'],

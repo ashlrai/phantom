@@ -20,7 +20,7 @@
  * Never throws.
  */
 
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync, type Stats } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, realpathSync, renameSync, writeFileSync, type Stats } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -96,11 +96,16 @@ function validEntry(value: unknown): value is TelegramThreadEntry {
     (value['actionIds'] === undefined || Array.isArray(value['actionIds']) && value['actionIds'].every(id => typeof id === 'string'));
 }
 
+/** save() bounds entries/buttons/memos at KEEP limits — a map file past 8 MiB is corrupt, not loadable. */
+const MAP_READ_BYTES = 8 * 1024 * 1024;
+
 function load(): ThreadMapFile {
   try {
     const p = mapPath();
     if (!existsSync(p)) return empty();
-    const parsed = JSON.parse(readFileSync(p, 'utf8')) as Partial<ThreadMapFile>;
+    const read = readPrivateFileCapped(p, MAP_READ_BYTES);
+    if (read === null || read.truncated) return empty();
+    const parsed = JSON.parse(read.text) as Partial<ThreadMapFile>;
     return {
       v: 1,
       entries: Array.isArray(parsed.entries) ? parsed.entries.filter(validEntry) : [],
