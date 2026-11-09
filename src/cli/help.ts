@@ -123,6 +123,7 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     safety: 'append',
     jsonShape: 'Merge: {status,jobId}; read: {v:1,jobs:[{jobId,repo,prompt}]}; complete: {status,jobId}; errors exit 1, usage exit 2',
   },
+  { usage: 'phm jobs empty [--since 24h] [--json]', description: 'Explain empty jobs from local notes and logs.', safety: 'read', jsonShape: 'jobs.empty.v1 {hours,total,counts,jobs}' },
   {
     usage: 'phm metrics ingest --jobs <jobs.jsonl> --status <status.json> [--json]',
     description: 'Read local job snapshots into deterministic lane and tier metrics and advisory priors. No network, writes or operational steering.',
@@ -693,6 +694,7 @@ const TOPIC_LABELS: Record<HelpTopic, string> = {
 /** The full command table (the former inline cmdHelp list), topic-tagged. */
 export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'tune <prepare|evaluate>', desc: 'Prepare scrub-gated local model datasets or evaluate paired evidence.', topic: 'core' },
+  { cmd: 'jobs empty [--since 24h] [--json]', desc: 'Explain empty jobs from local notes and logs.', topic: 'observability' },
   { cmd: 'metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]', desc: 'Estimate idle slot-minutes and flag long-running jobs from local snapshots.', topic: 'autonomy' },
   { cmd: 'graph nodes|edges|status [--json]', desc: 'Read-only GRAPH-1 nodes, edges, and availability; unavailable data exits 1. See phm graph --help.', topic: 'knowledge' },
   { cmd: 'radar list|run|diff [--json]', desc: 'Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.', topic: 'observability' },

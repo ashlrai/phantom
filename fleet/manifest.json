@@ -32,7 +32,7 @@
     { "src": "contrib/mac/integrated-merge.py", "root": "runs-bin", "class": "pinned", "note": "host-installed only after independent review + digest pin" },
     { "src": "contrib/mac/release-autorun.sh", "root": "runs-bin", "class": "pinned", "note": "release observer; digest-pinned host adoption" },
     { "src": "contrib/mac/mason-inbox-append", "root": "runs-bin", "class": "pinned", "note": "leader surface writer (leader wrappers pin)" },
-    { "name": "launch.sh", "root": "runs-bin", "class": "pinned", "note": "host-managed launcher; no repo mirror" },
+    { "src": "contrib/mac/host-integration/launch.candidate.sh", "name": "launch.sh", "root": "runs-bin", "class": "pinned", "note": "host-managed launcher candidate; Security pin required before adoption" },
     { "name": "scrub.pl", "root": "runs-bin", "class": "pinned", "note": "GATES v3 secret gate; ops-side only" },
     { "name": "reap-one.sh", "root": "runs-bin", "class": "pinned", "note": "external reaper that runs the pinned publish.sh" },
     { "name": "precheck.sh", "root": "runs-bin", "class": "pinned", "note": "bounded precheck called by dispatchd; staged copies live under staging/" },
