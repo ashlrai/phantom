@@ -115,6 +115,14 @@ ambiguous repeated boundaries are reported as unmeasured, not estimated;
 phase totals need not cover the whole wall time. Existing ledgers may not yet
 contain all boundaries.
 
+Run event log: `phm events list|head|branches|replay|append|note|checkout|fork
+<job> [--json]` keeps one append-only event log per job at
+`<job>.events.jsonl` under the runs dir. History is a tree with a movable
+head: `checkout` seeks along a branch, `fork` diverges under a new label, and
+`replay` folds the head path into a resumable state including the newest
+checkpoint reference. `phm checkpoint save --job <id>` records handoffs onto
+the trail. See [docs/RUN-EVENT-LOG.md](docs/RUN-EVENT-LOG.md).
+
 Fleet IQ: `phm fleet eval-report [--days 7] [--prs prs.json] --json` scores
 merged PRs post-merge — revert, regression and follow-up rates, CI-failure
 correlation, and time-to-merge — rolled up by lane, tier, lane+tier and repo

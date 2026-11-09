@@ -64,6 +64,10 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'disk', 'app', 'radar',
   // Standing disk maintenance: plan/apply reclaim classes (RQ-DISKMAINT).
   'disk-maint',
+  // Event-sourced per-job run state: movable head, fork, replay (RQ-SWE5-EVENT-LOG).
+  'events',
+  // Dispatched by index.ts but previously missing here (caught by cli-registry-drift).
+  'chain',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
@@ -158,7 +162,10 @@ const SUBCOMMANDS: Record<string, string[]> = {
   mirror: ['list', 'add', 'sync', 'path', 'remove', 'reconcile', 'release', 'help'],
   // Mirror the verb switch in src/cli/cloud.ts (runCloudCli).
   capacity: ['publish'],
-  checkpoint: ['resume', '--json', '--help'],
+  chain: ['verify', '--json', '--help'],
+  checkpoint: ['resume', 'save', '--job', '--runs-dir', '--json', '--help'],
+  // Mirrors the verb dispatch in src/cli/events.ts (cmdEvents).
+  events: ['list', 'head', 'branches', 'replay', 'append', 'note', 'checkout', 'fork', '--kind', '--data', '--at', '--branch', '--reason', '--runs-dir', '--json', '--help'],
   sessions: ['list', 'revoke', 'help'],
   cloud: ['launch', 'list', 'refresh', 'improve', 'budget', 'backlog', 'stats', 'help'],
   // Mirror the verb switch in src/cli/jev.ts (runJevCli).

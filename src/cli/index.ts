@@ -2226,6 +2226,11 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'events': {
+        process.exitCode = await (await import('./events.js')).cmdEvents(rest);
+        break;
+      }
+
       case 'issues': {
         process.exitCode = await (await import('./issues.js')).cmdIssues(rest);
         break;
