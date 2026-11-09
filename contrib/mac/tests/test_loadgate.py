@@ -65,12 +65,12 @@ class GateTests(unittest.TestCase):
         self.assertNotIn('LOADGATE', events(home))
 
     def test_loadavg_soft_limit_halves_claims(self):
-        home = self._case({'LOADGATE_NCPU': '18', 'LOADGATE_LOADAVG': '64'}, n=4,
+        home = self._case({'LOADGATE_NCPU': '18', 'LOADGATE_LOADAVG': '64'}, n=8,
                           prep=lambda h: stub_ps(h, 962))
-        self.assertEqual(len(launched(home)), 2)
+        self.assertEqual(len(launched(home)), 4)
         self.assertTrue(admission(home)['admit'])
         self.assertEqual(admission(home)['decision'], 'halve_claims')
-        self.assertEqual(len(ready_left(home)), 2)
+        self.assertEqual(len(ready_left(home)), 4)
 
     def test_loadavg_at_three_times_ncpu_admits_full_batch(self):
         home = self._case({'LOADGATE_LOADAVG': '54'}, n=4)

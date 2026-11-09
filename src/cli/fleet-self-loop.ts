@@ -26,10 +26,22 @@
  * whichever bound occurs first stops admission. When the count bound ends
  * the loop the summary carries termination 'max-ticks' and an optional
  * maxTicks count. Default behavior (no --max-ticks) is unchanged.
+ *
+ * --bus-to <label> --bus-root <abs-path> --bus-run-id <token> (one required
+ * group): after each completed pass, post a compact progress envelope to the
+ * existing durable bus transport (appendBusInbox).  No second bus is
+ * implemented; posting uses the real transport so the bus file is
+ * readable through listBusInboxAfter.  The body contains kind, run-id,
+ * pass, exit-code, state, consecutiveFailures, nextDelayMs — never raw
+ * reports, observer exceptions, or local paths.  An accepted duplicate
+ * counts as delivery; any other post result ends admission via
+ * observer-error semantics without re-running the tick, and produces
+ * nonzero exit.  Opt-in only: without the group, the bus is untouched.
  */
 import { isAbsolute, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { cmdFleetSelfTick } from './fleet-self-tick.js';
+import { looksLikeOption } from './args.js';
 import type { RunSelfTickOptions, SelfTickSteps } from '../core/fleet/self-tick.js';
 import type { SpawnLike } from '../core/fleet/planner-run.js';
 import {
@@ -41,6 +53,12 @@ import {
   type SelfLoopPassEvent,
   type SelfLoopTick,
 } from '../core/fleet/self-loop.js';
+import {
+  parseBusConfigGroup,
+  buildProgressEnvelope,
+  postProgressEnvelope,
+  type SelfLoopBusConfig,
+} from '../core/fleet/self-loop-bus-progress.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 /** Hard cap on any streamed NDJSON line. Export lets tests assert the bound. */
@@ -74,7 +92,7 @@ const toStreamLine = (record: Record<string, unknown>, heavyKey: 'report' | 'las
   return out;
 };
 
-const usage = `Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--max-ticks <n>] [--failure-backoff-max-ms <ms>] [--busy-backoff-max-ms <ms>] [--runs-dir <abs>] [--apply] [--json | --stream]
+const usage = `Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--max-ticks <n>] [--failure-backoff-max-ms <ms>] [--busy-backoff-max-ms <ms>] [--runs-dir <abs>] [--apply] [--json | --stream] [--bus-to <label> --bus-root <abs> --bus-run-id <token>]
 Repeat the self-management pass (fleet self-tick) for a bounded window:
 first pass immediately, then one pass every interval (default 60000ms,
 minimum 1000ms), never overlapping, until --duration-ms (maximum 24h) is
@@ -97,7 +115,11 @@ final sanitized summary line (unchanged default shape). --stream instead
 prints sanitized bounded NDJSON live: one {"v":1,"record":"pass",...} line
 per completed pass, then exactly one {"v":1,"record":"summary",...} line.
 --stream and --json are mutually exclusive and rejected before any pass
-runs. Exit 0 when no pass failed, 1 when any did (or the stream sink did),
+runs. --bus-to/--bus-root/--bus-run-id post a compact progress envelope (kind,
+run-id, pass, exit-code, state, consecutiveFailures, nextDelayMs) to the
+existing durable bus after each pass; all three flags are required together,
+otherwise the bus is untouched. Ticks remain dry-run unless --apply.
+Exit 0 when no pass failed, 1 when any did (or the stream/bus sink did),
 2 on usage.`;
 
 interface Dependencies {
@@ -127,6 +149,10 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
   let durationMs: number | undefined, intervalMs: number | undefined, runsDir: string | undefined;
   let failureBackoffMaxMs: number | undefined, busyBackoffMaxMs: number | undefined;
   let maxTicks: number | undefined;
+  // Bus flags (one required group: all absent = inactive).
+  let busTo: string | undefined, busRoot: string | undefined, busRunId: string | undefined;
+  const busValue = (value: string | undefined): string | undefined =>
+    typeof value === 'string' && value.length > 0 && !looksLikeOption(value) ? value : undefined;
   const parseMs = (value: string | undefined): number | undefined => {
     if (typeof value !== 'string' || !/^\d+$/.test(value)) return undefined;
     const parsed = Number(value);
@@ -162,6 +188,18 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
       const value = args[++i];
       if (typeof value !== 'string' || !isAbsolute(value)) return invalid();
       runsDir = value;
+    } else if (arg === '--bus-to' && busTo === undefined) {
+      const value = busValue(args[++i]);
+      if (value === undefined) return invalid();
+      busTo = value;
+    } else if (arg === '--bus-root' && busRoot === undefined) {
+      const value = args[++i];
+      if (typeof value !== 'string' || !isAbsolute(value)) return invalid();
+      busRoot = value;
+    } else if (arg === '--bus-run-id' && busRunId === undefined) {
+      const value = busValue(args[++i]);
+      if (value === undefined) return invalid();
+      busRunId = value;
     } else return invalid();
   }
   // Compatibility is explicit: --stream IS the machine-readable mode, so
@@ -170,6 +208,14 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
   if (durationMs === undefined) return invalid();
   if (failureBackoffMaxMs !== undefined && failureBackoffMaxMs < (intervalMs ?? SELF_LOOP_DEFAULT_INTERVAL_MS)) return invalid();
   if (busyBackoffMaxMs !== undefined && busyBackoffMaxMs < (intervalMs ?? SELF_LOOP_DEFAULT_INTERVAL_MS)) return invalid();
+  // The bus flag group is all-or-nothing; a partial or malformed group is a
+  // usage error before any pass runs, and the reason names the missing flag.
+  const busParse = parseBusConfigGroup(busTo, busRoot, busRunId);
+  if (!busParse.ok) {
+    error(`fleet self-loop: error: ${busParse.reason}`);
+    return 2;
+  }
+  const busConfig: SelfLoopBusConfig | null = busParse.value;
   // One root for the lock and all three steps of every pass, resolved here
   // once — same fallbacks as self-tick, so nothing can drift between passes.
   const root = resolve(runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'));
@@ -207,17 +253,34 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
   // NDJSON line the moment it finishes — the real tick path included — so a
   // supervisor sees progress while later passes are still deferred. A throw
   // from the sink ends admission safely inside runSelfLoop ('observer-error').
-  const onPass = stream
-    ? (event: SelfLoopPassEvent): void => {
-      output(toStreamLine({
-        v: 1, record: 'pass', pass: event.pass, exitCode: event.exitCode,
-        state: event.state, report: event.report,
-        ...(event.consecutiveFailures === undefined ? {} : { consecutiveFailures: event.consecutiveFailures }),
-        ...(event.consecutiveBusy === undefined ? {} : { consecutiveBusy: event.consecutiveBusy }),
-        ...(event.nextDelayMs === undefined ? {} : { nextDelayMs: event.nextDelayMs }),
-      }, 'report'));
+  const emitPass = (event: SelfLoopPassEvent): void => {
+    output(toStreamLine({
+      v: 1, record: 'pass', pass: event.pass, exitCode: event.exitCode,
+      state: event.state, report: event.report,
+      ...(event.consecutiveFailures === undefined ? {} : { consecutiveFailures: event.consecutiveFailures }),
+      ...(event.consecutiveBusy === undefined ? {} : { consecutiveBusy: event.consecutiveBusy }),
+      ...(event.nextDelayMs === undefined ? {} : { nextDelayMs: event.nextDelayMs }),
+    }, 'report'));
+  };
+  // When the bus group is configured, each completed pass also posts a compact
+  // progress envelope through the existing durable bus transport. An accepted
+  // duplicate counts as delivery; any other post outcome throws, which
+  // runSelfLoop folds into observer-error — admission stops, the pass still
+  // counts, and the summary reports the failure (exit 1).
+  const busInboxOptions = busConfig === null ? {} : { root: busConfig.root };
+  const postBusPass = busConfig === null ? undefined : (event: SelfLoopPassEvent): void => {
+    const posted = postProgressEnvelope(buildProgressEnvelope(
+      busConfig, event.pass, event.exitCode, event.state,
+      event.consecutiveFailures, event.nextDelayMs,
+    ), busInboxOptions);
+    if (posted.status !== 'posted' && posted.status !== 'duplicate') {
+      throw new Error(`bus progress post failed: ${posted.status}`);
     }
-    : undefined;
+  };
+  const onPass = stream && postBusPass !== undefined
+    ? async (event: SelfLoopPassEvent): Promise<void> => { emitPass(event); postBusPass(event); }
+    : stream ? emitPass
+    : postBusPass;
   const removeSignalListeners = onSignal(() => controller.abort());
   let summary;
   try {
