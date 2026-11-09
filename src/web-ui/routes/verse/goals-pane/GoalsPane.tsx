@@ -1,7 +1,7 @@
 /**
  * routes/verse/goals-pane/GoalsPane.tsx: every open goal, its progress, its
- * next milestone and the mission state, beside the Leader thread. Read-only:
- * goals change through `ashlr goals`, never from here. Each source fails on
+ * next milestone and the mission state, beside the Leader thread. Goals change
+ * through `ashlr goals`; the only write here is a steering line to the Leader. Each source fails on
  * its own. All text is untrusted and rendered as React text, never HTML.
  */
 import { useMemo } from 'react';
@@ -12,6 +12,7 @@ import { Card, CardNote } from '../command/Surface.js';
 import { readMergeSpeed } from '../fleet-merges/fleet-merges-model.js';
 import { fleetMergesQuery } from '../fleet-merges/fleet-merges-queries.js';
 import { mergeBacklogQuery } from '../fleet-merges/merge-backlog-queries.js';
+import { GoalSteer } from './GoalSteer.js';
 import { GoalMetric, previousDayValue } from './GoalMetric.js';
 import { goalLine, goalsHeadline, openGoals } from './goals-pane-model.js';
 import styles from './goals-pane.module.css';
@@ -74,6 +75,7 @@ export function GoalsPane({ visible = true }: { visible?: boolean }) {
           <GoalMetric metric={metrics[line.id]!} />
           <p className={styles.meta}>Next: {line.nextMilestone ?? 'none open'}</p>
           <p className={styles.meta}>{line.milestoneCounts}</p>
+          <GoalSteer goal={line} />
         </Card>
       ))}
     </div>
