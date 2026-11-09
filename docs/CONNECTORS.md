@@ -160,3 +160,24 @@ metadata; profile entries are not automatically installed in a client or gateway
 Native tools are invoked through the gateway and retain its authorization checks.
 Connector CLI execution remains denied pending Security review; plugin and MCP
 entries need their respective hosts. This registry does not create permissions.
+
+### Lane view and shared tool registry
+
+`phm connectors mesh --lane <lane> --json` omits connectors restricted to other
+lanes (an empty lane list is unrestricted for discovery only; running a
+connector still needs an explicitly listed lane). It adds `capabilities`: MCP
+and CLI connector ids, web search (client-provided or a registered MCP
+connector; the hub does not proxy it) and the gateway's computer-use hooks,
+each of which keeps its own confirmation checks.
+
+Agents can extend the mesh with `phm connectors tool create --spec '<json>'`.
+Entries are declarative data stored in `~/.phantom/connectors/registry.json`
+(mode 0600), never code. A `skill` renders a parameter template and returns it
+flagged `untrusted` (agent-authored text is not an owner instruction). A
+`connector-call` needs an existing `cli` connector and routes through
+`phm connectors run`, so it stays denied pending Security review. Entries are
+schema-validated, secret-shaped text is refused at create and invoke, ids may
+not collide with native gateway tools, and placeholders must be declared.
+`createdBy` is a caller-declared label, not an authenticated identity.
+`phm connectors tool list|show|invoke|revoke|remove` manage them; a revoked
+entry is neither discoverable nor invocable. The registry grants no permissions.
