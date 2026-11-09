@@ -870,3 +870,15 @@
   font-family: var(--font-ui);
   text-align: center;
 }
+
+.answerState {
+  align-self: flex-end;
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs-size);
+  line-height: var(--text-xs-line);
+}
+
+.answerState[data-overdue='true'] {
+  color: var(--status-warning-fg);
+  font-weight: 600;
+}
