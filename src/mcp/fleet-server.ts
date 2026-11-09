@@ -35,6 +35,7 @@ import { parseFleetJobOverlapArgs, readFleetJobOverlap, type FleetJobOverlapArgs
 import { MAX_FLEET_JOB_CURRENT_BATCH_IDS, parseFleetJobCurrentBatchArgs, readFleetJobCurrentBatch, type FleetJobCurrentBatchArgs } from './fleet-job-current-batch.js';
 import { parseFleetJobCurrentArgs, readFleetJobCurrent,
   type FleetJobCurrentArgs } from './fleet-job-current.js';
+import { parseFleetJobCurrentSnapshotArgs, readFleetJobCurrentSnapshot, type FleetJobCurrentSnapshotArgs } from './fleet-job-current-snapshot.js';
 import { parseFleetJobPatchArgs, readFleetJobPatch, type FleetJobPatchArgs } from './fleet-job-patch.js';
 import { MAX_FLEET_PATH_HISTORY, parseFleetPathHistoryArgs, readFleetPathHistory,
   type FleetPathHistoryArgs } from './fleet-path-history.js';
@@ -68,6 +69,7 @@ import { CI_RECEIPT_AWAIT_BATCH_MAX_TARGETS } from '../core/fleet/ci-receipt-awa
 
 import { retryStagingInventory } from './fleet-staging-inventory-retry.js';
 import { parseStagingBatchArgs, readStagingBatch, type StagingScanner } from './fleet-staging-inventory-batch.js';
+import { parseFleetStagingInventoryArgs, readFleetStagingInventory, type FleetStagingInventoryArgs } from './fleet-staging-inventory.js';
 import { FLEET_RELEASE_CANDIDATE_REPO_PATTERN, FLEET_RELEASE_CANDIDATE_TAG_PATTERN,
   parseFleetReleaseCandidateArgs, readFleetReleaseCandidate,
   type FleetReleaseCandidateArgs } from './fleet-release-candidate.js';
@@ -76,6 +78,7 @@ export const MAX_FLEET_OUTPUT_BYTES = 64 * 1024;
 
 export interface FleetReaders {
   stagingScanner?: StagingScanner;
+  stagingInventory?: (input: FleetStagingInventoryArgs) => Promise<unknown>;
   status: () => Promise<unknown>;
   loop: (limit: number) => Promise<unknown>;
   bus?: (limit: number) => Promise<unknown>;
@@ -92,6 +95,7 @@ export interface FleetReaders {
   jobHistoryBatch?: (input: FleetJobHistoryBatchArgs) => Promise<unknown>;
   jobCurrentBatch?: (input: FleetJobCurrentBatchArgs) => Promise<unknown>;
   jobCurrent?: (input: FleetJobCurrentArgs) => Promise<unknown>;
+  jobCurrentSnapshot?: (input: FleetJobCurrentSnapshotArgs) => Promise<unknown>;
   jobPatch?: (input: FleetJobPatchArgs) => Promise<unknown>;
   jobOverlap?: (input: FleetJobOverlapArgs) => Promise<unknown>;
   pathHistory?: (input: FleetPathHistoryArgs) => Promise<unknown>;
@@ -129,6 +133,12 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
   });
   const annotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [
+    {
+      name: 'fleet_staging_inventory',
+      description: 'Inventory the local release-staging directory: children (name, modifiedAt, bytes), total measured bytes, completeness flags, skipped symlink count, and an age-and-size disclaimer. The tool *only* reports measured size; measurement does not grant permission to clean, reclaim, or unblock any launch. Root is the fixed ~/.local/share/ashlr/release-staging path — no arbitrary root or command parameter is accepted.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
     {
       name: 'fleet_staging_inventory_retry',
       description: 'Retry incomplete roots in a staging batch report. Age and size do not establish cleanup eligibility. Does not delete or propose deletion.',
@@ -321,6 +331,20 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
           jobId: { type: 'string', description: 'Exact case-sensitive fleet job id such as RQ-EXAMPLE-1; matched only against bridge(…) commit subjects, never by prefix.' },
         },
         required: ['jobId'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_job_current_snapshot',
+      description: 'Replay the fleet_job_current audit at one recorded immutable commit: for the newest bridge commit on origin/master whose subject id exactly equals the requested job, the git tree entry — mode, type and object id — each touched path held at the commit versus the pinned snapshot tree, from the same bounded reader as `phm fleet job-current-snapshot` — never a second scanner. The snapshot must be a full lowercase 40- or 64-character commit OID and is verified as a commit and an ancestor of origin/master before any scan; later origin/master moves never change the findings, so an MCP agent sees exactly what a CLI planner recorded. At most the newest 1000 commits are scanned and at most 200 touched paths compared; empty or truncated evidence proves only what the bounded scan saw and does not prove the job never landed. This is replay evidence, not a live reading: statuses are object identity only — unchanged, changed, absent-now and absent-at-both, where a landed deletion still absent is consistency evidence, never missing work — and none of it is a correctness, live lane, dispatch or merge-queue verdict. No caller ref, filesystem root or cwd is accepted, and no tool mutates anything.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          jobId: { type: 'string', description: 'Exact case-sensitive fleet job id such as RQ-EXAMPLE-1; matched only against bridge(…) commit subjects, never by prefix.' },
+          snapshot: { type: 'string', pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$', description: 'Full lowercase 40- or 64-character commit OID recorded earlier; verified as a commit and an ancestor of origin/master before the replay. Not a live ref.' },
+        },
+        required: ['jobId', 'snapshot'],
         additionalProperties: false,
       },
       annotations,
@@ -557,7 +581,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate') {
+    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -565,6 +589,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     }
     const retry = name === 'fleet_staging_inventory_retry' ? await retryStagingInventory(args, readers.stagingScanner) : null;
     const stagingRoots = name === 'fleet_staging_inventory_batch' ? parseStagingBatchArgs(args) : null;
+    const fleetStagingInventory = name === 'fleet_staging_inventory' ? parseFleetStagingInventoryArgs(args) : null;
     const limited = name === 'fleet_loop' || name === 'fleet_bus_hops';
     const maxLimit = name === 'fleet_bus_hops' ? MAX_FLEET_BUS_HOPS : MAX_FLEET_TICKS;
     const limit = args['limit'] ?? 20;
@@ -579,6 +604,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const jobOverlap = name === 'fleet_job_overlap' ? parseFleetJobOverlapArgs(args) : null;
     const jobCurrentBatch = name === 'fleet_job_current_batch' ? parseFleetJobCurrentBatchArgs(args) : null;
     const jobCurrent = name === 'fleet_job_current' ? parseFleetJobCurrentArgs(args) : null;
+    const jobCurrentSnapshot = name === 'fleet_job_current_snapshot' ? parseFleetJobCurrentSnapshotArgs(args) : null;
     const jobPatchArgs = name === 'fleet_job_patch' ? parseFleetJobPatchArgs(args) : null;
     const pathHistory = name === 'fleet_path_history' ? parseFleetPathHistoryArgs(args) : null;
     const jobPrecheck = name === 'fleet_job_precheck' ? parseFleetJobPrecheckArgs(args) : null;
@@ -595,6 +621,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const ciReceiptAwaitBatch = name === 'fleet_ci_receipt_await_batch' ? parseFleetCiReceiptAwaitBatchArgs(args) : null;
     const releaseCandidate = name === 'fleet_release_candidate' ? parseFleetReleaseCandidateArgs(args) : null;
     if (name === 'fleet_release_candidate' ? releaseCandidate === null :
+        name === 'fleet_staging_inventory' ? fleetStagingInventory === null :
         name === 'fleet_staging_inventory_retry' ? retry === null :
         name === 'fleet_staging_inventory_batch' ? stagingRoots === null :
         name === 'fleet_ci_receipt_await_batch' ? ciReceiptAwaitBatch === null :
@@ -614,6 +641,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_job_overlap' ? jobOverlap === null :
         name === 'fleet_job_current_batch' ? jobCurrentBatch === null :
         name === 'fleet_job_current' ? jobCurrent === null :
+        name === 'fleet_job_current_snapshot' ? jobCurrentSnapshot === null :
         name === 'fleet_job_patch' ? jobPatchArgs === null :
         name === 'fleet_job_history' ? jobHistory === null :
         name === 'fleet_reset_group_await' ? resetGroupAwait === null :
@@ -628,7 +656,8 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       throw new McpError(ErrorCode.InvalidParams, 'Invalid fleet tool arguments.');
     }
     try {
-      const value = name === 'fleet_staging_inventory_retry' ? retry :
+      const value = name === 'fleet_staging_inventory' ? await (readers.stagingInventory ?? readFleetStagingInventory)(fleetStagingInventory as FleetStagingInventoryArgs)
+        : name === 'fleet_staging_inventory_retry' ? retry :
         name === 'fleet_staging_inventory_batch' ? await readStagingBatch(stagingRoots as string[], readers.stagingScanner, extra.signal)
         : name === 'fleet_status' ? await readers.status()
         : name === 'fleet_loop' ? await readers.loop(limit as number)
@@ -647,6 +676,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_job_overlap' ? await (readers.jobOverlap ?? readFleetJobOverlap)(jobOverlap as FleetJobOverlapArgs)
         : name === 'fleet_job_current_batch' ? await (readers.jobCurrentBatch ?? readFleetJobCurrentBatch)(jobCurrentBatch as FleetJobCurrentBatchArgs)
         : name === 'fleet_job_current' ? await (readers.jobCurrent ?? readFleetJobCurrent)(jobCurrent as FleetJobCurrentArgs)
+        : name === 'fleet_job_current_snapshot' ? await (readers.jobCurrentSnapshot ?? readFleetJobCurrentSnapshot)(jobCurrentSnapshot as FleetJobCurrentSnapshotArgs)
         : name === 'fleet_job_patch' ? await (readers.jobPatch ?? readFleetJobPatch)(jobPatchArgs as FleetJobPatchArgs)
         : name === 'fleet_job_precheck_batch' ? await (readers.jobPrecheckBatch ?? readFleetJobPrecheckBatch)(jobPrecheckBatch as FleetJobPrecheckBatchArgs)
         : name === 'fleet_job_precheck' ? await (readers.jobPrecheck ?? readFleetJobPrecheck)(jobPrecheck as FleetJobPrecheckArgs)

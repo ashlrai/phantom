@@ -1,0 +1,15 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "total_cost_usd": 0,
+  "duration_api_ms": 0,
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "cache_creation_input_tokens": 0
+  },
+  "modelUsage": {},
+  "result": "You are currently using your subscription to power your Claude Code usage\nCurrent week (all models): 63% used · resets Nov 16"
+}

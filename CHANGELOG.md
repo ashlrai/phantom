@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.24 |
-| Latest dated changelog release (2026-11-07) | 3.30.24 |
+| Source package | 3.30.28 |
+| Latest dated changelog release (2026-11-09) | 3.30.28 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -18,8 +18,102 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ## [Unreleased]
 
+## [3.30.28] - 2026-11-09
+
+
+### Fixes
+
+* read the installed app version for update status ([#4195](https://github.com/ashlrai/phantom/issues/4195)) ([08d305f](https://github.com/ashlrai/phantom/commit/08d305f32b8f773c082bc0251dd7b19132976b49))
+
+
+### Changes
+
+* **RQ-CI-RELEASE-GATE-TAG-CANDIDATE:** Bridge notes ([#4182](https://github.com/ashlrai/phantom/issues/4182)) ([9169482](https://github.com/ashlrai/phantom/commit/9169482fcc71e5fac5381d52212f4b1687bb47eb))
+* **RQ-CIFIX-PH-07-R2:** RQ-CIFIX-PH-07-R2 ([#4197](https://github.com/ashlrai/phantom/issues/4197)) ([8af40ab](https://github.com/ashlrai/phantom/commit/8af40ab8ed305fffbe7a2efdbf4184a734f49d90))
+* **RQ-DRAIN2-PH-16-R2:** RQ-DRAIN2-PH-16-R2 ([#4196](https://github.com/ashlrai/phantom/issues/4196)) ([4623bfd](https://github.com/ashlrai/phantom/commit/4623bfd6d2a2eb3aaa70f0efa6c0595a7f2739bd))
+* **RQ-DRAIN2-PH-29-R2:** RQ-DRAIN2-PH-29-R2 bridge notes ([#4198](https://github.com/ashlrai/phantom/issues/4198)) ([79dc1bf](https://github.com/ashlrai/phantom/commit/79dc1bf59bde420e7892898fecaedf474e3b4701))
+* **RQ-DUPLAUNCHQ11Q8:** RQ-DUPLAUNCHQ11Q8 ([#4162](https://github.com/ashlrai/phantom/issues/4162)) ([c6cba1a](https://github.com/ashlrai/phantom/commit/c6cba1a87bf9aa1a67176bbc3193e41687149de0))
+* **RQ-GUARDHEALTHQ10Q8:** Bridge notes — RQ-GUARDHEALTHQ10Q8 ([#4144](https://github.com/ashlrai/phantom/issues/4144)) ([fb83f81](https://github.com/ashlrai/phantom/commit/fb83f818720684b0831e5ad2805b4976e066c0c8))
+* **RQ-LOCALEMPTYN9Q8:** RQ-LOCALEMPTYN9Q8 handoff ([#4200](https://github.com/ashlrai/phantom/issues/4200)) ([19a1620](https://github.com/ashlrai/phantom/commit/19a162088526c0a16b5801022c388393c8953589))
+* **RQ-MERGELATQ10Q8:** RQ-MERGELATQ10Q8 bridge notes ([#4145](https://github.com/ashlrai/phantom/issues/4145)) ([86ba599](https://github.com/ashlrai/phantom/commit/86ba599348550cae607dafd74f981be00aa3a84f))
+* **RQ-MERGELATQ11Q8:** RQ-MERGELATQ11Q8 ([#4157](https://github.com/ashlrai/phantom/issues/4157)) ([48cf866](https://github.com/ashlrai/phantom/commit/48cf866870222b24f41248607c2a6d06903671a9))
+* **RQ-NS-NO-PASTE-SECURE-ENTRY:** RQ-NS-NO-PASTE-SECURE-ENTRY handoff ([#4189](https://github.com/ashlrai/phantom/issues/4189)) ([87a574d](https://github.com/ashlrai/phantom/commit/87a574d568fdbd90a96b7b409eb4da9c01a8e2d7))
+* **RQ-ONB-9-PHMDEV:** RQ-ONB-9-PHMDEV handoff ([#4201](https://github.com/ashlrai/phantom/issues/4201)) ([eb7bd10](https://github.com/ashlrai/phantom/commit/eb7bd106b3de2be3ded0de6b14e18c3e86f1dc36))
+* **RQ-PH-DEPAUDIT-PATHS-1:** Dependency audit trigger handoff ([#4191](https://github.com/ashlrai/phantom/issues/4191)) ([1251c95](https://github.com/ashlrai/phantom/commit/1251c959221c9c56ad09bf289ffbc07e532afa87))
+* **RQ-QUEUE-REDESIGN-1R2:** Queue depth handoff ([#4199](https://github.com/ashlrai/phantom/issues/4199)) ([ff5f72f](https://github.com/ashlrai/phantom/commit/ff5f72f2853278be5f58dea5b541fd482d715b10))
+* **RQ-RC3705BQ8:** Supersedes [#3705](https://github.com/ashlrai/phantom/issues/3705) ([#4177](https://github.com/ashlrai/phantom/issues/4177)) ([8725bec](https://github.com/ashlrai/phantom/commit/8725bec84f2a2eb44ed224fda415b95f351f745f))
+* **RQ-RC3718BQ8:** Supersedes [#3718](https://github.com/ashlrai/phantom/issues/3718) ([#4174](https://github.com/ashlrai/phantom/issues/4174)) ([54d016e](https://github.com/ashlrai/phantom/commit/54d016e44df154c49afc73026155f9ed00f0f332))
+* **RQ-RCDEEPWIKIQ8:** RQ-RCDEEPWIKIQ8 ([#4178](https://github.com/ashlrai/phantom/issues/4178)) ([d2def71](https://github.com/ashlrai/phantom/commit/d2def711bc0bba65ab179debc061d56b92dd6771))
+* **RQ-RCINCPIPEQ8:** RQ-RCINCPIPEQ8 ([#4176](https://github.com/ashlrai/phantom/issues/4176)) ([b2b362f](https://github.com/ashlrai/phantom/commit/b2b362f09ca364837fc5b4bb796371b032d3348d))
+* **RQ-RCMCPBQ8:** Supersedes: none (all four candidate PRs were closed). ([#4172](https://github.com/ashlrai/phantom/issues/4172)) ([d5442bd](https://github.com/ashlrai/phantom/commit/d5442bda819579a5b8f146dac8a22e3fc1eddb8b))
+* **RQ-RCTOOLMESHQ8:** RQ-RCTOOLMESHQ8 ([#4175](https://github.com/ashlrai/phantom/issues/4175)) ([b619a4c](https://github.com/ashlrai/phantom/commit/b619a4cdb0bb67f3970df70f968c6bcd9fae7287))
+* **RQ-RELEASE-ENQUEUE-1:** RQ-RELEASE-ENQUEUE-1 bridge ([#4143](https://github.com/ashlrai/phantom/issues/4143)) ([6cd6c8c](https://github.com/ashlrai/phantom/commit/6cd6c8c8b7fc9048bfea34d92a375cc092f4b108))
+* **RQ-SEC-PAUSE-FAILCLOSED-4152:** Fix-forward of [#4152](https://github.com/ashlrai/phantom/issues/4152) ([#4186](https://github.com/ashlrai/phantom/issues/4186)) ([82484f1](https://github.com/ashlrai/phantom/commit/82484f1c6f8f1637bf9d9e61c7ae8726379b1538))
+* **RQ-SWE5-CLAUDE-CTX-MEM:** RQ-SWE5-CLAUDE-CTX-MEM — checkpoint freshness + invalidation ([#4148](https://github.com/ashlrai/phantom/issues/4148)) ([6ce4f52](https://github.com/ashlrai/phantom/commit/6ce4f52e78d9afa7cab9534384ca8e53e90ffd15))
+* **RQ-SWE5-CLAUDE-MERGE-ENGINE:** BRIDGE_NOTES — RQ-SWE5-CLAUDE-MERGE-ENGINE ([#4149](https://github.com/ashlrai/phantom/issues/4149)) ([7845cf3](https://github.com/ashlrai/phantom/commit/7845cf3c45eb5263701be61bc9d15adff7302439))
+* **RQ-SWE5-CLAUDE-SHOWLAYER:** RQ-SWE5-CLAUDE-SHOWLAYER — Show mode ambient layer ([#4147](https://github.com/ashlrai/phantom/issues/4147)) ([873ea19](https://github.com/ashlrai/phantom/commit/873ea19c515bd5ae9ec0111fa6dd475b1bc7e6b0))
+* **RQ-SWE5-DESK-OBSERVE:** RQ-SWE5-DESK-OBSERVE — Observe cockpit pane ([#4164](https://github.com/ashlrai/phantom/issues/4164)) ([260e571](https://github.com/ashlrai/phantom/commit/260e5719c953a04e31caa33052f7a4fb1e0251e2))
+* **RQ-SWE5-DESK-SELFDRIVE:** RQ-SWE5-DESK-SELFDRIVE bridge notes ([#4155](https://github.com/ashlrai/phantom/issues/4155)) ([768ff63](https://github.com/ashlrai/phantom/commit/768ff631a7a37e926e1a0773fc0f83e3ce15af49))
+* **RQ-SWE5-DESK-SESSIONS:** RQ-SWE5-DESK-SESSIONS handoff ([#4154](https://github.com/ashlrai/phantom/issues/4154)) ([a79c9d0](https://github.com/ashlrai/phantom/commit/a79c9d03ca506f71077348e4700a11d700057233))
+* **RQ-SWE5-FASTREVERT:** BRIDGE_NOTES — RQ-SWE5-FASTREVERT ([#4171](https://github.com/ashlrai/phantom/issues/4171)) ([6dbf499](https://github.com/ashlrai/phantom/commit/6dbf49901268133f21b5958c5f1b4549b43cf9a9))
+* **RQ-SWE5-GROK-SEC-COMMS:** RQ-SWE5-GROK-SEC-COMMS — comms/ + integrations/ security rev ([#4152](https://github.com/ashlrai/phantom/issues/4152)) ([52c9fa8](https://github.com/ashlrai/phantom/commit/52c9fa86ea7ef6db42f2436d3b1f297ada0c2382))
+* **RQ-SWE5-LEAD-WORKER:** BRIDGE_NOTES — RQ-SWE5-LEAD-WORKER ([#4166](https://github.com/ashlrai/phantom/issues/4166)) ([3d21736](https://github.com/ashlrai/phantom/commit/3d2173645eee49cf9df5dd93f2aed630fc137df4))
+* **RQ-SWE5-LEADER-VISION:** BRIDGE_NOTES — RQ-SWE5-LEADER-VISION ([#4168](https://github.com/ashlrai/phantom/issues/4168)) ([d72ea09](https://github.com/ashlrai/phantom/commit/d72ea09f513db3b859b5bfc5b4f70162b29468e2))
+* **RQ-SWE5-MACHINERY-AS-CODE:** RQ-SWE5-MACHINERY-AS-CODE — machinery-as-code deploy plane ([#4181](https://github.com/ashlrai/phantom/issues/4181)) ([8256e8b](https://github.com/ashlrai/phantom/commit/8256e8b1c80dd43d41eb61accf84ba3403c49b2a))
+* **RQ-SWE5-PASSK-EVAL:** BRIDGE_NOTES — RQ-SWE5-PASSK-EVAL ([#4170](https://github.com/ashlrai/phantom/issues/4170)) ([b0fe575](https://github.com/ashlrai/phantom/commit/b0fe575df214b856a31e4e441213af1228dc2ccd))
+* **RQ-SWE5-RESEARCH-LOOP:** BRIDGE_NOTES — RQ-SWE5-RESEARCH-LOOP ([#4159](https://github.com/ashlrai/phantom/issues/4159)) ([2ff691e](https://github.com/ashlrai/phantom/commit/2ff691e60e207b460054477dcbf913c95b357f9b))
+* **RQ-SWE5-SCAFFOLD-AUDIT:** ([#4179](https://github.com/ashlrai/phantom/issues/4179)) ([e154512](https://github.com/ashlrai/phantom/commit/e154512b748a8074a7ce5a91e7d262167b644a29))
+* **RQ-SWE5-SELF-TOOLS:** RQ-SWE5-SELF-TOOLS handoff ([#4156](https://github.com/ashlrai/phantom/issues/4156)) ([902cebf](https://github.com/ashlrai/phantom/commit/902cebffd90f7535d0dfb59c648c4180c1f3374b))
+* **RQ-SWE5-STIGMERGY:** BRIDGE_NOTES — RQ-SWE5-STIGMERGY ([#4160](https://github.com/ashlrai/phantom/issues/4160)) ([afcafe6](https://github.com/ashlrai/phantom/commit/afcafe6b85008eb62c112661b7f98c83aff43a6a))
+* **RQ-SWE5-VERIFY-METRIC:** BRIDGE_NOTES — RQ-SWE5-VERIFY-METRIC ([#4184](https://github.com/ashlrai/phantom/issues/4184)) ([50f0fc3](https://github.com/ashlrai/phantom/commit/50f0fc312f64d22c990e663bfc73a2c1817bdb90))
+
+## [3.30.27] - 2026-11-09
+
+
+### Changes
+
+* **RQ-CIFIX3-PH-01:** RQ-CIFIX3-PH-01 ([#4125](https://github.com/ashlrai/phantom/issues/4125)) ([79e8614](https://github.com/ashlrai/phantom/commit/79e86140000433c7248a166490f5395c273e659c))
+* **RQ-CIFIX3-PH-03:** RQ-CIFIX3-PH-03 ([#4124](https://github.com/ashlrai/phantom/issues/4124)) ([5c1484f](https://github.com/ashlrai/phantom/commit/5c1484fc80510e5769eb4a3ab3acf7e6890e861e))
+* **RQ-CIFIX3-PH-04:** RQ-CIFIX3-PH-04 ([#4126](https://github.com/ashlrai/phantom/issues/4126)) ([4aec52e](https://github.com/ashlrai/phantom/commit/4aec52e0167c54fb83a215522927a9fe56ca3f29))
+* **RQ-DRAIN3-PH-10:** RQ-DRAIN3-PH-10 ([#4121](https://github.com/ashlrai/phantom/issues/4121)) ([9a5a50c](https://github.com/ashlrai/phantom/commit/9a5a50c84e05269f67c3096428f17d042b3e5b90))
+* **RQ-SWE4-API-FLEET-RACE:** RQ-SWE4-API-FLEET-RACE ([#4116](https://github.com/ashlrai/phantom/issues/4116)) ([192a74a](https://github.com/ashlrai/phantom/commit/192a74a4a5c48419dbb7d1c755fda4dcc04648fc))
+* **RQ-SWE4-API-RESBAR:** RQ-SWE4-API-RESBAR handoff ([#4117](https://github.com/ashlrai/phantom/issues/4117)) ([bdda6a4](https://github.com/ashlrai/phantom/commit/bdda6a49d8876130d8c769fcddfb4d52a76e1d1a))
+* **RQ-SWE4-API-SEC-PROXY:** RQ-SWE4-API-SEC-PROXY ([#4118](https://github.com/ashlrai/phantom/issues/4118)) ([75378fc](https://github.com/ashlrai/phantom/commit/75378fcea6c9d1c8a5aa2076695fc0920980dc50))
+* **RQ-SWE4-RELEASETAG-1:** RQ-SWE4-RELEASETAG-1 handoff ([#4127](https://github.com/ashlrai/phantom/issues/4127)) ([de42a64](https://github.com/ashlrai/phantom/commit/de42a64958a664d19b5c96c7e874a4284398b508))
+* **RQ-SWE4-TERRA-CLI-PH:** RQ-SWE4-TERRA-CLI-PH ([#4123](https://github.com/ashlrai/phantom/issues/4123)) ([5449b94](https://github.com/ashlrai/phantom/commit/5449b94af61a257ba460ce41bf01b50d7b94ae5e))
+* **RQ-SWE4-TERRA-SECBUS:** RQ-SWE4-TERRA-SECBUS ([#4120](https://github.com/ashlrai/phantom/issues/4120)) ([0da1acd](https://github.com/ashlrai/phantom/commit/0da1acd79bf26931e92a78d16f4bf74eab41c770))
+* **RQ-SWE4-TERRA-TESTS-PH:** Bridge notes — RQ-SWE4-TERRA-TESTS-PH ([#4119](https://github.com/ashlrai/phantom/issues/4119)) ([5992379](https://github.com/ashlrai/phantom/commit/5992379074ca85a3b0c6acf5f0c777e00db7a943))
+
+## [3.30.26] - 2026-11-08
+
+
+### Changes
+
+* **RQ-DEVINFAILQ8:** RQ-DEVINFAILQ8 handoff ([#4113](https://github.com/ashlrai/phantom/issues/4113)) ([79f8cc0](https://github.com/ashlrai/phantom/commit/79f8cc0930f70d6040e148fa6cacf374779f80eb))
+* **RQ-MERGEAGEQ8Q8:** RQ-MERGEAGEQ8Q8 handoff ([#4100](https://github.com/ashlrai/phantom/issues/4100)) ([88e1667](https://github.com/ashlrai/phantom/commit/88e166731c3bcc3fdab990902db7e08a6ef6d03f))
+* **RQ-MERGELATENCY8Q8:** Bridge notes ([#4103](https://github.com/ashlrai/phantom/issues/4103)) ([6e1fcc4](https://github.com/ashlrai/phantom/commit/6e1fcc4b6f0353fb112d0bd7acf66d4f6cd735b7))
+* **RQ-MERGEPARK8Q8:** RQ-MERGEPARK8Q8 handoff ([#4105](https://github.com/ashlrai/phantom/issues/4105)) ([818fe78](https://github.com/ashlrai/phantom/commit/818fe7861cffeb537ea7ca554ecc4646968f1e0d))
+* **RQ-MERGEPARKQ8Q8:** RQ-MERGEPARKQ8Q8 handoff ([#4102](https://github.com/ashlrai/phantom/issues/4102)) ([72161c9](https://github.com/ashlrai/phantom/commit/72161c9e45ab87af4d80b0a1fe395261bcb1b064))
+* **RQ-MERGEQUEUEQ8:** RQ-MERGEQUEUEQ8 handoff ([#4099](https://github.com/ashlrai/phantom/issues/4099)) ([6f430fe](https://github.com/ashlrai/phantom/commit/6f430fe552e082351edfe9ac9627dabe46dbe9ae))
+* **RQ-MERGEWAKE8Q8:** RQ-MERGEWAKE8Q8 handoff ([#4104](https://github.com/ashlrai/phantom/issues/4104)) ([c089039](https://github.com/ashlrai/phantom/commit/c0890391939cf69f87f7a36ee473604f0d2e1f1c))
+* **RQ-PARKLATENCYQ8:** RQ-PARKLATENCYQ8 ([#4114](https://github.com/ashlrai/phantom/issues/4114)) ([f6c706d](https://github.com/ashlrai/phantom/commit/f6c706dd95e324e71174a22ddd13bc2fd3a4d0bf))
+* **RQ-PARKWAKEQ8:** RQ-PARKWAKEQ8 handoff ([#4109](https://github.com/ashlrai/phantom/issues/4109)) ([26d1e88](https://github.com/ashlrai/phantom/commit/26d1e88ec359665dd6c98a6b7ebad7361a63c4a7))
+* **RQ-REAPCONVERGEQ8Q8:** Bridge notes ([#4101](https://github.com/ashlrai/phantom/issues/4101)) ([31ad6ee](https://github.com/ashlrai/phantom/commit/31ad6eeb98e51cc1c49cc3ad632b5811281a469a))
+* **RQ-SWE3-FAIRROUND-1:** BRIDGE_NOTES — RQ-SWE3-FAIRROUND-1 ([#4108](https://github.com/ashlrai/phantom/issues/4108)) ([59bba03](https://github.com/ashlrai/phantom/commit/59bba0341c8015a5754e4e27f471c11e633ab765))
+* **RQ-SWE3-MERGE-ACCEL-1:** BRIDGE_NOTES — RQ-SWE3-MERGE-ACCEL-1 ([#4112](https://github.com/ashlrai/phantom/issues/4112)) ([e26351a](https://github.com/ashlrai/phantom/commit/e26351a0cf727c02dc7b9bf594b339244c0afb1d))
+* **RQ-SWE3-PRTRIAGE-1:** BRIDGE_NOTES — RQ-SWE3-PRTRIAGE-1 ([#4111](https://github.com/ashlrai/phantom/issues/4111)) ([9aa58a2](https://github.com/ashlrai/phantom/commit/9aa58a2a83488cd0820980f306702f049b7438d2))
+* **RQ-SWE3-REDIRECT-FIX-1:** BRIDGE_NOTES — RQ-SWE3-REDIRECT-FIX-1 ([#4106](https://github.com/ashlrai/phantom/issues/4106)) ([35f2650](https://github.com/ashlrai/phantom/commit/35f265092bf56b37f843af3a26d8047b8b9ab1d9))
+* **RQ-SWE3-SESS-REAPER-1:** BRIDGE_NOTES — RQ-SWE3-SESS-REAPER-1 `phm fleet session-audi ([#4110](https://github.com/ashlrai/phantom/issues/4110)) ([4b57b00](https://github.com/ashlrai/phantom/commit/4b57b00d8e33144a04b2657d15530a46a6c2ca3b))
+
+## [3.30.25] - 2026-11-08
+
 ### Added
 
+- Add a prioritized read-only unified inbox for pending needs-you items, teammate texts, drafts and unclaimed bus work ([#4080](https://github.com/ashlrai/phantom/pull/4080)).
+- Add `phm fleet wt-audit` to inspect worktree lifecycle evidence and preview conservative reap candidates ([#4076](https://github.com/ashlrai/phantom/pull/4076)).
+- Add `phm fleet eval-report` for evidence-based post-merge durability and fleet outcome metrics ([#4077](https://github.com/ashlrai/phantom/pull/4077)).
+- Add the read-only `phm fleet merge-batch` planner for ordering overlapping pull requests ([#4072](https://github.com/ashlrai/phantom/pull/4072)).
+- Add opt-in desktop control for Claude, Codex and Devin, with capability and permission status ([#4000](https://github.com/ashlrai/phantom/pull/4000)).
 - Add a Fleet resource and activity board with lane quota observations, recent actions and merges, refreshed while visible ([#3939](https://github.com/ashlrai/phantom/pull/3939)).
 - Add Show Mode for browsing recent fleet activity and a merge ticker ([#3934](https://github.com/ashlrai/phantom/pull/3934)).
 - Add validated agent checkpoint handoffs and the read-only `phm checkpoint resume` command ([#3921](https://github.com/ashlrai/phantom/pull/3921)).

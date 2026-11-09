@@ -1,0 +1,18 @@
+{
+  "name": "word-count",
+  "description": "Count whitespace-separated words",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "text"
+    ],
+    "additionalProperties": false
+  },
+  "safetyClass": "read-only",
+  "entrypoint": "examples/word-count.mjs"
+}

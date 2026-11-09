@@ -57,6 +57,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
+import { readingIsFresh } from '../usage/sensor-reading.js';
 import { readPoolBudgets, poolBudgetDirectory } from './pool-budget-store.js';
 import type { PoolBudgetSnapshot, PoolBudgetView } from './pool-budget.js';
 import { readLaneTargets } from './runs-lane-targets.js';
@@ -165,7 +166,7 @@ const LANE_ID = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/;
 const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9_.:/@-]{0,127}$/;
 
 /** Statuses that make the first bare cell of a positional row a status column. */
-const KNOWN_STATUSES = new Set([
+export const KNOWN_STATUSES = new Set([
   'READY', 'CLAIMED', 'PR-OPEN', 'BLOCKED', 'HOLD', 'DONE', 'PROPOSED', 'LAND',
   'LANDED', 'MERGED', 'RUNNING', 'STARTING', 'QUEUED', 'WAITING', 'FAILED',
   'CANCELLED', 'SPLIT-PARENT', 'HELD', 'PUBLISHING', 'PUBLISHED', 'FINISHED',
@@ -437,6 +438,7 @@ interface UsageJournalRow {
   burnPerHour: number | null;
   projectedExhaustionAt: string | null;
   observedAt: string;
+  staleAfter: string | null;
 }
 
 /**
@@ -465,9 +467,10 @@ export function parseUsageJournals(texts: readonly string[]): { latest: Map<stri
       const burn = typeof row.burnRatePctPerHour === 'number' && Number.isFinite(row.burnRatePctPerHour) && row.burnRatePctPerHour >= 0
         ? row.burnRatePctPerHour : null;
       const projected = typeof row.projected100At === 'string' && validTimestamp(row.projected100At) ? row.projected100At : null;
+      const staleAfter = typeof row.staleAfter === 'string' && validTimestamp(row.staleAfter) ? row.staleAfter : null;
       const next: UsageJournalRow = {
         pool: row.pool, pctUsed, resetAt, burnPerHour: burn,
-        projectedExhaustionAt: projected, observedAt: observed,
+        projectedExhaustionAt: projected, observedAt: observed, staleAfter,
       };
       const prior = latest.get(row.pool);
       if (!prior || freshness(next) >= freshness(prior)) latest.set(row.pool, next);
@@ -510,19 +513,21 @@ function budgetCredit(view: PoolBudgetView): FleetLaneCreditView {
   };
 }
 
-function usageCredit(row: UsageJournalRow): FleetLaneCreditView {
-  const observed = row.pctUsed !== null;
+function usageCredit(row: UsageJournalRow, nowMs: number): FleetLaneCreditView {
+  const fresh = row.pctUsed !== null && readingIsFresh({
+    observedAt: row.observedAt, staleAfter: row.staleAfter, nowMs,
+  });
   return {
-    state: observed ? 'observed' : 'unknown',
-    label: observed ? `${100 - row.pctUsed!}% window` : 'unknown',
-    remainingPct: observed ? 100 - row.pctUsed! : null,
+    state: fresh ? 'observed' : 'unknown',
+    label: fresh ? `${100 - row.pctUsed!}% window` : 'unknown',
+    remainingPct: fresh ? 100 - row.pctUsed! : null,
     remainingCredits: null,
     creditsUnit: null,
     resetAt: row.resetAt,
     burnPerHour: row.burnPerHour,
     projectedExhaustionAt: row.projectedExhaustionAt,
     observedAt: row.observedAt,
-    source: observed ? 'usage-journal' : null,
+    source: fresh ? 'usage-journal' : null,
   };
 }
 
@@ -536,11 +541,12 @@ function creditFor(
   lane: string,
   budgets: PoolBudgetSnapshot,
   usage: Map<string, UsageJournalRow>,
+  nowMs: number,
 ): FleetLaneCreditView {
   const budgetView = (budgets.pools as Record<string, PoolBudgetView | undefined>)[lane];
   const budget = budgetView ? budgetCredit(budgetView) : null;
   const usageRow = usage.get(lane);
-  const usageView = usageRow ? usageCredit(usageRow) : null;
+  const usageView = usageRow ? usageCredit(usageRow, nowMs) : null;
   if (budget?.state === 'observed') return budget;
   if (usageView?.state === 'observed') return usageView;
   if (budget && budget.state !== 'unknown') return budget;
@@ -730,7 +736,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
       by: !row.held ? null : row.heldReason?.startsWith('autobackoff') ? 'autobackoff' : 'manual',
       since: row.lastChange,
     } : null;
-    return { lane, queueDepth, liveJobs, mergesPerHour, credit: creditFor(lane, budgets, usage.latest), slotTarget: row?.target ?? null, hold };
+    return { lane, queueDepth, liveJobs, mergesPerHour, credit: creditFor(lane, budgets, usage.latest, now.getTime()), slotTarget: row?.target ?? null, hold };
   });
 
   // Lanes doing something sort first; alphabetical inside each tier.

@@ -7,9 +7,15 @@
 # hard_cap 10 (the live values; a slots.json or budget-overrides.json entry raises them per host).
 # RQ-LANERECOVERNOV1Q8 rev: repeated authentication failures (>=2 distinct failed/EMPTY finishes with a
 # provider auth-error line) hold the lane autobackoff-style; no credential store is ever written.
-import os, re, json, time, fcntl, subprocess, glob, math
+import os, re, json, time, fcntl, subprocess, glob, math, datetime
+from concurrent.futures import ThreadPoolExecutor
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
 WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
+# A kernel-held claim serializes the complete tick, including liveness sampling and
+# queue reconciliation. It is released automatically if the dispatcher crashes.
+_tick_claim = open(Q + "/dispatchd.tick.lock", "a")
+try: fcntl.flock(_tick_claim, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError: raise SystemExit(0)
 NOW = time.time(); TS = time.strftime("%F %T")
 MAX_LAUNCH_PER_TICK = 4; GRACE = 120; RAISE_GAP = 120
 LANES = ["codex-cmp", "codex-personal", "claude", "devin", "claude-api", "codex-local"]   # tie-break order: cmp first
@@ -53,16 +59,42 @@ def _run(cmd, timeout, **kw):
                          stdin=kw.pop("stdin", subprocess.DEVNULL), **kw)
     name = os.path.basename(cmd[1] if cmd[0].endswith("bash") and len(cmd) > 1 else cmd[0]); t0 = time.time()
     try: out, err = p.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
+    except BaseException:
         try: os.killpg(p.pid, signal.SIGKILL)
         except OSError: pass
         try: p.communicate(timeout=0.1)
         except subprocess.TimeoutExpired:
             for pipe in (p.stdout, p.stderr):
                 if pipe: pipe.close()
-        log("SLOW %s timeout %ds, group killed" % (name, timeout)); raise
+        log("SLOW %s interrupted (budget %.1fs), group killed" % (name, timeout)); raise
     if time.time() - t0 > 5: log("SLOW %s %.0fs" % (name, time.time() - t0))
     return subprocess.CompletedProcess(cmd, p.returncode, out, err)
+# Monotonic phase deadlines include Python loops, filesystem reads and subprocesses.
+# Required-phase exhaustion fails closed; optional maintenance yields to the next tick.
+import atexit, signal
+_PHASE_START = time.monotonic(); _TICK_START = _PHASE_START
+_PHASE = "setup"; _PHASES = {}; _EXPIRED = []
+class MaintenanceDeadline(BaseException): pass
+def _phase_timeout(signum, frame):
+    _EXPIRED.append(_PHASE)
+    if _PHASE == "worktree_reap": raise MaintenanceDeadline()
+    raise SystemExit("dispatcher phase budget exhausted: " + _PHASE)
+def tick_phase(name, seconds=15):
+    global _PHASE, _PHASE_START
+    signal.setitimer(signal.ITIMER_REAL, 0)
+    now = time.monotonic()
+    _PHASES[_PHASE] = _PHASES.get(_PHASE, 0) + now - _PHASE_START
+    _PHASE, _PHASE_START = name, now
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+def tick_summary():
+    signal.setitimer(signal.ITIMER_REAL, 0)
+    now = time.monotonic()
+    _PHASES[_PHASE] = _PHASES.get(_PHASE, 0) + now - _PHASE_START
+    log("TICK total_s=%.3f %s slowest=%s expired=%s" % (
+        now - _TICK_START, " ".join(k + "_s=%.3f" % v for k, v in sorted(_PHASES.items())),
+        max(_PHASES, key=_PHASES.get), ",".join(_EXPIRED) or "none"))
+signal.signal(signal.SIGALRM, _phase_timeout)
+atexit.register(tick_summary)
 def job_diff_metrics(wt, job_base):
     # Compare the final tracked tree to the launch base, including commits and
     # staged edits. Untracked files count as files, but their line totals are
@@ -96,6 +128,13 @@ FORK_RX = re.compile(r"(?i)(fork: (retry: )?resource temporarily unavailable|can
 RL = re.compile(r"(?i)(429 too many requests|status(code)?[\s:=\"]+429\b|rate[ _-]?limit (reached|exceeded|hit)|exceeded (your|the) .{0,20}rate limit|usage limit|you've hit your|quota exceeded)")
 
 MD = R + "/metrics"; os.makedirs(MD, exist_ok=True)
+# RQ-SWE5-LOOP-BENCH: the ledger was read three times per tick (attempts scan, devin
+# spike, status rollup) plus once more for batch throughput. Parse once into
+# JOBS_RAW; JOBS holds the projected view (reconciler rows). Once _JOBS_LIVE is set
+# at the parse point, metric() also mirrors this tick's own rows in memory exactly
+# as a file re-read would see them.
+JOBS_RAW, JOBS = [], []
+_JOBS_LIVE = False
 def metric(d):
     d.setdefault("ts", time.strftime("%Y-%m-%dT%H:%M:%S%z"))
     if d.get("job") and "ab" not in d:   # Masbot 16:35: tag A/B arm from the router line (TERRA-AB-1)
@@ -105,6 +144,7 @@ def metric(d):
             if a: d["ab"] = a.group(1)
             if b: d["arm"] = b.group(1)
         except Exception: pass
+    if _JOBS_LIVE: JOBS_RAW.append(d); JOBS.append(d)
     with open(MD + "/jobs.jsonl", "a") as f: f.write(json.dumps(d, sort_keys=True) + "\n")
 CLS = [("credits_exhausted", re.compile(r"(?i)(credits? (are |have been )?(exhausted|depleted)|out of credits|insufficient credits|no credits remaining)")),
        ("usage_limit", re.compile(r"(?i)(usage limit|you've hit your|weekly limit)")),
@@ -123,9 +163,20 @@ def tokens(txt):
 def ev(msg):
     with open(EV, "a") as f: f.write("%s %s\n" % (TS, msg))
 def log(msg): print("%s %s" % (TS, msg), flush=True)
+tick_phase("setup", 10)
+# RQ-SWE5-LOOP-BENCH: queue metadata (.line/.base/.publish/prompts) is re-read
+# many times per job per tick. Cache reads keyed on (mtime_ns, size): a mid-tick
+# rewrite by launch.sh or a publisher invalidates exactly as a fresh read would.
+# Misses are never cached, so a file created mid-tick is still seen.
+_RD = {}
 def rd(p, d=""):
     try:
-        with open(p) as f: return f.read()
+        st = os.stat(p)
+        hit = _RD.get(p)
+        if hit is not None and hit[0] == (st.st_mtime_ns, st.st_size): return hit[1]
+        with open(p) as f: text = f.read()
+        _RD[p] = ((st.st_mtime_ns, st.st_size), text)
+        return text
     except Exception: return d
 def jload(p, d):
     try: return json.loads(rd(p)) or d
@@ -365,7 +416,53 @@ def _autopilot():
     try:
         return json.loads(subprocess.run(["/usr/bin/python3", R + "/bin/autopilot.py"], capture_output=True, text=True, timeout=20).stdout)
     except Exception: return None
-AP = _autopilot()
+# ---- memory
+def mem():
+    free = swap = None
+    try:
+        out = subprocess.run(["memory_pressure"], capture_output=True, text=True, timeout=10).stdout
+        m = re.search(r"free percentage:\s*(\d+)", out); free = int(m.group(1)) if m else None
+        out = subprocess.run(["sysctl", "-n", "vm.swapusage"], capture_output=True, text=True, timeout=5).stdout
+        m = re.search(r"used = ([\d.]+)M", out); swap = float(m.group(1)) / 1024 if m else None
+    except Exception: pass
+    return free, swap
+def _daemon_tick_age():   # -> (seconds since lastTickAt | None, why)
+    import datetime as dt
+    try:
+        r = subprocess.run(["ashlr", "daemon", "status", "--json"], capture_output=True, text=True, timeout=GATE_STATUS_TIMEOUT, stdin=subprocess.DEVNULL)
+        v = json.loads(r.stdout).get("lastTickAt")
+        if not isinstance(v, str): return (None, "no lastTickAt")
+        return (max(0.0, NOW - dt.datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()), None)
+    except Exception as e: return (None, type(e).__name__)
+def api_pace():   # claude-api: slot target comes from the credit burn plan, not memory pressure
+    try:
+        return json.loads(subprocess.run(["/usr/bin/python3", R + "/bin/claude-api.py", "pace", "--json"], capture_output=True,
+                                         text=True, timeout=20).stdout)
+    except Exception: return {"target": 0, "held": True, "reason": "claude-api.py pace failed"}
+def _claude_report():
+    try:
+        return json.loads(subprocess.run(["/usr/bin/python3", R + "/bin/claude-api.py", "report", "--json"],
+                                         capture_output=True, text=True, timeout=20).stdout)
+    except Exception: return {}
+from process_snapshot import capture as capture_process_snapshot
+# RQ-SWE5-LOOP-BENCH: these are independent read-only subprocesses; run in
+# sequence they cost ~0.5-1.5 s of every tick. Start all of them now and collect
+# each result at its original decision point. Probe behavior is unchanged.
+_PROBES = ThreadPoolExecutor(max_workers=6)
+AP_F = _PROBES.submit(_autopilot)
+MEM_F = _PROBES.submit(mem)
+PS_F = _PROBES.submit(capture_process_snapshot, timeout=5)
+TICK_AGE_F = _PROBES.submit(_daemon_tick_age)
+PACE_F = _PROBES.submit(api_pace)
+REPORT_F = _PROBES.submit(_claude_report)
+tick_phase("budget_read", 25)
+AP = AP_F.result()
+# The separately scheduled disk sampler never blocks a dispatcher tick.
+_disk_growth = jload(Q + "/disk-growth.json", {})
+if isinstance(_disk_growth, dict) and _disk_growth:
+    if not isinstance(AP, dict): AP = {}
+    _existing_disk = AP.get("disk")
+    AP["disk"] = {**(_existing_disk if isinstance(_existing_disk, dict) else {}), **_disk_growth}
 # Lane disk gate (green|freeze|halve|yellow), NOT the cleanup level: compact_level only drives compact.sh.
 # Missing or unknown (older autopilot, failed read) is yellow: raises frozen, no halving.
 DISK_GATE = (AP or {}).get("lane_disk_gate") or "yellow"
@@ -383,10 +480,17 @@ def _ph_check():   # auto-release PUBLISH_HOLD once org Actions backlog < 50 que
     try:
         if time.time() - os.path.getmtime(st) < 600: return
     except FileNotFoundError: pass
-    open(st, "w").close(); n = 0
-    for rp in ("phantom", "phantom-secrets", "locus", "lexicon", "ashlr-md", "ashlr-stack", "ashlr-plugin"):
-        try: n += int(_run(["gh", "api", "repos/ashlrai/%s/actions/runs?status=queued&per_page=1" % rp, "--jq", ".total_count"], 20).stdout.strip())
-        except Exception: return
+    open(st, "w").close()
+    # RQ-SWE5-LOOP-BENCH: the seven queued-run counts are independent; fetch them
+    # concurrently. Any failure still abandons the check (nothing is written).
+    repos = ("phantom", "phantom-secrets", "locus", "lexicon", "ashlr-md", "ashlr-stack", "ashlr-plugin")
+    def queued(rp):
+        try: return int(_run(["gh", "api", "repos/ashlrai/%s/actions/runs?status=queued&per_page=1" % rp, "--jq", ".total_count"], 20).stdout.strip())
+        except Exception: return None
+    with ThreadPoolExecutor(max_workers=len(repos)) as ex:
+        counts = list(ex.map(queued, repos))
+    if any(c is None for c in counts): return
+    n = sum(counts)
     open(R + "/PUBLISH_HOLD.queued", "w").write("%d %d\n" % (int(time.time()), n))
     if n < 50: os.replace(ph, ph + ".released-%d" % int(time.time()))
 try: _ph_check()
@@ -399,6 +503,13 @@ def _rc(j):   # RQ-FINISH-SIGNAL A: agent exit status written by launch.sh; miss
         v = rd(RUN + "/" + j + ".rc").strip()
         return int(v) if re.fullmatch(r"-?[0-9]{1,6}", v) else None
     except Exception: return None
+def devin_failure(exit_code, empty, tail):
+    """Fixed labels only; a silent failure cannot prove that no remote work started."""
+    if exit_code is None or exit_code == 0: return None
+    if empty is not True: return "failed_with_work" if empty is False else "failed_diff_unknown"
+    if any(rx.search(tail) for _, rx in AB_AUTH_RX["devin"]): return "authentication"
+    if any(rx.search(tail) for _, rx in AB_RX["devin"]): return "quota"
+    return "failed_empty_unknown"
 def _kind(j, kinds): return re.match(r"(?:RQ-)?(?:%s)(?:[-_]|$)" % "|".join(kinds), j) is not None
 REUSE_KINDS = ("FIXUP", "LAND", "SALVAGE")
 try: DISK_REUSE_ONLY_GB = float(os.environ.get("DISK_REUSE_ONLY_GB", "100"))
@@ -421,11 +532,13 @@ def _ph_open_prs():
     cp = R + "/phantom-open-prs"; n = None
     try:
         t, v = rd(cp).split()[:2]
-        if time.time() - float(t) < 600: n = int(v)
+        age = time.time() - float(t); count = int(v)
+        if 0 <= age < 600 and count >= 0: n = count
     except Exception: n = None
     if n is None:
         try:
             n = int(_run(["gh", "api", "search/issues?q=repo:ashlrai/phantom+is:pr+is:open&per_page=1", "--jq", ".total_count"], 20).stdout.strip())
+            if n < 0: raise ValueError("invalid PR count")
             open(cp + ".tmp", "w").write("%d %d\n" % (int(time.time()), n)); os.replace(cp + ".tmp", cp)
         except Exception: n = None
     _ph_open.append(n); return n
@@ -435,26 +548,16 @@ def _ph_drip_hold(j):   # True = hold this finished job in place (not dropped)
     if _kind(j, PH_DRIP_KINDS): return False
     n = _ph_open_prs(); return n is None or n >= PH_DRIP_MAX
 
-# ---- memory
-def mem():
-    free = swap = None
-    try:
-        out = subprocess.run(["memory_pressure"], capture_output=True, text=True, timeout=10).stdout
-        m = re.search(r"free percentage:\s*(\d+)", out); free = int(m.group(1)) if m else None
-        out = subprocess.run(["sysctl", "-n", "vm.swapusage"], capture_output=True, text=True, timeout=5).stdout
-        m = re.search(r"used = ([\d.]+)M", out); swap = float(m.group(1)) / 1024 if m else None
-    except Exception: pass
-    return free, swap
-free, swap = mem()
+free, swap = MEM_F.result()
 
+tick_phase("liveness", 25)
 # ---- liveness: map processes to jobs by cmdline and cwd
 alive, publishing, cwdjobs = set(), set(), set()
 pat_wt = re.compile(re.escape(WTROOT) + r"/([A-Za-z0-9._-]+)")
 pat_pr = re.compile(re.escape(R) + r"/([A-Za-z0-9._-]+?)\.prompt\b")
 pat_ln = re.compile(r"launch\.sh ([A-Za-z0-9._-]+) ")
 pat_pb = re.compile(r"(?:publish|reap-one)\.sh ([A-Za-z0-9._-]+)")
-from process_snapshot import capture as capture_process_snapshot
-ps_result = capture_process_snapshot(timeout=5)
+ps_result = PS_F.result()
 jsave(Q + "/process-snapshot.json", {"observed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                                     "known": ps_result.returncode == 0,
                                     "reason": ps_result.stderr if ps_result.returncode else None})
@@ -469,8 +572,8 @@ for line in ps.splitlines():
     for p in (pat_wt, pat_pr, pat_ln):
         m = p.search(line)
         if m: alive.add(m.group(1))
-claude_live = any(rd(x).split()[3:4] in (["claude"], ["claude-api"]) and os.path.isdir(rd(x).split()[2]) for x in glob.glob(R + "/*.base"))
-if claude_live:
+worker_worktrees = any(len(rd(x).split()) >= 4 and os.path.isdir(rd(x).split()[2]) for x in glob.glob(R + "/*.base"))
+if worker_worktrees:
     lo_result = _run(["lsof", "-nP", "-w", "-d", "cwd", "-Fn"], 20)
     if lo_result.returncode or not lo_result.stdout.strip():
         jsave(Q + "/process-snapshot.json", {"observed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -483,7 +586,7 @@ if claude_live:
             if m: cwdjobs.add(m.group(1))
 for j in cwdjobs:
     b = rd("%s/%s.base" % (R, j)).split()
-    if len(b) >= 4 and b[3] in ("claude", "claude-api"): alive.add(j)
+    if len(b) >= 4: alive.add(j)
 reaping = {os.path.basename(p)[:-8] for p in glob.glob(RUN + "/*.reaping")}
 publish_processes = set(publishing)   # a publisher may remove .base before its final auto-merge call
 publishing = {j for j in publishing if os.path.exists("%s/%s.base" % (R, j))}
@@ -507,7 +610,7 @@ BATCH_TUNING_PATH = Q + "/batch-tuning.json"; batch_tuning = batcher.load_tuning
 _bstats = None
 def batch_stats():   # throughput per lane and mode from jobs.jsonl, read once per tick and only when needed
     global _bstats
-    if _bstats is None: _bstats = batcher.throughput(batcher.read_rows(MD + "/jobs.jsonl"), NOW)
+    if _bstats is None: _bstats = batcher.throughput(JOBS, NOW)
     return _bstats
 def batch_attempts(j):
     try: return int(rd(RUN + "/" + j + ".batch-attempts", "0").strip() or 0)
@@ -575,6 +678,10 @@ for p in glob.glob(RUN + "/*.dispatched"):
     elif re.search(r"^SKIPPED: BRANCH_IN_WORKTREE", out, re.M):
         ev("LAUNCH_SKIPPED %s BRANCH_IN_WORKTREE (not a failure, not requeued; see %s.launch)" % (j, j))
         release_batch(j, "launch skipped")
+    elif not out.strip() and not base(j):
+        ln = rd(RUN + "/" + j + ".line").strip()
+        if ln: requeue.append(ln)
+        ev("LAUNCH_INTERRUPTED %s (requeued)" % j)
     else:
         ev("LAUNCH_FAILED %s (see %s.launch)" % (j, j))
         if FORK_RX.search(out): fork_seen.append(NOW); ev("FORK_FAILED %s (concurrency backoff)" % j)
@@ -586,17 +693,27 @@ running = {l: 0 for l in LANES}; kept = []; nreap = len(reaping); local_mid = 0
 # A leftover .base is not evidence that an already merged attempt needs another
 # publisher. A later launch starts a new attempt with the same job id.
 _attempts = {}; _merged_urls = set()
-for row in batcher.read_rows(MD + "/jobs.jsonl"):
+_raw_rows = batcher.parse_rows(MD + "/jobs.jsonl")
+JOBS_RAW.extend(_raw_rows); JOBS.extend(batcher.project_rows(_raw_rows))
+_JOBS_LIVE = True
+for row in JOBS:
     if not isinstance(row, dict): continue
     event, job = row.get("event"), row.get("job")
+    if row.get("outcome", row.get("status")) == "PUBLISHED":
+        job = row.get("jobId", row.get("job", row.get("id")))
     if event == "outcome" and str(row.get("state", row.get("outcome", ""))).upper() == "MERGED":
-        if isinstance(row.get("url"), str) and row["url"]: _merged_urls.add(row["url"])
+        if isinstance(row.get("url"), str) and row["url"]: _merged_urls.add(row["url"].rstrip("/"))
     if not isinstance(job, str): continue
     if event == "launch": _attempts[job] = {"finished": False, "merged": False, "urls": set()}
     attempt = _attempts.setdefault(job, {"finished": False, "merged": False, "urls": set()})
     if event == "finish": attempt["finished"] = True
-    if event == "publish" and isinstance(row.get("url"), str) and row["url"]: attempt["urls"].add(row["url"])
-    if event == "outcome" and str(row.get("state", row.get("outcome", ""))).upper() == "MERGED": attempt["merged"] = True
+    url = row.get("url") if event == "publish" else None
+    if row.get("outcome", row.get("status")) == "PUBLISHED": url = row.get("prUrl", row.get("pr"))
+    if isinstance(url, str) and url: attempt["urls"].add(url.rstrip("/"))
+    # URL-bearing outcomes may arrive after a later launch; match the PR, not
+    # the job id, so reconciliation cannot complete the wrong attempt.
+    if event == "outcome" and str(row.get("state", row.get("outcome", ""))).upper() == "MERGED" and not row.get("url"):
+        attempt["merged"] = True
 # A new marker covers the spawn-to-ps race. Old orphan markers still protect
 # their own job, but must not stop every other publisher forever.
 def _reap_starting(j):
@@ -613,6 +730,26 @@ if DRIP:
     except Exception: drecent = []
     drip_budget = 0 if dq >= 150 else max(0, 10 - len(drecent))
 REPO_RANK = {r: i for i, r in enumerate(("phantom", "phantom-secrets", "locus", "lexicon", "ashlr-md", "ashlr-stack", "ashlr-plugin"))}
+def _ready_repo_ranks():
+    """Read a complete rank snapshot; invalid snapshots leave legacy ordering intact."""
+    try:
+        with open(H + "/.ashlr/repo-rank.json") as f: state = json.load(f)
+        enrolled, rows = state["enrolled"], state["rankings"]
+        weights = [state["weights"][k] for k in ("prior", "recency", "leverage")]
+        number = lambda x: isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+        datetime.datetime.fromisoformat(state["generatedAt"].replace("Z", "+00:00"))
+        if (type(state["schemaVersion"]) is not int or state["schemaVersion"] != 1 or not isinstance(enrolled, list) or not enrolled
+                or any(not isinstance(r, str) or not re.fullmatch(r"[a-z0-9-]+", r) for r in enrolled)
+                or len(set(enrolled)) != len(enrolled) or not isinstance(rows, list) or len(rows) != len(enrolled)
+                or any(not number(w) or w < 0 for w in weights) or not math.isfinite(sum(weights)) or sum(weights) <= 0
+                or not isinstance(state["proposals"], list) or not isinstance(state["history"], list)
+                or any(not isinstance(r, dict) or r.get("repo") not in enrolled
+                       or not number(r.get("weight")) or r["weight"] <= 0 or not number(r.get("score")) for r in rows)
+                or len({r["repo"] for r in rows}) != len(enrolled)):
+            return {}
+        return {r["repo"]: i for i, r in enumerate(rows)}
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, OverflowError): return {}
+
 PRIORITY_QUEUE = rd(Q + "/router-queue.md"); _sizes = {}
 def _bucket(j):
     return (0 if j.startswith("RQ-FIX-MAIN-") else 1 if j.startswith("RQ-REL-") else
@@ -656,7 +793,8 @@ LANDONLY_PREFIXES = ("RQ-DESK-",)   # fixed strings in code; never read from the
 def _landonly_ids():   # exact tokens only (whitespace-split, as before); tokens that are not valid job ids are ignored
     return {t for t in rd(R + "/PUBLISH_LANDONLY").split() if JID.match(t)}
 def _landonly_ok(j): return j in _landonly_ids() or j.startswith(LANDONLY_PREFIXES)
-for bp in sorted(glob.glob(R + "/*.base"), key=_prio):
+tick_phase("worktree_account", 5)
+for bp in glob.glob(R + "/*.base"):
     j = os.path.basename(bp)[:-5]; b = base(j)
     if not b or not JID.match(j): continue
     wt, pool = b[2], b[3]
@@ -677,55 +815,70 @@ for bp in sorted(glob.glob(R + "/*.base"), key=_prio):
         if pool in running: running[pool] += 1
         if pool == "codex-local" and _is_local_mid(j): local_mid += 1
         continue
-    res = result(j)
-    if j in keep or (res and not res.startswith(("RESULT PR", "RESULT EMPTY"))):
-        kept.append(j)
-        mk = RUN + "/" + j + ".keptlogged"
-        if not os.path.exists(mk):
-            open(mk, "w").close()
-            ev(("PUBLISH_ABORT_SECRET_SHAPE %s worktree kept for supervisor" if res and "PUBLISH-ABORT" in res
-                else "KEPT %s worktree kept for supervisor") % j)
-        continue
-    if os.path.exists(R + "/PUBLISH_HOLD"): continue   # Actions backlog: keep finished worktrees local, publish later
-    if os.path.exists(R + "/PUBLISH_LANDONLY") and _bucket(j) > 3 and not _landonly_ok(j) and not os.path.exists(R + "/g1-pass/" + j + ".pass"): continue   # merge-rate first; only priority buckets, G1-passed and listed jobs publish
-    # reap-one.sh owns publish.sh and must wait through auto-merge enablement.
-    # Wait for its complete handoff before starting the next publisher;
-    # concurrent children can reorder merge-queue entry regardless of spawn order.
-    if publish_busy: continue
-    if over_budget(): continue   # RQ-TICK-BUDGET: later reaps wait one tick
-    if _ph_drip_hold(j):
-        mk = RUN + "/" + j + ".phdrip"
-        if not os.path.exists(mk): open(mk, "w").close(); ev("PHANTOM_DRIP hold %s open_prs=%s" % (j, _ph_open_prs()))
-        continue
-    if DRIP:
-        if drip_budget <= 0: continue
-        drip_budget -= 1; open(DRIPLOG, "a").write("%f\n" % NOW)
-    os.mkdir(RUN + "/" + j + ".reaping"); nreap += 1; publish_busy = True
-    try:
-        lp = "%s/%s.log" % (R, j); tl = logtail(lp, 20000)
-        nf, diff_lines, empty = job_diff_metrics(wt, b[0])
-        wall_s = int(os.path.getmtime(lp) - os.path.getmtime(bp)) if os.path.exists(lp) else None
-        try: bsize = reap_batch(j, wt, pool, wall_s)
-        except Exception as e: bsize = None; log("batch reap err %s %s" % (j, type(e).__name__))
-        if not attempt.get("finished") and not os.path.exists(RUN + "/" + j + ".timeout"):
-            metric({"event": "finish", "job": j, "lane": pool, "wall_s": wall_s, "batch_size": bsize,
-                "exit_code": _rc(j), "tokens_total": tokens(tl), "tokens_in": None, "tokens_out": None, "cost": None,
-                "diff_files": nf, "diff_lines": diff_lines, "empty": empty,
-                "pool_error": next((c for c, rx in CLS if any(rx.search(t) for t in errlines(tl.splitlines()[-30:]))), None)})
-    except Exception as e: log("metric finish err %s %s" % (j, type(e).__name__))
-    subprocess.Popen(["/bin/bash", R + "/bin/reap-one.sh", j], stdin=subprocess.DEVNULL,
-                     stdout=open(RUN + "/" + j + ".reap.log", "a"), stderr=subprocess.STDOUT, start_new_session=True)
-    log("REAP %s (%s)" % (j, pool))
 
+def reap_worktrees():
+    global nreap, publish_busy, drip_budget
+    for bp in _reap_candidates:
+        j = os.path.basename(bp)[:-5]; b = base(j)
+        if not b or not JID.match(j): continue
+        wt, pool = b[2], b[3]
+        if j in alive:
+            continue
+        if not os.path.isdir(wt) or j in reaping or j in publishing: continue
+        attempt = _attempts.get(j, {})
+        if attempt.get("merged") or attempt.get("urls", set()) & _merged_urls: continue
+        try: recent = max(os.path.getmtime(bp), os.path.getmtime("%s/%s.log" % (R, j)) if os.path.exists("%s/%s.log" % (R, j)) else 0)
+        except Exception: recent = NOW
+        if NOW - recent < 180 or not os.path.exists("%s/%s.log" % (R, j)):   # fresh launch by anyone (routine or us): not finished
+            if j.startswith("RQ-FIX-MAIN-") and _rc(j) is None and not result(j): fix_main_repos.add(_job_repo(j))
+            if _rc(j) is None and not result(j):
+                target = drain_target(j, _job_repo(j))
+                if target: drain_targets.add(target)
+            continue
+        res = result(j)
+        if j in keep or (res and not res.startswith(("RESULT PR", "RESULT EMPTY"))):
+            kept.append(j)
+            mk = RUN + "/" + j + ".keptlogged"
+            if not os.path.exists(mk):
+                open(mk, "w").close()
+                ev(("PUBLISH_ABORT_SECRET_SHAPE %s worktree kept for supervisor" if res and "PUBLISH-ABORT" in res
+                    else "KEPT %s worktree kept for supervisor") % j)
+            continue
+        if os.path.exists(R + "/PUBLISH_HOLD"): continue   # Actions backlog: keep finished worktrees local, publish later
+        if os.path.exists(R + "/PUBLISH_LANDONLY") and _bucket(j) > 3 and not _landonly_ok(j) and not os.path.exists(R + "/g1-pass/" + j + ".pass"): continue   # merge-rate first; only priority buckets, G1-passed and listed jobs publish
+        # reap-one.sh owns publish.sh and must wait through auto-merge enablement.
+        # Wait for its complete handoff before starting the next publisher;
+        # concurrent children can reorder merge-queue entry regardless of spawn order.
+        if publish_busy: continue
+        if over_budget(): continue   # RQ-TICK-BUDGET: later reaps wait one tick
+        if _ph_drip_hold(j):
+            mk = RUN + "/" + j + ".phdrip"
+            if not os.path.exists(mk): open(mk, "w").close(); ev("PHANTOM_DRIP hold %s open_prs=%s" % (j, _ph_open_prs()))
+            continue
+        if DRIP:
+            if drip_budget <= 0: continue
+            drip_budget -= 1; open(DRIPLOG, "a").write("%f\n" % NOW)
+        try:
+            lp = "%s/%s.log" % (R, j); tl = logtail(lp, 20000)
+            nf, diff_lines, empty = job_diff_metrics(wt, b[0])
+            wall_s = int(os.path.getmtime(lp) - os.path.getmtime(bp)) if os.path.exists(lp) else None
+            try: bsize = reap_batch(j, wt, pool, wall_s)
+            except Exception as e: bsize = None; log("batch reap err %s %s" % (j, type(e).__name__))
+            if not attempt.get("finished") and not os.path.exists(RUN + "/" + j + ".timeout"):
+                metric({"event": "finish", "job": j, "lane": pool, "wall_s": wall_s, "batch_size": bsize,
+                    "exit_code": _rc(j), "tokens_total": tokens(tl), "tokens_in": None, "tokens_out": None, "cost": None,
+                    "diff_files": nf, "diff_lines": diff_lines, "empty": empty,
+                    "failure_class": devin_failure(_rc(j), empty, tl) if pool == "devin" else None,
+                    "pool_error": next((c for c, rx in CLS if any(rx.search(t) for t in errlines(tl.splitlines()[-30:]))), None)})
+        except Exception as e: log("metric finish err %s %s" % (j, type(e).__name__))
+        os.mkdir(RUN + "/" + j + ".reaping"); nreap += 1; publish_busy = True
+        subprocess.Popen(["/bin/bash", R + "/bin/reap-one.sh", j], stdin=subprocess.DEVNULL,
+                         stdout=open(RUN + "/" + j + ".reap.log", "a"), stderr=subprocess.STDOUT, start_new_session=True)
+        log("REAP %s (%s)" % (j, pool))
+
+
+tick_phase("admission", 10)
 # ---- admission gate. Fixture signal overrides require the LOADGATE_TEST marker.
-def _daemon_tick_age():   # -> (seconds since lastTickAt | None, why)
-    import datetime as dt
-    try:
-        r = subprocess.run(["ashlr", "daemon", "status", "--json"], capture_output=True, text=True, timeout=GATE_STATUS_TIMEOUT, stdin=subprocess.DEVNULL)
-        v = json.loads(r.stdout).get("lastTickAt")
-        if not isinstance(v, str): return (None, "no lastTickAt")
-        return (max(0.0, NOW - dt.datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()), None)
-    except Exception as e: return (None, type(e).__name__)
 def _install_holder():   # the install-gate.py wrapper writes its holder JSON into queue/install.lock; a dead pid is no holder
     try:
         h = json.loads(rd(Q + "/install.lock") or "null")
@@ -742,7 +895,7 @@ def admission_gate():
     except (ValueError, OSError): load1 = float("inf")   # unreadable load: reduce claims
     procs = sum(1 for l in ps.splitlines() if l.strip())
     wts = sum(1 for bp in glob.glob(R + "/*.base") if os.path.basename(bp)[:-5] in alive and (lambda b: bool(b) and os.path.isdir(b[2]))(base(os.path.basename(bp)[:-5])))
-    age, why = _daemon_tick_age()
+    age, why = TICK_AGE_F.result()
     pressure = None
     try:
         pressure = int(os.environ["LOADGATE_PRESSURE"]) if test and "LOADGATE_PRESSURE" in os.environ else int(
@@ -831,6 +984,28 @@ def route_decision(record, proposed, now, hard_down=False, launched=False):
     record.update(pool=proposed, decided_at=now, moves=record["moves"] + [now])
     return record, None
 
+tick_phase("restock", 5)
+# ---- restock trigger: a codex lane's queue below 3x its free slots -> Mac-side deterministic restocker (no LLM)
+import queue_gate
+_gate = queue_gate.read_gate(Q)
+if _gate["depth"] is None:
+    _gate = queue_gate.allowance(min(lane_target_sum(), slots.get("hard_cap", lane_target_sum())),
+                                 rd(Q + "/ready.tsv"), set(rd(Q + "/RETIRED").split()))
+ev("QUEUE_GATE allow=%s depth=%s target=%s src=dispatchd" % (_gate["allow"], _gate["depth"], _gate["target"]))
+_ready_before_restock = rd(Q + "/ready.tsv").splitlines()
+rate_parked = any("PARKED-MERGERATE." in l for l in _ready_before_restock)
+for lane in ("codex-cmp", "codex-personal", "devin", "claude-api", "codex-local"):
+    sl = slots[lane]
+    if sl.get("held") or lane in hold: continue
+    qn = sum(1 for l in _ready_before_restock if not l.startswith("PARKED-") and l.split("\t")[2:3] == [lane])
+    if _gate["allow"] and (rate_parked or qn < 3 * max(sl["target"] - running[lane], 4)) and os.path.exists(Q + "/router-queue.md") and not os.path.exists(Q + "/RESTOCK_OFF"):
+        try:
+            _run(["/bin/bash", R + "/bin/restock.sh"], 4)
+        except (OSError, subprocess.SubprocessError):
+            log("restock budget exhausted or unavailable; launching existing ready claims")
+        break
+
+tick_phase("queue_parse", 10)
 # ---- queue
 # RQ-READYLOCK-SCOPE: queue/ready.lock guards only the ready.tsv read and the ready.tsv rewrite, never the
 # tick body (a slow tick held it 4+ min and blocked restock.py / sync-router-queue.py appends). Every taker
@@ -849,6 +1024,9 @@ def qlock(who="dispatchd", timeout=None):
 lk = qlock("dispatchd-read")
 if lk is None: log("ready.lock busy; tick skipped"); raise SystemExit(0)
 _raw = rd(Q + "/ready.tsv").splitlines()
+def parked_row(line):
+    fields = line.split("\t")
+    return fields[0].startswith("PARKED-") or (len(fields) > 2 and fields[2].startswith("PARKED-"))
 # Invalid persisted history must not silently reset the move budget.
 try:
     route_state = json.loads(rd(Q + "/route-state.json")) if os.path.exists(Q + "/route-state.json") else {}
@@ -861,7 +1039,7 @@ except (ValueError, TypeError, KeyError, AssertionError):
 routed = []
 for line in _raw + requeue:
     f = line.split("\t")
-    if len(f) < 5 or not JID.fullmatch(f[0]) or f[2] not in LANES:
+    if parked_row(line) or len(f) < 5 or not JID.fullmatch(f[0]) or f[2] not in LANES:
         routed.append(line); continue
     job, proposed = f[0], f[2]
     previous = route_state.get(job)
@@ -886,7 +1064,7 @@ lines = [l for l in routed if l.strip() and not l.startswith("#")]
 # Per-job receipts survive ticks and queue rewrites without rescanning the metrics log.
 for l in lines:
     f = l.split("\t")
-    if len(f) < 5 or not JID.fullmatch(f[0]) or f[2] not in LANES or f[3] not in TIERS: continue
+    if parked_row(l) or len(f) < 5 or not JID.fullmatch(f[0]) or f[2] not in LANES or f[3] not in TIERS: continue
     receipt = RUN + "/" + f[0] + ".enqueued"
     try:
         with open(receipt, "x") as out: out.write(str(time.time()))
@@ -898,27 +1076,20 @@ for l in lines:
 qdepth = {l: 0 for l in LANES}
 for l in lines:
     f = l.split("\t")
-    if len(f) >= 3 and f[2] in qdepth: qdepth[f[2]] += 1
+    if not parked_row(l) and len(f) >= 3 and f[2] in qdepth: qdepth[f[2]] += 1
 
-def api_pace():   # claude-api: slot target comes from the credit burn plan, not memory pressure
-    try:
-        return json.loads(subprocess.run(["/usr/bin/python3", R + "/bin/claude-api.py", "pace", "--json"], capture_output=True,
-                                         text=True, timeout=20).stdout)
-    except Exception: return {"target": 0, "held": True, "reason": "claude-api.py pace failed"}
 _dv = None
 def _devin_spike():   # DEVIN-LEVERAGE-20261026, computed in dispatchd itself (Masbot 21:19): the same
     global _dv          # last-10 devin finish scan bin/autopilot.py publishes, kept here so a down
     if _dv is None:     # autopilot never leaves the spike check unrun. Cached once per tick.
-        rows = []
-        for l in rd(MD + "/jobs.jsonl").splitlines():
-            try: rows.append(json.loads(l))
-            except Exception: pass
+        rows = JOBS_RAW
         pub = {r.get("job") for r in rows if r.get("event") == "publish" and r.get("url")}
         fin = [r for r in rows if r.get("event") == "finish" and r.get("lane") == "devin"][-DEVIN_STEP["window"]:]
         _dv = {"last_n": len(fin), "last_job": fin[-1].get("job") if fin else None,
                "non_pr": sum(1 for r in fin if r.get("empty") or r.get("job") not in pub)}
         _dv["step_down"] = len(fin) >= DEVIN_STEP["window"] and _dv["non_pr"] > DEVIN_STEP["max_non_pr"]
     return _dv
+tick_phase("adapt", 10)
 for lane in LANES:
     try: ab_scan(lane, alive)
     except Exception as e: log("autobackoff err %s %s" % (lane, type(e).__name__))
@@ -927,7 +1098,7 @@ for lane in LANES:
 for lane in LANES:
     s = slots[lane]
     if lane == "claude-api":
-        ap = api_pace(); nt = max(0, min(int(ap.get("target") or 0), s["ceiling"]))
+        ap = PACE_F.result(); nt = max(0, min(int(ap.get("target") or 0), s["ceiling"]))
         if nt != s["target"]: ev("SLOTS %s %d->%d paced (pool=%s need=$%s/h)" % (lane, s["target"], nt, ap.get("pool"), ap.get("need_usd_per_hour")))
         s["target"] = nt; s["api_pool"] = ap.get("pool"); s["api_reason"] = ap.get("reason")
         if s.get("held") or lane in hold: continue
@@ -993,6 +1164,7 @@ conc_adjusted(concurrency.decide(CONC, {
     "disk_free_gb": disk_free_gb, "disk_hard_stop_gb": DISK_HARD_STOP_GB, "procs": GATE["procs"], "procs_max": GATE_PROCS_MAX},
     NOW, _demand, CONC_FLOOR, CONC_CEILING))
 
+tick_phase("launch", 30)
 # ---- (b) fill
 launched = []; rest = []; bad = 0; batches = []
 GCAP = global_cap()
@@ -1005,6 +1177,8 @@ if disk_hard_stop: ev("DISKGUARD hard_stop %.0fG < %.0fG, no launches" % (disk_f
 if not pause and not disk_hard_stop and not GATE["tripped"]:
     cand = []
     for l in lines:
+        if parked_row(l):
+            rest.append(l); continue
         f = l.split("\t")
         ok = (len(f) >= 5 and JID.match(f[0]) and f[2] in LANES and f[3] in TIERS
               and os.path.isdir(H + "/Projects/ashlrai/" + f[1]) and "/" not in f[1]
@@ -1014,7 +1188,9 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         cand.append(f)
     # The key is global across pools; blocked jobs are retained below while
     # scanning continues, so a capped FIX-MAIN sibling cannot consume a claim.
-    cand.sort(key=lambda f: _job_priority(f[0], f[1], f[4], f[4]))
+    ready_ranks = _ready_repo_ranks()
+    cand.sort(key=lambda f: (_bucket(f[0]), ready_ranks.get(f[1], len(ready_ranks)),
+                             *_job_priority(f[0], f[1], f[4], f[4])[1:]))
     seen = set(); pc_n = 0; local_ok = None
     def _local_healthy():   # one GET per tick; any error, timeout or non-200 -> unhealthy. Env proxies ignored.
         import urllib.request
@@ -1082,6 +1258,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                 or running[lane] >= s["target"] or sum(running.values()) >= GCAP or j in alive or j in reaping or j in publishing):
             rest.append(line); seen.add(j); continue
         if lane == "codex-local":
+            if _size_hint(j, pf) > 60:
+                rest.append(line); seen.add(j); continue
             if tier == "mid" and local_mid >= LOCAL_MID_CAP: rest.append(line); seen.add(j); continue
             if local_ok is None:
                 local_ok = _local_healthy()
@@ -1138,6 +1316,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             try: os.remove(RUN + "/" + j + x)
             except FileNotFoundError: pass
         open(RUN + "/" + j + ".line", "w").write(line + "\n")
+        open("%s/%s.launch" % (R, j), "w").close()  # discard the previous attempt before claiming
         open(RUN + "/" + j + ".dispatched", "w").write(str(int(NOW)))
         metric({"event": "claim", "job": j, "repo": repo, "lane": lane, "tier": tier})
         env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG") if k in os.environ}
@@ -1161,37 +1340,318 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         running[lane] += 1; local_mid += lane == "codex-local" and tier == "mid"; launched.append(j); ev("LAUNCH %s %s %s %s" % (j, repo, lane, tier))
 else:
     rest = lines
-# Rewrite under the lock, re-reading first: lines appended since the snapshot (the file is append-only for
-# every other writer) ride through after this tick's survivors so the whole-file replace never erases them.
+# Reconcile concurrent parked-row rewrites as well as appended rows.
 lk = qlock("dispatchd-write", 30)
 if lk is None: log("ready.lock busy; ready.tsv rewrite skipped (launched jobs stay guarded by alive/worktree checks)"); raise SystemExit(0)
-rest = rest + [l for l in rd(Q + "/ready.tsv").splitlines()[len(_raw):] if l.strip() and not l.startswith("#")]
+from collections import Counter
+current = rd(Q + "/ready.tsv").splitlines()
+old_counts, current_counts = Counter(_raw), Counter(current)
+removed = old_counts - current_counts
+survivors = []
+for l in rest:
+    if parked_row(l) and removed[l]: removed[l] -= 1
+    else: survivors.append(l)
+rest = survivors
+added = current_counts - old_counts
+for l in current:
+    if added[l] and l.strip() and not l.startswith("#"):
+        rest.append(l); added[l] -= 1
 t = Q + "/ready.tsv.tmp"; open(t, "w").write("".join(l + "\n" for l in rest)); os.replace(t, Q + "/ready.tsv")
 lk.close()
 jsave(Q + "/slots.json", slots)
 concurrency.save(CONC_PATH, CONC)
 
-# ---- restock trigger: a codex lane's queue below 3x its free slots -> Mac-side deterministic restocker (no LLM)
-for lane in ("codex-cmp", "codex-personal", "devin", "claude-api", "codex-local"):
-    sl = slots[lane]
-    if sl.get("held") or lane in hold: continue
-    qn = sum(1 for l in rest if l.split("\t")[2:3] == [lane])
-    if qn < 3 * max(sl["target"] - running[lane], 4) and os.path.exists(Q + "/router-queue.md") and not os.path.exists(Q + "/RESTOCK_OFF"):
-        subprocess.Popen(["/bin/bash", R + "/bin/restock.sh"], stdin=subprocess.DEVNULL, stdout=open(Q + "/restock.log", "a"),
-                         stderr=subprocess.STDOUT, start_new_session=True)
-        break
+# Finished-worktree discovery/sorting runs at most every ten minutes. Drain the
+# cached priority list after launches each tick so cadence cannot throttle merges.
+# Stamp before
+# starting so a timeout does not cause a costly retry on every dispatcher tick.
+_reap_stamp = Q + "/.worktree-reap.stamp"
+_reap_cache = Q + "/worktree-reap-candidates.json"
+_reap_candidates = jload(_reap_cache, [])
+if not isinstance(_reap_candidates, list): _reap_candidates = []
+_reap_candidates = [p for p in _reap_candidates if isinstance(p, str) and os.path.dirname(p) == R and p.endswith(".base")]
+tick_phase("worktree_reap", gate_limit("WORKTREE_REAP_BUDGET_S", 15))
+try:
+    if not os.path.exists(_reap_stamp) or NOW - os.path.getmtime(_reap_stamp) >= 600:
+        open(_reap_stamp, "w").close()
+        _reap_candidates = sorted(glob.glob(R + "/*.base"), key=_prio)
+        jsave(_reap_cache, _reap_candidates)
+    reap_worktrees()
+except MaintenanceDeadline:
+    log("worktree maintenance budget exhausted; deferred")
+tick_phase("status", 15)
+if rate_parked: _ph_open_prs()
+
+# ---- verified completion (RQ-SWE5-VERIFY-METRIC; mirror of src/core/fleet/agent-activity.ts foldVerifiedCompletion — keep in sync)
+# A task counts as verified complete only when an independent check confirms it: the reconciled
+# GitHub state of the PR it published (MERGED/CLOSED via metrics-outcomes), never the worker's own
+# "done" report, a non-empty finish, or a publish event alone. Claims: `published` (non-batch job
+# published >=1 github PR url in-window), `batch-member` (task_outcome done; resolves through the
+# batch session's published PRs), `outcome` (bare outcome row, no publish observed). Coordination
+# failures: duplicates (one attempt >1 PR, or one PR claimed by >1 job), false completions (every
+# published PR CLOSED), unauthorized actions (PR repo != the job's routed repo). RQ-BATCH-* session
+# jobs are infrastructure: their publishes resolve member claims but never form claims themselves.
+VC_WINDOW_S = 24 * 3600
+VC_LIFECYCLE = {"enqueue", "claim", "batch_claim", "queued", "launch", "finish", "publish", "outcome", "task_outcome"}
+VC_QUEUE = {"enqueue", "claim", "batch_claim", "queued", "launch"}
+VC_RESOLVED = {"MERGED", "CLOSED", "OPEN"}
+VC_PR = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/([1-9][0-9]*)/?$", re.I)
+VC_JOB = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$")
+VC_LANE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$")
+VC_LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,79}$")
+VC_BATCH_PREFIX = "RQ-BATCH-"
+VC_MAX_DETAIL = 20
+
+def _vc_pick(row, *keys):
+    for k in keys:
+        v = row.get(k)
+        if isinstance(v, str) and v.strip(): return v.strip()
+    return None
+
+def _vc_num(row, *keys):
+    for k in keys:
+        v = row.get(k)
+        if isinstance(v, bool): continue
+        if isinstance(v, (int, float)) and math.isfinite(v): return v
+        if isinstance(v, str) and v.strip():
+            try: return float(v)
+            except ValueError: pass
+    return None
+
+def _vc_ts(value):
+    """ISO-8601 ts -> epoch seconds; None when absent/unparseable. Offset-aware; naive reads as local."""
+    if not isinstance(value, str): return None
+    s = value.strip()
+    if not s: return None
+    try:
+        d = datetime.datetime.fromisoformat(s[:-1] + "+00:00" if s.endswith(("Z", "z")) else s)
+    except ValueError:
+        m = re.match(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})([+-]\d{2})(\d{2})$", s)   # -0500 without colon
+        if not m: return None
+        try: d = datetime.datetime.fromisoformat(m.group(1) + m.group(2) + ":" + m.group(3))
+        except ValueError: return None
+    try:
+        return d.timestamp() if d.tzinfo is not None else time.mktime(d.timetuple()) + d.microsecond / 1e6
+    except (OverflowError, OSError, ValueError): return None
+
+def _vc_event(row):
+    """Lifecycle event name, or None for operational rows. Eventless producer/reconciler rows
+    infer from phase (eval-report/batcher convention): PUBLISHED -> publish, MERGED/CLOSED/OPEN -> outcome."""
+    ev = _vc_pick(row, "event", "type", "kind")
+    if ev is not None:
+        if ev == "published": return "publish"
+        return ev if ev in VC_LIFECYCLE else None
+    ph = _vc_phase(row)
+    if ph == "PUBLISHED": return "publish"
+    if ph in ("MERGED", "CLOSED", "OPEN"): return "outcome"
+    return None
+
+def _vc_phase(row):
+    v = _vc_pick(row, "outcome", "state", "status")
+    return v.upper() if v else None
+
+def _vc_pr(row):
+    """Canonical PR identity (lowercase owner/repo key + repoLc) or None."""
+    for k in ("url", "pr_url", "prUrl", "pr", "html_url"):
+        v = row.get(k)
+        if isinstance(v, str) and len(v) <= 512:
+            m = VC_PR.match(v.strip())
+            if m:
+                o, r, n = m.group(1).lower(), m.group(2).lower(), m.group(3)
+                return "https://github.com/%s/%s/pull/%s" % (o, r, n), "%s/%s" % (o, r)
+    return None
+
+def _vc_bounded(value, rx):
+    return value if value is not None and rx.match(value) else None
+
+def _vc_fresh():
+    return {"boundary": float("-inf"), "finish": None, "publish_ts": None, "publish_lane": None,
+            "urls": [], "url_set": set(), "task_outcome": None, "batch_id": None,
+            "job_outcome": None, "outcome_ts": None, "lane": None, "repo": None}
+
+def _vc_terminal(a):
+    return a["finish"] is not None or a["publish_ts"] is not None or a["outcome_ts"] is not None or a["task_outcome"] is not None
+
+def _vc_last_boundary(a):
+    return max((a["finish"] or {}).get("ts", 0), a["publish_ts"] or 0, a["outcome_ts"] or 0, (a["task_outcome"] or {}).get("ts", 0))
+
+def _vc_merge_meta(a, row):
+    lane = _vc_bounded(_vc_pick(row, "lane", "pool"), VC_LANE)
+    repo = _vc_bounded(_vc_pick(row, "repo"), VC_LABEL)
+    if a["lane"] is None and lane: a["lane"] = lane
+    if a["repo"] is None and repo: a["repo"] = repo
+
+def _vc_url_edge(url_jobs, url, job, ts):
+    by_job = url_jobs.setdefault(url, {})
+    if job not in by_job or ts < by_job[job]: by_job[job] = ts
+
+def _vc_verdict(urls, url_states):
+    """MERGED wins; all-CLOSED fails; anything unresolved stays pending."""
+    merged = closed = unresolved = False
+    for u in urls:
+        s = url_states.get(u)
+        if s == "MERGED": merged = True
+        elif s == "CLOSED": closed = True
+        else: unresolved = True
+    if merged: return "verified"
+    if closed and not unresolved: return "failed"
+    return "pending"
+
+def _vc_repo_match(routed, url_repo_lc):
+    """routed 'owner/name' matches exactly; basename routes match the repo name only."""
+    r = routed.strip().lower()
+    return r == url_repo_lc if "/" in r else r == url_repo_lc.rsplit("/", 1)[-1]
+
+def verified_completion(mets, now, missing=False):
+    cutoff = now - VC_WINDOW_S
+    url_states, url_jobs, claim_urls = {}, {}, {}
+    jobs, dropped = {}, 0
+    for row in mets:
+        if not isinstance(row, dict): dropped += 1; continue
+        ev = _vc_event(row)
+        if ev is None: continue
+        job = _vc_pick(row, "job", "job_id", "jobId", "id")
+        ts = _vc_ts(_vc_pick(row, "ts", "at", "time", "timestamp", "mergedAt", "closedAt", "recordedAt", "updatedAt"))
+        if job is None or not VC_JOB.match(job) or ts is None: dropped += 1; continue
+        j = jobs.setdefault(job, {"attempts": [], "current": _vc_fresh(), "repo": None})
+        a = j["current"]
+        if ev in VC_QUEUE:
+            if _vc_terminal(a) and ts >= _vc_last_boundary(a):
+                j["attempts"].append(a); a = j["current"] = _vc_fresh()
+            if ts > a["boundary"]: a["boundary"] = ts
+            _vc_merge_meta(a, row)
+            if ev == "batch_claim":
+                b = _vc_bounded(_vc_pick(row, "batch", "batch_id", "batchId"), VC_JOB)
+                if b and a["batch_id"] is None: a["batch_id"] = b
+            repo = _vc_bounded(_vc_pick(row, "repo"), VC_LABEL)
+            if repo: j["repo"] = repo
+            continue
+        if ev == "publish":
+            pr = _vc_pr(row); phase = _vc_phase(row)
+            if phase in VC_RESOLVED:
+                # Reconciler resolution row: PR state + claim evidence, never a new claim or attempt state.
+                if pr: url_states[pr[0]] = phase; _vc_url_edge(url_jobs, pr[0], job, ts)
+                continue
+            if ts < a["boundary"]: continue
+            if pr:
+                if pr[0] not in a["url_set"]:
+                    a["url_set"].add(pr[0]); a["urls"].append(pr[0])
+                    claim_urls.setdefault(job, set()).add(pr[0])
+                _vc_url_edge(url_jobs, pr[0], job, ts)
+                if a["publish_ts"] is None:
+                    a["publish_ts"] = ts
+                    a["publish_lane"] = _vc_bounded(_vc_pick(row, "lane", "pool"), VC_LANE)
+            _vc_merge_meta(a, row)
+            continue
+        if ev == "outcome":
+            pr = _vc_pr(row); phase = _vc_phase(row) or "RECORDED"
+            # A url's reconciled state is a fact about the PR, not the attempt: github timestamps can
+            # predate a requeue boundary, so url_states/claim evidence update before the attempt guard.
+            if pr: url_states[pr[0]] = phase; _vc_url_edge(url_jobs, pr[0], job, ts)
+            if ts >= a["boundary"]:
+                if not pr and (a["job_outcome"] is None or ts >= a["job_outcome"]["ts"]):
+                    a["job_outcome"] = {"state": phase, "ts": ts}
+                if a["outcome_ts"] is None or ts >= a["outcome_ts"]: a["outcome_ts"] = ts
+                _vc_merge_meta(a, row)
+            continue
+        if ts < a["boundary"]: continue
+        if ev == "finish":
+            if a["finish"] is None:
+                code = _vc_num(row, "exit_code", "exitCode")
+                a["finish"] = {"ts": ts, "ok_nonempty": code == 0 and row.get("empty") is not True}
+            _vc_merge_meta(a, row)
+            continue
+        # task_outcome — batch member result from the session's BRIDGE_NOTES.
+        o = _vc_pick(row, "outcome")
+        if o is not None and (a["task_outcome"] is None or ts >= a["task_outcome"]["ts"]):
+            b = _vc_bounded(_vc_pick(row, "batch", "batch_id", "batchId"), VC_JOB) or a["batch_id"]
+            a["task_outcome"] = {"outcome": o.lower(), "batch": b, "ts": ts}
+        if a["outcome_ts"] is None or ts >= a["outcome_ts"]: a["outcome_ts"] = ts
+        _vc_merge_meta(a, row)
+
+    claims, multi_pr = [], set()
+    completed_unpublished = 0
+    for job, j in jobs.items():
+        is_batch = job.startswith(VC_BATCH_PREFIX)
+        wurls = set(); has_done = has_resolved = ok_finish = False
+        for att in j["attempts"] + [j["current"]]:
+            if att["publish_ts"] is not None and att["publish_ts"] >= cutoff: wurls.update(att["urls"])
+            if att["finish"] and att["finish"]["ok_nonempty"] and att["finish"]["ts"] >= cutoff: ok_finish = True
+            if att["task_outcome"] and att["task_outcome"]["outcome"] == "done": has_done = True
+            if att["job_outcome"] and att["job_outcome"]["state"] in ("MERGED", "CLOSED"): has_resolved = True
+            if is_batch: continue   # batch sessions are infrastructure, not tasks
+            if att["publish_ts"] is not None and att["publish_ts"] >= cutoff and att["urls"]:
+                claims.append({"job": job, "kind": "published", "lane": att["publish_lane"] or att["lane"],
+                               "ts": att["publish_ts"], "verdict": _vc_verdict(att["urls"], url_states)})
+            to = att["task_outcome"]
+            if to and to["outcome"] == "done" and to["ts"] >= cutoff:
+                bus = claim_urls.get(to["batch"]) if to["batch"] else None
+                claims.append({"job": job, "kind": "batch-member", "lane": att["lane"], "ts": to["ts"],
+                               "verdict": _vc_verdict(bus, url_states) if bus else "pending"})
+            jo = att["job_outcome"]
+            if (not att["urls"] and (not to or to["outcome"] != "done") and jo
+                    and jo["state"] in ("MERGED", "CLOSED") and jo["ts"] >= cutoff):
+                claims.append({"job": job, "kind": "outcome", "lane": att["lane"], "ts": jo["ts"],
+                               "verdict": "verified" if jo["state"] == "MERGED" else "failed"})
+        if len(wurls) > 1: multi_pr.add(job)
+        if not is_batch and ok_finish and not claim_urls.get(job) and not has_done and not has_resolved:
+            completed_unpublished += 1
+
+    by_lane, false_jobs = {}, set()
+    kind_count = {"published": 0, "batch_members": 0, "outcomes": 0}
+    eligible = verified = failed = pending = 0
+    for c in claims:
+        eligible += 1
+        kind_count[{"published": "published", "batch-member": "batch_members", "outcome": "outcomes"}[c["kind"]]] += 1
+        if c["verdict"] == "verified": verified += 1
+        elif c["verdict"] == "failed": failed += 1; false_jobs.add(c["job"])
+        else: pending += 1
+        lane = _vc_bounded(c["lane"], VC_LANE) or "unknown"
+        r = by_lane.setdefault(lane, {"eligible": 0, "verified": 0, "failed": 0, "pending": 0})
+        r["eligible"] += 1
+        if c["verdict"] == "verified": r["verified"] += 1
+        elif c["verdict"] == "failed": r["failed"] += 1
+        else: r["pending"] += 1
+
+    # Duplicate + unauthorized evidence: in-window url->job edges.
+    shared, unauthorized_jobs = {}, set()
+    shared_pr_urls = unauthorized_actions = 0
+    for url, by_job in url_jobs.items():
+        jobs_in_window = {job for job, ts in by_job.items() if ts >= cutoff}
+        if len(jobs_in_window) > 1: shared_pr_urls += 1; shared[url] = jobs_in_window
+        repo_lc = url[len("https://github.com/"):url.rindex("/pull/")]
+        for job in jobs_in_window:
+            routed = jobs.get(job, {}).get("repo")
+            if routed and not _vc_repo_match(routed, repo_lc):
+                unauthorized_actions += 1; unauthorized_jobs.add(job)
+
+    return {"schema": "dispatchd.verified-completion.v1", "window_hours": VC_WINDOW_S // 3600,
+            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "source_state": "missing" if missing else ("degraded" if dropped else "healthy"),
+            "scanned": len(mets), "dropped": dropped, "truncated": False,
+            "eligible": eligible, "verified": verified, "failed": failed, "pending": pending,
+            "rate": round(verified / (verified + failed), 3) if verified + failed else None,
+            "claims": kind_count, "completed_unpublished": completed_unpublished,
+            "duplicates": {"multi_pr_jobs": len(multi_pr), "shared_pr_urls": shared_pr_urls},
+            "false_completions": failed, "unauthorized_actions": unauthorized_actions,
+            "by_lane": by_lane,
+            "detail": {"false_completion_jobs": sorted(false_jobs)[:VC_MAX_DETAIL],
+                       "multi_pr_jobs": sorted(multi_pr)[:VC_MAX_DETAIL],
+                       "shared_pr_urls": sorted(shared)[:VC_MAX_DETAIL],
+                       "unauthorized_jobs": sorted(unauthorized_jobs)[:VC_MAX_DETAIL]}}
+
 # ---- (d) status
 qdepth = {l: 0 for l in LANES}
 for l in rest:
     f = l.split("\t")
-    if len(f) >= 3 and f[2] in qdepth: qdepth[f[2]] += 1
+    if not parked_row(l) and len(f) >= 3 and f[2] in qdepth: qdepth[f[2]] += 1
 pubs = []
 for p in glob.glob(R + "/*.publish"):
     if NOW - os.path.getmtime(p) > 86400: continue
     m = re.search(r"RESULT PR (https://github.com/\S+/pull/\d+)", rd(p))
     if m: pubs.append((os.path.getmtime(p), os.path.basename(p)[:-8], m.group(1)))
 pubs.sort(reverse=True)
-evs = rd(EV).splitlines()[-25:]
+evs = logtail(EV, 65536).splitlines()[-25:]   # tail read: the events log grows unbounded
 st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "paused": pause or None,
       "mem_free_pct": free, "swap_gb": round(swap, 2) if swap is not None else None,
       "autopilot": AP,
@@ -1209,10 +1669,7 @@ st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%
                    "size_target": {l: batcher.size_for(batch_tuning, l) for l in batcher.BATCH_LANES}}}
 # budget per lane: overrides file (Grok Bot writes Mason's readings) + log-derived token burn
 ov = jload(Q + "/budget-overrides.json", {}); budget = {}
-mets = []
-for l in rd(MD + "/jobs.jsonl").splitlines():
-    try: mets.append(json.loads(l))
-    except Exception: pass
+mets = JOBS_RAW
 def epoch(t):
     try: return time.mktime(time.strptime(t[:19], "%Y-%m-%dT%H:%M:%S"))
     except Exception: return 0
@@ -1227,8 +1684,7 @@ for l in LANES:
     for k in ("weekly_used_pct", "credits_remaining", "reset_at", "source"): o.setdefault(k, None)
     budget[l] = o
 try:
-    budget["claude-api"].update(json.loads(subprocess.run(["/usr/bin/python3", R + "/bin/claude-api.py", "report", "--json"],
-                                                          capture_output=True, text=True, timeout=20).stdout))
+    budget["claude-api"].update(REPORT_F.result() or {})
 except Exception: pass
 st["budget"] = budget
 # 24h rollup by lane and tier
@@ -1255,6 +1711,7 @@ def roll(key):
         r["empty_rate"] = round(r["empty"] / r["finished"], 3) if r["finished"] else None
     return g
 st["rollup_24h"] = {"by_lane": roll("lane"), "by_tier": roll("tier")}
+st["verified_completion"] = verified_completion(mets, NOW, missing=not os.path.exists(MD + "/jobs.jsonl"))
 stamp = MD + "/.outcomes.stamp"
 if not os.path.exists(stamp) or NOW - os.path.getmtime(stamp) > 600:
     open(stamp, "w").close()

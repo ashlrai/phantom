@@ -95,6 +95,34 @@ a process crashes, the lock remains and reports `busy`. Its local JSON records
 lock file. Do not remove snapshot JSON to bypass the cooldown. Corrupt state is
 reported as an error rather than silently reset to an empty successful baseline.
 
+## Scheduled radar automation
+
+Radar can run on a schedule through the automations feature. The template
+`radar-docs-sweep` runs every day at 07:00 local time. It asks one fleet task
+to run `phm radar run --json` and `phm radar diff --json`, then report which
+sources changed or failed, with the Grok Bot and Grok Build changelogs first.
+The task is read-only: it changes no files, opens no PRs and sends no messages.
+
+Copy and paste:
+
+```sh
+ashlr automations templates --json
+ashlr automations add --template radar-docs-sweep --repos ashlrai/phantom
+ashlr automations enable au_radar-docs-and-tool-changes
+```
+
+The template is created disabled, so nothing runs until you enable it. Pass
+`--enable` to `add` to skip the second step. Radar must fire at least six hours
+apart. `FREQ=HOURLY;INTERVAL=5` is refused with "Radar runs at most every 6
+hours", while `FREQ=DAILY;BYHOUR=7;BYMINUTE=0` is accepted. The check is
+`assertRadarSchedule` in `src/core/automations/validate.ts`. It is not yet run
+when an automation is created or edited, so keep radar schedules to the
+template's daily rule until that wiring lands.
+
+Radar only reads the public catalogue. A scheduled run does the same
+unauthenticated, bounded fetches as `phm radar run`, and the six-hour cooldown
+per source still applies.
+
 ## Offline verification
 
 All test responses are synthetic. With a temporary test home:

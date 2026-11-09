@@ -37,6 +37,7 @@ not just the exit code: several report commands exit 0 even with problems.
 | Guardian freshness | `ashlr fleet health-age --json` | `fresh` means at most 30 minutes old. Stale, missing or invalid evidence exits 1. |
 | Sign-in holds | `ashlr fleet login-health --json` | Expired-login holds and whether a later nonempty finish was observed. Top-level `status: ok` means the ledger was read, not that all logins work. |
 | Stuck PRs | `ashlr fleet stuck-prs --json` | Lists PRs still recorded open after 60 minutes. An empty list with an error is unknown, not healthy. |
+| PR hygiene | `ashlr fleet pr-hygiene --json` | Triage audit of open PRs: `close-candidate` (superseded), `refix` (conflicting) and `review` (stale or file-overlapping) lanes. `reads.open: 'failed'` (exit 1) means the backlog could not be read — unknown, not clean. |
 | Wasted runs | `ashlr fleet waste --json` | Last six hours of skips, empty finishes, pool errors and runs without a PR. Counts overlap; unavailable totals stay unknown. |
 | Old worktrees | `ashlr fleet worktree-stale --json` | Lists cleanup candidates, oldest first. This example only lists; do not add `--apply` for a health check. |
 | Brain activity | `ashlr fleet brains --json` | Last recorded action; stale after 90 minutes, missing log is unknown. |

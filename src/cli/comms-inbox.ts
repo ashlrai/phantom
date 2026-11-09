@@ -1,14 +1,19 @@
 import { dirname, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
+import { readUnifiedInbox, type UnifiedInbox } from '../core/comms/unified-inbox.js';
 import { createChannelReceiver } from '../core/fleet/channel-envelope.js';
 import { INBOX_MAX_CHARS, readInboxEntries } from '../core/fleet/mason-inbox.js';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { parseInboxReadQuery, projectInboxRead } from '../core/verse/fleet-inbox-read.js';
 
-const HELP = `phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--watch [--new-only] [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
+const HELP = `phm comms inbox [--json]
+phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--watch [--new-only] [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
 phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
-Reads and writes Mason's local inbox. Output is JSON; post returns the receiver acknowledgement.
+With no verb, lists every pending comms item — unresolved needs-you lines, unanswered iMessage
+teammate texts, drafts awaiting approval and unclaimed bus work — one prioritized list whose
+items carry the deep-link commands that act on them. --json prints the same view as JSON.
+read and post read and write Mason's local inbox file. Output is JSON; post returns the receiver acknowledgement.
 --receipt-only on post returns only the acknowledgement status, channel and durable deduplication key, or a failure reason; it excludes message text and private paths.
 Read options select the newest matching entries (default limit 50), returned oldest first; source is metadata, not identity.
 --contains <text> is a literal case-insensitive substring match on message text (not regex) over the same bounded inbox tail, applied before the limit.
@@ -105,17 +110,39 @@ type SignalSource = {
 };
 type CommandOptions = {
   runsDir?: string;
+  busRoot?: string;
   stdin?: Readable;
   signals?: SignalSource;
   wait?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
 };
 
+/** Human view of the unified report: priority-ordered items and their deep links. */
+function printUnified(report: UnifiedInbox): void {
+  const degraded = Object.entries(report.sources).filter(([, s]) => s.state === 'degraded' || s.state === 'unavailable');
+  for (const item of report.items) {
+    console.log(`[${item.priority}] ${item.source}  ${item.title}`);
+    if (item.detail) console.log(`         ${item.detail}`);
+    for (const act of item.act) console.log(`         → ${act}`);
+  }
+  for (const [name, s] of degraded) console.log(`note: ${name} source ${s.state}`);
+  const counts = Object.entries(report.sources).map(([name, s]) => `${name} ${s.pending}`).join(' · ');
+  console.log(report.total === 0
+    ? 'Nothing pending.'
+    : `${report.total} pending (${counts})${report.omitted > 0 ? ` · ${report.omitted} omitted` : ''}`);
+}
+
 export function createCommsInboxCommand(options: CommandOptions = {}): (args: string[]) => Promise<number> {
   const receive = createChannelReceiver({ allowedSenderIds: new Set([LOCAL_OPERATOR]), runsDir: options.runsDir });
   return async (args: string[]): Promise<number> => {
-    if (args.length === 0 || args.length === 1 && ['--help', '-h'].includes(args[0]!) ||
+    if (args.length === 1 && ['--help', '-h'].includes(args[0]!) ||
       args.length === 2 && ['read', 'post'].includes(args[0]!) && ['--help', '-h'].includes(args[1]!)) {
       console.log(HELP); return 0;
+    }
+    // Bare `inbox` (optionally --json) is the unified pending view.
+    if (args.length === 0 || args.length === 1 && args[0] === '--json') {
+      const report = await readUnifiedInbox({ runsDir: options.runsDir, busRoot: options.busRoot });
+      if (args.length === 1) console.log(JSON.stringify(report)); else printUnified(report);
+      return 0;
     }
     const invalid = (): number => { console.log(JSON.stringify({ status: 'invalid' })); return 2; };
     const [verb, ...rest] = args;

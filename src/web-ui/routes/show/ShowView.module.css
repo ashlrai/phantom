@@ -29,3 +29,22 @@
 
 .blockers { color: var(--text-secondary); padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
 .blockers strong { color: var(--text-primary); }
+
+.ambient { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
+.panel { border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--bg-surface); padding: var(--space-4); min-width: 0; }
+.panel p { color: var(--text-secondary); margin: var(--space-2) 0; }
+.panel time { color: var(--text-tertiary); font-size: var(--text-xs-size); }
+.feed, .gauges { list-style: none; padding: 0; margin: var(--space-3) 0 0; max-height: 380px; overflow: auto; }
+.feed li { display: flex; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--border-subtle); overflow-wrap: anywhere; animation: showEnter .5s ease-out; }
+.dot { flex: none; width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--text-tertiary); }
+.dot[data-status='started'], .dot[data-status='running'] { background: var(--status-success-fg); animation: showPulse 1.6s ease-in-out infinite; }
+.dot[data-status='failed'], .dot[data-status='blocked'] { background: var(--status-danger-fg); }
+.gauges li { padding: var(--space-3) 0; border-bottom: 1px solid var(--border-subtle); }
+.gaugeHead { display: flex; justify-content: space-between; gap: var(--space-3); color: var(--text-secondary); overflow-wrap: anywhere; }
+.track { height: 8px; margin-top: var(--space-2); border-radius: 999px; background: var(--bg-sunken, var(--border-subtle)); overflow: hidden; }
+.fill { height: 100%; background: var(--status-success-fg); transition: width .6s ease; }
+.fill[data-low='true'] { background: var(--status-danger-fg); }
+@keyframes showEnter { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@keyframes showPulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .feed li, .dot, .fill { animation: none; transition: none; } }
+@media (max-width: 900px) { .ambient { grid-template-columns: 1fr; } }

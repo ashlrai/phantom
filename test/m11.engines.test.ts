@@ -361,8 +361,8 @@ describe('buildEngineCommand — ashlrcode', () => {
       GOAL,
       '--autonomous',
       '--dangerously-skip-permissions',
-      '--surgical',
     ]);
+    expect(cmd!.args).not.toContain('--surgical');
   });
 
   it('is a pure function — does not actually spawn anything', () => {

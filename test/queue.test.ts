@@ -141,6 +141,14 @@ describe('queue.v1', () => {
     expect((await s.read()).jobs[0].status).toBe('READY');
     expect(await readFile(join(s.directory, 'queue.v1.lock'), 'utf8')).toBe('held');
   });
+  it('release never deletes a lock another process acquired after ours was cleared', async () => {
+    const s = await store(); await s.add(job());
+    const lockPath = join(s.directory, 'queue.v1.lock');
+    const read = s.read.bind(s);
+    s.read = async () => { await rm(lockPath); await writeFile(lockPath, 'other-holder'); return read(); };
+    await s.claim('RQ-TEST', 'worker');
+    expect(await readFile(lockPath, 'utf8')).toBe('other-holder');
+  });
   it('requires dependencies DONE and enforces claim ownership through PR-OPEN to DONE', async () => {
     const s = await store(); await s.add({ ...job(), deps: ['RQ-DEP'] });
     await expect(s.claim('RQ-TEST', 'a')).rejects.toThrow('Dependencies');

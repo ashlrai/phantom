@@ -142,8 +142,8 @@ describe('readVerseCaps', () => {
   it.each([0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])('reports invalid stored capacity %s as defaulted instead of a configured allowance', (value) => {
     const caps = readVerseCaps(baseConfig({ daemon: { perTickItems: value, parallel: value,
       maxConcurrent: value, concurrency: { local: value, cloud: value, total: value } } }));
-    expect(caps.perTickItems).toBe(3);
-    expect(caps.parallel).toBe(2);
+    expect(caps.perTickItems).toBe(VERSE_CAPS_DEFAULTS.perTickItems);
+    expect(caps.parallel).toBe(VERSE_CAPS_DEFAULTS.parallel);
     expect(caps.maxConcurrent).toBeNull();
     expect(caps.concurrency).toEqual({ local: null, cloud: null, total: null });
     expect(caps.defaulted).toEqual(expect.arrayContaining(['perTickItems', 'parallel', 'maxConcurrent', 'concurrency']));
@@ -732,7 +732,7 @@ describe('explicit Automatic count choices', () => {
     expect(next.applied.sort()).toEqual(['concurrency', 'maxConcurrent', 'parallel', 'perTickItems']);
     for (const key of ['perTickItems', 'parallel', 'maxConcurrent', 'concurrency']) expect(caps.defaulted).not.toContain(key);
     const omitted = readVerseCaps(baseConfig());
-    expect(omitted).toMatchObject({ perTickItems: 3, parallel: 2, maxConcurrent: null,
+    expect(omitted).toMatchObject({ perTickItems: 1, parallel: 1, maxConcurrent: null,
       concurrency: { local: null, cloud: null, total: null }, uncappedCountKeys: [] });
     expect(omitted.defaulted).toEqual(expect.arrayContaining(['perTickItems', 'parallel', 'maxConcurrent', 'concurrency']));
     expect(initial.daemon?.perTickItems).toBe(2);
