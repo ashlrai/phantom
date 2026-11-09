@@ -45,6 +45,7 @@ import { STRAY_ID_PATTERN } from './fleet/stray-slots.js';
 import { listProposals } from './inbox/store.js';
 import { FLEET_APPS } from './fleet/app-await.js';
 import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
+import { desktopOperatorTools } from './desktop/operator-mcp.js';
 
 // Handler-only dependencies are imported lazily inside each handler so
 // `tools/list` pays for schemas and the safety gate only — not the ~300-file
@@ -1347,6 +1348,7 @@ const TOOLS: NativeToolImpl[] = [
       };
     },
   },
+  ...desktopOperatorTools,
 ];
 
 // ---------------------------------------------------------------------------
