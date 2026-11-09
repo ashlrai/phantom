@@ -261,6 +261,7 @@ Every command, grouped by topic.
     pool admission [--json]                                                                                                                                       Read-only load gate: loadavg, ncpu, running cap, install-lock holder and admit true/false with the reason.
     trail claim|beat|release <claim-key> [--json]                                                                                                                 Stigmergic work-item markers: claim a key, heartbeat progress, release. File-based coordination; no execution authority. See docs/STIGMERGY.md.
     trail list|show|resume|sweep|save [--json]                                                                                                                    Read claim markers, pick up a stalled claim with its saved checkpoint, or evaporate expired markers. See docs/STIGMERGY.md.
+    sessions create|show|resume|terminate [sesn_id] [--json]                                                                                                      Resumable agent sessions: agent profile id and version, environment id and an append-only event log; each turn is one phm queue job. Statuses idle, running, rescheduling, terminated.
 
   Observability - cost, telemetry, audit
     radar list|run|diff [--json]                                                               Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.
@@ -289,6 +290,7 @@ Every command, grouped by topic.
     resources [--json] [--watch]                                                               Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).
     capacity publish [--json]                                                                  Refresh local subscription usage metadata once with this node’s local authentication.
     estates [--json] [--repo <repo-id>]                                                        Per-repo estate cards: health, CI, security. Read-only portfolio view.
+    main blame --good <sha> --check "<cmd>" [--bad <sha>] [--repo <path>] [--json]             Name the first merge that turned the default branch red. Bisects in a temp worktree; read-only.
     ci-metrics [--json]                                                                        Per-repo daily turn-time (red to green) metrics; writes ~/.ashlr/ci-metrics.json.
     daily-fix validate|filter|dispatch|parse-fixup [--json]                                    Daily CI re-run helper: validate dispatch inputs against the allowlist, preview the job/test filter, emit the gh workflow command, or aggregate fixup-queue lines.
     budget <show|add> [--json]                                                                 Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.

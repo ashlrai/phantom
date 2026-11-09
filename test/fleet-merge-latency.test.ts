@@ -10,6 +10,25 @@ const reader = (...rows: unknown[]) => async () => rows.map(r => typeof r === 's
 const SHA = 'a'.repeat(40);
 afterEach(() => vi.restoreAllMocks());
 
+it('reports per-PR stages and makes missing, repeated, reversed and tied boundaries explicit', async () => {
+  const report = await fleetMergeLatency(reader(
+    ev(1, 'opened', 100), ev(1, 'queued', 90), ev(1, 'checks_passed', 40), ev(1, 'merged', 10),
+    ev(2, 'opened', 100), ev(2, 'queued', 90), ev(2, 'merged', 10),
+    ev(3, 'opened', 100), ev(3, 'queued', 90), ev(3, 'queued', 80), ev(3, 'checks_passed', 40), ev(3, 'merged', 10),
+    ev(4, 'opened', 100), ev(4, 'queued', 40), ev(4, 'checks_passed', 90), ev(4, 'merged', 10),
+    ev(5, 'opened', 40), ev(5, 'queued', 30), ev(5, 'checks_passed', 20), ev(5, 'merged', 10),
+  ), now);
+  expect(report.pr_stages).toMatchObject([
+    { pr: 1, queue_wait_s: 10, required_checks_s: 50, merge_s: 30, slowest_stage: 'required_checks', missing_or_ambiguous: [], out_of_order: false },
+    { pr: 2, queue_wait_s: 10, required_checks_s: null, merge_s: null, slowest_stage: null, missing_or_ambiguous: ['checks_passed'] },
+    { pr: 3, queue_wait_s: null, required_checks_s: null, missing_or_ambiguous: ['queued'], slowest_stage: null },
+    { pr: 4, required_checks_s: null, out_of_order: true, slowest_stage: null },
+    { pr: 5, slowest_stage: null, missing_or_ambiguous: [] },
+  ]);
+  expect(formatMergeLatency(report)).toContain('missing or ambiguous: checks_passed');
+  expect(formatMergeLatency(report)).toContain('timestamps out of order');
+});
+
 /** A PR that opened `open` s ago, queued after `q` s and merged `m` s after queueing. */
 const merged = (pr: number, q: number, m: number) =>
   [ev(pr, 'opened', 1000), ev(pr, 'queued', 1000 - q), ev(pr, 'merged', 1000 - q - m)];

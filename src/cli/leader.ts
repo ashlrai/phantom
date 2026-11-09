@@ -55,7 +55,7 @@ Usage:
   phm leader veto --memo <memoId> [--note "why"]
   phm leader oversight-plist --print [--bin /path/to/phm]
   phm leader say "<text>"
-  phm leader thread [--limit n] [--json]
+  phm leader thread [--limit n] [--follow] [--since messageId] [--json]
   phm leader answer <questionId> "<text>"
   phm leader approve <actionId>
   phm leader directives [list] [--all] [--json]
@@ -410,9 +410,31 @@ async function runThreadCli(sub: string, args: string[]): Promise<number> {
   if (sub === 'thread') {
     const json = flag(args, '--json');
     const limitOpt = option(args, '--limit');
-    if (limitOpt === undefined || args.length > 0 || (limitOpt !== null && !/^\d{1,3}$/.test(limitOpt))) {
+    const follow = flag(args, '--follow');
+    const sinceId = option(args, '--since');
+    if (limitOpt === undefined || sinceId === undefined || (sinceId !== null && !follow) || args.length > 0 || (limitOpt !== null && !/^\d{1,3}$/.test(limitOpt))) {
       console.error(USAGE);
       return 2;
+    }
+    if (follow) {
+      const { followThread } = await import('../core/vision/leader-thread-follow.js');
+      const controller = new AbortController();
+      const stop = () => controller.abort();
+      process.on('SIGINT', stop);
+      process.on('SIGTERM', stop);
+      try {
+        await followThread({
+          list: thread.listThread, signal: controller.signal,
+          ...(limitOpt === null ? {} : { backlog: Number(limitOpt) }),
+          ...(sinceId === null ? {} : { sinceId }),
+          onMessage: m => { if (json) console.log(JSON.stringify(m)); else printThreadMessage(m); },
+          onError: error => console.error(error instanceof Error ? error.message : String(error)),
+        });
+      } finally {
+        process.off('SIGINT', stop);
+        process.off('SIGTERM', stop);
+      }
+      return 0;
     }
     return threadCall(thread, async () => {
       const messages = await thread.listLeaderThread(limitOpt === null ? {} : { limit: Number(limitOpt) });
