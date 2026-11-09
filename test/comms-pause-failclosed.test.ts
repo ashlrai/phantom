@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isPaused, loadPauseState, setPause } from '../src/core/comms/pause.js';
 
 describe('comms pause fails closed', () => {
@@ -77,5 +77,22 @@ describe('comms pause fails closed', () => {
   it('pauses when paused is not a boolean', () => {
     writeFileSync(path, '{"paused":"false"}');
     expectState(true);
+  });
+
+  it('logs the reason it failed closed, without the path or file contents', async () => {
+    // Fresh module: the once-per-reason log memo is module state.
+    vi.resetModules();
+    const fresh = await import('../src/core/comms/pause.js');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      writeFileSync(path, '{ "secret": "sk-not-real"');
+      expect(fresh.isPaused()).toBe(true);
+      const lines = log.mock.calls.map((call) => String(call[0])).join('\n');
+      expect(lines).toContain('is not valid JSON');
+      expect(lines).not.toContain(home);
+      expect(lines).not.toContain('sk-not-real');
+    } finally {
+      log.mockRestore();
+    }
   });
 });

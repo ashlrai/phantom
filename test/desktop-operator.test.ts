@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, w
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { cmdDesktop, parseDesktopInstallArgs } from '../src/cli/desktop.js';
 import { cmdDesktopOperator } from '../src/cli/desktop-operator.js';
@@ -409,6 +409,49 @@ describe('helper protocol', () => {
       process.chdir(previousCwd);
       if (previous === undefined) delete process.env['PHANTOM_DESKTOP_OPERATOR'];
       else process.env['PHANTOM_DESKTOP_OPERATOR'] = previous;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('desktop operator fails closed on an unknown pause state', () => {
+  const originalHome = process.env.HOME;
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+  });
+
+  const write = { verb: 'type', app: 'Cursor', text: 'hi' } as const;
+
+  it('refuses a write when a stop probe throws', async () => {
+    const order: string[] = [];
+    const result = await runDesktopOperator(write, deps(mockSurface({ order }), {
+      commsPaused: () => { throw new Error('probe failed'); },
+    }));
+    expect(result).toMatchObject({ ok: false, code: 'comms_paused' });
+    const killed = await runDesktopOperator(write, deps(mockSurface({ order }), {
+      killed: () => { throw new Error('probe failed'); },
+    }));
+    expect(killed).toMatchObject({ ok: false, code: 'killed' });
+    expect(order).toEqual([]);
+  });
+
+  it('refuses a write when the real pause.json is a symlink, using the default probe', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'desktop-op-pause-'));
+    try {
+      process.env.HOME = home;
+      mkdirSync(join(home, '.ashlr', 'comms'), { recursive: true });
+      const target = join(home, 'target');
+      writeFileSync(target, '{"paused":false}');
+      symlinkSync(target, join(home, '.ashlr', 'comms', 'pause.json'));
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const order: string[] = [];
+      const { commsPaused: _omit, ...rest } = deps(mockSurface({ order }));
+      const result = await runDesktopOperator(write, rest);
+      expect(result).toMatchObject({ ok: false, code: 'comms_paused' });
+      expect(order).toEqual([]);
+    } finally {
       rmSync(home, { recursive: true, force: true });
     }
   });
