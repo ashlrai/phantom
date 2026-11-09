@@ -365,12 +365,12 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   const feed = names.includes('latest.json');
   const published = row !== null && row.draft === false && feed;
   const assetAt = latestTime(row?.assets.map((asset) => asset.created_at) ?? []);
-  if (!input.build && !input.buildPending && !input.buildCooldown && !(row?.draft === false && input.npmPublished === true)) {
+  if (!input.build && !input.buildPending && !input.buildCooldown && input.masterSha === headTag.sha && !(row?.draft === false && input.npmPublished === true)) {
     writes.push({
       method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/ci.yml/dispatches`,
       // ci.yml types release_gate as boolean. The dispatch API stores inputs as
       // strings; Actions then exposes inputs.release_gate as a boolean.
-      body: { ref: headTag.name, inputs: { release_gate: 'true' } },
+      body: { ref: 'master', inputs: { release_gate: 'true' } },
     });
   }
   if (input.build && !input.attest && !input.attestPending) {
@@ -417,7 +417,7 @@ export function buildTrain(input: TrainObservation): TrainPlan {
     admit: { status: 'complete' },
     merge: { status: mergeStageDone(admitted ? 'MERGED' : pr?.state) ? 'complete' : 'pending' },
     supersede: { status: writes.some((write) => write.method === 'PATCH') ? 'pending' : 'complete' },
-    build: { status: input.build ? 'complete' : 'pending' },
+    build: { status: input.build ? 'complete' : 'pending', ...(!input.build && input.masterSha !== headTag.sha ? { reason: 'candidate-not-master-head' } : {}) },
     attest: { status: input.attest ? 'complete' : 'pending' },
     sign: { status: signed ? 'complete' : 'pending', reason: signed ? 'signed-release-assets' : 'mac-release-autorun' },
     notarize: { status: signed ? 'complete' : 'pending', reason: signed ? 'signed-release-assets' : 'mac-release-autorun' },
