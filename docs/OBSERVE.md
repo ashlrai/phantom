@@ -9,6 +9,8 @@ phm observe session <id> --json
 
 The desktop route is `GET /api/verse/observe`. A session drill-down is `GET /api/verse/observe/session?id=<id>`. The transcript field stays null until a desktop operator reader is registered.
 
+`phm observe --json` reads the world model in [WORLD.md](WORLD.md). `coverage.fields` is still the live and unknown counts. `coverage.unknownFields` lists each unknown or stale field by path, with the same stable id as `blindSpots`.
+
 ## Baseline, 3.30.24
 
 Captured read-only at 2026-11-09 00:24 ET from Phantom 3.30.24.

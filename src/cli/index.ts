@@ -15,6 +15,7 @@
  *   mcp [list|doctor|install]  MCP aggregation gateway and registry management.
  *   radar [list|run|diff]      Observe public documentation and package changes.
  *   observe [--json]           Human observe snapshot: roster, sensors, pulls, bottlenecks.
+ *   world [--json]             Versioned world model for the scheduler and leaders.
  *   drafts [list|show|approve|reject]  Outbound drafts waiting for your approval.
  *   run "<goal>" [opts]        Local-first agent orchestrator; decompose & execute a goal.
  *   run show <id>              Print a past run in detail.
@@ -2752,6 +2753,11 @@ async function main(): Promise<void> {
 
       case 'observe': {
         process.exitCode = await (await import('./observe.js')).cmdObserve(rest);
+        break;
+      }
+
+      case 'world': {
+        process.exitCode = await (await import('./world.js')).cmdWorld(rest);
         break;
       }
 

@@ -1354,6 +1354,10 @@
     "src/core/website/output-materialization.ts",
     "src/core/website/release-metadata.ts",
     "src/core/worktree-retention.ts",
+    "src/core/world/path.ts",
+    "src/core/world/project.ts",
+    "src/core/world/read.ts",
+    "src/core/world/types.ts",
     "src/planning/triviality.ts"
   ]
 }
