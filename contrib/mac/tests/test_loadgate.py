@@ -138,6 +138,8 @@ class GateTests(unittest.TestCase):
         home = self._case(prep=lambda h: set_daemon_tick(h, '2020-01-01T00:00:00Z'))
         self.assertEqual(launched(home), ['RQ-GATE-0'])
         self.assertRegex(admission(home)['warnings'][0], r'daemon_tick_stale \d+s > 900s')
+        self.assertIn('Phantom daemon last tick: 2020-01-01T00:00:00Z', admission(home)['warnings'][0])
+        self.assertEqual(admission(home)['daemon_last_tick_at'], '2020-01-01T00:00:00Z')
         self.assertIsNone(admission(home)['reason'])
 
     def test_missing_null_or_unreadable_daemon_status_warns_but_admits(self):
