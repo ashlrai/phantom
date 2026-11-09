@@ -61,6 +61,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_APP_TOKEN: ${{ steps.app.outputs.token }}
+          RELEASE_TRAIN_DISPATCH_RELEASE_PR: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Release PR' && 'false' || 'true' }}
           RELEASE_TRAIN_DISPATCH_BUILD: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.name != 'Auto-tag' && 'false' || 'true' }}
         run: node --experimental-strip-types src/core/release/train.ts run --apply --out release-state.json
       - name: Upload release state
