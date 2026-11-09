@@ -43,6 +43,7 @@ import { COMPOSER_COMMAND_IDS, WORKBENCH_COMMAND_EVENT } from '../composer/compo
 import { PARKED_COMMAND_TTL_MS, registerCommandHandler, runCommand, runCommandWhenReady, type CommandInvocation } from './command-bus.js';
 import { commandCatalogLoaded, keyBinding, loadedCommand } from './command-keys.js';
 import { requestGuarded } from './guard-store.js';
+import { setHomeChoice } from './home-view-store.js';
 
 export type ShellNotify = (message: string, tone?: 'neutral' | 'success' | 'danger') => void;
 
@@ -234,6 +235,11 @@ export function registerShellCommandHandlers(): () => void {
   ];
   const offs = [
     ...surfaces.map(([id, section]) => registerCommandHandler(id, () => setVerseSection(section))),
+    ...(['leader', 'feed'] as const).map((view) => registerCommandHandler(`home.${view}`, () => {
+      setHomeChoice(view);
+      setVerseSection('live');
+      closeVerseOverlay();
+    })),
     registerCommandHandler('palette.open', () => toggleVerseOverlay('palette')),
     registerCommandHandler('needs-you.open', (inv) => {
       // The menu / a notification OPENS it; the key toggles.
