@@ -1,7 +1,7 @@
 /**
  * routes/verse/feed/FeedSection.tsx: the Feed, one newest-first stream of the
  * Leader's messages and outbox answers, Needs-you alerts, merges, fleet
- * events, Phantom update news and the owner thread (what came in on Telegram, Slack, email and
+ * events, Phantom update news, urgent (P0, P1) agent bus messages and the owner thread (what came in on Telegram, Slack, email and
  * iMessage, and where the Leader's answer went). It reads what the Leader, Merges and Needs-you surfaces already
  * read (feed-model.ts), so it adds no route and, on a warm cache, no request.
  *
@@ -18,6 +18,7 @@ import { useNow } from '../autonomy/use-ticker.js';
 import { Card, CardNote } from '../command/Surface.js';
 import { openChat } from '../command/nav.js';
 import { liveLine } from '../chat/sidebar-model.js';
+import { agentBusPageQuery } from '../fleet-bus/agent-bus-queries.js';
 import { fleetMergesQuery } from '../fleet-merges/fleet-merges-queries.js';
 import { leaderThreadQuery } from '../leader/thread-data.js';
 import { ownerThreadQuery } from '../leader-thread/owner-thread-queries.js';
@@ -25,6 +26,7 @@ import { updateStatusQuery } from '../sections/update-status-queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { useActivity } from '../shell/useActivity.js';
 import { buildFeed, filterFeed, type FeedFilter, type FeedKind } from './feed-model.js';
+import { FeedAskButton } from './FeedAskButton.js';
 import styles from './feed.module.css';
 
 const FILTERS: readonly { id: FeedFilter; label: string }[] = [
@@ -34,8 +36,9 @@ const FILTERS: readonly { id: FeedFilter; label: string }[] = [
   { id: 'merge', label: 'Merges' },
   { id: 'owner', label: 'Channels' },
   { id: 'update', label: 'Updates' },
+  { id: 'bus', label: 'Bus' },
 ];
-const KIND_LABEL: Record<FeedKind, string> = { leader: 'Leader', alert: 'Alert', merge: 'Merge', fleet: 'Fleet', owner: 'Channel', update: 'Update' };
+const KIND_LABEL: Record<FeedKind, string> = { leader: 'Leader', alert: 'Alert', merge: 'Merge', fleet: 'Fleet', owner: 'Channel', update: 'Update', bus: 'Bus' };
 export const FEED_POLL_MS = 15_000;
 
 export function FeedSection({ visible = true }: { visible?: boolean }) {
@@ -44,12 +47,15 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
   const owner = useQuery(ownerThreadQuery, { enabled: visible, freshMs: 15_000 });
   // The tray's own reads; a failed or missing update read just adds no update rows.
   const update = useQuery(updateStatusQuery, { enabled: visible, freshMs: 60_000 });
+  // An older hub has no bus route: the query's 404 just means no bus rows, never an error note.
+  const bus = useQuery(agentBusPageQuery(0, 50), { enabled: visible, freshMs: 15_000 });
   const nativeUpdates = useDesktopUpdates();
   const activity = useActivity();
   const refetchLeader = useRefetch(leaderThreadQuery);
   const refetchRuns = useRefetch(fleetMergesQuery);
   const refetchOwner = useRefetch(ownerThreadQuery);
-  usePollWhileVisible(() => { refetchLeader(); refetchRuns(); refetchOwner(); }, FEED_POLL_MS, { enabled: visible });
+  const refetchBus = useRefetch(agentBusPageQuery(0, 50));
+  usePollWhileVisible(() => { refetchLeader(); refetchRuns(); refetchOwner(); refetchBus(); }, FEED_POLL_MS, { enabled: visible });
   const now = useNow(30_000);
   const [filter, setFilter] = useState<FeedFilter>('all');
 
@@ -75,7 +81,8 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
     needsYou: activity.data?.needsYou,
     owner: ownerLines,
     update: updateItems,
-  }), [leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems]);
+    bus: bus.data,
+  }), [leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data]);
   const shown = filterFeed(feed, filter);
 
   return <div className={styles.root}>
@@ -108,7 +115,7 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
     {shown.length ? <ol className={styles.list} aria-label="Feed">
       {shown.map(item => <li key={item.id} data-kind={item.kind}>
         <Card title={item.title} caption={<time dateTime={item.at} title={new Date(item.at).toLocaleString('en-US')}>{formatRelative(item.at, now)}</time>}
-          actions={<span className={styles.kind} data-kind={item.kind}>{item.label ?? KIND_LABEL[item.kind]}</span>}>
+          actions={<><FeedAskButton item={item} /><span className={styles.kind} data-kind={item.kind}>{item.label ?? KIND_LABEL[item.kind]}</span></>}>
           {item.body ? <p className={styles.body}>{item.body}</p> : null}
           {item.href ? <a className={styles.link} href={item.href} target="_blank" rel="noopener noreferrer">Open</a> : null}
         </Card>
