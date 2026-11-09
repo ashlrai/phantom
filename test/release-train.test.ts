@@ -6,7 +6,7 @@ import { cmdRelease } from '../src/cli/release.js';
 import {
   admitCiRun, assertReleaseWrite, buildTrain, cappedCadenceMinutes, docsCarriersSynced, ENQUEUE_PULL_REQUEST,
   enqueueReleasePullRequest, failedBuildWithin, hostedTrainGate, isReleasePleaseCommit,
-  markWritesApplied, mergeStageDone, observeTrain, pauseReleaseTrain, readSentinel, releaseKillDecision, selectUpdaterFeed,
+  markWritesApplied, mergeStageDone, observeTrain, pauseReleaseTrain, readSentinel, releaseGithubCall, releaseKillDecision, selectUpdaterFeed,
   TRAIN_SCHEMA, updaterFeedMatches, WEBSITE_HOOK,
   type ReleaseWrite, type TrainObservation,
 } from '../src/core/release/train.js';
@@ -147,6 +147,41 @@ describe('release train', () => {
     expect(buildTrain(observation({ head: { tag: 'v3.30.27', sha: head, message, ancestry: 'diverged', committedAt: null } })).state.reason).toBe('candidate-refused');
   });
 
+  it('admits a tag on a later merge when the release-please commit is its ancestor', () => {
+    const later = { tag: 'v3.30.27', sha: head, message: 'bridge(RQ-X): notes (#1)\n', ancestry: 'ancestor' as const, committedAt: null };
+    expect(buildTrain(observation({ head: later })).state.reason).toBe('candidate-refused');
+    expect(buildTrain(observation({ head: { ...later, releaseMessage: message } })).exitCode).toBe(0);
+    expect(buildTrain(observation({ head: { ...later, releaseMessage: 'chore(master): release 3.30.26 (#1)', ancestry: 'diverged' } })).exitCode).toBe(1);
+  });
+
+  it('finds the release commit under a tag that landed on a later merge', async () => {
+    const later = 'd'.repeat(40);
+    const pkg = (version: string) => ({ encoding: 'base64', content: Buffer.from(JSON.stringify({ name: '@ashlr/phantom', version })).toString('base64') });
+    const run = (version: string, rows: unknown) => observeTrain(async (path) => {
+      const data: Record<string, unknown> = {
+        'repos/ashlrai/phantom': { id: 1263526319, full_name: 'ashlrai/phantom' },
+        'repos/ashlrai/phantom/commits/master': { sha },
+        [`repos/ashlrai/phantom/contents/package.json?ref=${sha}`]: pkg('3.30.27'),
+        [`repos/ashlrai/phantom/contents/package.json?ref=${later}`]: pkg(version),
+        'repos/ashlrai/phantom/git/ref/tags/v3.30.27': { ref: 'refs/tags/v3.30.27', object: { type: 'commit', sha: later } },
+        [`repos/ashlrai/phantom/commits/${later}`]: { sha: later, commit: { message: 'bridge: notes', committer: { date: '2026-11-09T02:30:00.000Z' } } },
+        [`repos/ashlrai/phantom/compare/${later}...${sha}`]: { status: 'ahead', ahead_by: 1 },
+        'repos/ashlrai/phantom/tags?per_page=100&page=1': [{ name: 'v3.30.27', commit: { sha: later } }],
+        [`repos/ashlrai/phantom/commits?sha=${later}&per_page=30`]: rows,
+        'repos/ashlrai/phantom/releases?per_page=100&page=1': [],
+        'repos/ashlrai/phantom/pulls?state=open&per_page=100&page=1': [],
+      };
+      if (Object.hasOwn(data, path)) return data[path];
+      if (path.includes('/actions/workflows/')) return { total_count: 0, workflow_runs: [] };
+      if (path.startsWith('registry/')) return null;
+      throw new Error(`unexpected ${path}`);
+    }, '2026-11-09T06:00:00.000Z', 60, { fleet: 'inactive', autorun: 'inactive' });
+    const rows = [{ commit: { message: 'bridge: notes' } }, { commit: { message } }];
+    expect((await run('3.30.27', rows)).head?.releaseMessage).toBe(message);
+    expect((await run('3.30.26', rows)).head?.releaseMessage).toBeUndefined();
+    expect((await run('3.30.27', [{ commit: { message: 'bridge: notes' } }])).head?.releaseMessage).toBeUndefined();
+  });
+
   it('dispatches attest and npm for the tagged sha and leaves signing to the Mac wrapper', () => {
     const waiting = buildTrain(observation({
       build: { runId: 11, attempt: 2, artifactId: 101, completedAt: '2026-11-09T03:00:00.000Z' },
@@ -170,6 +205,48 @@ describe('release train', () => {
     expect(published.state.stages.sign.sinceMergeMs).toBeNull();
     expect(published.state.website).toEqual(WEBSITE_HOOK);
     expect(published.state.steps.website).toMatchObject({ status: 'hooked' });
+  });
+
+  it('posts workflow dispatch JSON on stdin with gh api --input -', () => {
+    const ci = buildTrain(observation()).writes.find((write) => write.path.endsWith('/ci.yml/dispatches'));
+    const ciBody = { ref: 'v3.30.27', inputs: { release_gate: 'true' } };
+    expect(ci).toEqual({ method: 'POST', path: 'repos/ashlrai/phantom/actions/workflows/ci.yml/dispatches', body: ciBody });
+    expect(releaseGithubCall('POST', 'repos/ashlrai/phantom/actions/workflows/ci.yml/dispatches', ciBody)).toEqual({
+      args: ['api', '--hostname', 'github.com', '--method', 'POST', '--input', '-', 'repos/ashlrai/phantom/actions/workflows/ci.yml/dispatches'],
+      input: '{"ref":"v3.30.27","inputs":{"release_gate":"true"}}',
+    });
+    const attestBody = {
+      ref: 'master',
+      inputs: { ci_run_id: '11', ci_run_attempt: '2', candidate_sha: head, build_artifact_id: '101' },
+    };
+    const attest = buildTrain(observation({
+      build: { runId: 11, attempt: 2, artifactId: 101, completedAt: '2026-11-09T03:00:00.000Z' },
+    })).writes.find((write) => write.path.endsWith('/attest-ci-build.yml/dispatches'));
+    expect(attest).toEqual({ method: 'POST', path: 'repos/ashlrai/phantom/actions/workflows/attest-ci-build.yml/dispatches', body: attestBody });
+    expect(releaseGithubCall('POST', 'repos/ashlrai/phantom/actions/workflows/attest-ci-build.yml/dispatches', attestBody)).toEqual({
+      args: ['api', '--hostname', 'github.com', '--method', 'POST', '--input', '-', 'repos/ashlrai/phantom/actions/workflows/attest-ci-build.yml/dispatches'],
+      input: JSON.stringify(attestBody),
+    });
+    const npmBody = {
+      ref: 'master',
+      inputs: {
+        candidate_sha: head, ci_run_id: '11', ci_run_attempt: '2',
+        attestor_run_id: '22', attestor_run_attempt: '1', attested_artifact_id: '202', version: '3.30.27',
+        audit_run_id: '33', audit_run_attempt: '1',
+      },
+    };
+    const npm = buildTrain(observation({
+      build: { runId: 11, attempt: 2, artifactId: 101, completedAt: '2026-11-09T03:00:00.000Z' },
+      attest: { runId: 22, attempt: 1, artifactId: 202, completedAt: '2026-11-09T03:10:00.000Z' },
+      audit: { runId: 33, attempt: 1 },
+      npmPublished: false,
+    })).writes.find((write) => write.path.endsWith('/publish-canonical-npm.yml/dispatches'));
+    expect(npm).toEqual({ method: 'POST', path: 'repos/ashlrai/phantom/actions/workflows/publish-canonical-npm.yml/dispatches', body: npmBody });
+    expect(releaseGithubCall('POST', 'repos/ashlrai/phantom/actions/workflows/publish-canonical-npm.yml/dispatches', npmBody).input).toBe(JSON.stringify(npmBody));
+    expect(releaseGithubCall('GET', 'repos/ashlrai/phantom')).toEqual({
+      args: ['api', '--hostname', 'github.com', '--method', 'GET', 'repos/ashlrai/phantom'],
+    });
+    for (const body of [ciBody, attestBody, npmBody]) expect(JSON.stringify(body)).not.toContain('null');
   });
 
   it('rejects writes outside the sanctioned release paths', () => {

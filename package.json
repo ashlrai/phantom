@@ -1,6 +1,6 @@
 {
   "name": "@ashlr/phantom",
-  "version": "3.30.27",
+  "version": "3.30.28",
   "description": "Phantom by AshlrAI: the open-source engineering agent workbench for CLI accounts, local models and autonomous fleets.",
   "publishConfig": {
     "access": "public"
@@ -143,6 +143,7 @@
     "node": ">=22.15.0"
   },
   "scripts": {
+    "authority:regen": "node scripts/authority-regen.mjs",
     "version:sync": "node scripts/sync-candidate-version.mjs",
     "check:version": "node scripts/sync-candidate-version.mjs --check",
     "prepublishOnly": "npm run build && npm run check:first-paint:built && npm run check:docs && npm run typecheck && npm run lint && npm run test:web && npm run test:ci:sharded",
@@ -168,6 +169,7 @@
     "bench:memory": "tsx scripts/benchmark-memory.ts",
     "bench:memory:embed": "tsx scripts/benchmark-memory-embeddings.ts",
     "conformance:ecosystem": "tsx scripts/run-ecosystem-conformance.ts",
+    "perf:desktop": "node scripts/measure-desktop-perf.mjs",
     "check:first-paint": "node scripts/check-first-paint-budget.mjs --budget-kb 354 --mobile-budget-kb 250",
     "check:first-paint:built": "node scripts/check-first-paint-budget.mjs --no-build --out-dir dist/core/web/public/next --budget-kb 354 --mobile-budget-kb 250",
     "check:docs": "node scripts/check-documentation.mjs",

@@ -31,6 +31,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 
+import { leaderAsk, leaderAssign, leaderOrg, leaderStatus } from '../core/agents/leader-office.js';
 import { loadConfig } from '../core/config.js';
 import { hasLeaderNetworkConfig } from '../core/agents/leader-network-config.js';
 import { rejectUnknownOptions, type AllowedOptions } from './args.js';
@@ -42,6 +43,10 @@ Compatible alias: ashlr leader <command>
 
 Usage:
   phm leader show [--json]
+  phm leader status [--json]
+  phm leader ask "<text>" [--json]
+  phm leader org [--json]
+  phm leader assign --rq <RQ-KEY> --owner <role> --summary "<text>" [--due YYYY-MM-DD] [--status assigned|in_progress|blocked|done|proposed] [--outcome "<text>"] [--json]
   phm leader seat [--json] [--tier elite|workhorse|fast|local]
   phm leader inbox [--json] [--limit n] [--text "message"]
   phm leader run [--force]
@@ -409,8 +414,8 @@ async function runThreadCli(sub: string, args: string[]): Promise<number> {
       console.error(USAGE);
       return 2;
     }
-    return threadCall(thread, () => {
-      const messages = thread.listThread(limitOpt === null ? {} : { limit: Number(limitOpt) });
+    return threadCall(thread, async () => {
+      const messages = await thread.listLeaderThread(limitOpt === null ? {} : { limit: Number(limitOpt) });
       if (json) console.log(JSON.stringify({ messages }, null, 2));
       else if (messages.length === 0) console.log('No messages yet. Say something: phm leader say "…"');
       else for (const m of messages) printThreadMessage(m);
@@ -497,6 +502,79 @@ async function runDirectivesCli(args: string[]): Promise<number> {
   return 2;
 }
 
+const ASSIGNMENT_STATUSES = ['assigned', 'in_progress', 'blocked', 'done', 'proposed'] as const;
+
+function officeCode(status: string): number {
+  return status === 'stopped' || status === 'refused' || status === 'unavailable' ? 1 : 0;
+}
+
+function printOffice(json: boolean, value: unknown): void {
+  if (json) {
+    console.log(JSON.stringify(value, null, 2));
+    return;
+  }
+  if (!value || typeof value !== 'object') {
+    console.log(JSON.stringify(value));
+    return;
+  }
+  if ('priorities' in value && 'killed' in value) {
+    const view = value as { killed: boolean; priorities: { rq: string; owner: string; status: string; due: string | null }[] };
+    console.log(`killed: ${view.killed}`);
+    if (view.priorities.length === 0) console.log('No open work.');
+    else for (const row of view.priorities) console.log(`${row.rq}  ${row.owner}  ${row.status}${row.due ? `  due ${row.due}` : ''}`);
+    return;
+  }
+  if ('reply' in value && 'status' in value) {
+    const decision = value as { status: string; reply?: { text?: string } | null };
+    console.log(decision.reply?.text ? `${decision.status}: ${decision.reply.text}` : decision.status);
+    return;
+  }
+  if ('org' in value) {
+    const roles = (value as { org: { roles: { id: string; title: string; owner: string; lane: string }[] } }).org.roles;
+    console.log(roles.map((role) => `${role.id}  ${role.title}  ${role.owner}  ${role.lane}`).join('\n'));
+    return;
+  }
+  console.log(JSON.stringify(value));
+}
+
+/** Org, accountability and owner inbox. Reads the world on status, ask and assign. Does not call a model. */
+async function runOfficeCli(sub: 'status' | 'ask' | 'org' | 'assign', args: string[]): Promise<number> {
+  const json = flag(args, '--json');
+  if (sub === 'status' || sub === 'org') {
+    if (args.length > 0) { console.error(USAGE); return 2; }
+    const result = sub === 'status' ? await leaderStatus() : leaderOrg();
+    const failed = 'status' in result && !('killed' in result);
+    printOffice(json, result);
+    return failed ? officeCode(String(result.status)) : 0;
+  }
+  if (sub === 'ask') {
+    const textOption = option(args, '--text');
+    if (textOption === undefined || (textOption !== null && args.length > 0)) { console.error(USAGE); return 2; }
+    const text = (textOption ?? args.join(' ')).trim();
+    if (!text) { console.error(USAGE); return 2; }
+    const result = await leaderAsk({ text });
+    printOffice(json, result);
+    return officeCode(result.status);
+  }
+  const rq = option(args, '--rq');
+  const owner = option(args, '--owner');
+  const summary = option(args, '--summary');
+  const due = option(args, '--due');
+  const status = option(args, '--status');
+  const outcome = option(args, '--outcome');
+  const dueValue = due ?? null;
+  const statusValue = status ?? null;
+  const outcomeValue = outcome ?? null;
+  if ([rq, owner, summary, due, status, outcome].some((value) => value === undefined) || args.length > 0
+    || !rq || !owner || !summary || (statusValue !== null && !(ASSIGNMENT_STATUSES as readonly string[]).includes(statusValue))) {
+    console.error(USAGE);
+    return 2;
+  }
+  const result = await leaderAssign({ rq, owner, summary, due: dueValue, status: statusValue, outcome: outcomeValue });
+  printOffice(json, result);
+  return officeCode(result.status);
+}
+
 /** Typed CEO inspection and compose verbs; inspection never calls a model. */
 async function runCeoCli(sub: 'seat' | 'inbox', args: string[]): Promise<number> {
   const json = flag(args, '--json');
@@ -554,6 +632,7 @@ export async function runLeaderCli(argv: string[]): Promise<number> {
   }
   // Before the core import: printing a plist needs no Leader state.
   if (sub === 'oversight-plist') return runOversightPlist(args);
+  if (sub === 'status' || sub === 'ask' || sub === 'org' || sub === 'assign') return runOfficeCli(sub, args);
   if (sub === 'seat' || sub === 'inbox') return runCeoCli(sub, args);
   if (sub === 'say' || sub === 'thread' || sub === 'answer' || sub === 'approve' || sub === 'directives') return runThreadCli(sub, args);
   const leader = await import('../core/vision/leader.js');

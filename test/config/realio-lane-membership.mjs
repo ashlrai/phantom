@@ -56,6 +56,7 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-job-precheck-cli.test.ts', // Creates real git commits for precheck CLI coverage.
   'test/fleet-job-precheck-batch-nov04-spb1.test.ts', // Builds real git history for batch precheck coverage.
   'test/fleet-job-path-history-nov04-spb2.test.ts', // Creates and renames real git history for exact job lookup.
+  'test/fleet-deploy-plan.test.ts', // Compares committed scripts in real temporary Git repositories.
   'test/fleet-path-history-cli.test.ts', // Creates and reads real git history through the CLI.
   'test/fleet-path-history-literal-cli-04-spq1.test.ts', // Creates real temp git repos (git init/commit via execFileSync) for literal path-history CLI coverage.
   'test/fleet-path-history-preservation-06stl2.test.ts', // Creates a real temp git repo (git init via execFileSync) to prove path-history preservation.
@@ -775,6 +776,7 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-context-run-solu3.test.ts', // execFileSync runs fleet-context-run-solu3 example as a real child
   'test/fleet-dirty-union-preview-nov01.test.ts', // spawnSync drives a real git fixture (dirty union preview)
   'test/fleet-dirty-landed.test.ts', // execFileSync drives a real git fixture (dirty landed classification)
+  'test/prs-triage.test.ts', // execFileSync drives a real temp git repo for PR triage classification
   'test/remote-gateway-bus-read-session-nov01.test.ts', // binds a real loopback HTTP server (remote-gateway bus read session)
   'test/verify-changed-tsc-cache.test.ts', // spawnSync node scripts/verify-changed.mjs --tsc-cache as a real child
   'test/bus-loop-active-control-01sole2.test.ts', // spawn runs a real node --import tsx child for the bus-loop active-control case

@@ -14,7 +14,7 @@ import type { DevinSession, DevinSessionPage } from '../devin/client.js';
 import { connectedClient } from '../devin/service.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { listCoordination } from '../agents/claim-store.js';
-import type { BusWorkClaimView, BusWorkClaimsInspection } from './bus-work-claims.js';
+import { inspectBusWorkClaims, type BusWorkClaimView } from './bus-work-claims.js';
 import { listLiveWorkers, type LiveWorkersSnapshot } from './runs-live-workers.js';
 
 export const AGENT_ROSTER_SCHEMA = 'agent-roster.v1' as const;
@@ -33,7 +33,7 @@ export const ROSTER_SOURCES = [
 export type RosterSourceId = (typeof ROSTER_SOURCES)[number];
 
 export interface RosterClaimRef {
-  store: 'bus-work';
+  store: 'claim-store' | 'bus-work-fallback';
   id: string;
   owner: string;
   leaseUntil: string | null;
@@ -61,13 +61,15 @@ export interface RosterSource {
   truncated: boolean;
 }
 
+type RosterClaimsInspection = { source: 'claim-store' | 'bus-work-fallback' | 'missing' | 'unavailable'; claims: BusWorkClaimView[] };
+
 export interface AgentRoster {
   schema: typeof AGENT_ROSTER_SCHEMA;
   observedAt: string;
   latencyMs: number;
   sources: RosterSource[];
   sessions: RosterSession[];
-  claims: { source: BusWorkClaimsInspection['source']; items: RosterClaimRef[] };
+  claims: { source: RosterClaimsInspection['source']; items: RosterClaimRef[] };
 }
 
 export interface RosterExecResult {
@@ -85,7 +87,7 @@ export interface AgentRosterDeps {
   listDevinCloud?: () => Promise<DevinSessionPage | { unavailable: string }>;
   exec?: (argv: readonly string[], timeoutMs: number) => Promise<RosterExecResult>;
   fetchLoopback?: (url: string, timeoutMs: number) => Promise<{ status: number; body: string } | { unavailable: true }>;
-  readClaims?: () => BusWorkClaimsInspection;
+  readClaims?: () => RosterClaimsInspection;
 }
 
 const OLLAMA_PS_URL = 'http://127.0.0.1:11434/api/ps';
@@ -125,24 +127,29 @@ function isoMillis(ms: number): string | null {
 }
 
 /** Live coordination leases in the bus-work claim shape the roster already renders. */
-export function readRosterClaims(now = Date.now()): BusWorkClaimsInspection {
-  const listed = listCoordination(undefined, now);
-  if (listed.source !== 'available') return { source: listed.source, claims: [] };
+export function readRosterClaims(now = Date.now(), root?: string): RosterClaimsInspection {
+  const listed = listCoordination(root, now);
+  if (listed.source !== 'available') {
+    const fallback = inspectBusWorkClaims(root);
+    return fallback.source === 'available'
+      ? { source: 'bus-work-fallback', claims: fallback.claims }
+      : { source: listed.source === 'unavailable' || fallback.source === 'unavailable' ? 'unavailable' : 'missing', claims: [] };
+  }
   const claims: BusWorkClaimView[] = [];
   for (const row of listed.claims) {
     if (!row.live) continue;
     const id = row.origin === 'message' && row.key.startsWith('queue:') ? row.key.slice('queue:'.length) : row.key;
     claims.push({ id, cursor: 0, receivedAt: 0, owner: row.owner, leaseUntil: row.leaseUntil, completedAt: null });
   }
-  return { source: 'available', claims };
+  return { source: 'claim-store', claims };
 }
 
-function claimRef(row: BusWorkClaimView): RosterClaimRef | null {
+function claimRef(row: BusWorkClaimView, source: RosterClaimsInspection['source']): RosterClaimRef | null {
   const id = text(row.id, 128);
   const owner = text(row.owner, 128);
   if (!id || !owner) return null;
   return {
-    store: 'bus-work',
+    store: source === 'claim-store' ? 'claim-store' : 'bus-work-fallback',
     id,
     owner,
     leaseUntil: isoMillis(row.leaseUntil),
@@ -537,7 +544,7 @@ export async function collectAgentRoster(deps: AgentRosterDeps = {}): Promise<Ag
     claims = {
       source: inspection.source,
       items: inspection.claims.flatMap((row) => {
-        const next = claimRef(row);
+        const next = claimRef(row, inspection.source);
         return next ? [next] : [];
       }),
     };
@@ -609,7 +616,7 @@ function isSession(value: unknown): boolean {
   return row['claims'].every((claim) => {
     if (!claim || typeof claim !== 'object' || Array.isArray(claim)) return false;
     const item = claim as Record<string, unknown>;
-    return item['store'] === 'bus-work'
+    return (item['store'] === 'claim-store' || item['store'] === 'bus-work-fallback')
       && typeof item['id'] === 'string'
       && typeof item['owner'] === 'string'
       && (item['leaseUntil'] === null || typeof item['leaseUntil'] === 'string')
@@ -644,7 +651,7 @@ export function validateAgentRoster(value: unknown): string | null {
   const claims = roster['claims'];
   if (!claims || typeof claims !== 'object' || Array.isArray(claims)) return 'claims';
   const bag = claims as Record<string, unknown>;
-  if (bag['source'] !== 'missing' && bag['source'] !== 'available' && bag['source'] !== 'unavailable') return 'claims.source';
+  if (bag['source'] !== 'missing' && bag['source'] !== 'claim-store' && bag['source'] !== 'bus-work-fallback' && bag['source'] !== 'unavailable') return 'claims.source';
   if (!Array.isArray(bag['items'])) return 'claims.items';
   return null;
 }
