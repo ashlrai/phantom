@@ -43,11 +43,23 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/ecosystem-changelog-generator.test.ts', // Runs the generator in a real Node child process.
+  'test/verse-standby-python-contract-02somp1.test.ts', // Runs the Python lease helper in a real child process.
+  'test/company-context-store.test.ts', // concurrent context writer processes
+  'test/fleet-wt-reap-apply.test.ts', // real Git worktree removal
+  'test/check-publish.test.ts', // Real temporary Git repositories and preflight subprocesses.
+  'test/fleet-resource-session-writer.test.ts', // Runs the actual Python session tick against real private files and reads its output.
+  'test/desktop-artifact-installer.test.ts', // Real private files/Git/signature/attestation proofs; hosted signature refusal took 6.803s, with no elapsed-performance assertion.
+  'test/repo-rank.test.ts', // Creates local Git evidence and runs the Python restock rank consumer.
   'test/changelog-sync-bridge-04.test.ts', // Runs the changelog script in real child processes.
+  'test/recut-paths.test.ts', // Creates diverged git histories and runs the recut path verifier.
   'test/fleet-job-precheck-cli.test.ts', // Creates real git commits for precheck CLI coverage.
   'test/fleet-job-precheck-batch-nov04-spb1.test.ts', // Builds real git history for batch precheck coverage.
   'test/fleet-job-path-history-nov04-spb2.test.ts', // Creates and renames real git history for exact job lookup.
+  'test/fleet-deploy-plan.test.ts', // Compares committed scripts in real temporary Git repositories.
   'test/fleet-path-history-cli.test.ts', // Creates and reads real git history through the CLI.
+  'test/fleet-path-history-literal-cli-04-spq1.test.ts', // Creates real temp git repos (git init/commit via execFileSync) for literal path-history CLI coverage.
+  'test/fleet-path-history-preservation-06stl2.test.ts', // Creates a real temp git repo (git init via execFileSync) to prove path-history preservation.
   'test/fleet-draft-check-stdin-04-spf2.test.ts', // Creates real git repositories and invokes the stdin CLI.
   'test/fleet-job-current-04-spv1.test.ts', // Creates real git history and invokes the current-job CLI.
   'test/fleet-job-history-batch-04-spn1.test.ts', // Creates real git history for batch job lookup.
@@ -55,8 +67,25 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-job-overlap-04-spu1.test.ts', // Creates real git history for job overlap comparisons.
   'test/fleet-job-precheck-stdin-04-spe2.test.ts', // Creates real git history and invokes the stdin precheck CLI.
   'test/fleet-precheck-snapshot-nov04-spd2.test.ts', // Creates real git commits and moves the precheck ref.
+  'test/fleet-job-batch-audit-04squ2.test.ts', // Creates real git history for batch job audit coverage.
+  'test/fleet-job-compare-04-sqb2.test.ts', // Creates real git history for job compare coverage.
+  'test/fleet-job-compare-snapshot-04-sqe1.test.ts', // Creates real git history and replays a pinned snapshot for job compare.
+  'test/fleet-job-current-batch-04-spx1.test.ts', // Creates real git history for batch current-job lookups.
+  'test/fleet-job-current-batch-snapshot-04-sqc2.test.ts', // Creates real git history and replays a pinned snapshot for batch current-job reads.
+  'test/fleet-job-current-batch-stdin-04-spz1.test.ts', // Creates real git history and invokes the stdin batch current-job CLI.
+  'test/fleet-job-current-filter-04-spy2.test.ts', // Creates real git history for filtered current-job lookups.
+  'test/fleet-job-current-snapshot-04-sqa2.test.ts', // Creates real git history and replays a pinned snapshot for current-job reads.
+  'test/fleet-job-history-await-04-spu2.test.ts', // Creates real git history for awaited batch job-history reads.
+  'test/fleet-job-history-batch-replay-04-spt1.test.ts', // Creates real git history and replays an earlier master snapshot for batch job history.
+  'test/fleet-job-impact-04.test.ts', // Reads bridge identities from a real local git repository.
+  'test/fleet-job-overlap-snapshot-04-spx2.test.ts', // Creates real git history and replays a pinned snapshot for job overlap.
+  'test/fleet-job-patch-04-spn2.test.ts', // Creates real git history for pinned job patch reads.
+  'test/fleet-path-batch-04-spm2.test.ts', // Reads real bridge commits through literal pathspecs in a temp repo.
+  'test/fleet-path-cochanges-04-spv2.test.ts', // Creates real git history for path cochange ranking.
   'test/mcp/fleet-path-history-04-spm1.test.ts', // Creates real git history for MCP path lookup.
   'test/mcp/fleet-path-history-snapshot-04-spt2.test.ts', // Creates real git history and moves refs during MCP reads.
+  'test/mcp/fleet-job-patch-04-sqb1.test.ts', // Creates real git history for MCP job patch reads.
+  'test/mcp/fleet-path-history-pinned-04-sps2.test.ts', // Creates real git history and moves refs during pinned MCP path history reads.
   'test/verify-change.test.ts',
   'test/remote-reassign-e2e.test.ts', // Binds a real loopback HTTP server for remote reassignment.
   'test/connector-profile.test.ts', // Runs the pinned Perl secret-shape gate against generated profile TOML.
@@ -77,6 +106,7 @@ export const REAL_IO_TEST_FILES = [
   'test/agentbootreport31ak1.test.ts', // spawnSync and spawn run the agent-boot-report script as real children
   'test/agentcapacitywatchcli31ak4.test.ts', // spawn runs the agent-wait-capacity script as a real child
   'test/artifactpackcli31ak3.test.ts', // spawnSync and spawn run the agent-artifact-pack script as real children
+  'test/bin-ashlr-entry.test.ts', // spawnSync runs `node bin/ashlr --version` as a real child
   'test/channel-ack-replay-31za.test.ts', // spawnSync runs the channel-ack-replay example as a real child
   'test/cli-legacy-exit-codes.test.ts', // spawnSync runs real CLI children to check exit codes
   'test/composer-commands-doc-31.test.ts', // execSync runs git show against origin/master as a real child
@@ -98,6 +128,7 @@ export const REAL_IO_TEST_FILES = [
   'test/mcp-gateway-stdin-eof.test.ts', // spawn runs a real Node child for the gateway stdin lifecycle
   'test/no-orig-files-31.test.ts', // execSync runs git ls-files and grep as real children
   'test/perf-budget.test.ts', // spawnSync runs scripts/perf-budget.mjs as a real child
+  'test/perf-mcp-tools-list.test.ts', // spawnSync runs the MCP tools/list harness (real `phm mcp` gateway child)
   'test/phx-agentbusresume31j3.test.ts', // spawnSync runs the bus-resume example as a real child
   'test/phx-agentbusroundtask31k2.test.ts', // execFileSync runs the bus-task-roundtrip example as real children
   'test/phx-agentchangessnap31j2.test.ts', // spawnSync runs the job-changes example as a real child
@@ -132,9 +163,23 @@ export const REAL_IO_TEST_FILES = [
   'test/phx-usagemotionrecipe31sold9.test.ts', // execFileSync runs the usage-motion-incident example as a real child
   'test/phx-usagevalidationreport31solc5.test.ts', // spawnSync runs the usage validate CLI as real children
   'test/resolve-remote-branch-head.test.ts', // execSync runs git commands in a real child
+  'test/node-fixture.test.ts', // executes an inert fixture through a quoted Node path
   'test/realio-lane-guard-green.test.ts', // execFileSync runs the real lane guard in a Node child
   'test/fleet-ci-daily-plan-nov01.test.ts', // Applies generated patches with real git in a temporary repo.
   'test/fleet-ci-resume-inputs-05-srf1.test.ts', // Builds real temp git repos and runs ls-tree/diff-tree through the CLI.
+  'test/ci-batch-prior-planner-pipe-05ssr2.test.ts', // Builds real temp git repos for CI resume batch planning.
+  'test/fleet-ci-discovery-pipeline-05srs1.test.ts', // Builds a real temp git repo for CI receipt discovery and resume planning.
+  'test/fleet-ci-input-digests-05srm2.test.ts', // Builds real temp git repos for CI input digest seeds.
+  'test/fleet-ci-resume-plan-05srr2.test.ts', // Builds a real temp git repo for CI resume plan coverage.
+  'test/fleet-ci-resume-plan-name-05srv1.test.ts', // Builds a real temp git repo for CI resume plan name coverage.
+  'test/fleet-ci-resume-plan-preservation-05stk1.test.ts', // Builds a real temp git repo (git init via execFileSync) to prove CI resume plan preservation.
+  'test/fleet-ci-resume-real-pipe-05srn1.test.ts', // Builds real temp git repos and spawns a real Node child for the resume stdin pipe.
+  'test/fleet-ci-resume-stdin-05srl2.test.ts', // Builds real temp git repos for stdin resume-input reads.
+  'test/fleet-staging-batch-dispatch-05ssx1.test.ts', // Spawns the real tsx CLI for staging inventory batch dispatch.
+  'test/fleet-staging-batch-stop-05sta2.test.ts', // Spawns a real Node CLI child to prove signal handling on staging batch stop.
+  'test/fleet-staging-retry-05stb1.test.ts', // Spawns real tsx CLI children for staging inventory batch and retry.
+  'test/mcp/fleet-ci-recovery-pipe-05ssg2.test.ts', // Builds a real temp git repo for MCP CI receipt await and resume-input reads.
+  'test/mcp/fleet-ci-resume-inputs-05srj1.test.ts', // Builds real temp git repos for MCP CI resume-input reads.
   'test/mcp-gateway-lazy-start.test.ts', // Real stdio gateway + downstream subprocesses.
   // test/integration/lane-membership.mjs DERIVES its view by filtering this
   // array for `test/integration/` — importing it here instead would be a
@@ -208,6 +253,7 @@ export const REAL_IO_TEST_FILES = [
   'test/verse-seats.test.ts', // real loopback HTTP server standing in for Ollama
   'test/verse-local-dispatch.test.ts', // real loopback HTTP server standing in for Ollama's discovery endpoints
   'test/local-inference-probe.test.ts', // real loopback HTTP server standing in for a local /models endpoint (P3 probe)
+  'test/radar-local-bench-redirect.test.ts', // two real loopback HTTP servers: a redirector and a second listener the body must never reach
   'test/verse-accounts.test.ts', // real collector lease acquisition and private evidence files in a tmp root
   'test/verse-api.test.ts', // real web server bind + SSE tails against an in-memory fake engine
   'test/verse-api-context.test.ts', // real web server bind + real memory/preference files in a tmp HOME (V3.9 routes)
@@ -244,6 +290,7 @@ export const REAL_IO_TEST_FILES = [
   'test/resource-pool-commissioning-recovery.test.ts', // private inert stores and journal recovery
   'test/resource-pool-commissioning-collector.test.ts', // real durable lifecycle lease, inert probe ports
   'test/resource-native-profile.test.ts', // exclusive profile preparation and inert native execve
+  'test/resource-volume-polling.test.ts', // real bounded sysctl/df/diskutil storage identity against the host volume
   'test/resource-claude-account-status.test.ts', // native auth status with inert private process fixtures
   'test/resource-claude-account-usage.test.ts', // private scratch and bounded native usage mocks
   'test/resource-grok-account-probe.test.ts', // native metadata protocol with inert ACP fixtures
@@ -321,6 +368,7 @@ export const REAL_IO_TEST_FILES = [
   'test/resource-quota-registered-recovery.test.ts', // durable command phases and passive group-absence recovery
   'test/resource-collector-diagnostics.test.ts', // acquisition-time evidence and private loopback console
   'test/resource-native-idle-lifecycle.test.ts', // owned child exit and strict process-group receipt
+  'test/resource-quota-evidence-background.test.ts', // real private commits and kernel-verified quota lease custody
   'test/resource-quota-shared-evidence.test.ts', // private snapshots and verified process/lease identity
   'test/resource-shared-admission.test.ts', // current evidence inside atomic durable reservation
   'test/resource-worker-access.test.ts', // durable worker pauses and alias-aware atomic admission
@@ -478,6 +526,7 @@ export const REAL_IO_TEST_FILES = [
   'test/m23.gate.test.ts', // real git worktree/merge/apply subprocess work — 3.1s slowest test in the quiet baseline
   'test/m42.engineer-tools.test.ts', // real git worktree/merge/apply subprocess work — 7.1s slowest test in the quiet baseline
   'test/m47.merge.test.ts', // real git worktree/merge/apply subprocess work — 6.1s slowest test in the quiet baseline
+  'test/fleet-worktree-stale.test.ts', // real Git worktree removal and repeated cleanup
   'test/merge-temp-worktree-reaper.test.ts', // real git worktrees, dead-pid child processes and a real verifyProposal run
   'test/stale-git-locks.test.ts', // real git repos and worktrees, real doctor run
   'test/tmp-scratch-sweep.test.ts', // real git worktrees, dead-pid child processes
@@ -699,6 +748,7 @@ export const REAL_IO_TEST_FILES = [
   'test/h8.docs.test.ts', // hermetic real temp git repo + real fs fixture — 0.0s slowest test in the quiet baseline
   'test/h8.no-new-outward.test.ts', // hermetic real temp git repo + real fs fixture — 0.0s slowest test in the quiet baseline
   'test/verse-session-engine.test.ts', // real detached subprocesses (fake vendor CLIs) with process-group cancel/timeout kill paths
+  'test/slack-leader.test.ts', // executes the Mac sole-writer copy in an owned synthetic inbox; retains its 5s case bound
   'test/leader-local-transport-314.test.ts', // binds a real loopback HTTP server (streamed Ollama /api/chat, per-attempt timeout)
   'test/daemon-first-tick-314.test.ts', // real detached /bin/sh process groups killed on timeout + real mirror clones in h1 temp repos
   'test/mirror-sibling-deps-314.test.ts', // real mirror clones of sibling repos in h1 temp repos + one real frozen npm ci through ../<sibling>
@@ -726,6 +776,7 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-context-run-solu3.test.ts', // execFileSync runs fleet-context-run-solu3 example as a real child
   'test/fleet-dirty-union-preview-nov01.test.ts', // spawnSync drives a real git fixture (dirty union preview)
   'test/fleet-dirty-landed.test.ts', // execFileSync drives a real git fixture (dirty landed classification)
+  'test/prs-triage.test.ts', // execFileSync drives a real temp git repo for PR triage classification
   'test/remote-gateway-bus-read-session-nov01.test.ts', // binds a real loopback HTTP server (remote-gateway bus read session)
   'test/verify-changed-tsc-cache.test.ts', // spawnSync node scripts/verify-changed.mjs --tsc-cache as a real child
   'test/bus-loop-active-control-01sole2.test.ts', // spawn runs a real node --import tsx child for the bus-loop active-control case

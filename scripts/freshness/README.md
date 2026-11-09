@@ -5,7 +5,7 @@ Run from the checkout with Node 22.15 or newer:
 ```sh
 node scripts/freshness/sync.mjs
 node scripts/freshness/check.mjs
-HOME=$(mktemp -d) node --test scripts/freshness/sync.test.mjs
+HOME=$(mktemp -d) npx vitest run test/freshness-sync.test.ts
 ```
 
 Both commands accept `--root directory` for isolated fixtures. Check is read-only
@@ -35,7 +35,10 @@ Unknown names and malformed or unbalanced markers fail closed.
 This complements `npm run check:docs` (documentation navigation),
 `npm run check:version` (candidate metadata), and scripts/check-version.mjs
 (release tag identity). It does not duplicate or replace those checks.
+`node scripts/docs-sync.mjs` (`npm run docs:sync`) regenerates this surface
+together with the other generated docs (site blocks, CODEMAP inventory,
+llms indexes, CLI references) and `--check` reports drift on all of them.
 
-The task prohibits Tier-1 changes, including package.json. Direct invocations
-above are the available interface. An owner can later add `fresh:sync` and
-`fresh:check` npm aliases pointing at these scripts, without changing workflows.
+`npm run docs:sync` is the umbrella alias that regenerates these blocks along
+with every other generated docs surface; direct invocations above remain
+available for isolated fixtures.

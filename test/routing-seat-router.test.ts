@@ -29,6 +29,15 @@ import {
   type SeatCapacity,
 } from '../src/core/routing/headroom.js';
 import { rankAlternatives, routeSeat, tierPreference } from '../src/core/routing/router.js';
+import {
+  delegationStageForSwarmPhase,
+  isJudgmentRoutingTask,
+  planStageDelegation,
+  routingTaskStage,
+  stageDelegationViolation,
+  type DelegationLaneClass,
+} from '../src/core/routing/stage-delegation.js';
+import type { DelegationStage } from '../src/core/types/delegation.js';
 import { boundSeatReasons, listSeatIds, reasonSentence, reasonSentences } from '../src/core/routing/seat-reasons.js';
 import { normalizeJournalRecord, type DispatchJournalRecord } from '../src/core/fleet/fleet-runtime-journal.js';
 import type { BudgetPolicy, RoutingRequest } from '../src/core/routing/types.js';
@@ -723,5 +732,85 @@ describe('provider-neutral included native Devin role routing',()=>{
     expect(routeSeat(auto('leader','high'),[native],balanced(),opts).seatId).toBe('devin-cli');
     for(const held of [{...native,free:false},{...native,costBasis:'credits' as const},{...native,seatId:'devin-cloud'}])
       expect(routeSeat(auto('leader','high'),[held],balanced(),opts).seatId).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bottleneck-only stage delegation (research digest item 6): judgment stages
+// plan and verify on frontier lanes, implement on cheap lanes, extra capacity
+// only for the declared bottleneck.
+// ---------------------------------------------------------------------------
+
+describe('stage delegation policy (bottleneck-only)', () => {
+  it('delegates only the declared bottleneck stage and pins each stage to its lane class', () => {
+    expect(planStageDelegation({ bottleneck: 'implement' })).toEqual([
+      { stage: 'plan', laneClass: 'frontier', delegated: false },
+      { stage: 'implement', laneClass: 'cheap', delegated: true },
+      { stage: 'verify', laneClass: 'frontier', delegated: false },
+    ]);
+    expect(planStageDelegation({ bottleneck: 'verify' }).filter((s) => s.delegated).map((s) => s.stage))
+      .toEqual(['verify']);
+    expect(planStageDelegation({ bottleneck: 'verify', stages: ['implement', 'verify'] })
+      .map((s) => s.delegated)).toEqual([false, true]);
+  });
+
+  it('refuses unknown stages and a bottleneck outside the declared stage list', () => {
+    expect(() => planStageDelegation({ bottleneck: 'verify', stages: ['plan', 'implement'] }))
+      .toThrow('bottleneck must be one of the task stages');
+    expect(() => planStageDelegation({ bottleneck: 'bogus' as DelegationStage }))
+      .toThrow('invalid delegation bottleneck stage');
+    expect(() => planStageDelegation({ bottleneck: 'plan', stages: ['plan', 'bogus' as DelegationStage] }))
+      .toThrow('invalid delegation stage');
+  });
+
+  it('flags judgment stages on cheap lanes and non-bottleneck implement on frontier', () => {
+    expect(stageDelegationViolation('verify', 'cheap', 'verify')).toContain('judgment stage');
+    expect(stageDelegationViolation('plan', 'cheap', null)).toContain('judgment stage');
+    expect(stageDelegationViolation('implement', 'frontier', 'verify')).toContain('bottleneck');
+    expect(stageDelegationViolation('implement', 'frontier', null)).toContain('bottleneck');
+    expect(stageDelegationViolation('implement', 'frontier', 'implement')).toBeNull();
+    expect(stageDelegationViolation('implement', 'cheap', 'verify')).toBeNull();
+    expect(stageDelegationViolation('verify', 'frontier', 'implement')).toBeNull();
+    expect(stageDelegationViolation('bogus' as DelegationStage, 'cheap', null))
+      .toContain('unknown delegation stage');
+    expect(stageDelegationViolation('plan', 'bogus' as DelegationLaneClass, null))
+      .toContain('unknown delegation lane class');
+  });
+
+  it('maps router task kinds to their pipeline stage', () => {
+    expect(routingTaskStage('plan')).toBe('plan');
+    expect(routingTaskStage('leader')).toBe('plan');
+    expect(routingTaskStage('review')).toBe('verify');
+    expect(routingTaskStage('code')).toBe('implement');
+    expect(routingTaskStage('bulk')).toBe('implement');
+    expect(isJudgmentRoutingTask('review')).toBe(true);
+    expect(isJudgmentRoutingTask('code')).toBe(false);
+    // Swarm phases map the same way: verify/review judge, scaffold/build/integrate implement.
+    expect(delegationStageForSwarmPhase('verify')).toBe('verify');
+    expect(delegationStageForSwarmPhase('review')).toBe('verify');
+    for (const phase of ['scaffold', 'build', 'integrate'] as const)
+      expect(delegationStageForSwarmPhase(phase)).toBe('implement');
+  });
+
+  it('never orders judgment-stage tasks cheap-first, whatever the difficulty or mode', () => {
+    for (const mode of ['balanced', 'reserve', 'all-in'] as const) {
+      for (const difficulty of ['low', 'medium', 'high'] as const) {
+        for (const task of ['plan', 'review', 'leader'] as const) {
+          const order = tierPreference(mode, auto(task, difficulty));
+          expect(order.by).toBe('tier');
+          expect(order.order.indexOf('free')).toBeGreaterThan(order.order.indexOf('elite'));
+        }
+      }
+    }
+    expect(tierPreference('reserve', auto('plan', 'low'))).toEqual({ by: 'tier', order: ['fast', 'elite', 'free'] });
+    expect(tierPreference('balanced', auto('review', 'medium'))).toEqual({ by: 'tier', order: ['fast', 'elite', 'free'] });
+    expect(tierPreference('all-in', auto('plan', 'high'))).toEqual({ by: 'tier', order: ['elite', 'fast', 'free'] });
+  });
+
+  it('leaves implement-stage tasks on the existing cheap-first implement ordering', () => {
+    expect(tierPreference('balanced', auto('code', 'low'))).toEqual({ by: 'cost', order: ['free', 'fast', 'elite'] });
+    expect(tierPreference('balanced', auto('bulk', 'high'))).toEqual({ by: 'cost', order: ['free', 'fast', 'elite'] });
+    expect(tierPreference('balanced', auto('code', 'medium'))).toEqual({ by: 'cost', order: ['fast', 'free', 'elite'] });
+    expect(tierPreference('all-in', auto('code', 'medium'))).toEqual({ by: 'tier', order: ['fast', 'elite', 'free'] });
   });
 });

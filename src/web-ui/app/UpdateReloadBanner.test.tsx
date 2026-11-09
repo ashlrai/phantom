@@ -61,7 +61,7 @@ describe('UpdateReloadBanner', () => {
     render(<UpdateReloadBanner />);
     await waitFor(() => expect(calls()).toBe(1));
     expect(screen.queryByRole('status')).toBeNull();
-    set(status({ headSha: SHA_B }));
+    set(status({ headSha: SHA_B, processHeadSha: SHA_B }));
     act(() => { window.dispatchEvent(new Event(SIDECAR_RESTARTED_EVENT)); });
     expect(await screen.findByRole('status'))
       .toHaveTextContent('Phantom restarted on new code — reload');

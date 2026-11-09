@@ -105,11 +105,24 @@ describe('fleet runs watch', () => {
     ];
     for (const args of invalid) expect(await cmdFleetRunsRead('runs', args, readers)).toBe(2);
     for (const verb of ['journal', 'parked'] as const) {
-      expect(await cmdFleetRunsRead(verb, ['--watch'], readers)).toBe(2);
+      // --interval-ms only means something beside --watch.
       expect(await cmdFleetRunsRead(verb, ['--interval-ms', '1000'], readers)).toBe(2);
+      expect(await cmdFleetRunsRead(verb, ['--watch', '--interval-ms', '999'], readers)).toBe(2);
     }
     expect(readers.runs).not.toHaveBeenCalled();
     expect(errors.join('')).toContain('invalid fleet runs arguments');
+  });
+
+  it.each(['journal', 'parked'] as const)('watches %s: samples once, reports a failed read and retries until cancelled', async verb => {
+    const controller = new AbortController();
+    const read = vi.fn().mockRejectedValue(new Error('fake private detail'));
+    const readers = { ...deps(), [verb]: read };
+    const wait = vi.fn(async () => { controller.abort(); });
+    expect(await cmdFleetRunsRead(verb, ['--watch', '--json'], readers, { signal: controller.signal, wait })).toBe(0);
+    expect(read).toHaveBeenCalledOnce();
+    expect(wait).toHaveBeenCalledExactlyOnceWith(5000, expect.any(AbortSignal));
+    expect(output.map(line => JSON.parse(line))).toEqual([{ error: `fleet ${verb} unavailable` }]);
+    expect(output.join('')).not.toContain('fake private detail');
   });
 
   it.each(['SIGINT', 'SIGTERM'] as const)('cleans up signal listeners after %s during the default wait', async signal => {

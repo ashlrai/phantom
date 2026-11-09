@@ -52,7 +52,7 @@ async function cli<T>(files: { root: string; workspace: string; pool: string; bi
     '--root', files.root, '--workspace', files.workspace, '--pool', files.pool, '--bindings', files.bindings,
     '--next-pool', files.nextPool, '--next-bindings', files.nextBindings, '--json', ...(digest ? ['--expected-plan-digest', digest] : [])], {
     timeout: 30_000, maxBuffer: 256 * 1024, env: { ...process.env, HOME: homedir(), USERPROFILE: homedir(),
-      ASHLR_HOME: process.env.ASHLR_HOME ?? join(homedir(), '.ashlr'), TSX_DISABLE_CACHE: '1', NODE_DISABLE_COMPILE_CACHE: '1', GIT_OPTIONAL_LOCKS: '0' },
+      ASHLR_HOME: process.env.ASHLR_HOME ?? join(homedir(), '.ashlr'), TSX_DISABLE_CACHE: '1', GIT_OPTIONAL_LOCKS: '0' },
   });
   expect(stderr).toBe(''); return JSON.parse(stdout) as T;
 }

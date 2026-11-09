@@ -88,7 +88,7 @@ describe('phm resources ledger', () => {
     expect(text).toContain('today unknown USD; week 0 USD');
   });
 
-  it.each([['--wat'], ['--json', '--json'], ['--help', '-h'], ['--help', '--bad'], ['extra']])('rejects invalid arguments %j before reading', async (...args) => {
+  it.each([['--wat'], ['--json', '--json'], ['--help', '-h'], ['--help', '--bad'], ['extra']])('rejects invalid arguments %j before reading (%#)', async (...args) => {
     vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const read = vi.fn();
     expect(await cmdResourceLedger(args, read)).toBe(2);

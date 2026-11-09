@@ -16,20 +16,25 @@ const WAIT_FLAGS = ['--timeout-ms', '--interval-ms'] as const;
 export interface FleetStandbyAwaitDeps extends FleetStandbyDeps {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  signal?: AbortSignal;
 }
 
 type Report = Record<string, unknown>;
 
 /** Bound even dependencies that ignore their own timeout; consume late rejections. */
-async function bounded<T>(operation: () => T | Promise<T>, ms: number): Promise<{ expired: true } | { expired: false; value: T }> {
+async function bounded<T>(operation: () => T | Promise<T>, ms: number, signal?: AbortSignal): Promise<{ expired: true } | { cancelled: true } | { expired: false; value: T }> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
   try {
+    if (signal?.aborted) return { cancelled: true };
     return await Promise.race([
-      Promise.resolve().then(operation).then((value) => ({ expired: false as const, value })),
+      new Promise<{ cancelled: true }>((resolve) => { onAbort = () => resolve({ cancelled: true }); signal?.addEventListener('abort', onAbort, { once: true }); }),
+      Promise.resolve().then(() => signal?.aborted ? new Promise<T>(() => {}) : operation()).then((value) => ({ expired: false as const, value })),
       new Promise<{ expired: true }>((resolve) => { timer = setTimeout(() => resolve({ expired: true }), ms); }),
     ]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
   }
 }
 
@@ -58,7 +63,7 @@ const defaultExec: FleetStandbyExec = async (file, argv, options) => {
 
 export async function cmdFleetStandbyAwait(args: string[], deps: FleetStandbyAwaitDeps = {}): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log(`${usage}\nProbe the standby readiness proof (the same check as ashlr fleet standby) now and then every interval until it reports ready with no blockers or the total deadline passes. Observes only: never takes the lease, restores, starts workers or changes config. Exit 0 ready, 3 deadline elapsed (last report shown), 1 execution or invalid-output failure, 2 invalid arguments.`);
+    console.log(`${usage}\nProbe the standby readiness proof (the same check as ashlr fleet standby) now and then every interval until it reports ready with no blockers or the total deadline passes. Observes only: never takes the lease, restores, starts workers or changes config. Exit 0 ready, 3 deadline elapsed (last report shown), 4 cancelled, 1 execution or invalid-output failure, 2 invalid arguments.`);
     return 0;
   }
   const invalid = (): number => {
@@ -98,7 +103,7 @@ export async function cmdFleetStandbyAwait(args: string[], deps: FleetStandbyAwa
   const start = now();
   let attempts = 0;
   let lastReport: Report | null = null;
-  const finish = (outcome: 'ready' | 'timeout' | 'error', code: number, line: string): number => {
+  const finish = (outcome: 'ready' | 'timeout' | 'cancelled' | 'error', code: number, line: string): number => {
     if (json) {
       process.stdout.write(`${JSON.stringify({ outcome, attempts, elapsedMs: Math.max(0, now() - start), lastReport })}\n`);
     } else if (code === 0) console.log(line);
@@ -111,13 +116,16 @@ export async function cmdFleetStandbyAwait(args: string[], deps: FleetStandbyAwa
     const blockers = codes.length > 0 ? codes.join(', ') : 'no readable report';
     return finish('timeout', 3, `Standby not ready before the deadline (${blockers}).`);
   };
+  const cancelled = (): number => finish('cancelled', 4, 'Standby-await cancelled.');
+  if (deps.signal?.aborted) return cancelled();
   let discovery;
   try {
-    discovery = await bounded(() => deps.locateScript ? deps.locateScript() : findStandbyReadinessScript(deps.runsDir), timeoutMs);
+    discovery = await bounded(() => deps.locateScript ? deps.locateScript() : findStandbyReadinessScript(deps.runsDir), timeoutMs, deps.signal);
   } catch {
     if (now() - start >= timeoutMs) return timeout();
     return finish('error', 1, 'error: fleet standby-await: readiness script discovery failed');
   }
+  if ('cancelled' in discovery) return cancelled();
   if (discovery.expired || now() - start >= timeoutMs) return timeout();
   const script = discovery.value;
   if (script === null) return finish('error', 1, 'error: fleet standby-await needs scripts/mac-bridge/standby_readiness.py');
@@ -127,6 +135,7 @@ export async function cmdFleetStandbyAwait(args: string[], deps: FleetStandbyAwa
   }
 
   for (;;) {
+    if (deps.signal?.aborted) return cancelled();
     const remaining = timeoutMs - (now() - start);
     if (remaining <= 0) break;
     const probeTimeout = Math.min(remaining, PROBE_CAP_MS);
@@ -136,7 +145,8 @@ export async function cmdFleetStandbyAwait(args: string[], deps: FleetStandbyAwa
     try {
       const result = await bounded(() => exec('python3', argv, {
         encoding: 'utf8', timeout: probeTimeout, maxBuffer: 1024 * 1024, windowsHide: true,
-      }), probeTimeout);
+      }), probeTimeout, deps.signal);
+      if ('cancelled' in result) return cancelled();
       if (result.expired) {
         if (probeTimeout === remaining || now() - start >= timeoutMs) return timeout();
         return finish('error', 1, 'error: fleet standby-await: readiness probe could not run');
@@ -160,7 +170,8 @@ export async function cmdFleetStandbyAwait(args: string[], deps: FleetStandbyAwa
     if (report.ready === true) return finish('ready', 0, 'Standby is ready to take over.');
     const left = timeoutMs - (now() - start);
     if (left <= 0) break;
-    const pause = await bounded(() => sleep(Math.min(intervalMs, left)), left);
+    const pause = await bounded(() => sleep(Math.min(intervalMs, left)), left, deps.signal);
+    if ('cancelled' in pause) return cancelled();
     if (pause.expired) return timeout();
   }
   return timeout();

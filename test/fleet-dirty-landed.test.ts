@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cmdFleetDirtyLanded, classifyDirtyLanded, type DirtyLandedReport, type FleetDirtyLandedDeps } from '../src/cli/fleet-dirty-landed.js';
+import { recutDropJob } from '../src/core/fleet/recut-drop-body.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 import { resolveFleetSubcommand } from '../src/cli/fleet-subcommand-resolve.js';
 
@@ -54,7 +55,8 @@ function fixture() {
   writeFileSync(join(dir, 'c.txt'), 'c.txt: new\n'); git('commit', '-qam', 't3'); const t3 = git('rev-parse', 'HEAD');
   git('checkout', '-q', 'master');
   writeFileSync(join(dir, 'a.txt'), 'a.txt: shipped\n'); writeFileSync(join(dir, 'c.txt'), 'c.txt: other\n');
-  git('commit', '-qam', 'master moves');
+  writeFileSync(join(dir, 'base-only.txt'), 'new base history\n');
+  git('add', '.'); git('commit', '-qm', 'master moves');
   for (const [n, sha] of [[1, t1], [2, t2], [3, t3], [4, t1]] as const) git('update-ref', `refs/pull/${n}/head`, sha);
   return { dir, t1, t2, t3 };
 }
@@ -91,11 +93,64 @@ describe('fleet dirty-landed', () => {
     ]);
     expect(report.prs[0]).toMatchObject({ changedPaths: ['a.txt'], landedPaths: ['a.txt'], remainingPaths: [] });
     expect(report.prs[1]).toMatchObject({ landedPaths: ['a.txt'], remainingPaths: ['b.txt'] });
-    expect(report.prs[2]).toMatchObject({ landedPaths: [], remainingPaths: ['c.txt'] });
+    expect(report.prs[2]).toMatchObject({ changedPaths: ['c.txt'], landedPaths: [], remainingPaths: ['c.txt'] });
+    const job = recutDropJob({ ...report.prs[2]!, title: 'bridge: RQ-PHX-EXAMPLE' }, Date.now());
+    expect(job).toHaveProperty('body');
+    if ('body' in job) {
+      expect(job.body).toContain('git diff <merge-base>');
+      expect(job.body).not.toContain('base-only.txt');
+      expect(job.body).toContain('- "c.txt"');
+    }
     expect(report.prs[3]).toMatchObject({ reason: 'head-moved' });
     expect(report.prs[4]).toMatchObject({ reason: 'fetch-failed' });
     expect(report.prs[5]).toMatchObject({ reason: 'row-unreadable' });
   });
+
+  it('refuses a criss-cross history with more than one merge base', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ambiguous-fork-')); dirs.push(dir);
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    git('init', '-q', '-b', 'master');
+    git('config', 'user.email', 'test@example.com'); git('config', 'user.name', 'Test');
+    writeFileSync(join(dir, 'file'), 'base\n'); git('add', '.'); git('commit', '-qm', 'base');
+    const root = git('rev-parse', 'HEAD');
+    const tree = git('rev-parse', 'HEAD^{tree}');
+    const a = git('commit-tree', tree, '-p', root, '-m', 'a');
+    const b = git('commit-tree', tree, '-p', root, '-m', 'b');
+    const base = git('commit-tree', tree, '-p', a, '-p', b, '-m', 'base merge');
+    const head = git('commit-tree', tree, '-p', b, '-p', a, '-m', 'head merge');
+    git('update-ref', 'refs/heads/master', base); git('update-ref', 'refs/pull/1/head', head);
+    expect(await cmdFleetDirtyLanded(['--json'], { gh: ghReturning([row(1, head)]), remote: dir })).toBe(0);
+    const report = JSON.parse(output[0]!) as DirtyLandedReport;
+    expect(report.prs[0]).toMatchObject({ class: 'unknown', reason: 'ambiguous-merge-base', changedPaths: [] });
+  });
+
+  it('reports wide mode and generated zero-line diffs while retaining real large diffs', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wide-diff-')); dirs.push(dir);
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    git('init', '-q', '-b', 'master');
+    git('config', 'user.email', 'test@example.com'); git('config', 'user.name', 'Test');
+    mkdirSync(join(dir, 'files')); mkdirSync(join(dir, 'generated'));
+    for (let i = 0; i < 1000; i++) writeFileSync(join(dir, 'files', `${i}.txt`), 'original\n');
+    git('add', '.'); git('commit', '-qm', 'base');
+    git('checkout', '-qb', 'modes');
+    for (let i = 0; i < 1000; i++) chmodSync(join(dir, 'files', `${i}.txt`), 0o755);
+    git('add', '.');
+    git('commit', '-qm', 'modes'); const modes = git('rev-parse', 'HEAD');
+    git('checkout', '-q', 'master'); git('checkout', '-qb', 'generated');
+    for (let i = 0; i < 1000; i++) writeFileSync(join(dir, 'generated', `${i}.txt`), '');
+    git('add', '.'); git('commit', '-qm', 'generated'); const generated = git('rev-parse', 'HEAD');
+    git('checkout', '-q', 'master'); git('checkout', '-qb', 'real');
+    for (let i = 0; i < 1000; i++) writeFileSync(join(dir, 'files', `${i}.txt`), 'changed\n');
+    git('commit', '-qam', 'real'); const real = git('rev-parse', 'HEAD');
+    git('checkout', '-q', 'master');
+    for (const [n, sha] of [[1, modes], [2, generated], [3, real]] as const) git('update-ref', `refs/pull/${n}/head`, sha);
+    expect(await cmdFleetDirtyLanded(['--json'], { gh: ghReturning([row(1, modes), row(2, generated), row(3, real)]), remote: dir })).toBe(0);
+    const report = JSON.parse(output[0]!) as DirtyLandedReport;
+    expect(report.prs[0]?.diffAnomaly).toEqual({ kind: 'zero-line', files: 1000, causes: ['mode-only'] });
+    expect(report.prs[1]?.diffAnomaly).toEqual({ kind: 'zero-line', files: 1000, causes: ['generated-path'] });
+    expect(report.prs[2]?.diffAnomaly).toBeUndefined();
+    expect(recutDropJob(report.prs[0]!, Date.now())).toEqual({ reason: 'diff-anomaly' });
+  }, 30000);
 
   it('prints one plain line per dirty PR in human mode', async () => {
     const { dir, t1, t3 } = fixture();

@@ -141,6 +141,7 @@ const POLICY_POLL_MS = 5_000;
 const CONSOLE_POLL_MS = 2_000;
 const BOUNDS_POLL_MS = 400;
 const PICK_POLL_MS = 400;
+const AGENT_POLL_MIN_INTERVAL_MS = 250;
 const PICK_TIMEOUT_MS = 90_000;
 const NAV_WAIT_MS = 15_000;
 /** Operator input within this long of an agent command counts as taking over. */
@@ -909,11 +910,21 @@ export function BrowserPanel({ sessionId, visible = true, deps: depsOverride }: 
     if (!sessionId || !visible || !agentOn) return undefined;
     const ctrl = new AbortController();
     let stopped = false;
+    const sleep = (ms: number): Promise<void> => new Promise((resolve) => {
+      if (ctrl.signal.aborted) return resolve();
+      const timer = setTimeout(done, ms);
+      function done(): void {
+        clearTimeout(timer);
+        ctrl.signal.removeEventListener('abort', done);
+        resolve();
+      }
+      ctrl.signal.addEventListener('abort', done, { once: true });
+    });
     void (async () => {
       while (!stopped) {
         if (!api.canWrite()) {
           setAgentActivity('Unlock actions to let the agent use the browser.');
-          await new Promise((resolve) => setTimeout(resolve, 3_000));
+          await sleep(3_000);
           continue;
         }
         try {
@@ -928,9 +939,11 @@ export function BrowserPanel({ sessionId, visible = true, deps: depsOverride }: 
             recordAction(command, result);
             await api.result(sessionId, result).catch(() => {});
           }
+          // A broken or older server may return immediately instead of long-polling.
+          await sleep(AGENT_POLL_MIN_INTERVAL_MS);
         } catch {
           if (stopped) break;
-          await new Promise((resolve) => setTimeout(resolve, 3_000));
+          await sleep(3_000);
         }
       }
     })();

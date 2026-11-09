@@ -104,19 +104,16 @@ const SMALL: ModelProfile = {
  * Capable general chat models (≈4–72B, e.g. qwen2.5:72b).
  *
  * Native tool calls. Adequate step budget to handle multi-file tasks. The
- * roleHint pushes completeness — these large models tend to draft partial
- * changes and self-truncate without explicit guidance.
+ * roleHint is only the anti-stub line. Read-before-edit and verification
+ * already live in the tool and executor layers; a second "do not touch
+ * unrelated code" block spent the prompt budget on a scope lock.
  */
 const GENERAL: ModelProfile = {
   id: 'general',
   verbosity: 'standard',
   toolFormat: 'native',
   roleHint:
-    'Engineering completeness for this task:\n' +
-    '- Read the file before editing it.\n' +
-    '- Write COMPLETE changes — no "// ... rest unchanged ..." truncations.\n' +
-    '- Scope edits to this task only; do not touch unrelated code.\n' +
-    '- Verify the change was applied correctly before reporting done.',
+    'Write complete changes. Do not leave "// ... rest unchanged ..." truncations or placeholder stubs.',
   stepCap: 24,
   temperature: 0.3,
   promptCharCap: 2200,
@@ -136,16 +133,9 @@ const CODER: ModelProfile = {
   verbosity: 'rich',
   toolFormat: 'native',
   roleHint:
-    'Diff-quality contract for this task:\n' +
-    '- READ the file in full before editing it — never modify a file you have not read.\n' +
-    '- Make COMPLETE changes: produce the entire updated function/block/file, not a ' +
-    'truncated fragment or a stub with "// ... existing code ..." placeholders.\n' +
-    '- Keep the change SCOPED: edit only what the task requires; do not refactor or ' +
-    'rename unrelated symbols.\n' +
-    '- After writing, verify by reading back the changed region and confirming the ' +
-    'edit landed correctly — do not declare done on assumption.\n' +
-    '- If the task requires a new file, write the complete file content in one call.\n' +
-    '- Prefer small, atomic writes over large batch rewrites where the task allows.',
+    'Make complete changes: write the entire updated function, block, or file. ' +
+    'Do not emit a truncated fragment or a stub with "// ... existing code ..." placeholders. ' +
+    'If the task needs a new file, write the complete file in one call.',
   stepCap: 32,
   temperature: 0.2,
   promptCharCap: 3200,

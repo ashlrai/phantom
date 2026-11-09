@@ -45,3 +45,17 @@ it('validates actions and reports missing or invalid directories', async () => {
   expect((await readRunsSwitches({ runsDir: join(runsDir, 'missing') })).sourceState).toBe('missing');
   expect((await readRunsSwitches({ runsDir: 'relative' })).sourceState).toBe('degraded');
 });
+it('keeps lane-list HOLD bytes untouched and refuses both generic boolean actions', async () => {
+  const path = join(runsDir, 'HOLD');
+  const original = 'codex-personal\nclaude-api\n';
+  await writeFile(path, original);
+  for (const on of [true, false]) {
+    expect(parseSwitchAction({ id: 'HOLD', on })).toBeNull();
+    expect((await setRunsSwitch('HOLD', on, { runsDir })).sourceState).toBe('degraded');
+    expect(await readFile(path, 'utf8')).toBe(original);
+  }
+  expect((await readRunsSwitches({ runsDir })).switches.find(row => row.id === 'HOLD')?.on).toBe(true);
+  await rm(path);
+  await setRunsSwitch('HOLD', true, { runsDir });
+  await expect(lstat(path)).rejects.toMatchObject({ code: 'ENOENT' });
+});

@@ -113,12 +113,15 @@ export function defaultBetTraceReaders(root = join(homedir(), '.ashlr-runs')): B
   };
 }
 
+const usage = 'Usage: ashlr fleet bet-trace [--json]';
+const USAGE = `${usage}\nRead-only supervisor BET/FIXUP/SLOTS reconciliation.\n`;
+
 export async function cmdFleetBetTrace(args: string[], readers?: BetTraceReaders, now = Date.now()): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) {
-    process.stdout.write('Usage: ashlr fleet bet-trace [--json]\nRead-only supervisor BET/FIXUP/SLOTS reconciliation.\n'); return 0;
+    process.stdout.write(USAGE); return 0;
   }
   try {
-    if (args.some(arg => arg !== '--json')) throw new Error('Usage: ashlr fleet bet-trace [--json]');
+    if (args.some(arg => arg !== '--json')) throw new Error(usage);
     const report = await readBetTrace(readers ?? defaultBetTraceReaders(), now);
     process.stdout.write(args.includes('--json') ? JSON.stringify(report) + '\n' : report.passes.map(pass =>
       `${pass.source}: ${JSON.stringify(pass.totals)}\n${pass.commands.map(command => `  ${command.kind} ${command.id ?? command.lane} ${command.state}`).join('\n')}`).join('\n') + '\n');

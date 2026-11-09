@@ -3,9 +3,14 @@
 # Installed to ~/.ashlr-runs/bin/restock.py via swap.sh and sha-pinned by selfrun.sh (G1-CODE-PIN); run as
 # `restock.py [--dry-run] [--per-lane N]`. RQ-QUEUEGEN-BOLD-30 + SPEC-AMEND Security #5 + RQ-DEVINROUTEDEFAULTQ7
 # + RQ-QUEUE-AUTOUNPARK-1 (PARKED-DEP / DEPENDENCY GATE / UNPARK). Security must re-pin before live bin/ install.
-import os, re, sys, json, time, fcntl, subprocess
+import os, re, sys, json, time, fcntl, subprocess, math
+from datetime import datetime
 from launch_precheck import precheck, park, parked as precheck_parked, park_key
+import queue_gate
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; EV = R + "/dispatch-events.log"
+gate = queue_gate.read_gate(Q)
+print("QUEUE_GATE allow=%s depth=%s target=%s src=restock" % (gate["allow"], gate["depth"], gate["target"]), file=sys.stderr)
+if not gate["allow"]: sys.exit(0)
 DRY = "--dry-run" in sys.argv
 PER = int(sys.argv[sys.argv.index("--per-lane") + 1]) if "--per-lane" in sys.argv else None
 TS = time.strftime("%F %T"); HM = time.strftime("%H:%M")
@@ -62,9 +67,9 @@ for l in CODEX:
     if l == "claude-api" and not slots.get(l, {}).get("target"): need[l] = 0; continue   # paced to 0: no credit pool open
     free = max(t - s.get("running", 0), 0)
     want = PER if PER is not None else 3 * max(free, 4)
-    need[l] = max(want - s.get("queued", 0), 0)
-lines = rd(Q + "/router-queue.md").splitlines()
-if not lines: print("no router-queue.md copy"); sys.exit(0)
+    need[l] = want
+RQ_TXT = rd(Q + "/router-queue.md")   # one read: the pick loop below greps it per READY line
+lines = RQ_TXT.splitlines()
 status = {}; recs = []; held_pr = set()
 for i, l in enumerate(lines):
     m = re.match(r"^- ([A-Z][A-Z-]*)\b", l)
@@ -81,6 +86,7 @@ for i, l in enumerate(lines):
 claimed = {x.split("\t")[0] for x in rd(Q + "/claimed.tsv").splitlines() if x}
 ready_raw = [x for x in rd(Q + "/ready.tsv").splitlines() if x.strip() and not x.strip().startswith("#")]
 # RQ-QUEUE-AUTOUNPARK-1: PARKED-DEP[.lane] may lead the row (fleet parked status-first) or sit in the lane column.
+PARK_RATE = re.compile(r"^PARKED-MERGERATE\.([A-Za-z0-9][A-Za-z0-9._@-]{0,63})$", re.I)
 PARK_DEP = re.compile(r"^PARKED-(?:DEP|DEPENDENCY)(?:\.([A-Za-z0-9][A-Za-z0-9._@-]{0,63}))?$", re.I)
 GATE = re.compile(r"(?i)DEPENDENCY\s+GATE[:\s]+([^\n]+)")
 JID_TOK = re.compile(r"\b([A-Za-z0-9][A-Za-z0-9._-]{0,79})\b")
@@ -88,9 +94,29 @@ PIN_MERGE = "no merge without Security pin"
 def ready_job_id(line):
     f = line.split("\t")
     if not f: return None
-    if PARK_DEP.match(f[0]): return f[1] if len(f) > 1 else None
+    if PARK_DEP.match(f[0]) or PARK_RATE.match(f[0]): return f[1] if len(f) > 1 else None
     return f[0]
 inq = {j for j in (ready_job_id(x) for x in ready_raw) if j}
+# Count only distinct launchable rows. Dispatcher status can count parked or malformed
+# rows and is a previous-tick snapshot, so it cannot measure replenishment demand.
+queue_diagnostics = {"parked": 0, "invalid": 0, "empty_prompt": 0, "duplicate": 0}
+queue_seen = set()
+for row in ready_raw:
+    f = row.split("\t")
+    if PARK_DEP.match(f[0]) or PARK_RATE.match(f[0]) or (len(f) > 2 and (PARK_DEP.match(f[2]) or PARK_RATE.match(f[2]))):
+        queue_diagnostics["parked"] += 1
+        continue
+    valid = (len(f) >= 5 and re.fullmatch(r"[A-Za-z0-9._-]+", f[0]) and f[2] in CODEX
+             and f[3] in ("frontier", "work", "mid", "fast") and "/" not in f[1]
+             and os.path.isdir(H + "/Projects/ashlrai/" + f[1])
+             and os.path.realpath(f[4]).startswith(os.path.realpath(Q + "/prompts") + "/") and os.path.isfile(f[4]))
+    if not valid:
+        queue_diagnostics["invalid"] += 1; continue
+    if not rd(f[4]).strip():
+        queue_diagnostics["empty_prompt"] += 1; continue
+    if f[0] in queue_seen:
+        queue_diagnostics["duplicate"] += 1; continue
+    queue_seen.add(f[0]); need[f[2]] = max(need[f[2]] - 1, 0)
 merged = set(); completed = set()
 for x in rd(R + "/metrics/jobs.jsonl").splitlines():
     try: d = json.loads(x)
@@ -140,7 +166,9 @@ def prompt_body(j, repo, l, tier, attrs, text, gate=None):
     return (f"Job {j} (pool {l}, tier {tier}, repo {repo}). Task from the Ashlr router queue, verbatim:\n\n"
             f"{gate_line}{j} ({attrs}): {text}\n\n"
             "Treat the task as the minimum: be ambitious and high-leverage, and finish one complete, self-contained, mergeable change "
-            "that meets every acceptance item above, with new or updated tests that you run. Never print environment variables, secrets or tokens; "
+            "with new or updated tests that you run. If the full goal cannot be verified, ship the smallest correct, useful part with honest output "
+            "(for example, age: unknown) and list the gap in BRIDGE_NOTES.md for the PR body. Use EMPTY only when already done or truly impossible. "
+            "Never print environment variables, secrets or tokens; "
             "solve any secrets need through Phantom Secrets and any MCP/CLI access need through Locus. Do not commit or push, and do not edit .github/."
             f"{pin_line}")
 noops = load_noops(); seen_pr = set(); seen_file = set()   # seen_*: PRs / target files already picked this pass
@@ -151,13 +179,55 @@ def skip(j, why): skips[why] = skips.get(why, 0) + 1
 # RQ-QUEUE-AUTOUNPARK-1: each tick, unpark PARKED-DEP rows whose DEPENDENCY GATE ids are all MERGED in jobs.jsonl.
 # Unpark rewrites the ready.tsv row only — the prompt body (including "no merge without Security pin") is untouched.
 unparks = []   # (job, deps, ready_line, launch_line)
+parked_diagnostics = {"invalid": 0, "empty_gate": 0, "waiting": 0, "duplicate": 0}
+parked_seen = set(queue_seen)
 for line in ready_raw:
     parsed = parse_parked_dep(line)
-    if not parsed: continue
+    if not parsed:
+        f = line.split("\t")
+        if PARK_DEP.match(f[0]) or (len(f) > 2 and PARK_DEP.match(f[2])): parked_diagnostics["invalid"] += 1
+        continue
     j, repo, lane, tier, pf, _raw = parsed
+    if (not re.fullmatch(r"[A-Za-z0-9._-]+", j) or lane not in CODEX or tier not in ("frontier", "work", "mid", "fast")
+            or "/" in repo or not os.path.isdir(H + "/Projects/ashlrai/" + repo)
+            or not os.path.realpath(pf).startswith(os.path.realpath(Q + "/prompts") + "/") or not os.path.isfile(pf)):
+        parked_diagnostics["invalid"] += 1; continue
+    if j in parked_seen:
+        parked_diagnostics["duplicate"] += 1; continue
+    parked_seen.add(j)
     ids = gate_ids(rd(pf))
-    if not ids or any(d not in merged for d in ids): continue
+    if not ids: parked_diagnostics["empty_gate"] += 1; continue
+    if any(d not in merged for d in ids): parked_diagnostics["waiting"] += 1; continue
+    need[lane] = max(need[lane] - 1, 0)
     unparks.append((j, ids, line, "\t".join([j, repo, lane, tier, pf])))
+# Recover up to observed PR capacity promptly, with one hourly probe at saturation.
+# Reservations prevent repeated ticks from spending the same capacity twice.
+# Unknown evidence stays parked; the separate publish drip still applies.
+# The cooldown is checked and recorded under ready.lock, including across restarts.
+rate_candidates = []
+for line in ready_raw:
+    f = line.split("\t")
+    m0 = PARK_RATE.fullmatch(f[0])
+    m2 = PARK_RATE.fullmatch(f[2]) if len(f) > 2 else None
+    if m0 and len(f) == 6 and f[2] == m0.group(1):
+        j, repo, lane, tier, pf = f[1], f[4], f[2], f[3], f[5]
+    elif m2 and len(f) == 5:
+        j, repo, lane, tier, pf = f[0], f[1], m2.group(1), f[3], f[4]
+    else: continue
+    if (repo == "phantom" and lane in CODEX and not slots.get(lane, {}).get("held") and lane not in hold
+            and re.fullmatch(r"[A-Za-z0-9._-]+", j) and j not in parked_seen
+            and tier in ("frontier", "work", "mid", "fast") and os.path.isdir(H + "/Projects/ashlrai/phantom")
+            and os.path.realpath(pf).startswith(os.path.realpath(Q + "/prompts") + "/")
+            and os.path.isfile(pf) and rd(pf).strip()):
+        parked_seen.add(j)
+        rate_candidates.append((j, line, "\t".join([j, repo, lane, tier, pf])))
+def rate_count(now):
+    try:
+        stamp, count = rd(R + "/phantom-open-prs").split()
+        age = now - float(stamp); count = int(count)
+        return count if 0 <= age < 600 and count >= 0 else None
+    except (ValueError, TypeError): return None
+rate_unpark = []
 # bold census before the restock (RQ-QUEUEGEN-BOLD-30): the READY stock's share of bet=bold decides prefer_bold
 ready_n = len(recs); ready_bold = sum(1 for r in recs if ISBOLD.search(r[2]))
 bold_frac = ready_bold / ready_n if ready_n else 0.0   # empty READY stock reads as starved, not satisfied
@@ -170,12 +240,55 @@ for i, j, a2, t2, raw2 in recs:
 parked = {i for i, j in seclist}
 # under the bold floor bold lines pick first, then P-level, then line order; at/above it the order is unchanged
 ordk = (lambda r: (not ISBOLD.search(r[2]), prio(r[2]), r[0])) if prefer_bold else (lambda r: (prio(r[2]), r[0]))
-for i, j, attrs, text, raw in sorted(recs, key=ordk):
+def ranked_records(records):
+    ordered = sorted(records, key=ordk)
+    try:
+        state = json.loads(rd(H + "/.ashlr/repo-rank.json"))
+        rows = state["rankings"]
+        enrolled = state["enrolled"]
+        datetime.fromisoformat(state["generatedAt"].replace("Z", "+00:00"))
+        blend = [state["weights"][k] for k in ("prior", "recency", "leverage")]
+        if (any(not isinstance(w, (int, float)) or isinstance(w, bool) or not math.isfinite(w) or w < 0 for w in blend)
+                or not math.isfinite(sum(blend)) or sum(blend) <= 0
+                or not isinstance(state["proposals"], list) or not isinstance(state["history"], list)):
+            return ordered
+        if (state["schemaVersion"] != 1 or not isinstance(enrolled, list) or not enrolled
+                or any(not isinstance(r, str) or not re.fullmatch(r"[a-z0-9-]+", r) for r in enrolled)
+                or len(set(enrolled)) != len(enrolled) or len(rows) != len(enrolled)
+                or {r["repo"] for r in rows} != set(enrolled)
+                or any(not isinstance(r["weight"], (int, float)) or isinstance(r["weight"], bool)
+                       or not math.isfinite(r["weight"]) or r["weight"] <= 0 for r in rows)):
+            return ordered
+        weights = {r["repo"]: r["weight"] for r in rows}
+        total = sum(weights.values())
+        if not math.isfinite(total): return ordered
+        weights = {r: w / total for r, w in weights.items()}
+        if weights[rows[0]["repo"]] < 0.4:
+            top = rows[0]["repo"]
+            rest = 1 - weights[top]
+            weights = {r: (0.4 if r == top else w / rest * 0.6) for r, w in weights.items()}
+        groups = {r["repo"]: [] for r in rows}
+        other = []
+        for record in ordered:
+            match = re.search(r"\brepo=(?:ashlrai/)?([a-z0-9-]+)", record[2])
+            repo = match.group(1) if match else None
+            (groups[repo] if repo in groups else other).append(record)
+        result = []
+        counts = dict.fromkeys(groups, 0)
+        while any(groups.values()):
+            repo = min((r for r in groups if groups[r]), key=lambda r: ((counts[r] + 1) / weights[r], list(groups).index(r)))
+            result.append(groups[repo].pop(0))
+            counts[repo] += 1
+        return result + other
+    except (ValueError, KeyError, TypeError, AttributeError, ZeroDivisionError, OverflowError):
+        return ordered
+
+for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re.search(r"A\d{6,}Q8$", r[1]))):
     if all(len(picks[l]) >= need[l] for l in CODEX): break
     if i in parked: continue
     if re.search(r"(?i)not bridge|owner-authored|\bowners?\b|RETIRED|folds into|reuse the kept worktree|repos=|standing|tier=local", attrs + " " + text[:200]): skip(j, "not-bridge/fold/kept-reuse"); continue
     if not re.match(r"^[A-Z]", j): skip(j, "bad-id"); continue
-    if re.search(r"sub of " + re.escape(j) + r"\b", rd(Q + "/router-queue.md")): skip(j, "split-into-subs"); continue
+    if re.search(r"sub of " + re.escape(j) + r"\b", RQ_TXT): skip(j, "split-into-subs"); continue
     if "BASE_OVERRIDE" in attrs: skip(j, "base-override(supervisor)"); continue
     rm = re.search(r"\brepo=(?:ashlrai/)?([a-z0-9-]+)", attrs)
     if not rm:
@@ -191,6 +304,10 @@ for i, j, attrs, text, raw in sorted(recs, key=ordk):
     if pool == "any" and devin_default(tm, attrs): pool = "devin"   # frontier/long-horizon -> devin by default
     if pool == "any": pool = max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
     if pool not in CODEX: skip(j, "lane-" + pool); continue
+    if pool == "codex-local":
+        size = re.search(r"(?:^|[,;\s])size<=([0-9]+)(?=[,;\s]|$)", attrs)
+        if not size or int(size.group(1)) > 60:
+            skip(j, "local-size"); continue
     prp = set(re.findall(r"github\.com/[A-Za-z0-9._-]+/([A-Za-z0-9._-]+)/pull/(\d+)", raw))
     prp |= {(rm.group(1), n) for n in re.findall(r"(?:pull/|PR=|#)(\d+)", attrs + " " + text)}
     if prp & held_pr or any(("*", n) in held_pr for _, n in prp): skip(j, "hold-list-pr"); continue
@@ -246,6 +363,8 @@ for lane in CODEX:
         p = prompt_body(j, repo, l, tier, attrs, text)
         pf = f"{Q}/prompts/{j}.md"
         out.append((j, repo, l, tier, pf, p, i))
+out.sort(key=lambda row: bool(re.search(r"A\d{6,}Q8$", row[0])))
+out = out[:gate["allow"]]
 dep_out = []   # PARKED-DEP rows to append (job, repo, lane, tier, pf, prompt, i, deps)
 for j, repo, l, tier, attrs, text, i, deps in dep_parks:
     pf = f"{Q}/prompts/{j}.md"
@@ -256,20 +375,23 @@ if "--json" not in sys.argv:
       "bold ready=%d/%d(%.2f) picked=%d/%d(%.2f)%s" % (ready_bold, ready_n, bold_frac, pk_b, pk_n, pk_b / pk_n if pk_n else 0.0, " prefer=bold" if prefer_bold else ""),
       "skips", json.dumps(skips),
       "unpark", len(unparks), "parked_dep", len(dep_out))
+ print("queue", json.dumps(queue_diagnostics), "parked_diagnostics", json.dumps(parked_diagnostics))
 for i, j in ([] if "--json" in sys.argv else seclist): print(("DRY " if DRY else "") + "HOLD-SECURITY\t" + j)
 for j, repo, l, tier, pf, p, i in ([] if "--json" in sys.argv else out): print(("DRY " if DRY else "") + "\t".join([j, repo, l, tier]))
 for j, ids, _old, _new in ([] if "--json" in sys.argv else unparks): print(("DRY " if DRY else "") + "UNPARK\t%s\tdeps=%s" % (j, ",".join(ids)))
 for j, repo, l, tier, pf, p, i, deps in ([] if "--json" in sys.argv else dep_out): print(("DRY " if DRY else "") + "PARKED-DEP\t%s\tdeps=%s" % (j, ",".join(deps)))
 if "--json" in sys.argv:
     print(json.dumps({"dry_run": DRY, "queued": len(out), "done_noop": [j for _, j, _ in done], "skips": skips,
+                      "queue_diagnostics": queue_diagnostics, "parked_diagnostics": parked_diagnostics,
                       "unpark": [{"job": j, "deps": ids} for j, ids, _, _ in unparks],
                       "parked_dep": [{"job": j, "deps": deps} for j, *_r, deps in dep_out]}))
 if not DRY:
     # A separate state file avoids racing dispatch's launch retry ledger.
     ready_ids = {r[1] for r in recs}
     park_state = {j: e for j, e in park_state.items() if j in ready_ids}
-    open(PARKF + ".tmp", "w").write(json.dumps(park_state)); os.replace(PARKF + ".tmp", PARKF)
-if DRY or (not out and not seclist and not done and not unparks and not dep_out): sys.exit(0)
+    park_tmp = PARKF + ".%d.tmp" % os.getpid()
+    open(park_tmp, "w").write(json.dumps(park_state)); os.replace(park_tmp, PARKF)
+if DRY or (not out and not seclist and not done and not unparks and not dep_out and not rate_candidates): sys.exit(0)
 for j, repo, l, tier, pf, p, i in out: open(pf, "w").write(p)
 for j, repo, l, tier, pf, p, i, deps in dep_out: open(pf, "w").write(p)
 # RQ-READYLOCK-SCOPE: take ready.lock with a timeout (ASHLR_READY_LOCK_TIMEOUT, default 10 s) and log waits and
@@ -288,14 +410,91 @@ def ready_lock(who="restock"):
             time.sleep(0.05)
     if time.monotonic() - t0 > 1: ev("READY_LOCK_WAIT %s %.1fs" % (who, time.monotonic() - t0))
     return lk
-if out or unparks or dep_out:
+if out or unparks or dep_out or rate_candidates:
     with ready_lock() as lk:
         # Locked snapshot: apply UNPARK rewrites, then append new READY and PARKED-DEP rows.
         snap = rd(Q + "/ready.tsv").splitlines()
+        gate = queue_gate.read_gate(Q)
+        print("QUEUE_GATE allow=%s depth=%s target=%s src=restock-locked" % (gate["allow"], gate["depth"], gate["target"]), file=sys.stderr)
+        # A competing producer may have filled the queue since selection.
+        budget_ready = gate["allow"]
+        unparks = unparks[:budget_ready]
+        budget_ready -= len(unparks)
+        out = out[:budget_ready]
+        budget_ready -= len(out)
         repl = {old: new for _j, _ids, old, new in unparks}
+        cooldown = Q + "/mergerate-recovery-at"
+        try: last = float(rd(cooldown))
+        except ValueError: last = 0
+        now = time.time()
+        # Persist first observations and capacity under the same lock as wakeups.
+        # Missing evidence never opens the gate; a fall in the observed count
+        # permits one immediate wake without removing the normal hourly pacing.
+        state_path = Q + "/mergerate-observed.json"
+        try: observed = json.loads(rd(state_path, "{}"))
+        except (ValueError, TypeError): observed = {}
+        if not isinstance(observed, dict): observed = {}
+        first = observed.get("first", {})
+        if not isinstance(first, dict): first = {}
+        parked_ids = {j for j, old, _new in rate_candidates if old in snap}
+        first = {j: v for j, v in first.items() if j in parked_ids and isinstance(v, (int, float)) and 0 <= v <= now}
+        for j in parked_ids: first.setdefault(j, now)
+        count = rate_count(now)
+        previous = observed.get("count")
+        reservations = observed.get("reservations", {})
+        if not isinstance(reservations, dict): reservations = {}
+        # A reservation whose job vanished without producing a PR must not hold
+        # capacity forever. Give dispatch and crash recovery an hour, and keep
+        # reservations while any queue or execution evidence remains.
+        def active_row(row):
+            fields = row.split("\t")
+            return not PARK_RATE.match(fields[0]) and not (len(fields) > 2 and PARK_RATE.match(fields[2]))
+        active = {ready_job_id(row) for row in snap if active_row(row)}
+        reservations = {j: at for j, at in reservations.items()
+                        if isinstance(j, str) and re.fullmatch(r"[A-Za-z0-9._-]+", j)
+                        and isinstance(at, (int, float)) and not isinstance(at, bool) and math.isfinite(at)
+                        and (not 0 <= at <= now - 3600 or j in active
+                             or os.path.isdir(H + "/Projects/ashlrai/wt/" + j)
+                             or any(os.path.exists(Q + "/run/" + j + suffix)
+                                    for suffix in (".reaping", ".dispatched", ".batched"))
+                             or "RESULT PR" in rd("%s/%s.publish" % (R, j)))}
+        reserved = observed.get("reserved", 0)
+        if not isinstance(reserved, int) or isinstance(reserved, bool) or reserved < 0: reserved = 0
+        if count is not None and isinstance(previous, int) and not isinstance(previous, bool):
+            increase = max(0, count - previous)
+            consumed = min(increase, len(reservations))
+            for j in sorted(reservations, key=reservations.get)[:consumed]: reservations.pop(j)
+            reserved = max(0, reserved - (increase - consumed))
+        budget = max(0, 150 - count - reserved - len(reservations)) if count is not None else 0
+        probe = count is not None and budget == 0 and 0 <= last <= now - 3600
+        if budget_ready and (budget or probe):
+            # claimed.tsv is enqueue history, not an active lease.
+            # Preserve age across queue rewrites; Python's stable sort keeps file
+            # order for jobs first observed in the same tick.
+            for j, old, new in sorted(rate_candidates, key=lambda row: first.get(row[0], now)):
+                occurrences = sum(ready_job_id(x) == j for x in snap)
+                if (old in snap and occurrences == 1
+                        and j not in reservations
+                        and ("phantom", j) not in completed and (None, j) not in completed
+                        and not os.path.isdir(H + "/Projects/ashlrai/wt/" + j)
+                        and not os.path.exists(Q + "/run/" + j + ".reaping")
+                        and not os.path.exists(Q + "/run/" + j + ".dispatched")
+                        and not os.path.exists(Q + "/run/" + j + ".batched")
+                        and "RESULT PR" not in rd("%s/%s.publish" % (R, j))):
+                    repl[old] = new; rate_unpark.append((j, max(0, int(now - first.pop(j, now)))))
+                    reservations[j] = now
+                    if len(rate_unpark) >= min(budget_ready, budget or 1): break
+            if rate_unpark:
+                # Record reservations before rewriting the queue: a crash can delay recovery, never duplicate capacity.
+                open(cooldown + ".tmp", "w").write(str(now)); os.replace(cooldown + ".tmp", cooldown)
+        observed["reserved"] = reserved
+        observed["reservations"] = reservations
+        if count is not None: observed["count"] = count
+        observed["first"] = first
+        open(state_path + ".tmp", "w").write(json.dumps(observed)); os.replace(state_path + ".tmp", state_path)
         with open(Q + "/ready.tsv.tmp", "w") as f:
             for x in snap:
-                x = repl.get(x, x)
+                x = repl.pop(x, x)
                 if x.strip(): f.write(x + "\n")
             for j, repo, l, tier, pf, p, i in out: f.write("\t".join([j, repo, l, tier, pf]) + "\n")
             for j, repo, l, tier, pf, p, i, deps in dep_out:
@@ -311,6 +510,7 @@ for j, repo, l, tier, pf, p, i, deps in dep_out:
 for i, j, pc in done:
     lines[i] = re.sub(r"^- READY ", "- DONE-NOOP ", lines[i], count=1)
     ev("DONE-NOOP %s [precheck code=%d %s]" % (j, pc[0], pc[1]))
+for j, wait in rate_unpark: ev("UNPARK %s reason=MERGERATE observed_wait_seconds=%d" % (j, wait))
 for j, ids, _old, _new in unparks:
     ev("UNPARK %s deps=%s" % (j, ",".join(ids)))
 for j, repo, l, tier, pf, p, i, deps in dep_out:

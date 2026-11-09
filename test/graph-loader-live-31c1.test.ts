@@ -46,6 +46,8 @@ describe('live fleet graph loader adapter', () => {
     expect(output).toHaveBeenCalledOnce();
     expect(JSON.parse(output.mock.calls[0]![0] as string)).toEqual({
       schemaVersion: 1, command, status: 'ready',
+      // The CLI carries the seed's completeness evidence verbatim, never a fabricated "complete".
+      complete: seed.complete, sources: seed.sources, issues: seed.issues,
       ...(command === 'status' ? { counts: { nodes: seed.nodes.length, edges: seed.edges.length } }
         : { [command]: seed[command] }),
     });

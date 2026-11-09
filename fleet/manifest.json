@@ -1,0 +1,44 @@
+{
+  "schema": "fleet.machinery.v1",
+  "comment": "Fleet machinery inventory for ~/.ashlr-runs. class=managed: fleet/sync.py installs with backup+sha verify. class=manual: repo source exists but adoption is a separate reviewed ops step (sync reports drift only). class=pinned: GATES v3 / ops-owned file; sync reports sha and drift, never writes. Optional sha256 pins the expected live digest.",
+  "roots": {
+    "runs-bin": {
+      "env": "ASHLR_RUNS_BIN",
+      "default": "~/.ashlr-runs/bin",
+      "mustExist": true,
+      "note": "the Mac lane bin directory; agents preview with --bin only, never apply live"
+    }
+  },
+  "files": [
+    { "src": "contrib/mac/process_snapshot.py", "root": "runs-bin", "class": "managed", "note": "installed before its dispatcher consumer" },
+    { "src": "contrib/mac/dispatchd.py", "root": "runs-bin", "class": "managed", "note": "per-tick supervisor; Security re-pin before live install" },
+    { "src": "contrib/mac/concurrency.py", "root": "runs-bin", "class": "managed" },
+    { "src": "contrib/mac/batcher.py", "root": "runs-bin", "class": "managed" },
+    { "src": "contrib/mac/local_job.py", "root": "runs-bin", "class": "managed" },
+    { "src": "contrib/mac/restock.py", "root": "runs-bin", "class": "managed", "note": "queue restocker; Security re-pin before live install" },
+    { "src": "contrib/mac/launch_precheck.py", "root": "runs-bin", "class": "managed" },
+    { "src": "contrib/mac/install-gate.py", "root": "runs-bin", "class": "managed" },
+    { "src": "contrib/mac/launch-gate.sh", "root": "runs-bin", "class": "managed" },
+    { "src": "contrib/mac/wt-prune.sh", "root": "runs-bin", "class": "managed", "note": "migrated RQ-SWE5-MACHINERY-AS-CODE: was manual copy to bridge dir" },
+    { "src": "contrib/mac/wt-prune.py", "root": "runs-bin", "class": "managed", "note": "migrated RQ-SWE5-MACHINERY-AS-CODE: was manual copy to bridge dir" },
+    { "src": "contrib/mac/staged_drain.py", "root": "runs-bin", "class": "manual", "note": "installs next to the queue scripts; adoption pending review" },
+    { "src": "contrib/mac/staged-drain.sh", "root": "runs-bin", "class": "manual", "note": "bash entrypoint for staged_drain.py" },
+    { "src": "contrib/mac/host_session_tick.py", "root": "runs-bin", "class": "manual", "note": "current-host patch source; drift expected until adopted" },
+    { "src": "contrib/mac/host_session_runtime.py", "root": "runs-bin", "class": "manual" },
+    { "src": "contrib/mac/host_session_observation.py", "root": "runs-bin", "class": "manual" },
+    { "src": "contrib/mac/host_session_disk_cache.py", "root": "runs-bin", "class": "manual" },
+    { "src": "contrib/mac/host_pressure_admission.py", "root": "runs-bin", "class": "manual", "note": "surgical host patch module" },
+    { "src": "contrib/mac/publish.sh", "root": "runs-bin", "class": "pinned", "note": "GATES v3 secret gate; ops installs the pinned copy; repo is a reviewable mirror" },
+    { "src": "contrib/mac/integrated-merge.py", "root": "runs-bin", "class": "pinned", "note": "host-installed only after independent review + digest pin" },
+    { "src": "contrib/mac/release-autorun.sh", "root": "runs-bin", "class": "pinned", "note": "release observer; digest-pinned host adoption" },
+    { "src": "contrib/mac/mason-inbox-append", "root": "runs-bin", "class": "pinned", "note": "leader surface writer (leader wrappers pin)" },
+    { "src": "contrib/mac/host-integration/launch.candidate.sh", "name": "launch.sh", "root": "runs-bin", "class": "pinned", "note": "host-managed launcher candidate; Security pin required before adoption" },
+    { "name": "scrub.pl", "root": "runs-bin", "class": "pinned", "note": "GATES v3 secret gate; ops-side only" },
+    { "name": "reap-one.sh", "root": "runs-bin", "class": "pinned", "note": "external reaper that runs the pinned publish.sh" },
+    { "name": "precheck.sh", "root": "runs-bin", "class": "pinned", "note": "bounded precheck called by dispatchd; staged copies live under staging/" },
+    { "name": "restock.sh", "root": "runs-bin", "class": "pinned", "note": "wrapper dispatchd fires when a lane queue runs shallow" },
+    { "name": "metrics-outcomes.sh", "root": "runs-bin", "class": "pinned", "note": "wrapper dispatchd fires on the outcomes stamp" },
+    { "name": "router.py", "root": "runs-bin", "class": "pinned", "note": "ops-side router supervisor; contrib/router holds the TS successor" },
+    { "name": "router_queue.py", "root": "runs-bin", "class": "pinned", "note": "ops-side queue writer referenced by ops docs" }
+  ]
+}

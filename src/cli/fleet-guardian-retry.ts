@@ -9,6 +9,7 @@ import { cmdFleetGuardianVerify } from './fleet-guardian-verify.js';
 // deadline of its own, so retry always passes an explicit timeout; the default
 // here is one minute and the guardian maximum (one day) still applies.
 const VERIFY_TIMEOUT_DEFAULT_MS = 60_000;
+export const usage = 'Usage: ashlr fleet guardian-retry --manifest <file> --source-state <file> --output-state <file> (--repo <owner/name> --sha <sha> | --next-infra) [--verify [--timeout-ms <ms>]] [--json]';
 
 export async function cmdFleetGuardianRetry(
   args: string[],

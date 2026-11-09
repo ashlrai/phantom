@@ -7,6 +7,7 @@
  * Usage:
  *   ashlr resources           — table view
  *   ashlr resources --json    — raw JSON (ResourceSnapshot)
+ *   ashlr resources --ledger --json — resource and pool budget ledger
  *   ashlr resources --watch   — refresh every 30s (Ctrl-C to stop)
  */
 
@@ -164,7 +165,8 @@ function printResourcesHelp(): void {
   console.log(bold('  phm resources') + dim(' — per-backend resource control plane (read-only)'));
   console.log(dim('  Phantom CLI (ashlr remains compatible)'));
   console.log('');
-  console.log('  Usage: phm resources [--json] [--watch]');
+  console.log('  Usage: phm resources [--json] [--watch] [--ledger]');
+  console.log('         phm resources sample [--json]');
   console.log('         phm resources ledger [--json]');
   console.log('         phm resources personal [--refresh] [--json] [--home <absolute-path>]');
   console.log('         phm resources pool status|run|observe|probe|console|benchmark --help');
@@ -174,12 +176,38 @@ function printResourcesHelp(): void {
   console.log('');
   console.log(`    ${cyan('phm resources')}          ${dim('table view of availability/used%/cap/resets')}`);
   console.log(`    ${cyan('phm resources --json')}   ${dim('raw JSON (ResourceSnapshot)')}`);
+  console.log(`    ${cyan('phm resources --ledger --json')} ${dim('remaining quota, burn, exhaustion and observed final-hour usage by pool/bucket')}`);
   console.log(`    ${cyan('phm resources autopilot --json')} ${dim('read-only lane targets from disk, inode and credit readings')}`);
   console.log(`    ${cyan('phm resources --watch')}  ${dim('refresh every 30s (Ctrl-C to stop)')}`);
   console.log('');
 }
 
 export async function cmdResources(args: string[]): Promise<number> {
+  if (args[0] === 'sample') {
+    if (args.length > 2 || args[1] !== undefined && !['--json', '--help', '-h'].includes(args[1])) {
+      process.stderr.write('Usage: phm resources sample [--json]\n');
+      return 2;
+    }
+    if (args[1] === '--help' || args[1] === '-h') {
+      console.log('Usage: phm resources sample [--json]\nRequires telemetry.machine.enabled = true. Updates ~/.ashlr-runs/fleet.json.');
+      return 0;
+    }
+    const { loadConfig } = await import('../core/config.js');
+    const { machineTelemetryEnabled, sampleMachineForDispatch } = await import('../core/resources/telemetry-store.js');
+    let cfg: unknown;
+    try { cfg = loadConfig(); } catch {
+      process.stderr.write('Machine telemetry configuration is unavailable.\n'); return 1;
+    }
+    if (!machineTelemetryEnabled(cfg)) {
+      process.stderr.write('Machine telemetry is disabled; set telemetry.machine.enabled = true.\n'); return 2;
+    }
+    const sample = await sampleMachineForDispatch(cfg);
+    if (!sample) {
+      process.stderr.write('Machine telemetry unavailable: fleet state is locked, invalid or not writable.\n'); return 1;
+    }
+    console.log(JSON.stringify(sample, null, 2));
+    return 0;
+  }
   if (args[0] === 'ledger') {
     const { cmdResourceLedger } = await import('./resource-ledger.js');
     return cmdResourceLedger(args.slice(1));
@@ -237,7 +265,7 @@ export async function cmdResources(args: string[]): Promise<number> {
   }
   // Reject an unknown command before help or provider discovery. Otherwise a
   // misspelled credit operation looks successful and may read unrelated accounts.
-  if (args.some(arg => !['--json', '--watch', '--help', '-h'].includes(arg)) || new Set(args).size !== args.length) {
+  if (args.some(arg => !['--json', '--watch', '--ledger', '--help', '-h'].includes(arg)) || new Set(args).size !== args.length) {
     process.stderr.write('Invalid resource arguments; use phm resources --help.\n');
     return 2;
   }
@@ -245,7 +273,7 @@ export async function cmdResources(args: string[]): Promise<number> {
     printResourcesHelp();
     return 0;
   }
-  const jsonMode  = args.includes('--json');
+  const jsonMode  = args.includes('--json') || args.includes('--ledger');
   const watchMode = args.includes('--watch');
 
   // Explicit resource pools never import the default-home legacy monitor/config.
@@ -260,6 +288,11 @@ export async function cmdResources(args: string[]): Promise<number> {
   }
 
   async function tick(): Promise<void> {
+    if (args.includes('--ledger')) {
+      const { getResourceLedger } = await import('../core/fabric/resource-ledger.js');
+      console.log(JSON.stringify(await getResourceLedger(cfg), null, 2));
+      return;
+    }
     const snapshot = await getResourceSnapshot(cfg);
     if (jsonMode) {
       console.log(JSON.stringify(snapshot, null, 2));

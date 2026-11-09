@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import {createHash,generateKeyPairSync,sign} from 'node:crypto';
 import {tmpdir} from 'node:os';
 import {basename,dirname,join,resolve} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {gzipSync} from 'node:zlib';
 import {Header} from 'tar';
 import {canonicalJson} from '../src/core/authority/canonical-json.js';
@@ -12,7 +13,9 @@ import {readPinnedRuntimeArchive,extractPinnedRuntimeArchive,extractPinnedRuntim
 import {verifyUpdateManifest,verifyCompatibleUpdateManifest,desktopUpdateProfileForPackage,getDesktopUpdateProfile,verifyMinisign,verifyUpdateBundleRecord} from '../src/core/desktop/update-manifest.js';
 import {inspectSignedAppArchive,extractSignedAppArchive,verifyInstalledRuntimeArchive} from '../src/core/desktop/qualified-update.js';
 import {qualifiedFixture} from '../.github/tests/helpers/hosted-artifact-fixture.mjs';
-import {artifactInstallFailure,applyInspectedDesktopArtifacts,assertPairedHostedProof,inspectDesktopArtifactInstall,parseArtifactInstallArguments,readFinalizedDesktopArtifacts,verifyManualDesktopSource,withArtifactInstallTiming} from '../scripts/install-desktop-artifacts.mjs';
+import {artifactInstallFailure,applyInspectedDesktopArtifacts,assertPairedHostedProof,inspectDesktopArtifactInstall,parseArtifactInstallArguments,readFinalizedDesktopArtifacts,runDesktopArtifactInstall,verifyManualDesktopSource,withArtifactInstallTiming} from '../scripts/install-desktop-artifacts.mjs';
+import {censusExecutionLeases} from '../src/core/sandbox/execution-leases.js';
+import {startTsxChild} from './helpers/throughput-310b.js';
 import type {CompatibleUpdateManifest,DesktopUpdateProfileName,UpdateTrust} from '../src/core/desktop/update-manifest.js';
 
 const ownPorts=vi.hoisted(()=>({trust:null as any,dirty:false}));
@@ -52,7 +55,7 @@ function tar(rows:{path:string;data:Buffer|string;mode?:number;directory?:boolea
 function write(path:string,data:Buffer|string,mode=0o600) {fs.mkdirSync(dirname(path),{recursive:true,mode:0o700});fs.writeFileSync(path,data,{mode});fs.chmodSync(path,mode);}
 function fileIdentity(path:string) {const s=fs.lstatSync(path);return {dev:s.dev,ino:s.ino,ctimeMs:s.ctimeMs,mode:s.mode};}
 beforeEach(()=>{for(const spy of Object.values(ports))spy.mockReset();ownPorts.dirty=false;});
-afterEach(()=>{for(const fn of finalizers.splice(0).reverse())fn();for(const root of roots.splice(0))fs.rmSync(root,{recursive:true,force:true});});
+afterEach(()=>{for(const fn of finalizers.splice(0).reverse())fn();vi.unstubAllEnvs();for(const root of roots.splice(0))fs.rmSync(root,{recursive:true,force:true});});
 
 function fixture(profileName:DesktopUpdateProfileName='legacy-v1',currentPackageName='@ashlr/hub',archivePackageName?:string) {
   const profile=getDesktopUpdateProfile(profileName);
@@ -264,6 +267,65 @@ describe.skipIf(process.platform==='win32')('manual original paired artifact ins
     expect(ports.createIo).not.toHaveBeenCalled();expect(f.io.executionLeaseCensus).not.toHaveBeenCalled();expect(ports.spawn).not.toHaveBeenCalled();
     expect(fs.readdirSync(f.home).sort()).toEqual(before);expect(fs.readdirSync(f.artifacts).map(n=>[n,fileIdentity(join(f.artifacts,n))])).toEqual(inputs);
   });
+  it.each(['stop','active-lease','unknown-lease','native','quota-pending','quota-lock'])('explicit apply holds %s before hosted proof or install effects',async kind=> {
+    const f=fixture(),oldApp=f.io.appInventory('/Applications/Phantom.app'),held=fs.readFileSync(join(f.retained,'transaction.json'));
+    if(kind==='stop')fs.unlinkSync(join(f.home,'.ashlr/KILL'));
+    if(kind==='active-lease')f.census.leases.push({runId:'held'});
+    if(kind==='unknown-lease')f.census.unknown=1;
+    if(kind==='native')f.setLive(true);
+    if(kind.startsWith('quota-'))write(join(f.home,'.ashlr/account-connections/ledger',kind==='quota-pending'?'.resource-quota-refresh-pending.json':'.resource-quota-refresh.lock'),'held');
+    const error=await runDesktopArtifactInstall({...f.input,apply:true},f.deps).catch(error=>error);
+    expect(artifactInstallFailure(error)).toEqual({state:'held',phase:'quiescence',installationAccepted:false,authorityResumed:false});
+    expect(ports.verify).not.toHaveBeenCalled();expect(ports.audit).not.toHaveBeenCalled();expect(ports.publication).not.toHaveBeenCalled();
+    expect(f.deps.transport.githubRead).not.toHaveBeenCalled();expect(f.deps.transport.attestRun).not.toHaveBeenCalled();
+    if(kind==='native' || kind.startsWith('quota-'))expect(ports.spawn).toHaveBeenCalledWith('/bin/ps',['-axww','-o','pid=,ppid=,lstart=,args='],
+      {cwd:resolve(import.meta.dirname,'..'),encoding:'utf8',timeout:120_000,maxBuffer:1024*1024,env:f.deps.environment});
+    expect(f.stages.size).toBe(0);expect(fs.readlinkSync(f.current)).toBe(f.old);expect(f.io.appInventory('/Applications/Phantom.app')).toBe(oldApp);
+    expect(fs.existsSync(join(f.home,'.local/share/ashlr/releases',f.m.source.revision))).toBe(false);
+    for(const name of ['phm','ashlr'])expect(fs.existsSync(join(f.home,'.local/bin',name))).toBe(false);
+    if(kind.startsWith('quota-'))expect(fs.readFileSync(join(f.home,'.ashlr/account-connections/ledger',kind==='quota-pending'?'.resource-quota-refresh-pending.json':'.resource-quota-refresh.lock'),'utf8')).toBe('held');
+    expect(fs.readFileSync(join(f.retained,'transaction.json'))).toEqual(held);
+  });
+  it('orchestrated artifact inspection does not run quiescence or mutate local state',async()=> {
+    const f=fixture(),before=fs.readdirSync(f.home).sort();
+    expect(await runDesktopArtifactInstall(f.input,f.deps)).toMatchObject({state:'verified-artifacts',installationPerformed:false});
+    expect(ports.createIo).not.toHaveBeenCalled();expect(f.io.executionLeaseCensus).not.toHaveBeenCalled();expect(fs.readdirSync(f.home).sort()).toEqual(before);
+  });
+  it('a lease appearing after the early check still blocks before staging',async()=> {
+    const f=fixture();ports.verify.mockImplementation(()=>{f.census.leases.push({runId:'new-work'});return structuredClone(f.proof);});
+    await expect(runDesktopArtifactInstall({...f.input,apply:true},f.deps)).rejects.toThrow();
+    expect(ports.verify).toHaveBeenCalledTimes(1);expect(f.stages.size).toBe(0);expect(fs.readlinkSync(f.current)).toBe(f.old);
+  });
+  it('orchestrated valid published apply retains all four fresh hosted proofs',async()=> {
+    const f=fixture(),cap=Object.freeze({});
+    ports.publication.mockImplementation(async envelope=>{verifyCompatibleUpdateManifest({manifestText:envelope.manifestText,signature:envelope.signature},trust);return cap;});
+    ports.historical.mockImplementation((_input,token)=>{expect(token).toBe(cap);return structuredClone({...f.proof,publication:{digest:'stable original signed release'}});});
+    expect(await runDesktopArtifactInstall({...f.input,apply:true,publishedRelease:true},f.deps)).toMatchObject({state:'installed',installationPerformed:true,authorityResumed:false});
+    expect(ports.publication).toHaveBeenCalledTimes(4);expect(ports.historical).toHaveBeenCalledTimes(4);expect(ports.audit).toHaveBeenCalledTimes(4);
+  });
+  it('real isolated census holds a live lease and reaps it only after its owner exits',async()=> {
+    const f=fixture();vi.stubEnv('HOME',f.home);vi.stubEnv('USERPROFILE',f.home);
+    const moduleUrl=(path:string)=>pathToFileURL(resolve(import.meta.dirname,'../src/core/sandbox',path)).href;
+    const child=await startTsxChild(`import { acquireOutwardMutationFence, releaseOutwardMutationFence } from ${JSON.stringify(moduleUrl('mutation-fence.ts'))};
+      import { registerExecutionLease } from ${JSON.stringify(moduleUrl('execution-leases.ts'))};
+      const fence=acquireOutwardMutationFence(5000); const reg=registerExecutionLease(fence,{runId:'child',repoKey:'/fixture/repo',engine:'fixture'});
+      releaseOutwardMutationFence(fence); if(!reg.ok)process.exit(3); console.log('LEASE-READY'); setInterval(()=>{},1000);`,f.home,'LEASE-READY');
+    f.io.executionLeaseCensus.mockImplementation(async()=>censusExecutionLeases());
+    try {
+      await expect(runDesktopArtifactInstall({...f.input,apply:true},f.deps)).rejects.toThrow();
+      expect(ports.verify).not.toHaveBeenCalled();expect(ports.audit).not.toHaveBeenCalled();
+      const directory=join(f.home,'.ashlr/authority/leases');expect(fs.readdirSync(directory).filter(n=>n.startsWith('exec-'))).toHaveLength(1);
+      await child.kill();
+      ports.verify.mockImplementation(()=>{throw new Error('fixture proof stop after early census');});
+      await expect(runDesktopArtifactInstall({...f.input,apply:true},f.deps)).rejects.toThrow('fixture proof stop');
+      expect(f.io.log).toHaveBeenCalledWith(expect.stringContaining('reaped 1 proven-dead execution leases'));
+      expect(fs.readdirSync(directory).filter(n=>n.startsWith('exec-'))).toHaveLength(0);
+      ports.verify.mockClear();ports.audit.mockClear();
+      const uncertain=join(directory,'exec-aaaaaaaaaaaaaaaa-uncertain.lock');fs.symlinkSync(join(f.root,'missing'),uncertain);
+      await expect(runDesktopArtifactInstall({...f.input,apply:true},f.deps)).rejects.toThrow();
+      expect(ports.verify).not.toHaveBeenCalled();expect(fs.lstatSync(uncertain).isSymbolicLink()).toBe(true);
+    } finally {await child.kill();}
+  },60_000);
   it.each(['manifest','archive','qualification','package','producer','attestor','audit','source'])('refuses mixed %s proof before IO',async kind=> {
     const f=fixture(),p=structuredClone(f.proof);
     if(kind==='producer')p.official.runId++;else if(kind==='attestor')p.attestor.runId++;else if(kind==='audit')ports.audit.mockReturnValue({...f.m.qualification.audit,runId:99});else if(kind==='source')p.source={...p.source,tree:'f'.repeat(40)};else p[`${kind}Sha256` as keyof typeof p]='f'.repeat(64) as never;
@@ -433,6 +495,25 @@ describe.skipIf(process.platform==='win32')('manual original paired artifact ins
     expect(fs.readlinkSync(f.current)).toBe(join(f.home,'.local/share/ashlr/releases',f.m.source.revision));
     await expect(applyInspectedDesktopArtifacts(fresh)).rejects.toThrow(/replayed/);
   });
+  it('verifies admitted runtime entries larger than 16MiB and rejects changed lengths or bytes',async()=> {
+    const f=fixture('canonical-v2');
+    const original=await readPinnedRuntimeArchive({artifactPath:join(f.artifacts,f.m.cli.filename),sha256:f.m.cli.sha256,revision:f.m.source.revision,version:f.m.version,identityProfile:'canonical-v2'});
+    const large=Buffer.alloc(16*1024*1024+1,0x5a);
+    const leaf='dist/core/universe/builtins/preparation/preparation-bridge.mjs';
+    const data=tar([...original.entries.map(entry=>({path:`package/${entry.path}`,data:entry.bytes,mode:entry.executable?0o755:0o644})),{path:`package/${leaf}`,data:large,mode:0o644}]);
+    const artifactPath=join(f.root,'large-runtime.tgz');write(artifactPath,data);
+    const pins={artifactPath,sha256:hash(data),revision:f.m.source.revision,version:f.m.version,identityProfile:'canonical-v2' as const};
+    const archive=await readPinnedRuntimeArchive(pins);
+    expect(archive.entries.find(entry=>entry.path===leaf)?.bytes.length).toBe(large.length);
+    const pkg=join(f.root,'large-package');fs.mkdirSync(pkg,{mode:0o700});extractPinnedRuntimeArchive(archive,pkg);
+    await verifyInstalledRuntimeArchive(pkg,pins);
+    const path=join(pkg,leaf);
+    write(path,large.subarray(0,-1));await expect(verifyInstalledRuntimeArchive(pkg,pins)).rejects.toThrow('installed-current-unverified');
+    write(path,Buffer.concat([large,Buffer.from([0])]));await expect(verifyInstalledRuntimeArchive(pkg,pins)).rejects.toThrow('installed-current-unverified');
+    const changed=Buffer.from(large);changed[changed.length-1]^=1;
+    write(path,changed);await expect(verifyInstalledRuntimeArchive(pkg,pins)).rejects.toThrow('installed-current-unverified');
+    write(path,large);await verifyInstalledRuntimeArchive(pkg,pins);
+  });
   it('bounded extractor refuses nonempty/link destinations and original package verifier rejects added members and modes',async()=> {
     const f=fixture(),dest=join(f.root,'extract');fs.mkdirSync(dest,{mode:0o700});write(join(dest,'foreign'),'leave alone');
     expect(()=>extractSignedAppArchive(f.app,dest)).toThrow(/destination/);expect(fs.readFileSync(join(dest,'foreign'),'utf8')).toBe('leave alone');
@@ -517,9 +598,80 @@ function publishedFixture() {
 describe.skipIf(process.platform==='win32')('commissioned public historical manual proof',()=> {
   let publicationFixture: ReturnType<typeof publishedFixture>;
   beforeEach(() => { publicationFixture=publishedFixture(); },5_000);
-  // These filesystem/Git protocol integrations perform multiple complete verifications.
-  // Observed runs exceeded the unit default (CI 5.362s; local 14.106s); only
-  // these two cases get 20s. Setup and all other cases retain their 5s limits.
+  it('overlaps independent reads within fresh observation brackets and retains the synchronous third proof',async()=> {
+    const p=publicationFixture,timings:any[]=[];let active=0,peak=0;
+    const batch=vi.fn(async(endpoints:string[])=>Promise.all(endpoints.map(async endpoint=>{
+      active++;peak=Math.max(peak,active);try {await new Promise(resolve=>setTimeout(resolve,5));return p.read(endpoint);} finally {active--;}
+    })));
+    const cap=await realHosted.inspectCommissionedManualPublication({...p.envelope(),githubReadMany:batch,onObservationTiming:(value:any)=>timings.push(value)});
+    expect(peak).toBeGreaterThan(1);expect(peak).toBeLessThanOrEqual(3);expect(active).toBe(0);
+    expect(timings).toHaveLength(2);expect(timings.every(row=>row.mode==='bounded' && row.outcome==='returned' && row.durationMs>=0)).toBe(true);
+    const counts=new Map<string,number>();for(const endpoint of batch.mock.calls.flatMap(([endpoints])=>endpoints))counts.set(endpoint,(counts.get(endpoint)??0)+1);
+    expect([...counts.values()].every(count=>count===2)).toBe(true);
+    const before=batch.mock.calls.length;
+    expect(realHosted.verifyPublishedManualArtifact({...p.hosted.options,githubRead:p.read},cap).publication.tag).toBe(p.m.source.revision);
+    expect(batch).toHaveBeenCalledTimes(before);
+  },20_000);
+  it('refuses movement between bounded observation brackets',async()=> {
+    const p=publicationFixture;
+    const batch=async(endpoints:string[])=>Promise.all(endpoints.map(async endpoint=>p.read(endpoint)));
+    p.download.mockImplementation(async(url:string)=>{p.setMaster('e'.repeat(40));return Buffer.from(url.endsWith('/manifest.json')?p.envelope().manifestText:p.envelope().signature);});
+    await expect(realHosted.inspectCommissionedManualPublication({...p.envelope(),githubReadMany:batch})).rejects.toThrow(/changed during observation/);
+  },20_000);
+  it('retains bounded pagination and fails closed before using malformed dependent identifiers',async()=> {
+    const p=publicationFixture,original=p.read.getMockImplementation()!;
+    p.read.mockImplementation((endpoint:string)=>endpoint.includes('/rules/branches/master?')
+      ? endpoint.endsWith('page=1')?Array.from({length:100},()=>p.rules[0]):p.rules : original(endpoint));
+    const batch=vi.fn(async(endpoints:string[])=>endpoints.map(endpoint=>p.read(endpoint)));
+    expect((await realHosted.publicationObservationSnapshot(p.m,batch)).tag).toBe(p.m.source.revision);
+    expect(batch.mock.calls.flatMap(([endpoints])=>endpoints).some(endpoint=>endpoint.includes('rules/branches/master?per_page=100&page=2'))).toBe(true);
+    p.read.mockImplementation((endpoint:string)=>endpoint.includes('/rules/branches/master?')?Array.from({length:100},()=>p.rules[0]):original(endpoint));
+    await expect(realHosted.publicationObservationSnapshot(p.m,batch)).rejects.toThrow(/pagination limit/);
+    batch.mockClear();p.read.mockImplementation((endpoint:string)=>endpoint.endsWith('/branches/master')?{commit:{sha:'invalid'}}:original(endpoint));
+    await expect(realHosted.publicationObservationSnapshot(p.m,batch)).rejects.toThrow();
+    expect(batch.mock.calls.flatMap(([endpoints])=>endpoints).some(endpoint=>endpoint.includes('/compare/'))).toBe(false);
+  },20_000);
+  it.each(['rules','tag','asset'])('bounded snapshots retain the original %s validator',async kind=> {
+    const p=publicationFixture;
+    const batch=async(endpoints:string[])=>endpoints.map(endpoint=>{
+      const value=p.read(endpoint);
+      if(kind==='rules' && endpoint.includes('/rules/'))return p.rules.slice(1);
+      if(kind==='tag' && endpoint.includes('/git/ref/'))return {...value,object:{type:'commit',sha:'f'.repeat(40)}};
+      if(kind==='asset' && endpoint.includes('/assets?'))return value.slice(1);
+      return value;
+    });
+    await expect(realHosted.inspectCommissionedManualPublication({...p.envelope(),githubReadMany:batch})).rejects.toThrow();
+  },20_000);
+  it.each(['valid','cycle','too-deep'])('bounded snapshot handles annotated tag chain: %s',async kind=> {
+    const p=publicationFixture,original=p.read.getMockImplementation()!,sha=(n:number)=>n.toString(16).padStart(40,'0');
+    p.read.mockImplementation((endpoint:string)=>{
+      if(endpoint.includes('/git/ref/'))return {ref:'refs/tags/v3.24.3',object:{type:'tag',sha:sha(1)}};
+      if(endpoint.includes('/git/tags/')) {
+        const id=endpoint.split('/').at(-1)!,n=Number.parseInt(id,16);
+        return {sha:id,object:kind==='cycle'?{type:'tag',sha:sha(1)}:kind==='too-deep'?{type:'tag',sha:sha(n+1)}:{type:'commit',sha:p.m.source.revision}};
+      }
+      return original(endpoint);
+    });
+    const batch=async(endpoints:string[])=>endpoints.map(endpoint=>p.read(endpoint));
+    if(kind==='valid')expect((await realHosted.publicationObservationSnapshot(p.m,batch)).tag).toBe(p.m.source.revision);
+    else await expect(realHosted.publicationObservationSnapshot(p.m,batch)).rejects.toThrow(/tag chain/);
+  },20_000);
+  it('drains sibling pagination before reporting a failed page',async()=> {
+    const p=publicationFixture,original=p.read.getMockImplementation()!;let finish:(value:unknown[])=>void=()=>{};
+    p.read.mockImplementation((endpoint:string)=>endpoint.includes('/rules/branches/master?') || endpoint.includes('/releases/500/assets?')
+      ? Array.from({length:100},()=>({})) : original(endpoint));
+    let settled=false;const batch=async(endpoints:string[])=>{
+      if(endpoints[0]?.includes('/rules/branches/master?') && endpoints[0].endsWith('page=2'))throw new Error('page refused');
+      if(endpoints[0]?.includes('/releases/500/assets?') && endpoints[0].endsWith('page=2'))return await new Promise<unknown[]>(resolve=>{finish=resolve;});
+      return endpoints.map(endpoint=>p.read(endpoint));
+    };
+    const pending=realHosted.publicationObservationSnapshot(p.m,batch);pending.catch(()=>{settled=true;});
+    await new Promise(resolve=>setTimeout(resolve,0));expect(settled).toBe(false);finish([[]]);
+    await expect(pending).rejects.toThrow('page refused');
+  },20_000);
+  // Keep the two compound-proof cases' existing 20s bounds (CI 5.362s; local 14.106s).
+  // Setup retains its explicit 5s bound. Other real filesystem/Git/signature proofs
+  // inherit the real-I/O lane's 60s harness budget; they assert no elapsed-time SLO.
   it('runs genuine complete original evidence after master advances; historical success cannot authorize either hosted adopter or a replay',async()=> {
     const p=publicationFixture;
     const cap=await realHosted.inspectCommissionedManualPublication(p.envelope());

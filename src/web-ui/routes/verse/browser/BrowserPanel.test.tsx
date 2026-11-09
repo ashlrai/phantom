@@ -298,6 +298,19 @@ describe('desktop app (native webview)', () => {
 });
 
 describe('agent access', () => {
+  it('limits immediately returning polls and stops them when hidden', async () => {
+    const h = harness({ policy: policy({ agentAccess: true }) });
+    vi.mocked(h.api.commands).mockResolvedValue({ commands: [] });
+    const { rerender } = render(<BrowserPanel sessionId="s-1" deps={h.deps} />);
+    await waitFor(() => expect(h.api.commands).toHaveBeenCalledTimes(1));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 100)); });
+    expect(h.api.commands).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(h.api.commands).toHaveBeenCalledTimes(2));
+    rerender(<BrowserPanel sessionId="s-1" visible={false} deps={h.deps} />);
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+    expect(h.api.commands).toHaveBeenCalledTimes(2);
+  });
+
   it('the switch goes through the token gate and the API', async () => {
     const h = harness();
     setMutationToken('a'.repeat(64));

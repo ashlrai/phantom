@@ -63,6 +63,7 @@ import type { AshlrConfig } from '../src/core/types.js';
 import type { InboundEvent } from '../src/core/integrations/telegram.js';
 import { fakeLedger, makeApplyDeps, makePolicy } from './helpers/leader-310b-fakes.js';
 import type { LeaderPowersPorts } from '../src/core/vision/leader-powers.js';
+import { setJevForTest } from '../src/core/vision/leader-intent.js';
 
 // ---------------------------------------------------------------------------
 // Fake Telegram
@@ -114,7 +115,7 @@ function briefSources(over: Partial<BriefSources> = {}): BriefSources {
       cloudTasks: () => [],
       capacity: () => null,
       memos: () => [],
-      fleetTruth: async (since) => ({ windowStartMs: since, windowEndMs: since, merged: [], mergeCountState: 'ok', truncated: false, running: null, queued: null }),
+      fleetTruth: async (since, now) => ({ windowStartMs: since, windowEndMs: now!, merged: [], mergeCountState: 'ok', truncated: false, running: null, queued: null }),
     },
     leader: () => ({
       health: { status: 'healthy', summary: 'ok' },
@@ -183,6 +184,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setJevForTest(undefined);
   setTelegramTransportForTests(null);
   setTelegramSendClockForTests(null);
   setLeaderLineDepsForTest(null);
@@ -197,14 +199,14 @@ afterEach(() => {
 describe('brief — composed from recorded state, with links', () => {
   it('shipped, running, blockers, next and one question, phone-sized', async () => {
     const sources = briefSources();
-    sources.digest!.fleetTruth = async (since) => ({ windowStartMs: since, windowEndMs: since,
+    sources.digest!.fleetTruth = async (since, now) => ({ windowStartMs: since, windowEndMs: now!,
       merged: [{ repo: VERSE, number: 541, title: '', url: 'https://github.com/ashlrai/ashlr-hub/pull/541', mergedAtMs: ET('06:00'), source: 'gh' }],
       mergeCountState: 'ok', truncated: false, running: null, queued: null });
     const facts = await gatherBriefFacts(ET('00:00'), ET('08:05'), sources);
     const text = composeBrief('morning', facts, { narrative: 'One line of narrative.' });
     const lines = text.split('\n');
     expect(lines[0]).toBe('Morning brief · Sun, Sep 27');
-    expect(text).toContain('Shipped: 1 — ashlrai/ashlr-hub#541 https://github.com/ashlrai/ashlr-hub/pull/541 · 1 PR opened');
+    expect(text).toContain('Shipped: 1 GitHub-visible ashlrai merge — ashlrai/ashlr-hub#541 https://github.com/ashlrai/ashlr-hub/pull/541 · 1 PR opened');
     expect(text).toContain('Running: 1 — cloud "Fix the tracker" (PR open) https://github.com/ashlrai/ashlr-hub/pull/543');
     expect(text).toContain('Blockers: none.');
     expect(text).toContain('Next: Ship the instant brief before anything else · "Cloud: brief links" applies 10:30 unless you veto');
@@ -225,7 +227,7 @@ describe('brief — composed from recorded state, with links', () => {
     }));
     const text = composeBrief('evening', facts);
     expect(text.split('\n')[0]).toMatch(/^Evening recap · /);
-    expect(text).toContain('Shipped: nothing merged today.');
+    expect(text).toContain('Shipped: no GitHub-visible ashlrai merges in this window.');
     expect(text).toMatch(/Blockers: Leader degraded: grok timed out twice; reverted ashlrai\/ashlr-hub#530 https:\/\/github.com\/ashlrai\/ashlr-hub\/pull\/530; 1 repo hold/);
     expect(text).not.toContain('Q:');
   });
@@ -354,6 +356,20 @@ describe('runLeaderLine — briefs and reports on schedule, never nagging', () =
     expect(sends()).toHaveLength(1);
   });
 
+  it('uses local notification policy for ordinary reverts without sending titles to Jev', async () => {
+    const worthInterrupting = vi.fn(async () => ({ value: false, path: 'jev' as const, confidence: 1 }));
+    setJevForTest({ worthInterrupting });
+    setLeaderLineDepsForTest(lineDeps({
+      now: () => ET('12:30'),
+      events: async () => [{ key: 'revert:1', kind: 'revert', text: 'example task title' }],
+    }));
+    expect((await runLeaderLine(cfg())).pings).toBe(1);
+    expect(texts()[0]).toContain('example task title');
+    expect(worthInterrupting).not.toHaveBeenCalled();
+    await runLeaderLine(cfg());
+    expect(sends()).toHaveLength(1);
+  });
+
   it('is silent when switched off', async () => {
     setLeaderLineDepsForTest(lineDeps({ now: () => ET('08:05') }));
     expect(await runLeaderLine(cfg({ leaderLine: false }))).toEqual({ brief: null, pings: 0, driveReport: false });
@@ -452,7 +468,20 @@ describe('routing Mason\'s texts', () => {
     expect(thread.appendMasonMessage).toHaveBeenCalledWith('explain the result', expect.objectContaining({ channel: 'telegram' }));
   });
 
+  it('routes Telegram conversation locally without sending its text to Jev', async () => {
+    const classify = vi.fn(async () => ({ value: 'task-request', path: 'jev' as const, confidence: 1 }));
+    setJevForTest({ classifyOperatorIntent: classify });
+    thread.appendMasonMessage.mockResolvedValue({ message: { id: 'lt-20260927140000-bbbbbb' }, reply: null });
+    const text = 'how do you feel about the roadmap?';
+    await converseWithLeader(textEvent(text), text, cfg());
+    expect(classify).not.toHaveBeenCalled();
+    expect(thread.appendMasonMessage).toHaveBeenCalledWith(text, expect.objectContaining({ channel: 'telegram' }));
+  });
+
   it('"go build X" becomes a real launch at once, acknowledged in one line, with a result ping later', async () => {
+    const classify = vi.fn(async () => ({ value: 'chit-chat', path: 'jev' as const, confidence: 1 }));
+    const chooseLane = vi.fn(async () => ({ value: 'devin', path: 'jev' as const, confidence: 1 }));
+    setJevForTest({ classifyOperatorIntent: classify, chooseLane });
     const ledger = fakeLedger();
     const policy = makePolicy({ repos: [...makePolicy().repos, { nameWithOwner: 'ashlrai/phantom', stage: 'merge', enforcement: 'server', maxRisk: 'low', maxFiles: 4, maxLines: 150, maxMergesPerDay: 6, selfRepo: null }] as never });
     const { deps } = makeApplyDeps({ ledger, now: () => ET('10:00'), policy: () => policy });
@@ -470,6 +499,8 @@ describe('routing Mason\'s texts', () => {
     }));
 
     await converseWithLeader(textEvent('go build an instant brief for status requests with links and tests', 92), 'go build an instant brief for status requests with links and tests', cfg());
+    expect(classify).not.toHaveBeenCalled();
+    expect(chooseLane).not.toHaveBeenCalled();
     expect(launched).toEqual(['Build an instant brief for status requests with links and tests']);
     // A paid launch is acknowledged at once, then reported.
     expect(texts()[0]).toBe('Launching a cloud session for "Build an instant brief for status requests with links and tests" on ashlrai/phantom…');
@@ -491,12 +522,15 @@ describe('routing Mason\'s texts', () => {
   });
 
   it('falls back to the fleet when the paid lane says no, and says so', async () => {
+    const chooseLane = vi.fn(async () => ({ value: 'devin', path: 'jev' as const, confidence: 1 }));
+    setJevForTest({ chooseLane });
     const ledger = fakeLedger();
     const policy = makePolicy({ repos: [...makePolicy().repos, { nameWithOwner: 'ashlrai/phantom', stage: 'merge', enforcement: 'server', maxRisk: 'low', maxFiles: 4, maxLines: 150, maxMergesPerDay: 6, selfRepo: null }] as never });
     const { deps, units } = makeApplyDeps({ ledger, now: () => ET('10:00'), policy: () => policy });
     deps.powers = { cloud: { launch: async () => ({ ok: false, reason: '20 of 20 sessions used today.' }) } };
     setLeaderLineDepsForTest(lineDeps({ apply: async () => deps, laneBudget: async () => ({ mode: 'balanced', cloud: { ok: true, reason: null }, devin: null }) }));
     await handleTaskRequest(textEvent('x'), { text: 'build the weekly retro digest page with charts', repo: null, size: 'pr', lane: null }, cfg());
+    expect(chooseLane).not.toHaveBeenCalled();
     expect(texts()[1]).toMatch(/^Cloud said no \(20 of 20 sessions used today\) — On it\. "Build the weekly retro digest page with charts" is queued for the fleet on ashlrai\/phantom/);
     expect(units.tasks.size).toBe(1);
   });

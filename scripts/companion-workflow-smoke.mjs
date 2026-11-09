@@ -459,7 +459,10 @@ export async function runSmoke(options) {
         writeFileSync(join(shim, 'stack'), `#!/bin/sh\nexec ${[cmd, ...argv].map(part => `'${part.replace(/'/gu, `'\\''`)}'`).join(' ')} "$@"\n`);
         chmodSync(join(shim, 'stack'), 0o755);
       }
-      const stackEnv = { ...env, PATH: [shim, env.PATH].join(delimiter) };
+      const stackEnv = { ...env, PATH: [shim, env.PATH].join(delimiter), PHANTOM_VAULT_PASSPHRASE: 'phm-companion-smoke-passphrase' };
+      // Phantom runs Stack through Secrets when it is installed. Give that
+      // transport a project vault, just as a configured user project has one.
+      const setup = present('secretsBin') ? await secretsProject(options.secretsBin, stackEnv, project, []) : null;
       // Stack's own machine report (`ashlr.stack.status/v1`), which Phantom prefers.
       const direct = await run(options.stackBin, ['status', '--json'], { env: stackEnv, cwd: project });
       let report = null;
@@ -468,13 +471,13 @@ export async function runSmoke(options) {
       add('stack:status-json', direct.code === 0 && names.join(',') === 'openai,supabase'
         ? { status: 'pass', detail: `${report.schema ?? 'unversioned'} lists ${names.join(', ')}` }
         : { status: 'fail', detail: `stack status --json exit ${direct.code}: ${report ? 'services missing' : 'not JSON'}` });
-      const result = await run(options.phm, ['stack', 'status', '--json'], { env: stackEnv, cwd: project });
+      const result = setup ? null : await run(options.phm, ['stack', 'status', '--json'], { env: stackEnv, cwd: project });
       let parsed = null;
-      try { parsed = JSON.parse(result.stdout); } catch { /* reported below */ }
+      try { parsed = JSON.parse(result?.stdout); } catch { /* reported below */ }
       const services = Array.isArray(parsed?.services) ? [...parsed.services].sort() : [];
       add('phm:stack-status', services.join(',') === 'openai,supabase'
         ? { status: 'pass', detail: `Phantom saw ${services.join(', ')}` }
-        : { status: 'fail', detail: `expected openai, supabase; got ${result.stdout.trim().slice(0, 200) || `exit ${result.code} ${result.stderr.trim().slice(0, 200)}`}` });
+        : { status: 'fail', detail: setup ?? `expected openai, supabase; got ${result.stdout.trim().slice(0, 200) || `exit ${result.code} ${result.stderr.trim().slice(0, 200)}`}` });
     }
 
     // 4. Lexicon's Claude Code hook: always exit 0, fast, and stdout is JSON or empty.

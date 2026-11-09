@@ -1710,6 +1710,10 @@ boot UUID in both a version-2 preparation manifest and the launcher. A device nu
 volume and directory witnesses still match; any unavailable witness, replacement,
 permission change or device change during the preparation boot is refused.
 This adds a bounded local `df`/`diskutil`/`plutil` probe before native launch.
+Every launch, admission, identity capture and witness makes that probe afresh. Only
+historical last-known display of a seat may reuse a volume observation up to 60 seconds
+old (failures included); it yields display metadata that cannot launch anything and never
+a witness, capacity or financial evidence.
 Older profiles retain their original strict device and inode binding. Before
 their device changes, `ashlr resources profile upgrade-identity --directory
 <existing-profile> --dry-run` validates the old binding; repeat without

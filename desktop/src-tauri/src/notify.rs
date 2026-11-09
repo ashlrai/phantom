@@ -3,20 +3,17 @@
 //!
 //! Every word a notification shows is rendered HERE, from a fixed template:
 //!
-//!   * "Finished: ‹chat title›" / "Failed: ‹chat title›" — a chat turn ended,
+//!   * "Chat finished" / "Chat failed" — a chat turn ended,
 //!   * "Finished: N chats" — several ended in one poll (one banner, not a burst),
 //!   * "Needs you: N new" — new items in the Needs-you drawer, described by
 //!     CATEGORY COUNTS only ("2 approvals · 1 fleet decision"),
 //!   * terminal (3.15): "Command finished · exit 1 · 2m14s", "Claude Code
-//!     needs you", "Codex finished" — body the tab's title; several in one
+//!     needs you", "Codex finished" — fixed body; several in one
 //!     poll become one ("3 terminal commands finished"),
 //!   * seat health — `health_watch` renders that text from its own templates.
 //!
-//! The only server-supplied text that can reach a banner is a chat or
-//! terminal tab title, and it passes [`sanitize_title`] first: control and bidi-override characters are
-//! stripped (a title cannot fake a line break or flip "Finished" into
-//! something else visually) and it is capped at [`TITLE_MAX_CHARS`]. Needs-you
-//! item titles are producer text (Track B, other chats) and never appear.
+//! Chat and terminal titles and Needs-you item text never appear in banners.
+//! Event categories, counts, durations and exit codes are displayed.
 //!
 //! WHEN: only while the Verse window is not in front of the operator
 //! ([`should_deliver`]) — a banner about something already on screen is noise.
@@ -41,7 +38,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Longest chat title a banner shows, in characters (SPEC-310C §1).
+/// Maximum length for a sanitized title.
 pub const TITLE_MAX_CHARS: usize = 60;
 /// How long after a banner a focus-regain counts as "clicked it".
 pub const CLICK_WINDOW: Duration = Duration::from_secs(60);
@@ -52,8 +49,6 @@ pub const THROTTLE_MAX: usize = 6;
 pub const THROTTLE_WINDOW: Duration = Duration::from_secs(60);
 /// What a title that sanitizes down to nothing is called.
 const UNTITLED: &str = "Untitled chat";
-/// …and a terminal tab's.
-const UNTITLED_TERMINAL: &str = "Terminal";
 /// A finished command shorter than this is not news (the server only reports
 /// longer ones; this is the shell's own guard).
 pub const COMMAND_MIN_MS: u64 = 30_000;
@@ -79,7 +74,7 @@ fn is_invisible_format(c: char) -> bool {
     )
 }
 
-/// A chat title as a banner may show it: control and bidi characters gone,
+/// Sanitize a chat title: control and bidi characters gone,
 /// whitespace collapsed to single spaces, at most [`TITLE_MAX_CHARS`]
 /// characters (an ellipsis marks a cut), never empty.
 pub fn sanitize_title(raw: &str) -> String {
@@ -335,7 +330,7 @@ impl NeedsYouCounts {
     }
 }
 
-/// Something worth a banner. Titles are raw here and sanitized in [`render`].
+/// Something worth a banner. Source titles are never rendered.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Notice {
     Finished {
@@ -364,8 +359,7 @@ pub enum Notice {
         title: String,
         body: String,
     },
-    /// A long terminal command finished (3.15). `title` is the TAB's title,
-    /// never the command line (it can hold a secret).
+    /// A long terminal command finished (3.15). The tab title is withheld.
     TerminalCommand {
         tab_id: String,
         block_id: Option<String>,
@@ -452,18 +446,18 @@ pub fn render(notice: &Notice) -> Rendered {
     match notice {
         Notice::Finished {
             session_id,
-            title,
             duration_ms,
+            ..
         } => Rendered {
-            title: format!("Finished: {}", sanitize_title(title)),
+            title: "Chat finished".to_string(),
             body: match duration_ms {
                 Some(ms) => format!("Done in {}. Click to open the chat.", turn_duration(*ms)),
                 None => "Click to open the chat.".to_string(),
             },
             click: ClickTarget::session(session_id),
         },
-        Notice::Failed { session_id, title } => Rendered {
-            title: format!("Failed: {}", sanitize_title(title)),
+        Notice::Failed { session_id, .. } => Rendered {
+            title: "Chat failed".to_string(),
             body: "The turn stopped with an error. Click to see what happened.".to_string(),
             click: ClickTarget::session(session_id),
         },
@@ -510,9 +504,9 @@ pub fn render(notice: &Notice) -> Rendered {
         Notice::TerminalCommand {
             tab_id,
             block_id,
-            title,
             exit_code,
             duration_ms,
+            ..
         } => Rendered {
             title: match exit_code {
                 Some(code) => format!(
@@ -521,21 +515,21 @@ pub fn render(notice: &Notice) -> Rendered {
                 ),
                 None => format!("Command finished · {}", command_duration(*duration_ms)),
             },
-            body: sanitize_label(title, UNTITLED_TERMINAL),
+            body: "Open Phantom to review the terminal.".to_string(),
             click: ClickTarget::terminal(tab_id, block_id.as_deref()),
         },
         Notice::TerminalAgent {
             tab_id,
-            title,
             agent,
             needs_you,
+            ..
         } => Rendered {
             title: format!(
                 "{} {}",
                 agent_label(agent.as_deref()),
                 if *needs_you { "needs you" } else { "finished" }
             ),
-            body: sanitize_label(title, UNTITLED_TERMINAL),
+            body: "Open Phantom to review the terminal.".to_string(),
             click: ClickTarget::terminal(tab_id, None),
         },
         Notice::Terminal {
@@ -906,13 +900,13 @@ mod tests {
     // ── templates ────────────────────────────────────────────────────────────
 
     #[test]
-    fn a_finished_turn_names_the_chat_and_how_long_it_took() {
+    fn a_finished_turn_withholds_the_chat_title() {
         let r = render(&Notice::Finished {
             session_id: "vs_1".into(),
             title: "Refactor\nthe router".into(),
             duration_ms: Some(134_000),
         });
-        assert_eq!(r.title, "Finished: Refactor the router");
+        assert_eq!(r.title, "Chat finished");
         assert_eq!(r.body, "Done in 2m 14s. Click to open the chat.");
         assert_eq!(r.click, Some(ClickTarget::Session("vs_1".into())));
 
@@ -930,7 +924,7 @@ mod tests {
             session_id: "vs_2".into(),
             title: "Deploy".into(),
         });
-        assert_eq!(r.title, "Failed: Deploy");
+        assert_eq!(r.title, "Chat failed");
         assert!(r.body.contains("error"));
         assert_eq!(r.click, Some(ClickTarget::Session("vs_2".into())));
     }
@@ -1132,7 +1126,7 @@ mod tests {
             duration_ms: 134_000,
         });
         assert_eq!(r.title, "Command finished · exit 1 · 2m14s");
-        assert_eq!(r.body, "ashlr-hub npm test");
+        assert_eq!(r.body, "Open Phantom to review the terminal.");
         assert_eq!(r.click, ClickTarget::terminal("t-1", Some("b-9")));
         assert_eq!(r.click.unwrap().command(), "open-terminal:t-1/b-9");
 
@@ -1144,7 +1138,7 @@ mod tests {
             duration_ms: 45_000,
         });
         assert_eq!(r.title, "Command finished · 45s");
-        assert_eq!(r.body, "Terminal", "an empty tab title gets a name");
+        assert_eq!(r.body, "Open Phantom to review the terminal.");
 
         let r = render(&Notice::TerminalCommand {
             tab_id: "bad id".into(),
@@ -1177,7 +1171,7 @@ mod tests {
                 needs_you: true,
             });
             assert_eq!(needs.title, format!("{label} needs you"));
-            assert_eq!(needs.body, "binshield");
+            assert_eq!(needs.body, "Open Phantom to review the terminal.");
             assert_eq!(needs.click.unwrap().command(), "open-terminal:t-2");
             let idle = render(&Notice::TerminalAgent {
                 tab_id: "t-2".into(),

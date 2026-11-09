@@ -6,7 +6,7 @@ exports[`390px approve and held-lane decisions 1`] = `
     style="width: 390px;"
   >
     <section
-      aria-labelledby="_r_h_"
+      aria-labelledby="_r_i_"
       class="_screen_a86a66 _enter_a86a66"
     >
       <header
@@ -36,7 +36,7 @@ exports[`390px approve and held-lane decisions 1`] = `
         />
         <h1
           class="_largeTitle_a86a66"
-          id="_r_h_"
+          id="_r_i_"
         >
           Needs you
         </h1>
@@ -87,11 +87,11 @@ exports[`390px approve and held-lane decisions 1`] = `
           </button>
         </div>
         <section
-          aria-labelledby="_r_k_"
+          aria-labelledby="_r_l_"
         >
           <div>
             <h2
-              id="_r_k_"
+              id="_r_l_"
               style="margin: 0px;"
             >
               Held lanes
@@ -127,7 +127,7 @@ exports[`390px approve and held-lane decisions 1`] = `
             class="_swipe_972402"
           >
             <article
-              aria-labelledby="_r_i_"
+              aria-labelledby="_r_j_"
               class="_card_972402"
             >
               <div
@@ -147,7 +147,7 @@ exports[`390px approve and held-lane decisions 1`] = `
               </div>
               <h2
                 class="_title_972402"
-                id="_r_i_"
+                id="_r_j_"
                 title="PR: fix the flaky snapshot test"
               >
                 fix the flaky snapshot test
@@ -312,6 +312,27 @@ exports[`390px fleet status 1`] = `
             </button>
           </div>
         </section>
+        <div
+          class="_stats_507dbd"
+        >
+          <div
+            class="_stat_507dbd"
+          >
+            <span
+              class="_statValue_507dbd"
+            >
+              $4.50
+            </span>
+            <span
+              class="_statLabel_507dbd"
+            >
+              Spent today
+            </span>
+            <span>
+              of $25.00
+            </span>
+          </div>
+        </div>
         <section
           aria-labelledby="_r_1_"
         >
@@ -330,10 +351,10 @@ exports[`390px fleet status 1`] = `
             <div>
               <span>
                 <span>
-                  Hold all dispatch
+                  Saved lane holds
                 </span>
                 <span>
-                  The dispatcher sends nothing new until the hold lifts.
+                  Individual lane holds are preserved. Disable the queue to pause all new launches.
                 </span>
               </span>
               <span>
@@ -364,10 +385,10 @@ exports[`390px fleet status 1`] = `
             <div>
               <span>
                 <span>
-                  Stop leader passes
+                  Stop scheduled planning passes
                 </span>
                 <span>
-                  New Claude and Sol leader passes stop; workers keep running.
+                  Scheduled planning passes pause on every login; workers keep running. The Leader uses its own schedule.
                 </span>
               </span>
               <span>
@@ -381,10 +402,10 @@ exports[`390px fleet status 1`] = `
             <div>
               <span>
                 <span>
-                  Stop the Opus leader
+                  Stop the Leader planning loop
                 </span>
                 <span>
-                  The hourly Opus leader does not run.
+                  The supplementary hourly Leader loop pauses. The Leader can use any available provider.
                 </span>
               </span>
               <span>
@@ -499,6 +520,27 @@ exports[`390px fleet status 1`] = `
               id="_r_5_"
               style="margin: 0px;"
             >
+              Every resource
+            </h2>
+          </div>
+          <div>
+            <div>
+              <span>
+                <span>
+                  This server does not expose /api/verse/usage-resources yet, so this panel has no source.
+                </span>
+              </span>
+            </div>
+          </div>
+        </section>
+        <section
+          aria-labelledby="_r_6_"
+        >
+          <div>
+            <h2
+              id="_r_6_"
+              style="margin: 0px;"
+            >
               Waste forecast
             </h2>
           </div>
@@ -513,11 +555,11 @@ exports[`390px fleet status 1`] = `
           </div>
         </section>
         <section
-          aria-labelledby="_r_a_"
+          aria-labelledby="_r_b_"
         >
           <div>
             <h2
-              id="_r_a_"
+              id="_r_b_"
               style="margin: 0px;"
             >
               Queue
@@ -528,11 +570,11 @@ exports[`390px fleet status 1`] = `
           </p>
         </section>
         <section
-          aria-labelledby="_r_7_"
+          aria-labelledby="_r_8_"
         >
           <div>
             <h2
-              id="_r_7_"
+              id="_r_8_"
               style="margin: 0px;"
             >
               Budget mode
@@ -545,11 +587,11 @@ exports[`390px fleet status 1`] = `
           </p>
         </section>
         <section
-          aria-labelledby="_r_8_"
+          aria-labelledby="_r_9_"
         >
           <div>
             <h2
-              id="_r_8_"
+              id="_r_9_"
               style="margin: 0px;"
             >
               Grant
@@ -565,11 +607,11 @@ exports[`390px fleet status 1`] = `
           </p>
         </section>
         <section
-          aria-labelledby="_r_9_"
+          aria-labelledby="_r_a_"
         >
           <div>
             <h2
-              id="_r_9_"
+              id="_r_a_"
               style="margin: 0px;"
             >
               Recent decisions
@@ -593,7 +635,7 @@ exports[`390px shared chat inbox with desktop and phone channels 1`] = `
     style="width: 390px;"
   >
     <section
-      aria-labelledby="_r_c_"
+      aria-labelledby="_r_d_"
       class="_screen_a86a66 _enter_a86a66"
     >
       <header
@@ -629,7 +671,7 @@ exports[`390px shared chat inbox with desktop and phone channels 1`] = `
         </div>
         <h1
           class="_topbarTitle_a86a66"
-          id="_r_c_"
+          id="_r_d_"
         >
           Inbox
         </h1>
@@ -647,11 +689,11 @@ exports[`390px shared chat inbox with desktop and phone channels 1`] = `
           style="height: 0px;"
         />
         <section
-          aria-labelledby="_r_d_"
+          aria-labelledby="_r_e_"
         >
           <div>
             <h2
-              id="_r_d_"
+              id="_r_e_"
               style="margin: 0px;"
             >
               Chat with the leaders
@@ -795,7 +837,7 @@ exports[`390px shared chat inbox with desktop and phone channels 1`] = `
             </span>
             <p
               class="_entryText_67ab40"
-              id="_r_e_"
+              id="_r_f_"
             >
               The phone shares this inbox.
             </p>
@@ -826,7 +868,7 @@ exports[`390px shared chat inbox with desktop and phone channels 1`] = `
             </span>
             <p
               class="_entryText_67ab40"
-              id="_r_f_"
+              id="_r_g_"
             >
               Check the mobile build.
             </p>
@@ -844,11 +886,11 @@ exports[`390px usage panel 1`] = `
     style="width: 390px;"
   >
     <section
-      aria-labelledby="_r_g_"
+      aria-labelledby="_r_h_"
     >
       <div>
         <h2
-          id="_r_g_"
+          id="_r_h_"
           style="margin: 0px;"
         >
           Usage

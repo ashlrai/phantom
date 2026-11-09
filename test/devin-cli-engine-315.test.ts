@@ -166,6 +166,12 @@ describe('devin-cli registry entry and argv', () => {
 // ---------------------------------------------------------------------------
 
 describe('model resolution', () => {
+  it('blocks paid lightning variants without falling through to another configured model', () => {
+    expect(resolveDevinCliFleetModel({ fleetModel: 'swe-2-max-lightning' })).toBe('swe-2-max');
+    expect(resolveDevinCliFleetModel({ fleetModel: 'swe-2-flash' }, 'swe-2-high-lightning')).toBe('swe-2-max');
+    expect(resolveDevinCliFleetModel(undefined, 'swe-2-flash')).toBe('swe-2-flash');
+  });
+
   it('defaults to swe-2-high; devin.fleetModel and a per-run override win in that order', () => {
     expect(DEVIN_CLI_FLEET_DEFAULT_MODEL).toBe('swe-2-high');
     expect(resolveDevinCliFleetModel(undefined)).toBe('swe-2-high');
