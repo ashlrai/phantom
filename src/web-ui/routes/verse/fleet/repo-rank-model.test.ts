@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { expect, test } from 'vitest';
 import { scoreParts, type RepoRankState } from './repo-rank-model.js';
 
 test('score parts reflect the weighted normalized evidence and seed prior', () => {
