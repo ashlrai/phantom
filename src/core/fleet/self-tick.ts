@@ -1,7 +1,8 @@
 /**
  * self-tick.ts — one locked pass of Phantom's self-management, runnable by an
- * agent or a host timer with no desktop app open. Eight one-shot stages run
- * together, including same-channel inbox acknowledgements and merged-order notices.
+ * agent or a host timer with no desktop app open. Nine one-shot stages run
+ * together, including same-channel inbox acknowledgements, merged-order notices
+ * and the Needs-you triage.
  * runSelfTick is the single pass, each step injected as a seam in fixed order:
  *
  *   1. reset-release  — first, so a lane it frees counts as a free slot for
@@ -12,7 +13,8 @@
  *   5. planner-tick   — the autorun decision over the post-release picture.
  *   6. inbox-acks     — send pending same-channel acknowledgements.
  *   7. order-notices  — tell Mason when a merged job served one of his orders.
- *   8. landed-sweep   — close DIRTY PRs whose work already landed on master.
+ *   8. needs-triage   — auto-resolve Needs-you items outside the four hard limits.
+ *   9. landed-sweep   — close DIRTY PRs whose work already landed on master.
  *
  * A step that exits nonzero or throws is recorded 'failed'; later steps still
  * run. A hold a person placed is never released — that rule stays inside the
@@ -31,7 +33,7 @@ import {
 } from './local-store-lock.js';
 import { writeSelfTickLast } from './self-tick-last.js';
 
-export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick' | 'inbox-acks' | 'order-notices' | 'landed-sweep' | 'stray-stop' | 'meter-incident';
+export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick' | 'inbox-acks' | 'order-notices' | 'needs-triage' | 'landed-sweep' | 'stray-stop' | 'meter-incident';
 /** Fixed execution order — release first so the planner sees freed slots; landed-sweep last. */
 export const SELF_TICK_STEP_ORDER: readonly SelfTickStepName[] = [
   'reset-release',
@@ -41,6 +43,7 @@ export const SELF_TICK_STEP_ORDER: readonly SelfTickStepName[] = [
   'planner-tick',
   'inbox-acks',
   'order-notices',
+  'needs-triage',
   // Last: the slowest step (gh + git reads) must never delay release or the planner.
   'landed-sweep',
 ];
