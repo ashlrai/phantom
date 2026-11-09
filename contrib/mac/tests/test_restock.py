@@ -669,6 +669,56 @@ if __name__ == '__main__':
     unittest.main()
 
 class MergeRateRecoveryTests(unittest.TestCase):
+    def test_oldest_observed_job_wins_after_queue_reordering(self):
+        import time
+        tmp = build('# empty\n')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs/queue'
+        rows = []
+        for job in ('RQ-OLDER', 'RQ-NEWER'):
+            pf = q / 'prompts' / f'{job}.md'
+            pf.write_text('Keep the merge checks.\n')
+            rows.append(f'PARKED-MERGERATE.devin\t{job}\tdevin\twork\tphantom\t{pf}')
+        (q / 'ready.tsv').write_text('\n'.join(reversed(rows)) + '\n')
+        (q / 'mergerate-observed.json').write_text(json.dumps(
+            {'first': {'RQ-OLDER': time.time() - 100, 'RQ-NEWER': time.time() - 10}}))
+        (home / '.ashlr-runs/phantom-open-prs').write_text(f'{time.time()} 149\n')
+        result = restock(home, '--per-lane', '0')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        ready = (q / 'ready.tsv').read_text()
+        self.assertIn('RQ-OLDER\tphantom\tdevin\twork', ready)
+        self.assertIn(rows[1], ready)
+
+    def test_reparked_reserved_job_does_not_spend_capacity_twice(self):
+        import time
+        tmp = build('# empty\n')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs/queue'
+        rows = []
+        for job in ('RQ-RESERVED', 'RQ-OTHER'):
+            pf = q / 'prompts' / f'{job}.md'
+            pf.write_text('Keep the merge checks.\n')
+            rows.append(f'PARKED-MERGERATE.devin\t{job}\tdevin\twork\tphantom\t{pf}')
+        (q / 'ready.tsv').write_text('\n'.join(rows) + '\n')
+        (q / 'mergerate-observed.json').write_text(json.dumps(
+            {'count': 148, 'reservations': {'RQ-RESERVED': time.time()}}))
+        (home / '.ashlr-runs/phantom-open-prs').write_text(f'{time.time()} 148\n')
+        result = restock(home, '--per-lane', '0')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        ready = (q / 'ready.tsv').read_text()
+        self.assertIn(rows[0], ready)
+        self.assertIn('RQ-OTHER\tphantom\tdevin\twork', ready)
+        self.assertEqual(len(json.loads((q / 'mergerate-observed.json').read_text())['reservations']), 2)
+        state_path = q / 'mergerate-observed.json'
+        state = json.loads(state_path.read_text())
+        state['reservations']['RQ-RESERVED'] = time.time() - 3601
+        state_path.write_text(json.dumps(state))
+        result = restock(home, '--per-lane', '0')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('RQ-RESERVED\tphantom\tdevin\twork', (q / 'ready.tsv').read_text())
+
     def test_capacity_drop_wakes_once_and_records_observed_wait(self):
         import time
         tmp = build('# empty\n')
@@ -687,7 +737,7 @@ class MergeRateRecoveryTests(unittest.TestCase):
         self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
         state = q / 'mergerate-observed.json'
         observed = json.loads(state.read_text())
-        observed['first'] = {job: time.time() - 12 for job in observed['first']}
+        observed['first'] = dict.fromkeys(observed['first'], time.time() - 12)
         state.write_text(json.dumps(observed))
         (q / 'mergerate-recovery-at').write_text(str(time.time()))
         cache.write_text(f'{time.time()} 149\n')
