@@ -10,9 +10,11 @@
  * say the Feed is unavailable.
  */
 import { useMemo, useState } from 'react';
+import { apiGet } from '../../../data/client.js';
 import { useDesktopUpdates } from '../../../app/desktop-updates.js';
 import { deriveUpdateNotifications } from '../../../components/notifications/deriveUpdateNotifications.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
+import type { QueryDef } from '../../../data/queries.js';
 import { formatRelative } from '../autonomy/format.js';
 import { useNow } from '../autonomy/use-ticker.js';
 import { Card, CardNote } from '../command/Surface.js';
@@ -40,6 +42,9 @@ const FILTERS: readonly { id: FeedFilter; label: string }[] = [
 ];
 const KIND_LABEL: Record<FeedKind, string> = { leader: 'Leader', alert: 'Alert', merge: 'Merge', fleet: 'Fleet', owner: 'Channel', update: 'Update', bus: 'Bus' };
 export const FEED_POLL_MS = 15_000;
+const INBOX_POLL_MS = 5 * 60_000;
+// Same route as the Inbox pane's archive-plan card, under the Feed's own key.
+const inboxPlansQuery: QueryDef<unknown> = { key: 'verse-feed-gmail-archive-plan', fetch: s => apiGet('/api/verse/comms/gmail-triage/archive-plan', s) };
 
 export function FeedSection({ visible = true }: { visible?: boolean }) {
   const leader = useQuery(leaderThreadQuery, { enabled: visible, freshMs: 15_000 });
@@ -49,6 +54,10 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
   const update = useQuery(updateStatusQuery, { enabled: visible, freshMs: 60_000 });
   // An older hub has no bus route: the query's 404 just means no bus rows, never an error note.
   const bus = useQuery(agentBusPageQuery(0, 50), { enabled: visible, freshMs: 15_000 });
+  // A failed read adds no inbox rows and no error note.
+  const inboxPlans = useQuery(inboxPlansQuery, { enabled: visible, freshMs: INBOX_POLL_MS });
+  const refetchInboxPlans = useRefetch(inboxPlansQuery);
+  usePollWhileVisible(refetchInboxPlans, INBOX_POLL_MS, { enabled: visible });
   const nativeUpdates = useDesktopUpdates();
   const activity = useActivity();
   const refetchLeader = useRefetch(leaderThreadQuery);
@@ -84,7 +93,8 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
     owner: ownerLines,
     update: updateItems,
     bus: bus.data,
-  }), [leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data]);
+    inboxPlans: inboxPlans.error ? undefined : inboxPlans.data,
+  }), [leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data, inboxPlans.data, inboxPlans.error]);
   const filtered = filterFeed(feed, filter);
   const shown = filtered.filter(item => !isDismissed(item, dismissedMap));
   const dismissed = filtered.filter(item => isDismissed(item, dismissedMap));
