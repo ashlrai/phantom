@@ -82,6 +82,9 @@ const ADDED_NATIVE_NAMES = [
   'desktop_scroll',
   'desktop_type',
   'desktop_click',
+  'ashlr_comms_agent_status',
+  'ashlr_comms_agent_drafts',
+  'ashlr_comms_agent_run',
 ] as const;
 
 function classifyNativeNames(names: readonly string[]): { old: string[]; added: string[]; unallocated: string[] } {
@@ -120,7 +123,7 @@ describe('native MCP tool inventory', () => {
     const tools = listNativeTools();
     const names = tools.map(tool => tool.name);
     const classified = classifyNativeNames(names);
-    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(76);
+    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(79);
     expect(new Set(names).size).toBe(names.length);
     expect(classified.old).toEqual([...OLD_NATIVE_NAMES]);
     expect(classified.added).toEqual([...ADDED_NATIVE_NAMES]);
@@ -156,11 +159,14 @@ describe('native MCP tool inventory', () => {
     const observeTools = addedTools.filter(tool => tool.name === 'world_model' || tool.name === 'phantom_observe' || tool.name === 'phantom_observe_session');
     const observeBytes = observeTools.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(observeBytes).toBeLessThanOrEqual(2500);
-    const addedBytes = addedTools.filter(tool => tool !== doctor && tool !== roster && tool !== spend && !visibility.includes(tool) && !leaderTools.includes(tool) && !desktop.includes(tool) && !observeTools.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
+    const commsTools = addedTools.filter(tool => tool.name.startsWith('ashlr_comms_agent_'));
+    const commsBytes = commsTools.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
+    expect(commsBytes).toBeLessThanOrEqual(746);
+    const addedBytes = addedTools.filter(tool => tool !== doctor && tool !== roster && tool !== spend && !visibility.includes(tool) && !leaderTools.includes(tool) && !desktop.includes(tool) && !observeTools.includes(tool) && !commsTools.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(addedBytes).toBeLessThanOrEqual(9195);
     // 24,205 + 9,195 preserves the historical headroom. The doctor and roster
     // tools are measured on their own caps above.
-    expect(responseBytes(tools)).toBeLessThan(33400 + doctorBytes + rosterBytes + visibilityBytes + spendBytes + leaderBytes + desktopBytes + observeBytes);
+    expect(responseBytes(tools)).toBeLessThan(33400 + doctorBytes + rosterBytes + visibilityBytes + spendBytes + leaderBytes + desktopBytes + observeBytes + commsBytes);
   });
 });
 
