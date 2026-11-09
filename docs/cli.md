@@ -17,7 +17,7 @@ Topic summary and discovery hints.
 ```text
   Phantom - phm, the CLI for agentic engineers (ashlr remains compatible)
 
-    core            Core - index, navigate, configure (index, go, status, …)
+    core            Core - index, navigate, configure (tune, index, go, …)
     run             Run - local-first agent runs (run, runs, …)
     swarm           Swarm - specs + multi-agent fleets (spec, …)
     memory          Memory - shared genome (memory, recall, learn, …)
@@ -44,6 +44,7 @@ Every command, grouped by topic.
   Phantom - every command (phm or ashlr)
 
   Core - index, navigate, configure
+    tune <prepare|evaluate>                                                                                        Prepare scrub-gated local model datasets or evaluate paired evidence.
     index [--refresh]                                                                                              Build or refresh the desktop index; show counts by category.
     go [query] [--open|--cd]                                                                                       Find a repo or item; open in editor (--open) or print path for cd (--cd).
     status [--json]                                                                                                Attention board: dirty, off-sync, and stale repos; ecosystem summary.
