@@ -7,6 +7,7 @@ import { buildOpenAICompatibleClient } from '../run/provider-client.js';
 import type { AshlrConfig } from '../types.js';
 import { imessageStateDir } from '../integrations/imessage.js';
 import { ingestIMessages } from './imessage-inbox-bridge.js';
+import { sendLeaderReplies } from './imessage-leader-replies.js';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { ensurePrivateDirectory } from '../verse/preferences.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
@@ -172,6 +173,7 @@ export async function tickTeammateMessages(cfg: AshlrConfig, options: TeammateWo
     if (lock.state !== 'acquired') return { state: 'busy' as const };
     const intake = await ingestIMessages(cfg, { runsDir: runs });
     releaseLocalStoreLock(lock.lock); lock = undefined;
+    await sendLeaderReplies(cfg, { runsDir: runs }); // dry run unless comms.leaderRepliesSend is true
     result = intake.ok ? { ...await runTeammateResponder(cfg, options), intake } : { state: intake.state, intake };
     writePrivateFileAtomically(join(dir, `.${randomUUID()}.tmp`), join(dir, 'teammate-status.json'),
       JSON.stringify({ at: new Date((options.now ?? Date.now)()).toISOString(), ...result }), { anchorPath: dir, label: 'Teammate worker status' });

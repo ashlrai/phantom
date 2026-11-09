@@ -133,6 +133,25 @@ privacy settings; follow the `fixHint` yourself. Full Disk Access belongs to the
 app that launched `phm` (Terminal, iTerm, or the desktop app): enable it under
 System Settings > Privacy & Security > Full Disk Access, then restart that app.
 
+## Leader replies by text
+
+iMessage is two-way. Texts from your own handle become `MASON-INBOX.md` lines
+tagged `[src:imessage]`. Replies the Leader writes for you (entries in
+`leader/MASON-OUTBOX.md` and "Reply for Mason" lines in `leader/PLAN-LOG.md`)
+can be texted back to that same handle, once each.
+
+```bash
+phm imessage replies --json   # dry run by default: counts what is waiting, sends nothing
+```
+
+To send for real, set `comms.leaderRepliesSend` to `true` in `~/.ashlr/config.json`.
+Replies go only to `comms.imessageHandle`, never to anyone else. Each reply is
+recorded by hash in `~/.ashlr-runs/imessage/leader-sent.jsonl` (mode 0600), so it
+is never sent twice. The first live pass marks existing replies as already seen,
+so old history is not texted out. At most three go out per pass. `phm imessage
+poll --apply` and the sidecar worker run the same pass. Texts from any other
+handle never reach `MASON-INBOX.md`.
+
 ## Poll
 
 ```bash
