@@ -102,10 +102,11 @@ describe('receding horizon and manual readings', () => {
   });
   it('falls back to the even plan when the injected solver fails, and still lands at reset', async () => {
     const failing: MilpSolver = async () => ({ status: 'failed', objective: null, values: {} });
+    const throwing: MilpSolver = async () => { throw new Error('solver unavailable'); };
     const lp: string[] = [];
     const recording: MilpSolver = async (text) => { lp.push(text); return { status: 'timeout', objective: null, values: {} }; };
     const curve = [0.2, 2, 0.2, 2];
-    for (const solver of [failing, recording]) {
+    for (const solver of [failing, throwing, recording]) {
       const plan = await planHorizon({ poolId: 'codex-primary', used: 0, nowMs: start, resetAtMs: reset, windowStartMs: start, values: curve, knobs, solver, solverBudgetMs: 50 });
       expect(plan.solver).toBe('even');
       expect(plan.series.projection).toBe('derived');

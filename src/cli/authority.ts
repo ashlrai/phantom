@@ -26,7 +26,7 @@
  */
 import { execFile, spawnSync } from 'node:child_process';
 import { createHash, createPublicKey, randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -567,6 +567,18 @@ function drainSummary(r: { quiesced: boolean; liveExecutionLeases: number; drain
  * Mason wants to know the fleet is actually quiet. `--no-wait` arms and
  * returns at once, like the Verse button.
  */
+function pauseHostedReleaseTrain(): void {
+  if (process.env.VITEST) return;
+  try {
+    const dir = join(homedir(), '.ashlr-runs');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const off = join(dir, 'RELEASE_AUTORUN_OFF');
+    if (!existsSync(off)) writeFileSync(off, 'release train off\n', { mode: 0o600 });
+  } catch { /* the local kill switch is already the stop */ }
+  const result = spawnSync('gh', ['variable', 'set', 'PHANTOM_RELEASE_TRAIN', '-R', 'ashlrai/phantom', '--body', 'off'], { stdio: 'ignore', timeout: 15_000 });
+  if (result.status !== 0) console.error('PHANTOM_RELEASE_TRAIN was not set off');
+}
+
 async function cmdStop(parsed: Parsed, deps: AuthorityCliDeps): Promise<number> {
   const { stopAutonomy, stopAutonomyAndDrain } = await import('../core/authority/clamp.js');
   const result = parsed.flags.has('--no-wait')
@@ -579,6 +591,7 @@ async function cmdStop(parsed: Parsed, deps: AuthorityCliDeps): Promise<number> 
   // With --json, stdout carries only the JSON; the prose goes to stderr.
   const json = parsed.flags.has('--json');
   const say = json ? deps.err : deps.out;
+  pauseHostedReleaseTrain();
   say(`Stopped.${result.ledgered ? '' : ' (the ledger could not record it)'}`);
   for (const line of drainSummary(result)) say(line);
   if (json) deps.out(JSON.stringify(result, null, 2));

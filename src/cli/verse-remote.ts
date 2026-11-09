@@ -1,6 +1,7 @@
 /** Mac-local remote phone custody and diagnosis commands. */
 import { createInterface } from 'node:readline/promises';
 import { sendRemoteAdminCommand } from '../core/web/remote-admin.js';
+import { phonePairingQr } from '../core/web/phone-pairing-qr.js';
 import { diagnoseRemoteLocal, type RemoteDoctorDeps } from '../core/web/remote-local-doctor.js';
 
 const UUID = /^[0-9a-f-]{36}$/;
@@ -52,6 +53,16 @@ export async function cmdVerseRemote(args: string[], doctorDeps?: RemoteDoctorDe
     const invite = result as { code: string; expiresAt: number };
     console.log(`One-use pairing code: ${invite.code}`);
     console.log(`Expires: ${new Date(invite.expiresAt).toLocaleString()}`);
+    try {
+      const info = await sendRemoteAdminCommand({ action: 'info' });
+      const origin = info && typeof info === 'object' && 'publicOrigin' in info ? (info as { publicOrigin: unknown }).publicOrigin : null;
+      const qr = typeof origin === 'string' ? phonePairingQr(origin, invite.code, invite.expiresAt, Date.now()) : null;
+      if (qr) {
+        console.log('Scan this on the phone. The code is in the URL fragment and is not sent to the server.');
+        console.log(qr.payload);
+        console.log(qr.ascii);
+      }
+    } catch { /* The one-use code above is enough when the operator socket cannot answer info. */ }
     return 0;
   }
   if ((action === 'approve' || action === 'deny' || action === 'revoke') && (!id || !UUID.test(id))) return 2;

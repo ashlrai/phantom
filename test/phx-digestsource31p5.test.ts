@@ -99,11 +99,22 @@ describe('harness digest exact source selection', () => {
     expect(JSON.parse(checked.out)).toEqual({ v: 1, sources: [], issues: [] });
   });
 
-  it('rejects malformed or repeated source flags and documents the contract', async () => {
+  it('accepts repeated valid source flags in digest order, deduplicated', async () => {
+    const args = ['--file', fixture(), '--json'];
+    const full = JSON.parse((await run(args)).out);
+    const repeated = await run([...args, '--source', 'S10', '--source', 'S1', '--source', 'S10']);
+    expect(repeated.code).toBe(0);
+    expect(JSON.parse(repeated.out).sources).toEqual([full.sources[0], full.sources[1]]);
+    expect(JSON.parse(repeated.out).requestedSourceIds).toEqual(['S10', 'S1']);
+    const help = await run(['--help']);
+    expect(help.out).toContain('Repeat --source');
+  });
+
+  it('rejects malformed source flags, including inside repeats, and documents the contract', async () => {
     const args = ['--file', fixture(), '--json'];
     for (const extra of [['--source'], ['--source', '--check'], ['--source', ''],
       ...['s1', 'S', 'Sx', 'S1x', 'S-1', ' S1', 'S1 ', '1'].map(id => ['--source', id]),
-      ['--source', 'S1', '--source', 'S2']]) {
+      ['--source', 'S1', '--source', 'Sx'], ['--source', 'S1', '--source', '']]) {
       const result = await run([...args, ...extra]);
       expect(result.code).toBe(2);
       expect(result.out).toBe('');

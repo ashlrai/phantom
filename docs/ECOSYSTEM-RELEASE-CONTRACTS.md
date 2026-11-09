@@ -26,3 +26,13 @@ The dated ecosystem index supplies role labels and unverified historical reposit
 | Cortex/Auth/Config/Cost/Core Efficiency | Establish current product/source and owner release contract; preserve proposal-only scope where applicable |
 
 Documentation/site PR feedback never substitutes for Phantom's full original producer coverage. Workflow presence or a serialized public-facts record does not prove current commissioning, publication, deployment, or installation. Execute any next step through its existing qualified owner workflow after independent verification; this planner only connects the steps.
+
+## Release dispatch dry run
+
+`planReleaseDispatch(snapshot, nowMs, registry, repository)` in `src/core/release/orchestrator.ts` projects the reviewed dependency plan for one repository. It preserves holds and workflow bindings, redacts owner-supplied blocker text, and identifies the first stage awaiting independent verification. It does not determine a version bump or authorize a tag, publication, or announcement. A pending stage is not evidence of readiness or permission to execute. Unknown or unreviewed paths stay held, and owner gates are never modified.
+
+```sh
+node --import tsx scripts/release-dispatch-dry-run.ts --dry-run --input /absolute/path/local-snapshot.json --repo ashlrai/phantom
+```
+
+The input uses the same bounded local snapshot format and five-minute freshness rules described above. This preview has no execution mode, network calls, credential resolution, or release effects. Actual releases still require each repository's existing sanctioned path, verified evidence, and applicable grants and controls.

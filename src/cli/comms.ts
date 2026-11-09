@@ -20,6 +20,7 @@
  * Exit codes: 0 success, 1 error, 2 bad usage.
  */
 
+import { cmdCommsOwner, cmdCommsOwnerStatus } from './comms-owner-thread.js';
 import { cmdCommsDiagnose } from './comms-diagnose.js';
 import { cmdCommsBus } from './comms-bus.js';
 import { cmdCommsInbox } from './comms-inbox.js';
@@ -581,15 +582,18 @@ function printCommsHelp(): void {
   console.log('');
   console.log('  Phantom comms — bidirectional operator channel (Telegram/iMessage)');
   console.log('');
-  console.log('  Usage: phm comms <inbox|bus|email-drop|email-cycle|setup-email|status|diagnose|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|telegram-brand>');
+  console.log('  Usage: phm comms <inbox|bus|email-drop|email-cycle|setup-email|status|thread|send-owner|diagnose|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|pair-telegram|telegram-brand>');
   console.log('  Compatible alias: ashlr comms <command>');
   console.log('');
   console.log('    bus post|read                durable local JSON inbox (bus --help)');
+  console.log('    inbox [--json]               unified pending view: needs-you, teammate texts, drafts, unclaimed bus work');
   console.log('    inbox read|post              Mason inbox for local operators (inbox --help)');
   console.log('    email-drop <dir> --from <a>  ingest .eml files from a drop folder (allowlisted From only)');
   console.log('    email-cycle                  process the enabled saved email drop configuration');
   console.log('    setup-email                  print drop paths and Mail.app / forwarder setup');
-  console.log('    status                       config + pending/outstanding + watermark');
+  console.log('    status [--json]              config + pending/outstanding + watermark; --json is the owner-thread adapter rollup');
+  console.log('    thread [--limit n] [--json]  the single owner thread, oldest first');
+  console.log('    send-owner --text <message>  fan a leader reply out to the owner channel and the desktop thread');
   console.log('    send-test                    post + send a test report to verify the channel');
   console.log('    cycle                        run one send-pending + poll-replies pass');
   console.log('    ask "<text>" -o a -o b       post a question with numbered options');
@@ -599,6 +603,7 @@ function printCommsHelp(): void {
   console.log('    ask-vision                   run a Leader tick + deliver the latest memo via the Leader thread');
   console.log('    ask-merges                   post ship proposals for approval + run cycle');
   console.log('    setup-telegram               print Telegram setup steps + discover chat id');
+  console.log('    pair-telegram [--json]       locally pair the configured private owner; never prints credentials');
   console.log('    telegram-brand [--json]      preview the configured bot’s Phantom display profile');
   console.log('      --apply --expected-bot-id <id>  update default-locale profile and verify readback');
   console.log('');
@@ -612,7 +617,7 @@ function printCommsHelp(): void {
 const COMMS_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> = {
   diagnose:         { allowed: { flags: ['--json'] }, usage: 'usage: phm comms diagnose [--json]' },
   health:           { allowed: { flags: ['--json'] }, usage: 'usage: phm comms health [--json]' },
-  status:           { allowed: {}, usage: 'usage: phm comms status' },
+  status:           { allowed: { flags: ['--json'] }, usage: 'usage: phm comms status [--json]' },
   'send-test':      { allowed: {}, usage: 'usage: phm comms send-test' },
   'email-cycle':    { allowed: {}, usage: 'usage: phm comms email-cycle' },
   'setup-email':    { allowed: {}, usage: 'usage: phm comms setup-email' },
@@ -625,9 +630,11 @@ const COMMS_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> 
 };
 
 export async function cmdComms(args: string[]): Promise<number> {
+  if (args[0] === 'pair-telegram') return (await import('./comms-telegram-pair.js')).cmdPairTelegram(args.slice(1));
   if (args[0] === 'bus') return cmdCommsBus(args.slice(1));
   if (args[0] === 'inbox') return cmdCommsInbox(args.slice(1));
   if (args[0] === 'email-drop') return cmdCommsEmailDrop(args.slice(1));
+  if (args[0] === 'thread' || args[0] === 'send-owner') return cmdCommsOwner(args);
   if (args.includes('--help') || args.includes('-h')) {
     printCommsHelp();
     return 0;
@@ -654,7 +661,7 @@ export async function cmdComms(args: string[]): Promise<number> {
       return 0;
     }
     case 'status':
-      return cmdStatus();
+      return args.includes('--json') ? cmdCommsOwnerStatus(true) : cmdStatus();
     case 'send-test':
       return cmdSendTest();
     case 'email-cycle':
@@ -675,7 +682,7 @@ export async function cmdComms(args: string[]): Promise<number> {
       return cmdSetupTelegram();
     default:
       console.error(`unknown subcommand: ${sub}`);
-      console.error('usage: phm comms <status|diagnose|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|telegram-brand|email-drop>');
+      console.error('usage: phm comms <status|diagnose|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|pair-telegram|telegram-brand|email-drop>');
       return 2;
   }
 }

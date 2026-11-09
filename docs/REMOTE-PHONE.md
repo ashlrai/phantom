@@ -36,7 +36,8 @@ The phone shell URL is the gateway's public origin followed by `/verse/m`, serve
 
 **Phone screens**
 
-- **Home** — one glance: running jobs, usage versus reset, merges today, main health, incidents, and a box to send an order in plain language.
+- **Home** — one glance: running jobs, usage versus reset, merges today, main health, incidents, and a box to send an order in plain language. Open **Watch** from Home for the phone-first owner thread, world model, and agent activity.
+- **Watch** — owner thread with the Leader (send a message), live world-model summary (lanes, pull outcomes, releases, bottlenecks), and agent activity. The screen polls while it is visible.
 - **Fleet** — fleet switches, lanes, and holds; read fleet activity and live bus.
 - **Runs** — fleet runs list and current state.
 - **Inbox** — fleet inbox messages with optional source filter.
@@ -80,6 +81,7 @@ The phone shell URL is the gateway's public origin followed by `/verse/m`, serve
 | `/api/verse/fleet/control/lanes` | Fleet lanes manages lane routing assignments |
 | `/api/verse/fleet/control/holds` | Fleet holds manages fleet hold operations |
 | `/api/verse/release-pr` | Release pull requests handles release pull requests |
+| `/api/verse/world` | Live world model: lanes, pull outcomes, releases, and bottlenecks |
 
 An `act` device may post fleet inbox messages, toggle fleet switches, update lanes, release fleet holds, submit leader threads and directives, answer leader questions, cancel sessions, terminate sessions, land or close or dismiss cloud and Devin tasks, plan agents, manage queues, and use the release-pr endpoint — all paths from `validateRemoteMutation` in `src/core/web/remote-gateway-policy.ts`. Device approval, invitation, and revocation never pass through the gateway; they operate through a local Unix socket on the Mac.
 
@@ -116,3 +118,24 @@ that this places an owner hold on all fleet production and merges for that
 repository while keeping the approval pending. Remote holds require action
 scope and fresh device step-up, like approval and resume; they use the Hub's
 existing audited `pause-repo` operation.
+
+## Phone watch, pairing, and KILL
+
+The watch screen is part of the same desktop console (`/verse/m/#/watch`). It reuses the desktop leader send path and reads the desktop world model and activity feeds. Unknown world-model fields stay unknown. They are not shown as zero.
+
+### One-time owner step for a phone off the Mac
+
+The gateway stays off until `~/.ashlr/verse-remote.json` exists, and when it is on it listens only on `127.0.0.1`. Remote access uses the Cloudflare Tunnel and Cloudflare Access application this Mac already runs (`ai.ashlr.verse-cloudflared`). That is the existing free tunnel. Do not add another tunnel product, and do not point the tunnel at port 7777.
+
+1. Finish the Access application and the private `verse-remote.json` file in the activation order above.
+2. Quit and reopen Phantom so the sidecar starts the loopback gateway.
+3. Point the existing `cloudflared` route at `http://127.0.0.1:<gatewayPort>` only after the Access policy is active.
+4. On the Mac, run `ashlr verse remote invite <Access-subject> act`, confirm `INVITE <Access-subject>`, and scan the QR (or open the printed URL) on the phone. The pairing code is in the URL fragment, expires in five minutes, and works once. Approve the pending passkey on the Mac with `ashlr verse remote approve <id>`.
+
+A read invite (`ashlr verse remote invite <Access-subject> read`) can watch and cannot send.
+
+### Session handles and KILL
+
+Each device session cookie stays in the gateway process. The durable file `~/.ashlr/verse/phone-session-handles.json` stores only a Phantom Secrets handle of the form `phm_phone_session_` plus 32 hex characters, plus the device id, subject, scope, and expiry. It does not store the cookie. An expired handle no longer resolves to a session.
+
+Creating `~/.ashlr/KILL` refuses phone gateway startup and, if the gateway is already listening, refuses every phone read and write with `PHONE_DISABLED`. Removing the file and restarting Phantom allows the gateway to listen again. The desktop window keeps running while KILL is set.

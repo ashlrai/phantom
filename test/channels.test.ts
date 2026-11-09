@@ -229,6 +229,37 @@ describe('phm channels CLI', () => {
     expect(err).not.toHaveBeenCalled();
   });
 
+  it('honors help for Slack verbs and their advertised direct aliases', async () => {
+    useHome();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    for (const verb of ['map', 'probe', 'run']) {
+      for (const flag of ['--help', '-h']) {
+        expect(await cmdChannels([verb, flag])).toBe(0);
+        expect(await cmdChannels(['slack', verb, flag])).toBe(0);
+      }
+    }
+    expect(log.mock.calls.every(([line]) => String(line).includes('usage:'))).toBe(true);
+    expect(err).not.toHaveBeenCalled();
+  });
+
+  it('routes the map alias to the same offline handler', async () => {
+    useHome();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    // Both aliases observe the same clock; their full offline plans must match.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-06T00:00:00.000Z'));
+    try {
+      expect(await cmdChannels(['map', '--json'])).toBe(0);
+      const direct = JSON.parse(String(log.mock.calls.at(-1)?.[0]));
+      expect(direct.at).toBe('2026-11-06T00:00:00.000Z');
+      expect(await cmdChannels(['slack', 'map', '--json'])).toBe(0);
+      expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual(direct);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('rejects bad usage with exit 2 and keeps secrets out of every output path', async () => {
     useHome();
     process.env['TELEGRAM_BOT_TOKEN'] = 'sensitive-token-xyz';

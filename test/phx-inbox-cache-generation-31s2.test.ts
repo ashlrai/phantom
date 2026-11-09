@@ -84,7 +84,7 @@ describe('fleet inbox cache generations', () => {
     expect(await post(h.api, 'new order')).toMatchObject({ status: 201, wire: { accepted: true } });
     oldGate.release.resolve();
     expect(await oldRead).toMatchObject({ status: 200, wire: { inbox: [] } });
-    expect(await get(h.api)).toMatchObject({ status: 200, wire: { inbox: [{ text: 'new order', source: 'Fake desktop' }] } });
+    expect(await get(h.api)).toMatchObject({ status: 200, wire: { inbox: [{ text: 'new order', source: expect.stringMatching(/^desktop \(desk-[a-f0-9]{16}\)$/) }] } });
     expect(h.readInbox).toHaveBeenCalledTimes(2);
   });
 

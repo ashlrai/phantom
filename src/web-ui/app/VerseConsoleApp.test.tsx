@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearMutationToken, clearReadSession, getAuthSnapshot, getMutationToken, hasMutationHold, markCheckComplete } from '../data/auth-store.js';
@@ -13,17 +15,55 @@ import { preloadVerseFirstPaint, preloadVerseFonts, VerseConsoleApp } from './Ve
 const READ = 'c'.repeat(64);
 const MUT = 'd'.repeat(64);
 
+// Execute the JavaScript selected by the real native existing-window branch.
+// Rust owns JSON encoding (also covered by its compiled tests); the format
+// expansion here uses only disposable fixture tokens and the actual source
+// template, so dropping the native event reproduces the stuck gate.
+const nativeMain = readFileSync(resolve('desktop/src-tauri/src/main.rs'), 'utf8');
+const nativeShell = readFileSync(resolve('desktop/src-tauri/src/shell_contract.js'), 'utf8');
+function nativeExistingWindowScript(tokens: { readToken: string; token?: string } | null): string | null {
+  const start = nativeMain.indexOf('if let Some(existing) = handle2.get_webview_window(MAIN_WINDOW_LABEL)');
+  const branch = nativeMain.slice(start, nativeMain.indexOf('let Some(builder)', start));
+  if (branch.includes('existing.eval(&script)')) {
+    return `var __ASHLR_SHELL_CONFIG = ${JSON.stringify({ origin: 'http://127.0.0.1:7777', tokens, desktop: null })};\n${nativeShell}`;
+  }
+  if (!branch.includes('existing.eval(token_script)') || !nativeMain.includes('let existing_tokens = startup.map(token_handoff_script);')) {
+    throw new Error('Unknown native existing-window script path');
+  }
+  if (tokens === null) return null;
+  const body = nativeMain.slice(nativeMain.indexOf('fn token_handoff_script('), nativeMain.indexOf('/// Give a restarted sidecar'));
+  const literal = body.match(/format!\(\s*("(?:\\[\s\S]|[^"\\])*")/)?.[1];
+  if (!literal) throw new Error('Missing native token script template');
+  const template = JSON.parse(literal.replace(/\\\r?\n\s*/g, '')) as string;
+  const fields: Record<string, string> = { origin: JSON.stringify('http://127.0.0.1:7777'), tokens: JSON.stringify({ ...tokens, token: tokens.token ?? null }), event: JSON.stringify(SIDECAR_RESTARTED_EVENT) };
+  return template.replace(/\{\{|\}\}|\{(origin|tokens|event)\}/g, (match, field: string) => field ? fields[field]! : match === '{{' ? '{' : '}');
+}
+function runNativeExistingWindow(tokens: { readToken: string; token?: string } | null, origin = 'http://127.0.0.1:7777'): void {
+  const script = nativeExistingWindowScript(tokens);
+  if (script === null) return;
+  const nativeWindow = new Proxy(window, {
+    get(target, property) {
+      if (property === 'location') return { origin };
+      const value = Reflect.get(target, property);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+    set: (target, property, value) => Reflect.set(target, property, value),
+  });
+  new Function('window', 'CustomEvent', script)(nativeWindow, CustomEvent);
+}
+
 /**
- * Authentication reaches the shell's fresh Chat workspace, not the gate.
+ * Authentication reaches the shell's fresh Home workspace, not the gate.
  * This fixture explicitly resets the module-level UI store as well as storage.
- * Fresh installs use Work with me; adopting tokens does not force Command.
+ * Fresh installs start on Home; adopting tokens does not force a work mode.
  */
-async function expectShellOnChat(): Promise<void> {
+async function expectShellOnHome(): Promise<void> {
   const rail = await screen.findByRole('navigation', { name: 'Phantom sections' });
-  expect(within(rail).getByRole('button', { name: /^Chat/ })).toHaveAttribute('aria-current', 'page');
+  expect(screen.getByRole('main')).toHaveAttribute('data-section', 'live');
+  expect(within(rail).getByRole('button', { name: /^Chat/ })).not.toHaveAttribute('aria-current');
   expect(within(rail).getByRole('button', { name: /^Command/ })).not.toHaveAttribute('aria-current');
   const modes = screen.getByRole('navigation', { name: 'How you work' });
-  expect(within(modes).getByRole('button', { name: 'Work with me' })).toHaveAttribute('aria-pressed', 'true');
+  expect(within(modes).getByRole('button', { name: 'Work with me' })).toHaveAttribute('aria-pressed', 'false');
   expect(within(modes).getByRole('button', { name: 'Work for me' })).toHaveAttribute('aria-pressed', 'false');
 }
 
@@ -69,7 +109,7 @@ describe('VerseConsoleApp', () => {
       window.history.replaceState(null, '', '/verse/');
       window.dispatchEvent(new HashChangeEvent('hashchange'));
     });
-    await expectShellOnChat();
+    await expectShellOnHome();
   });
 
   it('is a scoped console on /verse', () => {
@@ -96,7 +136,7 @@ describe('VerseConsoleApp', () => {
     vi.stubGlobal('fetch', fetch);
     window.__ASHLR_TOKENS__ = { readToken: READ, token: MUT };
     render(<VerseConsoleApp />);
-    await expectShellOnChat();
+    await expectShellOnHome();
     expect(screen.queryByRole('heading', { name: 'Connect to Phantom' })).not.toBeInTheDocument();
     const sessionCall = state.calls.find((c) => c.path === '/api/session')!;
     expect(sessionCall.method).toBe('POST');
@@ -169,7 +209,7 @@ describe('font preloads (no "preloaded but not used" on the connect screen)', ()
     vi.stubGlobal('fetch', fetch);
     window.__ASHLR_TOKENS__ = { readToken: READ, token: MUT };
     render(<VerseConsoleApp />);
-    await expectShellOnChat();
+    await expectShellOnHome();
     const hrefs = [...document.head.querySelectorAll('link[rel="preload"]')].map((l) => l.getAttribute('href') ?? '');
     expect(hrefs.some((h) => /SpaceGrotesk-latin/.test(h))).toBe(true);
   });
@@ -248,6 +288,55 @@ describe('listenForSidecarRestart (desktop sidecar restart → immediate re-adop
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('adopts late first native tokens after the watchdog already opened a tokenless gate', async () => {
+    const { fetch, state } = verseFetch();
+    vi.stubGlobal('fetch', fetch);
+    render(<VerseConsoleApp />);
+    expect(await screen.findByRole('heading', { name: 'Connect to Phantom' })).toBeInTheDocument();
+    expect(sessionPosts(state.calls)).toEqual([]);
+    act(() => runNativeExistingWindow({ readToken: READ2, token: MUT2 }));
+    await expectShellOnHome();
+    expect(sessionPosts(state.calls)).toEqual([READ2]);
+    expect(getMutationToken()).toBe(MUT2);
+    expect(window.__ASHLR_TOKENS__).toBeUndefined();
+  });
+
+  it('late native read-only tokens authenticate without granting a mutation hold', async () => {
+    const { fetch, state } = verseFetch();
+    vi.stubGlobal('fetch', fetch);
+    render(<VerseConsoleApp />);
+    expect(await screen.findByRole('heading', { name: 'Connect to Phantom' })).toBeInTheDocument();
+    act(() => runNativeExistingWindow({ readToken: READ2 }));
+    await expectShellOnHome();
+    expect(sessionPosts(state.calls)).toEqual([READ2]);
+    expect(getMutationToken()).toBeNull();
+  });
+
+  it('late native handoff refuses a foreign origin without a session exchange', async () => {
+    const { fetch, state } = verseFetch();
+    vi.stubGlobal('fetch', fetch);
+    render(<VerseConsoleApp />);
+    expect(await screen.findByRole('heading', { name: 'Connect to Phantom' })).toBeInTheDocument();
+    act(() => runNativeExistingWindow({ readToken: READ2 }, 'https://example.invalid'));
+    await act(async () => { await Promise.resolve(); });
+    expect(sessionPosts(state.calls)).toEqual([]);
+    expect(window.__ASHLR_TOKENS__).toBeUndefined();
+    expect(getAuthSnapshot().phase).toBe('unauthenticated');
+  });
+
+  it('an existing external server without a startup record receives no tokens or authority', async () => {
+    const { fetch, state } = verseFetch();
+    vi.stubGlobal('fetch', fetch);
+    render(<VerseConsoleApp />);
+    expect(await screen.findByRole('heading', { name: 'Connect to Phantom' })).toBeInTheDocument();
+    expect(nativeExistingWindowScript(null)).toBeNull();
+    act(() => runNativeExistingWindow(null));
+    await act(async () => { await Promise.resolve(); });
+    expect(sessionPosts(state.calls)).toEqual([]);
+    expect(getMutationToken()).toBeNull();
+    expect(getAuthSnapshot().phase).toBe('unauthenticated');
+  });
+
   it('replaces the session gate when the event lands while it is showing', async () => {
     const { fetch } = verseFetch();
     vi.stubGlobal('fetch', fetch);
@@ -256,7 +345,7 @@ describe('listenForSidecarRestart (desktop sidecar restart → immediate re-adop
     expect(await screen.findByRole('heading', { name: 'Connect to Phantom' })).toBeInTheDocument();
     window.__ASHLR_TOKENS__ = { readToken: READ2, token: MUT2 };
     act(() => { window.dispatchEvent(new CustomEvent(SIDECAR_RESTARTED_EVENT)); });
-    await expectShellOnChat();
+    await expectShellOnHome();
     expect(screen.queryByRole('heading', { name: 'Connect to Phantom' })).not.toBeInTheDocument();
   });
 });

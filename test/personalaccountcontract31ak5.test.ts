@@ -52,7 +52,7 @@ describe('personal account usage provenance', () => {
     writeFileSync(join(dir, 'status.json'), JSON.stringify({
       last_tick: asOf,
       lanes: { 'codex-personal': { running: 1, target: 2, held: false } },
-      budget: { 'codex-personal': { weekly_used_pct: 99, source: 'dispatchd-status' } },
+      budget: { 'codex-personal': { weekly_used_pct: 99, source: 'dispatchd-status', observed_at: asOf } },
     }));
     return asOf;
   }

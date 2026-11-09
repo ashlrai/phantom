@@ -3,6 +3,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
+const usage = `Usage: ashlr fleet lane-idle [--json]
+Explain why lanes are below target from queue/status.json. Read-only.`;
+
 export type LaneIdleReader = (path: string) => Promise<string>;
 export interface IdleLane {
   lane: string;
@@ -56,7 +59,7 @@ export async function cmdFleetLaneIdle(
   reader: LaneIdleReader = path => readFile(path, 'utf8'),
 ): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log('Usage: ashlr fleet lane-idle [--json]\nExplain why lanes are below target from queue/status.json. Read-only.');
+    console.log(usage);
     return 0;
   }
   if (args.length > 1 || (args.length === 1 && args[0] !== '--json')) return 2;

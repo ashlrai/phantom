@@ -6,8 +6,8 @@ import { isAbsolute, join } from 'node:path';
 
 export const VERSE_FLEET_CONTROL_LANES_PATH = '/api/verse/fleet/control/lanes';
 export const LANE_ID_RE = /^[a-z][a-z0-9-]{1,30}$/;
-/** Top-level slots.json keys that are fleet-wide settings, not lanes (RQ-LOADGATE-1 global hard_cap). */
-export const GLOBAL_SLOT_KEYS: ReadonlySet<string> = new Set(['hard_cap']);
+/** Existing fleet-wide limit and attribution keys, never lane IDs. */
+export const GLOBAL_SLOT_KEYS: ReadonlySet<string> = new Set(['hard_cap', 'last_change_by']);
 export interface LaneTargetRow { lane: string; target: number; floor: number; ceiling: number; held: boolean; heldReason: string | null; heldUntil: string | null; pausedFrom: number | null; lastChange: string | null; changedBy: string | null }
 export interface LaneTargetsV1 { v: 1; generatedAt: string; sourceState: 'healthy' | 'missing' | 'degraded'; lanes: LaneTargetRow[] }
 export interface LaneTargetsOptions { runsDir?: string; now?: () => Date; changedBy?: string }
@@ -61,8 +61,14 @@ async function source(opts: LaneTargetsOptions) {
   const lanes = Object.hasOwn(raw, 'lanes') ? raw.lanes : raw;
   if (!object(lanes)) throw new LaneTargetError('unavailable');
   for (const [lane, row] of Object.entries(lanes)) {
-    if (GLOBAL_SLOT_KEYS.has(lane)) continue;
-    if (!LANE_ID_RE.test(lane) || !object(row) || !integer(row.target) || !integer(row.floor) || !integer(row.ceiling) || row.floor > row.ceiling || typeof row.held !== 'boolean') throw new LaneTargetError('unavailable');
+    if (GLOBAL_SLOT_KEYS.has(lane)) {
+      if (lane === 'last_change_by' && typeof row !== 'string') throw new LaneTargetError('unavailable');
+      continue;
+    }
+    // The existing dispatcher omits false hold flags. A present flag must still
+    // be a boolean; malformed values never become permission to launch work.
+    if (!LANE_ID_RE.test(lane) || !object(row) || !integer(row.target) || !integer(row.floor) || !integer(row.ceiling) || row.floor > row.ceiling ||
+        (Object.hasOwn(row, 'held') && typeof row.held !== 'boolean')) throw new LaneTargetError('unavailable');
   }
   return { queue, path, raw, lanes: lanes as Record<string, Record<string, unknown>> };
 }
@@ -89,7 +95,7 @@ export async function readLaneTargets(opts: LaneTargetsOptions = {}): Promise<La
   const state: LaneTargetsV1 = { v: 1, generatedAt: (opts.now ?? (() => new Date()))().toISOString(), sourceState: 'healthy', lanes: [] };
   try {
     const { lanes } = await source(opts);
-    state.lanes = Object.entries(lanes).filter(([lane]) => !GLOBAL_SLOT_KEYS.has(lane)).map(([lane, row]) => ({ lane, target: row.target as number, floor: row.floor as number, ceiling: row.ceiling as number, held: row.held as boolean, heldReason: nullableString(row.held_reason), heldUntil: nullableString(row.held_until), pausedFrom: pausedFrom(row), lastChange: epochIso(row.last_change), changedBy: changedBy(row) }));
+    state.lanes = Object.entries(lanes).filter(([lane]) => !GLOBAL_SLOT_KEYS.has(lane)).map(([lane, row]) => ({ lane, target: row.target as number, floor: row.floor as number, ceiling: row.ceiling as number, held: row.held === true, heldReason: nullableString(row.held_reason), heldUntil: nullableString(row.held_until), pausedFrom: pausedFrom(row), lastChange: epochIso(row.last_change), changedBy: changedBy(row) }));
   } catch (error) { state.sourceState = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'degraded'; }
   return state;
 }

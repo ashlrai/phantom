@@ -17,7 +17,7 @@ describe('optional Stacksync registry', () => {
   it.each([
     ['https://example.com/mcp', 5411],
     [STACKSYNC_CAPABILITY.endpoint, 42],
-  ])('skips a session with mismatched scope', (endpoint, workspaceId) => {
+  ])('skips a session with mismatched scope (%#)', (endpoint, workspaceId) => {
     const session = fixture(endpoint, workspaceId);
     expect(getOptionalToolRegistry({ stacksync: session })[0]?.status).toBe('skipped');
     expect(session.callTool).not.toHaveBeenCalled();

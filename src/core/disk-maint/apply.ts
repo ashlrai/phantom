@@ -31,8 +31,10 @@ import { pipeline } from 'node:stream/promises';
 import { createGunzip, createGzip } from 'node:zlib';
 import { promisify } from 'node:util';
 import {
-  candidateStillSafe, type DiskMaintPlan, type MaintCandidate, type MaintClassId,
+  artifactJobInactive, artifactJobName, candidateStillSafe, completedArtifactJobs, defaultFreeBytes,
+  type DiskMaintPlan, type MaintCandidate, type MaintClassId,
 } from './plan.js';
+import { readSource, type Source } from '../fleet/runs-parked-queue.js';
 import { protectedReason, protectedRoots, resolveMaintRoots, type MaintRoots } from './protect.js';
 
 const execFileAsync = promisify(execFile);
@@ -56,6 +58,7 @@ export interface ApplyClassResult {
 export interface DiskMaintApplyResult {
   schema: 'disk-maint-apply.v1';
   generatedAt: string;
+  freeGb: number | null;
   classes: ApplyClassResult[];
   totals: { freedBytes: number; failures: number; refusals: number; done: number };
 }
@@ -65,6 +68,8 @@ export interface ApplyDeps {
   /** Extra containment roots are never needed; managed roots are derived. */
   runner?: (file: string, args: string[]) => Promise<string>;
   now?: number;
+  readJobs?: (path: string) => Promise<{ state: Source; text: string }>;
+  freeBytes?: (path: string) => number | null | Promise<number | null>;
 }
 
 const defaultRunner = async (file: string, args: string[]): Promise<string> =>
@@ -182,7 +187,17 @@ export async function applyDiskMaint(plan: DiskMaintPlan, deps: ApplyDeps = {}):
     const item: ApplyClassResult = { id: cls.id, results, freedBytes: 0, failures: 0, refusals: 0 };
     if (!cls.enabled) { classes.push(item); continue; }
     for (const candidate of cls.candidates) {
-      const result = await applyOne(candidate, roots, rootsList, runner);
+      let eligible = true;
+      if (cls.id === 'job-artifacts') {
+        const job = artifactJobName(basename(candidate.path));
+        try {
+          const jobs = await (deps.readJobs ?? ((path: string) => readSource(path, 8 * 1024 * 1024, true)))(join(roots.runsDir, 'metrics', 'jobs.jsonl'));
+          eligible = !!job && candidate.action === 'delete-file' && candidate.path === join(roots.runsDir, basename(candidate.path)) &&
+            jobs.state === 'healthy' && completedArtifactJobs(jobs.text).has(job) && artifactJobInactive(roots, job);
+        } catch { eligible = false; }
+      }
+      const result: ApplyItemResult = eligible ? await applyOne(candidate, roots, rootsList, runner) :
+        { path: candidate.path, action: candidate.action, status: 'refused', freedBytes: 0, detail: 'job activity or completion unverified' };
       results.push(result);
       item.freedBytes += result.freedBytes;
       if (result.status === 'failed') item.failures++;
@@ -190,9 +205,15 @@ export async function applyDiskMaint(plan: DiskMaintPlan, deps: ApplyDeps = {}):
     }
     classes.push(item);
   }
+  let freeGb: number | null = null;
+  try {
+    const bytes = await (deps.freeBytes ?? defaultFreeBytes)(roots.runsDir);
+    if (typeof bytes === 'number' && Number.isFinite(bytes) && bytes >= 0) freeGb = Math.round(bytes / 1e8) / 10;
+  } catch { /* free space unavailable */ }
   return {
     schema: 'disk-maint-apply.v1',
     generatedAt: new Date(deps.now ?? Date.now()).toISOString(),
+    freeGb,
     classes,
     totals: {
       freedBytes: classes.reduce((s, c) => s + c.freedBytes, 0),

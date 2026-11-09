@@ -1,20 +1,8 @@
 /**
- * design/subset-glyphs.test.ts — Verse UI text stays inside the Ashlr Sans
- * Latin subset (review 3.10 c18).
- *
- * WHY: global.css declares "Ashlr Sans" twice — the Latin subset (73 KB,
- * with a unicode-range) and the full IBM Plex face (230 KB, no range). A
- * character outside the subset's range makes the browser fetch the full face
- * just to look for it; the Composer's permission glyphs (◇ ✎ ↻ ⚠) did that on
- * every chat paint, blowing the ≤ 150 KB font budget (SPEC-310A §1) — and
- * three of them are not even in Plex. UI symbols belong in SVG (see
- * components/primitives/icons.tsx) or inside the subset.
- *
- * The range is read from global.css itself, so a subset change moves this
- * test with it. Files owned by other units that still carry out-of-subset
- * glyphs are listed in KNOWN (a cross-unit request, not a waiver): the test
- * fails if any file gains a NEW out-of-subset character, so the list can only
- * shrink. It does not fail when a listed glyph is removed.
+ * Guard the font budget using both ranges declared in global.css. The full
+ * face now has a unicode-range, so symbols outside both faces use a system
+ * fallback instead of downloading it. Composer and Command remain subset-only.
+ * KNOWN tracks historical exceptions and cannot admit a new full-face glyph.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
@@ -22,11 +10,12 @@ import { describe, expect, it } from 'vitest';
 
 const WEB = resolve(process.cwd(), 'src/web-ui');
 
-/** The Latin subset's unicode-range, parsed from the @font-face that serves AshlrSans-latin.woff2. */
-function subsetRanges(): Array<[number, number]> {
+/** Read the actual unicode-range from the matching font face. */
+function fontRanges(fontFile: string): Array<[number, number]> {
   const css = readFileSync(join(WEB, 'design/global.css'), 'utf8');
-  const m = /AshlrSans-latin\.woff2[^}]*?unicode-range:\s*([^;]+);/s.exec(css);
-  if (!m) throw new Error('global.css: no unicode-range on the AshlrSans-latin face');
+  const face = css.match(/@font-face\s*\{[^}]*IBMPlexSans-full\.woff2[^}]*\}|@font-face\s*\{[^}]*AshlrSans-latin\.woff2[^}]*\}/gs)?.find((block) => block.includes(fontFile));
+  const m = face && /unicode-range:\s*([^;]+);/s.exec(face);
+  if (!m) throw new Error(`global.css: no unicode-range on ${fontFile}`);
   return m[1]!.split(',').map((part) => {
     const [a, b] = part.trim().replace(/^U\+/i, '').split('-');
     return [parseInt(a!, 16), parseInt(b ?? a!, 16)];
@@ -72,13 +61,16 @@ const KNOWN: Record<string, string> = {
 };
 
 describe('Phantom UI text stays inside the Ashlr Sans subset', () => {
-  const ranges = subsetRanges();
+  const ranges = fontRanges('AshlrSans-latin.woff2');
+  const fullRanges = fontRanges('IBMPlexSans-full.woff2');
   const inSubset = (cp: number) => cp < 0x80 || ranges.some(([a, b]) => cp >= a && cp <= b);
 
   it('parses the subset range from global.css', () => {
     expect(ranges.length).toBeGreaterThan(10);
     expect(inSubset('→'.codePointAt(0)!)).toBe(true);
     expect(inSubset('◇'.codePointAt(0)!)).toBe(false);
+    expect(fullRanges.some(([a, b]) => '▸'.codePointAt(0)! >= a && '▸'.codePointAt(0)! <= b)).toBe(false);
+    expect(fullRanges.some(([a, b]) => 'Ω'.codePointAt(0)! >= a && 'Ω'.codePointAt(0)! <= b)).toBe(true);
   });
 
   it('no file gains a character that would fetch the 230 KB full face', () => {
@@ -89,7 +81,7 @@ describe('Phantom UI text stays inside the Ashlr Sans subset', () => {
       const bad = new Set<string>();
       for (const ch of stripComments(readFileSync(file, 'utf8'))) {
         const cp = ch.codePointAt(0)!;
-        if (!inSubset(cp) && !allowed.includes(ch)) bad.add(`${ch} U+${cp.toString(16).toUpperCase().padStart(4, '0')}`);
+        if (!inSubset(cp) && fullRanges.some(([a, b]) => cp >= a && cp <= b) && !allowed.includes(ch)) bad.add(`${ch} U+${cp.toString(16).toUpperCase().padStart(4, '0')}`);
       }
       if (bad.size) offenders.push(`${rel}: ${[...bad].join(', ')}`);
     }

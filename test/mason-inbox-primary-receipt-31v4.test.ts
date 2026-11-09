@@ -29,6 +29,7 @@ describe('primary inbox receipt', () => {
     const entry = channelEntry('desktop', 'desk', 'fake message');
     expect(await appendInboxEntry('fake message', { runsDir, now: () => when })).toEqual({
       ok: true, at: '2026-01-02 00:04', bytes: Buffer.byteLength(entry),
+      id: `desk-${createHash('sha256').update(when.toISOString() + 'fake message').digest('hex').slice(0, 16)}`,
     });
     expect(await readFile(inboxPath(), 'utf8')).toBe(entry);
   });
@@ -39,6 +40,7 @@ describe('primary inbox receipt', () => {
     const entry = channelEntry('desktop', 'desk', text);
     expect(await appendInboxEntry(text, { runsDir, source, now: () => when })).toEqual({
       ok: true, at: '2026-01-02 00:04', bytes: Buffer.byteLength(entry),
+      id: `desk-${createHash('sha256').update(when.toISOString() + 'fake message').digest('hex').slice(0, 16)}`,
     });
     expect(await readFile(inboxPath(), 'utf8')).toBe(entry);
     expect(await readFile(join(runsDir, 'dispatch-events.log'), 'utf8')).toBe(

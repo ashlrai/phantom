@@ -3,13 +3,13 @@ import { execFile } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { FLEET_APPS } from '../core/verse/fleet-apps-api.js';
+import { FLEET_APPS } from '../core/fleet/app-await.js';
 import { findAppControlScript, findInstalledAppControlScript, type FleetAppExec } from './fleet-app.js';
 
 const execFileAsync = promisify(execFile);
 
 const USAGE =
-  'Usage: ashlr fleet apps-status [--root <dir>] [--json]\n' +
+  'Usage: ashlr fleet apps-status [--root <dir>] [--json] [--app <name>]...\n' +
   'Status inventory of eight managed GUI apps (Phantom, Codex, Claude, Grok Bot, ChatGPT, Cursor, Safari, Google Chrome) via scripts/mac-bridge/app_control.py. Runs from a Phantom source checkout or from the copy that `ashlr fleet bridge-install --apply` puts under <root>/mac-bridge/current. Exits 0 ok, 1 failure or missing script.';
 
 const MAX_PROBES = 2;
@@ -30,6 +30,7 @@ export interface FleetAppsStatusDeps {
   runsDir?: string;
   maxConcurrent?: number;
   totalDeadline?: number;
+  apps?: readonly string[];
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -76,23 +77,31 @@ export async function cmdFleetAppsStatus(args: string[], deps: FleetAppsStatusDe
 
   // Parse flags: --root <dir> --json, reject unknown/duplicates/positionals.
   const seen = new Set<string>();
+  const selected = new Set<string>();
   let json = false;
   let parsedRoot = root;
   for (let i = 0; i < args.length; i++) {
     const token = args[i]!;
     if (token === '--') break;
     if (token.startsWith('-') && token.length > 1) {
-      if (seen.has(token)) {
+      if (token !== '--app' && seen.has(token)) {
         console.error(`error: duplicate option: ${token}\n${USAGE}`);
         return 2;
       }
-      if (!['--json', '--root'].includes(token)) {
+      if (!['--json', '--root', '--app'].includes(token)) {
         console.error(`error: unknown option: ${token}\n${USAGE}`);
         return 2;
       }
       seen.add(token);
       if (token === '--json') {
         json = true;
+      } else if (token === '--app') {
+        const value = args[++i];
+        if (!value || !(FLEET_APPS as readonly string[]).includes(value)) {
+          console.error(`error: invalid app: ${value ?? ''}\n${USAGE}`);
+          return 2;
+        }
+        selected.add(value);
       } else {
         const value = args[++i];
         if (value === undefined || value.startsWith('-')) {
@@ -108,7 +117,7 @@ export async function cmdFleetAppsStatus(args: string[], deps: FleetAppsStatusDe
     }
   }
 
-  const view = await readFleetAppsStatus({ ...deps, runsDir: parsedRoot });
+  const view = await readFleetAppsStatus({ ...deps, runsDir: parsedRoot, apps: selected.size ? [...selected] : undefined });
   formatAppsStatusResult(view, json);
   return !view.available || view.degraded ? 1 : 0;
 }
@@ -127,19 +136,21 @@ export async function readFleetAppsStatus(deps: FleetAppsStatusDeps = {}): Promi
     findAppControlScript() ?? findInstalledAppControlScript(parsedRoot);
   const generatedAt = new Date(clock()).toISOString();
 
+  const appNames = deps.apps === undefined ? [...FLEET_APPS] : FLEET_APPS.filter(app => deps.apps!.includes(app));
+
   // Missing script: clear unavailable result, nonzero exit.
   if (script === null) {
     const view: FleetAppsStatusView = {
       v: 1,
       generatedAt,
       available: false,
-      apps: FLEET_APPS.map(app => ({ app, running: null, checkedAt: generatedAt })),
+      apps: appNames.map(app => ({ app, running: null, checkedAt: generatedAt })),
     };
     return view;
   }
 
   // Build rows: all apps present, defaulting to unknown.
-  const apps: FleetAppsStatusView['apps'] = FLEET_APPS.map(app => ({
+  const apps: FleetAppsStatusView['apps'] = appNames.map(app => ({
     app,
     running: null,
     checkedAt: generatedAt,
@@ -181,7 +192,7 @@ export async function readFleetAppsStatus(deps: FleetAppsStatusDeps = {}): Promi
 
   // Launch bounded concurrent workers.
   const active: Promise<void>[] = [];
-  const probeSlots = Math.min(maxConcurrent, FLEET_APPS.length);
+  const probeSlots = Math.min(maxConcurrent, apps.length);
   for (let i = 0; i < probeSlots; i++) {
     active.push(worker());
   }

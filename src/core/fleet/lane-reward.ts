@@ -27,11 +27,25 @@ export interface LaneRewardLane {
   meanReward: number | null; // mean rewardPerToken over scored attempts
   outcomes: { published: number; stable: number; reverted: number };
   reasons: Record<string, number>; // unscored attempts by reason
+  /** Attempts whose finish rows carried a valid token count (cost coverage). */
+  measured: number;
+  /** Total tokens spent by measured attempts — failed attempts still cost. */
+  tokensMeasured: number;
+  /** Verified results: attempts scored 'stable' (merged + no adverse post-merge evidence). */
+  verifiedResults: number;
+  /** tokensMeasured ÷ verifiedResults; null = unknown (no verified results or no measured tokens). */
+  tokensPerVerifiedResult: number | null;
 }
 export interface LaneRewardV1 {
   schema: typeof LANE_REWARD_SCHEMA; generatedAt: string; source: 'healthy' | 'missing' | 'degraded';
   weight: number; attempts: number; scored: number; unscored: number;
   meanReward: number | null; lanes: LaneRewardLane[];
+  /** Fleet-wide measured spend in ledger token units (across every lane). */
+  tokensMeasured: number;
+  /** Fleet-wide verified results (stable merges). */
+  verifiedResults: number;
+  /** Fleet-wide tokens ÷ verified results; null = unknown. */
+  tokensPerVerifiedResult: number | null;
 }
 export interface LaneRewardDeps {
   jobsText(path: string): Promise<string | null>; // null = unreadable
@@ -165,7 +179,8 @@ export async function readLaneReward(opts: {
   const text = await deps.jobsText(path);
   const base: LaneRewardV1 = { schema: LANE_REWARD_SCHEMA,
     generatedAt: new Date(Number.isFinite(nowMs) ? nowMs : Date.now()).toISOString(), source: 'healthy',
-    weight: LANE_REWARD_WEIGHT, attempts: 0, scored: 0, unscored: 0, meanReward: null, lanes: [] };
+    weight: LANE_REWARD_WEIGHT, attempts: 0, scored: 0, unscored: 0, meanReward: null, lanes: [],
+    tokensMeasured: 0, verifiedResults: 0, tokensPerVerifiedResult: null };
   if (text === null) return { ...base, source: 'missing' };
 
   const fold = foldLaneRewardAttempts(text);
@@ -175,10 +190,17 @@ export async function readLaneReward(opts: {
     const name = attempt.lane ?? 'unattributed';
     const lane = lanes.get(name) ??
       { lane: name, attempts: 0, scored: 0, unscored: 0, meanReward: null,
-        outcomes: { published: 0, stable: 0, reverted: 0 }, reasons: {}, rewardSum: 0 };
+        outcomes: { published: 0, stable: 0, reverted: 0 }, reasons: {}, rewardSum: 0,
+        measured: 0, tokensMeasured: 0, verifiedResults: 0, tokensPerVerifiedResult: null };
     lanes.set(name, lane);
     lane.attempts++;
     base.attempts++;
+    // Cost accounting: every measured attempt spends tokens, whatever its outcome.
+    if (attempt.tokens !== null) {
+      lane.measured++;
+      lane.tokensMeasured += attempt.tokens;
+      base.tokensMeasured += attempt.tokens;
+    }
     const result = scoreAttempt(job, attempt, pinned);
     if (result.scored) {
       lane.scored++;
@@ -186,6 +208,10 @@ export async function readLaneReward(opts: {
       lane.rewardSum += result.reward;
       rewardSum += result.reward;
       base.scored++;
+      if (result.outcome === 'stable') {
+        lane.verifiedResults++;
+        base.verifiedResults++;
+      }
     } else {
       lane.unscored++;
       lane.reasons[result.reason] = (lane.reasons[result.reason] ?? 0) + 1;
@@ -193,9 +219,20 @@ export async function readLaneReward(opts: {
     }
   }
   base.lanes = [...lanes.values()]
-    .map(({ rewardSum: sum, ...lane }) => ({ ...lane, meanReward: lane.scored > 0 ? sum / lane.scored : null }))
+    .map(({ rewardSum: sum, ...lane }) => ({
+      ...lane,
+      meanReward: lane.scored > 0 ? sum / lane.scored : null,
+      // 'stable' requires a measured token count, so verifiedResults > 0
+      // already implies tokensMeasured > 0; null marks "no verified results".
+      tokensPerVerifiedResult: lane.verifiedResults > 0
+        ? lane.tokensMeasured / lane.verifiedResults
+        : null,
+    }))
     .sort((a, b) => a.lane.localeCompare(b.lane));
   base.meanReward = base.scored > 0 ? rewardSum / base.scored : null;
+  base.tokensPerVerifiedResult = base.verifiedResults > 0
+    ? base.tokensMeasured / base.verifiedResults
+    : null;
   if (fold.dropped > 0) base.source = 'degraded';
   return base;
 }

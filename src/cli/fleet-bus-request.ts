@@ -9,6 +9,10 @@ import { readBusRequestStdin } from '../core/fleet/bus-request-stdin.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 
+const usage = `ashlr fleet bus-request --file <absolute-path|-> --timeout-ms <ms> [--interval-ms <ms>] [--root <absolute-path>]
+Use --file - to read one UTF-8 JSON envelope from stdin (maximum ${MAX_BUS_ENVELOPE_BYTES} bytes). Input and reply share the invocation timeout.
+--root selects the local store. Routing labels do not authenticate peers.`;
+
 interface Dependencies extends RequestDependencies { output?: (text: string) => void; input?: Readable }
 
 function redactFields(value: unknown): unknown {
@@ -30,7 +34,7 @@ export async function cmdFleetBusRequest(args: string[], options: BusInboxOption
     return result.outcome === 'replied' ? 0 : result.outcome === 'invalid-input' ? 2 : 1;
   };
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
-    try { (deps.output ?? console.log)(`ashlr fleet bus-request --file <absolute-path|-> --timeout-ms <ms> [--interval-ms <ms>] [--root <absolute-path>]\nUse --file - to read one UTF-8 JSON envelope from stdin (maximum ${MAX_BUS_ENVELOPE_BYTES} bytes). Input and reply share the invocation timeout.\n--root selects the local store. Routing labels do not authenticate peers.`); return 0; }
+    try { (deps.output ?? console.log)(usage); return 0; }
     catch { return 1; }
   }
   const values: Record<string, string> = {};

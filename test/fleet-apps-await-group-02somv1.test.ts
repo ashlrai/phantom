@@ -100,7 +100,7 @@ describe('fleet apps-await grouped readiness', () => {
     [...args, '--apps', 'Safari'], [...args, '--json'], [...args, '--wat'],
     ['--apps', 'Codex', '--timeout-ms', '0'], ['--apps', 'Codex', '--timeout-ms', '300001'],
     [...args, '--interval-ms', '99'], [...args, '--interval-ms', '60001'],
-  ])('rejects invalid selection or flags without discovery or execution: %j', async (...invalidArgs) => {
+  ])('rejects invalid selection or flags without discovery or execution: %j (%#)', async (...invalidArgs) => {
     const exec = vi.fn<FleetAppExec>(); const locateScript = vi.fn(() => null);
     expect(await cmdFleetAppsAwait(invalidArgs as string[], { exec, locateScript })).toBe(2);
     expect(exec).not.toHaveBeenCalled(); expect(locateScript).not.toHaveBeenCalled();

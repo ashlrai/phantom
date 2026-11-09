@@ -167,7 +167,7 @@ describe('local reader and CLI', () => {
 
   it.each([['ingest'], ['unknown'], ['ingest', '--jobs'], ['ingest', '--json', '--json'],
     ['ingest', '--jobs', 'a', '--jobs', 'b', '--status', 'c'],
-    ['ingest', '--jobs', 'a', '--status', 'b', '--output', 'c']])('rejects invalid CLI arguments: %j', (...args) => {
+    ['ingest', '--jobs', 'a', '--status', 'b', '--output', 'c']])('rejects invalid CLI arguments: %j (%#)', (...args) => {
     const io = { out: vi.fn(), err: vi.fn() };
     expect(cmdMetrics(args, io)).toBe(2); expect(io.out).not.toHaveBeenCalled();
   });

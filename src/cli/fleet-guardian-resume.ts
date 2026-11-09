@@ -20,6 +20,8 @@ import { cmdFleetGuardianLoop } from './fleet-guardian-loop.js';
 // verifier launched, no session allocated), otherwise the delegated code
 // (0 done/stopped, 4 deadline, 5 refused). Error output is fixed text;
 // raw checkpoint or filesystem exceptions are never printed.
+export const usage = 'Usage: ashlr fleet guardian-resume --checkpoint-dir <abs> [--output-dir <abs>] [--apply] [--duration-ms <ms> --interval-ms <ms> [--idle-backoff-max-ms <ms>] [--max-passes <n>]] [--manifest <f>] [--max-retries <n>] [--timeout-ms <ms>] [--stop-file <abs>] [--json] [--stream]';
+
 export async function cmdFleetGuardianResume(
   args: string[],
   deps: GuardianDrainDeps & GuardianRepeatDeps & { writeLine?: (line: string) => void | Promise<void> } = {},

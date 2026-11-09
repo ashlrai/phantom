@@ -24,6 +24,8 @@ const DRAIN_PATH_FLAGS = new Set(['--manifest', '--source-state', '--output-dir'
 // drain. The drain exit code is preserved; a persistence failure returns
 // nonzero even when the drain succeeded. Preview summaries may be saved, but
 // guardian-continue refuses any summary whose mode is not 'apply'.
+export const usage = 'Usage: ashlr fleet guardian-record --result-file <abs> --manifest <abs> --source-state <abs> --output-dir <abs> --max-retries <1..20> --timeout-ms <1..86400000> [--stop-file <abs>] [--apply] [--new-session]';
+
 export async function cmdFleetGuardianRecord(args: string[], deps: GuardianRecordDependencies = {}): Promise<number> {
   const emit = deps.output ?? writeStdoutLine;
   const receipt = async (persisted: boolean, reason: string): Promise<void> => {

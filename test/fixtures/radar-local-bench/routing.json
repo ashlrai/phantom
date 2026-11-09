@@ -1,0 +1,92 @@
+{
+  "schema": "ashlr.radar-local-bench.v1",
+  "suite": "routing",
+  "labels": ["local", "mid", "frontier"],
+  "instruction": "You choose the engine tier for an engineering job. Reply with EXACTLY ONE label and nothing else.\n\nLabels:\n- local — trivial, mechanical, or fully-bounded work the free local model can own end to end (typos, docs, lockfile bumps, single-file tests, regeneration).\n- mid — standard engineering needing a capable agent on a bounded diff (isolated features, moderate fixes, focused refactors with tests).\n- frontier — work that needs the strongest available reasoning or touches sensitive surfaces: security/auth/secrets, merge authority, cross-cutting architecture, anything where a wrong answer is expensive.",
+  "cases": [
+    {
+      "id": "readme-typo",
+      "input": "Job: fix a one-word typo in the README install section.\nSize: one line, one file.\nRisk: none.",
+      "expected": "local",
+      "tokensIn": 215,
+      "tokensOut": 2
+    },
+    {
+      "id": "auth-bypass",
+      "input": "Job: patch an auth bypass in session validation where a forged grant id is accepted.\nSize: small diff, but security-pinned and reviewed by the owner.\nRisk: credential custody and merge authority.",
+      "expected": "frontier",
+      "tokensIn": 230,
+      "tokensOut": 3
+    },
+    {
+      "id": "json-flag-batch",
+      "input": "Job: add a --json output flag to five CLI commands, each printing the documented schema, with tests.\nSize: five handlers plus tests, all bounded.\nRisk: low; output contract only.",
+      "expected": "mid",
+      "tokensIn": 230,
+      "tokensOut": 2
+    },
+    {
+      "id": "lockfile-bump",
+      "input": "Job: apply the grouped devDependency patch bump and commit the regenerated lockfile.\nSize: lockfile only.\nRisk: none.",
+      "expected": "local",
+      "tokensIn": 215,
+      "tokensOut": 2
+    },
+    {
+      "id": "lease-race",
+      "input": "Job: diagnose and fix the lease-renewal race that drops a healthy queue worker under load.\nSize: one module plus a regression test.\nRisk: correctness of shared state; subtle but bounded.",
+      "expected": "mid",
+      "tokensIn": 235,
+      "tokensOut": 2
+    },
+    {
+      "id": "protocol-design",
+      "input": "Job: design and implement the v5 queue dispatch protocol end to end, including schema versioning and the migration window.\nSize: cross-cutting, touches every dispatcher.\nRisk: architectural; mistakes strand in-flight jobs.",
+      "expected": "frontier",
+      "tokensIn": 240,
+      "tokensOut": 3
+    },
+    {
+      "id": "docs-index",
+      "input": "Job: repair four broken links in docs/README.md flagged by the docs check.\nSize: markdown only.\nRisk: none.",
+      "expected": "local",
+      "tokensIn": 210,
+      "tokensOut": 2
+    },
+    {
+      "id": "merge-gate-refactor",
+      "input": "Job: refactor the merge-gate orchestration so each gate is independently testable, across the fleet modules it spans.\nSize: ~40 files, gates that decide merges.\nRisk: a gate that silently weakens is a security regression.",
+      "expected": "frontier",
+      "tokensIn": 240,
+      "tokensOut": 3
+    },
+    {
+      "id": "unit-test-backfill",
+      "input": "Job: backfill unit tests for the pure label-parsing helpers in one file; no behavior change.\nSize: one test file.\nRisk: none.",
+      "expected": "local",
+      "tokensIn": 220,
+      "tokensOut": 2
+    },
+    {
+      "id": "cli-rename-flag",
+      "input": "Job: rename the --dry flag to --dry-run across two commands, keeping the old spelling as a hidden alias, plus doc and test updates.\nSize: two commands, mechanical but multi-site.\nRisk: low; alias keeps compatibility.",
+      "expected": "mid",
+      "tokensIn": 230,
+      "tokensOut": 2
+    },
+    {
+      "id": "secrets-loader",
+      "input": "Job: rework how the config loader resolves secret placeholders so vault references never materialize on disk.\nSize: one module, but credential custody.\nRisk: secrets exposure if wrong.",
+      "expected": "frontier",
+      "tokensIn": 235,
+      "tokensOut": 3
+    },
+    {
+      "id": "fixture-regen",
+      "input": "Job: regenerate the sanitized queue fixtures from the recorded inputs and commit the refreshed JSON.\nSize: mechanical regeneration, two files.\nRisk: none.",
+      "expected": "local",
+      "tokensIn": 215,
+      "tokensOut": 2
+    }
+  ]
+}

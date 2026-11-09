@@ -119,7 +119,7 @@ it('bounds a hanging reader and ignores its late rejection', async () => {
   await tick();
 });
 
-it.each(['read', 'sleep'])('cancels during %s and cleans listeners', async phase => {
+it.each(['read', 'sleep'])('reset-release-await cancels during %s and cleans listeners', async phase => {
   const before = process.listenerCount('SIGINT');
   const controller = new AbortController();
   const read = phase === 'read'
@@ -141,7 +141,7 @@ it('fails on a rejected reader without exposing its error', async () => {
   expect(JSON.stringify(result)).not.toContain('/private/path');
 });
 
-it('rejects invalid and duplicate flags before reading', async () => {
+it('reset-release-await rejects invalid and duplicate flags before reading', async () => {
   const read = readSpy();
   vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
   for (const args of [[], ['--lane', 'a', '--timeout-ms', '0'], ['--lane', 'a', '--lane', 'b', '--timeout-ms', '1'],

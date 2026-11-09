@@ -119,7 +119,7 @@ it.each([
   [], ['--repo', '../bad', '--to', 'leader'], ['--repo', 'x/y', '--to', 'bad address'],
   ['--repo', 'x/y', '--to', 'leader', '--repo', 'x/y'], ['--repo', 'x/y', '--to', 'leader', '--json', '--json'],
   ['--repo', 'x/y', '--to', '--dry-run'], ['--repo', 'x/y', '--to', 'leader', '--bogus'],
-])('rejects malformed arguments before I/O: %j', async (...argv) => {
+])('rejects malformed arguments before I/O: %j (%#)', async (...argv) => {
   const h = setup();
   expect(await h.invoke(argv)).toBe(2);
   expect(h.calls).toHaveLength(0);

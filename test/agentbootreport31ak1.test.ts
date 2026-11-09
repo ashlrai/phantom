@@ -1,3 +1,4 @@
+import { nodeFixtureHeader } from './helpers/node-fixture.js';
 import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -6,8 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const script = resolve('scripts/agent-boot-report.mjs');
 let dir: string, fake: string, log: string;
-const fixture = `#!${process.execPath}
-const fs = require('node:fs');
+const fixture = `${nodeFixtureHeader(process.execPath)}const fs = require('node:fs');
 const args = process.argv.slice(2);
 const key = args.slice(0, 2).join(' ');
 fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({args, pid: process.pid}) + '\\n');

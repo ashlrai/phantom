@@ -5,7 +5,7 @@
  * scroll container, so scroll/focus/details state survives navigation
  * consistently everywhere instead of each view reimplementing it.
  */
-import { useRef, useState } from 'react';
+import { Suspense, useRef, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Sidebar } from './Sidebar.js';
 import { Topbar } from './Topbar.js';
@@ -29,7 +29,7 @@ export function Shell() {
         <Topbar onOpenPalette={() => setPaletteOpen(true)} />
         <main ref={mainRef} className={styles.main} id="main-content" tabIndex={-1}>
           <RouteErrorBoundary resetKey={location.pathname}>
-            <Outlet />
+            <Suspense fallback={<p role="status">Loading view…</p>}><Outlet /></Suspense>
           </RouteErrorBoundary>
         </main>
       </div>

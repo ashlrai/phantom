@@ -241,8 +241,14 @@ describe.skipIf(!nativeMetadataLaunchSupported())('durable exec-in-place collect
     expect(existsSync(join(root, 'contact'))).toBe(false); const next = await acquire(); next.close();
   });
   it('retains the hold when the launcher dies before publishing its own identity', async () => {
-    writeFileSync(join(root, 'gate.mjs'), "await new Promise(()=>{});", { mode: 0o600 });
+    const ready = join(root, 'gate-ready');
+    // An unresolved top-level await alone lets Node exit. Keep the pre-import
+    // gate alive and observe that this exact owned child reached it before kill.
+    writeFileSync(join(root, 'gate.mjs'), `import {writeFileSync} from 'node:fs';setInterval(()=>{},1000);writeFileSync(${JSON.stringify(ready)},String(process.pid));await new Promise(()=>{});`, { mode: 0o600 });
     const { child, pid } = await owner('spawned');
+    await until(() => existsSync(ready) ? true : null);
+    expect(Number(readFileSync(ready, 'utf8'))).toBe(pid);
+    expect(ownedGroups.get(pid!)).toEqual(expect.any(String));
     expect(verifiedProcessStartIdentity(pid!, { requiredSource: 'ps-lstart' })?.ref).toBe(ownedGroups.get(pid!));
     process.kill(-pid!, 'SIGKILL'); await until(() => groupAbsent(pid!) ? true : null); ownedGroups.delete(pid!);
     await killOwner(child);
