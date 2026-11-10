@@ -22,6 +22,7 @@ import { collisionHeadline, collisionSteerPrefill, orderOutsidePrs } from './out
 import { recordMergeSample, summariseMerges, useMergeHistory } from './merges-history-store.js';
 import { ObserveSlice } from '../fleet-observe/ObserveFacts.js';
 import { ReleaseStrip } from './ReleaseStrip.js';
+import { RecutLoopStrip } from './RecutLoopStrip.js';
 import { RepoBacklogStrip } from './RepoBacklogStrip.js';
 import styles from './fleet-merges.module.css';
 
@@ -68,11 +69,11 @@ export function FleetMergesPane({ visible, host }: PaneProps) {
     catch { setNotice('Copy failed'); }
   };
 
-  if (read.data === null || (read.error instanceof ApiError && read.error.status === 404)) return <section className={styles.root} aria-label="Merges"><ReleaseStrip visible={visible} /><p className={styles.message}>Live runs not in this build</p></section>;
-  if (read.data === undefined) return <section className={styles.root} aria-label="Merges"><ReleaseStrip visible={visible} /><div role="status">{read.status === 'error' ? 'Live runs are unavailable.' : <><span>Reading live runs…</span><SkeletonLine /><SkeletonLine /></>}</div></section>;
+  if (read.data === null || (read.error instanceof ApiError && read.error.status === 404)) return <section className={styles.root} aria-label="Merges"><ReleaseStrip visible={visible} /><RecutLoopStrip visible={visible} /><p className={styles.message}>Live runs not in this build</p></section>;
+  if (read.data === undefined) return <section className={styles.root} aria-label="Merges"><ReleaseStrip visible={visible} /><RecutLoopStrip visible={visible} /><div role="status">{read.status === 'error' ? 'Live runs are unavailable.' : <><span>Reading live runs…</span><SkeletonLine /><SkeletonLine /></>}</div></section>;
   return <section className={styles.root} aria-label="Merges">
     <ObserveSlice visible={visible} part="merges" />
-    <ReleaseStrip visible={visible} />
+    <ReleaseStrip visible={visible} /><RecutLoopStrip visible={visible} />
     <div className={styles.headerActions}><p className={styles.header}>{data.count ?? '—'} merged in the last hour · {data.pending.length} publishes waiting</p>
       <p className={styles.header}>{speed.medianOpenToMergeMs === null && speed.perHour === null ? 'no timing in this snapshot yet' : [speed.medianOpenToMergeMs === null ? null : `median ${openToMergeText(speed.medianOpenToMergeMs)}`, speed.perHour === null ? null : `${speed.perHour}/h`].filter(Boolean).join(' · ')}</p>
       {verdicts.some(verdict => verdict.runId !== null) && <p className={styles.header}>{ciVerdictCounts(verdicts)}</p>}
