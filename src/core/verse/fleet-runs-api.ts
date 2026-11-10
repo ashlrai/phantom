@@ -7,7 +7,7 @@ import { getLaneModelSnapshot, type LaneModelSnapshot } from '../fleet/lane-mode
 import { VERSE_FLEET_LANE_MODELS_PATH, toFleetLaneModelsV1, type FleetLaneModelsV1 } from './fleet-lane-models-contract.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { lstatSync, mkdirSync } from 'node:fs';
 import type { ApiModule } from './api-modules.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
@@ -25,6 +25,7 @@ import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_GLA
 import type { SupersededReadV1 } from '../fleet/superseded-read.js';
 import { VERSE_FLEET_RUNS_STOP_PATH, stopJob, type JobStopResult, type StopJobOptions } from '../fleet/job-stop.js';
 import { STRAY_ID_PATTERN } from '../fleet/stray-slots.js';
+import { laneMedians, overrunOf } from '../fleet/job-overrun.js';
 import type { reassignQueuedJobs } from '../fleet/runs-reassign.js';
 import { isJobCommand, renderJobCommandReply, runTelegramJobCommand } from '../comms/telegram-job-command.js';
 
@@ -52,6 +53,39 @@ const DEFAULT_INBOX_SOURCE = 'Phantom desktop';
 // 256 KiB file, oldest evicted first.
 const INTERJECT_ACK_LIMIT = 200;
 const INTERJECT_ACK_MAX_BYTES = 256 * 1024;
+// One optional screenshot per interjection: 5 MiB binary, ~6.7 MiB as base64
+// on the wire — this POST reads a larger body cap than the shared default.
+const INTERJECT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const INTERJECT_IMAGE_MAX_BASE64_CHARS = Math.ceil(INTERJECT_IMAGE_MAX_BYTES / 3) * 4;
+const INTERJECT_POST_MAX_BODY_BYTES = 7 * 1024 * 1024;
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+interface InterjectImage { bytes: Buffer; ext: 'png' | 'jpg' }
+
+/** Decode the wire `image` field; the declared client type is never trusted,
+ * only the magic bytes decide the stored extension. */
+function parseInterjectImage(value: unknown): InterjectImage | 'invalid' | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || value.length === 0 || value.length > INTERJECT_IMAGE_MAX_BASE64_CHARS ||
+    value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) return 'invalid';
+  const bytes = Buffer.from(value, 'base64');
+  if (bytes.length === 0 || bytes.length > INTERJECT_IMAGE_MAX_BYTES) return 'invalid';
+  if (bytes.length >= PNG_MAGIC.length && bytes.subarray(0, PNG_MAGIC.length).equals(PNG_MAGIC)) return { bytes, ext: 'png' };
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return { bytes, ext: 'jpg' };
+  return 'invalid';
+}
+
+/** `<runsDir>/leader/inbound/screens/<UTC yyyymmddTHHMMSSZ>-<sha256[:8]>.<ext>`
+ * — the filename is server-minted; a client name or path is never consulted. */
+function storeInterjectImage(image: InterjectImage, runsDir: string, stamp: string): string {
+  const dir = join(runsDir, 'leader', 'inbound', 'screens');
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const sha = createHash('sha256').update(image.bytes).digest('hex').slice(0, 8);
+  const file = join(dir, `${stamp}-${sha}.${image.ext}`);
+  writePrivateFileAtomically(join(dir, `.${randomUUID()}.tmp`), file, image.bytes,
+    { anchorPath: dir, label: 'Interject screenshot' });
+  return file;
+}
 // The canonical value is exported from fleet/superseded-read.js; repeating it
 // here under the export's own literal type keeps the reader module (and its gh
 // transport) out of this router's load graph until the route is requested.
@@ -194,8 +228,8 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   // pendingSources the one belonging to the request inside receive(). Each
   // request removes its ticket as soon as its receive() settles (or in the
   // POST handler's finally if receive throws), before any later await.
-  const pendingSources: { source: string; id?: string }[] = [];
-  const releaseTicket = (ticket: { source: string; id?: string }): void => {
+  const pendingSources: { source: string; id?: string; image?: InterjectImage }[] = [];
+  const releaseTicket = (ticket: { source: string; id?: string; image?: InterjectImage }): void => {
     const i = pendingSources.indexOf(ticket);
     if (i >= 0) pendingSources.splice(i, 1);
   };
@@ -211,7 +245,16 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     receiptStore: deps.receiptStore ?? (deps.runsDir === undefined ? undefined : createLocalChannelDedupeStore(deps.runsDir)),
     write: async (envelope) => {
       const ticket = pendingSources[0];
-      const result = await append(envelope.body, ticket?.source ?? DEFAULT_INBOX_SOURCE) as InboxAppendResult;
+      // The image tag joins only at write time: dedupe still keys on the text
+      // (or requestId) alone, and a replayed/duplicate send writes no file.
+      // A throw fails closed as write-failed — no partial inbox line.
+      let text = envelope.body;
+      if (ticket?.image !== undefined) {
+        const stamp = new Date(now()).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+        const suffix = ` [image: ${storeInterjectImage(ticket.image, deps.runsDir ?? defaultRunsDir(), stamp)}]`;
+        text = envelope.body.slice(0, Math.max(0, FLEET_RUNS_INBOX_MAX_CHARS - suffix.length)) + suffix;
+      }
+      const result = await append(text, ticket?.source ?? DEFAULT_INBOX_SOURCE) as InboxAppendResult;
       if (result.ok && ticket && typeof result.id === 'string') ticket.id = result.id;
       return result;
     },
@@ -334,6 +377,18 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       result.outbox = project(entries, outboxShape) as FleetRunsV1['outbox'];
     } catch { result.outbox = []; }
     await sourcesDone;
+    // Overrun flags are additive evidence on projected workers: the ledger can
+    // only add `overrun`, never rewrite a projected field or the ordering.
+    if (result.workers.length > 0) {
+      const medians = await overrunMedians();
+      if (medians.size > 0) {
+        const at = now();
+        result.workers = result.workers.map(worker => {
+          const overrun = overrunOf(worker, medians, at);
+          return overrun === null ? worker : { ...worker, overrun };
+        });
+      }
+    }
     if (result.sources.merges === 'healthy' && result.mergesLastHour.items.length > 0) {
       try {
         const mod: typeof import('../intent/merge-snapshot.js') = await import('../intent/merge-snapshot.js' as string);
@@ -341,6 +396,40 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       } catch { /* Private ledger failures must not affect the snapshot. */ }
     }
     return result;
+  }
+  // Lane-median duration evidence is a slow statistic: refresh at most once a
+  // minute from the shared agent-activity ledger fold (the same bounded
+  // jobs.jsonl tail /api/fleet/activity serves). A missing or malformed
+  // ledger yields an empty map — workers then carry no overrun field and the
+  // composite read still succeeds.
+  let overrunCache: { at: number; medians: ReadonlyMap<string, number> } | undefined;
+  let overrunFlight: Promise<ReadonlyMap<string, number>> | undefined;
+  function overrunMedians(): Promise<ReadonlyMap<string, number>> {
+    if (!overrunFlight && (!overrunCache || now() - overrunCache.at >= 60_000)) {
+      overrunFlight = (async () => {
+        try {
+          const { readAgentActivity } = await import('../fleet/agent-activity.js');
+          const activity = await readAgentActivity({
+            runsDir: deps.runsDir ?? defaultRunsDir(), now,
+            // The reader's widest page, so each lane's newest finished
+            // durations — not just the default 6h slice — feed the median.
+            windowMs: 168 * 3_600_000, limit: 500,
+          });
+          const finished = activity.jobs.flatMap(job => {
+            if (job.stage !== 'finished') return [];
+            const seconds = job.wallS ?? job.runS;
+            return [{ lane: job.lane, durationMs: seconds === null ? null : seconds * 1000 }];
+          });
+          return laneMedians(finished, { window: 200 });
+        } catch {
+          return new Map<string, number>();
+        }
+      })().then(medians => {
+        overrunCache = { at: now(), medians };
+        return medians;
+      }).finally(() => { overrunFlight = undefined; });
+    }
+    return overrunFlight ?? Promise.resolve(overrunCache!.medians);
   }
   const laneModels = deps.laneModels ?? (() => getLaneModelSnapshot({ runsDir: deps.runsDir ?? defaultRunsDir() }));
   let modelCache: { at: number; value: FleetLaneModelsV1 } | undefined;
@@ -518,13 +607,17 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
     if (!passesMutationGate(req, res, ctx.token)) return true;
     let body: unknown;
-    try { body = JSON.parse(await readBody(req)); } catch { body = null; }
-    if (!record(body) || Object.keys(body).some(k => k !== 'text' && k !== 'source' && k !== 'requestId') ||
+    try { body = JSON.parse(await readBody(req, INTERJECT_POST_MAX_BODY_BYTES)); } catch { body = null; }
+    if (!record(body) || Object.keys(body).some(k => k !== 'text' && k !== 'source' && k !== 'requestId' && k !== 'image') ||
       typeof body.text !== 'string' || !body.text.trim() || body.text.trim().length > FLEET_RUNS_INBOX_MAX_CHARS ||
       (body.source !== undefined && (typeof body.source !== 'string' || !/^[A-Za-z0-9 ._-]{1,40}$/.test(body.source))) ||
       (body.requestId !== undefined && (typeof body.requestId !== 'string' || !CHANNEL_REQUEST_ID_PATTERN.test(body.requestId)))) {
       sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid inbox body' }); return true;
     }
+    // An optional screenshot: the wire value is base64 only — name/path fields
+    // a client might send are already refused by the key whitelist above.
+    const image = parseInterjectImage(body.image);
+    if (image === 'invalid') { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid inbox body' }); return true; }
     // A client-minted requestId marks one composed message; the ledger below
     // replays its first response for a repeat instead of appending again.
     // Requests without an id keep the receiver's text-window dedupe only.
@@ -532,7 +625,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     const text = body.text;
     const source = typeof body.source === 'string' ? body.source : DEFAULT_INBOX_SOURCE;
     const post = async (): Promise<void> => {
-      const ticket: { source: string; id?: string } = { source };
+      const ticket: { source: string; id?: string; image?: InterjectImage } = { source, ...(image === undefined ? {} : { image }) };
       pendingSources.push(ticket);
       try {
         // x-ashlr-channel is trusted only because this route sits on loopback
