@@ -6,10 +6,11 @@ import { parseArgs } from 'node:util';
 import { loadConfigReadOnlyStrict } from '../core/config.js';
 import { buildDoctorReport, pollInboundSince, readCursor } from '../core/integrations/imessage.js';
 import { ingestIMessages } from '../core/comms/imessage-inbox-bridge.js';
+import { sendLeaderReplies } from '../core/comms/imessage-leader-replies.js';
 import { tickTeammateMessages } from '../core/comms/imessage-teammate-worker.js';
 import type { AshlrConfig } from '../core/types.js';
 
-const USAGE = 'phm imessage doctor [--json]; phm imessage poll [--apply] [--json]; phm imessage respond --apply [--json]';
+const USAGE = 'phm imessage doctor [--json]; phm imessage poll [--apply] [--json]; phm imessage respond --apply [--json]; phm imessage replies [--json]';
 
 function loadCfg(): AshlrConfig | null {
   try { return loadConfigReadOnlyStrict(); } catch { return null; }
@@ -36,6 +37,16 @@ export async function cmdIMessage(args: string[]): Promise<number> {
       return result.state === 'healthy' || result.state === 'busy' ? 0 : 1;
     }
 
+    if (command === 'replies') {
+      // Leader replies to Mason's handle. Dry run unless comms.leaderRepliesSend is true.
+      if (!cfg) throw new Error('config unreadable');
+      const r = await sendLeaderReplies(cfg);
+      out(r, r.dryRun
+        ? `Leader replies (dry run): ${r.waiting} waiting; set comms.leaderRepliesSend to true to send`
+        : `Leader replies: ${r.state}; sent ${r.sent}, failed ${r.failed}, waiting ${r.waiting}`);
+      return r.state === 'error' || r.state === 'unverified-handle' || r.failed > 0 ? 1 : 0;
+    }
+
     if (command === 'doctor') {
       if (values.apply) throw new Error('--apply is only supported for poll');
       const report = await buildDoctorReport({ cfg });
@@ -48,6 +59,7 @@ export async function cmdIMessage(args: string[]): Promise<number> {
       if (!cfg) throw new Error('config unreadable');
       if (values.apply) {
         const r = await ingestIMessages(cfg);
+        await sendLeaderReplies(cfg); // best effort; dry run unless comms.leaderRepliesSend is true
         const f = r.findings;
         const mirror = f === null || (f.posted === 0 && f.pending === 0) ? '' : `, findings +${f.posted}${f.pending > 0 ? ` (${f.pending} pending)` : ''}`;
         out({ dryRun: false, ...r }, `iMessage poll: ${r.state}; scanned ${r.scanned}, accepted ${r.accepted}, duplicate ${r.duplicate}, refused ${r.refused}${r.deferred ? ', deferred' : ''}${r.notMason > 0 ? `, not Mason ${r.notMason}` : ''}${r.teammate > 0 ? `, teammate ${r.teammate}` : ''}${mirror}`);
