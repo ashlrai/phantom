@@ -79,6 +79,7 @@ function parseInterjectImage(value: unknown): InterjectImage | 'invalid' | undef
  * — the filename is server-minted; a client name or path is never consulted. */
 function storeInterjectImage(image: InterjectImage, runsDir: string, stamp: string): string {
   const dir = join(runsDir, 'leader', 'inbound', 'screens');
+  // sync-io-ok: <runsDir> is the internal fleet state dir (~/.ashlr-runs), not an operator folder
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const sha = createHash('sha256').update(image.bytes).digest('hex').slice(0, 8);
   const file = join(dir, `${stamp}-${sha}.${image.ext}`);
@@ -276,6 +277,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     requestAcksLoaded = true;
     const file = requestAcksFile!;
     const parent = requestAcksDir!;
+    // sync-io-ok: requestAcksFile lives under the internal runs dir (~/.ashlr-runs), not an operator folder
     try { lstatSync(file); } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
       throw error;
@@ -302,6 +304,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         requestAcks.delete(requestAcks.keys().next().value!);
         text = serialize();
       }
+      // sync-io-ok: the ack-ledger dir lives under the internal runs dir (~/.ashlr-runs), not an operator folder
       mkdirSync(dir, { recursive: true });
       writePrivateFileAtomically(join(dir, `.${randomUUID()}.tmp`), requestAcksFile, text,
         { anchorPath: dir, label: 'Interject request ledger' });

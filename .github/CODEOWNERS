@@ -425,6 +425,7 @@
 /test/fleet-merge-latency.test.ts @masonwyatt23
 /test/fleet-merge-pace-core-02.test.ts @masonwyatt23
 /test/fleet-merge-pace.test.ts @masonwyatt23
+/test/fleet-merge-plan.test.ts @masonwyatt23
 /test/fleet-merge-queue-age.test.ts @masonwyatt23
 /test/fleet-merge-recover.test.ts @masonwyatt23
 /test/fleet-merge-retry.test.ts @masonwyatt23

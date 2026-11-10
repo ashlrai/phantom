@@ -2748,6 +2748,8 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet direction [--json] ${cyan('# read-only autonomous direction report')}`);
   console.log(`    ashlr fleet init [--write]    ${cyan('# print/merge a starter cfg.foundry')}`);
   console.log('    ashlr fleet merge-throughput --input <snapshot.json> [--json]');
+  console.log(`    phm fleet merge-plan [--input <file>] [--hours N] [--previous <report.json>] [--json]`);
+  console.log(`                          ${cyan('# scoreboard + drain plan: merges/h, failure causes, rebase, superseded (RQ-MERGE-THROUGHPUT-1)')}`);
   console.log(`    ashlr fleet pause             ${cyan('# engage kill switch (pause fleet)')}`);
   console.log(`    ashlr fleet resume            ${cyan('# release kill switch (resume fleet)')}`);
   console.log(`    ashlr fleet doctor [--json]   ${cyan('# engine readiness preflight (M81)')}`);
