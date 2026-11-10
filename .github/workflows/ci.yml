@@ -41,7 +41,7 @@ permissions:
 # PR runs cancel superseded revisions. merge_group, schedule, dispatch and
 # workflow_call runs each get their own group (keyed by run_id) and never cancel.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.release_gate && format('phantom-release-{0}', github.ref_name) || format('ci-{0}', github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id)) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
