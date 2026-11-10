@@ -17,6 +17,8 @@ export type { ChannelPublishState } from './channel-bus-publish.js';
 
 export const INBOUND_CHANNELS = ['email', 'telegram', 'imessage', 'mobile', 'desktop', 'page', 'cli'] as const;
 export type InboundChannel = typeof INBOUND_CHANNELS[number];
+/** Client-minted request-id grammar, shared with the verse inbox route. */
+export const CHANNEL_REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 export const CHANNEL_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
 export const CHANNEL_ACK_TIMEOUT_MS = 2_000;
 export const CHANNEL_PUBLISH_TIMEOUT_MS = 2_000;
@@ -29,6 +31,11 @@ export const OPERATOR_SENDER_ID = 'mason';
 export interface ChannelMessage {
   /** Adapter-verified originating message or thread, never parsed from body text. */
   threadId?: string;
+  /** Client-minted idempotency key for one composed message, never identity.
+   * When present it — not sender+text — keys the dedupe receipt: a retry of
+   * the same message collapses onto its first receipt, while distinct ids
+   * land as distinct entries even when their text is identical. */
+  requestId?: string;
   channel: InboundChannel;
   /** Authenticated channel identity supplied by the trusted adapter. No credentials. */
   verifiedSenderId: string;
@@ -187,6 +194,10 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
     if (input.canonicalSenderId !== undefined && (typeof input.canonicalSenderId !== 'string' ||
         !input.canonicalSenderId.trim() || input.canonicalSenderId.length > 128 ||
         scrubSecrets(input.canonicalSenderId) !== input.canonicalSenderId)) return { ok: false, reason: 'invalid' };
+    if (input.requestId !== undefined && (typeof input.requestId !== 'string' ||
+        !CHANNEL_REQUEST_ID_PATTERN.test(input.requestId) || scrubSecrets(input.requestId) !== input.requestId)) {
+      return { ok: false, reason: 'invalid' };
+    }
     if (input.body.length > INBOX_MAX_CHARS) return { ok: false, reason: 'too-long' };
     // Check before normalization too: normalization must never hide a credential.
     if (scrubSecrets(input.body) !== input.body) return { ok: false, reason: 'secret-shaped' };
@@ -205,7 +216,12 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
       // Normalized text: cross-channel resends differing only in case/spacing are one instruction.
       // The dedupe domain is the canonical person id when the adapter mapped one.
       const senderKey = input.canonicalSenderId ?? input.verifiedSenderId;
-      const hash = createHash('sha256').update(JSON.stringify([senderKey, normalizeForDedupe(body)])).digest('hex');
+      // A client requestId is itself the message identity: the receipt binds
+      // that id, so same-text resends carrying distinct ids are still distinct
+      // orders and only a repeat of the same id collapses.
+      const hash = createHash('sha256').update(input.requestId === undefined
+        ? JSON.stringify([senderKey, normalizeForDedupe(body)])
+        : JSON.stringify(['request', input.requestId])).digest('hex');
       const previous = receipts.get(hash);
       const dedupeKey = previous?.key ?? createHash('sha256').update(JSON.stringify([hash, now])).digest('hex');
       const envelope: ChannelEnvelope = {
@@ -261,7 +277,7 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
   }
   return (input) => {
     // Snapshot before queuing: callers cannot change identity/body while waiting.
-    const snapshot = { channel: input?.channel, verifiedSenderId: input?.verifiedSenderId, canonicalSenderId: input?.canonicalSenderId, body: input?.body, threadId: input?.threadId };
+    const snapshot = { channel: input?.channel, verifiedSenderId: input?.verifiedSenderId, canonicalSenderId: input?.canonicalSenderId, body: input?.body, threadId: input?.threadId, requestId: input?.requestId };
     const result = tail.then(() => receive(snapshot));
     tail = result.then(() => undefined, () => undefined);
     return result;
