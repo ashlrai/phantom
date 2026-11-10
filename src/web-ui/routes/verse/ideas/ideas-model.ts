@@ -8,6 +8,7 @@ import { repoDisplayName } from '../autonomy/format.js';
 
 export interface IdeaRow {
   key: string;
+  id: string | null;
   title: string;
   repo: string;
   /** Raw score, or null when the loop did not score the item. */
@@ -48,6 +49,7 @@ export function rankIdeas(items: readonly VerseBacklogItem[]): IdeaRow[] {
     const score = typeof item.score === 'number' && Number.isFinite(item.score) ? item.score : null;
     rows.push({
       key: `${id ?? title}#${order}`,
+      id: id ?? null,
       title,
       repo: repo ? repoDisplayName(repo) : UNASSIGNED,
       score,

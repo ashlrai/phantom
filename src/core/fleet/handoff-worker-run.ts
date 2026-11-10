@@ -56,6 +56,8 @@ export interface HandoffWorkerRunOptions {
   argv: readonly string[];
   /** Worker wall-clock deadline in milliseconds, 1..3600000; absent means unbounded. */
   timeoutMs?: number;
+  /** Programmatic cancellation passed through to the context worker. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -78,6 +80,7 @@ export async function runHandoffWorker(opts: HandoffWorkerRunOptions, io: Contex
       (opts.busAfter !== undefined && !cursor(opts.busAfter)) ||
       (opts.busAfter !== undefined && opts.busAddress === undefined) ||
       !Number.isSafeInteger(byteBudget) || byteBudget < 1 || byteBudget > HANDOFF_RUN_MAX_BYTE_BUDGET ||
+      (opts.signal !== undefined && !(opts.signal instanceof AbortSignal)) ||
       (opts.timeoutMs !== undefined &&
         (!Number.isSafeInteger(opts.timeoutMs) || opts.timeoutMs < 1 || opts.timeoutMs > HANDOFF_RUN_MAX_TIMEOUT_MS))) {
     diagnostic('invalid input');
@@ -137,7 +140,7 @@ export async function runHandoffWorker(opts: HandoffWorkerRunOptions, io: Contex
       return 1;
     }
     return await runContextWorker({ snapshot: snapshotPath, prompt: promptPath, argv: [...opts.argv],
-      cwd: opts.cwd, timeoutMs: opts.timeoutMs }, io);
+      cwd: opts.cwd, timeoutMs: opts.timeoutMs, signal: opts.signal }, io);
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }
