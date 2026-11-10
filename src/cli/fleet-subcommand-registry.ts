@@ -96,6 +96,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'defer-stale': () => import('./fleet-defer-stale.js'),
   'dep-gate': () => import('./fleet-dep-gate.js'),
   'deploy-plan': () => import('./fleet-deploy-plan.js'),
+  'desktop-errors': () => import('./fleet-desktop-errors.js'),
   'diff-scan': () => import('./fleet-diff-scan.js'),
   'dirty-landed': () => import('./fleet-dirty-landed.js'),
   'disk': () => import('./fleet-disk.js'),
