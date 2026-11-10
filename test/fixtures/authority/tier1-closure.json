@@ -1388,6 +1388,8 @@
     "src/core/website/host-release.ts",
     "src/core/website/output-materialization.ts",
     "src/core/website/release-metadata.ts",
+    "src/core/workbench/secrets-model.ts",
+    "src/core/workbench/secrets.ts",
     "src/core/worktree-retention.ts",
     "src/core/world/export.ts",
     "src/core/world/path.ts",
