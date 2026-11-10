@@ -27,7 +27,7 @@ import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { MonogramTile } from '../apps/MonogramTile.js';
 import { describeContextError, useTokenGate } from '../context/use-token-gate.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import { acuLevel, devinConsumptionEvidence, devinHeadline, devinModelsLines, devinReadinessRow, devinSelfIdentityEvidence, devinTaskDiagnosticEvidence, devinUsageEvidence, DEVIN_USAGE_LINK, formatAcu, formatConsumptionAcu, safeDevinHref, waitingTasks } from '../devin/devin-model.js';
+import { acuLevel, devinConsumptionEvidence, devinFleetModelEvidence, devinFleetModelLines, devinHeadline, devinModelsLines, devinReadinessRow, devinSelfIdentityEvidence, devinTaskDiagnosticEvidence, devinUsageEvidence, DEVIN_USAGE_LINK, formatAcu, formatConsumptionAcu, safeDevinHref, waitingTasks } from '../devin/devin-model.js';
 import { DEVIN_POLL_MS, devinQuery, messageDevinTask, refreshDevinConsumption } from '../devin/devin-queries.js';
 import { DevinDashboardReader } from '../devin/DevinDashboardReader.js';
 import { requestGuarded } from '../shell/guarded-action.js';
@@ -163,6 +163,8 @@ export function DevinResource({ facts = null, bases }: DevinResourceProps = {}) 
   const leftPercent = budget.acuBudgetTotal > 0 ? Math.max(0, Math.min(100, (available / budget.acuBudgetTotal) * 100)) : 0;
   const waiting = waitingTasks(overview.tasks);
   const modelLines = overview.cli && overview.cli.state !== 'missing' ? devinModelsLines(overview.models) : null;
+  const fleetModel = devinFleetModelEvidence(overview.fleetModel);
+  const fleetModelLines = fleetModel ? devinFleetModelLines(fleetModel) : null;
   return (
     <li className={styles.card} data-resource="devin" data-devin={status.state}>
       <div className={styles.cardHead}>
@@ -241,6 +243,7 @@ export function DevinResource({ facts = null, bases }: DevinResourceProps = {}) 
           </p>
           {usage ? <p className={styles.subtle}>
             {formatAcu(usage.reported)} reported usage + adjustment · {formatAcu(usage.held)} held exposure · about {formatMetricUsd(budget.estimatedUsdUsed)} for recorded usage
+            {fleetModel?.promo === 'free' ? ' (fleet model is a free promo; estimate may not apply)' : ''}
             <span className={styles.pill} data-tone="neutral" title={budget.estimateNote}>estimate</span>
           </p> : <p className={styles.fine}>This server combines reservations and usage. Recorded cost coverage is unavailable.</p>}
           </> : <p className={styles.subtle}>Local budget capacity is unknown; task evidence is unavailable.</p>}
@@ -273,6 +276,19 @@ export function DevinResource({ facts = null, bases }: DevinResourceProps = {}) 
           title={modelLines.stale ? 'Not listed yet — the full list appears after the CLI is asked (in the background).' : undefined}>
           {modelLines.catalog} · {modelLines.defaultLine}
         </p>
+      ) : null}
+      {fleetModelLines ? (
+        // The model a fleet run launches with (devin.fleetModel else the
+        // compiled default) and whether it is a free promo on the server's own
+        // reading; a paid models.json key gets its own warning line.
+        <>
+          <p className={styles.subtle} data-devin-fleet-model={fleetModel?.promo ?? 'unknown'}>{fleetModelLines.row}</p>
+          {fleetModelLines.warnings.map(warning => (
+            <p className={styles.status} data-tone="warning" key={warning}>
+              <span className={styles.statusDot} aria-hidden="true" /><span>{warning}</span>
+            </p>
+          ))}
+        </>
       ) : null}
       {overview.cli && overview.cli.state !== 'missing' ? (
         // CLI session telemetry is not imported into this cloud-session budget.
