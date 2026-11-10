@@ -22,6 +22,8 @@ import { collisionHeadline, collisionSteerPrefill, orderOutsidePrs } from './out
 import { recordMergeSample, summariseMerges, useMergeHistory } from './merges-history-store.js';
 import { ObserveSlice } from '../fleet-observe/ObserveFacts.js';
 import { ReleaseStrip } from './ReleaseStrip.js';
+import { RecutLoopStrip } from './RecutLoopStrip.js';
+import { RepoBacklogStrip } from './RepoBacklogStrip.js';
 import styles from './fleet-merges.module.css';
 
 export function FleetMergesPane({ visible, host }: PaneProps) {
@@ -67,15 +69,16 @@ export function FleetMergesPane({ visible, host }: PaneProps) {
     catch { setNotice('Copy failed'); }
   };
 
-  if (read.data === null || (read.error instanceof ApiError && read.error.status === 404)) return <section className={styles.root} aria-label="Merges"><ReleaseStrip visible={visible} /><p className={styles.message}>Live runs not in this build</p></section>;
-  if (read.data === undefined) return <section className={styles.root} aria-label="Merges"><ReleaseStrip visible={visible} /><div role="status">{read.status === 'error' ? 'Live runs are unavailable.' : <><span>Reading live runs…</span><SkeletonLine /><SkeletonLine /></>}</div></section>;
+  if (read.data === null || (read.error instanceof ApiError && read.error.status === 404)) return <section className={styles.root} aria-label="Merges"><ReleaseStrip visible={visible} /><RecutLoopStrip visible={visible} /><p className={styles.message}>Live runs not in this build</p></section>;
+  if (read.data === undefined) return <section className={styles.root} aria-label="Merges"><ReleaseStrip visible={visible} /><RecutLoopStrip visible={visible} /><div role="status">{read.status === 'error' ? 'Live runs are unavailable.' : <><span>Reading live runs…</span><SkeletonLine /><SkeletonLine /></>}</div></section>;
   return <section className={styles.root} aria-label="Merges">
     <ObserveSlice visible={visible} part="merges" />
-    <ReleaseStrip visible={visible} />
+    <ReleaseStrip visible={visible} /><RecutLoopStrip visible={visible} />
     <div className={styles.headerActions}><p className={styles.header}>{data.count ?? '—'} merged in the last hour · {data.pending.length} publishes waiting</p>
       <p className={styles.header}>{speed.medianOpenToMergeMs === null && speed.perHour === null ? 'no timing in this snapshot yet' : [speed.medianOpenToMergeMs === null ? null : `median ${openToMergeText(speed.medianOpenToMergeMs)}`, speed.perHour === null ? null : `${speed.perHour}/h`].filter(Boolean).join(' · ')}</p>
       {verdicts.some(verdict => verdict.runId !== null) && <p className={styles.header}>{ciVerdictCounts(verdicts)}</p>}
       <Button size="sm" variant="subtle" aria-label="Copy merges as Markdown" disabled={!data.merged.length && !data.pending.length} onClick={() => void copy()}>Copy as Markdown</Button><span role="status">{notice}</span></div>
+    <RepoBacklogStrip visible={visible} />
     <section aria-label="Backlog"><h3 className={styles.heading}>Backlog</h3>
       {backlog.data?.source === 'gh-failed' ? <p>GitHub read failed: {backlog.data.reason}</p> : backlog.status === 'error' ? <p>GitHub read failed: unavailable</p> : !backlogData ? <p role="status">Reading merge backlog…</p> : <>
         <p>{counts.superseded > 0 ? <>{backlogData.countsLine.replace(`${backlog.data!.counts.mergeState.DIRTY ?? 0} DIRTY`, `${counts.liveDirty} DIRTY`).split(' · ').map((part, index) => <span key={index}>{index > 0 && ' · '}{part}{index === 1 && <> · <span className={styles.ciChip}>{counts.superseded} superseded</span></>}</span>)}</> : backlogData.countsLine}</p>

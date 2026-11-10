@@ -33,7 +33,7 @@ describe('compact scheduling disclosure', () => {
     fireEvent.click(screen.getByText('Capacity for work'));
     expect(screen.getAllByRole('region', { name: /Work capacity: Demo Grok/ })).toHaveLength(4);
     const card = screen.getByRole('region', { name: 'Work capacity: Demo Grok 1' });
-    expect(within(card).getByText('24% available after your reserve.')).toBeInTheDocument();
+    expect(within(card).getByText('24% available to the fleet.')).toBeInTheDocument();
     expect(within(card).getByText('Allowance resets in 1h 00m.')).toBeInTheDocument();
     const duration = within(card).getByText(/Middle half of observed durations.*7 samples/);
     expect(duration.closest('details')).toBe(screen.getByText('Capacity for work').closest('details'));

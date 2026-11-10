@@ -82,7 +82,7 @@ describe('radar source catalogue (Nov 4 2026 amendment)', () => {
     expect(JSON.stringify(sources).toLowerCase()).not.toContain('stacksync');
   });
 
-  it('keeps the required Grok and Cursor sources', () => {
+  it('keeps the required Grok, Cursor and Devin sources', () => {
     const urls = new Set(sources.map((s) => s.url));
     for (const url of [
       'https://x.ai/changelog/bot/rss.xml',
@@ -90,6 +90,9 @@ describe('radar source catalogue (Nov 4 2026 amendment)', () => {
       'https://cursor.com/changelog',
       'https://cursor.com/docs/cli/changelog',
       'https://cursor.com/docs/release-notes/cloud-agents',
+      'https://docs.devin.ai/release-notes/overview',
+      'https://docs.devin.ai/cli/changelog/stable',
+      'https://docs.devin.ai/desktop/changelog',
     ]) {
       expect(urls.has(url), url).toBe(true);
     }
