@@ -274,6 +274,39 @@ SIGINT/SIGTERM. Finished jobs emit once. Unknown jobs return a JSON error
 and exit 1; malformed arguments exit 2. This command is read-only and
 never contacts providers.
 
+### Local message bus mailbox
+
+`phm bus send|inbox|ack` manages durable local mailboxes. It does not dispatch
+remote work, execute agents or grant authority. `phm bus thread|task` remains
+the separate shared task board (`phm fleet bus ...`). Addresses are routing
+labels accessible to processes running as the same OS user, not authenticated
+principals.
+
+```sh
+phm bus send --from codex-cmp --to fleet --id task-1 --body '{"task":"review"}' --priority P1 --ttl 60000 --json
+phm bus inbox --to fleet --limit 100 --json
+phm bus ack task-1 --to fleet --json
+```
+
+The envelope is exactly `id/from/to/priority/ttl/body`; body accepts any JSON
+value. Send defaults to a UUID, P2 and 300000 ms. Preserve the original envelope
+and ID when retrying a send: identical retries deduplicate without extending
+TTL; changed contents under the same ID refuse. Inbox returns unacknowledged,
+unexpired envelopes in priority and acceptance order, with remaining TTL and
+`hasMore` for a truncated result. Reading never acknowledges. Ack checks the
+recipient and is idempotent; unknown IDs refuse.
+
+State lives under `$ASHLR_HOME/bus-mailbox`, default `~/.ashlr/bus-mailbox`,
+separate from the task board's `$ASHLR_HOME/bus`. Reads create nothing; corrupt,
+unsafe or concurrently changing stores refuse rather than reporting an empty
+inbox. Retry a transient storage refusal. History is retained with a
+5000-message/64 MiB admission limit, reserving space for acknowledgments. At
+capacity, existing inboxes, retries and acknowledgments remain available; new
+traffic needs a new private `ASHLR_HOME`. No history is automatically deleted.
+Credential-shaped payloads refuse; use Phantom Secrets `phm_<name>` references.
+`--json` emits one object on stdout, including errors. Exit codes are 0 success,
+1 operational refusal and 2 bad usage. `phm bus send --help` performs no work.
+
 ### MCP server
 
 `phm mcp` runs the MCP aggregation gateway on stdio. Its subcommands are `list`,
@@ -340,6 +373,8 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `logs/` | supervised local-runtime stdout and stderr |
 | `daemon.launchd.out.log`, `daemon.launchd.err.log` (macOS), `daemon.systemd.log` (Linux) | daemon service output |
 | `fleet/mirrors/` | the fleet's own mirror clones (`phm mirror`) |
+| `bus/` | shared task board state (`phm bus thread|task`, `phm fleet bus`) |
+| `bus-mailbox/` | durable local message mailboxes (`phm bus send|inbox|ack`) |
 
 [RELIABILITY.md](RELIABILITY.md#where-state-lives) lists the rest
 (`enrollment.json`, `daemon.json`, `inbox/`, `sandboxes/`, `audit/`).
@@ -396,6 +431,47 @@ one versioned intent to the operator-provisioned `~/.ashlr/router-queue/actions.
 it does not apply the action. Targets are confined to that queue or
 `~/.ashlr/vision/leader/`, without symlink components. Audit failures fail the
 command; no executor consumes these intents automatically.
+
+### Drive routine offload
+
+`phm fleet drive [--once] [--root <directory>] [--json]` refreshes local
+`~/.ashlr/drive/relay-status.json`. `--root <directory>` selects another state
+directory; `--json` also prints the report, including the same top three
+actionable levers ranked by affected count with stable ties. A quiet fleet can
+have fewer than three levers. It reuses the fleet digest for proposal activity
+and needs no model, transport or new credentials.
+
+The relay consumes a versioned local file contract owned by the driver:
+
+- `status.json`: `{ "schemaVersion": 1, "observedAt": "<ISO timestamp>",
+  "main": "green|red|unknown", "lanes": [{ "id": "mac", "queued": 0,
+  "running": 0, "paused": false }] }`. The main value is one enum member.
+- `jobs.jsonl`: one job transition per line with `id`, `state`
+  (`queued|running|completed|failed`), `updatedAt` (ISO timestamp), and optional
+  `prUrl`. Last record per job wins. An empty journal is valid.
+
+Snapshots older than 15 minutes or more than one minute ahead are reported
+as unhealthy. Running jobs without an update for 30 minutes are stuck. Idle,
+unpaused lanes produce restock findings. These routines only report findings;
+Grok Bot retains orchestration decisions and the existing dispatch gates.
+Only exact HTTPS GitHub pull request URLs enter the deduplicated PR list.
+Malformed or missing inputs cause exit 1 without refreshing the previous report.
+
+Masbot owns delivery. It reads `generatedAt`, `health`, `levers`, `prLinks`
+and `fleet` from the atomically replaced, owner-only relay file. It must refuse
+stale reports, deduplicate deliveries, and never treat an old report as a fresh
+health check. This command sends no messages. Grok Bot should stop polling
+these routine inputs once the local job and Masbot relay are commissioned.
+
+To restock a Mac, run `phm fleet drive jobs --bin /absolute/path/to/phm` with an
+optional absolute `--root`. It emits a JSON array containing a launchd label
+and plist whose program runs `fleet drive --once`. Save the `plist` value as
+`~/Library/LaunchAgents/ai.ashlr.drive-routines.plist`, then load it with
+`launchctl bootstrap gui/$(id -u) <absolute-plist-path>`. The single recurring
+Mac job refreshes health, levers and PR links every five minutes and at load.
+Generation does not install or activate jobs. Use an installed `phm` executable
+that resolves Node on launchd's PATH. When the driver snapshot producer lands,
+adapt it to this contract; the report and relay need no transport changes.
 
 ### Stop and pause
 
