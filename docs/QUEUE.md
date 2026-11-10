@@ -113,6 +113,22 @@ tier name itself. The vocabulary lives in
 [`queue-tier.ts`](../src/core/drive/queue-tier.ts). Keep it identical to
 `TIERS` in `contrib/mac/dispatchd.py`.
 
+### Queuegen dedupe and empty-outcome suppression
+
+`queuegen` ([`queuegen.ts`](../src/core/drive/queuegen.ts), run by
+`scripts/queuegen.mjs`) emits one `- READY` FIXUP or REBASE line per fleet
+PR per 24 h, deduped on `<repo>#<pr>` — but evidence-aware: each emission
+records the headSha it was minted against, so a moved head releases the
+suppression while an unchanged head holds it. Each emission also records
+the failure signature (the failing check, or `merge-tree`, plus the
+resolved file). When `jobs.jsonl` shows the last two same-signature
+attempts all came back empty, the candidate is suppressed instead of
+minting another empty job; a changed check or file is a different
+candidate and recovers. Missing, unreadable or out-of-window outcome
+evidence never suppresses — suppression is advisory and fails open. The
+ledger read is tail-bounded via `--metrics` (default
+`~/.ashlr-runs/metrics/jobs.jsonl`).
+
 ### Stage delegation (bottleneck-only)
 
 Router/leader policy: frontier lanes plan and verify; cheap lanes implement;
