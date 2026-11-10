@@ -180,6 +180,19 @@ replacement is published, request head-pinned GitHub auto-merge. GitHub still
 enforces required checks and the merge queue. Retry the command after a failed
 request or publication; it reuses the recovery identity.
 
+For a dropped auto-merge instead of a conflict, run `phm fleet merge-retry
+--events merge-events.jsonl --json` against the same ledger `phm fleet
+merge-latency` records into. The latency report's `queue_retries` classifies
+each open PR's recorded auto-merge drop: `retryable` needs a `queue` blocker
+in the enable-to-disable episode and retries left; `unattributed` drops wait
+for a person. Dry-run prints `request-auto-merge`; `--apply` re-arms ordinary
+head-pinned auto-merge (`gh pr merge --auto --match-head-commit`), appends one
+`retry_requested` event per PR, and stops after three requests per run and
+three retries per PR ever — replayed events count once. A failed submission
+appends `retry_failed` instead; three distinct failed submissions make the
+drop `request-failed` and stop automatic retries. Required checks,
+reviews and the merge queue stay in force.
+
 Acceptance: keep the interface as simple and intuitive as possible, with fewer
 steps, plain words, one obvious path, and every human surface backed by a typed
 API or CLI that agents can use (code-first, agent-native).

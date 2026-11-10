@@ -1,11 +1,12 @@
 /** Desktop read of the owner thread (iMessage, Telegram, Slack, email and desktop
  * lines in one ordered file) plus per-channel adapter state. Read-only: no
  * transports are passed, so this never sends, pulls or touches a channel. Owner
- * message bodies are private, so it answers only the local dispatch session. */
+ * message bodies are private, so it answers only the local dispatch session.
+ * Also exports the best-effort mirror of a desktop inbox post onto the thread. */
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
-import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings } from '../comms/owner-channel.js';
-import { readOwnerCommsStatus, readOwnerThread, type OwnerThreadOptions } from '../comms/owner-thread.js';
+import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings, type OwnerThreadSettings } from '../comms/owner-channel.js';
+import { acceptOwnerInbound, readOwnerCommsStatus, readOwnerThread, type OwnerThreadOptions, type OwnerThreadResult } from '../comms/owner-thread.js';
 
 export const VERSE_OWNER_THREAD_PATH = '/api/verse/comms/owner-thread';
 const DEFAULT_LIMIT = 100;
@@ -16,8 +17,24 @@ export interface OwnerThreadApiDeps {
   runsDir?: string;
   /** Default: the fixed owner config dir. */
   configDir?: string;
+  /** Settings seam for tests; default loads them from configDir. */
+  settings?: OwnerThreadSettings;
+  /** Bus root and leader mailbox seams for tests; default is the thread's own. */
+  busRoot?: string;
+  mailbox?: OwnerThreadOptions['mailbox'];
   /** Clock seam for tests. */
   now?: () => number;
+}
+
+/** The fixed owner dirs, never `$HOME` or the request, unless a test injects them. */
+function runtime(deps: OwnerThreadApiDeps): OwnerThreadOptions {
+  return {
+    runsDir: deps.runsDir ?? fixedOwnerRunsDir(),
+    settings: deps.settings ?? loadOwnerThreadSettings(deps.configDir ?? fixedOwnerConfigDir()),
+    ...(deps.busRoot ? { busRoot: deps.busRoot } : {}),
+    ...(deps.mailbox ? { mailbox: deps.mailbox } : {}),
+    ...(deps.now ? { now: deps.now } : {}),
+  };
 }
 
 const UNAVAILABLE = { schema: 'comms.owner-thread.v1', threadId: 'owner', messages: [], unavailable: true } as const;
@@ -52,11 +69,7 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
       return true;
     }
     try {
-      const options: OwnerThreadOptions = {
-        runsDir: deps.runsDir ?? fixedOwnerRunsDir(),
-        settings: loadOwnerThreadSettings(deps.configDir ?? fixedOwnerConfigDir()),
-        ...(deps.now ? { now: deps.now } : {}),
-      };
+      const options = runtime(deps);
       const thread = readOwnerThread(options, limit);
       const { adapters, kill, paused } = readOwnerCommsStatus(options);
       sendJson(res, 200, {
@@ -75,3 +88,21 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
 }
 
 export const handleOwnerThreadApi: ApiModule = createOwnerThreadApi();
+
+/**
+ * Copy an accepted desktop inbox text onto the owner thread. Best-effort: it
+ * never throws, and KILL, pause, an unconfirmed owner or a bad key come back
+ * as a status the caller may ignore. The key derives from the inbox receipt's
+ * stable dedupe key, so a repost is one thread message.
+ */
+export async function mirrorInboxToOwnerThread(text: string, dedupeKey: string, deps: OwnerThreadApiDeps = {}): Promise<{ status: OwnerThreadResult['status'] }> {
+  try {
+    const options = runtime(deps);
+    const senderId = options.settings.owners.desktop;
+    if (!senderId) return { status: 'unavailable' };
+    const result = await acceptOwnerInbound({
+      channel: 'desktop', senderId, text, idempotencyKey: `inbox:${dedupeKey.slice(0, 40)}`, at: (deps.now ?? Date.now)(),
+    }, options);
+    return { status: result.status };
+  } catch { return { status: 'unavailable' }; }
+}
