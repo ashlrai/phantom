@@ -1,3 +1,4 @@
+import { FABLE_ORCHESTRATOR_MODEL } from './fable-orchestrator.js';
 /**
  * bandit.ts - RQ-OT-P1-BANDIT: contextual Thompson sampler over the routing arm
  * registry (src/core/routing/arms.ts, landed in RQ-OT-P1-ARMS).
@@ -332,6 +333,8 @@ export function selectArm(
 ): BanditSelection | null {
   const unique = new Map<string, ArmKey>();
   for (const arm of candidates) {
+    // Planning admission owns Fable; Thompson exploration cannot spend it on coding.
+    if (arm.model === FABLE_ORCHESTRATOR_MODEL) continue;
     const key = contextualArmKey(arm, ctx);
     if (!unique.has(key)) unique.set(key, arm);
   }

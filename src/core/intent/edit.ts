@@ -8,11 +8,17 @@ import { randomBytes } from 'node:crypto';
 import { readLedger, writeLedger } from './store.js';
 import {
   DEFAULT_STALE_AFTER_MS, IntentError, MAX_EVIDENCE, MAX_INTENT_ITEMS, MAX_OWNER, MAX_PROVENANCE, MAX_PRS, MAX_RQ,
-  MAX_SOURCE, MAX_TITLE, isIntentStatus, normalizeRq, pullKey, sameDirective, titleIsPartial,
+  MAX_SOURCE, MAX_TITLE, isIntentStatus, normalizeRq, pullKey, sameDirective, titleIsPartial, validIntentId,
   type IntentItem, type IntentLedger, type IntentProvenance, type IntentStatus,
 } from './schema.js';
 
 export interface IntentAddInput {
+  /**
+   * Stable caller-supplied source ID, validated with validIntentId. Omitted means a
+   * generated ID. If it collides with a different directive, a fresh ID is generated
+   * and the existing record is left untouched. Same-directive dedup keeps the existing ID.
+   */
+  id?: string;
   title: string;
   source: string;
   owner?: string;
@@ -72,7 +78,20 @@ function preferStatus(current: IntentStatus, incoming: IntentStatus): IntentStat
   return RANK[incoming] > RANK[current] ? incoming : current;
 }
 
+function generatedId(): string {
+  return `int-${randomBytes(8).toString('hex')}`;
+}
+
+function freshId(ledger: IntentLedger): string {
+  let id = generatedId();
+  while (ledger.items.some(item => item.id === id)) id = generatedId();
+  return id;
+}
+
 function draft(input: IntentAddInput, at: string): IntentItem {
+  if (input.id !== undefined && (typeof input.id !== 'string' || !validIntentId(input.id))) {
+    throw new IntentError('Intent id must be 1 to 81 letters, digits, or . _ : -.');
+  }
   const title = clip(input.title, MAX_TITLE, 'Title');
   const source = clip(input.source, MAX_SOURCE, 'Source');
   const staleAfterMs = input.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
@@ -83,7 +102,7 @@ function draft(input: IntentAddInput, at: string): IntentItem {
   if (date !== null && Number.isNaN(Date.parse(date))) throw new IntentError('Date must be an ISO timestamp.');
   const partial = input.partial === true || titleIsPartial(title);
   return {
-    id: `int-${randomBytes(8).toString('hex')}`, title, source, owner: clip(input.owner ?? 'owner', MAX_OWNER, 'Owner'),
+    id: input.id ?? generatedId(), title, source, owner: clip(input.owner ?? 'owner', MAX_OWNER, 'Owner'),
     rq: unionRq([], input.rq ?? []), prs: [], status: status(input.status ?? 'proposed'), evidence: [],
     provenance: [{ source, date, verbatim: input.verbatim === true, partial }],
     partial, closureProposal: null, lastTouchedAt: at, staleAfterMs, createdAt: at, updatedAt: at,
@@ -112,6 +131,8 @@ function place(ledger: IntentLedger, incoming: IntentItem, at: string): IntentIt
   const matches = ledger.items.filter(item => sameDirective(item, incoming));
   if (matches.length === 0) {
     if (ledger.items.length >= MAX_INTENT_ITEMS) throw new IntentError(`The intent ledger holds at most ${MAX_INTENT_ITEMS} items.`);
+    // A supplied ID that names a different directive never overwrites that record.
+    if (ledger.items.some(item => item.id === incoming.id)) incoming.id = freshId(ledger);
     ledger.items.push(incoming);
     return incoming;
   }
