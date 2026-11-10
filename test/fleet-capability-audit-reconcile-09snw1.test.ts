@@ -20,11 +20,17 @@ describe('capability audit reconciliation', () => {
     expect(output.log).not.toHaveBeenCalled();
   });
 
-  it('exposes the current convention dispatch blocker', async () => {
+  it('prints the read-only catalog and keeps GATES-held surfaces out of implementable work', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
-      expect(await cmdFleet(['capability-audit', '--json'])).not.toBe(0);
+      expect(await cmdFleet(['capability-audit', '--json'])).toBe(0);
+      const report = JSON.parse(String(log.mock.calls[0]?.[0])) as {
+        counts: { gatesHeld: number; implementableNow: number };
+        implementableNow: Array<{ status: string }>;
+      };
+      expect(report.counts.gatesHeld).toBeGreaterThan(0);
+      expect(report.implementableNow.every((gap) => gap.status !== 'gates-held')).toBe(true);
     } finally {
       log.mockRestore();
       error.mockRestore();

@@ -9,7 +9,7 @@ describe('empty job reasons', () => {
     ['Missing input from the owner.', 'missing-input'],
     ['A scope extension is needed before proceeding.', 'scope-too-cautious'],
     ['No identifiable reason.', 'other'],
-  ])('classifies sample notes', (notes, kind) => {
+  ])('classifies sample notes (#%#)', (notes, kind) => {
     expect(classifyEmpty(notes, null).class).toBe(kind);
   });
   it('uses the log when notes are unavailable and never returns raw text', () => {

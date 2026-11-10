@@ -47,6 +47,7 @@ jobs:
     permissions:
       contents: read
       checks: read     # read check-runs for the exact commit
+      actions: write   # dispatch release-gate CI with GITHUB_TOKEN
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
@@ -165,9 +166,31 @@ jobs:
       # sanctioned local publisher attaches the signed artifacts.
       - name: Create tag v${{ steps.version.outputs.version }} and its draft release
         if: steps.checks.outputs.green == 'true'
+        id: tag
         shell: bash
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           VERSION: ${{ steps.version.outputs.version }}
-        run: node .github/scripts/tag-github-release.mjs
+        run: |
+          set -euo pipefail
+          result=$(node .github/scripts/tag-github-release.mjs)
+          printf '%s\n' "$result"
+          echo "release=$(printf '%s' "$result" | jq -r .release)" >> "$GITHUB_OUTPUT"
+
+      # ci.yml has no on.push.tags trigger, and a GITHUB_TOKEN tag would not
+      # fire one anyway. When this leg just created the draft, dispatch the
+      # release-gate build on the tag ref with the job GITHUB_TOKEN. The App
+      # token stays contents-only so the tag can still trigger downstream
+      # workflows. Do not request actions on the App mint: the installation
+      # lacks that permission and the token request would 422.
+      - name: Dispatch release-gate CI on the new tag
+        if: steps.checks.outputs.green == 'true' && steps.tag.outputs.release == 'draft-created'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/dispatches" --input - <<EOF
+          {"ref":"v${VERSION}","inputs":{"release_gate":"true"}}
+          EOF
 

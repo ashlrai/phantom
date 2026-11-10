@@ -12,9 +12,9 @@ import { createHash } from 'node:crypto';
 
 const { spawnSyncMock } = vi.hoisted(() => ({ spawnSyncMock: vi.fn() }));
 
-vi.mock('node:child_process', async (importOriginal) => ({
-  ...await importOriginal<typeof import('node:child_process')>(),
-  spawnSync: spawnSyncMock,
+vi.mock('../src/core/integrations/secrets.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../src/core/integrations/secrets.js')>(),
+  credentialSpawnSync: spawnSyncMock,
 }));
 
 import { evaluateEvidenceRemoteProtectionSignal } from '../src/core/inbox/merge.js';

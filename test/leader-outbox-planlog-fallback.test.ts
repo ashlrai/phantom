@@ -94,3 +94,54 @@ it('deduplicates reply text across files and plan passes before applying the lim
   expect((await readOutboxEntries({ runsDir })).entries.map(e => e.text)).toEqual(['Same answer', 'New answer']);
   expect((await readOutboxEntries({ runsDir, limit: 1 })).entries.map(e => e.text)).toEqual(['New answer']);
 });
+
+it('lists the latest reply per dated entry newest first through the replies CLI', async () => {
+  const { vi } = await import('vitest');
+  vi.stubEnv('ASHLR_RUNS_DIR', runsDir);
+  await write('PLAN-LOG.md', [3, 1, 2].map(i => `## 2026-11-09 0${i}:00 ET\n**Reply for Mason**\nOld ${i}\n### Planning\nPrivate\n**Reply for Mason**\nAnswer ${i}`).join('\n'));
+  const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  try {
+    const { runLeaderCli } = await import('../src/cli/leader.js');
+    expect(await runLeaderCli(['replies', '--json', '--limit', '3'])).toBe(0);
+    const result = JSON.parse(String(log.mock.calls.at(-1)![0]));
+    expect(result.entries.map((e: { at: string; text: string }) => [e.at, e.text])).toEqual([
+      ['2026-11-09 03:00', 'Answer 3'], ['2026-11-09 02:00', 'Answer 2'], ['2026-11-09 01:00', 'Answer 1'],
+    ]);
+    expect((await readOutboxEntries({ runsDir })).entries.map(e => e.text)).toEqual(['Answer 1', 'Answer 2', 'Answer 3']);
+    expect(await runLeaderCli(['replies', '--json', '--limit', '1'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)![0])).entries).toHaveLength(1);
+  } finally { log.mockRestore(); vi.unstubAllEnvs(); }
+}, 30_000);
+
+it('keeps the newest duplicate reply and its timestamp on the CLI, desktop and phone', async () => {
+  const { vi } = await import('vitest');
+  vi.stubEnv('ASHLR_RUNS_DIR', runsDir);
+  const fixture = '## 2026-11-09T01:00:00Z\n### Reply for Mason\nSame reply\n## 2026-11-09T02:00:00Z\n### Reply for Mason\nOther reply\n## 2026-11-09T03:00:00Z\n### Reply for Mason\nSame reply\n### Planning\nNot a reply';
+  await write('PLAN-LOG.md', fixture);
+  const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  try {
+    const { runLeaderCli } = await import('../src/cli/leader.js');
+    expect(await runLeaderCli(['replies', '--json'])).toBe(0);
+    const result = JSON.parse(String(log.mock.calls.at(-1)![0]));
+    expect(result.entries.map((e: { at: string; text: string }) => [e.at, e.text])).toEqual([
+      ['2026-11-09T03:00:00Z', 'Same reply'], ['2026-11-09T02:00:00Z', 'Other reply'],
+    ]);
+    const { entries } = await readOutboxEntries({ runsDir });
+    const { leaderReplyRows } = await import('../src/web-ui/routes/verse/mobile/leader-replies-model.js');
+    const { listLeaderThread } = await import('../src/core/vision/leader-thread.js');
+    const desktop = (await listLeaderThread()).filter(m => m.text === 'Same reply');
+    expect(desktop).toHaveLength(1);
+    expect(desktop[0]).toMatchObject({ from: 'leader', at: '2026-11-09T03:00:00.000Z' });
+    expect(leaderReplyRows(entries, [], Date.now()).filter(row => row.text === 'Same reply')).toMatchObject([
+      { who: 'leader', at: '2026-11-09T03:00:00.000Z' },
+    ]);
+  } finally { log.mockRestore(); vi.unstubAllEnvs(); }
+}, 30_000);
+
+
+it('keeps the same reply on different dates while deduplicating a date', async () => {
+  await write('MASON-OUTBOX.md', '## 2026-11-08T01:00:00Z\nSame answer');
+  await write('PLAN-LOG.md', '## 2026-11-08T02:00:00Z\n**Reply for Mason:** Same answer\n## 2026-11-09T03:00:00Z\n**Reply for Mason:** Same answer');
+  const { entries } = await readOutboxEntries({ runsDir });
+  expect(entries.map(e => e.at)).toEqual(['2026-11-08T02:00:00Z', '2026-11-09T03:00:00Z']);
+});
