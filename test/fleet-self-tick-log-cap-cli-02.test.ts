@@ -35,6 +35,7 @@ const steps: SelfTickSteps = {
   'inbox-acks': stub('inbox-acks'),
   'order-notices': stub('order-notices'),
   'needs-triage': stub('needs-triage'),
+  'waste-incident': stub('waste-incident'),
   'landed-sweep': stub('landed-sweep'),
 };
 
