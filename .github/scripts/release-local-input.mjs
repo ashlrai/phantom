@@ -31,12 +31,18 @@ function readOwned(path, cap) {
   } finally { closeSync(fd); }
 }
 const positiveText = value => typeof value === 'string' && /^[1-9][0-9]*$/.test(value) && Number.isSafeInteger(Number(value));
+// Master, or the stable tag whose commit is the candidate. The smoke job if already allows both.
+const RELEASE_REF = /^refs\/(?:heads\/master|tags\/v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/;
 export function producerRef(env) {
   const { repository } = requireProducerEnvironment(env);
   assert.ok(positiveText(env.GITHUB_RUN_ID) && positiveText(env.GITHUB_RUN_ATTEMPT));
   assert.match(env.GITHUB_SHA ?? '', /^[a-f0-9]{40}$/);
-  assert.equal(env.GITHUB_REF, 'refs/heads/master');
+  assert.match(env.GITHUB_REF ?? '', RELEASE_REF);
   return { repository, run: env.GITHUB_RUN_ID, attempt: env.GITHUB_RUN_ATTEMPT, revision: env.GITHUB_SHA };
+}
+function releaseBranch(ref) {
+  const tag = /^refs\/tags\/(v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/.exec(ref ?? '');
+  return tag ? tag[1] : 'master';
 }
 const preparedPath = env => join(realpathSync(env.RUNNER_TEMP), 'release-prepared');
 const witnessPath = env => join(realpathSync(env.RUNNER_TEMP), 'release-input-witness.json');
@@ -71,7 +77,7 @@ export function validateUploadedInput(record, env, artifact, run) {
   assert.equal(artifact.workflow_run?.head_sha, producer.revision);
   requireRepositoryReference(producer.repository, run.repository);
   assert.equal(run.id, Number(producer.run)); assert.equal(run.run_attempt, Number(producer.attempt));
-  assert.equal(run.head_sha, producer.revision); assert.equal(run.head_branch, 'master');
+  assert.equal(run.head_sha, producer.revision); assert.equal(run.head_branch, releaseBranch(env.GITHUB_REF));
   assert.equal(run.path, '.github/workflows/ci.yml');
   assert.ok(['workflow_dispatch', 'schedule'].includes(run.event));
   assert.equal(run.status, 'in_progress');
