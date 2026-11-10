@@ -51,13 +51,15 @@ export async function cosStatus(id: string, runsDir?: string) {
   let draft: CosDraft | undefined;
   try { draft = JSON.parse(await readFile(join(root(runsDir), 'cos', `${id}.json`), 'utf8')) as CosDraft; }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-  let delivery: 'sending' | 'sent' | 'uncertain' | undefined;
+  let delivery: CosDelivery | undefined;
   try { delivery = JSON.parse(await readFile(join(root(runsDir), 'cos', `${id}.delivery.json`), 'utf8')).state; }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-  return { job, draft, delivery, needsYou: draft !== undefined && delivery !== 'sent' };
+  return { job, draft, delivery, needsYou: draft !== undefined && delivery !== 'sent' && delivery !== 'declined' };
 }
 
 export interface CosDraft { id: string; origin: CosOrigin; text: string; digest: string }
+/** States of the exclusive `<id>.delivery.json` claim. `declined` is terminal: no transport ever runs. */
+export type CosDelivery = 'sending' | 'sent' | 'uncertain' | 'declined';
 /** Completion is a draft. External transports must obtain explicit approval. */
 export async function draftCosResult(id: string, text: string, runsDir?: string): Promise<CosDraft> {
   if (!text.trim() || text.length > 16_000 || scrubSecrets(text) !== text) throw new Error('Invalid result text');
@@ -79,17 +81,36 @@ export async function draftCosResult(id: string, text: string, runsDir?: string)
   return draft;
 }
 
+/**
+ * The stored draft, only when `digest` is the one displayed for it and the
+ * draft still hashes to that digest. Approval and decline share this binding.
+ */
+export async function boundCosDraft(id: string, digest: string, runsDir?: string): Promise<CosDraft | undefined> {
+  const { draft } = await cosStatus(id, runsDir);
+  if (!draft || !/^[a-f0-9]{64}$/.test(digest) || draft.digest !== digest || draft.digest !== createHash('sha256')
+    .update(JSON.stringify([draft.id, draft.origin, draft.text])).digest('hex')) return undefined;
+  return draft;
+}
+
+export const cosDeliveryPath = (id: string, runsDir?: string): string => join(root(runsDir), 'cos', `${id}.delivery.json`);
+
+/** Best effort: close the needs-you item. Callers keep their recorded delivery state if this fails. */
+export function closeCosNeedsYou(id: string, runsDir?: string): void {
+  try {
+    const item = readNeedsMason({ runsDir: root(runsDir) }).items.find(item => cosApprovalTexts(id).some(text => item.text === text));
+    if (item) resolveNeedsMason({ itemId: item.id }, { runsDir: root(runsDir), source: 'desktop' });
+  } catch { /* needs-you cleanup must never change a delivery state */ }
+}
+
 /** Trusted UI approval must bind the exact displayed draft digest, never message text. */
 export async function deliverCosResult(id: string, approvedDigest: string,
   send: (draft: CosDraft) => Promise<void>, runsDir?: string): Promise<void> {
-  const { draft } = await cosStatus(id, runsDir);
-  if (!draft || draft.digest !== approvedDigest || draft.digest !== createHash('sha256')
-    .update(JSON.stringify([draft.id, draft.origin, draft.text])).digest('hex')) {
-    throw new Error('Explicit approval of the current draft is required');
-  }
-  const path = join(root(runsDir), 'cos', `${id}.delivery.json`);
-  // Exclusive claim prevents two approved callers from sending twice. A crash
-  // or transport failure requires reconciliation, never an automatic resend.
+  const draft = await boundCosDraft(id, approvedDigest, runsDir);
+  if (!draft) throw new Error('Explicit approval of the current draft is required');
+  const path = cosDeliveryPath(id, runsDir);
+  // Exclusive claim prevents two approved callers from sending twice, and a
+  // decline from racing a send. A crash or transport failure requires
+  // reconciliation, never an automatic resend.
   await writeFile(path, JSON.stringify({ state: 'sending' }), { flag: 'wx', mode: 0o600 });
   try {
     await send(draft);
@@ -98,8 +119,5 @@ export async function deliverCosResult(id: string, approvedDigest: string,
     await writeFile(path, JSON.stringify({ state: 'uncertain' }), { mode: 0o600 });
     throw error;
   }
-  try {
-    const item = readNeedsMason({ runsDir: root(runsDir) }).items.find(item => cosApprovalTexts(id).some(text => item.text === text));
-    if (item) resolveNeedsMason({ itemId: item.id }, { runsDir: root(runsDir), source: 'desktop' });
-  } catch { /* The send succeeded; needs-you cleanup must never change its delivery state. */ }
+  closeCosNeedsYou(id, runsDir);
 }

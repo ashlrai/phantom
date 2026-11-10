@@ -35,7 +35,7 @@ Kinds are `page`, `atom`, `rss`, `npm`, `pypi`, or `json`. IDs are unique lowerc
 letters, digits and hyphens, up to 80 characters. `verified` is a boolean and
 means a maintainer checked the public endpoint, not that the content is trusted.
 
-The catalogue covers Claude, Codex, Grok, Cursor, Devin, GLM, Gemini,
+The catalogue covers Claude, Codex, Grok, Cursor, Devin (release notes, CLI changelog and Desktop changelog), GLM, Gemini,
 Antigravity, MLX, Qwen, GitHub CLI, Vercel CLI, Supabase CLI, Wrangler,
 Context7 and the MCP SDK. Grok Bot and Grok Build use their RSS feeds for
 fetching their changelogs.

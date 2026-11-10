@@ -758,7 +758,7 @@ try:
                for l, u in _p["lanes"].items() if l in UIA_OK and l in LANES and isinstance(u, dict)}
 except Exception: UIA = {}
 for _l, _u in UIA.items():
-    if _u.get("stale") is True: ev("STALE_BUDGET %s reset passed; ask Mason for a fresh reading" % _l)
+    if _u.get("stale") is True: ev("STALE_BUDGET %s reset passed; fresh reading unavailable" % _l)
 for lane in LANES:
     try: ab_scan(lane, alive)
     except Exception as e: log("autobackoff err %s %s" % (lane, type(e).__name__))

@@ -13,11 +13,24 @@
  *            with the conflicting paths from `git merge-tree --write-tree
  *            --name-only <baseSha> <headSha>` instead of a generic FIXUP.
  *
- * Dedupe is one line per PR per 24h (`state.emitted[<repo>#<n>]`); the same
- * key suppresses both kinds. Queue ids already present are never re-appended.
- * Lines touching a pinned surface (.github, publish.sh, dispatchd, git-safe,
- * scrub, reap) carry `[Security pin required]`; a truncated file listing is
- * unproven and pins conservatively.
+ * Dedupe is one line per PR per 24h keyed `<repo>#<n>`, but it is
+ * evidence-aware: the state entry records the headSha the line was minted
+ * against, so a moved head (new pushes, new files) releases the suppression
+ * while an unchanged head holds it. A legacy entry without recorded evidence
+ * keeps the old clock-only semantics. Queue ids already present are never
+ * re-appended. Lines touching a pinned surface (.github, publish.sh,
+ * dispatchd, git-safe, scrub, reap) carry `[Security pin required]`; a
+ * truncated file listing is unproven and pins conservatively.
+ *
+ * Suppression by outcome (repeated empty jobs): each emission also records
+ * the concrete failure evidence it was minted for — the failing check and
+ * the resolved file (`merge-tree` and the first conflict for a rebase) — in
+ * a bounded newest-first history. When jobs.jsonl shows the last
+ * QUEUEGEN_EMPTY_STREAK same-evidence attempts all came back empty, the
+ * candidate repeats work that already yielded nothing and is suppressed;
+ * a changed check or file is a different candidate and recovers. Missing,
+ * unreadable or stale (out-of-window) outcome evidence never suppresses —
+ * suppression is advisory and fails open.
  *
  * Amendments in force: no --rebase/force-push/--admin/auto-merge/check
  * skipping anywhere; hold list read from its canonical file and held PRs are
@@ -32,12 +45,17 @@
  */
 
 import { assertQueueTier } from './queue-tier.js';
+import { collapseJobOutcomes, type JobOutcome } from '../queue/job-outcomes.js';
 
 export const QUEUEGEN_CYCLE_CAP = 20;
 export const QUEUEGEN_PR_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const QUEUEGEN_FLEET_AUTHOR = 'ashlr-fleet[bot]';
 export const QUEUEGEN_SECURITY_PIN = '[Security pin required]';
 export const QUEUEGEN_TEXT_CAP = 560;
+/** Same-evidence attempts that all came back empty before a candidate is suppressed. */
+export const QUEUEGEN_EMPTY_STREAK = 2;
+/** Emission records kept per PR; oldest fall off first. */
+export const QUEUEGEN_HISTORY_CAP = 8;
 
 /** The seven approved repos; no discovery or expansion. */
 export const QUEUEGEN_REPOS = [
@@ -69,10 +87,25 @@ export interface QueuegenCheck {
   required: boolean;
 }
 
+/**
+ * One emitted line and the concrete repository evidence it was minted for:
+ * `headSha` is the dedupe anchor (a moved head is a new candidate), `check`
+ * and `file` are the failure signature (the failing required check name, or
+ * `merge-tree` for a rebase, and the resolved file). Fields absent on a
+ * legacy record read as unknown, never as a mismatch.
+ */
+export interface QueuegenEmission {
+  id: string;
+  at: number;
+  headSha?: string;
+  check?: string;
+  file?: string;
+}
+
 export interface QueuegenState {
   v: 1;
-  /** "<owner>/<repo>#<n>" -> {id, at} for the last line emitted for that PR. */
-  emitted: Record<string, { id: string; at: number }>;
+  /** "<owner>/<repo>#<n>" -> newest-first bounded emission history. */
+  emitted: Record<string, QueuegenEmission[]>;
 }
 
 export interface QueuegenIo {
@@ -92,6 +125,13 @@ export interface QueuegenIo {
   appendQueueLine(line: string): void;
   /** Canonical hold list as "<short>#<n>" entries; must throw if unreadable. */
   readHoldList(): Set<string>;
+  /**
+   * Recent outcome rows for emitted jobs (metrics/jobs.jsonl collapsed by
+   * job-outcomes.ts). Optional: when absent or throwing the cycle logs
+   * QUEUEGEN_OUTCOMES_UNAVAILABLE once and runs unsuppressed — suppression
+   * is advisory and never blocks generation on a missing ledger.
+   */
+  recentJobOutcomes?(): readonly JobOutcome[];
   /** Raw persisted state (or undefined); normalized inside the cycle. */
   loadState(): unknown;
   saveState(state: QueuegenState): void;
@@ -114,6 +154,8 @@ export interface QueuegenSummary {
   emitted: number;
   deduped: number;
   skipped: number;
+  /** Candidates withheld because their recent same-evidence attempts all came back empty. */
+  suppressed: number;
   capped: boolean;
 }
 
@@ -232,25 +274,94 @@ function emptyState(): QueuegenState {
   return { v: 1, emitted: {} };
 }
 
+const boundedText = (value: unknown, max: number): string | undefined =>
+  typeof value === 'string' && value.length > 0 && value.length <= max && !/[^\x20-\x7E]/.test(value)
+    ? value : undefined;
+
+function normalizeEmission(entry: unknown): QueuegenEmission | null {
+  if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return null;
+  const e = entry as Record<string, unknown>;
+  if (typeof e['id'] !== 'string' || !Number.isSafeInteger(e['at'])) return null;
+  const headSha = boundedText(e['headSha'], 64);
+  const check = boundedText(e['check'], 200);
+  const file = boundedText(e['file'], 400);
+  return {
+    id: e['id'], at: e['at'] as number,
+    ...(headSha ? { headSha } : {}), ...(check ? { check } : {}), ...(file ? { file } : {}),
+  };
+}
+
+/**
+ * Tolerant read of durable state: each key holds a newest-first bounded
+ * history, and a legacy singleton `{id, at}` wraps into a one-entry history.
+ * Malformed records and evidence fields are dropped, never thrown over.
+ */
 export function normalizeState(value: unknown): QueuegenState {
   const state = emptyState();
   const row = (value ?? {}) as Record<string, unknown>;
   for (const [key, entry] of Object.entries((row['emitted'] ?? {}) as Record<string, unknown>)) {
-    const e = (entry ?? {}) as Record<string, unknown>;
-    if (typeof e['id'] === 'string' && Number.isSafeInteger(e['at'])) {
-      state.emitted[key] = { id: e['id'], at: e['at'] as number };
-    }
+    const records = (Array.isArray(entry) ? entry : [entry])
+      .map(normalizeEmission).filter((e): e is QueuegenEmission => e !== null);
+    if (records.length === 0) continue;
+    records.sort((a, b) => b.at - a.at);
+    state.emitted[key] = records.slice(0, QUEUEGEN_HISTORY_CAP);
   }
   return state;
 }
 
-/** Bound durable state; oldest entries are evicted first. */
+/** Bound durable state; oldest entries and oldest keys are evicted first. */
 function prune(state: QueuegenState, cap = 8_192): void {
+  for (const key of Object.keys(state.emitted)) {
+    if (state.emitted[key]!.length > QUEUEGEN_HISTORY_CAP) {
+      state.emitted[key] = state.emitted[key]!.slice(0, QUEUEGEN_HISTORY_CAP);
+    }
+  }
   const keys = Object.keys(state.emitted);
   if (keys.length > cap) {
-    keys.sort((a, b) => state.emitted[a]!.at - state.emitted[b]!.at)
+    keys.sort((a, b) => (state.emitted[a]![0]?.at ?? 0) - (state.emitted[b]![0]?.at ?? 0))
       .slice(0, keys.length - cap).forEach((k) => delete state.emitted[k]);
   }
+}
+
+/**
+ * Count the newest consecutive same-evidence attempts that all came back
+ * empty. The failure signature is (check, file): the head may move between
+ * attempts while the work stays identical. History order is newest-first;
+ * an entry outside `windowMs`, a changed signature, a missing or a
+ * productive outcome each end the run — only proven empty repeats count. A
+ * ledger outcome for the exact candidate id also counts even when the state
+ * record was lost (same head and kind make it the same evidence).
+ */
+function countEmptyStreak(
+  history: readonly QueuegenEmission[], outcomes: ReadonlyMap<string, JobOutcome>,
+  check: string, file: string, candidateId: string, now: number, windowMs: number,
+): number {
+  const fresh = (at: number): boolean => at <= now && now - at < windowMs;
+  const attempts = new Map<string, { at: number; empty: boolean }>();
+  for (const entry of history) {
+    if (now - entry.at >= windowMs) break;
+    if (entry.check !== check || entry.file !== file) break;
+    if (attempts.has(entry.id)) continue;
+    const outcome = outcomes.get(entry.id);
+    const freshOutcome = outcome !== undefined && fresh(outcome.at) ? outcome : undefined;
+    attempts.set(entry.id, {
+      at: freshOutcome?.at ?? entry.at,
+      empty: freshOutcome !== undefined && freshOutcome.empty === true && freshOutcome.merged !== true,
+    });
+  }
+  if (!attempts.has(candidateId)) {
+    const outcome = outcomes.get(candidateId);
+    if (outcome !== undefined && fresh(outcome.at)) {
+      attempts.set(candidateId, { at: outcome.at, empty: outcome.empty === true && outcome.merged !== true });
+    }
+  }
+  const ordered = [...attempts.values()].sort((a, b) => b.at - a.at);
+  let streak = 0;
+  for (const attempt of ordered) {
+    if (!attempt.empty) break;
+    streak++;
+  }
+  return streak;
 }
 
 /**
@@ -277,7 +388,7 @@ export function runQueuegenCycle(io: QueuegenIo, options: QueuegenOptions = {}):
   }
   const now = io.now();
   const stamp = hhmm(now);
-  const summary: QueuegenSummary = { emitted: 0, deduped: 0, skipped: 0, capped: false };
+  const summary: QueuegenSummary = { emitted: 0, deduped: 0, skipped: 0, suppressed: 0, capped: false };
   let hold: Set<string>;
   try {
     hold = io.readHoldList();
@@ -293,6 +404,20 @@ export function runQueuegenCycle(io: QueuegenIo, options: QueuegenOptions = {}):
     io.log('QUEUEGEN_QUEUE_INVALID');
     throw error;
   }
+  // The outcomes ledger is read lazily — only a candidate that reaches the
+  // suppression check pays for it — and at most once per cycle. A throw is
+  // logged and the cycle continues unsuppressed.
+  let outcomes: Map<string, JobOutcome> | null = null;
+  const jobOutcomes = (): Map<string, JobOutcome> => {
+    if (outcomes !== null) return outcomes;
+    try {
+      outcomes = collapseJobOutcomes(io.recentJobOutcomes?.() ?? []);
+    } catch {
+      io.log('QUEUEGEN_OUTCOMES_UNAVAILABLE');
+      outcomes = new Map();
+    }
+    return outcomes;
+  };
   try {
     outer:
     for (const repo of repos) {
@@ -310,18 +435,25 @@ export function runQueuegenCycle(io: QueuegenIo, options: QueuegenOptions = {}):
             hold.has(`${short}#${pr.number}`) || hold.has(`${repo}#${pr.number}`)) continue;
         if (!/^[0-9a-f]{7,40}$/i.test(pr.headSha) || !/^[0-9a-f]{7,40}$/i.test(pr.baseSha) || !pr.headRef) continue;
         const key = `${repo}#${pr.number}`;
-        const last = state.emitted[key];
-        if (last !== undefined && now - last.at < windowMs) {
+        const history = state.emitted[key] ?? [];
+        const last = history[0];
+        // Same head inside the window is the same candidate — dedupe before any
+        // gh call. A moved head makes the recorded evidence stale: the push is
+        // a new candidate and falls through to be re-evaluated on live reads.
+        if (last !== undefined && now - last.at < windowMs &&
+            (last.headSha === undefined || last.headSha === pr.headSha)) {
           summary.deduped++;
           io.log(`QUEUEGEN_DEDUP ${key}`);
           continue;
         }
         const pinned = pr.filesTruncated || pr.files.some(securityPinnedPath);
+        const dirty = pr.mergeState === 'DIRTY';
+        const id = dirty ? rebaseId(repo, pr) : fixupId(repo, pr);
+        if (queueIds.has(id)) { summary.deduped++; continue; }
         let line: string;
-        let id: string;
-        if (pr.mergeState === 'DIRTY') {
-          id = rebaseId(repo, pr);
-          if (queueIds.has(id)) { summary.deduped++; continue; }
+        let checkName: string;
+        let file: string;
+        if (dirty) {
           let conflicts: string[];
           try {
             conflicts = io.conflictFiles(repo, pr);
@@ -331,10 +463,10 @@ export function runQueuegenCycle(io: QueuegenIo, options: QueuegenOptions = {}):
             continue;
           }
           if (conflicts.length === 0) { summary.skipped++; continue; }
+          checkName = 'merge-tree';
+          file = conflicts[0] ?? '';
           line = rebaseLine(repo, pr, conflicts, pinned, stamp, emit);
         } else {
-          id = fixupId(repo, pr);
-          if (queueIds.has(id)) { summary.deduped++; continue; }
           let checks: QueuegenCheck[];
           try {
             checks = io.checks(repo, pr);
@@ -353,22 +485,30 @@ export function runQueuegenCycle(io: QueuegenIo, options: QueuegenOptions = {}):
             continue;
           }
           const err = firstErrorLine(tail) ?? `${failing.name} failed (no error line captured)`;
-          const file = errorFile(err) ?? pr.files[0];
-          if (!file) {
+          const resolved = errorFile(err) ?? pr.files[0];
+          if (!resolved) {
             io.log(`QUEUEGEN_NOFILE ${key}`);
             summary.skipped++;
             continue;
           }
+          checkName = failing.name;
+          file = resolved;
           line = fixupLine(repo, pr, failing, file, err, pinned, stamp, emit);
         }
+        if (countEmptyStreak(history, jobOutcomes(), checkName, file, id, now, windowMs) >= QUEUEGEN_EMPTY_STREAK) {
+          summary.suppressed++;
+          io.log(`QUEUEGEN_EMPTY_STREAK ${key}`);
+          continue;
+        }
         io.appendQueueLine(line);
-        state.emitted[key] = { id, at: now };
+        history.unshift({ id, at: now, headSha: pr.headSha, check: checkName, file });
+        state.emitted[key] = history;
         queueIds.add(id);
         summary.emitted++;
-        io.log(`QUEUEGEN_${pr.mergeState === 'DIRTY' ? 'REBASE' : 'FIXUP'} ${id}`);
+        io.log(`QUEUEGEN_${dirty ? 'REBASE' : 'FIXUP'} ${id}`);
       }
     }
-    io.log(`QUEUEGEN_CYCLE emitted=${summary.emitted} deduped=${summary.deduped} skipped=${summary.skipped} capped=${summary.capped ? 1 : 0}`);
+    io.log(`QUEUEGEN_CYCLE emitted=${summary.emitted} deduped=${summary.deduped} suppressed=${summary.suppressed} skipped=${summary.skipped} capped=${summary.capped ? 1 : 0}`);
     return summary;
   } finally {
     prune(state);

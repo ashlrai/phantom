@@ -19,6 +19,7 @@ import { fleetInboxQuery, fleetRunsQuery, ordersTraceQuery } from './fleet-inbox
 import { githubUrl, jobsForEntry, narrowOrderTrace, orderJobsLine, stateWord } from './order-trace-model.js';
 import { CommsStatusCard } from './CommsStatusCard.js';
 import { GmailTriageCard } from './GmailTriageCard.js';
+import { GmailArchivePlanCard } from './GmailArchivePlanCard.js';
 import { UnifiedInboxCard } from './UnifiedInboxCard.js';
 import { CosDraftsCard } from './CosDraftsCard.js';
 import { EmailDraftsCard } from './EmailDraftsCard.js';
@@ -94,6 +95,7 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
     <UnifiedInboxCard visible={visible} />
     <CommsStatusCard visible={visible} />
     <GmailTriageCard visible={visible} />
+    <GmailArchivePlanCard visible={visible} />
     <CosDraftsCard visible={visible} />
     <EmailDraftsCard visible={visible} />
     <InboxPostBox snapshot={snapshot.data} onPosted={postedText => {

@@ -305,7 +305,7 @@ describe.runIf(process.platform !== 'win32')('native Devin execution admission',
     const run=vi.fn(async (_bin:string,args:readonly string[])=>{
       if(args[0] !== 'auth') {
         if(kind==='credentials')writeFileSync(credentials,'changed private fixture',{mode:0o600});
-        if(kind==='executable')writeFileSync(bin,'#!/bin/sh\nexit 1\n',{mode:0o755});
+        if(kind==='executable')writeFileSync(bin,'#!/bin/sh\nexit 1\n# drifted\n',{mode:0o755});
         if(kind==='revoked')allowed=false;
         return catalog();
       }

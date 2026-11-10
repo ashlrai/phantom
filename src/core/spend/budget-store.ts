@@ -1,40 +1,70 @@
 /**
- * Owner spend budget file. Agents cannot write it. Every successful change
- * appends one audit line. A missing or unreadable file stays at the 0 default.
+ * Owner spend budget file. The path is the account home from realHome(), so
+ * HOME and ASHLR_HOME cannot point the reader at a decoy.
+ *
+ * A budget above 0 is honored only from a root this account cannot mint.
+ * This repo has no mode-444 Security pin-chain verifier and no Masbot or
+ * owner signature verifier for a spend budget, so the effective amount stays
+ * 0. A ledger note and an operator approval are not roots.
+ *
+ * Lowering or zeroing an entry bumps a monotonic epoch stored beside the
+ * budget file. An older file, restored after that bump, does not match.
+ * `setSpendBudget` still refuses agent markers and a non-interactive terminal.
  */
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
-import { ashlrHome } from '../cloud/store.js';
+import { realHome } from '../real-home.js';
 import {
   DEFAULT_SPEND_BUDGET,
   SPEND_BUDGET_SCHEMA,
+  effectiveSpendBudget,
   parseSpendBudget,
+  parseSpendBudgetDocument,
   spendBudgetChangeRefused,
+  spendBudgetPolicyHash,
+  spendBudgetRootHonors,
   withSpendEntry,
+  type SpendBudgetAttestation,
+  type SpendBudgetDocument,
   type SpendBudgetEntry,
   type SpendBudgetPolicy,
 } from './budget-policy.js';
 
 const MAX_BYTES = 64 * 1024;
+const EPOCH_SCHEMA = 'spend.budget.epoch.v1';
 
-export function spendBudgetPath(root = ashlrHome()): string {
-  return join(root, 'spend-budget.json');
+export function spendBudgetDirectory(root?: string): string | null {
+  if (root !== undefined) return isAbsolute(root) ? root : null;
+  const home = realHome();
+  return home ? join(home, '.ashlr') : null;
 }
 
-export function spendBudgetAuditPath(root = ashlrHome()): string {
-  return join(root, 'spend-budget-audit.jsonl');
+export function spendBudgetPath(root?: string): string {
+  return join(spendBudgetDirectory(root) ?? '', 'spend-budget.json');
+}
+
+export function spendBudgetEpochPath(root?: string): string {
+  return join(spendBudgetDirectory(root) ?? '', 'spend-budget-epoch.json');
+}
+
+export function spendBudgetAuditPath(root?: string): string {
+  return join(spendBudgetDirectory(root) ?? '', 'spend-budget-audit.jsonl');
 }
 
 export class SpendBudgetOwnerError extends Error {
-  constructor() {
-    super('Spend budget changes require the owner. Agents cannot set a budget.');
+  constructor(message = 'Spend budget changes require the owner. Agents cannot set a budget.') {
+    super(message);
     this.name = 'SpendBudgetOwnerError';
   }
 }
 
-async function readPolicyFile(path: string): Promise<SpendBudgetPolicy | null> {
+function interactiveTerminal(): boolean {
+  return process.stdin.isTTY === true && process.stdout.isTTY === true;
+}
+
+async function readCapped(path: string): Promise<string | null> {
   let handle: Awaited<ReturnType<typeof open>> | null = null;
   try {
     const info = await lstat(path);
@@ -44,7 +74,7 @@ async function readPolicyFile(path: string): Promise<SpendBudgetPolicy | null> {
     if (!current.isFile() || current.size > MAX_BYTES) return null;
     const bytes = Buffer.alloc(current.size);
     await handle.read(bytes, 0, bytes.length, 0);
-    return parseSpendBudget(JSON.parse(bytes.toString('utf8')));
+    return bytes.toString('utf8');
   } catch {
     return null;
   } finally {
@@ -52,10 +82,76 @@ async function readPolicyFile(path: string): Promise<SpendBudgetPolicy | null> {
   }
 }
 
-export async function readSpendBudget(root = ashlrHome()): Promise<{ policy: SpendBudgetPolicy; source: 'owner' | 'default' }> {
-  if (!isAbsolute(root)) return { policy: structuredClone(DEFAULT_SPEND_BUDGET), source: 'default' };
-  const policy = await readPolicyFile(spendBudgetPath(root));
-  return policy ? { policy, source: 'owner' } : { policy: structuredClone(DEFAULT_SPEND_BUDGET), source: 'default' };
+async function readPolicyFile(path: string): Promise<SpendBudgetDocument | null> {
+  const text = await readCapped(path);
+  if (text === null) return null;
+  try {
+    return parseSpendBudgetDocument(JSON.parse(text));
+  } catch {
+    return null;
+  }
+}
+
+/** Missing epoch is 0. A corrupt epoch matches nothing. */
+export async function readSpendBudgetEpoch(root?: string): Promise<number | null> {
+  const dir = spendBudgetDirectory(root);
+  if (!dir) return null;
+  const text = await readCapped(spendBudgetEpochPath(dir));
+  if (text === null) return 0;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const body = parsed as Record<string, unknown>;
+    if (body['schema'] !== EPOCH_SCHEMA) return null;
+    if (Object.keys(body).some((key) => key !== 'schema' && key !== 'epoch')) return null;
+    return typeof body['epoch'] === 'number' && Number.isSafeInteger(body['epoch']) && body['epoch'] >= 0
+      ? body['epoch']
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function decreased(previous: SpendBudgetPolicy, next: SpendBudgetPolicy): boolean {
+  return previous.entries.some((before) => {
+    const after = next.entries.find((row) => row.provider === before.provider && row.period === before.period);
+    return (after?.usd ?? 0) < before.usd;
+  });
+}
+
+function attestationHash(attestation: SpendBudgetAttestation): string {
+  switch (attestation.kind) {
+    case 'pin-chain':
+    case 'recorded':
+      return attestation.hash;
+    case 'mason-approval':
+      return attestation.digest;
+    default: {
+      const unexpected: never = attestation;
+      return unexpected;
+    }
+  }
+}
+
+async function attestationHonored(policy: SpendBudgetPolicy, attestation: SpendBudgetAttestation | null, epoch: number | null): Promise<boolean> {
+  if (policy.entries.every((entry) => entry.usd === 0)) return true;
+  if (!attestation || epoch === null || attestation.epoch !== epoch) return false;
+  if (attestationHash(attestation) !== spendBudgetPolicyHash(policy, attestation.epoch)) return false;
+  return spendBudgetRootHonors(attestation);
+}
+
+export async function readSpendBudget(root?: string): Promise<{ policy: SpendBudgetPolicy; source: 'owner' | 'default' }> {
+  const dir = spendBudgetDirectory(root);
+  if (!dir) return { policy: structuredClone(DEFAULT_SPEND_BUDGET), source: 'default' };
+  const document = await readPolicyFile(spendBudgetPath(dir));
+  if (!document) return { policy: structuredClone(DEFAULT_SPEND_BUDGET), source: 'default' };
+  let attested = false;
+  try {
+    attested = await attestationHonored(document.policy, document.attestation, await readSpendBudgetEpoch(dir));
+  } catch {
+    attested = false;
+  }
+  return { policy: effectiveSpendBudget(document.policy, attested), source: 'owner' };
 }
 
 async function writeAtomic(path: string, text: string): Promise<void> {
@@ -86,6 +182,10 @@ async function appendAudit(path: string, line: string): Promise<void> {
   }
 }
 
+function recordedAttestation(policy: SpendBudgetPolicy, epoch: number): SpendBudgetAttestation {
+  return { kind: 'recorded', hash: spendBudgetPolicyHash(policy, epoch), epoch };
+}
+
 export async function setSpendBudget(entry: SpendBudgetEntry, options: {
   env?: NodeJS.ProcessEnv;
   root?: string;
@@ -94,23 +194,41 @@ export async function setSpendBudget(entry: SpendBudgetEntry, options: {
   const env = options.env ?? process.env;
   // A caller-supplied env cannot hide markers on this process.
   if (spendBudgetChangeRefused(env) || spendBudgetChangeRefused(process.env)) throw new SpendBudgetOwnerError();
+  if (!interactiveTerminal()) {
+    throw new SpendBudgetOwnerError('Spend budget changes require an interactive terminal. Agents cannot set a budget.');
+  }
   const parsed = parseSpendBudget({ schema: SPEND_BUDGET_SCHEMA, entries: [entry] });
   if (!parsed) throw new Error('Spend budget entry is invalid');
-  const root = options.root ?? ashlrHome();
-  if (!isAbsolute(root)) throw new Error('Spend budget root must be absolute');
-  const current = await readSpendBudget(root);
-  const from = current.policy.entries.find((row) => row.provider === entry.provider && row.period === entry.period)?.usd ?? 0;
-  const next = withSpendEntry(current.policy, parsed.entries[0]!);
+  const root = spendBudgetDirectory(options.root);
+  if (!root) throw new Error('Spend budget root must be absolute');
   const path = spendBudgetPath(root);
   const previous = await readPolicyFile(path);
-  await writeAtomic(path, `${JSON.stringify(next, null, 2)}\n`);
+  const declared = previous?.policy ?? structuredClone(DEFAULT_SPEND_BUDGET);
+  const from = declared.entries.find((row) => row.provider === entry.provider && row.period === entry.period)?.usd ?? 0;
+  const next = withSpendEntry(declared, parsed.entries[0]!);
+  const currentEpoch = await readSpendBudgetEpoch(root);
+  if (currentEpoch === null) throw new Error('Spend budget epoch is unreadable');
+  const epoch = decreased(declared, next) ? currentEpoch + 1 : currentEpoch;
+  if (epoch !== currentEpoch) {
+    await writeAtomic(spendBudgetEpochPath(root), `${JSON.stringify({ schema: EPOCH_SCHEMA, epoch })}\n`);
+  }
+  const body = next.entries.some((row) => row.usd > 0)
+    ? { ...next, attestation: recordedAttestation(next, epoch) }
+    : next;
+  try {
+    await writeAtomic(path, `${JSON.stringify(body, null, 2)}\n`);
+  } catch (error) {
+    if (epoch !== currentEpoch) await writeAtomic(spendBudgetEpochPath(root), `${JSON.stringify({ schema: EPOCH_SCHEMA, epoch: currentEpoch })}\n`).catch(() => undefined);
+    throw error;
+  }
   const at = (options.now ?? (() => new Date()))().toISOString();
   try {
     await appendAudit(spendBudgetAuditPath(root), `${JSON.stringify({ at, provider: entry.provider, period: entry.period, fromUsd: from, toUsd: entry.usd, by: 'owner' })}\n`);
   } catch (error) {
-    if (previous) await writeAtomic(path, `${JSON.stringify(previous, null, 2)}\n`).catch(() => undefined);
+    if (previous) await writeAtomic(path, `${JSON.stringify(previous.attestation ? { ...previous.policy, attestation: previous.attestation } : previous.policy, null, 2)}\n`).catch(() => undefined);
     else await unlink(path).catch(() => undefined);
+    if (epoch !== currentEpoch) await writeAtomic(spendBudgetEpochPath(root), `${JSON.stringify({ schema: EPOCH_SCHEMA, epoch: currentEpoch })}\n`).catch(() => undefined);
     throw error;
   }
-  return next;
+  return (await readSpendBudget(root)).policy;
 }
