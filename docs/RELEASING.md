@@ -154,10 +154,17 @@ What runs without a per-release approval:
   when its version is the next patch, its head is `release-please--*`, and
   GitHub Actions checks on that head are success. The merge uses the existing
   release app token and has no admin flag.
+- If the accepted tag is behind master and has no build, the train records
+  `advance.action=advance-from-master`, the next patch version and master SHA.
+  Once cadence is due, it dispatches `release-please.yml` if that version has
+  no open release PR; otherwise it waits for that PR and enqueues it only
+  after its checks are green. The Release PR workflow independently checks
+  green master, cadence and version carriers. Existing tags stay unchanged.
 - `auto-tag.yml` still creates `vX.Y.Z` and the draft after required checks
   on that commit.
 - A `workflow_dispatch` of `ci.yml` with `release_gate=true` and `--ref` set
-  to that tag builds that commit. Later master commits do not retarget it.
+  to master builds the candidate only while its SHA equals master head.
+  A stale candidate instead advances through the release PR path above.
   The half-hour schedule on master is unchanged.
 - When that build artifact exists, the train dispatches
   `attest-ci-build.yml` and then `publish-canonical-npm.yml` with the exact
@@ -177,6 +184,9 @@ uses the same variable.
 
 Signing and notarization stay in `contrib/mac/release-autorun.sh` and the
 stock `release-sign.sh` wrapper. CI does not codesign and does not notarize.
+The plan reason `mac-release-autorun` means signed assets are still pending
+from this wrapper; it blocks desktop completion, but not npm dispatch once
+build, attestation and audit evidence are available. It is not a new hold.
 The wrapper picks up a successful attestation of a `v*` tag on its existing
 10 minute poll. The attestor commit must be master at attestation time and
 must still be an ancestor of master when the wrapper runs. A diverged
@@ -187,7 +197,9 @@ one-time unlock of the existing signing identity, not a per-release approval.
 `phm.dev` is not deployed from this repository. The host profile is
 `phantom-public-web` in `src/core/website/host-release.ts`: repository
 `ashlrai/phantom-secrets`, root `apps/web`, domain `phm.dev`. The train
-records that hook. `src/core/website/release-metadata.ts` is the existing
+records that hook. Its `phantom-secrets` reason identifies the separate
+website owner; the website step is outside the publishing dependency order
+and does not block npm or desktop finalization. `src/core/website/release-metadata.ts` is the existing
 task that refreshes `apps/web/src/lib/workbench-release.json` from public
 GitHub and npm facts after publication. A train state file does not mean the
 site was deployed.
@@ -408,3 +420,16 @@ workflows. Release Please and auto-tag can temporarily create empty drafts;
 those are not by themselves failed releases or evidence of a settled published
 release with signed assets. SIGN-PUBLISH-3311 and the desktop, Terra and Dot
 lanes retain their separate ownership.
+
+### Check release status
+
+Run `phm release status` for a read-only table across the seven enrolled Ashlr
+repositories, or add `--json` for the `phantom.release-status.v1` report. The
+latest tag is GitHub's most recently listed tag; assets belong to the release
+for that tag, and unreleased commits count commits on the default branch ahead
+of it. The Phantom row also shows the HTTP status of the public updater feed.
+`Unknown` (JSON `null`) means the observation could not be made, including when
+a tag has no GitHub release. Other repositories have no updater feed check.
+GitHub access uses the existing `gh` authentication. The command changes no
+release settings. `phm release status --file <path>` continues to inspect a
+local release-train state file.

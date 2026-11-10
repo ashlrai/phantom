@@ -62,7 +62,7 @@ describe('fleet red-fix', () => {
     ['--repo', 'owner/name'], // red-fix is pinned to ashlrai/phantom
     ['--json', '--json'],
     ['--write', '--write'],
-  ])('rejects bad args %j with usage on stderr and exit 2', async (...args: string[]) => {
+  ])('rejects bad args %j (#%#) with usage on stderr and exit 2', async (...args: string[]) => {
     expect(await cmdFleetRedFix(args, deps())).toBe(2);
     expect(errors).toBe(`${USAGE}\n`);
     expect(run).not.toHaveBeenCalled();
