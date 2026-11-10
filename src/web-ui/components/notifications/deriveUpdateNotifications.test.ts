@@ -113,6 +113,12 @@ describe('update notifications — server self-update probe', () => {
     expect(derive(status, now)).toEqual([]);
   });
 
+  it('surfaces a settled apply as an informational item, not an action', () => {
+    const status = server({ lastApply: lastApply({ outcome: 'updated', reason: null, restartRequired: false }) }) as UpdateServerStatus;
+    expect(derive(status, now)).toEqual([expect.objectContaining({
+      id: 'update-applied:bbbbbbb', category: 'daemon-health', severity: 'info', title: 'Now running bbbbbbb' })]);
+  });
+
   it('lets a stale apply record age out instead of nagging forever', () => {
     const status = server({ lastApply: lastApply({ finishedAt: '2026-10-30T11:00:00Z' }) }) as UpdateServerStatus;
     expect(derive(status, now)).toEqual([]);
