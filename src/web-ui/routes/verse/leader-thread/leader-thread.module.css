@@ -88,3 +88,5 @@
   margin: var(--space-2) 0 0;
   color: var(--text-primary);
 }
+
+.root [data-find-current='true'] { outline: 2px solid var(--accent-500); outline-offset: -2px; }
