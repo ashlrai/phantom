@@ -29,6 +29,7 @@ import { openDockPane } from '../dock/dock-store.js';
 import { paneLinkUrl } from '../dock/pane-link.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { JobRefs } from '../fleet/JobRefs.js';
+import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import type { PaneHost } from '../panes/pane-registry.js';
 import { COMMS_STATUS_PATH, readCommsStatus } from '../fleet-inbox/comms-status-model.js';
 import { UNIFIED_INBOX_PATH, readUnifiedInboxView } from '../fleet-inbox/unified-inbox-model.js';
@@ -41,6 +42,7 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { useActivity } from '../shell/useActivity.js';
 import { buildFeed, feedPaneLabel, filterFeed, type FeedFilter, type FeedKind } from './feed-model.js';
 import { FeedAskButton } from './FeedAskButton.js';
+import { feedTellText } from './feed-tell-text.js';
 import { releaseFeedItems } from './release-feed-items.js';
 import { isDismissed, useFeedDismissals } from './feed-dismiss-store.js';
 import { countNew, firstOlderIndex, useFeedSeen } from './feed-seen-store.js';
@@ -210,6 +212,7 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
             : item.pane && feedPaneLabel(item.pane) ? <a className={styles.link} href={paneLinkUrl(item.pane, null, false) ?? undefined}
               aria-label={`${feedPaneLabel(item.pane)}: ${item.title}`} onClick={event => { event.preventDefault(); openPane(item.pane!); }}>{feedPaneLabel(item.pane)}</a> : null}
           {item.href ? <a className={styles.link} href={item.href} target="_blank" rel="noopener noreferrer">Open</a> : null}
+          <button type="button" className={styles.dismiss} aria-label={`Tell the Leader about ${item.title}`} onClick={() => openInterjectDialog({ prefill: feedTellText(item) })}>Tell the Leader</button>
           <button type="button" className={styles.dismiss} aria-label={`Dismiss ${item.title}`} onClick={() => dismissItem(item)}>Dismiss</button>
         </Card>
         </li>
@@ -221,6 +224,7 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
     {showDismissed && dismissed.length ? <ol className={styles.list} aria-label="Dismissed">
       {dismissed.map(item => <li key={item.id} data-kind={item.kind} className={styles.dimmed}>
         <Card title={item.title} caption={<time dateTime={item.at}>{formatRelative(item.at, now)}</time>}>
+          <button type="button" className={styles.dismiss} aria-label={`Tell the Leader about ${item.title}`} onClick={() => openInterjectDialog({ prefill: feedTellText(item) })}>Tell the Leader</button>
           <button type="button" className={styles.dismiss} aria-label={`Restore ${item.title}`} onClick={() => restoreItem(item)}>Restore</button>
         </Card>
       </li>)}
