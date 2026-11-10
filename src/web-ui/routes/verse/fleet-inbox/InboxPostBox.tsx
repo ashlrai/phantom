@@ -3,6 +3,7 @@ import { Button } from '../../../components/primitives/index.js';
 import { ApiError } from '../../../data/client.js';
 import { loadDraft, saveDraft } from '../fleet/interject-ack-model.js';
 import { postInterjectionDetailed } from '../fleet/interject-queries.js';
+import { mintInterjectRequestId } from '../fleet/interject-request.js';
 import { retryable } from './inbox-post-result.js';
 import { postAckLine } from './inbox-post-ack-model.js';
 import styles from './fleet-inbox.module.css';
@@ -17,9 +18,12 @@ export function InboxPostBox({ onPosted, snapshot }: { onPosted: (text: string) 
   const [result, setResult] = useState<Awaited<ReturnType<typeof postInterjectionDetailed>> | null>(null);
   const [retryText, setRetryText] = useState<string | null>(null);
   const busy = useRef(false);
+  // One request id per composed message; the Retry button reposts the same id.
+  const requestKey = useRef<{ text: string; id: string } | null>(null);
   const canSend = !sending && draft.trim().length > 0 && draft.length <= 6_000;
   function updateDraft(value: string) {
     setDraft(value);
+    if (!value.trim()) requestKey.current = null;
     try { saveDraft(window.sessionStorage, value); } catch { /* Storage can be unavailable. */ }
   }
   async function send(text = draft.trim()) {
@@ -30,7 +34,8 @@ export function InboxPostBox({ onPosted, snapshot }: { onPosted: (text: string) 
     setResult(null);
     setRetryText(null);
     try {
-      const result = await postInterjectionDetailed(text);
+      if (requestKey.current?.text !== text) requestKey.current = { text, id: mintInterjectRequestId() };
+      const result = await postInterjectionDetailed(text, requestKey.current.id);
       setResult(result);
       updateDraft('');
       if (!result.duplicate) onPosted(text);

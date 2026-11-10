@@ -19,6 +19,7 @@ import { APP_NAME, APP_VERSION, installedDesktopVersion } from './app-version.js
 import { AboutPanel } from './AboutPanel.js';
 import { AppearancePanel } from './AppearancePanel.js';
 import { ChatSettingsPanel } from './ChatSettingsPanel.js';
+import { CommsLimitsRow } from './CommsLimitsRow.js';
 import { ConnectionPanel } from './ConnectionPanel.js';
 import { DesktopSettingsPanel } from './DesktopSettingsPanel.js';
 import { PlannerSlatePanel } from './PlannerSlatePanel.js';
@@ -48,6 +49,7 @@ export function SettingsSection() {
           <ResidentAwakePanel />
           <ConnectionPanel />
           <ConnectorsSettings />
+          <CommsLimitsRow />
           <p><a href="#/settings/secrets">Phantom Secrets custody</a></p>
           <ShortcutsPanel />
           <OnboardingPanel />
