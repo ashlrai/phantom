@@ -42,7 +42,12 @@ function source(root, eventSha) {
   const identity = createBuildIdentity({ repoRoot: root });
   assert.equal(identity.provenance, 'git');
   assert.equal(identity.revision, eventSha, 'checkout differs from event SHA');
-  assert.equal(identity.dirty, false, 'source changed after build');
+  if (identity.dirty) {
+    const status = execFileSync('git', ['status', '--porcelain', '--untracked-files=normal'],
+      { cwd: root, encoding: 'utf8', timeout: 15000 });
+    assert.fail(`source changed after build:\n${status}`);
+  }
+  assert.equal(identity.dirty, false, 'source cleanliness unavailable');
   regular(join(root, 'package.json'), 1024 * 1024);
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
   sourceDesktopUpdateProfile(pkg.name);
