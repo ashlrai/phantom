@@ -2,6 +2,9 @@ import { useState } from 'react';
 import { refreshDesktopUpdates, useDesktopUpdates } from '../../../app/desktop-updates.js';
 import { Button, StatusBadge, Switch } from '../../../components/primitives/index.js';
 import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
+import { workersQuery } from '../fleet/workers-card-queries.js';
+import { updateImpact } from '../update/update-impact.js';
+import styles from './UpdateNowButton.module.css';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { APP_VERSION, installedDesktopVersion } from './app-version.js';
 import { UpdateNowButton } from './UpdateNowButton.js';
@@ -40,6 +43,14 @@ export function UpdateStatusRow() {
   const bridge = (window as unknown as { __ASHLR_DESKTOP__?: { updates?: { refresh?: unknown } } }).__ASHLR_DESKTOP__;
   const status = describeUpdateStatus({ native, server: query.status === 'error' ? null : query.data ?? null,
     appVersion: APP_VERSION, desktopVersion: installedDesktopVersion(), now: Date.now(), nativeBridge: typeof bridge?.updates?.refresh === 'function' });
+  const available = ['available', 'staged', 'waiting-for-idle', 'waiting-for-app-quit', 'installed'].includes(native?.phase ?? '')
+    || (!!query.data && !('kind' in query.data) && (query.data.behind ?? 0) > 0);
+  const workers = useQuery(workersQuery, { enabled: visible && documentVisible && available, freshMs: 60_000 });
+  const pollWorkers = useRefetch(workersQuery);
+  usePollWhileVisible(pollWorkers, 60_000, { enabled: available });
+  const count = workers.status === 'success' && workers.data?.sources.workers === 'healthy' ? workers.data.workers.length : null;
+  // Fleet runs are host processes launched by dispatchd in separate sessions (contrib/mac/dispatchd.py).
+  const impact = updateImpact(count, true, available);
   const behind = behindLines(query.status === 'error' ? null : query.data ?? null);
   async function checkNow() {
     if (checking) return;
@@ -69,7 +80,10 @@ export function UpdateStatusRow() {
     </>}>
       <StatusBadge status={status.tone} tone={status.tone} />
       <Button size="sm" busy={checking} onClick={() => void checkNow()}>Check now</Button>
-      <UpdateNowButton status={query.data} onDone={refresh} />
+      <div className={styles.root}>
+        {impact && <div className={styles.result} data-tone={impact.tone === 'warn' ? 'warning' : impact.tone} aria-live="polite">{impact.text}</div>}
+        <UpdateNowButton status={query.data} onDone={refresh} />
+      </div>
     </SettingRow>
     <SettingRow label="Update automatically when the fleet is quiet (10 min)" description={<span aria-live="polite">{policy.enabled ? autoSentence : 'Auto-update off'}</span>}>
       <Switch aria-label="Update automatically when the fleet is quiet (10 min)" checked={policy.enabled} onChange={enabled => writeAutoUpdatePolicy({ enabled, quietMinutes: 10 })} />

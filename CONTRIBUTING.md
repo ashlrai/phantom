@@ -60,6 +60,7 @@ To install the CLI while developing:
 | `npm run lint` | ESLint plus real-I/O membership and Phantom console synchronous-I/O guards |
 | `node scripts/verify-changed.mjs` | Lint only the files changed against origin/master and run one type check; the fast local gate before pushing. Repeats on an unchanged tree are skipped (`--force` reruns). Merge Gate still runs the full check. |
 | `npm run check:docs` | Validate operator documentation file links and anchors locally, without network requests |
+| `npm run check:perf` | Time the committed CLI cold-path budgets in `perf/budgets.json` (hyperfine when installed); advisory in CI, never a required check |
 | `npm run docs:sync` | Regenerate every generated docs surface (freshness blocks, site pages, CODEMAP inventory, llms indexes); `-- --check` reports drift without writing |
 | `node scripts/check-test-names.mjs` | Flag duplicate test names across `test/` that collide in name-keyed reports |
 | `node scripts/generate-cli-docs.mjs` | Regenerate `docs/cli.md` from `phm --help` output; `--check` compares without writing |
