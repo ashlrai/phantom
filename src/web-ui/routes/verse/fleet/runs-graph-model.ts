@@ -3,13 +3,13 @@ import type { WorkspaceGraphV1 } from './workspace-graph.js';
 
 export interface RunsData {
   v: 1;
-  workers: Array<{ job: string; lane?: string; model?: string; startedAt?: string; repo?: string; ageSeconds?: number | null }>;
+  workers: Array<{ job: string; lane?: string; model?: string; startedAt?: string; repo?: string; ageSeconds?: number | null; overrun?: { ratio: number; medianMs: number } }>;
   leaders: Array<{ name?: string; lane?: string; model?: string }>;
   lanes?: Array<{ id: string; running: number; target: number }>;
   mergesLastHour: { count: number | null; items?: Array<{ repo?: string; number?: number }> };
   switches: string[];
 }
-type Node = { id: string; kind: 'leader' | 'lane' | 'run' | 'merged' | 'overflow'; label: string; state: string; title: string; data?: { lane?: string; tier?: string; repo?: string; number?: number } };
+type Node = { id: string; kind: 'leader' | 'lane' | 'run' | 'merged' | 'overflow'; label: string; state: string; title: string; data?: { lane?: string; tier?: string; repo?: string; number?: number; overrun?: { ratio: number; medianMs: number } } };
 export interface RunsGraphModel extends Omit<WorkspaceGraphV1, 'nodes' | 'edges'> {
   nodes: Node[];
   edges: Array<WorkspaceGraphV1['edges'][number] & { title: string; inferred: boolean }>;
@@ -47,7 +47,7 @@ export function buildRunsGraph(runs: RunsData, now: number): RunsGraphModel {
     if (index >= 60) { overflow.set(lane, (overflow.get(lane) ?? 0) + 1); return; }
     const elapsed = worker.startedAt ? now - Date.parse(worker.startedAt) : NaN;
     const title = `${worker.job} · ${worker.lane ?? 'unknown lane'} · ${worker.model ?? 'model not reported'} · ${Number.isFinite(elapsed) ? `${Math.floor(Math.max(0, elapsed) / 60_000)}m elapsed` : 'elapsed not reported'}`;
-    add(worker.id, 'run', worker.job, 'running', title, { lane: worker.lane, tier: worker.model });
+    add(worker.id, 'run', worker.job, 'running', title, { lane: worker.lane, tier: worker.model, ...(worker.overrun ? { overrun: worker.overrun } : {}) });
     link(lane, worker.id);
     if ((runs.mergesLastHour.count ?? 0) > 0 && worker.repo && runs.mergesLastHour.items?.some(item => item.repo === worker.repo)) {
       link(worker.id, 'merged:last-hour');
