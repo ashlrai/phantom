@@ -402,6 +402,7 @@
 /test/fleet-ci-step-cost.test.ts @masonwyatt23
 /test/fleet-ci-trigger-facts-01.test.ts @masonwyatt23
 /test/fleet-companion-mcp.test.ts @masonwyatt23
+/test/fleet-conflict-risk.test.ts @masonwyatt23
 /test/fleet-control-315.test.ts @masonwyatt23
 /test/fleet-daily-reds.test.ts @masonwyatt23
 /test/fleet-dep-gate.test.ts @masonwyatt23
