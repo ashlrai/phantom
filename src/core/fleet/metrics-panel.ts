@@ -1,13 +1,15 @@
+import { readGeneratorYield } from '../queue/generator-yield.js';
 import { readGoals } from './goals.js';
 import { readFleetRunsDirState } from './runs-dir-state.js';
 
 /** The dispatcher rollup covers jobs launched in the last 24 hours. */
 export async function readMetricsPanel(runsDir?: string) {
-  const [goals, status] = await Promise.all([readGoals(runsDir), readFleetRunsDirState({ runsDir })]);
+  const [goals, status, generatorYield] = await Promise.all([readGoals(runsDir), readFleetRunsDirState({ runsDir }), readGeneratorYield(runsDir)]);
   const names = new Set([...goals.lanes.map(row => row.lane), ...status.lanes.map(row => row.lane)]);
   return {
     schema: 'fleet.metrics-panel.v1' as const,
     observedAt: goals.observedAt,
+    generatorYield,
     hourlyMerges: null as number[] | null,
     lanes: [...names].sort().map(lane => {
       const metric = goals.lanes.find(row => row.lane === lane);
