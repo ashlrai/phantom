@@ -11,11 +11,16 @@ import { scrubSecrets } from '../util/scrub.js';
 import { readLaneTargets, setLaneTarget } from '../fleet/runs-lane-targets.js';
 import { QueueStore } from '../queue/store.js';
 import { reclaimableTempWorktrees } from '../inbox/temp-worktree-reaper.js';
+import {
+  queueJobProblem, runSteerAction, steerNoteProblem, steerPriorityProblem, stopJobProblem,
+  type SteerDeps, type SteerRequest,
+} from '../workbench/steer.js';
 
 export const WB_ACTION_PATH = '/api/wb/v1/action';
-const actions = ['lane.pause', 'lane.resume', 'lane.target', 'queue.hold', 'queue.unhold', 'reap.count', 'job.retry'] as const;
+const actions = ['lane.pause', 'lane.resume', 'lane.target', 'queue.hold', 'queue.unhold', 'reap.count', 'job.retry',
+  'steer.note', 'queue.reprioritize', 'job.stop'] as const;
 type Action = typeof actions[number];
-interface Request { action: Action; nonce: string; dryRun: boolean; lane?: string; job?: string; target?: number }
+interface Request { action: Action; nonce: string; dryRun: boolean; lane?: string; job?: string; target?: number; text?: string; priority?: string }
 function parse(value: unknown): Request | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const b = value as Record<string, unknown>;
@@ -30,6 +35,15 @@ function parse(value: unknown): Request | null {
       fields.push('target');
       if (!Number.isSafeInteger(b.target) || Number(b.target) < 0 || Number(b.target) > 1000) return null;
     }
+  } else if (action === 'steer.note') {
+    fields.push('text');
+    if (steerNoteProblem(b.text) !== null) return null;
+  } else if (action === 'queue.reprioritize') {
+    fields.push('job', 'priority');
+    if (queueJobProblem(b.job) || steerPriorityProblem(b.priority)) return null;
+  } else if (action === 'job.stop') {
+    fields.push('job');
+    if (stopJobProblem(b.job)) return null;
   } else if (action !== 'reap.count') {
     fields.push('job');
     if (typeof b.job !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(b.job) || scrubSecrets(b.job) !== b.job) return null;
@@ -64,7 +78,21 @@ async function audit(directory: string, action: Action | 'invalid', outcome: str
     await file.sync();
   } finally { await file.close(); }
 }
-async function execute(b: Request, runsDir: string): Promise<number | undefined> {
+interface Executed { count?: number; outcome?: string }
+async function execute(b: Request, runsDir: string, deps?: SteerDeps): Promise<Executed> {
+  if (b.action === 'steer.note' || b.action === 'queue.reprioritize' || b.action === 'job.stop') {
+    const request: SteerRequest = b.action === 'steer.note'
+      ? { action: b.action, text: b.text! }
+      : b.action === 'queue.reprioritize'
+        ? { action: b.action, job: b.job!, priority: b.priority! }
+        : { action: b.action, job: b.job! };
+    const result = await runSteerAction(request, { dryRun: b.dryRun, runsDir, deps });
+    switch (result.action) {
+      case 'steer.note': return { outcome: result.outcome, count: result.bytes };
+      case 'queue.reprioritize': return { outcome: `${result.from}>${result.to}` };
+      case 'job.stop': return { outcome: result.outcome, count: result.pids.length };
+    }
+  }
   if (b.action.startsWith('lane.')) {
     const state = await readLaneTargets({ runsDir });
     const lane = state.lanes.find(row => row.lane === b.lane);
@@ -75,7 +103,7 @@ async function execute(b: Request, runsDir: string): Promise<number | undefined>
   } else if (b.action === 'reap.count') {
     const result = reclaimableTempWorktrees(process.cwd());
     if (!result.complete) throw new Error('Incomplete count');
-    return result.paths.length;
+    return { count: result.paths.length };
   } else {
     const store = new QueueStore(join(runsDir, 'queue'));
     if (b.action === 'job.retry') {
@@ -84,11 +112,11 @@ async function execute(b: Request, runsDir: string): Promise<number | undefined>
       if (!b.dryRun) await store.replay({ ids: [b.job!] });
     } else await store.hold(b.job!, b.action === 'queue.hold', b.dryRun);
   }
-  return undefined;
+  return {};
 }
 export async function handleWbAction(req: IncomingMessage, res: ServerResponse,
   ctx: { token: string; allowDispatch: boolean },
-  options: { directory?: string; runsDir?: string } = {}): Promise<boolean> {
+  options: { directory?: string; runsDir?: string; steerDeps?: SteerDeps } = {}): Promise<boolean> {
   if (req.method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }, { Allow: 'POST' }); return true; }
   if (!ctx.allowDispatch) { sendJson(res, 403, { error: 'actions disabled' }); return true; }
   if (!passesMutationGate(req, res, ctx.token)) return true;
@@ -96,7 +124,7 @@ export async function handleWbAction(req: IncomingMessage, res: ServerResponse,
   let body: Request | null = null;
   try {
     await privateDirectory(directory);
-    try { body = parse(JSON.parse(await readBody(req, 2048))); } catch { /* fixed refusal below */ }
+    try { body = parse(JSON.parse(await readBody(req, 8192))); } catch { /* fixed refusal below */ }
     if (!body) { await audit(directory, 'invalid', 'refused'); sendJson(res, 400, { error: 'invalid action' }); return true; }
     await privateDirectory(join(directory, 'nonces'));
     const digest = createHash('sha256').update(body.nonce).digest('hex');
@@ -110,9 +138,9 @@ export async function handleWbAction(req: IncomingMessage, res: ServerResponse,
     }
     // Durable intent precedes any side effect; an uncertain attempt cannot be replayed.
     await audit(directory, body.action, body.dryRun ? 'dry-run-attempt' : 'apply-attempt');
-    const count = await execute(body, options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'));
+    const done = await execute(body, options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), options.steerDeps);
     await audit(directory, body.action, 'completed');
-    sendJson(res, 200, { v: 1, dryRun: body.dryRun, ...(count === undefined ? {} : { count }) });
+    sendJson(res, 200, { v: 1, dryRun: body.dryRun, ...(done.count === undefined ? {} : { count: done.count }), ...(done.outcome === undefined ? {} : { outcome: done.outcome }) });
   } catch {
     await audit(directory, body?.action ?? 'invalid', 'unavailable').catch(() => undefined);
     sendJson(res, 503, { error: 'action unavailable' });
