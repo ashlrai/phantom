@@ -19,6 +19,7 @@ import { takeRequestedLane, useRequestedLane } from './lane-focus-request.js';
 import { LanePauseButton } from './LanePauseButton.js';
 import { LaneHoldReleaseButton } from './LaneHoldReleaseButton.js';
 import { LaneTargetStepper } from './LaneTargetStepper.js';
+import { LaunchStallBanner } from './LaunchStallBanner.js';
 import styles from './fleet-lanes.module.css';
 
 function pullUrl(repo: string, number: number): string | null {
@@ -94,6 +95,7 @@ export function FleetLanesPane({ visible }: Pick<PaneProps, 'visible'>) {
       : !data ? <p className={styles.muted} role="status">{read.status === 'error' ? 'Fleet runs are unavailable.' : 'Reading fleet runs…'}</p>
       : <>
         {read.status === 'error' ? <p className={styles.muted} role="status">Fleet runs could not refresh. Showing the last reading.</p> : null}
+        <LaunchStallBanner enabled={active} />
         {data.sources.runsDir !== 'healthy' ? <p className={styles.muted}>Runs directory: {data.sources.runsDir}</p> : null}
         <section className={styles.section} aria-labelledby="fleet-lanes-capacity">
           <h3 id="fleet-lanes-capacity" className={styles.title}>Lane capacity</h3>
