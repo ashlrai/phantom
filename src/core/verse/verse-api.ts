@@ -254,6 +254,7 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   { id: 'fleet-inbox-acks', load: async () => (await import('./fleet-inbox-acks-api.js')).handleFleetInboxAcksApi },
   { id: 'fleet-apps', load: async () => (await import('./fleet-apps-api.js')).handleFleetAppsApi },
   { id: 'fleet-standby' as MountedApiModuleId, load: async () => (await import('./fleet-standby-api.js')).handleFleetStandbyApi },
+  { id: 'fleet-disk-forecast' as MountedApiModuleId, load: async () => (await import('./fleet-disk-forecast-api.js')).handleFleetDiskForecastApi },
   // Self-tick last-run record: GET /api/verse/fleet/self-tick (core/verse/fleet-self-tick-api.ts); read-only, never takes the tick lock.
   { id: 'fleet-self-tick', load: async () => (await import('./fleet-self-tick-api.js')).handleFleetSelfTickApi },
   // Fleet graph registry: GET /api/verse/fleet/graph (core/verse/fleet-graph-api.ts); read-only.
