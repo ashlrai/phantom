@@ -159,6 +159,7 @@ import { tick, runDaemon } from '../src/core/daemon/loop.js';
 import { enroll, unenroll, setKill } from '../src/core/sandbox/policy.js';
 import { createProposal } from '../src/core/inbox/store.js';
 import { registerServingCapacityProbe, resetServingCapacityCache } from '../src/core/daemon/local-fleet.js';
+import { ADAPTIVE_START_LEVEL, resetAdaptiveThroughput } from '../src/core/daemon/count-preferences.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -479,10 +480,12 @@ describe('M116 — default config (batch mode)', () => {
       peak = Math.max(peak, concurrent);
       try { return await run(); } finally { concurrent--; }
     });
+    resetAdaptiveThroughput();
     const result = await tick(cfg, { dryRun: false });
     expect(result.reason).toBe('ok');
-    expect(mockRunSwarm).toHaveBeenCalledTimes(3);
-    expect(peak).toBe(2);
+    // Invalid counts fall back to the adaptive first ramp step, not a wider static default.
+    expect(mockRunSwarm).toHaveBeenCalledTimes(ADAPTIVE_START_LEVEL);
+    expect(peak).toBe(ADAPTIVE_START_LEVEL);
   });
 
   it('processes items up to parallel cap; no continuous looping', async () => {

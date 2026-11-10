@@ -4,7 +4,7 @@
 # `restock.py [--dry-run] [--per-lane N]`. RQ-QUEUEGEN-BOLD-30 + SPEC-AMEND Security #5 + RQ-DEVINROUTEDEFAULTQ7
 # + RQ-QUEUE-AUTOUNPARK-1 (PARKED-DEP / DEPENDENCY GATE / UNPARK). Security must re-pin before live bin/ install.
 import os, re, sys, json, time, fcntl, subprocess, math
-from datetime import datetime
+from datetime import datetime, timezone
 from launch_precheck import precheck, park, parked as precheck_parked, park_key
 import queue_gate
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; EV = R + "/dispatch-events.log"
@@ -38,6 +38,17 @@ DEVIN_T = 10; DEVIN_C = 16
 DVLH = re.compile(r"(?i)\b(?:horizon=long(?:-horizon)?|long[-_]horizon)\b")
 def devin_default(tm, attrs):   # open pool + frontier tier or a long-horizon marker -> devin by default
     return bool(tm and tm.group(1) == "frontier") or bool(DVLH.search(attrs))
+
+def local_fit(attrs, text):
+    """Conservatively admit only bounded, file-specific offline work."""
+    sizes = re.findall(r"(?:^|[,;\s])size<=([0-9]+)(?=[,;\s]|$)", attrs)
+    if len(sizes) != 1 or int(sizes[0]) > 80: return False, "size must be at most 80"
+    files = set(re.findall(r"(?<![\w./-])((?:[\w.-]+/)*[\w.-]+\.[A-Za-z][A-Za-z0-9]{0,9})(?![\w./-])", text))
+    if not 1 <= len(files) <= 2: return False, "name one or two files"
+    if not re.search(r"\boffline\b", text, re.I): return False, "offline work is not explicit"
+    if re.search(r"\b(?:network|browser|internet|https?://|fetch|download|upload|deploy|publish)\b", text, re.I):
+        return False, "network or browser may be needed"
+    return True, "bounded file-specific work"
 def rd(p, d=""):
     try: return open(p).read()
     except Exception: return d
@@ -133,11 +144,23 @@ for row in ready_raw:
     if f[0] in queue_seen:
         queue_diagnostics["duplicate"] += 1; continue
     queue_seen.add(f[0]); need[f[2]] = max(need[f[2]] - 1, 0)
-merged = set(); completed = set()
+merged = set(); completed = set(); recent_outcomes = {}
 for x in rd(R + "/metrics/jobs.jsonl").splitlines():
     try: d = json.loads(x)
     except Exception: continue
     if not isinstance(d, dict): continue
+    job = d.get("job")
+    stamp = d.get("ts", d.get("timestamp", d.get("at")))
+    try:
+        at = datetime.fromisoformat(stamp.replace("Z", "+00:00")) if isinstance(stamp, str) else None
+        epoch = at.timestamp() if at and at.tzinfo else None
+    except (ValueError, OverflowError): epoch = None
+    outcome = str(d.get("state", d.get("outcome", ""))).upper()
+    empty = d.get("empty") is True or outcome in ("EMPTY", "DONE-NOOP")
+    success = d.get("empty") is False or outcome == "MERGED"
+    if isinstance(job, str) and epoch is not None and 0 <= time.time() - epoch < 24 * 3600 and (empty or success):
+        previous = recent_outcomes.get(job)
+        if previous is None or epoch > previous[0]: recent_outcomes[job] = (epoch, empty and not success)
     if d.get("event") == "outcome" and d.get("state") == "MERGED" and isinstance(d.get("job"), str):
         merged.add(d["job"])
         repo = d.get("repo")
@@ -146,13 +169,19 @@ for x in rd(R + "/metrics/jobs.jsonl").splitlines():
             completed.add((repo.removeprefix("ashlrai/") if repo is not None else None, d["job"]))
 # A merged outcome plus the original identical task is evidence for suppressing
 # a later copy. Missing or ambiguous history never proves completion.
-completed_groups = set()
+completed_groups = set(); group_outcomes = {}
 for raw in lines:
     m = re.match(r"^- (?:READY|CLAIMED|DONE|MERGED|LANDED) ([A-Za-z0-9._-]+)(?: r\d+)? \((.*?)\):\s*(.*)$", raw)
     if m:
         group = single_case_group(*m.groups())
+        if group and m.group(1) in recent_outcomes:
+            group_outcomes.setdefault(group, {})[m.group(1)] = recent_outcomes[m.group(1)]
         if group and ((group[0], m.group(1)) in completed or (None, m.group(1)) in completed):
             completed_groups.add(group)
+# Two latest distinct attempts were empty: cool down only this exact request.
+# A later success or expiry of the evidence permits a fresh attempt.
+empty_groups = {group for group, outcomes in group_outcomes.items()
+                if len(outcomes) >= 2 and all(empty for _, empty in sorted(outcomes.values(), reverse=True)[:2])}
 try: ps = subprocess.run(["ps", "-axo", "command="], capture_output=True, text=True).stdout
 except Exception: ps = ""   # sandboxed callers may refuse ps; the worktree-dir check in busy() still applies
 def landed(dep): return dep in merged or status.get(dep, "") in ("DONE", "MERGED", "LANDED")
@@ -330,9 +359,10 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re
     if pool == "any": pool = max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
     if pool not in CODEX: skip(j, "lane-" + pool); continue
     if pool == "codex-local":
-        size = re.search(r"(?:^|[,;\s])size<=([0-9]+)(?=[,;\s]|$)", attrs)
-        if not size or int(size.group(1)) > 60:
-            skip(j, "local-size"); continue
+        fits, reason = local_fit(attrs, text)
+        if not fits:
+            pool = max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
+            print("LOCAL_FIT %s: %s; fallback=%s" % (j, reason, pool), file=sys.stderr)
     prp = set(re.findall(r"github\.com/[A-Za-z0-9._-]+/([A-Za-z0-9._-]+)/pull/(\d+)", raw))
     prp |= {(rm.group(1), n) for n in re.findall(r"(?:pull/|PR=|#)(\d+)", attrs + " " + text)}
     if prp & held_pr or any(("*", n) in held_pr for _, n in prp): skip(j, "hold-list-pr"); continue
@@ -367,6 +397,8 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re
     quality_group = single_case_group(j, attrs, text)
     if quality_group and quality_group in completed_groups:
         skip(j, "acceptance-already-merged"); continue
+    if quality_group and quality_group in empty_groups:
+        skip(j, "recent-empty-streak"); continue
     if quality_group and quality_group in quality_groups:
         skip(j, "duplicate-single-case-test-file"); continue
     # balance codex lanes: line pool first, else the lane with more unmet need (cmp wins ties)
