@@ -6,6 +6,8 @@ import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefresh } from '../../../data/hooks.js';
 import { ordersTraceQuery } from '../fleet-inbox/fleet-inbox-queries.js';
 import { narrowOrderTrace } from '../fleet-inbox/order-trace-model.js';
+import { runsGraphQuery } from './runs-graph-queries.js';
+import { insertMention, matchRunningJobs, mentionQuery, targetsOf } from './interject-target-model.js';
 import { interjectOutcome } from './interject-outcome-model.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { inboxTailQuery, postInterjection, readInboxAck } from './interject-queries.js';
@@ -37,6 +39,21 @@ export function InterjectBox() {
   const [draft, setDraft] = useState(() => {
     try { return loadDraft(window.sessionStorage); } catch { return ''; }
   });
+  const [caret, setCaret] = useState(0);
+  const [mentionClosed, setMentionClosed] = useState(false);
+  const [selected, setSelected] = useState(0);
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  const query = mentionClosed ? null : mentionQuery(draft, caret);
+  const running = useQuery(runsGraphQuery, { enabled: query !== null, freshMs: 15_000 });
+  const matches = query === null ? [] : matchRunningJobs(query, running.data?.workers ?? []);
+  const targets = targetsOf(draft);
+  function chooseMention(job: string) {
+    const next = insertMention(draft, caret, job);
+    updateDraft(next.text);
+    setCaret(next.caret);
+    setMentionClosed(true);
+    requestAnimationFrame(() => { textarea.current?.focus(); textarea.current?.setSelectionRange(next.caret, next.caret); });
+  }
   const [sending, setSending] = useState(false);
   const busy = useRef(false);
   const cursor = useRef<number | null>(null);
@@ -151,11 +168,21 @@ export function InterjectBox() {
     <h2 id={`${id}-title`}>Tell the leaders</h2>
     <form onSubmit={event => { event.preventDefault(); void send(); }}>
       <label htmlFor={id}>Prompt, thought or interjection</label>
-      <textarea id={id} rows={3} maxLength={6_000} value={draft} disabled={sending}
+      <textarea ref={textarea} id={id} rows={3} maxLength={6_000} value={draft} disabled={sending}
         placeholder="Tell the leaders. Lands in MASON-INBOX.md; the next leader pass reads it."
-        onChange={event => updateDraft(event.target.value)}
+        onChange={event => { updateDraft(event.target.value); setCaret(event.target.selectionStart); setMentionClosed(false); setSelected(0); }}
+        onSelect={event => setCaret(event.currentTarget.selectionStart)}
+        aria-controls={query !== null && matches.length ? `${id}-mentions` : undefined}
+        aria-activedescendant={query !== null && matches.length ? `${id}-mention-${Math.min(selected, matches.length - 1)}` : undefined}
         onKeyDown={event => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+          if (query !== null && matches.length && ['ArrowUp', 'ArrowDown', 'Enter', 'Tab'].includes(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+            event.preventDefault();
+            if (event.key === 'ArrowUp' || event.key === 'ArrowDown') setSelected(index => (index + (event.key === 'ArrowUp' ? -1 : 1) + matches.length) % matches.length);
+            else chooseMention(matches[Math.min(selected, matches.length - 1)]!.job);
+            return;
+          }
+          if (event.key === 'Escape' && query !== null) { event.preventDefault(); event.stopPropagation(); setMentionClosed(true); return; }
           if (event.key === 'Escape' || (event.key === 'Enter' && (event.metaKey || event.ctrlKey))) {
             event.preventDefault();
             event.stopPropagation();
@@ -178,6 +205,8 @@ export function InterjectBox() {
             } catch { /* Storage can be unavailable. */ }
           }
         }} />
+      {query !== null && matches.length ? <div id={`${id}-mentions`} role="listbox" aria-label="Running jobs">{matches.map((job, index) => <div id={`${id}-mention-${index}`} role="option" aria-selected={index === Math.min(selected, matches.length - 1)} key={`${job.job}-${index}`} onMouseDown={event => event.preventDefault()} onClick={() => chooseMention(job.job)}>{job.job} · {job.lane ?? 'Unknown lane'}</div>)}</div> : null}
+      {targets.length ? <div>{targets.map(target => <Tag key={target} size="sm">Aimed at {target}</Tag>)}</div> : null}
       <label><input type="checkbox" checked={asTask} disabled={sending} onChange={event => setAsTask(event.target.checked)} /> Run as task</label>
       <div className={styles.row}>
         <span>⌘↵ or Ctrl↵ send · ↑ history · Esc clear</span>
