@@ -147,6 +147,20 @@
     "verified": true
   },
   {
+    "id": "devin-cli-changelog",
+    "product": "Devin CLI",
+    "url": "https://docs.devin.ai/cli/changelog/stable",
+    "kind": "page",
+    "verified": true
+  },
+  {
+    "id": "devin-desktop-changelog",
+    "product": "Devin Desktop",
+    "url": "https://docs.devin.ai/desktop/changelog",
+    "kind": "page",
+    "verified": true
+  },
+  {
     "id": "zai-glm-release-notes",
     "product": "Z.ai GLM",
     "url": "https://docs.z.ai/release-notes/new-released",
