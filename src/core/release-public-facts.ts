@@ -278,6 +278,11 @@ const COMBINED_COMPLETE_CI_WORKFLOW_SHA256 = new Set([
   // release_gate, and the merge gate needs release-build. Exact bytes only:
   // the structural fast suffix still refuses every other revision.
   'c7f63536c65c2edf637a96e4ffc2d8594397d50346c96502a7e390eb6f064b08',
+  // Same reviewed topology after #4592 keyed release-gate dispatch concurrency
+  // on the tag (the source of v3.30.31), then after #4677 moved the release
+  // build into an isolated tree. Earlier releases above still verify.
+  'c2a41bf98e08fcdadba1dd4eb54547214cefc3555ceaec04def355a37989d02c',
+  'a0aaa485a663c5ef4ed3d713e8adb8368fcd366ed01b35f8bcbb3d9fa8b23b2f',
 ]);
 const completeSkippedJobs = (topology: CiAncillaryTopology): readonly string[] => topology === 'gate-complete-combined'
   ? COMPLETE_SKIPPED_JOBS.filter(name => name !== 'Prepare unsigned desktop release') : COMPLETE_SKIPPED_JOBS;

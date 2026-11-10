@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { OUTBOX_KIND_LABEL } from '../../../../core/fleet/outbox-kind.js';
 import { computeLaneHealth, laneHealthLine, stuckBadge } from '../../../../core/fleet/lane-health.js';
 import { VERSE_FLEET_RUNS_PATH } from '../../../../core/verse/fleet-runs-types.js';
@@ -39,6 +39,7 @@ import { mergeOwnerLines, ownerThreadLines, type LabeledLine } from './owner-thr
 import { NO_OWNER_THREAD, ownerThreadQuery } from './owner-thread-queries.js';
 import { fetchLeaderStatusNow } from './leader-status-now.js';
 import { sendLeaderInboxMessage, sendLeaderThreadMessage } from './leader-inbox-data.js';
+import { subscribeLeaderDraft, takeLeaderDraft } from './leader-draft-store.js';
 import { COMMS_CONFIRM_LINE, COMMS_TOML_PATH, INBOX_HELD_SENTENCE, inboxHeld } from './inbox-held-model.js';
 import { CopyPill } from '../apps/CopyPill.js';
 import { commandHints, completeCommand, parseComposerDraft } from './composer-commands.js';
@@ -135,6 +136,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const [checkingStatus, setCheckingStatus] = useState(false);
   const [needsYouOnly, setNeedsYouOnly] = useState(false);
   const [draft, setDraft] = useState('');
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const [sending, setSending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [held, setHeld] = useState(false);
@@ -145,6 +147,17 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const [commandLines, setCommandLines] = useState<LabeledLine[]>([]);
   // Inbox wall times, the merge and the day labels want a coarse tick.
   const now = useNow(10_000);
+
+  useEffect(() => {
+    const take = () => {
+      const text = takeLeaderDraft();
+      if (!text) return;
+      setDraft(prev => prev.trim() ? `${prev.trimEnd()}\n\n${text}` : text);
+      inputRef.current?.focus();
+    };
+    take();
+    return subscribeLeaderDraft(take);
+  }, []);
 
   usePollWhileVisible(() => { refetchThread(); refetchRuns(); refetchOwner(); }, 5_000, { enabled: visible });
   usePollWhileVisible(refetchDirectives, 30_000, { enabled: visible });
@@ -359,7 +372,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     {note ? <p className={styles.note} role="note">{note}</p> : null}
     <form className={styles.reply} onSubmit={onSubmit}>
       <div className={styles.replyRow}>
-        <textarea aria-label="Reply to the Leader" placeholder="Reply to the Leader…" value={draft} maxLength={6000}
+        <textarea ref={inputRef} aria-label="Reply to the Leader" placeholder="Reply to the Leader…" value={draft} maxLength={6000}
           disabled={sending || actions.readOnly} onChange={event => setDraft(event.target.value)} onKeyDown={onKeyDown} />
         <button type="submit" disabled={!canSend(draft, sending) || actions.readOnly}>Send</button>
       </div>
