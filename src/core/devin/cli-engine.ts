@@ -106,13 +106,13 @@ export function isDevinCliFreeModel(model: unknown, nowMs = Date.now()): boolean
  * The model a fleet run uses: a well-formed `override` (per run), else
  * `devin.fleetModel`, else DEVIN_CLI_FLEET_DEFAULT_MODEL. A malformed value
  * (spaces, a leading dash, uppercase, over 64 chars) is ignored rather than
- * passed to `--model`. Paid `-lightning` variants fall back to swe-2-max. Pure.
+ * passed to `--model`. Paid `-lightning` variants fall back to swe-2-flash-max. Pure.
  */
 export function resolveDevinCliFleetModel(section: AshlrConfig['devin'] | undefined, override?: string | null): string {
   for (const candidate of [override, section?.fleetModel]) {
     if (typeof candidate !== 'string') continue;
     const trimmed = candidate.trim();
-    if (MODEL_ID_RE.test(trimmed)) return trimmed.endsWith('-lightning') ? 'swe-2-max' : trimmed;
+    if (MODEL_ID_RE.test(trimmed)) return trimmed.endsWith('-lightning') ? 'swe-2-flash-max' : trimmed;
   }
   return DEVIN_CLI_FLEET_DEFAULT_MODEL;
 }

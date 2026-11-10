@@ -21,6 +21,7 @@
 import { estimatedCreditValue, formatNativeCreditUnits, nativeCreditBalanceTitle, CODEX_CREDIT_VALUE_SOURCE, CODEX_CREDIT_VALUE_CHECKED } from './codex-credit-value.js';
 import type { BudgetMode } from '../../../../core/routing/types.js';
 import { Button } from '../../../components/primitives/Button.js';
+import { codexFreeResetsLine, codexResetLine } from './codex-reset-line.js';
 import { readingAge } from './reading-age.js';
 import { relativePhrase } from '../context/context-model.js';
 import { accountActions, type AccountAction } from '../apps/apps-model.js';
@@ -149,6 +150,8 @@ export function ResourceCard({ row, status, display, settled, mode, busy, onActi
   const otherWindows = row.windows.filter((w) => w !== primaryWindow);
   const reserveText = reserve === null ? null : reserve.percent !== null && mode !== null ? `${reserve.label} · ${MODE_WORD[mode]}` : reserve.label;
   const connectionPhrase = display?.connection.checkedAt ? relativePhrase(display.connection.checkedAt, resetNowMs) : null;
+  const resetLine = display?.usage.current === false || row.quotaCurrent === false ? null : codexResetLine(row, resetNowMs);
+  const freeResetsLine = codexFreeResetsLine(row);
   const quotaDiagnostic = row.windows.length === 0 ? claudeQuotaDiagnostic(row.quotaReadReason) : null;
   return (
     <li className={styles.card} data-status={status.kind} data-seat={row.seatId} data-usage-state={display?.usage.state} data-usage-observed-at={display?.usage.observedAt ?? undefined} data-verse-anchor={`resources:${row.seatId}`}>
@@ -173,6 +176,8 @@ export function ResourceCard({ row, status, display, settled, mode, busy, onActi
           {primaryWindow !== null ? <WindowMeter row={row} w={primaryWindow} current={display?.usage.current ?? true} reservePercent={reserve?.percent ?? null} /> : null}
         </div>
       ) : <p className={styles.subtle}>Usage not reported by this resource.</p>}
+      {resetLine !== null ? <p className={styles.subtle} data-resource-codex-reset>{resetLine}</p> : null}
+      {freeResetsLine !== null ? <p className={styles.subtle} data-resource-codex-free-resets>{freeResetsLine}</p> : null}
       {quotaDiagnostic ? <p className={styles.subtle}>Claude quota check: {quotaDiagnostic.sentence} <code>{quotaDiagnostic.code}</code></p> : null}
       {row.lastReading ? <p className={styles.subtle}>Last known usage · latest check failed.</p> : null}
       {row.windows.length === 0 && row.historicalUsage && !row.signedOut ? <div className={styles.fine}>

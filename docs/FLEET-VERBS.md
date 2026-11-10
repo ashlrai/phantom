@@ -38,6 +38,7 @@
 | lane-yield | `src/cli/fleet-lane-yield.ts` | Read-only per-lane yield from metrics/jobs.jsonl over `--hours` (default 2): launches, precheck skips by code, empty finishes, MERGED outcomes joined to the lane through the job's launch row; red (exit 1) when skips are over half of 10+ rows; unread file prints unknown | no |
 | lane-truth | `src/cli/fleet-lane-truth.ts` | Offline advisory only; never changes a hold or grants dispatch authority | no |
 | filler-yield | `src/cli/fleet-filler-yield.ts` | Read-only per-repo yield of author-filler jobs (`RQ-…A…Q8`) from metrics/jobs.jsonl: launches, code-13 precheck skips, empty finishes, MERGED outcomes; red (exit 1) when skips are over half of 10+ rows; unread file prints unknown | no |
+| precheck-waste | `src/cli/fleet-precheck-waste.ts` | Six-hour launch and precheck-skip counts; `--json` includes `by_repo_code` counts, reasons and next steps. Missing metadata is `unknown`; unknown codes require inspecting the precheck record. Counts exclude `precheck_parked` events. | no |
 | launch-proof | `src/cli/fleet-launch-proof.ts` | Read one status snapshot and one live process table; never dispatch work | no |
 | memory | `src/cli/fleet-memory.ts` | Read-only host memory view: memstat.json free/swap/disk plus .memguard2.json level and stopped ids | no |
 | merge-batch | `src/cli/fleet-merge-batch.ts` | Read-only merge-batch planner: groups an open-PR snapshot (gh pr list array, merge-backlog read or pr-hygiene report via --input/stdin/<root>/fleet/open-prs.json) into file-overlap batches, scores conflict risk and emits the least-rebase-churn order as fleet.merge-batch.v1; never calls gh | no |
@@ -66,3 +67,13 @@
 **Convention for adding a new verb.** Create `src/cli/fleet-<verb>.ts` exporting `cmdFleet<Verb>` (each dash-separated part title-cased and concatenated), then run `node scripts/gen-fleet-registry.mjs` and include the generated registry change. Update this document and, when appropriate, help and completions. The dispatcher cannot load a convention verb absent from the registry.
 
 `dirty-landed --json` includes `diffAnomaly` for a complete PR diff of at least 1,000 files with zero added or deleted text lines in every file. Causes distinguish unchanged-content mode changes, generated-looking paths (a naming heuristic), and other zero-line changes. Binary, incomplete, and ordinary large text diffs are not classified as zero-line anomalies. The recut loop and recut sweep skip confirmed anomalies; inspect them before deciding what to do. The existing landed class remains independent of this diagnostic.
+
+For `fleet eval-report`, CI correlation uses required-check evidence only. A PR
+export must include `headRefOid`, a complete nonempty `requiredChecks` array of
+context names, and one rollup entry per required name with matching `headSha`.
+For merged PRs each entry also needs `completedAt` no later than `mergedAt`.
+Missing, duplicate, pending, stale or ambiguous evidence reports `unknown` and
+is excluded from CI correlation; optional checks do not count. Standard `gh pr
+list --json statusCheckRollup` exports do not supply all this evidence, so they
+report unknown until enriched by a trustworthy observer. These observations do
+not establish historical branch protection or grant merge authority.
