@@ -103,6 +103,19 @@ export default tseslint.config(
     },
   },
   {
+    // The CommonJS child preload (loaded with
+    // `node --require`) runs under Node; test/setup is owner-reviewed, so the
+    // grant lives here instead of a pragma in the file.
+    files: ['test/setup/child-process-home.cjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'commonjs',
+      globals: {
+        process: 'readonly',
+      },
+    },
+  },
+  {
     // ci-mac-rotation.test.mjs resolves repo-root paths through `new URL(...)`
     // but, unlike its sibling CI tests, has no `/* global URL */` pragma —
     // the pragma lives here since the test file itself is a Tier-1 path.

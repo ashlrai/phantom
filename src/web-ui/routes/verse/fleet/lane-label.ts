@@ -14,6 +14,12 @@ export function laneLabel(lane: string): string {
     'claude': 'Claude',
     'claude-api': 'Claude API',
     'devin': 'Devin',
+    'devin-flash': 'Devin SWE-2 Flash',
+    'zai': 'Z.ai',
+    'gemini': 'Gemini',
+    'agy': 'Antigravity',
+    'grok': 'Grok',
+    'cursor': 'Cursor',
   };
   const mapped = known[lane];
   if (mapped !== undefined) return mapped;
@@ -29,6 +35,16 @@ export function laneShort(lane: string): string {
     'claude': 'CL',
     'api': 'API',
     'devin': 'DEVIN',
+    'codex-personal': 'PERS',
+    'codex-cmp': 'CMP',
+    'codex-local': 'LOCAL',
+    'claude-api': 'API',
+    'devin-flash': 'FLASH',
+    'zai': 'ZAI',
+    'gemini': 'GEM',
+    'agy': 'AGY',
+    'grok': 'GROK',
+    'cursor': 'CUR',
   };
   const mapped = short[lane];
   if (mapped !== undefined) return mapped;
