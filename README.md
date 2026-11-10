@@ -280,6 +280,7 @@ The [ecosystem map](https://github.com/ashlrai/phantom/blob/master/docs/ECOSYSTE
 | --- | --- |
 | [docs/llms.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms.txt) | Short index for agents |
 | [docs/llms-full.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms-full.txt) | Copy-paste install, JSON commands, and MCP setup |
+| [docs/VISION.md](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) | Product direction: a chat-first open-source assistant, four pillars, and the gap to today's code |
 | [docs/QUICKSTART.md](docs/QUICKSTART.md) | First local session |
 | [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md) | Install, MCP, upgrade, uninstall |
 | [docs/VERSE.md](docs/VERSE.md) | Console guide |
