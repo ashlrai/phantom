@@ -25,16 +25,14 @@ M250s–M270s range; see `docs/MILESTONE-INDEX.md` §2.)
 
 **What replaced this document:**
 
-- **`docs/MILESTONE-INDEX.md`** — the authoritative ID → subject → status
-  lookup across every milestone, M2 through M503, including every known
-  spec-vs-shipped collision. Check this before proposing new work under a
-  specific milestone number.
-- **`CHANGELOG.md`** — what actually shipped, in release order, with prose
-  descriptions grouped by theme.
-- **`docs/ROADMAP.md`** — current forward-looking direction and the design
-  principles that haven't changed since v1.
-- **GitHub issues** — the live backlog. Open a GitHub issue with the problem
-  (not the feature) per `docs/ROADMAP.md`'s "How to influence this."
+- **`docs/VISION.md`**: the product direction.
+- **`docs/MILESTONE-INDEX.md`**: the ID to subject to status lookup across
+  milestones, including known spec-vs-shipped collisions. Check it before
+  proposing new work under a specific milestone number.
+- **`CHANGELOG.md`**: what shipped, in release order.
+- **`docs/ROADMAP.md`**: milestone history and the current design principles.
+- **GitHub issues**: the live backlog. Open a GitHub issue with the problem,
+  as `docs/ROADMAP.md` describes.
 
 The original contracts-first planning content that lived in this file
 (M84–M88, authored against PR #8's Windows-support landing) is preserved in
