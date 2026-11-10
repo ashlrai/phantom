@@ -8,13 +8,22 @@
  * systemctl --user is-enabled/is-active on Linux); it never installs, loads,
  * unloads, spawns or writes, and never prints unit contents or raw manager
  * output.
+ *
+ * `--last-run` switches to the supervisor exit gate recovered from #2915
+ * (RQ-PHX-SELFTICKCHECK02SOLC2): no service-manager probe at all, only the
+ * recorded queue/self-tick-last.json run, exit 0 only when it is healthy.
+ * --max-age-seconds and --require-apply are valid only in that mode, so the
+ * default verdict's contract is unchanged.
  */
 import { spawnSync } from 'node:child_process';
-import { isAbsolute } from 'node:path';
+import { homedir } from 'node:os';
+import { isAbsolute, join, resolve } from 'node:path';
 import { checkSelfTickSchedule, type SelfTickCheckProbe, type SelfTickCheckReport } from '../core/fleet/self-tick-check.js';
+import { checkSelfTickLastRun, SELF_TICK_LAST_DEFAULT_MAX_AGE_SECONDS } from '../core/fleet/self-tick-last-check.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const usage = `Usage: ashlr fleet self-tick-check [--json] [--runs-dir <abs>]
+       ashlr fleet self-tick-check --last-run [--json] [--runs-dir <abs>] [--max-age-seconds <n>] [--require-apply]
 Read-only verdict: is the per-user self-tick timer installed and confirmed
 active by this user's service manager? Stats the canonical unit paths and
 probes launchctl print gui/<uid>/<label> (macOS) or systemctl --user
@@ -23,7 +32,14 @@ never a shell; never installs, loads, unloads or writes. --runs-dir adds the
 last recorded run's freshness, reported separately and never called healthy
 work. missing/inactive suggests (never runs) the fixed installer argv 'ashlr
 fleet self-tick-schedule --write --load'. Exit 0 installed+confirmed active,
-1 missing/inactive, 2 usage, 3 unknown/unreadable/unsupported.`;
+1 missing/inactive, 2 usage, 3 unknown/unreadable/unsupported.
+
+--last-run is the supervisor gate on the recorded run instead: no probe,
+exit 0 only for a readable record (--runs-dir, else ASHLR_RUNS_DIR, else
+~/.ashlr-runs) whose run started within --max-age-seconds (default ${SELF_TICK_LAST_DEFAULT_MAX_AGE_SECONDS}),
+ran with no failed steps and, with --require-apply, was an apply pass.
+Exit 1 names one reason (missing, unreadable, future, stale, busy, failed,
+dry-run); a timestamp over 60s ahead of this clock is 'future', never fresh.`;
 
 interface Dependencies {
   output?: (text: string) => void; error?: (text: string) => void;
@@ -72,16 +88,36 @@ export async function cmdFleetSelfTickCheck(args: string[], deps: Dependencies =
   const error = deps.error ?? ((text: string) => console.error(text));
   const invalid = (): number => { error(`Invalid arguments. ${usage.split('\n')[0]}`); return 2; };
   if (args.includes('--help') || args.includes('-h')) { output(usage); return 0; }
-  let json = false, runsDir: string | undefined;
+  let json = false, lastRun = false, requireApply = false;
+  let runsDir: string | undefined, maxAgeSeconds: number | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--json' && !json) json = true;
+    else if (arg === '--last-run' && !lastRun) lastRun = true;
+    else if (arg === '--require-apply' && !requireApply) requireApply = true;
     else if (arg === '--runs-dir' && runsDir === undefined) {
       const value = args[++i];
       if (typeof value !== 'string' || !isAbsolute(value)) return invalid();
       runsDir = value;
+    } else if (arg === '--max-age-seconds' && maxAgeSeconds === undefined) {
+      const value = args[++i];
+      const parsed = typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : Number.NaN;
+      if (!Number.isSafeInteger(parsed) || parsed < 1) return invalid();
+      maxAgeSeconds = parsed;
     } else return invalid();
   }
+  if (lastRun) {
+    // Same fallback as self-tick itself; only the last-run record is read.
+    const root = resolve(runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(deps.home ?? homedir(), '.ashlr-runs'));
+    const { detail, ...report } = checkSelfTickLastRun({
+      runsDir: root, now: (deps.now ?? Date.now)(), maxAgeSeconds, requireApply,
+    });
+    output(json
+      ? JSON.stringify(sanitizePublicJson(report))
+      : `fleet self-tick-check: ${report.healthy ? 'healthy' : 'UNHEALTHY'} (${report.healthy ? '' : `reason=${report.reason} `}${detail})`);
+    return report.healthy ? 0 : 1;
+  }
+  if (requireApply || maxAgeSeconds !== undefined) return invalid(); // last-run gates only
   const report = checkSelfTickSchedule({
     probe: deps.probe ?? defaultProbe,
     home: deps.home, platform: deps.platform, uid: deps.uid, runsDir,
