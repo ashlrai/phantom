@@ -20,6 +20,7 @@ function steps(calls: string[], over: Partial<SelfTickSteps> = {}): SelfTickStep
     'meter-incident': ok('meter-incident', {}),
     'planner-tick': ok('planner-tick', {}),
     'inbox-acks': ok('inbox-acks', {}),
+    'waste-incident': ok('waste-incident', {}),
     'order-notices': ok('order-notices', {}),
     'needs-triage': ok('needs-triage', {}),
     'landed-sweep': ok('landed-sweep', { v: 1, closed: 1, planned: 2 }),
@@ -31,7 +32,7 @@ describe('self-tick landed-sweep step', () => {
   it('runs five steps in order with landed-sweep last', async () => {
     const calls: string[] = [];
     const { report, exitCode } = await runSelfTick({ runsDir: tmp(), steps: steps(calls), now: () => 0 });
-    const order = ['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'needs-triage', 'landed-sweep'];
+    const order = ['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'needs-triage', 'waste-incident', 'landed-sweep'];
     expect([...SELF_TICK_STEP_ORDER]).toEqual(order);
     expect(calls).toEqual(order);
     expect(report.steps.map(s => [s.step, s.state])).toEqual(order.map(n => [n, 'ok']));
@@ -45,7 +46,7 @@ describe('self-tick landed-sweep step', () => {
       steps: steps(calls, { 'landed-sweep': async () => { throw new Error('boom'); } }),
     });
     expect(report.steps.map(s => [s.step, s.state])).toEqual([
-      ['reset-release', 'ok'], ['lane-autohold', 'ok'], ['stray-stop', 'ok'], ['meter-incident', 'ok'], ['planner-tick', 'ok'], ['inbox-acks', 'ok'], ['order-notices', 'ok'], ['needs-triage', 'ok'], ['landed-sweep', 'failed'],
+      ['reset-release', 'ok'], ['lane-autohold', 'ok'], ['stray-stop', 'ok'], ['meter-incident', 'ok'], ['planner-tick', 'ok'], ['inbox-acks', 'ok'], ['order-notices', 'ok'], ['needs-triage', 'ok'], ['waste-incident', 'ok'], ['landed-sweep', 'failed'],
     ]);
     expect(exitCode).toBe(1);
   });
