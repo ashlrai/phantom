@@ -43,6 +43,7 @@ import type { SurfaceActions } from '../command/actions.js';
 import type { OptionalRead } from '../command/surface-data.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { DirectivesStrip } from './DirectivesStrip.js';
+import { LeaderBriefCard } from './LeaderBriefCard.js';
 import { getLeaderFocus, isLeaderFocusLive, subscribeLeaderFocus, takeLeaderFocus } from './leader-focus.js';
 import { LeaderComposer, type LeaderComposerHandle } from './LeaderComposer.js';
 import { answerLeaderQuestion, fetchOlderThread, leaderDirectivesQuery, leaderThreadQuery, sendLeaderMessage, THREAD_PAGE_SIZE } from './thread-data.js';
@@ -446,6 +447,8 @@ export function LeaderConversation({ leader, actions, dormant }: LeaderConversat
           </span>
         ) : null}
       </header>
+
+      <LeaderBriefCard />
 
       <DirectivesStrip read={directives.data} actions={actions} adding={addingDirective} onAddingChange={setAddingDirective} />
 
