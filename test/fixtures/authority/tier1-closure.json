@@ -1406,6 +1406,8 @@
     "src/core/world/project.ts",
     "src/core/world/read.ts",
     "src/core/world/types.ts",
+    "src/doctor/executable.ts",
+    "src/doctor/tool-version-cache.ts",
     "src/planning/triviality.ts"
   ]
 }
