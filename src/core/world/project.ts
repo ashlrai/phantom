@@ -8,6 +8,7 @@ import type { BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import type { AgentRoster } from '../fleet/agent-roster.js';
 import type { UsageSensorReport } from '../usage/sensor-reading.js';
 import type { RepoHeadline } from '../observe/types.js';
+import type { IntentSummary } from '../intent/summary.js';
 import { GROWTH_FIELD_NEEDS, type GrowthSeriesId, type GrowthSnapshot } from '../growth/series.js';
 import { stableFieldId, WORLD_CACHE_TTL_MS, WORLD_SCHEMA, type BlindSpot, type Field, type Freshness, type WorldModel } from './types.js';
 
@@ -34,6 +35,8 @@ export interface WorldProjectInput {
   outcomes: readonly RepoHeadline[] | null;
   /** Latest growth-series readings. Null leaves every growth field unknown. */
   growth?: GrowthSnapshot | null;
+  /** intentSummary result. Null, or present false, leaves every intent field unknown. Titles are never read. */
+  intents?: IntentSummary | null;
 }
 
 function iso(nowMs: number): string {
@@ -85,6 +88,8 @@ function needFor(path: string): string {
   if (path === 'bottlenecks.count') return 'Eng Ops writes ~/.ashlr-runs/export/bottlenecks.json (bottlenecks.v1).';
   if (path === 'humanSteps.remaining') return 'Eng Ops writes ~/.ashlr-runs/export/human-steps.json (ashlr.human-steps/v1).';
   if (path.startsWith('outcomes.')) return 'A complete pull export. Merged-per-day needs mergedAt. Change-failure rate needs reverted, fixForward, and failedRelease on every merged pull.';
+  if (path.startsWith('intents.stale.')) return 'This directive is past its stale timer. ashlr fleet intent-sweep lists it; ashlr fleet intent-sweep --apply refreshes it locally.';
+  if (path.startsWith('intents.')) return 'A readable local ashlr.intent-ledger/v1 under ASHLR_RUNS_DIR or ~/.ashlr-runs/intent. A missing or malformed ledger is unknown, not zero.';
   if (path.startsWith('growth.')) return GROWTH_FIELD_NEEDS[path] ?? `A fresh reading for ${path}.`;
   return `A fresh reading for ${path}.`;
 }
@@ -127,6 +132,26 @@ export function blindSpotsFrom(model: Omit<WorldModel, 'blindSpots'>): { spots: 
   if (model.outcomes.repos.length === 0) spots.push({ id: 'outcomes-repos', path: 'outcomes.repos', freshness: 'unknown', need: needFor('outcomes.repos') });
   spots.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   return { spots, fresh };
+}
+
+const INTENT_SOURCE = 'ashlr.intent-ledger/v1';
+const INTENT_COUNTS = ['items', 'tracked', 'merged', 'shipped', 'verified', 'stale', 'partial'] as const;
+
+function count(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+/** Stale directives as blind spots. Only stable ids are kept, never titles. */
+function staleIntentSpots(summary: IntentSummary | null | undefined): BlindSpot[] {
+  if (!summary?.present || !Array.isArray(summary.staleItems)) return [];
+  const spots = new Map<string, BlindSpot>();
+  for (const item of summary.staleItems) {
+    if (!item || typeof item.id !== 'string') continue;
+    const path = `intents.stale.${item.id}`;
+    const id = stableFieldId(path);
+    if (!spots.has(id)) spots.set(id, { id, path, freshness: 'stale', need: needFor(path) });
+  }
+  return [...spots.values()];
 }
 
 export function projectWorldModel(input: WorldProjectInput): WorldModel {
@@ -222,6 +247,10 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
     const cfr = repo.changeFailureRate === null ? unknown<number>('pull-export') : reading(repo.changeFailureRate, 'pull-export', now, 'fresh');
     return { repo: repo.repo, mergedPerDay: merged, changeFailureRate: cfr };
   });
+  const intentField = (key: typeof INTENT_COUNTS[number]): Field<number> => {
+    const value = input.intents?.present === true ? count(input.intents[key]) : null;
+    return value === null ? unknown<number>(INTENT_SOURCE) : reading(value, INTENT_SOURCE, now, 'fresh');
+  };
   const draft = {
     schema: WORLD_SCHEMA,
     generatedAt: now,
@@ -246,6 +275,19 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
       costPerMergedPr: growthField('costPerMergedPr'),
       bottleneckTrends: growthField('bottleneckTrends'),
     },
+    intents: {
+      items: intentField('items'),
+      tracked: intentField('tracked'),
+      merged: intentField('merged'),
+      shipped: intentField('shipped'),
+      verified: intentField('verified'),
+      stale: intentField('stale'),
+      partial: intentField('partial'),
+    },
   };
-  return { ...draft, blindSpots: blindSpotsFrom(draft).spots };
+  const spots = new Map<string, BlindSpot>();
+  for (const spot of [...blindSpotsFrom(draft).spots, ...staleIntentSpots(input.intents)]) {
+    if (!spots.has(spot.id)) spots.set(spot.id, spot);
+  }
+  return { ...draft, blindSpots: [...spots.values()].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0) };
 }
