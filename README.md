@@ -257,7 +257,7 @@ Every top-level `phm` command, grouped by what it is for. `ashlr` runs the same 
 | Explain dispatcher routes. | `phm route explain --json` |
 | Show usage by engine. | `phm usage` |
 
-See the [CLI reference](docs/cli.md) for all commands.
+See the [CLI reference](https://github.com/ashlrai/phantom/blob/master/docs/cli.md) for all commands.
 
 ## The Phantom ecosystem
 
@@ -283,6 +283,7 @@ The [ecosystem map](https://github.com/ashlrai/phantom/blob/master/docs/ECOSYSTE
 | [docs/QUICKSTART.md](docs/QUICKSTART.md) | First local session |
 | [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md) | Install, MCP, upgrade, uninstall |
 | [docs/VERSE.md](docs/VERSE.md) | Console guide |
+| [docs/lanes.md](docs/lanes.md) | What each fleet lane runs on and is best at |
 | [docs/README.md](docs/README.md) | Full doc map |
 | [docs/HUB-REFERENCE.md](https://github.com/ashlrai/phantom/blob/master/docs/HUB-REFERENCE.md) | Kernel reference: Universe, resource pools, and the legacy fleet |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
