@@ -29,7 +29,7 @@ function fastFixture(t) {
     300: { id: 300, run_attempt: 1, repository: metadata(repository), head_sha: attestorSha, head_branch: 'master', event: 'workflow_dispatch', path: '.github/workflows/attest-ci-build.yml', status: 'completed', conclusion: 'success' },
   };
   const job = (run, name, steps, labels = ['ubuntu-latest']) => ({ id: name.length, run_id: run, head_sha: f.sha, name, labels, status: 'completed', conclusion: 'success', steps: steps.map(name => ({ name, status: 'completed', conclusion: 'success' })) });
-  const pushJobs = [job(90, 'Secret-shape scan', ['Scan candidate diff (fail closed)']), job(90, 'Quick typecheck', ['Core no-emit type check', 'Check authority drift (hermetic)']), job(90, 'Classify PR site lane', ['Bind candidate source']), job(90, 'Merge Gate', ['Require selected CI lane'])];
+  const pushJobs = [job(90, 'Secret-shape scan', ['Scan candidate diff (fail closed)']), job(90, 'Secret scan (diff)', ['Scan the commits this event adds']), job(90, 'Quick typecheck', ['Core no-emit type check', 'Check authority drift (hermetic)']), job(90, 'Classify PR site lane', ['Bind candidate source']), job(90, 'Merge Gate', ['Require selected CI lane'])];
   const fastJobs = fastJobPolicy(f.root).map(row => job(100, row.name, row.steps, row.labels));
   const read = endpoint => {
     if (endpoint === `repos/${repository}`) return metadata(repository);
@@ -88,7 +88,7 @@ for (const mutation of ['push failure', 'manual CI', 'wrong push sha', 'wrong pu
     if (mutation === 'wrong push sha') f.runs[90].head_sha = 'd'.repeat(40);
     if (mutation === 'wrong push attempt') f.runs[90].run_attempt = 1;
     if (mutation === 'fork CI') f.runs[90].repository.id++;
-    if (mutation === 'skipped step') f.pushJobs[1].steps[1].conclusion = 'skipped';
+    if (mutation === 'skipped step') f.pushJobs.find((job) => job.name === 'Quick typecheck').steps[1].conclusion = 'skipped';
     if (mutation === 'duplicate job') f.pushJobs.push({ ...f.pushJobs[0] });
     if (mutation === 'self-hosted CI') f.pushJobs[0].labels.push('self-hosted');
     if (mutation === 'wrong producer workflow') f.runs[100].path = '.github/workflows/other.yml';

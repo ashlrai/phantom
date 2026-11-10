@@ -9,6 +9,8 @@
  *                             shared single-flight cache + failure backoff
  *                             (web/fleet-status-cache.ts getCachedWbGhStatus)
  *   GET /api/wb/v1/budget   → budget policy + per-seat usage projection
+ *   GET /api/wb/v1/events   → SSE stream of workbench.event.v1 kinds
+ *                             (wb.snapshot / wb.gh / wb.action) (wb-events.ts)
  *
  * Auth: identical to every other read route — these paths are `/api/*` GETs,
  * so server.ts's read-session boundary (X-Ashlr-Token or a minted read
@@ -46,9 +48,11 @@ import {
 import type { VerseGithubSnapshot } from '../verse/github-types.js';
 import { getCachedWbGhStatus } from './fleet-status-cache.js';
 import { readWorkbenchSecrets } from '../workbench/secrets.js';
+import { readWbLocus } from '../workbench/locus.js';
 import { fleetInventoryPath, readFleetInventory } from '../fleet/graph-seed.js';
 import { QueueStore } from '../queue/store.js';
 import { sendJson } from './read-session.js';
+import { handleWbEventsSse, WB_EVENTS_PATH, type WbEventsDeps } from './wb-events.js';
 
 // ---------------------------------------------------------------------------
 // Routes
@@ -58,9 +62,10 @@ export const WB_SNAPSHOT_PATH = '/api/wb/v1/snapshot';
 export const WB_GH_PATH = '/api/wb/v1/gh';
 export const WB_BUDGET_PATH = '/api/wb/v1/budget';
 export const WB_SECRETS_PATH = '/api/wb/v1/secrets';
+export const WB_LOCUS_PATH = '/api/wb/v1/locus';
 export const WB_STEER_PATH = '/api/wb/v1/steer';
 
-const WB_ROUTES = new Set([WB_SNAPSHOT_PATH, WB_GH_PATH, WB_BUDGET_PATH, WB_SECRETS_PATH, WB_STEER_PATH]);
+const WB_ROUTES = new Set([WB_SNAPSHOT_PATH, WB_GH_PATH, WB_BUDGET_PATH, WB_SECRETS_PATH, WB_STEER_PATH, WB_LOCUS_PATH]);
 
 /** True for every `/api/wb/v1/*` path — handled (or 404d) by this module. */
 export function isWbApiPath(path: string): boolean {
@@ -126,7 +131,7 @@ function projectSeat(seat: SeatCapacity): WbSeatRow {
  * `readCapacitySnapshot` collapses absent/unreadable/malformed into null, so
  * the file's existence distinguishes 'missing' from 'invalid' for the wire.
  */
-function readWbSnapshot(file: string = capacitySnapshotPath()): WbSnapshotReading {
+export function readWbSnapshot(file: string = capacitySnapshotPath()): WbSnapshotReading {
   const snap: CapacitySnapshot | null = readCapacitySnapshot(file);
   if (!snap) {
     return {
@@ -173,11 +178,19 @@ function handleWbSnapshot(res: ServerResponse): void {
   }));
 }
 
-interface WbGhDeps {
+export interface WbGhDeps {
   /** Enrolled repo paths to read; default is the enrollment registry. */
   paths?: () => string[];
   /** Test seam for the gh subprocess runner (github-repo.ts options). */
   gh?: VerseGithubReadOptions['gh'];
+}
+
+/** Deps for the whole /api/wb/v1/* surface: gh seams + the events stream. */
+export interface WbApiDeps extends WbGhDeps {
+  /** Minted read session — required by the SSE route, absent on header auth. */
+  readSession?: { id: string; expiresAt: number };
+  /** Test seams for GET /api/wb/v1/events (cadence, gh read). */
+  events?: WbEventsDeps;
 }
 
 async function handleWbGh(
@@ -366,10 +379,28 @@ export async function handleWbApi(
   res: ServerResponse,
   cfg: AshlrConfig,
   path: string,
-  deps: WbGhDeps = {},
+  deps: WbApiDeps = {},
   steerDeps: WbSteerDeps = {},
 ): Promise<boolean> {
   if (!isWbApiPath(path)) return false;
+
+  // ── GET /api/wb/v1/events (SSE) ─────────────────────────────────────────
+  // Same convention as /api/events and the verse tail: a minted read session
+  // is required (the raw read token authenticates the boundary but carries no
+  // expiry the stream can honor), and wrong methods 405 like the JSON routes.
+  if (path === WB_EVENTS_PATH) {
+    const method = (req.method ?? 'GET').toUpperCase();
+    if (method !== 'GET') {
+      sendJson(res, 405, { error: 'method not allowed' }, { Allow: 'GET' });
+      return true;
+    }
+    if (!deps.readSession || deps.readSession.expiresAt <= Date.now()) {
+      sendJson(res, 401, { code: 'SESSION_REQUIRED', error: 'valid read session required' });
+      return true;
+    }
+    handleWbEventsSse(req, res, cfg, deps.readSession, deps.events ?? {});
+    return true;
+  }
 
   if (!WB_ROUTES.has(path)) {
     sendJson(res, 404, { error: `not found: GET ${path}` });
@@ -381,7 +412,9 @@ export async function handleWbApi(
     return true;
   }
 
-  if (path === WB_SECRETS_PATH) {
+  if (path === WB_LOCUS_PATH) {
+    sendJson(res, 200, sanitizePublicJson(await readWbLocus()));
+  } else if (path === WB_SECRETS_PATH) {
     sendJson(res, 200, await readWorkbenchSecrets());
   } else if (path === WB_SNAPSHOT_PATH) {
     handleWbSnapshot(res);
