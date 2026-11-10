@@ -48,6 +48,7 @@ export function SettingsSection() {
           <ResidentAwakePanel />
           <ConnectionPanel />
           <ConnectorsSettings />
+          <p><a href="#/settings/secrets">Phantom Secrets custody</a></p>
           <ShortcutsPanel />
           <OnboardingPanel />
           <AboutPanel />

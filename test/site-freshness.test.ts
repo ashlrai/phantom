@@ -40,6 +40,7 @@ describe('site freshness', () => {
     expect(facts.mcpServers.length).toBeGreaterThan(0);
     expect(facts.cliTop.has('verse')).toBe(true);
     expect(facts.models.claude.length).toBeGreaterThan(0);
+    expect(facts.models.claude.some((name) => name.startsWith('Fable 5.2'))).toBe(true);
     expect(facts.models.codex.length).toBeGreaterThan(0);
     expect(facts.models.grok.length).toBeGreaterThan(0);
   });
