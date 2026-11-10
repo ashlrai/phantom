@@ -49,8 +49,6 @@ const ConnectView = lazy(() => import('../routes/connect/ConnectView.js').then((
 const UniverseView = lazy(() => import('../routes/universe/UniverseView.js').then((module) => ({ default: module.UniverseView })));
 const ConnectorsSettings = lazy(() => import('../routes/settings/connectors/ConnectorsView.js').then((module) => ({ default: module.ConnectorsSettings })));
 
-const SecretsView = lazy(() => import('../routes/settings/secrets/SecretsView.js').then(module => ({ default: module.SecretsView })));
-
 export function AppRoutes() {
   return (
     <Routes>
@@ -66,7 +64,6 @@ export function AppRoutes() {
           ),
         )}
         <Route path="/connect" element={<ConnectView />} />
-        <Route path="/settings/secrets" element={<SecretsView />} />
         <Route path="/settings/connectors" element={<ConnectorsSettings />} />
         <Route path="/overview" element={<FleetDashboardView />} />
         <Route path="/agent-os" element={<AgentOsView />} />

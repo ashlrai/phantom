@@ -22,18 +22,12 @@
  *     appears in the bounded metrics tail; unknown prompt state stays active;
  *   - caps — at most 2 writes per tick and 6 per rolling hour counted from
  *     the ledger; the overflow is skipped 'capped', outcome 'capped';
- *   - the head SHA — the merge-state record proves the tracked head (a moved
- *     head would classify 'pending', not 'conflicted'), and a bounded
- *     `gh pr view --json headRefOid` covers untracked PRs; no sha, no write;
- *   - empty-yield — the last EMPTY_YIELD_STREAK ledger attempts the loop
- *     wrote for this PR on the *same head* all finished empty in jobs.jsonl:
- *     minting another recut for identical evidence just repeats work that
- *     already yielded nothing. A moved head, a missing ledger entry, an
- *     unmeasured or a productive outcome, or outcome evidence older than
- *     EMPTY_YIELD_WINDOW_MS each fail open — suppression is advisory;
  *   - landed — `ashlr fleet dirty-landed`'s read says every path the PR changes
  *     already matches master, so a recut would change nothing (not counted
- *     against the caps; any other class or a failed read proceeds).
+ *     against the caps; any other class or a failed read proceeds);
+ *   - the head SHA — the merge-state record proves the tracked head (a moved
+ *     head would classify 'pending', not 'conflicted'), and a bounded
+ *     `gh pr view --json headRefOid` covers untracked PRs; no sha, no write.
  *
  * OFF: <runsDir>/queue/recut-loop.off, the fleet's <runsDir>/ORCH_OFF switch,
  * or the ORCH_OFF env var — the tick returns 'off' and writes nothing.
@@ -88,7 +82,6 @@ import {
   readMergeBacklogStates,
   type MergeBacklogReadV1,
 } from './merge-backlog-read.js';
-import { collapseJobOutcomes, parseJobOutcomeRows, type JobOutcome } from '../queue/job-outcomes.js';
 import { findSupersededPrs, type MergedFleetPr } from './superseded-prs.js';
 
 export const RECUT_LOOP_LANE = 'codex-personal';
@@ -100,10 +93,6 @@ const HOUR_WRITE_CAP = 6;
 const HOUR_MS = 60 * 60 * 1000;
 const RECENT_WINDOW_MS = 24 * HOUR_MS;
 const LEDGER_TAIL_BYTES = 64 * 1024;
-/** Same-head loop attempts that all came back empty before a recut is suppressed. */
-const EMPTY_YIELD_STREAK = 2;
-/** Outcome rows older than this never suppress — stale evidence proves nothing. */
-const EMPTY_YIELD_WINDOW_MS = 7 * RECENT_WINDOW_MS;
 const SCAN_FILE_LIMIT = 10_000;
 const SCAN_BYTES_PER_FILE = 8000;
 const PROMPT_FILE_LIMIT = 1000;
@@ -162,7 +151,7 @@ export interface RecutLoopWritten {
 
 export interface RecutLoopSkipped {
   pr: number;
-  /** superseded | recent | in-flight | capped | no-head | empty-yield | landed | no-id | exists | write-failed */
+  /** superseded | recent | in-flight | capped | no-head | landed | no-id | exists | write-failed */
   reason: string;
 }
 
@@ -430,7 +419,7 @@ async function readPromptTexts(runsDir: string): Promise<ReadonlyMap<string, str
 }
 
 /** PR numbers named `pull/<N>/head` by any in-flight prompt or drop body. */
-async function readInflightPrs(runsDir: string, dropDir: string): Promise<{ prs: Set<number>; metricsText: string }> {
+async function readInflightPrs(runsDir: string, dropDir: string): Promise<Set<number>> {
   const spec: ScanDir[] = [
     { dir: runsDir, pattern: ROOT_PROMPT_RE, strip: /\.prompt$/ },
     { dir: join(runsDir, 'queue', 'prompts'), pattern: DROP_JOB_FILE, strip: /\.md$/ },
@@ -467,27 +456,7 @@ async function readInflightPrs(runsDir: string, dropDir: string): Promise<{ prs:
       if (Number.isSafeInteger(pr) && pr > 0) prs.add(pr);
     }
   }
-  return { prs, metricsText: metrics.text };
-}
-
-/**
- * Consecutive newest-first loop attempts for `pr` minted on `headSha` whose
- * collapsed outcome came back empty. A different-head entry is different work
- * and skipped; a missing, unmeasured, productive or merged outcome ends the
- * run — only proven empty repeats count.
- */
-function emptyYieldStreak(
-  ledger: readonly RecutLoopLedgerEntry[], pr: number, headSha: string,
-  outcomes: ReadonlyMap<string, JobOutcome>,
-): number {
-  let streak = 0;
-  for (const entry of ledger) {
-    if (entry.pr !== pr || entry.headSha !== headSha) continue;
-    const outcome = outcomes.get(`${DROP_JOB_FILE_PREFIX}${entry.id}`);
-    if (outcome === undefined || outcome.empty !== true || outcome.merged === true) break;
-    streak += 1;
-  }
-  return streak;
+  return prs;
 }
 
 /** First free RECUT<N>L<k> id: taken anywhere the ingest tracks it, or in the drop dir. */
@@ -608,9 +577,7 @@ async function recutLoopTickLocked(deps: RecutLoopDeps): Promise<RecutLoopTickRe
     result.outcome = 'read-failed';
     return result;
   }
-  const [prompts, ledger, inflightRead] = guardReads;
-  const inflight = inflightRead.prs;
-  const outcomes = collapseJobOutcomes(parseJobOutcomeRows(inflightRead.metricsText, nowMs, EMPTY_YIELD_WINDOW_MS));
+  const [prompts, ledger, inflight] = guardReads;
 
   const superseded = new Set(findSupersededPrs(backlog.items, merged, prompts).map((row) => row.pr.number));
   const recent = new Set(ledger.filter((entry) => Date.parse(entry.at) >= nowMs - RECENT_WINDOW_MS).map((entry) => entry.pr));
@@ -636,7 +603,6 @@ async function recutLoopTickLocked(deps: RecutLoopDeps): Promise<RecutLoopTickRe
     if (allowance <= 0) { skip('capped'); capped = true; continue; }
     const headSha = await readHeadSha(pr);
     if (headSha === null) { skip('no-head'); continue; }
-    if (emptyYieldStreak(ledger, pr, headSha, outcomes) >= EMPTY_YIELD_STREAK) { skip('empty-yield'); continue; }
     // Fail open: a degraded landed read must never block a real recut.
     const landed = await readLanded({ number: pr, headSha, title: item.title }).catch(() => null);
     if (landed === 'landed' || landed === 'diff-anomaly') { skip(landed); continue; }

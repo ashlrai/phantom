@@ -129,19 +129,6 @@ evidence never suppresses — suppression is advisory and fails open. The
 ledger read is tail-bounded via `--metrics` (default
 `~/.ashlr-runs/metrics/jobs.jsonl`).
 
-The recut loop ([`recut-loop.ts`](../src/core/fleet/recut-loop.ts)) applies
-the same rule to the drop jobs it mints for conflicting fleet PRs: when the
-last two attempts it wrote for one PR on the *same head* all finished empty
-in `jobs.jsonl`, the candidate is skipped with reason `empty-yield` and the
-tick reports it in `skipped` rather than launching a third identical
-attempt. A moved head is different work and recovers; a missing ledger
-entry, an unmeasured, productive or merged outcome, or outcome evidence
-older than seven days each fail open.
-
-The same empty-streak rule guards relaunch at the dispatcher: see
-[`contrib/mac/README.md`](../contrib/mac/README.md) for launch-precheck
-code 14.
-
 ### Stage delegation (bottleneck-only)
 
 Router/leader policy: frontier lanes plan and verify; cheap lanes implement;

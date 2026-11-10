@@ -8,9 +8,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { MergeBacklogReadItem, MergeBacklogReadV1 } from '../src/core/fleet/merge-backlog-read.js';
-import type { MergedFleetPr } from '../src/core/fleet/superseded-prs.js';
-import { recutLoopTick, type RecutLoopDeps } from '../src/core/fleet/recut-loop.js';
+import type { MergeBacklogReadItem, MergeBacklogReadV1 } from './merge-backlog-read.js';
+import type { MergedFleetPr } from './superseded-prs.js';
+import { recutLoopTick, type RecutLoopDeps } from './recut-loop.js';
 
 const NOW = Date.parse('2026-11-01T00:10:00.000Z');
 const HEAD_SHA = '0123abcd'.repeat(5);
@@ -231,127 +231,5 @@ describe('recutLoopTick', () => {
     expect(result.outcome).toBe('wrote');
     expect(result.written).toEqual([{ pr: 15, id: 'RECUT15L2', file: join(dropDir, 'RQ-PHX-RECUT15L2.md') }]);
     expect(readdirSync(dropDir).sort()).toEqual(['RQ-PHX-RECUT15L1.md', 'RQ-PHX-RECUT15L2.md']);
-  });
-
-  describe('empty-yield suppression', () => {
-    const hoursAgo = (h: number): string => new Date(NOW - h * 3_600_000).toISOString();
-    const metrics = (rows: Record<string, unknown>[]): void => {
-      mkdirSync(join(runsDir, 'metrics'), { recursive: true });
-      writeFileSync(join(runsDir, 'metrics', 'jobs.jsonl'), `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`);
-    };
-    const ledger = (rows: Record<string, unknown>[]): void => {
-      mkdirSync(join(runsDir, 'queue'), { recursive: true });
-      writeFileSync(ledgerPath(), `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`);
-    };
-    const attempt = (pr: number, id: string, headSha: string, at: string): Record<string, unknown> =>
-      ({ at, pr, id, headSha, file: `/drop/RQ-PHX-${id}.md` });
-    const emptyFinish = (id: string, at: string): Record<string, unknown> =>
-      ({ event: 'finish', job: `RQ-PHX-${id}`, empty: true, ts: at });
-    const landed = { readLanded: async () => 'needs-recut' as const };
-
-    it('suppresses a recut whose last two same-head attempts both finished empty', async () => {
-      // Both attempts are older than the 24h 'recent' window — only the
-      // outcome evidence keeps them from being re-cut.
-      ledger([
-        attempt(15, 'RECUT15L1', HEAD_SHA, hoursAgo(50)),
-        attempt(15, 'RECUT15L2', HEAD_SHA, hoursAgo(30)),
-      ]);
-      metrics([emptyFinish('RECUT15L1', hoursAgo(49)), emptyFinish('RECUT15L2', hoursAgo(29))]);
-
-      const result = await recutLoopTick(deps([item(15)], landed));
-
-      expect(result.outcome).toBe('nothing');
-      expect(result.written).toEqual([]);
-      // The avoided-launch report: one suppressed candidate with its reason.
-      expect(result.skipped).toEqual([{ pr: 15, reason: 'empty-yield' }]);
-      expect(existsSync(dropDir)).toBe(false);
-      expect(ledgerLines()).toHaveLength(2);   // suppression never mints evidence
-    });
-
-    it('writes when fewer than two trailing attempts are proven empty', async () => {
-      ledger([attempt(15, 'RECUT15L1', HEAD_SHA, hoursAgo(30))]);
-      metrics([emptyFinish('RECUT15L1', hoursAgo(29))]);
-
-      const result = await recutLoopTick(deps([item(15)], landed));
-
-      expect(result.outcome).toBe('wrote');
-      expect(result.written).toHaveLength(1);
-    });
-
-    it('a moved head is different work — the stale-head streak never binds', async () => {
-      const oldHead = '9'.repeat(40);
-      ledger([
-        attempt(15, 'RECUT15L1', oldHead, hoursAgo(50)),
-        attempt(15, 'RECUT15L2', oldHead, hoursAgo(30)),
-      ]);
-      metrics([emptyFinish('RECUT15L1', hoursAgo(49)), emptyFinish('RECUT15L2', hoursAgo(29))]);
-
-      const result = await recutLoopTick(deps([item(15)], landed));
-
-      expect(result.outcome).toBe('wrote');
-      expect(result.written.map((row) => row.id)).toEqual(['RECUT15L1']);
-    });
-
-    it('a productive or merged outcome ends the streak', async () => {
-      ledger([
-        attempt(15, 'RECUT15L1', HEAD_SHA, hoursAgo(50)),
-        attempt(15, 'RECUT15L2', HEAD_SHA, hoursAgo(30)),
-      ]);
-      metrics([
-        emptyFinish('RECUT15L1', hoursAgo(49)),
-        { event: 'finish', job: 'RQ-PHX-RECUT15L2', empty: false, ts: hoursAgo(29) },
-      ]);
-      const first = await recutLoopTick(deps([item(15)], landed));
-      expect(first.outcome).toBe('wrote');
-
-      rmSync(join(dropDir, 'RQ-PHX-RECUT15L1.md'));
-      metrics([
-        emptyFinish('RECUT15L1', hoursAgo(49)),
-        emptyFinish('RECUT15L2', hoursAgo(29)),
-        { event: 'outcome', job: 'RQ-PHX-RECUT15L2', state: 'MERGED', ts: hoursAgo(28) },
-      ]);
-      ledger([
-        attempt(15, 'RECUT15L1', HEAD_SHA, hoursAgo(50)),
-        attempt(15, 'RECUT15L2', HEAD_SHA, hoursAgo(30)),
-      ]);
-      const second = await recutLoopTick(deps([item(15)], landed));
-      expect(second.outcome).toBe('wrote');
-    });
-
-    it('missing or stale outcome evidence fails open', async () => {
-      // No metrics file at all: nothing can be proven empty.
-      ledger([
-        attempt(15, 'RECUT15L1', HEAD_SHA, hoursAgo(50)),
-        attempt(15, 'RECUT15L2', HEAD_SHA, hoursAgo(30)),
-      ]);
-      const first = await recutLoopTick(deps([item(15)], landed));
-      expect(first.outcome).toBe('wrote');
-      rmSync(join(dropDir, 'RQ-PHX-RECUT15L1.md'));
-
-      // Outcomes older than the 7-day evidence window are stale, not proof.
-      const stale = hoursAgo(8 * 24);
-      metrics([emptyFinish('RECUT15L1', stale), emptyFinish('RECUT15L2', stale)]);
-      ledger([
-        attempt(15, 'RECUT15L1', HEAD_SHA, hoursAgo(50)),
-        attempt(15, 'RECUT15L2', HEAD_SHA, hoursAgo(30)),
-      ]);
-      const second = await recutLoopTick(deps([item(15)], landed));
-      expect(second.outcome).toBe('wrote');
-    });
-
-    it('reports avoided launches alongside real writes on a mixed tick', async () => {
-      ledger([
-        attempt(15, 'RECUT15L1', HEAD_SHA, hoursAgo(50)),
-        attempt(15, 'RECUT15L2', HEAD_SHA, hoursAgo(30)),
-      ]);
-      metrics([emptyFinish('RECUT15L1', hoursAgo(49)), emptyFinish('RECUT15L2', hoursAgo(29))]);
-
-      const result = await recutLoopTick(deps([item(15), item(16), item(17)], landed));
-
-      expect(result.outcome).toBe('wrote');
-      expect(result.written.map((row) => row.pr)).toEqual([16, 17]);
-      expect(result.skipped).toEqual([{ pr: 15, reason: 'empty-yield' }]);
-      expect(ledgerLines()).toHaveLength(4);   // 2 old + 2 new writes
-    });
   });
 });

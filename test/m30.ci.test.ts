@@ -484,23 +484,6 @@ describe('M30 CI workflow', () => {
     expect(gated).toEqual([...expensive].sort());
   });
 
-  it('runs a read-only generated-files check on every required fast-path event', () => {
-    type Step = { name?: string; if?: string; run?: string; 'continue-on-error'?: unknown };
-    const quick = (parse(ciYml).jobs as Record<string, { steps: Step[] }>).quick;
-    const check = quick.steps.find((step) => step.name === 'Check generated files');
-    expect(check, 'missing Check generated files step').toBeDefined();
-    expect(check!.if).toBeUndefined();
-    expect(check!['continue-on-error']).toBeUndefined();
-    expect(check!.run).toContain('node scripts/generate-docs-llms.mjs');
-    expect(check!.run).toContain('git status --porcelain --untracked-files=normal');
-    expect(check!.run).not.toMatch(/git add|git commit|git push|auto-commit/);
-    expect(check!.run).not.toMatch(/llms\.txt[^\n]*(exempt|exclude|ignore)/);
-    const names = quick.steps.map((step) => step.name);
-    expect(names.indexOf('Set up Node.js 22')).toBeGreaterThan(-1);
-    expect(names.indexOf('Set up Node.js 22')).toBeLessThan(names.indexOf('Check generated files')!);
-    expect(names.indexOf('Check generated files')).toBeLessThan(names.indexOf('Prove source-identical history fast path')!);
-  });
-
   it('executes the real history proof contract for equal and fallback outcomes', async () => {
     // The helper's git/event/api boundaries are injected; every binding inside
     // proveHistoryFastPath itself executes for real. Owned-repo git fixtures

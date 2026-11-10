@@ -10,7 +10,7 @@ export const LANE_ID_RE = /^[a-z][a-z0-9-]{1,30}$/;
 export const GLOBAL_SLOT_KEYS: ReadonlySet<string> = new Set(['hard_cap', 'last_change_by']);
 export interface LaneTargetRow { lane: string; target: number; floor: number; ceiling: number; held: boolean; heldReason: string | null; heldUntil: string | null; pausedFrom: number | null; lastChange: string | null; changedBy: string | null }
 export interface LaneTargetsV1 { v: 1; generatedAt: string; sourceState: 'healthy' | 'missing' | 'degraded'; lanes: LaneTargetRow[] }
-export interface LaneTargetsOptions { runsDir?: string; now?: () => Date; changedBy?: string; dryRun?: boolean }
+export interface LaneTargetsOptions { runsDir?: string; now?: () => Date; changedBy?: string }
 export class LaneTargetError extends Error {
   readonly status: 422 | 503;
   constructor(readonly code: 'unknown-lane' | 'out-of-range' | 'unavailable') {
@@ -108,7 +108,6 @@ export async function setLaneTarget(lane: string, target: number, opts: LaneTarg
     // hard_cap (RQ-LOADGATE-1) bounds a target like the ceiling does; dispatchd would clamp it on the next tick anyway.
     const top = integer(row.hard_cap) ? Math.min(row.ceiling as number, row.hard_cap) : row.ceiling as number;
     if (!integer(target) || target < (row.floor as number) || target > top) throw new LaneTargetError('out-of-range');
-    if (opts.dryRun) return readLaneTargets(opts);
     const now = (opts.now ?? (() => new Date()))();
     const iso = now.toISOString();
     const by = (opts.changedBy ?? 'Phantom desktop').replace(/[\t\r\n]/g, ' ');

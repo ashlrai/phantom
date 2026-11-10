@@ -3150,12 +3150,6 @@ async function main(): Promise<void> {
         break;
       }
 
-      case 'wb': {
-        const { cmdWb } = await import('./wb.js');
-        process.exitCode = await cmdWb(rest);
-        break;
-      }
-
       case 'budget': {
         const { cmdBudget } = await import('./budget.js');
         process.exitCode = await cmdBudget(rest);

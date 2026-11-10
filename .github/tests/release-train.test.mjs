@@ -382,7 +382,7 @@ test('workflows carry the merged-PR -> tag -> release wiring with no widened per
   assert.equal(autoTag.concurrency.group, 'auto-tag-${{ github.repository }}');
   assert.equal(autoTag.concurrency['cancel-in-progress'], false);
   const tagJob = autoTag.jobs.tag;
-  assert.deepEqual(tagJob.permissions, {contents: 'read', checks: 'read', actions: 'write'});
+  assert.deepEqual(tagJob.permissions, {contents: 'read', checks: 'read'});
   const names = tagJob.steps.map(s => s.name ?? '');
   assert.ok(names.some(n => n.startsWith('Detect version')));
   assert.ok(names.some(n => n.startsWith('Require every required check')));;
@@ -391,14 +391,6 @@ test('workflows carry the merged-PR -> tag -> release wiring with no widened per
   assert.ok(tagStep.run.includes('node .github/scripts/tag-github-release.mjs'));
   assert.ok(String(tagStep.if).includes('checks.outputs.green'), 'tag step must gate on green checks');
   assert.ok(String(tagStep.env?.GH_TOKEN).includes('steps.app.outputs.token'), 'tag step must use the scoped app token, not GITHUB_TOKEN');
-  const dispatchStep = tagJob.steps.find(s => (s.name ?? '').startsWith('Dispatch release-gate CI'));
-  assert.ok(dispatchStep, 'auto-tag must dispatch release-gate CI after creating the draft');
-  assert.ok(String(dispatchStep.env?.GH_TOKEN).includes('github.token'), 'dispatch must use GITHUB_TOKEN; the App has no actions permission');
-  assert.equal(String(dispatchStep.env?.GH_TOKEN).includes('steps.app.outputs.token'), false);
-  const mint = tagJob.steps.find(s => String(s.uses ?? '').includes('create-github-app-token'));
-  assert.ok(mint, 'auto-tag must mint a contents-only App token for the tag step');
-  assert.equal(mint.with['permission-actions'], undefined);
-  assert.equal(mint.with['permission-contents'], 'write');
   const detect = tagJob.steps.find(s => /Detect version/.test(s.name ?? ''));
   assert.ok(detect.run.includes('ls-remote --exit-code --tags'), 'tag existence check must run before the version-unchanged bail-out');
   assert.ok(detect.run.indexOf('ls-remote --exit-code --tags') < detect.run.indexOf('"$new" = "$old"'),

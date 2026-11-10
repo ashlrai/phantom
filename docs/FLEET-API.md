@@ -274,24 +274,3 @@ Run `phm fleet map --json` for the same `fleet.map.v1` tree. The map uses
 `/api/verse/fleet/live`: it shows only jobs in that snapshot, and a job with
 an unreported lane appears under an unknown lane. Provider marks are initials;
 the snapshot does not provide logos or the Leader's identity.
-
-### Desktop workbench actions (WB-4)
-
-`POST /api/wb/v1/action` requires dispatch enabled, the existing mutation
-capability in `x-ashlr-token`, and `Content-Type: application/json`. Read tokens
-and browser read sessions cannot authorize actions. The server stores its
-existing capability at `~/.ashlr/wb/token` with mode 0600; it creates no additional
-capability. Treat this file as private local custody.
-
-Bodies contain `action`, a unique 32–64 lowercase hexadecimal `nonce`, and
-optional `dryRun` (defaults to true). Lane actions `lane.pause`, `lane.resume`,
-`lane.target` require `lane`; target also requires an integer `target`. Resume
-restores the remembered pre-pause target. Queue actions `queue.hold`,
-`queue.unhold`, `job.retry` require `job`. Holds affect only READY jobs; retries
-create a new attempt only for a finished failed job. `reap.count` takes no target
-and only counts reclaimable worktrees. Extra fields are refused.
-
-Nonces are consumed for dry runs and failed attempts as well as successful
-applies, and survive server restarts. Use a fresh nonce to apply a reviewed dry
-run. `~/.ashlr/wb/audit.jsonl` records timestamps, fixed action names and outcomes;
-request values, capabilities, job IDs, paths and nonces are never recorded.
