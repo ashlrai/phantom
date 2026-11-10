@@ -1,3 +1,4 @@
+import { observeFleetMerges } from '../intent/observe-fleet-merges.js';
 import { readGoals } from '../fleet/goals.js';
 import { readMetricsPanel } from '../fleet/metrics-panel.js';
 import { applyOrderStatus, OrderStatusError } from './fleet-order-status.js';
@@ -272,6 +273,12 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       result.outbox = project(entries, outboxShape) as FleetRunsV1['outbox'];
     } catch { result.outbox = []; }
     await sourcesDone;
+    // Record observed merges on tracked intents from the already-projected
+    // rows (no second read). Only with a declared runsDir, so hermetic
+    // instances never touch the real ledger; failures never affect the snapshot.
+    if (deps.runsDir !== undefined && result.sources.merges === 'healthy') {
+      await observeFleetMerges(result.mergesLastHour.items, { runsDir: deps.runsDir, now: new Date(result.generatedAt) });
+    }
     return result;
   }
   const laneModels = deps.laneModels ?? (() => getLaneModelSnapshot({ runsDir: deps.runsDir ?? defaultRunsDir() }));
