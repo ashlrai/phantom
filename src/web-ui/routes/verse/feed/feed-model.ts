@@ -11,12 +11,15 @@
  *   update   Phantom update news: ready, held, failed, applied (the notification
  *            tray's derived update items; no route of its own)
  *   bus      urgent (P0, P1) agent-to-agent messages from the agent bus page
+ *   comms    the Comms agent's digest (fleet kind, or alert when an inbox is over
+ *            100 unread or a draft is over 12 h old)
  *
  * Pure: one adapter per source, then `buildFeed` dedupes by id, drops items
  * whose time does not parse, sorts newest first and caps the stream. Every
  * text is untrusted (model output, PR titles) and is rendered as plain text.
  */
 import type { FeedReport } from '../../../../core/feed.js';
+import { buildCommsDigestFeedItems, type CommsDigestInput } from '../../../../core/fleet/feed-comms-digest.js';
 import type { AppNotification } from '../../../components/notifications/types.js';
 import type { NeedsYouItem } from '../../../../core/verse/workbench-types.js';
 import type { UnifiedInboxView } from '../fleet-inbox/unified-inbox-model.js';
@@ -73,6 +76,8 @@ export interface FeedSources {
   /** The agent bus page; only P0 and P1 messages reach the stream. */
   bus?: AgentBusPage | null;
   teammate?: (UnifiedInboxView & { generatedAt?: string }) | null;
+  /** The Comms agent's latest run reading; one digest item per run id. */
+  comms?: CommsDigestInput | null;
 }
 
 export type FeedFilter = 'all' | 'leader' | 'alert' | 'merge' | 'owner' | 'update' | 'bus' | 'teammate' | 'comms';
@@ -205,7 +210,7 @@ export function feedItemPane(item: Pick<FeedItem, 'id' | 'kind'>): FeedPane | un
 }
 
 /** Every source merged, each item with its owning pane: deduped by id (newest copy wins), unparsable times dropped, newest first, at most FEED_LIMIT. */
-export function buildFeed(sources: FeedSources, limit = FEED_LIMIT): FeedItem[] {
+export function buildFeed(sources: FeedSources, limit = FEED_LIMIT, now = Date.now()): FeedItem[] {
   const all: FeedItem[] = [
     ...(sources.shared?.items ?? []).map((item, index): FeedItem => ({ id: `shared:${item.kind}:${item.at}:${index}`, at: item.at, kind: item.kind === 'merge' ? 'merge' : 'leader', ...headline(item.text) })),
     ...leaderAdapter(sources.leader),
@@ -218,6 +223,7 @@ export function buildFeed(sources: FeedSources, limit = FEED_LIMIT): FeedItem[] 
     ...busAdapter(sources.bus),
     ...teammateAdapter(sources.teammate),
     ...commsWaitingAdapter(sources.teammate),
+    ...buildCommsDigestFeedItems(sources.comms, now),
   ];
   const timed = all.flatMap(item => {
     const ms = Date.parse(item.at);
