@@ -2,7 +2,8 @@
  * data/sse.ts — the live channel. One EventSource against /api/events for
  * the whole app, fanning out NAMED events (see api.ts handleSseEvents:
  * 'runs' | 'swarms' | 'inbox' | 'daemon' | 'daemon-observation' |
- * 'fleet-activity-ping' | 'fleet-activity-observation' | 'snapshot') to
+ * 'fleet-activity-ping' | 'fleet-activity-observation' | 'fleet-board' |
+ * 'snapshot') to
  * subscribers, and invalidating the matching cache key so any mounted
  * useQuery(key) re-fetches in the background.
  *
@@ -23,6 +24,7 @@ export const SSE_EVENT_NAMES = [
   'daemon-observation',
   'fleet-activity-ping',
   'fleet-activity-observation',
+  'fleet-board',
   'snapshot',
   'session-expired',
 ] as const;
@@ -57,6 +59,9 @@ const EVENT_TO_CACHE_KEYS: Record<SseEventName, string[]> = {
   // refreshing on mount.
   'fleet-activity-ping': ['fleet-activity', 'fleet'],
   'fleet-activity-observation': ['fleet-activity', 'fleet'],
+  // The server's per-tick stat of coordination/leader-board.json; the event
+  // is an invalidation ping only — the query re-reads the board envelope.
+  'fleet-board': ['fleet-board'],
   // Agent OS snapshots are immutable records but their current authenticated
   // projection advances alongside the server's general snapshot signal.
   snapshot: ['dashboard-snapshot', 'agent-os-snapshot'],

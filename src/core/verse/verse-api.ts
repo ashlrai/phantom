@@ -198,7 +198,7 @@ export function isVerseApiPath(path: string): boolean {
 // ---------------------------------------------------------------------------
 
 /** Stable ids, in mount order. */
-export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr' | 'fleet-holds' | 'fleet-graph-live' | 'fleet-graph' | 'fleet-usage-audit' | 'fleet-ci-runs' | 'fleet-memory' | 'fleet-apps' | 'fleet-inbox-acks' | 'fleet-self-tick' | 'fleet-main-red-age';
+export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr' | 'fleet-holds' | 'fleet-graph-live' | 'fleet-graph' | 'fleet-usage-audit' | 'fleet-ci-runs' | 'fleet-memory' | 'fleet-apps' | 'fleet-inbox-acks' | 'fleet-self-tick' | 'fleet-main-red-age' | 'fleet-board';
 
 export interface MountedApiModule {
   id: MountedApiModuleId;
@@ -265,6 +265,8 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   { id: 'fleet-merge-pace' as MountedApiModuleId, load: async () => (await import('./merge-pace-api.js')).handleMergePaceApi },
   { id: 'fleet-landed-closes' as MountedApiModuleId, load: async () => (await import('./landed-closes-api.js')).handleLandedClosesApi },
   { id: 'fleet-slow-prs' as MountedApiModuleId, load: async () => (await import('./slow-prs-api.js')).handleSlowPrsApi },
+  // Leader-as-CEO board: GET /api/verse/fleet/board (core/verse/fleet-board-api.ts); read-only.
+  { id: 'fleet-board', load: async () => (await import('./fleet-board-api.js')).handleFleetBoardApi },
 ];
 
 let mountedModules: readonly MountedApiModule[] = DEFAULT_API_MODULES;

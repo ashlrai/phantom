@@ -41,6 +41,7 @@ const SwarmsView = lazy(() => import('../routes/work/swarms/SwarmsView.js').then
 const SwarmDetailView = lazy(() => import('../routes/work/swarms/SwarmDetailView.js').then((module) => ({ default: module.SwarmDetailView })));
 const DaemonView = lazy(() => import('../routes/control/daemon/DaemonView.js').then((module) => ({ default: module.DaemonView })));
 const FleetView = lazy(() => import('../routes/control/fleet/FleetView.js').then((module) => ({ default: module.FleetView })));
+const FleetBoardView = lazy(() => import('../routes/control/board/FleetBoardView.js').then((module) => ({ default: module.FleetBoardView })));
 const SecurityView = lazy(() => import('../routes/control/security/SecurityView.js').then((module) => ({ default: module.SecurityView })));
 const GoalsView = lazy(() => import('../routes/goals/GoalsView.js').then((module) => ({ default: module.GoalsView })));
 const InboxView = lazy(() => import('../routes/inbox/InboxView.js').then((module) => ({ default: module.InboxView })));
@@ -84,6 +85,7 @@ export function AppRoutes() {
         <Route path="/work/swarms/:id" element={<SwarmDetailView />} />
         <Route path="/control/daemon" element={<DaemonView />} />
         <Route path="/control/fleet" element={<FleetView />} />
+        <Route path="/control/board" element={<FleetBoardView />} />
         <Route path="/control/security" element={<SecurityView />} />
         <Route path="/goals" element={<GoalsView />} />
         <Route path="/verse/inbox" element={<DecisionInbox />} />

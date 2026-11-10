@@ -115,6 +115,8 @@ import { handleGrowthApi, isGrowthPath } from '../verse/growth-api.js';
 import { handleVerseMcpApi, isVerseMcpPath } from '../verse/mcp-control-api.js';
 // Desktop native-shell read API (GET /api/wb/v1/*).
 import { handleWbApi, isWbApiPath } from './wb-read-api.js';
+// Leader board file fingerprint for the fleet-board SSE topic (core/fleet/fleet-board-read.ts).
+import { fleetBoardDigest } from '../fleet/fleet-board-read.js';
 
 // ---------------------------------------------------------------------------
 // SSE registry — shared across all open SSE connections so server.ts can
@@ -210,7 +212,7 @@ let sseHistoryProjection: SseHistoryProjection | null = null;
  * No `topics` parameter means every group (the historical behaviour).
  */
 export const SSE_TOPICS = [
-  'verse-sessions', 'verse-account-readings', 'runs', 'swarms', 'inbox', 'daemon', 'fleet-activity', 'snapshot',
+  'verse-sessions', 'verse-account-readings', 'runs', 'swarms', 'inbox', 'daemon', 'fleet-activity', 'fleet-board', 'snapshot',
 ] as const;
 export type SseTopic = typeof SSE_TOPICS[number];
 
@@ -1054,6 +1056,26 @@ function handleSseEvents(
     } catch { /* unavailable publications never imply a completed reading */ }
   }
 
+  // Leader board (GET /api/verse/fleet/board): one stat per poll tick against
+  // the file the last Leader tick recorded. A new/changed/removed recording
+  // pushes an invalidation ping — the board itself is re-read by the query,
+  // never streamed here.
+  let lastBoardDigest: string | null = null;
+  let boardDigestInFlight = false;
+  function pushFleetBoardIfChanged(): void {
+    if (cleaned || backpressured || boardDigestInFlight || !topics.has('fleet-board')) return;
+    boardDigestInFlight = true;
+    void fleetBoardDigest()
+      .then((digest) => {
+        if (digest !== lastBoardDigest) {
+          lastBoardDigest = digest;
+          sendNamed('fleet-board', { changed: true });
+        }
+      })
+      .catch(() => { /* an unreadable board is a GET-time status, not an SSE error */ })
+      .finally(() => { boardDigestInFlight = false; });
+  }
+
   // Emit one full update (runs, swarms, inbox, daemon slices) for the
   // subscribed topics.
   async function emitUpdate(): Promise<void> {
@@ -1137,6 +1159,7 @@ function handleSseEvents(
   // Send an initial snapshot immediately.
   pushVerseSessionsIfChanged();
   pushAccountReadingsIfChanged();
+  pushFleetBoardIfChanged();
   try {
     void emitUpdate().catch(() => { /* A failed read must not reject outside the stream. */ });
   } catch {
@@ -1149,6 +1172,7 @@ function handleSseEvents(
   const intervalId = setInterval(() => {
     pushVerseSessionsIfChanged();
     pushAccountReadingsIfChanged();
+    pushFleetBoardIfChanged();
     try {
       void emitUpdate().catch(() => { /* Retry a failed read on the next bounded tick. */ });
     } catch {
