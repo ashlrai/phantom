@@ -154,18 +154,20 @@ What runs without a per-release approval:
   when its version is the next patch, its head is `release-please--*`, and
   GitHub Actions checks on that head are success. The merge uses the existing
   release app token and has no admin flag.
-- If the accepted tag is behind master and has no build, the train records
-  `advance.action=advance-from-master`, the next patch version and master SHA.
-  Once cadence is due, it dispatches `release-please.yml` if that version has
-  no open release PR; otherwise it waits for that PR and enqueues it only
-  after its checks are green. The Release PR workflow independently checks
-  green master, cadence and version carriers. Existing tags stay unchanged.
+- A release-please tag whose commit is an ancestor of master (compare
+  `tag...master` status `ahead`, or `identical` when it is master HEAD) is
+  the candidate when required CI on that exact SHA is green. Diverged and
+  red candidates are refused. The train does not retag and does not delete
+  tags. A green open release PR for the next patch is still enqueued only
+  after its own checks are green. The Release PR workflow independently
+  checks green master, cadence and version carriers.
 - `auto-tag.yml` still creates `vX.Y.Z` and the draft after required checks
   on that commit.
-- A `workflow_dispatch` of `ci.yml` with `release_gate=true` and `--ref` set
-  to master builds the candidate only while its SHA equals master head.
-  A stale candidate instead advances through the release PR path above.
-  The half-hour schedule on master is unchanged.
+- A `workflow_dispatch` of `ci.yml` with `release_gate=true` builds that
+  candidate. The ref is the tag when the tag is behind master, and `master`
+  when the SHAs match. Attestation uses the same ref, so the checkout SHA is
+  the candidate rather than a newer master HEAD. The half-hour schedule on
+  master is unchanged.
 - When that build artifact exists, the train dispatches
   `attest-ci-build.yml` and then `publish-canonical-npm.yml` with the exact
   run, attempt, and artifact ids. The publisher's own admission still runs.
@@ -188,9 +190,11 @@ The plan reason `mac-release-autorun` means signed assets are still pending
 from this wrapper; it blocks desktop completion, but not npm dispatch once
 build, attestation and audit evidence are available. It is not a new hold.
 The wrapper picks up a successful attestation of a `v*` tag on its existing
-10 minute poll. The attestor commit must be master at attestation time and
-must still be an ancestor of master when the wrapper runs. A diverged
-attestor is not signed. If `~/.ashlr-runs/release-sign/keychain-allowed` is
+10 minute poll. The attestor may be current master, or the release tag commit
+when that tag's peeled sha is the candidate, the commit is an ancestor of
+master, and required CI on that sha is green. A diverged attestor, a
+non-release ref, or a tag whose sha does not match is not signed. The live
+host copy under `~/.ashlr-runs/bin/` is not updated by this repository change. If `~/.ashlr-runs/release-sign/keychain-allowed` is
 missing, the wrapper writes `NEEDS-MASON-<tag>` and waits. That file is the
 one-time unlock of the existing signing identity, not a per-release approval.
 
