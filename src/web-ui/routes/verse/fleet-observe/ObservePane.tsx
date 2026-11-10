@@ -26,7 +26,7 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { usedPercentText } from '../percent-text.js';
 import { verseAccountsQuery } from '../usage/usage-queries.js';
 import { projectAccountsSnapshot } from '../usage/usage-contract.js';
-import { VERSE_AGENT_ROSTER_PATH } from '../../../../core/verse/agent-roster-api.js';
+import { VERSE_AGENT_ROSTER_PATH } from '../../../../core/verse/agent-roster-path.js';
 import { ObserveFacts } from './ObserveFacts.js';
 import { heldIncidents, readComms, readGauges, readLanes, readMerges, readRoster, readSessions } from './observe-model.js';
 import styles from './fleet-observe.module.css';

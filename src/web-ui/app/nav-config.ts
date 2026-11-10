@@ -69,6 +69,7 @@ export const NAV_GROUPS: NavGroup[] = [
     id: 'work',
     label: 'Work',
     leaves: [
+      { path: '/work/log', label: 'Work log', description: 'Merged pull requests', implemented: true },
       {
         path: '/work/runs',
         label: 'Runs',
