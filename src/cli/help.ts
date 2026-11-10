@@ -107,6 +107,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'observe.human.v1 | session detail',
   },
   {
+    usage: 'phm wb secrets [--json]',
+    description: 'Read Phantom Secrets custody metadata only: names, scope, age and last rotation. Exit 1 when unavailable; never reveals values.',
+    safety: 'read',
+    jsonShape: '{ v: 1, state: ok|unknown, secrets: SecretCustody[] }',
+  },
+  {
     usage: 'phm budget show [--json]',
     description: 'Read per-pool budget buckets, burn rates, resets and provenance. Unknown is never zero.',
     safety: 'read',
