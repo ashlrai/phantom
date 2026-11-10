@@ -277,3 +277,42 @@ Run `phm fleet map --json` for the same `fleet.map.v1` tree. The map uses
 `/api/verse/fleet/live`: it shows only jobs in that snapshot, and a job with
 an unreported lane appears under an unknown lane. Provider marks are initials;
 the snapshot does not provide logos or the Leader's identity.
+
+### Desktop workbench actions (WB-4)
+
+`POST /api/wb/v1/action` requires dispatch enabled, the existing mutation
+capability in `x-ashlr-token`, and `Content-Type: application/json`. Read tokens
+and browser read sessions cannot authorize actions. The server stores its
+existing capability at `~/.ashlr/wb/token` with mode 0600; it creates no additional
+capability. Treat this file as private local custody.
+
+Bodies contain `action`, a unique 32–64 lowercase hexadecimal `nonce`, and
+optional `dryRun` (defaults to true). Lane actions `lane.pause`, `lane.resume`,
+`lane.target` require `lane`; target also requires an integer `target`. Resume
+restores the remembered pre-pause target. Queue actions `queue.hold`,
+`queue.unhold`, `job.retry` require `job`. Holds affect only READY jobs; retries
+create a new attempt only for a finished failed job. `reap.count` takes no target
+and only counts reclaimable worktrees. Extra fields are refused.
+
+Steer actions drive the Verse steer pane. `steer.note` requires `text` and
+appends it to the Leader inbox under the "Phantom workbench" source (empty,
+overlong and secret-shaped text is refused before anything is written).
+`queue.reprioritize` requires `job` and `priority` (`P0`–`P3`) and moves only
+READY or HOLD lines; claimed or finished jobs are refused. `job.stop` requires
+`job` and ends a running job: SIGTERM, then SIGKILL after the grace period, with
+the same stop ledger and event narration as the operator stop path. The CLI
+twins `phm wb steer --text <note>`, `phm wb reprioritize <job> --priority <P0-P3>`
+and `phm wb stop <job>` share the action implementation; they are dry runs
+unless `--apply` is given and print the same result with `--json`.
+
+`GET /api/wb/v1/steer` is the pane's composite read. It reports the fleet.v1
+roster slice (claim IDs reduced to present/absent, leases never projected), the
+public seats, and the queue lines (id, status, priority, pool, tier, bounded
+scope). Each source carries a state field (`ok`, `missing`, `not-fleet-v1`,
+`unavailable`) so the pane can show an honest empty state instead of a fake
+healthy roster.
+
+Nonces are consumed for dry runs and failed attempts as well as successful
+applies, and survive server restarts. Use a fresh nonce to apply a reviewed dry
+run. `~/.ashlr/wb/audit.jsonl` records timestamps, fixed action names and outcomes;
+request values, capabilities, job IDs, paths and nonces are never recorded.

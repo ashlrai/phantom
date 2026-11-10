@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cmdRelease } from '../src/cli/release.js';
 import {
-  admitCiRun, allowReleasePrDispatch, assertReleaseWrite, buildTrain, cappedCadenceMinutes, docsCarriersSynced, ENQUEUE_PULL_REQUEST,
+  admitCiRun, allowReleasePrDispatch, assertReleaseWrite, buildTrain, cadenceMinutesFromEnv, cappedCadenceMinutes, DEFAULT_CADENCE_MINUTES, docsCarriersSynced, ENQUEUE_PULL_REQUEST,
   judgeRequiredChecks, releaseHeadBranch, releaseWriteUsesAppToken, TRAIN_JOB_CHECK_NAME,
   enqueueReleasePullRequest, hostedTrainGate, isReleasePleaseCommit,
   successorTagConflict, refusePublishIfSuccessorConflict,
@@ -204,6 +204,14 @@ describe('release train', () => {
     expect(cappedCadenceMinutes(60)).toBe(60);
     expect(cappedCadenceMinutes(120)).toBe(120);
     expect(() => cappedCadenceMinutes(0)).toThrow(/cadence/);
+    expect(DEFAULT_CADENCE_MINUTES).toBe(5);
+    expect(cadenceMinutesFromEnv(undefined)).toBe(5);
+    expect(cadenceMinutesFromEnv('')).toBe(5);
+    expect(cadenceMinutesFromEnv('5')).toBe(5);
+    expect(cadenceMinutesFromEnv('1')).toBe(1);
+    expect(cadenceMinutesFromEnv('60')).toBe(60);
+    expect(() => cadenceMinutesFromEnv('0')).toThrow(/cadence/);
+    expect(() => cadenceMinutesFromEnv('4.5')).toThrow(/cadence/);
     const early = buildTrain(observation({
       lastTaggedAt: '2026-11-09T05:30:00.000Z',
       openReleasePr: { number: 9, nodeId: 'PR_kwDO_test', version: '3.30.28', headSha: pr, headRef: 'release-please--master', mergeable: 'MERGEABLE', state: 'OPEN', queued: false },
