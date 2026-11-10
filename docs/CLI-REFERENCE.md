@@ -18,7 +18,7 @@ Terminal colors and trailing whitespace are removed, and em dashes become hyphen
 ```text
 Phantom - phm, the CLI for agentic engineers (ashlr remains compatible)
 
-    core            Core - index, navigate, configure (tune, index, go, …)
+    core            Core - index, navigate, configure (caps, wb, constitution, …)
     run             Run - local-first agent runs (run, runs, …)
     swarm           Swarm - specs + multi-agent fleets (spec, …)
     memory          Memory - shared genome (memory, recall, learn, …)
@@ -43,6 +43,9 @@ Phantom - phm, the CLI for agentic engineers (ashlr remains compatible)
 Phantom - every command (phm or ashlr)
 
   Core - index, navigate, configure
+    caps list|validate|generate [--registry <path>] [--out <dir>] [--pin-stage] [--check] [--json]                 Capability registry: surfaces, models, hosting edges, account references and capabilities; validate it and generate pinned per-agent adapters to staging (never into live agent config dirs). See docs/CAPABILITY-REGISTRY.md.
+    wb secrets [--json]                                                                                            Workbench view of Phantom Secrets custody: secret names, scopes and ages, never values (read-only).
+    constitution check [--root <repo>] [--json] [paths...]                                                         Check constitution rule definitions and references in prompts and templates (read-only).
     tune <prepare|evaluate>                                                                                        Prepare scrub-gated local model datasets or evaluate paired evidence.
     index [--refresh]                                                                                              Build or refresh the desktop index; show counts by category.
     go [query] [--open|--cd]                                                                                       Find a repo or item; open in editor (--open) or print path for cd (--cd).

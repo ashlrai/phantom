@@ -1,5 +1,6 @@
 import { readWorkbenchSecrets } from '../core/workbench/secrets.js';
 export async function cmdWb(args: string[]): Promise<number> {
+  if (args.includes('--help') || args.includes('-h')) { console.log('Usage: phm wb secrets [--json]'); return 0; }
   if (args[0] !== 'secrets' || args.slice(1).some(arg => arg !== '--json')) {
     console.error('Usage: phm wb secrets [--json]');
     return 2;

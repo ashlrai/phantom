@@ -81,6 +81,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/autonomy/`
 - `src/core/autopilot/`
 - `src/core/bridge/`
+- `src/core/caps/`
 - `src/core/classify/`
 - `src/core/cloud/`
 - `src/core/comms/`

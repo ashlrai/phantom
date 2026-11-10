@@ -68,7 +68,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'disk-maint',
   // Changed-file tests and the fleet event feed.
   'test', 'check', 'feed',
-  'worklog', 'library',
+  'worklog', 'library', 'caps', 'constitution', 'wb',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
@@ -177,6 +177,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   capacity: ['publish'],
   checkpoint: ['resume', '--json', '--help'],
   // Mirror the verb switch in src/cli/trail.ts (cmdTrail).
+  caps: ['list', 'validate', 'generate', '--registry', '--out', '--check', '--pin-stage', '--json', '--help'],
   trail: ['claim', 'beat', 'release', 'save', 'list', 'show', 'resume', 'sweep', '--json', '--help'],
   // Mirror the verb switch in src/cli/sessions.ts (cmdSessions).
   sessions: ['list', 'revoke', 'create', 'show', 'resume', 'terminate', 'help'],
