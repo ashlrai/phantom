@@ -7,12 +7,16 @@ import { getLaneModelSnapshot, type LaneModelSnapshot } from '../fleet/lane-mode
 import { VERSE_FLEET_LANE_MODELS_PATH, toFleetLaneModelsV1, type FleetLaneModelsV1 } from './fleet-lane-models-contract.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { lstatSync, mkdirSync } from 'node:fs';
 import type { ApiModule } from './api-modules.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { readStableRegularFile } from '../util/stable-file-read.js';
+import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { createPhantomMergeWindow, type MergeWindowRunner } from '../fleet/phantom-merge-window.js';
 import { readHostLoad } from '../fleet/host-load.js';
-import { createChannelReceiver } from '../fleet/channel-envelope.js';
+import { createChannelReceiver, CHANNEL_REQUEST_ID_PATTERN } from '../fleet/channel-envelope.js';
 import { createLocalChannelDedupeStore, type ChannelDedupeStore } from '../fleet/channel-dedupe-store.js';
 import type { InboxAppendResult } from '../fleet/mason-inbox.js';
 import { parseInboxReadQuery, projectInboxRead, VERSE_FLEET_RUNS_INBOX_READ_LIMIT_MAX } from './fleet-inbox-read.js';
@@ -21,6 +25,7 @@ import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_GLA
 import type { SupersededReadV1 } from '../fleet/superseded-read.js';
 import { VERSE_FLEET_RUNS_STOP_PATH, stopJob, type JobStopResult, type StopJobOptions } from '../fleet/job-stop.js';
 import { STRAY_ID_PATTERN } from '../fleet/stray-slots.js';
+import { laneMedians, overrunOf } from '../fleet/job-overrun.js';
 import type { reassignQueuedJobs } from '../fleet/runs-reassign.js';
 import { isJobCommand, renderJobCommandReply, runTelegramJobCommand } from '../comms/telegram-job-command.js';
 
@@ -44,6 +49,43 @@ const VERSE_INBOX_MOBILE_OPERATOR_ID = 'verse-operator@mobile';
 const VERSE_INBOX_CHANNEL = 'desktop' as const;
 const VERSE_INBOX_MOBILE_CHANNEL = 'mobile' as const;
 const DEFAULT_INBOX_SOURCE = 'Phantom desktop';
+// The request-id ledger bounds its replay memory: 200 composed messages, a
+// 256 KiB file, oldest evicted first.
+const INTERJECT_ACK_LIMIT = 200;
+const INTERJECT_ACK_MAX_BYTES = 256 * 1024;
+// One optional screenshot per interjection: 5 MiB binary, ~6.7 MiB as base64
+// on the wire — this POST reads a larger body cap than the shared default.
+const INTERJECT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const INTERJECT_IMAGE_MAX_BASE64_CHARS = Math.ceil(INTERJECT_IMAGE_MAX_BYTES / 3) * 4;
+const INTERJECT_POST_MAX_BODY_BYTES = 7 * 1024 * 1024;
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+interface InterjectImage { bytes: Buffer; ext: 'png' | 'jpg' }
+
+/** Decode the wire `image` field; the declared client type is never trusted,
+ * only the magic bytes decide the stored extension. */
+function parseInterjectImage(value: unknown): InterjectImage | 'invalid' | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || value.length === 0 || value.length > INTERJECT_IMAGE_MAX_BASE64_CHARS ||
+    value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) return 'invalid';
+  const bytes = Buffer.from(value, 'base64');
+  if (bytes.length === 0 || bytes.length > INTERJECT_IMAGE_MAX_BYTES) return 'invalid';
+  if (bytes.length >= PNG_MAGIC.length && bytes.subarray(0, PNG_MAGIC.length).equals(PNG_MAGIC)) return { bytes, ext: 'png' };
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return { bytes, ext: 'jpg' };
+  return 'invalid';
+}
+
+/** `<runsDir>/leader/inbound/screens/<UTC yyyymmddTHHMMSSZ>-<sha256[:8]>.<ext>`
+ * — the filename is server-minted; a client name or path is never consulted. */
+function storeInterjectImage(image: InterjectImage, runsDir: string, stamp: string): string {
+  const dir = join(runsDir, 'leader', 'inbound', 'screens');
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const sha = createHash('sha256').update(image.bytes).digest('hex').slice(0, 8);
+  const file = join(dir, `${stamp}-${sha}.${image.ext}`);
+  writePrivateFileAtomically(join(dir, `.${randomUUID()}.tmp`), file, image.bytes,
+    { anchorPath: dir, label: 'Interject screenshot' });
+  return file;
+}
 // The canonical value is exported from fleet/superseded-read.js; repeating it
 // here under the export's own literal type keeps the reader module (and its gh
 // transport) out of this router's load graph until the route is requested.
@@ -186,8 +228,8 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   // pendingSources the one belonging to the request inside receive(). Each
   // request removes its ticket as soon as its receive() settles (or in the
   // POST handler's finally if receive throws), before any later await.
-  const pendingSources: { source: string; id?: string }[] = [];
-  const releaseTicket = (ticket: { source: string; id?: string }): void => {
+  const pendingSources: { source: string; id?: string; image?: InterjectImage }[] = [];
+  const releaseTicket = (ticket: { source: string; id?: string; image?: InterjectImage }): void => {
     const i = pendingSources.indexOf(ticket);
     if (i >= 0) pendingSources.splice(i, 1);
   };
@@ -203,11 +245,68 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     receiptStore: deps.receiptStore ?? (deps.runsDir === undefined ? undefined : createLocalChannelDedupeStore(deps.runsDir)),
     write: async (envelope) => {
       const ticket = pendingSources[0];
-      const result = await append(envelope.body, ticket?.source ?? DEFAULT_INBOX_SOURCE) as InboxAppendResult;
+      // The image tag joins only at write time: dedupe still keys on the text
+      // (or requestId) alone, and a replayed/duplicate send writes no file.
+      // A throw fails closed as write-failed — no partial inbox line.
+      let text = envelope.body;
+      if (ticket?.image !== undefined) {
+        const stamp = new Date(now()).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+        const suffix = ` [image: ${storeInterjectImage(ticket.image, deps.runsDir ?? defaultRunsDir(), stamp)}]`;
+        text = envelope.body.slice(0, Math.max(0, FLEET_RUNS_INBOX_MAX_CHARS - suffix.length)) + suffix;
+      }
+      const result = await append(text, ticket?.source ?? DEFAULT_INBOX_SOURCE) as InboxAppendResult;
       if (result.ok && ticket && typeof result.id === 'string') ticket.id = result.id;
       return result;
     },
   });
+  // Request-id ledger for POST .../runs/inbox. The console mints one id per
+  // composed message and retries repost it, so a repeat (double submit, slow
+  // response, reconnect, Hub restart) replays the first response instead of
+  // appending a second inbox line. requestTail serializes the
+  // check-append-record sequence in this process; the JSON file preserves it
+  // across a restart. An instance without a runsDir stays memory-only, like
+  // the channel receipt store above. Rows are [requestId, status, body].
+  const requestAcks = new Map<string, { status: number; body: Record<string, unknown> }>();
+  const requestAcksDir = deps.runsDir === undefined ? undefined : join(deps.runsDir, 'channel-receipts');
+  const requestAcksFile = requestAcksDir === undefined ? undefined : join(requestAcksDir, 'interject-requests.json');
+  let requestAcksLoaded = requestAcksFile === undefined;
+  let requestTail: Promise<unknown> = Promise.resolve();
+  const loadRequestAcks = (): void => {
+    if (requestAcksLoaded) return;
+    requestAcksLoaded = true;
+    const file = requestAcksFile!;
+    const parent = requestAcksDir!;
+    try { lstatSync(file); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
+    }
+    const read = readStableRegularFile(file, { anchorPath: parent, maxFileBytes: INTERJECT_ACK_MAX_BYTES, remainingBytes: INTERJECT_ACK_MAX_BYTES });
+    if (!read.ok) throw new Error('interject request ledger unreadable');
+    const rows: unknown = JSON.parse(read.text);
+    if (!Array.isArray(rows) || rows.length > INTERJECT_ACK_LIMIT) throw new Error('invalid interject request ledger');
+    for (const row of rows) {
+      if (!Array.isArray(row) || row.length !== 3 || typeof row[0] !== 'string' || !CHANNEL_REQUEST_ID_PATTERN.test(row[0]) ||
+          (row[1] !== 200 && row[1] !== 201) || !record(row[2])) throw new Error('invalid interject request ledger');
+      requestAcks.set(row[0], { status: row[1], body: row[2] });
+    }
+  };
+  // The append already happened when this runs: a lost commit only forfeits
+  // dedupe memory (the pre-ledger behavior), so it never fails the send.
+  const commitRequestAcks = (): void => {
+    if (requestAcksFile === undefined || requestAcksDir === undefined) return;
+    try {
+      const dir = requestAcksDir;
+      const serialize = () => JSON.stringify([...requestAcks].map(([id, ack]) => [id, ack.status, ack.body]));
+      let text = serialize();
+      while (requestAcks.size > 0 && (requestAcks.size > INTERJECT_ACK_LIMIT || Buffer.byteLength(text) > INTERJECT_ACK_MAX_BYTES)) {
+        requestAcks.delete(requestAcks.keys().next().value!);
+        text = serialize();
+      }
+      mkdirSync(dir, { recursive: true });
+      writePrivateFileAtomically(join(dir, `.${randomUUID()}.tmp`), requestAcksFile, text,
+        { anchorPath: dir, label: 'Interject request ledger' });
+    } catch { /* Ledger loss degrades to the pre-ledger behavior. */ }
+  };
   // Optional metadata uses the same string guards as the existing projection.
   function withAck(entry: unknown, states: ReturnType<typeof readInboxAckStates>): { id?: string; channel?: string; ack?: InboxAckState } {
     if (!record(entry)) return {};
@@ -278,7 +377,59 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       result.outbox = project(entries, outboxShape) as FleetRunsV1['outbox'];
     } catch { result.outbox = []; }
     await sourcesDone;
+    // Overrun flags are additive evidence on projected workers: the ledger can
+    // only add `overrun`, never rewrite a projected field or the ordering.
+    if (result.workers.length > 0) {
+      const medians = await overrunMedians();
+      if (medians.size > 0) {
+        const at = now();
+        result.workers = result.workers.map(worker => {
+          const overrun = overrunOf(worker, medians, at);
+          return overrun === null ? worker : { ...worker, overrun };
+        });
+      }
+    }
+    if (result.sources.merges === 'healthy' && result.mergesLastHour.items.length > 0) {
+      try {
+        const mod: typeof import('../intent/merge-snapshot.js') = await import('../intent/merge-snapshot.js' as string);
+        await mod.noteMergeSnapshot(result.mergesLastHour.items, deps.runsDir ?? defaultRunsDir(), new Date(now()).toISOString());
+      } catch { /* Private ledger failures must not affect the snapshot. */ }
+    }
     return result;
+  }
+  // Lane-median duration evidence is a slow statistic: refresh at most once a
+  // minute from the shared agent-activity ledger fold (the same bounded
+  // jobs.jsonl tail /api/fleet/activity serves). A missing or malformed
+  // ledger yields an empty map — workers then carry no overrun field and the
+  // composite read still succeeds.
+  let overrunCache: { at: number; medians: ReadonlyMap<string, number> } | undefined;
+  let overrunFlight: Promise<ReadonlyMap<string, number>> | undefined;
+  function overrunMedians(): Promise<ReadonlyMap<string, number>> {
+    if (!overrunFlight && (!overrunCache || now() - overrunCache.at >= 60_000)) {
+      overrunFlight = (async () => {
+        try {
+          const { readAgentActivity } = await import('../fleet/agent-activity.js');
+          const activity = await readAgentActivity({
+            runsDir: deps.runsDir ?? defaultRunsDir(), now,
+            // The reader's widest page, so each lane's newest finished
+            // durations — not just the default 6h slice — feed the median.
+            windowMs: 168 * 3_600_000, limit: 500,
+          });
+          const finished = activity.jobs.flatMap(job => {
+            if (job.stage !== 'finished') return [];
+            const seconds = job.wallS ?? job.runS;
+            return [{ lane: job.lane, durationMs: seconds === null ? null : seconds * 1000 }];
+          });
+          return laneMedians(finished, { window: 200 });
+        } catch {
+          return new Map<string, number>();
+        }
+      })().then(medians => {
+        overrunCache = { at: now(), medians };
+        return medians;
+      }).finally(() => { overrunFlight = undefined; });
+    }
+    return overrunFlight ?? Promise.resolve(overrunCache!.medians);
   }
   const laneModels = deps.laneModels ?? (() => getLaneModelSnapshot({ runsDir: deps.runsDir ?? defaultRunsDir() }));
   let modelCache: { at: number; value: FleetLaneModelsV1 } | undefined;
@@ -456,82 +607,113 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
     if (!passesMutationGate(req, res, ctx.token)) return true;
     let body: unknown;
-    try { body = JSON.parse(await readBody(req)); } catch { body = null; }
-    if (!record(body) || Object.keys(body).some(k => k !== 'text' && k !== 'source') ||
+    try { body = JSON.parse(await readBody(req, INTERJECT_POST_MAX_BODY_BYTES)); } catch { body = null; }
+    if (!record(body) || Object.keys(body).some(k => k !== 'text' && k !== 'source' && k !== 'requestId' && k !== 'image') ||
       typeof body.text !== 'string' || !body.text.trim() || body.text.trim().length > FLEET_RUNS_INBOX_MAX_CHARS ||
-      (body.source !== undefined && (typeof body.source !== 'string' || !/^[A-Za-z0-9 ._-]{1,40}$/.test(body.source)))) {
+      (body.source !== undefined && (typeof body.source !== 'string' || !/^[A-Za-z0-9 ._-]{1,40}$/.test(body.source))) ||
+      (body.requestId !== undefined && (typeof body.requestId !== 'string' || !CHANNEL_REQUEST_ID_PATTERN.test(body.requestId)))) {
       sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid inbox body' }); return true;
     }
-    const ticket: { source: string; id?: string } = { source: typeof body.source === 'string' ? body.source : DEFAULT_INBOX_SOURCE };
-    pendingSources.push(ticket);
-    try {
-      // x-ashlr-channel is trusted only because this route sits on loopback
-      // behind the mutation token — the same authority that fixes the
-      // operator id above. The remote gateway strips and re-serializes every
-      // forwarded request and stamps the header itself, so a remote client
-      // cannot mint the mobile assertion through the gateway; a direct
-      // loopback caller still needs the token to reach this line at all.
-      // Any other value, or none, keeps the desktop mapping.
-      const mobile = req.headers['x-ashlr-channel'] === 'mobile';
-      const result = await receive({
-        channel: mobile ? VERSE_INBOX_MOBILE_CHANNEL : VERSE_INBOX_CHANNEL,
-        verifiedSenderId: mobile ? VERSE_INBOX_MOBILE_OPERATOR_ID : VERSE_INBOX_OPERATOR_ID,
-        body: body.text.trim(),
-      });
-      // write() was the ticket's only reader, so release it now: any await
-      // below (job command, owner-thread mirror) must not leave it at the
-      // head of pendingSources while the next request's write runs.
-      releaseTicket(ticket);
-      if (result.ok) {
-        // Only an accepted persistence invalidates the cached composite; a
-        // duplicate appended nothing, and a refusal changed nothing.
-        if (result.ack.status === 'accepted') { generation++; cached = undefined; }
-        // The text is already receipted above, so the order trail exists even
-        // if the command fails. The reply is fixed text from the shared renderer.
-        let command: { status: string; reply: string } | undefined;
-        if (isJobCommand(body.text)) {
-          const outcome = await runTelegramJobCommand(body.text.trim(), {
-            stopJob: (id, opts) => (deps.stopJob ?? stopJob)(id, { ...opts, runsDir: deps.runsDir ?? defaultRunsDir() }),
-            reassignQueuedJobs: async (input, opts) => (deps.reassign ?? (await import('../fleet/runs-reassign.js')).reassignQueuedJobs)(
-              input, { ...opts, runsDir: deps.runsDir ?? defaultRunsDir() }),
-            // The gateway stamps this header from its live paired session;
-            // neither inbox text nor source can assert a device identity.
-            changedBy: mobile && typeof req.headers['x-ashlr-remote-device'] === 'string'
-              && /^[0-9a-f-]{36}$/.test(req.headers['x-ashlr-remote-device'])
-              ? `mobile-device:${req.headers['x-ashlr-remote-device']}` : mobile ? 'mobile' : 'desktop',
-          });
-          if (outcome.status === 'stopped' || outcome.status === 'moved') { generation++; cached = undefined; }
-          command = { status: outcome.status, reply: renderJobCommandReply(outcome) };
-        }
-        // Best-effort copy of a desktop post onto the owner thread; KILL, pause
-        // or any failure leaves the inbox response exactly as it was. A mobile
-        // post is not mirrored: the thread has no mobile channel, and filing it
-        // as desktop would misattribute where the owner wrote from.
-        const ownerThread = mobile ? undefined : await import('./owner-thread-api.js')
-          .then(m => m.mirrorInboxToOwnerThread(result.envelope.body, result.ack.dedupeKey, { now, ...deps.ownerThread }))
-          .catch(() => ({ status: 'unavailable' as const }));
-        sendJson(res, result.ack.status === 'accepted' ? 201 : 200, {
-          ok: true, at: result.envelope.receivedAt,
-          ...(ownerThread === undefined ? {} : { ownerThread }),
-          ...(ticket.id === undefined ? {} : { id: project(ticket.id, 'string') }),
-          accepted: result.ack.status === 'accepted', duplicate: result.ack.status === 'duplicate',
-          // The receiver's key is a bare 64-hex SHA-256 — a secret shape the
-          // response sanitizer would redact — so the wire carries a labeled
-          // 96-bit prefix of the same stable key.
-          dedupeKey: `sha256:${result.ack.dedupeKey.slice(0, 24)}`,
-          ...(command === undefined ? {} : { command }),
+    // An optional screenshot: the wire value is base64 only — name/path fields
+    // a client might send are already refused by the key whitelist above.
+    const image = parseInterjectImage(body.image);
+    if (image === 'invalid') { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid inbox body' }); return true; }
+    // A client-minted requestId marks one composed message; the ledger below
+    // replays its first response for a repeat instead of appending again.
+    // Requests without an id keep the receiver's text-window dedupe only.
+    const requestId = typeof body.requestId === 'string' ? body.requestId : undefined;
+    const text = body.text;
+    const source = typeof body.source === 'string' ? body.source : DEFAULT_INBOX_SOURCE;
+    const post = async (): Promise<void> => {
+      const ticket: { source: string; id?: string; image?: InterjectImage } = { source, ...(image === undefined ? {} : { image }) };
+      pendingSources.push(ticket);
+      try {
+        // x-ashlr-channel is trusted only because this route sits on loopback
+        // behind the mutation token — the same authority that fixes the
+        // operator id above. The remote gateway strips and re-serializes every
+        // forwarded request and stamps the header itself, so a remote client
+        // cannot mint the mobile assertion through the gateway; a direct
+        // loopback caller still needs the token to reach this line at all.
+        // Any other value, or none, keeps the desktop mapping.
+        const mobile = req.headers['x-ashlr-channel'] === 'mobile';
+        const result = await receive({
+          channel: mobile ? VERSE_INBOX_MOBILE_CHANNEL : VERSE_INBOX_CHANNEL,
+          verifiedSenderId: mobile ? VERSE_INBOX_MOBILE_OPERATOR_ID : VERSE_INBOX_OPERATOR_ID,
+          body: text.trim(),
+          ...(requestId === undefined ? {} : { requestId }),
         });
-      } else if (result.reason === 'dedupe-store-unavailable') {
-        // Fail closed: the receipt store could not be read, so the inbox entry
-        // was never written and the request must not look accepted.
-        sendJson(res, 503, { code: 'INBOX_RECEIPTS_UNREADABLE' });
-      } else if (result.reason === 'write-failed' || typeof result.reason !== 'string' || !result.reason) {
-        sendJson(res, 503, { code: 'INBOX_UNAVAILABLE' });
-      } else {
-        sendJson(res, 422, { code: 'INBOX_REFUSED', reason: project(result.reason, 'string') });
-      }
-    } catch { sendJson(res, 503, { code: 'INBOX_UNAVAILABLE' }); }
-    finally { releaseTicket(ticket); }
+        // write() was the ticket's only reader, so release it now: any await
+        // below (job command, owner-thread mirror) must not leave it at the
+        // head of pendingSources while the next request's write runs.
+        releaseTicket(ticket);
+        if (result.ok) {
+          // Only an accepted persistence invalidates the cached composite; a
+          // duplicate appended nothing, and a refusal changed nothing.
+          if (result.ack.status === 'accepted') { generation++; cached = undefined; }
+          // The text is already receipted above, so the order trail exists even
+          // if the command fails. The reply is fixed text from the shared renderer.
+          let command: { status: string; reply: string } | undefined;
+          if (isJobCommand(text)) {
+            const outcome = await runTelegramJobCommand(text.trim(), {
+              stopJob: (id, opts) => (deps.stopJob ?? stopJob)(id, { ...opts, runsDir: deps.runsDir ?? defaultRunsDir() }),
+              reassignQueuedJobs: async (input, opts) => (deps.reassign ?? (await import('../fleet/runs-reassign.js')).reassignQueuedJobs)(
+                input, { ...opts, runsDir: deps.runsDir ?? defaultRunsDir() }),
+              // The gateway stamps this header from its live paired session;
+              // neither inbox text nor source can assert a device identity.
+              changedBy: mobile && typeof req.headers['x-ashlr-remote-device'] === 'string'
+                && /^[0-9a-f-]{36}$/.test(req.headers['x-ashlr-remote-device'])
+                ? `mobile-device:${req.headers['x-ashlr-remote-device']}` : mobile ? 'mobile' : 'desktop',
+            });
+            if (outcome.status === 'stopped' || outcome.status === 'moved') { generation++; cached = undefined; }
+            command = { status: outcome.status, reply: renderJobCommandReply(outcome) };
+          }
+          // Best-effort copy of a desktop post onto the owner thread; KILL, pause
+          // or any failure leaves the inbox response exactly as it was. A mobile
+          // post is not mirrored: the thread has no mobile channel, and filing it
+          // as desktop would misattribute where the owner wrote from.
+          const ownerThread = mobile ? undefined : await import('./owner-thread-api.js')
+            .then(m => m.mirrorInboxToOwnerThread(result.envelope.body, result.ack.dedupeKey, { now, ...deps.ownerThread }))
+            .catch(() => ({ status: 'unavailable' as const }));
+          const status = result.ack.status === 'accepted' ? 201 : 200;
+          const payload: Record<string, unknown> = {
+            ok: true, at: result.envelope.receivedAt,
+            ...(ownerThread === undefined ? {} : { ownerThread }),
+            ...(ticket.id === undefined ? {} : { id: project(ticket.id, 'string') }),
+            accepted: result.ack.status === 'accepted', duplicate: result.ack.status === 'duplicate',
+            // The receiver's key is a bare 64-hex SHA-256 — a secret shape the
+            // response sanitizer would redact — so the wire carries a labeled
+            // 96-bit prefix of the same stable key.
+            dedupeKey: `sha256:${result.ack.dedupeKey.slice(0, 24)}`,
+            ...(command === undefined ? {} : { command }),
+          };
+          // A recorded id is replayed verbatim, so the ledger write lands
+          // before the response; a commit failure only forfeits dedupe memory.
+          if (requestId !== undefined) { requestAcks.set(requestId, { status, body: payload }); commitRequestAcks(); }
+          sendJson(res, status, payload);
+        } else if (result.reason === 'dedupe-store-unavailable') {
+          // Fail closed: the receipt store could not be read, so the inbox entry
+          // was never written and the request must not look accepted.
+          sendJson(res, 503, { code: 'INBOX_RECEIPTS_UNREADABLE' });
+        } else if (result.reason === 'write-failed' || typeof result.reason !== 'string' || !result.reason) {
+          sendJson(res, 503, { code: 'INBOX_UNAVAILABLE' });
+        } else {
+          sendJson(res, result.reason === 'flag-only' ? 400 : 422, { code: 'INBOX_REFUSED', reason: project(result.reason, 'string') });
+        }
+      } catch { sendJson(res, 503, { code: 'INBOX_UNAVAILABLE' }); }
+      finally { releaseTicket(ticket); }
+    };
+    if (requestId === undefined) { await post(); return true; }
+    const work = requestTail.then(async () => {
+      try { loadRequestAcks(); }
+      // Fail closed like the receipt store: an unreadable ledger cannot prove
+      // this id is new, so the request must not look accepted.
+      catch { sendJson(res, 503, { code: 'INBOX_RECEIPTS_UNREADABLE' }); return; }
+      const seen = requestAcks.get(requestId);
+      if (seen !== undefined) { sendJson(res, seen.status, seen.body); return; }
+      await post();
+    });
+    requestTail = work.then(() => undefined, () => undefined);
+    try { await work; } catch { /* The response was already written or the socket is gone. */ }
     return true;
   };
 }

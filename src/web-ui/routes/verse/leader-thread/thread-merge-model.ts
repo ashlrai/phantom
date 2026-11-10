@@ -39,7 +39,7 @@ function inboxMs(at: string, nowMs: number): number {
   return parseInboxAt(at, nowMs) ?? Date.parse(at);
 }
 
-export function mergeThread(thread: readonly ThreadPostShape[], inbox: FleetRunsV1['inbox'], nowMs: number, runs?: unknown, outbox: readonly { at: string; text: string }[] = []): MergedThread {
+export function mergeThread(thread: readonly ThreadPostShape[], inbox: FleetRunsV1['inbox'], nowMs: number, runs?: unknown, outbox: readonly { at: string; text: string }[] = [], laneLines: readonly MergedLine[] = []): MergedThread {
   // An interjection relayed into the thread lands there verbatim; the inbox
   // copy is dropped so the message shows once, still attributed to Mason.
   const relayed = new Set(thread.filter(m => m.from === 'mason').map(m => m.text.trim()));
@@ -75,6 +75,8 @@ export function mergeThread(thread: readonly ThreadPostShape[], inbox: FleetRuns
     push({ at: Date.parse(message.at), who: message.from, source: message.id.startsWith('leader-file-') ? 'outbox' : message.channel, text: displayThreadText(message), id: message.id,
       ack: matches.length === 1 ? ackFor(matches[0]!) : null });
   }
+  // Lane held/resumed system lines land last on an exact tie.
+  for (const line of laneLines) push(line);
   dated.sort((a, b) => a.line.at - b.line.at || a.order - b.order);
   return { lines: dated.map(d => d.line), undated };
 }

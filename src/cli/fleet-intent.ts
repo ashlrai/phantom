@@ -4,7 +4,7 @@ import { cmdFleetIntentImport } from './fleet-intent-import.js';
 import { sweepStale } from '../core/intent/sweep.js';
 import { linkMergedPull, MAX_RELEASE_REF } from '../core/intent/evidence.js';
 import { noteShippedRelease } from '../core/intent/release.js';
-import { readLedger, writeLedger } from '../core/intent/store.js';
+import { transactIntentLedger } from '../core/intent/store.js';
 import { IntentError, isIntentStatus, normalizeRq, validIntentId, validRepo, type IntentStatus } from '../core/intent/schema.js';
 
 const usage = `Usage: phm fleet intent list [--status status] [--json]
@@ -96,10 +96,8 @@ export async function cmdFleetIntent(args: string[]): Promise<number> {
       const number = Number(numberText);
       const title = values.get('--title') ?? '';
       if (!validRepo(repo) || !/^[1-9]\d*$/.test(numberText) || !Number.isSafeInteger(number) || !title.trim()) return fail('Invalid pull evidence.');
-      const ledger = await readLedger();
-      const matches = linkMergedPull(ledger, { repo, number, title, branch: values.get('--branch'), url: values.get('--url') }, new Date().toISOString());
-      if (matches.length) await writeLedger(ledger);
-      updated = matches.length;
+      updated = await transactIntentLedger(undefined, ledger =>
+        linkMergedPull(ledger, { repo, number, title, branch: values.get('--branch'), url: values.get('--url') }, new Date().toISOString()).length);
     } else {
       const release = values.get('--release') ?? '';
       if (!release.trim() || release.replace(/[\r\n]+/g, ' ').trim().length > MAX_RELEASE_REF) return fail('Invalid release.');
