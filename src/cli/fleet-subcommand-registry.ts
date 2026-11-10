@@ -99,6 +99,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'disk-forecast': () => import('./fleet-disk-forecast.js'),
   'disk-sweep': () => import('./fleet-disk-sweep.js'),
   'disk-trend': () => import('./fleet-disk-trend.js'),
+  'dispatch-events': () => import('./fleet-dispatch-events.js'),
   'dispatch-proof': () => import('./fleet-dispatch-proof.js'),
   'dispatch-summary': () => import('./fleet-dispatch-summary.js'),
   'doctor': () => import('./fleet-doctor.js'),
