@@ -484,6 +484,23 @@ describe('M30 CI workflow', () => {
     expect(gated).toEqual([...expensive].sort());
   });
 
+  it('runs a read-only generated-files check on every required fast-path event', () => {
+    type Step = { name?: string; if?: string; run?: string; 'continue-on-error'?: unknown };
+    const quick = (parse(ciYml).jobs as Record<string, { steps: Step[] }>).quick;
+    const check = quick.steps.find((step) => step.name === 'Check generated files');
+    expect(check, 'missing Check generated files step').toBeDefined();
+    expect(check!.if).toBeUndefined();
+    expect(check!['continue-on-error']).toBeUndefined();
+    expect(check!.run).toContain('node scripts/generate-docs-llms.mjs');
+    expect(check!.run).toContain('git status --porcelain --untracked-files=normal');
+    expect(check!.run).not.toMatch(/git add|git commit|git push|auto-commit/);
+    expect(check!.run).not.toMatch(/llms\.txt[^\n]*(exempt|exclude|ignore)/);
+    const names = quick.steps.map((step) => step.name);
+    expect(names.indexOf('Set up Node.js 22')).toBeGreaterThan(-1);
+    expect(names.indexOf('Set up Node.js 22')).toBeLessThan(names.indexOf('Check generated files')!);
+    expect(names.indexOf('Check generated files')).toBeLessThan(names.indexOf('Prove source-identical history fast path')!);
+  });
+
   it('executes the real history proof contract for equal and fallback outcomes', async () => {
     // The helper's git/event/api boundaries are injected; every binding inside
     // proveHistoryFastPath itself executes for real. Owned-repo git fixtures
@@ -807,7 +824,8 @@ describe('M30 CI workflow', () => {
     const inputs = readFileSync(resolve(repoRoot, '.github/scripts/ci-attestation-inputs.mjs'), 'utf8');
     expect(signing).toMatch(/^ {2}workflow_dispatch:/m);
     expect(signing).not.toMatch(/^ {2}(?:pull_request(?:_target)?|workflow_call|push):/m);
-    expect(signing).toContain("if: github.ref == 'refs/heads/master'");
+    expect(signing).toContain('const releaseTag = /^refs\\/tags\\/v(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$/;');
+    expect(signing).not.toContain("startsWith(github.ref, 'refs/tags/v')");
     expect(signing).toContain('ref: ${{ github.sha }}');
     expect(signing).toContain('persist-credentials: false');
     expect(signing).toContain('id-token: write');
@@ -822,11 +840,11 @@ describe('M30 CI workflow', () => {
     }
     expect(signing).not.toMatch(/npm (?:ci|install|run build|publish)|node "?\$DIRECTORY\/(?:candidate|bundle)\//);
     expect(inputs).toContain("assert.ok(['workflow_dispatch', 'schedule'].includes(env.GITHUB_EVENT_NAME))");
-    expect(inputs).toContain("assert.equal(env.GITHUB_REF, 'refs/heads/master')");
+    expect(inputs).toContain('heads\\/master|tags\\/v');
     expect(inputs).toContain('const { repository } = requireProducerEnvironment(env)');
     expect(inputs).toContain('requireRepositoryMetadata(repository, read(base))');
     expect(inputs).toContain('requireRepositoryReference(repository, ci.repository)');
-    expect(inputs).toContain("assert.equal(trusted.tree.sha, candidate.tree.sha");
+    expect(inputs).toContain("assert.equal(env.GITHUB_SHA, env.CANDIDATE_SHA, 'checkout is not the candidate')");
     expect(inputs).toContain("assert.equal(ci.path, '.github/workflows/ci.yml'");
   });
 
