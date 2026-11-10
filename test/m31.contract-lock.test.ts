@@ -140,6 +140,7 @@ describe('native MCP tool surface lock', () => {
       'phantom_fleet_graph:read',
       'phantom_fleet_job_reassign:append',
       'phantom_fleet_needs:read',
+      'phantom_fleet_needs_resolve:append',
       'phantom_fleet_orders:read',
       'phantom_fleet_planner_run:append',
       'phantom_fleet_session:read',

@@ -5,22 +5,24 @@
  * thread shows. It never throws: a failure becomes the line.
  *
  * Writes that succeed also post one short inbox note ("[composer] /pause:
- * done") so the leaders see what Mason did. /drop and /help are local, so
- * they post nothing.
+ * done") so the leaders see what Mason did. /drop and /help are local, and
+ * /status is read-only, so they post nothing.
  */
 import { pauseFleet, resumeFleet } from '../../../data/mutations.js';
 import { describeControlError } from '../autonomy/use-guarded-action.js';
 import type { ConfirmSpec } from '../command/actions.js';
 import { openDockPane } from '../dock/dock-store.js';
 import { postJobStop, stopOutcomeText, type JobStopResult } from '../fleet-job-log/job-stop-action.js';
-import { postReleaseHold } from '../fleet-lanes/lane-hold-release.js';
+import { postLaneHold, postReleaseHold } from '../fleet-lanes/lane-hold-release.js';
 import { suggestId, type DropJobDraft } from '../fleet-queue/drop-job-model.js';
 import { openDropJobSheet } from '../fleet-queue/drop-job-sheet-store.js';
 import { isLaneTargets } from '../ops/lane-targets-model.js';
-import { commandArgError, helpLine, type ComposerCommandName } from './composer-commands.js';
+import { commandArgError, helpLine, holdArgs, type ComposerCommandName } from './composer-commands.js';
 import { sendLeaderInboxMessage } from './leader-inbox-data.js';
+import { fetchLeaderStatusNow } from './leader-status-now.js';
 
 export const COMPOSER_RELEASE_REASON = 'released from Leader composer';
+export const COMPOSER_HOLD_REASON = 'held from Leader composer';
 
 export interface ComposerCommand { name: ComposerCommandName; arg: string }
 
@@ -28,8 +30,10 @@ export interface ComposerCommandDeps {
   pauseFleet: () => Promise<void>;
   resumeFleet: () => Promise<void>;
   releaseHold: (lane: string, reason: string) => Promise<unknown>;
+  holdLane: (lane: string, minutes: number, reason: string) => Promise<unknown>;
   stopJob: (id: string) => Promise<JobStopResult>;
   openDropSheet: (seed: DropJobDraft) => 'seeded' | 'kept';
+  statusNow: () => Promise<string | null>;
   postNote: (text: string) => Promise<void>;
   now: () => number;
 }
@@ -38,6 +42,7 @@ export const liveComposerDeps: ComposerCommandDeps = {
   pauseFleet,
   resumeFleet,
   releaseHold: postReleaseHold,
+  holdLane: postLaneHold,
   stopJob: postJobStop,
   openDropSheet: seed => {
     const outcome = openDropJobSheet(seed);
@@ -45,6 +50,7 @@ export const liveComposerDeps: ComposerCommandDeps = {
     if (outcome === 'seeded') openDockPane('fleet-queue');
     return outcome;
   },
+  statusNow: fetchLeaderStatusNow,
   postNote: sendLeaderInboxMessage,
   now: Date.now,
 };
@@ -69,6 +75,8 @@ export function commandGate(command: ComposerCommand): { reason: string; confirm
       confirmLabel: 'Yes, resume',
     } };
     case 'release': return { reason: 'Releasing a lane hold requires the mutation token.', confirm: null };
+    // Holding is the safe direction — like release it asks for no confirm.
+    case 'hold': return { reason: 'Holding a lane requires the mutation token.', confirm: null };
     case 'stop': return { reason: 'Stopping a job requires the mutation token.', confirm: {
       title: `Stop ${command.arg}?`,
       body: 'This stops the job’s running processes.',
@@ -95,6 +103,15 @@ async function write(command: ComposerCommand, deps: ComposerCommandDeps): Promi
       if (!row || row.held) throw new Error('The server did not confirm the lane release.');
       return [`Released ${command.arg}`, 'done'];
     }
+    case 'hold': {
+      // commandArgError already ran, so the argument always splits here.
+      const parts = holdArgs(command.arg);
+      if (!parts) throw new Error('The server did not confirm the lane hold.');
+      const result = await deps.holdLane(parts.lane, parts.minutes, COMPOSER_HOLD_REASON);
+      const row = isLaneTargets(result) ? result.lanes.find(item => item.lane === parts.lane) : undefined;
+      if (!row || !row.held) throw new Error('The server did not confirm the lane hold.');
+      return [`Held ${parts.lane} for ${parts.minutes} min`, 'done'];
+    }
     default: {
       const result = await deps.stopJob(command.arg);
       const outcome = stopOutcomeText(result);
@@ -107,6 +124,14 @@ export async function runComposerCommand(command: ComposerCommand, deps: Compose
   const argError = commandArgError(command);
   if (argError) return argError;
   if (command.name === 'help') return helpLine();
+  if (command.name === 'status') {
+    // Read only: no token gate, no inbox note.
+    try {
+      return await deps.statusNow() ?? 'Status is unavailable right now.';
+    } catch (error) {
+      return `/status failed: ${describeControlError(error)}`;
+    }
+  }
   if (command.name === 'drop') {
     const outcome = deps.openDropSheet({ id: suggestId(command.arg, deps.now()), lane: 'codex-personal', tier: 'mid', body: command.arg });
     return outcome === 'seeded'
