@@ -6,12 +6,17 @@ const record = (value: unknown): value is Record<string, unknown> => typeof valu
 const str = (value: unknown): string | undefined => typeof value === 'string' ? value : undefined;
 const objects = (value: unknown): Record<string, unknown>[] => Array.isArray(value) ? value.filter(record) : [];
 const natural = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
+const overrun = (value: unknown): { ratio: number; medianMs: number } | undefined =>
+  record(value) && typeof value.ratio === 'number' && Number.isFinite(value.ratio)
+    && typeof value.medianMs === 'number' && Number.isFinite(value.medianMs) && value.medianMs > 0
+    ? { ratio: value.ratio, medianMs: value.medianMs } : undefined;
 
 export function narrowRuns(data: unknown): RunsData | null {
   if (!record(data) || data.v !== 1 || !Array.isArray(data.workers) || !data.workers.every(w => record(w) && typeof w.job === 'string')
     || !Array.isArray(data.leaders) || !record(data.mergesLastHour) || !(data.mergesLastHour.count === null || natural(data.mergesLastHour.count))
     || !Array.isArray(data.switches) || !data.switches.every(s => typeof s === 'string')) return null;
-  return { v: 1, workers: objects(data.workers).map(w => ({ job: w.job as string, lane: str(w.lane), model: str(w.model) ?? str(w.tier), startedAt: str(w.startedAt), repo: str(w.repo), ...(natural(w.ageSeconds) ? { ageSeconds: w.ageSeconds } : {}) })),
+  return { v: 1, workers: objects(data.workers).map(w => { const flag = overrun(w.overrun);
+    return { job: w.job as string, lane: str(w.lane), model: str(w.model) ?? str(w.tier), startedAt: str(w.startedAt), repo: str(w.repo), ...(natural(w.ageSeconds) ? { ageSeconds: w.ageSeconds } : {}), ...(flag ? { overrun: flag } : {}) }; }),
     leaders: data.leaders.map(value => { const l = record(value) ? value : {}; return { name: str(l.name) ?? str(l.label), lane: str(l.lane), model: str(l.model) }; }),
     lanes: objects(data.lanes).flatMap(l => { const id = str(l.lane) ?? str(l.id); return id !== undefined && natural(l.running) && natural(l.target) ? [{ id, running: l.running, target: l.target }] : []; }),
     mergesLastHour: { count: data.mergesLastHour.count as number | null, items: objects(data.mergesLastHour.items).map(i => ({ repo: str(i.repo), ...(natural(i.number) ? { number: i.number } : {}) })) }, switches: data.switches };
