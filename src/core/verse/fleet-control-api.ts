@@ -301,6 +301,9 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
     }
     return true;
   }
+  if (path === '/api/verse/fleet/control/launch-stall') {
+    return (await import('./fleet-launch-stall-api.js')).handleFleetLaunchStallApi(ctx, req, res, path, method);
+  }
   const isRoot = path === VERSE_FLEET_CONTROL_PATH;
   const isQueue = path === VERSE_FLEET_CONTROL_QUEUE_PATH;
   const isRunLog = path.startsWith(VERSE_FLEET_CONTROL_RUNS_PREFIX) && path.endsWith('/log');

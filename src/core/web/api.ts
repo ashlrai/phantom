@@ -1,3 +1,4 @@
+import { handleWbAction, WB_ACTION_PATH } from './wb-action-api.js';
 /**
  * core/web/api.ts — M14 JSON API handler.
  *
@@ -2443,6 +2444,7 @@ export async function handleApi(
     // ── GET /api/wb/v1/{snapshot,gh,budget} (desktop native shell reads) ────
     // Versioned loopback read surface for desktop/src-tauri fleet ops.
     // GET-only; already behind the read-session boundary like every /api/* GET.
+    if (path === WB_ACTION_PATH) return handleWbAction(req, res, ctx);
     if (isWbApiPath(path)) {
       return handleWbApi(req, res, cfg, path);
     }
