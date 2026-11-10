@@ -1,6 +1,7 @@
 import { dirname, resolve } from 'node:path';
 import { validateBusEnvelope } from '../core/fleet/bus-envelope.js';
 import { appendBusInbox, type BusInboxOptions } from '../core/fleet/bus-inbox.js';
+import { isFleetJobId } from '../core/fleet/runs-job-detail.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { estimateHandoffTokens, renderHandoff, validateHandoff, type WorkerHandoff } from '../core/verse/handoff.js';
@@ -67,6 +68,7 @@ export async function cmdFleetHandoffSend(args: string[], options: BusInboxOptio
   if (!isHandoff(input)) return fail([{ field: 'handoff', detail: 'invalid JSON shape' }]);
   const problems = validateHandoff(input);
   if (problems.length) return fail(problems.slice(0, 50));
+  if (!isFleetJobId(input.id)) return fail([{ field: 'id', detail: 'must be a valid fleet job id' }]);
   const prompt = renderHandoff(input);
   const checked = validateBusEnvelope({ id, from, to, priority: 'P3', ttl: 86_400_000,
     body: { kind: 'worker-handoff', taskId: input.id, prompt } });
