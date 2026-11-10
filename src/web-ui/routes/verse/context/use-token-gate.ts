@@ -76,6 +76,12 @@ export function useTokenGate(): TokenGate {
   return { run, dialog: { open: prompt.open, reason: prompt.reason, onClose, onUnlocked } };
 }
 
+/** A refusal body that carries no information ("not found", "404"): the status branches say it better. */
+const BARE_REFUSALS = new Set(['not found', 'not_found', '404', '404 not found']);
+function isBareRefusal(detail: string): boolean {
+  return BARE_REFUSALS.has(detail.trim().toLowerCase());
+}
+
 /**
  * One sentence for a failed context action. Prefers the server's own words
  * (`ApiError.detail`), which the context routes write for a person.
@@ -92,7 +98,7 @@ export function describeContextError(err: unknown): string {
     if (err.status === 401) return 'The mutation token was rejected. Unlock again with the token `ashlr verse` printed.';
     if (err.code === 'VERSE_SESSION_NOT_FOUND') return 'This chat no longer exists on the server — it may have been deleted. Refresh the chat list.';
     // The server's own words, with any ISO instant in them read as local time.
-    if (err.detail) return tidyProse(err.detail);
+    if (err.detail && !isBareRefusal(err.detail)) return tidyProse(err.detail);
     if (err.status === 404) return 'This server does not have that route yet — update Phantom and restart `ashlr verse`.';
     if (err.status === 409) return 'A turn is already running in this chat. Wait for it or stop it first.';
     return tidyProse(err.message);

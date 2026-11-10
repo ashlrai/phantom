@@ -26,11 +26,12 @@
  *
  * Never throws. Results are cached ≤ 5 s (the activity probe runs `ps`).
  */
+import { readFileSync } from 'node:fs';
 import { readDaemonActivity, DAEMON_ACTIVITY_STALE_MS, type DaemonActivityPhase } from './activity.js';
 import {
   acquireDaemonLock,
   loadDaemonStateStrict,
-  readDaemonLockOwner,
+  daemonLockPath,
   releaseDaemonLock,
   saveDaemonStateResult,
 } from './state.js';
@@ -50,6 +51,8 @@ const CACHE_MS = 5_000;
  */
 export type DaemonLivenessState = 'alive' | 'stale' | 'stopped' | 'unknown';
 
+export type DaemonHeartbeatStatus = 'fresh' | 'stale' | 'unavailable' | 'invalid';
+
 export interface DaemonLivenessV1 {
   v: 1;
   checkedAt: string;
@@ -60,7 +63,7 @@ export interface DaemonLivenessV1 {
   pid: number | null;
   /** What daemon.json claims (null fields = unreadable / absent). */
   recorded: { running: boolean | null; pid: number | null; startedAt: string | null; lastTickAt: string | null };
-  lock: { pid: number; heartbeatAt: string; heartbeatAgeMs: number | null } | null;
+  lock: { pid: number; heartbeatAt: string | null; heartbeatAgeMs: number | null; heartbeatStatus: DaemonHeartbeatStatus } | null;
   activity: { phase: DaemonActivityPhase | null; ageMs: number | null; ownerState: string } | null;
   /** daemon.json claims a run that provably ended — `ashlr daemon doctor --clear-stale` fixes it. */
   staleRecord: boolean;
@@ -159,9 +162,21 @@ function computeLiveness(
 
   let lock: DaemonLivenessV1['lock'] = null;
   try {
-    const owner = readDaemonLockOwner();
-    if (owner && Number.isInteger(owner.pid) && owner.pid > 0) {
-      lock = { pid: owner.pid, heartbeatAt: owner.heartbeatAt, heartbeatAgeMs: ageMs(owner.heartbeatAt, nowMs) };
+    // Status can identify the owner even when the heartbeat field is missing.
+    // Lock acquisition continues to use the strict ownership parser.
+    const owner: unknown = JSON.parse(readFileSync(daemonLockPath(), 'utf8'));
+    if (typeof owner === 'object' && owner !== null && !Array.isArray(owner)) {
+      const fields = owner as Record<string, unknown>;
+      if (typeof fields.pid === 'number' && Number.isInteger(fields.pid) && fields.pid > 0 &&
+          typeof fields.token === 'string' && typeof fields.hostname === 'string' && typeof fields.acquiredAt === 'string') {
+        const heartbeatAt = typeof fields.heartbeatAt === 'string' ? fields.heartbeatAt : null;
+        const parsed = heartbeatAt ? Date.parse(heartbeatAt) : NaN;
+        const valid = Number.isFinite(parsed) && new Date(parsed).toISOString() === heartbeatAt && parsed <= nowMs;
+        const heartbeatAgeMs = valid ? nowMs - parsed : null;
+        const heartbeatStatus: DaemonHeartbeatStatus = fields.heartbeatAt == null || fields.heartbeatAt === ''
+          ? 'unavailable' : !valid ? 'invalid' : heartbeatAgeMs! <= LOCK_HEARTBEAT_STALE_MS ? 'fresh' : 'stale';
+        lock = { pid: fields.pid, heartbeatAt, heartbeatAgeMs, heartbeatStatus };
+      }
     }
   } catch {
     lock = null;
@@ -211,11 +226,11 @@ function computeLiveness(
     if (activityPid === lock.pid && activity?.ownerState === 'alive') {
       return result('alive', true, lock.pid, `Running as pid ${lock.pid} (identity proven by its start time).`);
     }
-    if (lock.heartbeatAgeMs !== null && lock.heartbeatAgeMs <= LOCK_HEARTBEAT_STALE_MS) {
+    if (lock.heartbeatStatus === 'fresh') {
       return result('alive', true, lock.pid, `Running as pid ${lock.pid} (lock heartbeat ${describeAge(lock.heartbeatAgeMs)}).`);
     }
     return result('unknown', null, null,
-      `Pid ${lock.pid} from the daemon lock exists, but its heartbeat is ${describeAge(lock.heartbeatAgeMs)} and its identity `
+      `Pid ${lock.pid} from the daemon lock exists, but its heartbeat is ${lock.heartbeatStatus === 'stale' ? `stale (${describeAge(lock.heartbeatAgeMs)})` : lock.heartbeatStatus === 'invalid' ? 'invalid' : 'unavailable'} and its identity `
       + 'cannot be proven — it may be a hung daemon or an unrelated process that reused the pid.');
   }
 
