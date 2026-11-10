@@ -2454,7 +2454,7 @@ export async function handleApi(
     // GET-only; already behind the read-session boundary like every /api/* GET.
     if (path === WB_ACTION_PATH) return handleWbAction(req, res, ctx);
     if (isWbApiPath(path)) {
-      return handleWbApi(req, res, cfg, path);
+      return handleWbApi(req, res, cfg, path, { readSession: ctx.readSession });
     }
 
     // ── /api/verse/mcp[/...] (MCP + per-account CLI management) ─────────────
