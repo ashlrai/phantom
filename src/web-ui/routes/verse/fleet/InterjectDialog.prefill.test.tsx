@@ -40,5 +40,5 @@ it('sends a steering note with its job context to the inbox', async () => {
   await screen.findByRole('status');
   const post = fetcher.mock.calls.find(([, options]) => options.method === 'POST')!;
   expect(post[0]).toBe('/api/verse/fleet/runs/inbox');
-  expect(JSON.parse(post[1].body as string)).toEqual({ text: 'Re RQ-PHX-FOO (codex-personal): stop touching dock-store', source: 'Phantom desktop' });
+  expect(JSON.parse(post[1].body as string)).toEqual({ text: 'Re RQ-PHX-FOO (codex-personal): stop touching dock-store', source: 'Phantom desktop', requestId: expect.stringMatching(/^req-[A-Za-z0-9._:-]{4,124}$/) });
 });

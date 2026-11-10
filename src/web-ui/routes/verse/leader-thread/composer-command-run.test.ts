@@ -12,8 +12,10 @@ function deps(overrides: Partial<ComposerCommandDeps> = {}) {
     pauseFleet: vi.fn(async () => {}),
     resumeFleet: vi.fn(async () => {}),
     releaseHold: vi.fn(async () => laneTargets(false)),
+    holdLane: vi.fn(async () => laneTargets(true)),
     stopJob: vi.fn(async (id: string) => ({ id, pids: [11, 12], outcome: 'stopped' as const, at: '2026-11-09T08:00:00Z' })),
     openDropSheet: vi.fn(() => 'seeded' as const),
+    statusNow: vi.fn(async () => 'all good'),
     postNote: vi.fn(async () => {}),
     now: () => Date.parse('2026-11-09T08:00:00Z'),
     ...overrides,
@@ -21,7 +23,7 @@ function deps(overrides: Partial<ComposerCommandDeps> = {}) {
   return all;
 }
 
-const actionKeys = ['pauseFleet', 'resumeFleet', 'releaseHold', 'stopJob', 'openDropSheet'] as const;
+const actionKeys = ['pauseFleet', 'resumeFleet', 'releaseHold', 'holdLane', 'stopJob', 'openDropSheet', 'statusNow'] as const;
 function onlyCalled(d: ReturnType<typeof deps>, key: (typeof actionKeys)[number]) {
   for (const other of actionKeys) expect(d[other]).toHaveBeenCalledTimes(other === key ? 1 : 0);
 }
