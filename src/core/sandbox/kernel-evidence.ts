@@ -39,6 +39,63 @@ import { join } from 'node:path';
 
 export const LOG_BINARY = '/usr/bin/log';
 const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
+/** Grace between SIGTERM and SIGKILL of the log-stream process group. */
+export const LOG_STREAM_KILL_GRACE_MS = 500;
+/**
+ * Supervisor started as `/bin/sh -c SCRIPT $0 LOG_BIN ...argv`.
+ * It puts the stream in the same process group and reaps the group if the
+ * wrapper dies (including SIGKILL: ppid becomes 1). Prints nothing (the
+ * capture fd is stdout/stderr). Canonical copy: src/log-stream-supervisor.sh.
+ */
+export const LOG_STREAM_SUPERVISOR_SH = String.raw`# ashlr-log-stream-supervisor. Invoked as:
+#   /bin/sh -c SCRIPT ashlr-log-stream-supervisor LOG_BIN stream --style ndjson --predicate PREDICATE
+# $1 is LOG_BIN; remaining args are passed through unchanged. The caller
+# starts this in its own process group. Stdout and stderr are the capture
+# fd: print nothing. If the parent dies (SIGKILL of the wrapper), this
+# script notices via kill -0 / ppid and TERM-then-KILL the group.
+logbin=$1
+shift
+[ -n "$logbin" ] || exit 2
+"$logbin" "$@" &
+child=$!
+parent=$PPID
+pgid=$$
+cleaning=0
+cleanup() {
+  [ "$cleaning" = 1 ] && return 0
+  cleaning=1
+  trap '' TERM INT HUP
+  kill -TERM "$child" 2>/dev/null
+  kill -TERM -"$pgid" 2>/dev/null
+  i=0
+  while [ "$i" -lt 10 ]; do
+    kill -0 "$child" 2>/dev/null || break
+    sleep 0.05
+    i=$((i + 1))
+  done
+  kill -KILL "$child" 2>/dev/null
+  wait "$child" 2>/dev/null
+  # SIGKILL the rest of the group last (this process may die here).
+  kill -KILL -"$pgid" 2>/dev/null
+  exit 1
+}
+trap 'cleanup' TERM INT HUP
+while :; do
+  if ! kill -0 "$parent" 2>/dev/null; then
+    cleanup
+  fi
+  cur=$(ps -o ppid= -p $$ 2>/dev/null | tr -d ' ')
+  if [ "$cur" = "1" ]; then
+    cleanup
+  fi
+  if ! kill -0 "$child" 2>/dev/null; then
+    wait "$child"
+    rc=$?
+    trap '' TERM INT HUP
+    exit "$rc"
+  fi
+  sleep 0.2
+done`;
 /** Longest the daemon blocks for the stream to come up before the run starts. */
 export const STREAM_READY_TIMEOUT_MS = 3_000;
 /** Longest it waits for the end barrier after the run. */
@@ -106,17 +163,97 @@ function sleepSyncDefault(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+
+/** Exact argv production `log stream` has always used. */
+export function logStreamArgv(predicate: string): string[] {
+  return ['stream', '--style', 'ndjson', '--predicate', predicate];
+}
+
+function killProcessGroup(pid: number, signal: NodeJS.Signals): void {
+  try { process.kill(-pid, signal); } catch { /* already gone, or not a group leader */ }
+  try { process.kill(pid, signal); } catch { /* already gone */ }
+}
+
+/**
+ * Start `/usr/bin/log stream` under a supervisor in its own process group.
+ * The supervisor is the group leader (spawn detached). `unref` keeps the
+ * event loop from staying open; cleanup is guaranteed by stop() / lifetime
+ * handlers / the supervisor's parent-death check.
+ */
+export function startLogStreamWithSupervisor(
+  predicate: string,
+  outFd: number,
+  logBin: string = LOG_BINARY,
+): ChildProcess {
+  const child = spawn('/bin/sh', ['-c', LOG_STREAM_SUPERVISOR_SH, 'ashlr-log-stream-supervisor', logBin, ...logStreamArgv(predicate)], {
+    stdio: ['ignore', outFd, outFd],
+    env: { PATH: '/usr/bin:/bin', LC_ALL: 'C' },
+    detached: true,
+  });
+  child.on('error', () => { /* surfaces as "never ready" */ });
+  child.unref();
+  return child;
+}
+
+/** TERM the stream (and its group when pid is real), then KILL after a short grace. */
+export function stopLogStream(
+  stream: { kill(signal?: NodeJS.Signals): boolean; pid?: number } | null,
+  graceMs: number = LOG_STREAM_KILL_GRACE_MS,
+  sleepSync: (ms: number) => void = sleepSyncDefault,
+): void {
+  if (!stream) return;
+  try { stream.kill('SIGTERM'); } catch { /* already gone */ }
+  const pid = stream.pid;
+  if (pid == null || pid <= 1) return;
+  killProcessGroup(pid, 'SIGTERM');
+  const until = Date.now() + graceMs;
+  while (Date.now() < until) {
+    let alive = false;
+    try { process.kill(-pid, 0); alive = true; } catch {
+      try { process.kill(pid, 0); alive = true; } catch { /* gone */ }
+    }
+    if (!alive) return;
+    const slice = Math.min(50, Math.max(0, until - Date.now()));
+    if (slice <= 0) break;
+    sleepSync(slice);
+  }
+  killProcessGroup(pid, 'SIGKILL');
+}
+
+/**
+ * On SIGTERM/SIGINT/SIGHUP/exit of the wrapper, stop the stream group.
+ * Does not install uncaughtException (that would swallow the crash).
+ * Only used when a real child pid exists. Returns a detach function.
+ */
+export function attachLifetimeStop(stopFn: () => void): () => void {
+  let active = true;
+  const run = (): void => {
+    if (!active) return;
+    active = false;
+    detach();
+    stopFn();
+  };
+  const onSig = (sig: NodeJS.Signals): void => {
+    run();
+    try { process.kill(process.pid, sig); } catch { /* exiting */ }
+  };
+  const onExit = (): void => { run(); };
+  function detach(): void {
+    process.removeListener('SIGTERM', onSig);
+    process.removeListener('SIGINT', onSig);
+    process.removeListener('SIGHUP', onSig);
+    process.removeListener('exit', onExit);
+  }
+  process.on('SIGTERM', onSig);
+  process.on('SIGINT', onSig);
+  process.on('SIGHUP', onSig);
+  process.on('exit', onExit);
+  return () => { active = false; detach(); };
+}
+
 export const defaultKernelEvidenceDeps: KernelEvidenceDeps = {
   platform: process.platform,
-  startStream: (predicate, outFd) => {
-    const child = spawn(LOG_BINARY, ['stream', '--style', 'ndjson', '--predicate', predicate], {
-      stdio: ['ignore', outFd, outFd],
-      env: { PATH: '/usr/bin:/bin', LC_ALL: 'C' },
-    });
-    child.on('error', () => { /* surfaces as "never ready" */ });
-    child.unref();
-    return child;
-  },
+  startStream: (predicate, outFd) => startLogStreamWithSupervisor(predicate, outFd),
   barrier: (markerPath, message) => {
     spawnSync(SANDBOX_EXEC, [
       '-p',
@@ -224,10 +361,21 @@ export function startSandboxDenialWatch(
     cleanup();
     return inert('`log stream` could not be started');
   }
+  let detachLifetime: (() => void) | null = null;
   const stop = (): void => {
-    try { stream?.kill('SIGTERM'); } catch { /* already gone */ }
+    if (detachLifetime) {
+      const d = detachLifetime;
+      detachLifetime = null;
+      d();
+    }
+    const current = stream;
     stream = null;
+    stopLogStream(current);
   };
+  const startedPid = (stream as { pid?: number } | null)?.pid;
+  if (startedPid != null && startedPid > 1) {
+    detachLifetime = attachLifetimeStop(stop);
+  }
 
   // Ready = the stream printed its "Filtering the log data…" header.
   const readyBy = deps.nowMs() + STREAM_READY_TIMEOUT_MS;
