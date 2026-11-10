@@ -563,7 +563,13 @@ HOME=$(mktemp -d) python3 -B -m unittest contrib/mac/tests/test_staged_drain.py 
 ```
 
 Restock and dispatch share `launch_precheck.py`. Only exit 10 with an exact
-job-matching merged/closed PR receipt proves completion. Restock also excludes
+job-matching merged/closed PR receipt proves completion. Before the external
+precheck even runs, the shared module retires a job whose last two recorded
+finishes in `metrics/jobs.jsonl` all came back empty: it returns code 14
+(`empty_streak_<N>x`), dispatch logs `DONE-NOOP <job> [precheck code=14]`
+and drops the queue line, and restock records the job done. A productive or
+merged outcome, an unmeasured finish, and a missing, unreadable or malformed
+metrics ledger each fail open — nothing is suppressed. Restock also excludes
 exact jobs with recorded `MERGED` outcomes before creating prompts or claims;
 an explicit repository must match (legacy outcomes use fleet-wide job IDs).
 Restock keeps exit 11–13 rows READY with bounded retries recorded separately in

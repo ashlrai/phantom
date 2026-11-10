@@ -43,6 +43,7 @@ import {
 } from '../verse/github-repo.js';
 import type { VerseGithubSnapshot } from '../verse/github-types.js';
 import { getCachedWbGhStatus } from './fleet-status-cache.js';
+import { readWorkbenchSecrets } from '../workbench/secrets.js';
 import { sendJson } from './read-session.js';
 
 // ---------------------------------------------------------------------------
@@ -52,8 +53,9 @@ import { sendJson } from './read-session.js';
 export const WB_SNAPSHOT_PATH = '/api/wb/v1/snapshot';
 export const WB_GH_PATH = '/api/wb/v1/gh';
 export const WB_BUDGET_PATH = '/api/wb/v1/budget';
+export const WB_SECRETS_PATH = '/api/wb/v1/secrets';
 
-const WB_ROUTES = new Set([WB_SNAPSHOT_PATH, WB_GH_PATH, WB_BUDGET_PATH]);
+const WB_ROUTES = new Set([WB_SNAPSHOT_PATH, WB_GH_PATH, WB_BUDGET_PATH, WB_SECRETS_PATH]);
 
 /** True for every `/api/wb/v1/*` path — handled (or 404d) by this module. */
 export function isWbApiPath(path: string): boolean {
@@ -262,7 +264,9 @@ export async function handleWbApi(
     return true;
   }
 
-  if (path === WB_SNAPSHOT_PATH) {
+  if (path === WB_SECRETS_PATH) {
+    sendJson(res, 200, await readWorkbenchSecrets());
+  } else if (path === WB_SNAPSHOT_PATH) {
     handleWbSnapshot(res);
   } else if (path === WB_GH_PATH) {
     await handleWbGh(cfg, res, deps);
