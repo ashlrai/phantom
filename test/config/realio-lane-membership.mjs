@@ -43,7 +43,12 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/bus-cli.test.ts', // Real CLI subprocesses and concurrent durable mailbox sends in disposable homes.
   'test/agent-tools-registry.test.ts', // Spawns a real child to read the tool registry.
+  'test/constitution-recutnonphxold60.test.ts', // Spawns the CLI through tsx to prove `constitution` dispatches.
+  'test/phantom-discovery.test.ts', // Compiles the generated client with a real tsc child.
+  'test/fleet-coordination.test.ts', // Spawns tsx children that contend for the coordination lock.
+  'test/release-articles.test.ts', // Real temporary Git repositories driven through git children.
   'test/real-home-child.test.ts', // Spawns a Node child to prove the test preload keeps KILL and enrollment inside HOME.
   'test/release-train.test.ts', // Spawns node --experimental-strip-types against the release-train guard.
   'test/main-blame.test.ts', // Spawns git bisect children against a real temporary repository.
@@ -795,4 +800,6 @@ export const REAL_IO_TEST_FILES = [
   'test/planner-cycle-single-01solc5.test.ts', // spawnSync runs a real node child for the single-cycle planner fixture
   'test/test-changed.test.ts', // real Git repositories and npm child processes for changed-test selection
   'test/verify-changed-dedupe.test.ts', // spawnSync node scripts/verify-changed.mjs and execFileSync git in real temp repos
+  'test/fleet-guardian-head-manifest-01.test.ts', // execFileSync builds real git repo fixtures; the module execFiles real git reads
+  'test/recut-n4r2000s79.test.ts', // execFileSync builds a real temp git repo for the recovered guardian-head module
 ];
