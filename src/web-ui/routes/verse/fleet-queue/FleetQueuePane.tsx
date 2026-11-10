@@ -14,6 +14,7 @@ import { explainReason, explainSkip, laneRows } from '../ops/ops-queue-model.js'
 import { opsQueueQuery } from '../ops/ops-queue-queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { queueDepth } from './queue-depth-model.js';
 import { heldLaneLine, laneHoldsQuery, queuedBehindHold } from './queue-holds-model.js';
 import { laneDrainText } from './queue-lane-drain.js';
 import { restockNotice } from './queue-repo-mix.js';
@@ -71,8 +72,20 @@ export function FleetQueuePane({ visible, host }: PaneProps) {
   const notice = restockNotice(data.byLane);
   const snapshotLanes = laneSupply(snapshot.data);
   const waiting = queuedBehindHold(data.byLane, holds.data);
+  // Ready-line ages are not projected by the queue read, so those lines are
+  // unknown; drop files carry real ages and stale ones mean dispatchd never
+  // ingested them.
+  const depth = queueDepth({
+    readyCount: data.ready,
+    lanes: snapshotLanes,
+    lineAgesMs: [
+      ...Array.from({ length: data.ready }, () => null),
+      ...(drops.data?.items ?? []).map((item) => item.ageSeconds * 1000),
+    ],
+  });
   return <section className={styles.root} aria-label="Queue">
     <p className={styles.header}>{data.total} jobs · {data.ready} ready · {data.parked} parked · {data.skipsLast24h ?? '—'} precheck skips in 24 h{waiting > 0 && ` · ${waiting} queued lines wait on held lanes`}</p>
+    <p className={depth.verdict === 'deep' || depth.verdict === 'empty' ? `${styles.depth} ${styles.warning}` : styles.depth} role="status">{depth.text}</p>
     <Button size="sm" disabled={drops.data === null || drops.data === undefined} title={drops.data === null ? 'Update Phantom to write jobs from here' : undefined} onClick={() => setSheetOpen(true)}>New job</Button>
     {notice && <p className={styles.notice} role="status">{notice}</p>}
     {holds.status === 'error' && <p className={styles.notice} role="alert">Lane holds could not refresh.</p>}
