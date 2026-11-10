@@ -631,6 +631,8 @@
     "src/core/fleet/model-racing.ts",
     "src/core/fleet/model-stats.ts",
     "src/core/fleet/monitoring-cursor.ts",
+    "src/core/fleet/needs-mason-relay.ts",
+    "src/core/fleet/needs-mason-reply-delivery.ts",
     "src/core/fleet/needs-mason-resolve.ts",
     "src/core/fleet/needs-mason-triage.ts",
     "src/core/fleet/order-merge-notice.ts",
@@ -1406,6 +1408,8 @@
     "src/core/world/project.ts",
     "src/core/world/read.ts",
     "src/core/world/types.ts",
+    "src/doctor/executable.ts",
+    "src/doctor/tool-version-cache.ts",
     "src/planning/triviality.ts"
   ]
 }

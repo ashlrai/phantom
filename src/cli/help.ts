@@ -180,6 +180,7 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     safety: 'append',
     jsonShape: 'Merge: {status,jobId}; read: {v:1,jobs:[{jobId,repo,prompt}]}; complete: {status,jobId}; errors exit 1, usage exit 2',
   },
+  { usage: 'phm jobs retry-empty --dry-run|--apply [--file <router-queue.md>] [--json]', description: 'Preview or queue one scoped retry per eligible empty job.', safety: 'append', jsonShape: 'jobs.retry-empty.v1 {applied,lines}' },
   { usage: 'phm jobs empty [--since 24h] [--json]', description: 'Explain empty jobs from local notes and logs.', safety: 'read', jsonShape: 'jobs.empty.v1 {hours,total,counts,jobs}' },
   {
     usage: 'phm metrics ingest --jobs <jobs.jsonl> --status <status.json> [--json]',
@@ -628,7 +629,8 @@ export function agentDocsText(): string {
   lines.push('phantom_agent_bus_post, phantom_fleet_drop_job, phantom_fleet_job_reassign,');
   lines.push('phantom_fleet_planner_run, phantom_fleet_apps_ensure, phantom_fleet_apps_changes,');
   lines.push('phantom_fleet_apps_status, phantom_fleet_apps_await, phantom_fleet_needs,');
-  lines.push('phantom_fleet_orders, phantom_fleet_graph, phantom_fleet_session, phantom_fleet_doctor.');
+  lines.push('phantom_fleet_needs_resolve, phantom_fleet_orders, phantom_fleet_graph,');
+  lines.push('phantom_fleet_session, phantom_fleet_doctor.');
   lines.push('Tool discovery is not authorization. phantom_fleet_doctor only reads fleet health.');
   lines.push('Read-only observation tools: world_model, phantom_observe, phantom_observe_session,');
   lines.push('phantom_spend_budget, phm_context_brief, phm_claim_acquire, phm_claim_release,');
