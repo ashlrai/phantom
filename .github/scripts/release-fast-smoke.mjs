@@ -325,11 +325,23 @@ async function smoke() {
   appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Release smoke: ${elapsedMs} ms; candidate ${revision}; reused push CI ${pushCi.runId}/${pushCi.runAttempt}; feed/manifest contract parsed from ${served === 'latest' ? 'releases/latest (HTTP 200)' : `stocked release ${served}; live endpoint remains unavailable (HTTP 404), latest ${latestRelease.tag} (${latestRelease.id}) is assetless; this is not updater recovery`}. Cold build, publication signature verification, signing and installed-app acceptance remain separate prerequisites.\n`);
 }
 
-/** Master is always accepted. A stable tag is accepted only when its commit is an ancestor of master. */
+/** Master is always accepted. A stable tag is accepted only when its peeled commit is this sha and an ancestor of master. */
 export function acceptReleaseRef({ ref, sha, repository, read }) {
   if (ref === 'refs/heads/master') return;
   assert.match(ref ?? '', /^refs\/tags\/v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/, 'release smoke ref is not master or a stable tag');
   assert.match(sha ?? '', /^[a-f0-9]{40}$/);
+  const name = ref.slice('refs/tags/'.length);
+  let object = read(`repos/${repository}/git/ref/tags/${name}`)?.object;
+  const seen = new Set();
+  for (let depth = 0; object?.type === 'tag'; depth += 1) {
+    assert.ok(depth < 4 && /^[a-f0-9]{40}$/.test(object.sha) && !seen.has(object.sha), 'invalid tag annotation');
+    seen.add(object.sha);
+    const tag = read(`repos/${repository}/git/tags/${object.sha}`);
+    assert.equal(tag?.sha, object.sha, 'tag annotation sha mismatches');
+    object = tag.object;
+  }
+  assert.equal(object?.type, 'commit', 'release tag does not peel to a commit');
+  assert.equal(object.sha, sha, 'tag sha mismatches candidate');
   const compare = read(`repos/${repository}/compare/${sha}...master`);
   assert.ok(compare && (compare.status === 'ahead' || compare.status === 'identical'), 'tag is not an ancestor of master');
 }

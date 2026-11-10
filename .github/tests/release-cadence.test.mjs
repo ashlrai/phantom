@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { parse } from 'yaml';
-import { cadenceMinutes, nextPatch, planReleaseCadence, planReleaseCadenceWhenAvailable, createPublicMetadataReader } from '../scripts/release-cadence.mjs';
+import { cadenceMinutes, nextPatch, planReleaseCadence, planReleaseCadenceWhenAvailable, createPublicMetadataReader, peeledCommit } from '../scripts/release-cadence.mjs';
+import { peelReleaseTag } from '../scripts/peel-release-tag.mjs';
 import { reconcileTaggedReleasePrs } from '../scripts/release-pr-labels.mjs';
 import { normalizeReleaseNotes } from '../../scripts/sync-release-notes.mjs';
 
@@ -45,6 +46,29 @@ test('default cadence produces next patch only for new green master work', async
   assert.equal(nextPatch('3.30.0'), '3.30.1');
   assert.deepEqual(await planReleaseCadence(f.input), { due: true, reason: 'green-master-cadence-due', version: '3.30.2', revision, ciRunId: 123, ciRunAttempt: 1 });
   assert.deepEqual(await planReleaseCadence({ ...f.input, minutes: 60 }), { due: false, reason: 'cadence-not-due' });
+});
+
+test('peel follows an annotation and refuses a commit that is not the candidate', async () => {
+  const annotation = 'c'.repeat(40), commit = 'd'.repeat(40);
+  const ref = { ref: 'refs/tags/v1.2.3', object: { type: 'tag', sha: annotation } };
+  const read = (sha) => ({ sha, object: { type: 'commit', sha: commit } });
+  assert.equal(peelReleaseTag(ref, read).object.sha, commit);
+  await assert.rejects(peeledCommit(async () => ({ sha: 'f'.repeat(40), object: { type: 'commit', sha: commit } }), 'repos/ashlrai/phantom', { type: 'tag', sha: annotation }), /annotation sha mismatches/);
+  assert.throws(() => peelReleaseTag(ref, () => ({ sha: annotation, object: { type: 'commit', sha: '' } })), /tag sha mismatches/);
+});
+
+test('an annotated tag is peeled to its commit before the cadence compare', async () => {
+  const annotation = 'c'.repeat(40);
+  const f = fixture({
+    '/git/ref/tags/v3.30.1': { ref: 'refs/tags/v3.30.1', object: { type: 'tag', sha: annotation } },
+    [`/git/tags/${annotation}`]: { sha: annotation, object: { type: 'commit', sha: tagged } },
+  });
+  assert.equal((await planReleaseCadence(f.input)).due, true);
+  const mismatch = fixture({
+    '/git/ref/tags/v3.30.1': { ref: 'refs/tags/v3.30.1', object: { type: 'tag', sha: annotation } },
+    [`/git/tags/${annotation}`]: { sha: annotation, object: { type: 'commit', sha: revision } },
+  });
+  assert.equal((await planReleaseCadence(mismatch.input)).reason, 'no-new-commits');
 });
 
 test('no new commits, an untagged bump, and moved master never open another version PR', async () => {
