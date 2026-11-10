@@ -55,6 +55,7 @@ export const REAL_IO_TEST_FILES = [
   'test/verse-standby-python-contract-02somp1.test.ts', // Runs the Python lease helper in a real child process.
   'test/company-context-store.test.ts', // concurrent context writer processes
   'test/fleet-wt-reap-apply.test.ts', // real Git worktree removal
+  'test/episodic-memory.test.ts', // Uses real Git revisions and persistent JSONL fixtures.
   'test/check-publish.test.ts', // Real temporary Git repositories and preflight subprocesses.
   'test/fleet-resource-session-writer.test.ts', // Runs the actual Python session tick against real private files and reads its output.
   'test/desktop-artifact-installer.test.ts', // Real private files/Git/signature/attestation proofs; hosted signature refusal took 6.803s, with no elapsed-performance assertion.

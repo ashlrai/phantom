@@ -65,6 +65,7 @@ const ADDED_NATIVE_NAMES = [
   'phantom_observe_session',
   'phantom_fleet_graph',
   'phantom_fleet_session',
+  'phantom_fleet_verbs',
   'phm_agent_roster',
   'phm_context_brief',
   'phm_claim_acquire',
@@ -126,7 +127,7 @@ describe('native MCP tool inventory', () => {
     const tools = listNativeTools();
     const names = tools.map(tool => tool.name);
     const classified = classifyNativeNames(names);
-    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(82);
+    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(83);
     expect(new Set(names).size).toBe(names.length);
     expect(classified.old).toEqual([...OLD_NATIVE_NAMES]);
     expect(classified.added).toEqual([...ADDED_NATIVE_NAMES]);

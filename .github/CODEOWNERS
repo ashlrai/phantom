@@ -366,6 +366,7 @@
 /test/engines-stream-family-310b.test.ts @masonwyatt23
 /test/enroll-secrets-offer.test.ts @masonwyatt23
 /test/enrollment-read-directory-churn.test.ts @masonwyatt23
+/test/episodic-memory.test.ts @masonwyatt23
 /test/execution-feedback-case.test.ts @masonwyatt23
 /test/execution-leases-310b.test.ts @masonwyatt23
 /test/external-skill-audit-trust-roots.test.ts @masonwyatt23
