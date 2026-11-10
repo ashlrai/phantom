@@ -15,6 +15,7 @@ import { verseProjectMemoryQuery, searchSessions } from '../context/context-quer
 import { openDockPane } from '../dock/dock-store.js';
 import { agentBusMissing, agentBusPageQuery, agentBusStatusQuery } from '../fleet-bus/agent-bus-queries.js';
 import { verseSessionsQuery } from '../verse-queries.js';
+import { CosMemorySection } from './CosMemorySection.js';
 import { leaderFileRows, narrowLeaderFiles, type LeaderFilesResponse } from './library-leader-files-model.js';
 import { libraryBusLines, withReceiptTtl } from './library-bus-model.js';
 import { memorySummary, recentProjects, searchQueryValid, type RecentProject } from './library-model.js';
@@ -217,6 +218,7 @@ export function LibraryPane({ visible = true }: { visible?: boolean }) {
   const projects = useMemo(() => recentProjects(sessions.data ?? []), [sessions.data]);
   return (
     <div className={styles.root}>
+      <CosMemorySection visible={visible} />
       <section className={styles.section} aria-label="Memory">
         <h2>Memory</h2>
         {sessions.error && !sessions.data ? (
