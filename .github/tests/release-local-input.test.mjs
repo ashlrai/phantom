@@ -75,9 +75,18 @@ test('complete input inventory is required even without a witness', t => {
   const f = fixture(t); writeFileSync(join(f.prepared, 'other'), 'x'); assert.throws(() => snapshotInput(f.prepared));
 });
 
+test('capture accepts the stable release tag whose commit is checked out', t => {
+  const f = fixture(t);
+  const env = { ...f.env, GITHUB_REF: 'refs/tags/v1.0.0' };
+  const record = captureInput(env, f.root);
+  assert.equal(record.producer.revision, f.env.GITHUB_SHA);
+  assert.doesNotThrow(() => validateUploadedInput(record, env, f.artifact, { ...f.run, head_branch: 'v1.0.0' }));
+  assert.throws(() => validateUploadedInput(record, env, f.artifact, f.run));
+});
 test('capture reports fixed reason codes without exposing underlying paths or values', t => {
   const f = fixture(t);
-  assert.throws(() => captureInput({ ...f.env, GITHUB_REF: 'refs/tags/v1.0.0' }, f.root), { custodyCode: 'wrong_runner' });
+  assert.throws(() => captureInput({ ...f.env, GITHUB_REF: 'refs/heads/feature' }, f.root), { custodyCode: 'wrong_runner' });
+  assert.throws(() => captureInput({ ...f.env, GITHUB_REF: 'refs/tags/v1' }, f.root), { custodyCode: 'wrong_runner' });
   writeFileSync(join(f.root, 'package.json'), '{}');
   assert.throws(() => captureInput(f.env, f.root), { custodyCode: 'stale_checkout' });
   execFileSync('git', ['-C', f.root, 'checkout', '--', 'package.json']);

@@ -1192,6 +1192,12 @@ export interface AshlrConfig {
      * when unset or empty. Set in ~/.ashlr/config.json. NEVER commit values.
      */
     imessageAllow?: string[];
+    /**
+     * Send Leader replies (MASON-OUTBOX and PLAN-LOG "Reply for Mason") to
+     * imessageHandle, once each. Default false: a pass only reports what it
+     * would send.
+     */
+    leaderRepliesSend?: boolean;
     /** iMessage service name. Default 'iMessage'. */
     service?: 'iMessage';
     /**
