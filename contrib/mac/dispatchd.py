@@ -10,7 +10,7 @@
 # RQ-DEVINTOKENSN9SQ8 rev: finish rows carry the usage each lane already reports — claude*/claude-api
 # result JSON usage, devin's sessions.db tokens + billed ACUs, the 'tokens used' log line — with
 # usage_source and a usage_missing reason when nothing was recorded.
-import os, re, json, time, fcntl, subprocess, glob, math, datetime, sqlite3, urllib.parse
+import os, re, json, time, fcntl, subprocess, glob, math, datetime, sqlite3, urllib.parse, hashlib
 from concurrent.futures import ThreadPoolExecutor
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
 WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
@@ -1093,7 +1093,8 @@ def ratelimited(lane, since):
 
 # ---- precheck: returns (code, reason) to skip, None to launch. Timeout/error/usage -> launch.
 PC_MAX = 8
-from launch_precheck import precheck as shared_precheck, park_key, parked, park
+from launch_precheck import (precheck as shared_precheck, park_key, parked, park,
+                             attempt_identity, empty_reason, read_attempts)
 PARK_PATH = Q + "/precheck-parked.json"
 park_state = jload(PARK_PATH, {})
 if not isinstance(park_state, dict): park_state = {}
@@ -1347,6 +1348,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     cand.sort(key=lambda f: (not bool(waste_risk(UIA.get(f[2]), f[2])), _bucket(f[0]), ready_ranks.get(f[1], len(ready_ranks)),
                              *_job_priority(f[0], f[1], f[4], f[4])[1:]))
     seen = set(); pc_n = 0; local_ok = None
+    empty_attempts = read_attempts(R); base_identities = {}
     def _local_healthy():   # one GET per tick; any error, timeout or non-200 -> unhealthy. Env proxies ignored.
         import urllib.request
         try:
@@ -1363,6 +1365,24 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         if j in retired_ids: return "listed in queue/RETIRED"
         if re.search(r"^- RETIRED (?:\S+ )*?%s[ \[(]" % re.escape(j), rq, re.M): return "RETIRED in router-queue.md"
         return None
+    empty_gate_cache = {}
+    def claim_identity(repo, prompt_path):
+        if repo not in base_identities:
+            base_identities[repo] = attempt_identity(repo, "", H, _run)
+        identity = dict(base_identities[repo])
+        if identity:
+            identity['prompt_hash'] = hashlib.sha256(rd(prompt_path).encode()).hexdigest()
+        return identity
+    def empty_gate(j, repo, prompt_path, lane):
+        key = (j, repo, prompt_path)
+        if key not in empty_gate_cache:
+            identity = claim_identity(repo, prompt_path)
+            reason = empty_reason(j, identity, empty_attempts, NOW) if identity else None
+            if reason:
+                metric(dict(identity, event="skipped_empty", job=j, lane=lane, reason=reason))
+                ev("SKIPPED_EMPTY %s %s" % (j, reason))
+            empty_gate_cache[key] = reason
+        return empty_gate_cache[key]
     def member_ok(f, lead=False):   # every check the loop below would apply to the job on its own, plus batch limits
         m = f[0]
         return (batcher.batchable_id(m) and not drain_target(m, f[1]) and f[2] in batcher.BATCH_LANES and (lead or m not in seen) and not retired(m)
@@ -1431,6 +1451,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         # Defer it instead of accidentally launching unverified work.
         if j in park_state and (pc_n >= PC_MAX or over_budget()):
             rest.append(line); continue
+        if empty_gate(j, repo, pf, lane): continue
         batch = form_batch(f)
         if batch:   # the batch session runs each member's own checks, so the per-job precheck is skipped
             picked, lane, size = batch; area = picked[0]["area"]
@@ -1462,7 +1483,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                 park_state.pop(j); jsave(PARK_PATH, park_state)
             if pc:
                 open(Q + "/precheck-skips.tsv", "a").write("%s\t%s\t%d\t%s\n" % (TS, j, pc[0], pc[1]))
-                metric({"event": "precheck_skip", "job": j, "repo": repo, "lane": lane, "code": pc[0]})
+                metric({"event": "skipped_empty", "job": j, "repo": repo, "lane": lane, "code": pc[0]})
                 ev("DONE-NOOP %s [precheck code=%d %s]" % (j, pc[0], pc[1])); continue
         if os.path.exists("%s/%s.publish" % (R, j)):   # relaunch on a kept worktree: archive old result
             os.replace("%s/%s.publish" % (R, j), "%s/%s.publish.prev-%d" % (R, j, NOW))
@@ -1471,6 +1492,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         for x in (".keptlogged", ".diskguard", ".phdrip", ".rc", ".timeout"):
             try: os.remove(RUN + "/" + j + x)
             except FileNotFoundError: pass
+        identity = claim_identity(repo, pf)
         risk = waste_risk(UIA.get(lane), lane) if not batch else None
         boost = waste_boost(UIA.get(lane), lane, tier) if risk else None
         reason = boost[1] if boost else ("use-it-all %s waste risk: pool preferred" % risk if risk else None)
@@ -1478,7 +1500,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         open(RUN + "/" + j + ".line", "w").write(line + "\n")
         open("%s/%s.launch" % (R, j), "w").close()  # discard the previous attempt before claiming
         open(RUN + "/" + j + ".dispatched", "w").write(str(int(NOW)))
-        metric({"event": "claim", "job": j, "repo": repo, "lane": lane, "tier": tier})
+        metric(dict(identity, event="claim", job=j, repo=repo, lane=lane, tier=tier))
         env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG") if k in os.environ}
         launch_cmd = (["/usr/bin/python3", "-I", R + "/bin/local_job.py"] if lane == "codex-local"
                       else ["/bin/bash", R + "/bin/launch.sh"])
