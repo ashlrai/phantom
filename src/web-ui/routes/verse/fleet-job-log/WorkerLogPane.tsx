@@ -22,6 +22,7 @@ import { findMatches, matchLabel, nextMatch } from './log-find-model.js';
 import { jobTextQuery } from './job-text-queries.js';
 import { jobStopEligible, postJobStop, STOP_CONFIRM_MS, stopConfirmLabel, stopFailureText, stopOutcomeText } from './job-stop-action.js';
 import { livenessText, livenessTone, newLinesLabel, trackGrowth, type TrackedLog } from './log-liveness-model.js';
+import { JobActivity } from './JobActivity.js';
 import styles from './worker-log.module.css';
 
 const EMPTY_LINES: string[] = [];
@@ -160,6 +161,7 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
     {runs.status === 'error' && <p role="status">Workers could not refresh.</p>}
     {runs.data && options.length === 0 && <p className={styles.hint}>No workers running right now.</p>}
     {runs.data === null && <p className={styles.hint}>The worker list is not available in this build.</p>}
+    {valid && <JobActivity job={job} enabled={active} pollMs={pollMs(detail.data)} />}
     {valid && detail.data === null && <p>The job detail API has not landed in this build yet.</p>}
     {valid && detail.status === 'error' && <p role="status">Job detail could not refresh.</p>}
     {valid && detail.data && <>
