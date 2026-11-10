@@ -30,6 +30,7 @@ import styles from './leader-thread.module.css';
 import { busRepliesToMason, mergeByTime, type BusReply } from './thread-bus-replies.js';
 import { fleetInbox, fleetOutbox, lineChannel, lineSourceLabel, mergeThread } from './thread-merge-model.js';
 import { canSend, scrollTargetIndex, trimReply } from './thread-reply-model.js';
+import { stepMatch, threadMatches, type ThreadFindItem } from './thread-find-model.js';
 import { mentionedRefs } from './thread-refs.js';
 import { leaderCeoSummary } from './leader-ceo-model.js';
 import { LeaderOfficeStrip } from './LeaderOfficeStrip.js';
@@ -56,18 +57,18 @@ const NO_MESSAGES: LeaderThreadMessage[] = [];
 const STICK_PX = 96;
 
 /** One merged line: a system note stays the centered quiet line; the leaders' rows keep the conversation's look; Mason's get a left rule and a source chip. */
-function LineView({ line }: { line: LabeledLine }) {
+function LineView({ line, match, current }: { line: LabeledLine; match?: boolean; current?: boolean }) {
   const leader = line.who === 'leader';
   const iso = Number.isFinite(line.at) ? new Date(line.at).toISOString() : null;
   const clock = iso ? clockTime(iso) : '—';
   if (line.source === 'system') {
-    return <p className={leaderStyles.system}>{line.text}{iso ? <> <time dateTime={iso}>{clock}</time></> : null}</p>;
+    return <p className={leaderStyles.system} data-find-match={match || undefined} data-find-current={current || undefined}>{line.text}{iso ? <> <time dateTime={iso}>{clock}</time></> : null}</p>;
   }
   const channel = lineChannel(line.source);
   const label = lineSourceLabel(line.source);
   const refs = leader ? mentionedRefs(line.text) : [];
   return (
-    <section className={leader ? leaderStyles.group : `${leaderStyles.group} ${styles.masonLine}`} data-from={line.who} data-source={line.source} aria-label={`${leader ? 'Leader' : 'You'}, ${clock}`}>
+    <section data-find-match={match || undefined} data-find-current={current || undefined} className={leader ? leaderStyles.group : `${leaderStyles.group} ${styles.masonLine}`} data-from={line.who} data-source={line.source} aria-label={`${leader ? 'Leader' : 'You'}, ${clock}`}>
       <header className={leaderStyles.groupHead}>
         <span className={leaderStyles.avatar} data-from={line.who} aria-hidden="true">{leader ? 'L' : 'M'}</span>
         <span className={leaderStyles.who}>{line.label ?? (leader ? 'Leader' : 'You')}</span>
@@ -92,8 +93,8 @@ function LineView({ line }: { line: LabeledLine }) {
   );
 }
 
-function BusReplyView({ row, now }: { row: BusReply; now: number }) {
-  return <section className={leaderStyles.group} aria-label="Bus reply">
+function BusReplyView({ row, now, match, current }: { row: BusReply; now: number; match?: boolean; current?: boolean }) {
+  return <section data-find-match={match || undefined} data-find-current={current || undefined} className={leaderStyles.group} aria-label="Bus reply">
     <header className={leaderStyles.groupHead}>
       <span className={leaderStyles.who}>{row.from}</span>
       <span className={leaderStyles.channel}>Via bus</span>
@@ -135,6 +136,10 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const [statusNow, setStatusNow] = useState<string | null>(null);
   const [checkingStatus, setCheckingStatus] = useState(false);
   const [needsYouOnly, setNeedsYouOnly] = useState(false);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState('');
+  const [findIndex, setFindIndex] = useState(0);
+  const findRef = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState('');
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [sending, setSending] = useState(false);
@@ -180,7 +185,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
 
   // One row per line, keeping the conversation's day separators; undated lines go last.
   const items = useMemo(() => {
-    const out: ({ type: 'day'; key: string; label: string } | { type: 'line'; key: string; line: LabeledLine } | { type: 'bus'; key: string; row: BusReply })[] = [];
+    const out: ThreadFindItem[] = [];
     let day = '';
     for (const item of mergeByTime([...mergeOwnerLines(merged.lines, ownerLines), ...merged.undated], busRows)) {
       if (needsYouOnly && (item.type !== 'line' || !((item.line.source === 'outbox' && (item.line.kind === 'decision' || item.line.kind === 'alert')) || (item.line.who === 'mason' && item.line.ack?.state === 'waiting')))) continue;
@@ -198,9 +203,23 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     return out;
   }, [merged, ownerLines, busRows, now, needsYouOnly]);
 
+  const matches = useMemo(() => threadMatches(items, findQuery), [items, findQuery]);
+  const currentIndex = matches.length ? findIndex % matches.length : 0;
+  const currentKey = matches[currentIndex];
+  useEffect(() => { if (findOpen) findRef.current?.focus(); }, [findOpen]);
+  useLayoutEffect(() => {
+    if (findOpen && currentKey) logRef.current?.querySelector<HTMLElement>('[data-find-current="true"]')?.scrollIntoView?.({ block: 'center' });
+  }, [findOpen, currentKey]);
+  function closeFind() {
+    setFindOpen(false);
+    setFindQuery('');
+    setFindIndex(0);
+  }
+
   const lastKey = items.length ? items[items.length - 1]!.key : null;
   const forcedAt = useRef(scrollVersion);
   useLayoutEffect(() => {
+    if (findOpen) return;
     const el = logRef.current;
     const entries = el?.firstElementChild?.children;
     if (!el || !entries || scrollTargetIndex(entries) === -1) return;
@@ -209,7 +228,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     if (!force && !atEnd.current) return;
     atEnd.current = true;
     el.scrollTop = el.scrollHeight;
-  }, [lastKey, scrollVersion]);
+  }, [lastKey, scrollVersion, findOpen]);
 
   async function checkStatus() {
     setCheckingStatus(true);
@@ -334,7 +353,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   } else {
     body = items.map(item => item.type === 'day'
       ? <div key={item.key} className={leaderStyles.day} role="separator" aria-label={item.label}><span>{item.label}</span></div>
-      : item.type === 'line' ? <LineView key={item.key} line={item.line} /> : <BusReplyView key={item.key} row={item.row} now={now} />);
+      : item.type === 'line' ? <LineView key={item.key} line={item.line} match={findOpen && matches.includes(item.key)} current={findOpen && item.key === currentKey} /> : <BusReplyView key={item.key} row={item.row} now={now} match={findOpen && matches.includes(item.key)} current={findOpen && item.key === currentKey} />);
   }
 
   return <div className={styles.root}>
@@ -353,7 +372,18 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       </details>
     </section>
     <DirectivesStrip read={directives.data} actions={actions} adding={addingDirective} onAddingChange={setAddingDirective} />
-    <header><button type="button" disabled={checkingStatus} onClick={() => void checkStatus()}>{checkingStatus ? 'Checking…' : 'Status now'}</button> <button type="button" aria-pressed={needsYouOnly} onClick={() => setNeedsYouOnly(value => !value)}>Needs you only</button></header>
+    <header><button type="button" disabled={checkingStatus} onClick={() => void checkStatus()}>{checkingStatus ? 'Checking…' : 'Status now'}</button> <button type="button" aria-pressed={needsYouOnly} onClick={() => setNeedsYouOnly(value => !value)}>Needs you only</button> <button type="button" onClick={() => setFindOpen(true)}>Find</button></header>
+    {findOpen ? <div onKeyDown={event => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeFind(); }
+    }}>
+      <input ref={findRef} aria-label="Find in conversation" value={findQuery} onChange={event => { setFindQuery(event.target.value); setFindIndex(0); }} onKeyDown={event => {
+        if (event.key === 'Enter') { event.preventDefault(); setFindIndex(stepMatch(currentIndex, matches.length, event.shiftKey ? -1 : 1)); }
+      }} />
+      <span role="status">{matches.length ? `${currentIndex + 1} of ${matches.length}` : 'No matches'}</span>
+      <button type="button" onClick={() => setFindIndex(stepMatch(currentIndex, matches.length, -1))}>Prev</button>
+      <button type="button" onClick={() => setFindIndex(stepMatch(currentIndex, matches.length, 1))}>Next</button>
+      <button type="button" onClick={closeFind}>Close</button>
+    </div> : null}
     {statusNow !== null ? <section aria-label="Status now" role="status"><p style={{ whiteSpace: 'pre-wrap' }}>{statusNow}</p><button type="button" onClick={() => setStatusNow(null)}>Dismiss</button></section> : null}
     <p className={styles.note}>{busRows.length} bus replies</p>
     {busUnavailable ? <p className={styles.note} role="status">Durable bus unavailable</p> : null}
