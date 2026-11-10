@@ -2439,7 +2439,7 @@ export async function handleApi(
     // Versioned loopback read surface for desktop/src-tauri fleet ops.
     // GET-only; already behind the read-session boundary like every /api/* GET.
     if (isWbApiPath(path)) {
-      return handleWbApi(req, res, cfg, path);
+      return handleWbApi(req, res, cfg, path, { readSession: ctx.readSession });
     }
 
     // ── /api/verse/mcp[/...] (MCP + per-account CLI management) ─────────────

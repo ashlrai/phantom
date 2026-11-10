@@ -304,6 +304,7 @@ function printUsage(): void {
   console.log(`    ${cyan('GET  /api/wb/v1/snapshot')}  Desktop shell: fleet capacity snapshot (stale/invalid → unknown)`);
   console.log(`    ${cyan('GET  /api/wb/v1/gh')}        Desktop shell: GitHub read over enrolled repos (cached + backoff)`);
   console.log(`    ${cyan('GET  /api/wb/v1/budget')}    Desktop shell: budget policy + per-seat usage`);
+  console.log(`    ${cyan('GET  /api/wb/v1/events')}    Desktop shell: SSE workbench events + queue.v1 relay (read session)`);
   console.log('');
   console.log('  ' + bold('Dispatch route (--allow-dispatch only):'));
   console.log(`    ${cyan('POST /api/run')}             Launch phm run (requires X-Ashlr-Token header)`);

@@ -49,12 +49,20 @@ import {
   writeCapacitySnapshot,
 } from '../src/core/routing/budget-store.js';
 import type { SeatCapacity } from '../src/core/routing/headroom.js';
+import {
+  publishWbEvent,
+  readWbQueueJournal,
+  wbQueueEventsJournalPath,
+} from '../src/core/web/wb-events.js';
+import { validateWorkbench } from '../src/core/workbench/schema.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
 
 const SECRET_PROBE = ['sk', '-FAKE', '-wbProbe', 'Secret9', '0123456789', 'abcdef'].join('');
+const CLIENT_PROOF = 'a'.repeat(64);
+const SCHEMA_DIR = path.join(__dirname, '..', 'schema', 'workbench.v1');
 
 function makeSeat(overrides: Partial<SeatCapacity> = {}): SeatCapacity {
   return {
@@ -156,12 +164,14 @@ const authHeaders = (h: WebServerHandle) => ({ Host: hostOf(h), 'x-ashlr-token':
 // ---------------------------------------------------------------------------
 
 let openHandles: WebServerHandle[] = [];
+let openStreams: SseConnection[] = [];
 let tmpHome: string;
 let prevHome: string | undefined;
 let prevUserProfile: string | undefined;
 
 beforeEach(() => {
   openHandles = [];
+  openStreams = [];
   ghReadMock.mockReset();
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ashlr-wb-api-'));
   prevHome = process.env.HOME;
@@ -171,6 +181,10 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  for (const s of openStreams) {
+    try { s.close(); } catch { /* ignore */ }
+  }
+  openStreams = [];
   for (const h of openHandles) {
     try { await h.close(); } catch { /* ignore */ }
   }
@@ -374,5 +388,327 @@ describe('redaction of secret-shaped input', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).not.toContain(SECRET_PROBE);
     expect(res.body).toContain('[REDACTED]');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/wb/v1/events — WB-8 SSE surface (wb.* kinds + queue.v1 relay)
+// ---------------------------------------------------------------------------
+
+/** Mint a read session exactly like a browser client: token + client proof. */
+async function mintSession(h: WebServerHandle): Promise<{ cookie: string }> {
+  const res = await httpRequest('POST', `${h.url}/api/session`, {
+    Host: hostOf(h),
+    'x-ashlr-token': h.readToken,
+    'x-ashlr-read-client': CLIENT_PROOF,
+  });
+  expect(res.statusCode).toBe(204);
+  const setCookie = res.headers['set-cookie'];
+  const raw = Array.isArray(setCookie) ? setCookie[0] : setCookie;
+  expect(typeof raw).toBe('string');
+  return { cookie: String(raw).split(';')[0]! };
+}
+
+interface SseFrame {
+  id?: string;
+  event: string;
+  data: string;
+}
+
+interface SseConnection {
+  frames: SseFrame[];
+  raw: string;
+  req: http.ClientRequest;
+  res: http.IncomingMessage;
+  close(): void;
+}
+
+/** Open an SSE stream; frames accumulate in `frames` as they arrive. */
+function openSse(h: WebServerHandle, cookie: string): Promise<SseConnection> {
+  return new Promise((resolve, reject) => {
+    const url = `${h.url}/api/wb/v1/events?client=${CLIENT_PROOF}`;
+    const parsed = new URL(url);
+    const req = http.request(
+      {
+        hostname: parsed.hostname,
+        port: Number(parsed.port),
+        path: parsed.pathname + parsed.search,
+        method: 'GET',
+        headers: { Host: hostOf(h), Cookie: cookie },
+      },
+      (res) => {
+        if (res.statusCode !== 200) {
+          let data = '';
+          res.on('data', (c: Buffer) => { data += c.toString(); });
+          res.on('end', () => reject(new Error(`SSE status ${res.statusCode}: ${data}`)));
+          return;
+        }
+        const conn: SseConnection = {
+          frames: [],
+          raw: '',
+          req,
+          res,
+          close: () => req.destroy(),
+        };
+        let buf = '';
+        res.on('data', (chunk: Buffer) => {
+          buf += chunk.toString();
+          conn.raw += chunk.toString();
+          let idx: number;
+          while ((idx = buf.indexOf('\n\n')) !== -1) {
+            const block = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+            const frame: SseFrame = { event: 'message', data: '' };
+            for (const line of block.split('\n')) {
+              if (line.startsWith('event:')) frame.event = line.slice(6).trim();
+              else if (line.startsWith('data:')) frame.data = (frame.data ? frame.data + '\n' : '') + line.slice(5).trim();
+              else if (line.startsWith('id:')) frame.id = line.slice(3).trim();
+            }
+            if (frame.data || frame.event !== 'message') conn.frames.push(frame);
+          }
+        });
+        resolve(conn);
+      },
+    );
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+async function waitFor(cond: () => boolean, timeoutMs = 8_000, intervalMs = 25): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (cond()) return;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  throw new Error('waitFor timed out');
+}
+
+const framesOf = (conn: SseConnection, event: string): SseFrame[] =>
+  conn.frames.filter((f) => f.event === event);
+
+async function connect(h: WebServerHandle): Promise<SseConnection> {
+  const { cookie } = await mintSession(h);
+  const conn = await openSse(h, cookie);
+  openStreams.push(conn);
+  return conn;
+}
+
+/**
+ * One RQ-QUEUE-2 station event on the contract router-queue.ts defines:
+ * station/source attestation pairs, exact per-station evidence keys, UTC
+ * millisecond timestamps, sha256 eventId. Overrides merge shallowly.
+ */
+function stationEvent(n: number, overrides: Record<string, unknown> = {}): { eventId: string } & Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    eventId: n.toString(16).padStart(64, '0'),
+    jobId: `RQ-JOB-${n}`,
+    repo: 'ashlrai/phantom',
+    attempt: `att-${n}`,
+    station: 'merged',
+    observedAt: '2026-11-09T12:00:00.000Z',
+    source: 'github',
+    evidence: { pr: 1000 + n, headSha: 'a'.repeat(40), mergeSha: 'b'.repeat(40) },
+    ...overrides,
+  };
+}
+
+function writeJournal(events: unknown[]): void {
+  const file = wbQueueEventsJournalPath();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ schemaVersion: 1, events }), { mode: 0o600 });
+}
+
+describe('GET /api/wb/v1/events auth', () => {
+  it('without any credential → 401 at the read boundary', async () => {
+    const h = await serve();
+    const res = await httpRequest('GET', `${h.url}/api/wb/v1/events`, { Host: hostOf(h) });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('the raw read token authenticates but carries no session → SESSION_REQUIRED', async () => {
+    const h = await serve();
+    const res = await httpRequest('GET', `${h.url}/api/wb/v1/events`, authHeaders(h));
+    expect(res.statusCode).toBe(401);
+    expect(res.body).toContain('SESSION_REQUIRED');
+    expect(res.body).not.toContain(h.readToken);
+  });
+
+  it('POST /api/wb/v1/events → 405', async () => {
+    const h = await serve();
+    const { cookie } = await mintSession(h);
+    const post = await httpRequest('POST', `${h.url}/api/wb/v1/events?client=${CLIENT_PROOF}`, {
+      Host: hostOf(h), Cookie: cookie,
+    });
+    expect(post.statusCode).toBe(405);
+  });
+});
+
+describe('GET /api/wb/v1/events wb.* kinds', () => {
+  it('emits schema-valid wb.snapshot and wb.gh envelopes on connect', async () => {
+    ghReadMock.mockResolvedValue(FAKE_GH_SNAPSHOT);
+    const h = await serve();
+    writeCapacitySnapshot([makeSeat()], new Date());
+    const conn = await connect(h);
+
+    await waitFor(() => framesOf(conn, 'wb.snapshot').length >= 1 && framesOf(conn, 'wb.gh').length >= 1);
+
+    for (const frame of [...framesOf(conn, 'wb.snapshot'), ...framesOf(conn, 'wb.gh')]) {
+      const payload: unknown = JSON.parse(frame.data);
+      expect(validateWorkbench(SCHEMA_DIR, 'event', payload)).toEqual([]);
+      const event = payload as { kind: string; seq: number };
+      expect(event.kind).toBe(frame.event);
+      expect(event.seq).toBeGreaterThanOrEqual(1);
+    }
+    // seq is per-connection monotonic across kinds.
+    const seqs = conn.frames
+      .filter((f) => f.event.startsWith('wb.'))
+      .map((f) => (JSON.parse(f.data) as { seq: number }).seq);
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+  });
+
+  it('re-emits wb.snapshot when the capacity snapshot changes', async () => {
+    ghReadMock.mockResolvedValue(FAKE_GH_SNAPSHOT);
+    const h = await serve();
+    writeCapacitySnapshot([makeSeat()], new Date());
+    const conn = await connect(h);
+    await waitFor(() => framesOf(conn, 'wb.snapshot').length >= 1);
+
+    writeCapacitySnapshot([makeSeat(), makeSeat({ seatId: 'seat-2' })], new Date());
+    await waitFor(() => framesOf(conn, 'wb.snapshot').length >= 2);
+  });
+
+  it('publishWbEvent broadcasts wb.action to open streams', async () => {
+    ghReadMock.mockResolvedValue(FAKE_GH_SNAPSHOT);
+    const h = await serve();
+    const conn = await connect(h);
+    await waitFor(() => conn.frames.length >= 1);
+
+    publishWbEvent('wb.action', { repo: 'ashlrai/phantom' });
+    await waitFor(() => framesOf(conn, 'wb.action').length >= 1);
+
+    const frame = framesOf(conn, 'wb.action')[0]!;
+    const payload: unknown = JSON.parse(frame.data);
+    expect(validateWorkbench(SCHEMA_DIR, 'event', payload)).toEqual([]);
+    expect((payload as { repo?: string }).repo).toBe('ashlrai/phantom');
+  });
+});
+
+describe('GET /api/wb/v1/events queue.v1 relay', () => {
+  it('relays new station events once each, deduped by eventId', async () => {
+    ghReadMock.mockResolvedValue(FAKE_GH_SNAPSHOT);
+    const h = await serve();
+    const conn = await connect(h);
+    await waitFor(() => conn.frames.length >= 1);
+
+    // History present BEFORE the relay's baseline is connect-time state:
+    // write the journal, then append — only the appended events emit.
+    writeJournal([stationEvent(1), stationEvent(2)]);
+    await waitFor(() => framesOf(conn, 'queue.v1').length >= 2, 8_000);
+
+    const first = framesOf(conn, 'queue.v1').map((f) => f.id);
+    expect(first).toContain(stationEvent(1)['eventId']);
+    expect(first).toContain(stationEvent(2)['eventId']);
+
+    // Rewriting the same journal must not re-emit.
+    writeJournal([stationEvent(1), stationEvent(2)]);
+    await new Promise((r) => setTimeout(r, 2_500));
+    expect(framesOf(conn, 'queue.v1')).toHaveLength(2);
+
+    // A third event appends cleanly.
+    writeJournal([stationEvent(1), stationEvent(2), stationEvent(3)]);
+    await waitFor(() => framesOf(conn, 'queue.v1').length >= 3);
+    const third = framesOf(conn, 'queue.v1')[2]!;
+    const data = JSON.parse(third.data) as { station: string; jobId: string };
+    expect(data.station).toBe('merged');
+    expect(data.jobId).toBe('RQ-JOB-3');
+    expect(third.id).toBe(stationEvent(3)['eventId']);
+  }, 25_000);
+
+  it('a malformed journal silences the relay without killing the stream', async () => {
+    ghReadMock.mockResolvedValue(FAKE_GH_SNAPSHOT);
+    const h = await serve();
+    const conn = await connect(h);
+    await waitFor(() => conn.frames.length >= 1);
+
+    const file = wbQueueEventsJournalPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '{not-json\n', { mode: 0o600 });
+    await new Promise((r) => setTimeout(r, 2_500));
+    expect(framesOf(conn, 'queue.v1')).toHaveLength(0);
+
+    // wb.* frames still flow — the stream is alive.
+    writeCapacitySnapshot([makeSeat({ seatId: 'seat-new' })], new Date());
+    await waitFor(() => framesOf(conn, 'wb.snapshot').length >= 2);
+  }, 15_000);
+
+  it('off-contract station events are dropped, valid siblings still relay', async () => {
+    ghReadMock.mockResolvedValue(FAKE_GH_SNAPSHOT);
+    const h = await serve();
+    const conn = await connect(h);
+    await waitFor(() => conn.frames.length >= 1);
+
+    writeJournal([
+      stationEvent(1, { station: 'planned', source: 'github' }), // wrong source for station
+      stationEvent(2, { evidence: { pr: 7, headSha: 'a'.repeat(40), mergeSha: 'b'.repeat(40), extra: 'x' } }), // extra evidence key
+      stationEvent(3, { observedAt: 'not-a-time' }),
+      stationEvent(4),
+    ]);
+    await waitFor(() => framesOf(conn, 'queue.v1').length >= 1, 8_000);
+    await new Promise((r) => setTimeout(r, 2_500));
+
+    const relayed = framesOf(conn, 'queue.v1');
+    expect(relayed).toHaveLength(1);
+    expect(relayed[0]!.id).toBe(stationEvent(4)['eventId']);
+  }, 15_000);
+
+  it('journal history at connect is baseline, not relayed', async () => {
+    ghReadMock.mockResolvedValue(FAKE_GH_SNAPSHOT);
+    writeJournal([stationEvent(7)]);
+    const h = await serve();
+    const conn = await connect(h);
+    await waitFor(() => conn.frames.length >= 1);
+    await new Promise((r) => setTimeout(r, 2_500));
+    expect(framesOf(conn, 'queue.v1')).toHaveLength(0);
+  }, 15_000);
+});
+
+describe('GET /api/wb/v1/events redaction + paths', () => {
+  it('secret-shaped station evidence is scrubbed to [REDACTED] on the wire', async () => {
+    ghReadMock.mockResolvedValue(FAKE_GH_SNAPSHOT);
+    const h = await serve();
+    const conn = await connect(h);
+    await waitFor(() => conn.frames.length >= 1);
+
+    // 'merged' evidence keys are exactly {pr, headSha, mergeSha}; the secret
+    // probe rides in headSha — a string slot the relay passes through, and
+    // sanitizePublicJson must scrub before it reaches the wire.
+    writeJournal([stationEvent(1, { evidence: { pr: 1001, headSha: SECRET_PROBE, mergeSha: 'b'.repeat(40) } })]);
+    await waitFor(() => framesOf(conn, 'queue.v1').length >= 1);
+
+    expect(conn.raw).not.toContain(SECRET_PROBE);
+    expect(conn.raw).toContain('[REDACTED]');
+  }, 15_000);
+
+  it('secret-shaped snapshot data never appears anywhere on the stream', async () => {
+    ghReadMock.mockResolvedValue(FAKE_GH_SNAPSHOT);
+    const h = await serve();
+    writeCapacitySnapshot([makeSeat({ label: `seat key ${SECRET_PROBE}` })], new Date());
+    const conn = await connect(h);
+    await waitFor(() => framesOf(conn, 'wb.snapshot').length >= 1);
+    writeJournal([stationEvent(1)]);
+    await waitFor(() => framesOf(conn, 'queue.v1').length >= 1);
+    await new Promise((r) => setTimeout(r, 500));
+
+    expect(conn.raw).not.toContain(SECRET_PROBE);
+    expect(conn.raw).not.toContain(tmpHome);
+  }, 15_000);
+
+  it('the queue journal lives under ~/.ashlr, never ~/.ashlr-runs', () => {
+    const journal = wbQueueEventsJournalPath();
+    expect(journal).toContain(`${path.sep}.ashlr${path.sep}`);
+    expect(journal).not.toContain('.ashlr-runs');
+    expect(readWbQueueJournal(journal)).toBeNull(); // absent → honest empty
   });
 });
