@@ -118,6 +118,15 @@ export function mutateBusWorkClaim(request: BusClaimRequest): BusClaimResult {
       const row = rows.find(r => r.id === request.id && r.cursor === cursor && r.receivedAt === receivedAt);
       if (row && row.ttl !== envelope.ttl) return { status: 'lost' };
       if (remaining <= 0) return { status: 'expired' };
+      // Drop other receipts whose TTL has already lapsed before the capacity
+      // check. A table full of dead rows must still admit a live id; the sweep
+      // below persists that. A clock before receipt keeps the row.
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const candidate = rows[i]!;
+        if (candidate !== row && !(now < candidate.receivedAt || now - candidate.receivedAt < candidate.ttl)) {
+          rows.splice(i, 1);
+        }
+      }
       if (row?.completedAt !== null && row?.completedAt !== undefined) return { status: 'completed' };
       let result: BusClaimResult;
       const claimKey = `queue:${request.id}`;

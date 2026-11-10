@@ -11,7 +11,9 @@ import { basename } from 'node:path';
 import { readLedger, writeLedger } from './store.js';
 import {
   DEFAULT_STALE_AFTER_MS,
+  INTENT_LEDGER_SCHEMA,
   IntentError,
+  MAX_EVIDENCE,
   MAX_INTENT_ITEMS,
   MAX_OWNER,
   MAX_PROVENANCE,
@@ -19,6 +21,7 @@ import {
   MAX_RQ,
   MAX_SOURCE,
   MAX_TITLE,
+  isIntentLedger,
   isIntentStatus,
   normalizeRq,
   pullKey,
@@ -138,6 +141,30 @@ async function rowsFromFile(path: string): Promise<Row[]> {
   return rows;
 }
 
+/**
+ * A file that is one JSON document tagged `ashlr.intent-ledger/v1` is a native
+ * ledger copy, not a bag of raw rows: its items already carry PRs, evidence,
+ * provenance and real timestamps. The whole document must pass the ledger
+ * schema; a tagged but invalid file fails the import instead of degrading to
+ * rows. Untagged or unparsable files return null and keep the row path.
+ */
+async function nativeLedgerItems(path: string): Promise<IntentItem[] | null> {
+  let raw: string;
+  try { raw = await readFile(path, 'utf8'); }
+  catch { throw new IntentError(`Could not read ${basename(path)}.`); }
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('{')) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(trimmed) as unknown; }
+  catch { return null; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  if ((parsed as Row)['schema'] !== INTENT_LEDGER_SCHEMA) return null;
+  if (!isIntentLedger(parsed)) {
+    throw new IntentError(`${basename(path)} is tagged ${INTENT_LEDGER_SCHEMA} but is not a valid ledger.`);
+  }
+  return parsed.items;
+}
+
 function addProvenance(item: IntentItem, row: IntentProvenance): void {
   if (item.provenance.some((p) => p.source === row.source && p.date === row.date && p.verbatim === row.verbatim)) return;
   item.provenance = [...item.provenance, row].slice(-MAX_PROVENANCE);
@@ -156,8 +183,19 @@ function absorb(target: IntentItem, incoming: IntentItem, at: string): void {
   const rq = [...new Set([...target.rq, ...incoming.rq])];
   if (rq.length > MAX_RQ) throw new IntentError(`An intent can track at most ${MAX_RQ} RQ keys.`);
   target.rq = rq;
-  const seen = new Set(target.prs.map(pullKey));
-  for (const pull of incoming.prs) if (!seen.has(pullKey(pull)) && target.prs.length < MAX_PRS) target.prs.push(pull);
+  for (const pull of incoming.prs) {
+    const existing = target.prs.find((row) => pullKey(row) === pullKey(pull));
+    if (existing) {
+      if (pull.state === 'merged') existing.state = 'merged';
+      if (pull.url && !existing.url) existing.url = pull.url;
+    } else if (target.prs.length < MAX_PRS) target.prs.push(pull);
+  }
+  for (const row of incoming.evidence) {
+    if (!target.evidence.some((entry) => entry.at === row.at && entry.kind === row.kind
+      && entry.ref === row.ref && entry.note === row.note)) {
+      target.evidence = [...target.evidence, row].slice(-MAX_EVIDENCE);
+    }
+  }
   target.status = preferStatus(target.status, incoming.status);
   target.partial = target.partial || incoming.partial;
   for (const row of incoming.provenance) addProvenance(target, row);
@@ -192,6 +230,14 @@ export async function importIntentFiles(paths: string[], opts: { root?: string; 
   let deduped = 0;
   for (const path of paths) {
     const fileSource = basename(path) || 'import';
+    const native = await nativeLedgerItems(path);
+    if (native !== null) {
+      for (const item of native) {
+        if (place(ledger, item, at)) deduped += 1;
+        else imported += 1;
+      }
+      continue;
+    }
     for (const row of await rowsFromFile(path)) {
       const item = itemFromRow(row, fileSource, at);
       if (!item) continue;

@@ -1,7 +1,7 @@
 /**
  * routes/verse/sections/AppearancePanel.tsx — the "Linux" part of the design
  * language: theme, accent, display size, density, display face, radius,
- * motion.
+ * layout, motion.
  *
  * Every control applies IMMEDIATELY (design doc §3: live preview, no save
  * button) because the whole app is the preview — the panel writes through
@@ -25,6 +25,7 @@ import {
   type Appearance,
   type Density,
   type DisplayFont,
+  type LayoutPreference,
   type RadiusScale,
   type ThemePreference,
   type UiScale,
@@ -85,6 +86,12 @@ const RADIUS_OPTIONS = [
   { value: 'soft' as RadiusScale, label: 'Soft' },
 ];
 
+const LAYOUT_OPTIONS = [
+  { value: 'auto' as LayoutPreference, label: 'Auto' },
+  { value: 'wide' as LayoutPreference, label: 'Wide' },
+  { value: 'narrow' as LayoutPreference, label: 'Narrow' },
+];
+
 /** A 360° sweep at the current saturation/lightness, so the track shows the choice. */
 function hueTrack(s: number, l: number): string {
   const stops = [0, 60, 120, 180, 240, 300, 360].map((h) => `${accentHex(h, s, l)} ${(h / 360) * 100}%`);
@@ -135,7 +142,7 @@ export function AppearancePanel({ appearance, onChange, onReset }: AppearancePan
           size="sm"
           onClick={onReset}
           disabled={isDefaultAppearance(appearance)}
-          title="Restore the shipped theme, accent, display size, density, font, radius and motion"
+          title="Restore the shipped theme, accent, display size, density, font, radius, layout and motion"
         >
           Reset to defaults
         </Button>
@@ -268,6 +275,18 @@ export function AppearancePanel({ appearance, onChange, onReset }: AppearancePan
           options={DENSITY_OPTIONS}
           value={appearance.density}
           onChange={(density) => onChange({ density })}
+        />
+      </SettingRow>
+
+      <SettingRow
+        label="Layout"
+        description="Narrow puts the Leader conversation first, with the other views as tabs and an icon-only rail. Auto switches below 960 px, for a half-screen window."
+      >
+        <Segmented
+          aria-label="Layout"
+          options={LAYOUT_OPTIONS}
+          value={appearance.layout}
+          onChange={(layout) => onChange({ layout })}
         />
       </SettingRow>
 

@@ -95,7 +95,7 @@ async function loadConfig(): Promise<AshlrConfig> {
 // ---------------------------------------------------------------------------
 
 interface ParsedModelsArgs {
-  subcommand: 'list' | 'pull' | 'start' | 'inventory' | 'routing';
+  subcommand: 'list' | 'pull' | 'start' | 'inventory' | 'routing' | 'verify';
   pullName?: string;
   json: boolean;
   yes: boolean;
@@ -140,6 +140,9 @@ function parseModelsArgs(args: string[]): ParsedModelsArgs {
       return result;
     }
     result.pullName = name;
+  } else if (sub === 'verify') {
+    result.subcommand = 'verify';
+    if (positional.length > 1 || result.yes) result.usageError = 'Usage: phm models verify [--json]';
   } else if (sub === 'routing') {
     result.subcommand = 'routing';
     if (positional.length > 1 || result.yes) result.usageError = 'Usage: phm models routing [--json]';
@@ -149,7 +152,7 @@ function parseModelsArgs(args: string[]): ParsedModelsArgs {
   } else if (sub === 'start') {
     result.subcommand = 'start';
   } else {
-    result.usageError = `unknown subcommand: ${sub}. Use list, routing, inventory, pull <name>, or start.`;
+    result.usageError = `unknown subcommand: ${sub}. Use list, routing, inventory, verify, pull <name>, or start.`;
   }
 
   return result;
@@ -516,6 +519,7 @@ function printModelsHelp(): void {
   console.log('');
 
   const subs: [string, string][] = [
+    ['verify', 'Check registry IDs against official provider pages; not-found means absent from those pages.'],
     ['routing', 'Inspect recorded task fit, latency availability and execution feedback (read-only).'],
     ['inventory', 'Measure opt-in loopback models and write fleet.json resources.models.'],
     ['(none) / list',    'List all local models across Ollama and LM Studio.'],
@@ -587,6 +591,19 @@ export async function cmdModels(args: string[]): Promise<number> {
     process.stderr.write(`${C.red}error:${C.reset} ${parsed.usageError}\n`);
     process.stderr.write(`Run ${C.cyan}ashlr models --help${C.reset} for usage.\n`);
     return 2;
+  }
+
+  if (parsed.subcommand === 'verify') {
+    try {
+      const { verifyModelDocs } = await import('../core/fleet/model-docs-verify.js');
+      const results = await verifyModelDocs();
+      if (parsed.json) console.log(JSON.stringify({ schema: 'models.verify.v1', results }));
+      else for (const row of results) console.log(`${row.id}: ${row.status} (${row.sourceUrl}, ${row.checkedAt})`);
+      return results.some(row => row.status !== 'confirmed') ? 1 : 0;
+    } catch {
+      process.stderr.write('Cannot read or validate model registry.\n');
+      return 1;
+    }
   }
 
   if (parsed.subcommand === 'routing') {

@@ -16,6 +16,7 @@ import {
   USAGE_SENSOR_LANES,
   USAGE_SENSOR_STALE_MS,
   unmeasuredSensor,
+  readingIsFresh,
   usageSensorReadingSchema,
   type UsageSensorLane,
   type UsageSensorReading,
@@ -28,6 +29,19 @@ export function codexPoolHomeAllowed(home: string, operatorHome: string): boolea
     if (home === dir || home.startsWith(`${dir}/`)) return false;
   }
   return true;
+}
+
+/** Refresh only an existing stale personal reading; failures preserve stale evidence. */
+export async function refreshStalePersonalUsage(
+  readings: UsageSensorReading[], options: UsageSensorPullOptions = {},
+): Promise<UsageSensorReading[]> {
+  const nowMs = options.nowMs ?? Date.now();
+  const latest = readings.filter(row => row.lane === 'codex-personal')
+    .sort((a, b) => Date.parse(b.observedAt) - Date.parse(a.observedAt))[0];
+  if (!latest || readingIsFresh({ ...latest, nowMs })) return readings;
+  const refreshed = await codexLane('codex-personal', options.codexPersonalHome,
+    options.operatorHome ?? homedir(), nowMs, options.readCodex ?? (home => readCodexUsage({ home })));
+  return refreshed ? [...readings, refreshed] : readings;
 }
 
 function fromDevin(result: DevinUsageResult, nowMs: number): UsageSensorReading | null {
