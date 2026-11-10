@@ -165,6 +165,7 @@ import { REASONING_API_PREFIX } from '../reasoning/types.js';
 import { VERSE_FLEET_CONTROL_HOLDS_PATH } from '../fleet/runs-lane-hold.js';
 import { VERSE_FLEET_GRAPH_PATH } from './fleet-graph-api.js';
 import { VERSE_FLEET_GRAPH_LIVE_PATH } from './fleet-graph-live-api.js';
+import { VERSE_LEADER_BRIEF_PATH } from './leader-brief-api.js';
 import {
   VERSE_TERMINAL_AGENT_STATE_PATH_RE,
   WORKBENCH_ROUTE_FAMILIES,
@@ -265,6 +266,7 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   { id: 'fleet-merge-pace' as MountedApiModuleId, load: async () => (await import('./merge-pace-api.js')).handleMergePaceApi },
   { id: 'fleet-landed-closes' as MountedApiModuleId, load: async () => (await import('./landed-closes-api.js')).handleLandedClosesApi },
   { id: 'fleet-slow-prs' as MountedApiModuleId, load: async () => (await import('./slow-prs-api.js')).handleSlowPrsApi },
+  { id: 'leader-brief' as MountedApiModuleId, load: async () => (await import('./leader-brief-api.js')).handleLeaderBriefApi },
 ];
 
 let mountedModules: readonly MountedApiModule[] = DEFAULT_API_MODULES;
@@ -629,6 +631,8 @@ async function dispatchWorkbenchModules(
   // Every other path the family claims stays its exclusive route.
   if (path === VERSE_FLEET_CONTROL_HOLDS_PATH) return false;
   if (path === VERSE_FLEET_GRAPH_PATH || path === VERSE_FLEET_GRAPH_LIVE_PATH) return false;
+  // The Leader brief is one exact path under the `leader` family prefix; its mount answers it.
+  if (path === VERSE_LEADER_BRIEF_PATH) return false;
   const family = workbenchFamilyFor(path);
   if (!family) return false;
   if (method !== 'GET') {
