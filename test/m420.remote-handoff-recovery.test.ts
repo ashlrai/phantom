@@ -29,6 +29,16 @@ const {
 
 vi.mock('node:child_process', () => ({ execFileSync: (...args: unknown[]) => execFileSyncMock(...args) }));
 
+// remote-handoff reads the host through the Secrets credential wrapper, which
+// probes the real PATH for a `phantom` binary first. An unreadable PATH entry
+// (EACCES/EPERM) or an installed Secrets CLI would rewrite or refuse the `gh`
+// call before it reaches the double above, so the result depended on the
+// runner. Route the wrapper straight to the double to keep this hermetic.
+vi.mock('../src/core/integrations/secrets.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../src/core/integrations/secrets.js')>(),
+  credentialExecFileSync: (...args: unknown[]) => execFileSyncMock(...args),
+}));
+
 vi.mock('../src/core/git.js', () => ({
   resolveGitHubOriginAuthorityDetails: () => originAuthorityMock(),
 }));
