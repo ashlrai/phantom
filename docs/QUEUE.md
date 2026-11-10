@@ -113,6 +113,35 @@ tier name itself. The vocabulary lives in
 [`queue-tier.ts`](../src/core/drive/queue-tier.ts). Keep it identical to
 `TIERS` in `contrib/mac/dispatchd.py`.
 
+### Queuegen dedupe and empty-outcome suppression
+
+`queuegen` ([`queuegen.ts`](../src/core/drive/queuegen.ts), run by
+`scripts/queuegen.mjs`) emits one `- READY` FIXUP or REBASE line per fleet
+PR per 24 h, deduped on `<repo>#<pr>` — but evidence-aware: each emission
+records the headSha it was minted against, so a moved head releases the
+suppression while an unchanged head holds it. Each emission also records
+the failure signature (the failing check, or `merge-tree`, plus the
+resolved file). When `jobs.jsonl` shows the last two same-signature
+attempts all came back empty, the candidate is suppressed instead of
+minting another empty job; a changed check or file is a different
+candidate and recovers. Missing, unreadable or out-of-window outcome
+evidence never suppresses — suppression is advisory and fails open. The
+ledger read is tail-bounded via `--metrics` (default
+`~/.ashlr-runs/metrics/jobs.jsonl`).
+
+The recut loop ([`recut-loop.ts`](../src/core/fleet/recut-loop.ts)) applies
+the same rule to the drop jobs it mints for conflicting fleet PRs: when the
+last two attempts it wrote for one PR on the *same head* all finished empty
+in `jobs.jsonl`, the candidate is skipped with reason `empty-yield` and the
+tick reports it in `skipped` rather than launching a third identical
+attempt. A moved head is different work and recovers; a missing ledger
+entry, an unmeasured, productive or merged outcome, or outcome evidence
+older than seven days each fail open.
+
+The same empty-streak rule guards relaunch at the dispatcher: see
+[`contrib/mac/README.md`](../contrib/mac/README.md) for launch-precheck
+code 14.
+
 ### Stage delegation (bottleneck-only)
 
 Router/leader policy: frontier lanes plan and verify; cheap lanes implement;
@@ -270,3 +299,28 @@ is executed by the planner. The planner does not install or change host scripts.
 ## Find repeated router jobs
 
 Run `phm queue dedupe --json` to preview repeated READY jobs in the local router queue. Add `--apply` to mark repeats `SUPERSEDED-BY-<first id>`, or `--file <path>` to inspect another router queue. The first READY or CLAIMED line wins. Matching uses the repository, first named target file, and either normalized acceptance text or the same quoted acceptance phrase. Lines missing evidence are reported as unknown. This is a partial, text-based check; review quoted matches for different intended outcomes.
+
+### Suggest work for an idle lane
+
+Run `phm fleet supply --lane codex-personal --n 5 --json` from the Phantom
+checkout. It suggests READY lines from open TODO issues, unchecked root
+`ROADMAP.md` items and `// TODO(owner)` source comments. It reads the local
+`~/.ashlr-runs/queue/router-queue.md` to skip matching title hashes; it does
+not add lines to the queue. The JSON reports the requested count, emitted
+lines, gap and each source's status. An unavailable source is `unknown`;
+if the queue is unavailable no lines are emitted because deduplication cannot
+be verified. GitHub reads are public and may be unavailable or incomplete.
+Without `--lane` and `--n`, `fleet supply` retains its batch activity report.
+
+### Generator yield
+
+Run `phm queue yield --since 24h --json` to compare generators from the local
+`metrics/jobs.jsonl` ledger. The Metrics screen shows the same 24-hour report.
+Events in the window are joined by job ID. An explicit `src` takes precedence
+over the job ID pattern; unrecognized sources are `unknown`. PRs and merges
+count jobs with recorded PRs and merges. Empty rate uses jobs with a recorded
+empty result. Median diff lines uses recorded `diff_lines`. Tokens per merged PR
+is the sum of recorded job tokens divided by merged PRs; it is unknown if any
+job in the group lacks a token total or no PR merged. Missing measurements are
+unknown, and malformed lines are skipped and counted. The report describes
+recorded evidence, not necessarily every job or PR.

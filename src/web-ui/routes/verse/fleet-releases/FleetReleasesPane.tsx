@@ -14,6 +14,7 @@ import { compareReleaseTags, releaseGapText, releaseNotesUrl } from '../sections
 import { UpdateNowButton } from '../sections/UpdateNowButton.js';
 import { updateStatusQuery } from '../sections/update-status-queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { releaseCadence } from './release-cadence-model.js';
 import { dailyCiLine } from './daily-ci-line.js';
 import { orderRepos, releaseLabel, releasePrMergeBlocker, runTone, safeRepoHref } from './fleet-releases-model.js';
 import { ciRunsQuery, opsReleasesQuery, postReleasePrMerge } from './fleet-releases-queries.js';
@@ -104,12 +105,14 @@ export function FleetReleasesPane({ visible }: PaneProps) {
       const prNotes = pr && 'notes' in pr ? pr.notes : prRepoRow?.notes ?? [];
       const tone = run ? runTone(run) : 'neutral';
       const mergeNotice = mergeNotices[name];
+      const cadence = releaseCadence({ installedVersion: installed, newestVersion: repo.gh?.latestRelease?.tag ?? repo.latestTag, newestPublishedAt: repo.gh?.latestRelease?.publishedAt, now });
       const updateLine = phantom ? postMergeLine(mergeNotice, updateStatus, now) : null;
       const candidate = readyVersion(updateStatus);
       return <li key={`${repo.repo}:${index}`} className={styles.row}>
         <div>{href ? <a href={href} target="_blank" rel="noopener noreferrer">{repo.repo}</a> : <span>{repo.repo}</span>}</div>
         <div>Version: {repo.version ?? '—'} · Tag: {repo.latestTag ?? '—'}</div>
         {phantom && <div>{installedReleaseLine(installed, repo.gh?.latestRelease?.tag ?? repo.latestTag)}</div>}
+        {phantom && <div role="status" aria-label="Release cadence" className={styles.headline} data-tone={cadence.tone === 'neutral' ? undefined : cadence.tone}>{cadence.line}</div>}
         {pr && <div className={styles.prBlock}>
           <div className={styles.headline} data-tone={pr.tone}>{'href' in pr && pr.href ? <a href={pr.href} target="_blank" rel="noopener noreferrer">{pr.headline}</a> : pr.headline}</div>
           {line && <><div role="status" className={styles.headline} data-tone={guard?.blockMerge ? 'warn' : undefined}>{line}</div>{prNumber !== undefined && <Button size="sm" onClick={() => openInterjectDialog({ prefill: releaseTellPrefill(repo.repo, prNumber, line) })}>Tell the leaders</Button>}</>}
