@@ -86,6 +86,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'context-run': () => import('./fleet-context-run.js'),
   'context-watch': () => import('./fleet-context-watch.js'),
   'cos': () => import('./fleet-cos.js'),
+  'cos-decline': () => import('./fleet-cos-decline.js'),
   'cos-reconcile': () => import('./fleet-cos-reconcile.js'),
   'cos-work': () => import('./fleet-cos-work.js'),
   'daily-reds': () => import('./fleet-daily-reds.js'),
