@@ -1,6 +1,6 @@
 {
   "name": "@ashlr/phantom",
-  "version": "3.30.28",
+  "version": "3.30.29",
   "description": "Phantom by AshlrAI: the open-source engineering agent workbench for CLI accounts, local models and autonomous fleets.",
   "publishConfig": {
     "access": "public"
@@ -62,6 +62,7 @@
     "docs/SELF-HOSTING.md",
     "docs/AUTOMATIC-OUTCOMES.md",
     "docs/VERSE.md",
+    "docs/lanes.md",
     "docs/PROACTIVE-COORDINATION.md",
     "docs/PROACTIVE-COORDINATION-BACKLOG.md",
     "docs/AUTONOMY-SETUP.md",

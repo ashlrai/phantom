@@ -32,8 +32,9 @@ requires a fresh status, a loaded service and a successful last exit; exit 1
 includes stale or missing status, an unloaded service, a failed exit, or unknown
 evidence. A loaded service without a recorded exit is unknown, not a success.
 The check reads launchd without changing it or printing its raw output. Follow
-the diagnostic in the report to inspect the service or its logs. The existing
-`phm fleet health-age` checks freshness alone. Add `--log` to count error,
+the diagnostic in the report to inspect the service or its logs. Add `--diagnose` to run the status, service and log checks together and list
+one repair per problem; it only reads, so it never repeats the guardian's own
+fixups. The existing `phm fleet health-age` checks freshness alone. Add `--log` to count error,
 failed, failure and exception lines in the last 24 hours of the bounded 256 KiB
 log tail. The JSON `log` object reports source availability, recent errors and
 error lines with missing, invalid or future timestamps separately; it never
