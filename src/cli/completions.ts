@@ -69,6 +69,8 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // Changed-file tests and the fleet event feed.
   'test', 'check', 'feed',
   'worklog', 'library',
+  // Dispatched by index.ts but missing here (caught by cli-registry-drift).
+  'constitution', 'wb',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
