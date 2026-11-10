@@ -34,7 +34,7 @@ const FILTERS: readonly { id: FeedFilter; label: string }[] = [
   { id: 'owner', label: 'Mason' },
   { id: 'update', label: 'Updates' },
 ];
-const KIND_LABEL: Record<FeedKind, string> = { leader: 'Leader', alert: 'Alert', merge: 'Merge', fleet: 'Fleet', owner: 'Mason', update: 'Update' };
+const KIND_LABEL: Record<FeedKind, string> = { leader: 'Leader', alert: 'Alert', merge: 'Merge', fleet: 'Fleet', owner: 'Mason', update: 'Update', bus: 'Bus', teammate: 'Dot', comms: 'Comms' };
 const SHOWN_MAX = 50;
 const POLL_MS = 30_000;
 
