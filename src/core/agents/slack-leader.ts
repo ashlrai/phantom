@@ -13,7 +13,22 @@ import { parseCommsConfirmation, type DeliverResult, type TeamIdentity } from '.
 import { slackEventToBus, type SlackInboundDecision, type SlackIngestContext } from './slack-inbound.js';
 import type { LeaderChannelAdapter } from './leader-channel-adapter.js';
 
-export interface SlackLeaderOptions extends LeaderRuntimeOptions { call?: SlackCall; signal?: AbortSignal }
+/** Owner "status" auto-answer, injected by the socket wiring: this module is
+ * inside the Tier-1 closure, so it cannot import the status composer itself. */
+export interface SlackStatusReply {
+  /** Exact short owner asks only; anything else stays with the Leader. */
+  ask(text: string): boolean;
+  /** Compose the answer for a gated ask. */
+  compose(runsDir: string, now: Date): Promise<string>;
+  /** Posted when compose throws or misses its deadline. */
+  readonly fallback: string;
+}
+
+export interface SlackLeaderOptions extends LeaderRuntimeOptions {
+  call?: SlackCall; signal?: AbortSignal;
+  /** Test seam for the owner "status" auto-answer; unset leaves asks to the Leader. */
+  statusReply?: SlackStatusReply;
+}
 
 /** Compose the existing authenticated Slack mapper, durable Leader routing and
  * journaled same-thread delivery without putting credentials in the adapter. */
@@ -62,12 +77,27 @@ export async function ingestSlackLeaderEnvelope(message: BusEnvelope, options: S
         user.is_bot !== false || user.is_app_user === true || user.deleted === true || user.is_stranger === true ||
         user.is_restricted === true || user.is_ultra_restricted === true || options.signal?.aborted) return { owned: true, durable: false };
   } catch { return { owned: true, durable: false }; }
-  const network = createLeaderNetwork({ ...sources, runsDir: options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), busRoot: options.busRoot, now: options.now, appendInbox: leaderInboxAppender(options) });
+  const runsDir = options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  const network = createLeaderNetwork({ ...sources, runsDir, busRoot: options.busRoot, now: options.now, appendInbox: leaderInboxAppender(options),
+    deliver: (owner, reply) => deliverSlackLeaderMessage(owner, reply, options) });
   const result = await network.ingest({ message: {
     // A namespaced 128-bit receipt avoids secret-value heuristics on raw digests.
     ...checked.value, id: `slack-owner-${createHash('sha256').update(message.id).digest('hex').slice(0, 32)}`, from: 'mason',
     sender: { agent_id: 'mason', vendor: 'phantom', human: true, team: true },
   }, verifiedSender: identity, receivedAt: (options.now ?? Date.now)() });
+  const statusReply = options.statusReply, body = result.envelope?.body;
+  if (result.status === 'accepted' && result.requestId && statusReply &&
+      body && typeof body === 'object' && !Array.isArray(body) &&
+      typeof body.text === 'string' && statusReply.ask(body.text)) {
+    // Detached so the socket ack is not held behind the brief read or the post;
+    // the reply goes through the same journaled route and never alters ingest.
+    const requestId = result.requestId, compose = statusReply.compose.bind(statusReply);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    void Promise.race([compose(runsDir, new Date((options.now ?? Date.now)())),
+      new Promise<string>(resolve => { timer = setTimeout(() => resolve(statusReply.fallback), 10_000); })])
+      .catch(() => statusReply.fallback).finally(() => clearTimeout(timer))
+      .then(text => network.reply(requestId, text)).catch(() => {});
+  }
   const durable = result.status === 'accepted' || result.status === 'duplicate' || result.recorded === true;
   // Same unified owner thread the other channels feed; the Slack thread ref rides along so the reply goes back to it.
   if (durable) {
