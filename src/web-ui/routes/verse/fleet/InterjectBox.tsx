@@ -12,6 +12,7 @@ import { interjectOutcome } from './interject-outcome-model.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { inboxTailQuery, postInterjection, readInboxAck } from './interject-queries.js';
 import { mintInterjectRequestId } from './interject-request.js';
+import { interjectImageChip, interjectImageError, readInterjectImage, type InterjectImage } from './interject-image.js';
 import { ackState, ackText, loadDraft, loadPendingAck, newestLeaderPassMs, parseInboxAt, saveDraft, savePendingAck, sourceChip } from './interject-ack-model.js';
 import { loadHistory, pushHistory, recall } from './interject-history.js';
 import { askCosTask, isCosRouteAbsent } from './cos-task-client.js';
@@ -67,6 +68,23 @@ export function InterjectBox() {
   const [asTask, setAsTask] = useState(false);
   const [taskId, setTaskId] = useState<string | null>(lastCosTask);
   const [taskAck, setTaskAck] = useState('');
+  const [image, setImage] = useState<InterjectImage | null>(null);
+  function attachImage(file: File | null | undefined) {
+    if (!file) return;
+    const error = interjectImageError(file);
+    if (error !== null) { setMessage(error); return; }
+    setMessage('');
+    void readInterjectImage(file).then(attached => {
+      // A changed attachment is a different composed message: it earns its own
+      // request id so a retry never collapses two sends into one.
+      requestKey.current = null;
+      setImage(attached);
+    }, () => setMessage('The screenshot could not be read.'));
+  }
+  function removeImage() {
+    requestKey.current = null;
+    setImage(null);
+  }
   function updateDraft(text: string) {
     setDraft(text);
     // An emptied box ends the composition: a retype — even of the same words —
@@ -136,9 +154,10 @@ export function InterjectBox() {
       setTaskAck('');
       const text = draft.trim();
       if (requestKey.current?.text !== text) requestKey.current = { text, id: mintInterjectRequestId() };
-      const result = await postInterjection(text, requestKey.current.id);
+      const result = await postInterjection(text, requestKey.current.id, image?.data);
       try { pushHistory(window.localStorage, text); } catch { /* Storage can be unavailable. */ }
       cursor.current = null;
+      setImage(null);
       updateDraft('');
       setSent(result.at);
       if (result.id) {
@@ -166,12 +185,21 @@ export function InterjectBox() {
     (entryTime(b.at) ?? Date.parse(b.at)) - (entryTime(a.at) ?? Date.parse(a.at))).slice(0, 5);
   return <section className={styles.panel} aria-labelledby={`${id}-title`}>
     <h2 id={`${id}-title`}>Tell the leaders</h2>
-    <form onSubmit={event => { event.preventDefault(); void send(); }}>
+    <form onSubmit={event => { event.preventDefault(); void send(); }}
+      onDragOver={event => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }}
+      onDrop={event => {
+        const file = event.dataTransfer.files?.[0];
+        if (file) { event.preventDefault(); attachImage(file); }
+      }}>
       <label htmlFor={id}>Prompt, thought or interjection</label>
       <textarea ref={textarea} id={id} rows={3} maxLength={6_000} value={draft} disabled={sending}
         placeholder="Tell the leaders. Lands in MASON-INBOX.md; the next leader pass reads it."
         onChange={event => { updateDraft(event.target.value); setCaret(event.target.selectionStart); setMentionClosed(false); setSelected(0); }}
         onSelect={event => setCaret(event.currentTarget.selectionStart)}
+        onPaste={event => {
+          const file = Array.from(event.clipboardData?.items ?? []).find(item => item.kind === 'file')?.getAsFile();
+          if (file) { event.preventDefault(); attachImage(file); }
+        }}
         aria-controls={query !== null && matches.length ? `${id}-mentions` : undefined}
         aria-activedescendant={query !== null && matches.length ? `${id}-mention-${Math.min(selected, matches.length - 1)}` : undefined}
         onKeyDown={event => {
@@ -186,7 +214,7 @@ export function InterjectBox() {
           if (event.key === 'Escape' || (event.key === 'Enter' && (event.metaKey || event.ctrlKey))) {
             event.preventDefault();
             event.stopPropagation();
-            if (event.key === 'Escape') { cursor.current = null; updateDraft(''); }
+            if (event.key === 'Escape') { cursor.current = null; setImage(null); updateDraft(''); }
             else void send();
           } else if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') &&
             !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
@@ -207,6 +235,7 @@ export function InterjectBox() {
         }} />
       {query !== null && matches.length ? <div id={`${id}-mentions`} role="listbox" aria-label="Running jobs">{matches.map((job, index) => <div id={`${id}-mention-${index}`} role="option" aria-selected={index === Math.min(selected, matches.length - 1)} key={`${job.job}-${index}`} onMouseDown={event => event.preventDefault()} onClick={() => chooseMention(job.job)}>{job.job} · {job.lane ?? 'Unknown lane'}</div>)}</div> : null}
       {targets.length ? <div>{targets.map(target => <Tag key={target} size="sm">Aimed at {target}</Tag>)}</div> : null}
+      {image ? <div><Button type="button" variant="subtle" size="sm" onClick={removeImage}>{interjectImageChip(image)} ×</Button></div> : null}
       <label><input type="checkbox" checked={asTask} disabled={sending} onChange={event => setAsTask(event.target.checked)} /> Run as task</label>
       <div className={styles.row}>
         <span>⌘↵ or Ctrl↵ send · ↑ history · Esc clear</span>
