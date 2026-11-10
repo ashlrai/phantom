@@ -397,6 +397,47 @@ it does not apply the action. Targets are confined to that queue or
 `~/.ashlr/vision/leader/`, without symlink components. Audit failures fail the
 command; no executor consumes these intents automatically.
 
+### Drive routine offload
+
+`phm fleet drive [--once] [--root <directory>] [--json]` refreshes local
+`~/.ashlr/drive/relay-status.json`. `--root <directory>` selects another state
+directory; `--json` also prints the report, including the same top three
+actionable levers ranked by affected count with stable ties. A quiet fleet can
+have fewer than three levers. It reuses the fleet digest for proposal activity
+and needs no model, transport or new credentials.
+
+The relay consumes a versioned local file contract owned by the driver:
+
+- `status.json`: `{ "schemaVersion": 1, "observedAt": "<ISO timestamp>",
+  "main": "green|red|unknown", "lanes": [{ "id": "mac", "queued": 0,
+  "running": 0, "paused": false }] }`. The main value is one enum member.
+- `jobs.jsonl`: one job transition per line with `id`, `state`
+  (`queued|running|completed|failed`), `updatedAt` (ISO timestamp), and optional
+  `prUrl`. Last record per job wins. An empty journal is valid.
+
+Snapshots older than 15 minutes or more than one minute ahead are reported
+as unhealthy. Running jobs without an update for 30 minutes are stuck. Idle,
+unpaused lanes produce restock findings. These routines only report findings;
+Grok Bot retains orchestration decisions and the existing dispatch gates.
+Only exact HTTPS GitHub pull request URLs enter the deduplicated PR list.
+Malformed or missing inputs cause exit 1 without refreshing the previous report.
+
+Masbot owns delivery. It reads `generatedAt`, `health`, `levers`, `prLinks`
+and `fleet` from the atomically replaced, owner-only relay file. It must refuse
+stale reports, deduplicate deliveries, and never treat an old report as a fresh
+health check. This command sends no messages. Grok Bot should stop polling
+these routine inputs once the local job and Masbot relay are commissioned.
+
+To restock a Mac, run `phm fleet drive jobs --bin /absolute/path/to/phm` with an
+optional absolute `--root`. It emits a JSON array containing a launchd label
+and plist whose program runs `fleet drive --once`. Save the `plist` value as
+`~/Library/LaunchAgents/ai.ashlr.drive-routines.plist`, then load it with
+`launchctl bootstrap gui/$(id -u) <absolute-plist-path>`. The single recurring
+Mac job refreshes health, levers and PR links every five minutes and at load.
+Generation does not install or activate jobs. Use an installed `phm` executable
+that resolves Node on launchd's PATH. When the driver snapshot producer lands,
+adapt it to this contract; the report and relay need no transport changes.
+
 ### Stop and pause
 
 | Control | Effect |

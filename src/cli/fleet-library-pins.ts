@@ -1,10 +1,8 @@
 import { addPin, LibraryPinError, listPins, removePin, type LibraryPinsOptions } from '../core/fleet/library-pins.js';
 
-const usage = [
-  'Usage: ashlr fleet library-pins [--json]',
-  '       ashlr fleet library-pins add --kind memory|bus|file|note --ref <ref> --title <title> [--json]',
-  '       ashlr fleet library-pins remove <id> [--json]',
-].join('\n');
+const usage = `Usage: ashlr fleet library-pins [--json]
+       ashlr fleet library-pins add --kind memory|bus|file|note --ref <ref> --title <title> [--json]
+       ashlr fleet library-pins remove <id> [--json]`;
 
 export async function cmdFleetLibraryPins(args: string[], options: LibraryPinsOptions = {}): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) { console.log(usage); return 0; }
