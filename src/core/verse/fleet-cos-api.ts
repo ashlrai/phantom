@@ -28,6 +28,7 @@ export const VERSE_FLEET_COS_RECONCILE_PATH = '/api/verse/fleet/cos/reconcile';
 // are never identity, and the channel is never parsed from the body.
 const VERSE_COS_OPERATOR_ID = 'verse-cos-operator';
 const COS_INBOX_SOURCE = 'Phantom desktop task';
+const COS_INBOX_MOBILE_SOURCE = 'Phantom mobile task';
 const COS_TEXT_MAX = 16_000;
 const JOB_ID = /^cos-[a-f0-9]{32}$/;
 const WIRE_DIGEST = /^sha256:[a-f0-9]{24}$/;
@@ -70,7 +71,9 @@ export function createFleetCosApi(deps: FleetCosApiDeps = {}): ApiModule {
     backgroundQueue: true,
     receiptStore: createLocalChannelDedupeStore(runsDir),
     // The order trail stays MASON-INBOX.md, the same sink the inbox route uses.
-    write: (envelope) => appendInboxEntry(envelope.body, { source: COS_INBOX_SOURCE, runsDir, now: () => new Date(now()) }),
+    write: (envelope) => appendInboxEntry(envelope.body, {
+      source: envelope.channel === 'mobile' ? COS_INBOX_MOBILE_SOURCE : COS_INBOX_SOURCE, runsDir, now: () => new Date(now()),
+    }),
   });
 
   async function ask(req: Parameters<ApiModule>[1], res: Parameters<ApiModule>[2]): Promise<void> {
@@ -81,7 +84,15 @@ export function createFleetCosApi(deps: FleetCosApiDeps = {}): ApiModule {
       sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid task body' }); return;
     }
     try {
-      const result = await receive({ channel: 'desktop', verifiedSenderId: VERSE_COS_OPERATOR_ID, body: text });
+      // x-ashlr-channel is trusted only because this route sits on loopback
+      // behind the mutation token — the same authority that fixes the
+      // operator id above. The remote gateway strips and re-serializes every
+      // forwarded request and stamps the header itself, so a remote client
+      // cannot mint the mobile assertion through the gateway; a direct
+      // loopback caller still needs the token to reach this line at all.
+      // Any other value, or none, keeps the desktop mapping.
+      const mobile = req.headers['x-ashlr-channel'] === 'mobile';
+      const result = await receive({ channel: mobile ? 'mobile' : 'desktop', verifiedSenderId: VERSE_COS_OPERATOR_ID, body: text });
       if (result.ok) {
         const duplicate = result.ack.status === 'duplicate';
         sendJson(res, duplicate ? 200 : 201, { v: 1, id: cosJobId(result.ack.dedupeKey),
@@ -166,8 +177,8 @@ export function createFleetCosApi(deps: FleetCosApiDeps = {}): ApiModule {
         const deliver = deps.deliverEmail ?? (await import('../comms/email-drop-bridge.js')).deliverEmailCosResult;
         const dir = outboxDir;
         send = () => deliver(id, full, { runsDir, outboxDir: dir });
-      } else if (channel === 'desktop' || channel === 'cli') {
-        // The reply is already on screen; claiming the delivery records the approval.
+      } else if (channel === 'desktop' || channel === 'cli' || channel === 'mobile') {
+        // The reply is read on screen through status; claiming the delivery records the approval.
         send = () => deliverCosResult(id, full, async () => {}, runsDir);
       } else {
         sendJson(res, 422, { code: 'COS_NO_TRANSPORT', channel }); return;

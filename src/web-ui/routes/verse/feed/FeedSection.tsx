@@ -40,12 +40,15 @@ import { updateStatusQuery } from '../sections/update-status-queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { useActivity } from '../shell/useActivity.js';
 import { buildFeed, feedPaneLabel, filterFeed, type FeedFilter, type FeedKind } from './feed-model.js';
+import { FeedAskButton } from './FeedAskButton.js';
+import { releaseFeedItems } from './release-feed-items.js';
 import { isDismissed, useFeedDismissals } from './feed-dismiss-store.js';
 import { countNew, firstOlderIndex, useFeedSeen } from './feed-seen-store.js';
 import styles from './feed.module.css';
 
 const unifiedInboxQuery: QueryDef<unknown> = { key: 'verse-fleet-comms-unified-inbox', fetch: signal => apiGet(UNIFIED_INBOX_PATH, signal) };
 const inboxPlansQuery: QueryDef<unknown> = { key: 'verse-feed-gmail-archive-plan', fetch: signal => apiGet('/api/verse/comms/gmail-triage/archive-plan', signal) };
+const releaseStagesQuery: QueryDef<unknown> = { key: 'verse-release-stages', fetch: signal => apiGet('/api/verse/release/stages', signal) };
 const sharedFeedQuery: QueryDef<FeedReport> = { key: 'shared-feed', fetch: signal => apiGet<FeedReport>('/api/feed', signal) };
 
 const FILTERS: readonly { id: FeedFilter; label: string }[] = [
@@ -81,6 +84,7 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
   const refetchInboxPlans = useRefetch(inboxPlansQuery);
   usePollWhileVisible(refetchInboxPlans, 300_000, { enabled: visible });
   const commsRead = useQuery(commsStatusQuery, { enabled: visible, freshMs: 60_000 });
+  const releaseStages = useQuery(releaseStagesQuery, { enabled: visible, freshMs: 300_000 });
   const nativeUpdates = useDesktopUpdates();
   const activity = useActivity();
   const refetchShared = useRefetch(sharedFeedQuery);
@@ -144,7 +148,9 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
     comms,
     inboxPlans: inboxPlans.error ? undefined : inboxPlans.data,
   }), [shared.data, leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data, inboxView, teammate?.error, comms, inboxPlans.data, inboxPlans.error]);
-  const filtered = filterFeed(feed, filter);
+  const releaseItems = useMemo(() => releaseFeedItems(releaseStages.data, nativeUpdates, new Date().toISOString()), [releaseStages.data, nativeUpdates]);
+  const combinedFeed = useMemo(() => [...feed, ...releaseItems].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 100), [feed, releaseItems]);
+  const filtered = filterFeed(combinedFeed, filter);
   const shown = filtered.filter(item => !isDismissed(item, dismissedMap));
   const dismissed = filtered.filter(item => isDismissed(item, dismissedMap));
   const newCount = countNew(shown, seenAt);
@@ -154,7 +160,7 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
   // so the count stays while he reads and is gone next time.
   const newestAt = useRef<string | undefined>(undefined);
   // Only while visible: the render that hides the Feed must not replace what it last showed.
-  if (visible) newestAt.current = feed.find(item => !isDismissed(item, dismissedMap))?.at;
+  if (visible) newestAt.current = combinedFeed.find(item => !isDismissed(item, dismissedMap))?.at;
   useEffect(() => {
     if (!visible) return undefined;
     return () => { if (newestAt.current) markSeen(newestAt.current); };
@@ -197,7 +203,7 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
         {newCount > 0 && i === olderAt ? <li role="separator" aria-label="Earlier" className={styles.divider}>Earlier</li> : null}
         <li data-kind={item.kind}>
         <Card title={<JobRefs text={item.title} onOpenJob={openJob} />} caption={<time dateTime={item.at} title={new Date(item.at).toLocaleString('en-US')}>{formatRelative(item.at, now)}</time>}
-          actions={<span className={styles.kind} data-kind={item.kind}>{item.label ?? KIND_LABEL[item.kind]}</span>}>
+          actions={<><FeedAskButton item={item} /><span className={styles.kind} data-kind={item.kind}>{item.label ?? KIND_LABEL[item.kind]}</span></>}>
           {item.body ? <p className={styles.body}><JobRefs text={item.body} onOpenJob={openJob} /></p> : null}
           {/* Dot's texts keep their older "Open inbox" wording; every other owned item says where it goes. */}
           {item.kind === 'teammate' && item.pane ? <button type="button" className={styles.link} onClick={() => openPane(item.pane!)}>Open inbox</button>
