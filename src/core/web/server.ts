@@ -1,3 +1,5 @@
+import { storeWbToken } from './wb-action-api.js';
+import { homedir } from 'node:os';
 /**
  * core/web/server.ts — M14 local web dashboard HTTP server.
  *
@@ -255,6 +257,13 @@ export async function startServer(
     throw error;
   });
 
+  try {
+    if (opts.allowDispatch) await storeWbToken(join(homedir(), '.ashlr', 'wb'), token);
+  } catch (error) {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await readProjections?.close();
+    throw error;
+  }
   const url = `http://127.0.0.1:${port}`;
 
   // Deferred beyond successful listener/handle creation: no network or heavy
