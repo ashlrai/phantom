@@ -44,6 +44,10 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  */
 export const REAL_IO_TEST_FILES = [
   'test/agent-tools-registry.test.ts', // Spawns a real child to read the tool registry.
+  'test/constitution-recutnonphxold60.test.ts', // Spawns the CLI through tsx to prove `constitution` dispatches.
+  'test/phantom-discovery.test.ts', // Compiles the generated client with a real tsc child.
+  'test/fleet-coordination.test.ts', // Spawns tsx children that contend for the coordination lock.
+  'test/release-articles.test.ts', // Real temporary Git repositories driven through git children.
   'test/real-home-child.test.ts', // Spawns a Node child to prove the test preload keeps KILL and enrollment inside HOME.
   'test/release-train.test.ts', // Spawns node --experimental-strip-types against the release-train guard.
   'test/main-blame.test.ts', // Spawns git bisect children against a real temporary repository.
@@ -780,6 +784,7 @@ export const REAL_IO_TEST_FILES = [
   'test/collision-free-edits.test.ts', // real temp git repos: init/commit/branch/merge fixtures for the concurrent-fragment merge cases
   'test/improve-reverted.test.ts', // real temp git repo fixture (init/commit/revert) for the revert-detection case
   'test/desktop-nightly-build.test.ts', // real `node <script> --check` and `tar` children plus an on-disk .app.tar.gz fixture
+  'test/build-outputs.test.ts', // real `git check-ignore` / `git ls-files` children per declared build output
   'test/fleet-bus-work-claims-01.test.ts', // spawnSync runs fleet-bus-work-claims as a real child
   'test/fleet-context-run-solu3.test.ts', // execFileSync runs fleet-context-run-solu3 example as a real child
   'test/fleet-dirty-union-preview-nov01.test.ts', // spawnSync drives a real git fixture (dirty union preview)
