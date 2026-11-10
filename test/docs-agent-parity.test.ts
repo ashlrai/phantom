@@ -55,6 +55,11 @@ describe('docs/llms.txt completeness', () => {
     expect(missing).toEqual([]);
   });
 
+  it('is generated from the curated source and docs pages', () => {
+    const source = readFileSync(join(DOCS, 'llms-source.txt'), 'utf8');
+    expect(readFileSync(join(DOCS, 'llms.txt'), 'utf8')).toBe(renderLlmsTxt(source, listDocsPages(DOCS)));
+  });
+
   it('is exactly what the generator produces', () => {
     expect(() => execFileSync('node', ['scripts/generate-docs-llms.mjs', '--check'], { cwd: ROOT, stdio: 'pipe' })).not.toThrow();
   });

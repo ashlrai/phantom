@@ -15,7 +15,7 @@ export function AgentEdges() {
   const result = useQuery(query, { freshMs: 15_000 });
   const data = result.data;
   return <section className={styles.edges} aria-label="Agent messages"><h3>Agent messages</h3>
-    <p>Lines show live messages on the local agent bus. Names and providers are reported labels.</p>
-    {!data && !result.error ? <p>Loading agent messages…</p> : result.error || data?.source !== 'available' ? <p role="status">Agent messages unknown.</p> : data.edges?.length ? <ul>{data.edges.map((edge, index) => <li key={`${edge.from.address}:${edge.to.address}:${index}`}><Endpoint endpoint={edge.from} /><span className={styles.line} aria-label="messaged">→</span><Endpoint endpoint={edge.to} /><small>{edge.messages} {edge.messages === 1 ? 'message' : 'messages'}</small></li>)}</ul> : <p>No live agent messages.</p>}
+    <p>Lines show live messages on the local agent bus. Line thickness reflects messages in the last hour. Names and providers are reported labels.</p>
+    {!data && !result.error ? <p>Loading agent messages…</p> : result.error || data?.source !== 'available' ? <p role="status">Agent messages unknown.</p> : data.edges?.length ? <ul>{data.edges.map((edge, index) => <li key={`${edge.from.address}:${edge.to.address}:${index}`}><Endpoint endpoint={edge.from} /><span className={styles.line} style={{ borderBottomWidth: Math.min(8, 1 + edge.messagesLastHour) }} aria-label="messaged">→</span><Endpoint endpoint={edge.to} /><small>{edge.messagesLastHour} in the last hour</small></li>)}</ul> : <p>No live agent messages.</p>}
   </section>;
 }

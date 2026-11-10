@@ -329,12 +329,27 @@ test('fallback feed errors, oversized bytes, malformed JSON and version drift ar
   await assert.rejects(f.run, /stocked updater feed unavailable/);
 });
 
-test('a tag ref is accepted only when its commit is an ancestor of master', () => {
+test('a tag ref is accepted only when its peeled commit is this sha and an ancestor of master', () => {
   const sha = 'a'.repeat(40);
+  const annotation = 'b'.repeat(40);
+  const read = (path) => {
+    if (path.endsWith('/git/ref/tags/v3.30.28')) return { ref: 'refs/tags/v3.30.28', object: { type: 'commit', sha } };
+    if (path.endsWith('/compare/' + sha + '...master')) return { status: 'ahead' };
+    throw new Error(path);
+  };
   acceptReleaseRef({ ref: 'refs/heads/master', sha, repository, read: () => { throw new Error('master does not compare'); } });
-  acceptReleaseRef({ ref: 'refs/tags/v3.30.28', sha, repository, read: () => ({ status: 'ahead' }) });
-  assert.throws(() => acceptReleaseRef({ ref: 'refs/tags/v3.30.28', sha, repository, read: () => ({ status: 'diverged' }) }), /ancestor/);
-  assert.throws(() => acceptReleaseRef({ ref: 'refs/heads/feature', sha, repository, read: () => ({ status: 'ahead' }) }), /stable tag/);
+  acceptReleaseRef({ ref: 'refs/tags/v3.30.28', sha, repository, read });
+  const annotated = (path) => {
+    if (path.endsWith('/git/ref/tags/v3.30.28')) return { ref: 'refs/tags/v3.30.28', object: { type: 'tag', sha: annotation } };
+    if (path.endsWith('/git/tags/' + annotation)) return { sha: annotation, object: { type: 'commit', sha } };
+    if (path.endsWith('/compare/' + sha + '...master')) return { status: 'ahead' };
+    throw new Error(path);
+  };
+  acceptReleaseRef({ ref: 'refs/tags/v3.30.28', sha, repository, read: annotated });
+  assert.throws(() => acceptReleaseRef({ ref: 'refs/tags/v3.30.28', sha, repository, read: (path) => path.includes('/git/ref/') ? { ref: 'refs/tags/v3.30.28', object: { type: 'commit', sha: annotation } } : { status: 'ahead' } }), /tag sha mismatches/);
+  assert.throws(() => acceptReleaseRef({ ref: 'refs/tags/v3.30.28', sha, repository, read: (path) => path.includes('/git/ref/') ? { ref: 'refs/tags/v3.30.28', object: { type: 'commit', sha } } : { status: 'diverged' } }), /ancestor/);
+  assert.throws(() => acceptReleaseRef({ ref: 'refs/tags/nightly', sha, repository, read }), /stable tag/);
+  assert.throws(() => acceptReleaseRef({ ref: 'refs/heads/v3.30.28', sha, repository, read }), /stable tag/);
 });
 
 test('stocked feed selection uses the highest semver, not list order or a newer timestamp on an older release', () => {

@@ -128,7 +128,7 @@ export const HEALTH: VerseHealthResponse = {
 
 export const BUDGET = {
   mode: 'balanced',
-  seats: {},
+  seats: { 'claude-a': { seatId: 'claude-a', enabled: true, reservePercent: 40, maxSessionWindowPercent: 70 } },
   updatedAt: '2026-09-24T10:00:00.000Z',
   headroom: [
     { seatId: 'claude-a', sessionUsedPercent: 15, weeklyUsedPercent: 85, bindingWindow: 'weekly', autonomyHeadroomPercent: 0, resetAt: null, eligibleForAutonomy: false, reasons: ['Past the ceiling.'] },

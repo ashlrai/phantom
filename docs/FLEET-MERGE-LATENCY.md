@@ -28,3 +28,38 @@ blocker or eligibility. It is unknown unless a blocker is observed at enqueue,
 all transitions are ordered, and eligibility is observed once. An open blocked
 PR therefore has an unknown total until eligibility is observed. These durations
 are based on observed transitions and do not establish the cause between samples.
+
+`queue_state_time` rolls the same spans up across all timelines: per-PR median,
+90th percentile and slowest seconds queued before eligibility, eligible before
+merge, still queued now, and blocked on each reason. An unmeasurable span counts
+`missing`, never zero; in a measurable breakdown an absent reason is a measured
+zero. The plain report summarizes it in one `Time in each queue state` line.
+
+## Bounded retry for transient queue failures
+
+An open PR whose recorded auto-merge request was dropped shows under
+`queue_retries`. The drop is `retryable` when the last timed transition is
+`auto_merge_disabled` after a timed `auto_merge_enabled` and the newest
+recorded blocker in that episode is `queue`; every other cause stays with its
+owner (a `conflict` blocker belongs to the recut path) and a drop with no
+queue blocker is `unattributed` for a person to judge. Each PR gets at most
+three distinct `retry_requested` events ever — identical replayed lines count
+once — and a retry recorded at or after the drop marks the episode
+`already-requested`. These are observations, not merge authority.
+
+`phm fleet merge-retry [--events file] [--apply] [--json]` turns `retryable`
+rows into action: dry-run prints `request-auto-merge`, and `--apply` re-arms
+ordinary head-pinned GitHub auto-merge (`gh pr merge --auto
+--match-head-commit`), records one `retry_requested` event, and caps each run
+at three requests. Required checks, reviews and the merge queue remain
+enforced; the PR merges only when they pass on their own. Rows report
+`already-armed`, `conflict`, `draft`, `held`, `capped` or `failed`, and
+`needs-person` rows carry the classifier reason. `retry_requested` is also a
+`--record` type so another writer can share the same bound.
+
+A failed submission appends one `retry_failed` event instead — transient
+failures retry on a later run without spending a retry, while three distinct
+failed submissions mark the drop `request-failed` and stop automatic retries
+for good. A failed state read records nothing: it was never a submission
+attempt and retries for free. `retry_failed` lines dedupe like retries — a
+replayed line counts once — and `retry_failed` is a `--record` type too.

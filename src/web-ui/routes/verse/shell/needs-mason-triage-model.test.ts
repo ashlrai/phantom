@@ -5,17 +5,17 @@ import { AUTO_RESOLVE_REPLY, batchResolveSummary, groupNeedsMasonRows, hardLimit
 it('sends a billing line to hardLimit and a plain line to auto', () => {
   const grouped = groupNeedsMasonRows([
     { id: 'a', text: 'Approve the fake $40 plan change' },
-    { id: 'b', text: 'Pick a fake color for the dock' },
+    { id: 'b', text: 'unpark RQ-FAKE-1' },
   ]);
   expect(grouped.hardLimit).toHaveLength(1);
   expect(grouped.hardLimit[0]).toMatchObject({ id: 'a', limit: 'money', reason: 'money or billing' });
-  expect(grouped.auto).toEqual([{ id: 'b', text: 'Pick a fake color for the dock' }]);
+  expect(grouped.auto).toEqual([{ id: 'b', text: 'unpark RQ-FAKE-1' }]);
 });
 
 it('keeps order within each group', () => {
   const grouped = groupNeedsMasonRows([
-    { id: '1', text: 'Pick a fake color' }, { id: '2', text: 'Delete the fake folder' },
-    { id: '3', text: 'Pick a fake shape' }, { id: '4', text: 'Email the fake list' },
+    { id: '1', text: 'unpark RQ-FAKE-1' }, { id: '2', text: 'Delete the fake folder' },
+    { id: '3', text: 'unpark RQ-FAKE-2' }, { id: '4', text: 'Email the fake list' },
   ]);
   expect(grouped.auto.map(row => row.id)).toEqual(['1', '3']);
   expect(grouped.hardLimit.map(row => row.id)).toEqual(['2', '4']);

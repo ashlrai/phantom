@@ -62,6 +62,15 @@ function authorityCfg(entries: Array<{ engine: string; model: string }>): AshlrC
 // ---------------------------------------------------------------------------
 
 describe('M320 catalog entries', () => {
+  it('registers Fable 5.2 for lookup without admitting it to automatic routing', () => {
+    const model = KNOWN_MODELS.find((entry) => entry.id === 'claude:claude-fable-5-2');
+    expect(model).toMatchObject({ engine: 'claude', apiModelId: 'claude-fable-5-2',
+      explicitOnly: true, seatRouted: true, qualityRank: 4 });
+    expect(canonicalModelTag('claude', 'claude-fable-5-2')).toBe('claude-fable-5-2');
+    expect(catalogFor('claude')).not.toContain(model);
+    expect(pickModel({ engine: 'claude', preferStrong: true, excludeIds: new Set() })).not.toBe(model);
+  });
+
   it('claude:sonnet-5 exists with frontier-class shape', () => {
     const m = KNOWN_MODELS.find((e) => e.id === 'claude:sonnet-5');
     expect(m).toBeDefined();

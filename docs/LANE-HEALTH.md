@@ -41,3 +41,20 @@ phase and how long it has been there, instead of silently hanging. Timeouts:
 queued 30m, producing 45m, verifying 20m, judging 10m, landing 10m, reverting
 10m. `parked` and `watching` wait on the world by design and are never stuck.
 A run with no readable phase start is not judged.
+
+## Memory shed plan
+
+Run `phm fleet shed-plan` for the next suggested action, or add `--json` for
+`fleet.shed-plan.v1`. The read-only plan uses `~/.ashlr-runs/queue/status.json`:
+free memory at or below 30% is high pressure, matching the dispatcher's fallback.
+Swap is shown as context; it has no independent threshold in this plan. Active
+local lanes come before cloud lanes, ordered within each kind by 24-hour merged
+PRs divided by lane RAM (`lanes.<lane>.ram_gb`, total GiB). Missing measurements
+are `null`, and unmeasured lanes sort after measured lanes, with lane name as a
+deterministic tie-break. Idle lanes are kept open in the recommendation.
+Unknown lane kinds and missing running counts are not selected for shedding.
+
+The current dispatcher does not publish lane RAM or consume this plan. Until
+those gaps are closed, the order within a kind may be unmeasured and this
+command neither changes admission nor proves a lane can admit work. Check memory
+again after any operator action.
