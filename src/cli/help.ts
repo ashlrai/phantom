@@ -156,6 +156,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'schemaVersion 1; unavailable scores are null',
   },
   {
+    usage: 'phm wb locus [--json]',
+    description: 'Read Locus custody health through its credential-free fleet feed. Missing or unsupported Locus is unknown.',
+    safety: 'read',
+    jsonShape: '{v:1, state, reason, custody, sessionOk}',
+  },
+  {
     usage: 'phm companions [--json] [--root <install-root>] [--bin-dir <dir>]',
     description: 'Separate companion executable inventory using scrubbed version/help probes only; installed is not bundled or runtime-ready. Exit 0 reports inventory, including missing/incompatible tools; 2 bad usage.',
     safety: 'read',

@@ -2228,6 +2228,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'wb': {
+        const { cmdWb } = await import('./wb.js');
+        process.exitCode = await cmdWb(rest);
+        break;
+      }
+
       case 'companions': {
         const cmdCompanions = await loadCompanionsCmd();
         process.exitCode = await cmdCompanions(rest);

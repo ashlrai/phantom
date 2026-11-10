@@ -1392,3 +1392,10 @@ when Tauri ships a release on the newer gtk-rs line.
 
 If a Linux desktop build is ever produced from this directory, re-check this
 first — the reasoning above stops holding the moment the Linux target is real.
+
+The read-only Locus custody projection is available at `GET /api/wb/v1/locus`
+behind the workbench read-session boundary and as `phm wb locus --json`. Both
+read `locus fleet-feed --json` and report pinned, unpinned, or unhealthy
+session health. If Locus or that subcommand is unavailable, the result is
+unknown; malformed or unsupported feed data is also unknown. No credentials,
+identity details, or CLI error output are included.
