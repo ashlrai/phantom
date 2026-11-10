@@ -5,8 +5,8 @@ import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cmdRelease } from '../src/cli/release.js';
 import {
-  admitCiRun, allowReleasePrDispatch, assertReleaseWrite, buildTrain, cappedCadenceMinutes, docsCarriersSynced, ENQUEUE_PULL_REQUEST,
-  judgeRequiredChecks, releaseHeadBranch, TRAIN_JOB_CHECK_NAME,
+  admitCiRun, allowReleasePrDispatch, assertReleaseWrite, buildTrain, cadenceMinutesFromEnv, cappedCadenceMinutes, DEFAULT_CADENCE_MINUTES, docsCarriersSynced, ENQUEUE_PULL_REQUEST,
+  judgeRequiredChecks, releaseHeadBranch, releaseWriteUsesAppToken, TRAIN_JOB_CHECK_NAME,
   enqueueReleasePullRequest, hostedTrainGate, isReleasePleaseCommit,
   successorTagConflict, refusePublishIfSuccessorConflict,
   markWritesApplied, mergeStageDone, observeTrain, pauseReleaseTrain, readSentinel, releaseGithubCall, releaseKillDecision, selectUpdaterFeed,
@@ -121,7 +121,7 @@ describe('release train', () => {
     expect(ancestor.writes.some((write) => write.path.includes('release-please.yml'))).toBe(false);
     const current = buildTrain(observation({ masterSha: head, aheadBy: 0 }));
     expect(current.exitCode).toBe(0);
-    expect(current.writes.find((write) => write.path.endsWith('/ci.yml/dispatches'))?.body).toEqual({ ref: 'master', inputs: { release_gate: 'true' } });
+    expect(current.writes.find((write) => write.path.endsWith('/ci.yml/dispatches'))?.body).toEqual({ ref: 'v3.30.27', inputs: { release_gate: 'true' } });
     const red = buildTrain(observation({ candidateCi: 'red' }));
     expect(red).toMatchObject({ exitCode: 1, writes: [], state: { reason: 'candidate-ci-red' } });
     const diverged = buildTrain(observation({
@@ -204,6 +204,14 @@ describe('release train', () => {
     expect(cappedCadenceMinutes(60)).toBe(60);
     expect(cappedCadenceMinutes(120)).toBe(120);
     expect(() => cappedCadenceMinutes(0)).toThrow(/cadence/);
+    expect(DEFAULT_CADENCE_MINUTES).toBe(5);
+    expect(cadenceMinutesFromEnv(undefined)).toBe(5);
+    expect(cadenceMinutesFromEnv('')).toBe(5);
+    expect(cadenceMinutesFromEnv('5')).toBe(5);
+    expect(cadenceMinutesFromEnv('1')).toBe(1);
+    expect(cadenceMinutesFromEnv('60')).toBe(60);
+    expect(() => cadenceMinutesFromEnv('0')).toThrow(/cadence/);
+    expect(() => cadenceMinutesFromEnv('4.5')).toThrow(/cadence/);
     const early = buildTrain(observation({
       lastTaggedAt: '2026-11-09T05:30:00.000Z',
       openReleasePr: { number: 9, nodeId: 'PR_kwDO_test', version: '3.30.28', headSha: pr, headRef: 'release-please--master', mergeable: 'MERGEABLE', state: 'OPEN', queued: false },
@@ -388,11 +396,11 @@ describe('release train', () => {
 
   it('posts workflow dispatch JSON on stdin with gh api --input -', () => {
     const ci = buildTrain(observation({ masterSha: head })).writes.find((write) => write.path.endsWith('/ci.yml/dispatches'));
-    const ciBody = { ref: 'master', inputs: { release_gate: 'true' } };
+    const ciBody = { ref: 'v3.30.27', inputs: { release_gate: 'true' } };
     expect(ci).toEqual({ method: 'POST', path: 'repos/ashlrai/phantom/actions/workflows/ci.yml/dispatches', body: ciBody });
     expect(releaseGithubCall('POST', 'repos/ashlrai/phantom/actions/workflows/ci.yml/dispatches', ciBody)).toEqual({
       args: ['api', '--hostname', 'github.com', '--method', 'POST', '--input', '-', 'repos/ashlrai/phantom/actions/workflows/ci.yml/dispatches'],
-      input: '{"ref":"master","inputs":{"release_gate":"true"}}',
+      input: '{"ref":"v3.30.27","inputs":{"release_gate":"true"}}',
     });
     const attestBody = {
       ref: 'v3.30.27',
@@ -426,6 +434,16 @@ describe('release train', () => {
       args: ['api', '--hostname', 'github.com', '--method', 'GET', 'repos/ashlrai/phantom'],
     });
     for (const body of [ciBody, attestBody, npmBody]) expect(JSON.stringify(body)).not.toContain('null');
+  });
+
+  it('sends workflow dispatches with GITHUB_TOKEN, not the App token', () => {
+    expect(releaseWriteUsesAppToken('POST', 'repos/ashlrai/phantom/actions/workflows/ci.yml/dispatches')).toBe(false);
+    expect(releaseWriteUsesAppToken('POST', 'repos/ashlrai/phantom/actions/workflows/attest-ci-build.yml/dispatches')).toBe(false);
+    expect(releaseWriteUsesAppToken('POST', 'repos/ashlrai/phantom/actions/workflows/publish-canonical-npm.yml/dispatches')).toBe(false);
+    expect(releaseWriteUsesAppToken('POST', 'repos/ashlrai/phantom/actions/workflows/release-please.yml/dispatches')).toBe(false);
+    expect(releaseWriteUsesAppToken('PATCH', 'repos/ashlrai/phantom/releases/1')).toBe(true);
+    expect(releaseWriteUsesAppToken('POST', 'graphql')).toBe(true);
+    expect(releaseWriteUsesAppToken('GET', 'repos/ashlrai/phantom/commits/master')).toBe(false);
   });
 
   it('rejects writes outside the sanctioned release paths', () => {
