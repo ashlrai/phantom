@@ -1,11 +1,13 @@
 import { isAbsolute } from 'node:path';
+import { cmdAgents } from './agents.js';
 import { busV2ContractSummary } from '../core/agents/bus-v2-schema.js';
 import { listChannelRegistry, probeRegisteredChannel } from '../core/agents/channel-registry.js';
 import { CHANNEL_IDS, type ChannelId } from '../core/agents/channel-policy.js';
 import { readFleetEdges } from '../core/fleet/fleet-edges.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const HELP = `ashlr agents edges [--json]
+const HELP = `ashlr agents list|show <id>|validate <id>|versions <id> [--json]
+ashlr agents edges [--json]
 ashlr agents bus contract [--json]
 ashlr agents bus channels list [--json]
 ashlr agents bus channels test <id> [--root <abs>] [--json]
@@ -28,6 +30,7 @@ export async function runAgentsCli(
     err(json ? JSON.stringify({ error: 'invalid-argument' }) : HELP);
     return 2;
   }
+  if (['list', 'show', 'validate', 'versions'].includes(args[0]!)) return cmdAgents(args, out, err);
   let root: string | undefined;
   const rest: string[] = [];
   for (let i = 0; i < args.length; i += 1) {
