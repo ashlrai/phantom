@@ -3,3 +3,7 @@
 .danger { color: var(--status-danger-fg); background: var(--status-danger-bg); border: 1px solid var(--status-danger-solid); border-radius: 6px; padding: 4px 8px; }
 .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
 .dimmed { opacity: 0.25; }
+/* Corner chip on a run node whose elapsed passed its lane median. Absolute so
+   the fixed 52px node button layout is unchanged; anchors to the node's
+   translated <g> (a transform containing block), i.e. the node tile corner. */
+.overrun { position: absolute; top: 1px; right: 3px; padding: 0 5px; font-size: 10px; line-height: 1.3; border-radius: 6px; color: var(--status-warning-fg); background: var(--status-warning-bg); border: 1px solid var(--status-warning-solid); }

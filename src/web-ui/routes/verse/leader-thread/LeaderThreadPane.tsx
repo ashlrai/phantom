@@ -15,6 +15,7 @@ import { ActionStatus, useSurfaceActions } from '../command/actions.js';
 import { fleetLiveQuery, leaderQuery } from '../command/surface-data.js';
 import { openDockPane } from '../dock/dock-store.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
+import { laneTargetsQuery } from '../ops/lane-targets-queries.js';
 import { agentBusMissing, agentBusPageQuery, agentBusStatusQuery } from '../fleet-bus/agent-bus-queries.js';
 import { JobRefs } from '../fleet/JobRefs.js';
 import { DirectivesStrip } from '../leader/DirectivesStrip.js';
@@ -28,6 +29,7 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import leaderStyles from '../leader/leader.module.css';
 import styles from './leader-thread.module.css';
 import { busRepliesToMason, mergeByTime, type BusReply } from './thread-bus-replies.js';
+import { appendLaneLog, laneEventItems, laneTransitions, loadLaneLog, type LaneEvent } from './thread-lane-events.js';
 import { fleetInbox, fleetOutbox, lineChannel, lineSourceLabel, mergeThread } from './thread-merge-model.js';
 import { canSend, scrollTargetIndex, trimReply } from './thread-reply-model.js';
 import { stepMatch, threadMatches, type ThreadFindItem } from './thread-find-model.js';
@@ -55,6 +57,11 @@ const fleetRunsQuery: QueryDef<unknown> = {
 const NO_MESSAGES: LeaderThreadMessage[] = [];
 /** A thread scrolled within this of its end counts as "at the end" (new lines follow it down). */
 const STICK_PX = 96;
+
+/** localStorage can be denied (private mode); the lane-event log just stays session-only then. */
+function laneEventStorage(): Storage | null {
+  try { return window.localStorage; } catch { return null; }
+}
 
 /** One merged line: a system note stays the centered quiet line; the leaders' rows keep the conversation's look; Mason's get a left rule and a source chip. */
 function LineView({ line, match, current }: { line: LabeledLine; match?: boolean; current?: boolean }) {
@@ -109,6 +116,7 @@ function BusReplyView({ row, now, match, current }: { row: BusReply; now: number
 export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const thread = useQuery(leaderThreadQuery, { enabled: visible, freshMs: 5_000 });
   const runs = useQuery(fleetRunsQuery, { enabled: visible, freshMs: 5_000 });
+  const laneTargets = useQuery(laneTargetsQuery, { enabled: visible, freshMs: 5_000 });
   const journal = useQuery(leaderJournalQuery, { enabled: visible, freshMs: 30_000 });
   const leader = useQuery(leaderQuery, { enabled: visible, freshMs: 30_000 });
   const fleet = useQuery(fleetLiveQuery, { enabled: visible, freshMs: 30_000 });
@@ -121,6 +129,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const busPage = useQuery(busPageQuery, { enabled: visible && busStatus.data?.source === 'available' && !agentBusMissing(), freshMs: 10_000 });
   const refetchThread = useRefetch(leaderThreadQuery);
   const refetchRuns = useRefetch(fleetRunsQuery);
+  const refetchTargets = useRefetch(laneTargetsQuery);
   const refetchOwner = useRefetch(ownerThreadQuery);
   const refetchJournal = useRefetch(leaderJournalQuery);
   const refetchLeader = useRefetch(leaderQuery);
@@ -150,6 +159,8 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const [addingDirective, setAddingDirective] = useState(false);
   /** Composer command results; local to this session, never sent as messages. */
   const [commandLines, setCommandLines] = useState<LabeledLine[]>([]);
+  /** Lane held/resumed events, seeded from the persisted log so a reload keeps them. */
+  const [laneEvents, setLaneEvents] = useState<LaneEvent[]>(() => loadLaneLog(laneEventStorage()).events);
   // Inbox wall times, the merge and the day labels want a coarse tick.
   const now = useNow(10_000);
 
@@ -164,18 +175,34 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     return subscribeLeaderDraft(take);
   }, []);
 
-  usePollWhileVisible(() => { refetchThread(); refetchRuns(); refetchOwner(); }, 5_000, { enabled: visible });
+  usePollWhileVisible(() => { refetchThread(); refetchRuns(); refetchTargets(); refetchOwner(); }, 5_000, { enabled: visible });
   usePollWhileVisible(refetchDirectives, 30_000, { enabled: visible });
   usePollWhileVisible(() => { refetchJournal(); refetchLeader(); refetchFleet(); refetchOffice(); }, 30_000, { enabled: visible });
   usePollWhileVisible(() => {
     if (!agentBusMissing()) { refetchBusStatus(); if (busStatus.data?.source === 'available') refetchBusPage(); }
   }, 10_000, { enabled: visible && !agentBusMissing() });
 
+  // Each lane-targets read is diffed against the stored snapshot; the first
+  // ever read records a baseline and emits nothing.
+  useEffect(() => {
+    const data = laneTargets.data;
+    if (!data) return;
+    const storage = laneEventStorage();
+    const events = laneTransitions(loadLaneLog(storage).snapshot, data.lanes, Date.now());
+    const next = appendLaneLog(storage, data.lanes, events);
+    setLaneEvents(prev => {
+      const last = next.events[next.events.length - 1];
+      const prevLast = prev[prev.length - 1];
+      return prev.length === next.events.length && prevLast?.lane === last?.lane && prevLast?.kind === last?.kind && prevLast?.atMs === last?.atMs ? prev : next.events;
+    });
+  }, [laneTargets.data]);
+
   const read = thread.data;
   const messages = read?.value?.messages ?? NO_MESSAGES;
   const inbox = useMemo(() => fleetInbox(runs.data), [runs.data]);
   const outbox = useMemo(() => fleetOutbox(runs.data), [runs.data]);
-  const merged = useMemo(() => mergeThread(messages, inbox, now, runs.data, outbox), [messages, inbox, outbox, now, runs.data]);
+  const laneItems = useMemo(() => laneEventItems(laneEvents), [laneEvents]);
+  const merged = useMemo(() => mergeThread(messages, inbox, now, runs.data, outbox, laneItems), [messages, inbox, outbox, laneItems, now, runs.data]);
   const busRows = useMemo(() => busRepliesToMason(busPage.data?.messages ?? [], now, outbox), [busPage.data, now, outbox]);
   const ownerRead = owner.data ?? NO_OWNER_THREAD;
   const ownerLines = useMemo(() => ownerRead.paused ? [] : ownerThreadLines(ownerRead.lines, merged.lines), [ownerRead, merged.lines]);
