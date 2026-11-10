@@ -22,7 +22,7 @@ import {
   parseDevinDailyAcu,
   refreshUsageSensors,
 } from '../src/core/usage/sensor-refresh.js';
-import { pullOfficialUsageSensors } from '../src/core/usage/sensor-pull.js';
+import { pullOfficialUsageSensors, refreshStalePersonalUsage } from '../src/core/usage/sensor-pull.js';
 
 const NOW = Date.parse('2026-11-09T12:00:00.000Z');
 const fixture = (name: string): unknown =>
@@ -147,6 +147,27 @@ describe('official usage fixtures', () => {
 });
 
 describe('official refresh refuses operator credential homes', () => {
+  it('refreshes a stale personal reading once, and keeps failures unknown', async () => {
+    const stale = reading({ lane: 'codex-personal', source: 'codex-app-server', unit: 'percent', limit: 100,
+      staleAfter: new Date(NOW).toISOString() });
+    const readCodex = vi.fn(async () => ({ pctUsed: 42, resetAt: '2026-11-16T12:00:00.000Z' }));
+    const options = { nowMs: NOW, operatorHome: '/home/operator', codexPersonalHome: '/srv/personal', readCodex };
+    const refreshed = await refreshStalePersonalUsage([stale], options);
+    expect(readCodex).toHaveBeenCalledWith('/srv/personal');
+    expect(presentUsageSensors(refreshed, NOW).lanes.find(row => row.lane === 'codex-personal'))
+      .toMatchObject({ status: 'fresh', used: 42, reason: null });
+    await refreshStalePersonalUsage(refreshed, options);
+    expect(readCodex).toHaveBeenCalledTimes(1);
+    const failed = await refreshStalePersonalUsage([stale], { ...options, readCodex: async () => { throw new Error(); } });
+    expect(presentUsageSensors(failed, NOW).lanes.find(row => row.lane === 'codex-personal'))
+      .toMatchObject({ status: 'unknown', headroom: null, reason: 'Usage reading is stale' });
+  });
+
+  it('reports a missing Claude source as unknown with a reason', () => {
+    const claude = presentUsageSensors([], NOW).lanes.find(row => row.lane === 'claude-max');
+    expect(claude).toMatchObject({ status: 'unknown', used: null, reason: 'No usage source available' });
+    expect(JSON.stringify(claude)).not.toContain('ask Mason');
+  });
   it('does not call Codex when the home is the operator .codex directory', async () => {
     const readCodex = vi.fn(async () => ({ pctUsed: 1, resetAt: '2026-11-16T12:00:00.000Z' }));
     const readings = await pullOfficialUsageSensors({

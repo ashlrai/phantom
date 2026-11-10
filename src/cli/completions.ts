@@ -66,12 +66,16 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'disk', 'app', 'radar',
   // Standing disk maintenance: plan/apply reclaim classes (RQ-DISKMAINT).
   'disk-maint',
+  // Changed-file tests and the fleet event feed.
+  'test', 'check', 'feed',
+  'worklog', 'library',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
 const SUBCOMMANDS: Record<string, string[]> = {
   graph: ['nodes', 'edges', 'status', '--json', '--help'],
   sweep: ['report'],
+  check: ['--base', '--json', '--help'],
   companions: ['--json', '--root', '--bin-dir', '--secrets-bin', '--locus-bin', '--lexicon-bin', '--help'],
   disk: ['--wt-dir', '--runs-dir', '--tmp-dir', '--json', '--help'],
   'disk-maint': ['schedule', '--apply', '--json', '--only', '--allow', '--compress-days', '--prune-days', '--help'],
@@ -97,13 +101,13 @@ const SUBCOMMANDS: Record<string, string[]> = {
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
   queue: ['stats', 'report', 'add', 'claim', 'done', 'block', 'list', 'import', 'export', '--help'],
   benchmark: ['run', '--compare-reports', 'help'],
-  metrics: ['summary', 'dashboard', 'record', 'recommend', 'ingest', 'levers', 'idle', 'help'],
+  metrics: ['summary', 'dashboard', 'record', 'recommend', 'ingest', 'levers', 'leverage-mix', 'idle', 'help'],
   config: ['get', 'set', 'path', 'effective'],
   mcp: ['list', 'doctor', 'install', 'ecosystem', 'run'],
   run: ['show'],
   spec: ['new', 'list', 'show', 'refine'],
   swarm: ['show', 'verify', 'approve', 'rollback'],
-  models: ['list', 'pull', 'start', 'inventory'],
+  models: ['list', 'pull', 'start', 'inventory', 'routing', 'verify'],
   gh: ['pr', 'issue', 'ci'],
   vercel: ['ls', 'logs'],
   website: ['status', 'auto', 'pause', 'off', 'request', 'run', 'prepare', 'commission'],
@@ -126,7 +130,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'status', 'session', 'watch', 'events', 'lanes', 'lane-slots', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
     'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue', 'outcomes', 'backlog', 'lane-slots',
-    'deploy-plan', 'job-latency', 'eval-report', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'pr-hygiene', 'merge-batch', 'rebase-plan', 'bus', 'usage', 'research-digest',
+    'shed-plan', 'deploy-plan', 'job-latency', 'supply', 'eval-report', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'pr-hygiene', 'merge-batch', 'rebase-plan', 'bus', 'usage', 'research-digest',
   ],
   bus: ['thread', 'task', '--peer', '--root', '--queue-root', '--json', '--help'],
   estates: ['--repo', '--json', '--help'],

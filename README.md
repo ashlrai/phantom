@@ -10,7 +10,7 @@ Agents start here. Humans can use the same commands.
 [Full agent reference](https://github.com/ashlrai/phantom/blob/master/docs/llms-full.txt) ·
 [Onboarding](https://phm.dev/connect) ·
 [User guide](docs/VERSE.md) ·
-[Repository tools](tools/README.md) ·
+[Repository tools](https://github.com/ashlrai/phantom/blob/master/tools/README.md) ·
 [GitHub](https://github.com/ashlrai/phantom)
 
 [![CI](https://github.com/ashlrai/phantom/actions/workflows/ci.yml/badge.svg)](https://github.com/ashlrai/phantom/actions/workflows/ci.yml)
@@ -28,7 +28,7 @@ phm --version
 phm docs --agent --json
 ```
 
-This source tree targets version 3.30.28; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.30; check canonical release availability and exact matching assets before installation.
 
 Patch release PRs are evaluated every 30 minutes when master has new green CI.
 `RELEASE_CADENCE_MINUTES` configures the minimum interval; the release PR keeps
@@ -126,7 +126,7 @@ Details: [self-hosting](docs/SELF-HOSTING.md#connect-claude-code-and-codex-over-
 | ![Accounts and local models](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-local.svg) | **Your accounts.** Claude Code, Codex, Grok, Devin, API credits, and tool-capable local models. Vendor CLIs manage their own sign-in; the optional Devin API connection stores its key in the macOS Keychain. |
 | ![Review](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-review.svg) | **A record you can review.** Chats, diffs, checkpoints, and fleet runs stay in the console. Fleet telemetry and Show Mode display recent recorded activity. A finished run is not proof the outcome shipped. |
 | ![Review](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-review.svg) | **Fleet inspection.** Read-only reports cover [worktrees](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-VERBS.md), [merge batches](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-BATCH.md), and post-merge outcomes. The [unified inbox](https://github.com/ashlrai/phantom/blob/master/docs/CHANNELS.md#unified-inbox) collects pending local items without acting on them. |
-| ![Review](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-review.svg) | **One owner thread.** The [Leader](docs/LEADER.md) routes work, and [one owner thread](docs/OWNER-THREAD.md) joins desktop, Telegram, email, iMessage, and Slack. The [Comms agent](docs/COMMS-AGENT.md) triages mail under an enforced send policy. [Growth charts](docs/GROWTH.md) and a [phone watch view](docs/REMOTE-PHONE.md) read the same local records. |
+| ![Review](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-review.svg) | **One owner thread.** The [Leader](docs/LEADER.md) routes work, and [one owner thread](https://github.com/ashlrai/phantom/blob/master/docs/OWNER-THREAD.md) joins desktop, Telegram, email, iMessage, and Slack. The [Comms agent](https://github.com/ashlrai/phantom/blob/master/docs/COMMS-AGENT.md) triages mail under an enforced send policy. [Growth charts](https://github.com/ashlrai/phantom/blob/master/docs/GROWTH.md) and a [phone watch view](docs/REMOTE-PHONE.md) read the same local records. |
 
 **Work with me** is the chat. **Work for me** is the fleet. Saving a fleet outcome does not start work and does not widen permission. The fleet runs only in enrolled repositories under a signed grant. Autonomy ships **dormant** and is macOS-only.
 
@@ -239,13 +239,25 @@ Every top-level `phm` command, grouped by what it is for. `ashlr` runs the same 
 | Run | `run`, `runs`, `eval`, `skills`, `models`, `local-runtime` |
 | Swarm | `spec`, `swarm`, `swarms` |
 | Memory | `recall`, `learn`, `genome`, `memory` |
-| Knowledge | `graph`, `ask`, `knowledge`, `wiki` |
+| Knowledge | `graph`, `ask`, `knowledge`, `wiki`, `library` |
 | Autonomy | `route`, `metrics`, `trail`, `issues`, `select`, `pool`, `benchmark`, `enroll`, `backlog`, `inbox`, `daemon`, `drive`, `worker`, `prs`, `fleet`, `bus`, `recovery`, `manager`, `vision`, `goal`, `loop`, `conductor-permit`, `roadmap`, `reflect`, `health`, `goals`, `sweep`, `digest`, `release-articles`, `release`, `drafts`, `comms`, `comms-agent`, `imessage`, `connectors`, `channels`, `director`, `best-of-n`, `invent`, `universe`, `website`, `authority`, `org`, `leader`, `mirror`, `cloud`, `playbook`, `jev`, `devin`, `openai-agents`, `agents`, `automations` |
-| Observability | `chain`, `router`, `context`, `claim`, `router-calibration`, `jobs`, `lanes`, `queue`, `incident`, `daily-fix`, `pulse`, `pulse-export`, `pulse-test`, `telemetry`, `audit`, `repos`, `receipt`, `radar`, `observe`, `growth`, `world`, `resource`, `resources`, `capacity`, `estates`, `signals`, `friction`, `budget`, `ci-metrics`, `main`, `usage` |
+| Observability | `feed`, `worklog`, `chain`, `router`, `context`, `claim`, `router-calibration`, `jobs`, `lanes`, `queue`, `incident`, `daily-fix`, `pulse`, `pulse-export`, `pulse-test`, `telemetry`, `audit`, `repos`, `receipt`, `radar`, `observe`, `growth`, `world`, `resource`, `resources`, `capacity`, `estates`, `signals`, `friction`, `budget`, `ci-metrics`, `main`, `usage` |
 | Integrations | `autopilot`, `improve`, `steward`, `team`, `companions`, `mcp`, `checkpoint`, `sessions`, `gh`, `vercel`, `wire`, `notify`, `stack`, `ecosystem` |
-| Safety | `worktrees`, `disk`, `disk-maint`, `node`, `sandbox`, `seams`, `verify`, `engineering-receipt`, `verify-safety`, `verify-pr`, `preflight`, `onboard`, `demo` |
+| Safety | `worktrees`, `disk`, `disk-maint`, `node`, `sandbox`, `seams`, `test`, `verify`, `engineering-receipt`, `verify-safety`, `verify-pr`, `preflight`, `onboard`, `demo` |
 | Web | `top`, `tui`, `dash`, `dashboard`, `serve`, `verse` |
 | Scaffold | `new`, `ship` |
+
+### Common CLI tasks
+
+| Task | Example |
+| --- | --- |
+| Summarize local metrics. | `phm metrics summary --json` |
+| Check the release train. | `phm release status --json` |
+| Preview cleanup of finished worktrees. | `phm worktrees prune --dry-run --json` |
+| Explain dispatcher routes. | `phm route explain --json` |
+| Show usage by engine. | `phm usage` |
+
+See the [CLI reference](https://github.com/ashlrai/phantom/blob/master/docs/cli.md) for all commands.
 
 ## The Phantom ecosystem
 
@@ -271,6 +283,7 @@ The [ecosystem map](https://github.com/ashlrai/phantom/blob/master/docs/ECOSYSTE
 | [docs/QUICKSTART.md](docs/QUICKSTART.md) | First local session |
 | [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md) | Install, MCP, upgrade, uninstall |
 | [docs/VERSE.md](docs/VERSE.md) | Console guide |
+| [docs/lanes.md](docs/lanes.md) | What each fleet lane runs on and is best at |
 | [docs/README.md](docs/README.md) | Full doc map |
 | [docs/HUB-REFERENCE.md](https://github.com/ashlrai/phantom/blob/master/docs/HUB-REFERENCE.md) | Kernel reference: Universe, resource pools, and the legacy fleet |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |

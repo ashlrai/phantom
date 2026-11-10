@@ -9,6 +9,11 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+// The hosted workflow executes this file directly with Node's type stripping.
+function readEnvironmentCredential(envKey: string): string | undefined {
+  return process.env[envKey];
+}
+
 export const TRAIN_SCHEMA = 'phantom.release-train.v1';
 export const HOURLY_MINUTES = 60;
 export const REPOSITORY = 'ashlrai/phantom';
@@ -28,7 +33,61 @@ const RELEASE_SUBJECT = /^chore\([^)\r\n]+\): release (0|[1-9]\d*)\.(0|[1-9]\d*)
 
 export type KillObservation = 'inactive' | 'active' | 'unknown';
 export type Ancestry = 'ancestor' | 'identical' | 'diverged' | 'behind' | 'unknown';
+/** Required GitHub Actions checks on one commit. Missing or unfinished is pending, not green. */
+export type CandidateCi = 'green' | 'red' | 'pending' | 'unknown';
 type StepStatus = 'complete' | 'pending' | 'stopped' | 'hooked';
+const ACTIONS_APP_ID = 15368;
+const RELEASE_TAG = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
+
+/** GitHub `head_branch` is `master` or a bare `vX.Y.Z`. `refs/heads/vX.Y.Z` is a branch. */
+export function releaseHeadBranch(branch: unknown): boolean {
+  if (branch === 'master') return true;
+  if (typeof branch !== 'string' || branch.startsWith('refs/')) return false;
+  return RELEASE_TAG.test(branch);
+}
+
+/** Release-train job name. It must never be a candidate-admission check. */
+export const TRAIN_JOB_CHECK_NAME = 'train';
+
+/**
+ * Judge only the named required Actions checks on this SHA.
+ * The train's own `train` check-runs are ignored even if listed, so a failed
+ * train retry cannot poison the same SHA.
+ * GitHub's check-run listing can include one row per check suite, so a later
+ * failed or skipped Merge Gate from tag or push CI must not override an earlier
+ * successful run of that same required context.
+ * Queued or in-progress required checks are pending, not red.
+ * An empty required set is unknown (fail closed). A required check with only
+ * completed non-success conclusions is red.
+ */
+export function judgeRequiredChecks(
+  required: readonly string[],
+  runs: readonly { name: string; status: string; conclusion: string | null; appId: number }[],
+): CandidateCi {
+  const names = [...new Set(required.filter((name) => name !== TRAIN_JOB_CHECK_NAME))];
+  if (names.length === 0) return 'unknown';
+  let pending = false;
+  for (const name of names) {
+    const matched = runs.filter((run) => run.appId === ACTIONS_APP_ID && run.name === name);
+    if (matched.length === 0) {
+      pending = true;
+      continue;
+    }
+    let seenSuccess = false;
+    let seenIncomplete = false;
+    let seenFailure = false;
+    for (const run of matched) {
+      if (run.status !== 'completed') seenIncomplete = true;
+      else if (run.conclusion === 'success') seenSuccess = true;
+      else seenFailure = true;
+    }
+    if (seenIncomplete) pending = true;
+    else if (seenSuccess) continue;
+    else if (seenFailure) return 'red';
+    else pending = true;
+  }
+  return pending ? 'pending' : 'green';
+}
 
 export interface ReleaseAsset { name: string; created_at: string | null }
 export interface ReleaseRow {
@@ -56,14 +115,15 @@ export interface TrainObservation {
    * It carries that release commit's message when it is an ancestor of the tag
    * and package.json at the tag still carries the tag version.
    */
-  head: { tag: string; sha: string; message: string; releaseMessage?: string; ancestry: Ancestry; committedAt: string | null } | null;
+  head: { tag: string; sha: string; message: string; releaseMessage?: string; ancestry: Ancestry; compareStatus?: string; committedAt: string | null } | null;
+  skippedTags?: { tag: string; reason: string }[];
   releases: ReleaseRow[];
   openReleasePr: { number: number; nodeId: string; version: string; headSha: string; headRef: string; mergeable: string; state: 'OPEN' | 'MERGED'; queued: boolean } | null;
   pullChecks: { pending: number; failing: number } | null;
+  /** Required CI on `head.sha`. Green is the only value that may dispatch a build. */
+  candidateCi: CandidateCi;
   build: { runId: number; attempt: number; artifactId: number; completedAt: string | null } | null;
   buildPending: boolean;
-  /** A failed release build for this SHA completed within the last 6 hours. */
-  buildCooldown: boolean;
   attest: { runId: number; attempt: number; artifactId: number; completedAt: string | null } | null;
   attestPending: boolean;
   audit: { runId: number; attempt: number } | null;
@@ -83,7 +143,9 @@ export interface TrainState {
   tag: string | null;
   sha: string | null;
   next: string | null;
+  advance?: { action: 'advance-from-master'; version: string; sha: string; reason: string };
   superseded: string[];
+  skippedTags?: { tag: string; reason: string }[];
   website: typeof WEBSITE_HOOK;
   steps: Record<string, { status: StepStatus; reason?: string }>;
   stages: Record<string, StageTiming>;
@@ -156,10 +218,10 @@ export function enqueueReleasePullRequest(nodeId: string): ReleaseWrite {
   return { method: 'POST', path: 'graphql', body: { query: ENQUEUE_PULL_REQUEST, variables: { pullRequestId: nodeId } } };
 }
 
-/** Standing approval: at most hourly. Slower values pass through. Faster values rise to 60. */
+/** Configured release cadence in minutes. Valid values are 1 through 1440, with no hourly floor. */
 export function cappedCadenceMinutes(raw: number): number {
   if (!Number.isInteger(raw) || raw < 1 || raw > 1440) throw new Error('invalid release cadence');
-  return Math.max(HOURLY_MINUTES, raw);
+  return raw;
 }
 
 export function nextPatch(version: string): string {
@@ -183,10 +245,29 @@ function compareVersion(a: [number, number, number], b: [number, number, number]
   return 0;
 }
 
+/** True when a tag is at least the next patch of master, the existing strictly-greater gate. */
+export function successorTagConflict(masterVersion: string, tags: readonly { name: string }[]): boolean {
+  const expected = nextPatch(masterVersion);
+  return tags.some((tag) => {
+    const version = versionOf(tag.name);
+    const next = versionOf(`v${expected}`);
+    return version !== null && next !== null && compareVersion(version, next) >= 0;
+  });
+}
+
+export function refusePublishIfSuccessorConflict(writes: ReleaseWrite[], observed: Pick<TrainObservation, 'masterVersion' | 'tags'>): ReleaseWrite[] {
+  if (!successorTagConflict(observed.masterVersion, observed.tags)) return writes;
+  return writes.filter((write) => !write.path.endsWith('/publish-canonical-npm.yml/dispatches'));
+}
+
 export function isReleasePleaseCommit(message: string, version: string): boolean {
   const match = RELEASE_SUBJECT.exec(message);
   if (!match) return false;
   return `${match[1]}.${match[2]}.${match[3]}` === version;
+}
+
+function releaseMismatch(tag: string, message: string): string {
+  return `release_message_mismatch: tag=${tag} first_line=${JSON.stringify(message.split(/\r?\n/, 1)[0] ?? '')} expected=chore(<scope>): release ${tag.slice(1)}`;
 }
 
 export function docsCarriersSynced(message: string, version: string): boolean {
@@ -260,7 +341,7 @@ function emptyStages(mergeAt: string | null): Record<string, StageTiming> {
 export function assertReleaseWrite(write: ReleaseWrite): void {
   if (write.method !== 'PATCH' && write.method !== 'POST') throw new Error('refusing release write');
   const release = /^repos\/ashlrai\/phantom\/releases\/([1-9]\d*)$/;
-  const dispatch = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|publish-canonical-npm|ci)\.yml\/dispatches$/;
+  const dispatch = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|publish-canonical-npm|ci|release-please)\.yml\/dispatches$/;
   if (write.path.includes('/merge') || JSON.stringify(write.body).includes('admin') || JSON.stringify(write.body).includes('bypass')) {
     throw new Error('refusing release write');
   }
@@ -277,6 +358,7 @@ export function assertReleaseWrite(write: ReleaseWrite): void {
   if (dispatch.test(write.path)) {
     const body = write.body as { ref?: string; inputs?: Record<string, string | boolean> };
     if ((body.ref !== 'master' && !/^v\d+\.\d+\.\d+$/.test(body.ref ?? '')) || !body.inputs) throw new Error('refusing workflow dispatch');
+    if (write.path.endsWith('/release-please.yml/dispatches') && (body.ref !== 'master' || Object.keys(body.inputs).length !== 0)) throw new Error('refusing release PR dispatch');
     return;
   }
   throw new Error('refusing release write');
@@ -290,7 +372,7 @@ export function buildTrain(input: TrainObservation): TrainPlan {
     writes: [],
     state: {
       schema: TRAIN_SCHEMA, stopped: true, reason, version: null, tag: null, sha: null, next: null,
-      superseded: [], website: WEBSITE_HOOK,
+      superseded: [], skippedTags: input.skippedTags ?? [], website: WEBSITE_HOOK,
       steps: { kill: { status: 'stopped', reason } },
       stages: emptyStages(null),
     },
@@ -301,6 +383,9 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   let headTag: { name: string; sha: string } | null;
   try { headTag = newestTag(input.tags); }
   catch { return stopped('duplicate-tag'); }
+  if (input.head && input.head.sha === '') return stopped('candidate-refused: tag_sha_empty');
+  const eligibleTags = input.tags.filter((tag) => !input.skippedTags?.some((skipped) => skipped.tag === tag.name));
+  try { headTag = newestTag(eligibleTags); } catch { return stopped('duplicate-tag'); }
   if (!input.head || !headTag || input.head.tag !== headTag.name || input.head.sha !== headTag.sha) {
     return stopped(input.head ? 'candidate-not-newest' : 'no-release-tag');
   }
@@ -308,7 +393,18 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   const admitted = (input.head.ancestry === 'ancestor' || input.head.ancestry === 'identical')
     && input.head.sha !== ''
     && (isReleasePleaseCommit(input.head.message, version) || isReleasePleaseCommit(input.head.releaseMessage ?? '', version));
-  if (!admitted) return stopped('candidate-refused');
+  if (!admitted) {
+    const detail = input.head.ancestry !== 'ancestor' && input.head.ancestry !== 'identical'
+      ? `compare_not_ahead: ${input.head.compareStatus ?? input.head.ancestry}`
+      : releaseMismatch(input.head.tag, input.head.message);
+    return stopped(`candidate-refused: ${detail}`);
+  }
+  // Admission already requires ancestry `ancestor` or `identical`.
+  // compare(candidate...master) status `ahead` is `ancestor` (master contains the tag).
+  // That is the same relationship as compare(master...candidate) status `behind`.
+  // `identical` is master HEAD. Diverged stays refused above. Red CI is refused here.
+  if (input.candidateCi === 'red') return stopped('candidate-ci-red');
+  const publishable = input.candidateCi === 'green';
 
   const marker = supersedeMarker(headTag.name);
   const superseded: string[] = [];
@@ -328,6 +424,7 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   const elapsed = input.lastTaggedAt ? Date.parse(input.now) - Date.parse(input.lastTaggedAt) : Number.NaN;
   const cadenceDue = input.aheadBy > 0 && Number.isFinite(elapsed) && elapsed >= minutes * 60_000;
   const expected = nextPatch(input.masterVersion);
+  if (successorTagConflict(input.masterVersion, input.tags)) return stopped('duplicate_tag');
   const pr = input.openReleasePr;
   const checks = input.pullChecks;
   if (cadenceDue && pr && checks && pr.state === 'OPEN' && !pr.queued && pr.version === expected && pr.headRef.startsWith('release-please--')
@@ -341,24 +438,32 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   const feed = names.includes('latest.json');
   const published = row !== null && row.draft === false && feed;
   const assetAt = latestTime(row?.assets.map((asset) => asset.created_at) ?? []);
-  if (!input.build && !input.buildPending && !input.buildCooldown && !(row?.draft === false && input.npmPublished === true)) {
+  // Always dispatch CI and attest on the tag ref, even when that commit is
+  // also master HEAD. ci.yml has no on.push.tags trigger, and a master ref
+  // hides the build from anyone looking for the tag; both refs peel to the
+  // same SHA when they match, but github.ref_name must be the tag so the
+  // phantom-release-<tag> concurrency group and tag-scoped workflows apply.
+  const ref = headTag.name;
+  if (!input.build && !input.buildPending && publishable && !(row?.draft === false && input.npmPublished === true)) {
     writes.push({
       method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/ci.yml/dispatches`,
       // ci.yml types release_gate as boolean. The dispatch API stores inputs as
       // strings; Actions then exposes inputs.release_gate as a boolean.
-      body: { ref: headTag.name, inputs: { release_gate: 'true' } },
+      body: { ref, inputs: { release_gate: 'true' } },
     });
   }
-  if (input.build && !input.attest && !input.attestPending) {
+  if (input.build && !input.attest && !input.attestPending && publishable) {
     writes.push({
       method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/attest-ci-build.yml/dispatches`,
-      body: { ref: 'master', inputs: {
+      body: { ref, inputs: {
         ci_run_id: String(input.build.runId), ci_run_attempt: String(input.build.attempt),
         candidate_sha: headTag.sha, build_artifact_id: String(input.build.artifactId),
       } },
     });
   }
-  if (input.build && input.attest && input.audit && input.npmPublished === false) {
+  if (input.build && input.attest && input.audit && input.npmPublished === false && publishable) {
+    // Re-run the strictly-greater tag check immediately before publish dispatch.
+    if (successorTagConflict(input.masterVersion, input.tags)) return stopped('duplicate_tag');
     writes.push({
       method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/publish-canonical-npm.yml/dispatches`,
       body: { ref: 'master', inputs: {
@@ -393,7 +498,10 @@ export function buildTrain(input: TrainObservation): TrainPlan {
     admit: { status: 'complete' },
     merge: { status: mergeStageDone(admitted ? 'MERGED' : pr?.state) ? 'complete' : 'pending' },
     supersede: { status: writes.some((write) => write.method === 'PATCH') ? 'pending' : 'complete' },
-    build: { status: input.build ? 'complete' : 'pending' },
+    build: {
+      status: input.build ? 'complete' : 'pending',
+      ...(!input.build && !publishable ? { reason: input.candidateCi === 'pending' ? 'candidate-ci-pending' : 'candidate-ci-unknown' } : {}),
+    },
     attest: { status: input.attest ? 'complete' : 'pending' },
     sign: { status: signed ? 'complete' : 'pending', reason: signed ? 'signed-release-assets' : 'mac-release-autorun' },
     notarize: { status: signed ? 'complete' : 'pending', reason: signed ? 'signed-release-assets' : 'mac-release-autorun' },
@@ -422,7 +530,7 @@ export function buildTrain(input: TrainObservation): TrainPlan {
     writes,
     state: {
       schema: TRAIN_SCHEMA, stopped: false, reason: kill.reason, version, tag: headTag.name, sha: headTag.sha,
-      next, superseded, website: WEBSITE_HOOK, steps, stages,
+      next, superseded, skippedTags: input.skippedTags ?? [], website: WEBSITE_HOOK, steps, stages,
     },
   };
 }
@@ -431,7 +539,7 @@ export function markWritesApplied(state: TrainState): TrainState {
   const steps: TrainState['steps'] = { ...state.steps, supersede: { status: 'complete' } };
   const order = ['build', 'attest', 'sign', 'notarize', 'npm', 'feed', 'docs', 'finalize'];
   const next = order.find((name) => steps[name]?.status === 'pending') ?? null;
-  return { ...state, steps, next };
+  return { ...state, steps, next: state.advance ? 'release-pr' : next };
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -493,10 +601,11 @@ export async function observeTrain(
   if (current !== null) {
     const ref = record(current);
     const object = record(ref?.object);
-    if (ref?.ref !== `refs/tags/v${masterVersion}` || object?.type !== 'commit' || !SHA.test(String(object.sha ?? ''))) throw new Error('current tag is not a commit');
-    const tagged = record(await read(`repos/${REPOSITORY}/commits/${String(object.sha)}`));
+    if (ref?.ref !== `refs/tags/v${masterVersion}` || !object) throw new Error('current tag is not a commit');
+    const tagSha = await peeledTagCommit(read, object);
+    const tagged = record(await read(`repos/${REPOSITORY}/commits/${tagSha}`));
     lastTaggedAt = text(record(record(tagged?.commit)?.committer)?.date);
-    const compare = record(await read(`repos/${REPOSITORY}/compare/${String(object.sha)}...${masterSha}`));
+    const compare = record(await read(`repos/${REPOSITORY}/compare/${tagSha}...${masterSha}`));
     if (compare?.status === 'ahead' && Number.isInteger(compare.ahead_by)) aheadBy = Number(compare.ahead_by);
     else if (compare?.status === 'identical') aheadBy = 0;
     else throw new Error('current tag is not an ancestor of master');
@@ -505,21 +614,38 @@ export async function observeTrain(
   const tags = tagRows.map((row) => {
     const item = record(row);
     return { name: text(item?.name) ?? '', sha: text(record(item?.commit)?.sha) ?? '' };
-  }).filter((tag) => TAG.test(tag.name) && SHA.test(tag.sha));
-  const newest = newestTag(tags);
+  }).filter((tag) => TAG.test(tag.name));
+  // Validate each candidate after the ancestor walk; a newer unrelated tag
+  // must not hide the latest actual release.
+  const skippedTags: { tag: string; reason: string }[] = [];
   let head: TrainObservation['head'] = null;
-  if (newest) {
+  let firstRejected: TrainObservation['head'] = null;
+  const remaining = [...tags];
+  while (remaining.length > 0) {
+    const newest = newestTag(remaining);
+    if (!newest) break;
     const commit = record(await read(`repos/${REPOSITORY}/commits/${newest.sha}`));
     const message = text(record(commit?.commit)?.message) ?? '';
     const committedAt = text(record(record(commit?.commit)?.committer)?.date);
     const compare = record(await read(`repos/${REPOSITORY}/compare/${newest.sha}...${masterSha}`));
     const status = text(compare?.status);
     const ancestry: Ancestry = status === 'ahead' ? 'ancestor' : status === 'identical' ? 'identical' : status === 'diverged' ? 'diverged' : status === 'behind' ? 'behind' : 'unknown';
-    head = { tag: newest.name, sha: newest.sha, message, ancestry, committedAt };
+    const candidate: NonNullable<TrainObservation['head']> = { tag: newest.name, sha: newest.sha, message, ancestry, compareStatus: status ?? 'unknown', committedAt };
     if (!isReleasePleaseCommit(message, newest.name.slice(1))) {
       const releaseMessage = await ancestorReleaseMessage(read, newest);
-      if (releaseMessage) head.releaseMessage = releaseMessage;
+      if (releaseMessage) candidate.releaseMessage = releaseMessage;
     }
+    if (isReleasePleaseCommit(message, newest.name.slice(1)) || candidate.releaseMessage) {
+      head = candidate;
+      break;
+    }
+    firstRejected ??= candidate;
+    skippedTags.push({ tag: newest.name, reason: releaseMismatch(newest.name, message) });
+    remaining.splice(remaining.findIndex((tag) => tag.name === newest.name), 1);
+  }
+  if (!head && firstRejected) {
+    head = firstRejected;
+    skippedTags.splice(skippedTags.findIndex((item) => item.tag === head?.tag), 1);
   }
   const releaseRows = await pages(read, `repos/${REPOSITORY}/releases`);
   const releases: ReleaseRow[] = releaseRows.map((row) => {
@@ -575,22 +701,94 @@ export async function observeTrain(
     pullChecks = { pending, failing };
   }
   const version = head ? head.tag.slice(1) : masterVersion;
-  const found = head ? await successfulRun(read, 'ci.yml', head.sha, head.tag, Date.parse(now)) : { build: null, pending: false, cooldown: false };
+  const found = head ? await successfulRun(read, 'ci.yml', head.sha, head.tag) : { build: null, pending: false };
   const audit = head ? await auditRun(read, head.sha) : null;
   const attested = found.build ? await attestRun(read, found.build.runId, found.build.attempt) : { attest: null, pending: false };
   const npm = await read(`registry/npm/@ashlr/phantom/${version}`);
   const npmRecord = record(npm);
   const docsSynced = head ? docsCarriersSynced(head.message, version) : false;
+  const candidateCi = head ? await requiredCi(read, head.sha) : 'unknown';
   return {
     now, fleetKill: kill.fleet, autorunOff: kill.autorun,
-    masterSha, masterVersion, cadenceMinutes, lastTaggedAt, aheadBy, tags, head, releases,
-    openReleasePr, pullChecks, build: found.build, buildPending: found.pending, buildCooldown: found.cooldown,
+    masterSha, masterVersion, cadenceMinutes, lastTaggedAt, aheadBy, tags, head, skippedTags, releases,
+    openReleasePr, pullChecks, candidateCi, build: found.build, buildPending: found.pending,
     attest: attested.attest, attestPending: attested.pending, audit,
     npmPublished: npm === null ? false : npmRecord?.version === version ? true : null,
     npmAt: text(npmRecord?.time) ?? (npmRecord && record(npmRecord.time)?.[version] ? String(record(npmRecord.time)?.[version]) : null),
     docsSynced,
     feedVersion: await publishedFeedVersion(read, releases, head?.tag ?? null),
   };
+}
+
+async function peeledTagCommit(read: (path: string) => Promise<unknown>, object: Record<string, unknown>): Promise<string> {
+  let current: Record<string, unknown> | null = object;
+  const seen = new Set<string>();
+  for (let depth = 0; current?.type === 'tag'; depth += 1) {
+    const annotation = text(current.sha) ?? '';
+    if (depth >= 4 || !SHA.test(annotation) || seen.has(annotation)) throw new Error('current tag is not a commit');
+    seen.add(annotation);
+    const tag = record(await read(`repos/${REPOSITORY}/git/tags/${annotation}`));
+    if (text(tag?.sha) !== annotation) throw new Error('current tag is not a commit');
+    current = record(tag?.object);
+    if (!current) throw new Error('current tag is not a commit');
+  }
+  const sha = text(current?.sha) ?? '';
+  if (current?.type !== 'commit' || !SHA.test(sha)) throw new Error('current tag is not a commit');
+  return sha;
+}
+
+function checkContext(value: unknown): string | null {
+  const name = text(record(value)?.context) ?? (typeof value === 'string' ? value : null);
+  return name && name.length > 0 && name.length <= 128 && !name.includes('\n') ? name : null;
+}
+
+/** Required contexts from rulesets and classic protection, judged on this exact SHA. */
+async function requiredCi(read: (path: string) => Promise<unknown>, sha: string): Promise<CandidateCi> {
+  const names = new Set<string>();
+  const rules = await read(`repos/${REPOSITORY}/rules/branches/master`);
+  if (Array.isArray(rules)) {
+    for (const rule of rules) {
+      const item = record(rule);
+      if (item?.type !== 'required_status_checks') continue;
+      const checks = record(item.parameters)?.required_status_checks;
+      if (!Array.isArray(checks)) continue;
+      for (const check of checks) {
+        const name = checkContext(check);
+        if (name) names.add(name);
+      }
+    }
+  }
+  const branch = record(await read(`repos/${REPOSITORY}/branches/master`));
+  const contexts = record(record(branch?.protection)?.required_status_checks)?.contexts;
+  if (Array.isArray(contexts)) {
+    for (const context of contexts) {
+      const name = checkContext(context);
+      if (name) names.add(name);
+    }
+  }
+  const collected: unknown[] = [];
+  let total: number | null = null;
+  for (let page = 1; page <= 10; page += 1) {
+    const listed = record(await read(`repos/${REPOSITORY}/commits/${sha}/check-runs?filter=latest&app_id=${ACTIONS_APP_ID}&per_page=100&page=${page}`));
+    const batch = listed && Array.isArray(listed.check_runs) ? listed.check_runs : null;
+    const pageTotal = listed && Number.isInteger(listed.total_count) ? Number(listed.total_count) : null;
+    if (!batch || pageTotal === null || pageTotal < 0) return 'unknown';
+    if (total === null) total = pageTotal;
+    else if (pageTotal !== total) return 'unknown';
+    collected.push(...batch);
+    if (batch.length < 100) break;
+  }
+  if (total === null || total !== collected.length || collected.length > 1000) return 'unknown';
+  const parsed = collected.map((row) => {
+    const item = record(row);
+    return {
+      name: text(item?.name) ?? '',
+      status: text(item?.status) ?? '',
+      conclusion: text(item?.conclusion),
+      appId: Number(record(item?.app)?.id),
+    };
+  });
+  return judgeRequiredChecks([...names], parsed);
 }
 
 async function publishedFeedVersion(read: (path: string) => Promise<unknown>, releases: ReleaseRow[], tag: string | null): Promise<string | null> {
@@ -609,26 +807,14 @@ export function admitCiRun(run: Record<string, unknown>, sha: string, tag: strin
   return run.head_branch === 'master' || run.head_branch === tag;
 }
 
-export function failedBuildWithin(run: Record<string, unknown>, nowMs: number, windowMs = 6 * 60 * 60 * 1000): boolean {
-  if (run.status !== 'completed' || run.conclusion !== 'failure') return false;
-  const at = Date.parse(text(run.updated_at) ?? '');
-  return Number.isFinite(at) && nowMs >= at && nowMs - at < windowMs;
-}
-
-async function successfulRun(read: (path: string) => Promise<unknown>, workflow: string, sha: string, tag: string, nowMs: number): Promise<{ build: TrainObservation['build']; pending: boolean; cooldown: boolean }> {
+async function successfulRun(read: (path: string) => Promise<unknown>, workflow: string, sha: string, tag: string): Promise<{ build: TrainObservation['build']; pending: boolean }> {
   const listed = record(await read(`repos/${REPOSITORY}/actions/workflows/${workflow}/runs?head_sha=${sha}&per_page=20`));
   const runs = Array.isArray(listed?.workflow_runs) ? listed.workflow_runs : [];
   if (!Number.isInteger(listed?.total_count) || Number(listed?.total_count) > 20 && runs.length === 20) throw new Error('incomplete build inventory');
   let pending = false;
-  let cooldown = false;
   for (const row of runs) {
     const run = record(row);
     if (!run || run.head_sha !== sha) continue;
-    if (run.path === '.github/workflows/ci.yml'
-      && (run.event === 'workflow_dispatch' || run.event === 'schedule')
-      && text(record(run.repository)?.full_name) === REPOSITORY
-      && text(record(run.head_repository)?.full_name) === REPOSITORY
-      && failedBuildWithin(run, nowMs)) cooldown = true;
     if (run.status === 'queued' || run.status === 'in_progress' || run.status === 'waiting') pending = true;
     if (!admitCiRun(run, sha, tag)) continue;
     if (run.status !== 'completed' || run.conclusion !== 'success') continue;
@@ -640,9 +826,9 @@ async function successfulRun(read: (path: string) => Promise<unknown>, workflow:
     const name = `ashlr-build-${Number(id)}-${Number(attempt)}`;
     const match = rows.map(record).find((artifact) => artifact?.name === name && artifact.expired !== true);
     if (!match || !Number.isSafeInteger(match.id)) continue;
-    return { build: { runId: Number(id), attempt: Number(attempt), artifactId: Number(match.id), completedAt: text(run.updated_at) }, pending, cooldown };
+    return { build: { runId: Number(id), attempt: Number(attempt), artifactId: Number(match.id), completedAt: text(run.updated_at) }, pending };
   }
-  return { build: null, pending, cooldown };
+  return { build: null, pending };
 }
 
 async function auditRun(read: (path: string) => Promise<unknown>, sha: string): Promise<TrainObservation['audit']> {
@@ -665,7 +851,7 @@ async function attestRun(read: (path: string) => Promise<unknown>, ciRun: number
   let pending = false;
   for (const row of runs) {
     const run = record(row);
-    if (run?.head_branch !== 'master') continue;
+    if (!run || !releaseHeadBranch(run.head_branch)) continue;
     if (run.status === 'queued' || run.status === 'in_progress' || run.status === 'waiting') pending = true;
     if (run.status !== 'completed' || run.conclusion !== 'success' || !Number.isSafeInteger(run.id)) continue;
     const artifacts = record(await read(`repos/${REPOSITORY}/actions/runs/${Number(run.id)}/artifacts?per_page=100`));
@@ -699,9 +885,17 @@ export function releaseGithubCall(method: string, path: string, body?: unknown):
   return { args: [...args, '--input', '-', path], input: JSON.stringify(body) };
 }
 
+export const WORKFLOW_DISPATCH = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|publish-canonical-npm|ci|release-please)\.yml\/dispatches$/;
+
+/** Draft PATCH and enqueue use the App token; so do workflow dispatches, so a
+ *  GITHUB_TOKEN dispatch cannot be mistaken for a missing tag-triggered build. */
+export function releaseWriteUsesAppToken(method: string, path: string): boolean {
+  return method === 'PATCH' || path === 'graphql' || (method === 'POST' && WORKFLOW_DISPATCH.test(path));
+}
+
 function gh(method: string, path: string, body?: unknown): string {
-  const appWrite = method === 'PATCH' || path === 'graphql';
-  const token = appWrite ? process.env.RELEASE_APP_TOKEN : process.env.GH_TOKEN;
+  const appWrite = releaseWriteUsesAppToken(method, path);
+  const token = appWrite ? readEnvironmentCredential('RELEASE_APP_TOKEN') : readEnvironmentCredential('GH_TOKEN');
   if (!token) throw new Error(appWrite ? 'release app token unavailable' : 'github token unavailable');
   const env: NodeJS.ProcessEnv = { ...process.env, GH_TOKEN: token };
   delete env.RELEASE_APP_TOKEN;
@@ -734,6 +928,11 @@ async function githubRead(path: string): Promise<unknown> {
   }
   const textBody = gh('GET', path);
   return textBody ? JSON.parse(textBody) as unknown : null;
+}
+
+/** A completed Release PR workflow must not recursively dispatch itself. */
+export function allowReleasePrDispatch(path: string, enabled = process.env.RELEASE_TRAIN_DISPATCH_RELEASE_PR): boolean {
+  return enabled !== 'false' || !path.endsWith('/release-please.yml/dispatches');
 }
 
 function isDirectRun(): boolean {
@@ -769,15 +968,25 @@ async function main(): Promise<number> {
   const plan = buildTrain(observed);
   let state = plan.state;
   if (apply && plan.exitCode === 0) {
-    const allowBuild = process.env.RELEASE_TRAIN_DISPATCH_BUILD !== 'false';
-    for (const write of plan.writes) {
-      if (!allowBuild && write.path.endsWith('/ci.yml/dispatches')) continue;
+    let writes = plan.writes;
+    if (writes.some((write) => write.path.endsWith('/publish-canonical-npm.yml/dispatches'))) {
+      const fresh = await observeTrain(githubRead);
+      writes = refusePublishIfSuccessorConflict(writes, fresh);
+      if (writes.length !== plan.writes.length) return 1;
+    }
+    for (const write of writes) {
+      if (!allowReleasePrDispatch(write.path)) continue;
       assertReleaseWrite(write);
       gh(write.method, write.path, write.body);
     }
-    if (plan.writes.some((write) => write.method === 'PATCH')) state = markWritesApplied(state);
+    if (writes.some((write) => write.method === 'PATCH')) state = markWritesApplied(state);
   }
+  state = { ...state, skippedTags: observed.skippedTags ?? [] };
   const json = `${JSON.stringify(state, null, 2)}\n`;
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    const { appendFileSync } = await import('node:fs');
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Release train\n\n${state.reason}\n\n${(state.skippedTags ?? []).map((item) => `- ${item.reason}`).join('\n')}\n`);
+  }
   if (out) writeFileSync(out, json, { mode: 0o644 });
   process.stdout.write(json);
   return plan.exitCode;
