@@ -167,8 +167,24 @@ Run `phm fleet merge-queue-age --input snapshot.json` for queued PR age and
 blocking reasons, oldest first. Add `--json` for agents. The typed
 `MergeQueueAgeInput` and `mergeQueueAge(input, now)` API use the same report.
 The snapshot contains `prs` and `queue`; `--help` lists their fields.
-Merged and closed PRs are excluded. Missing evidence stays unknown. Required
-checks remain in place; this command only reads the supplied file.
+Merged and closed PRs are excluded. Missing evidence stays unknown.
+
+Each blocker in `causes` classifies with a `since` timestamp: pending,
+failed and missing required checks take their own `at` (else the queue
+entry's `enteredAt`); conflicts, review stalls and stale branches take the
+PR's `updatedAt`. A stale branch is `mergeStateStatus` `BEHIND`; `DIRTY`
+counts as a conflict just like `mergeable: CONFLICTING`. An unparseable or
+future timestamp stays `null` — unknown, never guessed.
+
+A conflicting active entry also lands in `retryable_conflicts` with the
+`recut` request the existing merge-queue recut path enqueues once per head:
+the shared `RQ-RECUT-<repo>-<pr>-<sha7>` idempotency key means a repeat
+observation never enqueues a second recut. `blocked_conflicts` names the
+honest reason nothing was enqueued — `ambiguous` queue or PR rows, `no-repo`,
+`no-head`, `already-requested` (a `lastRecutHead` covering this head) or
+`too-many-recuts` (three or more recorded `recutRequests`). Required checks
+remain in place; this command only reads the supplied file and merges or
+requeues nothing.
 
 To prioritize conflict recovery by that same evidence, run `phm fleet
 merge-recover --queue-input snapshot.json --json`. The report includes the
@@ -179,6 +195,19 @@ measured entry in that snapshot. Add `--apply` to queue recuts and, after a
 replacement is published, request head-pinned GitHub auto-merge. GitHub still
 enforces required checks and the merge queue. Retry the command after a failed
 request or publication; it reuses the recovery identity.
+
+For a dropped auto-merge instead of a conflict, run `phm fleet merge-retry
+--events merge-events.jsonl --json` against the same ledger `phm fleet
+merge-latency` records into. The latency report's `queue_retries` classifies
+each open PR's recorded auto-merge drop: `retryable` needs a `queue` blocker
+in the enable-to-disable episode and retries left; `unattributed` drops wait
+for a person. Dry-run prints `request-auto-merge`; `--apply` re-arms ordinary
+head-pinned auto-merge (`gh pr merge --auto --match-head-commit`), appends one
+`retry_requested` event per PR, and stops after three requests per run and
+three retries per PR ever — replayed events count once. A failed submission
+appends `retry_failed` instead; three distinct failed submissions make the
+drop `request-failed` and stop automatic retries. Required checks,
+reviews and the merge queue stay in force.
 
 Acceptance: keep the interface as simple and intuitive as possible, with fewer
 steps, plain words, one obvious path, and every human surface backed by a typed

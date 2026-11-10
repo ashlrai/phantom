@@ -12,7 +12,7 @@
 import type { FeedReport } from '../../../../core/feed.js';
 import { apiGet } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
-import { useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useDesktopUpdates } from '../../../app/desktop-updates.js';
 import { deriveUpdateNotifications } from '../../../components/notifications/deriveUpdateNotifications.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
@@ -32,6 +32,7 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { useActivity } from '../shell/useActivity.js';
 import { buildFeed, filterFeed, type FeedFilter, type FeedKind } from './feed-model.js';
 import { isDismissed, useFeedDismissals } from './feed-dismiss-store.js';
+import { countNew, firstOlderIndex, useFeedSeen } from './feed-seen-store.js';
 import styles from './feed.module.css';
 
 const unifiedInboxQuery: QueryDef<unknown> = { key: 'verse-fleet-comms-unified-inbox', fetch: signal => apiGet(UNIFIED_INBOX_PATH, signal) };
@@ -46,8 +47,9 @@ const FILTERS: readonly { id: FeedFilter; label: string }[] = [
   { id: 'update', label: 'Updates' },
   { id: 'bus', label: 'Bus' },
   { id: 'teammate', label: 'Dot' },
+  { id: 'comms', label: 'Comms' },
 ];
-const KIND_LABEL: Record<FeedKind, string> = { leader: 'Leader', alert: 'Alert', merge: 'Merge', fleet: 'Fleet', owner: 'Channel', update: 'Update', bus: 'Bus', teammate: 'Dot' };
+const KIND_LABEL: Record<FeedKind, string> = { leader: 'Leader', alert: 'Alert', merge: 'Merge', fleet: 'Fleet', owner: 'Channel', update: 'Update', bus: 'Bus', teammate: 'Dot', comms: 'Comms' };
 export const FEED_POLL_MS = 15_000;
 
 export function FeedSection({ visible = true }: { visible?: boolean }) {
@@ -73,6 +75,7 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
   const [filter, setFilter] = useState<FeedFilter>('all');
   const { map: dismissedMap, dismissItem, restoreItem } = useFeedDismissals();
   const [showDismissed, setShowDismissed] = useState(false);
+  const { seenAt, markSeen } = useFeedSeen();
 
   const leaderFailed = Boolean(leader.error) || leader.data?.available === false;
   const runsFailed = Boolean(runs.error) && runs.data === undefined;
@@ -90,6 +93,19 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
     () => deriveUpdateNotifications(update.data ?? null, Date.now(), nativeUpdates),
     [update.data, nativeUpdates]);
 
+  const inboxView = useMemo(() => {
+    const raw = teammate?.data;
+    const view = readUnifiedInboxView(raw);
+    if (!view || view.unavailable || !raw || typeof raw !== 'object') return view;
+    const data = raw as { generatedAt?: unknown; items?: unknown };
+    const rawItems = Array.isArray(data.items) ? data.items : [];
+    return { ...view, generatedAt: typeof data.generatedAt === 'string' ? data.generatedAt : undefined,
+      items: view.items.map(item => {
+        const original = rawItems.find((row: unknown) => row && typeof row === 'object' && 'id' in row && row.id === item.id) as { since?: unknown } | undefined;
+        return typeof original?.since === 'string' ? { ...item, since: original.since } : item;
+      }) };
+  }, [teammate?.data]);
+
   const feed = useMemo(() => buildFeed({
     shared: shared.data,
     leader: leader.data?.value?.messages,
@@ -98,11 +114,23 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
     owner: ownerLines,
     update: updateItems,
     bus: bus.data,
-    teammate: teammate?.error ? null : readUnifiedInboxView(teammate?.data),
-  }), [shared.data, leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data, teammate?.data, teammate?.error]);
+    teammate: teammate?.error ? null : inboxView,
+  }), [shared.data, leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data, inboxView, teammate?.error]);
   const filtered = filterFeed(feed, filter);
   const shown = filtered.filter(item => !isDismissed(item, dismissedMap));
   const dismissed = filtered.filter(item => isDismissed(item, dismissedMap));
+  const newCount = countNew(shown, seenAt);
+  const olderAt = firstOlderIndex(shown, seenAt);
+
+  // Leaving the Feed (hidden, or unmounted) after it was visible marks what it showed as seen,
+  // so the count stays while he reads and is gone next time.
+  const newestAt = useRef<string | undefined>(undefined);
+  // Only while visible: the render that hides the Feed must not replace what it last showed.
+  if (visible) newestAt.current = feed.find(item => !isDismissed(item, dismissedMap))?.at;
+  useEffect(() => {
+    if (!visible) return undefined;
+    return () => { if (newestAt.current) markSeen(newestAt.current); };
+  }, [visible, markSeen]);
 
   return <div className={styles.root}>
     <section aria-labelledby="feed-running-title" className={styles.running}>
@@ -132,8 +160,14 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
       : !allDown && shown.length === 0
         ? <CardNote>{filter === 'all' ? 'Nothing new yet. Leader messages, alerts and merges land here as they happen.' : `No ${FILTERS.find(f => f.id === filter)!.label.toLowerCase()} in the feed right now.`}</CardNote>
         : null}
+    {newCount > 0 ? <div className={styles.newBar}>
+      <span>{newCount} new since you last looked</span>
+      <button type="button" className={styles.dismiss} onClick={() => markSeen(shown[0]!.at)}>Mark all seen</button>
+    </div> : null}
     {shown.length ? <ol className={styles.list} aria-label="Feed">
-      {shown.map(item => <li key={item.id} data-kind={item.kind}>
+      {shown.map((item, i) => <Fragment key={item.id}>
+        {newCount > 0 && i === olderAt ? <li role="separator" aria-label="Earlier" className={styles.divider}>Earlier</li> : null}
+        <li data-kind={item.kind}>
         <Card title={item.title} caption={<time dateTime={item.at} title={new Date(item.at).toLocaleString('en-US')}>{formatRelative(item.at, now)}</time>}
           actions={<span className={styles.kind} data-kind={item.kind}>{item.label ?? KIND_LABEL[item.kind]}</span>}>
           {item.body ? <p className={styles.body}>{item.body}</p> : null}
@@ -141,7 +175,8 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
           {item.href ? <a className={styles.link} href={item.href} target="_blank" rel="noopener noreferrer">Open</a> : null}
           <button type="button" className={styles.dismiss} aria-label={`Dismiss ${item.title}`} onClick={() => dismissItem(item)}>Dismiss</button>
         </Card>
-      </li>)}
+        </li>
+      </Fragment>)}
     </ol> : null}
     {dismissed.length ? <div className={styles.dismissedBar}>
       <span>{dismissed.length} dismissed</span> · <button type="button" className={styles.dismiss} aria-expanded={showDismissed} onClick={() => setShowDismissed(v => !v)}>{showDismissed ? 'Hide' : 'Show'}</button>
