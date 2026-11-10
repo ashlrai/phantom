@@ -39,6 +39,27 @@ export interface FeedItem {
   href?: string;
   /** Shown on the kind chip instead of the kind's name, e.g. "Mason via Telegram". */
   label?: string;
+  /** The registered pane that owns this item (set by buildFeed, see feedItemPane); the Feed offers "Open in …" for it. */
+  pane?: FeedPane;
+}
+
+/**
+ * The panes a Feed item can open, with the words on its link. Ids are the
+ * real `*.pane.tsx` registrations; Phantom updates have no pane of their own.
+ */
+const FEED_PANE_LABEL = {
+  'leader-thread': 'Open in Leader',
+  'fleet-merges': 'Open in Merges',
+  'fleet-events': 'Open in Events',
+  'fleet-bus': 'Open in Bus',
+  'fleet-inbox': 'Open in Inbox',
+} as const;
+
+export type FeedPane = keyof typeof FEED_PANE_LABEL;
+
+/** "Open in Leader", "Open in Merges", …; undefined for an id the Feed does not link to. */
+export function feedPaneLabel(paneId: string | undefined): string | undefined {
+  return paneId && Object.hasOwn(FEED_PANE_LABEL, paneId) ? FEED_PANE_LABEL[paneId as FeedPane] : undefined;
 }
 
 export interface FeedSources {
@@ -167,7 +188,23 @@ export function commsWaitingAdapter(view: (UnifiedInboxView & { generatedAt?: st
   });
 }
 
-/** Every source merged: deduped by id (newest copy wins), unparsable times dropped, newest first, at most FEED_LIMIT. */
+const KIND_PANE: Partial<Record<FeedKind, FeedPane>> = {
+  leader: 'leader-thread', owner: 'leader-thread', merge: 'fleet-merges', fleet: 'fleet-events',
+  bus: 'fleet-bus', teammate: 'fleet-inbox', comms: 'fleet-inbox',
+};
+
+/**
+ * The pane that owns an item: Leader and owner-thread lines → Leader, merges →
+ * Merges, fleet events → Events, bus → Bus, Dot, LinkedIn and Gmail → Inbox.
+ * Needs-you alerts keep their https link and get no pane; updates have none.
+ * Applied in buildFeed so each adapter's output stays the source's own data.
+ */
+export function feedItemPane(item: Pick<FeedItem, 'id' | 'kind'>): FeedPane | undefined {
+  if (item.kind === 'alert') return item.id.startsWith('gmail:') ? 'fleet-inbox' : undefined;
+  return KIND_PANE[item.kind];
+}
+
+/** Every source merged, each item with its owning pane: deduped by id (newest copy wins), unparsable times dropped, newest first, at most FEED_LIMIT. */
 export function buildFeed(sources: FeedSources, limit = FEED_LIMIT): FeedItem[] {
   const all: FeedItem[] = [
     ...(sources.shared?.items ?? []).map((item, index): FeedItem => ({ id: `shared:${item.kind}:${item.at}:${index}`, at: item.at, kind: item.kind === 'merge' ? 'merge' : 'leader', ...headline(item.text) })),
@@ -184,7 +221,9 @@ export function buildFeed(sources: FeedSources, limit = FEED_LIMIT): FeedItem[] 
   ];
   const timed = all.flatMap(item => {
     const ms = Date.parse(item.at);
-    return Number.isFinite(ms) ? [{ item: { ...item, at: new Date(ms).toISOString() }, ms }] : [];
+    if (!Number.isFinite(ms)) return [];
+    const pane = feedItemPane(item);
+    return [{ item: { ...item, at: new Date(ms).toISOString(), ...(pane ? { pane } : {}) }, ms }];
   }).sort((a, b) => b.ms - a.ms);
   const seen = new Set<string>();
   const out: FeedItem[] = [];
