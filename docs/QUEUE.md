@@ -324,3 +324,7 @@ is the sum of recorded job tokens divided by merged PRs; it is unknown if any
 job in the group lacks a token total or no PR merged. Missing measurements are
 unknown, and malformed lines are skipped and counted. The report describes
 recorded evidence, not necessarily every job or PR.
+
+## Waiting to launch
+
+Run `phm queue stuck --json` to list READY router jobs without a recorded launch. `age_s` uses the enqueue epoch, or the first timestamped dispatch event for the job; `age: "unknown"` means neither is available. If dispatch events are unavailable, `eventsAvailable` is false and the list may include jobs that have launched.

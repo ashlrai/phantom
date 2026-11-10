@@ -1250,6 +1250,14 @@ jobs:
         with:
           node-version: '22.23.2'
           cache: npm
+      # Build, pack and smoke run only in a fresh detached worktree of the one
+      # pinned commit, never in this job checkout. The fixed path under the
+      # ephemeral runner temp keeps the native cache location stable; creation
+      # refuses an existing non-empty path and proves the new tree pristine.
+      - name: Create isolated release tree
+        if: steps.eligible.outputs.ready == 'true'
+        id: tree
+        run: node scripts/release-isolated-tree.mjs create "$RUNNER_TEMP/phantom-release-tree"
       - name: Download existing immutable build
         if: steps.existing.outputs.ready == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1261,6 +1269,14 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ steps.existing.outputs.run }}
           digest-mismatch: error
+      # Independent setup overlaps: the pinned npm/Tauri CLI install runs in the
+      # background while Bun, Rust and the native cache restore. Its exit code is
+      # collected before the build; build-desktop-nightly.mjs re-probes every pin.
+      - name: Start pinned build tool install
+        if: steps.eligible.outputs.ready == 'true' && steps.existing.outputs.ready != 'true'
+        run: |
+          ( set +e; npm install --global npm@10.9.8 @tauri-apps/cli@2.11.4 > "$RUNNER_TEMP/build-tools.log" 2>&1
+            echo "$?" > "$RUNNER_TEMP/build-tools.status" ) &
       - name: Set up Bun
         if: steps.eligible.outputs.ready == 'true' && steps.existing.outputs.ready != 'true'
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -1271,6 +1287,9 @@ jobs:
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: '1.97.1'
+      # Lockfile-keyed, never commit-keyed: an exact hit restores and skips the
+      # post-job save, so runs stop re-uploading and evicting each other's
+      # entries. A Cargo.lock change falls back to the toolchain prefix.
       - name: Cache native compiler inputs
         if: steps.eligible.outputs.ready == 'true' && steps.existing.outputs.ready != 'true'
         uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -1278,23 +1297,31 @@ jobs:
           path: |
             ~/.cargo/registry/
             ~/.cargo/git/db/
-            desktop/src-tauri/target/
-          key: release-native-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}-${{ github.sha }}
-          restore-keys: release-native-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}-
+            ${{ steps.tree.outputs.root }}/desktop/src-tauri/target/
+          key: release-native-v2-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+          restore-keys: release-native-v2-${{ runner.os }}-${{ runner.arch }}-1.97.1-
       - name: Install pinned build tools
         if: steps.eligible.outputs.ready == 'true' && steps.existing.outputs.ready != 'true'
+        timeout-minutes: 5
         run: |
-          npm install --global npm@10.9.8 @tauri-apps/cli@2.11.4
+          until [ -s "$RUNNER_TEMP/build-tools.status" ]; do sleep 1; done
+          status="$(cat "$RUNNER_TEMP/build-tools.status")"
+          if [ "$status" != 0 ]; then cat "$RUNNER_TEMP/build-tools.log"; exit 1; fi
       - name: Build unsigned desktop and original package once
         if: steps.eligible.outputs.ready == 'true' && steps.existing.outputs.ready != 'true'
         id: build
+        timeout-minutes: 45
+        working-directory: ${{ steps.tree.outputs.root }}
         env:
           PHANTOM_RELEASE_REVISION: ${{ github.sha }}
         run: |
           npm run build:desktop:nightly -- --existing-icons
+          node scripts/release-isolated-tree.mjs verify .
           node .github/scripts/release-fast-smoke.mjs prepare
+          node scripts/release-isolated-tree.mjs verify .
       - name: Capture original immutable input custody
         if: steps.eligible.outputs.ready == 'true'
+        working-directory: ${{ steps.tree.outputs.root }}
         run: node .github/scripts/release-local-input.mjs capture
       - name: Upload immutable release input
         id: artifact
@@ -1322,6 +1349,9 @@ jobs:
       - name: Smoke desktop release artifact
         if: steps.eligible.outputs.ready == 'true'
         id: smoke
+        # Phase deadline is 5m plus a 5s kill grace; fail fast past that.
+        timeout-minutes: 6
+        working-directory: ${{ steps.tree.outputs.root }}
         env:
           GH_TOKEN: ${{ github.token }}
           PUSH_CI_RUN: ${{ steps.push.outputs.run }}
