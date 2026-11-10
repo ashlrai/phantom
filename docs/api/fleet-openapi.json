@@ -363,12 +363,15 @@
       },
       "post": {
         "operationId": "releaseFleetLaneHold", "tags": ["fleet-control"],
-        "summary": "Release a lane hold (returns updated LaneTargetsV1).",
+        "summary": "Place or release a lane hold (returns updated LaneTargetsV1).",
         "x-phantom-local-only": true,
         "security": [{ "mutationToken": [] }],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["lane", "action"], "properties": { "lane": { "type": "string" }, "action": { "type": "string", "const": "release" }, "reason": { "type": "string" } } } } }
+          "content": { "application/json": { "schema": { "oneOf": [
+            { "type": "object", "additionalProperties": false, "required": ["lane", "action"], "properties": { "lane": { "type": "string" }, "action": { "type": "string", "const": "release" }, "reason": { "type": "string" } } },
+            { "type": "object", "additionalProperties": false, "required": ["lane", "action", "minutes"], "properties": { "lane": { "type": "string" }, "action": { "type": "string", "const": "hold" }, "minutes": { "type": "integer", "minimum": 1, "maximum": 1440 }, "reason": { "type": "string" } } }
+          ] } } }
         },
         "responses": { "200": { "$ref": "#/components/responses/LaneTargetsV1" }, "default": { "$ref": "#/components/responses/Error" } }
       }
