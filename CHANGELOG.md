@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.30 |
-| Latest dated changelog release (2026-11-10) | 3.30.30 |
+| Source package | 3.30.31 |
+| Latest dated changelog release (2026-11-10) | 3.30.31 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -38,6 +38,24 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Make leader office writes, scrubbing and escalation fail closed ([#4240](https://github.com/ashlrai/phantom/pull/4240)).
 - Keep Comms owner files under the account home ([#4269](https://github.com/ashlrai/phantom/pull/4269)) and count the three Comms MCP tools in the output budget ([#4252](https://github.com/ashlrai/phantom/pull/4252)).
 - Regenerate the fleet subcommand registry so `fleet done-plan` and `fleet done-evaluate` dispatch.
+
+## [3.30.31] - 2026-11-10
+
+
+### Fixes
+
+* **ci:** fail the quick job when generated files are stale ([#4612](https://github.com/ashlrai/phantom/issues/4612)) ([bfc5371](https://github.com/ashlrai/phantom/commit/bfc5371ea103335deddacf1087e814d7f4e17817))
+* **release-train:** dispatch tag-ref builds with the App token ([#4607](https://github.com/ashlrai/phantom/issues/4607)) ([a8c04fe](https://github.com/ashlrai/phantom/commit/a8c04fe4a5fbcf4edbd0ac8e8f1e0a4dab946088))
+* **release:** dispatch with GITHUB_TOKEN, drop actions perm from App mints (fix-forward [#4607](https://github.com/ashlrai/phantom/issues/4607)) ([#4608](https://github.com/ashlrai/phantom/issues/4608)) ([751ef03](https://github.com/ashlrai/phantom/commit/751ef03a1fd130db129fceaa242e9c35a0bfedec))
+
+
+### Changes
+
+* **RQ-PH-NOTHROTTLE-1:** RQ-PH-NOTHROTTLE-1 ([#4601](https://github.com/ashlrai/phantom/issues/4601)) ([e2e5b81](https://github.com/ashlrai/phantom/commit/e2e5b815af78ef4d2d0cd9b176968be7050dff10))
+* **RQ-PHX-INTENTSWEEPPRESERVE09SQR1:** Handoff ([#4606](https://github.com/ashlrai/phantom/issues/4606)) ([2180322](https://github.com/ashlrai/phantom/commit/2180322788b43032610b1b04e9794b4d78b24cd8))
+* **RQ-PHX-RECUTOLDA60:** BRIDGE_NOTES: RQ-PHX-RECUTOLDA60 ([#4602](https://github.com/ashlrai/phantom/issues/4602)) ([3261d5f](https://github.com/ashlrai/phantom/commit/3261d5ffc0f82e1fa4e340f2c7f0586a7729c596))
+* **RQ-PHX-RECUTOLDB60:** BRIDGE_NOTES: RQ-PHX-RECUTOLDB60 ([#4605](https://github.com/ashlrai/phantom/issues/4605)) ([99b3d17](https://github.com/ashlrai/phantom/commit/99b3d17a1c9f6704f1fad9de5cd1d47635ae5b95))
+* **RQ-PHX-RECUTOLDE60:** RQ-PHX-RECUTOLDE60: recut of [#4259](https://github.com/ashlrai/phantom/issues/4259) (RQ-PHX-RECONCILEDECLINE0 ([#4604](https://github.com/ashlrai/phantom/issues/4604)) ([321c625](https://github.com/ashlrai/phantom/commit/321c6258ba55381c6a8c77bf6828425f23e4b65e))
 
 ## [3.30.30] - 2026-11-10
 
