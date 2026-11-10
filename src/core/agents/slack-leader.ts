@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { realHome } from '../real-home.js';
 import { validateBusEnvelope, type BusEnvelope } from '../fleet/bus-envelope.js';
-import { leaderInboxAppender, leaderNetworkSources, readLeaderNetworkConfig, type LeaderRuntimeOptions } from './leader-network-runtime.js';
+import { leaderInboxAppender, leaderNetworkSources, noteUnifiedOwner, readLeaderNetworkConfig, type LeaderRuntimeOptions } from './leader-network-runtime.js';
 import { createLeaderNetwork, parseMasonIdentities } from './leader-network.js';
 import { takeLeaderReplyBatch } from './leader-reply-queue.js';
 import { loadAgentNetworkConfig, isSlackUserId, parseSlackThreadRef } from './slack-network.js';
@@ -68,7 +68,14 @@ export async function ingestSlackLeaderEnvelope(message: BusEnvelope, options: S
     ...checked.value, id: `slack-owner-${createHash('sha256').update(message.id).digest('hex').slice(0, 32)}`, from: 'mason',
     sender: { agent_id: 'mason', vendor: 'phantom', human: true, team: true },
   }, verifiedSender: identity, receivedAt: (options.now ?? Date.now)() });
-  return { owned: true, durable: result.status === 'accepted' || result.status === 'duplicate' || result.recorded === true };
+  const durable = result.status === 'accepted' || result.status === 'duplicate' || result.recorded === true;
+  // Same unified owner thread the other channels feed; the Slack thread ref rides along so the reply goes back to it.
+  if (durable) {
+    const body = checked.value.body;
+    const text = body && typeof body === 'object' && !Array.isArray(body) && typeof body.text === 'string' ? body.text : undefined;
+    if (text) await noteUnifiedOwner('slack', identity.id, text, checked.value.id, (options.now ?? Date.now)(), options, message.channel_ref);
+  }
+  return { owned: true, durable };
 }
 
 /** Same-channel/thread delivery, with the existing send-intent journal owning uncertainty. */

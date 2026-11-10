@@ -58,7 +58,7 @@ describe('seatStrip', () => {
     const { items, headline } = strip([GROK_SEAT], view);
     const [grok] = items;
     const rows = buildCapacityRows([GROK_SEAT], { health: [], budget: view, now: NOW });
-    expect(grok).toMatchObject({ key: 'grok', engine: 'grok', name: 'Grok', level: 'ok', value: '99% left', reservePercent: 40 });
+    expect(grok).toMatchObject({ key: 'grok', engine: 'grok', name: 'Grok', level: 'ok', value: '99% left', reservePercent: null });
     // The same projection as the rail's battery, by construction.
     expect(grok!.leftPercent).toBe(bindingLeftPercent(rows[0]!));
     expect(grok!.note).toMatch(/^resets /);

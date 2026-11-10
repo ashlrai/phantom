@@ -169,6 +169,9 @@ function assureDarwinSourcePath(path: string, kind: 'directory' | 'file'): void 
   if (process.platform !== 'darwin') return;
   const assurance = assurePrivateStoragePath(path, kind, 'inspect-existing', {
     anchorPath: resolve(homedir()),
+    // Follow the live platform. The host default stays on the OS that loaded
+    // the module, so a simulated platform cannot redirect unrelated writers.
+    platform: process.platform,
   });
   if (!assurance.ok) throw new Error(`goal source ACL custody refused: ${path}: ${assurance.reason}`);
 }
