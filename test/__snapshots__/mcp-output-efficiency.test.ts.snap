@@ -77,6 +77,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "safety": "read",
     },
     {
+      "name": "phantom_fleet_needs_resolve",
+      "safety": "append",
+    },
+    {
       "name": "phantom_fleet_orders",
       "safety": "read",
     },
@@ -851,6 +855,28 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "phantom_fleet_needs",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "itemId": {
+          "description": "<description>",
+          "pattern": "^nm-[0-9a-f]{12}$",
+          "type": "string",
+        },
+        "reply": {
+          "description": "<description>",
+          "maxLength": 500,
+          "type": "string",
+        },
+      },
+      "required": [
+        "itemId",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_fleet_needs_resolve",
   },
   {
     "inputSchema": {
