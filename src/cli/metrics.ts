@@ -1,3 +1,4 @@
+import { readLeverageMix } from '../core/metrics/leverage-mix.js';
 import { cmdMetricsIdle } from './metrics-idle.js';
 /** `phm metrics [summary|dashboard|record|recommend|ingest]` — local telemetry + value metrics. */
 import { join } from 'node:path';
@@ -10,9 +11,10 @@ import { ensurePrivateDirectory, writePrivateFileAtomic } from '../core/verse/pr
 import { defaultStewardPolicy, runSteward } from '../core/steward/disk.js';
 import { ingestMetrics, MetricsInputError } from '../core/fleet/metrics-ingest.js';
 
-const USAGE = `Usage: phm metrics <summary|dashboard [--out file]|record <json>|recommend <taskType> <arm...>|idle --status <snapshot.json> --jobs <jobs.jsonl>|ingest --jobs <jobs.jsonl> --status <status.json>|levers [--window <7d|30d>]> [--json]
+const USAGE = `Usage: phm metrics <summary|dashboard [--out file] [--prs file]|record <json>|recommend <taskType> <arm...>|idle --status <snapshot.json> --jobs <jobs.jsonl>|ingest --jobs <jobs.jsonl> --status <status.json>|levers [--window <7d|30d>]|leverage-mix [--prs <file>]> [--json]
 phm metrics ingest reads two explicit local files and prints deterministic lane and tier metrics as JSON.
 phm metrics levers ranks opportunity proxies from local activity and fleet rollups.
+phm metrics leverage-mix reports the 24-hour fleet merge mix; --prs enriches it with GitHub PR file paths.
 No network, writes, provider calls or operational routing changes. See docs/METRICS-ROUTER-FEED.md for schemas.
 Exit 0: report or help. Exit 2: invalid arguments or refused input.`;
 
@@ -54,21 +56,32 @@ export function cmdMetrics(argv: string[], io?: CliIo): number | Promise<number>
   const [sub = 'summary', ...rest] = argv.filter((a) => a !== '--json');
   if (sub === 'help') { io.out(USAGE); return 0; }
   if (sub === 'ingest') return cmdIngest(rest, io);
-  if (rejectUnknownOptions(rest, sub === 'dashboard' ? { values: ['--out'] } : {})) { io.err(USAGE); return 2; }
+  if (sub === 'leverage-mix') {
+    if (rest.length && (rest.length !== 2 || rest[0] !== '--prs' || !rest[1] || rest[1].startsWith('-'))) { io.err(USAGE); return 2; }
+    const report = readLeverageMix(rest[1]);
+    io.out(json ? JSON.stringify(report, null, 2) : `Product or fleet improvements: ${report.improvedShare === null ? 'unknown' : `${(report.improvedShare * 100).toFixed(1)}%`} of merges in the last 24 hours (known classifications; unknowns included in total).`);
+    return 0;
+  }
+  if (rejectUnknownOptions(rest, sub === 'dashboard' ? { values: ['--out', '--prs'] } : {})) { io.err(USAGE); return 2; }
   try {
     switch (sub) {
       case 'summary': {
         if (rest.length) { io.err(USAGE); return 2; }
         const r = rollup(readTelemetry());
-        if (json) io.out(JSON.stringify(r, null, 2));
+        if (json) return import('../core/fleet/metrics-panel.js').then(async ({ readMetricsPanel }) => { io.out(JSON.stringify({ ...r, fleetMetrics: await readMetricsPanel() }, null, 2)); return 0; });
         else io.out(`${r.totals.prsShipped} PRs shipped · ${r.totals.valuePerMTok} value/1M tok · ${r.totals.valuePerHour} value/hr · ${r.totals.valuePerUsd ?? '—'} value/$`);
         return 0;
       }
       case 'dashboard': {
-        if (rest.length && (rest.length !== 2 || rest[0] !== '--out' || !rest[1] || rest[1].startsWith('-'))) { io.err(USAGE); return 2; }
-        const out = rest[1] ?? join(ashlrHome(), 'metrics', 'dashboard.html');
-        const html = renderDashboard(rollup(readTelemetry()), runSteward(defaultStewardPolicy()));
-        if (!rest.length) { ensurePrivateDirectory(ashlrHome()); ensurePrivateDirectory(join(ashlrHome(), 'metrics')); }
+        const options = new Map<string, string>();
+        for (let i = 0; i < rest.length; i += 2) {
+          const key = rest[i], value = rest[i + 1];
+          if (!key || !['--out', '--prs'].includes(key) || options.has(key) || !value || value.startsWith('-')) { io.err(USAGE); return 2; }
+          options.set(key, value);
+        }
+        const out = options.get('--out') ?? join(ashlrHome(), 'metrics', 'dashboard.html');
+        const html = renderDashboard(rollup(readTelemetry()), runSteward(defaultStewardPolicy()), undefined, readLeverageMix(options.get('--prs')));
+        if (!options.has('--out')) { ensurePrivateDirectory(ashlrHome()); ensurePrivateDirectory(join(ashlrHome(), 'metrics')); }
         writePrivateFileAtomic(out, html);
         io.out(out); return 0;
       }

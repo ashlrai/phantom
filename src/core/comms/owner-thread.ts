@@ -27,6 +27,7 @@ import {
   OWNER_THREAD_CLAIM_KEY,
   OWNER_THREAD_ID,
   createLeaderMailbox,
+  OWNER_CHANNELS,
   isOwnerChannel,
   ownerChannelToBus,
   type LeaderMailbox,
@@ -425,6 +426,112 @@ export async function sendOwnerReply(input: OwnerReplyInput, options: OwnerThrea
     });
   } catch {
     return { status: 'unavailable', reason: 'Owner thread is unavailable.' };
+  }
+}
+
+/**
+ * Record a proactive Leader post (brief, recap, ping) as one outbound desktop
+ * line so the owner thread shows what was sent elsewhere. Calls no transport:
+ * nothing leaves the machine. Same halt, secret and idempotency rules as replies.
+ */
+export async function postOwnerNotice(input: { text: string; idempotencyKey: string }, options: OwnerThreadOptions): Promise<OwnerThreadResult> {
+  if (halted(options) || paused(options)) return { status: 'halted', reason: 'Adapters are halted.' };
+  const text = cleanText(input.text);
+  if (!text || typeof input.idempotencyKey !== 'string' || !KEY.test(input.idempotencyKey)) {
+    return { status: 'refused', reason: 'Notice is not recordable.' };
+  }
+  const key = input.idempotencyKey;
+  try {
+    return await transaction(options, async state => {
+      const prior = state.messages.find(message => message.idempotencyKey === key);
+      if (prior) return { status: 'duplicate' as const, seq: prior.seq, idempotencyKey: key };
+      if (state.archivedKeys?.includes(keyDigest(key))) return { status: 'duplicate' as const, idempotencyKey: key };
+      const stored = appendMessage(state, {
+        idempotencyKey: key, channel: 'desktop', senderId: 'leader', direction: 'outbound',
+        at: new Date(clock(options)).toISOString(), text, fanout: ['desktop'],
+      });
+      mirror(options, stored);
+      return { status: 'accepted' as const, seq: stored.seq, idempotencyKey: key };
+    });
+  } catch {
+    return { status: 'unavailable', reason: 'Owner thread is unavailable.' };
+  }
+}
+
+export const OWNER_HELLO_TEXT ='Leader is live here, reply to talk to me.';
+
+export interface OwnerHelloResult {
+  status: 'sent' | 'partial' | 'refused' | 'duplicate' | 'halted' | 'unavailable';
+  deliveries: Array<{ channel: OwnerChannel; status: 'sent' | 'duplicate' | 'refused' | 'disabled' | 'halted'; reason: string }>;
+}
+
+/**
+ * Tell the owner, once per enabled channel, that the channel is live. Same gate
+ * as `sendOwnerReply`: only the confirmed owner, never while halted or paused.
+ * A recorded receipt makes every later call a no-op for that channel.
+ */
+export async function sendOwnerHello(options: OwnerThreadOptions): Promise<OwnerHelloResult> {
+  if (halted(options) || paused(options)) return { status: 'halted', deliveries: [] };
+  try {
+    return await transaction(options, async state => {
+      const deliveries: OwnerHelloResult['deliveries'] = [];
+      for (const channel of OWNER_CHANNELS) {
+        if (channel === 'desktop') continue;
+        const key = `hello-${channel}-v1`;
+        const receiptKey = `${key}:${channel}`;
+        if (state.deliveries[receiptKey] === 'sent' || state.archivedKeys?.includes(keyDigest(key))) {
+          deliveries.push({ channel, status: 'duplicate', reason: 'Hello already sent.' });
+          continue;
+        }
+        const ownerId = options.settings.owners[channel];
+        const gate = adapterStatus(channel, options.settings, false, false);
+        if (!gate.enabled || !ownerId) {
+          deliveries.push({ channel, status: 'disabled', reason: gate.reason });
+          continue;
+        }
+        const transport = options.transports?.[channel];
+        if (!transport) {
+          deliveries.push({ channel, status: 'disabled', reason: 'No transport is attached for this channel.' });
+          continue;
+        }
+        const policy = checkSendPolicy({
+          channel: ownerChannelToBus(channel), recipients: [ownerId], teamIdentities: options.settings.team,
+          external: false, confirmedByMason: options.settings.confirmed,
+        });
+        if (policy.status !== 'sent') {
+          deliveries.push({ channel, status: 'refused', reason: 'Hello only goes to the confirmed owner.' });
+          continue;
+        }
+        const kill = halted(options);
+        const hold = paused(options);
+        if (kill || hold) {
+          deliveries.push({ channel, status: 'halted', reason: 'Adapters are halted.' });
+          continue;
+        }
+        let result: { status: 'sent' | 'duplicate' | 'refused' };
+        try { result = await transport.deliver({ idempotencyKey: receiptKey, text: OWNER_HELLO_TEXT, ownerId }); }
+        catch { result = { status: 'refused' }; }
+        if (result.status !== 'sent' && result.status !== 'duplicate') {
+          deliveries.push({ channel, status: 'refused', reason: 'Channel transport refused the hello.' });
+          continue;
+        }
+        state.deliveries[receiptKey] = 'sent';
+        mirror(options, appendMessage(state, {
+          idempotencyKey: key, channel, senderId: 'leader', direction: 'outbound',
+          at: new Date(clock(options)).toISOString(), text: OWNER_HELLO_TEXT, fanout: [channel],
+        }));
+        deliveries.push({ channel, status: result.status, reason: 'Delivered to the owner.' });
+      }
+      // Disabled channels are skipped, not failures. Only a refusal makes the run partial.
+      const sent = deliveries.some(row => row.status === 'sent');
+      const failed = deliveries.some(row => row.status === 'refused' || row.status === 'halted');
+      const status: OwnerHelloResult['status'] = sent
+        ? (failed ? 'partial' : 'sent')
+        : !failed && deliveries.some(row => row.status === 'duplicate') ? 'duplicate' : 'refused';
+      return { status, deliveries };
+    });
+  } catch {
+    return { status: 'unavailable', deliveries: [] };
   }
 }
 

@@ -7,6 +7,7 @@ import { FLEET_RUNS_INBOX_MAX_CHARS } from '../verse/fleet-runs-types.js';
 
 export interface OutboxEntry {
   at: string;
+  heading?: string;
   text: string;
 }
 
@@ -62,13 +63,19 @@ export function parseOutbox(markdown: string, limit = 30): OutboxEntry[] {
 }
 
 /** Extract only explicit leader replies, retaining their section's wall-clock time. */
-function parsePlanLog(markdown: string): OutboxEntry[] {
+export function parsePlanLog(markdown: string): OutboxEntry[] {
   const entries: OutboxEntry[] = [];
   let at = '';
+  let heading = '';
   let body: string[] | null = null;
+  let entryIndex = -1;
   const finish = (): void => {
     const text = body?.join('\n').trim();
-    if (text) entries.push({ at, text: cap(text) });
+    if (text) {
+      const reply = { at, heading, text: cap(text) };
+      if (entryIndex >= 0) entries[entryIndex] = reply;
+      else { entryIndex = entries.length; entries.push(reply); }
+    }
     body = null;
   };
   for (const line of markdown.replace(/\r\n/g, '\n').split('\n')) {
@@ -78,7 +85,11 @@ function parsePlanLog(markdown: string): OutboxEntry[] {
       body = [marker[1]!];
     } else if (/^#{1,6} /.test(line)) {
       finish();
-      if (line.startsWith('## ')) at = HEADING_TIME.exec(line)?.[0] ?? /^## (\d{4}-\d{2}-\d{2}) ET/.exec(line)?.[1] ?? '';
+      if (line.startsWith('## ')) {
+        entryIndex = -1;
+        heading = line.slice(3).trim();
+        at = HEADING_TIME.exec(line)?.[0] ?? /^## (\d{4}-\d{2}-\d{2}) ET/.exec(line)?.[1] ?? '';
+      }
     } else if (body !== null) {
       body.push(line);
     }
@@ -137,19 +148,42 @@ export async function readOutboxEntries(opts: { runsDir?: string; limit?: number
   for (const name of ['MASON-OUTBOX.md', 'PLAN-LOG.md']) {
     try {
       const markdown = await readTail(join(runsDir, 'leader', name));
-      entries.push(...(name === 'PLAN-LOG.md' ? parsePlanLog(markdown) : parseOutbox(markdown, Number.MAX_SAFE_INTEGER)));
+      entries.push(...(name === 'PLAN-LOG.md' ? parsePlanLog(markdown).map(({ at, text }) => ({ at, text })) : parseOutbox(markdown, Number.MAX_SAFE_INTEGER)));
       if (sourceState !== 'degraded') sourceState = 'healthy';
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') sourceState = 'degraded';
     }
   }
+  // Sort first so a duplicate keeps its newest timestamp across both journals.
+  entries.sort((a, b) => (replyTime(b.at) || 0) - (replyTime(a.at) || 0));
   const seen = new Set<string>();
   const unique = entries.filter(entry => {
-    const hash = replyTextHash(entry.text);
+    const hash = `${entry.at.slice(0, 10)}:${replyTextHash(entry.text)}`;
     if (seen.has(hash)) return false;
     seen.add(hash);
     return true;
   }).sort((a, b) => (replyTime(a.at) || 0) - (replyTime(b.at) || 0));
   const limit = opts.limit ?? 30;
   return { sourceState, entries: Number.isFinite(limit) && limit > 0 ? unique.slice(-Math.floor(limit)) : [] };
+}
+
+/** Only explicit dated PLAN-LOG replies, keeping the newest copy of each text per date. */
+export async function readPlanLogReplies(opts: { limit?: number } = {}): Promise<{ sourceState: 'healthy' | 'missing' | 'unknown'; entries: OutboxEntry[] }> {
+  const root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  try {
+    const limit = opts.limit ?? 30;
+    const seen = new Set<string>();
+    const entries = parsePlanLog(await readTail(join(root, 'leader', 'PLAN-LOG.md')))
+      .filter(e => e.at && e.heading && Number.isFinite(replyTime(e.at)))
+      .sort((a, b) => replyTime(b.at) - replyTime(a.at))
+      .filter(e => {
+        const hash = `${e.at.slice(0, 10)}:${replyTextHash(e.text)}`;
+        if (seen.has(hash)) return false;
+        seen.add(hash);
+        return true;
+      }).reverse();
+    return { sourceState: 'healthy', entries: Number.isFinite(limit) && limit > 0 ? entries.slice(-Math.floor(limit)) : [] };
+  } catch (error) {
+    return { sourceState: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unknown', entries: [] };
+  }
 }

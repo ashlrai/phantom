@@ -55,6 +55,8 @@ Usage:
   phm leader veto --memo <memoId> [--note "why"]
   phm leader oversight-plist --print [--bin /path/to/phm]
   phm leader say "<text>"
+  phm leader replies [--json] [--limit n]  show recent PLAN-LOG replies, newest first
+  phm leader replies sync [--json]  copy new PLAN-LOG replies to the Leader thread
   phm leader thread [--limit n] [--follow] [--since messageId] [--json]
   phm leader answer <questionId> "<text>"
   phm leader approve <actionId>
@@ -653,6 +655,29 @@ export async function runLeaderCli(argv: string[]): Promise<number> {
     return 0;
   }
   // Before the core import: printing a plist needs no Leader state.
+  if (sub === 'replies') {
+    const json = flag(args, '--json');
+    const sync = args[0] === 'sync';
+    if (sync) args.shift();
+    const limit = option(args, '--limit');
+    if (args.length || limit === undefined || (sync && limit !== null) || (limit !== null && (!/^\d{1,3}$/.test(limit) || Number(limit) < 1 || Number(limit) > 200))) { console.error(USAGE); return 2; }
+    try {
+      if (!sync) {
+        const { readPlanLogReplies } = await import('../core/fleet/mason-outbox.js');
+        const result = await readPlanLogReplies({ limit: limit === null ? 30 : Number(limit) });
+        result.entries.reverse();
+        console.log(json ? JSON.stringify(result) : result.entries.map(entry => `${entry.at}  ${entry.text}`).join('\n\n') || (result.sourceState === 'unknown' ? 'Leader replies are unavailable.' : 'No replies yet.'));
+        return result.sourceState === 'unknown' ? 1 : 0;
+      }
+      const { syncLeaderReplies } = await import('../core/vision/leader-thread.js');
+      const result = await syncLeaderReplies();
+      console.log(json ? JSON.stringify(result) : `${result.posted.length} replies posted; ${result.skipped.length} skipped. Source: ${result.sourceState}. Uncertain: ${result.unknown.length}.`);
+      return result.sourceState === 'unknown' || result.unknown.length ? 1 : 0;
+    } catch {
+      console.error(json ? JSON.stringify({ error: 'leader-replies-unavailable' }) : 'Leader replies are unavailable.');
+      return 1;
+    }
+  }
   if (sub === 'oversight-plist') return runOversightPlist(args);
   if (sub === 'status' || sub === 'ask' || sub === 'org' || sub === 'assign') return runOfficeCli(sub, args);
   if (sub === 'seat' || sub === 'inbox') return runCeoCli(sub, args);

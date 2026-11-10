@@ -167,8 +167,24 @@ Run `phm fleet merge-queue-age --input snapshot.json` for queued PR age and
 blocking reasons, oldest first. Add `--json` for agents. The typed
 `MergeQueueAgeInput` and `mergeQueueAge(input, now)` API use the same report.
 The snapshot contains `prs` and `queue`; `--help` lists their fields.
-Merged and closed PRs are excluded. Missing evidence stays unknown. Required
-checks remain in place; this command only reads the supplied file.
+Merged and closed PRs are excluded. Missing evidence stays unknown.
+
+Each blocker in `causes` classifies with a `since` timestamp: pending,
+failed and missing required checks take their own `at` (else the queue
+entry's `enteredAt`); conflicts, review stalls and stale branches take the
+PR's `updatedAt`. A stale branch is `mergeStateStatus` `BEHIND`; `DIRTY`
+counts as a conflict just like `mergeable: CONFLICTING`. An unparseable or
+future timestamp stays `null` — unknown, never guessed.
+
+A conflicting active entry also lands in `retryable_conflicts` with the
+`recut` request the existing merge-queue recut path enqueues once per head:
+the shared `RQ-RECUT-<repo>-<pr>-<sha7>` idempotency key means a repeat
+observation never enqueues a second recut. `blocked_conflicts` names the
+honest reason nothing was enqueued — `ambiguous` queue or PR rows, `no-repo`,
+`no-head`, `already-requested` (a `lastRecutHead` covering this head) or
+`too-many-recuts` (three or more recorded `recutRequests`). Required checks
+remain in place; this command only reads the supplied file and merges or
+requeues nothing.
 
 To prioritize conflict recovery by that same evidence, run `phm fleet
 merge-recover --queue-input snapshot.json --json`. The report includes the
@@ -179,6 +195,19 @@ measured entry in that snapshot. Add `--apply` to queue recuts and, after a
 replacement is published, request head-pinned GitHub auto-merge. GitHub still
 enforces required checks and the merge queue. Retry the command after a failed
 request or publication; it reuses the recovery identity.
+
+For a dropped auto-merge instead of a conflict, run `phm fleet merge-retry
+--events merge-events.jsonl --json` against the same ledger `phm fleet
+merge-latency` records into. The latency report's `queue_retries` classifies
+each open PR's recorded auto-merge drop: `retryable` needs a `queue` blocker
+in the enable-to-disable episode and retries left; `unattributed` drops wait
+for a person. Dry-run prints `request-auto-merge`; `--apply` re-arms ordinary
+head-pinned auto-merge (`gh pr merge --auto --match-head-commit`), appends one
+`retry_requested` event per PR, and stops after three requests per run and
+three retries per PR ever — replayed events count once. A failed submission
+appends `retry_failed` instead; three distinct failed submissions make the
+drop `request-failed` and stop automatic retries. Required checks,
+reviews and the merge queue stay in force.
 
 Acceptance: keep the interface as simple and intuitive as possible, with fewer
 steps, plain words, one obvious path, and every human surface backed by a typed
@@ -202,6 +231,17 @@ Acceptance: as simple and intuitive as possible, fewer steps, plain words,
 one obvious path, and every human surface backed by a typed API or CLI
 that agents can use (code-first, agent-native).
 
+## Repeated queue lines
+
+Run `phm fleet queue-repeats --lines lines.json --json` for one number: how many
+READY or CLAIMED lines from the last 24 hours repeat an earlier line with the
+same repo, target file and acceptance, plus the top 5 examples. Omit `--json`
+for plain words. Supply `QueueLine` records (`id`, `status`, `repo`, `at`,
+`text`); the typed `queueRepeats(lines)` API returns the same report. Text must
+name a target file before an `Acceptance:` clause, and lines without both are
+never matched. Read-only. Gap: it matches exact normalized acceptance, not
+reworded duplicates, and does not yet read `ready.tsv` directly.
+
 ## PR creation and queue delays
 
 Run `phm fleet queue-age --events events.json --json` to rank PR delays from
@@ -217,3 +257,20 @@ The longest measured delays come first; ongoing waits are not estimated.
 Acceptance: as simple and intuitive as possible, fewer steps, plain words,
 one obvious path, and every human surface backed by a typed API or CLI
 that agents can use (code-first, agent-native).
+
+### Machine load
+
+`phm fleet machine --json` and `GET /api/fleet/machine` expose the same
+read-only `fleet.machine.v1` projection of dispatchd's `queue/status.json`.
+Load per CPU uses the one-minute load average and CPU count; the Machine card
+warns above four times the CPU count. Swap and free disk are in GB. Missing or
+invalid measurements are `null` in JSON and shown as “unknown” in the card.
+Worktrees are the dispatcher's active worker worktrees, not all Git worktrees.
+
+### Fleet map
+
+The Fleet screen shows a map of the Leader, reported lanes and active jobs.
+Run `phm fleet map --json` for the same `fleet.map.v1` tree. The map uses
+`/api/verse/fleet/live`: it shows only jobs in that snapshot, and a job with
+an unreported lane appears under an unknown lane. Provider marks are initials;
+the snapshot does not provide logos or the Leader's identity.

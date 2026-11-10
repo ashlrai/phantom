@@ -179,6 +179,14 @@ function renderTable(usage: import('../core/usage/frontier-usage.js').FrontierUs
 
 export async function cmdUsage(args: string[]): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) { printUsage(); return 0; }
+  if (args[0] === 'pace') {
+    if (args.length > 2 || (args[1] !== undefined && args[1] !== '--json')) { console.error('Usage: phm usage pace [--json]'); return 2; }
+    const { readUsagePace } = await import('../core/usage/pace.js');
+    const pace = await readUsagePace();
+    if (args[1] === '--json') console.log(JSON.stringify(pace, null, 2));
+    else for (const row of pace.pools) console.log(`${row.pool}: ${row.projectedPercent === null ? 'unknown' : `on pace to use ${row.projectedPercent}% before reset (${row.hoursLeft} h left)`} · suggested running slots: ${row.recommendedSlots ?? 'unknown'}`);
+    return 0;
+  }
   if (args[0] === 'sensors') return cmdUsageSensors(args.slice(1));
   if (args[0] === 'validate') {
     if ((args.length !== 2 && args.length !== 3) || !args[1] || args[1].startsWith('-') ||
@@ -246,11 +254,14 @@ function printUsage(): void {
   console.log(b('  ashlr usage') + d(' [--json]'));
   console.log('');
   console.log('  Show per-engine frontier usage: calls, tokens, cost, and window state.');
+  console.log('  phm usage pace [--json] shows included-quota forecasts by pool.');
   console.log('  phm usage validate <file> [--json] checks usage-reading.v1 JSONL records.');
   console.log('  phm usage sensors --json [--refresh] [--file <snapshot>]');
   console.log('  prints each lane reading, its age and whether it is stale.');
   console.log('  A reading at or after staleAfter is unknown and is not headroom.');
   console.log('  --refresh uses official APIs and CLIs only.');
+  console.log('  Reading a snapshot automatically refreshes stale Codex personal usage');
+  console.log('  when its pool home is configured; the snapshot is not rewritten.');
   console.log('  Codex refresh uses PHANTOM_SENSOR_CODEX_CMP_HOME and');
   console.log('  PHANTOM_SENSOR_CODEX_PERSONAL_HOME when those pool homes are set.');
   console.log('  Operator credential directories are refused.');

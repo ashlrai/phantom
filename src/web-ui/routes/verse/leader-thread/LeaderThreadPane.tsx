@@ -37,7 +37,12 @@ import { OwnerChannelsStrip } from './OwnerChannelsStrip.js';
 import { leaderOfficeQuery } from './leader-office-data.js';
 import { mergeOwnerLines, ownerThreadLines, type LabeledLine } from './owner-thread-lines.js';
 import { NO_OWNER_THREAD, ownerThreadQuery } from './owner-thread-queries.js';
-import { sendLeaderInboxMessage } from './leader-inbox-data.js';
+import { fetchLeaderStatusNow } from './leader-status-now.js';
+import { sendLeaderInboxMessage, sendLeaderThreadMessage } from './leader-inbox-data.js';
+import { COMMS_CONFIRM_LINE, COMMS_TOML_PATH, INBOX_HELD_SENTENCE, inboxHeld } from './inbox-held-model.js';
+import { CopyPill } from '../apps/CopyPill.js';
+import { commandHints, completeCommand, parseComposerDraft } from './composer-commands.js';
+import { commandGate, liveComposerDeps, runComposerCommand, type ComposerCommand } from './composer-command-run.js';
 
 /** Shared 'verse-fleet-runs' key so the pane rides the same cache and SSE invalidation as the other fleet panes. */
 const fleetRunsQuery: QueryDef<unknown> = {
@@ -126,13 +131,18 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const logRef = useRef<HTMLDivElement>(null);
   const atEnd = useRef(true);
   const inFlight = useRef(false);
+  const [statusNow, setStatusNow] = useState<string | null>(null);
+  const [checkingStatus, setCheckingStatus] = useState(false);
   const [needsYouOnly, setNeedsYouOnly] = useState(false);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const [held, setHeld] = useState(false);
   const [unlockOpen, setUnlockOpen] = useState(false);
   const [scrollVersion, setScrollVersion] = useState(0);
   const [addingDirective, setAddingDirective] = useState(false);
+  /** Composer command results; local to this session, never sent as messages. */
+  const [commandLines, setCommandLines] = useState<LabeledLine[]>([]);
   // Inbox wall times, the merge and the day labels want a coarse tick.
   const now = useNow(10_000);
 
@@ -188,8 +198,40 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     el.scrollTop = el.scrollHeight;
   }, [lastKey, scrollVersion]);
 
+  async function checkStatus() {
+    setCheckingStatus(true);
+    setStatusNow(null);
+    try {
+      setStatusNow(await fetchLeaderStatusNow() ?? 'Status is unavailable right now.');
+    } catch {
+      setStatusNow('Status is unavailable right now.');
+    } finally {
+      setCheckingStatus(false);
+    }
+  }
+
+  function runCommand(command: ComposerCommand) {
+    if (actions.busy) return;
+    const done = (text: string) => {
+      const at = Date.now();
+      setCommandLines(lines => [...lines, { id: `composer-${at}-${lines.length}`, at, who: 'mason', source: 'system', text, ack: null }]);
+      setDraft('');
+      setScrollVersion(version => version + 1);
+    };
+    const gate = commandGate(command);
+    const run = () => runComposerCommand(command, liveComposerDeps);
+    // Writes go through the pane's guarded actions: the button's confirm, then the mutation hold.
+    if (gate) actions.act(run, gate.reason, { confirm: gate.confirm ?? undefined, onDone: done });
+    else void run().then(done);
+  }
+
   async function send() {
     if (inFlight.current || !canSend(draft, sending) || actions.readOnly) return;
+    const parsed = parseComposerDraft(draft);
+    if (parsed.kind === 'command') {
+      runCommand(parsed);
+      return;
+    }
     if (!hasMutationHold()) {
       setUnlockOpen(true);
       return;
@@ -198,10 +240,37 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     inFlight.current = true;
     setSending(true);
     setFailure(null);
+    setHeld(false);
     try {
       await sendLeaderInboxMessage(text);
       setDraft('');
       await refetchQuery(fleetRunsQuery.key, () => fleetRunsQuery.fetch(), true);
+      setScrollVersion(version => version + 1);
+    } catch (error) {
+      if (inboxHeld(error)) setHeld(true);
+      else setFailure(readFailureReason(error));
+    } finally {
+      inFlight.current = false;
+      setSending(false);
+    }
+  }
+
+  /** The thread route has no comms gate, so a held inbox message can still reach the Leader. */
+  async function sendToThread() {
+    if (inFlight.current || !canSend(draft, sending) || actions.readOnly) return;
+    if (!hasMutationHold()) {
+      setUnlockOpen(true);
+      return;
+    }
+    inFlight.current = true;
+    setSending(true);
+    setFailure(null);
+    try {
+      await sendLeaderThreadMessage(trimReply(draft));
+      setDraft('');
+      setHeld(false);
+      refetchThread();
+      refetchRuns();
       setScrollVersion(version => version + 1);
     } catch (error) {
       setFailure(readFailureReason(error));
@@ -217,12 +286,20 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key !== 'Enter' || (!event.metaKey && !event.ctrlKey) || event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (event.key === 'Tab' && !event.shiftKey) {
+      const completed = completeCommand(draft);
+      if (completed !== null) { event.preventDefault(); setDraft(completed); }
+      return;
+    }
+    // A command runs on plain Enter; a message still needs Cmd/Ctrl+Enter.
+    const command = !event.shiftKey && parseComposerDraft(draft).kind === 'command';
+    if (event.key !== 'Enter' || (!command && !event.metaKey && !event.ctrlKey) || event.nativeEvent.isComposing || event.keyCode === 229) return;
     event.preventDefault();
     event.stopPropagation();
     void send();
   }
 
+  const hints = commandHints(draft);
   const threadMissing = read !== undefined && read.value === null;
   const empty = items.length === 0;
   const loading = empty && read === undefined && runs.data === undefined && runs.error === undefined;
@@ -263,7 +340,8 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       </details>
     </section>
     <DirectivesStrip read={directives.data} actions={actions} adding={addingDirective} onAddingChange={setAddingDirective} />
-    <header><button type="button" aria-pressed={needsYouOnly} onClick={() => setNeedsYouOnly(value => !value)}>Needs you only</button></header>
+    <header><button type="button" disabled={checkingStatus} onClick={() => void checkStatus()}>{checkingStatus ? 'Checking…' : 'Status now'}</button> <button type="button" aria-pressed={needsYouOnly} onClick={() => setNeedsYouOnly(value => !value)}>Needs you only</button></header>
+    {statusNow !== null ? <section aria-label="Status now" role="status"><p style={{ whiteSpace: 'pre-wrap' }}>{statusNow}</p><button type="button" onClick={() => setStatusNow(null)}>Dismiss</button></section> : null}
     <p className={styles.note}>{busRows.length} bus replies</p>
     {busUnavailable ? <p className={styles.note} role="status">Durable bus unavailable</p> : null}
     <OwnerChannelsStrip channels={ownerRead.channels} paused={ownerRead.paused} />
@@ -275,6 +353,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       <div className={leaderStyles.logInner}>
         {ownerRead.paused ? <p className={leaderStyles.system}>Owner channels paused</p> : null}
         {body}
+        {commandLines.map(line => <LineView key={line.id} line={line} />)}
       </div>
     </div>
     {note ? <p className={styles.note} role="note">{note}</p> : null}
@@ -284,6 +363,15 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
           disabled={sending || actions.readOnly} onChange={event => setDraft(event.target.value)} onKeyDown={onKeyDown} />
         <button type="submit" disabled={!canSend(draft, sending) || actions.readOnly}>Send</button>
       </div>
+      {hints.length ? <ul className={styles.note} aria-label="Composer commands">
+        {hints.map(hint => <li key={hint.name}><code>{hint.usage}</code> {hint.summary}</li>)}
+      </ul> : null}
+      {held ? <div className={styles.note} role="status">
+        <p>{INBOX_HELD_SENTENCE} Only Mason edits this file.</p>
+        <CopyPill text={COMMS_TOML_PATH} what="the comms.toml path" />
+        <CopyPill text={COMMS_CONFIRM_LINE} what="the comms.toml confirmation line" />
+        <button type="button" disabled={!canSend(draft, sending) || actions.readOnly} onClick={() => void sendToThread()}>Send to the Leader thread instead</button>
+      </div> : null}
       {failure ? <p className={styles.replyFailure} role="alert">{failure}</p> : null}
     </form>
     <MutationTokenDialog open={unlockOpen} onClose={() => setUnlockOpen(false)} onUnlocked={() => void send()}

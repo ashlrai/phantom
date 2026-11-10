@@ -67,6 +67,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { loadConfig, saveConfig, CONFIG_PATH } from '../core/config.js';
@@ -2073,7 +2075,33 @@ async function main(): Promise<void> {
 
   try {
     switch (cmd) {
+      case 'check': {
+        if (wantsHelp(rest)) {
+          printCoreUsage('check', 'Run development checks in a Phantom checkout.', [
+            ['phm check [--base <ref>] [--json]', 'Run incremental typechecks, cached lint and affected tests'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
+        const script = resolve(process.cwd(), 'scripts/gate.mjs');
+        if (!existsSync(script)) {
+          console.error('phm check: run from the Phantom repository root (scripts/gate.mjs missing)');
+          process.exitCode = 2;
+          break;
+        }
+        const result = spawnSync(process.execPath, [script, '--check', ...rest], { stdio: 'inherit' });
+        if (result.error) console.error(`phm check: ${result.error.message}`);
+        process.exitCode = result.status ?? 1;
+        break;
+      }
       case 'chain': {
+        if (wantsHelp(rest)) {
+          printCoreUsage('chain', 'Synthetic chain checks.', [
+            ['phm chain verify [--json]', 'Run the in-memory chain checks'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
         const { cmdChain } = await import('./chain.js');
         process.exitCode = await cmdChain(rest);
         break;
@@ -2148,7 +2176,20 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'jobs': {
+        const { cmdJobs } = await import('./jobs-empty.js');
+        process.exitCode = await cmdJobs(rest);
+        break;
+      }
+
       case 'metrics': {
+        if (wantsHelp(rest)) {
+          printCoreUsage('metrics', 'Local metrics reports.', [
+            ['phm metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]', 'Estimate idle slot-minutes'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
         const { cmdMetrics } = await import('./metrics.js');
         process.exitCode = await cmdMetrics(rest);
         break;
@@ -2218,11 +2259,25 @@ async function main(): Promise<void> {
       }
 
       case 'checkpoint': {
+        if (wantsHelp(rest)) {
+          printCoreUsage('checkpoint', 'Resume a saved checkpoint.', [
+            ['phm checkpoint resume', 'Resume the saved checkpoint'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
         const { cmdCheckpoint } = await import('./checkpoint.js');
         process.exitCode = await cmdCheckpoint(rest);
         break;
       }
       case 'trail': {
+        if (wantsHelp(rest)) {
+          printCoreUsage('trail', 'Stigmergic file markers.', [
+            ['phm trail claim|beat|release|save|list|show|resume|sweep', 'File markers for stalled work'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
         const { cmdTrail } = await import('./trail.js');
         process.exitCode = await cmdTrail(rest);
         break;
@@ -2385,6 +2440,11 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'constitution': {
+        const { cmdConstitution } = await import('./constitution.js');
+        process.exitCode = await cmdConstitution(rest);
+        break;
+      }
       case 'spec': {
         const cmdSpec = await loadSpecCmd();
         process.exitCode = await cmdSpec(rest);
@@ -2478,8 +2538,13 @@ async function main(): Promise<void> {
       }
 
       case 'worktrees': {
-        const { cmdWorktrees } = await import('./worktrees.js');
-        process.exitCode = cmdWorktrees(rest);
+        if (rest[0] === 'prune') {
+          const { cmdWorktreesPrune } = await import('./worktrees-prune.js');
+          process.exitCode = await cmdWorktreesPrune(rest.slice(1));
+        } else {
+          const { cmdWorktrees } = await import('./worktrees.js');
+          process.exitCode = cmdWorktrees(rest);
+        }
         break;
       }
 
@@ -2556,12 +2621,33 @@ async function main(): Promise<void> {
       }
 
       case 'repos': {
+        if (wantsHelp(rest)) {
+          printCoreUsage('repos', 'Repository ranking.', [
+            ['phm repos rank [--json]', 'Rank enrolled repositories'],
+            ['phm repos proposals [--json]', 'Read ranking proposals'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
         const { cmdReposRank } = await import('./repos-rank.js');
         process.exitCode = cmdReposRank(rest);
         break;
       }
 
+      case 'worklog': {
+        const { cmdWorklog } = await import('./worklog.js');
+        process.exitCode = await cmdWorklog(rest);
+        break;
+      }
+
       case 'fleet': {
+        if (rest[0] === 'usage' && wantsHelp(rest)) {
+          printCoreUsage('fleet usage', 'Read fleet usage.', [
+            ['phm fleet usage [--json]', 'Read fleet usage'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
         // M49: fleet control plane + observability — read-only `status`,
         // plus `pause`/`resume` (kill-switch only).
         const cmdFleet = await loadFleetCmd();
@@ -2678,6 +2764,11 @@ async function main(): Promise<void> {
       }
 
       case 'goals': {
+        if (rest.length === 0 || (rest.length === 1 && rest[0] === '--json')) {
+          const { cmdGoals } = await import('./goals-view.js');
+          process.exitCode = await cmdGoals(rest);
+          break;
+        }
         const cmdGoals = await loadGoalsCmd();
         process.exitCode = await cmdGoals(rest);
         break;
@@ -2701,7 +2792,20 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'test': {
+        const { cmdTest } = await import('./test-changed.js');
+        process.exitCode = cmdTest(rest);
+        break;
+      }
+
       case 'verify': {
+        if (wantsHelp(rest)) {
+          printCoreUsage('verify', 'Verify a change.', [
+            ['phm verify', 'Run the verification flow'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
         const { cmdVerify } = await import('./verify.js');
         process.exitCode = await cmdVerify(rest);
         break;
@@ -2783,6 +2887,14 @@ async function main(): Promise<void> {
       }
 
       case 'world': {
+        if (wantsHelp(rest)) {
+          printCoreUsage('world', 'Cached world model.', [
+            ['phm world [--json]', 'Read the cached world model'],
+            ['phm world get <path> [--json]', 'Read one world-model node'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
         process.exitCode = await (await import('./world.js')).cmdWorld(rest);
         break;
       }
@@ -2812,6 +2924,14 @@ async function main(): Promise<void> {
       }
 
       case 'comms': {
+        if ((rest[0] === 'thread' || rest[0] === 'send-owner') && wantsHelp(rest)) {
+          printCoreUsage('comms', 'Owner thread.', [
+            ['phm comms thread [--json]', 'Read the owner thread'],
+            ['phm comms send-owner --text <reply> [--json]', 'Reply to the owner'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
         const cmdComms = await loadCommsCmd();
         process.exitCode = await cmdComms(rest);
         break;
@@ -2902,6 +3022,18 @@ async function main(): Promise<void> {
         }
         const cmdAuthority = await loadAuthorityCmd();
         process.exitCode = await cmdAuthority(rest);
+        break;
+      }
+
+      case 'library': {
+        const { cmdLibrary } = await import('./library.js');
+        process.exitCode = await cmdLibrary(rest);
+        break;
+      }
+
+      case 'feed': {
+        const { cmdFeed } = await import('./feed.js');
+        process.exitCode = await cmdFeed(rest);
         break;
       }
 
@@ -3037,6 +3169,13 @@ async function main(): Promise<void> {
       }
 
       case 'usage': {
+        if (wantsHelp(rest)) {
+          printCoreUsage('usage', 'Usage readings.', [
+            ['phm usage validate', 'Validate a usage reading'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
         // M194: frontier usage table — per-engine calls/tokens/cost + window state.
         const cmdUsage = await loadUsageCmd();
         process.exitCode = await cmdUsage(rest);

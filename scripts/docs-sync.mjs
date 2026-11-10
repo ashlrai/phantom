@@ -63,7 +63,8 @@ function syncDocsLlms(root, { check }) {
   const rel = 'docs/llms.txt';
   const path = resolve(root, rel);
   const current = readFileSync(path, 'utf8');
-  const next = renderLlmsTxt(current, listDocsPages(join(root, 'docs')));
+  const source = readFileSync(join(root, 'docs', 'llms-source.txt'), 'utf8');
+  const next = renderLlmsTxt(source, listDocsPages(join(root, 'docs')));
   if (next === current) return [];
   if (!check) writeFileSync(path, next);
   return [rel];

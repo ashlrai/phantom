@@ -11,3 +11,7 @@
 .badge { padding: 0 var(--space-1); border: 1px solid var(--border-subtle); border-radius: var(--radius-full); text-transform: uppercase; }
 .metric[data-state='stale'] .badge { color: var(--warning-500, var(--text-secondary)); }
 .metric[data-state='unknown'] .badge { font-style: italic; }
+.steer { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.steer input { flex: 1; min-width: 12ch; }
+
+.metric[data-state='met'] .metricValue { color: var(--success-500, var(--text-primary)); }

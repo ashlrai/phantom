@@ -1,7 +1,7 @@
 /**
  * routes/verse/goals-pane/GoalsPane.tsx: every open goal, its progress, its
- * next milestone and the mission state, beside the Leader thread. Read-only:
- * goals change through `ashlr goals`, never from here. Each source fails on
+ * next milestone and the mission state, beside the Leader thread. Goals change
+ * through `ashlr goals`; the only write here is a steering line to the Leader. Each source fails on
  * its own. All text is untrusted and rendered as React text, never HTML.
  */
 import { useMemo } from 'react';
@@ -12,16 +12,34 @@ import { Card, CardNote } from '../command/Surface.js';
 import { readMergeSpeed } from '../fleet-merges/fleet-merges-model.js';
 import { fleetMergesQuery } from '../fleet-merges/fleet-merges-queries.js';
 import { mergeBacklogQuery } from '../fleet-merges/merge-backlog-queries.js';
+import { paneLinkUrl } from '../dock/pane-link.js';
+import type { PaneProps } from '../panes/pane-registry.js';
+import { repoBacklogView } from '../fleet-merges/repo-backlog-model.js';
+import { repoBacklogQuery } from '../fleet-merges/repo-backlog-queries.js';
+import { GoalSteer } from './GoalSteer.js';
 import { GoalMetric, previousDayValue } from './GoalMetric.js';
 import { goalLine, goalsHeadline, openGoals } from './goals-pane-model.js';
+import { prBacklogGoal, prBacklogTotal } from './pr-backlog-goal-model.js';
 import styles from './goals-pane.module.css';
 
-export function GoalsPane({ visible = true }: { visible?: boolean }) {
+// First known backlog total this session: the "since you opened Phantom" baseline.
+let sessionBacklogBaseline: number | null = null;
+export function resetPrBacklogBaseline(): void { sessionBacklogBaseline = null; }
+
+export function GoalsPane({ visible = true, host }: Pick<Partial<PaneProps>, 'visible' | 'host'>) {
   const goals = useQuery(goalsQuery, { enabled: visible });
   const mission = useQuery(visionMissionQuery, { enabled: visible });
 
   const merges = useQuery(fleetMergesQuery, { enabled: visible });
   const backlog = useQuery(mergeBacklogQuery, { enabled: visible });
+  const prBacklog = useQuery(repoBacklogQuery, { enabled: visible });
+  const prGoal = useMemo(() => {
+    const rows = prBacklog.data ? repoBacklogView(prBacklog.data, Date.now()).rows : undefined;
+    const total = prBacklogTotal(rows);
+    const previous = sessionBacklogBaseline;
+    if (total !== null && sessionBacklogBaseline === null) sessionBacklogBaseline = total;
+    return prBacklogGoal(rows, previous);
+  }, [prBacklog.data]);
   const metrics = useMemo(() => {
     const readings: Partial<Record<GoalMetricId, MetricReading>> = {};
     const now = Date.now();
@@ -50,6 +68,11 @@ export function GoalsPane({ visible = true }: { visible?: boolean }) {
           ? 'Mission state unavailable'
           : mission.data ? `Mission state: ${mission.data.state}` : 'Mission state loading'}
       </p>
+      <p className={styles.metric} data-state={prGoal.tone}>
+        <a href={paneLinkUrl('fleet-merges', null, false) ?? undefined} onClick={event => { event.preventDefault(); host?.openPane('fleet-merges'); }}>{prGoal.label}</a>
+        <span className={styles.metricValue}>{prGoal.value}</span>
+        {prGoal.trend ? <span>{prGoal.trend}</span> : null}
+      </p>
       {goalsFailed ? <CardNote tone="danger">{goals.error?.message ?? 'Could not read goals.'}</CardNote> : null}
       {loading ? <CardNote>Loading goals</CardNote> : null}
       {goals.data && lines.length === 0 ? (
@@ -74,6 +97,7 @@ export function GoalsPane({ visible = true }: { visible?: boolean }) {
           <GoalMetric metric={metrics[line.id]!} />
           <p className={styles.meta}>Next: {line.nextMilestone ?? 'none open'}</p>
           <p className={styles.meta}>{line.milestoneCounts}</p>
+          <GoalSteer goal={line} />
         </Card>
       ))}
     </div>

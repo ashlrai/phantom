@@ -441,10 +441,12 @@ reads it.
 ## From the CLI
 
 `phm leader thread --json` shows the ordered conversation, including replies in
-`leader/MASON-OUTBOX.md` and every “Reply for Mason” block in `leader/PLAN-LOG.md`
+`leader/MASON-OUTBOX.md` and the latest “Reply for Mason” block in each `leader/PLAN-LOG.md` entry
 under your runs directory. Reply blocks use their heading time; identical text
 appears once. These journals are read only. The desktop Leader pane and phone
 view show the same replies, including when the outbox cannot be written.
+For dated PLAN-LOG replies alone, newest first, use `phm leader replies --json --limit 20`.
+The reader checks the last 256 KiB of the journal; older replies may be omitted.
 
 ```sh
 ashlr leader say "focus: the flaky retry test in binshield"
@@ -512,3 +514,9 @@ older exact model tags remain readable and do not authorize newer versions.
 and [Claude model details](https://platform.claude.com/docs/en/models/overview)
 provide public API price estimates. Those prices do not replace subscription
 allowance, native context allocation or verified funding observations.
+
+### Leader facts snapshot
+
+Run `ashlr fleet leader-facts --json` to refresh `~/.ashlr-runs/leader/facts.json` before a leader pass. The `leader.facts.v1` snapshot joins leader-tagged router queue lines to jobs with a dated ledger event in the last 48 hours, then reads PR state, 24-hour merge counts, and latest release tags from GitHub. Repositories are those represented by the selected jobs. `null` means unknown; source status reports missing or damaged local evidence. Jobs with no dated ledger evidence have unknown age and are retained. Recent Q8 PRs can also be discovered from GitHub when queue history is absent. The file is replaced atomically; this command does not merge or publish anything.
+
+The resident daemon refreshes this snapshot at startup and every 15 minutes. GitHub search also discovers recent Q8 PRs independently of local history; `sources.github` is `partial` when search or a PR lookup fails or the search reaches its page limit. The schedule requires the resident daemon to be running.

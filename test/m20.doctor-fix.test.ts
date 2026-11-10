@@ -57,7 +57,10 @@ const mockSpawn = vi.fn(() => {
   child.stdout = null;
   child.stderr = null;
   child.unref = () => {};
-  queueMicrotask(() => child.emit('error', Object.assign(new Error('not found'), { code: 'ENOENT' })));
+  queueMicrotask(() => {
+    const error = Object.assign(new Error('not found'), { code: 'ENOENT' });
+    if (child.listenerCount('error') > 0) child.emit('error', error);
+  });
   return child;
 });
 
