@@ -4,7 +4,7 @@
 // against live PRs before then):
 //
 //   phantom exec -- node scripts/queuegen.mjs \
-//     [--queue PATH] [--hold-file PATH] [--state-file PATH] [--mirrors-root PATH] [--dry-run]
+//     [--queue PATH] [--hold-file PATH] [--state-file PATH] [--mirrors-root PATH] [--metrics PATH] [--dry-run]
 //
 // Requires `npm run build` (imports dist). `gh` must be on PATH and already
 // authorized. Defaults live under ~/.ashlr-runs/queue/ and ~/.ashlr/fleet/mirrors:
@@ -13,20 +13,23 @@
 //                                                       optional ashlrai/ prefix,
 //                                                       "#" comments allowed)
 //   state-file   <queue>.queuegen-state.json
+//   metrics      ~/.ashlr-runs/metrics/jobs.jsonl      (recent job outcomes;
+//                                                       a missing file means no suppression)
 //   mirrors-root ~/.ashlr/fleet/mirrors                (<owner>__<repo> mirrors)
 // Unreadable hold file, malformed queue line, or any gh error stops the cycle
 // with exit 1 and no retry. stderr carries only QUEUEGEN_* journal lines.
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const USAGE = 'node scripts/queuegen.mjs [--queue PATH] [--hold-file PATH] [--state-file PATH] [--mirrors-root PATH] [--dry-run]';
+const USAGE = 'node scripts/queuegen.mjs [--queue PATH] [--hold-file PATH] [--state-file PATH] [--mirrors-root PATH] [--metrics PATH] [--dry-run]';
 const GH_TIMEOUT_MS = 90_000;
 const GIT_TIMEOUT_MS = 60_000;
 const PR_LIMIT = 100;
 const LOG_TAIL_CHARS = 8_000;
+const METRICS_TAIL_BYTES = 8 * 1024 * 1024;
 
 const PR_QUERY = `query($name: String!, $cursor: String) {
   repository(owner: "ashlrai", name: $name) {
@@ -215,6 +218,33 @@ function atomicWrite(path, text) {
   renameSync(tmp, path);
 }
 
+let parseJobOutcomeRows = null;
+try {
+  const mod = await import('../dist/core/queue/job-outcomes.js');
+  if (typeof mod.parseJobOutcomeRows === 'function') parseJobOutcomeRows = mod.parseJobOutcomeRows;
+} catch { /* missing build is fatal for runQueuegenCycle's import anyway */ }
+
+/** Tail-bounded jobs.jsonl read; a missing file means no outcomes (never a throw). */
+function readOutcomeRows(metricsPath, now, windowMs) {
+  if (parseJobOutcomeRows === null || !existsSync(metricsPath)) return [];
+  const fd = openSync(metricsPath, 'r');
+  let text;
+  try {
+    const size = fstatSync(fd).size;
+    const start = Math.max(0, size - METRICS_TAIL_BYTES);
+    const buffer = Buffer.alloc(size - start);
+    readSync(fd, buffer, 0, buffer.length, start);
+    text = buffer.toString('utf8');
+    if (start > 0) {
+      const first = text.indexOf('\n');
+      text = first < 0 ? '' : text.slice(first + 1);
+    }
+  } finally {
+    closeSync(fd);
+  }
+  return parseJobOutcomeRows(text, now, windowMs);
+}
+
 async function main() {
   const queueRoot = join(homedir(), '.ashlr-runs', 'queue');
   const flags = {
@@ -222,6 +252,7 @@ async function main() {
     '--hold-file': join(queueRoot, 'hold-list.txt'),
     '--state-file': '',
     '--mirrors-root': join(homedir(), '.ashlr', 'fleet', 'mirrors'),
+    '--metrics': join(homedir(), '.ashlr-runs', 'metrics', 'jobs.jsonl'),
   };
   const dryRun = process.argv.includes('--dry-run');
   const args = process.argv.slice(2).filter((arg) => arg !== '--dry-run');
@@ -238,8 +269,9 @@ async function main() {
   flags['--hold-file'] = resolve(flags['--hold-file']);
   flags['--state-file'] = resolve(flags['--state-file'] || `${flags['--queue']}.queuegen-state.json`);
   flags['--mirrors-root'] = resolve(flags['--mirrors-root']);
+  flags['--metrics'] = resolve(flags['--metrics']);
 
-  const { runQueuegenCycle, normalizeState } =
+  const { runQueuegenCycle, normalizeState, QUEUEGEN_PR_WINDOW_MS } =
     await import('../dist/core/drive/queuegen.js');
 
   mkdirSync(dirname(flags['--queue']), { recursive: true, mode: 0o700 });
@@ -254,6 +286,7 @@ async function main() {
       appendFileSync(flags['--queue'], `${line}\n`, { mode: 0o600 });
     },
     readHoldList: () => readHoldList(flags['--hold-file']),
+    recentJobOutcomes: () => readOutcomeRows(flags['--metrics'], Date.now(), QUEUEGEN_PR_WINDOW_MS),
     loadState: () => {
       if (!existsSync(flags['--state-file'])) return undefined;
       return normalizeState(JSON.parse(readFileSync(flags['--state-file'], 'utf8')));
