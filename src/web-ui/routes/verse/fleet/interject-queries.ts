@@ -34,18 +34,18 @@ export const inboxTailQuery: QueryDef<InboxTail> = {
 
 export type { InboxAck };
 
-async function post(text: string): Promise<{ at: string; duplicate: boolean; accepted: boolean; id?: string }> {
+async function post(text: string, requestId?: string): Promise<{ at: string; duplicate: boolean; accepted: boolean; id?: string }> {
   const token = getMutationToken();
   if (!token) throw new VerseMutationLockedError();
-  const result = await apiPost<{ at: string; duplicate?: unknown; accepted?: unknown; id?: unknown }>(INTERJECT_POST_PATH, buildInterjectBody(text), token);
+  const result = await apiPost<{ at: string; duplicate?: unknown; accepted?: unknown; id?: unknown }>(INTERJECT_POST_PATH, buildInterjectBody(text, requestId), token);
   if (!result || typeof result.at !== 'string') throw new Error('The message could not be confirmed. Refresh and check the inbox.');
   touchMutationHold();
   const id = typeof result.id === 'string' && result.id ? result.id : undefined;
   return { at: result.at, duplicate: result.duplicate === true, accepted: result.accepted === true, ...(id ? { id } : {}) };
 }
 
-export async function postInterjection(text: string): Promise<{ at: string; id?: string }> {
-  const { at, id } = await post(text);
+export async function postInterjection(text: string, requestId?: string): Promise<{ at: string; id?: string }> {
+  const { at, id } = await post(text, requestId);
   return { at, ...(id ? { id } : {}) };
 }
 
