@@ -25,6 +25,7 @@ import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_GLA
 import type { SupersededReadV1 } from '../fleet/superseded-read.js';
 import { VERSE_FLEET_RUNS_STOP_PATH, stopJob, type JobStopResult, type StopJobOptions } from '../fleet/job-stop.js';
 import { STRAY_ID_PATTERN } from '../fleet/stray-slots.js';
+import { laneMedians, overrunOf } from '../fleet/job-overrun.js';
 import type { reassignQueuedJobs } from '../fleet/runs-reassign.js';
 import { isJobCommand, renderJobCommandReply, runTelegramJobCommand } from '../comms/telegram-job-command.js';
 
@@ -334,6 +335,18 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       result.outbox = project(entries, outboxShape) as FleetRunsV1['outbox'];
     } catch { result.outbox = []; }
     await sourcesDone;
+    // Overrun flags are additive evidence on projected workers: the ledger can
+    // only add `overrun`, never rewrite a projected field or the ordering.
+    if (result.workers.length > 0) {
+      const medians = await overrunMedians();
+      if (medians.size > 0) {
+        const at = now();
+        result.workers = result.workers.map(worker => {
+          const overrun = overrunOf(worker, medians, at);
+          return overrun === null ? worker : { ...worker, overrun };
+        });
+      }
+    }
     if (result.sources.merges === 'healthy' && result.mergesLastHour.items.length > 0) {
       try {
         const mod: typeof import('../intent/merge-snapshot.js') = await import('../intent/merge-snapshot.js' as string);
@@ -341,6 +354,40 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       } catch { /* Private ledger failures must not affect the snapshot. */ }
     }
     return result;
+  }
+  // Lane-median duration evidence is a slow statistic: refresh at most once a
+  // minute from the shared agent-activity ledger fold (the same bounded
+  // jobs.jsonl tail /api/fleet/activity serves). A missing or malformed
+  // ledger yields an empty map — workers then carry no overrun field and the
+  // composite read still succeeds.
+  let overrunCache: { at: number; medians: ReadonlyMap<string, number> } | undefined;
+  let overrunFlight: Promise<ReadonlyMap<string, number>> | undefined;
+  function overrunMedians(): Promise<ReadonlyMap<string, number>> {
+    if (!overrunFlight && (!overrunCache || now() - overrunCache.at >= 60_000)) {
+      overrunFlight = (async () => {
+        try {
+          const { readAgentActivity } = await import('../fleet/agent-activity.js');
+          const activity = await readAgentActivity({
+            runsDir: deps.runsDir ?? defaultRunsDir(), now,
+            // The reader's widest page, so each lane's newest finished
+            // durations — not just the default 6h slice — feed the median.
+            windowMs: 168 * 3_600_000, limit: 500,
+          });
+          const finished = activity.jobs.flatMap(job => {
+            if (job.stage !== 'finished') return [];
+            const seconds = job.wallS ?? job.runS;
+            return [{ lane: job.lane, durationMs: seconds === null ? null : seconds * 1000 }];
+          });
+          return laneMedians(finished, { window: 200 });
+        } catch {
+          return new Map<string, number>();
+        }
+      })().then(medians => {
+        overrunCache = { at: now(), medians };
+        return medians;
+      }).finally(() => { overrunFlight = undefined; });
+    }
+    return overrunFlight ?? Promise.resolve(overrunCache!.medians);
   }
   const laneModels = deps.laneModels ?? (() => getLaneModelSnapshot({ runsDir: deps.runsDir ?? defaultRunsDir() }));
   let modelCache: { at: number; value: FleetLaneModelsV1 } | undefined;
