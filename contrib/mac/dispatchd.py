@@ -7,7 +7,10 @@
 # hard_cap 10 (the live values; a slots.json or budget-overrides.json entry raises them per host).
 # RQ-LANERECOVERNOV1Q8 rev: repeated authentication failures (>=2 distinct failed/EMPTY finishes with a
 # provider auth-error line) hold the lane autobackoff-style; no credential store is ever written.
-import os, re, json, time, fcntl, subprocess, glob, math, datetime
+# RQ-DEVINTOKENSN9SQ8 rev: finish rows carry the usage each lane already reports — claude*/claude-api
+# result JSON usage, devin's sessions.db tokens + billed ACUs, the 'tokens used' log line — with
+# usage_source and a usage_missing reason when nothing was recorded.
+import os, re, json, time, fcntl, subprocess, glob, math, datetime, sqlite3, urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
 WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
@@ -168,6 +171,8 @@ def tokens(txt):
 def claude_usage(txt):
     # The result is cumulative; assistant message usage is per call and must not
     # be added to it. Missing or malformed fields remain unknown independently.
+    # Returns (usage, saw_result): saw_result marks a type=result row that carried
+    # a usage block at all, so an incomplete one reads differently from none.
     result = None
     for line in txt.splitlines():
         try: row = json.loads(line)
@@ -183,7 +188,108 @@ def claude_usage(txt):
     total_in = sum(inputs) if all(v is not None for v in inputs) and sum(inputs) <= 9007199254740991 else None
     total = total_in + output if total_in is not None and output is not None and total_in + output <= 9007199254740991 else None
     return {"tokens_in": total_in, "tokens_out": output, "tokens_cache_read": read,
-            "tokens_cache_write": write, "tokens_total": total}
+            "tokens_cache_write": write, "tokens_total": total}, result is not None
+def _devin_sessions_db():
+    # The CLI's own data dir: $XDG_DATA_HOME/devin else ~/.local/share/devin (cli-probe.ts).
+    xdg = os.environ.get("XDG_DATA_HOME") or ""
+    return (xdg if xdg.startswith("/") else H + "/.local/share") + "/devin/cli/sessions.db"
+def _uint(v):   # a reported usage count: JSON int in the safe range (same bar as claude_usage.count)
+    return v if type(v) is int and not isinstance(v, bool) and 0 <= v <= 9007199254740991 else None
+def devin_usage(wt):
+    """Usage the devin lane already recorded for this job's worktree. `devin -p`
+    prints only the response text, so nothing billable reaches the job log; the
+    CLI's own sessions.db keeps it instead: per-response token metrics on
+    assistant rows (each response is stored twice; request_id dedupes) and the
+    session's billed total_acu_cost. Any response that lacks metrics makes the
+    token total unknowable, so every token field stays None and usage_missing
+    names why; ACUs are recorded whenever a session metadata row reports one.
+    Rows with no request_id are locally injected text, not served responses.
+    """
+    out = {"tokens_in": None, "tokens_out": None, "tokens_cache_read": None, "tokens_cache_write": None,
+           "tokens_total": None, "acus": None, "usage_source": None, "usage_missing": None}
+    db = _devin_sessions_db()
+    if not os.path.isfile(db):
+        out["usage_missing"] = "devin-session-db-missing"; return out
+    sessions, nodes = None, {}
+    for _retry in range(3):   # a concurrent devin job can hold the WAL briefly; the finish row is written once
+        try:
+            con = sqlite3.connect("file:%s?mode=ro" % urllib.parse.quote(db), uri=True, timeout=2)
+            try:
+                dirs = tuple({os.path.normpath(wt), os.path.normpath(os.path.realpath(wt))})
+                sessions = con.execute("SELECT id, metadata FROM sessions WHERE working_directory IN (%s)"
+                                       % ",".join("?" * len(dirs)), dirs).fetchall()
+                for sid, _meta in sessions:
+                    nodes[sid] = con.execute("SELECT node_id, chat_message FROM message_nodes WHERE session_id=?",
+                                             (sid,)).fetchall()
+            finally: con.close()
+            break
+        except sqlite3.OperationalError as e:
+            if "locked" in str(e).lower() or "busy" in str(e).lower(): time.sleep(0.2); continue
+            out["usage_missing"] = "devin-session-db-unreadable"; return out
+        except (sqlite3.Error, OSError):
+            out["usage_missing"] = "devin-session-db-unreadable"; return out
+    if sessions is None:
+        out["usage_missing"] = "devin-session-db-unreadable"; return out
+    if not sessions:
+        out["usage_missing"] = "devin-no-session-for-worktree"; return out
+    out["usage_source"] = "devin-sessions-db"
+    acus = 0.0; acus_known = False
+    responses = unmeasured = 0; seen = set()
+    tin = tout = tcr = tcw = 0
+    for sid, meta in sessions:
+        try: md = json.loads(meta) if isinstance(meta, str) else None
+        except ValueError: md = None
+        acu = md.get("total_acu_cost") if isinstance(md, dict) else None
+        if type(acu) in (int, float) and not isinstance(acu, bool) and math.isfinite(acu) and acu >= 0:
+            acus += acu; acus_known = True
+        for nid, raw in nodes.get(sid, []):
+            try: row = json.loads(raw)
+            except (ValueError, TypeError): continue
+            if not isinstance(row, dict) or row.get("role") != "assistant": continue
+            meta2 = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+            rid = meta2.get("request_id")
+            key = (sid, rid) if isinstance(rid, str) and rid else (sid, "node:%s" % nid)
+            if key in seen: continue
+            seen.add(key)
+            if not rid: continue   # locally injected assistant text: nothing served, nothing billed
+            responses += 1
+            metrics = meta2.get("metrics") if isinstance(meta2.get("metrics"), dict) else {}
+            i, o = _uint(metrics.get("input_tokens")), _uint(metrics.get("output_tokens"))
+            cr, cw = metrics.get("cache_read_tokens"), metrics.get("cache_creation_tokens")
+            if i is None or o is None or (cr is not None and _uint(cr) is None) or (cw is not None and _uint(cw) is None):
+                unmeasured += 1; continue   # a reported-but-bad count is unknown, not zero
+            cr, cw = cr or 0, cw or 0
+            tin += i + cr + cw; tout += o; tcr += cr; tcw += cw
+    if acus_known: out["acus"] = round(acus, 6)
+    if responses and not unmeasured:
+        out.update({"tokens_in": tin, "tokens_out": tout, "tokens_cache_read": tcr,
+                    "tokens_cache_write": tcw, "tokens_total": tin + tout})
+    else:
+        out["usage_missing"] = "devin-usage-incomplete" if responses else "devin-usage-not-reported"
+    return out
+def job_usage(pool, wt, lp, tl):
+    """The usage each lane already reports for a finishing job, else nulls with the
+    reason. claude* runs stream/print JSON whose type=result row carries usage;
+    devin's CLI stays silent but its sessions.db records tokens and ACUs; the rest
+    keep the 'tokens used' log line. `cost` (USD) is never invented here."""
+    if pool in ("claude", "claude-api"):
+        u, saw = claude_usage(logtail(lp, 16 * 1024 * 1024))
+        u.update({"acus": None,
+                  "usage_source": "claude-result-json" if saw else None,
+                  "usage_missing": None if u["tokens_total"] is not None
+                                   else "claude-usage-incomplete" if saw else "claude-result-not-in-log"})
+        return u
+    if pool == "devin":
+        u = devin_usage(wt)
+        if u["tokens_total"] is None:
+            t = tokens(tl)
+            if t is not None:
+                u["tokens_total"] = t; u["usage_source"] = "tokens-line"; u["usage_missing"] = None
+        return u
+    t = tokens(tl)
+    return {"tokens_total": t, "tokens_in": None, "tokens_out": None, "acus": None,
+            "usage_source": "tokens-line" if t is not None else None,
+            "usage_missing": None if t is not None else "tokens-line-not-in-log"}
 def ev(msg):
     with open(EV, "a") as f: f.write("%s %s\n" % (TS, msg))
 def log(msg): print("%s %s" % (TS, msg), flush=True)
@@ -884,7 +990,7 @@ def reap_worktrees():
             drip_budget -= 1; open(DRIPLOG, "a").write("%f\n" % NOW)
         try:
             lp = "%s/%s.log" % (R, j); tl = logtail(lp, 20000)
-            usage = claude_usage(logtail(lp, 16 * 1024 * 1024)) if pool == "claude" else {"tokens_total": tokens(tl), "tokens_in": None, "tokens_out": None}
+            usage = job_usage(pool, wt, lp, tl)
             nf, diff_lines, empty = job_diff_metrics(wt, b[0])
             wall_s = int(os.path.getmtime(lp) - os.path.getmtime(bp)) if os.path.exists(lp) else None
             try: bsize = reap_batch(j, wt, pool, wall_s)
