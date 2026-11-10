@@ -61,6 +61,8 @@ const PATH = '/tmp/mirrors/ashlrai__binshield';
 const STALE_MIRROR = '/tmp/mirrors/ashlrai__stale';
 const CFG = {
   models: { llamaServer: { baseUrl: 'http://127.0.0.1:8080/v1' } },
+  // Best-of-N reserves a Grok candidate only when that lane has two slots.
+  daemon: { perTickItems: 2, parallel: 2 },
   foundry: {
     allowedBackends: ['builtin', 'llama-server', 'grok-cli', 'claude', 'nim', 'kimi', 'grok', 'ashlrcode'],
     fabric: { gateway: true, concurrentDispatch: true },

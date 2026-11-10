@@ -9,6 +9,7 @@ import { listDrafts } from '../cos/drafts.js';
 import { diagnoseEmailDrop, type EmailDiagnosisDeps } from '../comms/email-diagnosis.js';
 import { checkIMessagePath } from '../comms/imessage-path-check.js';
 import { readImessageAckEvidence } from '../comms/imessage-ack-evidence.js';
+import { buildCommsCutoverReadiness, type CommsCutoverReport } from '../comms/cutover-readiness.js';
 import { readEmailOutbox } from '../comms/email-outbox.js';
 import { readTeammateLatency, type TeammateLatencySummary } from '../comms/teammate-reply-latency.js';
 
@@ -25,6 +26,8 @@ export interface FleetCommsStatusApiDeps {
   imessageAcks?: typeof readImessageAckEvidence;
   /** Teammate (Dot) reply-latency seam for tests. Default reads teammates.jsonl under runsDir with the request clock. */
   teammateLatency?: (now: number) => TeammateLatencySummary | Promise<TeammateLatencySummary>;
+  /** Off-Grok-Bot cutover seam for tests. Default: buildCommsCutoverReadiness over runsDir. */
+  cutover?: (runsDir: string) => Promise<CommsCutoverReport>;
   /** Clock seam for tests; stamps generatedAt. */
   now?: () => Date;
 }
@@ -135,6 +138,20 @@ export function createFleetCommsStatusApi(deps: FleetCommsStatusApiDeps = {}): A
       teammateSource = 'degraded';
     }
 
+    // A projection of the cutover report: states, reason codes and next-step commands only.
+    let cutover: { overall: { state: string; blockers: string[] }; capabilities: Record<string, { state: string; reason: string; nextStep: string }> } | null = null;
+    let cutoverSource: 'healthy' | 'degraded' = 'healthy';
+    try {
+      const report = await (deps.cutover ?? ((dir: string) => buildCommsCutoverReadiness({ runsDir: dir })))(runsDir);
+      cutover = {
+        overall: { state: report.overall.state, blockers: [...report.overall.blockers] },
+        capabilities: Object.fromEntries(Object.entries(report.capabilities)
+          .map(([id, c]) => [id, { state: c.state, reason: c.reason, nextStep: c.nextStep }])),
+      };
+    } catch {
+      cutoverSource = 'degraded';
+    }
+
     sendJson(res, 200, {
       version: 1,
       generatedAt: generatedAt.toISOString(),
@@ -143,7 +160,8 @@ export function createFleetCommsStatusApi(deps: FleetCommsStatusApiDeps = {}): A
       emailDiagnosis,
       imessage,
       teammate,
-      sources: { drafts: draftsSource, emailOutbox: emailOutboxSource, imessage: imessageSource, teammate: teammateSource },
+      cutover,
+      sources: { drafts: draftsSource, emailOutbox: emailOutboxSource, imessage: imessageSource, teammate: teammateSource, cutover: cutoverSource },
     });
   }
 

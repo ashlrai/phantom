@@ -12,7 +12,10 @@ import { enqueueTask, readTaskQueue, recordTaskDispatch, taskQueuePath } from '.
 import { configureReleaseArticles, importProposedRelease, publicArticleDraft, readReleaseArticles, releaseArticlePaths,
   RELEASE_ARTICLE_REPO, RELEASE_TEASER_REPO, defaultReleaseArticlesDeps, syncReleaseArticles, type ReleaseArticlesDeps } from '../src/core/release-articles.js';
 import { parseProposedRelease, RELEASE_CI_JOBS, releaseRequiredSteps, releaseRequiredLabels, verifyPublishedRelease, verifyLatestWorkbenchRelease, publicWorkbenchRelease, defaultReleasePublicReader, type ReleasePublicReader } from '../src/core/release-public-facts.js';
-import { runReleaseArticlesCli } from '../src/cli/release-articles.js';
+import { releaseGapReport, runReleaseArticlesCli } from '../src/cli/release-articles.js';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { syncWebsiteReleaseMetadata, websiteReleaseMetadataPath, type WebsiteReleaseMetadataDeps } from '../src/core/website/release-metadata.js';
 
 
@@ -1534,5 +1537,31 @@ describe('durable article maintenance uses the normal task lane', () => {
     const audit = readFileSync(join(process.cwd(), '.github/workflows/dependency-audit.yml'), 'utf8');
     for (const name of RELEASE_CI_JOBS) for (const step of releaseRequiredSteps(name)) expect(ci).toContain(`name: ${step}\n`);
     for (const step of releaseRequiredSteps('Dependency audit (root + Raycast)')) expect(audit).toContain(`name: ${step}\n`);
+  });
+});
+
+const directories: string[] = [];
+afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
+
+describe('release gap report', () => {
+  it('groups first-parent changes after the published version and excludes its history', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'release-gap-')); directories.push(directory);
+    const git = (...args: string[]): string => execFileSync('git', args, { cwd: directory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    git('init', '-q'); git('config', 'user.email', 'fixture@example.invalid'); git('config', 'user.name', 'Fixture');
+    const commit = (subject: string): string => {
+      writeFileSync(join(directory, 'file'), subject); git('add', 'file'); git('commit', '-q', '-m', subject); return git('rev-parse', 'HEAD');
+    };
+    commit('feat: already published'); git('tag', 'v1.2.3');
+    const fix = commit('fix(cli)!: repair output');
+    const feature = commit('feat: add report (#12)');
+    const other = commit('ordinary change');
+    const report = await releaseGapReport(directory, undefined, '1.2.3');
+    expect(report).toEqual({ version: '1.2.3', tag: 'v1.2.3', head: other, groups: {
+      other: [{ sha: other, subject: 'ordinary change' }],
+      feat: [{ sha: feature, subject: 'feat: add report (#12)' }],
+      fix: [{ sha: fix, subject: 'fix(cli)!: repair output' }],
+    } });
+    await expect(releaseGapReport(directory, undefined, '1.2.4')).rejects.toThrow();
+    await expect(releaseGapReport(directory, undefined, '../bad')).rejects.toThrow();
   });
 });

@@ -220,3 +220,22 @@ describe('cmdFleetRedMerges', () => {
     expect(output).toHaveBeenCalledWith(expect.stringContaining('Usage: ashlr fleet red-merges'));
   });
 });
+
+it('reports PR observations without treating pending or absent checks as default-branch failures', async () => {
+  const jobs = [
+    row({ event: 'launch', job: 'RQ-A', lane: 'later', ts: at('11:45') }),
+    row({ event: 'launch', job: 'RQ-A', lane: 'earlier', ts: at('10:00') }),
+    row({ event: 'outcome', job: 'RQ-A', state: 'MERGED', checks: 'red', ts: at('11:00') }),
+    row({ event: 'outcome', job: 'RQ-B', state: 'MERGED', checks: 'pending', ts: at('11:10') }),
+    row({ event: 'outcome', job: 'RQ-C', state: 'MERGED', ts: at('11:20') }),
+    row({ event: 'outcome', job: 'RQ-D', state: 'MERGED', checks: 'red', source: 'metrics-outcomes-reconciler', ts: at('11:30') }),
+  ].join('\n');
+  const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+  expect(await cmdFleetRedMerges(['--json'], deps(jobs))).toBe(0);
+  const report = JSON.parse(String(output.mock.calls[0]![0]));
+  expect(report).toMatchObject({ checksScope: 'pr', merges: 4 });
+  expect(report.window[23].lanes).toEqual([
+    { lane: 'earlier', red: 1, green: 0, other: 0 },
+    { lane: 'unattributed', red: 0, green: 0, other: 3 },
+  ]);
+});

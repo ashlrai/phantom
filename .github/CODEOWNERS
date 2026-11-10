@@ -369,6 +369,8 @@
 /test/execution-feedback-case.test.ts @masonwyatt23
 /test/execution-leases-310b.test.ts @masonwyatt23
 /test/external-skill-audit-trust-roots.test.ts @masonwyatt23
+/test/fable-orchestrator.test.ts @masonwyatt23
+/test/fable-world.test.ts @masonwyatt23
 /test/fixture-custody.test.ts @masonwyatt23
 /test/fixtures/eval/routing.ts @masonwyatt23
 /test/fixtures/fleet-graph/router-queue.md @masonwyatt23
@@ -424,6 +426,7 @@
 /test/fleet-merge-pace.test.ts @masonwyatt23
 /test/fleet-merge-queue-age.test.ts @masonwyatt23
 /test/fleet-merge-recover.test.ts @masonwyatt23
+/test/fleet-merge-retry.test.ts @masonwyatt23
 /test/fleet-merge-state-class.test.ts @masonwyatt23
 /test/fleet-post-merge-verify-31.test.ts @masonwyatt23
 /test/fleet-self-loop-02soly1.test.ts @masonwyatt23
@@ -443,6 +446,7 @@
 /test/fleet-sticky-loop.test.ts @masonwyatt23
 /test/fleet-stray-slots-gate-sole3.test.ts @masonwyatt23
 /test/fleet-superseded-read.test.ts @masonwyatt23
+/test/fleet-write-budget-cli.test.ts @masonwyatt23
 /test/gate.test.ts @masonwyatt23
 /test/gateway-anthropic-client.test.ts @masonwyatt23
 /test/gateway-audit-marker.test.ts @masonwyatt23
@@ -978,6 +982,7 @@
 /test/outcome-task-context.test.ts @masonwyatt23
 /test/outcomes-api.test.ts @masonwyatt23
 /test/overnight-api-310b.test.ts @masonwyatt23
+/test/perf-budget-workflow.test.ts @masonwyatt23
 /test/perf-budget.test.ts @masonwyatt23
 /test/phantom-custody.test.ts @masonwyatt23
 /test/phantom-merge-window-api-nov01.test.ts @masonwyatt23
@@ -991,6 +996,7 @@
 /test/phx-rewardevidence31solc2.test.ts @masonwyatt23
 /test/phx-routercalcompare31sold6.test.ts @masonwyatt23
 /test/planner-real-supply.test.ts @masonwyatt23
+/test/planner-write-budget.test.ts @masonwyatt23
 /test/planning-client-discovery-revive.test.ts @masonwyatt23
 /test/planning-clients-revive.test.ts @masonwyatt23
 /test/playbooks-315.test.ts @masonwyatt23
@@ -1014,6 +1020,7 @@
 /test/receipt-later-hooks.test.ts @masonwyatt23
 /test/recut-loop-attempts.test.ts @masonwyatt23
 /test/recut-loop-landed-03.test.ts @masonwyatt23
+/test/recut-loop.test.ts @masonwyatt23
 /test/red-team-routing-310.test.ts @masonwyatt23
 /test/redact-known.test.ts @masonwyatt23
 /test/refix-loop.test.ts @masonwyatt23
@@ -1175,6 +1182,7 @@
 /test/verse-fleet-runs-merge-speed-31.test.ts @masonwyatt23
 /test/verse-fleet-types.test.ts @masonwyatt23
 /test/verse-grok-usage-reset-315.test.ts @masonwyatt23
+/test/verse-inbox-owner-mirror.test.ts @masonwyatt23
 /test/verse-local-fleet.test.ts @masonwyatt23
 /test/verse-manager-conversation.test.ts @masonwyatt23
 /test/verse-manager-session.test.ts @masonwyatt23
