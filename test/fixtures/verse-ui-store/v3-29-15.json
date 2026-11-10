@@ -1,0 +1,40 @@
+{
+  "ashlr.verse.ui.v3": {
+    "version": 3,
+    "section": "chat",
+    "railExpanded": true,
+    "sidebarWidth": 300,
+    "sidebarCollapsed": false,
+    "resourcesOpen": false,
+    "resourcesWidth": 352,
+    "recentActions": ["dock.preview", "pane.preview", "chat.new"],
+    "recentChats": ["chat-1", "chat-2"],
+    "lastLaunchDay": "2026-10-12",
+    "chatMovedAnnounced": true,
+    "dock": {
+      "open": true,
+      "width": 460,
+      "tabs": ["preview", "terminal", "fleet-lanes", "gone-pane"],
+      "active": "preview",
+      "splitWith": "terminal",
+      "splitRatio": 0.4,
+      "placement": "right",
+      "height": 320,
+      "byChat": {
+        "chat-2": { "open": true, "tabs": ["preview", "files"], "active": "files", "splitWith": null }
+      }
+    }
+  },
+  "ashlr.verse.appearance.v1": {
+    "accentH": 210,
+    "accentS": 80,
+    "accentL": 55,
+    "density": "compact",
+    "uiScale": "large",
+    "displayFont": "mono",
+    "radius": "soft",
+    "motion": "full",
+    "reduceMotion": false
+  },
+  "ashlr.theme.v1": "dark"
+}

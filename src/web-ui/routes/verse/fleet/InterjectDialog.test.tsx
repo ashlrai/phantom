@@ -34,7 +34,7 @@ describe('fleet interjection dialog', () => {
     const [path, options] = fetchMock.mock.calls.find(([, options]) => options.method === 'POST')!;
     expect(path).toBe('/api/verse/fleet/runs/inbox');
     expect(typeof options.body).toBe('string');
-    expect(JSON.parse(options.body as string)).toEqual({ text: 'Please check the queue', source: 'Phantom desktop' });
+    expect(JSON.parse(options.body as string)).toEqual({ text: 'Please check the queue', source: 'Phantom desktop', requestId: expect.stringMatching(/^req-[A-Za-z0-9._:-]{4,124}$/) });
     expect(new Headers(options.headers).get('x-ashlr-token')).toBe(token);
     expect(textarea).toHaveValue('');
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument(), { timeout: 3000 });
