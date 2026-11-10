@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { cmdRelease } from '../src/cli/release.js';
 import {
   admitCiRun, allowReleasePrDispatch, assertReleaseWrite, buildTrain, cappedCadenceMinutes, docsCarriersSynced, ENQUEUE_PULL_REQUEST,
+  judgeRequiredChecks,
   enqueueReleasePullRequest, failedBuildWithin, hostedTrainGate, isReleasePleaseCommit,
   markWritesApplied, mergeStageDone, observeTrain, pauseReleaseTrain, readSentinel, releaseGithubCall, releaseKillDecision, selectUpdaterFeed,
   TRAIN_SCHEMA, updaterFeedMatches, WEBSITE_HOOK,
@@ -15,6 +16,16 @@ import {
 const sha = 'a'.repeat(40);
 const head = 'b'.repeat(40);
 const pr = 'c'.repeat(40);
+function greenCi(commit: string): Record<string, unknown> {
+  return {
+    'repos/ashlrai/phantom/rules/branches/master': [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'Merge Gate' }] } }],
+    'repos/ashlrai/phantom/branches/master': { protection: { required_status_checks: { contexts: ['Merge Gate'] } } },
+    [`repos/ashlrai/phantom/commits/${commit}/check-runs?filter=latest&app_id=15368&per_page=100`]: {
+      total_count: 1,
+      check_runs: [{ name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } }],
+    },
+  };
+}
 const message = 'chore(master): release 3.30.27 (#4130)\n\n* chore(release): sync candidate version carriers to 3.30.27\n';
 
 function observation(overrides: Partial<TrainObservation> = {}): TrainObservation {
@@ -36,6 +47,7 @@ function observation(overrides: Partial<TrainObservation> = {}): TrainObservatio
     ],
     openReleasePr: null,
     pullChecks: null,
+    candidateCi: 'green',
     build: null,
     buildPending: false,
     buildCooldown: false,
@@ -96,34 +108,28 @@ describe('release train', () => {
     expect(buildTrain(observation({ buildCooldown: true })).writes.some((write) => write.path.includes('/ci.yml/'))).toBe(false);
   });
 
-  it('only dispatches a candidate still at master, using the branch ref', () => {
-    const stale = buildTrain(observation());
-    expect(stale.writes.some((write) => write.path.endsWith('/ci.yml/dispatches'))).toBe(false);
-    expect(stale.state.steps.build.reason).toBe('candidate-not-master-head');
-    const current = buildTrain(observation({ masterSha: head }));
-    expect(current.writes.find((write) => write.path.endsWith('/ci.yml/dispatches'))?.body).toEqual({ ref: 'master', inputs: { release_gate: 'true' } });
-  });
-
-  it('advances a stale bridge tag from newer master through release-please', () => {
-    const base = observation();
-    const plan = buildTrain({ ...base, head: { ...base.head!, message: 'bridge: changes', releaseMessage: message } });
-    expect(plan.state.advance).toEqual({ action: 'advance-from-master', version: '3.30.28', sha,
-      reason: 'candidate-not-master-head -> plan 3.30.28' });
-    expect(plan.state.next).toBe('release-pr');
-    expect(markWritesApplied(plan.state).next).toBe('release-pr');
-    expect(plan.writes).toContainEqual({ method: 'POST',
-      path: 'repos/ashlrai/phantom/actions/workflows/release-please.yml/dispatches',
-      body: { ref: 'master', inputs: {} } });
-    for (const write of plan.writes) expect(() => assertReleaseWrite(write)).not.toThrow();
-    const next29 = buildTrain(observation({ masterVersion: '3.30.28',
-      tags: [{ name: 'v3.30.28', sha: head }],
-      head: { ...base.head!, tag: 'v3.30.28', message: 'bridge: changes',
-        releaseMessage: message.replaceAll('3.30.27', '3.30.28') } }));
-    expect(next29.state.advance?.version).toBe('3.30.29');
+  it('accepts an ancestor or head with green CI and rejects red or diverged candidates', () => {
+    expect(judgeRequiredChecks(['Merge Gate'], [{ name: 'Merge Gate', status: 'completed', conclusion: 'success', appId: 15368 }])).toBe('green');
+    expect(judgeRequiredChecks(['Merge Gate'], [{ name: 'Merge Gate', status: 'completed', conclusion: 'failure', appId: 15368 }])).toBe('red');
+    const ancestor = buildTrain(observation());
+    expect(ancestor.exitCode).toBe(0);
+    expect(ancestor.state.sha).toBe(head);
+    expect(ancestor.state.steps.build?.reason).toBeUndefined();
+    expect(ancestor.state.advance).toBeUndefined();
+    expect(ancestor.writes.find((write) => write.path.endsWith('/ci.yml/dispatches'))?.body).toEqual({ ref: 'v3.30.27', inputs: { release_gate: 'true' } });
+    expect(ancestor.writes.some((write) => write.path.includes('release-please.yml'))).toBe(false);
     const current = buildTrain(observation({ masterSha: head, aheadBy: 0 }));
-    expect(current.state.advance).toBeUndefined();
-    expect(current.writes.some(write => write.path.includes('release-please.yml'))).toBe(false);
-    expect(current.writes.some(write => write.path.endsWith('/ci.yml/dispatches'))).toBe(true);
+    expect(current.exitCode).toBe(0);
+    expect(current.writes.find((write) => write.path.endsWith('/ci.yml/dispatches'))?.body).toEqual({ ref: 'master', inputs: { release_gate: 'true' } });
+    const red = buildTrain(observation({ candidateCi: 'red' }));
+    expect(red).toMatchObject({ exitCode: 1, writes: [], state: { reason: 'candidate-ci-red' } });
+    const diverged = buildTrain(observation({
+      head: { tag: 'v3.30.27', sha: head, message, ancestry: 'diverged', compareStatus: 'diverged', committedAt: null },
+    }));
+    expect(diverged.exitCode).toBe(1);
+    expect(diverged.writes).toEqual([]);
+    expect(diverged.state.reason).toContain('candidate-refused');
+    expect(diverged.state.reason).toContain('compare_not_ahead: diverged');
   });
 
   it('does not recursively dispatch Release PR from its own completion', () => {
@@ -175,7 +181,7 @@ describe('release train', () => {
     const merge = due.writes.find((write) => write.path === 'graphql');
     expect(merge).toEqual(enqueueReleasePullRequest('PR_kwDO_test'));
     expect(due.writes.some(write => write.path.includes('release-please.yml'))).toBe(false);
-    expect(due.state.advance?.version).toBe('3.30.28');
+    expect(due.state.advance).toBeUndefined();
     expect(ENQUEUE_PULL_REQUEST).toContain('enqueuePullRequest');
     expect(JSON.stringify(due.writes)).not.toMatch(/admin|bypass|\/merge/);
     expect(mergeStageDone('OPEN')).toBe(false);
@@ -245,6 +251,7 @@ describe('release train', () => {
         [`repos/ashlrai/phantom/commits?sha=${later}&per_page=30`]: rows,
         'repos/ashlrai/phantom/releases?per_page=100&page=1': [],
         'repos/ashlrai/phantom/pulls?state=open&per_page=100&page=1': [],
+        ...greenCi(later),
       };
       if (Object.hasOwn(data, path)) return data[path];
       if (path.includes('/actions/workflows/')) return { total_count: 0, workflow_runs: [] };
@@ -278,6 +285,7 @@ describe('release train', () => {
       'repos/ashlrai/phantom/tags?per_page=100&page=1': [{ name: badTag, commit: { sha: badSha } }, { name: goodTag, commit: { sha: goodSha } }],
       'repos/ashlrai/phantom/releases?per_page=100&page=1': [],
       'repos/ashlrai/phantom/pulls?state=open&per_page=100&page=1': [],
+      ...greenCi(goodSha),
     };
     const observed = await observeTrain(async (path) => {
       if (Object.hasOwn(data, path)) return data[path];
@@ -324,7 +332,7 @@ describe('release train', () => {
       input: '{"ref":"master","inputs":{"release_gate":"true"}}',
     });
     const attestBody = {
-      ref: 'master',
+      ref: 'v3.30.27',
       inputs: { ci_run_id: '11', ci_run_attempt: '2', candidate_sha: head, build_artifact_id: '101' },
     };
     const attest = buildTrain(observation({
@@ -423,6 +431,7 @@ describe('release train', () => {
       [`repos/ashlrai/phantom/actions/workflows/ci.yml/runs?head_sha=${head}&per_page=20`]: { total_count: 0, workflow_runs: [] },
       [`repos/ashlrai/phantom/actions/workflows/dependency-audit.yml/runs?head_sha=${head}&status=success&per_page=5`]: { total_count: 0, workflow_runs: [] },
       'registry/npm/@ashlr/phantom/3.30.27': null,
+      ...greenCi(head),
     };
     const observed = await observeTrain(async (path) => {
       if (!Object.hasOwn(data, path)) throw new Error(`unexpected ${path}`);
@@ -430,6 +439,7 @@ describe('release train', () => {
     }, '2026-11-09T06:00:00.000Z', 30, { fleet: 'inactive', autorun: 'inactive' });
     expect(observed.cadenceMinutes).toBe(30);
     expect(observed.head?.ancestry).toBe('ancestor');
+    expect(observed.candidateCi).toBe('green');
     expect(observed.npmPublished).toBe(false);
     expect(buildTrain(observed).state.tag).toBe('v3.30.27');
   });

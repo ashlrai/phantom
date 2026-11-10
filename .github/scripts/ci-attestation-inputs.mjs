@@ -41,7 +41,8 @@ export function copyDataTree(source, destination, budget = { files: 0, bytes: 0,
 
 export function prepare({ env = process.env, read = api } = {}) {
   const { repository } = requireProducerEnvironment(env);
-  assert.ok(['workflow_dispatch', 'schedule'].includes(env.GITHUB_EVENT_NAME)); assert.equal(env.GITHUB_REF, 'refs/heads/master');
+  assert.ok(['workflow_dispatch', 'schedule'].includes(env.GITHUB_EVENT_NAME));
+  assert.match(env.GITHUB_REF ?? '', /^refs\/(?:heads\/master|tags\/v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/);
   assert.match(env.CANDIDATE_SHA ?? '', hash); assert.match(env.GITHUB_SHA ?? '', hash);
   const run = integer(env.CI_RUN_ID); const attempt = integer(env.CI_RUN_ATTEMPT); const artifactId = integer(env.BUILD_ARTIFACT_ID);
   assert.equal(git('rev-parse', 'HEAD'), env.GITHUB_SHA); assert.equal(git('status', '--porcelain', '--untracked-files=normal'), '');
@@ -54,7 +55,10 @@ export function prepare({ env = process.env, read = api } = {}) {
   requireRepositoryReference(repository, ci.repository);
   assert.equal(ci.path, '.github/workflows/ci.yml', 'unexpected producer workflow');
   const profile = releaseQualificationProfile({ repository, run: ci, read });
-  if (profile) { assert.ok(['workflow_dispatch', 'schedule'].includes(ci.event)); assert.equal(ci.head_branch, 'master'); }
+  if (profile) {
+    assert.ok(['workflow_dispatch', 'schedule'].includes(ci.event));
+    assert.match(String(ci.head_branch ?? ''), /^(?:master|v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/);
+  }
   else assert.equal(env.GITHUB_EVENT_NAME, 'workflow_dispatch');
   assert.equal(ci.status, 'completed'); assert.equal(ci.conclusion, 'success');
   const names = artifactNames(run, attempt, profile); const artifacts = []; let page = 1; let total = null;

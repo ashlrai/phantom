@@ -154,18 +154,20 @@ What runs without a per-release approval:
   when its version is the next patch, its head is `release-please--*`, and
   GitHub Actions checks on that head are success. The merge uses the existing
   release app token and has no admin flag.
-- If the accepted tag is behind master and has no build, the train records
-  `advance.action=advance-from-master`, the next patch version and master SHA.
-  Once cadence is due, it dispatches `release-please.yml` if that version has
-  no open release PR; otherwise it waits for that PR and enqueues it only
-  after its checks are green. The Release PR workflow independently checks
-  green master, cadence and version carriers. Existing tags stay unchanged.
+- A release-please tag whose commit is an ancestor of master (compare
+  `master...tag` status `behind`, or `identical` when it is master HEAD) is
+  the candidate when required CI on that exact SHA is green. Diverged and
+  red candidates are refused. The train does not retag and does not delete
+  tags. A green open release PR for the next patch is still enqueued only
+  after its own checks are green. The Release PR workflow independently
+  checks green master, cadence and version carriers.
 - `auto-tag.yml` still creates `vX.Y.Z` and the draft after required checks
   on that commit.
-- A `workflow_dispatch` of `ci.yml` with `release_gate=true` and `--ref` set
-  to master builds the candidate only while its SHA equals master head.
-  A stale candidate instead advances through the release PR path above.
-  The half-hour schedule on master is unchanged.
+- A `workflow_dispatch` of `ci.yml` with `release_gate=true` builds that
+  candidate. The ref is the tag when the tag is behind master, and `master`
+  when the SHAs match. Attestation uses the same ref, so the checkout SHA is
+  the candidate rather than a newer master HEAD. The half-hour schedule on
+  master is unchanged.
 - When that build artifact exists, the train dispatches
   `attest-ci-build.yml` and then `publish-canonical-npm.yml` with the exact
   run, attempt, and artifact ids. The publisher's own admission still runs.

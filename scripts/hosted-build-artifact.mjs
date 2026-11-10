@@ -268,7 +268,8 @@ export function auditGithub({ repository, revision, runId, runAttempt, artifactI
   assert.ok(profile === undefined || profile === 'fast-release-v1', 'unexpected producer policy');
   assert.equal(run.path, '.github/workflows/ci.yml', 'unexpected producer workflow');
   if (profile === 'fast-release-v1') {
-    assert.ok(['workflow_dispatch', 'schedule'].includes(run.event)); assert.equal(run.head_branch, 'master');
+    assert.ok(['workflow_dispatch', 'schedule'].includes(run.event));
+    assert.match(String(run.head_branch ?? ''), /^(?:master|v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/);
     assert.equal(eventSha, revision, 'fast producer must check out its exact event revision');
   }
   assert.equal(run.head_sha, revision); assert.equal(run.status, 'completed'); assert.equal(run.conclusion, 'success');
@@ -427,7 +428,8 @@ export function releaseQualificationProfile({ repository, run, read }) {
   if (!matches.length || matches[0].conclusion === 'skipped') return undefined;
   const job = matches[0];
   assert.equal(run.path, '.github/workflows/ci.yml');
-  assert.ok(['workflow_dispatch', 'schedule'].includes(run.event)); assert.equal(run.head_branch, 'master');
+  assert.ok(['workflow_dispatch', 'schedule'].includes(run.event));
+  assert.match(String(run.head_branch ?? ''), /^(?:master|v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/);
   assert.equal(job.run_id, run.id); assert.equal(job.head_sha, run.head_sha);
   assert.equal(job.status, 'completed'); assert.equal(job.conclusion, 'success');
   assert.ok(job.labels?.includes('macos-15') && !job.labels.includes('self-hosted'), 'unexpected release runner');

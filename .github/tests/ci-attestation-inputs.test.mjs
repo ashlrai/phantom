@@ -224,6 +224,14 @@ test('scheduled attestation cannot downgrade a legacy exhaustive producer', { sk
   f.inputs.GITHUB_EVENT_NAME = 'schedule'; assert.throws(() => prepare({ env: f.inputs, read: f.read }));
 }));
 
+test('fast producer accepts a stable release tag branch for the candidate sha', { skip: process.platform === 'win32' }, () => withFixture(f => {
+  Object.assign(runRecord(f), { event: 'workflow_dispatch', head_branch: 'v3.30.27' });
+  f.inputs.GITHUB_REF = 'refs/tags/v3.30.27';
+  fastJobs(f);
+  const result = prepare({ env: f.inputs, read: f.read });
+  assert.equal(result.map.profile, 'fast-release-v1');
+}));
+
 for (const [key, value] of [['event', 'pull_request'], ['head_branch', 'feature']]) {
   test(`fast producer refuses ${key} outside trusted master`, { skip: process.platform === 'win32' }, () => withFixture(f => {
     Object.assign(runRecord(f), { event: 'workflow_dispatch', head_branch: 'master', [key]: value });

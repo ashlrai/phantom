@@ -28,7 +28,7 @@ permissions:
 jobs:
   attest:
     name: Attest verified build and qualification
-    if: github.ref == 'refs/heads/master'
+    if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
