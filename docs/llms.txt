@@ -429,3 +429,5 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Repository ranking](REPO-RANK.md): `phm repos rank --json`, `phm repos rank --recompute --json` and `phm repos rank proposals --json`; daily local evidence, manual enrollment, read-only restock weights.
 
 - [PR triage](PR-TRIAGE.md): read-only open PR verdicts and JSON schema.
+
+- [App drive](APP-DRIVE.md): unified Devin, Claude, Codex and Phantom session actions; authenticated loopback and DESK integration limits.
