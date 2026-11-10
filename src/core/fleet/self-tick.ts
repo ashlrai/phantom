@@ -1,6 +1,6 @@
 /**
  * self-tick.ts — one locked pass of Phantom's self-management, runnable by an
- * agent or a host timer with no desktop app open. Nine one-shot stages run
+ * agent or a host timer with no desktop app open. Ten one-shot stages run
  * together, including same-channel inbox acknowledgements, merged-order notices
  * and the Needs-you triage.
  * runSelfTick is the single pass, each step injected as a seam in fixed order:
@@ -14,7 +14,8 @@
  *   6. inbox-acks     — send pending same-channel acknowledgements.
  *   7. order-notices  — tell Mason when a merged job served one of his orders.
  *   8. needs-triage   — auto-resolve Needs-you items outside the four hard limits.
- *   9. landed-sweep   — close DIRTY PRs whose work already landed on master.
+ *   9. waste-incident — raise high-waste incidents.
+ *  10. landed-sweep   — close DIRTY PRs whose work already landed on master.
  *
  * A step that exits nonzero or throws is recorded 'failed'; later steps still
  * run. A hold a person placed is never released — that rule stays inside the
@@ -33,7 +34,7 @@ import {
 } from './local-store-lock.js';
 import { writeSelfTickLast } from './self-tick-last.js';
 
-export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick' | 'inbox-acks' | 'order-notices' | 'needs-triage' | 'landed-sweep' | 'stray-stop' | 'meter-incident';
+export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick' | 'inbox-acks' | 'order-notices' | 'needs-triage' | 'landed-sweep' | 'stray-stop' | 'meter-incident' | 'waste-incident';
 /** Fixed execution order — release first so the planner sees freed slots; landed-sweep last. */
 export const SELF_TICK_STEP_ORDER: readonly SelfTickStepName[] = [
   'reset-release',
@@ -44,6 +45,7 @@ export const SELF_TICK_STEP_ORDER: readonly SelfTickStepName[] = [
   'inbox-acks',
   'order-notices',
   'needs-triage',
+  'waste-incident',
   // Last: the slowest step (gh + git reads) must never delay release or the planner.
   'landed-sweep',
 ];
