@@ -291,6 +291,24 @@ restores the remembered pre-pause target. Queue actions `queue.hold`,
 create a new attempt only for a finished failed job. `reap.count` takes no target
 and only counts reclaimable worktrees. Extra fields are refused.
 
+Steer actions drive the Verse steer pane. `steer.note` requires `text` and
+appends it to the Leader inbox under the "Phantom workbench" source (empty,
+overlong and secret-shaped text is refused before anything is written).
+`queue.reprioritize` requires `job` and `priority` (`P0`–`P3`) and moves only
+READY or HOLD lines; claimed or finished jobs are refused. `job.stop` requires
+`job` and ends a running job: SIGTERM, then SIGKILL after the grace period, with
+the same stop ledger and event narration as the operator stop path. The CLI
+twins `phm wb steer --text <note>`, `phm wb reprioritize <job> --priority <P0-P3>`
+and `phm wb stop <job>` share the action implementation; they are dry runs
+unless `--apply` is given and print the same result with `--json`.
+
+`GET /api/wb/v1/steer` is the pane's composite read. It reports the fleet.v1
+roster slice (claim IDs reduced to present/absent, leases never projected), the
+public seats, and the queue lines (id, status, priority, pool, tier, bounded
+scope). Each source carries a state field (`ok`, `missing`, `not-fleet-v1`,
+`unavailable`) so the pane can show an honest empty state instead of a fake
+healthy roster.
+
 Nonces are consumed for dry runs and failed attempts as well as successful
 applies, and survive server restarts. Use a fresh nonce to apply a reviewed dry
 run. `~/.ashlr/wb/audit.jsonl` records timestamps, fixed action names and outcomes;
