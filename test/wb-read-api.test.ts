@@ -201,7 +201,7 @@ describe('bind + auth boundary', () => {
 
   it('GET /api/wb/v1/* without a token → 401 on all three routes', async () => {
     const h = await serve();
-    for (const route of ['/api/wb/v1/snapshot', '/api/wb/v1/gh', '/api/wb/v1/budget']) {
+    for (const route of ['/api/wb/v1/snapshot', '/api/wb/v1/gh', '/api/wb/v1/budget', '/api/wb/v1/locus']) {
       const res = await httpRequest('GET', `${h.url}${route}`, { Host: hostOf(h) });
       expect(res.statusCode, `${route} without a token`).toBe(401);
       expect(res.body).not.toContain(h.readToken);
@@ -212,7 +212,7 @@ describe('bind + auth boundary', () => {
   it('GET /api/wb/v1/* with the read token → 200s with a v:1 contract', async () => {
     const h = await serve();
     ghReadMock.mockResolvedValue(FAKE_GH_SNAPSHOT);
-    for (const route of ['/api/wb/v1/snapshot', '/api/wb/v1/gh', '/api/wb/v1/budget']) {
+    for (const route of ['/api/wb/v1/snapshot', '/api/wb/v1/gh', '/api/wb/v1/budget', '/api/wb/v1/locus']) {
       const res = await httpRequest('GET', `${h.url}${route}`, authHeaders(h));
       expect(res.statusCode, route).toBe(200);
       expect(JSON.parse(res.body).v).toBe(1);
