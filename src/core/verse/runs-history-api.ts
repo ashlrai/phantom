@@ -63,11 +63,13 @@ import {
   LANE_STREAKS_MIN_MINUTES,
 } from '../fleet/lane-empty-streak.js';
 import { readFleetMainHealth } from '../fleet/main-health.js';
+import { readStuckFixes } from '../fleet/stuck-fixes.js';
 
 export const VERSE_RUNS_HISTORY_PATH = '/api/verse/runs-history';
 export const VERSE_RUNS_HISTORY_LANE_TRUTH_PATH = '/api/verse/runs-history/lane-truth';
 export const VERSE_RUNS_HISTORY_LANE_STREAKS_PATH = '/api/verse/runs-history/lane-streaks';
 export const VERSE_RUNS_HISTORY_MAIN_HEALTH_PATH = '/api/verse/runs-history/main-health';
+export const VERSE_RUNS_HISTORY_STUCK_FIXES_PATH = '/api/verse/runs-history/stuck-fixes';
 
 export interface RunsHistoryApiDeps {
   /** Defaults to sampleIfDue on the resolved history file. */
@@ -183,6 +185,19 @@ export function createRunsHistoryApi(deps: RunsHistoryApiDeps = {}): ApiModule {
         return true;
       }
       sendJson(res, 200, await readFleetMainHealth({ runsDir: deps.runsDir }));
+      return true;
+    }
+    if (path === VERSE_RUNS_HISTORY_STUCK_FIXES_PATH) {
+      if (method !== 'GET') {
+        sendJson(res, 405, { error: `method not allowed: ${method} ${path}` });
+        return true;
+      }
+      const unknown = [...new URL(req.url ?? '/', 'http://localhost').searchParams.keys()][0];
+      if (unknown !== undefined) {
+        sendJson(res, 400, { code: 'VERSE_INVALID', error: `unknown parameter: ${unknown.slice(0, 64)}` });
+        return true;
+      }
+      sendJson(res, 200, await readStuckFixes({ runsDir: deps.runsDir }));
       return true;
     }
     if (path !== VERSE_RUNS_HISTORY_PATH) return false;
