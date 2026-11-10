@@ -1,7 +1,7 @@
 /**
  * routes/verse/feed/FeedSection.tsx: the Feed, one newest-first stream of the
  * Leader's messages and outbox answers, Needs-you alerts, merges, fleet
- * events, Phantom update news, urgent (P0, P1) agent bus messages and the owner thread (what came in on Telegram, Slack, email and
+ * events, Phantom update news, urgent (P0, P1) agent bus messages, the Comms digest and the owner thread (what came in on Telegram, Slack, email and
  * iMessage, and where the Leader's answer went). It reads what the Leader, Merges and Needs-you surfaces already
  * read (feed-model.ts), so it adds no route and, on a warm cache, no request.
  *
@@ -30,6 +30,7 @@ import { paneLinkUrl } from '../dock/pane-link.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { JobRefs } from '../fleet/JobRefs.js';
 import type { PaneHost } from '../panes/pane-registry.js';
+import { COMMS_STATUS_PATH, readCommsStatus } from '../fleet-inbox/comms-status-model.js';
 import { UNIFIED_INBOX_PATH, readUnifiedInboxView } from '../fleet-inbox/unified-inbox-model.js';
 import { agentBusPageQuery } from '../fleet-bus/agent-bus-queries.js';
 import { fleetMergesQuery } from '../fleet-merges/fleet-merges-queries.js';
@@ -58,6 +59,8 @@ const FILTERS: readonly { id: FeedFilter; label: string }[] = [
   { id: 'comms', label: 'Comms' },
 ];
 const KIND_LABEL: Record<FeedKind, string> = { leader: 'Leader', alert: 'Alert', merge: 'Merge', fleet: 'Fleet', owner: 'Channel', update: 'Update', bus: 'Bus', teammate: 'Dot', comms: 'Comms' };
+// Same key and fetch as the Inbox pane's Comms card, so the two share one cached read.
+const commsStatusQuery: QueryDef<unknown> = { key: 'verse-fleet-comms-status', fetch: s => apiGet(COMMS_STATUS_PATH, s) };
 export const FEED_POLL_MS = 15_000;
 
 /** In the dock the pane host opens panes; rendered on its own (tests, older mounts) the dock store does, as LeaderThreadPane does. */
@@ -73,6 +76,7 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
   // An older hub has no bus route: the query's 404 just means no bus rows, never an error note.
   const bus = useQuery(agentBusPageQuery(0, 50), { enabled: visible, freshMs: 15_000 });
   const teammate = useQuery(unifiedInboxQuery, { enabled: visible, freshMs: 15_000 });
+  const commsRead = useQuery(commsStatusQuery, { enabled: visible, freshMs: 60_000 });
   const nativeUpdates = useDesktopUpdates();
   const activity = useActivity();
   const refetchShared = useRefetch(sharedFeedQuery);
@@ -117,6 +121,13 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
       }) };
   }, [teammate?.data]);
 
+  // The status route reports pending drafts only, so unread, archived and Dot stay "unknown";
+  // the draft batch (keyed by its oldest draft) is the run until a run reader exists.
+  const comms = useMemo(() => {
+    const drafts = !commsRead || commsRead.error ? null : readCommsStatus(commsRead.data)?.drafts;
+    return drafts?.oldestPendingAt ? { runId: `drafts:${drafts.oldestPendingAt}`, at: drafts.oldestPendingAt, drafts } : null;
+  }, [commsRead]);
+
   const feed = useMemo(() => buildFeed({
     shared: shared.data,
     leader: leader.data?.value?.messages,
@@ -126,7 +137,8 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
     update: updateItems,
     bus: bus.data,
     teammate: teammate?.error ? null : inboxView,
-  }), [shared.data, leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data, inboxView, teammate?.error]);
+    comms,
+  }), [shared.data, leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data, inboxView, teammate?.error, comms]);
   const filtered = filterFeed(feed, filter);
   const shown = filtered.filter(item => !isDismissed(item, dismissedMap));
   const dismissed = filtered.filter(item => isDismissed(item, dismissedMap));
