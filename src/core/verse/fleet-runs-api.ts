@@ -604,7 +604,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         } else if (result.reason === 'write-failed' || typeof result.reason !== 'string' || !result.reason) {
           sendJson(res, 503, { code: 'INBOX_UNAVAILABLE' });
         } else {
-          sendJson(res, 422, { code: 'INBOX_REFUSED', reason: project(result.reason, 'string') });
+          sendJson(res, result.reason === 'flag-only' ? 400 : 422, { code: 'INBOX_REFUSED', reason: project(result.reason, 'string') });
         }
       } catch { sendJson(res, 503, { code: 'INBOX_UNAVAILABLE' }); }
       finally { releaseTicket(ticket); }
