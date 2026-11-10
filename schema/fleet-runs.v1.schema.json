@@ -72,7 +72,16 @@
           "repo": {"type": "string"},
           "lane": {"type": "string"},
           "tier": {"type": "string"},
-          "ageSeconds": {"type": ["number", "null"]}
+          "ageSeconds": {"type": ["number", "null"]},
+          "overrun": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ratio", "medianMs"],
+            "properties": {
+              "ratio": {"type": "number"},
+              "medianMs": {"type": "number"}
+            }
+          }
         }
       }
     },

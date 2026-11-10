@@ -1,6 +1,6 @@
 {
   "name": "@ashlr/phantom",
-  "version": "3.30.31",
+  "version": "3.30.32",
   "description": "Phantom by AshlrAI: the open-source engineering agent workbench for CLI accounts, local models and autonomous fleets.",
   "publishConfig": {
     "access": "public"
@@ -149,7 +149,7 @@
     "check:version": "node scripts/sync-candidate-version.mjs --check",
     "prepublishOnly": "npm run build && npm run check:first-paint:built && npm run check:docs && npm run typecheck && npm run lint && npm run test:web && npm run test:ci:sharded",
     "prepack": "npm run build",
-    "build": "npm run check:version && tsc -p tsconfig.json && node scripts/generate-docs-llms.mjs && node scripts/authority-surface.mjs && node scripts/copy-assets.mjs && node scripts/build-preparation-builtin.mjs && vite build --config vite.config.web.ts && node scripts/build-release-dependency-inventory.mjs && node scripts/build-identity.mjs",
+    "build": "npm run check:version && tsc -p tsconfig.json && node scripts/authority-surface.mjs && node scripts/copy-assets.mjs && node scripts/build-preparation-builtin.mjs && vite build --config vite.config.web.ts && node scripts/build-release-dependency-inventory.mjs && node scripts/build-identity.mjs",
     "build:preparation-builtin": "node scripts/build-preparation-builtin.mjs",
     "build:binary": "node scripts/build-sea.mjs",
     "build:desktop:nightly": "node scripts/build-desktop-nightly.mjs",
@@ -176,7 +176,7 @@
     "check:docs": "node scripts/check-documentation.mjs",
     "docs:sync": "node scripts/docs-sync.mjs",
     "check:perf": "node scripts/perf-budget.mjs",
-    "check:pack-contracts": "node --test .github/tests/ci-pack-smoke.test.mjs .github/tests/desktop-update-finalizer.test.mjs .github/tests/first-paint-built.test.mjs .github/tests/ci-qualification-lane.test.mjs .github/tests/ci-impact-shadow.test.mjs .github/tests/ci-attestation-inputs.test.mjs .github/tests/hosted-build-artifact.test.mjs .github/tests/hosted-native-build.test.mjs .github/tests/release-train.test.mjs .github/tests/fast-hosted-artifact.test.mjs .github/tests/release-fast-smoke.test.mjs .github/tests/release-local-input.test.mjs .github/tests/release-smoke-phase.test.mjs .github/tests/ci-release-same-runner.test.mjs .github/tests/release-cadence.test.mjs .github/tests/ci-history-source.test.mjs .github/tests/ci-test-feedback.test.mjs .github/tests/ci-impact-map.test.mjs",
+    "check:pack-contracts": "node --test .github/tests/ci-pack-smoke.test.mjs .github/tests/release-isolated-tree.test.mjs .github/tests/desktop-update-finalizer.test.mjs .github/tests/first-paint-built.test.mjs .github/tests/ci-qualification-lane.test.mjs .github/tests/ci-impact-shadow.test.mjs .github/tests/ci-attestation-inputs.test.mjs .github/tests/hosted-build-artifact.test.mjs .github/tests/hosted-native-build.test.mjs .github/tests/release-train.test.mjs .github/tests/fast-hosted-artifact.test.mjs .github/tests/release-fast-smoke.test.mjs .github/tests/release-local-input.test.mjs .github/tests/release-smoke-phase.test.mjs .github/tests/ci-release-same-runner.test.mjs .github/tests/release-cadence.test.mjs .github/tests/ci-history-source.test.mjs .github/tests/ci-test-feedback.test.mjs .github/tests/ci-impact-map.test.mjs",
     "check:quarantine": "node scripts/check-quarantine-ledger.mjs",
     "check:release:fast": "npm run check:pack-contracts && npm run check:release",
     "check:release": "npm run test:ci -- --maxWorkers=1 --fileParallelism=false test/m515.release-publish-authority-split.test.ts test/documentation-navigation.test.ts test/package-files-allowlist.test.ts test/authority-release-truth.test.ts test/m33.release-meta.test.ts test/cli-registry-drift.test.ts test/authority-tier1-closure-310b.test.ts test/sidecar-literal-imports-315.test.ts test/m93.service-authority-docs.test.ts test/m479.release-workflow-policy.test.ts test/m522.production-promotion-docs.test.ts test/m468.release-desktop-workflow-policy.test.ts test/authority-codeowners-310b.test.ts test/m30.ci.test.ts test/m25.index.test.ts",
