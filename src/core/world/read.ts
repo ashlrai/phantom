@@ -26,7 +26,8 @@ import type { AgentRoster } from '../fleet/agent-roster.js';
 import { writeWorldExport } from './export.js';
 import { loadGrowthFacts } from '../growth/read.js';
 import { growthSnapshot } from '../growth/series.js';
-import { projectWorldModel } from './project.js';
+import { intentSummary } from '../intent/summary.js';
+import { projectWorldModel, type IntentWorldReading } from './project.js';
 import { WORLD_CACHE_TTL_MS, type WorldModel } from './types.js';
 import type { ObserveSnapshot } from '../observe/types.js';
 
@@ -61,10 +62,22 @@ async function readDisk(nowMs: number): Promise<CachedWorld | null> {
     if (ageMs < 0 || ageMs >= WORLD_CACHE_TTL_MS) return null;
     const parsed = JSON.parse(await readFile(path, 'utf8')) as CachedWorld;
     if (parsed?.schema !== 'ashlr.world-model/v1' || !parsed.views?.observe || !parsed.growth?.mergesPerHour) return null;
+    // Snapshots written before intents joined the model are incomplete; rebuild.
+    if (!hasIntentFields(parsed)) return null;
     return stamp(parsed, true, ageMs);
   } catch {
     return null;
   }
+}
+
+function hasIntentFields(model: CachedWorld): boolean {
+  const intents = model.intents as unknown as Record<string, unknown> | undefined;
+  if (!intents || typeof intents !== 'object') return false;
+  return ['items', 'tracked', 'merged', 'shipped', 'verified', 'stale', 'partial'].every((key) => {
+    const field = intents[key] as { freshness?: unknown } | null | undefined;
+    return !!field && typeof field === 'object' && 'value' in field
+      && (field.freshness === 'fresh' || field.freshness === 'stale' || field.freshness === 'unknown');
+  });
 }
 
 async function writeDisk(model: CachedWorld): Promise<void> {
@@ -111,6 +124,19 @@ async function readCi(nowMs: number): Promise<{ repos: number; medianDailyTtgSec
     const median = sorted.length === 0 ? null : sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
     const observedAt = typeof parsed.generatedAt === 'string' ? parsed.generatedAt : new Date(nowMs).toISOString();
     return { repos: rows.length, medianDailyTtgSeconds: median, observedAt };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reuses intentSummary; its quality flags decide observed vs unknown. A throw is
+ * unknown, never zero. Titles are dropped here so none reach the world model.
+ */
+async function readIntents(nowMs: number): Promise<IntentWorldReading | null> {
+  try {
+    const summary = await intentSummary({ nowMs });
+    return { ...summary, staleItems: summary.staleItems.map((item) => ({ id: item.id })) };
   } catch {
     return null;
   }
@@ -187,6 +213,7 @@ export async function buildWorldModel(options: ReadObserveOptions = {}): Promise
       nowMs,
       ...(parsedPulls ? { pulls: parsedPulls.pulls, pullsComplete: parsedPulls.complete === true } : {}),
     })),
+    intents: await readIntents(nowMs),
   });
   observe.coverage = {
     ...observe.coverage,
