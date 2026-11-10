@@ -12,6 +12,7 @@ import { readLedger, writeLedger } from './store.js';
 import {
   DEFAULT_STALE_AFTER_MS,
   IntentError,
+  MAX_EVIDENCE,
   MAX_INTENT_ITEMS,
   MAX_OWNER,
   MAX_PROVENANCE,
@@ -156,8 +157,19 @@ function absorb(target: IntentItem, incoming: IntentItem, at: string): void {
   const rq = [...new Set([...target.rq, ...incoming.rq])];
   if (rq.length > MAX_RQ) throw new IntentError(`An intent can track at most ${MAX_RQ} RQ keys.`);
   target.rq = rq;
-  const seen = new Set(target.prs.map(pullKey));
-  for (const pull of incoming.prs) if (!seen.has(pullKey(pull)) && target.prs.length < MAX_PRS) target.prs.push(pull);
+  for (const pull of incoming.prs) {
+    const existing = target.prs.find((row) => pullKey(row) === pullKey(pull));
+    if (existing) {
+      if (pull.state === 'merged') existing.state = 'merged';
+      if (pull.url && !existing.url) existing.url = pull.url;
+    } else if (target.prs.length < MAX_PRS) target.prs.push(pull);
+  }
+  for (const row of incoming.evidence) {
+    if (!target.evidence.some((entry) => entry.at === row.at && entry.kind === row.kind
+      && entry.ref === row.ref && entry.note === row.note)) {
+      target.evidence = [...target.evidence, row].slice(-MAX_EVIDENCE);
+    }
+  }
   target.status = preferStatus(target.status, incoming.status);
   target.partial = target.partial || incoming.partial;
   for (const row of incoming.provenance) addProvenance(target, row);

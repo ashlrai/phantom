@@ -31,8 +31,12 @@ typed route.
 ```
 ashlr fleet red-merges [--hours 24] [--root <dir>] [--json]
 ```
-Rolls up per-hour merge counts by red/green/other check state across
-every lane from `metrics/jobs.jsonl`. Read-only — never dispatches or
+Rolls up per-hour merge counts by red/green/other PR check state across
+every lane from `metrics/jobs.jsonl`. Pending, missing, or copied pre-merge checks count as other.
+These are PR observations, not default-branch failures; use `main-red-age`
+for guardian observations. `fleet running --json` counts unfinished launches
+in the last six hours from timestamped ledger events; older launches are not
+claimed to be running. Read-only — never dispatches or
 mutates anything. Pass `--json` for machine-parseable output.
 
 ## Is the build clean right now?
@@ -41,8 +45,7 @@ mutates anything. Pass `--json` for machine-parseable output.
 npm run typecheck
 ```
 Runs the full type-check suite; `0` means the tree compiles, `1` means
-it does not. Pair with `ashlr fleet red-merges --hours 1` to spot
-regressions the guardian has not yet caught.
+it does not. Pair with `ashlr fleet red-merges --hours 1` to inspect recent PR check observations.
 
 ## Guardian reference
 

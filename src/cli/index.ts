@@ -67,6 +67,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { loadConfig, saveConfig, CONFIG_PATH } from '../core/config.js';
@@ -2073,6 +2075,25 @@ async function main(): Promise<void> {
 
   try {
     switch (cmd) {
+      case 'check': {
+        if (wantsHelp(rest)) {
+          printCoreUsage('check', 'Run development checks in a Phantom checkout.', [
+            ['phm check [--base <ref>] [--json]', 'Run incremental typechecks, cached lint and affected tests'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
+        const script = resolve(process.cwd(), 'scripts/gate.mjs');
+        if (!existsSync(script)) {
+          console.error('phm check: run from the Phantom repository root (scripts/gate.mjs missing)');
+          process.exitCode = 2;
+          break;
+        }
+        const result = spawnSync(process.execPath, [script, '--check', ...rest], { stdio: 'inherit' });
+        if (result.error) console.error(`phm check: ${result.error.message}`);
+        process.exitCode = result.status ?? 1;
+        break;
+      }
       case 'chain': {
         if (wantsHelp(rest)) {
           printCoreUsage('chain', 'Synthetic chain checks.', [
@@ -2608,6 +2629,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'worklog': {
+        const { cmdWorklog } = await import('./worklog.js');
+        process.exitCode = await cmdWorklog(rest);
+        break;
+      }
+
       case 'fleet': {
         if (rest[0] === 'usage' && wantsHelp(rest)) {
           printCoreUsage('fleet usage', 'Read fleet usage.', [
@@ -2990,6 +3017,12 @@ async function main(): Promise<void> {
         }
         const cmdAuthority = await loadAuthorityCmd();
         process.exitCode = await cmdAuthority(rest);
+        break;
+      }
+
+      case 'library': {
+        const { cmdLibrary } = await import('./library.js');
+        process.exitCode = await cmdLibrary(rest);
         break;
       }
 
