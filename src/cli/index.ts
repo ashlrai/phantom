@@ -2182,6 +2182,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'land': {
+        const { cmdLand } = await import('./land.js');
+        process.exitCode = await cmdLand(rest);
+        break;
+      }
+
       case 'metrics': {
         if (wantsHelp(rest)) {
           printCoreUsage('metrics', 'Local metrics reports.', [
