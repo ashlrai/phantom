@@ -2,6 +2,7 @@ import { EMPTY_CLASSES, readEmptyJobs } from '../core/fleet/empty-jobs.js';
 
 const usage = 'Usage: phm jobs empty [--json] [--since <hours>h]';
 export async function cmdJobs(args: string[]): Promise<number> {
+  if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { console.log(usage); return 0; }
   if (args[0] !== 'empty') { console.error(usage); return 2; }
   let hours = 24;
   let json = false;
