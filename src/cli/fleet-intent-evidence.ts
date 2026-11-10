@@ -1,7 +1,7 @@
 import { linkMergedPull, markShipped, MAX_RELEASE_REF } from '../core/intent/evidence.js';
 import { normalizeRq, validRepo } from '../core/intent/schema.js';
 import { noteShippedRelease } from '../core/intent/release.js';
-import { readLedger, writeLedger } from '../core/intent/store.js';
+import { ledgerFilePresent, readLedger, transactIntentLedger } from '../core/intent/store.js';
 
 const usage = 'Usage: ashlr fleet intent-evidence merged --repo owner/name --number N --title text [--branch text] [--at timestamp] [--apply] [--json]\n       ashlr fleet intent-evidence shipped --release id [--rq key[,key...]] [--notes text] [--at timestamp] [--apply] [--json]';
 
@@ -43,12 +43,15 @@ export async function cmdFleetIntentEvidence(args: string[]): Promise<number> {
     let matches: { id: string; status: string }[];
     if (action === 'shipped' && apply) {
       matches = (await noteShippedRelease(note, { now: at })).matches;
+    } else if (action === 'merged' && apply && (await ledgerFilePresent())) {
+      matches = (await transactIntentLedger(undefined, (ledger) =>
+        linkMergedPull(ledger, { repo, number, title, branch: values.get('--branch') }, at),
+      )).map(({ id, status }) => ({ id, status }));
     } else {
       const ledger = await readLedger();
       const matched = action === 'merged'
         ? linkMergedPull(ledger, { repo, number, title, branch: values.get('--branch') }, at)
         : markShipped(ledger, note, at);
-      if (action === 'merged' && apply && matched.length > 0) await writeLedger(ledger);
       matches = matched.map(({ id, status }) => ({ id, status }));
     }
     const result = { dryRun: !apply, applied: apply && matches.length > 0, matches };
