@@ -137,3 +137,11 @@ it('keeps the newest duplicate reply and its timestamp on the CLI, desktop and p
     ]);
   } finally { log.mockRestore(); vi.unstubAllEnvs(); }
 }, 30_000);
+
+
+it('keeps the same reply on different dates while deduplicating a date', async () => {
+  await write('MASON-OUTBOX.md', '## 2026-11-08T01:00:00Z\nSame answer');
+  await write('PLAN-LOG.md', '## 2026-11-08T02:00:00Z\n**Reply for Mason:** Same answer\n## 2026-11-09T03:00:00Z\n**Reply for Mason:** Same answer');
+  const { entries } = await readOutboxEntries({ runsDir });
+  expect(entries.map(e => e.at)).toEqual(['2026-11-08T02:00:00Z', '2026-11-09T03:00:00Z']);
+});

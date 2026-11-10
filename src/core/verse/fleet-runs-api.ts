@@ -78,6 +78,8 @@ export interface FleetRunsApiDeps {
   reassign?: typeof reassignQueuedJobs;
   /** Briefing behind GET .../runs/mission. Default reads the runs directory. */
   readMission?: () => Promise<MissionControlV1>;
+  /** Owner-thread mirror roots (tests); default is the fixed owner dirs. */
+  ownerThread?: import('./owner-thread-api.js').OwnerThreadApiDeps;
 }
 
 /** ASHLR_RUNS_DIR overrides ~/.ashlr-runs — the fleet runs-dir convention. */
@@ -182,9 +184,13 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   // metadata — never identity — so it rides to the sink out of band: the
   // receiver serializes all writes, which keeps the ticket at the head of
   // pendingSources the one belonging to the request inside receive(). Each
-  // request removes its ticket exactly once (consumed by write, or spliced in
-  // the finally of the POST handler) before the next receive can start.
+  // request removes its ticket as soon as its receive() settles (or in the
+  // POST handler's finally if receive throws), before any later await.
   const pendingSources: { source: string; id?: string }[] = [];
+  const releaseTicket = (ticket: { source: string; id?: string }): void => {
+    const i = pendingSources.indexOf(ticket);
+    if (i >= 0) pendingSources.splice(i, 1);
+  };
   const receive = createChannelReceiver({
     allowedSenderIds: new Set([VERSE_INBOX_OPERATOR_ID, VERSE_INBOX_MOBILE_OPERATOR_ID]),
     now: () => new Date(now()),
@@ -472,6 +478,10 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         verifiedSenderId: mobile ? VERSE_INBOX_MOBILE_OPERATOR_ID : VERSE_INBOX_OPERATOR_ID,
         body: body.text.trim(),
       });
+      // write() was the ticket's only reader, so release it now: any await
+      // below (job command, owner-thread mirror) must not leave it at the
+      // head of pendingSources while the next request's write runs.
+      releaseTicket(ticket);
       if (result.ok) {
         // Only an accepted persistence invalidates the cached composite; a
         // duplicate appended nothing, and a refusal changed nothing.
@@ -493,8 +503,16 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
           if (outcome.status === 'stopped' || outcome.status === 'moved') { generation++; cached = undefined; }
           command = { status: outcome.status, reply: renderJobCommandReply(outcome) };
         }
+        // Best-effort copy of a desktop post onto the owner thread; KILL, pause
+        // or any failure leaves the inbox response exactly as it was. A mobile
+        // post is not mirrored: the thread has no mobile channel, and filing it
+        // as desktop would misattribute where the owner wrote from.
+        const ownerThread = mobile ? undefined : await import('./owner-thread-api.js')
+          .then(m => m.mirrorInboxToOwnerThread(result.envelope.body, result.ack.dedupeKey, { now, ...deps.ownerThread }))
+          .catch(() => ({ status: 'unavailable' as const }));
         sendJson(res, result.ack.status === 'accepted' ? 201 : 200, {
           ok: true, at: result.envelope.receivedAt,
+          ...(ownerThread === undefined ? {} : { ownerThread }),
           ...(ticket.id === undefined ? {} : { id: project(ticket.id, 'string') }),
           accepted: result.ack.status === 'accepted', duplicate: result.ack.status === 'duplicate',
           // The receiver's key is a bare 64-hex SHA-256 — a secret shape the
@@ -513,10 +531,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         sendJson(res, 422, { code: 'INBOX_REFUSED', reason: project(result.reason, 'string') });
       }
     } catch { sendJson(res, 503, { code: 'INBOX_UNAVAILABLE' }); }
-    finally {
-      const i = pendingSources.indexOf(ticket);
-      if (i >= 0) pendingSources.splice(i, 1);
-    }
+    finally { releaseTicket(ticket); }
     return true;
   };
 }
