@@ -245,7 +245,9 @@ describe('M30 CI workflow', () => {
     expect(permissionJobs).toEqual([
       ['release-build', { contents: 'read', actions: 'read' }],
     ]);
-    expect(ciYml).toContain("concurrency:\n  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
+    // Release-gate dispatches share one group per tag so a second train queues
+    // behind the first (#4592); every other run keeps its PR or run_id group.
+    expect(ciYml).toContain("concurrency:\n  group: ${{ github.event_name == 'workflow_dispatch' && inputs.release_gate && format('phantom-release-{0}', github.ref_name) || format('ci-{0}', github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id)) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
     // Master pushes run the seconds-fast gate only so the required Merge Gate
     // exists on the exact commit for auto-tag; full suites stay daily.
     expect(ciYml).toMatch(/^ {2}push:\n {4}branches: \[master\]$/m);
@@ -379,8 +381,10 @@ describe('M30 CI workflow', () => {
     for (const config of ['tsconfig.json', 'src/web-ui/tsconfig.json']) {
       expect(JSON.parse(readFileSync(resolve(repoRoot, config), 'utf8')).compilerOptions.incremental).toBe(true);
     }
-    expect(pkg.scripts.typecheck).toBe('tsc --noEmit && npm run typecheck:web');
-    expect(pkg.scripts['typecheck:web']).toBe('tsc --noEmit -p src/web-ui/tsconfig.json');
+    // The no-emit gate runs the native compiler (#4600; parity is proven by
+    // scripts/tsgo-parity.mjs). Emission stays on tsc in the build script.
+    expect(pkg.scripts.typecheck).toBe('tsgo --noEmit && npm run typecheck:web');
+    expect(pkg.scripts['typecheck:web']).toBe('tsgo --noEmit -p src/web-ui/tsconfig.json');
     const drift = quick.steps.find((step: { name?: string }) => step.name === 'Check authority drift (hermetic)');
     expect(drift).toBeDefined();
     expect(drift.if).toBe("steps.history.outputs.equal != 'true'");
@@ -871,7 +875,7 @@ describe('M30 CI workflow', () => {
     // in a no-emit step. Neither a transpile-only build nor a masked failure
     // can stand in for that compiler invocation.
     expect(pkg.scripts?.build?.split(' && ').slice(0, 2)).toEqual(['npm run check:version', 'tsc -p tsconfig.json']);
-    expect(pkg.scripts?.['typecheck:web']).toBe('tsc --noEmit -p src/web-ui/tsconfig.json');
+    expect(pkg.scripts?.['typecheck:web']).toBe('tsgo --noEmit -p src/web-ui/tsconfig.json');
     expect(ciYml).toContain('npm run lint');
     const docs = ciYml.match(/^ {6}- name: Check documentation\n[\s\S]*?(?=^ {6}- name:)/gm) ?? [];
     expect(docs).toHaveLength(1);
