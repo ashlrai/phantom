@@ -155,7 +155,7 @@ What runs without a per-release approval:
   GitHub Actions checks on that head are success. The merge uses the existing
   release app token and has no admin flag.
 - A release-please tag whose commit is an ancestor of master (compare
-  `master...tag` status `behind`, or `identical` when it is master HEAD) is
+  `tag...master` status `ahead`, or `identical` when it is master HEAD) is
   the candidate when required CI on that exact SHA is green. Diverged and
   red candidates are refused. The train does not retag and does not delete
   tags. A green open release PR for the next patch is still enqueued only
@@ -190,9 +190,11 @@ The plan reason `mac-release-autorun` means signed assets are still pending
 from this wrapper; it blocks desktop completion, but not npm dispatch once
 build, attestation and audit evidence are available. It is not a new hold.
 The wrapper picks up a successful attestation of a `v*` tag on its existing
-10 minute poll. The attestor commit must be master at attestation time and
-must still be an ancestor of master when the wrapper runs. A diverged
-attestor is not signed. If `~/.ashlr-runs/release-sign/keychain-allowed` is
+10 minute poll. The attestor may be current master, or the release tag commit
+when that tag's peeled sha is the candidate, the commit is an ancestor of
+master, and required CI on that sha is green. A diverged attestor, a
+non-release ref, or a tag whose sha does not match is not signed. The live
+host copy under `~/.ashlr-runs/bin/` is not updated by this repository change. If `~/.ashlr-runs/release-sign/keychain-allowed` is
 missing, the wrapper writes `NEEDS-MASON-<tag>` and waits. That file is the
 one-time unlock of the existing signing identity, not a per-release approval.
 

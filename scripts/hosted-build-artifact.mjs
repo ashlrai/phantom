@@ -314,15 +314,126 @@ export function auditGithub({ repository, revision, runId, runAttempt, artifactI
     jobs: requiredJobs.map((required) => ({ name: required.name, id: jobs.find((job) => job.name === required.name).id })) };
 }
 
+const RELEASE_TAG_REF = /^refs\/tags\/v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
+const RELEASE_VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
+const ACTIONS_APP_ID = 15368;
+
+/**
+ * `refs/heads/master` when the attestor is the protected tip.
+ * A stable release tag only when its peeled commit is the candidate, that
+ * commit is an ancestor of master (compare candidate...master is `ahead` or
+ * `identical`), and required Actions checks on that sha are green.
+ * Feature branches and non-release tags are refused.
+ */
+export function acceptReleaseSourceRef({ ref, candidateSha, masterSha, tagSha, compareStatus, ci }) {
+  assert.match(candidateSha, SHA);
+  assert.match(masterSha ?? '', SHA);
+  if (ref === 'refs/heads/master') return ref;
+  assert.match(String(ref ?? ''), RELEASE_TAG_REF, 'release ref is not master or a stable tag');
+  assert.match(tagSha ?? '', SHA);
+  assert.equal(tagSha, candidateSha, 'tag sha mismatches candidate');
+  assert.ok(compareStatus === 'ahead' || compareStatus === 'identical', 'tag is not an ancestor of master');
+  if (compareStatus === 'identical') assert.equal(candidateSha, masterSha, 'identical compare is not the tip');
+  else assert.notEqual(candidateSha, masterSha, 'ahead compare is the tip');
+  assert.equal(ci, 'green', 'required CI is not green');
+  return ref;
+}
+
+export function peelTagCommit(read, repository, name) {
+  assert.match(name, /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/);
+  const ref = read(`repos/${repository}/git/ref/tags/${name}`);
+  assert.equal(ref?.ref, `refs/tags/${name}`);
+  let object = ref.object;
+  const seen = new Set();
+  for (let depth = 0; object?.type === 'tag'; depth += 1) {
+    assert.ok(depth < 4 && SHA.test(object.sha) && !seen.has(object.sha), 'invalid release tag chain');
+    seen.add(object.sha);
+    const tag = read(`repos/${repository}/git/tags/${object.sha}`);
+    assert.equal(tag?.sha, object.sha);
+    object = tag.object;
+  }
+  assert.equal(object?.type, 'commit', 'release tag does not peel to a commit');
+  assert.match(object.sha ?? '', SHA);
+  return object.sha;
+}
+
+function requiredCiOnSha(read, repository, commitSha) {
+  const names = new Set();
+  const rules = read(`repos/${repository}/rules/branches/master`);
+  if (Array.isArray(rules)) {
+    for (const rule of rules) {
+      if (rule?.type !== 'required_status_checks' || !Array.isArray(rule.parameters?.required_status_checks)) continue;
+      for (const check of rule.parameters.required_status_checks) {
+        const name = typeof check?.context === 'string' ? check.context : '';
+        if (name && name.length <= 128 && !name.includes('\n')) names.add(name);
+      }
+    }
+  }
+  const contexts = read(`repos/${repository}/branches/master`)?.protection?.required_status_checks?.contexts;
+  if (Array.isArray(contexts)) {
+    for (const context of contexts) {
+      if (typeof context === 'string' && context && context.length <= 128 && !context.includes('\n')) names.add(context);
+    }
+  }
+  if (names.size === 0) return 'unknown';
+  const runs = [];
+  let total = null;
+  for (let page = 1; page <= 10; page += 1) {
+    const listed = read(`repos/${repository}/commits/${commitSha}/check-runs?filter=latest&app_id=${ACTIONS_APP_ID}&per_page=100&page=${page}`);
+    const batch = Array.isArray(listed?.check_runs) ? listed.check_runs : null;
+    if (!batch || !Number.isInteger(listed?.total_count) || listed.total_count < 0) return 'unknown';
+    if (total === null) total = listed.total_count;
+    else if (listed.total_count !== total) return 'unknown';
+    runs.push(...batch);
+    if (batch.length < 100) break;
+  }
+  if (total !== runs.length || runs.length > 1000) return 'unknown';
+  let pending = false;
+  for (const name of names) {
+    const matched = runs.filter((run) => run?.name === name && run.app?.id === ACTIONS_APP_ID);
+    if (matched.length === 0) { pending = true; continue; }
+    for (const run of matched) {
+      if (run.status !== 'completed') pending = true;
+      else if (run.conclusion !== 'success') return 'red';
+    }
+  }
+  return pending ? 'pending' : 'green';
+}
+
+/** Master tip stays on refs/heads/master. Any other attestor must be the candidate. */
+export function resolveReleaseSourceRef({ read, repository, masterSha, attestorSha, candidateSha, version }) {
+  assert.match(masterSha, SHA);
+  assert.match(attestorSha, SHA);
+  assert.match(candidateSha, SHA);
+  if (attestorSha === masterSha) return { ref: 'refs/heads/master', tagSha: attestorSha, compareStatus: 'identical', ci: 'green' };
+  if (attestorSha !== candidateSha) throw new Error('attestor is not current trusted master');
+  assert.match(version ?? '', RELEASE_VERSION);
+  const ref = `refs/tags/v${version}`;
+  const tagSha = peelTagCommit(read, repository, `v${version}`);
+  const compare = read(`repos/${repository}/compare/${candidateSha}...${masterSha}`);
+  const source = acceptReleaseSourceRef({
+    ref, candidateSha, masterSha, tagSha, compareStatus: compare?.status, ci: requiredCiOnSha(read, repository, candidateSha),
+  });
+  return { ref: source, tagSha, compareStatus: compare.status, ci: 'green' };
+}
+
 export function verifyAttestation({ path, repository, attestorSha, attestorRun, attestorAttempt,
-  run = command }) {
+  run = command, sourceRef = 'refs/heads/master', candidateSha, masterSha, tagSha, compareStatus, ci }) {
   assert.match(attestorSha, SHA);
   assert.ok(Number.isSafeInteger(attestorRun) && attestorRun > 0 && Number.isSafeInteger(attestorAttempt) && attestorAttempt > 0);
+  const ref = acceptReleaseSourceRef({
+    ref: sourceRef,
+    candidateSha: candidateSha ?? attestorSha,
+    masterSha: masterSha ?? attestorSha,
+    tagSha: tagSha ?? attestorSha,
+    compareStatus: compareStatus ?? (sourceRef === 'refs/heads/master' ? 'identical' : undefined),
+    ci: ci ?? (sourceRef === 'refs/heads/master' ? 'green' : undefined),
+  });
   const workflow = '.github/workflows/attest-ci-build.yml';
   const bytes = boundedBytes(path);
   const result = JSON.parse(run('gh', ['attestation', 'verify', path, '--repo', repository,
     '--hostname', 'github.com', '--signer-workflow', `${repository}/${workflow}`,
-    '--source-digest', attestorSha, '--source-ref', 'refs/heads/master',
+    '--source-digest', attestorSha, '--source-ref', ref,
     '--deny-self-hosted-runners', '--predicate-type', 'https://slsa.dev/provenance/v1', '--format', 'json']));
   assert.ok(Array.isArray(result) && result.length > 0 && result.length <= 100, 'no verified attestation');
   const expectedInvocation = `https://github.com/${repository}/actions/runs/${attestorRun}/attempts/${attestorAttempt}`;
@@ -662,6 +773,10 @@ function verifyArtifactBody({ root, revision, bundle, policy, githubRead, attest
     officialArtifact(read, producer.repository, policy.runId, revision, name, { id: lane.artifactId, name, digest: lane.artifactDigest });
   }
   const master = read(`${base}/branches/master`); checkMaster(master, policy);
+  const sourceRef = resolveReleaseSourceRef({
+    read, repository: producer.repository, masterSha: master.commit.sha, attestorSha: policy.attestorSha,
+    candidateSha: revision, version: JSON.parse(boundedBytes(join(root, 'package.json'), 1024 * 1024)).version,
+  });
   const attestorCommit = read(`${base}/git/commits/${policy.attestorSha}`);
   assert.equal(attestorCommit.tree?.sha, source.tree, 'master/candidate tree differs');
   const attestor = read(`${base}/actions/runs/${policy.attestorRun}/attempts/${policy.attestorAttempt}`);
@@ -679,7 +794,9 @@ function verifyArtifactBody({ root, revision, bundle, policy, githubRead, attest
   const subjects = [[join(bundle, 'dist.tar'), sha(archive)], [manifestPath, sha(manifestBytes)], [qualificationPath, sha(qualificationBytes)]];
   const verified = subjects.map(([path, expectedHash]) => {
     const attestation = verifyAttestation({ path, repository: producer.repository,
-      attestorSha: policy.attestorSha, attestorRun: policy.attestorRun, attestorAttempt: policy.attestorAttempt, ...(attestRun ? { run: attestRun } : {}) });
+      attestorSha: policy.attestorSha, attestorRun: policy.attestorRun, attestorAttempt: policy.attestorAttempt,
+      sourceRef: sourceRef.ref, candidateSha: revision, masterSha: master.commit.sha, tagSha: sourceRef.tagSha,
+      compareStatus: sourceRef.compareStatus, ci: sourceRef.ci, ...(attestRun ? { run: attestRun } : {}) });
     assert.equal(attestation.sha256, expectedHash, 'signed subject differs from initially validated bytes');
     return [path, attestation.sha256];
   });
@@ -698,7 +815,11 @@ function verifyArtifactBody({ root, revision, bundle, policy, githubRead, attest
 
 
 export function verifyArtifact(input) {
-  const { receipt, admission } = verifyArtifactBody(input, (master, policy) => assert.equal(master.commit?.sha, policy.attestorSha, 'attestor is not current trusted master'));
+  const { receipt, admission } = verifyArtifactBody(input, (master, policy) => {
+    const tip = master?.commit?.sha;
+    assert.match(tip ?? '', SHA);
+    if (tip !== policy.attestorSha) assert.equal(policy.attestorSha, input.revision, 'attestor is not current trusted master');
+  });
   admissions.set(receipt, admission); return receipt;
 }
 

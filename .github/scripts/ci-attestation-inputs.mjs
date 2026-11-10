@@ -5,7 +5,7 @@ import { appendFileSync, chmodSync, copyFileSync, existsSync, lstatSync, mkdirSy
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { releaseQualificationProfile } from '../../scripts/hosted-build-artifact.mjs';
+import { releaseQualificationProfile, peelTagCommit } from '../../scripts/hosted-build-artifact.mjs';
 import { requireProducerEnvironment, requireRepositoryMetadata, requireRepositoryReference } from './github-repository-binding.mjs';
 const roles = ['mac-general-1', 'mac-general-2', 'mac-general-3', 'mac-general-4', 'mac-isolated'];
 const hash = /^[a-f0-9]{40}$/;
@@ -48,8 +48,12 @@ export function prepare({ env = process.env, read = api } = {}) {
   assert.equal(git('rev-parse', 'HEAD'), env.GITHUB_SHA); assert.equal(git('status', '--porcelain', '--untracked-files=normal'), '');
   const base = `repos/${repository}`;
   requireRepositoryMetadata(repository, read(base));
+  assert.equal(env.GITHUB_SHA, env.CANDIDATE_SHA, 'checkout is not the candidate');
+  if ((env.GITHUB_REF ?? '').startsWith('refs/tags/')) {
+    assert.equal(peelTagCommit(read, repository, env.GITHUB_REF.slice('refs/tags/'.length)), env.CANDIDATE_SHA, 'tag sha mismatches candidate');
+  }
   const trusted = read(`${base}/git/commits/${env.GITHUB_SHA}`); const candidate = read(`${base}/git/commits/${env.CANDIDATE_SHA}`);
-  assert.equal(trusted.sha, env.GITHUB_SHA); assert.equal(candidate.sha, env.CANDIDATE_SHA); assert.equal(trusted.tree.sha, candidate.tree.sha, 'trusted master tree differs from candidate');
+  assert.equal(trusted.sha, env.GITHUB_SHA); assert.equal(candidate.sha, env.CANDIDATE_SHA);
   const ci = read(`${base}/actions/runs/${run}/attempts/${attempt}`);
   assert.equal(ci.id, run); assert.equal(ci.run_attempt, attempt); assert.equal(ci.head_sha, env.CANDIDATE_SHA);
   requireRepositoryReference(repository, ci.repository);

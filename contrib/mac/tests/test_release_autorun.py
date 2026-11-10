@@ -114,6 +114,41 @@ class AutorunTest(unittest.TestCase):
  def test_duplicate_producer_artifact_refuses(self):
   key='repos/ashlrai/phantom/actions/runs/11/artifacts?per_page=100';rows=self.data[key]['artifacts'];new=copy.deepcopy(rows[-1]);new['id']=103;rows.append(new);self.data[key]['total_count']=len(rows)
   self.execute();self.assertEqual(self.calls(),[])
+ def ancestor(self, **patch):
+  M='e'*40
+  self.data['repos/ashlrai/phantom/commits/master']={'sha':M}
+  att=self.data['repos/ashlrai/phantom/actions/runs/22']
+  att['head_sha']=H; att['head_branch']=TAG
+  self.data['repos/ashlrai/phantom/actions/workflows/attest-ci-build.yml/runs?status=success&per_page=20']['workflow_runs'][0]=att
+  self.data['repos/ashlrai/phantom/actions/runs/11/attempts/2']['head_branch']=TAG
+  for row in self.data['repos/ashlrai/phantom/actions/runs/22/artifacts?per_page=100']['artifacts']:
+   row['workflow_run']['head_sha']=H
+  self.data['repos/ashlrai/phantom/compare/'+H+'...'+M]={'status':'ahead'}
+  self.data['repos/ashlrai/phantom/git/ref/tags/'+TAG]={'ref':'refs/tags/'+TAG,'object':{'type':'commit','sha':H}}
+  self.data['repos/ashlrai/phantom/rules/branches/master']=[{'type':'required_status_checks','parameters':{'required_status_checks':[{'context':'Merge Gate'}]}}]
+  self.data['repos/ashlrai/phantom/branches/master']={'protection':{'required_status_checks':{'contexts':[]}}}
+  self.data['repos/ashlrai/phantom/commits/'+H+'/check-runs?filter=latest&app_id=15368&per_page=100']={'total_count':1,'check_runs':[{'name':'Merge Gate','status':'completed','conclusion':'success','app':{'id':15368}}]}
+  for key,value in patch.items():
+   cursor=self.data
+   for part in key.split('.')[:-1]: cursor=cursor[part]
+   cursor[key.split('.')[-1]]=value
+  return M
+ def test_ancestor_release_tag_with_green_ci_is_signed(self):
+  self.ancestor();self.execute();self.assertEqual(len(self.calls()),1)
+  args=dict(zip(self.calls()[0][::2],self.calls()[0][1::2]));self.assertEqual(args['--attestor-sha'],H);self.assertEqual(args['--head-sha'],H)
+ def test_non_release_attestor_ref_is_not_signed(self):
+  self.ancestor();self.data['repos/ashlrai/phantom/actions/runs/22']['head_branch']='nightly'
+  self.data['repos/ashlrai/phantom/actions/workflows/attest-ci-build.yml/runs?status=success&per_page=20']['workflow_runs'][0]=self.data['repos/ashlrai/phantom/actions/runs/22']
+  self.execute();self.assertEqual(self.calls(),[])
+ def test_release_tag_sha_mismatch_is_not_signed(self):
+  self.ancestor();self.data['repos/ashlrai/phantom/git/ref/tags/'+TAG]['object']['sha']=A
+  self.execute();self.assertEqual(self.calls(),[])
+ def test_ancestor_with_red_required_ci_is_not_signed(self):
+  self.ancestor();self.data['repos/ashlrai/phantom/commits/'+H+'/check-runs?filter=latest&app_id=15368&per_page=100']['check_runs'][0]['conclusion']='failure'
+  self.execute();self.assertEqual(self.calls(),[])
+ def test_diverged_attestor_is_not_signed(self):
+  self.ancestor();self.data['repos/ashlrai/phantom/compare/'+H+'...'+'e'*40]['status']='diverged'
+  self.execute();self.assertEqual(self.calls(),[])
  def test_master_moves_before_intent_refuses(self):
   self.data['repos/ashlrai/phantom/commits/master']={'sequence':[{'sha':A},{'sha':H}]}
   self.execute();self.assertEqual(self.calls(),[]);self.assertFalse(self.state('sha-'+H+'.started').exists())

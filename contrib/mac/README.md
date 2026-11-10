@@ -800,7 +800,11 @@ dispatches. The unchanged stock signer independently verifies the selected
 source, run attempts, original artifacts, audit and signing/publication guards.
 Selection metadata is not a reusable qualification grant.
 
-The observer considers at most 20 newest successful attestors on current master.
+The observer considers at most 20 newest successful attestors on current master
+or on a stable `vX.Y.Z` release tag whose commit is that attestor. An attestor
+that is not the master tip is signed only when it is the candidate, the tag
+peels to that sha, compare `candidate...master` is `ahead` or `identical`,
+and required CI on that sha is green.
 A missing handoff does not hide an older ready attestor or create new permanent
 seen state. Complete bounded artifact inventories must contain one exact
 current-attempt handoff and build with matching run, source and repository.

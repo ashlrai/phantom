@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { cmdRelease } from '../src/cli/release.js';
 import {
   admitCiRun, allowReleasePrDispatch, assertReleaseWrite, buildTrain, cappedCadenceMinutes, docsCarriersSynced, ENQUEUE_PULL_REQUEST,
-  judgeRequiredChecks,
+  judgeRequiredChecks, releaseHeadBranch,
   enqueueReleasePullRequest, failedBuildWithin, hostedTrainGate, isReleasePleaseCommit,
   markWritesApplied, mergeStageDone, observeTrain, pauseReleaseTrain, readSentinel, releaseGithubCall, releaseKillDecision, selectUpdaterFeed,
   TRAIN_SCHEMA, updaterFeedMatches, WEBSITE_HOOK,
@@ -20,7 +20,7 @@ function greenCi(commit: string): Record<string, unknown> {
   return {
     'repos/ashlrai/phantom/rules/branches/master': [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'Merge Gate' }] } }],
     'repos/ashlrai/phantom/branches/master': { protection: { required_status_checks: { contexts: ['Merge Gate'] } } },
-    [`repos/ashlrai/phantom/commits/${commit}/check-runs?filter=latest&app_id=15368&per_page=100`]: {
+    [`repos/ashlrai/phantom/commits/${commit}/check-runs?filter=latest&app_id=15368&per_page=100&page=1`]: {
       total_count: 1,
       check_runs: [{ name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } }],
     },
@@ -111,6 +111,11 @@ describe('release train', () => {
   it('accepts an ancestor or head with green CI and rejects red or diverged candidates', () => {
     expect(judgeRequiredChecks(['Merge Gate'], [{ name: 'Merge Gate', status: 'completed', conclusion: 'success', appId: 15368 }])).toBe('green');
     expect(judgeRequiredChecks(['Merge Gate'], [{ name: 'Merge Gate', status: 'completed', conclusion: 'failure', appId: 15368 }])).toBe('red');
+    expect(releaseHeadBranch('master')).toBe(true);
+    expect(releaseHeadBranch('v3.30.27')).toBe(true);
+    expect(releaseHeadBranch('refs/heads/v3.30.27')).toBe(false);
+    expect(releaseHeadBranch('refs/tags/v3.30.27')).toBe(false);
+    expect(releaseHeadBranch('v1')).toBe(false);
     const ancestor = buildTrain(observation());
     expect(ancestor.exitCode).toBe(0);
     expect(ancestor.state.sha).toBe(head);
@@ -442,5 +447,15 @@ describe('release train', () => {
     expect(observed.candidateCi).toBe('green');
     expect(observed.npmPublished).toBe(false);
     expect(buildTrain(observed).state.tag).toBe('v3.30.27');
+    const incomplete = { ...greenCi(head) };
+    const checks = `repos/ashlrai/phantom/commits/${head}/check-runs?filter=latest&app_id=15368&per_page=100&page=1`;
+    incomplete[checks] = { total_count: 2, check_runs: [{ name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } }] };
+    const unpaged = await observeTrain(async (path) => {
+      if (Object.hasOwn(incomplete, path)) return incomplete[path];
+      if (!Object.hasOwn(data, path)) throw new Error(`unexpected ${path}`);
+      return data[path];
+    }, '2026-11-09T06:00:00.000Z', 30, { fleet: 'inactive', autorun: 'inactive' });
+    expect(unpaged.candidateCi).toBe('unknown');
+    expect(buildTrain(unpaged).writes.some((write) => write.path.endsWith('/ci.yml/dispatches'))).toBe(false);
   });
 });

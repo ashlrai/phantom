@@ -46,7 +46,10 @@ if matches:
 valid_run(){ /usr/bin/python3 -I -c 'import json,sys
 r=json.load(sys.stdin); run,attempt,sha,workflow=sys.argv[1:]
 assert type(r.get("id")) is int and r["id"]==int(run) and type(r.get("run_attempt")) is int and r["run_attempt"]==int(attempt)
-assert r.get("path")==".github/workflows/"+workflow+".yml" and r.get("head_sha")==sha and r.get("head_branch")=="master"
+assert r.get("path")==".github/workflows/"+workflow+".yml" and r.get("head_sha")==sha
+branch=r.get("head_branch")
+release=branch=="master" or (workflow!="dependency-audit" and __import__("re").fullmatch(r"v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)", branch or ""))
+assert release, "ref is not master or a stable release tag"
 assert r.get("status")=="completed" and r.get("conclusion")=="success"
 for key in ("repository","head_repository"):
  assert r[key].get("id")==1263526319 and r[key].get("full_name")=="ashlrai/phantom"' "$@"; }
@@ -59,13 +62,58 @@ assert isinstance(rows,list) and len(rows)<=20 and type(r["total_count"]) is int
 assert all(type(a.get("id")) is int and a["id"]>0 and type(a.get("run_attempt")) is int and a["run_attempt"]>0 for a in rows)
 assert len({a["id"] for a in rows})==len(rows)
 for a in sorted(rows,key=lambda a:a["id"],reverse=True):
- assert a.get("path")==".github/workflows/attest-ci-build.yml" and a.get("head_branch")=="master" and a.get("status")=="completed" and a.get("conclusion")=="success" and re.fullmatch(r"[a-f0-9]{40}",a.get("head_sha",""))
+ branch=a.get("head_branch")
+ if branch!="master" and not re.fullmatch(r"v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)", branch or ""):
+  continue
+ assert a.get("path")==".github/workflows/attest-ci-build.yml" and a.get("status")=="completed" and a.get("conclusion")=="success" and re.fullmatch(r"[a-f0-9]{40}",a.get("head_sha",""))
  for key in ("repository","head_repository"):
   assert a[key].get("id")==1263526319 and a[key].get("full_name")=="ashlrai/phantom"
- print(a["id"],a["run_attempt"],a["head_sha"])') || { log "attest run inventory invalid"; exit 0; }
-while read -r AR AA AS; do
+ print(a["id"],a["run_attempt"],a["head_sha"],branch)') || { log "attest run inventory invalid"; exit 0; }
+ancestor_proof() {
+  local cmp ref typ peeled n body rules branch runs
+  cmp=$(G "repos/$REPO/compare/$AS...$M") || return 1
+  [ "$(echo "$cmp" | J status)" = ahead ] || [ "$(echo "$cmp" | J status)" = identical ] || return 1
+  ref=$(G "repos/$REPO/git/ref/tags/$TAG") || return 1
+  [ "$(echo "$ref" | J ref)" = "refs/tags/$TAG" ] || return 1
+  typ=$(echo "$ref" | J object.type); peeled=$(echo "$ref" | J object.sha); n=0
+  while [ "$typ" = tag ]; do
+    n=$((n+1)); [ "$n" -le 4 ] || return 1
+    body=$(G "repos/$REPO/git/tags/$peeled") || return 1
+    typ=$(echo "$body" | J object.type); peeled=$(echo "$body" | J object.sha)
+  done
+  [ "$typ" = commit ] && [ "$peeled" = "$AS" ] || return 1
+  rules=$(G "repos/$REPO/rules/branches/master") || return 1
+  branch=$(G "repos/$REPO/branches/master") || return 1
+  runs=$(G "repos/$REPO/commits/$AS/check-runs?filter=latest&app_id=15368&per_page=100") || return 1
+  { printf '%s\0' "$rules"; printf '%s\0' "$branch"; printf '%s' "$runs"; } | /usr/bin/python3 -I -c 'import json,sys
+parts=sys.stdin.buffer.read().split(b"\0")
+assert len(parts)==3
+rules,branch,runs=map(json.loads,parts)
+names=set()
+if isinstance(rules,list):
+  for rule in rules:
+    if not isinstance(rule,dict) or rule.get("type")!="required_status_checks": continue
+    checks=(rule.get("parameters") or {}).get("required_status_checks")
+    if not isinstance(checks,list): continue
+    for check in checks:
+      name=(check or {}).get("context") if isinstance(check,dict) else None
+      if isinstance(name,str) and name and len(name)<=128 and "\n" not in name: names.add(name)
+contexts=((branch or {}).get("protection") or {}).get("required_status_checks",{}).get("contexts") if isinstance(branch,dict) else None
+if isinstance(contexts,list):
+  for name in contexts:
+    if isinstance(name,str) and name and len(name)<=128 and "\n" not in name: names.add(name)
+assert names, "no required checks"
+rows=runs.get("check_runs") if isinstance(runs,dict) else None
+assert isinstance(rows,list) and runs.get("total_count")==len(rows)<=100
+for name in names:
+  matched=[row for row in rows if isinstance(row,dict) and row.get("name")==name and (row.get("app") or {}).get("id")==15368]
+  assert matched, "required check missing"
+  for row in matched:
+    assert row.get("status")=="completed" and row.get("conclusion")=="success"
+' || return 1
+}
+while read -r AR AA AS AB; do
 [ -n "${AR:-}" ] || continue
-[ "$AS" = "$M" ] || continue   # unchanged signer also requires current attestor source
 [ -f "$D/attest-$AR-$AA.seen" ] && continue
 G "repos/$REPO/actions/runs/$AR" | valid_run "$AR" "$AA" "$AS" attest-ci-build 2>/dev/null || { log "attest $AR/$AA changed or invalid; held"; exit 0; }
 BA=$(G "repos/$REPO/actions/runs/$AR/artifacts?per_page=100") || { log "read attest artifacts failed"; exit 0; }
@@ -86,6 +134,9 @@ h=sys.argv[1]; tags=[t["name"] for t in json.load(sys.stdin) if t["commit"]["sha
 assert len(tags)<=1
 print(tags[0] if tags else "")' "$HEAD") || { log "tag inventory invalid; held"; exit 0; }
 [ -n "$TAG" ] || { log "attest $AR/$AA: source carries no visible v* tag; will look again"; continue; }
+if [ "$AS" != "$M" ]; then
+  [ "$AS" = "$HEAD" ] && [ "$AB" = "$TAG" ] && ancestor_proof || { log "ancestor attestor refused"; continue; }
+fi
 AUD=$(G "repos/$REPO/actions/workflows/dependency-audit.yml/runs?head_sha=$HEAD&status=success&per_page=1") || { log "read audit failed"; exit 0; }
 read -r AU UA < <(echo "$AUD" | J workflow_runs.0.id workflow_runs.0.run_attempt | paste -sd' ' -)
 [[ "${AU:-}" =~ ^[1-9][0-9]*$ ]] && [[ "${UA:-}" =~ ^[1-9][0-9]*$ ]] || { log "audit absent; will look again"; continue; }

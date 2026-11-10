@@ -39,9 +39,11 @@ type StepStatus = 'complete' | 'pending' | 'stopped' | 'hooked';
 const ACTIONS_APP_ID = 15368;
 const RELEASE_TAG = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
 
-/** Master, or the stable release tag the train dispatches. Feature branches are refused. */
+/** GitHub `head_branch` is `master` or a bare `vX.Y.Z`. `refs/heads/vX.Y.Z` is a branch. */
 export function releaseHeadBranch(branch: unknown): boolean {
-  return branch === 'master' || (typeof branch === 'string' && RELEASE_TAG.test(branch));
+  if (branch === 'master') return true;
+  if (typeof branch !== 'string' || branch.startsWith('refs/')) return false;
+  return RELEASE_TAG.test(branch);
 }
 
 /**
@@ -566,10 +568,11 @@ export async function observeTrain(
   if (current !== null) {
     const ref = record(current);
     const object = record(ref?.object);
-    if (ref?.ref !== `refs/tags/v${masterVersion}` || object?.type !== 'commit' || !SHA.test(String(object.sha ?? ''))) throw new Error('current tag is not a commit');
-    const tagged = record(await read(`repos/${REPOSITORY}/commits/${String(object.sha)}`));
+    if (ref?.ref !== `refs/tags/v${masterVersion}` || !object) throw new Error('current tag is not a commit');
+    const tagSha = await peeledTagCommit(read, object);
+    const tagged = record(await read(`repos/${REPOSITORY}/commits/${tagSha}`));
     lastTaggedAt = text(record(record(tagged?.commit)?.committer)?.date);
-    const compare = record(await read(`repos/${REPOSITORY}/compare/${String(object.sha)}...${masterSha}`));
+    const compare = record(await read(`repos/${REPOSITORY}/compare/${tagSha}...${masterSha}`));
     if (compare?.status === 'ahead' && Number.isInteger(compare.ahead_by)) aheadBy = Number(compare.ahead_by);
     else if (compare?.status === 'identical') aheadBy = 0;
     else throw new Error('current tag is not an ancestor of master');
@@ -684,6 +687,23 @@ export async function observeTrain(
   };
 }
 
+async function peeledTagCommit(read: (path: string) => Promise<unknown>, object: Record<string, unknown>): Promise<string> {
+  let current: Record<string, unknown> | null = object;
+  const seen = new Set<string>();
+  for (let depth = 0; current?.type === 'tag'; depth += 1) {
+    const annotation = text(current.sha) ?? '';
+    if (depth >= 4 || !SHA.test(annotation) || seen.has(annotation)) throw new Error('current tag is not a commit');
+    seen.add(annotation);
+    const tag = record(await read(`repos/${REPOSITORY}/git/tags/${annotation}`));
+    if (text(tag?.sha) !== annotation) throw new Error('current tag is not a commit');
+    current = record(tag?.object);
+    if (!current) throw new Error('current tag is not a commit');
+  }
+  const sha = text(current?.sha) ?? '';
+  if (current?.type !== 'commit' || !SHA.test(sha)) throw new Error('current tag is not a commit');
+  return sha;
+}
+
 function checkContext(value: unknown): string | null {
   const name = text(record(value)?.context) ?? (typeof value === 'string' ? value : null);
   return name && name.length > 0 && name.length <= 128 && !name.includes('\n') ? name : null;
@@ -713,10 +733,20 @@ async function requiredCi(read: (path: string) => Promise<unknown>, sha: string)
       if (name) names.add(name);
     }
   }
-  const listed = record(await read(`repos/${REPOSITORY}/commits/${sha}/check-runs?filter=latest&app_id=${ACTIONS_APP_ID}&per_page=100`));
-  const runs = Array.isArray(listed?.check_runs) ? listed.check_runs : null;
-  if (!runs || listed?.total_count !== runs.length || runs.length > 100) return 'unknown';
-  const parsed = runs.map((row) => {
+  const collected: unknown[] = [];
+  let total: number | null = null;
+  for (let page = 1; page <= 10; page += 1) {
+    const listed = record(await read(`repos/${REPOSITORY}/commits/${sha}/check-runs?filter=latest&app_id=${ACTIONS_APP_ID}&per_page=100&page=${page}`));
+    const batch = listed && Array.isArray(listed.check_runs) ? listed.check_runs : null;
+    const pageTotal = listed && Number.isInteger(listed.total_count) ? Number(listed.total_count) : null;
+    if (!batch || pageTotal === null || pageTotal < 0) return 'unknown';
+    if (total === null) total = pageTotal;
+    else if (pageTotal !== total) return 'unknown';
+    collected.push(...batch);
+    if (batch.length < 100) break;
+  }
+  if (total === null || total !== collected.length || collected.length > 1000) return 'unknown';
+  const parsed = collected.map((row) => {
     const item = record(row);
     return {
       name: text(item?.name) ?? '',
