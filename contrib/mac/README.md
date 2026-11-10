@@ -926,6 +926,23 @@ empty are also excluded during restocking, until the base changes. Failed or
 unknown exits remain eligible, so authentication failures do not become cached
 no-ops. Missing refs, malformed metrics, and Git errors allow launch.
 
+The prompt hash covers the whole prompt file, whose first line names the job id
+and lane, so it never matches a re-cut under a new id, a re-route to another
+lane, or the same task after any upstream commit (RQ-CODEXP-EMPTY-1). Claims
+therefore also record `task_hash`: the sha256 of the `<job> (attrs): <task>`
+text with the job id, attrs, case and spacing removed. When two attempts of one
+task in the same repo finished successfully empty within 24 hours, on any id,
+lane or base, the next one is skipped with reason `task_empty_repeat_24h`. One
+empty attempt alone still retries. A prompt without a task line has no
+`task_hash` and is never suppressed by this rule.
+
+The launcher candidate (`host-integration/launch.candidate.sh` and
+`launch.patch`) asks a run that ends with no change to print
+`EMPTY_REASON: <code>` and put the same line first in `BRIDGE_NOTES.md`. The
+code is `duplicate-landed`, `prompt-unclear`, `blocked` or `no-change-needed`.
+`phm fleet empty-causes --lane <lane>` reads that line first when it classifies
+a lane's empty runs; see [FLEET-VERBS](../../docs/FLEET-VERBS.md).
+
 Suppressed work records `event=skipped_empty`, with a reason, instead of a
 model launch or finish. Existing shell precheck skips use that event too.
 Committed changes count as work even when the worktree is clean. Claim metadata
