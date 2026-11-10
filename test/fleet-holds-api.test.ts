@@ -30,7 +30,7 @@ async function call(method: string, body?: unknown, token = 'fixture-token', url
   const handled = await handleFleetHoldsApi(ctx, req, res, new URL(url, 'http://localhost').pathname, method);
   return { handled, status, body: payload ? JSON.parse(payload) as LaneTargetsV1 : null };
 }
-it('GET returns lane targets and rejects queries', async () => {
+it('GET holds returns lane targets and rejects queries', async () => {
   const result = await call('GET');
   expect(result.status).toBe(200);
   expect(result.body).toMatchObject({ v: 1, sourceState: 'healthy', lanes: [{ lane: 'sol', held: true, heldReason: expect.any(String), changedBy: 'autobackoff' }] });

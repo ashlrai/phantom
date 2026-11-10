@@ -154,11 +154,20 @@ What runs without a per-release approval:
   when its version is the next patch, its head is `release-please--*`, and
   GitHub Actions checks on that head are success. The merge uses the existing
   release app token and has no admin flag.
+- A release-please tag whose commit is an ancestor of master (compare
+  `tag...master` status `ahead`, or `identical` when it is master HEAD) is
+  the candidate when required CI on that exact SHA is green. Diverged and
+  red candidates are refused. The train does not retag and does not delete
+  tags. A green open release PR for the next patch is still enqueued only
+  after its own checks are green. The Release PR workflow independently
+  checks green master, cadence and version carriers.
 - `auto-tag.yml` still creates `vX.Y.Z` and the draft after required checks
   on that commit.
-- A `workflow_dispatch` of `ci.yml` with `release_gate=true` and `--ref` set
-  to that tag builds that commit. Later master commits do not retarget it.
-  The half-hour schedule on master is unchanged.
+- A `workflow_dispatch` of `ci.yml` with `release_gate=true` builds that
+  candidate. The ref is the tag when the tag is behind master, and `master`
+  when the SHAs match. Attestation uses the same ref, so the checkout SHA is
+  the candidate rather than a newer master HEAD. The half-hour schedule on
+  master is unchanged.
 - When that build artifact exists, the train dispatches
   `attest-ci-build.yml` and then `publish-canonical-npm.yml` with the exact
   run, attempt, and artifact ids. The publisher's own admission still runs.
@@ -177,17 +186,24 @@ uses the same variable.
 
 Signing and notarization stay in `contrib/mac/release-autorun.sh` and the
 stock `release-sign.sh` wrapper. CI does not codesign and does not notarize.
+The plan reason `mac-release-autorun` means signed assets are still pending
+from this wrapper; it blocks desktop completion, but not npm dispatch once
+build, attestation and audit evidence are available. It is not a new hold.
 The wrapper picks up a successful attestation of a `v*` tag on its existing
-10 minute poll. The attestor commit must be master at attestation time and
-must still be an ancestor of master when the wrapper runs. A diverged
-attestor is not signed. If `~/.ashlr-runs/release-sign/keychain-allowed` is
+10 minute poll. The attestor may be current master, or the release tag commit
+when that tag's peeled sha is the candidate, the commit is an ancestor of
+master, and required CI on that sha is green. A diverged attestor, a
+non-release ref, or a tag whose sha does not match is not signed. The live
+host copy under `~/.ashlr-runs/bin/` is not updated by this repository change. If `~/.ashlr-runs/release-sign/keychain-allowed` is
 missing, the wrapper writes `NEEDS-MASON-<tag>` and waits. That file is the
 one-time unlock of the existing signing identity, not a per-release approval.
 
 `phm.dev` is not deployed from this repository. The host profile is
 `phantom-public-web` in `src/core/website/host-release.ts`: repository
 `ashlrai/phantom-secrets`, root `apps/web`, domain `phm.dev`. The train
-records that hook. `src/core/website/release-metadata.ts` is the existing
+records that hook. Its `phantom-secrets` reason identifies the separate
+website owner; the website step is outside the publishing dependency order
+and does not block npm or desktop finalization. `src/core/website/release-metadata.ts` is the existing
 task that refreshes `apps/web/src/lib/workbench-release.json` from public
 GitHub and npm facts after publication. A train state file does not mean the
 site was deployed.
@@ -408,3 +424,16 @@ workflows. Release Please and auto-tag can temporarily create empty drafts;
 those are not by themselves failed releases or evidence of a settled published
 release with signed assets. SIGN-PUBLISH-3311 and the desktop, Terra and Dot
 lanes retain their separate ownership.
+
+### Check release status
+
+Run `phm release status` for a read-only table across the seven enrolled Ashlr
+repositories, or add `--json` for the `phantom.release-status.v1` report. The
+latest tag is GitHub's most recently listed tag; assets belong to the release
+for that tag, and unreleased commits count commits on the default branch ahead
+of it. The Phantom row also shows the HTTP status of the public updater feed.
+`Unknown` (JSON `null`) means the observation could not be made, including when
+a tag has no GitHub release. Other repositories have no updater feed check.
+GitHub access uses the existing `gh` authentication. The command changes no
+release settings. `phm release status --file <path>` continues to inspect a
+local release-train state file.
