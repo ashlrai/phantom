@@ -13,8 +13,7 @@ import type {
   RunBudget,
   WorkItem,
 } from '../types.js';
-import { DELEGATION_STAGES } from '../types/delegation.js';
-import { STAGE_LANE_CLASS } from '../routing/stage-delegation.js';
+import { DELEGATION_STAGES, STAGE_LANE_CLASS } from '../routing/stage-delegation.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 const MAX_TEXT = 240;

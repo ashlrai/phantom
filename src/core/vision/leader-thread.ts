@@ -541,13 +541,6 @@ export async function listLeaderThread(opts: LeaderThreadQuery = {}): Promise<Le
   return messages.filter(message => matchesThreadQuery(message, opts)).slice(-limit);
 }
 
-/** One message by id (with its delivery state), or null. */
-export function findThreadMessage(id: string): LeaderThreadMessage | null {
-  if (!LEADER_THREAD_ID_RE.test(id)) return null;
-  const found = readLog().find((m) => m.id === id);
-  return found ? withDelivery(found, readIndex()) : null;
-}
-
 // ---------------------------------------------------------------------------
 // Proactive messages and delivery
 // ---------------------------------------------------------------------------

@@ -134,6 +134,14 @@ test('detects output modified during npm pack without rebuilding or returning a 
   assert.equal(calls, 1);
 });
 
+test('checks source identity after pack and reports offending porcelain lines', (t) => {
+  const f = fixture(t);
+  assert.throws(() => packBuild({ ...f, runNpm: (_bin, args) => {
+    writeFileSync(join(f.root, 'unexpected-generated.txt'), 'unexpected');
+    return report(args[4]);
+  } }), /source changed after build:\n\?\? unexpected-generated\.txt/);
+});
+
 for (const [name, overrides] of [
   ['wrong package', { name: '@other/hub' }], ['wrong version', { version: '3.24.1' }],
   ['path traversal', { filename: '../ashlr-hub-3.24.2.tgz' }],

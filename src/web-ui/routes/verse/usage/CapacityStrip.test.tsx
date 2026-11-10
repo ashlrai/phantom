@@ -39,7 +39,7 @@ const CLAUDE = { ...CLAUDE_TIGHT_SEAT, id: 'claude-a', accountId: 'claude-a' };
 
 const BUDGET = {
   mode: 'balanced',
-  seats: {},
+  seats: { 'claude-a': { seatId: 'claude-a', enabled: true, reservePercent: 40 } },
   updatedAt: 'x',
   headroom: [{ seatId: 'claude-a', sessionUsedPercent: 15, weeklyUsedPercent: 85, bindingWindow: 'weekly', autonomyHeadroomPercent: 0, resetAt: null, eligibleForAutonomy: false, reasons: ['Past the ceiling.'] }],
   seatInfo: [{ seatId: 'claude-a', label: 'Claude Max', engine: 'claude', free: false }],

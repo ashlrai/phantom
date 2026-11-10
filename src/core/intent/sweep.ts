@@ -26,16 +26,18 @@ export async function sweepStale(opts: { root?: string; apply?: boolean; now?: s
   }
   const ledger = await readLedger(opts.root);
   const items = ledger.items.filter(item => !terminal.has(item.status) && now - Date.parse(item.lastTouchedAt) > item.staleAfterMs);
-  const stale = items.map(item => ({ id: item.id, title: item.title, status: item.status, action: actionFor(item) }));
+  const actions = items.map(actionFor);
   if (opts.apply) {
     for (const [index, item] of items.entries()) {
-      const action = stale[index]!.action;
-      if (item.status === 'in-progress') item.status = 'queued';
+      const action = actions[index]!;
+      if (action === 'requeue') item.status = 'queued';
       item.evidence = [...item.evidence, { at, kind: 'sweep' as const, ref: action, note: 'Local stale tracking refreshed; no job dispatched.' }].slice(-MAX_EVIDENCE);
       item.lastTouchedAt = at;
       item.updatedAt = at;
     }
     if (items.length) await writeLedger(ledger, opts.root);
   }
+  // Rows report the persisted status: post-apply when applying, untouched on preview.
+  const stale = items.map((item, index) => ({ id: item.id, title: item.title, status: item.status, action: actions[index]! }));
   return { stale, applied: opts.apply === true, updated: opts.apply ? items.length : 0 };
 }

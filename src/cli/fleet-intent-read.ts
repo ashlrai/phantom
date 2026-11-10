@@ -1,5 +1,5 @@
 import { IntentError, isIntentStatus, validIntentId } from '../core/intent/schema.js';
-import { readLedger } from '../core/intent/store.js';
+import { getIntent, listIntents } from '../core/intent/read.js';
 
 const usage = `Usage: ashlr fleet intent-read list [--status <status>] [--json]
        ashlr fleet intent-read get <id> [--json]
@@ -18,15 +18,16 @@ export async function cmdFleetIntentRead(args: string[]): Promise<number> {
   }
   const action = args[0];
   if (action !== 'list' && action !== 'get') return fail('Invalid arguments. Run ashlr fleet intent-read --help.');
-  let status: string | undefined;
+  let status: import('../core/intent/schema.js').IntentStatus | undefined;
   let id: string | undefined;
   let seenJson = false;
   for (let i = 1; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--json' && !seenJson) { seenJson = true; continue; }
     if (arg === '--status' && action === 'list' && status === undefined) {
-      status = args[++i];
-      if (!status || !isIntentStatus(status)) return fail('Invalid status.');
+      const value = args[++i];
+      if (!value || !isIntentStatus(value)) return fail('Invalid status.');
+      status = value;
       continue;
     }
     if (action === 'get' && !id && validIntentId(arg)) { id = arg; continue; }
@@ -34,13 +35,12 @@ export async function cmdFleetIntentRead(args: string[]): Promise<number> {
   }
   if (action === 'get' && !id) return fail('A valid directive id is required.');
   try {
-    const ledger = await readLedger();
     if (action === 'list') {
-      const records = status === undefined ? ledger.items : ledger.items.filter(item => item.status === status);
+      const { items: records } = await listIntents({ status });
       if (json) console.log(JSON.stringify({ ok: true, records }));
       else for (const item of records) console.log(`${item.id}  [${item.status}]  ${item.title}`);
     } else {
-      const item = ledger.items.find(record => record.id === id);
+      const item = await getIntent(id!);
       if (!item) return fail('Intent not found.');
       if (json) console.log(JSON.stringify({ ok: true, item }));
       else console.log(`${item.id}  [${item.status}]  ${item.title}`);

@@ -5,7 +5,7 @@ import { appendFileSync, chmodSync, copyFileSync, existsSync, lstatSync, mkdirSy
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { releaseQualificationProfile } from '../../scripts/hosted-build-artifact.mjs';
+import { releaseQualificationProfile, peelTagCommit } from '../../scripts/hosted-build-artifact.mjs';
 import { requireProducerEnvironment, requireRepositoryMetadata, requireRepositoryReference } from './github-repository-binding.mjs';
 const roles = ['mac-general-1', 'mac-general-2', 'mac-general-3', 'mac-general-4', 'mac-isolated'];
 const hash = /^[a-f0-9]{40}$/;
@@ -41,20 +41,28 @@ export function copyDataTree(source, destination, budget = { files: 0, bytes: 0,
 
 export function prepare({ env = process.env, read = api } = {}) {
   const { repository } = requireProducerEnvironment(env);
-  assert.ok(['workflow_dispatch', 'schedule'].includes(env.GITHUB_EVENT_NAME)); assert.equal(env.GITHUB_REF, 'refs/heads/master');
+  assert.ok(['workflow_dispatch', 'schedule'].includes(env.GITHUB_EVENT_NAME));
+  assert.match(env.GITHUB_REF ?? '', /^refs\/(?:heads\/master|tags\/v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/);
   assert.match(env.CANDIDATE_SHA ?? '', hash); assert.match(env.GITHUB_SHA ?? '', hash);
   const run = integer(env.CI_RUN_ID); const attempt = integer(env.CI_RUN_ATTEMPT); const artifactId = integer(env.BUILD_ARTIFACT_ID);
   assert.equal(git('rev-parse', 'HEAD'), env.GITHUB_SHA); assert.equal(git('status', '--porcelain', '--untracked-files=normal'), '');
   const base = `repos/${repository}`;
   requireRepositoryMetadata(repository, read(base));
+  assert.equal(env.GITHUB_SHA, env.CANDIDATE_SHA, 'checkout is not the candidate');
+  if ((env.GITHUB_REF ?? '').startsWith('refs/tags/')) {
+    assert.equal(peelTagCommit(read, repository, env.GITHUB_REF.slice('refs/tags/'.length)), env.CANDIDATE_SHA, 'tag sha mismatches candidate');
+  }
   const trusted = read(`${base}/git/commits/${env.GITHUB_SHA}`); const candidate = read(`${base}/git/commits/${env.CANDIDATE_SHA}`);
-  assert.equal(trusted.sha, env.GITHUB_SHA); assert.equal(candidate.sha, env.CANDIDATE_SHA); assert.equal(trusted.tree.sha, candidate.tree.sha, 'trusted master tree differs from candidate');
+  assert.equal(trusted.sha, env.GITHUB_SHA); assert.equal(candidate.sha, env.CANDIDATE_SHA);
   const ci = read(`${base}/actions/runs/${run}/attempts/${attempt}`);
   assert.equal(ci.id, run); assert.equal(ci.run_attempt, attempt); assert.equal(ci.head_sha, env.CANDIDATE_SHA);
   requireRepositoryReference(repository, ci.repository);
   assert.equal(ci.path, '.github/workflows/ci.yml', 'unexpected producer workflow');
   const profile = releaseQualificationProfile({ repository, run: ci, read });
-  if (profile) { assert.ok(['workflow_dispatch', 'schedule'].includes(ci.event)); assert.equal(ci.head_branch, 'master'); }
+  if (profile) {
+    assert.ok(['workflow_dispatch', 'schedule'].includes(ci.event));
+    assert.match(String(ci.head_branch ?? ''), /^(?:master|v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/);
+  }
   else assert.equal(env.GITHUB_EVENT_NAME, 'workflow_dispatch');
   assert.equal(ci.status, 'completed'); assert.equal(ci.conclusion, 'success');
   const names = artifactNames(run, attempt, profile); const artifacts = []; let page = 1; let total = null;

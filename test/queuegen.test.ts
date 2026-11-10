@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { QUEUE_TIERS } from '../src/core/drive/queue-tier.js';
+import type { JobOutcome } from '../src/core/queue/job-outcomes.js';
 import {
   runQueuegenCycle, firstErrorLine, errorFile, acceptanceCommand,
   securityPinnedPath, normalizeState, fixupLine, rebaseLine,
   QUEUEGEN_SECURITY_PIN, QUEUEGEN_PR_WINDOW_MS,
-  type QueuegenCheck, type QueuegenIo, type QueuegenPr, type QueuegenState,
+  type QueuegenCheck, type QueuegenEmission, type QueuegenIo, type QueuegenPr, type QueuegenState,
 } from '../src/core/drive/queuegen.js';
 
 const NOW = 1_700_000_000_000;
@@ -54,6 +55,8 @@ function makeIo(options: {
   checksThrow?: Set<string>;
   listThrow?: Set<string>;
   holdThrows?: boolean;
+  outcomes?: JobOutcome[];
+  outcomesThrow?: boolean;
   now?: number;
 }): Fake {
   const calls: string[] = [];
@@ -84,6 +87,10 @@ function makeIo(options: {
     readHoldList: () => {
       if (options.holdThrows) throw new Error('unreadable');
       return new Set(options.hold ?? []);
+    },
+    recentJobOutcomes: () => {
+      if (options.outcomesThrow) throw new Error('ledger unreadable');
+      return options.outcomes ?? [];
     },
     loadState: () => state,
     saveState: (s) => { state = s; },
@@ -249,6 +256,216 @@ describe('queuegen dedupe', () => {
     expect(runQueuegenCycle(io)).toMatchObject({ emitted: 0, deduped: 1 });
     expect(lines).toHaveLength(0);
   });
+
+  it('dedupes the same head inside the window but releases a moved head', () => {
+    const emission = (over: Partial<QueuegenEmission> = {}): QueuegenEmission => ({
+      id: `RQ-FIXUP-phantom-1-${sha('a').slice(0, 7)}`, at: NOW - 60_000,
+      headSha: sha('a'), check: 'typecheck', file: 'src/x.ts', ...over,
+    });
+    // Same head: the recorded evidence still holds, so no gh call is spent.
+    const same = makeIo(oneOptions({
+      checks: failChecks(), logs: errLog('ERROR src/x.ts:1: bad'),
+      state: { v: 1, emitted: { 'ashlrai/phantom#1': [emission()] } },
+    }));
+    expect(runQueuegenCycle(same.io)).toMatchObject({ emitted: 0, deduped: 1, suppressed: 0 });
+    expect(same.calls.some((call) => call.startsWith('checks '))).toBe(false);
+
+    // A moved head makes the record stale evidence: files changed, new candidate.
+    const moved = makeIo(oneOptions({
+      prs: new Map([['ashlrai/phantom', [pr({ headSha: sha('c') })]]]),
+      checks: failChecks(), logs: errLog('ERROR src/x.ts:1: bad'),
+      state: { v: 1, emitted: { 'ashlrai/phantom#1': [emission()] } },
+    }));
+    expect(runQueuegenCycle(moved.io)).toMatchObject({ emitted: 1, deduped: 0 });
+    expect(moved.lines[0]).toContain(`RQ-FIXUP-phantom-1-${sha('c').slice(0, 7)}`);
+
+    // A legacy record without evidence keeps clock-only dedupe for the window.
+    const legacy = makeIo(oneOptions({
+      prs: new Map([['ashlrai/phantom', [pr({ headSha: sha('c') })]]]),
+      checks: failChecks(), logs: errLog('ERROR src/x.ts:1: bad'),
+      state: { v: 1, emitted: { 'ashlrai/phantom#1': { id: 'RQ-FIXUP-phantom-1-x', at: NOW - 60_000 } } },
+    }));
+    expect(runQueuegenCycle(legacy.io)).toMatchObject({ emitted: 0, deduped: 1 });
+  });
+});
+
+describe('queuegen outcome suppression', () => {
+  const outcome = (job: string, over: Partial<JobOutcome> = {}): JobOutcome =>
+    ({ job, at: NOW - 30_000, empty: true, merged: false, ...over });
+  const emission = (headSeed: string, over: Partial<QueuegenEmission> = {}): QueuegenEmission => ({
+    id: `RQ-FIXUP-phantom-1-${sha(headSeed).slice(0, 7)}`, at: NOW - 2 * 3_600_000,
+    headSha: sha(headSeed), check: 'typecheck', file: 'src/x.ts', ...over,
+  });
+  const emittingPr = (over: Partial<QueuegenPr> = {}) => oneOptions({
+    prs: new Map([['ashlrai/phantom', [pr({ headSha: sha('c'), ...over })]]]),
+    checks: failChecks(), logs: errLog('ERROR src/x.ts:1: bad'),
+  });
+
+  it('suppresses a candidate whose last two same-evidence attempts came back empty', () => {
+    const { io, lines, calls } = makeIo({
+      ...emittingPr(),
+      state: { v: 1, emitted: { 'ashlrai/phantom#1': [emission('b'), emission('a', { at: NOW - 3 * 3_600_000 })] } },
+      outcomes: [
+        outcome(`RQ-FIXUP-phantom-1-${sha('b').slice(0, 7)}`),
+        outcome(`RQ-FIXUP-phantom-1-${sha('a').slice(0, 7)}`, { at: NOW - 2 * 3_600_000 }),
+      ],
+    });
+    expect(runQueuegenCycle(io)).toMatchObject({ emitted: 0, suppressed: 1 });
+    expect(lines).toHaveLength(0);
+    expect(calls).toContain('log QUEUEGEN_EMPTY_STREAK ashlrai/phantom#1');
+  });
+
+  it('re-emits a probe while only one same-evidence attempt went empty', () => {
+    const { io, lines } = makeIo({
+      ...emittingPr(),
+      state: { v: 1, emitted: { 'ashlrai/phantom#1': [emission('b')] } },
+      outcomes: [outcome(`RQ-FIXUP-phantom-1-${sha('b').slice(0, 7)}`)],
+    });
+    expect(runQueuegenCycle(io)).toMatchObject({ emitted: 1, suppressed: 0 });
+    expect(lines).toHaveLength(1);
+  });
+
+  it('ignores outcomes and history outside the window as stale evidence', () => {
+    const stale = NOW - QUEUEGEN_PR_WINDOW_MS - 60_000;
+    const { io, lines } = makeIo({
+      ...emittingPr(),
+      state: { v: 1, emitted: { 'ashlrai/phantom#1': [
+        emission('b', { at: stale }), emission('a', { at: stale - 60_000 }),
+      ] } },
+      outcomes: [
+        outcome(`RQ-FIXUP-phantom-1-${sha('b').slice(0, 7)}`, { at: stale }),
+        outcome(`RQ-FIXUP-phantom-1-${sha('a').slice(0, 7)}`, { at: stale - 30_000 }),
+      ],
+    });
+    expect(runQueuegenCycle(io)).toMatchObject({ emitted: 1, suppressed: 0 });
+    expect(lines).toHaveLength(1);
+  });
+
+  it('recovers when the failing check or resolved file changed', () => {
+    const history = { 'ashlrai/phantom#1': [emission('b'), emission('a', { at: NOW - 3 * 3_600_000 })] };
+    const outcomes = [
+      outcome(`RQ-FIXUP-phantom-1-${sha('b').slice(0, 7)}`),
+      outcome(`RQ-FIXUP-phantom-1-${sha('a').slice(0, 7)}`, { at: NOW - 2 * 3_600_000 }),
+    ];
+    // A different failing check is a different candidate.
+    const otherCheck = makeIo({
+      ...emittingPr(),
+      checks: failChecks('build-test'),
+      logs: errLog('ERROR src/x.ts:1: bad', 'build-test'),
+      state: { v: 1, emitted: history }, outcomes,
+    });
+    expect(runQueuegenCycle(otherCheck.io)).toMatchObject({ emitted: 1, suppressed: 0 });
+    // The error line pointing at a different file is a different candidate.
+    const otherFile = makeIo({
+      ...emittingPr(),
+      logs: errLog('ERROR src/deep/y.ts:9: bad'),
+      state: { v: 1, emitted: history }, outcomes,
+    });
+    expect(runQueuegenCycle(otherFile.io)).toMatchObject({ emitted: 1, suppressed: 0 });
+  });
+
+  it('treats a productive or merged newest outcome as progress, not an empty streak', () => {
+    const history = { 'ashlrai/phantom#1': [emission('b'), emission('a', { at: NOW - 3 * 3_600_000 })] };
+    for (const newest of [
+      outcome(`RQ-FIXUP-phantom-1-${sha('b').slice(0, 7)}`, { empty: false }),
+      outcome(`RQ-FIXUP-phantom-1-${sha('b').slice(0, 7)}`, { merged: true }),
+    ]) {
+      const { io, lines } = makeIo({
+        ...emittingPr(),
+        state: { v: 1, emitted: history },
+        outcomes: [newest, outcome(`RQ-FIXUP-phantom-1-${sha('a').slice(0, 7)}`, { at: NOW - 2 * 3_600_000 })],
+      });
+      expect(runQueuegenCycle(io)).toMatchObject({ emitted: 1, suppressed: 0 });
+      expect(lines).toHaveLength(1);
+    }
+  });
+
+  it('counts a same-head ledger outcome even when the state record was lost', () => {
+    const head = sha('c');
+    const { io } = makeIo({
+      ...emittingPr({ headSha: head }),
+      state: { v: 1, emitted: { 'ashlrai/phantom#1': [emission('b')] } },
+      outcomes: [
+        outcome(`RQ-FIXUP-phantom-1-${head.slice(0, 7)}`, { at: NOW - 60_000 }),
+        outcome(`RQ-FIXUP-phantom-1-${sha('b').slice(0, 7)}`, { at: NOW - 2 * 60_000 }),
+      ],
+    });
+    expect(runQueuegenCycle(io)).toMatchObject({ emitted: 0, suppressed: 1 });
+  });
+
+  it('suppresses a repeated rebase candidate on the DIRTY path', () => {
+    const { io, lines } = makeIo(oneOptions({
+      prs: new Map([['ashlrai/phantom', [pr({ headSha: sha('c'), mergeState: 'DIRTY' })]]]),
+      conflicts: new Map([['ashlrai/phantom#1', ['src/a.ts', 'src/b.ts']]]),
+      state: { v: 1, emitted: { 'ashlrai/phantom#1': [
+        emission('b', { id: `RQ-REBASE-phantom-1-${sha('b').slice(0, 7)}`, check: 'merge-tree', file: 'src/a.ts' }),
+        emission('a', { id: `RQ-REBASE-phantom-1-${sha('a').slice(0, 7)}`, check: 'merge-tree', file: 'src/a.ts', at: NOW - 3 * 3_600_000 }),
+      ] } },
+      outcomes: [
+        outcome(`RQ-REBASE-phantom-1-${sha('b').slice(0, 7)}`),
+        outcome(`RQ-REBASE-phantom-1-${sha('a').slice(0, 7)}`, { at: NOW - 2 * 3_600_000 }),
+      ],
+    }));
+    expect(runQueuegenCycle(io)).toMatchObject({ emitted: 0, suppressed: 1 });
+    expect(lines).toHaveLength(0);
+  });
+
+  it('fails open and logs once when the outcomes reader throws', () => {
+    const { io, lines, calls } = makeIo({
+      ...emittingPr(),
+      state: { v: 1, emitted: { 'ashlrai/phantom#1': [emission('b'), emission('a', { at: NOW - 3 * 3_600_000 })] } },
+      outcomes: [
+        outcome(`RQ-FIXUP-phantom-1-${sha('b').slice(0, 7)}`),
+        outcome(`RQ-FIXUP-phantom-1-${sha('a').slice(0, 7)}`, { at: NOW - 2 * 3_600_000 }),
+      ],
+      outcomesThrow: true,
+    });
+    expect(runQueuegenCycle(io)).toMatchObject({ emitted: 1, suppressed: 0 });
+    expect(lines).toHaveLength(1);
+    expect(calls.filter((call) => call === 'log QUEUEGEN_OUTCOMES_UNAVAILABLE')).toHaveLength(1);
+  });
+
+  it('emission records the concrete evidence into bounded history', () => {
+    const fake = makeIo(oneOptions({ checks: failChecks(), logs: errLog('ERROR src/x.ts:1: bad') }));
+    runQueuegenCycle(fake.io);
+    const entries = fake.state()?.emitted['ashlrai/phantom#1'];
+    expect(entries).toHaveLength(1);
+    expect(entries?.[0]).toMatchObject({
+      id: `RQ-FIXUP-phantom-1-${sha('a').slice(0, 7)}`, headSha: sha('a'),
+      check: 'typecheck', file: 'src/x.ts',
+    });
+  });
+});
+
+describe('queuegen state normalization', () => {
+  it('wraps legacy singletons, sorts newest-first, drops malformed records and evidence', () => {
+    const state = normalizeState({
+      emitted: {
+        'r#1': { id: 'x', at: 5 },
+        'r#2': [
+          { id: 'old', at: 1, headSha: sha('a') },
+          { id: 'new', at: 9, headSha: 'not a sha'.repeat(40), check: 'ok', file: 'src/x.ts' },
+          { id: 'no-at' },
+          'junk',
+        ],
+        'r#3': 'garbage',
+        'r#4': [],
+      },
+    });
+    expect(state.emitted['r#1']).toEqual([{ id: 'x', at: 5 }]);
+    expect(state.emitted['r#2']!.map((entry) => entry.id)).toEqual(['new', 'old']);
+    expect(state.emitted['r#2']![0]).toEqual({ id: 'new', at: 9, check: 'ok', file: 'src/x.ts' });
+    expect(state.emitted['r#3']).toBeUndefined();
+    expect(state.emitted['r#4']).toBeUndefined();
+  });
+
+  it('bounds per-PR history', () => {
+    const state = normalizeState({
+      emitted: { 'r#1': Array.from({ length: 20 }, (_, i) => ({ id: `e${i}`, at: i })) },
+    });
+    expect(state.emitted['r#1']).toHaveLength(8);
+    expect(state.emitted['r#1']![0]).toEqual({ id: 'e19', at: 19 });
+  });
 });
 
 describe('queuegen safety rails', () => {
@@ -348,7 +565,7 @@ describe('queuegen safety rails', () => {
     const { io } = makeIo({ prs: many, checks, logs, repos: ['ashlrai/phantom'] });
     const summary = runQueuegenCycle(io, { cycleCap: 3 });
     expect(summary).toMatchObject({ emitted: 3, capped: true });
-    expect(normalizeState({ emitted: { 'a#1': { id: 'x', at: 5 }, bad: { id: 1 }, nope: 's' } }).emitted['a#1']).toEqual({ id: 'x', at: 5 });
+    expect(normalizeState({ emitted: { 'a#1': { id: 'x', at: 5 }, bad: { id: 1 }, nope: 's' } }).emitted['a#1']).toEqual([{ id: 'x', at: 5 }]);
   });
 });
 
