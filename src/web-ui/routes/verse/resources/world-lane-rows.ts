@@ -64,6 +64,7 @@ const CANONICAL: readonly LaneSpec[] = [
 ];
 
 const EXTRA: Readonly<Record<string, { label: string; engine: LaneEngine }>> = {
+  'claude:fable': { label: 'Fable 5.2 · planning and orchestration', engine: 'claude' },
   'devin-swe-flash': { label: 'Devin SWE Flash', engine: 'devin' },
   'devin-weekly': { label: 'Devin weekly', engine: 'devin' },
   'codex-cmp': { label: 'Codex company', engine: 'codex' },
@@ -315,7 +316,11 @@ function project(lane: Record<string, unknown>, label: string, engine: LaneEngin
   const primary = used.present ? used : remaining;
   const badge = badgeOf(primary, nowMs);
   const resetAt = reset.freshness === 'fresh' && typeof reset.value === 'string' && isoLabel(reset.value) ? reset.value : null;
-  const usage = usageText(used, limit, unit);
+  const overall = measure(lane, windows, 'fableOverallWeeklyUsedPercent', nowMs);
+  const weekly = measure(lane, windows, 'claudeWeeklyUsedPercent', nowMs);
+  const usage = laneName === 'claude:fable'
+    ? `${numberText(overall, 'percent', 'used')} of Claude weekly limit · Claude ${numberText(weekly, 'percent', 'used')}`
+    : usageText(used, limit, unit);
   const remainingText = numberText(remaining, unit, 'remaining');
   const burnText = numberText(burn, unit, 'burn');
   const resetText = resetAt ? isoLabel(resetAt) ?? 'unknown' : 'unknown';

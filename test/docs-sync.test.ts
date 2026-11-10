@@ -57,7 +57,8 @@ function fixtureRoot(): string {
     '',
   ].join('\n'));
   writeFileSync(join(root, 'docs', 'GUIDE.md'), '# Guide\n\nA page.\n');
-  writeFileSync(join(root, 'docs', 'llms.txt'), '# Phantom\n\n> Docs.\n');
+  writeFileSync(join(root, 'docs', 'llms-source.txt'), '# Phantom\n\n> Docs.\n');
+  writeFileSync(join(root, 'docs', 'llms.txt'), 'stale output\n');
   writeFileSync(join(root, 'site', 'index.html'), '<html><head><title>Phantom</title><link rel="canonical" href="https://verse.ashlr.ai/"></head><body></body></html>\n');
   return root;
 }

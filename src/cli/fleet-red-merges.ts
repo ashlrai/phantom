@@ -55,6 +55,8 @@ const isMerge = (row: Row): boolean => hasWord(row, EVENT_KEYS, MERGE_WORDS) || 
   || row['landed'] === true || row['merged'] === true;
 /** `checks` may be a bare string or a ChecksMemo-shaped { state/status/conclusion }. */
 const checksOf = (row: Row): ChecksBucket => {
+  // Reconciliation copies a published row; its checks predate the merge.
+  if (row['source'] === 'metrics-outcomes-reconciler') return 'other';
   const raw = pickString(row, CHECKS_KEYS) ?? (record(row['checks']) && pickString(record(row['checks'])!, ['state', 'status', 'conclusion']));
   const value = raw?.toLowerCase();
   return value === 'red' || value === 'green' ? value : 'other';
@@ -72,6 +74,8 @@ export interface RedMergesHour {
 }
 export interface RedMergesReport {
   schema: 'fleet.red-merges.v1'; generatedAt: string; hours: number;
+  /** These checks describe the PR, not default-branch health. */
+  checksScope: 'pr';
   source: RedMergesSource; malformed: number;
   merges: number | 'unknown';
   window: RedMergesHour[];
@@ -122,12 +126,16 @@ export function foldRedMerges(text: string, hours: number, nowMs: number): { win
     if (row === null) malformed++;
     else rows.push({ row, index: rows.length });
   }
-  // job→lane from launch rows only; the newest launch wins the join.
-  const jobLane = new Map<string, string>();
+  // Associate a merge only with the most recent preceding timestamped launch.
+  const jobLanes = new Map<string, { ms: number; lane: string }[]>();
   for (const { row } of rows) {
     if (!isLaunch(row)) continue;
-    const job = jobOf(row), lane = laneOf(row);
-    if (job !== null && lane !== null) jobLane.set(job, lane);
+    const job = jobOf(row), lane = laneOf(row), ms = msOf(row);
+    if (job !== null && lane !== null && ms !== null) {
+      const launches = jobLanes.get(job) ?? [];
+      launches.push({ ms, lane });
+      jobLanes.set(job, launches);
+    }
   }
   const cutoff = nowMs - hours * HOUR_MS;
   // One merge per identity (job id, else PR text, else the row itself), kept
@@ -139,7 +147,7 @@ export function foldRedMerges(text: string, hours: number, nowMs: number): { win
     if (ms === null || ms < cutoff || ms > nowMs) continue;
     const job = jobOf(row);
     const key = job ?? pickString(row, ['url', 'pr_url', 'prUrl', 'pr']) ?? `row-${index}`;
-    const lane = laneOf(row) ?? (job !== null ? jobLane.get(job) : null) ?? 'unattributed';
+    const lane = laneOf(row) ?? (job !== null ? jobLanes.get(job)?.filter(launch => launch.ms <= ms).sort((a, b) => b.ms - a.ms)[0]?.lane : null) ?? 'unattributed';
     const existing = merges.get(key);
     if (existing === undefined || ms < existing.ms) merges.set(key, { ms, lane, checks: checksOf(row) });
   }
@@ -174,7 +182,7 @@ const hourLine = (hour: RedMergesHour): string => {
 export async function cmdFleetRedMerges(args: string[], deps: FleetRedMergesDeps = {}): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
     console.log(`${usage}\n` +
-      'Per hour in the last --hours: merges landed on red checks, green checks\n' +
+      'Per hour in the last --hours: merges with red PR checks, green PR checks\n' +
       'or anything else, per lane, from metrics/jobs.jsonl outcome rows joined\n' +
       'to launch rows by job id. A ledger that cannot be read prints unknown,\n' +
       'never zero. Read-only; never dispatches or mutates.');
@@ -228,6 +236,7 @@ export async function cmdFleetRedMerges(args: string[], deps: FleetRedMergesDeps
   }));
   const report: RedMergesReport = {
     schema: 'fleet.red-merges.v1',
+    checksScope: 'pr',
     generatedAt: new Date(Number.isFinite(nowMs) ? nowMs : Date.now()).toISOString(),
     hours,
     source: text === null ? (unreadable ? 'unreadable' : 'missing') : folded!.malformed > 0 ? 'degraded' : 'healthy',

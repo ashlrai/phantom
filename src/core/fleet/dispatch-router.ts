@@ -314,7 +314,7 @@ export function grokDispatchBatchCapacity(cfg: AshlrConfig): number {
  * except where a class-B Leader action (more than 2 Grok lanes, Codex on) has already
  * passed its veto window — those are decisions the grant allows.
  */
-export function planLanes(input: LanePlanInput): Record<FleetEngine, LanePlan> {
+export async function planLanes(input: LanePlanInput): Promise<Record<FleetEngine, LanePlan>> {
   const out = {} as Record<FleetEngine, LanePlan>;
   const presentOrUnknown = input.presence.present !== false;
   for (const lane of FLEET_ENGINES) {
@@ -389,7 +389,7 @@ export function planLanes(input: LanePlanInput): Record<FleetEngine, LanePlan> {
     }
     const advice = input.sensorPace?.[lane];
     if (slots > 0 && advice && typeof input.nowMs === 'number') {
-      const paced = paceAgainstCeiling(advice, slots, input.nowMs, false);
+      const paced = await paceAgainstCeiling(advice, slots, input.nowMs, false, lane);
       if (paced.target !== null && paced.target < slots) {
         slots = paced.target;
         capReason = paceReason(paced.reason, paced.target);
