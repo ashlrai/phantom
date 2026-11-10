@@ -101,6 +101,39 @@ def du(path):
         return None
 
 
+def du_many(paths):
+    """One du invocation for many roots; missing -> 0, failed -> None per path."""
+    result, live = {}, {}
+    for label, path in paths.items():
+        try:
+            path.lstat()
+            live[label] = path
+        except FileNotFoundError:
+            result[label] = 0
+        except OSError:
+            result[label] = None
+    if live:
+        try:
+            proc = subprocess.run(["/usr/bin/du", "-sk", *[str(p) for p in live.values()]],
+                                  capture_output=True, timeout=60, check=False)
+            if proc.returncode:
+                # A partial traversal can still print a misleading total. Recheck
+                # each root independently so failed measurements remain unknown.
+                result.update({label: du(path) for label, path in live.items()})
+                return result
+            measured = {}
+            for line in proc.stdout.decode().splitlines():
+                kb, sep, name = line.partition("\t")
+                if sep:
+                    measured[name] = int(kb) * 1024
+            for label, path in live.items():
+                result[label] = measured.get(str(path))
+        except (subprocess.TimeoutExpired, ValueError):
+            for label in live:
+                result[label] = None
+    return result
+
+
 def snapshot(worktree, cache, state):
     # A missing/failed measurement is unknown, never zero. df/statvfs is the
     # volume measurement; du is attribution, not exclusive APFS allocation.
@@ -109,7 +142,7 @@ def snapshot(worktree, cache, state):
              "target": worktree / "target", "desktop_target": worktree / "desktop/src-tauri/target",
              "shared_target": cache, "quarantine": state / "quarantine"}
     return {"free_bytes": usage.free, "used_bytes": usage.used,
-            "du_bytes": {label: du(path) for label, path in paths.items()}}
+            "du_bytes": du_many(paths)}
 
 
 def log(state, job, event, worktree, cache, **fields):
@@ -128,9 +161,15 @@ def identity(worktree):
     worktree = Path(os.path.abspath(worktree))
     if worktree.resolve(strict=True) != worktree:
         raise Refused("symlinked-worktree")
-    top = Path(os.fsdecode(git(worktree, "rev-parse", "--show-toplevel")).strip())
-    common = Path(os.fsdecode(git(worktree, "rev-parse", "--path-format=absolute", "--git-common-dir")).strip()).resolve()
-    gitdir = Path(os.fsdecode(git(worktree, "rev-parse", "--absolute-git-dir")).strip()).resolve()
+    # One rev-parse emits all three paths in argument order.
+    fields = os.fsdecode(git(worktree, "rev-parse", "--show-toplevel",
+                           "--path-format=absolute", "--git-common-dir",
+                           "--absolute-git-dir")).splitlines()
+    if len(fields) != 3:
+        raise Refused("git-failed")
+    top = Path(fields[0].strip())
+    common = Path(fields[1].strip()).resolve()
+    gitdir = Path(fields[2].strip()).resolve()
     if top != worktree or common == gitdir or (gitdir / "locked").exists():
         raise Refused("not-unlocked-linked-worktree")
     return worktree, common
