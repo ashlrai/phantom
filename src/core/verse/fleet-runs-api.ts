@@ -276,6 +276,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     requestAcksLoaded = true;
     const file = requestAcksFile!;
     const parent = requestAcksDir!;
+    // sync-io-ok: lstat of the interject ack ledger under the private ~/.ashlr-runs dir, never an operator project folder
     try { lstatSync(file); } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
       throw error;
@@ -302,6 +303,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         requestAcks.delete(requestAcks.keys().next().value!);
         text = serialize();
       }
+      // sync-io-ok: mkdir of the same private ~/.ashlr-runs ledger dir, never an operator project folder
       mkdirSync(dir, { recursive: true });
       writePrivateFileAtomically(join(dir, `.${randomUUID()}.tmp`), requestAcksFile, text,
         { anchorPath: dir, label: 'Interject request ledger' });

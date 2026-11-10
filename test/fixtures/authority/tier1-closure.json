@@ -583,6 +583,8 @@
     "src/core/fleet/fleet-runtime-journal.ts",
     "src/core/fleet/fleet-truth.ts",
     "src/core/fleet/fleet-types.ts",
+    "src/core/fleet/fleet-verb-catalog.ts",
+    "src/core/fleet/fleet-verbs-tool.ts",
     "src/core/fleet/generated-repair-identity.ts",
     "src/core/fleet/generated-repair-lifecycle.ts",
     "src/core/fleet/graph-live.ts",
