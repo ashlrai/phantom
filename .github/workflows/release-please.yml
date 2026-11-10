@@ -41,7 +41,7 @@ jobs:
       - name: Require new green master work and release cadence
         id: cadence
         env:
-          RELEASE_CADENCE_MINUTES: ${{ vars.RELEASE_CADENCE_MINUTES || '60' }}
+          RELEASE_CADENCE_MINUTES: ${{ vars.RELEASE_CADENCE_MINUTES || '5' }}
         run: node .github/scripts/release-cadence.mjs
       - name: Reconcile tags created by auto-tag with pending release PRs
         if: steps.cadence.outputs.due == 'true'
