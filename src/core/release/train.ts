@@ -1,6 +1,6 @@
 /**
- * Continuous release train. Cuts at most hourly from green master, builds the
- * tagged commit, and resumes the sanctioned publishers. KILL fails closed.
+ * Continuous release train. Cuts from green master, builds the tagged commit,
+ * and resumes the sanctioned publishers. KILL fails closed.
  * See docs/RELEASING.md.
  */
 import { execFileSync } from 'node:child_process';
@@ -15,7 +15,16 @@ function readEnvironmentCredential(envKey: string): string | undefined {
 }
 
 export const TRAIN_SCHEMA = 'phantom.release-train.v1';
-export const HOURLY_MINUTES = 60;
+/** Default enqueue cadence in minutes when RELEASE_CADENCE_MINUTES is unset.
+ *  Matches the hosted Release PR default. Valid values are 1 through 1440. */
+export const DEFAULT_CADENCE_MINUTES = 5;
+
+/** Resolve a cadence value from RELEASE_CADENCE_MINUTES, or the default. */
+export function cadenceMinutesFromEnv(raw: string | undefined = process.env.RELEASE_CADENCE_MINUTES): number {
+  if (raw === undefined || raw === '') return DEFAULT_CADENCE_MINUTES;
+  if (!/^[1-9]\d*$/.test(raw)) throw new Error('invalid release cadence');
+  return cappedCadenceMinutes(Number(raw));
+}
 export const REPOSITORY = 'ashlrai/phantom';
 export const REPOSITORY_ID = 1263526319;
 export const WEBSITE_HOOK = Object.freeze({
@@ -579,7 +588,7 @@ async function ancestorReleaseMessage(read: (path: string) => Promise<unknown>, 
 export async function observeTrain(
   read: (path: string) => Promise<unknown>,
   now = new Date().toISOString(),
-  cadenceMinutes = HOURLY_MINUTES,
+  cadenceMinutes = cadenceMinutesFromEnv(),
   kill: { fleet: KillObservation; autorun: KillObservation } = {
     fleet: readSentinel(fleetKillPath()),
     autorun: readSentinel(autorunOffPath()),
@@ -887,10 +896,12 @@ export function releaseGithubCall(method: string, path: string, body?: unknown):
 
 export const WORKFLOW_DISPATCH = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|publish-canonical-npm|ci|release-please)\.yml\/dispatches$/;
 
-/** Draft PATCH and enqueue use the App token; so do workflow dispatches, so a
- *  GITHUB_TOKEN dispatch cannot be mistaken for a missing tag-triggered build. */
+/** Draft PATCH and enqueue use the App token. Workflow dispatches stay on
+ *  GITHUB_TOKEN: the ashlr-release App has no actions permission, so a mint
+ *  that requests that permission 422s. */
 export function releaseWriteUsesAppToken(method: string, path: string): boolean {
-  return method === 'PATCH' || path === 'graphql' || (method === 'POST' && WORKFLOW_DISPATCH.test(path));
+  if (method === 'POST' && WORKFLOW_DISPATCH.test(path)) return false;
+  return method === 'PATCH' || path === 'graphql';
 }
 
 function gh(method: string, path: string, body?: unknown): string {
