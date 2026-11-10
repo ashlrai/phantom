@@ -2440,6 +2440,11 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'constitution': {
+        const { cmdConstitution } = await import('./constitution.js');
+        process.exitCode = await cmdConstitution(rest);
+        break;
+      }
       case 'spec': {
         const cmdSpec = await loadSpecCmd();
         process.exitCode = await cmdSpec(rest);
@@ -3142,6 +3147,12 @@ async function main(): Promise<void> {
       case 'friction': {
         const { cmdFriction } = await import('./friction.js');
         process.exitCode = await cmdFriction(rest);
+        break;
+      }
+
+      case 'wb': {
+        const { cmdWb } = await import('./wb.js');
+        process.exitCode = await cmdWb(rest);
         break;
       }
 
