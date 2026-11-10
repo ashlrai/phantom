@@ -64,6 +64,7 @@ imports, individual files, semantics or contract coverage.
 - `src/api/`
 - `src/cli/`
 - `src/core/`
+- `src/doctor/`
 - `src/fleet/`
 - `src/mcp/`
 - `src/planning/`

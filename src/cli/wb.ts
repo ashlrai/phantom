@@ -71,6 +71,12 @@ function parseSteer(verb: string, args: string[]): { request?: SteerRequest; jso
 export async function cmdWb(args: string[]): Promise<number> {
   const verb = args[0];
   if (verb === undefined || verb === '--help' || verb === '-h') { console.log(HELP); return 0; }
+  // The read verbs take no values, so --help / -h anywhere after them is a
+  // help request: print usage and exit 0 without probing Locus or Secrets.
+  if ((verb === 'locus' || verb === 'secrets') && args.slice(1).some(arg => arg === '--help' || arg === '-h')) {
+    console.log(HELP);
+    return 0;
+  }
   if (verb === 'locus') {
     if (args.slice(1).some(arg => arg !== '--json') || args.length > 2) { console.error(HELP); return 2; }
     console.log(JSON.stringify(await readWbLocus(), null, 2));

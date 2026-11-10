@@ -275,6 +275,27 @@ Run `phm fleet map --json` for the same `fleet.map.v1` tree. The map uses
 an unreported lane appears under an unknown lane. Provider marks are initials;
 the snapshot does not provide logos or the Leader's identity.
 
+### Desktop workbench reads
+
+The desktop native shell reads `GET /api/wb/v1/*` behind the same read-session
+boundary as every other `/api/*` GET. None of these routes mutate anything, and
+every body is scrubbed so secret-shaped strings come back redacted.
+
+| Route | Returns |
+| --- | --- |
+| `GET /api/wb/v1/snapshot` | The persisted capacity snapshot (`~/.ashlr/routing/capacity.json`). Missing, invalid or older than 10 minutes reads `state: "unknown"` with a reason, never old data as live |
+| `GET /api/wb/v1/gh` | GitHub reads across enrolled repos behind a shared single-flight cache with failure backoff; cached answers carry their age |
+| `GET /api/wb/v1/budget` | The budget policy (defaults when the file is absent) and per-seat usage |
+| `GET /api/wb/v1/secrets` | Phantom Secrets custody metadata from `phantom list --json`: names, scope, age and last rotation only. Values are never read |
+| `GET /api/wb/v1/locus` | Locus custody health from `locus fleet-feed --json`: `pinned`, `unpinned` or `unhealthy`, and whether the session is ok |
+| `GET /api/wb/v1/steer` | The steer pane's composite read (below) |
+| `GET /api/wb/v1/events` | Server-Sent Events carrying `wb.snapshot`, `wb.gh` and `wb.action` invalidation envelopes only; the client re-reads the matching route |
+
+`phm wb secrets [--json]` and `phm wb locus [--json]` print the same secrets and
+Locus readings from the terminal. An unavailable or malformed source reads
+unknown. `wb secrets` then exits 1; `wb locus` always prints JSON and exits 0,
+so read its `state` field.
+
 ### Desktop workbench actions (WB-4)
 
 `POST /api/wb/v1/action` requires dispatch enabled, the existing mutation

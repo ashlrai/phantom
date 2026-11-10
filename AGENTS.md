@@ -331,6 +331,8 @@ The release autonomy command is awaiting top-level CLI wiring. Once wired, it wi
 
 Desktop update status: `phm app update status [--json]` reads the installed app bundle version and reports a staged candidate only when it is newer, plus host deferral and lease counts. Unknown job identities stay null. See [desktop updates](DESKTOP.md#background-update-discovery-and-local-status).
 
+Steer the leaders: `phm app steer --text <message> [--json]` posts one message to the owner inbox through the same channel receiver as the console steer box. The receiver scrubs secret shapes and drops a repeat of the same text sent within 10 minutes. Exit 0 accepted or duplicate, 1 refused (empty, too long or rejected), 2 usage.
+
 ## Multi-Mac node pool
 
 Use explicit team SSH aliases and local provider sign-in, never copied auth.

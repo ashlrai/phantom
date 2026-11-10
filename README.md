@@ -28,7 +28,7 @@ phm --version
 phm docs --agent --json
 ```
 
-This source tree targets version 3.30.31; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.32; check canonical release availability and exact matching assets before installation.
 
 Patch release PRs are evaluated every 30 minutes when master has new green CI.
 `RELEASE_CADENCE_MINUTES` configures the minimum interval; the release PR keeps
@@ -256,6 +256,9 @@ Every top-level `phm` command, grouped by what it is for. `ashlr` runs the same 
 | Preview cleanup of finished worktrees. | `phm worktrees prune --dry-run --json` |
 | Explain dispatcher routes. | `phm route explain --json` |
 | Show usage by engine. | `phm usage` |
+| List ready jobs that never launched. | `phm queue stuck --json` |
+| Read the Leader's status brief. | `phm fleet brief --json` |
+| Preview a steer note to the leaders (dry run). | `phm wb steer --text "<note>" --json` |
 
 See the [CLI reference](https://github.com/ashlrai/phantom/blob/master/docs/cli.md) for all commands.
 
