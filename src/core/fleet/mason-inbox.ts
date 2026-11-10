@@ -22,6 +22,8 @@ export interface InboxAppendOptions {
   runsDir?: string;
   now?: () => Date;
   source?: string;
+  /** Plan only: run every check and report the entry shape without writing. */
+  dryRun?: boolean;
 }
 
 export type InboxAppendResult =
@@ -143,6 +145,7 @@ export async function appendInboxEntry(text: string, opts: InboxAppendOptions = 
     const at = localTimestamp(now);
     const eventTimestamp = now.toISOString().slice(0, 19).replace('T', ' ');
     const { entry, id } = formatChannelEntry(clean, source, now);
+    if (opts.dryRun === true) return { ok: true, at, id, bytes: Buffer.byteLength(entry, 'utf8') };
     await mkdir(join(runsDir, 'leader'), { recursive: true });
     await appendFile(join(runsDir, 'leader', 'MASON-INBOX.md'), entry, { encoding: 'utf8', flag: 'a' });
     // The inbox owns acceptance; the dispatch event is only observational.
