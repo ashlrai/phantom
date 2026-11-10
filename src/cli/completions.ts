@@ -69,6 +69,8 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // Changed-file tests and the fleet event feed.
   'test', 'check', 'feed',
   'worklog', 'library',
+  // Dispatched by index.ts but missing here (caught by cli-registry-drift).
+  'constitution', 'wb',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
@@ -132,9 +134,9 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'status', 'session', 'watch', 'events', 'lanes', 'lane-slots', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
     'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue', 'outcomes', 'backlog', 'lane-slots',
-    'shed-plan', 'deploy-plan', 'job-latency', 'supply', 'eval-report', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'pr-hygiene', 'merge-batch', 'rebase-plan', 'bus', 'usage', 'research-digest',
+    'shed-plan', 'deploy-plan', 'job-latency', 'supply', 'eval-report', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'pr-hygiene', 'merge-batch', 'rebase-plan', 'bus', 'usage', 'research-digest', 'drive',
   ],
-  bus: ['thread', 'task', '--peer', '--root', '--queue-root', '--json', '--help'],
+  bus: ['thread', 'task', 'send', 'inbox', 'ack', '--from', '--to', '--body', '--id', '--priority', '--ttl', '--limit', '--peer', '--root', '--queue-root', '--json', '--help'],
   estates: ['--repo', '--json', '--help'],
   'ci-metrics': ['--json', '--help'],
   main: ['blame', '--repo', '--good', '--bad', '--check', '--timeout-ms', '--json', '--help'],

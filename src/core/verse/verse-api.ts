@@ -263,6 +263,7 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   // (core/verse/fleet-main-red-age-api.ts); read-only.
   { id: 'fleet-main-red-age', load: async () => (await import('./fleet-main-red-age-api.js')).handleFleetMainRedAgeApi },
   { id: 'fleet-merge-pace' as MountedApiModuleId, load: async () => (await import('./merge-pace-api.js')).handleMergePaceApi },
+  { id: 'fleet-doctor' as MountedApiModuleId, load: async () => (await import('./fleet-doctor-api.js')).handleFleetDoctorApi },
   { id: 'fleet-landed-closes' as MountedApiModuleId, load: async () => (await import('./landed-closes-api.js')).handleLandedClosesApi },
   { id: 'fleet-slow-prs' as MountedApiModuleId, load: async () => (await import('./slow-prs-api.js')).handleSlowPrsApi },
 ];
@@ -480,6 +481,9 @@ const WORKBENCH_IMPORTS: Readonly<Record<WorkbenchRouteFamilyId, () => Promise<W
   },
   'fleet-library-files': async () => {
     try { return (await import('./fleet-library-files-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-library-files-api.js'); }
+  },
+  'fleet-handoffs': async () => {
+    try { return (await import('./fleet-handoffs-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-handoffs-api.js'); }
   },
   'owner-thread': async () => {
     try { return (await import('./owner-thread-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'owner-thread-api.js'); }

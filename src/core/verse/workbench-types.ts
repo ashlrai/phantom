@@ -1656,6 +1656,7 @@ export const WORKBENCH_ROUTE_FAMILIES = [
   { id: 'team', owner: 'desktop-command', module: 'src/core/verse/team-api.ts', handler: 'handleTeamApi', prefixes: ['/api/verse/team'] },
   { id: 'fleet-comms-status', owner: 'desktop-command', module: 'src/core/verse/fleet-comms-status-api.ts', handler: 'handleFleetCommsStatusApi', prefixes: ['/api/verse/fleet/comms-status'] },
   { id: 'fleet-library-files', owner: 'desktop-command', module: 'src/core/verse/fleet-library-files-api.ts', handler: 'handleFleetLibraryFilesApi', prefixes: ['/api/verse/fleet/library-files'] },
+  { id: 'fleet-handoffs', owner: 'desktop-command', module: 'src/core/verse/fleet-handoffs-api.ts', handler: 'handleFleetHandoffsApi', prefixes: ['/api/verse/fleet/handoffs'] },
   { id: 'owner-thread', owner: 'desktop-command', module: 'src/core/verse/owner-thread-api.ts', handler: 'handleOwnerThreadApi', prefixes: ['/api/verse/comms/owner-thread'] },
   { id: 'gmail-triage', owner: 'desktop-command', module: 'src/core/verse/gmail-triage-api.ts', handler: 'handleGmailTriageApi', prefixes: ['/api/verse/comms/gmail-triage'] },
   { id: 'release-stages', owner: 'desktop-command', module: 'src/core/verse/release-stages-api.ts', handler: 'handleReleaseStagesApi', prefixes: ['/api/verse/release/stages'] },
