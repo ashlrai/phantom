@@ -19,9 +19,13 @@ describe('recovered queue lint', () => {
     const ready = `good\trepo\tcodex-personal\twork\t${prompt}\nshort\nmissing\trepo\tunknown\tbad\t${home}/missing\noutside\trepo\tclaude\tfast\t${outside}\n`;
     const routerPath = join(runsDir, 'queue/router-queue.md'), readyPath = join(runsDir, 'queue/ready.tsv');
     await writeFile(routerPath, router); await writeFile(readyPath, ready);
+    await writeFile(join(runsDir, 'queue', 'status.json'), JSON.stringify({ invalid_queue_lines: 2 }));
     const output: string[] = [];
     expect(await cmdFleetQueueLint(['--json'], { home, runsDir, now: Date.parse('2026-01-01T04:00:00Z'), out: s => output.push(s) })).toBe(0);
     const report = JSON.parse(output[0]!);
+    expect(report.invalid_queue_lines).toBe(2);
+    expect(report.errors).toEqual([]);
+    expect(report.missingFields.map((f: { line: number; reason: string }) => [f.line, f.reason])).toEqual([[2, 'Missing priority'], [4, 'Missing priority'], [5, 'Missing priority'], [6, 'Missing priority']]);
     expect(report.duplicates.map((f: { line: number }) => f.line)).toEqual([2, 4]);
     expect(report.old.map((f: { line: number }) => f.line)).toEqual([2]);
     expect(report.unknownAge.map((f: { line: number }) => f.line)).toEqual([4, 5]);
@@ -31,6 +35,23 @@ describe('recovered queue lint', () => {
     expect(await readFile(routerPath, 'utf8')).toBe(router);
     expect(await readFile(readyPath, 'utf8')).toBe(ready);
     expect(await readFile(prompt, 'utf8')).toBe('prompt');
+  });
+  it('preserves findings and exits 1 when the dispatcher count is unavailable', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'queue-lint-')); dirs.push(home);
+    const runsDir = join(home, 'runs');
+    await mkdir(join(runsDir, 'queue'), { recursive: true });
+    await writeFile(join(runsDir, 'queue', 'router-queue.md'), '- READY RQ-OK (P0, pool=devin, tier=fast, repo=phantom): Do it.\n');
+    await writeFile(join(runsDir, 'queue', 'ready.tsv'), '');
+    const output: string[] = [];
+    expect(await cmdFleetQueueLint(['--json'], { home, runsDir, now: Date.parse('2026-01-01T04:00:00Z'), out: s => output.push(s) })).toBe(1);
+    const report = JSON.parse(output[0]!);
+    expect(report.invalid_queue_lines).toBeNull();
+    expect(report.errors).toEqual(['Dispatcher count unavailable']);
+    expect(report.missingFields).toEqual([]);
+    await writeFile(join(runsDir, 'queue', 'status.json'), 'not json');
+    output.length = 0;
+    expect(await cmdFleetQueueLint(['--json'], { home, runsDir, now: Date.parse('2026-01-01T04:00:00Z'), out: s => output.push(s) })).toBe(1);
+    expect(JSON.parse(output[0]!).invalid_queue_lines).toBeNull();
   });
   it('prints help and bounded errors', async () => {
     const home = await mkdtemp(join(tmpdir(), 'queue-lint-')); dirs.push(home);
