@@ -37,6 +37,7 @@ import { OwnerChannelsStrip } from './OwnerChannelsStrip.js';
 import { leaderOfficeQuery } from './leader-office-data.js';
 import { mergeOwnerLines, ownerThreadLines, type LabeledLine } from './owner-thread-lines.js';
 import { NO_OWNER_THREAD, ownerThreadQuery } from './owner-thread-queries.js';
+import { fetchLeaderStatusNow } from './leader-status-now.js';
 import { sendLeaderInboxMessage, sendLeaderThreadMessage } from './leader-inbox-data.js';
 import { COMMS_CONFIRM_LINE, COMMS_TOML_PATH, INBOX_HELD_SENTENCE, inboxHeld } from './inbox-held-model.js';
 import { CopyPill } from '../apps/CopyPill.js';
@@ -130,6 +131,8 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const logRef = useRef<HTMLDivElement>(null);
   const atEnd = useRef(true);
   const inFlight = useRef(false);
+  const [statusNow, setStatusNow] = useState<string | null>(null);
+  const [checkingStatus, setCheckingStatus] = useState(false);
   const [needsYouOnly, setNeedsYouOnly] = useState(false);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -194,6 +197,18 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     atEnd.current = true;
     el.scrollTop = el.scrollHeight;
   }, [lastKey, scrollVersion]);
+
+  async function checkStatus() {
+    setCheckingStatus(true);
+    setStatusNow(null);
+    try {
+      setStatusNow(await fetchLeaderStatusNow() ?? 'Status is unavailable right now.');
+    } catch {
+      setStatusNow('Status is unavailable right now.');
+    } finally {
+      setCheckingStatus(false);
+    }
+  }
 
   function runCommand(command: ComposerCommand) {
     if (actions.busy) return;
@@ -325,7 +340,8 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       </details>
     </section>
     <DirectivesStrip read={directives.data} actions={actions} adding={addingDirective} onAddingChange={setAddingDirective} />
-    <header><button type="button" aria-pressed={needsYouOnly} onClick={() => setNeedsYouOnly(value => !value)}>Needs you only</button></header>
+    <header><button type="button" disabled={checkingStatus} onClick={() => void checkStatus()}>{checkingStatus ? 'Checking…' : 'Status now'}</button> <button type="button" aria-pressed={needsYouOnly} onClick={() => setNeedsYouOnly(value => !value)}>Needs you only</button></header>
+    {statusNow !== null ? <section aria-label="Status now" role="status"><p style={{ whiteSpace: 'pre-wrap' }}>{statusNow}</p><button type="button" onClick={() => setStatusNow(null)}>Dismiss</button></section> : null}
     <p className={styles.note}>{busRows.length} bus replies</p>
     {busUnavailable ? <p className={styles.note} role="status">Durable bus unavailable</p> : null}
     <OwnerChannelsStrip channels={ownerRead.channels} paused={ownerRead.paused} />
