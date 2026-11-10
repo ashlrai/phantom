@@ -918,6 +918,7 @@
     "src/core/quality/conventions.ts",
     "src/core/quality/health.ts",
     "src/core/quality/store.ts",
+    "src/core/queue/job-outcomes.ts",
     "src/core/queue/markdown.ts",
     "src/core/queue/replay.ts",
     "src/core/queue/schema.ts",
