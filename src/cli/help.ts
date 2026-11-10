@@ -107,6 +107,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'observe.human.v1 | session detail',
   },
   {
+    usage: 'phm wb locus [--json]',
+    description: 'Read Locus custody health through its credential-free fleet feed.',
+    safety: 'read',
+    jsonShape: '{v:1, state, reason, custody, sessionOk}',
+  },
+  {
     usage: 'phm wb secrets [--json]',
     description: 'Read Phantom Secrets custody metadata only: names, scope, age and last rotation. Exit 1 when unavailable; never reveals values.',
     safety: 'read',
