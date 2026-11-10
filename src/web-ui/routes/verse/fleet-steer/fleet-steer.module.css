@@ -1,0 +1,15 @@
+.root { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); min-width: 0; }
+.message, .notice, .hint, .status { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); }
+.notice { color: var(--text-primary); }
+.roster { display: flex; flex-direction: column; gap: var(--space-2); list-style: none; margin: 0; padding: 0; }
+.roster ul { display: flex; flex-direction: column; gap: var(--space-1); list-style: none; margin: 0; padding: 0; }
+.sectionTitle { margin: 0; font-size: var(--text-xs-size); color: var(--text-secondary); font-weight: 600; }
+.agent { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.agentName { font-size: var(--text-xs-size); font-weight: 600; }
+.agentTask { min-width: 0; overflow-wrap: anywhere; color: var(--text-secondary); font-size: var(--text-xs-size); }
+.block { display: flex; flex-direction: column; gap: var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-1, 4px); padding: var(--space-2); margin: 0; min-width: 0; }
+.block legend { font-size: var(--text-xs-size); font-weight: 600; padding: 0 var(--space-1); }
+.note { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; font-size: var(--text-xs-size); background: var(--surface-1, transparent); color: var(--text-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-1, 4px); padding: var(--space-2); }
+.row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; min-width: 0; }
+.field { display: flex; align-items: center; gap: var(--space-1); font-size: var(--text-xs-size); color: var(--text-secondary); }
+.status { min-width: 0; overflow-wrap: anywhere; }
