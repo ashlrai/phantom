@@ -2435,6 +2435,19 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/app/fleet-usage (fleet-usage.v1, Resources > Lane usage) ──
+    // Read-only projection of the runs dir; same read class as GET /api/resource.
+    if (path === '/api/app/fleet-usage') {
+      if (method !== 'GET') {
+        res.setHeader('Allow', 'GET');
+        sendJson(res, 405, { error: 'method not allowed' });
+        return true;
+      }
+      const { readFleetUsageFeed } = await import('../resources/fleet-usage.js');
+      sendJson(res, 200, await readFleetUsageFeed());
+      return true;
+    }
+
     // ── GET /api/wb/v1/{snapshot,gh,budget} (desktop native shell reads) ────
     // Versioned loopback read surface for desktop/src-tauri fleet ops.
     // GET-only; already behind the read-session boundary like every /api/* GET.
