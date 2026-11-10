@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* global setTimeout, clearTimeout, WebSocket */
 /**
  * scripts/measure-desktop-perf.mjs — repeatable cold-start and steady-state
  * render measurement for the Phantom desktop window (the /verse/ console).
