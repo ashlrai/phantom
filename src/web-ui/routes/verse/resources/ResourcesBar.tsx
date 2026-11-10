@@ -139,7 +139,10 @@ export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolea
       priorLabel = codexCreditsAvailable(priorCredit.reading)
         ? `Credits ${priorValue === null ? units : `≈${priorValue}`} · last` : 'No credits reported · last';
     }
-    const creditLabel = row.engine !== 'codex' ? undefined : priorLabel !== null ? priorLabel : !currentCredits ? 'Credits unconfirmed'
+    const unknownCreditReason = !display.credit.observedAt ? 'Credits: no reading yet'
+      : row.creditState === 'unknown' ? 'Credits: not reported by this plan'
+      : `Credits: last ${readingAge(display.credit.observedAt, opts.now)}`;
+    const creditLabel = row.engine !== 'codex' ? undefined : priorLabel !== null ? priorLabel : !currentCredits ? unknownCreditReason
       : row.credits !== null ? creditValue === null ? row.credits : `Credits ≈${creditValue}`
       : row.creditState === 'none' ? 'No credits reported' : 'Credits not reported';
     const creditHeld = row.engine === 'codex' && currentCredits && row.creditSpendControlReached === true;
@@ -148,6 +151,7 @@ export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolea
     const exactCreditBalance = formatNativeCreditUnits(exactBalance) === null ? undefined : exactBalance ?? undefined;
     const creditDetail: string[] = priorCredit ? [`Credits recorded ${new Date(priorCredit.observedAt).toLocaleString()}`,
       'Prior credit reading; current balance and availability are unconfirmed.'] : [];
+    if (row.engine === 'codex' && !currentCredits && !priorCredit) creditDetail.push(`${unknownCreditReason}. Current credit balance is unknown.`);
     if (row.credits !== null && currentCredits) creditDetail.push(row.credits, 'Credit units are independent of subscription usage; autonomous credit spending is not admitted.');
     if (row.engine === 'codex' && currentCredits && row.creditState === 'none') creditDetail.push('Native provider reports no available credits.');
     if (priorValue !== null) creditDetail.push(`Prior estimated credit value ${priorValue} · personal-plan $0.04/credit reference; not attributed spend.`);
@@ -376,7 +380,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
                 {row.display ? <span id={`usage-stamp-${row.key}`} className={styles.usageStamp}>{row.display.usage.label}
                   {row.display.usage.observedAt ? <> · <time dateTime={row.display.usage.observedAt} title={row.display.usage.observedAt}>{readingAge(row.display.usage.observedAt)}</time></> : <> · {readingAge(null)}</>}</span> : null}
                 {row.creditLabel ? <span className={styles.credits}>
-                  <span>{row.creditLabel}</span>
+                  <span title={row.creditLabel.startsWith('Credits:') ? `${row.creditLabel}. Current credit balance is unknown.` : row.creditLabel}>{row.creditLabel}</span>
                   {row.creditHeld ? <span className={styles.creditHold}>Held</span> : null}
                 </span> : null}
               </>

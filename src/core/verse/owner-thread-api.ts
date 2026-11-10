@@ -3,6 +3,7 @@
  * transports are passed, so this never sends, pulls or touches a channel. Owner
  * message bodies are private, so it answers only the local dispatch session.
  * Also exports the best-effort mirror of a desktop inbox post onto the thread. */
+import { join } from 'node:path';
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings, type OwnerThreadSettings } from '../comms/owner-channel.js';
@@ -11,6 +12,8 @@ import { acceptOwnerInbound, readOwnerCommsStatus, readOwnerThread, type OwnerTh
 export const VERSE_OWNER_THREAD_PATH = '/api/verse/comms/owner-thread';
 /** Read-only "status now" brief for the Leader pane; same dispatch gate as the thread. */
 export const VERSE_OWNER_STATUS_PATH = `${VERSE_OWNER_THREAD_PATH}/status`;
+/** Read-only comms.toml confirmation for Settings. There is no write twin: the flag is Mason's alone. */
+export const VERSE_OWNER_COMMS_LIMITS_PATH = `${VERSE_OWNER_THREAD_PATH}/comms-limits`;
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 200;
 
@@ -53,7 +56,7 @@ function parseLimit(raw: string | null): number | null {
 
 export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
   return async (ctx, req, res, path, method) => {
-    if (path !== VERSE_OWNER_THREAD_PATH && path !== VERSE_OWNER_STATUS_PATH) return false;
+    if (path !== VERSE_OWNER_THREAD_PATH && path !== VERSE_OWNER_STATUS_PATH && path !== VERSE_OWNER_COMMS_LIMITS_PATH) return false;
     if (method !== 'GET') {
       sendJson(res, 405, { error: 'The owner thread is read only here.' });
       return true;
@@ -69,6 +72,17 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
         sendJson(res, 200, { schema: 'comms.owner-status.v1', text, at: new Date(deps.now?.() ?? Date.now()).toISOString() });
       } catch {
         sendJson(res, 200, { schema: 'comms.owner-status.v1', unavailable: true });
+      }
+      return true;
+    }
+    if (path === VERSE_OWNER_COMMS_LIMITS_PATH) {
+      // Same parseCommsConfirmation read of the same fixed comms.toml the owner sends gate on.
+      const configDir = deps.configDir ?? fixedOwnerConfigDir();
+      try {
+        const confirmedByMason = (deps.settings ?? loadOwnerThreadSettings(configDir)).confirmed;
+        sendJson(res, 200, { schema: 'comms.limits.v1', confirmedByMason, path: join(configDir, 'comms.toml') });
+      } catch {
+        sendJson(res, 200, { schema: 'comms.limits.v1', unavailable: true });
       }
       return true;
     }
