@@ -427,3 +427,5 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Repository ranking](REPO-RANK.md): `phm repos rank --json`, `phm repos rank --recompute --json` and `phm repos rank proposals --json`; daily local evidence, manual enrollment, read-only restock weights.
 
 - [PR triage](PR-TRIAGE.md): read-only open PR verdicts and JSON schema.
+
+- Agent profiles: docs/AGENT-PROFILES.md. Declarative TOML, restrictive send policy, versions and CLI integration status. Examples: phm agents list --json; phm agents versions helper --json.
