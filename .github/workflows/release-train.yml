@@ -57,6 +57,7 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
           permission-pull-requests: write
+          permission-actions: write
       - name: Plan and apply the release train
         env:
           GH_TOKEN: ${{ github.token }}
