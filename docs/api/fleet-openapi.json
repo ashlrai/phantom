@@ -55,6 +55,9 @@
     "/api/verse/version": {
       "get": { "operationId": "getVerseVersion", "summary": "Read the running Phantom version.", "responses": { "200": { "description": "Version information" }, "default": { "description": "Request rejected or service unavailable" } } }
     },
+    "/api/verse/world": {
+      "get": { "operationId": "getVerseWorld", "summary": "Read the cached world-model snapshot. Unknown fields stay unknown.", "responses": { "200": { "description": "ashlr.world-model/v1 or an unavailable reading" }, "default": { "description": "Request rejected or service unavailable" } } }
+    },
     "/api/verse/fleet/runs/glance": {
       "get": { "operationId": "getFleetRunsGlance", "summary": "Read a compact fleet runs snapshot.", "responses": { "200": { "description": "Fleet glance" }, "default": { "description": "Request rejected or service unavailable" } } }
     },

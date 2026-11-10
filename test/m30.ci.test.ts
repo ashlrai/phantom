@@ -807,7 +807,8 @@ describe('M30 CI workflow', () => {
     const inputs = readFileSync(resolve(repoRoot, '.github/scripts/ci-attestation-inputs.mjs'), 'utf8');
     expect(signing).toMatch(/^ {2}workflow_dispatch:/m);
     expect(signing).not.toMatch(/^ {2}(?:pull_request(?:_target)?|workflow_call|push):/m);
-    expect(signing).toContain("if: github.ref == 'refs/heads/master'");
+    expect(signing).toContain('const releaseTag = /^refs\\/tags\\/v(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$/;');
+    expect(signing).not.toContain("startsWith(github.ref, 'refs/tags/v')");
     expect(signing).toContain('ref: ${{ github.sha }}');
     expect(signing).toContain('persist-credentials: false');
     expect(signing).toContain('id-token: write');
@@ -822,11 +823,11 @@ describe('M30 CI workflow', () => {
     }
     expect(signing).not.toMatch(/npm (?:ci|install|run build|publish)|node "?\$DIRECTORY\/(?:candidate|bundle)\//);
     expect(inputs).toContain("assert.ok(['workflow_dispatch', 'schedule'].includes(env.GITHUB_EVENT_NAME))");
-    expect(inputs).toContain("assert.equal(env.GITHUB_REF, 'refs/heads/master')");
+    expect(inputs).toContain('heads\\/master|tags\\/v');
     expect(inputs).toContain('const { repository } = requireProducerEnvironment(env)');
     expect(inputs).toContain('requireRepositoryMetadata(repository, read(base))');
     expect(inputs).toContain('requireRepositoryReference(repository, ci.repository)');
-    expect(inputs).toContain("assert.equal(trusted.tree.sha, candidate.tree.sha");
+    expect(inputs).toContain("assert.equal(env.GITHUB_SHA, env.CANDIDATE_SHA, 'checkout is not the candidate')");
     expect(inputs).toContain("assert.equal(ci.path, '.github/workflows/ci.yml'");
   });
 

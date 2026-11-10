@@ -41,7 +41,7 @@ permissions:
 # PR runs cancel superseded revisions. merge_group, schedule, dispatch and
 # workflow_call runs each get their own group (keyed by run_id) and never cancel.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.release_gate && format('phantom-release-{0}', github.ref_name) || format('ci-{0}', github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id)) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -1196,7 +1196,7 @@ jobs:
   release-build:
     needs: [secret-shape, classify]
     name: Desktop release smoke
-    if: needs.classify.outputs.release_gate == 'true' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
+    if: needs.classify.outputs.release_gate == 'true'
     permissions:
       contents: read
       actions: read
@@ -1205,6 +1205,18 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 90
     steps:
+      - name: Require master or a stable release tag
+        env:
+          RELEASE_REF: ${{ github.ref }}
+        run: |
+          node <<'NODE'
+          const ref = process.env.RELEASE_REF ?? '';
+          const releaseTag = /^refs\/tags\/v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+          if (ref !== 'refs/heads/master' && !releaseTag.test(ref)) {
+            console.error('release ref refused');
+            process.exit(1);
+          }
+          NODE
       - name: Checkout exact release candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
