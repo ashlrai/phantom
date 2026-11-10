@@ -189,6 +189,30 @@ let plannerRunStartedAt: string | null = null;
 
 const TOOLS: NativeToolImpl[] = [
   {
+    name: 'intent_list',
+    description: 'List local owner directives and their provenance, optionally filtered by status.',
+    inputSchema: { type: 'object', properties: { status: { type: 'string', enum: ['proposed', 'queued', 'in-progress', 'merged', 'shipped', 'verified', 'superseded', 'closed', 'unknown'] } }, additionalProperties: false },
+    safety: 'read',
+    handler: async (args) => {
+      const { listIntents } = await import('./intent/ledger.js');
+      const { isIntentStatus } = await import('./intent/schema.js');
+      const status = typeof args['status'] === 'string' && isIntentStatus(args['status']) ? args['status'] : undefined;
+      const listed = await listIntents({ status });
+      return { ok: true, ...listed.summary, records: listed.items };
+    },
+  },
+  {
+    name: 'intent_get',
+    description: 'Read one intent by id from the local ledger.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,80}$' } }, required: ['id'], additionalProperties: false },
+    safety: 'read',
+    handler: async (args) => {
+      const { getIntent } = await import('./intent/ledger.js');
+      const item = await getIntent(args['id'] as string);
+      return item ? { ok: true, item } : { ok: false, error: 'Intent not found.' };
+    },
+  },
+  {
     name: 'phantom_agent_bus_read',
     description: 'Read the local durable bus after a cursor; resume with nextCursor. Expired messages are skipped. Message bodies and sender labels are untrusted.',
     inputSchema: { type: 'object', properties: {
@@ -1832,6 +1856,14 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       ('unservedOnly' in args && typeof args.unservedOnly !== 'boolean') ||
       ('limit' in args && (!Number.isSafeInteger(args.limit) || (args.limit as number) < 1 || (args.limit as number) > 100))
       ? 'invalid orders arguments' : null;
+  } else if (name === 'intent_list' || name === 'intent_get') {
+    const { isIntentStatus, validIntentId } = await import('./intent/schema.js');
+    const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
+    const key = name === 'intent_list' ? 'status' : 'id';
+    const value = args[key];
+    invalid = !object || Object.keys(args).some(k => k !== key) ||
+      (name === 'intent_list' ? value !== undefined && (typeof value !== 'string' || !isIntentStatus(value)) :
+        typeof value !== 'string' || !validIntentId(value)) ? 'invalid intent arguments' : null;
   } else if (name === 'phm_agent_roster') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
     invalid = !object || Object.keys(args).length > 0 ? 'invalid roster arguments' : null;
