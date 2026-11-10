@@ -7,6 +7,8 @@ const HOUR = 3_600_000;
 export interface WasteCounts { launches: number; skips: number; skip_share: number }
 export interface WasteHour extends WasteCounts { hour: string }
 export interface WasteGroup extends WasteCounts { name: string; hours: WasteHour[] }
+export interface RepoSkipCode { code: string; skips: number; reason: string; next_step: string }
+export interface RepoSkipCodes { repo: string; codes: RepoSkipCode[] }
 export interface PrecheckWasteReport {
   schema: 'fleet.precheck-waste.v1';
   window_hours: 6;
@@ -15,6 +17,7 @@ export interface PrecheckWasteReport {
   hours: WasteHour[];
   by_code: WasteGroup[];
   by_repo: WasteGroup[];
+  by_repo_code: RepoSkipCodes[];
   top_prefixes: WasteGroup[];
 }
 const empty = (): WasteCounts => ({ launches: 0, skips: 0, skip_share: 0 });
@@ -24,10 +27,19 @@ function add(counts: WasteCounts, skip: boolean): void {
 }
 /** Prefix ends at the first digit, preserving queue-id separators; no digit means the whole id. */
 export function precheckPrefix(id: string): string { return id.split(/\d/, 1)[0] || 'unknown'; }
+const codeLabel = (value: unknown): string =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? String(value)
+    : typeof value === 'string' && value.trim() ? value.trim() : 'unknown';
+function codeAdvice(code: string): Pick<RepoSkipCode, 'reason' | 'next_step'> {
+  if (code === '13') return { reason: 'Acceptance is unproven; the job may already be covered.',
+    next_step: 'Inspect the job and existing work, then update the task if more work is needed.' };
+  return { reason: code === 'unknown' ? 'Skip code is missing.' : 'Skip code is not recognized by this report.',
+    next_step: 'Inspect the dispatch precheck record for the job before taking action.' };
+}
 
 export async function fleetPrecheckWaste(read: TaskCheckReader = readTaskCheckJobs, now = Date.now()): Promise<PrecheckWasteReport> {
   const report: PrecheckWasteReport = { schema: 'fleet.precheck-waste.v1', window_hours: 6,
-    known: false, totals: null, hours: [], by_code: [], by_repo: [], top_prefixes: [] };
+    known: false, totals: null, hours: [], by_code: [], by_repo: [], by_repo_code: [], top_prefixes: [] };
   let text: string | null;
   try { text = await read(); } catch { text = null; }
   if (text === null) return report;
@@ -35,6 +47,7 @@ export async function fleetPrecheckWaste(read: TaskCheckReader = readTaskCheckJo
   report.totals = empty();
   const hours = new Map<string, WasteHour>();
   const groups = [new Map<string, WasteGroup>(), new Map<string, WasteGroup>(), new Map<string, WasteGroup>()];
+  const repoCodes = new Map<string, Map<string, number>>();
   const label = (value: unknown): string => typeof value === 'string' && value.trim() ? value : 'unknown';
   for (const line of text.split(/\r?\n/)) {
     let row: Record<string, unknown>;
@@ -52,7 +65,12 @@ export async function fleetPrecheckWaste(read: TaskCheckReader = readTaskCheckJo
     const bucket = hours.get(hour) ?? { hour, ...empty() };
     hours.set(hour, bucket);
     add(bucket, skip);
-    const names = [label(row.code), label(row.repo), precheckPrefix(label(row.job ?? row.job_id ?? row.id))];
+    const names = [codeLabel(row.code), label(row.repo), precheckPrefix(label(row.job ?? row.job_id ?? row.id))];
+    if (skip) {
+      const codes = repoCodes.get(names[1]!) ?? new Map<string, number>();
+      repoCodes.set(names[1]!, codes);
+      codes.set(names[0]!, (codes.get(names[0]!) ?? 0) + 1);
+    }
     groups.forEach((map, i) => {
       // Codes describe skips; launches have no precheck code.
       if (i === 0 && !skip) return;
@@ -70,12 +88,15 @@ export async function fleetPrecheckWaste(read: TaskCheckReader = readTaskCheckJo
   })).sort((a, b) => b.skips - a.skips || a.name.localeCompare(b.name)));
   report.hours = [...hours.values()].sort((a, b) => a.hour.localeCompare(b.hour));
   [report.by_code, report.by_repo, report.top_prefixes] = [sorted[0]!, sorted[1]!, sorted[2]!.slice(0, 10)];
+  report.by_repo_code = [...repoCodes].map(([repo, codes]) => ({ repo, codes: [...codes].map(([code, skips]) =>
+    ({ code, skips, ...codeAdvice(code) })).sort((a, b) => b.skips - a.skips || a.code.localeCompare(b.code))
+  })).sort((a, b) => a.repo.localeCompare(b.repo));
   return report;
 }
 
 export async function cmdFleetPrecheckWaste(args: string[], read: TaskCheckReader = readTaskCheckJobs, now = Date.now()): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log(`${usage}\nRead six hours of jobs.jsonl. Count precheck skips by code, repo, prefix (before the first digit) and UTC hour. Top 10 prefixes by skips. Share = skips / (launches + skips), from 0 to 1; code groups contain skips only. Unread metrics are unknown.`);
+    console.log(`${usage}\nRead six hours of jobs.jsonl. Count precheck skips by code, repo, prefix (before the first digit) and UTC hour. JSON groups codes by repo with reasons and next steps. Only precheck_skip events count; precheck_parked events are separate. Top 10 prefixes by skips. Share = skips / (launches + skips), from 0 to 1; code groups contain skips only. Unread metrics are unknown.`);
     return 0;
   }
   if (args.length > 1 || args.some(arg => arg !== '--json')) { console.error(usage); return 2; }

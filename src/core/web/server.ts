@@ -1,3 +1,5 @@
+import { storeWbToken } from './wb-action-api.js';
+import { homedir } from 'node:os';
 /**
  * core/web/server.ts — M14 local web dashboard HTTP server.
  *
@@ -25,6 +27,7 @@ import type { AshlrConfig, WebServerOptions, WebServerHandle } from '../types.js
 import { handleUsageResourcesApi } from '../verse/usage-resources-api.js';
 import { handleApi, drainSseConnections, drainSseSession, invalidateWebReadCaches } from './api.js';
 import { createReadProjectionWorker, type ReadProjectionReader } from './read-projections.js';
+import { governReadProjections } from './read-projection-governor.js';
 import { createReadSessionBoundary, headerValue, isAllowedHost, requestUrl, safeEqual, sendJson } from './read-session.js';
 import { serveStatic } from './static.js';
 import { gcRunStreams } from '../run/streaming.js';
@@ -34,6 +37,7 @@ import { isBrowserMcpPath } from '../verse/browser-types.js';
 import { isVerseMcpEndpointPath } from '../verse/verse-mcp-types.js';
 import { closeVerseTerminals } from '../verse/terminal.js';
 import { VERSE_TERMINAL_PATH } from '../verse/workbench-types.js';
+import { PHANTOM_DISCOVERY_PATH, PHANTOM_PING_PATH, phantomManifest } from './phantom-discovery.js';
 
 // ---------------------------------------------------------------------------
 // Host-header allowlist (anti DNS-rebinding)
@@ -100,8 +104,11 @@ export async function startServer(
   // The production default isolates synchronous metadata aggregation from the
   // HTTP loop. Explicit null keeps injected, in-process readers available to
   // hermetic route tests; there is no runtime fallback after a worker failure.
+  // The governor caps how often a polled projection may rebuild (cost-scaled
+  // freshness, stale-while-revalidate, failure backoff): without it an idle
+  // desktop's SSE ticks kept a >60 s snapshot build looping forever.
   const readProjections = dependencies.readProjections === undefined
-    ? createReadProjectionWorker(cfg)
+    ? governReadProjections(createReadProjectionWorker(cfg))
     : dependencies.readProjections;
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
@@ -178,6 +185,12 @@ export async function startServer(
       return;
     }
 
+    // Discovery shares the existing read authority boundary and is opt-in.
+    if (process.env.ASHLR_PHANTOM_DISCOVERY === '1' && method === 'GET') {
+      if (path === PHANTOM_DISCOVERY_PATH) { sendJson(res, 200, phantomManifest); return; }
+      if (path === PHANTOM_PING_PATH) { sendJson(res, 200, { ok: true }); return; }
+    }
+
     // ── 2. API routes ──────────────────────────────────────────────────────
     // handleApi is async; wrap to catch errors without crashing the server.
     handleApi(req, res, cfg, {
@@ -244,6 +257,13 @@ export async function startServer(
     throw error;
   });
 
+  try {
+    if (opts.allowDispatch) await storeWbToken(join(homedir(), '.ashlr', 'wb'), token);
+  } catch (error) {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await readProjections?.close();
+    throw error;
+  }
   const url = `http://127.0.0.1:${port}`;
 
   // Deferred beyond successful listener/handle creation: no network or heavy

@@ -1,3 +1,5 @@
+import { FABLE_ORCHESTRATOR_MODEL } from '../routing/fable-orchestrator.js';
+import { readFableAdmission } from '../routing/fable-admission.js';
 /** Leader roles use task fit and observed account capacity, not provider bans.
  * The router ranks source-discovered model variants on their real account IDs;
  * each account retains one shared allowance. Native completion contacts enter
@@ -250,7 +252,8 @@ async function routeLeader(
     if(deps.transports.native && candidate.seat.engine === 'codex' && !subscriptionOnlyCurrent(base,nowMs)){
       ruledOut.push(skippedSeat(candidate,'A current subscription-only billing boundary is unconfirmed.'));continue;
     }
-    const models=candidate.seat.models.filter(model=>!model.unavailableReason);
+    const models=candidate.seat.models.filter(model=>!model.unavailableReason && (model.id !== FABLE_ORCHESTRATOR_MODEL ||
+      candidate.seat.engine === 'claude' && deps.transports.native && readFableAdmission({ role: 'leader' }, nowMs).allowed));
     const variants=models.map(model => ({
       candidate:{...candidate,seat:{...candidate.seat,models:[model],contextWindow:model.contextWindow}},
       capacity:{...base,contextWindow:model.contextWindow,tier:seatTier(candidate.seat.engine,model.id),
@@ -258,18 +261,22 @@ async function routeLeader(
           ? {free:true,costBasis:'free' as const,contextWindow:currentDevinBinding(candidate, model.id)!.contextTokens} : {})},
     })).filter(variant => deps.route(request,[variant.capacity],policy,nowMs).seatId !== null);
     const ranked = rankEligibleCapacities(request, variants.map(variant => variant.capacity), policy, { nowMs });
-    const orderedVariants = [...variants].sort((a, b) => preferences
+    const fableRank = (model: string | null): number => model === FABLE_ORCHESTRATOR_MODEL ? -1 : 0;
+    const orderedVariants = [...variants].sort((a, b) => fableRank(runnableModel(a.candidate.seat)) - fableRank(runnableModel(b.candidate.seat)) || (preferences
       ? leaderTierRank(preferences, task, a.candidate.seat.engine, runnableModel(a.candidate.seat) ?? '')
         - leaderTierRank(preferences, task, b.candidate.seat.engine, runnableModel(b.candidate.seat) ?? '')
         || ranked.indexOf(a.capacity) - ranked.indexOf(b.capacity)
-      : ranked.indexOf(a.capacity) - ranked.indexOf(b.capacity));
+      : ranked.indexOf(a.capacity) - ranked.indexOf(b.capacity)));
     const variant = orderedVariants[0];
     if(variant){selected.push(variant.candidate);capacity.push(variant.capacity);}
-    else {capacity.push({...base,contextWindow:models[0]?.contextWindow ?? 0});selected.push({...candidate,seat:{...candidate.seat,models:models.slice(0,1)}});}
+    else if (models.length) {capacity.push({...base,contextWindow:models[0]?.contextWindow ?? 0});selected.push({...candidate,seat:{...candidate.seat,models:models.slice(0,1)}});}
   }
   eligible.splice(0,eligible.length,...selected);
   let decision = deps.route(request, capacity, policy, nowMs);
-  if (preferences && decision.seatId) {
+  const fableSeat = decision.candidates.find(id => eligible.some(value => value.seat.id === id && runnableModel(value.seat) === FABLE_ORCHESTRATOR_MODEL));
+  if (fableSeat) decision = { ...decision, seatId: fableSeat, candidates: [fableSeat, ...decision.candidates.filter(id => id !== fableSeat)],
+    why: 'Fable 5.2 planning and orchestration within measured weekly reserve.', summary: 'Subscription orchestrator.' };
+  if (preferences && decision.seatId && !fableSeat) {
     const capacityById = new Map(capacity.map(value => [value.seatId, value]));
     const candidateById = new Map(eligible.map(value => [value.seat.id, value]));
     const original = new Map(decision.candidates.map((id, index) => [id, index]));

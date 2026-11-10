@@ -68,7 +68,7 @@ export function cmdMetrics(argv: string[], io?: CliIo): number | Promise<number>
       case 'summary': {
         if (rest.length) { io.err(USAGE); return 2; }
         const r = rollup(readTelemetry());
-        if (json) io.out(JSON.stringify(r, null, 2));
+        if (json) return import('../core/fleet/metrics-panel.js').then(async ({ readMetricsPanel }) => { io.out(JSON.stringify({ ...r, fleetMetrics: await readMetricsPanel() }, null, 2)); return 0; });
         else io.out(`${r.totals.prsShipped} PRs shipped · ${r.totals.valuePerMTok} value/1M tok · ${r.totals.valuePerHour} value/hr · ${r.totals.valuePerUsd ?? '—'} value/$`);
         return 0;
       }
