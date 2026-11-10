@@ -6,7 +6,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { cmdRelease } from '../src/cli/release.js';
 import {
   admitCiRun, allowReleasePrDispatch, assertReleaseWrite, buildTrain, cappedCadenceMinutes, docsCarriersSynced, ENQUEUE_PULL_REQUEST,
-  judgeRequiredChecks, releaseHeadBranch,
+  judgeRequiredChecks, releaseHeadBranch, settleCandidateCi, TRAIN_JOB_CHECK_NAME,
+  CANDIDATE_CI_POLL_MS, CANDIDATE_CI_POLL_INTERVAL_MS,
   enqueueReleasePullRequest, failedBuildWithin, hostedTrainGate, isReleasePleaseCommit,
   markWritesApplied, mergeStageDone, observeTrain, pauseReleaseTrain, readSentinel, releaseGithubCall, releaseKillDecision, selectUpdaterFeed,
   TRAIN_SCHEMA, updaterFeedMatches, WEBSITE_HOOK,
@@ -135,6 +136,91 @@ describe('release train', () => {
     expect(diverged.writes).toEqual([]);
     expect(diverged.state.reason).toContain('candidate-refused');
     expect(diverged.state.reason).toContain('compare_not_ahead: diverged');
+  });
+
+  it('judges only named required checks and does not treat pending or later suites as red', () => {
+    const gate = (status: string, conclusion: string | null) => (
+      { name: 'Merge Gate', status, conclusion, appId: 15368 }
+    );
+    const trainJob = (conclusion: string) => (
+      { name: TRAIN_JOB_CHECK_NAME, status: 'completed', conclusion, appId: 15368 }
+    );
+    expect(judgeRequiredChecks(['Merge Gate'], [
+      gate('completed', 'success'),
+      gate('completed', 'failure'),
+    ])).toBe('green');
+    expect(judgeRequiredChecks(['Merge Gate'], [
+      gate('completed', 'success'),
+      trainJob('failure'),
+    ])).toBe('green');
+    expect(judgeRequiredChecks(['Merge Gate', TRAIN_JOB_CHECK_NAME], [
+      gate('completed', 'success'),
+      trainJob('failure'),
+    ])).toBe('green');
+    expect(judgeRequiredChecks([TRAIN_JOB_CHECK_NAME], [trainJob('failure')])).toBe('unknown');
+    expect(judgeRequiredChecks(['Merge Gate'], [gate('in_progress', null)])).toBe('pending');
+    expect(judgeRequiredChecks(['Merge Gate'], [gate('queued', null)])).toBe('pending');
+    expect(judgeRequiredChecks(['Merge Gate'], [
+      gate('completed', 'success'),
+      gate('in_progress', null),
+    ])).toBe('pending');
+    expect(judgeRequiredChecks(['Merge Gate'], [gate('completed', 'failure')])).toBe('red');
+    expect(judgeRequiredChecks(['Merge Gate'], [])).toBe('pending');
+    const pendingPlan = buildTrain(observation({ candidateCi: 'pending' }));
+    expect(pendingPlan.exitCode).toBe(0);
+    expect(pendingPlan.state.stopped).toBe(false);
+    expect(pendingPlan.state.steps.build?.reason).toBe('candidate-ci-pending');
+    expect(pendingPlan.writes.some((write) => write.path.endsWith('/ci.yml/dispatches'))).toBe(false);
+  });
+
+  it('rechecks pending required CI until it settles or the poll budget ends', async () => {
+    expect(CANDIDATE_CI_POLL_MS).toBe(12 * 60 * 1000);
+    expect(CANDIDATE_CI_POLL_INTERVAL_MS).toBe(30_000);
+    let now = 0;
+    const sleeps: number[] = [];
+    const observations = ['pending', 'pending', 'green'] as const;
+    let calls = 0;
+    const settled = await settleCandidateCi(
+      async () => {
+        const candidateCi = observations[Math.min(calls, observations.length - 1)];
+        calls += 1;
+        return observation({ candidateCi });
+      },
+      {
+        budgetMs: 60_000,
+        intervalMs: 10_000,
+        now: () => now,
+        sleep: async (ms) => { sleeps.push(ms); now += ms; },
+      },
+    );
+    expect(settled.candidateCi).toBe('green');
+    expect(calls).toBe(3);
+    expect(sleeps).toEqual([10_000, 10_000]);
+
+    now = 0;
+    calls = 0;
+    const exhausted = await settleCandidateCi(
+      async () => {
+        calls += 1;
+        return observation({ candidateCi: 'pending' });
+      },
+      {
+        budgetMs: 25_000,
+        intervalMs: 10_000,
+        now: () => now,
+        sleep: async (ms) => { now += ms; },
+      },
+    );
+    expect(exhausted.candidateCi).toBe('pending');
+    expect(calls).toBe(4);
+
+    const red = await settleCandidateCi(async () => observation({ candidateCi: 'red' }), {
+      budgetMs: 60_000,
+      intervalMs: 10_000,
+      now: () => 0,
+      sleep: async () => { throw new Error('must not poll after a settled observation'); },
+    });
+    expect(red.candidateCi).toBe('red');
   });
 
   it('does not recursively dispatch Release PR from its own completion', () => {

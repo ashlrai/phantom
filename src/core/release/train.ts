@@ -46,28 +46,74 @@ export function releaseHeadBranch(branch: unknown): boolean {
   return RELEASE_TAG.test(branch);
 }
 
+/** Release-train job name. It must never be a candidate-admission check. */
+export const TRAIN_JOB_CHECK_NAME = 'train';
+/** Hosted apply run waits this long for required checks still queued or in progress. */
+export const CANDIDATE_CI_POLL_MS = 12 * 60 * 1000;
+export const CANDIDATE_CI_POLL_INTERVAL_MS = 30_000;
+
 /**
- * Every required Actions check on this SHA must be completed and success.
- * An empty required set is unknown (fail closed). A non-success conclusion is red.
+ * Judge only the named required Actions checks on this SHA.
+ * The train's own `train` check-runs are ignored even if listed, so a failed
+ * train retry cannot poison the same SHA.
+ * GitHub's check-run listing can include one row per check suite, so a later
+ * failed or skipped Merge Gate from tag or push CI must not override an earlier
+ * successful run of that same required context.
+ * Queued or in-progress required checks are pending, not red.
+ * An empty required set is unknown (fail closed). A required check with only
+ * completed non-success conclusions is red.
  */
 export function judgeRequiredChecks(
   required: readonly string[],
   runs: readonly { name: string; status: string; conclusion: string | null; appId: number }[],
 ): CandidateCi {
-  if (required.length === 0) return 'unknown';
+  const names = [...new Set(required.filter((name) => name !== TRAIN_JOB_CHECK_NAME))];
+  if (names.length === 0) return 'unknown';
   let pending = false;
-  for (const name of required) {
+  for (const name of names) {
     const matched = runs.filter((run) => run.appId === ACTIONS_APP_ID && run.name === name);
     if (matched.length === 0) {
       pending = true;
       continue;
     }
+    let seenSuccess = false;
+    let seenIncomplete = false;
+    let seenFailure = false;
     for (const run of matched) {
-      if (run.status !== 'completed') pending = true;
-      else if (run.conclusion !== 'success') return 'red';
+      if (run.status !== 'completed') seenIncomplete = true;
+      else if (run.conclusion === 'success') seenSuccess = true;
+      else seenFailure = true;
     }
+    if (seenIncomplete) pending = true;
+    else if (seenSuccess) continue;
+    else if (seenFailure) return 'red';
+    else pending = true;
   }
   return pending ? 'pending' : 'green';
+}
+
+export async function settleCandidateCi<T extends { candidateCi: CandidateCi }>(
+  observe: () => Promise<T>,
+  options?: {
+    budgetMs?: number;
+    intervalMs?: number;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+  },
+): Promise<T> {
+  const budgetMs = options?.budgetMs ?? CANDIDATE_CI_POLL_MS;
+  const intervalMs = options?.intervalMs ?? CANDIDATE_CI_POLL_INTERVAL_MS;
+  const now = options?.now ?? Date.now;
+  const sleep = options?.sleep ?? ((ms: number) => new Promise((resolve) => { setTimeout(resolve, ms); }));
+  const deadline = now() + budgetMs;
+  let observed = await observe();
+  while (observed.candidateCi === 'pending' && now() < deadline) {
+    const wait = Math.min(intervalMs, deadline - now());
+    if (wait <= 0) break;
+    await sleep(wait);
+    observed = await observe();
+  }
+  return observed;
 }
 
 export interface ReleaseAsset { name: string; created_at: string | null }
@@ -935,7 +981,9 @@ async function main(): Promise<number> {
   const apply = args.includes('--apply');
   const outFlag = args.indexOf('--out');
   const out = outFlag >= 0 ? args[outFlag + 1] : '';
-  const observed = await observeTrain(githubRead);
+  const observed = apply
+    ? await settleCandidateCi(() => observeTrain(githubRead))
+    : await observeTrain(githubRead);
   const plan = buildTrain(observed);
   let state = plan.state;
   if (apply && plan.exitCode === 0) {
