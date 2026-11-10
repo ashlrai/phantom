@@ -17,6 +17,7 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { groupByRepo, ideasHeadline, rankIdeas, sourceCounts, type RepoGroup } from './ideas-model.js';
 import { IdeaSteer } from './IdeaSteer.js';
 import styles from './ideas.module.css';
+import { NextIdeas } from './NextIdeas.js';
 
 export const IDEAS_POLL_MS = 30_000;
 const PER_REPO = 5;
@@ -66,6 +67,7 @@ export function IdeasPane({ visible = true }: { visible?: boolean }) {
   }
 
   return <div className={styles.root} aria-label="Ideas">
+    <NextIdeas visible={visible} />
     <label>Goal: <select value={goalFilter} onChange={event => setGoalFilter(event.target.value)}>
       <option value="all">All</option>
       {openGoals(goals.data ?? []).map(goal => <option key={goal.id} value={goal.id}>{goal.objective}</option>)}
