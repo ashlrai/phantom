@@ -6,9 +6,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { cmdRelease } from '../src/cli/release.js';
 import {
   admitCiRun, allowReleasePrDispatch, assertReleaseWrite, buildTrain, cappedCadenceMinutes, docsCarriersSynced, ENQUEUE_PULL_REQUEST,
-  judgeRequiredChecks, releaseHeadBranch, settleCandidateCi, TRAIN_JOB_CHECK_NAME,
-  CANDIDATE_CI_POLL_MS, CANDIDATE_CI_POLL_INTERVAL_MS,
-  enqueueReleasePullRequest, failedBuildWithin, hostedTrainGate, isReleasePleaseCommit,
+  judgeRequiredChecks, releaseHeadBranch, TRAIN_JOB_CHECK_NAME,
+  enqueueReleasePullRequest, hostedTrainGate, isReleasePleaseCommit,
+  successorTagConflict, refusePublishIfSuccessorConflict,
   markWritesApplied, mergeStageDone, observeTrain, pauseReleaseTrain, readSentinel, releaseGithubCall, releaseKillDecision, selectUpdaterFeed,
   TRAIN_SCHEMA, updaterFeedMatches, WEBSITE_HOOK,
   type ReleaseWrite, type TrainObservation,
@@ -51,7 +51,6 @@ function observation(overrides: Partial<TrainObservation> = {}): TrainObservatio
     candidateCi: 'green',
     build: null,
     buildPending: false,
-    buildCooldown: false,
     attest: null,
     attestPending: false,
     audit: null,
@@ -96,17 +95,13 @@ describe('release train', () => {
     expect(calls.some((argv) => argv.join(' ') === 'gh variable set PHANTOM_RELEASE_TRAIN -R ashlrai/phantom --body off')).toBe(true);
   });
 
-  it('admits only sanctioned ci runs and backs off after a recent failure', () => {
+  it('admits only sanctioned ci runs', () => {
     const repo = { full_name: 'ashlrai/phantom' };
     const good = { head_sha: head, path: '.github/workflows/ci.yml', event: 'workflow_dispatch', repository: repo, head_repository: repo, head_branch: 'v3.30.28' };
     expect(admitCiRun(good, head, 'v3.30.28')).toBe(true);
     expect(admitCiRun({ ...good, event: 'push' }, head, 'v3.30.28')).toBe(false);
     expect(admitCiRun({ ...good, path: '.github/workflows/other.yml' }, head, 'v3.30.28')).toBe(false);
     expect(admitCiRun({ ...good, repository: { full_name: 'other/phantom' } }, head, 'v3.30.28')).toBe(false);
-    const now = Date.parse('2026-11-09T06:00:00Z');
-    expect(failedBuildWithin({ status: 'completed', conclusion: 'failure', updated_at: '2026-11-09T01:00:00Z' }, now)).toBe(true);
-    expect(failedBuildWithin({ status: 'completed', conclusion: 'failure', updated_at: '2026-11-08T20:00:00Z' }, now)).toBe(false);
-    expect(buildTrain(observation({ buildCooldown: true })).writes.some((write) => write.path.includes('/ci.yml/'))).toBe(false);
   });
 
   it('accepts an ancestor or head with green CI and rejects red or diverged candidates', () => {
@@ -173,56 +168,6 @@ describe('release train', () => {
     expect(pendingPlan.writes.some((write) => write.path.endsWith('/ci.yml/dispatches'))).toBe(false);
   });
 
-  it('rechecks pending required CI until it settles or the poll budget ends', async () => {
-    expect(CANDIDATE_CI_POLL_MS).toBe(12 * 60 * 1000);
-    expect(CANDIDATE_CI_POLL_INTERVAL_MS).toBe(30_000);
-    let now = 0;
-    const sleeps: number[] = [];
-    const observations = ['pending', 'pending', 'green'] as const;
-    let calls = 0;
-    const settled = await settleCandidateCi(
-      async () => {
-        const candidateCi = observations[Math.min(calls, observations.length - 1)];
-        calls += 1;
-        return observation({ candidateCi });
-      },
-      {
-        budgetMs: 60_000,
-        intervalMs: 10_000,
-        now: () => now,
-        sleep: async (ms) => { sleeps.push(ms); now += ms; },
-      },
-    );
-    expect(settled.candidateCi).toBe('green');
-    expect(calls).toBe(3);
-    expect(sleeps).toEqual([10_000, 10_000]);
-
-    now = 0;
-    calls = 0;
-    const exhausted = await settleCandidateCi(
-      async () => {
-        calls += 1;
-        return observation({ candidateCi: 'pending' });
-      },
-      {
-        budgetMs: 25_000,
-        intervalMs: 10_000,
-        now: () => now,
-        sleep: async (ms) => { now += ms; },
-      },
-    );
-    expect(exhausted.candidateCi).toBe('pending');
-    expect(calls).toBe(4);
-
-    const red = await settleCandidateCi(async () => observation({ candidateCi: 'red' }), {
-      budgetMs: 60_000,
-      intervalMs: 10_000,
-      now: () => 0,
-      sleep: async () => { throw new Error('must not poll after a settled observation'); },
-    });
-    expect(red.candidateCi).toBe('red');
-  });
-
   it('does not recursively dispatch Release PR from its own completion', () => {
     const path = 'repos/ashlrai/phantom/actions/workflows/release-please.yml/dispatches';
     expect(allowReleasePrDispatch(path, 'false')).toBe(false);
@@ -254,8 +199,9 @@ describe('release train', () => {
     expect(buildTrain(observation({ fleetKill: 'active' }))).toMatchObject({ exitCode: 1, writes: [] });
   });
 
-  it('caps the cadence at hourly and only cuts a green release-please pull request', () => {
-    expect(cappedCadenceMinutes(30)).toBe(60);
+  it('honors configured cadence minutes and only cuts a green release-please pull request', () => {
+    expect(cappedCadenceMinutes(30)).toBe(30);
+    expect(cappedCadenceMinutes(60)).toBe(60);
     expect(cappedCadenceMinutes(120)).toBe(120);
     expect(() => cappedCadenceMinutes(0)).toThrow(/cadence/);
     const early = buildTrain(observation({
@@ -317,6 +263,32 @@ describe('release train', () => {
     expect(reason).toContain('first_line="bridge: unrelated"');
     expect(reason).toContain('expected=chore(<scope>): release 3.30.27');
     expect(buildTrain({ ...base, tags: [...base.tags, { name: 'v3.30.28', sha: head }], skippedTags: [{ tag: 'v3.30.28', reason: 'release_message_mismatch' }] }).state.reason).toBe('duplicate_tag');
+  });
+
+  it('refuses a second train publish when a strictly-greater tag appears mid-flight', () => {
+    const ready = observation({
+      build: { runId: 11, attempt: 2, artifactId: 101, completedAt: '2026-11-09T03:00:00.000Z' },
+      attest: { runId: 22, attempt: 1, artifactId: 202, completedAt: '2026-11-09T03:10:00.000Z' },
+      audit: { runId: 33, attempt: 1 },
+      npmPublished: false,
+    });
+    const first = buildTrain(ready);
+    const publish = first.writes.filter((write) => write.path.endsWith('/publish-canonical-npm.yml/dispatches'));
+    expect(publish).toHaveLength(1);
+    expect(successorTagConflict(ready.masterVersion, ready.tags)).toBe(false);
+
+    // A second train observes a newer tag that landed while the first was still publishing.
+    const raced = {
+      ...ready,
+      tags: [...ready.tags, { name: 'v3.30.28', sha: 'd'.repeat(40) }],
+      skippedTags: [{ tag: 'v3.30.28', reason: 'release_message_mismatch' }],
+    };
+    expect(successorTagConflict(raced.masterVersion, raced.tags)).toBe(true);
+    expect(buildTrain(raced).state.reason).toBe('duplicate_tag');
+    expect(buildTrain(raced).writes).toEqual([]);
+    const remaining = refusePublishIfSuccessorConflict(first.writes, raced);
+    expect(remaining.find((write) => write.path.endsWith('/publish-canonical-npm.yml/dispatches'))).toBeUndefined();
+    expect(refusePublishIfSuccessorConflict(first.writes, ready)).toEqual(first.writes);
   });
 
   it('admits a tag on a later merge when the release-please commit is its ancestor', () => {
