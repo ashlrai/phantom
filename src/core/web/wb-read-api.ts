@@ -9,6 +9,8 @@
  *                             shared single-flight cache + failure backoff
  *                             (web/fleet-status-cache.ts getCachedWbGhStatus)
  *   GET /api/wb/v1/budget   → budget policy + per-seat usage projection
+ *   GET /api/wb/v1/events   → SSE stream of workbench.event.v1 kinds
+ *                             (wb.snapshot / wb.gh / wb.action) (wb-events.ts)
  *
  * Auth: identical to every other read route — these paths are `/api/*` GETs,
  * so server.ts's read-session boundary (X-Ashlr-Token or a minted read
@@ -50,6 +52,7 @@ import { readWbLocus } from '../workbench/locus.js';
 import { fleetInventoryPath, readFleetInventory } from '../fleet/graph-seed.js';
 import { QueueStore } from '../queue/store.js';
 import { sendJson } from './read-session.js';
+import { handleWbEventsSse, WB_EVENTS_PATH, type WbEventsDeps } from './wb-events.js';
 
 // ---------------------------------------------------------------------------
 // Routes
@@ -128,7 +131,7 @@ function projectSeat(seat: SeatCapacity): WbSeatRow {
  * `readCapacitySnapshot` collapses absent/unreadable/malformed into null, so
  * the file's existence distinguishes 'missing' from 'invalid' for the wire.
  */
-function readWbSnapshot(file: string = capacitySnapshotPath()): WbSnapshotReading {
+export function readWbSnapshot(file: string = capacitySnapshotPath()): WbSnapshotReading {
   const snap: CapacitySnapshot | null = readCapacitySnapshot(file);
   if (!snap) {
     return {
@@ -175,11 +178,19 @@ function handleWbSnapshot(res: ServerResponse): void {
   }));
 }
 
-interface WbGhDeps {
+export interface WbGhDeps {
   /** Enrolled repo paths to read; default is the enrollment registry. */
   paths?: () => string[];
   /** Test seam for the gh subprocess runner (github-repo.ts options). */
   gh?: VerseGithubReadOptions['gh'];
+}
+
+/** Deps for the whole /api/wb/v1/* surface: gh seams + the events stream. */
+export interface WbApiDeps extends WbGhDeps {
+  /** Minted read session — required by the SSE route, absent on header auth. */
+  readSession?: { id: string; expiresAt: number };
+  /** Test seams for GET /api/wb/v1/events (cadence, gh read). */
+  events?: WbEventsDeps;
 }
 
 async function handleWbGh(
@@ -368,10 +379,28 @@ export async function handleWbApi(
   res: ServerResponse,
   cfg: AshlrConfig,
   path: string,
-  deps: WbGhDeps = {},
+  deps: WbApiDeps = {},
   steerDeps: WbSteerDeps = {},
 ): Promise<boolean> {
   if (!isWbApiPath(path)) return false;
+
+  // ── GET /api/wb/v1/events (SSE) ─────────────────────────────────────────
+  // Same convention as /api/events and the verse tail: a minted read session
+  // is required (the raw read token authenticates the boundary but carries no
+  // expiry the stream can honor), and wrong methods 405 like the JSON routes.
+  if (path === WB_EVENTS_PATH) {
+    const method = (req.method ?? 'GET').toUpperCase();
+    if (method !== 'GET') {
+      sendJson(res, 405, { error: 'method not allowed' }, { Allow: 'GET' });
+      return true;
+    }
+    if (!deps.readSession || deps.readSession.expiresAt <= Date.now()) {
+      sendJson(res, 401, { code: 'SESSION_REQUIRED', error: 'valid read session required' });
+      return true;
+    }
+    handleWbEventsSse(req, res, cfg, deps.readSession, deps.events ?? {});
+    return true;
+  }
 
   if (!WB_ROUTES.has(path)) {
     sendJson(res, 404, { error: `not found: GET ${path}` });
