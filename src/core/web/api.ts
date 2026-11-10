@@ -83,6 +83,7 @@ import {
   type PublicDaemonObservation,
 } from '../daemon/public-observation.js';
 import { serviceStatus } from '../daemon/service.js';
+import { buildNodesSnapshot } from '../nodes/view.js';
 import { daemonServiceInstallOptions } from '../daemon/service-config.js';
 import { buildFleetStatus, readFleetDaemonStatus } from '../fleet/status.js';
 import { getCachedFleetStatus, primeFleetStatusCache } from './fleet-status-cache.js';
@@ -732,7 +733,9 @@ async function buildVisionMissionSnapshot(cfg: AshlrConfig): Promise<Record<stri
 /** Write a JSON response. Never throws. */
 export function sendJson(res: ServerResponse, status: number, body: unknown): void {
   try {
-    const boundedBody = body && typeof body === 'object' && 'error' in body
+    // Bound error text only; a null/absent error (e.g. phantom.nodes.v1
+    // `error: null` on a healthy read) must stay null, not become "null".
+    const boundedBody = body && typeof body === 'object' && 'error' in body && (body as { error: unknown }).error != null
       ? { ...body, error: String((body as { error: unknown }).error).slice(0, 512) }
       : body;
     const payload = JSON.stringify(sanitizePublicJson(boundedBody) ?? null);
@@ -2147,6 +2150,16 @@ export async function handleApi(
         ? await ctx.readProjections.read('control')
         : await buildControlSnapshot(cfg);
       sendJson(res, 200, snapshot);
+      return true;
+    }
+
+    // ── GET /api/nodes ───────────────────────────────────────────────────────
+    // phantom.nodes.v1: the same projection as `ashlr fleet nodes --json` (node
+    // id, role, status, heartbeat age, live jobs, gh auth state, caps, leader).
+    // Read-only, no auth: same read class as /api/control. buildNodesSnapshot
+    // never throws and refuses an inventory holding a secret-shaped value.
+    if (path === '/api/nodes' && method === 'GET') {
+      sendJson(res, 200, buildNodesSnapshot());
       return true;
     }
 
