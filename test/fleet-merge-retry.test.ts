@@ -52,8 +52,8 @@ describe('fleet merge-retry', () => {
     expect(await f.run()).toBe(0);
     expect(f.report).toMatchObject({ schema: 'fleet.merge-retry.v1', dryRun: true, ok: true, known: true, max_retries_per_pr: 3 });
     expect(f.report.rows).toEqual([
-      { repo: REPO, pr: 7, action: 'request-auto-merge', disabled_at: ago(700), waiting_s: 700, retries_left: 3, head_sha: HEAD },
-      { repo: REPO, pr: 8, action: 'needs-person', reason: 'unattributed' },
+      { repo: REPO, pr: 7, action: 'request-auto-merge', disabled_at: ago(700), waiting_s: 700, retries_left: 3, requests_failed: 0, head_sha: HEAD },
+      { repo: REPO, pr: 8, action: 'needs-person', reason: 'unattributed', requests_failed: 0 },
     ]);
     expect(f.calls).toEqual([]);
   });
@@ -77,7 +77,7 @@ describe('fleet merge-retry', () => {
       ev(7, 'retry_requested', 950), ev(7, 'retry_requested', 850), ev(7, 'retry_requested', 750),
     ]);
     expect(await f.run(['--apply', '--json'])).toBe(0);
-    expect(f.report.rows).toEqual([{ repo: REPO, pr: 7, action: 'needs-person', reason: 'too-many-retries' }]);
+    expect(f.report.rows).toEqual([{ repo: REPO, pr: 7, action: 'needs-person', reason: 'too-many-retries', requests_failed: 0 }]);
     expect(f.merges()).toEqual([]);
     expect(f.recorded).toEqual([]);
   });
@@ -112,10 +112,12 @@ describe('fleet merge-retry', () => {
     expect(await f.run(['--apply', '--json'])).toBe(1);
     expect(f.report.rows.map((r: { pr: number; action: string }) => [r.pr, r.action])).toEqual([
       [1, 'already-armed'], [2, 'draft'], [3, 'conflict'], [4, 'merged'], [5, 'failed']]);
-    expect(f.recorded).toEqual([]);
+    // Only #5 reached a submission attempt: it records one retry_failed event.
+    expect(f.recorded).toEqual([{ repo: REPO, pr: 5, type: 'retry_failed', at: new Date(now).toISOString(), head_sha: HEAD }]);
     f.state.failMerge = false;
-    expect(await f.run(['--apply', '--json'])).toBe(0); // a failed request consumes no retry
-    expect(f.recorded).toHaveLength(1);
+    expect(await f.run(['--apply', '--json'])).toBe(0); // a transient submission failure retries on the next run
+    expect(f.recorded).toHaveLength(2);
+    expect(f.recorded[1]).toMatchObject({ pr: 5, type: 'retry_requested' });
   });
 
   it('caps merge requests per run and never retries held phantom PRs', async () => {
@@ -128,6 +130,46 @@ describe('fleet merge-retry', () => {
     expect(await held.run(['--apply', '--json'])).toBe(0);
     expect(held.report.rows[0].action).toBe('held');
     expect(held.calls).toEqual([]);
+  });
+
+  it('keeps a transient submission failure retryable but makes three distinct failures permanent', async () => {
+    // One recorded submission failure: still retryable, and the budget shows up.
+    const f = fixture([...failed(7), ev(7, 'retry_failed', 600, { head_sha: HEAD })]);
+    expect(await f.run(['--apply', '--json'])).toBe(0);
+    expect(f.report.rows[0]).toMatchObject({ pr: 7, action: 'auto-merge-requested', requests_failed: 1, retries_left: 3 });
+    // Three distinct failed submissions: the drop is permanent — no GitHub call at all.
+    const g = fixture([...failed(8),
+      ev(8, 'retry_failed', 600, { head_sha: HEAD }), ev(8, 'retry_failed', 500, { head_sha: HEAD }), ev(8, 'retry_failed', 400)]);
+    expect(await g.run(['--apply', '--json'])).toBe(0);
+    expect(g.report.rows).toEqual([{ repo: REPO, pr: 8, action: 'needs-person', reason: 'request-failed', requests_failed: 3 }]);
+    expect(g.calls).toEqual([]);
+    // Replayed identical failure lines dedupe to one submission failure.
+    const h = fixture([...failed(9), ev(9, 'retry_failed', 600, { head_sha: HEAD }), ev(9, 'retry_failed', 600, { head_sha: HEAD })]);
+    expect(await h.run(['--apply', '--json'])).toBe(0);
+    expect(h.report.rows[0]).toMatchObject({ pr: 9, action: 'auto-merge-requested', requests_failed: 1 });
+  });
+
+  it('reports a failed state read without recording — it was never a submission attempt', async () => {
+    const f = fixture(failed(7));
+    f.state.failView = true;
+    expect(await f.run(['--apply', '--json'])).toBe(1);
+    expect(f.report.rows[0]).toMatchObject({ pr: 7, action: 'failed' });
+    expect(f.recorded).toEqual([]);
+    f.state.failView = false;
+    expect(await f.run(['--apply', '--json'])).toBe(0); // a failed read retries for free
+    expect(f.report.rows[0].action).toBe('auto-merge-requested');
+    expect(f.recorded).toEqual([{ repo: REPO, pr: 7, type: 'retry_requested', at: new Date(now).toISOString(), head_sha: HEAD }]);
+  });
+
+  it('leaves closed and not-ready PRs alone without recording or submitting', async () => {
+    const f = fixture([...failed(1), ...failed(2)], {
+      1: { number: 1, state: 'CLOSED', headRefOid: HEAD, isDraft: false, mergeStateStatus: 'CLEAN', autoMergeRequest: null },
+      2: { number: 2, state: 'OPEN', headRefOid: HEAD, isDraft: false, mergeStateStatus: 'UNKNOWN', autoMergeRequest: null },
+    });
+    expect(await f.run(['--apply', '--json'])).toBe(0);
+    expect(f.report.rows.map((r: { pr: number; action: string }) => [r.pr, r.action])).toEqual([[1, 'closed'], [2, 'not-ready']]);
+    expect(f.merges()).toEqual([]);
+    expect(f.recorded).toEqual([]);
   });
 
   it('honours the event repo, fails honestly on unreadable ledgers and rejects bad arguments', async () => {
