@@ -17,5 +17,12 @@ export function MetricsPane({ visible }: PaneProps) {
     {!data ? <p>{read.status === 'error' ? 'Metrics are unknown.' : 'Reading metrics…'}</p> : data.lanes.length === 0 ? <p>Lane measurements: unknown</p> :
       <table><thead><tr><th>Lane</th><th>PRs merged per hour</th><th>Median open to merge (seconds)</th><th>Empty rate</th><th>Running / target</th></tr></thead>
         <tbody>{data.lanes.map(row => <tr key={row.lane}><td>{row.lane}</td><td>{row.mergesPerHour === null ? 'unknown' : row.mergesPerHour.toFixed(2)}</td><td>{row.medianOpenToMergeSeconds ?? 'unknown'}</td><td>{row.emptyRate === null ? 'unknown' : `${(row.emptyRate * 100).toFixed(1)}%`}</td><td>{row.running ?? 'unknown'} / {row.target ?? 'unknown'}</td></tr>)}</tbody></table>}
+    <h3>Jobs by generator</h3>
+    <p>Last 24 hours. Empty rate uses jobs with a recorded empty result. Tokens per merged PR includes all jobs in the group.</p>
+    {!data?.generatorYield?.known ? <p>Generator measurements: unknown</p> : <>
+      <p>Malformed lines skipped: {data.generatorYield.malformedLines}</p>
+      <table><thead><tr><th>Generator</th><th>Jobs</th><th>PRs</th><th>Merged</th><th>Empty rate</th><th>Median diff lines</th><th>Tokens per merged PR</th></tr></thead>
+        <tbody>{data.generatorYield.generators.map(row => <tr key={row.generator}><td>{row.generator}</td><td>{row.jobs}</td><td>{row.prs}</td><td>{row.merged}</td><td>{row.emptyRate === null ? 'unknown' : `${(row.emptyRate * 100).toFixed(1)}%`}</td><td>{row.medianDiffLines ?? 'unknown'}</td><td>{row.tokensPerMergedPr ?? 'unknown'}</td></tr>)}</tbody></table>
+    </>}
   </section>;
 }
