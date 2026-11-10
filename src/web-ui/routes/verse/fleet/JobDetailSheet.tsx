@@ -19,6 +19,7 @@ import { changesHeadline, collisionTell, sortFiles, type FleetJobChangesV1 } fro
 import { openInterjectDialog } from './interject-dialog-store.js';
 import { sheetActions, steerPrefill } from './job-sheet-actions.js';
 import { jobDetailQuery, notInBuild } from './workers-card-queries.js';
+import { LaunchLaneNote } from './LaunchLaneNote.js';
 import { JobRefs } from './JobRefs.js';
 import { jobBacklogQuery, jobBacklogRepo } from './job-backlog-queries.js';
 import { jobBacklogState } from './job-backlog-state.js';
@@ -68,7 +69,7 @@ export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: str
     try { await navigator.clipboard.writeText(branch); setNotice('Copied'); }
     catch { setNotice('Copy failed'); }
   };
-  const facts = d ? [['Lane', d.lane], ['Tier', d.tier], ['Model', d.model], ['Launched', formatRelative(d.launchedAt)], ['Base', d.baseSha?.slice(0, 7)], ['Branch', d.branch]] : [];
+  const facts = d ? [['Tier', d.tier], ['Model', d.model], ['Launched', formatRelative(d.launchedAt)], ['Base', d.baseSha?.slice(0, 7)], ['Branch', d.branch]] : [];
   return <Sheet open titleId={id} title={job} onClose={onClose}>
     {read.status === 'refreshing' ? <RefreshIndicator /> : null}
     {d ? <StatusBadge status={d.state} tone={tones[d.state]} /> : null}
@@ -85,6 +86,7 @@ export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: str
       }}>Tell on bus</Button>
     </div>
     {notInBuild(read.error) ? <p>Job detail is not in this build yet.</p> : read.error ? <p>Job detail unavailable.</p> : !d ? <SkeletonLine /> : <>
+      <LaunchLaneNote requestedLane={d.requestedLane} launchedLane={d.launchedLane ?? d.lane} laneReason={d.laneReason} />
       <dl className={styles.facts}>{facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd><span aria-label={`${label} ${value ?? 'unknown'}`}>{value ?? '—'}</span>{label === 'Branch' && value ? <> <Button size="sm" onClick={() => void copyBranch(value)}>Copy</Button> <span role="status">{notice}</span></> : null}</dd></div>)}</dl>
       {d.publish?.prUrl ? <p><a href={d.publish.prUrl} target="_blank" rel="noreferrer">PR for job {job}</a></p> : null}
       {prState ? <p><StatusBadge status={prState.state} tone={{ danger: 'danger', warn: 'warning', ok: 'success', neutral: 'neutral' }[prState.tone] as Tone}>{prState.text}</StatusBadge></p> : null}
