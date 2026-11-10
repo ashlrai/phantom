@@ -1411,7 +1411,7 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
               if (!currentPolicy || currentPolicy.grantId !== policy.grantId) return;
               const snapshot = deps.capacitySnapshot();
               const reading = await deps.probeLocalRuntime(cfg, snapshot);
-              const observed = planLanes({
+              const observed = await planLanes({
                 policy: currentPolicy,
                 directives: clampLeaderDirectives(deps.directives(), currentPolicy),
                 presence: await deps.presence(at),
@@ -1820,7 +1820,7 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
         leaderPreferences = resolveLeaderPreferences(leaderCfg);
         freshBatchCapacity = grokDispatchBatchCapacity(leaderCfg);
       } catch { leaderPreferences = unavailableLeaderPreferences(); }
-      const lanes = planLanes({
+      const lanes = await planLanes({
         policy,
         directives,
         presence,
