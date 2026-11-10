@@ -31,9 +31,10 @@ import {
   releaseLocalStoreLock,
   type LocalStoreLockAcquireResult,
 } from './local-store-lock.js';
+import { noticeOverdueTeammateTexts } from '../comms/teammate-overdue.js';
 import { writeSelfTickLast } from './self-tick-last.js';
 
-export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick' | 'inbox-acks' | 'order-notices' | 'needs-triage' | 'landed-sweep' | 'stray-stop' | 'meter-incident';
+export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick' | 'inbox-acks' | 'order-notices' | 'needs-triage' | 'teammate-overdue' | 'landed-sweep' | 'stray-stop' | 'meter-incident';
 /** Fixed execution order — release first so the planner sees freed slots; landed-sweep last. */
 export const SELF_TICK_STEP_ORDER: readonly SelfTickStepName[] = [
   'reset-release',
@@ -44,6 +45,7 @@ export const SELF_TICK_STEP_ORDER: readonly SelfTickStepName[] = [
   'inbox-acks',
   'order-notices',
   'needs-triage',
+  'teammate-overdue',
   // Last: the slowest step (gh + git reads) must never delay release or the planner.
   'landed-sweep',
 ];
@@ -57,7 +59,7 @@ export interface SelfTickStepRun {
 }
 /** A step seam gets the shared argv (--json, maybe --apply, --runs-dir). */
 export type SelfTickStep = (args: string[]) => Promise<SelfTickStepRun>;
-export type SelfTickSteps = Record<SelfTickStepName, SelfTickStep>;
+export type SelfTickSteps = Record<Exclude<SelfTickStepName, 'teammate-overdue'>, SelfTickStep> & Partial<Record<'teammate-overdue', SelfTickStep>>;
 
 export interface SelfTickStepResult {
   step: SelfTickStepName;
@@ -127,7 +129,10 @@ export async function runSelfTick(options: RunSelfTickOptions): Promise<SelfTick
   try {
     for (const step of SELF_TICK_STEP_ORDER) {
       try {
-        const run = options.steps[step];
+        const run = options.steps[step] ?? (step === 'teammate-overdue' ? async () => {
+          const result = await noticeOverdueTeammateTexts({ runsDir, now: options.now, apply: options.apply });
+          return { exitCode: result.state === 'ok' ? 0 : 1, output: JSON.stringify(result) };
+        } : undefined);
         if (!run) {
           report.steps.push({ step, state: 'failed', exitCode: 1, report: { reason: 'step-not-configured' } });
           continue;
