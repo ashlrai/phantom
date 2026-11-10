@@ -2663,9 +2663,17 @@ async function main(): Promise<void> {
       }
 
       case 'bus': {
-        // `phm bus ...` is the same shared task board as `phm fleet bus ...`.
-        const cmdFleet = await loadFleetCmd();
-        process.exitCode = await cmdFleet(['bus', ...rest]);
+        // `phm bus send|inbox|ack` is the durable mailbox; `phm bus thread|task`
+        // and `phm fleet bus ...` are the shared task board.
+        const mailboxVerb = rest[0] === 'send' || rest[0] === 'inbox' || rest[0] === 'ack' ||
+          (rest[0] === '--json' && (rest[1] === 'send' || rest[1] === 'inbox' || rest[1] === 'ack'));
+        if (mailboxVerb) {
+          const { cmdBus } = await import('./bus.js');
+          process.exitCode = await cmdBus(rest);
+        } else {
+          const cmdFleet = await loadFleetCmd();
+          process.exitCode = await cmdFleet(['bus', ...rest]);
+        }
         break;
       }
 
