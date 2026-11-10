@@ -382,7 +382,7 @@ test('workflows carry the merged-PR -> tag -> release wiring with no widened per
   assert.equal(autoTag.concurrency.group, 'auto-tag-${{ github.repository }}');
   assert.equal(autoTag.concurrency['cancel-in-progress'], false);
   const tagJob = autoTag.jobs.tag;
-  assert.deepEqual(tagJob.permissions, {contents: 'read', checks: 'read'});
+  assert.deepEqual(tagJob.permissions, {contents: 'read', checks: 'read', actions: 'write'});
   const names = tagJob.steps.map(s => s.name ?? '');
   assert.ok(names.some(n => n.startsWith('Detect version')));
   assert.ok(names.some(n => n.startsWith('Require every required check')));;
@@ -391,6 +391,14 @@ test('workflows carry the merged-PR -> tag -> release wiring with no widened per
   assert.ok(tagStep.run.includes('node .github/scripts/tag-github-release.mjs'));
   assert.ok(String(tagStep.if).includes('checks.outputs.green'), 'tag step must gate on green checks');
   assert.ok(String(tagStep.env?.GH_TOKEN).includes('steps.app.outputs.token'), 'tag step must use the scoped app token, not GITHUB_TOKEN');
+  const dispatchStep = tagJob.steps.find(s => (s.name ?? '').startsWith('Dispatch release-gate CI'));
+  assert.ok(dispatchStep, 'auto-tag must dispatch release-gate CI after creating the draft');
+  assert.ok(String(dispatchStep.env?.GH_TOKEN).includes('github.token'), 'dispatch must use GITHUB_TOKEN; the App has no actions permission');
+  assert.equal(String(dispatchStep.env?.GH_TOKEN).includes('steps.app.outputs.token'), false);
+  const mint = tagJob.steps.find(s => String(s.uses ?? '').includes('create-github-app-token'));
+  assert.ok(mint, 'auto-tag must mint a contents-only App token for the tag step');
+  assert.equal(mint.with['permission-actions'], undefined);
+  assert.equal(mint.with['permission-contents'], 'write');
   const detect = tagJob.steps.find(s => /Detect version/.test(s.name ?? ''));
   assert.ok(detect.run.includes('ls-remote --exit-code --tags'), 'tag existence check must run before the version-unchanged bail-out');
   assert.ok(detect.run.indexOf('ls-remote --exit-code --tags') < detect.run.indexOf('"$new" = "$old"'),
@@ -414,6 +422,37 @@ test('workflows carry the merged-PR -> tag -> release wiring with no widened per
   assert.deepEqual(rp.jobs['release-please'].permissions, {'contents': 'write', 'pull-requests': 'write'});
   const allRuns = Object.values(rp.jobs).flatMap(j => (j.steps ?? []).map(s => s.run ?? '')).join('\n');
   assert.equal(allRuns.includes('pr merge'), false, 'workflows must not merge the release PR directly');
+});
+
+// The ashlr-release App installation grants only contents and pull-requests.
+// create-github-app-token 422s ("The permissions requested are not granted to
+// this installation") when a mint asks for anything else, which is how #4607
+// broke Auto-tag and the train. Every App mint in every workflow must stay
+// inside the granted set; work that needs another permission (for example
+// actions: write to dispatch CI) uses the job GITHUB_TOKEN instead. Widening
+// this list requires granting the permission on the App installation first.
+test('every ashlr-release App mint requests only permissions the installation grants', () => {
+  const GRANTED = new Set(['permission-contents', 'permission-pull-requests']);
+  const dir = new URL('../workflows/', import.meta.url);
+  const mints = [];
+  for (const file of fs.readdirSync(dir).filter(f => /\.ya?ml$/.test(f)).sort()) {
+    const workflow = parse(fs.readFileSync(new URL(file, dir), 'utf8'));
+    for (const [jobName, job] of Object.entries(workflow?.jobs ?? {})) {
+      for (const step of job.steps ?? []) {
+        if (!String(step.uses ?? '').startsWith('actions/create-github-app-token@')) continue;
+        if (!String(step.with?.['app-id'] ?? '').includes('ASHLR_RELEASE_APP_ID')) continue;
+        const requested = Object.keys(step.with ?? {}).filter(k => k.startsWith('permission-'));
+        mints.push(`${file}:${jobName}`);
+        assert.ok(requested.length > 0, `${file}:${jobName} must scope its App mint; an unscoped mint inherits every installation permission`);
+        for (const key of requested) {
+          assert.ok(GRANTED.has(key), `${file}:${jobName} requests ${key}, which the ashlr-release installation does not grant (token mint would 422)`);
+        }
+      }
+    }
+  }
+  for (const expected of ['auto-tag.yml', 'release-please.yml', 'release-train.yml']) {
+    assert.ok(mints.some(m => m.startsWith(`${expected}:`)), `expected an ashlr-release App mint in ${expected}`);
+  }
 });
 
 test('argument and plan contracts are fail-closed', () => {
