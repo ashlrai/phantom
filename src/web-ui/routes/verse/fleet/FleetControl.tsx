@@ -38,6 +38,8 @@ import { commandChord } from '../shell/command-keys.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { homeRunsQuery } from '../mobile/home-runs-query.js';
 import { dispatchdLine, dispatchdWorking } from './dispatchd-headline.js';
+import { releaseLagLine } from '../../../../core/release/lag-shape.js';
+import { releaseLagQuery } from './release-lag-query.js';
 import { darkSinceLabel } from './dark-since.js';
 import { fleetControlQuery, postFleetControl, refreshFleetControlReads } from './fleet-control-queries.js';
 import { nativeFleetAvailable, runNativeFleetOp, type NativeFleetEvent, type NativeFleetOp } from './native-fleet.js';
@@ -118,6 +120,7 @@ export interface FleetControlProps {
 export function FleetControl({ actions, grantFlow, darkSince = null, setupShownBelow = false }: FleetControlProps) {
   const read = useQuery(fleetControlQuery, { freshMs: 4_000 });
   const runsRead = useQuery(homeRunsQuery, { freshMs: FLEET_CONTROL_POLL_MS });
+  const releaseLag = useQuery(releaseLagQuery, { freshMs: 60_000 }).data?.value ?? null;
   const refetch = useRefetch(fleetControlQuery);
   const refresh = useRefresh(fleetControlQuery);
   // A slow/queued read must finish before the next automatic poll replaces it.
@@ -293,6 +296,7 @@ export function FleetControl({ actions, grantFlow, darkSince = null, setupShownB
       </div>
 
       {dispatchLine ? <p className={styles.muted}>{dispatchLine}</p> : null}
+      {releaseLag ? <p className={styles.muted} data-testid="release-lag-line">{releaseLagLine(releaseLag)}</p> : null}
 
       {lastKnown ? (
         <p className={styles.muted} role="status">
