@@ -1,14 +1,15 @@
 /**
  * Provenance-aware import of directive JSON/JSONL files into the local intent
  * ledger. Extracted from the retained importIntentFiles (PR #4235, 80f1d451)
- * against the current schema and store only. Every input is parsed and merged
- * in memory first; the ledger is written once at the end, so a bad later file
- * leaves the ledger untouched.
+ * against the current schema and store only. Every input file is parsed before
+ * the ledger lock is taken; the merge then runs inside transactIntentLedger
+ * against the freshest ledger, so a bad file or a concurrent writer cannot
+ * silently drop items and a refused import leaves the ledger untouched.
  */
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
-import { readLedger, writeLedger } from './store.js';
+import { transactIntentLedger } from './store.js';
 import {
   DEFAULT_STALE_AFTER_MS,
   INTENT_LEDGER_SCHEMA,
@@ -165,9 +166,37 @@ async function nativeLedgerItems(path: string): Promise<IntentItem[] | null> {
   return parsed.items;
 }
 
+function sameProvenance(left: IntentProvenance, right: IntentProvenance): boolean {
+  return left.source === right.source && left.date === right.date && left.verbatim === right.verbatim;
+}
+
+/**
+ * The same source read twice is one identity (source/date/verbatim): a complete
+ * copy (`partial: false`) supersedes a truncated one regardless of import order.
+ * The item's aggregate `partial` flag is not touched here; absorb keeps it
+ * conservative (OR), so a partial source anywhere still marks the item partial.
+ */
 function addProvenance(item: IntentItem, row: IntentProvenance): void {
-  if (item.provenance.some((p) => p.source === row.source && p.date === row.date && p.verbatim === row.verbatim)) return;
+  const existing = item.provenance.find((p) => sameProvenance(p, row));
+  if (existing) {
+    if (existing.partial && !row.partial) existing.partial = false;
+    return;
+  }
   item.provenance = [...item.provenance, row].slice(-MAX_PROVENANCE);
+}
+
+/** Dedupes one item's own provenance rows by identity before it enters the ledger. */
+function mergedProvenance(rows: IntentProvenance[]): IntentProvenance[] {
+  const merged: IntentProvenance[] = [];
+  for (const row of rows) {
+    const existing = merged.find((p) => sameProvenance(p, row));
+    if (existing) {
+      if (existing.partial && !row.partial) existing.partial = false;
+    } else {
+      merged.push(row);
+    }
+  }
+  return merged.slice(-MAX_PROVENANCE);
 }
 
 /** Never lowers a status; terminal states win, so an import cannot reopen work. */
@@ -209,6 +238,7 @@ function place(ledger: IntentLedger, incoming: IntentItem, at: string): boolean 
   if (matches.length === 0) {
     if (ledger.items.some((item) => item.id === incoming.id)) incoming.id = newId();
     if (ledger.items.length >= MAX_INTENT_ITEMS) throw new IntentError(`The intent ledger holds at most ${MAX_INTENT_ITEMS} items.`);
+    incoming.provenance = mergedProvenance(incoming.provenance);
     ledger.items.push(incoming);
     return false;
   }
@@ -225,26 +255,29 @@ export async function importIntentFiles(paths: string[], opts: { root?: string; 
   if (paths.length === 0) throw new IntentError('Name at least one JSONL or JSON file.');
   const at = opts.now ?? new Date().toISOString();
   if (Number.isNaN(Date.parse(at))) throw new IntentError('Time must be an ISO timestamp.');
-  const ledger = await readLedger(opts.root);
-  let imported = 0;
-  let deduped = 0;
+  // Parse every input before acquiring the ledger lock: file reads and row
+  // validation are side-effect free, and a failure here never touches the
+  // persisted ledger or contends with other writers.
+  const incoming: IntentItem[] = [];
   for (const path of paths) {
     const fileSource = basename(path) || 'import';
     const native = await nativeLedgerItems(path);
     if (native !== null) {
-      for (const item of native) {
-        if (place(ledger, item, at)) deduped += 1;
-        else imported += 1;
-      }
+      incoming.push(...native);
       continue;
     }
     for (const row of await rowsFromFile(path)) {
       const item = itemFromRow(row, fileSource, at);
-      if (!item) continue;
+      if (item) incoming.push(item);
+    }
+  }
+  return transactIntentLedger(opts.root, (ledger) => {
+    let imported = 0;
+    let deduped = 0;
+    for (const item of incoming) {
       if (place(ledger, item, at)) deduped += 1;
       else imported += 1;
     }
-  }
-  await writeLedger(ledger, opts.root);
-  return { imported, deduped, items: ledger.items.length };
+    return { imported, deduped, items: ledger.items.length };
+  });
 }
