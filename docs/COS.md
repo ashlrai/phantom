@@ -75,6 +75,16 @@ Approval binds to the draft digest; changed text cannot reuse an earlier approva
 
 There is no CLI approval command.
 
+To decline a draft instead, pass the digest shown with it:
+
+```sh
+phm fleet cos-decline <id> --digest <64-hex>   # record a decline; nothing is sent
+```
+
+A decline takes the same exclusive claim as a send, so a later approval is
+refused, and a draft that is already sending, sent or uncertain cannot be
+declined. It closes the needs-you item. Exit 1 means the decline was refused.
+
 ## Uncertain delivery
 
 An exclusive claim prevents concurrent or repeated sends. A failed transport
