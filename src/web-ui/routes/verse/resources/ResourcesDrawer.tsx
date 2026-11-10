@@ -59,6 +59,7 @@ import { verseAccountsQuery, verseLocalModelsQuery } from '../usage/usage-querie
 import { setVerseSection, type VerseSectionId } from '../verse-ui-store.js';
 import { CloudCredits } from './CloudCredits.js';
 import { UsagePace } from './UsagePace.js';
+import { ResetsTimeline } from './ResetsTimeline.js';
 import { CreditPools } from './CreditPools.js';
 import { DevinResource } from './DevinResource.js';
 import { JevResource } from './JevResource.js';
@@ -457,6 +458,9 @@ export function ResourcesDrawer({ mode, compact = false, now: fixedNow }: Resour
       </header>
 
       <div className={styles.body}>
+        {!data.loading ? <ResetsTimeline nowMs={now} readings={rows.filter(row => row.kind === 'subscription').map(row => ({
+          label: row.label, windows: row.windows.map(window => ({ ...window, usedPercent: displayById.get(row.seatId)?.usage.current ? window.usedPercent : null })),
+        }))} /> : null}
         <Suspense fallback={<p className={styles.subtle}>Loading allowance controls…</p>}>
           <ResetSpendingControl view={data.budget} nowMs={now} onReviewGrant={() => go('fleet', 'authority-grant')} />
         </Suspense>

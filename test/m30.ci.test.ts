@@ -147,7 +147,7 @@ describe('M30 CI workflow', () => {
     const { jobs } = parse(ciYml) as { jobs: Record<string, Record<string, unknown>> };
     const gate = jobs['merge-gate']!;
     const full = ['ci', 'windows-service-authority'];
-    const keys = ['secret-shape', 'classify', 'quick', 'site', 'docs', ...full, 'release-build'];
+    const keys = ['secret-shape', 'secret-scan', 'classify', 'quick', 'site', 'docs', ...full, 'release-build'];
     expect(gate.name).toBe('Merge Gate');
     expect(gate.needs).toEqual(keys);
     expect(gate.if).toBe('${{ always() }}');
@@ -155,6 +155,10 @@ describe('M30 CI workflow', () => {
     // The secret-shape scan always runs: no if, no paths filter.
     expect(jobs['secret-shape']!.if).toBeUndefined();
     expect(jobs['secret-shape']!.needs).toBeUndefined();
+    // The diff secret scan is the same unconditional security floor.
+    expect(jobs['secret-scan']!.if).toBeUndefined();
+    expect(jobs['secret-scan']!.needs).toBeUndefined();
+    expect(jobs['secret-scan']!.name).toBe('Secret scan (diff)');
     const steps = gate.steps as { env: Record<string, string>; run: string }[];
     expect(steps).toHaveLength(1);
     expect(steps[0]!.env.GATE_NEEDS).toBe('${{ toJSON(needs) }}');
@@ -168,7 +172,7 @@ describe('M30 CI workflow', () => {
         process: { env: { GATE_NEEDS: JSON.stringify(dependencies), EVENT_NAME: event, REF: ref } }, console: { log: () => {} },
       });
     };
-    const ok = { 'secret-shape': 'success', classify: 'success' };
+    const ok = { 'secret-shape': 'success', 'secret-scan': 'success', classify: 'success' };
     for (const event of ['pull_request', 'merge_group']) {
       expect(execute(event, 'full', { ...ok, quick: 'success' })).not.toThrow();
       expect(execute(event, 'site', { ...ok, quick: 'success' })).not.toThrow();
@@ -177,6 +181,8 @@ describe('M30 CI workflow', () => {
       for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
         expect(execute(event, 'full', { ...ok, quick: 'success', 'secret-shape': outcome }), `secret ${outcome}`).toThrow();
         expect(execute(event, 'docs', { ...ok, quick: 'success', 'secret-shape': outcome }), `docs secret ${outcome}`).toThrow();
+        expect(execute(event, 'full', { ...ok, quick: 'success', 'secret-scan': outcome }), `diff scan ${outcome}`).toThrow();
+        expect(execute(event, 'docs', { ...ok, quick: 'success', 'secret-scan': outcome }), `docs diff scan ${outcome}`).toThrow();
         expect(execute(event, 'full', { ...ok, quick: outcome }), `quick ${outcome}`).toThrow();
         expect(execute(event, 'docs', { ...ok, quick: outcome }), `docs quick ${outcome}`).toThrow();
         expect(execute(event, 'full', { ...ok, quick: 'success', classify: outcome })).toThrow();
@@ -192,6 +198,7 @@ describe('M30 CI workflow', () => {
       expect(execute(event, 'full', complete)).not.toThrow();
       expect(execute(event, 'full', { ...complete, quick: 'success' })).toThrow();
       expect(execute(event, 'full', { ...complete, 'secret-shape': 'skipped' })).toThrow();
+      expect(execute(event, 'full', { ...complete, 'secret-scan': 'skipped' })).toThrow();
       for (const name of full) {
         for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
           expect(execute(event, 'full', { ...complete, [name]: outcome }), `${name}: ${outcome}`).toThrow();
@@ -230,6 +237,7 @@ describe('M30 CI workflow', () => {
     for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
       expect(execute('push', 'full', { ...ok, quick: outcome }, undefined, master), `push quick ${outcome}`).toThrow();
       expect(execute('push', 'full', { ...ok, quick: 'success', 'secret-shape': outcome }, undefined, master), `push secret ${outcome}`).toThrow();
+      expect(execute('push', 'full', { ...ok, quick: 'success', 'secret-scan': outcome }, undefined, master), `push diff scan ${outcome}`).toThrow();
     }
   });
 
@@ -245,7 +253,9 @@ describe('M30 CI workflow', () => {
     expect(permissionJobs).toEqual([
       ['release-build', { contents: 'read', actions: 'read' }],
     ]);
-    expect(ciYml).toContain("concurrency:\n  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
+    // Release-gate dispatches share one group per tag so a second train queues
+    // behind the first (#4592); every other run keeps its PR or run_id group.
+    expect(ciYml).toContain("concurrency:\n  group: ${{ github.event_name == 'workflow_dispatch' && inputs.release_gate && format('phantom-release-{0}', github.ref_name) || format('ci-{0}', github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id)) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
     // Master pushes run the seconds-fast gate only so the required Merge Gate
     // exists on the exact commit for auto-tag; full suites stay daily.
     expect(ciYml).toMatch(/^ {2}push:\n {4}branches: \[master\]$/m);
@@ -292,7 +302,7 @@ describe('M30 CI workflow', () => {
     const lanes = ['full', 'site', 'docs'];
     // The fast gate: secret-shape scan, classification, the quick typecheck and
     // the required Merge Gate — Ubuntu runners only.
-    const approvedFast = ['secret-shape', 'classify', 'quick', 'merge-gate'];
+    const approvedFast = ['secret-shape', 'secret-scan', 'classify', 'quick', 'merge-gate'];
     for (const [id, job] of Object.entries(jobs)) {
       const oses = runners(job);
       expect(oses.length, `${id} declares no runner`).toBeGreaterThan(0);
@@ -379,8 +389,10 @@ describe('M30 CI workflow', () => {
     for (const config of ['tsconfig.json', 'src/web-ui/tsconfig.json']) {
       expect(JSON.parse(readFileSync(resolve(repoRoot, config), 'utf8')).compilerOptions.incremental).toBe(true);
     }
-    expect(pkg.scripts.typecheck).toBe('tsc --noEmit && npm run typecheck:web');
-    expect(pkg.scripts['typecheck:web']).toBe('tsc --noEmit -p src/web-ui/tsconfig.json');
+    // The no-emit gate runs the native compiler (#4600; parity is proven by
+    // scripts/tsgo-parity.mjs). Emission stays on tsc in the build script.
+    expect(pkg.scripts.typecheck).toBe('tsgo --noEmit && npm run typecheck:web');
+    expect(pkg.scripts['typecheck:web']).toBe('tsgo --noEmit -p src/web-ui/tsconfig.json');
     const drift = quick.steps.find((step: { name?: string }) => step.name === 'Check authority drift (hermetic)');
     expect(drift).toBeDefined();
     expect(drift.if).toBe("steps.history.outputs.equal != 'true'");
@@ -791,8 +803,9 @@ describe('M30 CI workflow', () => {
       if (matrix?.shard) return matrix.shard.map((shard) => job.name.replace('${{ matrix.shard }}', String(shard)));
       return [job.name];
     });
-    expect(names).toHaveLength(23);
-    expect(new Set(names).size).toBe(23);
+    expect(names).toHaveLength(24);
+    expect(new Set(names).size).toBe(24);
+    expect(names).toContain('Secret scan (diff)');
     expect(names).toContain('Desktop release smoke');
     expect(names).toContain('Merge Gate');
     expect(names.filter((name) => name.startsWith('Mac exhaustive ('))).toHaveLength(5);
@@ -871,7 +884,7 @@ describe('M30 CI workflow', () => {
     // in a no-emit step. Neither a transpile-only build nor a masked failure
     // can stand in for that compiler invocation.
     expect(pkg.scripts?.build?.split(' && ').slice(0, 2)).toEqual(['npm run check:version', 'tsc -p tsconfig.json']);
-    expect(pkg.scripts?.['typecheck:web']).toBe('tsc --noEmit -p src/web-ui/tsconfig.json');
+    expect(pkg.scripts?.['typecheck:web']).toBe('tsgo --noEmit -p src/web-ui/tsconfig.json');
     expect(ciYml).toContain('npm run lint');
     const docs = ciYml.match(/^ {6}- name: Check documentation\n[\s\S]*?(?=^ {6}- name:)/gm) ?? [];
     expect(docs).toHaveLength(1);
