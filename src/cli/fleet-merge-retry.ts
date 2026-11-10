@@ -14,8 +14,10 @@
  * merge requests per apply run. Each successful request appends one
  * `retry_requested` event to the same ledger, so a second run sees the retry
  * as already-requested and does nothing. Dry run is the default; `--apply`
- * performs the requests. A failed request records nothing and may be retried
- * on a later run.
+ * performs the requests. A failed request appends one `retry_failed` event
+ * instead — transient failures retry on a later run without spending a retry,
+ * while MAX_QUEUE_RETRIES distinct failed submissions mark the drop
+ * `request-failed` and stop automatic retries for good.
  */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -34,7 +36,7 @@ import { PHANTOM_PR_HOLDS } from './fleet-merge-recover.js';
 const USAGE = 'Usage: phm fleet merge-retry [--events <file>] [--apply] [--json]\n' +
   'Preview bounded auto-merge retries for transient queue failures recorded in the merge-events ledger. ' +
   'Apply re-arms ordinary head-pinned auto-merge (gh pr merge --auto --match-head-commit); required checks and the merge queue remain enforced. ' +
-  `At most ${MAX_QUEUE_RETRIES} retries per PR ever; the ledger dedupes repeats. Dry run without --apply.`;
+  `At most ${MAX_QUEUE_RETRIES} retries and ${MAX_QUEUE_RETRIES} distinct failed submissions per PR ever; the ledger dedupes repeats. Dry run without --apply.`;
 const SCHEMA = 'fleet.merge-retry.v1';
 /** At most this many merge requests per apply run; extras report capped. */
 export const MAX_REQUESTS_PER_RUN = 3;
@@ -58,11 +60,12 @@ const validLivePr = (value: unknown, pr: number): value is LivePr =>
 
 export interface MergeRetryRow {
   repo: string; pr: number; action: string;
-  /** For needs-person rows: unattributed, already-requested or too-many-retries. */
+  /** For needs-person rows: unattributed, already-requested, too-many-retries or request-failed. */
   reason?: string;
   disabled_at?: string;
   waiting_s?: number;
   retries_left?: number;
+  requests_failed?: number;
   head_sha?: string | null;
 }
 
@@ -75,7 +78,7 @@ export interface MergeRetryReport {
   rows: MergeRetryRow[];
 }
 
-type RetryRecorder = (event: { repo: string; pr: number; type: 'retry_requested'; at: string; head_sha?: string }) => Promise<void>;
+type RetryRecorder = (event: { repo: string; pr: number; type: 'retry_requested' | 'retry_failed'; at: string; head_sha?: string }) => Promise<void>;
 
 export interface MergeRetryDeps {
   gh?: CloudGh;
@@ -92,9 +95,10 @@ export async function cmdFleetMergeRetry(args: string[], deps: MergeRetryDeps = 
       USAGE,
       'Candidates come from phm fleet merge-latency queue_retries: the dropped auto-merge needs a recorded queue blocker and retries left.',
       'A retry requests plain GitHub auto-merge on the live head; it merges only when required checks and reviews pass on their own.',
-      'Default ledger: ~/.ashlr-runs/metrics/merge-events.jsonl. Each apply appends one retry_requested event per requested PR.',
-      `Bounds: ${MAX_QUEUE_RETRIES} retries per PR total, ${MAX_REQUESTS_PER_RUN} requests per run. Held PRs are never retried.`,
+      'Default ledger: ~/.ashlr-runs/metrics/merge-events.jsonl. Each apply appends one retry_requested event per requested PR, or one retry_failed event per failed submission.',
+      `Bounds: ${MAX_QUEUE_RETRIES} retries and ${MAX_QUEUE_RETRIES} distinct failed submissions per PR total, ${MAX_REQUESTS_PER_RUN} requests per run. Held PRs are never retried.`,
       'Actions: request-auto-merge (dry run), auto-merge-requested, already-armed, already-requested, conflict, draft, merged, closed, not-ready, held, capped, failed, needs-person.',
+      'Needs-person reasons: unattributed, already-requested, too-many-retries, request-failed.',
       'Exit: 0 ok, 1 unreadable ledger or a failed request, 2 bad arguments.',
     ].join('\n'));
     return 0;
@@ -122,7 +126,8 @@ export async function cmdFleetMergeRetry(args: string[], deps: MergeRetryDeps = 
     const retries = latency.queue_retries!;
     for (const candidate of retries.retryable) {
       const base = { repo: candidate.repo, pr: candidate.pr, disabled_at: candidate.disabled_at,
-        waiting_s: candidate.waiting_s, retries_left: candidate.retries_left, head_sha: candidate.head_sha };
+        waiting_s: candidate.waiting_s, retries_left: candidate.retries_left,
+        requests_failed: candidate.requests_failed, head_sha: candidate.head_sha };
       if (!apply) { rows.push({ ...base, action: 'request-auto-merge' }); continue; }
       const action = attempted >= MAX_REQUESTS_PER_RUN
         ? 'capped'
@@ -132,7 +137,7 @@ export async function cmdFleetMergeRetry(args: string[], deps: MergeRetryDeps = 
       rows.push({ ...base, action });
     }
     for (const person of retries.needs_person) {
-      rows.push({ repo: person.repo, pr: person.pr, action: 'needs-person', reason: person.reason });
+      rows.push({ repo: person.repo, pr: person.pr, action: 'needs-person', reason: person.reason, requests_failed: person.requests_failed });
     }
   }
   const report: MergeRetryReport = { schema: SCHEMA, dryRun: !apply, ok: latency.known && !failed,
@@ -161,10 +166,19 @@ async function retryOne(candidate: RetryableQueueFailure, gh: CloudGh, record: R
   if (current.isDraft) return 'draft';
   if (current.mergeStateStatus === 'DIRTY') return 'conflict';
   if (!READY_STATES.has(current.mergeStateStatus)) return 'not-ready';
+  // A failed submission is recorded so a permanently failing PR stops being
+  // retried after the bound; a failed state read above records nothing — it
+  // was never a submission attempt and retries for free on a later run.
+  const submissionFailed = async (): Promise<string> => {
+    try {
+      await record({ repo, pr, type: 'retry_failed', at: new Date(now).toISOString(), head_sha: current.headRefOid });
+    } catch { /* losing the failure record only lets the next run try once more */ }
+    return 'failed';
+  };
   try {
     const result = await gh(['pr', 'merge', String(pr), '--repo', repo, '--auto', '--match-head-commit', current.headRefOid]);
-    if (!result.ok) return 'failed';
-  } catch { return 'failed'; }
+    if (!result.ok) return submissionFailed();
+  } catch { return submissionFailed(); }
   try {
     await record({ repo, pr, type: 'retry_requested', at: new Date(now).toISOString(), head_sha: current.headRefOid });
   } catch { /* the request landed; the next run only loses the dedupe hint */ }

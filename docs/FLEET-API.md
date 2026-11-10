@@ -188,7 +188,9 @@ in the enable-to-disable episode and retries left; `unattributed` drops wait
 for a person. Dry-run prints `request-auto-merge`; `--apply` re-arms ordinary
 head-pinned auto-merge (`gh pr merge --auto --match-head-commit`), appends one
 `retry_requested` event per PR, and stops after three requests per run and
-three retries per PR ever — replayed events count once. Required checks,
+three retries per PR ever — replayed events count once. A failed submission
+appends `retry_failed` instead; three distinct failed submissions make the
+drop `request-failed` and stop automatic retries. Required checks,
 reviews and the merge queue stay in force.
 
 Acceptance: keep the interface as simple and intuitive as possible, with fewer
