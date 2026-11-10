@@ -593,7 +593,7 @@ describe('Codex credits are independent of the quota battery', () => {
   it('never publishes stale or signed-out credits as currently available', () => {
     for (const patch of [{ signedOut: true }, { lastReading: true }]) {
       const result = barRows([row({ engine: 'codex', plan: 'pro', creditBalance: '12', credits: '12 credits available', ...patch })], { healthRead: true, now: NOW })[0]!;
-      expect(result.creditLabel).toBe('Credits unconfirmed');
+      expect(result.creditLabel).toBe('Credits: last read 1 min ago');
       expect(result.summary).not.toContain('estimated credit value');
       expect(result.detail.join(' ')).not.toContain('Estimated credit value');
     }
@@ -612,7 +612,7 @@ describe('Codex credits are independent of the quota battery', () => {
       row({ seatId: 'codex-b', engine: 'codex', windows: [win({ usedPercent: 0 })], credits: null, creditState: 'unknown' }),
     ], { healthRead: true, now: NOW });
     expect(projected[0]).toMatchObject({ value: 'no usage', leftPercent: null, level: 'unknown', creditLabel: 'Credits ≈$0.48' });
-    expect(projected[1]).toMatchObject({ value: '0% used', leftPercent: 100, creditLabel: 'Credits unconfirmed' });
+    expect(projected[1]).toMatchObject({ value: '0% used', leftPercent: 100, creditLabel: 'Credits: not reported by this plan' });
     expect(projected[1]!.display!.credit.current).toBe(false);
     expect(projected[1]!.display!.usage.current).toBe(true);
     expect(projected[1]!.exactCreditBalance).toBeUndefined();
@@ -672,7 +672,7 @@ describe('Codex credits are independent of the quota battery', () => {
         observedAt: new Date(NOW - 120_000).toISOString(), expiresAt: new Date(NOW - 60_000).toISOString(),
         windows: [{ id: 'primary', usedPercent: 78, resetsAt: null }] },
     })], { healthRead: true, now: NOW })[0]!;
-    expect(stale).toMatchObject({ value: '78% used · last', creditLabel: 'Credits unconfirmed' });
+    expect(stale).toMatchObject({ value: '78% used · last', creditLabel: 'Credits: last read 1 min ago' });
     expect(stale.detail).not.toContain('12 credits available');
   });
 });
