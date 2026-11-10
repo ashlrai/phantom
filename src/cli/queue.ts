@@ -4,6 +4,7 @@ import { readQueueVisits } from '../core/queue/journal.js';
 import { estimateQueueStats } from '../core/queue/stats.js';
 
 const HELP = `Usage: phm queue stats [--json] [--window <seconds>]
+       phm queue yield [--since 24h] [--json]
        phm queue report --events <file> [--json]
        phm queue dedupe [--file <router-queue.md>] [--apply] [--json]
        phm queue add|claim|done|block|replay|list|import|export [options]
@@ -86,6 +87,7 @@ export async function cmdQueue(args: string[]): Promise<number> {
     if (valueOptions.has(arg)) { i++; continue; }
     if (!arg.startsWith('-')) { command = arg; break; }
   }
+  if (command === 'yield') return (await import('./queue-yield.js')).cmdQueueYield(args.slice(args.indexOf('yield') + 1));
   if (command === 'dedupe') return (await import('./queue-dedupe.js')).cmdQueueDedupe(args.slice(args.indexOf('dedupe') + 1));
   if (['add', 'claim', 'done', 'block', 'replay', 'list', 'import', 'export'].includes(command ?? '') ||
       args.some(arg => arg === '--dir' || arg.startsWith('--dir='))) {

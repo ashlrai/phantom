@@ -26,8 +26,9 @@ it('reads deterministic inventory and reports heartbeat evidence in JSON and tex
     { nodeId: 'fresh', session: 1, heartbeatAt: now - 30_000, expiresAt: now + 100_000, caps: ['codex'], owners: ['team'] },
     { nodeId: 'stale', session: 2, heartbeatAt: now - 120_000, expiresAt: now + 100_000 },
     { nodeId: 'unknown', session: 3, heartbeatAt: 0, expiresAt: now + 100_000 },
+    { nodeId: 'offline', session: 4, heartbeatAt: now - 300_000, expiresAt: now + 100_000 },
   ];
-  writeFileSync(file, JSON.stringify({ version: 'drive.nodes.v1', sequence: 3, observedAt: now, nodes, leader: null, jobs: [] }));
+  writeFileSync(file, JSON.stringify({ version: 'drive.nodes.v1', sequence: 4, observedAt: now, nodes, leader: null, jobs: [] }));
   const args = ['--json', '--now', new Date(now).toISOString()];
   const first = run(args);
   expect(first.code).toBe(0);
@@ -35,7 +36,7 @@ it('reads deterministic inventory and reports heartbeat evidence in JSON and tex
   const result = JSON.parse(first.output);
   expect(result.sourcePath).toBe(file);
   expect(result.observedAt).toBe(new Date(now).toISOString());
-  expect(result.nodes.map((n: { id: string; status: string }) => [n.id, n.status])).toEqual([['fresh', 'ready'], ['stale', 'stale'], ['unknown', 'unknown']]);
+  expect(result.nodes.map((n: { id: string; status: string }) => [n.id, n.status])).toEqual([['fresh', 'ready'], ['offline', 'down'], ['stale', 'stale'], ['unknown', 'unknown']]);
   expect(run(['--now', new Date(now).toISOString()]).output).toContain('stale  worker  stale  heartbeat 2m');
   expect(readFileSync(file, 'utf8')).toContain('fresh');
 });
