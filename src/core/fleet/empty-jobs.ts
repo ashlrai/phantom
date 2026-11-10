@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { emptyJobs } from './empty-job-ledger.js';
 import { classifyEmptyLog, FLEET_EMPTY_WHY_REASONS, type FleetEmptyWhyReason } from './empty-why-classify.js';
 
-export const EMPTY_CLASSES = ['duplicate', 'already-done', 'blocked-by-env', 'missing-input', 'scope-too-cautious', 'other'] as const;
+export const EMPTY_CLASSES = ['duplicate', 'already-done', 'too-broad', 'tests-timeout', 'blocked-by-env', 'missing-input', 'scope-too-cautious', 'other'] as const;
 export type EmptyClass = typeof EMPTY_CLASSES[number];
 export interface EmptyJobResult { id: string; lane: string; class: EmptyClass; reason: string }
 export interface EmptyCause { class: EmptyClass; label: string; count: number; exampleJob: string }
@@ -18,12 +18,14 @@ export interface EmptyJobsReport { schema: 'jobs.empty.v1'; hours: number; total
 const REASON_LOG_LIMIT = 50;
 const REASON_RECENT_LIMIT = 20;
 
-const labels: Record<EmptyClass, string> = { duplicate: 'Duplicate of an earlier job', 'already-done': 'Work already done', 'blocked-by-env': 'Tool or environment problem', 'missing-input': 'Missing input', 'scope-too-cautious': 'Scope or approval', other: 'Unknown reason' };
+const labels: Record<EmptyClass, string> = { duplicate: 'Duplicate of an earlier job', 'already-done': 'Work already done', 'too-broad': 'Scope too broad', 'tests-timeout': 'Tests slow or timed out', 'blocked-by-env': 'Tool or environment problem', 'missing-input': 'Missing input', 'scope-too-cautious': 'Scope or approval', other: 'Unknown reason' };
 
 // Return fixed descriptions: notes and logs may contain private information.
 const rules: ReadonlyArray<readonly [EmptyClass, string, RegExp]> = [
   ['duplicate', 'The job duplicated an earlier job.', /\bduplicate(?:d)? (?:of )?(?:an? |the )?(?:earlier |previous |existing )?(?:job|task|request)\b|\b(?:job|task|request) (?:is |was )?(?:a )?duplicate\b/i],
-  ['already-done', 'Work was already completed or covered.', /already (?:done|implemented|completed|fixed|merged|covered|shipped|exists)|(?:existing|open) (?:pr|pull request).*cover/i],
+  ['already-done', 'Work was already completed or covered.', /no change(?:s)? (?:is |are |was |were )?needed|already (?:done|implemented|completed|fixed|merged|covered|shipped|exists)|(?:existing|open) (?:pr|pull request).*cover/i],
+  ['too-broad', 'The task was too broad.', /\b(?:too broad|scope too (?:large|broad)|task is too large)\b/i],
+  ['tests-timeout', 'Tests were slow or timed out.', /(?:tests?|test suite).{0,80}(?:slow|timed?\s*out|timeout)|(?:timed?\s*out|timeout).{0,80}(?:tests?|test suite)/i],
   ['blocked-by-env', 'A tool or environment problem blocked the work.', /\bEPERM\b|\bEACCES\b|permission denied|command not found|(?:tool|dependency|binary|executable).{0,30}(?:missing|unavailable|not found)|timed?\s*out|timeout|network (?:unavailable|error)|rate limit/i],
   ['missing-input', 'Required input was unavailable.', /missing (?:input|context|information|file|credentials?|data)|(?:need|needs|requires?|awaiting|waiting for) (?:user |owner |human )?(?:input|clarification|information|credentials?|access|approval)|(?:no|without) (?:access|input|context)/i],
   ['scope-too-cautious', 'The job stopped over scope or approval.', /(?:out(?:side)? of|beyond) (?:the )?scope|scope (?:extension|is unclear|was unclear)|(?:approval|permission|confirmation) (?:is )?(?:required|needed)|(?:cannot|can't|unable to) (?:proceed|continue) without/i],
@@ -63,7 +65,7 @@ export async function readEmptyJobs(hours = 24, root = process.env.ASHLR_RUNS_DI
       return { ...job, ...classifyEmpty(notes, log) };
     })));
   }
-  const counts: Record<EmptyClass, number> = { duplicate: 0, 'already-done': 0, 'blocked-by-env': 0, 'missing-input': 0, 'scope-too-cautious': 0, other: 0 };
+  const counts: Record<EmptyClass, number> = { duplicate: 0, 'already-done': 0, 'too-broad': 0, 'tests-timeout': 0, 'blocked-by-env': 0, 'missing-input': 0, 'scope-too-cautious': 0, other: 0 };
   for (const job of jobs) counts[job.class]++;
   const topCauses = EMPTY_CLASSES.filter(kind => counts[kind] > 0)
     .map(kind => ({ class: kind, label: labels[kind], count: counts[kind], exampleJob: jobs.find(job => job.class === kind)!.id }))

@@ -45,6 +45,7 @@ import { countNew, firstOlderIndex, useFeedSeen } from './feed-seen-store.js';
 import styles from './feed.module.css';
 
 const unifiedInboxQuery: QueryDef<unknown> = { key: 'verse-fleet-comms-unified-inbox', fetch: signal => apiGet(UNIFIED_INBOX_PATH, signal) };
+const inboxPlansQuery: QueryDef<unknown> = { key: 'verse-feed-gmail-archive-plan', fetch: signal => apiGet('/api/verse/comms/gmail-triage/archive-plan', signal) };
 const sharedFeedQuery: QueryDef<FeedReport> = { key: 'shared-feed', fetch: signal => apiGet<FeedReport>('/api/feed', signal) };
 
 const FILTERS: readonly { id: FeedFilter; label: string }[] = [
@@ -76,6 +77,9 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
   // An older hub has no bus route: the query's 404 just means no bus rows, never an error note.
   const bus = useQuery(agentBusPageQuery(0, 50), { enabled: visible, freshMs: 15_000 });
   const teammate = useQuery(unifiedInboxQuery, { enabled: visible, freshMs: 15_000 });
+  const inboxPlans = useQuery(inboxPlansQuery, { enabled: visible, freshMs: 300_000 });
+  const refetchInboxPlans = useRefetch(inboxPlansQuery);
+  usePollWhileVisible(refetchInboxPlans, 300_000, { enabled: visible });
   const commsRead = useQuery(commsStatusQuery, { enabled: visible, freshMs: 60_000 });
   const nativeUpdates = useDesktopUpdates();
   const activity = useActivity();
@@ -138,7 +142,8 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
     bus: bus.data,
     teammate: teammate?.error ? null : inboxView,
     comms,
-  }), [shared.data, leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data, inboxView, teammate?.error, comms]);
+    inboxPlans: inboxPlans.error ? undefined : inboxPlans.data,
+  }), [shared.data, leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data, inboxView, teammate?.error, comms, inboxPlans.data, inboxPlans.error]);
   const filtered = filterFeed(feed, filter);
   const shown = filtered.filter(item => !isDismissed(item, dismissedMap));
   const dismissed = filtered.filter(item => isDismissed(item, dismissedMap));
