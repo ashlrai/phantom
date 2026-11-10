@@ -120,4 +120,34 @@ describe('fleet health-age', () => {
     expect(JSON.parse(vi.mocked(console.log).mock.lastCall![0])).toMatchObject({ service: { lastExitCode: -9, diagnostic: expect.stringContaining('error') } });
     expect(() => readFileSync(join(runsDir, 'queue', 'ready.tsv'))).toThrow();
   });
+  it('--diagnose lists one repair per problem across status, service and log', async () => {
+    mkdirSync(join(runsDir, 'guardian'));
+    writeFileSync(join(runsDir, 'supervisor/status-main-guardian.md'), '# Main guardian status (2026-11-03 10:00:00)\n');
+    writeFileSync(join(runsDir, 'guardian/guardian.log'), '2026-11-03 11:00:00 ERROR secret-detail\n');
+    const service = vi.fn().mockResolvedValue({ state: 'not-loaded', lastExitCode: null, diagnostic: 'x' });
+    expect(await cmdFleetHealthAge(['--diagnose', '--json'], { runsDir, now, service })).toBe(1);
+    const output = vi.mocked(console.log).mock.lastCall![0] as string;
+    const { diagnosis } = JSON.parse(output);
+    expect(diagnosis.healthy).toBe(false);
+    expect(diagnosis.problems.map((p: { kind: string }) => p.kind)).toEqual(['status', 'service', 'log']);
+    expect(diagnosis.problems.every((p: { repair: string }) => p.repair.length > 0)).toBe(true);
+    expect(output).not.toContain('secret-detail');
+    expect(await cmdFleetHealthAge(['--diagnose'], { runsDir, now, service })).toBe(1);
+    expect(vi.mocked(console.log).mock.calls.flat().join('\n')).toContain('Repairs:');
+  });
+  it('--diagnose reports healthy with no problems', async () => {
+    mkdirSync(join(runsDir, 'guardian'));
+    writeFileSync(join(runsDir, 'supervisor/status-main-guardian.md'), '# Main guardian status (2026-11-03 11:59:00)\n');
+    writeFileSync(join(runsDir, 'guardian/guardian.log'), '2026-11-03 11:59:00 normal\n');
+    const service = vi.fn().mockResolvedValue({ state: 'loaded', lastExitCode: 0, diagnostic: 'OK' });
+    expect(await cmdFleetHealthAge(['--diagnose', '--json'], { runsDir, now, service })).toBe(0);
+    expect(JSON.parse(vi.mocked(console.log).mock.lastCall![0]).diagnosis).toEqual({ healthy: true, problems: [] });
+  });
+  it('--diagnose flags a nonzero last exit and a missing log', async () => {
+    writeFileSync(join(runsDir, 'supervisor/status-main-guardian.md'), '# Main guardian status (2026-11-03 11:59:00)\n');
+    const service = vi.fn().mockResolvedValue({ state: 'loaded', lastExitCode: 78, diagnostic: 'x' });
+    expect(await cmdFleetHealthAge(['--diagnose', '--json'], { runsDir, now, service })).toBe(1);
+    const { problems } = JSON.parse(vi.mocked(console.log).mock.lastCall![0]).diagnosis;
+    expect(problems.map((p: { problem: string }) => p.problem)).toEqual(['Last exit code was 78.', 'Guardian log is missing.']);
+  });
 });
