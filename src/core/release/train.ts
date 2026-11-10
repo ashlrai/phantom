@@ -89,6 +89,7 @@ export interface TrainState {
   tag: string | null;
   sha: string | null;
   next: string | null;
+  advance?: { action: 'advance-from-master'; version: string; sha: string; reason: string };
   superseded: string[];
   skippedTags?: { tag: string; reason: string }[];
   website: typeof WEBSITE_HOOK;
@@ -271,7 +272,7 @@ function emptyStages(mergeAt: string | null): Record<string, StageTiming> {
 export function assertReleaseWrite(write: ReleaseWrite): void {
   if (write.method !== 'PATCH' && write.method !== 'POST') throw new Error('refusing release write');
   const release = /^repos\/ashlrai\/phantom\/releases\/([1-9]\d*)$/;
-  const dispatch = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|publish-canonical-npm|ci)\.yml\/dispatches$/;
+  const dispatch = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|publish-canonical-npm|ci|release-please)\.yml\/dispatches$/;
   if (write.path.includes('/merge') || JSON.stringify(write.body).includes('admin') || JSON.stringify(write.body).includes('bypass')) {
     throw new Error('refusing release write');
   }
@@ -288,6 +289,7 @@ export function assertReleaseWrite(write: ReleaseWrite): void {
   if (dispatch.test(write.path)) {
     const body = write.body as { ref?: string; inputs?: Record<string, string | boolean> };
     if ((body.ref !== 'master' && !/^v\d+\.\d+\.\d+$/.test(body.ref ?? '')) || !body.inputs) throw new Error('refusing workflow dispatch');
+    if (write.path.endsWith('/release-please.yml/dispatches') && (body.ref !== 'master' || Object.keys(body.inputs).length !== 0)) throw new Error('refusing release PR dispatch');
     return;
   }
   throw new Error('refusing release write');
@@ -357,6 +359,19 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   if (cadenceDue && pr && checks && pr.state === 'OPEN' && !pr.queued && pr.version === expected && pr.headRef.startsWith('release-please--')
     && SHA.test(pr.headSha) && pr.mergeable === 'MERGEABLE' && checks.failing === 0 && checks.pending === 0) {
     writes.push(enqueueReleasePullRequest(pr.nodeId));
+  }
+
+  // A stale tag cannot use the master-only release build. Ask the existing
+  // release-please workflow for a successor; it rechecks green master/cadence
+  // and owns version carriers. Never retag or build master as the old version.
+  const advance = !input.build && !input.buildPending && input.masterSha !== headTag.sha
+    && input.head.ancestry === 'ancestor' && cadenceDue
+    ? { action: 'advance-from-master' as const, version: expected, sha: input.masterSha,
+      reason: `candidate-not-master-head -> plan ${expected}` }
+    : undefined;
+  if (advance && (!pr || pr.version !== expected)) {
+    writes.push({ method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/release-please.yml/dispatches`,
+      body: { ref: 'master', inputs: {} } });
   }
 
   const row = input.releases.find((release) => release.tag_name === headTag.name) ?? null;
@@ -429,7 +444,8 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   };
   const order = ['build', 'attest', 'sign', 'notarize', 'npm', 'feed', 'docs', 'finalize'];
   if (steps.supersede?.status === 'pending') order.unshift('supersede');
-  const next = order.find((name) => steps[name]?.status === 'pending') ?? null;
+  if (advance) steps['release-pr'] = { status: 'pending', reason: pr?.version === expected ? 'awaiting-release-pr-merge-queue' : 'release-please-workflow' };
+  const next = advance ? 'release-pr' : order.find((name) => steps[name]?.status === 'pending') ?? null;
   const stages = emptyStages(mergeAt);
   stages.tag = timing(row?.created_at ?? null, mergeAt);
   stages.build = timing(input.build?.completedAt ?? null, mergeAt);
@@ -445,7 +461,8 @@ export function buildTrain(input: TrainObservation): TrainPlan {
     exitCode: 0,
     writes,
     state: {
-      schema: TRAIN_SCHEMA, stopped: false, reason: kill.reason, version, tag: headTag.name, sha: headTag.sha,
+      schema: TRAIN_SCHEMA, stopped: false, reason: advance?.reason ?? kill.reason, version, tag: headTag.name, sha: headTag.sha,
+      ...(advance ? { advance } : {}),
       next, superseded, skippedTags: input.skippedTags ?? [], website: WEBSITE_HOOK, steps, stages,
     },
   };
@@ -455,7 +472,7 @@ export function markWritesApplied(state: TrainState): TrainState {
   const steps: TrainState['steps'] = { ...state.steps, supersede: { status: 'complete' } };
   const order = ['build', 'attest', 'sign', 'notarize', 'npm', 'feed', 'docs', 'finalize'];
   const next = order.find((name) => steps[name]?.status === 'pending') ?? null;
-  return { ...state, steps, next };
+  return { ...state, steps, next: state.advance ? 'release-pr' : next };
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -777,6 +794,11 @@ async function githubRead(path: string): Promise<unknown> {
   return textBody ? JSON.parse(textBody) as unknown : null;
 }
 
+/** A completed Release PR workflow must not recursively dispatch itself. */
+export function allowReleasePrDispatch(path: string, enabled = process.env.RELEASE_TRAIN_DISPATCH_RELEASE_PR): boolean {
+  return enabled !== 'false' || !path.endsWith('/release-please.yml/dispatches');
+}
+
 function isDirectRun(): boolean {
   const entry = process.argv[1];
   if (!entry) return false;
@@ -813,6 +835,7 @@ async function main(): Promise<number> {
     const allowBuild = process.env.RELEASE_TRAIN_DISPATCH_BUILD !== 'false';
     for (const write of plan.writes) {
       if (!allowBuild && write.path.endsWith('/ci.yml/dispatches')) continue;
+      if (!allowReleasePrDispatch(write.path)) continue;
       assertReleaseWrite(write);
       gh(write.method, write.path, write.body);
     }

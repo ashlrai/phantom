@@ -27,7 +27,7 @@ import { channelName } from '../leader-thread/owner-thread-lines.js';
 import type { OwnerThreadLine } from '../leader-thread/owner-thread-queries.js';
 import { fleetOutbox } from '../leader-thread/thread-merge-model.js';
 
-export type FeedKind = 'leader' | 'alert' | 'merge' | 'fleet' | 'owner' | 'update' | 'bus' | 'teammate';
+export type FeedKind = 'leader' | 'alert' | 'merge' | 'fleet' | 'owner' | 'update' | 'bus' | 'teammate' | 'comms';
 
 export interface FeedItem {
   id: string;
@@ -51,10 +51,10 @@ export interface FeedSources {
   update?: readonly AppNotification[] | null;
   /** The agent bus page; only P0 and P1 messages reach the stream. */
   bus?: AgentBusPage | null;
-  teammate?: UnifiedInboxView | null;
+  teammate?: (UnifiedInboxView & { generatedAt?: string }) | null;
 }
 
-export type FeedFilter = 'all' | 'leader' | 'alert' | 'merge' | 'owner' | 'update' | 'bus' | 'teammate';
+export type FeedFilter = 'all' | 'leader' | 'alert' | 'merge' | 'owner' | 'update' | 'bus' | 'teammate' | 'comms';
 
 export const FEED_LIMIT = 100;
 const TITLE_MAX = 120;
@@ -154,6 +154,19 @@ export function teammateAdapter(view: UnifiedInboxView | null | undefined): Feed
   });
 }
 
+/** Waiting Gmail and LinkedIn entries share the unified inbox read. */
+export function commsWaitingAdapter(view: (UnifiedInboxView & { generatedAt?: string }) | null | undefined): FeedItem[] {
+  if (!view || view.unavailable) return [];
+  return view.items.flatMap((entry): FeedItem[] => {
+    if (entry.kind !== 'gmail-over-target' && entry.kind !== 'linkedin-message') return [];
+    const gmail = entry.kind === 'gmail-over-target';
+    const at = entry.since ?? (gmail ? view.generatedAt : undefined);
+    if (!at || !Number.isFinite(Date.parse(at))) return [];
+    return [{ id: `${gmail ? 'gmail' : 'linkedin'}:${entry.id}`, at, kind: gmail ? 'alert' : 'comms',
+      ...headline(entry.title), label: gmail ? 'Gmail over target' : 'LinkedIn waiting' }];
+  });
+}
+
 /** Every source merged: deduped by id (newest copy wins), unparsable times dropped, newest first, at most FEED_LIMIT. */
 export function buildFeed(sources: FeedSources, limit = FEED_LIMIT): FeedItem[] {
   const all: FeedItem[] = [
@@ -167,6 +180,7 @@ export function buildFeed(sources: FeedSources, limit = FEED_LIMIT): FeedItem[] 
     ...updateAdapter(sources.update),
     ...busAdapter(sources.bus),
     ...teammateAdapter(sources.teammate),
+    ...commsWaitingAdapter(sources.teammate),
   ];
   const timed = all.flatMap(item => {
     const ms = Date.parse(item.at);
@@ -184,5 +198,5 @@ export function buildFeed(sources: FeedSources, limit = FEED_LIMIT): FeedItem[] 
 }
 
 export function filterFeed(items: readonly FeedItem[], filter: FeedFilter): FeedItem[] {
-  return filter === 'all' ? [...items] : items.filter(item => item.kind === filter);
+  return filter === 'all' ? [...items] : items.filter(item => item.kind === filter || (filter === 'comms' && item.kind === 'alert' && item.id.startsWith('gmail:')));
 }

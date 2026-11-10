@@ -44,7 +44,7 @@ it('records a failing needs-triage step and still runs landed-sweep', async () =
 });
 
 const items = [
-  { id: 'N1', text: 'Pick the fixture colour', status: 'open' },
+  { id: 'N1', text: 'unpark RQ-FIXTURE-1', status: 'open' },
   { id: 'N2', text: 'Paste the API key for the fake service', status: 'open' },
 ];
 

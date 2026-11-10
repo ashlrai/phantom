@@ -987,6 +987,32 @@ class QueueQualityTests(unittest.TestCase):
                 self.assertTrue({'RQ-TEST1A123456Q8', 'RQ-TEST3A123456Q8', 'RQ-SUBSTANTIVE', 'RQ-GUARDIAN1A123456Q8'} <= set(ids), r.stdout)
                 if not expected: self.assertEqual(skips(r.stdout).get('duplicate-single-case-test-file'), 1)
 
+    def test_recent_empty_streak_is_scoped_and_recovers(self):
+        from datetime import datetime, timezone, timedelta
+        task = 'Add one test case in test/example.test.ts'
+        rows = [line(f'RQ-TEST{n}A123456Q8', pool='codex-personal', tier='work', repo='phantom', text=task) for n in range(1, 4)]
+        rows.append(line('RQ-DISTINCT', pool='codex-personal', tier='work', repo='phantom', text='Fix behavior in test/example.test.ts'))
+        tmp = build('\n'.join(rows) + '\n', slots={**{l: {'held': True} for l in LANES}, 'codex-personal': {'target': 6}})
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        metrics = home / '.ashlr-runs/metrics/jobs.jsonl'
+        metrics.parent.mkdir(parents=True, exist_ok=True)
+        now = datetime.now(timezone.utc)
+        def evidence(job, minutes, **fields):
+            return json.dumps({'job': job, 'ts': (now - timedelta(minutes=minutes)).isoformat(), **fields})
+        empty = [evidence('RQ-TEST1A123456Q8', 20, empty=True), evidence('RQ-TEST2A123456Q8', 10, outcome='empty')]
+        metrics.write_text('\n'.join(empty) + '\n')
+        result = restock(home, '--dry-run', '--per-lane', '10')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(skips(result.stdout).get('recent-empty-streak'), 3)
+        self.assertIn('RQ-DISTINCT', dry_ids(result.stdout))
+        metrics.write_text('\n'.join(empty + [evidence('RQ-TEST2A123456Q8', 1, empty=False)]) + '\n')
+        result = restock(home, '--dry-run', '--per-lane', '10')
+        self.assertIn('RQ-TEST1A123456Q8', dry_ids(result.stdout))
+        metrics.write_text('\n'.join([evidence('RQ-TEST1A123456Q8', 1500, empty=True), empty[1]]) + '\n')
+        result = restock(home, '--dry-run', '--per-lane', '10')
+        self.assertIn('RQ-TEST1A123456Q8', dry_ids(result.stdout))
+
     def test_existing_queued_group_survives_next_pass(self):
         rows = [line('RQ-TEST1A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add one test case in test/example.test.ts'),
                 line('RQ-TEST2A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add one test case in test/example.test.ts')]

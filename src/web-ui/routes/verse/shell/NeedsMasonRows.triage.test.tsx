@@ -14,8 +14,8 @@ vi.mock('../../../data/client.js', async importOriginal => ({
 const RESOLVE = '/api/verse/agent-bus/needs-mason/resolve';
 const items = [
   { id: 'fake-hard', text: 'Approve the fake $40 plan change' },
-  { id: 'fake-a', text: 'Pick a fake color' },
-  { id: 'fake-b', text: 'Pick a fake shape' },
+  { id: 'fake-a', text: 'unpark RQ-FAKE-1' },
+  { id: 'fake-b', text: 'unpark RQ-FAKE-2' },
 ];
 
 beforeEach(() => {
@@ -44,6 +44,6 @@ it('batch-resolves only the lines outside the hard limits', async () => {
     [RESOLVE, { itemId: 'fake-b', reply: AUTO_RESOLVE_REPLY }],
   ]);
   expect(screen.getByText(items[0].text)).toBeTruthy();
-  expect(screen.queryByText('Pick a fake color')).toBeNull();
-  expect(screen.queryByText('Pick a fake shape')).toBeNull();
+  expect(screen.queryByText('unpark RQ-FAKE-1')).toBeNull();
+  expect(screen.queryByText('unpark RQ-FAKE-2')).toBeNull();
 });
