@@ -40,6 +40,8 @@ import { updateStatusQuery } from '../sections/update-status-queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { useActivity } from '../shell/useActivity.js';
 import { buildFeed, feedPaneLabel, filterFeed, type FeedFilter, type FeedKind } from './feed-model.js';
+import { buildAwayDigest } from './away-digest.js';
+import { AwayDigestCard } from './AwayDigestCard.js';
 import { FeedAskButton } from './FeedAskButton.js';
 import { releaseFeedItems } from './release-feed-items.js';
 import { isDismissed, useFeedDismissals } from './feed-dismiss-store.js';
@@ -160,6 +162,10 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
   const dismissed = filtered.filter(item => isDismissed(item, dismissedMap));
   const newCount = countNew(shown, seenAt);
   const olderAt = firstOlderIndex(shown, seenAt);
+  // The away summary covers the whole stream, not the filtered view; dismissed items are already seen.
+  const awayDigest = useMemo(
+    () => buildAwayDigest(combinedFeed.filter(item => !isDismissed(item, dismissedMap)), seenAt, now),
+    [combinedFeed, dismissedMap, seenAt, now]);
 
   // Leaving the Feed (hidden, or unmounted) after it was visible marks what it showed as seen,
   // so the count stays while he reads and is gone next time.
@@ -172,6 +178,7 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
   }, [visible, markSeen]);
 
   return <div className={styles.root}>
+    {awayDigest ? <AwayDigestCard digest={awayDigest} onFilter={setFilter} onDismiss={() => markSeen(awayDigest.newestAt)} /> : null}
     <section aria-labelledby="feed-running-title" className={styles.running}>
       <h2 id="feed-running-title">Running chats</h2>
       {activity.status === 'stale' ? <CardNote tone="unknown">Activity is stale; showing the last successful read.</CardNote> : null}
