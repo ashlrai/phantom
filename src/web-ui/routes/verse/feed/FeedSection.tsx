@@ -40,6 +40,7 @@ import { updateStatusQuery } from '../sections/update-status-queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { useActivity } from '../shell/useActivity.js';
 import { buildFeed, feedPaneLabel, filterFeed, type FeedFilter, type FeedKind } from './feed-model.js';
+import { FeedAskButton } from './FeedAskButton.js';
 import { isDismissed, useFeedDismissals } from './feed-dismiss-store.js';
 import { countNew, firstOlderIndex, useFeedSeen } from './feed-seen-store.js';
 import styles from './feed.module.css';
@@ -197,7 +198,7 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
         {newCount > 0 && i === olderAt ? <li role="separator" aria-label="Earlier" className={styles.divider}>Earlier</li> : null}
         <li data-kind={item.kind}>
         <Card title={<JobRefs text={item.title} onOpenJob={openJob} />} caption={<time dateTime={item.at} title={new Date(item.at).toLocaleString('en-US')}>{formatRelative(item.at, now)}</time>}
-          actions={<span className={styles.kind} data-kind={item.kind}>{item.label ?? KIND_LABEL[item.kind]}</span>}>
+          actions={<><FeedAskButton item={item} /><span className={styles.kind} data-kind={item.kind}>{item.label ?? KIND_LABEL[item.kind]}</span></>}>
           {item.body ? <p className={styles.body}><JobRefs text={item.body} onOpenJob={openJob} /></p> : null}
           {/* Dot's texts keep their older "Open inbox" wording; every other owned item says where it goes. */}
           {item.kind === 'teammate' && item.pane ? <button type="button" className={styles.link} onClick={() => openPane(item.pane!)}>Open inbox</button>
