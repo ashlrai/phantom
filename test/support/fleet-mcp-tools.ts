@@ -51,4 +51,5 @@ export const FLEET_MCP_TOOL_NAMES: readonly string[] = Object.freeze([
   'fleet_gmail_triage_latest',
   'fleet_disk_forecast',
   'fleet_gmail_archive_plan_latest',
+  'fleet_self_tick_last',
 ]);
