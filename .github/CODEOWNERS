@@ -429,6 +429,7 @@
 /test/fleet-merge-retry.test.ts @masonwyatt23
 /test/fleet-merge-state-class.test.ts @masonwyatt23
 /test/fleet-post-merge-verify-31.test.ts @masonwyatt23
+/test/fleet-release-gate-start-05srq2.test.ts @masonwyatt23
 /test/fleet-self-loop-02soly1.test.ts @masonwyatt23
 /test/fleet-self-loop-await-live-02some2.test.ts @masonwyatt23
 /test/fleet-self-loop-await-record-02somd2.test.ts @masonwyatt23
