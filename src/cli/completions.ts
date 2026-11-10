@@ -98,6 +98,8 @@ const SUBCOMMANDS: Record<string, string[]> = {
   'release-articles': ['status', 'enable', 'disable', 'import', 'sync', '--help'],
   release: ['status', '--json', '--file', '--help'],
   agents: ['bus', 'help'],
+  // Mirror the verb switch in src/cli/wb.ts (cmdWb).
+  wb: ['secrets', 'steer', 'reprioritize', 'stop', '--text', '--priority', '--apply', '--json', '--help'],
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
   queue: ['stats', 'report', 'add', 'claim', 'done', 'block', 'list', 'import', 'export', '--help'],
   benchmark: ['run', '--compare-reports', 'help'],
