@@ -1,11 +1,11 @@
-import { cmdFleetIntentRead } from './fleet-intent-read.js';
+import { getIntent, listIntents } from '../core/intent/ledger.js';
 import { cmdFleetIntentEdit } from './fleet-intent-edit.js';
 import { cmdFleetIntentImport } from './fleet-intent-import.js';
 import { sweepStale } from '../core/intent/sweep.js';
 import { linkMergedPull, MAX_RELEASE_REF } from '../core/intent/evidence.js';
 import { noteShippedRelease } from '../core/intent/release.js';
 import { readLedger, writeLedger } from '../core/intent/store.js';
-import { normalizeRq, validRepo } from '../core/intent/schema.js';
+import { IntentError, isIntentStatus, normalizeRq, validIntentId, validRepo, type IntentStatus } from '../core/intent/schema.js';
 
 const usage = `Usage: phm fleet intent list [--status status] [--json]
        phm fleet intent get <id> [--json]
@@ -31,11 +31,41 @@ export async function cmdFleetIntent(args: string[]): Promise<number> {
     console.log(args.includes('--json') ? JSON.stringify({ usage }) : usage);
     return 0;
   }
-  if (verb === 'list' || verb === 'get') return cmdFleetIntentRead([verb, ...rest]);
-  if (verb === 'add' || verb === 'update') {
-    return cmdFleetIntentEdit([verb, ...rest.map(arg => arg === '--notes' && verb === 'update' ? '--note' : arg)]);
+  if (verb === 'list' || verb === 'get') {
+    let status: IntentStatus | undefined;
+    let id: string | undefined;
+    let seenJson = false;
+    for (let i = 0; i < rest.length; i++) {
+      const arg = rest[i]!;
+      if (arg === '--json' && !seenJson) { seenJson = true; continue; }
+      if (arg === '--status' && verb === 'list' && status === undefined) {
+        const value = rest[++i];
+        if (!value || !isIntentStatus(value)) return fail('Invalid status.');
+        status = value;
+      } else if (verb === 'get' && !id && validIntentId(arg)) id = arg;
+      else return fail('Invalid arguments.');
+    }
+    if (verb === 'get' && !id) return fail('A valid directive id is required.');
+    try {
+      if (verb === 'list') {
+        const listed = await listIntents({ status });
+        if (json) console.log(JSON.stringify({ ok: true, ...listed.summary, records: listed.items }));
+        else for (const item of listed.items) console.log(`${item.id}  [${item.status}]  ${item.title}`);
+      } else {
+        const item = await getIntent(id!);
+        if (!item) return fail('Intent not found. Run phm intent list.');
+        if (json) console.log(JSON.stringify({ ok: true, item }));
+        else console.log(`${item.id}  [${item.status}]  ${item.title}`);
+      }
+      return 0;
+    } catch (error) {
+      return fail(error instanceof IntentError ? error.message : 'Intent ledger operation failed. Check ~/.ashlr-runs/intent permissions and retry.');
+    }
   }
-  if (verb === 'import') return cmdFleetIntentImport(rest);
+  if (verb === 'add' || verb === 'update') {
+    return (await cmdFleetIntentEdit([verb, ...rest.map(arg => arg === '--notes' && verb === 'update' ? '--note' : arg)])) === 0 ? 0 : 2;
+  }
+  if (verb === 'import') return (await cmdFleetIntentImport(rest)) === 0 ? 0 : 2;
   if (verb === 'stale') {
     if (rest.some(arg => arg !== '--json' && arg !== '--apply') || new Set(rest).size !== rest.length) return fail('Invalid arguments.');
     try {
