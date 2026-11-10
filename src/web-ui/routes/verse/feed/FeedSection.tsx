@@ -44,6 +44,9 @@ import { FeedAskButton } from './FeedAskButton.js';
 import { releaseFeedItems } from './release-feed-items.js';
 import { isDismissed, useFeedDismissals } from './feed-dismiss-store.js';
 import { countNew, firstOlderIndex, useFeedSeen } from './feed-seen-store.js';
+import { useVerseUi } from '../useVerseUi.js';
+import { setFeedMutedKinds } from '../verse-ui-store.js';
+import { isFeedItemVisible } from './feed-mute.js';
 import styles from './feed.module.css';
 
 const unifiedInboxQuery: QueryDef<unknown> = { key: 'verse-fleet-comms-unified-inbox', fetch: signal => apiGet(UNIFIED_INBOX_PATH, signal) };
@@ -95,6 +98,8 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
   const refetchBus = useRefetch(agentBusPageQuery(0, 50));
   usePollWhileVisible(() => { refetchShared(); refetchLeader(); refetchRuns(); refetchOwner(); refetchBus(); refetchTeammate(); }, FEED_POLL_MS, { enabled: visible });
   const now = useNow(30_000);
+  const { feedMutedKinds } = useVerseUi();
+  const [showMuted, setShowMuted] = useState(false);
   const [filter, setFilter] = useState<FeedFilter>('all');
   const { map: dismissedMap, dismissItem, restoreItem } = useFeedDismissals();
   const [showDismissed, setShowDismissed] = useState(false);
@@ -150,7 +155,7 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
   }), [shared.data, leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data, inboxView, teammate?.error, comms, inboxPlans.data, inboxPlans.error]);
   const releaseItems = useMemo(() => releaseFeedItems(releaseStages.data, nativeUpdates, new Date().toISOString()), [releaseStages.data, nativeUpdates]);
   const combinedFeed = useMemo(() => [...feed, ...releaseItems].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 100), [feed, releaseItems]);
-  const filtered = filterFeed(combinedFeed, filter);
+  const filtered = filterFeed(combinedFeed.filter(item => isFeedItemVisible(item, feedMutedKinds)), filter);
   const shown = filtered.filter(item => !isDismissed(item, dismissedMap));
   const dismissed = filtered.filter(item => isDismissed(item, dismissedMap));
   const newCount = countNew(shown, seenAt);
@@ -160,7 +165,7 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
   // so the count stays while he reads and is gone next time.
   const newestAt = useRef<string | undefined>(undefined);
   // Only while visible: the render that hides the Feed must not replace what it last showed.
-  if (visible) newestAt.current = combinedFeed.find(item => !isDismissed(item, dismissedMap))?.at;
+  if (visible) newestAt.current = combinedFeed.find(item => isFeedItemVisible(item, feedMutedKinds) && !isDismissed(item, dismissedMap))?.at;
   useEffect(() => {
     if (!visible) return undefined;
     return () => { if (newestAt.current) markSeen(newestAt.current); };
@@ -203,7 +208,7 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
         {newCount > 0 && i === olderAt ? <li role="separator" aria-label="Earlier" className={styles.divider}>Earlier</li> : null}
         <li data-kind={item.kind}>
         <Card title={<JobRefs text={item.title} onOpenJob={openJob} />} caption={<time dateTime={item.at} title={new Date(item.at).toLocaleString('en-US')}>{formatRelative(item.at, now)}</time>}
-          actions={<><FeedAskButton item={item} /><span className={styles.kind} data-kind={item.kind}>{item.label ?? KIND_LABEL[item.kind]}</span></>}>
+          actions={<><FeedAskButton item={item} /><details><summary aria-label={`More actions for ${item.title}`}>⋯</summary><button type="button" onClick={() => setFeedMutedKinds([...feedMutedKinds, item.kind])}>Mute {KIND_LABEL[item.kind]}</button></details><span className={styles.kind} data-kind={item.kind}>{item.label ?? KIND_LABEL[item.kind]}</span></>}>
           {item.body ? <p className={styles.body}><JobRefs text={item.body} onOpenJob={openJob} /></p> : null}
           {/* Dot's texts keep their older "Open inbox" wording; every other owned item says where it goes. */}
           {item.kind === 'teammate' && item.pane ? <button type="button" className={styles.link} onClick={() => openPane(item.pane!)}>Open inbox</button>
@@ -215,6 +220,10 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
         </li>
       </Fragment>)}
     </ol> : null}
+    {feedMutedKinds.length ? <div className={styles.dismissedBar}>
+      <span>{feedMutedKinds.length} kinds muted</span> · <button type="button" className={styles.dismiss} aria-expanded={showMuted} onClick={() => setShowMuted(v => !v)}>{showMuted ? 'Hide' : 'Show'}</button>
+      {showMuted ? feedMutedKinds.map(kind => <button key={kind} type="button" className={styles.dismiss} onClick={() => setFeedMutedKinds(feedMutedKinds.filter(k => k !== kind))}>Unmute {kind}</button>) : null}
+    </div> : null}
     {dismissed.length ? <div className={styles.dismissedBar}>
       <span>{dismissed.length} dismissed</span> · <button type="button" className={styles.dismiss} aria-expanded={showDismissed} onClick={() => setShowDismissed(v => !v)}>{showDismissed ? 'Hide' : 'Show'}</button>
     </div> : null}
