@@ -14,7 +14,11 @@
  * control); POST fleet/live {action:'pause-repo', repo, reason} places
  * an owner hold behind step-up; POST fleet/control/switches {id, on}, fleet/control/lanes
  * {lane, target} and fleet/control/holds {lane, action:'release', reason?}
- * behind step-up. Every path and body shape is exact — no wildcards.
+ * behind step-up. A paired phone can ask the chief of staff and read the
+ * answer: POST fleet/cos/ask {text} without step-up (a message, like the
+ * inbox), GET fleet/cos/list bare or with a 1-50 limit, and GET
+ * fleet/cos/status with a single cos- job id; approval stays desktop-only.
+ * Every path and body shape is exact — no wildcards.
  */
 import { timingSafeEqual } from 'node:crypto';
 import { validateBusEnvelope } from '../fleet/bus-envelope.js';
@@ -95,6 +99,9 @@ const FLEET_JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/;
 const isFleetJobIdParam = (v: string): boolean => !/[\r\n]+$/.test(v) && FLEET_JOB_ID.test(v);
 const FLEET_READ_LIMIT = (v: string): boolean => /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 200;
 const FLEET_CI_HOURS = (v: string): boolean => /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 168;
+// The chief-of-staff job grammar and the list bound mirror fleet-cos-api.ts.
+const COS_JOB_ID = /^cos-[a-f0-9]{32}$/;
+const COS_LIST_LIMIT = (v: string): boolean => /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 50;
 
 function exactParams(params: URLSearchParams, shape: Record<string, (value: string) => boolean>): boolean {
   const keys = [...params.keys()];
@@ -123,7 +130,8 @@ export function classifyRemoteRoute(method: string | undefined, rawTarget: strin
     if (method !== 'POST') return { kind: 'deny' };
     if (path === '/api/verse/activity/seen' || path === '/api/verse/sessions'
       || path === '/api/verse/leader/thread' || path === '/api/verse/leader/directives'
-      || path === '/api/verse/fleet/runs/inbox' || path === '/api/verse/agent-bus') return { kind: 'write', path, stepUp: false };
+      || path === '/api/verse/fleet/runs/inbox' || path === '/api/verse/fleet/cos/ask'
+      || path === '/api/verse/agent-bus') return { kind: 'write', path, stepUp: false };
     if (path === '/api/verse/daemon' || path === '/api/verse/budget' || path === '/api/verse/authority'
       || path === '/api/verse/fleet/live' || path === '/api/verse/fleet/live/drop-jobs'
       || path === '/api/verse/fleet/control/switches' || path === '/api/verse/fleet/control/lanes'
@@ -161,6 +169,8 @@ export function classifyRemoteRoute(method: string | undefined, rawTarget: strin
     const id = path.slice('/api/verse/sessions/'.length);
     if (SESSION_ID.test(id)) return { kind: 'read', path };
   }
+  // Bare reads that live outside READ_ROUTES, like the session detail above.
+  if (path === '/api/verse/fleet/cos/list' && query === undefined) return { kind: 'read', path };
   if (query === undefined) return { kind: 'deny' };
   const params = new URLSearchParams(query);
   if (path === '/api/verse/activity'
@@ -177,6 +187,10 @@ export function classifyRemoteRoute(method: string | undefined, rawTarget: strin
   )) return { kind: 'read', path };
   if (path === '/api/verse/fleet/ci-runs'
     && exactParams(params, { hours: FLEET_CI_HOURS })) return { kind: 'read', path };
+  if (path === '/api/verse/fleet/cos/list'
+    && exactParams(params, { limit: COS_LIST_LIMIT })) return { kind: 'read', path };
+  if (path === '/api/verse/fleet/cos/status'
+    && exactParams(params, { id: (v) => COS_JOB_ID.test(v) })) return { kind: 'read', path };
   if ((path === '/api/verse/fleet/live/bus' || path === '/api/verse/fleet/live/queue')
     && exactParams(params, { limit: FLEET_READ_LIMIT })) return { kind: 'read', path };
   if (path === '/api/verse/agent-bus') {
@@ -253,6 +267,8 @@ export function validateRemoteMutation(decision: RemoteRouteDecision, body: unkn
   if (path === '/api/verse/fleet/runs/inbox') return keys(body, ['text', 'source'])
     && boundedText(body.text, 4_000)
     && (body.source === undefined || (typeof body.source === 'string' && FLEET_INBOX_SOURCE.test(body.source)));
+  // The channel is asserted by the gateway's stamped header, never the body.
+  if (path === '/api/verse/fleet/cos/ask') return keys(body, ['text']) && boundedText(body.text, 4_000);
   if (path === '/api/verse/fleet/control/switches') return keys(body, ['id', 'on'])
     && typeof body.id === 'string' && FLEET_SWITCH_ID.test(body.id)
     && typeof body.on === 'boolean';
