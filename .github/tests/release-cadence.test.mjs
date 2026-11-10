@@ -34,10 +34,12 @@ function fixture(overrides = {}) {
   return { read, run, data, input: { repository: 'ashlrai/phantom', revision, now, read } };
 }
 
-test('standing approval raises a sub-hour cadence to hourly', () => {
-  assert.equal(Math.max(60, cadenceMinutes('30')), 60);
-  assert.equal(Math.max(60, cadenceMinutes('60')), 60);
-  assert.equal(Math.max(60, cadenceMinutes('120')), 120);
+test('cadence validator honors configured values', () => {
+  for (const minutes of [5, 30, 60, 120]) {
+    assert.equal(cadenceMinutes(String(minutes)), minutes);
+  }
+  assert.throws(() => cadenceMinutes('4'));
+  assert.throws(() => cadenceMinutes('invalid'));
 });
 
 test('default cadence produces next patch only for new green master work', async () => {
@@ -296,7 +298,8 @@ test('timer cadence keeps the existing permissions and guarded merge route', () 
   const steps = workflow.jobs['release-please'].steps;
   assert.equal(steps.find(s => s.id === 'rp').if, "steps.cadence.outputs.due == 'true'");
   assert.match(steps.find(s => s.id === 'cadence').env.RELEASE_CADENCE_MINUTES, /vars.RELEASE_CADENCE_MINUTES/);
-  assert.match(read('../scripts/release-cadence.mjs'), /Math\.max\(60, cadenceMinutes/);
+  assert.match(read('../scripts/release-cadence.mjs'), /cadenceMinutes\(process\.env\.RELEASE_CADENCE_MINUTES \|\| '5'\)/);
+  assert.equal(read('../scripts/release-cadence.mjs').includes('Math.max(60, cadenceMinutes'), false);
   const config = JSON.parse(read('../../release-please-config.json'));
   assert.equal(config.versioning, 'always-bump-patch');
   assert.equal(config['skip-changelog'], false);
