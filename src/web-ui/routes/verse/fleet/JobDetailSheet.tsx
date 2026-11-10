@@ -1,3 +1,5 @@
+import { ConfirmDialog } from '../../inbox/ConfirmDialog.js';
+import { useJobStop } from '../fleet-job-log/use-job-stop.js';
 import { useEffect, useId, useState } from 'react';
 import { Button } from '../../../components/primitives/Button.js';
 import { Sheet } from '../../../components/primitives/Sheet.js';
@@ -31,6 +33,8 @@ const fileStatus: Record<FleetJobChangesV1['files'][number]['status'], string> =
 export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: string | null; onClose: () => void }) {
   const id = useId();
   const [notice, setNotice] = useState('');
+  const [confirmStop, setConfirmStop] = useState(false);
+  const stop = useJobStop(job);
   useEffect(() => {
     if (notice !== 'Copied') return;
     const timer = setTimeout(() => setNotice(''), 2_000);
@@ -74,9 +78,10 @@ export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: str
     {read.status === 'refreshing' ? <RefreshIndicator /> : null}
     {d ? <StatusBadge status={d.state} tone={tones[d.state]} /> : null}
     <div role="group" aria-label="Job actions" className={styles.actions}>
-      {sheetActions(job, d).map(action => action.href
+      {sheetActions(job, d, d?.state).map(action => action.href
         ? <a key={action.id} href={action.href} target="_blank" rel="noopener noreferrer">{action.label}</a>
-        : <Button key={action.id} size="sm" onClick={() => {
+        : <Button key={action.id} size="sm" disabled={action.id === 'stop' && stop.busy} onClick={() => {
+          if (action.id === 'stop') { stop.clear(); setConfirmStop(true); return; }
           if (action.id === 'log') { requestWorkerLogJob(job); openDockPane('worker-log'); }
           else { openInterjectDialog({ prefill: steerPrefill(job, d?.lane) }); }
           onClose();
@@ -85,6 +90,10 @@ export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: str
         requestBusPost(busTellPrefill(job, d)); openDockPane('fleet-bus'); onClose();
       }}>Tell on bus</Button>
     </div>
+    {stop.text && <p role="status">{stop.text}</p>}
+    <ConfirmDialog open={confirmStop} onClose={() => setConfirmStop(false)} title={`Stop ${job}?`}
+      body="This stops the job’s running processes." confirmLabel="Yes, stop" destructive busy={stop.busy}
+      onConfirm={() => { setConfirmStop(false); void stop.run(); }} />
     {notInBuild(read.error) ? <p>Job detail is not in this build yet.</p> : read.error ? <p>Job detail unavailable.</p> : !d ? <SkeletonLine /> : <>
       <LaunchLaneNote requestedLane={d.requestedLane} launchedLane={d.launchedLane ?? d.lane} laneReason={d.laneReason} />
       <dl className={styles.facts}>{facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd><span aria-label={`${label} ${value ?? 'unknown'}`}>{value ?? '—'}</span>{label === 'Branch' && value ? <> <Button size="sm" onClick={() => void copyBranch(value)}>Copy</Button> <span role="status">{notice}</span></> : null}</dd></div>)}</dl>
