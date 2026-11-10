@@ -90,8 +90,8 @@ export function schedulingEvidence(budget: unknown, seat: { seatId: string; engi
   const evidenceAvailable = fresh || localEligible;
   const knownRemaining = typeof remaining === 'number' && Number.isFinite(remaining) && remaining >= 0 && remaining <= 100;
   const availability = localEligible ? 'Local throughput available under current runtime limits.'
-    : !fresh ? 'Work capacity needs a fresh reading.' : admission === 'held' ? 'Held back by current account or reserve limits.'
-    : admission === 'eligible' && knownRemaining ? `${percentText(remaining)} available after your reserve.` : 'Work capacity unknown.';
+    : !fresh ? 'Work capacity needs a fresh reading.' : admission === 'held' ? 'Held back by current account limits.'
+    : admission === 'eligible' && knownRemaining ? `${percentText(remaining)} available to the fleet.` : 'Work capacity unknown.';
   const reset = field(row, 'reset'), resetAt = instant(field(reset, 'at')), startsAt = instant(field(reset, 'startsAt'));
   const reportedKind = field(reset, 'kind');
   const plan = field(reset, 'plan');

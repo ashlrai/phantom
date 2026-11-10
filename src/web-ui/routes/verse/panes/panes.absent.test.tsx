@@ -84,8 +84,6 @@ const KNOWN_FAILURES = new Map<string, string>([
   // ChecksPanel prints the raw refusal body: the whole pane is the 9-char
   // string "not found" (ChecksDockPane → ChecksPanel → describeContextError
   // prefers ApiError.detail, which is the gate's bare { error: 'not found' }).
-  ['checks/all-404', 'pane renders only the raw server string "not found" (9 visible chars) — BRIDGE_NOTES.md'],
-  ['checks/missing-runs-dir', 'pane renders only the raw server string "not found" (9 visible chars) — BRIDGE_NOTES.md'],
 ]);
 
 /** Visible text, skipping anything hidden by attribute or computed style (every-pane-sweep's measure). */

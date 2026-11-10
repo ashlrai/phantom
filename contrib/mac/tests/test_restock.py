@@ -461,7 +461,7 @@ class AutoUnparkTests(unittest.TestCase):
 
 class ReplenishmentDiagnosticsTests(unittest.TestCase):
     def test_local_and_personal_parked_rows_do_not_fill_lanes_or_loop(self):
-        rows = [line('RQ-LOCAL-NEW', pool='codex-local', repo='phantom', **{'size<': 60}),
+        rows = [line('RQ-LOCAL-NEW', text='Offline: fix src/example.ts', pool='codex-local', repo='phantom', **{'size<': 60}),
                 line('RQ-PERSONAL-NEW', pool='codex-personal', repo='phantom')]
         slots = {l: {'held': True} for l in LANES}
         slots.update({'codex-local': {'target': 1}, 'codex-personal': {'target': 1}})
@@ -491,10 +491,10 @@ class ReplenishmentDiagnosticsTests(unittest.TestCase):
         self.assertEqual(again['queued'], 0)
         self.assertEqual((q / 'ready.tsv').read_text(), ready)
 
-    def test_local_requires_bounded_size_at_most_60(self):
-        rows = [line('RQ-LOCAL-' + suffix, pool='codex-local', repo='phantom', **attrs)
-                for suffix, attrs in [('SMALL', {'size<': 59}), ('EDGE', {'size<': 60}),
-                                      ('LARGE', {'size<': 61}), ('MISSING', {}), ('BAD', {'size<': 'oops'})]]
+    def test_local_requires_bounded_size_and_file_scope(self):
+        rows = [line('RQ-LOCAL-' + suffix, text='Offline: fix src/example.ts', pool='codex-local', repo='phantom', **attrs)
+                for suffix, attrs in [('SMALL', {'size<': 59}), ('EDGE', {'size<': 80}),
+                                      ('LARGE', {'size<': 81}), ('MISSING', {}), ('BAD', {'size<': 'oops'})]]
         slots = {lane: {'held': True} for lane in LANES}
         slots['codex-local'] = {'target': 10}
         tmp = build('\n'.join(rows) + '\n', slots=slots)
@@ -507,6 +507,30 @@ class ReplenishmentDiagnosticsTests(unittest.TestCase):
             self.assertIn('RQ-LOCAL-' + suffix, ready)
         for suffix in ('LARGE', 'MISSING', 'BAD'):
             self.assertNotIn('RQ-LOCAL-' + suffix, ready)
+
+    def test_local_fit_routes_eight_queue_lines(self):
+        cases = [
+            ('ONE', 80, 'Offline: fix src/a.ts', 'codex-local'),
+            ('TWO', 40, 'Offline: fix src/a.ts and test/a.test.ts', 'codex-local'),
+            ('LARGE', 81, 'Offline: fix src/a.ts', 'codex-personal'),
+            ('NONE', 20, 'Offline: fix the parser', 'codex-personal'),
+            ('THREE', 20, 'Offline: fix src/a.ts src/b.ts src/c.ts', 'codex-personal'),
+            ('NETWORK', 20, 'Offline: fetch network data in src/a.ts', 'codex-personal'),
+            ('BROWSER', 20, 'Offline: use browser to test src/a.ts', 'codex-personal'),
+            ('MISSING', None, 'Offline: fix src/a.ts', 'codex-personal'),
+        ]
+        slots = {lane: {'held': True} for lane in LANES}
+        slots.update({'codex-local': {'target': 10}, 'codex-personal': {'target': 10}})
+        for name, size, task, expected in cases:
+            with self.subTest(name=name):
+                attrs = {'size<': size} if size is not None else {}
+                tmp = build(line('RQ-FIT-' + name, text=task, pool='codex-local', repo='phantom', **attrs) + '\n', slots=slots)
+                try:
+                    result = restock(Path(tmp.name), '--dry-run', '--per-lane', '10')
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(dry_lanes(result.stdout)['RQ-FIT-' + name][0], expected)
+                finally:
+                    tmp.cleanup()
 
     def test_duplicate_parked_rows_unpark_once(self):
         tmp = build('')
@@ -547,7 +571,7 @@ class NoopCutTests(unittest.TestCase):
     def state(self, home):
         return json.loads((home / '.ashlr-runs' / 'queue' / 'noop-streak.json').read_text())
 
-    def test_same_pr_and_same_file_collapse_to_one_pick(self):
+    def test_same_pr_collapses_but_distinct_prs_on_same_file_are_kept(self):
         home = self.make([
             line('RQ-A', P=1, pool='devin', repo='phantom', text='FIXUP phantom#7 file=src/a.ts fix'),
             line('RQ-B', P=1, pool='devin', repo='phantom', text='REBASE phantom#7 file=src/b.ts fix'),
@@ -555,9 +579,8 @@ class NoopCutTests(unittest.TestCase):
             line('RQ-D', P=1, pool='devin', repo='phantom', text='FIXUP phantom#9 file=src/d.ts fix'),
         ])
         r = restock(home, '--dry-run')
-        self.assertEqual(sorted(dry_ids(r.stdout)), ['RQ-A', 'RQ-D'], r.stdout)
+        self.assertEqual(sorted(dry_ids(r.stdout)), ['RQ-A', 'RQ-C', 'RQ-D'], r.stdout)
         self.assertEqual(skips(r.stdout).get('dup-pr'), 1)
-        self.assertEqual(skips(r.stdout).get('dup-file'), 1)
 
     def test_two_noops_park_the_line_for_24h(self):
         row = line('RQ-N', P=1, pool='devin', repo='phantom', text='stale work')
@@ -943,15 +966,15 @@ class QueueDepthGateTests(unittest.TestCase):
                     tmp.cleanup()
 
 class QueueQualityTests(unittest.TestCase):
-    def test_single_case_filler_grouped_only_above_threshold(self):
+    def test_identical_filler_grouped_at_any_rate_and_distinct_work_kept(self):
         rows = [
             line('RQ-TEST1A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add one test case in test/example.test.ts'),
-            line('RQ-TEST2A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add a single test case in test/example.test.ts'),
+            line('RQ-TEST2A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add one test case in test/example.test.ts'),
             line('RQ-TEST3A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add one test case in test/other.test.ts'),
             line('RQ-SUBSTANTIVE', pool='codex-personal', tier='work', repo='phantom', text='Fix behavior and add tests in test/example.test.ts'),
             line('RQ-GUARDIAN1A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Guardian: add one test case in test/example.test.ts'),
         ]
-        for rate, expected in [(0.26, False), (0.25, True), (None, True)]:
+        for rate, expected in [(0.26, False), (0.25, False), (None, False)]:
             with self.subTest(rate=rate):
                 tmp = build('\n'.join(rows) + '\n', slots={**{l: {'held': True} for l in LANES}, 'codex-personal': {'target': 6}})
                 self.addCleanup(tmp.cleanup)
@@ -963,6 +986,32 @@ class QueueQualityTests(unittest.TestCase):
                 self.assertEqual('RQ-TEST2A123456Q8' in ids, expected, r.stdout)
                 self.assertTrue({'RQ-TEST1A123456Q8', 'RQ-TEST3A123456Q8', 'RQ-SUBSTANTIVE', 'RQ-GUARDIAN1A123456Q8'} <= set(ids), r.stdout)
                 if not expected: self.assertEqual(skips(r.stdout).get('duplicate-single-case-test-file'), 1)
+
+    def test_recent_empty_streak_is_scoped_and_recovers(self):
+        from datetime import datetime, timezone, timedelta
+        task = 'Add one test case in test/example.test.ts'
+        rows = [line(f'RQ-TEST{n}A123456Q8', pool='codex-personal', tier='work', repo='phantom', text=task) for n in range(1, 4)]
+        rows.append(line('RQ-DISTINCT', pool='codex-personal', tier='work', repo='phantom', text='Fix behavior in test/example.test.ts'))
+        tmp = build('\n'.join(rows) + '\n', slots={**{l: {'held': True} for l in LANES}, 'codex-personal': {'target': 6}})
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        metrics = home / '.ashlr-runs/metrics/jobs.jsonl'
+        metrics.parent.mkdir(parents=True, exist_ok=True)
+        now = datetime.now(timezone.utc)
+        def evidence(job, minutes, **fields):
+            return json.dumps({'job': job, 'ts': (now - timedelta(minutes=minutes)).isoformat(), **fields})
+        empty = [evidence('RQ-TEST1A123456Q8', 20, empty=True), evidence('RQ-TEST2A123456Q8', 10, outcome='empty')]
+        metrics.write_text('\n'.join(empty) + '\n')
+        result = restock(home, '--dry-run', '--per-lane', '10')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(skips(result.stdout).get('recent-empty-streak'), 3)
+        self.assertIn('RQ-DISTINCT', dry_ids(result.stdout))
+        metrics.write_text('\n'.join(empty + [evidence('RQ-TEST2A123456Q8', 1, empty=False)]) + '\n')
+        result = restock(home, '--dry-run', '--per-lane', '10')
+        self.assertIn('RQ-TEST1A123456Q8', dry_ids(result.stdout))
+        metrics.write_text('\n'.join([evidence('RQ-TEST1A123456Q8', 1500, empty=True), empty[1]]) + '\n')
+        result = restock(home, '--dry-run', '--per-lane', '10')
+        self.assertIn('RQ-TEST1A123456Q8', dry_ids(result.stdout))
 
     def test_existing_queued_group_survives_next_pass(self):
         rows = [line('RQ-TEST1A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add one test case in test/example.test.ts'),
@@ -978,3 +1027,19 @@ class QueueQualityTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn('RQ-TEST2A123456Q8', dry_ids(r.stdout))
         self.assertEqual(skips(r.stdout).get('duplicate-single-case-test-file'), 1)
+
+    def test_merged_identical_filler_suppresses_stale_copy(self):
+        task = 'Add one test case in test/example.test.ts'
+        rows = [line('RQ-OLD1A123456Q8', pool='codex-personal', tier='work', repo='phantom', text=task),
+                line('RQ-NEW1A123456Q8', pool='codex-personal', tier='work', repo='phantom', text=task),
+                line('RQ-NEW2A123456Q8', pool='codex-personal', tier='work', repo='phantom', text=task + ' for invalid input')]
+        tmp = build('\n'.join(rows) + '\n', slots={**{l: {'held': True} for l in LANES}, 'codex-personal': {'target': 6}})
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        metrics = home / '.ashlr-runs/metrics/jobs.jsonl'
+        metrics.parent.mkdir(parents=True, exist_ok=True)
+        metrics.write_text(json.dumps({'event': 'outcome', 'state': 'MERGED', 'job': 'RQ-OLD1A123456Q8', 'repo': 'phantom'}) + '\n')
+        result = restock(home, '--dry-run', '--per-lane', '10')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(skips(result.stdout).get('acceptance-already-merged'), 1)
+        self.assertIn('RQ-NEW2A123456Q8', dry_ids(result.stdout))

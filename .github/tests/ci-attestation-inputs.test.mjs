@@ -27,7 +27,7 @@ function fixture(repositoryName = hub.legacyName) {
   const names = artifactNames(101, 2);
   const artifacts = [names.producer, ...names.lanes.map(row => row.name)].map((name, index) => ({
     id: 301 + index, name, expired: false, digest: `sha256:${'a'.repeat(64)}`,
-    workflow_run: { id: 101, head_sha: candidate },
+    workflow_run: { id: 101, head_sha: trusted },
   }));
   const repository = { full_name: repositoryName, id: hub.repositoryId, node_id: hub.repositoryNodeId, owner: { id: hub.ownerId, login: hub.ownerLogin }, default_branch: hub.defaultBranch, private: false, visibility: 'public' };
   const answers = new Map([
@@ -35,14 +35,14 @@ function fixture(repositoryName = hub.legacyName) {
     [`repos/${repositoryName}/git/commits/${trusted}`, { sha: trusted, tree: { sha: tree } }],
     [`repos/${repositoryName}/git/commits/${candidate}`, { sha: candidate, tree: { sha: tree } }],
     [`repos/${repositoryName}/actions/runs/101/attempts/2`, {
-      id: 101, run_attempt: 2, head_sha: candidate, path: '.github/workflows/ci.yml',
+      id: 101, run_attempt: 2, head_sha: trusted, path: '.github/workflows/ci.yml',
       repository: { ...repository }, status: 'completed', conclusion: 'success',
     }],
     [`repos/${repositoryName}/actions/runs/101/attempts/2/jobs?per_page=100&page=1`, { total_count: 0, jobs: [] }],
     [`repos/${repositoryName}/actions/runs/101/artifacts?per_page=100&page=1`, { total_count: artifacts.length, artifacts }],
   ]);
   const inputs = { GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/master', GITHUB_REPOSITORY: repositoryName, GITHUB_REPOSITORY_ID: String(hub.repositoryId), GITHUB_REPOSITORY_OWNER_ID: String(hub.ownerId),
-    GITHUB_SHA: trusted, CANDIDATE_SHA: candidate, CI_RUN_ID: '101', CI_RUN_ATTEMPT: '2', BUILD_ARTIFACT_ID: '301', RUNNER_TEMP: temporary };
+    GITHUB_SHA: trusted, CANDIDATE_SHA: trusted, CI_RUN_ID: '101', CI_RUN_ATTEMPT: '2', BUILD_ARTIFACT_ID: '301', RUNNER_TEMP: temporary };
   const read = path => { assert.ok(answers.has(path), `unexpected API lookup: ${path}`); return globalThis.structuredClone(answers.get(path)); };
   return { home, root, temporary, git, inputs, answers, artifacts, read, candidate, trusted, tree };
 }
@@ -69,7 +69,7 @@ test('prepares one exact immutable producer plus all five Mac lanes as inert inp
   assert.equal(result.map.lanes.length, 5); assert.equal(new Set(result.map.lanes.map(row => row.id)).size, 5);
   assert.equal(lstatSync(result.directory).mode & 0o777, 0o700);
   assert.equal(lstatSync(join(result.directory, 'artifact-map.json')).mode & 0o777, 0o600);
-  assert.equal(f.git('-C', join(result.directory, 'candidate'), 'rev-parse', 'HEAD'), f.candidate);
+  assert.equal(f.git('-C', join(result.directory, 'candidate'), 'rev-parse', 'HEAD'), f.trusted);
   assert.equal(readFileSync(join(result.directory, 'candidate', 'seed.txt'), 'utf8'), 'inert fixture\n');
   assert.equal(f.git('rev-parse', 'HEAD'), f.trusted); assert.equal(f.git('status', '--porcelain'), '');
 }));
@@ -78,7 +78,7 @@ test('trusted preparation binds the renamed namespace to the same numeric reposi
   const calls = [];
   const result = prepare({ env: f.inputs, read: path => { calls.push(path); return f.read(path); } });
   assert.equal(result.map.producer.id, 301);
-  assert.equal(f.git('-C', join(result.directory, 'candidate'), 'rev-parse', 'HEAD'), f.candidate);
+  assert.equal(f.git('-C', join(result.directory, 'candidate'), 'rev-parse', 'HEAD'), f.trusted);
   assert.ok(calls.length > 0 && calls.every(path => path.startsWith(`repos/${hub.renamedName}/`) || path === `repos/${hub.renamedName}`));
 }, hub.renamedName));
 
@@ -98,14 +98,23 @@ for (const [key, value] of [
   assert.deepEqual(readdirSync(f.temporary), []);
 }));
 
-test('refuses master/candidate tree mismatch and dirty or wrongly checked-out source', { skip: process.platform === 'win32' }, () => withFixture(f => {
-  const candidate = f.answers.get(`repos/ashlrai/ashlr-hub/git/commits/${f.candidate}`);
-  candidate.tree.sha = 'b'.repeat(40);
-  assert.throws(() => prepare({ env: f.inputs, read: f.read }), /tree differs/);
-  candidate.tree.sha = f.tree; writeFileSync(join(f.root, 'seed.txt'), 'dirty');
+test('re-peels an annotated release tag and refuses a peel that is not the candidate', { skip: process.platform === 'win32' }, () => withFixture(f => {
+  const annotation = 'd'.repeat(40);
+  const name = f.inputs.GITHUB_REPOSITORY;
+  f.answers.set(`repos/${name}/git/ref/tags/v1.2.3`, { ref: 'refs/tags/v1.2.3', object: { type: 'tag', sha: annotation } });
+  f.answers.set(`repos/${name}/git/tags/${annotation}`, { sha: annotation, object: { type: 'commit', sha: f.trusted } });
+  assert.doesNotThrow(() => prepare({ env: { ...f.inputs, GITHUB_REF: 'refs/tags/v1.2.3' }, read: f.read }));
+  f.answers.set(`repos/${name}/git/tags/${annotation}`, { sha: annotation, object: { type: 'commit', sha: f.candidate } });
+  assert.throws(() => prepare({ env: { ...f.inputs, GITHUB_REF: 'refs/tags/v1.2.3' }, read: f.read }), /tag sha mismatches/);
+  assert.throws(() => prepare({ env: { ...f.inputs, GITHUB_REF: 'refs/tags/nightly' }, read: f.read }));
+  assert.throws(() => prepare({ env: { ...f.inputs, GITHUB_REF: 'refs/heads/v1.2.3' }, read: f.read }));
+}));
+test('refuses a candidate sha mismatch and dirty or wrongly checked-out source', { skip: process.platform === 'win32' }, () => withFixture(f => {
+  assert.throws(() => prepare({ env: { ...f.inputs, CANDIDATE_SHA: f.candidate }, read: f.read }), /not the candidate/);
+  writeFileSync(join(f.root, 'seed.txt'), 'dirty');
   assert.throws(() => prepare({ env: f.inputs, read: f.read }));
   f.git('checkout', '--', 'seed.txt');
-  assert.throws(() => prepare({ env: { ...f.inputs, GITHUB_SHA: f.candidate }, read: f.read }));
+  assert.throws(() => prepare({ env: { ...f.inputs, GITHUB_SHA: f.candidate, CANDIDATE_SHA: f.candidate }, read: f.read }));
   assert.deepEqual(readdirSync(f.temporary), []);
 }));
 
@@ -117,7 +126,7 @@ for (const mutation of ['missing', 'duplicate', 'expired', 'digest', 'run', 'hea
     if (mutation === 'expired') row.expired = true;
     if (mutation === 'digest') row.digest = 'sha256:unqualified';
     if (mutation === 'run') row.workflow_run.id = 102;
-    if (mutation === 'head') row.workflow_run.head_sha = f.trusted;
+    if (mutation === 'head') row.workflow_run.head_sha = f.candidate;
     if (mutation === 'producer-id') f.inputs.BUILD_ARTIFACT_ID = '999';
     listRecord(f).total_count = listRecord(f).artifacts.length;
     assert.throws(() => prepare({ env: f.inputs, read: f.read })); assert.deepEqual(readdirSync(f.temporary), []);
@@ -224,6 +233,15 @@ test('scheduled attestation cannot downgrade a legacy exhaustive producer', { sk
   f.inputs.GITHUB_EVENT_NAME = 'schedule'; assert.throws(() => prepare({ env: f.inputs, read: f.read }));
 }));
 
+test('fast producer accepts a stable release tag branch for the candidate sha', { skip: process.platform === 'win32' }, () => withFixture(f => {
+  Object.assign(runRecord(f), { event: 'workflow_dispatch', head_branch: 'v3.30.27' });
+  f.inputs.GITHUB_REF = 'refs/tags/v3.30.27';
+  f.answers.set(`repos/${f.inputs.GITHUB_REPOSITORY}/git/ref/tags/v3.30.27`, { ref: 'refs/tags/v3.30.27', object: { type: 'commit', sha: f.trusted } });
+  fastJobs(f);
+  const result = prepare({ env: f.inputs, read: f.read });
+  assert.equal(result.map.profile, 'fast-release-v1');
+}));
+
 for (const [key, value] of [['event', 'pull_request'], ['head_branch', 'feature']]) {
   test(`fast producer refuses ${key} outside trusted master`, { skip: process.platform === 'win32' }, () => withFixture(f => {
     Object.assign(runRecord(f), { event: 'workflow_dispatch', head_branch: 'master', [key]: value });
@@ -242,7 +260,7 @@ test('assembles fast producer as inert data without manufacturing exhaustive cov
 }));
 
 function fastJobs(f) {
-  const job = { name: 'Desktop release smoke', run_id: 101, head_sha: f.candidate,
+  const job = { name: 'Desktop release smoke', run_id: 101, head_sha: f.trusted,
     labels: ['macos-15'], status: 'completed', conclusion: 'success',
     steps: ['Verify green master push CI', 'Smoke desktop release artifact', 'Upload qualified build handoff']
       .map(name => ({ name, status: 'completed', conclusion: 'success' })) };

@@ -478,14 +478,23 @@ const WORKBENCH_IMPORTS: Readonly<Record<WorkbenchRouteFamilyId, () => Promise<W
   'fleet-comms-status': async () => {
     try { return (await import('./fleet-comms-status-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-comms-status-api.js'); }
   },
+  'fleet-library-files': async () => {
+    try { return (await import('./fleet-library-files-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-library-files-api.js'); }
+  },
   'owner-thread': async () => {
     try { return (await import('./owner-thread-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'owner-thread-api.js'); }
   },
   'gmail-triage': async () => {
     try { return (await import('./gmail-triage-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'gmail-triage-api.js'); }
   },
+  'release-stages': async () => {
+    try { return (await import('./release-stages-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'release-stages-api.js'); }
+  },
   'comms-inbox': async () => {
     try { return (await import('./comms-inbox-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'comms-inbox-api.js'); }
+  },
+  'comms-teammate-reply': async () => {
+    try { return (await import('./comms-teammate-reply-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'comms-teammate-reply-api.js'); }
   },
   'agent-roster': async () => {
     try { return (await import('./agent-roster-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'agent-roster-api.js'); }

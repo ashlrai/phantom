@@ -1,10 +1,13 @@
 /** The unified comms inbox for the Inbox pane (GET /api/verse/comms/inbox). Read only; narrowing is defensive, never repairing. */
 export const UNIFIED_INBOX_PATH = '/api/verse/comms/inbox?limit=20';
+/** Every pending item, for the expanded Waiting list. */
+export const UNIFIED_INBOX_ALL_PATH = '/api/verse/comms/inbox?limit=200';
+const DETAIL_MAX = 300;
 /** The CLI twin of this card. */
 export const UNIFIED_INBOX_COMMAND = 'phm comms inbox';
 
-const SOURCES = ['needs-you', 'imessage', 'drafts', 'bus'] as const;
-const KINDS = ['needs-you', 'teammate-text', 'draft-approval', 'bus-work'] as const;
+const SOURCES = ['needs-you', 'imessage', 'drafts', 'bus', 'gmail', 'linkedin'] as const;
+const KINDS = ['needs-you', 'teammate-text', 'draft-approval', 'bus-work', 'gmail-over-target', 'linkedin-message'] as const;
 const SEVERITIES = ['info', 'warn', 'high'] as const;
 const STATES = ['healthy', 'missing', 'degraded', 'unavailable'] as const;
 const EXPIRES_SOON_MS = 30 * 60_000;
@@ -21,6 +24,8 @@ export interface UnifiedInboxEntry {
   severity: InboxSeverity;
   blocking: boolean;
   title: string;
+  /** Why it waits (sender and age, subject, plan size); absent when the API sent none or a non-string. */
+  detail?: string;
   since: string | null;
   expiresAt: string | null;
   act: string[];
@@ -48,6 +53,8 @@ function readEntry(raw: unknown): UnifiedInboxEntry | null {
     blocking: raw.blocking === true, title: raw.title,
     since: isoOrNull(raw.since), expiresAt: isoOrNull(raw.expiresAt),
     act: Array.isArray(raw.act) ? raw.act.filter((a): a is string => typeof a === 'string') : [],
+    // Omitted (not null) when absent so entries without a detail keep their prior shape.
+    ...(typeof raw.detail === 'string' && { detail: raw.detail.slice(0, DETAIL_MAX) }),
   };
 }
 
@@ -65,8 +72,8 @@ export function readUnifiedInboxView(data: unknown): UnifiedInboxView | null {
   return { total: data.total, omitted: data.omitted, sources, items };
 }
 
-const SOURCE_NAMES: Record<InboxSource, string> = { 'needs-you': 'Needs you', imessage: 'iMessage', drafts: 'Drafts', bus: 'Bus' };
-const ITEM_LABELS: Record<InboxSource, string> = { 'needs-you': 'Needs you', imessage: 'Teammate text', drafts: 'Draft', bus: 'Bus work' };
+const SOURCE_NAMES: Record<InboxSource, string> = { 'needs-you': 'Needs you', imessage: 'iMessage', drafts: 'Drafts', bus: 'Bus', gmail: 'Gmail', linkedin: 'LinkedIn' };
+const ITEM_LABELS: Record<InboxSource, string> = { 'needs-you': 'Needs you', imessage: 'Teammate text', drafts: 'Draft', bus: 'Bus work', gmail: 'Gmail inbox', linkedin: 'LinkedIn message' };
 
 /** "Needs you 3 · iMessage 1 · Drafts 0 · Bus degraded 2"; a missing source shows "—", never 0. */
 export function sourceSummary(sources: UnifiedInboxSources): string {
@@ -94,4 +101,25 @@ export function itemLine(item: UnifiedInboxEntry, nowMs: number): { label: strin
     if (left <= EXPIRES_SOON_MS) parts.push(`expires in ${Math.max(0, Math.ceil(left / 60_000))}m`);
   }
   return { label: ITEM_LABELS[item.source], title: item.title, age: parts.length ? parts.join(' · ') : null };
+}
+
+const SOURCE_COMMANDS: Record<InboxSource, string> = {
+  'needs-you': 'phm fleet needs', imessage: 'phm fleet teammate-texts', drafts: 'phm drafts list --status pending',
+  bus: 'phm fleet bus-claim', gmail: 'phm fleet gmail-archive-plan', linkedin: 'phm drafts list --status pending',
+};
+const STATE_MEANINGS: Record<Exclude<InboxSourceState, 'healthy'>, string> = {
+  missing: 'not set up on this Mac', degraded: 'read partly; some items may be missing', unavailable: 'could not be read',
+};
+
+export interface SourceProblem { source: InboxSource; name: string; meaning: string; command: string }
+
+/** One entry per source that is not healthy; a source absent from the response counts as unreadable. */
+export function sourceProblems(sources: UnifiedInboxSources): SourceProblem[] {
+  const problems: SourceProblem[] = [];
+  for (const source of SOURCES) {
+    const state = sources[source]?.state ?? 'unavailable';
+    if (state === 'healthy') continue;
+    problems.push({ source, name: SOURCE_NAMES[source], meaning: STATE_MEANINGS[state], command: SOURCE_COMMANDS[source] });
+  }
+  return problems;
 }
