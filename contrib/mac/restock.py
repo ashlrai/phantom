@@ -3,9 +3,10 @@
 # Installed to ~/.ashlr-runs/bin/restock.py via swap.sh and sha-pinned by selfrun.sh (G1-CODE-PIN); run as
 # `restock.py [--dry-run] [--per-lane N]`. RQ-QUEUEGEN-BOLD-30 + SPEC-AMEND Security #5 + RQ-DEVINROUTEDEFAULTQ7
 # + RQ-QUEUE-AUTOUNPARK-1 (PARKED-DEP / DEPENDENCY GATE / UNPARK). Security must re-pin before live bin/ install.
-import os, re, sys, json, time, fcntl, subprocess, math
+import os, re, sys, json, time, fcntl, subprocess, math, hashlib
 from datetime import datetime, timezone
-from launch_precheck import precheck, park, parked as precheck_parked, park_key
+from launch_precheck import (precheck, park, parked as precheck_parked, park_key,
+                             attempt_identity, empty_reason, read_attempts)
 import queue_gate
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; EV = R + "/dispatch-events.log"
 gate = queue_gate.read_gate(Q)
@@ -230,6 +231,13 @@ skips = {}; picks = {l: [] for l in CODEX}; dep_parks = []; done = []; checked =
 # Bound network prechecks while allowing skipped rows to backfill lane demand.
 pc_left = max(20, sum(need.values()))
 def skip(j, why): skips[why] = skips.get(why, 0) + 1
+empty_attempts = read_attempts(R); empty_bases = {}
+def empty_gate(j, repo, prompt):
+    if repo not in empty_bases: empty_bases[repo] = attempt_identity(repo, "", H)
+    base = empty_bases[repo]
+    if not base: return None
+    identity = dict(base); identity["prompt_hash"] = hashlib.sha256(prompt.encode()).hexdigest()
+    return empty_reason(j, identity, empty_attempts, ts)
 # RQ-QUEUE-AUTOUNPARK-1: each tick, unpark PARKED-DEP rows whose DEPENDENCY GATE ids are all MERGED in jobs.jsonl.
 # Unpark rewrites the ready.tsv row only — the prompt body (including "no merge without Security pin") is untouched.
 unparks = []   # (job, deps, ready_line, launch_line)
@@ -404,9 +412,19 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re
     # balance codex lanes: line pool first, else the lane with more unmet need (cmp wins ties)
     lane = pool if len(picks[pool]) < need[pool] or pool == "codex-local" else max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
     if len(picks[lane]) >= need[lane]: continue
+    prompt = prompt_body(j, rm.group(1), lane, tier, attrs, text)
+    reason = empty_gate(j, rm.group(1), prompt)
+    if reason:
+        skip(j, reason)
+        if not DRY:
+            with open(R + '/metrics/jobs.jsonl', 'a') as stream:
+                stream.write(json.dumps(dict(event='skipped_empty', job=j, repo=rm.group(1),
+                                             lane=lane, reason=reason,
+                                             ts=time.strftime('%Y-%m-%dT%H:%M:%S%z'))) + '\n')
+        continue
     if pc_left <= 0: break
     checked.add(j); pc_left -= 1
-    pc = precheck(j, rm.group(1), prompt_body(j, rm.group(1), lane, tier, attrs, text), H, R)
+    pc = precheck(j, rm.group(1), prompt, H, R)
     if pc and pc[0] in (11, 12, 13):
         # Open PRs and legacy existence heuristics are not acceptance evidence.
         # Keep the author row READY; unchanged retries share dispatch's backoff.
