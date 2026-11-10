@@ -168,7 +168,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   try {
     assert.equal(process.env.GITHUB_REF, 'refs/heads/master');
     const plan = await planReleaseCadenceWhenAvailable({ repository: process.env.GITHUB_REPOSITORY, revision: process.env.GITHUB_SHA,
-      minutes: Math.max(60, cadenceMinutes(process.env.RELEASE_CADENCE_MINUTES || '60')), read: createPublicMetadataReader() });
+      minutes: cadenceMinutes(process.env.RELEASE_CADENCE_MINUTES || '5'), read: createPublicMetadataReader() });
     assert.ok(process.env.GITHUB_OUTPUT);
     appendFileSync(process.env.GITHUB_OUTPUT, `due=${plan.due}\nversion=${plan.version ?? ''}\n`);
     console.log(JSON.stringify(plan));
