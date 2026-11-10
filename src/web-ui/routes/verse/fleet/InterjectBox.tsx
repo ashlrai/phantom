@@ -9,6 +9,7 @@ import { narrowOrderTrace } from '../fleet-inbox/order-trace-model.js';
 import { interjectOutcome } from './interject-outcome-model.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { inboxTailQuery, postInterjection, readInboxAck } from './interject-queries.js';
+import { mintInterjectRequestId } from './interject-request.js';
 import { ackState, ackText, loadDraft, loadPendingAck, newestLeaderPassMs, parseInboxAt, saveDraft, savePendingAck, sourceChip } from './interject-ack-model.js';
 import { loadHistory, pushHistory, recall } from './interject-history.js';
 import { askCosTask, isCosRouteAbsent } from './cos-task-client.js';
@@ -40,6 +41,9 @@ export function InterjectBox() {
   const busy = useRef(false);
   const cursor = useRef<number | null>(null);
   const liveDraft = useRef('');
+  // One request id per composed message: a retry (double Enter, a slow
+  // response, a reconnect) reposts it and the Hub replays the first write.
+  const requestKey = useRef<{ text: string; id: string } | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [message, setMessage] = useState('');
   const [sent, setSent] = useState<string | null>(null);
@@ -48,6 +52,9 @@ export function InterjectBox() {
   const [taskAck, setTaskAck] = useState('');
   function updateDraft(text: string) {
     setDraft(text);
+    // An emptied box ends the composition: a retype — even of the same words —
+    // is a new message and mints a new request id.
+    if (!text.trim()) requestKey.current = null;
     try { saveDraft(window.sessionStorage, text); } catch { /* Storage can be unavailable. */ }
   }
   useEffect(() => {
@@ -110,8 +117,10 @@ export function InterjectBox() {
         return;
       }
       setTaskAck('');
-      const result = await postInterjection(draft.trim());
-      try { pushHistory(window.localStorage, draft.trim()); } catch { /* Storage can be unavailable. */ }
+      const text = draft.trim();
+      if (requestKey.current?.text !== text) requestKey.current = { text, id: mintInterjectRequestId() };
+      const result = await postInterjection(text, requestKey.current.id);
+      try { pushHistory(window.localStorage, text); } catch { /* Storage can be unavailable. */ }
       cursor.current = null;
       updateDraft('');
       setSent(result.at);
