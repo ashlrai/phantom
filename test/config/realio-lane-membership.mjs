@@ -44,6 +44,10 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  */
 export const REAL_IO_TEST_FILES = [
   'test/agent-tools-registry.test.ts', // Spawns a real child to read the tool registry.
+  'test/constitution-recutnonphxold60.test.ts', // Spawns the CLI through tsx to prove `constitution` dispatches.
+  'test/phantom-discovery.test.ts', // Compiles the generated client with a real tsc child.
+  'test/fleet-coordination.test.ts', // Spawns tsx children that contend for the coordination lock.
+  'test/release-articles.test.ts', // Real temporary Git repositories driven through git children.
   'test/real-home-child.test.ts', // Spawns a Node child to prove the test preload keeps KILL and enrollment inside HOME.
   'test/release-train.test.ts', // Spawns node --experimental-strip-types against the release-train guard.
   'test/main-blame.test.ts', // Spawns git bisect children against a real temporary repository.

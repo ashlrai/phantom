@@ -27,6 +27,9 @@ importers:
       '@simplewebauthn/server':
         specifier: ^14.0.3
         version: 14.0.3
+      highs:
+        specifier: 1.15.4
+        version: 1.15.4
       jose:
         specifier: ^6.2.12
         version: 6.2.12
@@ -1370,6 +1373,10 @@ packages:
   hasown@2.0.4:
     resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
     engines: {node: '>= 0.4'}
+
+  highs@1.15.4:
+    resolution: {integrity: sha512-vsC03XHDqWAVrEFUt22h8e4CDDMb+LAFa0bycjPUq2kadRigK5pNLVIlwspKvMxxVtrr4NAucZHP/CAgigxiDQ==}
+    engines: {node: '>=18'}
 
   hono@4.13.13:
     resolution: {integrity: sha512-CQ46U0ZkAGmbT/4UxdzzGJpacP2IeKgY4a5/tOI9AABbpOMfK739wfDXmv1usCk+3RkKj1hQy4/fjhiwa2xlrA==}
@@ -3421,6 +3428,8 @@ snapshots:
   hasown@2.0.4:
     dependencies:
       function-bind: 1.1.2
+
+  highs@1.15.4: {}
 
   hono@4.13.13: {}
 

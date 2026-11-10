@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createServer, request as httpRequest, type Server } from 'node:http';
 import { Readable } from 'node:stream';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { createRemoteAccessVerifier } from '../src/core/web/remote-access.js';
@@ -11,6 +12,7 @@ import { createRemoteDeviceStore, type RemoteDevice } from '../src/core/web/remo
 import { handleVerseApi, type VerseApiContext } from '../src/core/verse/verse-api.js';
 import { startRemoteReadGateway } from '../src/core/web/remote-gateway.js';
 import { createRemotePairing } from '../src/core/web/remote-pairing.js';
+import { registerFleetIntegrationTests } from './helpers/fleet-integration.js';
 
 const ORIGIN = 'https://phone.example.com';
 const SUBJECT = '7335d417-61da-459d-899c-0a01c76a2f94';
@@ -35,7 +37,8 @@ function device(): RemoteDevice {
     deviceType: 'multiDevice', backedUp: true, createdAt: 1, lastUsedAt: null, revokedAt: null };
 }
 
-async function fixture(opts: { writes?: boolean; mobileAssets?: boolean } = {}) {
+async function fixture(arg: string | { writes?: boolean; mobileAssets?: boolean; fleetSnapshotPath?: string } = {}) {
+  const opts = typeof arg === 'string' ? { fleetSnapshotPath: arg } : arg;
   const root = mkdtempSync(join(tmpdir(), 'ashlr-remote-http-'));
   dirs.push(root);
   const devices = createRemoteDeviceStore(root);
@@ -107,6 +110,10 @@ async function fixture(opts: { writes?: boolean; mobileAssets?: boolean } = {}) 
     access: CONFIG, devices, verifier, mobileAssetsEnabled: opts.mobileAssets,
     hub: opts.writes ? { port: hubPort, readToken: TOKEN, mutationToken: MTOKEN } : { port: hubPort, readToken: TOKEN },
     pairing: opts.writes ? createRemotePairing(CONFIG, devices) : undefined,
+    fleetSnapshotPath: opts.fleetSnapshotPath,
+    // Fleet assets come from the bundled public dir; desktop mobile assets keep
+    // proxying the running Hub build when no override is configured.
+    ...(opts.fleetSnapshotPath ? { assetsDir: fileURLToPath(new URL('../src/core/web/public', import.meta.url)) } : {}),
   });
   const identity = { subject: SUBJECT, email: 'owner@example.com', expiresAt: Date.now() + 600_000 };
   const session = gateway.issueDeviceSession(identity, DEVICE_ID);
@@ -186,6 +193,53 @@ describe('dormant remote read gateway HTTP boundary', () => {
       }
     }
     expect(f.received).toEqual([]);
+  });
+
+  it('serves only authenticated, redacted fleet reads and keeps the shared file unchanged', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ashlr-fleet-remote-'));
+    dirs.push(root);
+    const path = join(root, 'fleet.json');
+    const input = JSON.stringify({ schema: 'fleet.v1', generated_at: new Date().toISOString(),
+      tokens: TOKEN, raw_cli: 'private auth file content',
+      agents: [{ agent: 'codex', repo: 'ashlrai/phantom', task: `inspect ${TOKEN}`, claim_id: 'claim-1', expires_at: new Date(Date.now() + 3600000).toISOString() }],
+      pools: [], readings: [], repos: [], coordination: {}, router: {}, sources: {} });
+    writeFileSync(path, input, { mode: 0o600 });
+    const f = await fixture(path);
+    try {
+      expect(f.gateway.url).toMatch(/^http:\/\/127\.0\.0\.1:/);
+      for (const target of ['/fleet/', '/fleet/fleet.js', '/fleet/fleet.css', '/api/fleet']) {
+        expect((await f.get(target, { cookie: '' })).status).toBe(401);
+        expect((await f.get(target, { 'cf-access-jwt-assertion': '' })).status).toBe(401);
+        const response = await f.get(target);
+        expect(response.status).toBe(200);
+        const body = await response.text();
+        expect(body).not.toContain(TOKEN);
+        expect(body).not.toContain('private auth file content');
+        expect(response.headers.get('set-cookie')).toBeNull();
+      }
+      const snapshot = await (await f.get('/api/fleet')).json();
+      expect(snapshot).toMatchObject({ schema: 'fleet.v1', agents: [{ task: 'inspect [REDACTED]' }] });
+      expect(snapshot).not.toHaveProperty('tokens');
+      for (const target of ['/api/fleet?path=/etc/passwd', '/fleet/../fleet.json', '/fleet/fleet.json', '/fleet/fleet.js?x=1']) {
+        expect((await f.get(target)).status).toBe(404);
+      }
+      for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+        expect((await f.get('/api/fleet', {}, method)).status).toBeGreaterThanOrEqual(400);
+      }
+      expect(readFileSync(path, 'utf8')).toBe(input);
+      expect(f.received).toHaveLength(0);
+      f.devices.revoke(DEVICE_ID, Date.now());
+      expect((await f.get('/api/fleet')).status).toBe(401);
+    } finally { await f.gateway.close(); }
+  });
+
+  it('reports an unavailable fleet snapshot without exposing filesystem errors', async () => {
+    const f = await fixture('/missing-private-fleet-fixture/fleet.json');
+    try {
+      const response = await f.get('/api/fleet');
+      expect(response.status).toBe(503);
+      expect(await response.text()).not.toContain('/missing-private');
+    } finally { await f.gateway.close(); }
   });
 
   it('keeps raw Hub credentials off the browser and allows only reviewed reads', async () => {
@@ -359,3 +413,6 @@ describe('dormant remote read gateway HTTP boundary', () => {
     } finally { await f.gateway.close(); }
   });
 });
+
+// This existing serialized real-I/O suite owns fleet process and FIFO coverage.
+registerFleetIntegrationTests();

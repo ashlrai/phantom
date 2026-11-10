@@ -2,8 +2,10 @@
  * `ashlr fleet` — M49 fleet control plane + observability CLI.
  *
  * Subcommands:
+ *   fleet status --coding [--json]
+ *       Collect coding-pool evidence and atomically publish fleet.v1 locally.
  *   fleet status [--json] [--legacy]
- *       Print a READ-ONLY snapshot of the whole fleet: daemon liveness +
+ *       Print the READ-ONLY operational snapshot: daemon liveness +
  *       today's spend, per-backend recent dispatches + quota, queue size,
  *       proposal counts (pending / frontier-pending / applied), recent
  *       auto-merges, and the kill-switch (paused) state. Never mutates.
@@ -36,7 +38,8 @@
  *
  * Pause/resume mutate only the kill-switch sentinel. The nested shadow canary
  * command owns its separate metadata-only controller store. `queue` owns the
- * separate untrusted router handoff and its read audit; status remains read-only.
+ * separate untrusted router handoff and its read audit; status remains
+ * read-only unless --coding is passed, which writes only its local snapshot.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -1684,10 +1687,28 @@ async function loadCfg(): Promise<AshlrConfig | null> {
 }
 
 // ---------------------------------------------------------------------------
-// Subcommand: status (READ-ONLY)
+// Subcommand: status (local snapshot refresh; legacy report remains read-only)
 // ---------------------------------------------------------------------------
 
 async function cmdFleetStatus(jsonMode: boolean): Promise<number> {
+  const { buildCodingFleetSnapshot, writeCodingFleetSnapshot, formatCodingFleetSnapshot } = await import('../core/fleet/coding-snapshot.js');
+  try {
+    const snapshot = await buildCodingFleetSnapshot();
+    writeCodingFleetSnapshot(snapshot);
+    const { emitFleetTelemetry } = await import('../core/fleet/coding-telemetry.js');
+    const { loadSchedulerConfig } = await import('../core/providers/coding-cli/scheduler/defaults.js');
+    emitFleetTelemetry(snapshot, loadSchedulerConfig().posthog);
+    process.stdout.write((jsonMode ? JSON.stringify(snapshot, null, 2) : formatCodingFleetSnapshot(snapshot)) + '\n');
+    return 0;
+  } catch {
+    // Never echo an exception from gh, config, or a filesystem path: it may
+    // contain credentials. A failed publication must not look successful.
+    process.stderr.write('fleet status: snapshot unavailable or shared path is not writable; set PHANTOM_FLEET_PATH to a private writable path.\n');
+    return 1;
+  }
+}
+
+async function cmdFleetLegacyStatus(jsonMode: boolean): Promise<number> {
   const cfg = await loadCfg();
   if (!cfg) {
     process.stderr.write(red('error: ') + 'failed to load config.\n');
@@ -2516,7 +2537,7 @@ async function cmdFleetScorecard(args: string[]): Promise<number> {
 
 /** Options each lenient fleet verb reads, mirroring printFleetHelp. */
 const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> = {
-  status:         { allowed: { flags: ['--json', '--legacy'] }, usage: 'ashlr fleet status [--json] [--legacy]' },
+  status:         { allowed: { flags: ['--json', '--legacy', '--coding'] }, usage: 'ashlr fleet status [--json] [--legacy | --coding]' },
   events:         { allowed: { flags: ['--json', '--follow'], values: ['--queue-dir', '--cursor'] }, usage: 'ashlr fleet events --json [--follow] [--cursor <cursor>] [--queue-dir <abs>]' },
   watch:          { allowed: { flags: ['--json'] }, usage: 'ashlr fleet watch [--json]' },
   graph:          { allowed: { flags: ['--json'], values: ['--queue-dir'] }, usage: 'phantom fleet graph [--json] [--queue-dir <abs>]' },
@@ -2578,6 +2599,12 @@ export async function cmdFleet(args: string[]): Promise<number> {
     }
   }
 
+  // Host-only coordination verbs also answer as `fleet coordination <verb>`.
+  if (['claim', 'release', 'handoff', 'board', 'post', 'inbox', 'assign'].includes(sub)) {
+    const { cmdFleetCoordination } = await import('./fleet-coordination.js');
+    return cmdFleetCoordination([sub, ...rest]);
+  }
+
   // `fleet <verb> --help` prints usage and never runs the verb: without this,
   // `fleet pause --help` engaged the kill switch and `fleet resume --help`
   // released it. automerge-canary, xreview and grok-usage own their own help and refusals.
@@ -2615,10 +2642,16 @@ export async function cmdFleet(args: string[]): Promise<number> {
       const { cmdFleetUsage } = await import('./fleet-usage.js');
       return cmdFleetUsage(rest);
     }
-    case 'status':
-      // This baseline's status handler already produces the legacy control-plane
-      // report; accept the explicit selector used by activation-readiness callers.
-      return cmdFleetStatus(rest.includes('--json'));
+    case 'status': {
+      if (rest.includes('--legacy') && rest.includes('--coding')) {
+        process.stderr.write('error: fleet status: --legacy and --coding are mutually exclusive\n');
+        return 2;
+      }
+      // Preserve the established activation-readiness JSON contract. Snapshot
+      // publication is explicit because it also writes local fleet evidence.
+      if (rest.includes('--coding')) return cmdFleetStatus(rest.includes('--json'));
+      return cmdFleetLegacyStatus(rest.includes('--json'));
+    }
     case 'events': {
       if (!rest.includes('--json')) {
         process.stderr.write('fleet events requires --json\n');
@@ -2720,7 +2753,10 @@ function printFleetHelp(): void {
   console.log('  ' + bold('Usage:'));
   console.log('');
   console.log('    ashlr fleet <name>   # any src/cli/fleet-<name>.ts module (see fleet-subcommand-resolve.ts)');
-  console.log(`    ashlr fleet status [--json] [--legacy] ${cyan('# read-only fleet snapshot')}`);
+  console.log(`    ashlr fleet status [--json] [--legacy | --coding] ${cyan('# read operational status; --coding refreshes fleet.v1')}`);
+  console.log('    ashlr fleet claim|release|handoff|board|post|inbox|assign --help');
+  console.log(`                          ${cyan('# host-only claims and messages; assign proposes and never spawns')}`);
+  console.log(`    ashlr fleet coordination <verb> ${cyan('# same verbs under the coordination namespace')}`);
   console.log(`    ashlr fleet grok-usage status|record [--help] ${cyan('# Grok Ultra points and runway')}`);
   console.log(`    ashlr fleet events --json [--follow] [--cursor <cursor>] [--queue-dir <abs>]`);
   console.log('    phm fleet usage [--json] | usage add <pool> <pct> --at <timestamp>');

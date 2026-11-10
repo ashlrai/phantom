@@ -1,0 +1,21 @@
+# Fixture CLI output from the 2026-10-25 Mac inventory.
+# Tests read these files. Nothing here is a live credential.
+
+codex version: codex 0.164.0
+claude version: 2.1.280 (Claude Code)
+grok models:
+You are using XAI_API_KEY
+grok-build-0.1
+grok-4.20-0309-non-reasoning
+grok-4.20-0309-reasoning
+grok-4.20-multi-agent-0309
+grok-4.3
+grok-4.5
+grok-4.6
+grok-4.7
+codex login: logged in
+claude auth: login expired
+codex reject gpt-6.1-sol: The model `gpt-6.1-sol` is not available on this account.
+codex rate limit: ERROR: rate limit exceeded. Try again after 2026-10-26T06:00:00.000Z
+claude rate limit: Error: usage limit reached. reset: 2026-10-26T06:00:00.000Z
+codex rate limit no reset: ERROR: 429 rate limit exceeded

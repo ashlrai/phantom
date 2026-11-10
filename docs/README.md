@@ -37,7 +37,7 @@ A zero exit code is not a merge and not permission to spend. `phm docs --agent -
 
 | Your task | Canonical guide |
 |-----------|-----------------|
-| Discover an experimental Phantom peer API and generate a typed client | [Phantom peer discovery](PHANTOM-DISCOVERY.md) |
+| Discover an experimental Phantom peer API and generate a typed client | [Phantom peer discovery](https://github.com/ashlrai/phantom/blob/master/docs/PHANTOM-DISCOVERY.md) |
 | Install, open the console, and make a first turn | [Quickstart](QUICKSTART.md) |
 | Install, connect MCP, upgrade, and uninstall | [Self-hosting](SELF-HOSTING.md) |
 | Use the console | [Phantom user guide](VERSE.md) |
@@ -121,6 +121,9 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Diagnose daemon liveness and prepare the protected Mac revival handoff | [Daemon revival source guide](https://github.com/ashlrai/phantom/blob/master/docs/DAEMON-REVIVE.md) |
 | Read the resident tick's bounded phases, outcomes and per-stage errors | [Daemon tick phases](https://github.com/ashlrai/phantom/blob/master/docs/daemon-tick-phases.md) |
 | Run agents in Phantom against your accounts and a local model | [Local fleet](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-FLEET.md) |
+| Route work across logged-in coding CLIs by billing class | [Coding CLI adapters](https://github.com/ashlrai/phantom/blob/master/docs/CODING-CLI-ADAPTERS.md) |
+| Schedule coding pools with the optimizing router | [Coding-pool scheduler](https://github.com/ashlrai/phantom/blob/master/docs/router/SCHEDULER.md) |
+| Monitor coding pools and coordinate host claims from the phone | [Fleet v1](https://github.com/ashlrai/phantom/blob/master/docs/router/fleet-v1.md) |
 | Inspect managed OpenAI Agents sessions through the read-only CLI | [OpenAI Agents integration](OPENAI-AGENTS-INTEGRATION.md) |
 | Understand supported Dots companion workflows and the plugin-event integration path | [Dots companion](DOTS-COMPANION.md) |
 | Compose scoped, dated evidence with the pure source memory kernel | [Memory foundation](MEMORY-FOUNDATION.md) |
@@ -351,4 +354,4 @@ canonical release guide for required hosted qualification and publication.
 
 - [Empty job reasons](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-EMPTIES.md): group recorded empty outcomes and review filler suggestions.
 
-[Fable 5.2 orchestration and host handoff](FABLE-ORCHESTRATOR.md)
+[Fable 5.2 orchestration and host handoff](https://github.com/ashlrai/phantom/blob/master/docs/FABLE-ORCHESTRATOR.md)

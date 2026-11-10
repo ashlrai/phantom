@@ -2112,8 +2112,8 @@ async function main(): Promise<void> {
         break;
       }
       case 'router': {
-        const { cmdRouter } = await import('./router.js');
-        process.exitCode = await cmdRouter(rest);
+        const { cmdRouter, runRouterCli } = await import('./router.js');
+        process.exitCode = await (rest[0] === 'regret' ? runRouterCli(rest) : cmdRouter(rest));
         break;
       }
       case 'context': {
