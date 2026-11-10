@@ -42,7 +42,7 @@ on:
 
 permissions: {}
 concurrency:
-  group: phantom-canonical-npm
+  group: phantom-canonical-npm-${{ inputs.version }}
   cancel-in-progress: false
 
 jobs:
