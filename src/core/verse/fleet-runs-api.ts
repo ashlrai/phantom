@@ -278,6 +278,12 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       result.outbox = project(entries, outboxShape) as FleetRunsV1['outbox'];
     } catch { result.outbox = []; }
     await sourcesDone;
+    if (result.sources.merges === 'healthy' && result.mergesLastHour.items.length > 0) {
+      try {
+        const mod: typeof import('../intent/merge-snapshot.js') = await import('../intent/merge-snapshot.js' as string);
+        await mod.noteMergeSnapshot(result.mergesLastHour.items, deps.runsDir ?? defaultRunsDir(), new Date(now()).toISOString());
+      } catch { /* Private ledger failures must not affect the snapshot. */ }
+    }
     return result;
   }
   const laneModels = deps.laneModels ?? (() => getLaneModelSnapshot({ runsDir: deps.runsDir ?? defaultRunsDir() }));
