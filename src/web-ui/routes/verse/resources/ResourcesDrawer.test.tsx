@@ -60,7 +60,7 @@ const HEALTH: SeatHealthReport[] = [
 
 const BUDGET = {
   mode: 'balanced',
-  seats: {},
+  seats: { 'claude-a': { seatId: 'claude-a', enabled: true, reservePercent: 40, maxSessionWindowPercent: 70 } },
   updatedAt: CHECKED,
   headroom: [],
   seatInfo: [
@@ -389,7 +389,7 @@ describe('ResourcesDrawer — accounts', () => {
     render(<ResourcesDrawer mode="docked" now={NOW} />);
     await screen.findByRole('heading', { name: /^Cash Margin Partners/ });
     const card = within(cardOf('Cash Margin Partners'));
-    await waitFor(() => expect(card.getByText('Held back by current account or reserve limits.')).toBeInTheDocument());
+    await waitFor(() => expect(card.getByText('Held back by current account limits.')).toBeInTheDocument());
     const summary = card.getByText('Usage details');
     summary.focus();
     const reads = calls.length;
@@ -984,7 +984,8 @@ describe('ResourcesDrawer — readiness for chat and the fleet (3.14)', () => {
     const claude = within(await screen.findByRole('group', { name: 'Claude Max: readiness' }));
     expect(claude.getByText('Chat')).toBeInTheDocument();
     expect(claude.getByText('Fleet')).toBeInTheDocument();
-    expect(claude.getByText('Ready · reserve 40% kept for you')).toBeInTheDocument();
+    expect(claude.getAllByText('Ready')).toHaveLength(2); // Chat and Fleet; the router's 40% reserve is not worded
+    expect(claude.queryByText(/reserve|kept for you/i)).not.toBeInTheDocument();
     expect(claude.getByText('35% of the weekly window is left for the fleet. Roles: judges, leads.')).toBeInTheDocument();
 
     const cmp = within(screen.getByRole('group', { name: 'Cash Margin Partners: readiness' }));

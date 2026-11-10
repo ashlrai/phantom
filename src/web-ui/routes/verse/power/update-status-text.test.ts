@@ -5,16 +5,16 @@ import { updateStatusText } from './update-status-text.js';
 const base: DesktopUpdateState = { phase: 'idle', enabled: true, version: '3.29.15', bytesReceived: 0, bytesTotal: null, reason: null };
 
 describe('updateStatusText', () => {
-  it('names the installed version when idle and says no newer signed release exists', () => {
+  it('names the installed version when idle and says no installable newer release is on the feed', () => {
     expect(updateStatusText(base)).toEqual({
       badge: 'Up to date · v3.29.15',
-      detail: 'No signed release newer than v3.29.15 has been published yet.',
+      detail: 'No installable signed release newer than v3.29.15 is on the update feed.',
     });
   });
   it('stays sensible without a version', () => {
     const text = updateStatusText({ ...base, version: null });
     expect(text.badge).toBe('No newer signed release');
-    expect(text.detail).toContain('No signed release newer than');
+    expect(text.detail).toContain('No installable signed release newer than');
   });
   it('never claims a check happened because the state has no check time', () => {
     for (const phase of ['idle', 'current'] as const) {

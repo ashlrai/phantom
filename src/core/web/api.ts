@@ -1920,6 +1920,13 @@ export async function handleApi(
       return true;
     }
 
+    if (path === '/api/worklog' && method === 'GET') {
+      const { readWorklog } = await import('../fleet/worklog.js');
+      try { sendJson(res, 200, await readWorklog()); }
+      catch { sendJson(res, 503, { error: 'Jobs ledger is unreadable.' }); }
+      return true;
+    }
+
     if (path === '/api/fleet/machine' && method === 'GET') {
       const { readFleetMachine } = await import('../fleet/machine.js');
       sendJson(res, 200, await readFleetMachine());
@@ -2139,6 +2146,12 @@ export async function handleApi(
         ? await ctx.readProjections.read('control')
         : await buildControlSnapshot(cfg);
       sendJson(res, 200, snapshot);
+      return true;
+    }
+
+    if (path === '/api/feed' && method === 'GET') {
+      const { readFeed } = await import('../feed.js');
+      sendJson(res, 200, await readFeed());
       return true;
     }
 

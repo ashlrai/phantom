@@ -96,6 +96,16 @@ export function renderCliDoc(sections) {
     'per-command detail surface.',
     '',
   ];
+  parts.push(
+    '## Common tasks', '',
+    'Each command also supports details through `phm help --all`.', '',
+    '| Task | Example |', '| --- | --- |',
+    '| Summarize local metrics. | `phm metrics summary --json` |',
+    '| Check the release train. | `phm release status --json` |',
+    '| Preview cleanup of finished worktrees. | `phm worktrees prune --dry-run --json` |',
+    '| Explain dispatcher routes. | `phm route explain --json` |',
+    '| Show usage by engine. | `phm usage` |', '',
+  );
   for (const { title, note, output } of sections) {
     parts.push(`## \`${title}\``, '', note, '', '```text', output.replace(/\n$/, ''), '```', '');
   }

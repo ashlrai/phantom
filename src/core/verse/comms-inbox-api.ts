@@ -6,6 +6,7 @@ import type { ApiModule } from './api-modules.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { approveDraft, getDraft, listDrafts, rejectDraft, type Draft } from '../cos/drafts.js';
 import { fixedOwnerRunsDir } from '../comms/owner-channel.js';
+import { markLinkedInAnswered } from '../comms/linkedin-drop.js';
 import { readUnifiedInbox, type UnifiedInbox, type UnifiedInboxOptions } from '../comms/unified-inbox.js';
 
 export const VERSE_COMMS_INBOX_PATH = '/api/verse/comms/inbox';
@@ -15,6 +16,7 @@ const MAX_LIMIT = 200;
 const EMAIL_DRAFTS_PATH = `${VERSE_COMMS_INBOX_PATH}/email-drafts`;
 const EMAIL_DRAFTS_APPROVE = `${EMAIL_DRAFTS_PATH}/approve`;
 const EMAIL_DRAFTS_REJECT = `${EMAIL_DRAFTS_PATH}/reject`;
+const LINKEDIN_ANSWERED_PATH = `${VERSE_COMMS_INBOX_PATH}/linkedin/answered`;
 const EMAIL_DRAFTS_MAX = 50;
 const EMAIL_BODY_MAX = 8000;
 const DRAFT_ID_RE = /^d-[0-9a-f]{16}$/;
@@ -36,6 +38,8 @@ export interface CommsInboxApiDeps {
   getDraft?: typeof getDraft;
   approve?: typeof approveDraft;
   reject?: typeof rejectDraft;
+  /** LinkedIn answered-marker seam for tests; default writes the marker file. */
+  markLinkedIn?: typeof markLinkedInAnswered;
 }
 
 /** 1..200, or null for anything that is not a plain integer in range. */
@@ -120,8 +124,44 @@ export function createCommsInboxApi(deps: CommsInboxApiDeps = {}): ApiModule {
     return true;
   };
 
+  /** Owner marks a LinkedIn message answered. Writes one marker file under the fixed runs dir; sends nothing. */
+  const handleLinkedInAnswered: ApiModule = async (ctx, req, res, path, method) => {
+    if (path !== LINKEDIN_ANSWERED_PATH) return false;
+    if (method !== 'POST') {
+      sendJson(res, 405, { error: 'Method not allowed.' });
+      return true;
+    }
+    if (!ctx.allowDispatch) {
+      sendJson(res, 404, { error: 'not found' });
+      return true;
+    }
+    if (!passesMutationGate(req, res, ctx.token)) return true;
+    let input: unknown;
+    try { input = JSON.parse(await readBody(req)); }
+    catch (error) {
+      if (error instanceof SyntaxError) { sendJson(res, 400, outcome('invalid')); return true; }
+      sendJson(res, 413, { error: 'Request body too large.' });
+      return true;
+    }
+    if (typeof input !== 'object' || input === null || Array.isArray(input)
+      || Object.keys(input).some(key => key !== 'id')) {
+      sendJson(res, 400, outcome('invalid'));
+      return true;
+    }
+    const id = (input as { id?: unknown }).id;
+    try {
+      const result = typeof id === 'string' ? (deps.markLinkedIn ?? markLinkedInAnswered)(runsDirOf(), id) : 'invalid';
+      if (result === 'invalid') sendJson(res, 400, outcome('invalid'));
+      else sendJson(res, 200, { v: 1, outcome: result });
+    } catch {
+      sendJson(res, 503, outcome('unavailable'));
+    }
+    return true;
+  };
+
   return async (ctx, req, res, path, method) => {
     if (await handleEmailDrafts(ctx, req, res, path, method)) return true;
+    if (await handleLinkedInAnswered(ctx, req, res, path, method)) return true;
     if (path !== VERSE_COMMS_INBOX_PATH) return false;
     if (method !== 'GET') {
       sendJson(res, 405, { error: 'The comms inbox is read only here.' });

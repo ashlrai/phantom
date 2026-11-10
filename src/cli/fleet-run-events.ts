@@ -1,6 +1,8 @@
 import { parseArgs } from 'node:util';
 import { readRunEventLog, replayRunState, runBranches, runHead, runEventLogPath, RunEventLogError } from '../core/events/run-event-reader.js';
 
+const usage = 'Usage: phm fleet run-events <list|head|branches|replay> <job> [--runs-dir <absolute>] [--at <event>] [--branch <name>] [--json]';
+
 /** Read the original event-tree artifacts without changing them. */
 export async function cmdFleetRunEvents(args: string[]): Promise<number> {
   let parsed: ReturnType<typeof parseArgs>;
@@ -15,7 +17,7 @@ export async function cmdFleetRunEvents(args: string[]): Promise<number> {
   }
   const [command, job, ...extra] = parsed.positionals;
   if (parsed.values.help || command === 'help') {
-    console.log('Usage: phm fleet run-events <list|head|branches|replay> <job> [--runs-dir <absolute>] [--at <event>] [--branch <name>] [--json]');
+    console.log(usage);
     return 0;
   }
   if (!command || !['list', 'head', 'branches', 'replay'].includes(command) || !job || extra.length) {
