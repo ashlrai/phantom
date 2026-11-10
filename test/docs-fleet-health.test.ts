@@ -21,7 +21,7 @@ describe('fleet health guide', () => {
       'fleet idle-lanes --json', 'fleet api-pools --json', 'fleet load --json',
       'fleet admission --json', 'fleet lane-share --json', 'fleet leader-health --json',
       'fleet heartbeat --json', 'fleet main-health --json', 'fleet health-age --json',
-      'fleet login-health --json', 'fleet stuck-prs --json', 'fleet waste --json',
+      'fleet login-health --json', 'fleet stuck-prs --json', 'fleet pr-hygiene --json', 'fleet waste --json',
       'fleet worktree-stale --json', 'fleet brains --json', 'fleet disk --json',
       'fleet memory --json', 'fleet judge-health --json', 'fleet evidence doctor decisions --json',
     ]);

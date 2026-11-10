@@ -24,7 +24,7 @@ describe('Updates row', () => {
     expect(screen.getByText(/Update 2.0.0 ready/)).toHaveAttribute('aria-live', 'polite');
     await screen.findByText(/abcdef1/);
     await userEvent.click(screen.getByRole('button', { name: 'Check now' }));
-    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetcher.mock.calls.filter(([url]) => String(url).includes('/ops/self-update'))).toHaveLength(2));
     expect(refresh).toHaveBeenCalledOnce();
     expect(fetcher.mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
   });
@@ -49,10 +49,10 @@ describe('Updates row', () => {
     vi.useFakeTimers(); const fetcher = server();
     const view = render(<SectionVisibilityProvider visible><ToastProvider><UpdateStatusRow /></ToastProvider></SectionVisibilityProvider>);
     await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls.filter(([url]) => String(url).includes('/ops/self-update'))).toHaveLength(2);
     view.rerender(<SectionVisibilityProvider visible={false}><ToastProvider><UpdateStatusRow /></ToastProvider></SectionVisibilityProvider>);
     await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls.filter(([url]) => String(url).includes('/ops/self-update'))).toHaveLength(2);
     view.rerender(<SectionVisibilityProvider visible><ToastProvider><UpdateStatusRow /></ToastProvider></SectionVisibilityProvider>);
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(fetcher.mock.calls.length).toBeGreaterThanOrEqual(3);

@@ -18,7 +18,7 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); rmSync(root, { recursive: true, force: true }); });
 
 const NEXT_STEPS = new Set(['phm comms setup-email', 'phm fleet email-outbox --json',
-  'phm imessage doctor --json', 'phm imessage poll --json', 'phm comms diagnose --json']);
+  'phm imessage doctor --json', 'phm imessage poll --json', 'phm comms diagnose --json', 'phm fleet gmail-triage']);
 const PRIVATE_MARKERS = ['fake-private-address@example.test', 'fake-private-handle', '/fake/secret/path',
   'fake-secret-exception', 'fake body text'];
 

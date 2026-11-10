@@ -1,10 +1,11 @@
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cmdRelease } from '../src/cli/release.js';
 import {
-  admitCiRun, assertReleaseWrite, buildTrain, cappedCadenceMinutes, docsCarriersSynced, ENQUEUE_PULL_REQUEST,
+  admitCiRun, allowReleasePrDispatch, assertReleaseWrite, buildTrain, cappedCadenceMinutes, docsCarriersSynced, ENQUEUE_PULL_REQUEST,
   enqueueReleasePullRequest, failedBuildWithin, hostedTrainGate, isReleasePleaseCommit,
   markWritesApplied, mergeStageDone, observeTrain, pauseReleaseTrain, readSentinel, releaseGithubCall, releaseKillDecision, selectUpdaterFeed,
   TRAIN_SCHEMA, updaterFeedMatches, WEBSITE_HOOK,
@@ -53,6 +54,22 @@ describe('release train', () => {
   const dirs: string[] = [];
   afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
+  it('runs the workflow commands directly under Node type stripping', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'train-node-'));
+    dirs.push(dir);
+    const run = (...args: string[]) => spawnSync(process.execPath,
+      ['--experimental-strip-types', 'src/core/release/train.ts', ...args],
+      { encoding: 'utf8', env: { HOME: dir, GITHUB_ACTIONS: 'true' } });
+    const guard = run('guard');
+    expect(guard.status).toBe(1);
+    expect(JSON.parse(guard.stdout)).toMatchObject({ proceed: false, reason: 'repo-variable-unset' });
+    expect(guard.stderr).not.toContain('ERR_MODULE_NOT_FOUND');
+    const train = run('run', '--apply', '--out', join(dir, 'release-state.json'));
+    expect(train.status).toBe(1);
+    expect(train.stderr).toContain('github token unavailable');
+    expect(train.stderr).not.toContain('ERR_MODULE_NOT_FOUND');
+  });
+
   it('fails closed on the hosted repo variable unless it is on', () => {
     expect(hostedTrainGate({ GITHUB_ACTIONS: 'true' })).toEqual({ proceed: false, reason: 'repo-variable-unset' });
     expect(hostedTrainGate({ GITHUB_ACTIONS: 'true', PHANTOM_RELEASE_TRAIN: 'off' })).toEqual({ proceed: false, reason: 'repo-variable-off' });
@@ -77,6 +94,51 @@ describe('release train', () => {
     expect(failedBuildWithin({ status: 'completed', conclusion: 'failure', updated_at: '2026-11-09T01:00:00Z' }, now)).toBe(true);
     expect(failedBuildWithin({ status: 'completed', conclusion: 'failure', updated_at: '2026-11-08T20:00:00Z' }, now)).toBe(false);
     expect(buildTrain(observation({ buildCooldown: true })).writes.some((write) => write.path.includes('/ci.yml/'))).toBe(false);
+  });
+
+  it('only dispatches a candidate still at master, using the branch ref', () => {
+    const stale = buildTrain(observation());
+    expect(stale.writes.some((write) => write.path.endsWith('/ci.yml/dispatches'))).toBe(false);
+    expect(stale.state.steps.build.reason).toBe('candidate-not-master-head');
+    const current = buildTrain(observation({ masterSha: head }));
+    expect(current.writes.find((write) => write.path.endsWith('/ci.yml/dispatches'))?.body).toEqual({ ref: 'master', inputs: { release_gate: 'true' } });
+  });
+
+  it('advances a stale bridge tag from newer master through release-please', () => {
+    const base = observation();
+    const plan = buildTrain({ ...base, head: { ...base.head!, message: 'bridge: changes', releaseMessage: message } });
+    expect(plan.state.advance).toEqual({ action: 'advance-from-master', version: '3.30.28', sha,
+      reason: 'candidate-not-master-head -> plan 3.30.28' });
+    expect(plan.state.next).toBe('release-pr');
+    expect(markWritesApplied(plan.state).next).toBe('release-pr');
+    expect(plan.writes).toContainEqual({ method: 'POST',
+      path: 'repos/ashlrai/phantom/actions/workflows/release-please.yml/dispatches',
+      body: { ref: 'master', inputs: {} } });
+    for (const write of plan.writes) expect(() => assertReleaseWrite(write)).not.toThrow();
+    const next29 = buildTrain(observation({ masterVersion: '3.30.28',
+      tags: [{ name: 'v3.30.28', sha: head }],
+      head: { ...base.head!, tag: 'v3.30.28', message: 'bridge: changes',
+        releaseMessage: message.replaceAll('3.30.27', '3.30.28') } }));
+    expect(next29.state.advance?.version).toBe('3.30.29');
+    const current = buildTrain(observation({ masterSha: head, aheadBy: 0 }));
+    expect(current.state.advance).toBeUndefined();
+    expect(current.writes.some(write => write.path.includes('release-please.yml'))).toBe(false);
+    expect(current.writes.some(write => write.path.endsWith('/ci.yml/dispatches'))).toBe(true);
+  });
+
+  it('does not recursively dispatch Release PR from its own completion', () => {
+    const path = 'repos/ashlrai/phantom/actions/workflows/release-please.yml/dispatches';
+    expect(allowReleasePrDispatch(path, 'false')).toBe(false);
+    expect(allowReleasePrDispatch(path, 'true')).toBe(true);
+    expect(allowReleasePrDispatch('graphql', 'false')).toBe(true);
+  });
+
+  it('does not plan a successor without commits after the tag or before cadence', () => {
+    for (const overrides of [{ aheadBy: 0 }, { lastTaggedAt: '2026-11-09T05:59:00Z' }]) {
+      const plan = buildTrain(observation(overrides));
+      expect(plan.state.advance).toBeUndefined();
+      expect(plan.writes.some(write => write.path.includes('release-please.yml'))).toBe(false);
+    }
   });
 
   it('fails closed unless both kill sentinels are proven absent', () => {
@@ -112,6 +174,8 @@ describe('release train', () => {
     }));
     const merge = due.writes.find((write) => write.path === 'graphql');
     expect(merge).toEqual(enqueueReleasePullRequest('PR_kwDO_test'));
+    expect(due.writes.some(write => write.path.includes('release-please.yml'))).toBe(false);
+    expect(due.state.advance?.version).toBe('3.30.28');
     expect(ENQUEUE_PULL_REQUEST).toContain('enqueuePullRequest');
     expect(JSON.stringify(due.writes)).not.toMatch(/admin|bypass|\/merge/);
     expect(mergeStageDone('OPEN')).toBe(false);
@@ -144,12 +208,23 @@ describe('release train', () => {
     expect(isReleasePleaseCommit(message, '3.30.27')).toBe(true);
     expect(docsCarriersSynced(message, '3.30.27')).toBe(true);
     expect(buildTrain(observation({ head: { tag: 'v3.30.27', sha: head, message: 'feat: something\n', ancestry: 'ancestor', committedAt: null } })).exitCode).toBe(1);
-    expect(buildTrain(observation({ head: { tag: 'v3.30.27', sha: head, message, ancestry: 'diverged', committedAt: null } })).state.reason).toBe('candidate-refused');
+    expect(buildTrain(observation({ head: { tag: 'v3.30.27', sha: head, message, ancestry: 'diverged', committedAt: null } })).state.reason).toContain('candidate-refused');
+  });
+
+  it('explains each candidate refusal and refuses an existing next tag', () => {
+    const base = observation();
+    expect(buildTrain({ ...base, head: { ...base.head!, ancestry: 'diverged', compareStatus: 'diverged' } }).state.reason).toContain('compare_not_ahead: diverged');
+    expect(buildTrain({ ...base, head: { ...base.head!, sha: '' } }).state.reason).toContain('tag_sha_empty');
+    const reason = buildTrain({ ...base, head: { ...base.head!, message: 'bridge: unrelated\nbody' } }).state.reason;
+    expect(reason).toContain('release_message_mismatch: tag=v3.30.27');
+    expect(reason).toContain('first_line="bridge: unrelated"');
+    expect(reason).toContain('expected=chore(<scope>): release 3.30.27');
+    expect(buildTrain({ ...base, tags: [...base.tags, { name: 'v3.30.28', sha: head }], skippedTags: [{ tag: 'v3.30.28', reason: 'release_message_mismatch' }] }).state.reason).toBe('duplicate_tag');
   });
 
   it('admits a tag on a later merge when the release-please commit is its ancestor', () => {
     const later = { tag: 'v3.30.27', sha: head, message: 'bridge(RQ-X): notes (#1)\n', ancestry: 'ancestor' as const, committedAt: null };
-    expect(buildTrain(observation({ head: later })).state.reason).toBe('candidate-refused');
+    expect(buildTrain(observation({ head: later })).state.reason).toContain('candidate-refused');
     expect(buildTrain(observation({ head: { ...later, releaseMessage: message } })).exitCode).toBe(0);
     expect(buildTrain(observation({ head: { ...later, releaseMessage: 'chore(master): release 3.30.26 (#1)', ancestry: 'diverged' } })).exitCode).toBe(1);
   });
@@ -182,6 +257,39 @@ describe('release train', () => {
     expect((await run('3.30.27', [{ commit: { message: 'bridge: notes' } }])).head?.releaseMessage).toBeUndefined();
   });
 
+  it.each([
+    ['v3.30.28', '5d9e9350', 'bridge(RQ-SWE5-FRESH-JUDGE): changes (#4153)', 'v3.30.27', message],
+    ['v3.30.25', 'e18df2ff', 'bridge: changes (#4098)', 'v3.30.24', 'chore(master): release 3.30.24 (#1)'],
+  ])('skips unrelated tag %s after checking its ancestors', async (badTag, prefix, badMessage, goodTag, goodMessage) => {
+    const badSha = prefix.padEnd(40, '0');
+    const goodSha = 'd'.repeat(40);
+    const pkg = (version: string) => ({ encoding: 'base64', content: Buffer.from(JSON.stringify({ name: '@ashlr/phantom', version })).toString('base64') });
+    const data: Record<string, unknown> = {
+      'repos/ashlrai/phantom': { id: 1263526319, full_name: 'ashlrai/phantom' },
+      'repos/ashlrai/phantom/commits/master': { sha },
+      [`repos/ashlrai/phantom/contents/package.json?ref=${sha}`]: pkg(badTag.slice(1)),
+      [`repos/ashlrai/phantom/git/ref/tags/${badTag}`]: { ref: `refs/tags/${badTag}`, object: { type: 'commit', sha: badSha } },
+      [`repos/ashlrai/phantom/commits/${badSha}`]: { commit: { message: badMessage, committer: { date: '2026-11-09T02:30:00Z' } } },
+      [`repos/ashlrai/phantom/commits/${goodSha}`]: { commit: { message: goodMessage, committer: { date: '2026-11-09T01:30:00Z' } } },
+      [`repos/ashlrai/phantom/compare/${badSha}...${sha}`]: { status: 'ahead', ahead_by: 1 },
+      [`repos/ashlrai/phantom/compare/${goodSha}...${sha}`]: { status: 'ahead', ahead_by: 240 },
+      [`repos/ashlrai/phantom/contents/package.json?ref=${badSha}`]: pkg(badTag.slice(1)),
+      [`repos/ashlrai/phantom/commits?sha=${badSha}&per_page=30`]: [{ commit: { message: badMessage } }],
+      'repos/ashlrai/phantom/tags?per_page=100&page=1': [{ name: badTag, commit: { sha: badSha } }, { name: goodTag, commit: { sha: goodSha } }],
+      'repos/ashlrai/phantom/releases?per_page=100&page=1': [],
+      'repos/ashlrai/phantom/pulls?state=open&per_page=100&page=1': [],
+    };
+    const observed = await observeTrain(async (path) => {
+      if (Object.hasOwn(data, path)) return data[path];
+      if (path.includes('/actions/workflows/')) return { total_count: 0, workflow_runs: [] };
+      if (path.startsWith('registry/')) return null;
+      throw new Error(`unexpected ${path}`);
+    }, '2026-11-09T06:00:00Z', 60, { fleet: 'inactive', autorun: 'inactive' });
+    expect(observed.head?.tag).toBe(goodTag);
+    expect(observed.skippedTags).toEqual([{ tag: badTag, reason: expect.stringContaining(`release_message_mismatch: tag=${badTag}`) }]);
+    expect(buildTrain(observed).state.tag).toBe(goodTag);
+  });
+
   it('dispatches attest and npm for the tagged sha and leaves signing to the Mac wrapper', () => {
     const waiting = buildTrain(observation({
       build: { runId: 11, attempt: 2, artifactId: 101, completedAt: '2026-11-09T03:00:00.000Z' },
@@ -208,12 +316,12 @@ describe('release train', () => {
   });
 
   it('posts workflow dispatch JSON on stdin with gh api --input -', () => {
-    const ci = buildTrain(observation()).writes.find((write) => write.path.endsWith('/ci.yml/dispatches'));
-    const ciBody = { ref: 'v3.30.27', inputs: { release_gate: 'true' } };
+    const ci = buildTrain(observation({ masterSha: head })).writes.find((write) => write.path.endsWith('/ci.yml/dispatches'));
+    const ciBody = { ref: 'master', inputs: { release_gate: 'true' } };
     expect(ci).toEqual({ method: 'POST', path: 'repos/ashlrai/phantom/actions/workflows/ci.yml/dispatches', body: ciBody });
     expect(releaseGithubCall('POST', 'repos/ashlrai/phantom/actions/workflows/ci.yml/dispatches', ciBody)).toEqual({
       args: ['api', '--hostname', 'github.com', '--method', 'POST', '--input', '-', 'repos/ashlrai/phantom/actions/workflows/ci.yml/dispatches'],
-      input: '{"ref":"v3.30.27","inputs":{"release_gate":"true"}}',
+      input: '{"ref":"master","inputs":{"release_gate":"true"}}',
     });
     const attestBody = {
       ref: 'master',
@@ -252,6 +360,7 @@ describe('release train', () => {
   it('rejects writes outside the sanctioned release paths', () => {
     const bad = { method: 'POST', path: 'repos/ashlrai/phantom/git/refs', body: { sha: head, merge_method: 'merge' } } as ReleaseWrite;
     expect(() => assertReleaseWrite(bad)).toThrow(/refusing/);
+    expect(() => assertReleaseWrite({ method: 'POST', path: 'repos/ashlrai/phantom/actions/workflows/release-please.yml/dispatches', body: { ref: 'v3.30.28', inputs: {} } })).toThrow(/refusing/);
     const publish = { method: 'PATCH', path: 'repos/ashlrai/phantom/releases/2', body: { name: 'x', body: 'y', draft: false, prerelease: false } } as unknown as ReleaseWrite;
     expect(() => assertReleaseWrite(publish)).toThrow(/publish/);
     const plan = buildTrain(observation());

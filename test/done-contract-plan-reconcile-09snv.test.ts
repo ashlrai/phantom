@@ -44,7 +44,7 @@ describe('parseDoneContract', () => {
     ['no-enforceable-layer', { schema: 'done-contract.v1' }],
     ['schema-invalid', contract({ extra: 1 })],
     ['schema-invalid', contract({ verify: [{ id: 'x', cmd: ['a'], cwd: '../up' }] })],
-  ])('rejects %s', (category, value) => {
+  ])('rejects %s (#%#)', (category, value) => {
     expect(() => parseDoneContract(JSON.stringify(value))).toThrow(category);
   });
   it('rejects non-JSON without echoing it', () => {

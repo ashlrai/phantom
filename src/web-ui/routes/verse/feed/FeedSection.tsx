@@ -9,7 +9,10 @@
  * note that some updates are missing. Only when every source is down does it
  * say the Feed is unavailable.
  */
-import { useMemo, useState } from 'react';
+import type { FeedReport } from '../../../../core/feed.js';
+import { apiGet } from '../../../data/client.js';
+import type { QueryDef } from '../../../data/queries.js';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useDesktopUpdates } from '../../../app/desktop-updates.js';
 import { deriveUpdateNotifications } from '../../../components/notifications/deriveUpdateNotifications.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
@@ -18,6 +21,8 @@ import { useNow } from '../autonomy/use-ticker.js';
 import { Card, CardNote } from '../command/Surface.js';
 import { openChat } from '../command/nav.js';
 import { liveLine } from '../chat/sidebar-model.js';
+import { openDockPane } from '../dock/dock-store.js';
+import { UNIFIED_INBOX_PATH, readUnifiedInboxView } from '../fleet-inbox/unified-inbox-model.js';
 import { agentBusPageQuery } from '../fleet-bus/agent-bus-queries.js';
 import { fleetMergesQuery } from '../fleet-merges/fleet-merges-queries.js';
 import { leaderThreadQuery } from '../leader/thread-data.js';
@@ -27,7 +32,11 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { useActivity } from '../shell/useActivity.js';
 import { buildFeed, filterFeed, type FeedFilter, type FeedKind } from './feed-model.js';
 import { isDismissed, useFeedDismissals } from './feed-dismiss-store.js';
+import { countNew, firstOlderIndex, useFeedSeen } from './feed-seen-store.js';
 import styles from './feed.module.css';
+
+const unifiedInboxQuery: QueryDef<unknown> = { key: 'verse-fleet-comms-unified-inbox', fetch: signal => apiGet(UNIFIED_INBOX_PATH, signal) };
+const sharedFeedQuery: QueryDef<FeedReport> = { key: 'shared-feed', fetch: signal => apiGet<FeedReport>('/api/feed', signal) };
 
 const FILTERS: readonly { id: FeedFilter; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -37,11 +46,14 @@ const FILTERS: readonly { id: FeedFilter; label: string }[] = [
   { id: 'owner', label: 'Channels' },
   { id: 'update', label: 'Updates' },
   { id: 'bus', label: 'Bus' },
+  { id: 'teammate', label: 'Dot' },
+  { id: 'comms', label: 'Comms' },
 ];
-const KIND_LABEL: Record<FeedKind, string> = { leader: 'Leader', alert: 'Alert', merge: 'Merge', fleet: 'Fleet', owner: 'Channel', update: 'Update', bus: 'Bus' };
+const KIND_LABEL: Record<FeedKind, string> = { leader: 'Leader', alert: 'Alert', merge: 'Merge', fleet: 'Fleet', owner: 'Channel', update: 'Update', bus: 'Bus', teammate: 'Dot', comms: 'Comms' };
 export const FEED_POLL_MS = 15_000;
 
 export function FeedSection({ visible = true }: { visible?: boolean }) {
+  const shared = useQuery(sharedFeedQuery, { enabled: visible, freshMs: 15_000 });
   const leader = useQuery(leaderThreadQuery, { enabled: visible, freshMs: 15_000 });
   const runs = useQuery(fleetMergesQuery, { enabled: visible, freshMs: 15_000 });
   const owner = useQuery(ownerThreadQuery, { enabled: visible, freshMs: 15_000 });
@@ -49,17 +61,21 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
   const update = useQuery(updateStatusQuery, { enabled: visible, freshMs: 60_000 });
   // An older hub has no bus route: the query's 404 just means no bus rows, never an error note.
   const bus = useQuery(agentBusPageQuery(0, 50), { enabled: visible, freshMs: 15_000 });
+  const teammate = useQuery(unifiedInboxQuery, { enabled: visible, freshMs: 15_000 });
   const nativeUpdates = useDesktopUpdates();
   const activity = useActivity();
+  const refetchShared = useRefetch(sharedFeedQuery);
   const refetchLeader = useRefetch(leaderThreadQuery);
   const refetchRuns = useRefetch(fleetMergesQuery);
   const refetchOwner = useRefetch(ownerThreadQuery);
+  const refetchTeammate = useRefetch(unifiedInboxQuery);
   const refetchBus = useRefetch(agentBusPageQuery(0, 50));
-  usePollWhileVisible(() => { refetchLeader(); refetchRuns(); refetchOwner(); refetchBus(); }, FEED_POLL_MS, { enabled: visible });
+  usePollWhileVisible(() => { refetchShared(); refetchLeader(); refetchRuns(); refetchOwner(); refetchBus(); refetchTeammate(); }, FEED_POLL_MS, { enabled: visible });
   const now = useNow(30_000);
   const [filter, setFilter] = useState<FeedFilter>('all');
   const { map: dismissedMap, dismissItem, restoreItem } = useFeedDismissals();
   const [showDismissed, setShowDismissed] = useState(false);
+  const { seenAt, markSeen } = useFeedSeen();
 
   const leaderFailed = Boolean(leader.error) || leader.data?.available === false;
   const runsFailed = Boolean(runs.error) && runs.data === undefined;
@@ -70,24 +86,51 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
   const ownerLines = ownerPaused ? undefined : owner.data?.lines;
   const failed = [leaderFailed, runsFailed, alertsFailed, ownerFailed].filter(Boolean).length;
   // Down means no source gave anything: the owner source only counts as up when it returned lines.
-  const allDown = leaderFailed && runsFailed && alertsFailed && (ownerFailed || !ownerLines?.length);
+  const allDown = !shared.data && leaderFailed && runsFailed && alertsFailed && (ownerFailed || !ownerLines?.length);
   const loading = leader.data === undefined && !leaderFailed && runs.data === undefined && !runsFailed && !activity.data && !alertsFailed && owner.data === undefined && !ownerFailed;
 
   const updateItems = useMemo(
     () => deriveUpdateNotifications(update.data ?? null, Date.now(), nativeUpdates),
     [update.data, nativeUpdates]);
 
+  const inboxView = useMemo(() => {
+    const raw = teammate?.data;
+    const view = readUnifiedInboxView(raw);
+    if (!view || view.unavailable || !raw || typeof raw !== 'object') return view;
+    const data = raw as { generatedAt?: unknown; items?: unknown };
+    const rawItems = Array.isArray(data.items) ? data.items : [];
+    return { ...view, generatedAt: typeof data.generatedAt === 'string' ? data.generatedAt : undefined,
+      items: view.items.map(item => {
+        const original = rawItems.find((row: unknown) => row && typeof row === 'object' && 'id' in row && row.id === item.id) as { since?: unknown } | undefined;
+        return typeof original?.since === 'string' ? { ...item, since: original.since } : item;
+      }) };
+  }, [teammate?.data]);
+
   const feed = useMemo(() => buildFeed({
+    shared: shared.data,
     leader: leader.data?.value?.messages,
     runs: runsFailed ? undefined : runs.data,
     needsYou: activity.data?.needsYou,
     owner: ownerLines,
     update: updateItems,
     bus: bus.data,
-  }), [leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data]);
+    teammate: teammate?.error ? null : inboxView,
+  }), [shared.data, leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data, inboxView, teammate?.error]);
   const filtered = filterFeed(feed, filter);
   const shown = filtered.filter(item => !isDismissed(item, dismissedMap));
   const dismissed = filtered.filter(item => isDismissed(item, dismissedMap));
+  const newCount = countNew(shown, seenAt);
+  const olderAt = firstOlderIndex(shown, seenAt);
+
+  // Leaving the Feed (hidden, or unmounted) after it was visible marks what it showed as seen,
+  // so the count stays while he reads and is gone next time.
+  const newestAt = useRef<string | undefined>(undefined);
+  // Only while visible: the render that hides the Feed must not replace what it last showed.
+  if (visible) newestAt.current = feed.find(item => !isDismissed(item, dismissedMap))?.at;
+  useEffect(() => {
+    if (!visible) return undefined;
+    return () => { if (newestAt.current) markSeen(newestAt.current); };
+  }, [visible, markSeen]);
 
   return <div className={styles.root}>
     <section aria-labelledby="feed-running-title" className={styles.running}>
@@ -111,20 +154,29 @@ export function FeedSection({ visible = true }: { visible?: boolean }) {
     {allDown
       ? <CardNote tone="unknown">The Feed is unavailable: none of its sources answered. It retries on its own.</CardNote>
       : failed > 0 ? <CardNote tone="unknown">Some updates could not be loaded.</CardNote> : null}
+    <CardNote tone="unknown">{shared.data ? `Unknown sources: ${Object.entries(shared.data.sources).filter(([, state]) => state === 'unknown').map(([name]) => name === 'leaderReplies' ? 'leader replies' : name).join(', ') || 'none'}.` : 'Shared feed sources are unknown.'}</CardNote>
     {ownerPaused ? <CardNote tone="unknown">Owner channels are paused; their messages are hidden.</CardNote> : null}
     {loading ? <CardNote>Loading the feed…</CardNote>
       : !allDown && shown.length === 0
         ? <CardNote>{filter === 'all' ? 'Nothing new yet. Leader messages, alerts and merges land here as they happen.' : `No ${FILTERS.find(f => f.id === filter)!.label.toLowerCase()} in the feed right now.`}</CardNote>
         : null}
+    {newCount > 0 ? <div className={styles.newBar}>
+      <span>{newCount} new since you last looked</span>
+      <button type="button" className={styles.dismiss} onClick={() => markSeen(shown[0]!.at)}>Mark all seen</button>
+    </div> : null}
     {shown.length ? <ol className={styles.list} aria-label="Feed">
-      {shown.map(item => <li key={item.id} data-kind={item.kind}>
+      {shown.map((item, i) => <Fragment key={item.id}>
+        {newCount > 0 && i === olderAt ? <li role="separator" aria-label="Earlier" className={styles.divider}>Earlier</li> : null}
+        <li data-kind={item.kind}>
         <Card title={item.title} caption={<time dateTime={item.at} title={new Date(item.at).toLocaleString('en-US')}>{formatRelative(item.at, now)}</time>}
           actions={<span className={styles.kind} data-kind={item.kind}>{item.label ?? KIND_LABEL[item.kind]}</span>}>
           {item.body ? <p className={styles.body}>{item.body}</p> : null}
+          {item.kind === 'teammate' ? <button type="button" className={styles.link} onClick={() => openDockPane('fleet-inbox')}>Open inbox</button> : null}
           {item.href ? <a className={styles.link} href={item.href} target="_blank" rel="noopener noreferrer">Open</a> : null}
           <button type="button" className={styles.dismiss} aria-label={`Dismiss ${item.title}`} onClick={() => dismissItem(item)}>Dismiss</button>
         </Card>
-      </li>)}
+        </li>
+      </Fragment>)}
     </ol> : null}
     {dismissed.length ? <div className={styles.dismissedBar}>
       <span>{dismissed.length} dismissed</span> · <button type="button" className={styles.dismiss} aria-expanded={showDismissed} onClick={() => setShowDismissed(v => !v)}>{showDismissed ? 'Hide' : 'Show'}</button>

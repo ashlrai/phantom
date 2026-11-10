@@ -1,0 +1,101 @@
+name: Perf Budget
+
+# Advisory CLI-latency regression check (RQ-PERF-9). Times the committed cold
+# paths in perf/budgets.json with hyperfine and fails the job when a median
+# exceeds baseline + 20%. This workflow is deliberately NOT a required check
+# and is never wired into merge_group or the Merge Gate: its signal tells the
+# PR author and the fleet that a change made startup slower, but a slow shared
+# runner or an un-rebaselined machine class can never gate a merge. Re-seed
+# baselines with `node scripts/perf-budget.mjs --update-baseline` after
+# deliberate startup work lands.
+
+on:
+  pull_request:
+    branches: ["**"]
+    types: [opened, synchronize, reopened]
+  # Daily read on the default branch keeps baseline drift visible without
+  # waiting for an unrelated PR to trip the budget.
+  schedule:
+    - cron: "37 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# PR runs cancel superseded revisions; schedule and dispatch runs each get
+# their own group and never cancel.
+concurrency:
+  group: perf-budget-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  perf-budget:
+    name: Perf budget (advisory, non-required)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          cache: npm
+
+      - name: Install hyperfine
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq hyperfine
+
+      - name: Install and build
+        run: npm ci && npm run build
+
+      # Every phm target requires dist/cli/index.js, so a missing build is an
+      # environment error (exit 2), never a fast pass. The phantom wrapper
+      # target is optional and skips when no phantom binary is installed.
+      # --home gives every timed command the same fresh HOME/ASHLR_HOME the
+      # baselines describe.
+      - name: Run the perf budget check
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/perf-home"
+          node scripts/perf-budget.mjs --runner hyperfine --home "$RUNNER_TEMP/perf-home" --json \
+            | tee perf-budget-report.json
+
+      - name: Summarize results
+        if: always()
+        run: |
+          node --input-type=module <<'NODE' >> "$GITHUB_STEP_SUMMARY"
+          import { readFileSync } from 'node:fs';
+          let report;
+          try {
+            report = JSON.parse(readFileSync('perf-budget-report.json', 'utf8'));
+          } catch {
+            console.log('### Perf budget\n\nNo JSON report was produced; see the job log.');
+            process.exit(0);
+          }
+          const esc = (v) => String(v).replace(/\|/g, '\\|');
+          const ms = (v) => (v === undefined ? '—' : `${v} ms`);
+          const lines = [
+            `### Perf budget (${report.runner}) — ${report.ok ? 'within budget' : 'REGRESSION or environment error'}`,
+            '',
+            '| target | median | budget | status |',
+            '| --- | ---: | ---: | --- |',
+          ];
+          for (const r of report.results) {
+            const why = r.why ? ` — ${esc(r.why)}` : '';
+            lines.push(`| ${r.id} | ${ms(r.stats?.median_ms)} | ${ms(r.budget_ms)} | ${r.status}${why} |`);
+          }
+          lines.push('', 'Advisory only: this check is not required and cannot block merge.');
+          console.log(lines.join('\n'));
+          NODE
+
+      - name: Upload the JSON report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: perf-budget-report
+          path: perf-budget-report.json
+          if-no-files-found: ignore
+          retention-days: 30
