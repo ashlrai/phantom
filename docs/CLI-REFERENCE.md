@@ -70,6 +70,7 @@ Phantom - every command (phm or ashlr)
     runtime run --store <absolute> -- universe <args>                                                              Run Universe in the foreground using the verified installed candidate; operational commands require explicit absolute --root.
     orient [--repo <r>] [--json]                                                                                   Session-start context: genome hits, health, backlog, pending proposals, attention (read-only).
     docs --agent [--json]                                                                                          Agent cheat sheet: the CLI-first contract (commands, safety classes, JSON shapes).
+    check [--base <ref>] [--json]                                                                                  Run incremental typechecks, cached lint and affected tests from a Phantom checkout; development feedback only.
     completions zsh|bash                                                                                           Print a shell completion script to stdout.
     plugins init|list|info|enable|disable                                                                          Scaffold + manage plugins (~/.ashlr/plugins/) - default-off, integrity-pinned, audited (see docs/PLUGINS.md).
     x <name> [args...]                                                                                             Run an enabled plugin's command.
