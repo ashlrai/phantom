@@ -1,3 +1,4 @@
+import { readFableAdmission } from '../routing/fable-admission.js';
 /**
  * Build and cache ashlr.world-model/v1. A warm cache hit does not re-probe
  * the roster, the desktop operator, or gh.
@@ -170,6 +171,7 @@ export async function buildWorldModel(options: WorldReadOptions = {}): Promise<C
   };
   const observe = assembleObserve(observeInput);
   const model = projectWorldModel({
+    fablePlan: readFableAdmission({ role: 'leader' }, nowMs),
     nowMs,
     sensors: isSensorReport(sensors) ? sensors : null,
     sensorRows: isSensorReport(sensors) ? sensors.lanes : [],

@@ -772,6 +772,12 @@ describe('M430 evidence filesystem races', () => {
       );
       actual.renameSync(ashlr, replacement);
       actual.renameSync(moved, ashlr);
+      // A rename away and back keeps the inode. ext4 also moves ctime; this
+      // host's tmpfs can leave ctime unchanged inside one timestamp, which
+      // would hide the rebind from the snapshot. Record a new timestamp so
+      // the authority check still sees that the directory was replaced.
+      const stamped = Date.now() / 1000 + 1;
+      actual.utimesSync(ashlr, stamped, stamped);
     };
 
     expect(persistAutonomyEvidencePack(pack)).toBe(false);
