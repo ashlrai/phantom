@@ -29,6 +29,20 @@ function writeLog(f: Fixture, name: string, text: string, mtime: Date): string {
   return path;
 }
 
+function writeFeedRc(f: Fixture, sha: string, rc: string, mtime: Date): string {
+  const path = join(f.autorun, `feed-${sha}.rc`);
+  writeFileSync(path, `${rc}\n`);
+  utimesSync(path, mtime, mtime);
+  return path;
+}
+
+function writeFeedJson(f: Fixture, sha: string, doc: unknown, mtime: Date): string {
+  const path = join(f.autorun, `feed-${sha}.json`);
+  writeFileSync(path, `${JSON.stringify(doc)}\n`);
+  utimesSync(path, mtime, mtime);
+  return path;
+}
+
 const T1 = new Date('2026-11-08T14:22:10.000Z');
 const T2 = new Date('2026-11-09T02:10:00.000Z');
 
@@ -40,18 +54,30 @@ describe('readReleaseChainStatus', () => {
       expect(status).toEqual({
         latestAutorun: null, reason: null, version: null,
         installedVersion: '3.29.15', verdict: 'unknown', sources: [],
+        evidence: { versionJoin: 'none', feedRc: null, feedState: null, boundLog: null, diagnostics: [] },
       });
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
-  it('reports published when the newest rc is 0', () => {
+  it('reports published when the newest rc is 0 and the feed check proves it', () => {
     const f = fixture();
     try {
       const rc = writeRc(f, 'aaaaaaaaaaaa', '0', T1);
+      const feedRc = writeFeedRc(f, 'aaaaaaaaaaaa', '0', T1);
+      const feedJson = writeFeedJson(f, 'aaaaaaaaaaaa', {
+        schemaVersion: 1, kind: 'desktop-update-channel-check', state: 'verified-live',
+        sha: 'aaaaaaaaaaaa', tag: 'v3.30.9', releaseId: 123, latestTag: 'v3.30.9',
+        endpointHttp: 200, feedSha256: 'a'.repeat(64), manifestSha256: 'b'.repeat(64),
+        checkedAt: '2026-11-08T15:00:00Z',
+      }, T1);
       const status = readReleaseChainStatus({ runsDir: f.root });
       expect(status.verdict).toBe('published');
       expect(status.latestAutorun).toEqual({ sha: 'aaaaaaaaaaaa', rc: 0, mtime: T1.toISOString() });
-      expect(status.sources).toEqual([rc]);
+      expect(status.version).toBe('3.30.9');
+      expect(status.evidence.versionJoin).toBe('feed-receipt');
+      expect(status.evidence.feedRc).toBe(0);
+      expect(status.evidence.feedState).toBe('verified-live');
+      expect(status.sources).toEqual([rc, feedRc, feedJson]);
       expect(status.reason).toBeNull();
     } finally { rmSync(f.root, { recursive: true, force: true }); }
   });
@@ -75,7 +101,7 @@ describe('readReleaseChainStatus', () => {
     try {
       writeRc(f, 'bbbbbbbbbbbb', '12', T2);
       writeLog(f, 'v3.30.8-1762540000.log',
-        'signing…\nDesktop update finalization held; no feed was published. Phase: sign-app\n', T2);
+        'signing…\nSTART v3.30.8 bbbbbbbbbbbb\nDesktop update finalization held; no feed was published. Phase: sign-app\n', T2);
       const status = readReleaseChainStatus({ runsDir: f.root });
       expect(status.verdict).toBe('held');
       expect(status.reason).toBe('Desktop update finalization held; no feed was published. Phase: sign-app');
@@ -120,6 +146,7 @@ describe('cmdFleetReleaseChain', () => {
     const output: string[] = [];
     try {
       writeRc(f, 'aaaaaaaaaaaa', '0', T1);
+      writeFeedRc(f, 'aaaaaaaaaaaa', '0', T1);
       const code = await cmdFleetReleaseChain(['--json', '--runs-dir', f.root], {
         installedVersion: () => '3.29.15', output: text => output.push(text),
       });
@@ -136,7 +163,7 @@ describe('cmdFleetReleaseChain', () => {
     const output: string[] = [];
     try {
       writeRc(f, 'bbbbbbbbbbbb', '12', T2);
-      writeLog(f, 'v3.30.8-1762540000.log', 'Reason: Desktop update finalization held\n', T2);
+      writeLog(f, 'v3.30.8-1762540000.log', 'START v3.30.8 bbbbbbbbbbbb\nReason: Desktop update finalization held\n', T2);
       const code = await cmdFleetReleaseChain(['--runs-dir', f.root], {
         installedVersion: () => null, output: text => output.push(text),
       });
