@@ -42,3 +42,6 @@ export function buildNodesSnapshot(deps: { dir?: string; nowMs?: number } = {}) 
   }).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   return { ...base, observedAt: state.observedAt ? new Date(state.observedAt).toISOString() : null, leaderId, nodes, error: null };
 }
+
+/** The `phantom.nodes.v1` projection served by `GET /api/nodes` and `ashlr fleet nodes --json`. */
+export type NodesSnapshot = ReturnType<typeof buildNodesSnapshot>;
