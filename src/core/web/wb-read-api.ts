@@ -9,6 +9,8 @@
  *                             shared single-flight cache + failure backoff
  *                             (web/fleet-status-cache.ts getCachedWbGhStatus)
  *   GET /api/wb/v1/budget   → budget policy + per-seat usage projection
+ *   GET /api/wb/v1/events   → SSE stream of workbench.event.v1 kinds
+ *                             (wb.snapshot / wb.gh / wb.action) (wb-events.ts)
  *
  * Auth: identical to every other read route — these paths are `/api/*` GETs,
  * so server.ts's read-session boundary (X-Ashlr-Token or a minted read
@@ -26,6 +28,8 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 import type { AshlrConfig } from '../types.js';
 import { sanitizePublicJson } from '../util/public-json.js';
@@ -44,7 +48,11 @@ import {
 import type { VerseGithubSnapshot } from '../verse/github-types.js';
 import { getCachedWbGhStatus } from './fleet-status-cache.js';
 import { readWorkbenchSecrets } from '../workbench/secrets.js';
+import { readWbLocus } from '../workbench/locus.js';
+import { fleetInventoryPath, readFleetInventory } from '../fleet/graph-seed.js';
+import { QueueStore } from '../queue/store.js';
 import { sendJson } from './read-session.js';
+import { handleWbEventsSse, WB_EVENTS_PATH, type WbEventsDeps } from './wb-events.js';
 
 // ---------------------------------------------------------------------------
 // Routes
@@ -54,8 +62,10 @@ export const WB_SNAPSHOT_PATH = '/api/wb/v1/snapshot';
 export const WB_GH_PATH = '/api/wb/v1/gh';
 export const WB_BUDGET_PATH = '/api/wb/v1/budget';
 export const WB_SECRETS_PATH = '/api/wb/v1/secrets';
+export const WB_LOCUS_PATH = '/api/wb/v1/locus';
+export const WB_STEER_PATH = '/api/wb/v1/steer';
 
-const WB_ROUTES = new Set([WB_SNAPSHOT_PATH, WB_GH_PATH, WB_BUDGET_PATH, WB_SECRETS_PATH]);
+const WB_ROUTES = new Set([WB_SNAPSHOT_PATH, WB_GH_PATH, WB_BUDGET_PATH, WB_SECRETS_PATH, WB_STEER_PATH, WB_LOCUS_PATH]);
 
 /** True for every `/api/wb/v1/*` path — handled (or 404d) by this module. */
 export function isWbApiPath(path: string): boolean {
@@ -121,7 +131,7 @@ function projectSeat(seat: SeatCapacity): WbSeatRow {
  * `readCapacitySnapshot` collapses absent/unreadable/malformed into null, so
  * the file's existence distinguishes 'missing' from 'invalid' for the wire.
  */
-function readWbSnapshot(file: string = capacitySnapshotPath()): WbSnapshotReading {
+export function readWbSnapshot(file: string = capacitySnapshotPath()): WbSnapshotReading {
   const snap: CapacitySnapshot | null = readCapacitySnapshot(file);
   if (!snap) {
     return {
@@ -168,11 +178,19 @@ function handleWbSnapshot(res: ServerResponse): void {
   }));
 }
 
-interface WbGhDeps {
+export interface WbGhDeps {
   /** Enrolled repo paths to read; default is the enrollment registry. */
   paths?: () => string[];
   /** Test seam for the gh subprocess runner (github-repo.ts options). */
   gh?: VerseGithubReadOptions['gh'];
+}
+
+/** Deps for the whole /api/wb/v1/* surface: gh seams + the events stream. */
+export interface WbApiDeps extends WbGhDeps {
+  /** Minted read session — required by the SSE route, absent on header auth. */
+  readSession?: { id: string; expiresAt: number };
+  /** Test seams for GET /api/wb/v1/events (cadence, gh read). */
+  events?: WbEventsDeps;
 }
 
 async function handleWbGh(
@@ -241,6 +259,117 @@ function handleWbBudget(res: ServerResponse): void {
   }));
 }
 
+// ---------------------------------------------------------------------------
+// GET /api/wb/v1/steer — the agent steer pane's read
+// ---------------------------------------------------------------------------
+
+/**
+ * One composite read for the desktop steer pane: the fleet.v1 roster slice
+ * (the #945 adapter's source), the public seat list, and the queue lines a
+ * reprioritize acts on. Every source reports its own state — a missing
+ * fleet.json is 'missing', never an empty roster.
+ *
+ * Projection is allowlist-only: agents carry the adapter's five fields with
+ * `claim_id` reduced to a presence marker (lease ids stay on the host), pools
+ * carry id + shared_with, and queue lines carry id, status, priority, pool,
+ * tier and a bounded scope. sanitizePublicJson still runs over the whole body.
+ */
+export interface WbSteerDeps {
+  /** fleet.json location; defaults to {@link fleetInventoryPath}. */
+  fleetPath?: string;
+  /** The public seat inventory; defaults to `discoverSeats(cfg).seats`. */
+  listSeats?: (cfg: AshlrConfig) => Promise<readonly unknown[]> | readonly unknown[];
+  /** queue.v1 directory parent; defaults to ASHLR_RUNS_DIR or ~/.ashlr-runs. */
+  runsDir?: string;
+}
+
+type WbSteerSourceState = 'ok' | 'missing' | 'malformed' | 'too-large' | 'unreadable' | 'unavailable' | 'not-fleet-v1';
+
+const WB_STEER_MAX_AGENTS = 1_000;
+const WB_STEER_MAX_TEXT = 240;
+
+const wbRecord = (value: unknown): Record<string, unknown> | null =>
+  value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+const wbText = (value: unknown, max = WB_STEER_MAX_TEXT): string | null =>
+  typeof value === 'string' && value.length > 0 && value.length <= max ? value : null;
+
+function projectFleetAgent(raw: unknown): Record<string, unknown> | null {
+  const row = wbRecord(raw);
+  const agent = wbText(row?.agent, 160);
+  if (!row || !agent) return null;
+  return {
+    agent,
+    repo: wbText(row.repo),
+    task: wbText(row.task),
+    // Presence marker only: the adapter needs claimed-or-not, never the lease id.
+    claim_id: typeof row.claim_id === 'string' ? 'present' : null,
+    expires_at: wbText(row.expires_at, 60),
+  };
+}
+
+function projectFleetPool(raw: unknown): Record<string, unknown> | null {
+  const row = wbRecord(raw);
+  const id = wbText(row?.id, 80);
+  if (!row || !id) return null;
+  return { id, shared_with: wbText(row.shared_with, 80) };
+}
+
+function projectFleetSteer(read: ReturnType<typeof readFleetInventory>): { fleet: Record<string, unknown> | null; fleetState: WbSteerSourceState } {
+  if (!read.ok) return { fleet: null, fleetState: read.reason === 'malformed' ? 'malformed' : read.reason === 'too-large' ? 'too-large' : read.reason === 'unreadable' ? 'unreadable' : 'missing' };
+  const doc = wbRecord(read.inventory);
+  if (!doc || doc.schema !== 'fleet.v1') return { fleet: null, fleetState: 'not-fleet-v1' };
+  const generatedAt = wbText(doc.generated_at, 60);
+  if (!generatedAt) return { fleet: null, fleetState: 'not-fleet-v1' };
+  return {
+    fleetState: 'ok',
+    fleet: {
+      schema: 'fleet.v1',
+      generated_at: generatedAt,
+      agents: (Array.isArray(doc.agents) ? doc.agents : []).slice(0, WB_STEER_MAX_AGENTS).map(projectFleetAgent).filter((row): row is Record<string, unknown> => row !== null),
+      pools: (Array.isArray(doc.pools) ? doc.pools : []).map(projectFleetPool).filter((row): row is Record<string, unknown> => row !== null),
+    },
+  };
+}
+
+async function readWbQueue(runsDir: string): Promise<{ queue: Record<string, unknown>[]; queueState: 'ok' | 'unavailable' }> {
+  try {
+    const doc = await new QueueStore(join(runsDir, 'queue')).read();
+    return {
+      queueState: 'ok',
+      queue: doc.jobs.map(job => ({ id: job.id, status: job.status, priority: job.priority, pool: job.pool, tier: job.tier, scope: job.scope.slice(0, WB_STEER_MAX_TEXT) })),
+    };
+  } catch {
+    return { queue: [], queueState: 'unavailable' };
+  }
+}
+
+async function handleWbSteer(cfg: AshlrConfig, res: ServerResponse, deps: WbSteerDeps = {}): Promise<void> {
+  const { fleet, fleetState } = projectFleetSteer(readFleetInventory(deps.fleetPath ?? fleetInventoryPath()));
+  const runsDir = deps.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  const [queueRead, seats] = await Promise.all([
+    readWbQueue(runsDir),
+    (async (): Promise<{ seats: unknown[]; seatsState: 'ok' | 'unavailable' }> => {
+      try {
+        const list = deps.listSeats ?? (async (config: AshlrConfig) => (await import('../verse/seats.js')).discoverSeats(config).then(d => d.seats));
+        const rows = await list(cfg);
+        return { seats: rows.slice(0, WB_STEER_MAX_AGENTS) as unknown[], seatsState: 'ok' };
+      } catch {
+        return { seats: [], seatsState: 'unavailable' as const };
+      }
+    })(),
+  ]);
+  sendJson(res, 200, sanitizePublicJson({
+    v: 1,
+    generatedAt: new Date().toISOString(),
+    fleet,
+    fleetState,
+    seats: seats.seats,
+    seatsState: seats.seatsState,
+    queue: queueRead.queue,
+    queueState: queueRead.queueState,
+  }));
+}
+
 /**
  * Dispatch `/api/wb/v1/*` routes. GET-only; unknown subpaths 404, wrong
  * methods 405. Returns true when the path belonged to this surface.
@@ -250,9 +379,28 @@ export async function handleWbApi(
   res: ServerResponse,
   cfg: AshlrConfig,
   path: string,
-  deps: WbGhDeps = {},
+  deps: WbApiDeps = {},
+  steerDeps: WbSteerDeps = {},
 ): Promise<boolean> {
   if (!isWbApiPath(path)) return false;
+
+  // ── GET /api/wb/v1/events (SSE) ─────────────────────────────────────────
+  // Same convention as /api/events and the verse tail: a minted read session
+  // is required (the raw read token authenticates the boundary but carries no
+  // expiry the stream can honor), and wrong methods 405 like the JSON routes.
+  if (path === WB_EVENTS_PATH) {
+    const method = (req.method ?? 'GET').toUpperCase();
+    if (method !== 'GET') {
+      sendJson(res, 405, { error: 'method not allowed' }, { Allow: 'GET' });
+      return true;
+    }
+    if (!deps.readSession || deps.readSession.expiresAt <= Date.now()) {
+      sendJson(res, 401, { code: 'SESSION_REQUIRED', error: 'valid read session required' });
+      return true;
+    }
+    handleWbEventsSse(req, res, cfg, deps.readSession, deps.events ?? {});
+    return true;
+  }
 
   if (!WB_ROUTES.has(path)) {
     sendJson(res, 404, { error: `not found: GET ${path}` });
@@ -264,12 +412,16 @@ export async function handleWbApi(
     return true;
   }
 
-  if (path === WB_SECRETS_PATH) {
+  if (path === WB_LOCUS_PATH) {
+    sendJson(res, 200, sanitizePublicJson(await readWbLocus()));
+  } else if (path === WB_SECRETS_PATH) {
     sendJson(res, 200, await readWorkbenchSecrets());
   } else if (path === WB_SNAPSHOT_PATH) {
     handleWbSnapshot(res);
   } else if (path === WB_GH_PATH) {
     await handleWbGh(cfg, res, deps);
+  } else if (path === WB_STEER_PATH) {
+    await handleWbSteer(cfg, res, steerDeps);
   } else {
     handleWbBudget(res);
   }

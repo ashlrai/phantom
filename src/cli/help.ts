@@ -107,10 +107,34 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'observe.human.v1 | session detail',
   },
   {
+    usage: 'phm wb locus [--json]',
+    description: 'Read Locus custody health through its credential-free fleet feed.',
+    safety: 'read',
+    jsonShape: '{v:1, state, reason, custody, sessionOk}',
+  },
+  {
     usage: 'phm wb secrets [--json]',
     description: 'Read Phantom Secrets custody metadata only: names, scope, age and last rotation. Exit 1 when unavailable; never reveals values.',
     safety: 'read',
     jsonShape: '{ v: 1, state: ok|unknown, secrets: SecretCustody[] }',
+  },
+  {
+    usage: 'phm wb steer --text <note> [--apply] [--json]',
+    description: 'Append a steer note to the leaders\' inbox — the same steer.note the workbench action API runs. Dry run unless --apply. Exit 0 accepted, 1 operational, 2 usage/invalid.',
+    safety: 'append',
+    jsonShape: '{ v: 1, dryRun, action, outcome, at, id, bytes } | { v: 1, dryRun, error }',
+  },
+  {
+    usage: 'phm wb reprioritize <job-id> --priority P0|P1|P2|P3 [--apply] [--json]',
+    description: 'Re-priority one unclaimed queue.v1 line (READY or HOLD) — the same queue.reprioritize the workbench action API runs. Dry run unless --apply. Exit 0 changed, 1 operational, 2 usage/invalid.',
+    safety: 'append',
+    jsonShape: '{ v: 1, dryRun, action, outcome, job, from, to } | { v: 1, dryRun, error }',
+  },
+  {
+    usage: 'phm wb stop <job-id> [--apply] [--json]',
+    description: 'SIGTERM then SIGKILL every process carrying the job id on token boundaries — the same job.stop the workbench action API runs, audited to queue/job-stops.jsonl before the first signal. Dry run lists the matched pids only. Exit 0, 1 operational, 2 usage/invalid.',
+    safety: 'append',
+    jsonShape: '{ v: 1, dryRun, action, outcome, job, pids } | { v: 1, dryRun, error }',
   },
   {
     usage: 'phm budget show [--json]',
