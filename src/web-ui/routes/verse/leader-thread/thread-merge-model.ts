@@ -66,9 +66,9 @@ export function mergeThread(thread: readonly ThreadPostShape[], inbox: FleetRuns
   outbox.forEach((entry, index) => {
     push({ at: inboxMs(entry.at, nowMs), who: 'leader', source: 'outbox', text: entry.text, id: `outbox-${index}`, ack: null, kind: classifyOutboxText(entry.text) });
   });
-  const fileTexts = new Set(outbox.map(entry => entry.text.trim()));
+  const fileTexts = new Set(outbox.map(entry => `${entry.at.slice(0, 10)}:${entry.text.trim()}`));
   for (const message of thread) {
-    if (message.from === 'leader' && fileTexts.has(message.text.trim())) continue;
+    if (message.from === 'leader' && fileTexts.has(`${message.at.slice(0, 10)}:${message.text.trim()}`)) continue;
     // Only attribute a relayed entry when its text identifies exactly one inbox row.
     const matches = message.from === 'mason' && message.channel !== 'system'
       ? inbox.flatMap((entry, index) => entry.text.trim() === message.text.trim() ? [index] : []) : [];

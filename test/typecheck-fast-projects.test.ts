@@ -47,6 +47,11 @@ function scriptProjects(script: string, seen: ReadonlySet<string> = new Set()): 
 }
 
 describe('typecheck:fast project parity', () => {
+  it('uses the native compiler for the canonical backend and web checks', () => {
+    expect(pkg.scripts['typecheck']).toBe('tsgo --noEmit && npm run typecheck:web');
+    expect(pkg.scripts['typecheck:web']).toBe('tsgo --noEmit -p src/web-ui/tsconfig.json');
+  });
+
   it('names the same tsconfig projects as typecheck', () => {
     expect(pkg.scripts['typecheck']).toBeTypeOf('string');
     expect(pkg.scripts['typecheck:fast']).toBeTypeOf('string');

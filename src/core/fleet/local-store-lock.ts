@@ -431,6 +431,10 @@ function canonicalStartIdentity(
   };
 }
 
+/** ps lstart and the self-clock formula can disagree by more than one second
+ * for the same live process. A larger gap still means the pid was reused. */
+export const START_IDENTITY_SKEW_SECONDS = 5;
+
 export function canonicalStartEpochSecond(
   ref: string,
   source: unknown,
@@ -444,16 +448,26 @@ export function canonicalStartEpochSecond(
   }
 }
 
+/** First honest self-start. A later wall-clock step must not make this process
+ * look like a different owner; explicit clock arguments still compute fresh. */
+let pinnedCurrentProcessStart: VerifiedProcessStartIdentity | undefined;
+
 export function currentProcessStartIdentity(
-  nowMs = Date.now(),
-  uptimeSeconds = process.uptime(),
+  nowMs?: number,
+  uptimeSeconds?: number,
 ): VerifiedProcessStartIdentity | undefined {
-  if (!Number.isFinite(nowMs) || !Number.isFinite(uptimeSeconds) ||
-    nowMs < 0 || uptimeSeconds < 0) return undefined;
-  return canonicalStartIdentity(
+  if (nowMs === undefined && uptimeSeconds === undefined && pinnedCurrentProcessStart) {
+    return pinnedCurrentProcessStart;
+  }
+  const now = nowMs ?? Date.now();
+  const uptime = uptimeSeconds ?? process.uptime();
+  if (!Number.isFinite(now) || !Number.isFinite(uptime) || now < 0 || uptime < 0) return undefined;
+  const observed = canonicalStartIdentity(
     'self-clock-epoch-second',
-    Math.floor((nowMs - uptimeSeconds * 1_000) / 1_000),
+    Math.floor((now - uptime * 1_000) / 1_000),
   );
+  if (nowMs === undefined && uptimeSeconds === undefined && observed) pinnedCurrentProcessStart = observed;
+  return observed;
 }
 
 /** Return a verified, source-tagged process-start identity or undefined on uncertainty. */
@@ -952,7 +966,7 @@ function hasVerifiedLiveOwner(path: string, directory: LockDirectory): boolean {
       ? (selfStart ? canonicalStartEpochSecond(selfStart.ref, selfStart.source) : undefined)
       : verifiedProcessStartIdentity(owner.pid)?.epochSecond;
     if (recordedStart === undefined || observedStart === undefined ||
-      Math.abs(recordedStart - observedStart) > 1) return false;
+      Math.abs(recordedStart - observedStart) > START_IDENTITY_SKEW_SECONDS) return false;
     return hasExpectedToken(
       path,
       { ...named, token: owner.token },
