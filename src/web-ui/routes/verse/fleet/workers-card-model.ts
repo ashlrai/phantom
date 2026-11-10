@@ -44,7 +44,7 @@ export function narrowJob(v: unknown) {
     || !record(v.sources)) return null;
   const sources = v.sources;
   if (!['launch', 'base', 'meta', 'publish', 'log'].every(k => ['healthy', 'missing', 'degraded'].includes(String(sources[k])))) return null;
-  return { job: v.job, state: String(v.state), lane: string(v.lane), tier: string(v.tier), model: string(v.model),
+  return { job: v.job, state: String(v.state), lane: string(v.lane), requestedLane: string(v.requestedLane), launchedLane: string(v.launchedLane), laneReason: string(v.laneReason), tier: string(v.tier), model: string(v.model),
     launchedAt: string(v.launchedAt), baseSha: string(v.baseSha), branch: string(v.branch),
     publish: record(v.publish) ? { prUrl: githubUrl(string(v.publish.prUrl)), autoMerge: typeof v.publish.autoMerge === 'boolean' ? v.publish.autoMerge : null } : null,
     hasNotes: record(v.notes) && typeof v.notes.hasNotes === 'boolean' ? v.notes.hasNotes : null,

@@ -600,6 +600,7 @@ export const REAL_IO_TEST_FILES = [
   'test/m571.local-production-gate.test.ts', // validates the macOS sandbox with real loopback HTTP, Unix sockets, subprocesses, and filesystem writes
   'test/m2.doctor.test.ts', // runs real environment/tool probes against git, npm, and fs — 0.9s slowest test in the quiet baseline
   'test/m440.dependency-audit-ci.test.ts', // spawns bounded real shell fixtures to prove audit fallback fail-closed behavior
+  'test/m1214.secret-scan-ci.test.ts', // real temporary Git repository and bash scan fixture for the diff secret scan
   'test/m93.daemon-service-crash-recovery.test.ts', // real daemon process crash/recovery (24.5s file total) — 1.7s slowest test in the quiet baseline
 
   // --- Agent OS durable stores and runtime: real private filesystem layouts, fsync/link
@@ -802,4 +803,5 @@ export const REAL_IO_TEST_FILES = [
   'test/verify-changed-dedupe.test.ts', // spawnSync node scripts/verify-changed.mjs and execFileSync git in real temp repos
   'test/fleet-guardian-head-manifest-01.test.ts', // execFileSync builds real git repo fixtures; the module execFiles real git reads
   'test/recut-n4r2000s79.test.ts', // execFileSync builds a real temp git repo for the recovered guardian-head module
+  'test/leader-relay-process-preservation-10srt1.test.ts', // spawnSync runs the real `leader replies sync` CLI child
 ];
