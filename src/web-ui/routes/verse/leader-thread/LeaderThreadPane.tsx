@@ -1,10 +1,10 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { OUTBOX_KIND_LABEL } from '../../../../core/fleet/outbox-kind.js';
 import { computeLaneHealth, laneHealthLine, stuckBadge } from '../../../../core/fleet/lane-health.js';
 import { VERSE_FLEET_RUNS_PATH } from '../../../../core/verse/fleet-runs-types.js';
 import { MutationTokenDialog } from '../../../components/auth/MutationTokenDialog.js';
 import { hasMutationHold } from '../../../data/auth-store.js';
-import { refetchQuery } from '../../../data/cache.js';
+import { refetchQuery, runQuery } from '../../../data/cache.js';
 import { ApiError, apiGet, readFailureReason } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';
@@ -17,7 +17,12 @@ import { openDockPane } from '../dock/dock-store.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { laneTargetsQuery } from '../ops/lane-targets-queries.js';
 import { agentBusMissing, agentBusPageQuery, agentBusStatusQuery } from '../fleet-bus/agent-bus-queries.js';
+import { ordersTraceQuery } from '../fleet-inbox/fleet-inbox-queries.js';
+import { narrowOrderTrace, type OrderTraceV1 } from '../fleet-inbox/order-trace-model.js';
+import { readMerges, type Merged, type Pending } from '../fleet-merges/fleet-merges-model.js';
 import { JobRefs } from '../fleet/JobRefs.js';
+import { narrowWorkers, validJob } from '../fleet/workers-card-model.js';
+import { jobDetailQuery } from '../fleet/workers-card-queries.js';
 import { DirectivesStrip } from '../leader/DirectivesStrip.js';
 import { ChannelBadge } from '../leader/ThreadItems.js';
 import { leaderDirectivesQuery, leaderThreadQuery } from '../leader/thread-data.js';
@@ -47,6 +52,7 @@ import { COMMS_CONFIRM_LINE, COMMS_TOML_PATH, INBOX_HELD_SENTENCE, inboxHeld } f
 import { CopyPill } from '../apps/CopyPill.js';
 import { commandHints, completeCommand, parseComposerDraft } from './composer-commands.js';
 import { commandGate, liveComposerDeps, runComposerCommand, type ComposerCommand } from './composer-command-run.js';
+import { steerTargetId, steerTargetOutcome, type SteerTargetJobFacts } from './steer-target-outcome.js';
 
 /** Shared 'verse-fleet-runs' key so the pane rides the same cache and SSE invalidation as the other fleet panes. */
 const fleetRunsQuery: QueryDef<unknown> = {
@@ -57,6 +63,8 @@ const fleetRunsQuery: QueryDef<unknown> = {
 const NO_MESSAGES: LeaderThreadMessage[] = [];
 /** A thread scrolled within this of its end counts as "at the end" (new lines follow it down). */
 const STICK_PX = 96;
+/** Stand-in def for the disabled slot; `enabled: false` means it never fetches. */
+const NO_JOB_DETAIL: QueryDef<null> = { key: 'steer-target:no-detail', fetch: () => Promise.resolve(null) };
 
 /** localStorage can be denied (private mode); the lane-event log just stays session-only then. */
 function laneEventStorage(): Storage | null {
@@ -100,6 +108,37 @@ function LineView({ line, match, current }: { line: LabeledLine; match?: boolean
   );
 }
 
+/** The quiet follow-up under a Mason entry that aimed a steer order at one job (@RQ-id). */
+function SteerTargetLine({ id, text, trace, merges, liveByJob, now }: {
+  id: string;
+  text: string;
+  trace: OrderTraceV1 | null;
+  merges: { merged: readonly Merged[]; pending: readonly Pending[] };
+  liveByJob: ReadonlyMap<string, number | null>;
+  now: number;
+}) {
+  const detailDef = useMemo(() => (validJob(id) ? jobDetailQuery(id) : null), [id]);
+  const detail = useQuery(detailDef ?? NO_JOB_DETAIL, { enabled: detailDef !== null });
+  usePollWhileVisible(() => { if (detailDef) void runQuery(detailDef.key, () => detailDef.fetch()); }, 10_000, { enabled: detailDef !== null });
+  const facts = useMemo<SteerTargetJobFacts>(() => {
+    const traceJob = trace?.orders.flatMap(order => order.jobs).find(job => job.id === id) ?? null;
+    const merged = merges.merged.find(item => item.job === id) ?? null;
+    const pending = merges.pending.find(item => item.job === id) ?? null;
+    const age = liveByJob.get(id);
+    const data = detail.data;
+    return {
+      trace: traceJob ? { state: traceJob.state, url: traceJob.url } : null,
+      merged: merged ? { number: merged.number, href: merged.href } : null,
+      pending: pending ? { href: pending.href } : null,
+      live: age === undefined ? null : { launchedAt: age === null ? null : new Date(now - age * 1_000).toISOString() },
+      detail: data ? { state: data.state, prUrl: data.publish?.prUrl ?? null, launchedAt: data.launchedAt } : null,
+    };
+  }, [id, trace, merges, liveByJob, detail.data, now]);
+  const outcome = steerTargetOutcome(text, facts);
+  if (outcome === null) return null;
+  return <p className={leaderStyles.system} data-steer-outcome={outcome.stage}>{outcome.href ? <a href={outcome.href} target="_blank" rel="noreferrer">{outcome.text}</a> : outcome.text}</p>;
+}
+
 function BusReplyView({ row, now, match, current }: { row: BusReply; now: number; match?: boolean; current?: boolean }) {
   return <section data-find-match={match || undefined} data-find-current={current || undefined} className={leaderStyles.group} aria-label="Bus reply">
     <header className={leaderStyles.groupHead}>
@@ -127,6 +166,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const after = Math.max(0, (busStatus.data?.retainedCount ?? 0) - 100);
   const busPageQuery = useMemo(() => agentBusPageQuery(after, 100), [after]);
   const busPage = useQuery(busPageQuery, { enabled: visible && busStatus.data?.source === 'available' && !agentBusMissing(), freshMs: 10_000 });
+  const orders = useQuery(ordersTraceQuery, { enabled: visible, freshMs: 10_000 });
   const refetchThread = useRefetch(leaderThreadQuery);
   const refetchRuns = useRefetch(fleetRunsQuery);
   const refetchTargets = useRefetch(laneTargetsQuery);
@@ -138,6 +178,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const refetchOffice = useRefetch(leaderOfficeQuery);
   const refetchBusStatus = useRefetch(agentBusStatusQuery);
   const refetchBusPage = useRefetch(busPageQuery);
+  const refetchOrders = useRefetch(ordersTraceQuery);
   const actions = useSurfaceActions();
   const logRef = useRef<HTMLDivElement>(null);
   const atEnd = useRef(true);
@@ -181,6 +222,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   usePollWhileVisible(() => {
     if (!agentBusMissing()) { refetchBusStatus(); if (busStatus.data?.source === 'available') refetchBusPage(); }
   }, 10_000, { enabled: visible && !agentBusMissing() });
+  usePollWhileVisible(refetchOrders, 15_000, { enabled: visible });
 
   // Each lane-targets read is diffed against the stored snapshot; the first
   // ever read records a baseline and emits nothing.
@@ -206,6 +248,9 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const busRows = useMemo(() => busRepliesToMason(busPage.data?.messages ?? [], now, outbox), [busPage.data, now, outbox]);
   const ownerRead = owner.data ?? NO_OWNER_THREAD;
   const ownerLines = useMemo(() => ownerRead.paused ? [] : ownerThreadLines(ownerRead.lines, merged.lines), [ownerRead, merged.lines]);
+  const trace = useMemo(() => (orders.error ? null : narrowOrderTrace(orders.data)), [orders.data, orders.error]);
+  const merges = useMemo(() => readMerges(runs.data), [runs.data]);
+  const liveByJob = useMemo(() => new Map((narrowWorkers(runs.data)?.workers ?? []).map(worker => [worker.job, worker.ageSeconds] as const)), [runs.data]);
   const summary = leaderCeoSummary(journal.data);
   const bottleneck = summary.bottleneck ?? leader.data?.value?.latest?.bottleneck?.statement ?? null;
   const health = useMemo(() => fleet.data?.value ? computeLaneHealth(fleet.data.value) : null, [fleet.data]);
@@ -378,9 +423,15 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       {needsYouOnly ? 'Nothing needs you right now.' : threadMissing ? (read!.reason ?? 'The Leader conversation did not answer.') : 'No conversation or interjections yet — reply below or post to the inbox from any channel.'}
     </p>;
   } else {
-    body = items.map(item => item.type === 'day'
-      ? <div key={item.key} className={leaderStyles.day} role="separator" aria-label={item.label}><span>{item.label}</span></div>
-      : item.type === 'line' ? <LineView key={item.key} line={item.line} match={findOpen && matches.includes(item.key)} current={findOpen && item.key === currentKey} /> : <BusReplyView key={item.key} row={item.row} now={now} match={findOpen && matches.includes(item.key)} current={findOpen && item.key === currentKey} />);
+    body = items.map(item => {
+      if (item.type === 'day') return <div key={item.key} className={leaderStyles.day} role="separator" aria-label={item.label}><span>{item.label}</span></div>;
+      if (item.type !== 'line') return <BusReplyView key={item.key} row={item.row} now={now} match={findOpen && matches.includes(item.key)} current={findOpen && item.key === currentKey} />;
+      const target = item.line.who === 'mason' ? steerTargetId(item.line.text) : null;
+      return <Fragment key={item.key}>
+        <LineView line={item.line} match={findOpen && matches.includes(item.key)} current={findOpen && item.key === currentKey} />
+        {target !== null ? <SteerTargetLine id={target} text={item.line.text} trace={trace} merges={merges} liveByJob={liveByJob} now={now} /> : null}
+      </Fragment>;
+    });
   }
 
   return <div className={styles.root}>
