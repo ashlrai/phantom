@@ -6,8 +6,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { cmdRelease } from '../src/cli/release.js';
 import {
   admitCiRun, allowReleasePrDispatch, assertReleaseWrite, buildTrain, cappedCadenceMinutes, docsCarriersSynced, ENQUEUE_PULL_REQUEST,
-  judgeRequiredChecks, releaseHeadBranch,
-  enqueueReleasePullRequest, failedBuildWithin, hostedTrainGate, isReleasePleaseCommit,
+  judgeRequiredChecks, releaseHeadBranch, TRAIN_JOB_CHECK_NAME,
+  enqueueReleasePullRequest, hostedTrainGate, isReleasePleaseCommit,
+  successorTagConflict, refusePublishIfSuccessorConflict,
   markWritesApplied, mergeStageDone, observeTrain, pauseReleaseTrain, readSentinel, releaseGithubCall, releaseKillDecision, selectUpdaterFeed,
   TRAIN_SCHEMA, updaterFeedMatches, WEBSITE_HOOK,
   type ReleaseWrite, type TrainObservation,
@@ -50,7 +51,6 @@ function observation(overrides: Partial<TrainObservation> = {}): TrainObservatio
     candidateCi: 'green',
     build: null,
     buildPending: false,
-    buildCooldown: false,
     attest: null,
     attestPending: false,
     audit: null,
@@ -95,17 +95,13 @@ describe('release train', () => {
     expect(calls.some((argv) => argv.join(' ') === 'gh variable set PHANTOM_RELEASE_TRAIN -R ashlrai/phantom --body off')).toBe(true);
   });
 
-  it('admits only sanctioned ci runs and backs off after a recent failure', () => {
+  it('admits only sanctioned ci runs', () => {
     const repo = { full_name: 'ashlrai/phantom' };
     const good = { head_sha: head, path: '.github/workflows/ci.yml', event: 'workflow_dispatch', repository: repo, head_repository: repo, head_branch: 'v3.30.28' };
     expect(admitCiRun(good, head, 'v3.30.28')).toBe(true);
     expect(admitCiRun({ ...good, event: 'push' }, head, 'v3.30.28')).toBe(false);
     expect(admitCiRun({ ...good, path: '.github/workflows/other.yml' }, head, 'v3.30.28')).toBe(false);
     expect(admitCiRun({ ...good, repository: { full_name: 'other/phantom' } }, head, 'v3.30.28')).toBe(false);
-    const now = Date.parse('2026-11-09T06:00:00Z');
-    expect(failedBuildWithin({ status: 'completed', conclusion: 'failure', updated_at: '2026-11-09T01:00:00Z' }, now)).toBe(true);
-    expect(failedBuildWithin({ status: 'completed', conclusion: 'failure', updated_at: '2026-11-08T20:00:00Z' }, now)).toBe(false);
-    expect(buildTrain(observation({ buildCooldown: true })).writes.some((write) => write.path.includes('/ci.yml/'))).toBe(false);
   });
 
   it('accepts an ancestor or head with green CI and rejects red or diverged candidates', () => {
@@ -135,6 +131,41 @@ describe('release train', () => {
     expect(diverged.writes).toEqual([]);
     expect(diverged.state.reason).toContain('candidate-refused');
     expect(diverged.state.reason).toContain('compare_not_ahead: diverged');
+  });
+
+  it('judges only named required checks and does not treat pending or later suites as red', () => {
+    const gate = (status: string, conclusion: string | null) => (
+      { name: 'Merge Gate', status, conclusion, appId: 15368 }
+    );
+    const trainJob = (conclusion: string) => (
+      { name: TRAIN_JOB_CHECK_NAME, status: 'completed', conclusion, appId: 15368 }
+    );
+    expect(judgeRequiredChecks(['Merge Gate'], [
+      gate('completed', 'success'),
+      gate('completed', 'failure'),
+    ])).toBe('green');
+    expect(judgeRequiredChecks(['Merge Gate'], [
+      gate('completed', 'success'),
+      trainJob('failure'),
+    ])).toBe('green');
+    expect(judgeRequiredChecks(['Merge Gate', TRAIN_JOB_CHECK_NAME], [
+      gate('completed', 'success'),
+      trainJob('failure'),
+    ])).toBe('green');
+    expect(judgeRequiredChecks([TRAIN_JOB_CHECK_NAME], [trainJob('failure')])).toBe('unknown');
+    expect(judgeRequiredChecks(['Merge Gate'], [gate('in_progress', null)])).toBe('pending');
+    expect(judgeRequiredChecks(['Merge Gate'], [gate('queued', null)])).toBe('pending');
+    expect(judgeRequiredChecks(['Merge Gate'], [
+      gate('completed', 'success'),
+      gate('in_progress', null),
+    ])).toBe('pending');
+    expect(judgeRequiredChecks(['Merge Gate'], [gate('completed', 'failure')])).toBe('red');
+    expect(judgeRequiredChecks(['Merge Gate'], [])).toBe('pending');
+    const pendingPlan = buildTrain(observation({ candidateCi: 'pending' }));
+    expect(pendingPlan.exitCode).toBe(0);
+    expect(pendingPlan.state.stopped).toBe(false);
+    expect(pendingPlan.state.steps.build?.reason).toBe('candidate-ci-pending');
+    expect(pendingPlan.writes.some((write) => write.path.endsWith('/ci.yml/dispatches'))).toBe(false);
   });
 
   it('does not recursively dispatch Release PR from its own completion', () => {
@@ -168,8 +199,9 @@ describe('release train', () => {
     expect(buildTrain(observation({ fleetKill: 'active' }))).toMatchObject({ exitCode: 1, writes: [] });
   });
 
-  it('caps the cadence at hourly and only cuts a green release-please pull request', () => {
-    expect(cappedCadenceMinutes(30)).toBe(60);
+  it('honors configured cadence minutes and only cuts a green release-please pull request', () => {
+    expect(cappedCadenceMinutes(30)).toBe(30);
+    expect(cappedCadenceMinutes(60)).toBe(60);
     expect(cappedCadenceMinutes(120)).toBe(120);
     expect(() => cappedCadenceMinutes(0)).toThrow(/cadence/);
     const early = buildTrain(observation({
@@ -231,6 +263,32 @@ describe('release train', () => {
     expect(reason).toContain('first_line="bridge: unrelated"');
     expect(reason).toContain('expected=chore(<scope>): release 3.30.27');
     expect(buildTrain({ ...base, tags: [...base.tags, { name: 'v3.30.28', sha: head }], skippedTags: [{ tag: 'v3.30.28', reason: 'release_message_mismatch' }] }).state.reason).toBe('duplicate_tag');
+  });
+
+  it('refuses a second train publish when a strictly-greater tag appears mid-flight', () => {
+    const ready = observation({
+      build: { runId: 11, attempt: 2, artifactId: 101, completedAt: '2026-11-09T03:00:00.000Z' },
+      attest: { runId: 22, attempt: 1, artifactId: 202, completedAt: '2026-11-09T03:10:00.000Z' },
+      audit: { runId: 33, attempt: 1 },
+      npmPublished: false,
+    });
+    const first = buildTrain(ready);
+    const publish = first.writes.filter((write) => write.path.endsWith('/publish-canonical-npm.yml/dispatches'));
+    expect(publish).toHaveLength(1);
+    expect(successorTagConflict(ready.masterVersion, ready.tags)).toBe(false);
+
+    // A second train observes a newer tag that landed while the first was still publishing.
+    const raced = {
+      ...ready,
+      tags: [...ready.tags, { name: 'v3.30.28', sha: 'd'.repeat(40) }],
+      skippedTags: [{ tag: 'v3.30.28', reason: 'release_message_mismatch' }],
+    };
+    expect(successorTagConflict(raced.masterVersion, raced.tags)).toBe(true);
+    expect(buildTrain(raced).state.reason).toBe('duplicate_tag');
+    expect(buildTrain(raced).writes).toEqual([]);
+    const remaining = refusePublishIfSuccessorConflict(first.writes, raced);
+    expect(remaining.find((write) => write.path.endsWith('/publish-canonical-npm.yml/dispatches'))).toBeUndefined();
+    expect(refusePublishIfSuccessorConflict(first.writes, ready)).toEqual(first.writes);
   });
 
   it('admits a tag on a later merge when the release-please commit is its ancestor', () => {
