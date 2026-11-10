@@ -3,8 +3,8 @@
  * finding): frontier lanes plan and verify; cheap lanes implement; only the
  * stage that is the actual bottleneck earns delegated extra capacity.
  *
- * A decomposed task has three stages — `plan`, `implement`, `verify`
- * (DELEGATION_STAGES in types/delegation.ts). Judgment stages (`plan`,
+ * A decomposed task has three stages, `plan`, `implement`, `verify`
+ * (`DELEGATION_STAGES` below). Judgment stages (`plan`,
  * `verify`) never move to cheap lanes: a cheap verify proves nothing, and a
  * cheap plan cannot plan. `implement` is the cheap-lane stage by default and
  * only escalates when implementation itself is the declared bottleneck —
@@ -19,7 +19,9 @@
  * I/O, no clock, no model calls.
  */
 import type { DelegationStage } from '../types/delegation.js';
-import { DELEGATION_STAGES } from '../types/delegation.js';
+
+/** Runtime list of the shared stage vocabulary. The types module stays type-only. */
+export const DELEGATION_STAGES = ['plan', 'implement', 'verify'] as const satisfies readonly DelegationStage[];
 import type { SwarmPhaseName } from '../types/swarm.js';
 import type { ResourceTier } from './tiers.js';
 import type { RoutingTask } from './types.js';

@@ -83,9 +83,15 @@ export function resolveProductionVelocityProfile(cfg: AshlrConfig): EffectivePro
   const enabled = pendingPolicy.enabled;
 
   const adaptive = currentThroughputLevel().level;
+  // An explicit daemon parallel width is the operator slot ceiling. The
+  // adaptive ramp applies only when that width was not set.
+  const rawParallel = cfg.daemon?.parallel;
+  const slotFallback = typeof rawParallel === 'number' && Number.isSafeInteger(rawParallel) && rawParallel > 0
+    ? rawParallel
+    : adaptive;
   const maxSlotsPerBackend = positiveInt(
     rawObj['maxSlotsPerBackend'],
-    positiveInt(fabric['maxSlotsPerBackend'], adaptive),
+    positiveInt(fabric['maxSlotsPerBackend'], slotFallback),
   );
 
   const localMaxConcurrent = positiveIntOrNull(rawObj['localMaxConcurrent'])

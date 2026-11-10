@@ -113,7 +113,7 @@ case $POOL in
     /usr/bin/curl -s -m 2 -o /dev/null -I "$CBU/api/hello" || { echo "HELD: claude-broker not running (token not provisioned? see queue/run/claude-broker.log)"; exit 3; }
   fi
   { nohup "${E[@]}" ANTHROPIC_BASE_URL="$CBU" CLAUDE_CODE_OAUTH_TOKEN=ashlr-lane-dummy-not-a-credential CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
-      sandbox-exec -f $R/bin/claude-cli.sb claude -p --dangerously-skip-permissions --strict-mcp-config --mcp-config "$LM/mcp.json" --model $M < $R/$J.prompt 2>&1 | $SCRUB > $R/$J.log; rcw "${PIPESTATUS[0]}"; } & ;;   # <<< CLAUDE-BROKER rev1
+      sandbox-exec -f $R/bin/claude-cli.sb claude -p --dangerously-skip-permissions --strict-mcp-config --mcp-config "$LM/mcp.json" --model $M --output-format stream-json --verbose < $R/$J.prompt 2>&1 | $SCRUB > $R/$J.log; rcw "${PIPESTATUS[0]}"; } & ;;   # <<< CLAUDE-BROKER rev1
  claude-api) # >>> claude-api lane (Mason 10:28 PM Oct 26): gifted + monthly Anthropic API credits, paced by claude-api.py
   # key: Phantom Secrets first (phantom exec injects it; the value never reaches this script), else a mode-600 user-owned
   # non-symlink key file read on fd 3 by the child itself (never on argv, never echoed or logged); neither -> HOLD exit 3

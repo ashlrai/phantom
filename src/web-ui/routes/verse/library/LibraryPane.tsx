@@ -6,7 +6,8 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import type { VerseSearchResponse } from '../../../../core/verse/types.js';
-import { ApiError } from '../../../data/client.js';
+import { ApiError, apiGet } from '../../../data/client.js';
+import type { QueryDef } from '../../../data/queries.js';
 import { useQuery } from '../../../data/hooks.js';
 import { Card, CardNote } from '../command/Surface.js';
 import { openChat } from '../command/nav.js';
@@ -14,6 +15,8 @@ import { verseProjectMemoryQuery, searchSessions } from '../context/context-quer
 import { openDockPane } from '../dock/dock-store.js';
 import { agentBusMissing, agentBusPageQuery, agentBusStatusQuery } from '../fleet-bus/agent-bus-queries.js';
 import { verseSessionsQuery } from '../verse-queries.js';
+import { CosMemorySection } from './CosMemorySection.js';
+import { leaderFileRows, narrowLeaderFiles, type LeaderFilesResponse } from './library-leader-files-model.js';
 import { libraryBusLines, withReceiptTtl } from './library-bus-model.js';
 import { memorySummary, recentProjects, searchQueryValid, type RecentProject } from './library-model.js';
 import styles from './library.module.css';
@@ -162,11 +165,60 @@ function AgentConversation({ visible }: { visible: boolean }) {
   );
 }
 
+const leaderFilesQuery: QueryDef<LeaderFilesResponse> = {
+  key: 'verse-fleet-library-files',
+  fetch: async (signal) => {
+    const body = narrowLeaderFiles(await apiGet<unknown>('/api/verse/fleet/library-files', signal));
+    if (!body) throw new Error('malformed leader files response');
+    return body;
+  },
+};
+
+function LeaderFileItem({ row }: { row: ReturnType<typeof leaderFileRows>[number] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <li className={styles.busRow}>
+      <button type="button" className={styles.hit} aria-expanded={open} onClick={() => setOpen(!open)}>
+        <strong>{row.label}</strong>
+        <span className={styles.meta}>{row.age} · {row.size}</span>
+        <span className={styles.snippet}>{row.preview ? (open || row.preview.length <= 80 ? row.preview : `${row.preview.slice(0, 79)}…`) : 'Empty file.'}</span>
+      </button>
+    </li>
+  );
+}
+
+function LeaderFiles({ visible }: { visible: boolean }) {
+  const files = useQuery(leaderFilesQuery, { enabled: visible, freshMs: 30_000 });
+  const rows = useMemo(() => (files.data ? leaderFileRows(files.data.files, Date.now()) : []), [files.data]);
+  return (
+    <section className={styles.section} aria-label="Leader files">
+      <h2>Leader files</h2>
+      <p className={styles.meta}>The Leader's own working files. Read-only previews.</p>
+      {files.error && !files.data ? (
+        <CardNote tone="danger">Could not read the Leader's files</CardNote>
+      ) : !files.data ? (
+        <CardNote>Loading…</CardNote>
+      ) : files.data.state === 'unavailable' ? (
+        <CardNote tone="danger">The Leader's files are unavailable right now. They were not read.</CardNote>
+      ) : files.data.state === 'absent' ? (
+        <CardNote>The Leader has no working files yet.</CardNote>
+      ) : rows.length === 0 ? (
+        <CardNote>The Leader's folder has no readable files.</CardNote>
+      ) : (
+        <ul className={styles.bus} aria-label="Leader files list">
+          {rows.map((row) => <LeaderFileItem key={row.key} row={row} />)}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export function LibraryPane({ visible = true }: { visible?: boolean }) {
   const sessions = useQuery(verseSessionsQuery, { enabled: visible });
   const projects = useMemo(() => recentProjects(sessions.data ?? []), [sessions.data]);
   return (
     <div className={styles.root}>
+      <CosMemorySection visible={visible} />
       <section className={styles.section} aria-label="Memory">
         <h2>Memory</h2>
         {sessions.error && !sessions.data ? (
@@ -181,6 +233,7 @@ export function LibraryPane({ visible = true }: { visible?: boolean }) {
       </section>
       <PastChats />
       <AgentConversation visible={visible} />
+      <LeaderFiles visible={visible} />
     </div>
   );
 }

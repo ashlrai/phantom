@@ -602,6 +602,7 @@ describe('M454 pinned upstream routing challenge', () => {
       'docs/DISK-MAINT.md',
       'docs/DEVIN.md',
       'docs/VERSE-CONTEXT.md',
+      'docs/AGENT-CHECKPOINT.md',
       'docs/VERSE-BROWSER.md',
       'docs/JEV-INTEGRATION.md',
       'docs/DEMO.md',
@@ -628,6 +629,7 @@ describe('M454 pinned upstream routing challenge', () => {
       'docs/contracts/CONTRACT-M521.md',
       'docs/contracts/CONTRACT-M568.md',
       'docs/contracts/CONTRACT-MISSION-RECEIPT-V1.md',
+      'docs/MACHINE-TELEMETRY.md',
     ]);
     // Explicit review of newly shipped members preserves challenge isolation.
     for (const file of ['docs/model-registry.json', 'docs/LEADER-NETWORK.md', 'docs/DISK-MAINT.md']) {
