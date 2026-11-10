@@ -44,6 +44,10 @@ vi.mock('../src/core/verse/github-repo.js', async (importOriginal) => {
 });
 
 import { startServer as startRealServer } from '../src/core/web/server.js';
+import { handleWbApi } from '../src/core/web/wb-read-api.js';
+import { QueueStore } from '../src/core/queue/store.js';
+import { Readable } from 'node:stream';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   capacitySnapshotPath,
   writeCapacitySnapshot,
@@ -199,9 +203,9 @@ describe('bind + auth boundary', () => {
     expect(h.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
   });
 
-  it('GET /api/wb/v1/* without a token → 401 on all four routes', async () => {
+  it('GET /api/wb/v1/* without a token → 401 on all five routes', async () => {
     const h = await serve();
-    for (const route of ['/api/wb/v1/snapshot', '/api/wb/v1/gh', '/api/wb/v1/budget', '/api/wb/v1/secrets']) {
+    for (const route of ['/api/wb/v1/snapshot', '/api/wb/v1/gh', '/api/wb/v1/budget', '/api/wb/v1/secrets', '/api/wb/v1/steer']) {
       const res = await httpRequest('GET', `${h.url}${route}`, { Host: hostOf(h) });
       expect(res.statusCode, `${route} without a token`).toBe(401);
       expect(res.body).not.toContain(h.readToken);
@@ -345,6 +349,126 @@ describe('GET /api/wb/v1/budget', () => {
     expect(body.policy).toBeTruthy(); // config is not collected evidence
     expect(body.seats).toEqual([]);
     expect(body.spentTodayUsd).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/wb/v1/steer — the agent steer pane's composite read
+// ---------------------------------------------------------------------------
+
+/** Drive handleWbApi directly so fleet/seat/queue deps stay hermetic. */
+async function steerGet(path: string, steerDeps: Parameters<typeof handleWbApi>[5] = {}): Promise<Response> {
+  const req = Readable.from([]) as IncomingMessage;
+  req.method = 'GET';
+  req.headers = {};
+  let status = 0;
+  let payload = '';
+  const res = {
+    writeHead(code: number) { status = code; },
+    end(text: string) { payload = text; },
+  } as unknown as ServerResponse;
+  await handleWbApi(req, res, makeConfig(), path, {}, steerDeps);
+  return { statusCode: status, headers: {}, body: payload };
+}
+
+const FLEET_V1 = {
+  schema: 'fleet.v1',
+  generated_at: '2026-11-10T00:00:00Z',
+  agents: [
+    { agent: 'devin', repo: 'ashlrai/phantom', task: 'ship the steer pane', claim_id: 'clm_secret_lease', expires_at: '2126-01-01T00:00:00Z' },
+    { agent: 'claude', repo: null, task: null, expires_at: null },
+    { agent: 'secret-agent' },
+  ],
+  pools: [{ id: 'devin', shared_with: null }, { id: 'claude-max' }],
+};
+
+describe('GET /api/wb/v1/steer', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-steer-read-'));
+  });
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('projects the fleet.v1 roster slice, seats and queue lines; claim ids stay on the host', async () => {
+    const fleetPath = path.join(dir, 'fleet.json');
+    fs.writeFileSync(fleetPath, JSON.stringify(FLEET_V1), { mode: 0o600 });
+    const store = new QueueStore(path.join(dir, 'queue'));
+    await store.add({ id: 'RQ-STEER-1', status: 'READY', priority: 'P1', pool: 'devin', tier: 'mid', repo: 'phantom', deps: [], scope: 'fixture scope', acceptance: '', claims: [] });
+    const res = await steerGet('/api/wb/v1/steer', {
+      fleetPath,
+      runsDir: dir,
+      listSeats: () => [{ id: 'claude', engine: 'claude', label: 'Claude Code', models: [] }],
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.v).toBe(1);
+    expect(body.fleetState).toBe('ok');
+    expect(body.fleet.schema).toBe('fleet.v1');
+    expect(body.fleet.agents).toHaveLength(3);
+    // claim_id is a presence marker only — the lease id never leaves the host.
+    expect(res.body).not.toContain('clm_secret_lease');
+    expect(body.fleet.agents[0].claim_id).toBe('present');
+    expect(body.fleet.agents[1].claim_id).toBeNull();
+    expect(body.fleet.pools).toEqual([{ id: 'devin', shared_with: null }, { id: 'claude-max', shared_with: null }]);
+    expect(body.seatsState).toBe('ok');
+    expect(body.seats).toHaveLength(1);
+    expect(body.queueState).toBe('ok');
+    expect(body.queue).toEqual([{ id: 'RQ-STEER-1', status: 'READY', priority: 'P1', pool: 'devin', tier: 'mid', scope: 'fixture scope' }]);
+  });
+
+  it('reports each source state honestly — missing fleet, unreadable queue, failed seats', async () => {
+    const res = await steerGet('/api/wb/v1/steer', {
+      fleetPath: path.join(dir, 'nope.json'),
+      runsDir: dir,
+      listSeats: () => { throw new Error('seat discovery down'); },
+    });
+    const body = JSON.parse(res.body);
+    expect(res.statusCode).toBe(200);
+    expect(body.fleet).toBeNull();
+    expect(body.fleetState).toBe('missing');
+    expect(body.seatsState).toBe('unavailable');
+    expect(body.seats).toEqual([]);
+    expect(body.queueState).toBe('ok'); // a missing queue file is an empty queue, not an error
+    expect(body.queue).toEqual([]);
+  });
+
+  it('a non-fleet.v1 document reports not-fleet-v1, never an empty roster', async () => {
+    const fleetPath = path.join(dir, 'fleet.json');
+    fs.writeFileSync(fleetPath, JSON.stringify({ schema: 'other', agents: [] }), { mode: 0o600 });
+    const res = await steerGet('/api/wb/v1/steer', { fleetPath, runsDir: dir, listSeats: () => [] });
+    const body = JSON.parse(res.body);
+    expect(body.fleetState).toBe('not-fleet-v1');
+    expect(body.fleet).toBeNull();
+  });
+
+  it('GET-only, unknown subpaths still 404, and a non-wb path falls through', async () => {
+    const req = Readable.from([]) as IncomingMessage;
+    req.method = 'POST';
+    req.headers = {};
+    let status = 0;
+    const res = { writeHead(code: number) { status = code; }, end() { /* noop */ } } as unknown as ServerResponse;
+    expect(await handleWbApi(req, res, makeConfig(), '/api/wb/v1/steer', {}, {})).toBe(true);
+    expect(status).toBe(405);
+    const miss = await steerGet('/api/wb/v1/nope');
+    expect(miss.statusCode).toBe(404);
+    const req2 = Readable.from([]) as IncomingMessage;
+    req2.method = 'GET';
+    req2.headers = {};
+    expect(await handleWbApi(req2, res, makeConfig(), '/api/other', {}, {})).toBe(false);
+  });
+
+  it('scrubs secret-shaped fixture text, never echoes it verbatim', async () => {
+    const fleetPath = path.join(dir, 'fleet.json');
+    fs.writeFileSync(fleetPath, JSON.stringify({
+      ...FLEET_V1,
+      agents: [{ agent: 'devin', repo: 'ashlrai/phantom', task: `ship it ${SECRET_PROBE}`, claim_id: 'x' }],
+    }), { mode: 0o600 });
+    const store = new QueueStore(path.join(dir, 'queue'));
+    await store.add({ id: 'RQ-SECRET-1', status: 'READY', priority: 'P1', pool: 'devin', tier: 'mid', repo: 'phantom', deps: [], scope: `do ${SECRET_PROBE} now`, acceptance: '', claims: [] });
+    const res = await steerGet('/api/wb/v1/steer', { fleetPath, runsDir: dir, listSeats: () => [] });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).not.toContain(SECRET_PROBE);
+    expect(res.body).toContain('[REDACTED]');
   });
 });
 
