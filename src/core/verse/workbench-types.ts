@@ -1662,6 +1662,7 @@ export const WORKBENCH_ROUTE_FAMILIES = [
   { id: 'release-stages', owner: 'desktop-command', module: 'src/core/verse/release-stages-api.ts', handler: 'handleReleaseStagesApi', prefixes: ['/api/verse/release/stages'] },
   { id: 'comms-inbox', owner: 'desktop-command', module: 'src/core/verse/comms-inbox-api.ts', handler: 'handleCommsInboxApi', prefixes: ['/api/verse/comms/inbox'] },
   { id: 'comms-teammate-reply', owner: 'desktop-command', module: 'src/core/verse/comms-teammate-reply-api.ts', handler: 'handleCommsTeammateReplyApi', prefixes: ['/api/verse/comms/teammate-reply'] },
+  { id: 'fleet-merge-latency', owner: 'desktop-command', module: 'src/core/verse/merge-latency-api.ts', handler: 'handleMergeLatencyApi', prefixes: ['/api/verse/fleet/merge-latency'] },
   { id: 'agent-roster', owner: 'desktop-command', module: 'src/core/verse/agent-roster-api.ts', handler: 'handleAgentRosterApi', prefixes: ['/api/verse/fleet/agent-roster'] },
   {
     // 3.15: the Fleet tab's control surface (Start / Pause / Resume / Stop,
