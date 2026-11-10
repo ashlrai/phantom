@@ -887,10 +887,12 @@ export function releaseGithubCall(method: string, path: string, body?: unknown):
 
 export const WORKFLOW_DISPATCH = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|publish-canonical-npm|ci|release-please)\.yml\/dispatches$/;
 
-/** Draft PATCH and enqueue use the App token; so do workflow dispatches, so a
- *  GITHUB_TOKEN dispatch cannot be mistaken for a missing tag-triggered build. */
+/** Draft PATCH and enqueue use the App token. Workflow dispatches stay on
+ *  GITHUB_TOKEN: the ashlr-release App has no actions permission, so a mint
+ *  that requests that permission 422s. */
 export function releaseWriteUsesAppToken(method: string, path: string): boolean {
-  return method === 'PATCH' || path === 'graphql' || (method === 'POST' && WORKFLOW_DISPATCH.test(path));
+  if (method === 'POST' && WORKFLOW_DISPATCH.test(path)) return false;
+  return method === 'PATCH' || path === 'graphql';
 }
 
 function gh(method: string, path: string, body?: unknown): string {
