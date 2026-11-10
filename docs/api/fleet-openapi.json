@@ -532,7 +532,7 @@
         "security": [{ "mutationToken": [] }],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["text"], "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 4000, "description": "Remote gateway bound (UTF-8 bytes); the hub itself allows 6000 characters after trimming." }, "source": { "type": "string", "pattern": "^[A-Za-z0-9 ._-]{1,40}$" } } } } }
+          "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["text"], "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 4000, "description": "Remote gateway bound (UTF-8 bytes); the hub itself allows 6000 characters after trimming." }, "source": { "type": "string", "pattern": "^[A-Za-z0-9 ._-]{1,40}$" }, "requestId": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$", "description": "Optional client-minted idempotency key: one per composed message. A repeat reposts the same id and the hub replays the first response without appending again." } } } } }
         },
         "responses": { "201": { "$ref": "#/components/responses/FleetInboxPostResult" }, "default": { "$ref": "#/components/responses/Error" } }
       }
