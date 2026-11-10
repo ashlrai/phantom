@@ -163,6 +163,7 @@ export interface FleetEvalReport {
   mergeLead: { measured: number; median_s: number | null; p90_s: number | null; max_s: number | null };
   ci: {
     measured: number;
+    unknown: number;
     clean: { merged: number; adverse: number; adverseRate: number | null };
     failedChecks: { merged: number; adverse: number; adverseRate: number | null };
     jobFinishFailed: { merged: number; adverse: number; adverseRate: number | null };
@@ -403,34 +404,44 @@ export interface GhPullRequest {
   body: string | null;
 }
 
-const FAILED_CHECK = new Set(['FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'STALE']);
+const FAILED_CHECK = new Set(['FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
 const PASSED_CHECK = new Set(['SUCCESS', 'NEUTRAL', 'SKIPPED']);
 
-function parseChecks(value: unknown): GhPullRequest['checks'] {
+function parseChecks(value: unknown, requiredValue: unknown, head: string | null, mergedAtMs: number | null): GhPullRequest['checks'] {
+  // A rollup alone does not identify the required contexts or the commit it
+  // describes. Require an explicit, complete list and head-bound observations.
+  if (!head || !/^[0-9a-f]{40}$/i.test(head) || !Array.isArray(requiredValue) || requiredValue.length === 0
+    || !requiredValue.every((n) => typeof n === 'string' && n.trim() !== '')
+    || new Set(requiredValue).size !== requiredValue.length) return null;
   const container = asRow(value);
   const contexts = Array.isArray(value) ? value
-    : Array.isArray(container?.['nodes']) ? container!['nodes'] as unknown[]
-    : Array.isArray(asRow(container?.['contexts'])?.['nodes']) ? (asRow(container!['contexts'])!['nodes'] as unknown[])
+    : Array.isArray(container?.['nodes']) ? container['nodes'] as unknown[]
+    : Array.isArray(asRow(container?.['contexts'])?.['nodes']) ? asRow(container!['contexts'])!['nodes'] as unknown[]
     : null;
   if (!contexts) return null;
-  let failed = 0, pending = 0, total = 0;
+  let failed = 0, pending = 0;
   const failedNames: string[] = [];
-  for (const raw of contexts) {
-    const ctx = asRow(raw);
-    if (!ctx) continue;
-    total++;
-    const name = str(ctx, 'name', 'context') ?? 'check';
+  for (const name of requiredValue as string[]) {
+    const matches = contexts.map(asRow).filter((c) => c && str(c, 'name', 'context') === name
+      && str(c, 'headSha', 'head_sha') === head);
+    // Multiple runs may include stale retries; do not guess which was current.
+    if (matches.length !== 1) return null;
+    const ctx = matches[0]!;
+    if (mergedAtMs !== null) {
+      const completed = ts(ctx, 'completedAt', 'completed_at');
+      if (completed === null || completed > mergedAtMs) return null;
+    }
     const conclusion = str(ctx, 'conclusion', 'state')?.toUpperCase() ?? null;
-    if (conclusion && FAILED_CHECK.has(conclusion)) {
+    if (ctx['status'] !== undefined && ctx['status'] !== 'COMPLETED') {
+      pending++;
+    } else if (conclusion && FAILED_CHECK.has(conclusion)) {
       failed++;
       if (failedNames.length < MAX_FAILED_CHECK_NAMES) failedNames.push(name);
-    } else if (conclusion && PASSED_CHECK.has(conclusion)) {
-      // passed
-    } else {
+    } else if (!conclusion || !PASSED_CHECK.has(conclusion)) {
       pending++;
     }
   }
-  return total === 0 ? null : { total, failed, pending, failedNames };
+  return { total: requiredValue.length, failed, pending, failedNames };
 }
 
 function parsePrRow(raw: unknown): GhPullRequest | null {
@@ -477,7 +488,7 @@ function parsePrRow(raw: unknown): GhPullRequest | null {
     mergedAtMs,
     mergeCommit,
     files,
-    checks: parseChecks(row['statusCheckRollup'] ?? row['statusCheckRollupState'] ?? row['checkSuites']),
+    checks: state === 'MERGED' && mergedAtMs === null ? null : parseChecks(row['statusCheckRollup'] ?? row['statusCheckRollupState'] ?? row['checkSuites'], row['requiredChecks'], str(row, 'headRefOid'), mergedAtMs),
     commitSubjects,
     body: str(row, 'body'),
   };
@@ -829,6 +840,7 @@ export function buildFleetEvalReport(input: FleetEvalReportInput): FleetEvalRepo
   const lead: number[] = [];
   const ci = {
     measured: 0,
+    unknown: 0,
     clean: { merged: 0, adverse: 0 },
     failedChecks: { merged: 0, adverse: 0 },
     jobFinishFailed: { merged: 0, adverse: 0 },
@@ -848,7 +860,7 @@ export function buildFleetEvalReport(input: FleetEvalReportInput): FleetEvalRepo
       const bucket = pr.checkState === 'clean' ? ci.clean : ci.failedChecks;
       bucket.merged++;
       if (adverseOf(pr.durability)) bucket.adverse++;
-    }
+    } else ci.unknown++;
     if (pr.jobFinishFailed === true) {
       ci.jobFinishFailed.merged++;
       if (adverseOf(pr.durability)) ci.jobFinishFailed.adverse++;
@@ -916,6 +928,7 @@ export function buildFleetEvalReport(input: FleetEvalReportInput): FleetEvalRepo
     mergeLead: timeStats(lead),
     ci: {
       measured: ci.measured,
+      unknown: ci.unknown,
       clean: { ...ci.clean, adverseRate: rate(ci.clean.adverse, ci.clean.merged) },
       failedChecks: { ...ci.failedChecks, adverseRate: rate(ci.failedChecks.adverse, ci.failedChecks.merged) },
       jobFinishFailed: { ...ci.jobFinishFailed, adverseRate: rate(ci.jobFinishFailed.adverse, ci.jobFinishFailed.merged) },
@@ -946,7 +959,7 @@ export function formatFleetEvalReport(report: FleetEvalReport): string {
   lines.push(`Time to merge: ${report.timeToMerge.measured ? `median ${report.timeToMerge.median_s}s, p90 ${report.timeToMerge.p90_s}s (${report.timeToMerge.measured} measured)` : 'no ledger ttm samples'}; ` +
     `merge lead: ${report.mergeLead.measured ? `median ${report.mergeLead.median_s}s, p90 ${report.mergeLead.p90_s}s` : 'unmeasured'}`);
   const ci = report.ci;
-  lines.push(`CI correlation: ${ci.measured ? `clean ${pct(ci.clean.adverseRate)} adverse (${ci.clean.merged}), failed-checks ${pct(ci.failedChecks.adverseRate)} adverse (${ci.failedChecks.merged}) — ${ci.direction}` : 'no check data'}; ` +
+  lines.push(`CI correlation: ${ci.measured ? `clean ${pct(ci.clean.adverseRate)} adverse (${ci.clean.merged}), failed-checks ${pct(ci.failedChecks.adverseRate)} adverse (${ci.failedChecks.merged}) — ${ci.direction}` : 'no check data'}; unknown ${ci.unknown}; ` +
     `job-finish-failed ${pct(ci.jobFinishFailed.adverseRate)} adverse (${ci.jobFinishFailed.merged})`);
   for (const [label, rows] of [['By lane', report.byLane], ['By tier', report.byTier]] as const) {
     if (rows.length === 0) continue;
