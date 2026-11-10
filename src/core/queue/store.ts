@@ -120,6 +120,27 @@ export class QueueStore {
       return jobs;
     });
   }
+  /** Hold only unclaimed work; never interrupt an active attempt. */
+  async hold(id: string, held: boolean, dryRun = false): Promise<void> {
+    const change = (doc: QueueDocument): void => {
+      const job = this.find(doc, id);
+      if (job.status !== (held ? 'READY' : 'HOLD')) throw new Error('Invalid hold transition');
+      job.status = held ? 'HOLD' : 'READY';
+    };
+    if (dryRun) change(await this.read());
+    else await this.mutate(change);
+  }
+  /** Reprioritize one unclaimed line; returns the priority it replaces. */
+  async reprioritize(id: string, priority: string, dryRun = false): Promise<string> {
+    const change = (doc: QueueDocument): string => {
+      const job = this.find(doc, id);
+      if (job.status !== 'READY' && job.status !== 'HOLD') throw new Error('Invalid reprioritize transition');
+      const from = job.priority;
+      job.priority = priority;
+      return from;
+    };
+    return dryRun ? change(await this.read()) : this.mutate(change);
+  }
   async mirror(): Promise<string> {
     return this.locked(async () => {
       const path = join(this.directory, 'queue.mirror.md');

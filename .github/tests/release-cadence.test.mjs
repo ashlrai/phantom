@@ -307,7 +307,7 @@ test('timer cadence keeps the existing permissions and guarded merge route', () 
   assert.ok(workflow.jobs['sync-and-refresh'].steps.some(s => s.run?.includes('sync-release-notes.mjs')));
   assert.equal(read('../workflows/release-please.yml').includes('pr merge'), false);
   const tag = parse(read('../workflows/auto-tag.yml'));
-  assert.deepEqual(tag.jobs.tag.permissions, { contents: 'read', checks: 'read' });
+  assert.deepEqual(tag.jobs.tag.permissions, { contents: 'read', checks: 'read', actions: 'write' });
   assert.deepEqual(tag.on.schedule, [{ cron: '22,52 * * * *' }]);
   assert.deepEqual(tag.on.workflow_run.workflows, ['CI']);
   assert.ok(tag.jobs.tag.if.includes("github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master'"), 'manual retry must not tag a feature branch');
