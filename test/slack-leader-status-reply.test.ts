@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSlackLeaderAdapter, ingestSlackLeaderEnvelope, readSlackDeliveryPolicy } from '../src/core/agents/slack-leader.js';
 import { readLeaderInbox, tickLeaderNetwork } from '../src/core/agents/leader-network-runtime.js';
 import { openSlackSocket, type SlackCall } from '../src/core/agents/slack-transport.js';
 import { OWNER_STATUS_FALLBACK, ownerStatusReply } from '../src/core/agents/owner-status-reply.js';
+import { leaderInboxRequestHash, type LeaderInboxAppender } from '../src/core/agents/leader-inbox-writer.js';
 import type { AshlrConfig } from '../src/core/types.js';
 import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
 
@@ -13,7 +14,7 @@ vi.setConfig({ testTimeout: 30_000 });
 // Ingest now awaits the unified owner-thread receipt (~1-2 s cold); poll past it.
 const WAIT_MS = 15_000;
 let root: string;
-let options: { configDir: string; runsDir: string; busRoot: string; now: () => number };
+let options: { configDir: string; runsDir: string; busRoot: string; now: () => number; appendInbox: LeaderInboxAppender };
 const configText = `[mason]\nidentities=[{channel="slack",id="U0FAKEOWNER"}]\n[team]\nidentities=[{channel="slack",id="U0FAKEOWNER"},{channel="slack",id="U0FAKEPEER"}]\n[slack]\nbridge_id="slack"\nteam_id="T0FAKETEAM"\nown_user_id="U0FAKEBOT"\nown_bot_id="B0FAKEBOT"\nbot_token_ref="phm_SLACK_AGENTNET_BOT_TOKEN"\napp_token_ref="phm_SLACK_AGENTNET_APP_TOKEN"\n[[slack.map]]\ntopic="leaders"\nchannel="D0FAKELEADER"\n`;
 const threadRef = 'slack:T0FAKETEAM:D0FAKELEADER:1793920000.000001';
 const STATUS_TEXT = 'Phantom status, 21:00 ET\nShipped (last 12h): none';
@@ -25,7 +26,17 @@ function slackEvent(text: string, user = 'U0FAKEOWNER', eventId = 'Ev-status') {
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'slack-leader-status-'));
-  options = { configDir: join(root, 'config'), runsDir: join(root, 'runs'), busRoot: join(root, 'bus'), now: () => Date.parse('2026-11-06T02:00:00Z') };
+  options = { configDir: join(root, 'config'), runsDir: join(root, 'runs'), busRoot: join(root, 'bus'), now: () => Date.parse('2026-11-06T02:00:00Z'),
+    // Temp-dir stand-in for the host's sole writer. The status fast path needs
+    // one: it is what records today's P0 entry when the answer cannot be sent.
+    appendInbox: async request => {
+      const dir = join(options.runsDir, 'leader'), file = join(dir, 'MASON-INBOX.md'), digest = leaderInboxRequestHash(request);
+      const marker = `[leader-network:${request.requestId}]`;
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const duplicate = existsSync(file) && readFileSync(file, 'utf8').includes(marker);
+      if (!duplicate) appendFileSync(file, `\n## 2026-11-05 21:00 ET (Operator, slack) PRIORITY P0 [request-sha256:${digest}] ${marker}\n${request.text}\n`);
+      return { schema: 'mason-inbox-receipt.v1', requestId: request.requestId, requestSha256: digest, status: duplicate ? 'duplicate' : 'appended' };
+    } };
   mkdirSync(options.configDir, { mode: 0o700 });
   writeFileSync(join(options.configDir, 'agent-network.toml'), configText, { mode: 0o600 });
   writeFileSync(join(options.configDir, 'comms.toml'), 'confirmedByMason=true\n', { mode: 0o600 });
@@ -62,7 +73,7 @@ async function receive(call: SlackCall, brief: (runsDir: string, now: Date) => P
 }
 
 describe('owner "Phantom status" auto-answer over Slack', () => {
-  it('answers the verified owner once in the same thread and still records the ask for the Leader', async () => {
+  it('answers the verified owner once in the same thread and leaves no P0 order in the inbox', async () => {
     const call = fakeCall();
     const statusReply = vi.fn(async () => STATUS_TEXT);
     await receive(call, statusReply, slackEvent('Phantom status'));
@@ -70,7 +81,8 @@ describe('owner "Phantom status" auto-answer over Slack', () => {
     expect(statusReply).toHaveBeenCalledOnce();
     expect(statusReply).toHaveBeenCalledWith(options.runsDir, new Date(options.now()));
     expect(posts(call)[0]?.[1]).toMatchObject({ channel: 'D0FAKELEADER', thread_ts: '1793920000.000001', text: `Leader: ${STATUS_TEXT}` });
-    expect((await readLeaderInbox(options)).inbox.entries[0]?.text).toContain('Phantom status');
+    // RQ-PHX-SLACKSTATUSROUNDTRIP10: an answered status ask is not a P0 order.
+    expect((await readLeaderInbox(options)).inbox.entries).toEqual([]);
 
     // (b) A redelivered duplicate neither recomposes nor posts again, and the
     // Leader's own worker does not generate a second answer for the same ask.
@@ -123,6 +135,7 @@ describe('owner "Phantom status" auto-answer over Slack', () => {
     const statusReply = vi.fn(async () => STATUS_TEXT);
     await receive(call, statusReply, slackEvent('fleet status'));
     await vi.waitFor(() => expect(posts(call).length).toBeGreaterThan(0), { timeout: WAIT_MS });
-    expect((await readLeaderInbox(options)).inbox.entries[0]?.text).toContain('fleet status');
+    // The undelivered answer falls back to today's P0 inbox order.
+    await vi.waitFor(async () => expect((await readLeaderInbox(options)).inbox.entries[0]?.text).toContain('fleet status'), { timeout: WAIT_MS });
   });
 });
