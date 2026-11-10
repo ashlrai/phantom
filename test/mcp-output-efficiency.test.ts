@@ -58,6 +58,7 @@ const ADDED_NATIVE_NAMES = [
   'phantom_fleet_doctor',
   'phantom_fleet_apps_await',
   'phantom_fleet_needs',
+  'phantom_fleet_needs_resolve',
   'phantom_fleet_orders',
   'world_model',
   'phantom_observe',
@@ -140,8 +141,9 @@ describe('native MCP tool inventory', () => {
     // The historical 35-tool response measured 23,547 bytes; retain its strict
     // pre-audit 24,205-byte ceiling and its 658 bytes of measured headroom.
     expect(responseBytes(oldTools)).toBeLessThan(24205);
-    // The 18 legitimate additions measured 9,177 object bytes plus 18 commas.
-    // Their fixed 9,195-byte allowance has no unmeasured growth headroom.
+    // The 19 legitimate additions measured 9,177 object bytes plus 19 commas.
+    // phantom_fleet_needs_resolve then measured 9884 total; the fixed
+    // 9,884-byte allowance has no unmeasured growth headroom.
     const doctor = addedTools.find(tool => tool.name === 'phantom_fleet_doctor')!;
     const doctorBytes = Buffer.byteLength(JSON.stringify(doctor)) + 1;
     expect(doctorBytes).toBeLessThanOrEqual(250);
@@ -174,10 +176,10 @@ describe('native MCP tool inventory', () => {
     const needsBytes = Buffer.byteLength(JSON.stringify(needs)) + 1;
     expect(needsBytes).toBeLessThanOrEqual(380);
     const addedBytes = addedTools.filter(tool => tool !== doctor && tool !== roster && tool !== spend && tool !== needs && !visibility.includes(tool) && !leaderTools.includes(tool) && !desktop.includes(tool) && !observeTools.includes(tool) && !ownerComms.includes(tool) && !agentComms.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
-    expect(addedBytes).toBeLessThanOrEqual(9195);
-    // 24,205 + 9,195 preserves the historical headroom. Later tool groups are
+    expect(addedBytes).toBeLessThanOrEqual(9884);
+    // 24,205 + 9,884 preserves the historical headroom. Later tool groups are
     // measured on their own caps above.
-    expect(responseBytes(tools)).toBeLessThan(33400 + doctorBytes + rosterBytes + visibilityBytes + spendBytes + leaderBytes + desktopBytes + observeBytes + ownerCommsBytes + agentCommsBytes + needsBytes);
+    expect(responseBytes(tools)).toBeLessThan(33400 + 689 + doctorBytes + rosterBytes + visibilityBytes + spendBytes + leaderBytes + desktopBytes + observeBytes + ownerCommsBytes + agentCommsBytes + needsBytes);
   });
 });
 

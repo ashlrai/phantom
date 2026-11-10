@@ -6,6 +6,7 @@
  *                                       lanes route serves, so a client can
  *                                       read and write through one path
  *   POST /api/verse/fleet/control/holds → {lane, action:'release', reason?} → LaneTargetsV1
+ *                                       → {lane, action:'hold', minutes, reason?} → LaneTargetsV1
  *   POST /api/verse/fleet/control/stray-slots → verified SIGTERM + audit + refreshed report
  *
  * The path sits inside the fleet-control workbench family's /api/verse/fleet/
@@ -99,6 +100,7 @@ export const handleFleetHoldsApi: ApiModule = async (ctx, req, res, path, method
   try {
     const { readLaneTargets } = await import('../fleet/runs-lane-targets.js');
     const { releaseLaneHold, parseLaneHoldAction, LaneHoldError } = await import('../fleet/runs-lane-hold.js');
+    const { placeLaneHold } = await import('../fleet/runs-lane-hold-place.js');
     if (method === 'GET') {
       if (noQuery(req, res)) sendJson(res, 200, await readLaneTargets());
     } else if (method === 'POST') {
@@ -110,11 +112,15 @@ export const handleFleetHoldsApi: ApiModule = async (ctx, req, res, path, method
         sendJson(res, 409, { code: 'busy', error: 'Another fleet control action is still running — try again in a moment.' });
         return true;
       }
-      const run = releaseLaneHold(action.lane, { reason: action.reason, changedBy: 'Phantom desktop' });
+      const run = action.action === 'hold'
+        ? placeLaneHold(action.lane, { minutes: action.minutes, reason: action.reason, changedBy: 'Phantom desktop' })
+        : releaseLaneHold(action.lane, { reason: action.reason, changedBy: 'Phantom desktop' });
       actionInFlight = run;
       try { sendJson(res, 200, await run); }
       catch (error) {
-        if (error instanceof LaneHoldError) sendJson(res, error.status, { code: error.code, error: error.message });
+        // An unknown lane is a bad request on the hold verb (400); release
+        // keeps its existing 422 contract.
+        if (error instanceof LaneHoldError) sendJson(res, action.action === 'hold' && error.code === 'unknown-lane' ? 400 : error.status, { code: error.code, error: error.message });
         else throw error;
       } finally { actionInFlight = null; }
     } else sendJson(res, 405, { error: 'method not allowed' });
