@@ -1,3 +1,5 @@
+import type { FablePlan } from '../routing/fable-orchestrator.js';
+import { FABLE_ORCHESTRATOR_MODEL } from '../routing/fable-orchestrator.js';
 /**
  * Pure world-model projection. Callers pass readings they already have.
  * This file does not open files, spawn processes, or call the network.
@@ -14,6 +16,7 @@ const PACE_NEED = 'RQ-SENSORS-PACE-1 adds pacePerHour, requiredPacePerHour, and 
 
 export interface WorldProjectInput {
   nowMs: number;
+  fablePlan?: FablePlan;
   sensors: UsageSensorReport | null;
   /** Raw lane rows, used only for pacing keys the current schema does not require. */
   sensorRows?: readonly unknown[];
@@ -153,7 +156,7 @@ function staleIntentSpots(summary: IntentSummary | null | undefined): BlindSpot[
 
 export function projectWorldModel(input: WorldProjectInput): WorldModel {
   const now = iso(input.nowMs);
-  const lanes = (input.sensors?.lanes ?? []).map((lane) => {
+  const lanes: WorldModel['sensors']['lanes'] = (input.sensors?.lanes ?? []).map((lane) => {
     const source = lane.source;
     const observedAt = lane.observedAt;
     const fresh = lane.status === 'fresh';
@@ -182,6 +185,19 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
     const runway = paceField(runwayHours);
     return { lane: lane.lane, headroom, used, limit, remaining, burnRate, idleIncludedWastedPerWeek, pacePerHour: paceHour, requiredPacePerHour: required, runwayHours: runway };
   });
+  if (input.fablePlan) {
+    const plan = input.fablePlan;
+    const percent = (value: number | null): Field<number> => value === null ? unknown('claude-usage')
+      : reading(value, 'claude-usage', plan.observedAtMs === null ? null : iso(plan.observedAtMs), 'fresh');
+    lanes.push({ lane: 'claude:fable', model: FABLE_ORCHESTRATOR_MODEL, role: 'planning-orchestration',
+      claudeWeeklyUsedPercent: percent(plan.claudeWeeklyUsedPercent),
+      fableOverallWeeklyUsedPercent: percent(plan.fableOverallWeeklyUsedPercent),
+      used: percent(plan.fableOverallWeeklyUsedPercent), limit: percent(plan.fableOverallWeeklyUsedPercent === null ? null : 100),
+      remaining: percent(plan.fableOverallWeeklyUsedPercent === null ? null : Math.max(0, plan.sharePercent - plan.fableOverallWeeklyUsedPercent)),
+      headroom: unknown('claude-usage'), burnRate: unknown('claude-usage'), idleIncludedWastedPerWeek: unknown(),
+      pacePerHour: unknown(), requiredPacePerHour: unknown(), runwayHours: unknown() });
+  }
+
 
   const knownSources = input.roster?.sources.filter((source) => source.availability === 'known') ?? [];
   const sessionCount = input.roster === null ? unknown<number>('agent-roster.v1')

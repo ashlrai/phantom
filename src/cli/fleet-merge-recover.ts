@@ -10,7 +10,8 @@ import { mergeQueueAge, validMergeQueueAgeInput } from './fleet-merge-queue-age.
 
 const USAGE = 'Usage: phm fleet merge-recover [--queue-input <snapshot.json>] [--apply] [--json] [--runs-dir <absolute path>]\nPreview stale conflicting fleet PRs. A queue snapshot prioritizes the oldest measured entries and reports their wait. Apply queues isolated recuts; run again after publication to request auto-merge. Required checks remain enforced.';
 const REPO = 'ashlrai/phantom';
-const HOLDS = new Set([197, 878, 743, 725, 738, 744, 693, 1228]);
+/** Mason's own holds in ashlrai/phantom (AGENTS.md hold list); never auto-acted on. */
+export const PHANTOM_PR_HOLDS = new Set([197, 878, 743, 725, 738, 744, 693, 1228]);
 const FIELDS = 'number,title,state,headRefOid,baseRefName,isDraft,mergeStateStatus,autoMergeRequest';
 interface Pr { number: number; title: string; state: string; headRefOid: string; baseRefName: string; isDraft: boolean; mergeStateStatus: string; autoMergeRequest: unknown }
 export interface MergeRecoverDeps {
@@ -63,7 +64,7 @@ export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDep
       if (entry.ageSeconds !== null && !entry.missingData.includes('unique_queue_entry')) ranks.set(entry.number, index);
     });
     for (const pr of [...prs].sort((a, b) => (ranks.get(a.number) ?? Infinity) - (ranks.get(b.number) ?? Infinity))) {
-      if (HOLDS.has(pr.number)) { rows.push({ pr: pr.number, action: 'held' }); continue; }
+      if (PHANTOM_PR_HOLDS.has(pr.number)) { rows.push({ pr: pr.number, action: 'held' }); continue; }
       const job = recutDropJob(pr, 0);
       if ('reason' in job || !['main', 'master'].includes(pr.base)) continue;
       // Stable across dates and processes; a changed source head is a new recovery.

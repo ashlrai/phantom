@@ -36,6 +36,10 @@ export interface WorldModel {
   sensors: {
     lanes: Array<{
       lane: string;
+      model?: string;
+      role?: 'planning-orchestration';
+      claudeWeeklyUsedPercent?: Field<number>;
+      fableOverallWeeklyUsedPercent?: Field<number>;
       headroom: Field<number>;
       used: Field<number>;
       limit: Field<number>;

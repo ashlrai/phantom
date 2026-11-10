@@ -67,7 +67,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // Standing disk maintenance: plan/apply reclaim classes (RQ-DISKMAINT).
   'disk-maint',
   // Changed-file tests and the fleet event feed.
-  'test', 'feed',
+  'test', 'check', 'feed',
   'worklog', 'library',
 ];
 
@@ -75,6 +75,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
 const SUBCOMMANDS: Record<string, string[]> = {
   graph: ['nodes', 'edges', 'status', '--json', '--help'],
   sweep: ['report'],
+  check: ['--base', '--json', '--help'],
   companions: ['--json', '--root', '--bin-dir', '--secrets-bin', '--locus-bin', '--lexicon-bin', '--help'],
   disk: ['--wt-dir', '--runs-dir', '--tmp-dir', '--json', '--help'],
   'disk-maint': ['schedule', '--apply', '--json', '--only', '--allow', '--compress-days', '--prune-days', '--help'],
