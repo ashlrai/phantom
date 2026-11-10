@@ -41,7 +41,7 @@ permissions:
 # PR runs cancel superseded revisions. merge_group, schedule, dispatch and
 # workflow_call runs each get their own group (keyed by run_id) and never cancel.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.release_gate && format('phantom-release-{0}', github.ref_name) || format('ci-{0}', github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id)) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -104,6 +104,18 @@ jobs:
         with:
           node-version: '22.22.3'
           cache: npm
+      # Read-only dirty diff on every PR, merge_group, and master push. Runs
+      # the tracked-file generator and fails if any path changes, including
+      # docs/llms.txt. No auto-commit and no path exemptions.
+      - name: Check generated files
+        run: |
+          set -euo pipefail
+          node scripts/generate-docs-llms.mjs
+          status="$(git status --porcelain --untracked-files=normal)"
+          if [ -n "$status" ]; then
+            printf 'generated files are stale; commit the regenerated tree:\n%s\n' "$status" >&2
+            exit 1
+          fi
       # Source-identical fast path (pull_request and merge_group only): the
       # exact whole tracked tree of the checked-out candidate is compared with
       # the authenticated current canonical base. The proof code is fetched
