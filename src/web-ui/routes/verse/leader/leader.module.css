@@ -149,6 +149,64 @@
   outline-offset: 2px;
 }
 
+/* ---- phantom status brief ---------------------------------------------- */
+.brief {
+  padding: var(--space-2) var(--card-pad);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.briefHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.briefToggle,
+.briefRefresh {
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-full);
+  background: var(--bg-surface-raised);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-xs-size);
+  line-height: var(--text-sm-line);
+  cursor: pointer;
+}
+
+.briefToggle {
+  min-width: 0;
+  border-color: transparent;
+  background: none;
+  font-weight: 600;
+}
+
+.briefRefresh:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.briefToggle:focus-visible,
+.briefRefresh:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* Untrusted plain text: lines wrap anywhere, so a half-screen window never scrolls sideways. */
+.briefBody {
+  margin-top: var(--space-1);
+  color: var(--text-secondary);
+  font-size: var(--text-xs-size);
+  line-height: var(--text-sm-line);
+  overflow-wrap: anywhere;
+}
+
+.briefLine {
+  margin: 0;
+}
+
 /* ---- directives -------------------------------------------------------- */
 .directives {
   display: flex;
