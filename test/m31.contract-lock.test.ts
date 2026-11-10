@@ -143,6 +143,7 @@ describe('native MCP tool surface lock', () => {
       'phantom_fleet_orders:read',
       'phantom_fleet_planner_run:append',
       'phantom_fleet_session:read',
+      'phantom_fleet_verbs:read',
       'phantom_leader_ask:append',
       'phantom_leader_assign:append',
       'phantom_leader_inbox:read',
