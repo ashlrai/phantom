@@ -1382,6 +1382,7 @@
     "src/core/web/read-session.ts",
     "src/core/web/run-stream.ts",
     "src/core/web/visibility.ts",
+    "src/core/web/wb-action-api.ts",
     "src/core/web/wb-read-api.ts",
     "src/core/website/host-adapter.ts",
     "src/core/website/host-release.ts",
