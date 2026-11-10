@@ -46,9 +46,11 @@ afterEach(() => {
 // Mock child_process
 // ---------------------------------------------------------------------------
 
-const mockExecFile = vi.fn((_cmd: string, _args: string[], _options: unknown, callback?: (error: Error, stdout: string, stderr: string) => void) => {
-  // Async inventory probes must complete just like the synchronous absent-tool mock.
-  callback?.(Object.assign(new Error('not found'), { code: 'ENOENT' }), '', '');
+// Doctor's parallel inventory now uses the callback form. A missing command
+// must settle rather than leaving every fix waiting on an unresolved probe.
+const mockExecFile = vi.fn((_cmd, _args, _opts, callback) => {
+  callback(Object.assign(new Error('not found'), { code: 'ENOENT' }), '', '');
+  return { stdin: { end: vi.fn() } };
 });
 const mockExecFileSync = vi.fn();
 const mockSpawnSync = vi.fn(() => ({ status: 1, stdout: '', stderr: '' }));
@@ -71,12 +73,27 @@ vi.mock('node:child_process', () => ({
   spawn: (...args: unknown[]) => mockSpawn(...args),
 }));
 
+// The native PATH probe bypasses the child_process mocks above; keep it
+// hermetic so a real phm on the developer PATH cannot flip checkLocalBin.
+vi.mock('../src/doctor/executable.js', () => ({ findDoctorExecutable: () => null }));
+
 // ---------------------------------------------------------------------------
 // Mock fetch — providers down by default
 // ---------------------------------------------------------------------------
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
+
+// Transform the doctor graph during collection, as the report suite does;
+// the per-case timeout measures fixes rather than cold TypeScript loading.
+import { fixDoctor as runFixDoctor } from '../src/core/doctor-fix.js';
+import '../src/core/tools-registry.js';
+import '../src/core/mcp-registry.js';
+import '../src/core/observability/rollup.js';
+import '../src/core/observability/governance.js';
+import '../src/core/observability/telemetry-sink.js';
+import '../src/core/genome/store.js';
+import '../src/core/integrations/identity.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -115,8 +132,7 @@ function allSpawnedArgs(): string[] {
 }
 
 async function importFixDoctor() {
-  const mod = await import('../src/core/doctor-fix.js');
-  return mod.fixDoctor;
+  return runFixDoctor;
 }
 
 // ---------------------------------------------------------------------------
