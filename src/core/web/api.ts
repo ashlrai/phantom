@@ -1318,6 +1318,11 @@ export async function handleApi(
   const method = (req.method ?? 'GET').toUpperCase();
 
   try {
+    if (path === '/api/usage/spend' && method === 'GET') {
+      const { readUsageSpend } = await import('../usage/spend.js');
+      sendJson(res, 200, await readUsageSpend());
+      return true;
+    }
     if (path === HOST_SUMMARY_PATH) {
       if (method !== 'GET') {
         res.setHeader('Allow', 'GET');
