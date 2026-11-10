@@ -304,6 +304,10 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   if (path === '/api/verse/fleet/control/launch-stall') {
     return (await import('./fleet-launch-stall-api.js')).handleFleetLaunchStallApi(ctx, req, res, path, method);
   }
+  // Literal path: a static import of VERSE_FLEET_DISK_RUNWAY_PATH would load the module on every request.
+  if (path === '/api/verse/fleet/control/disk-runway') {
+    return (await import('./fleet-disk-runway-api.js')).handleFleetDiskRunwayApi(ctx, req, res, path, method);
+  }
   const isRoot = path === VERSE_FLEET_CONTROL_PATH;
   const isQueue = path === VERSE_FLEET_CONTROL_QUEUE_PATH;
   const isRunLog = path.startsWith(VERSE_FLEET_CONTROL_RUNS_PREFIX) && path.endsWith('/log');
