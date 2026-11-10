@@ -257,13 +257,13 @@ it('classifies transient queue failures: retryable, unattributed, attributed els
     ev(10, 'auto_merge_enabled', 900), ev(10, 'blocked', 800, { reason: 'queue' }), ev(10, 'auto_merge_disabled', 700), { ...ev(10, 'auto_merge_enabled', 100), at: undefined }, // untimed toggle: armed state unknown
   ), now);
   expect(report.queue_retries?.retryable).toEqual([
-    { repo: 'ashlrai/phantom', pr: 1, disabled_at: ago(700), waiting_s: 700, head_sha: SHA, retries_used: 0, retries_left: 3 },
-    { repo: 'ashlrai/phantom', pr: 9, disabled_at: ago(200), waiting_s: 200, head_sha: null, retries_used: 0, retries_left: 3 },
+    { repo: 'ashlrai/phantom', pr: 1, disabled_at: ago(700), waiting_s: 700, head_sha: SHA, retries_used: 0, retries_left: 3, requests_failed: 0 },
+    { repo: 'ashlrai/phantom', pr: 9, disabled_at: ago(200), waiting_s: 200, head_sha: null, retries_used: 0, retries_left: 3, requests_failed: 0 },
   ]);
   expect(report.queue_retries?.needs_person).toEqual([
-    { repo: 'ashlrai/phantom', pr: 2, reason: 'unattributed', retries_used: 0 },
-    { repo: 'ashlrai/phantom', pr: 3, reason: 'unattributed', retries_used: 0 },
-    { repo: 'ashlrai/phantom', pr: 10, reason: 'unattributed', retries_used: 0 },
+    { repo: 'ashlrai/phantom', pr: 2, reason: 'unattributed', retries_used: 0, requests_failed: 0 },
+    { repo: 'ashlrai/phantom', pr: 3, reason: 'unattributed', retries_used: 0, requests_failed: 0 },
+    { repo: 'ashlrai/phantom', pr: 10, reason: 'unattributed', retries_used: 0, requests_failed: 0 },
   ]);
   expect(formatMergeLatency(report)).toContain('merge-retry');
   expect(formatMergeLatency(report)).toContain('auto-merge dropped, unattributed');
@@ -288,9 +288,63 @@ it('bounds retries, dedupes identical retry events, and marks a retry for this d
     { pr: 1, retries_used: 2, retries_left: 1 }, { pr: 3, retries_used: 1, retries_left: 2 },
   ]);
   expect(report.queue_retries?.needs_person).toEqual([
-    { repo: 'ashlrai/phantom', pr: 2, reason: 'too-many-retries', retries_used: 3 },
-    { repo: 'ashlrai/phantom', pr: 4, reason: 'already-requested', retries_used: 1 },
+    { repo: 'ashlrai/phantom', pr: 2, reason: 'too-many-retries', retries_used: 3, requests_failed: 0 },
+    { repo: 'ashlrai/phantom', pr: 4, reason: 'already-requested', retries_used: 1, requests_failed: 0 },
   ]);
+});
+
+it('bounds failed submissions, dedupes replayed retry_failed lines, and never counts a failure as in-flight', async () => {
+  const report = await fleetMergeLatency(reader(
+    // One failed submission at/after the disable: transient — still retryable, not already-requested.
+    ev(1, 'auto_merge_enabled', 900), ev(1, 'blocked', 800, { reason: 'queue' }), ev(1, 'auto_merge_disabled', 700),
+    ev(1, 'retry_failed', 600, { head_sha: SHA }),
+    // Three distinct failed submissions: a permanent failure a person must look at.
+    ev(2, 'auto_merge_enabled', 900), ev(2, 'blocked', 800, { reason: 'queue' }), ev(2, 'auto_merge_disabled', 700),
+    ev(2, 'retry_failed', 600, { head_sha: SHA }), ev(2, 'retry_failed', 500, { head_sha: SHA }), ev(2, 'retry_failed', 400),
+    // The same retry_failed line replayed three times counts once.
+    ev(3, 'auto_merge_enabled', 900), ev(3, 'blocked', 800, { reason: 'queue' }), ev(3, 'auto_merge_disabled', 700),
+    ev(3, 'retry_failed', 600, { head_sha: SHA }), ev(3, 'retry_failed', 600, { head_sha: SHA }), ev(3, 'retry_failed', 600, { head_sha: SHA.toUpperCase() }),
+  ), now);
+  expect(report.queue_retries?.retryable).toEqual([
+    { repo: 'ashlrai/phantom', pr: 1, disabled_at: ago(700), waiting_s: 700, head_sha: SHA, retries_used: 0, retries_left: 3, requests_failed: 1 },
+    // head_sha is the newest recorded head verbatim; dedupe ignores case.
+    { repo: 'ashlrai/phantom', pr: 3, disabled_at: ago(700), waiting_s: 700, head_sha: SHA.toUpperCase(), retries_used: 0, retries_left: 3, requests_failed: 1 },
+  ]);
+  expect(report.queue_retries?.needs_person).toEqual([
+    { repo: 'ashlrai/phantom', pr: 2, reason: 'request-failed', retries_used: 0, requests_failed: 3 },
+  ]);
+});
+
+it('rolls up measured time in each queue state across PRs, keeping unmeasurable spans missing', async () => {
+  const report = await fleetMergeLatency(reader(
+    // Measurable: queue 200s then required_checks 200s before eligibility; 500s eligible to merge.
+    ev(1, 'queued', 1000), ev(1, 'blocked', 1000, { reason: 'queue' }), ev(1, 'blocked', 800, { reason: 'required_checks' }),
+    ev(1, 'eligible', 600), ev(1, 'merged', 100),
+    // Measurable: 200s blocked on review; 200s queued; 200s eligible to merge.
+    ev(2, 'queued', 500), ev(2, 'blocked', 500, { reason: 'review' }), ev(2, 'eligible', 300), ev(2, 'merged', 100),
+    // Open with only an enqueue: dwell only.
+    ev(3, 'queued', 300),
+    // Open after eligibility: measurable blocked time and dwell, no merged spans.
+    ev(4, 'queued', 400), ev(4, 'blocked', 400, { reason: 'conflict' }), ev(4, 'eligible', 200),
+  ), now);
+  expect(report.queue_state_time).toEqual({
+    enqueue_to_eligible: { count: 2, missing: 2, p50_s: 200, p90_s: 400, max_s: 400 },
+    eligible_to_merge: { count: 2, missing: 2, p50_s: 200, p90_s: 500, max_s: 500 },
+    open_dwell: { count: 2, missing: 2, p50_s: 300, p90_s: 400, max_s: 400 },
+    blocked: {
+      required_checks: { count: 3, missing: 1, p50_s: 0, p90_s: 200, max_s: 200 },
+      review: { count: 3, missing: 1, p50_s: 0, p90_s: 200, max_s: 200 },
+      conflict: { count: 3, missing: 1, p50_s: 0, p90_s: 200, max_s: 200 },
+      queue: { count: 3, missing: 1, p50_s: 0, p90_s: 200, max_s: 200 },
+      other: { count: 3, missing: 1, p50_s: 0, p90_s: 0, max_s: 0 },
+    },
+  });
+  const text = formatMergeLatency(report);
+  expect(text).toContain('Time in each queue state: queued median 200s across 2 PRs (2 unmeasured)');
+  expect(text).toContain('blocked on required checks median 0s across 3 PRs (1 unmeasured)');
+  const empty = await fleetMergeLatency(reader(), now);
+  expect(empty.queue_state_time?.enqueue_to_eligible).toEqual({ count: 0, missing: 0, p50_s: null, p90_s: null, max_s: null });
+  expect(formatMergeLatency(empty)).toContain('Time in each queue state: unknown (no measured spans).');
 });
 
 it('records retry_requested observations through the append and --record paths', async () => {
@@ -309,7 +363,10 @@ it('records retry_requested observations through the append and --record paths',
     expect(await cmdFleetMergeLatency(['--events', path, '--record', JSON.stringify(ev(2, 'retry_requested', 500))], { now })).toBe(0);
     expect(log).toHaveBeenCalledWith('Merge observation recorded.');
     const report = await fleetMergeLatency(async () => readFile(path, 'utf8'), now);
-    expect(report.queue_retries?.needs_person).toEqual([{ repo: 'ashlrai/phantom', pr: 1, reason: 'already-requested', retries_used: 1 }]);
+    expect(report.queue_retries?.needs_person).toEqual([{ repo: 'ashlrai/phantom', pr: 1, reason: 'already-requested', retries_used: 1, requests_failed: 0 }]);
+    expect(await cmdFleetMergeLatency(['--events', path, '--record', JSON.stringify(ev(2, 'retry_failed', 400, { head_sha: SHA }))], { now })).toBe(0);
+    expect(await readFile(path, 'utf8')).toContain('"type":"retry_failed"');
     await expect(recordMergeEvent(path, { ...ev(3, 'retry_requested', 500), at: undefined })).rejects.toThrow();
+    await expect(recordMergeEvent(path, { ...ev(3, 'retry_failed', 500), at: undefined })).rejects.toThrow();
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
