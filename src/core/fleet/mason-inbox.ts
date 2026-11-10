@@ -28,7 +28,7 @@ export interface InboxAppendOptions {
 
 export type InboxAppendResult =
   | { ok: true; at: string; bytes: number; id: string }
-  | { ok: false; reason: 'empty' | 'too-long' | 'secret-shaped' | 'write-failed' };
+  | { ok: false; reason: 'empty' | 'flag-only' | 'too-long' | 'secret-shaped' | 'write-failed' };
 
 export const INBOX_MAX_CHARS = 6000;
 const MAX_READ_BYTES = 256 * 1024;
@@ -51,6 +51,11 @@ function localTimestamp(date: Date): string {
 
 function normaliseText(text: string): string {
   return text.replace(/\r\n/g, '\n').trim();
+}
+
+export function isFlagOnlyInboxText(text: string): boolean {
+  const clean = normaliseText(text);
+  return !clean || clean.split(/\s+/).every(token => /^--?[A-Za-z0-9][A-Za-z0-9-]*(?:=[^\s]+)?$/.test(token));
 }
 
 export function formatInboxEntry(text: string, source: string, when: Date): string {
@@ -134,7 +139,7 @@ export function parseInbox(markdown: string, limit = 20): InboxEntry[] {
 
 export async function appendInboxEntry(text: string, opts: InboxAppendOptions = {}): Promise<InboxAppendResult> {
   const clean = normaliseText(text);
-  if (!clean) return { ok: false, reason: 'empty' };
+  if (isFlagOnlyInboxText(clean)) return { ok: false, reason: 'flag-only' };
   if (clean.length > INBOX_MAX_CHARS) return { ok: false, reason: 'too-long' };
   if (scrubSecrets(clean) !== clean) return { ok: false, reason: 'secret-shaped' };
 
