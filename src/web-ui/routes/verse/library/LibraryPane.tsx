@@ -16,6 +16,8 @@ import { openDockPane } from '../dock/dock-store.js';
 import { agentBusMissing, agentBusPageQuery, agentBusStatusQuery } from '../fleet-bus/agent-bus-queries.js';
 import { verseSessionsQuery } from '../verse-queries.js';
 import { CosMemorySection } from './CosMemorySection.js';
+import { HandoffsSection } from './HandoffsSection.js';
+import { narrowHandoffs, type HandoffsResponse } from './library-handoffs-model.js';
 import { leaderFileRows, narrowLeaderFiles, type LeaderFilesResponse } from './library-leader-files-model.js';
 import { libraryBusLines, withReceiptTtl } from './library-bus-model.js';
 import { memorySummary, recentProjects, searchQueryValid, type RecentProject } from './library-model.js';
@@ -174,6 +176,15 @@ const leaderFilesQuery: QueryDef<LeaderFilesResponse> = {
   },
 };
 
+const handoffsQuery: QueryDef<HandoffsResponse> = {
+  key: 'verse-fleet-handoffs',
+  fetch: async (signal) => {
+    const body = narrowHandoffs(await apiGet<unknown>('/api/verse/fleet/handoffs', signal));
+    if (!body) throw new Error('malformed handoffs response');
+    return body;
+  },
+};
+
 function LeaderFileItem({ row }: { row: ReturnType<typeof leaderFileRows>[number] }) {
   const [open, setOpen] = useState(false);
   return (
@@ -215,6 +226,7 @@ function LeaderFiles({ visible }: { visible: boolean }) {
 
 export function LibraryPane({ visible = true }: { visible?: boolean }) {
   const sessions = useQuery(verseSessionsQuery, { enabled: visible });
+  const handoffs = useQuery(handoffsQuery, { enabled: visible, freshMs: 30_000 });
   const projects = useMemo(() => recentProjects(sessions.data ?? []), [sessions.data]);
   return (
     <div className={styles.root}>
@@ -234,6 +246,7 @@ export function LibraryPane({ visible = true }: { visible?: boolean }) {
       <PastChats />
       <AgentConversation visible={visible} />
       <LeaderFiles visible={visible} />
+      <HandoffsSection data={handoffs.data} error={handoffs.error} />
     </div>
   );
 }
