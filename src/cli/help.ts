@@ -113,6 +113,24 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{ v: 1, state: ok|unknown, secrets: SecretCustody[] }',
   },
   {
+    usage: 'phm wb steer --text <note> [--apply] [--json]',
+    description: 'Append a steer note to the leaders\' inbox — the same steer.note the workbench action API runs. Dry run unless --apply. Exit 0 accepted, 1 operational, 2 usage/invalid.',
+    safety: 'append',
+    jsonShape: '{ v: 1, dryRun, action, outcome, at, id, bytes } | { v: 1, dryRun, error }',
+  },
+  {
+    usage: 'phm wb reprioritize <job-id> --priority P0|P1|P2|P3 [--apply] [--json]',
+    description: 'Re-priority one unclaimed queue.v1 line (READY or HOLD) — the same queue.reprioritize the workbench action API runs. Dry run unless --apply. Exit 0 changed, 1 operational, 2 usage/invalid.',
+    safety: 'append',
+    jsonShape: '{ v: 1, dryRun, action, outcome, job, from, to } | { v: 1, dryRun, error }',
+  },
+  {
+    usage: 'phm wb stop <job-id> [--apply] [--json]',
+    description: 'SIGTERM then SIGKILL every process carrying the job id on token boundaries — the same job.stop the workbench action API runs, audited to queue/job-stops.jsonl before the first signal. Dry run lists the matched pids only. Exit 0, 1 operational, 2 usage/invalid.',
+    safety: 'append',
+    jsonShape: '{ v: 1, dryRun, action, outcome, job, pids } | { v: 1, dryRun, error }',
+  },
+  {
     usage: 'phm budget show [--json]',
     description: 'Read per-pool budget buckets, burn rates, resets and provenance. Unknown is never zero.',
     safety: 'read',
@@ -761,7 +779,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'docs --agent [--json]',        desc: 'Agent cheat sheet: the CLI-first contract (commands, safety classes, JSON shapes).', topic: 'core' },
   { cmd: 'check [--base <ref>] [--json]', desc: 'Run incremental typechecks, cached lint and affected tests from a Phantom checkout; development feedback only.', topic: 'core' },
   { cmd: 'completions zsh|bash',         desc: 'Print a shell completion script to stdout.', topic: 'core' },
-  { cmd: 'plugins init|list|info|enable|disable', desc: 'Scaffold + manage plugins (~/.ashlr/plugins/) — default-off, integrity-pinned, audited (see docs/PLUGINS.md).', topic: 'core' },
+  { cmd: 'plugins init|list|info|enable|disable', desc: 'Plugins under ~/.ashlr/plugins/ (default-off). --json on every verb. init, enable and disable take --dry-run (writes nothing). enable prompts only on a terminal; otherwise use --yes.', topic: 'core' },
   { cmd: 'x <name> [args...]',           desc: "Run an enabled plugin's command.", topic: 'core' },
   { cmd: 'help [<topic>|--all|--search <term>]', desc: 'Topic-grouped help; --all prints every command; --search <term> filters.', topic: 'core' },
   { cmd: 'version',                      desc: 'Print the installed ashlr version (aliases: --version, -v).', topic: 'core' },
