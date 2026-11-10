@@ -55,7 +55,7 @@ Usage:
   phm leader veto --memo <memoId> [--note "why"]
   phm leader oversight-plist --print [--bin /path/to/phm]
   phm leader say "<text>"
-  phm leader replies [--json] [--limit n]  show recent PLAN-LOG replies, newest first
+  phm leader replies [--json] [--limit n] [--file PATH]  show recent PLAN-LOG replies, newest first
   phm leader replies sync [--json]  copy new PLAN-LOG replies to the Leader thread
   phm leader thread [--limit n] [--follow] [--since messageId] [--json]
   phm leader answer <questionId> "<text>"
@@ -660,13 +660,14 @@ export async function runLeaderCli(argv: string[]): Promise<number> {
     const sync = args[0] === 'sync';
     if (sync) args.shift();
     const limit = option(args, '--limit');
-    if (args.length || limit === undefined || (sync && limit !== null) || (limit !== null && (!/^\d{1,3}$/.test(limit) || Number(limit) < 1 || Number(limit) > 200))) { console.error(USAGE); return 2; }
+    const file = option(args, '--file');
+    if (args.length || file === undefined || (sync && file !== null) || limit === undefined || (sync && limit !== null) || (limit !== null && (!/^\d{1,3}$/.test(limit) || Number(limit) < 1 || Number(limit) > 200))) { console.error(USAGE); return 2; }
     try {
       if (!sync) {
         const { readPlanLogReplies } = await import('../core/fleet/mason-outbox.js');
-        const result = await readPlanLogReplies({ limit: limit === null ? 30 : Number(limit) });
+        const result = await readPlanLogReplies({ limit: limit === null ? 30 : Number(limit), file: file ?? undefined });
         result.entries.reverse();
-        console.log(json ? JSON.stringify(result) : result.entries.map(entry => `${entry.at}  ${entry.text}`).join('\n\n') || (result.sourceState === 'unknown' ? 'Leader replies are unavailable.' : 'No replies yet.'));
+        console.log(json ? JSON.stringify(result) : result.entries.map(entry => `${entry.at}  ${entry.text}`).join('\n\n') || result.reason || 'No replies yet.');
         return result.sourceState === 'unknown' ? 1 : 0;
       }
       const { syncLeaderReplies } = await import('../core/vision/leader-thread.js');
