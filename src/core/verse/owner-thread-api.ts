@@ -9,6 +9,8 @@ import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings, type O
 import { acceptOwnerInbound, readOwnerCommsStatus, readOwnerThread, type OwnerThreadOptions, type OwnerThreadResult } from '../comms/owner-thread.js';
 
 export const VERSE_OWNER_THREAD_PATH = '/api/verse/comms/owner-thread';
+/** Read-only "status now" brief for the Leader pane; same dispatch gate as the thread. */
+export const VERSE_OWNER_STATUS_PATH = `${VERSE_OWNER_THREAD_PATH}/status`;
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 200;
 
@@ -22,6 +24,8 @@ export interface OwnerThreadApiDeps {
   /** Bus root and leader mailbox seams for tests; default is the thread's own. */
   busRoot?: string;
   mailbox?: OwnerThreadOptions['mailbox'];
+  /** Status brief seam for tests; default is the Leader's instant brief. */
+  statusBrief?: () => Promise<string>;
   /** Clock seam for tests. */
   now?: () => number;
 }
@@ -49,13 +53,23 @@ function parseLimit(raw: string | null): number | null {
 
 export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
   return async (ctx, req, res, path, method) => {
-    if (path !== VERSE_OWNER_THREAD_PATH) return false;
+    if (path !== VERSE_OWNER_THREAD_PATH && path !== VERSE_OWNER_STATUS_PATH) return false;
     if (method !== 'GET') {
       sendJson(res, 405, { error: 'The owner thread is read only here.' });
       return true;
     }
     if (!ctx.allowDispatch) {
       sendJson(res, 404, { error: 'not found' });
+      return true;
+    }
+    if (path === VERSE_OWNER_STATUS_PATH) {
+      try {
+        // Loaded on first ask: the brief composer is heavy and only this route needs it.
+        const text = await (deps.statusBrief ? deps.statusBrief() : (await import('../comms/leader-line.js')).instantBrief(ctx.cfg));
+        sendJson(res, 200, { schema: 'comms.owner-status.v1', text, at: new Date(deps.now?.() ?? Date.now()).toISOString() });
+      } catch {
+        sendJson(res, 200, { schema: 'comms.owner-status.v1', unavailable: true });
+      }
       return true;
     }
     let limit: number | null;
