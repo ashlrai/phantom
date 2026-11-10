@@ -39,7 +39,7 @@ describe('commandArgError', () => {
 describe('hints and completion', () => {
   it('shows hints only while the draft starts with "/"', () => {
     expect(commandHints('hello')).toEqual([]);
-    expect(commandHints('/').map(hint => hint.name)).toEqual(['pause', 'resume', 'release', 'stop', 'drop', 'help']);
+    expect(commandHints('/').map(hint => hint.name)).toEqual(['pause', 'resume', 'release', 'hold', 'stop', 'drop', 'status', 'help']);
     expect(commandHints('/re').map(hint => hint.name)).toEqual(['resume', 'release']);
     expect(commandHints(' /REL').map(hint => hint.name)).toEqual(['release']);
     expect(commandHints('/release cod').map(hint => hint.name)).toEqual(['release']);
