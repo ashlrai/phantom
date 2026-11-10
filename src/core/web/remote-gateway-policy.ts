@@ -87,6 +87,8 @@ const REPO = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
 const ACTIVITY_CURSOR = /^v1\.[0-9a-f]{8}\.[et]\.\d{1,15}$/;
 // Fleet inbox read/post share this source label grammar with the Hub route.
 const FLEET_INBOX_SOURCE = /^[A-Za-z0-9 ._-]{1,40}$/;
+// Client-minted idempotency key on inbox posts; the Hub owns the same grammar.
+const FLEET_INBOX_REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 // Body shape only: the Hub re-checks switch ids against RUNS_SWITCHES and lane
 // ids against LANE_ID_RE plus per-lane bounds, so the gateway bounds format.
 const FLEET_SWITCH_ID = /^[A-Za-z][A-Za-z0-9_-]{1,40}$/;
@@ -264,9 +266,10 @@ export function validateRemoteMutation(decision: RemoteRouteDecision, body: unkn
   if (path === '/api/verse/leader') return (keys(body, ['action', 'actionId'])
     && body.action === 'veto' && boundedText(body.actionId, 128))
     || (keys(body, ['action', 'itemId']) && body.action === 'dismiss' && boundedText(body.itemId, 256));
-  if (path === '/api/verse/fleet/runs/inbox') return keys(body, ['text', 'source'])
+  if (path === '/api/verse/fleet/runs/inbox') return keys(body, ['text', 'source', 'requestId'])
     && boundedText(body.text, 4_000)
-    && (body.source === undefined || (typeof body.source === 'string' && FLEET_INBOX_SOURCE.test(body.source)));
+    && (body.source === undefined || (typeof body.source === 'string' && FLEET_INBOX_SOURCE.test(body.source)))
+    && (body.requestId === undefined || (typeof body.requestId === 'string' && FLEET_INBOX_REQUEST_ID.test(body.requestId)));
   // The channel is asserted by the gateway's stamped header, never the body.
   if (path === '/api/verse/fleet/cos/ask') return keys(body, ['text']) && boundedText(body.text, 4_000);
   if (path === '/api/verse/fleet/control/switches') return keys(body, ['id', 'on'])

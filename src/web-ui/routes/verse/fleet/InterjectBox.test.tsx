@@ -32,7 +32,7 @@ it('types and sends with command-enter, confirms, clears and refreshes', async (
   const posts = fetcher.mock.calls.filter(([, init]) => init?.method === 'POST');
   expect(posts).toHaveLength(1);
   expect(posts[0]![0]).toBe('/api/verse/fleet/runs/inbox');
-  expect(JSON.parse(String(posts[0]![1]!.body))).toEqual({ text: 'Ship when green', source: 'Phantom desktop' });
+  expect(JSON.parse(String(posts[0]![1]!.body))).toEqual({ text: 'Ship when green', source: 'Phantom desktop', requestId: expect.stringMatching(/^req-[A-Za-z0-9._:-]{4,124}$/) });
   expect(new Headers(posts[0]![1]!.headers).get('x-ashlr-token')).toBe(token);
   await waitFor(() => expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'GET')).toHaveLength(2));
 });

@@ -32,7 +32,7 @@ it('refreshes the inbox after posting and highlights the newest matching entry f
   expect(fetcher.mock.calls.filter(([url, init]) => String(url).includes('/runs/inbox?') && init?.method === 'GET')).toHaveLength(2);
   const post = fetcher.mock.calls.find(([, init]) => init?.method === 'POST')!;
   expect(post[0]).toBe('/api/verse/fleet/runs/inbox');
-  expect(JSON.parse(String(post[1]!.body))).toEqual({ text: 'Ship this', source: 'Phantom desktop' });
+  expect(JSON.parse(String(post[1]!.body))).toEqual({ text: 'Ship this', source: 'Phantom desktop', requestId: expect.stringMatching(/^req-[A-Za-z0-9._:-]{4,124}$/) });
   const rows = screen.getAllByRole('article');
   expect(rows[0]!.className).not.toContain('highlight');
   expect(rows[1]!.className).toContain('highlight');
