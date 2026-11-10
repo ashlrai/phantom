@@ -158,6 +158,7 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
+          permission-actions: write
 
       # One step creates the tag then the DRAFT GitHub release — the train leg
       # that used to depend on someone doing it by hand. The release stays a
