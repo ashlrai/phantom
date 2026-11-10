@@ -10,6 +10,7 @@ import {
   MAX_FLEET_BUS_INBOX_READ, parseFleetBusInboxArgs, readFleetBusInbox, type FleetBusInboxArgs,
 } from './fleet-inbox.js';
 import { readFleetLanes } from './fleet-lanes.js';
+import { parseFleetSelfTickLastArgs, readFleetSelfTickLast } from './fleet-self-tick.js';
 import { readFleetUsageResets } from './fleet-usage-resets.js';
 import {
   MAX_FLEET_RESET_HISTORY, parseFleetResetHistoryArgs, readFleetResetHistory, type FleetResetHistoryArgs,
@@ -93,6 +94,7 @@ export interface FleetReaders {
   hostRuns?: () => Promise<unknown>;
   busInbox?: (input: FleetBusInboxArgs) => Promise<unknown>;
   lanes?: () => Promise<unknown>;
+  selfTickLast?: () => Promise<unknown>;
   usageResets?: () => Promise<unknown>;
   resetHistory?: (input: FleetResetHistoryArgs) => Promise<unknown>;
   resetGroupAwait?: (input: FleetResetGroupAwaitArgs) => Promise<unknown>;
@@ -645,11 +647,17 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       inputSchema: { type: 'object', properties: { inbox: { type: 'string', maxLength: 64 } }, additionalProperties: false },
       annotations,
     },
+    {
+      name: 'fleet_self_tick_last',
+      description: 'Read the last recorded self-tick pass from queue/self-tick-last.json: start time, mode (apply or dry-run), whether it ran or found the lock busy, age in seconds and the names of any failed steps. last is null when no pass was ever recorded and state unreadable when the record fails validation. Takes no arguments, reads the default runs root only, and never runs a tick, takes the self-tick lock or writes anything.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
   ] }));
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_intent_read') {
+    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -693,8 +701,10 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const ciReceiptAwait = name === 'fleet_ci_receipt_await' ? parseFleetCiReceiptAwaitArgs(args) : null;
     const ciReceiptAwaitBatch = name === 'fleet_ci_receipt_await_batch' ? parseFleetCiReceiptAwaitBatchArgs(args) : null;
     const intentRead = name === 'fleet_intent_read' ? parseFleetIntentReadArgs(args) : null;
+    const selfTickLastArgs = name === 'fleet_self_tick_last' ? parseFleetSelfTickLastArgs(args) : null;
     const releaseCandidate = name === 'fleet_release_candidate' ? parseFleetReleaseCandidateArgs(args) : null;
     if (name === 'fleet_intent_read' ? intentRead === null :
+        name === 'fleet_self_tick_last' ? selfTickLastArgs === null :
         name === 'fleet_release_candidate' ? releaseCandidate === null :
         name === 'fleet_staging_inventory' ? fleetStagingInventory === null :
         name === 'fleet_staging_inventory_retry' ? retry === null :
@@ -744,6 +754,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_bus_hops' ? await (readers.bus ?? readFleetBusHops)(limit as number)
         : name === 'fleet_host_runs' ? await (readers.hostRuns ?? readFleetRunsDirState)()
         : name === 'fleet_lanes' ? await (readers.lanes ?? readFleetLanes)()
+        : name === 'fleet_self_tick_last' ? await (readers.selfTickLast ?? (() => readFleetSelfTickLast()))()
         : name === 'fleet_usage_resets' ? await (readers.usageResets ?? readFleetUsageResets)()
         : name === 'fleet_reset_group_await' ? await (readers.resetGroupAwait ?? readFleetResetGroupAwait)(resetGroupAwait as FleetResetGroupAwaitArgs)
         : name === 'fleet_reset_await' ? await (readers.resetAwait ?? readFleetResetAwait)(resetAwait as FleetResetAwaitArgs)
