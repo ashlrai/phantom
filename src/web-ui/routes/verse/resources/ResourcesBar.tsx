@@ -57,6 +57,8 @@ import type { ProviderResourceDescriptor } from '../../../../core/resources/prov
 import { readingAge } from './reading-age.js';
 import { projectResourceDisplay, type ResourceDisplayView } from './resource-display-model.js';
 import { LazyProviderResourceGroups } from './useResourceDisplayClock.js';
+import { firstReadSession, markFirstReadAttempted, shouldAutoCheck } from './first-read.js';
+import { refreshAccountReading } from '../useSeatsRefresh.js';
 
 type Level = 'ok' | 'low' | 'out' | 'idle' | 'unknown';
 
@@ -94,6 +96,31 @@ const LEVEL_OF_STATUS: Readonly<Record<AccountStatus['kind'], Level>> = {
   checking: 'unknown',
   'not-checked': 'unknown',
 };
+
+/**
+ * The app session's first-read queue: each never-read seat gets one bounded
+ * usage check, fired one at a time with no retries. Module scope, like the
+ * attempted set itself — a remounted bar joins the same sequence instead of
+ * starting a second one beside it.
+ */
+const firstReadQueue: { ids: string[]; running: boolean } = { ids: [], running: false };
+
+async function drainFirstReadQueue(): Promise<void> {
+  if (firstReadQueue.running) return;
+  firstReadQueue.running = true;
+  try {
+    for (let id = firstReadQueue.ids.shift(); id !== undefined; id = firstReadQueue.ids.shift()) {
+      try {
+        // The same bounded request "Check again" sends. A thrown check — no
+        // mutation token held, a refused or interrupted read — leaves the row
+        // showing its own reason; nothing here retries in a loop.
+        await refreshAccountReading(id);
+      } catch { /* one bounded attempt per seat per session */ }
+    }
+  } finally {
+    firstReadQueue.running = false;
+  }
+}
 
 /** Pure: capacity rows → bar rows (exported for tests). */
 export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolean; now: number; maxAgeMs?: number; localReadFailed?: boolean; pendingSeatIds?: readonly string[]; devinConsumption?: unknown }): BarRow[] {
@@ -325,9 +352,25 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
     expiresAt: personalSessionExpiresAt(personal, data.budget?.readingMaxAgeMs),
     windows: [{ resetsAt: personal?.resetsAt }],
   }]);
+  const capacityRows = useMemo(
+    () => (data.loading ? [] : buildCapacityRows(data.seats, { health: data.health, budget: data.budget, local: 'collapse', now })),
+    [data.loading, data.seats, data.health, data.budget, now],
+  );
+  // First open after install or upgrade: start one bounded usage check per
+  // never-read resource so the rows fill with real readings instead of
+  // "No current usage reading · Check now". Attempted seats are remembered in
+  // session memory, so each resource is checked once, never in a retry loop.
+  useEffect(() => {
+    if (data.loading || !documentVisible) return;
+    const ids = shouldAutoCheck(capacityRows, firstReadSession());
+    for (const id of ids) markFirstReadAttempted(id);
+    if (ids.length === 0) return;
+    firstReadQueue.ids.push(...ids);
+    void drainFirstReadQueue();
+  }, [capacityRows, data.loading, documentVisible]);
   const rows = useMemo(
-    () => (data.loading ? [] : applySensorHeadroom(barRows(buildCapacityRows(data.seats, { health: data.health, budget: data.budget, local: 'collapse', now }), { healthRead: data.health !== null, now, maxAgeMs: data.budget?.readingMaxAgeMs, localReadFailed: data.localReadFailed, pendingSeatIds: data.pendingSeatIds, devinConsumption: devin?.consumption }), observeRead.data?.usage.windows ?? null)),
-    [data.loading, data.seats, data.health, data.budget, data.localReadFailed, data.pendingSeatIds, now, devin?.consumption, observeRead.data],
+    () => applySensorHeadroom(barRows(capacityRows, { healthRead: data.health !== null, now, maxAgeMs: data.budget?.readingMaxAgeMs, localReadFailed: data.localReadFailed, pendingSeatIds: data.pendingSeatIds, devinConsumption: devin?.consumption }), observeRead.data?.usage.windows ?? null),
+    [capacityRows, data.health, data.budget, data.localReadFailed, data.pendingSeatIds, now, devin?.consumption, observeRead.data],
   );
   const cloud = cloudRead.data?.credits ?? null;
   const cloudLeft = cloud && cloud.totalUsd > 0 ? (cloud.remainingUsd / cloud.totalUsd) * 100 : null;
