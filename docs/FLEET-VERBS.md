@@ -18,6 +18,7 @@
 | ci-failures | `src/cli/fleet-ci-failures.ts` | Reads CI failure groups from a repo, configurable repo and hours window | no |
 | ci-nightly | `src/cli/fleet-ci-nightly.ts` | Reads CI nightly hotspots for a repo, configurable repo flag | no |
 | class-share | `src/cli/fleet-class-share.ts` | Offline accounting only; never changes dispatch or merge authority | no |
+| conflict-risk | `src/cli/fleet-conflict-risk.ts` | Read-only conflict predictor for the rebase scheduler: predicts which open PRs will conflict with the next `--next` predicted merges (file-overlap plus merge-recency heuristic) into `fleet.conflict-risk.v1`; high-risk rows carry `rebaseRecommended`. Failed or truncated reads degrade honestly, never clean | no |
 | dead-heads | `src/cli/fleet-dead-heads.ts` | Read-only report; never edits queue state or launches jobs | no |
 | dep-gate | `src/cli/fleet-dep-gate.ts` | Read-only gate over `queue/ready.tsv`: each non-PARKED row's prompt `DEPENDENCY GATE: <ids>` must be fully MERGED in `metrics/jobs.jsonl`; prints `UNMET-DEP` rows and exits 1 when any id lacks a MERGED outcome | no |
 | dispatch-summary | `src/cli/fleet-dispatch-summary.ts` | Read-only dispatch intent rollup; never writes and never contacts a provider | no |
