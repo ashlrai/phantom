@@ -510,6 +510,7 @@ function rootPackageIsPortable(
     'docs/SELF-HOSTING.md',
     'docs/AUTOMATIC-OUTCOMES.md',
     'docs/VERSE.md',
+    'docs/lanes.md',
     'docs/PROACTIVE-COORDINATION.md',
     'docs/PROACTIVE-COORDINATION-BACKLOG.md',
     'docs/AUTONOMY-SETUP.md',
