@@ -426,6 +426,7 @@
 /test/fleet-merge-pace.test.ts @masonwyatt23
 /test/fleet-merge-queue-age.test.ts @masonwyatt23
 /test/fleet-merge-recover.test.ts @masonwyatt23
+/test/fleet-merge-retry.test.ts @masonwyatt23
 /test/fleet-merge-state-class.test.ts @masonwyatt23
 /test/fleet-post-merge-verify-31.test.ts @masonwyatt23
 /test/fleet-self-loop-02soly1.test.ts @masonwyatt23
@@ -1178,6 +1179,7 @@
 /test/verse-fleet-runs-merge-speed-31.test.ts @masonwyatt23
 /test/verse-fleet-types.test.ts @masonwyatt23
 /test/verse-grok-usage-reset-315.test.ts @masonwyatt23
+/test/verse-inbox-owner-mirror.test.ts @masonwyatt23
 /test/verse-local-fleet.test.ts @masonwyatt23
 /test/verse-manager-conversation.test.ts @masonwyatt23
 /test/verse-manager-session.test.ts @masonwyatt23
