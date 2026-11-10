@@ -91,7 +91,7 @@ export async function cmdWb(args: string[]): Promise<number> {
     return 0;
   } catch (error) {
     // SteerRefusedError = bad input (HTTP's 400); anything else = operational (503).
-    const message = error instanceof SteerRefusedError ? `invalid ${verb}` : (error instanceof Error ? error.message : `${verb} unavailable`);
+    const message = error instanceof SteerRefusedError ? (error.message === 'flag-only' ? 'that looks like a flag, not a message; did you mean `ashlr ... --help`?' : `invalid ${verb}`) : (error instanceof Error ? error.message : `${verb} unavailable`);
     if (parsed.json) console.log(JSON.stringify({ v: 1, dryRun, error: message }));
     else console.error(message);
     return error instanceof SteerRefusedError ? 2 : 1;
