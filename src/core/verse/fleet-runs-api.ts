@@ -8,7 +8,7 @@ import { VERSE_FLEET_LANE_MODELS_PATH, toFleetLaneModelsV1, type FleetLaneModels
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { lstatSync, mkdirSync } from 'node:fs';
+import { lstat, mkdir } from 'node:fs/promises';
 import type { ApiModule } from './api-modules.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -229,12 +229,12 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   const requestAcksFile = requestAcksDir === undefined ? undefined : join(requestAcksDir, 'interject-requests.json');
   let requestAcksLoaded = requestAcksFile === undefined;
   let requestTail: Promise<unknown> = Promise.resolve();
-  const loadRequestAcks = (): void => {
+  const loadRequestAcks = async (): Promise<void> => {
     if (requestAcksLoaded) return;
     requestAcksLoaded = true;
     const file = requestAcksFile!;
     const parent = requestAcksDir!;
-    try { lstatSync(file); } catch (error) {
+    try { await lstat(file); } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
       throw error;
     }
@@ -250,7 +250,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   };
   // The append already happened when this runs: a lost commit only forfeits
   // dedupe memory (the pre-ledger behavior), so it never fails the send.
-  const commitRequestAcks = (): void => {
+  const commitRequestAcks = async (): Promise<void> => {
     if (requestAcksFile === undefined || requestAcksDir === undefined) return;
     try {
       const dir = requestAcksDir;
@@ -260,7 +260,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         requestAcks.delete(requestAcks.keys().next().value!);
         text = serialize();
       }
-      mkdirSync(dir, { recursive: true });
+      await mkdir(dir, { recursive: true });
       writePrivateFileAtomically(join(dir, `.${randomUUID()}.tmp`), requestAcksFile, text,
         { anchorPath: dir, label: 'Interject request ledger' });
     } catch { /* Ledger loss degrades to the pre-ledger behavior. */ }
@@ -642,7 +642,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
           };
           // A recorded id is replayed verbatim, so the ledger write lands
           // before the response; a commit failure only forfeits dedupe memory.
-          if (requestId !== undefined) { requestAcks.set(requestId, { status, body: payload }); commitRequestAcks(); }
+          if (requestId !== undefined) { requestAcks.set(requestId, { status, body: payload }); await commitRequestAcks(); }
           sendJson(res, status, payload);
         } else if (result.reason === 'dedupe-store-unavailable') {
           // Fail closed: the receipt store could not be read, so the inbox entry
@@ -658,7 +658,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     };
     if (requestId === undefined) { await post(); return true; }
     const work = requestTail.then(async () => {
-      try { loadRequestAcks(); }
+      try { await loadRequestAcks(); }
       // Fail closed like the receipt store: an unreadable ledger cannot prove
       // this id is new, so the request must not look accepted.
       catch { sendJson(res, 503, { code: 'INBOX_RECEIPTS_UNREADABLE' }); return; }
