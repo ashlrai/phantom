@@ -25,6 +25,7 @@ import type { AshlrConfig, WebServerOptions, WebServerHandle } from '../types.js
 import { handleUsageResourcesApi } from '../verse/usage-resources-api.js';
 import { handleApi, drainSseConnections, drainSseSession, invalidateWebReadCaches } from './api.js';
 import { createReadProjectionWorker, type ReadProjectionReader } from './read-projections.js';
+import { governReadProjections } from './read-projection-governor.js';
 import { createReadSessionBoundary, headerValue, isAllowedHost, requestUrl, safeEqual, sendJson } from './read-session.js';
 import { serveStatic } from './static.js';
 import { gcRunStreams } from '../run/streaming.js';
@@ -101,8 +102,11 @@ export async function startServer(
   // The production default isolates synchronous metadata aggregation from the
   // HTTP loop. Explicit null keeps injected, in-process readers available to
   // hermetic route tests; there is no runtime fallback after a worker failure.
+  // The governor caps how often a polled projection may rebuild (cost-scaled
+  // freshness, stale-while-revalidate, failure backoff): without it an idle
+  // desktop's SSE ticks kept a >60 s snapshot build looping forever.
   const readProjections = dependencies.readProjections === undefined
-    ? createReadProjectionWorker(cfg)
+    ? governReadProjections(createReadProjectionWorker(cfg))
     : dependencies.readProjections;
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
