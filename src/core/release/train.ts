@@ -1,6 +1,6 @@
 /**
- * Continuous release train. Cuts at most hourly from green master, builds the
- * tagged commit, and resumes the sanctioned publishers. KILL fails closed.
+ * Continuous release train. Cuts from green master, builds the tagged commit,
+ * and resumes the sanctioned publishers. KILL fails closed.
  * See docs/RELEASING.md.
  */
 import { execFileSync } from 'node:child_process';
@@ -15,7 +15,16 @@ function readEnvironmentCredential(envKey: string): string | undefined {
 }
 
 export const TRAIN_SCHEMA = 'phantom.release-train.v1';
-export const HOURLY_MINUTES = 60;
+/** Default enqueue cadence in minutes when RELEASE_CADENCE_MINUTES is unset.
+ *  Matches the hosted Release PR default. Valid values are 1 through 1440. */
+export const DEFAULT_CADENCE_MINUTES = 5;
+
+/** Resolve a cadence value from RELEASE_CADENCE_MINUTES, or the default. */
+export function cadenceMinutesFromEnv(raw: string | undefined = process.env.RELEASE_CADENCE_MINUTES): number {
+  if (raw === undefined || raw === '') return DEFAULT_CADENCE_MINUTES;
+  if (!/^[1-9]\d*$/.test(raw)) throw new Error('invalid release cadence');
+  return cappedCadenceMinutes(Number(raw));
+}
 export const REPOSITORY = 'ashlrai/phantom';
 export const REPOSITORY_ID = 1263526319;
 export const WEBSITE_HOOK = Object.freeze({
@@ -438,9 +447,12 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   const feed = names.includes('latest.json');
   const published = row !== null && row.draft === false && feed;
   const assetAt = latestTime(row?.assets.map((asset) => asset.created_at) ?? []);
-  // Dispatch the tag when it is an ancestor, so github.sha is that commit.
-  // Master HEAD uses the branch ref; both point at the candidate SHA.
-  const ref = input.masterSha === headTag.sha ? 'master' : headTag.name;
+  // Always dispatch CI and attest on the tag ref, even when that commit is
+  // also master HEAD. ci.yml has no on.push.tags trigger, and a master ref
+  // hides the build from anyone looking for the tag; both refs peel to the
+  // same SHA when they match, but github.ref_name must be the tag so the
+  // phantom-release-<tag> concurrency group and tag-scoped workflows apply.
+  const ref = headTag.name;
   if (!input.build && !input.buildPending && publishable && !(row?.draft === false && input.npmPublished === true)) {
     writes.push({
       method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/ci.yml/dispatches`,
@@ -576,7 +588,7 @@ async function ancestorReleaseMessage(read: (path: string) => Promise<unknown>, 
 export async function observeTrain(
   read: (path: string) => Promise<unknown>,
   now = new Date().toISOString(),
-  cadenceMinutes = HOURLY_MINUTES,
+  cadenceMinutes = cadenceMinutesFromEnv(),
   kill: { fleet: KillObservation; autorun: KillObservation } = {
     fleet: readSentinel(fleetKillPath()),
     autorun: readSentinel(autorunOffPath()),
@@ -882,8 +894,18 @@ export function releaseGithubCall(method: string, path: string, body?: unknown):
   return { args: [...args, '--input', '-', path], input: JSON.stringify(body) };
 }
 
+export const WORKFLOW_DISPATCH = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|publish-canonical-npm|ci|release-please)\.yml\/dispatches$/;
+
+/** Draft PATCH and enqueue use the App token. Workflow dispatches stay on
+ *  GITHUB_TOKEN: the ashlr-release App has no actions permission, so a mint
+ *  that requests that permission 422s. */
+export function releaseWriteUsesAppToken(method: string, path: string): boolean {
+  if (method === 'POST' && WORKFLOW_DISPATCH.test(path)) return false;
+  return method === 'PATCH' || path === 'graphql';
+}
+
 function gh(method: string, path: string, body?: unknown): string {
-  const appWrite = method === 'PATCH' || path === 'graphql';
+  const appWrite = releaseWriteUsesAppToken(method, path);
   const token = appWrite ? readEnvironmentCredential('RELEASE_APP_TOKEN') : readEnvironmentCredential('GH_TOKEN');
   if (!token) throw new Error(appWrite ? 'release app token unavailable' : 'github token unavailable');
   const env: NodeJS.ProcessEnv = { ...process.env, GH_TOKEN: token };
