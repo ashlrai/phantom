@@ -21,8 +21,8 @@ const MAX_RECUTS = 3;
 /** After this many auto-merge retries for one PR, a person should look at it. */
 export const MAX_QUEUE_RETRIES = 3;
 
-export type MergeEventType = 'opened' | 'queued' | 'checks_passed' | 'conflict' | 'recut_requested' | 'retry_requested' | 'merged' | 'closed' | 'auto_merge_enabled' | 'auto_merge_disabled' | 'eligible' | 'blocked' | 'check_observed';
-const TYPES: ReadonlySet<string> = new Set<MergeEventType>(['opened', 'queued', 'checks_passed', 'conflict', 'recut_requested', 'retry_requested', 'merged', 'closed', 'auto_merge_enabled', 'auto_merge_disabled', 'eligible', 'blocked', 'check_observed']);
+export type MergeEventType = 'opened' | 'queued' | 'checks_passed' | 'conflict' | 'recut_requested' | 'retry_requested' | 'retry_failed' | 'merged' | 'closed' | 'auto_merge_enabled' | 'auto_merge_disabled' | 'eligible' | 'blocked' | 'check_observed';
+const TYPES: ReadonlySet<string> = new Set<MergeEventType>(['opened', 'queued', 'checks_passed', 'conflict', 'recut_requested', 'retry_requested', 'retry_failed', 'merged', 'closed', 'auto_merge_enabled', 'auto_merge_disabled', 'eligible', 'blocked', 'check_observed']);
 
 /** One JSON object per line. `head_sha` is read from conflict and recut_requested events. */
 export interface MergeEvent { repo: string; pr: number; type: MergeEventType; at?: string; head_sha?: string; reason?: BlockerReason; required?: boolean; conclusion?: 'success' | 'failure' | 'pending' }
@@ -50,9 +50,11 @@ export interface RetryableQueueFailure {
   /** Distinct retry_requested events recorded for this PR (deduplicated). */
   retries_used: number;
   retries_left: number;
+  /** Distinct retry_failed submission events recorded for this PR (deduplicated). */
+  requests_failed: number;
 }
-export type QueueRetryBlockReason = 'unattributed' | 'already-requested' | 'too-many-retries';
-export interface BlockedQueueRetry { repo: string; pr: number; reason: QueueRetryBlockReason; retries_used: number }
+export type QueueRetryBlockReason = 'unattributed' | 'already-requested' | 'too-many-retries' | 'request-failed';
+export interface BlockedQueueRetry { repo: string; pr: number; reason: QueueRetryBlockReason; retries_used: number; requests_failed: number }
 export interface QueueRetries {
   /** Transient queue failures `phm fleet merge-retry` may re-arm, longest wait first. */
   retryable: RetryableQueueFailure[];
@@ -92,7 +94,28 @@ export interface MergeLatencyReport {
   /** Open PRs whose recorded auto-merge was dropped, split by retry safety. Never merge authority. */
   queue_retries: QueueRetries | null;
   queue_timelines: QueueTimeline[] | null;
+  /** Aggregate seconds PRs spent in each queue state across all timelines. */
+  queue_state_time: QueueStateTime | null;
   pr_stages: PrStages[] | null;
+}
+
+/**
+ * Fleet-level rollup of the per-PR queue timeline spans: how much time PRs
+ * spent queued before eligibility, eligible before merge, still waiting now,
+ * and blocked on each recorded reason. Each stat is a `LatencyStats` over one
+ * value per timeline; a PR whose span is unmeasurable counts `missing`, never
+ * zero. In a measurable wait-by-reason breakdown an absent reason is a
+ * measured zero (no time was spent blocked on it).
+ */
+export interface QueueStateTime {
+  /** Per-PR enqueue→eligible seconds. */
+  enqueue_to_eligible: LatencyStats;
+  /** Per-PR eligible→merge seconds. */
+  eligible_to_merge: LatencyStats;
+  /** Per-PR current dwell for still-queued open PRs. */
+  open_dwell: LatencyStats;
+  /** Per-PR seconds blocked on each reason. */
+  blocked: Record<BlockerReason, LatencyStats>;
 }
 
 export type PrStage = 'queue_wait' | 'required_checks' | 'merge';
@@ -150,7 +173,10 @@ type QueueRetryVerdict = { kind: 'none' } | { kind: 'retryable'; row: RetryableQ
  * `unattributed`. An identical `retry_requested` line replayed into the
  * ledger counts once; a retry requested at or after this disable is
  * `already-requested`, and MAX_QUEUE_RETRIES distinct requests exhaust the
- * bound.
+ * bound. `retry_failed` lines (a submitted re-arm that failed) dedupe the
+ * same way and share the bound separately: they never mark the episode
+ * already-requested, but MAX_QUEUE_RETRIES distinct failed submissions make
+ * the failure permanent — `request-failed` — so automation stops retrying it.
  */
 function queueRetryVerdict(events: MergeEvent[], now: number): QueueRetryVerdict {
   const isTimed = (e: MergeEvent) => e.at !== undefined && Number.isFinite(eventTime(e));
@@ -159,10 +185,12 @@ function queueRetryVerdict(events: MergeEvent[], now: number): QueueRetryVerdict
   if (last?.type !== 'auto_merge_disabled') return { kind: 'none' };
   const disabledAt = eventTime(last);
   const { repo, pr } = last;
+  const dedupe = (list: MergeEvent[]) => new Set(list.map(e => `${e.at ?? ''}|${(e.head_sha ?? '').toLowerCase()}`)).size;
   const retries = events.filter(e => e.type === 'retry_requested');
-  const retriesUsed = new Set(retries.map(e => `${e.at ?? ''}|${(e.head_sha ?? '').toLowerCase()}`)).size;
+  const retriesUsed = dedupe(retries);
+  const requestsFailed = dedupe(events.filter(e => e.type === 'retry_failed'));
   const blocked = (reason: QueueRetryBlockReason): QueueRetryVerdict =>
-    ({ kind: 'blocked', row: { repo, pr, reason, retries_used: retriesUsed } });
+    ({ kind: 'blocked', row: { repo, pr, reason, retries_used: retriesUsed, requests_failed: requestsFailed } });
   // An untimed toggle leaves the armed state unknown; a person decides.
   if (events.some(e => !isTimed(e) && (e.type === 'auto_merge_enabled' || e.type === 'auto_merge_disabled'))) return blocked('unattributed');
   if (retries.some(e => isTimed(e) && eventTime(e) >= disabledAt)) return blocked('already-requested');
@@ -173,11 +201,12 @@ function queueRetryVerdict(events: MergeEvent[], now: number): QueueRetryVerdict
   if (lastBlocked === undefined) return blocked('unattributed');
   if (lastBlocked.reason !== 'queue') return { kind: 'none' };
   if (retriesUsed >= MAX_QUEUE_RETRIES) return blocked('too-many-retries');
+  if (requestsFailed >= MAX_QUEUE_RETRIES) return blocked('request-failed');
   let head: string | null = null;
   for (const e of events) if (e.head_sha) head = e.head_sha;
   return { kind: 'retryable', row: { repo, pr, disabled_at: last.at!, head_sha: head,
     waiting_s: Math.max(0, Math.round((now - disabledAt) / 1000)), retries_used: retriesUsed,
-    retries_left: MAX_QUEUE_RETRIES - retriesUsed } };
+    retries_left: MAX_QUEUE_RETRIES - retriesUsed, requests_failed: requestsFailed } };
 }
 
 function timeline(events: MergeEvent[], now: number): QueueTimeline {
@@ -219,7 +248,7 @@ function timeline(events: MergeEvent[], now: number): QueueTimeline {
 /** Append one validated observation; never runs a merge or changes checks. */
 export async function recordMergeEvent(path: string, value: unknown): Promise<void> {
   const event = parseEvent(JSON.stringify(value));
-  if (!event || !event.at || !['opened', 'queued', 'checks_passed', 'eligible', 'blocked', 'merged', 'check_observed', 'retry_requested'].includes(event.type)) throw new Error('Invalid merge observation');
+  if (!event || !event.at || !['opened', 'queued', 'checks_passed', 'eligible', 'blocked', 'merged', 'check_observed', 'retry_requested', 'retry_failed'].includes(event.type)) throw new Error('Invalid merge observation');
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await appendFile(path, `${JSON.stringify(event)}\n`, { mode: 0o600 });
 }
@@ -265,7 +294,7 @@ export async function fleetMergeLatency(read: MergeEventReader, now = Date.now()
   try { text = await read(); } catch { text = null; }
   if (text === null) {
     return { ...base, known: false, merged: 0, merged_time_unknown: 0, open: 0, ignored_events: 0, opened_to_queue: null, queue_to_merge: null,
-      total: null, slowest_step: null, retryable_conflicts: null, blocked_conflicts: null, pending_auto_merge: null, queue_retries: null, queue_timelines: null, pr_stages: null };
+      total: null, slowest_step: null, retryable_conflicts: null, blocked_conflicts: null, pending_auto_merge: null, queue_retries: null, queue_timelines: null, queue_state_time: null, pr_stages: null };
   }
   const since = now - hours * 3_600_000;
   const byPr = new Map<string, MergeEvent[]>();
@@ -345,11 +374,18 @@ export async function fleetMergeLatency(read: MergeEventReader, now = Date.now()
   const byPrId = (a: { repo: string; pr: number }, b: { repo: string; pr: number }) => a.repo.localeCompare(b.repo) || a.pr - b.pr;
   const q = stats(toQueue);
   const m = stats(toMerge);
+  const stateTime: QueueStateTime = {
+    enqueue_to_eligible: stats(timelines.map(t => t.enqueue_to_eligible_s)),
+    eligible_to_merge: stats(timelines.map(t => t.eligible_to_merge_s)),
+    open_dwell: stats(timelines.map(t => t.current_dwell_s)),
+    blocked: Object.fromEntries(BLOCKER_REASONS.map(reason =>
+      [reason, stats(timelines.map(t => t.wait_by_reason_s === null ? null : t.wait_by_reason_s[reason] ?? 0))])) as Record<BlockerReason, LatencyStats>,
+  };
   return { ...base, known: true, merged, merged_time_unknown: mergedTimeUnknown, open, ignored_events: ignored, opened_to_queue: q, queue_to_merge: m, total: stats(total),
     slowest_step: q.p50_s === null || m.p50_s === null ? null : m.p50_s >= q.p50_s ? 'queue_to_merge' : 'opened_to_queue',
     retryable_conflicts: retryable.sort(byWait), blocked_conflicts: blocked.sort(byPrId),
     queue_retries: { retryable: retryableQueueFailures.sort((a, b) => b.waiting_s - a.waiting_s || byPrId(a, b)), needs_person: blockedQueueRetries.sort(byPrId) },
-    queue_timelines: timelines.sort(byPrId), pr_stages: stages.sort(byPrId), pending_auto_merge: pending.sort((a, b) => (b.waiting_s ?? -1) - (a.waiting_s ?? -1) || byPrId(a, b)) };
+    queue_timelines: timelines.sort(byPrId), queue_state_time: stateTime, pr_stages: stages.sort(byPrId), pending_auto_merge: pending.sort((a, b) => (b.waiting_s ?? -1) - (a.waiting_s ?? -1) || byPrId(a, b)) };
 }
 
 export const readMergeEvents = (path: string): MergeEventReader => async () => {
@@ -362,6 +398,19 @@ export const readMergeEvents = (path: string): MergeEventReader => async () => {
 const secs = (v: number | null): string => v === null ? 'unknown' : `${v}s`;
 const line = (name: string, s: LatencyStats | null): string =>
   `${name}: median ${secs(s?.p50_s ?? null)}, 90th percentile ${secs(s?.p90_s ?? null)}, slowest ${secs(s?.max_s ?? null)} (${s?.count ?? 0} measured, ${s?.missing ?? 0} missing events)`;
+
+/** One compact line summarizing measured time in each queue state. */
+function stateTimeLine(t: QueueStateTime): string {
+  const part = (label: string, s: LatencyStats): string | null => s.count === 0 ? null
+    : `${label} median ${secs(s.p50_s)} across ${s.count} PR${s.count === 1 ? '' : 's'}${s.missing ? ` (${s.missing} unmeasured)` : ''}`;
+  const parts = [
+    part('queued', t.enqueue_to_eligible),
+    part('eligible', t.eligible_to_merge),
+    part('still queued', t.open_dwell),
+    ...BLOCKER_REASONS.map(reason => part(`blocked on ${reason.replace('_', ' ')}`, t.blocked[reason])),
+  ].filter((p): p is string => p !== null);
+  return parts.length ? `Time in each queue state: ${parts.join('; ')}.` : 'Time in each queue state: unknown (no measured spans).';
+}
 
 function pendingLine(p: PendingAutoMerge): string {
   const state = p.auto_merge === 'unknown' ? 'auto-merge state unknown'
@@ -379,6 +428,7 @@ export function formatMergeLatency(r: MergeLatencyReport): string {
     line('Queue to merge', r.queue_to_merge),
     ...r.pr_stages!.map(p => `${p.repo}#${p.pr}: queue wait ${secs(p.queue_wait_s)}, required checks ${secs(p.required_checks_s)}, merge ${secs(p.merge_s)}; slowest stage: ${p.slowest_stage ?? 'unknown (incomplete, unordered, or tied)'}; missing or ambiguous: ${p.missing_or_ambiguous.join(', ') || 'none'}${p.out_of_order ? '; timestamps out of order' : ''}.`),
     ...r.queue_timelines!.map(t => `${t.repo}#${t.pr}: enqueue to eligible ${secs(t.enqueue_to_eligible_s)}, eligible to merge ${secs(t.eligible_to_merge_s)}; blockers: ${t.blocked.map(b => b.reason).join(', ') || 'none recorded'}; wait by reason: ${t.wait_by_reason_s === null ? 'unknown' : Object.entries(t.wait_by_reason_s).map(([reason, seconds]) => `${reason} ${seconds}s`).join(', ')}; failed observations: ${t.checks ? `${t.checks.required_failures} required, ${t.checks.unrelated_failures} unrelated, ${t.checks.unknown_failures} unknown` : 'unknown'}.`),
+    stateTimeLine(r.queue_state_time!),
     line('Open to merge', r.total),
     `Pending auto-merge: ${r.pending_auto_merge!.length} (${r.pending_auto_merge!.filter(p => p.stalled).length} stalled after ${r.stalled_after_s}s, ${r.pending_auto_merge!.filter(p => p.stalled === null).length} unknown waits).`,
     ...r.pending_auto_merge!.map(pendingLine),
@@ -386,7 +436,7 @@ export function formatMergeLatency(r: MergeLatencyReport): string {
     retry.length ? `Conflicts the recut loop can retry: ${retry.map(c => `#${c.pr} (${c.recut.key})`).join(', ')}` : 'Conflicts the recut loop can retry: none',
     ...r.blocked_conflicts!.map(c => `Needs a person: #${c.pr} (${c.reason})`),
     r.queue_retries!.retryable.length
-      ? `Dropped auto-merges merge-retry can re-arm (run phm fleet merge-retry): ${r.queue_retries!.retryable.map(f => `#${f.pr} (${f.retries_left} retries left, ${f.waiting_s}s dropped)`).join(', ')}`
+      ? `Dropped auto-merges merge-retry can re-arm (run phm fleet merge-retry): ${r.queue_retries!.retryable.map(f => `#${f.pr} (${f.retries_left} retries left${f.requests_failed ? `, ${f.requests_failed} failed submission${f.requests_failed === 1 ? '' : 's'}` : ''}, ${f.waiting_s}s dropped)`).join(', ')}`
       : 'Dropped auto-merges merge-retry can re-arm: none',
     ...r.queue_retries!.needs_person.map(f => `Needs a person: #${f.pr} (auto-merge dropped, ${f.reason})`),
     ...(r.ignored_events ? [`${r.ignored_events} unreadable events skipped.`] : []),
@@ -404,14 +454,14 @@ export async function cmdFleetMergeLatency(args: string[], deps: MergeLatencyDep
       'Example: phm fleet merge-latency --events merge-events.jsonl --json',
       'Default ledger: ~/.ashlr-runs/metrics/merge-events.jsonl. One JSON event per line: repo, pr, type, at (ISO timestamp), head_sha (optional).',
       'Record: phm fleet merge-latency --events <file> --record <JSON> (repo, pr, type, at; blocked also needs reason).',
-      'Recording types: opened, queued, checks_passed, eligible, blocked, merged, check_observed, retry_requested. Blocker reasons: required_checks, review, conflict, queue, other.',
+      'Recording types: opened, queued, checks_passed, eligible, blocked, merged, check_observed, retry_requested, retry_failed. Blocker reasons: required_checks, review, conflict, queue, other.',
       'Per PR: queue wait is opened to queued; required checks are queued to checks_passed; merge is checks_passed to merged.',
       'Check observations require conclusion (success, failure, pending); required is true, false, or omitted if unknown.',
       'Eligibility is an observed transition; missing, repeated or reblocked boundaries remain unknown. Required checks remain in place.',
-      'Types: opened, queued, eligible, blocked, check_observed, checks_passed, conflict, recut_requested, retry_requested, merged, closed, auto_merge_enabled, auto_merge_disabled.',
+      'Types: opened, queued, eligible, blocked, check_observed, checks_passed, conflict, recut_requested, retry_requested, retry_failed, merged, closed, auto_merge_enabled, auto_merge_disabled.',
       'Merged window: --hours (default 24). Missing merge times count as missing samples, separately from dated merges.',
       'Open PRs and pending auto-merges include all ages. Enable/disable events describe transitions; queued alone does not imply auto-merge.',
-      'Dropped auto-merges list under queue_retries: retryable needs a queue blocker in the enable-to-disable episode and retries left; phm fleet merge-retry re-arms them with ordinary auto-merge.',
+      'Dropped auto-merges list under queue_retries: retryable needs a queue blocker in the enable-to-disable episode and retries left; phm fleet merge-retry re-arms them with ordinary auto-merge. Three distinct failed submissions (retry_failed) mark a drop request-failed and stop automatic retries.',
       'Stall age starts at the latest enable transition; --stalled-after defaults to 3600 seconds. Missing or conflicting state times stay unknown.',
       'Inspect required checks, reviews and queue state for stalled PRs. Missing events are counted, not guessed. Unreadable events are unknown.',
     ].join('\n'));

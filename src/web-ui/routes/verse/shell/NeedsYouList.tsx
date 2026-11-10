@@ -22,6 +22,7 @@ import { forwardRef, useEffect, useRef } from 'react';
 import type { NeedsYouItem } from '../../../../core/verse/workbench-types.js';
 import { NEEDS_YOU_ACTION_KEYS } from '../../../../core/verse/workbench-types.js';
 import type { TriageChip } from './cloud-triage.js';
+import type { HardLimitLabel } from './needs-you-hard-limit.js';
 import { needsYouRowView, until, type NeedsYouRunView } from './needs-you-model.js';
 import styles from './NeedsYouDrawer.module.css';
 
@@ -67,10 +68,13 @@ export interface NeedsYouListProps {
   onTogglePick?: (id: string) => void;
   /** Cloud PR verdicts by item id. */
   chips?: ReadonlyMap<string, TriageChip>;
+  /** "Only you: secrets" / "Phantom can clear" by item id (needs-you-hard-limit.ts). */
+  limits?: ReadonlyMap<string, HardLimitLabel>;
 }
 
 const NO_PICKS: ReadonlySet<string> = new Set();
 const NO_CHIPS: ReadonlyMap<string, TriageChip> = new Map();
+const NO_LIMITS: ReadonlyMap<string, HardLimitLabel> = new Map();
 
 /** "Clean" / "Held · 2 commits behind" — tone is a word as well as a colour. */
 export function TriageChipView({ chip }: { chip: TriageChip }) {
@@ -83,7 +87,7 @@ export function TriageChipView({ chip }: { chip: TriageChip }) {
 }
 
 export const NeedsYouList = forwardRef<HTMLDivElement, NeedsYouListProps>(function NeedsYouList(
-  { items, selectedId, onSelect, onOpen, now, label, picked = NO_PICKS, onTogglePick, chips = NO_CHIPS },
+  { items, selectedId, onSelect, onOpen, now, label, picked = NO_PICKS, onTogglePick, chips = NO_CHIPS, limits = NO_LIMITS },
   ref,
 ) {
   const listId = 'verse-needs-you-list';
@@ -118,6 +122,7 @@ export const NeedsYouList = forwardRef<HTMLDivElement, NeedsYouListProps>(functi
         const view = needsYouRowView(item, now);
         const isPicked = picked.has(item.id);
         const chip = chips.get(item.id);
+        const limit = limits.get(item.id);
         return (
           <div
             key={item.id}
@@ -147,6 +152,8 @@ export const NeedsYouList = forwardRef<HTMLDivElement, NeedsYouListProps>(functi
               <span className={styles.rowMeta}>
                 {isPicked ? <span className="visually-hidden">Picked. </span> : null}
                 {chip ? <TriageChipView chip={chip} /> : null}
+                {/* Existing chip tones: amber "held" for only-you, green "clean" for clearable. */}
+                {limit ? <span className={styles.chip} data-tone={limit.kind === 'only-you' ? 'held' : 'clean'}>{limit.label}</span> : null}
                 <span className={styles.severity} data-severity={item.severity}>{SEVERITY_WORD[item.severity]}</span>
                 <span>{SOURCE_WORD[item.source]}</span>
                 {view.repo ? <span className={styles.repo} title={view.repoFull}>{view.repo}</span> : null}
