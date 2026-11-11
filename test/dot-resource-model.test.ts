@@ -24,6 +24,7 @@ function status(over: {
   } as const : over.teammate;
   return {
     generatedAt: minutesAgo(0),
+    sendPolicy: null,
     imessage: {
       configuration: { state: over.configuration ?? 'configured', reason: '' },
       chatDb: { state: 'readable', reason: '' }, cursor: { state: 'present', reason: '' },
