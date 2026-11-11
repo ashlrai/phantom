@@ -39,6 +39,8 @@ import { execFile } from 'node:child_process';
 import { lstatSync, mkdirSync, readFileSync, readdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { createDraft } from '../cos/drafts.js';
+import { validateAgentProfile, type AgentProfile } from '../agents/agent-profile.js';
+import { checkSend } from '../agents/send-policy.js';
 
 /** Replies larger than this are stuck, not sent — a reply is ack text, not a payload. */
 export const EMAIL_OUTBOX_MAX_BYTES = 64 * 1024;
@@ -88,7 +90,10 @@ export interface EmailOutboxSendOptions {
   draftsRunsDir?: string;
   /** Clock seam for tests; stamps `at` on sent details. */
   now?: () => Date;
+  profile?: AgentProfile;
 }
+
+const DEFAULT_OUTBOX_PROFILE = validateAgentProfile({ id: 'email-outbox', displayName: 'Email outbox', doctrine: 'doctrine.md', channels: ['email'] });
 
 export interface EmailOutboxSendDetail {
   name: string;
@@ -247,6 +252,11 @@ export async function sendEmailOutbox(opts: EmailOutboxSendOptions): Promise<Ema
     if (entry.stuck) { record(entry.name, 'stuck', { reason: entry.stuck }); continue; }
     const reply = entry.reply!;
     if (reply.to !== null && !opts.allowedRecipients.has(reply.to) && opts.draftsRunsDir !== undefined) {
+      const policy = checkSend(opts.profile ?? DEFAULT_OUTBOX_PROFILE, 'email', reply.to, 0);
+      if (policy.decision !== 'draft') {
+        record(entry.name, 'refused', { to: reply.to, reason: policy.reason });
+        continue;
+      }
       try {
         const draft = await createDraft({ to: reply.to, subject: reply.subject, body: reply.body, source: entry.name }, opts.draftsRunsDir, now);
         try {

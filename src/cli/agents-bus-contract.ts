@@ -4,6 +4,7 @@ import { listChannelRegistry, probeRegisteredChannel } from '../core/agents/chan
 import { CHANNEL_IDS, type ChannelId } from '../core/agents/channel-policy.js';
 import { readFleetEdges } from '../core/fleet/fleet-edges.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
+import { cmdAgents } from './agents.js';
 
 const HELP = `ashlr agents edges [--json]
 ashlr agents bus contract [--json]
@@ -22,6 +23,7 @@ export async function runAgentsCli(
   out: (text: string) => void = console.log,
   err: (text: string) => void = console.error,
 ): Promise<number> {
+  if (['list', 'show', 'validate', 'versions'].includes(args[0] ?? '')) return cmdAgents(args);
   if (!args.length || ['help', '--help', '-h'].includes(args[0]!)) { out(HELP); return 0; }
   const json = args.includes('--json');
   if (args.filter(arg => arg === '--json').length > 1) {
