@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { archivePlan, classifyGmailHeuristic, EML_INBOX_READ_MAX, readEmlInboxDetailed } from '../core/comms/gmail-eml-adapter.js';
-import { writeGmailArchivePlanLatest } from '../core/comms/gmail-archive-plan-latest.js';
+import { writeGmailArchivePlanLatest, type GmailArchivePlanScope } from '../core/comms/gmail-archive-plan-latest.js';
 
 const USAGE = `Usage: ashlr fleet gmail-archive-plan --dir <eml dir> [--inbox <label>] [--target <n>] [--scan <n>] [--runs-dir <dir>] [--json] [--no-save]
 Propose which saved messages to archive to keep unread at --target or fewer (default 100). The newest --scan messages are read (bounded, default ${EML_INBOX_READ_MAX}, never more).
@@ -42,12 +42,12 @@ export async function cmdFleetGmailArchivePlan(args: string[]): Promise<number> 
   for (const m of messages) if (chosen.has(m.id)) counts.set(senderOf(m.from), (counts.get(senderOf(m.from)) ?? 0) + 1);
   const topSenders = [...counts].map(([sender, count]) => ({ sender, count }))
     .sort((a, b) => b.count - a.count || a.sender.localeCompare(b.sender)).slice(0, 3);
+  const scope: GmailArchivePlanScope = { source: 'local-eml-export', scanned: messages.length, files: read.scope.files,
+    limit: read.scope.limit, truncated: read.scope.truncated, unreadRepresentsLiveTotal: false };
   if (save) {
-    try { writeGmailArchivePlanLatest(runsDir, { inbox: inbox ?? basename(dir), unread: plan.unread, target: plan.target, archiveCount: chosen.size, topSenders }); }
+    try { writeGmailArchivePlanLatest(runsDir, { inbox: inbox ?? basename(dir), unread: plan.unread, target: plan.target, archiveCount: chosen.size, topSenders, scope }); }
     catch { console.error('Could not save the archive plan.'); }
   }
-  const scope = { source: 'local-eml-export', scanned: messages.length, files: read.scope.files,
-    limit: read.scope.limit, truncated: read.scope.truncated, unreadRepresentsLiveTotal: false };
   if (json) console.log(JSON.stringify({ schema: 'fleet.gmail-archive-plan.v1', archivePlan: plan, topSenders, scope }));
   else {
     console.log(`Would archive ${chosen.size} of ${scope.scanned} scanned messages (target ${plan.target}). Archive only, nothing is deleted.`);
