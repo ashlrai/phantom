@@ -1,8 +1,8 @@
 /**
  * `ashlr fleet self-tick` — one locked pass of Phantom's self-management for
- * a host timer or an agent with no desktop app open. It calls the ten
- * existing one-shot verbs in the fixed order reset-release → lane-autohold
- * → stray-stop → meter-incident → planner-tick → inbox-acks → order-notices → needs-triage → waste-incident → landed-sweep, each with --json (plus --apply and --runs-dir when given),
+ * a host timer or an agent with no desktop app open. It calls the eleven
+ * one-shot stages in the fixed order reset-release → lane-autohold
+ * → stray-stop → meter-incident → planner-tick → inbox-acks → order-notices → needs-triage → waste-incident → teammate-overdue → landed-sweep, each with --json (plus --apply and --runs-dir when given),
  * and folds their parsed reports into one run report. Only one self-tick runs
  * per runs dir; a step that fails or throws never stops the later ones.
  */
@@ -35,7 +35,7 @@ stray-stop (bounded guarded recovery), then meter-incident (deduped flat-meter
 notices), then planner-tick, then inbox-acks (sends pending same-channel acks), then order-notices
 (tells Mason when a merged job served one of his orders), then needs-triage
 (auto-resolves Needs-you items outside the four hard limits; secrets, money,
-outside sends and data destruction stay for Mason), then waste-incident (reports high-waste lanes), then landed-sweep (closes DIRTY PRs whose work already landed;
+outside sends and data destruction stay for Mason), then waste-incident (reports high-waste lanes), then teammate-overdue (notices the owner thread about unanswered teammate texts), then landed-sweep (closes DIRTY PRs whose work already landed;
 last because it is the slowest). Without --apply nothing is released, held, spawned, acknowledged, notified or resolved — the
 planner step still appends its observational PLANNER_TICK line to
 queue/dispatch-events.log either way. Only one self-tick runs per runs dir:
@@ -109,6 +109,11 @@ function summary(step: string, report: unknown): string {
     const stored = posts.filter((post) => post !== null && typeof post === 'object' && (post as Record<string, unknown>)['status'] === 'posted').length;
     return `planned=${count(row['planned'])} posted=${stored}`;
   }
+  if (step === 'teammate-overdue') {
+    const state = typeof row['state'] === 'string' ? row['state'] : 'unknown';
+    const n = (value: unknown): number => typeof value === 'number' ? value : 0;
+    return `${state} raised=${n(row['raised'])} skipped=${n(row['skipped'])}`;
+  }
   if (step === 'landed-sweep') {
     const n = (value: unknown): number => typeof value === 'number' ? value : 0;
     return `closed=${n(row['closed'])} planned=${n(row['planned'])}`;
@@ -137,7 +142,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
   // --last is a read-only report of the last recorded pass: nothing runs,
   // no lock is taken, so --apply has no meaning beside it.
   if (last && apply) return invalid();
-  // One root for the lock and all nine steps: the verbs' own fallbacks
+  // One root for the lock and all eleven steps: the verbs' own fallbacks
   // (ASHLR_RUNS_DIR, ~/.ashlr-runs) resolve here once, so the lock domain
   // and the released slots can never drift to different dirs.
   const home = deps.home ?? homedir();

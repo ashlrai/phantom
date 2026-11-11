@@ -40,8 +40,16 @@ export interface TeammateLatency {
   sourceState: 'healthy' | 'missing' | 'degraded';
 }
 
+/** Whether Mason has confirmed the send limits. Counts and channel names only. */
+export interface SendPolicyStatus {
+  confirmed: boolean;
+  teamIdentities: number;
+  channels: string[];
+}
+
 export interface CommsStatus {
   generatedAt: string;
+  sendPolicy: SendPolicyStatus | null;
   imessage: IMessageStatus | null;
   teammate: TeammateLatency | null;
   /** Absent from older servers. */
@@ -116,6 +124,12 @@ function readTeammate(value: unknown): TeammateLatency | null {
     latestTextAt: typeof latestTextAt === 'string' ? latestTextAt : null, sourceState };
 }
 
+function readSendPolicy(value: unknown): SendPolicyStatus | null {
+  if (!isRecord(value) || typeof value.confirmed !== 'boolean' || !isCount(value.teamIdentities)) return null;
+  if (!Array.isArray(value.channels) || !value.channels.every(c => typeof c === 'string')) return null;
+  return { confirmed: value.confirmed, teamIdentities: value.teamIdentities, channels: value.channels as string[] };
+}
+
 /** Strict narrowing: a response that fails the shape is absent, never repaired. */
 export function readCommsStatus(data: unknown): CommsStatus | null {
   if (!isRecord(data) || data.version !== 1 || typeof data.generatedAt !== 'string') return null;
@@ -127,6 +141,7 @@ export function readCommsStatus(data: unknown): CommsStatus | null {
   if (sources.emailOutbox !== 'healthy' && sources.emailOutbox !== 'missing' && sources.emailOutbox !== 'degraded') return null;
   return {
     generatedAt: data.generatedAt,
+    sendPolicy: readSendPolicy(data.sendPolicy),
     imessage: readIMessage(data.imessage),
     teammate: readTeammate(data.teammate),
     teammateSource: isSourceState(sources.teammate) ? sources.teammate : null,
@@ -212,4 +227,16 @@ export function teammateLatencyLine(t: TeammateLatency): string {
     parts.push(`${t.unanswered} waiting${t.oldestUnanswered ? ` ${t.oldestUnanswered.ageMinutes} min` : ''}`);
   }
   return `Dot: ${parts.join(', ')}`;
+}
+
+/** The send-policy line. Mason confirms by editing the file himself; this only reports. */
+export function sendPolicyLine(policy: SendPolicyStatus): string {
+  if (policy.teamIdentities === 0) {
+    return 'Team sends: no team identity is allowlisted in ~/.ashlr/agent-network.toml, so every send is refused.';
+  }
+  if (!policy.confirmed) {
+    return 'Team sends: drafts only. You have not confirmed ~/.ashlr/comms.toml yet. Outside people are never sendable from here.';
+  }
+  const count = `${policy.teamIdentities} team ${policy.teamIdentities === 1 ? 'identity' : 'identities'}`;
+  return `Team sends: confirmed by you · ${count}${policy.channels.length > 0 ? ` (${policy.channels.join(', ')})` : ''}`;
 }
