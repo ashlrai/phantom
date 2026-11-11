@@ -3,11 +3,13 @@
  * the MergedLines the Leader thread already renders, channel kept for the
  * badge. Pure.
  */
-import type { OwnerThreadLine } from './owner-thread-queries.js';
+import type { OwnerReceipts, OwnerThreadLine } from './owner-thread-queries.js';
 import type { MergedLine } from './thread-merge-model.js';
 
 /** A MergedLine that names its speaker, e.g. "Mason via iMessage". */
-export type LabeledLine = MergedLine & { label?: string };
+export type LabeledLine = MergedLine & { label?: string; receipt?: ReceiptItem[] };
+/** One channel's delivery state for an outgoing line; "unknown" = no record. */
+export interface ReceiptItem { channel: string; state: 'delivered' | 'pending' | 'failed' | 'unknown'; reason?: string }
 
 const CHANNEL_NAME: Readonly<Record<string, string>> = { desktop: 'Desktop', telegram: 'Telegram', email: 'Email', imessage: 'iMessage', slack: 'Slack' };
 export const channelName = (channel: string) => CHANNEL_NAME[channel] ?? channel;
@@ -18,7 +20,7 @@ const minute = (ms: number) => Math.floor(ms / 60_000);
  * The server mirrors a desktop post into both the owner thread and
  * MASON-INBOX, so a desktop line matching an inbox line (text and minute) is dropped.
  */
-export function ownerThreadLines(rows: readonly OwnerThreadLine[], fleetLines: readonly MergedLine[]): LabeledLine[] {
+export function ownerThreadLines(rows: readonly OwnerThreadLine[], fleetLines: readonly MergedLine[], receipts: OwnerReceipts = {}): LabeledLine[] {
   const mirrored = new Set(fleetLines.filter(l => l.who === 'mason' && Number.isFinite(l.at)).map(l => `${minute(l.at)}|${l.text.trim()}`));
   return rows.flatMap((row): LabeledLine[] => {
     const at = Date.parse(row.at);
@@ -26,7 +28,9 @@ export function ownerThreadLines(rows: readonly OwnerThreadLine[], fleetLines: r
     const inbound = row.direction === 'inbound';
     if (inbound && row.channel === 'desktop' && mirrored.has(`${minute(at)}|${row.text.trim()}`)) return [];
     const targets = row.fanout?.length ? row.fanout : [row.channel];
-    return [{ at, who: inbound ? 'mason' : 'leader', source: row.channel, text: row.text, id: `owner-${row.id}`, ack: null,
+    const mine = receipts[row.id] ?? {};
+    const receipt = inbound ? undefined : [...new Set([...targets, ...Object.keys(mine)])].map((channel): ReceiptItem => mine[channel] ? { channel, ...mine[channel] } : { channel, state: 'unknown' });
+    return [{ at, who: inbound ? 'mason' : 'leader', source: row.channel, text: row.text, id: `owner-${row.id}`, ack: null, ...(receipt ? { receipt } : {}),
       label: inbound ? `Mason via ${channelName(row.channel)}` : `Leader → ${targets.map(channelName).join(', ')}` }];
   });
 }

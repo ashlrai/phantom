@@ -46,6 +46,20 @@ const PARAMS = ['chat', 'pane', 'terminal', 'block'] as const;
 /** `verse://terminal/<tabId>` or `verse://terminal/<tabId>/<blockId>` (a trailing slash is tolerated). */
 const TERMINAL_LINK_RE = /^verse:\/\/terminal\/(t-[a-z0-9]{1,32})(?:\/(b-\d{1,9}))?\/?$/;
 
+/** Read exactly one pane id, resolving legacy names. */
+export function parsePaneLink(href: string): string | null {
+  if (typeof href !== 'string') return null;
+  const match = /^verse:\/\/pane\/([a-z][a-z0-9-]{0,39})\/?$/.exec(href);
+  return match && match[0] === href ? normalizePaneId(match[1]) : null;
+}
+
+/** Build a pane link from a valid pane id. */
+export function paneLinkUrl(id: string): string {
+  const pane = normalizePaneId(id);
+  if (pane === null) throw new RangeError('not a pane id');
+  return `verse://pane/${pane}`;
+}
+
 /** Read a `verse://terminal/…` link; null for anything else (never guessed). */
 export function parseTerminalLink(href: string): TerminalLink | null {
   if (typeof href !== 'string') return null;

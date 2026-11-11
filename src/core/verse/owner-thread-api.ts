@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings, type OwnerThreadSettings } from '../comms/owner-channel.js';
+import { readReceipts } from '../leader/delivery-receipts.js';
 import { acceptOwnerInbound, readOwnerCommsStatus, readOwnerThread, type OwnerThreadOptions, type OwnerThreadResult } from '../comms/owner-thread.js';
 
 export const VERSE_OWNER_THREAD_PATH = '/api/verse/comms/owner-thread';
@@ -102,6 +103,8 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
       const { adapters, kill, paused } = readOwnerCommsStatus(options);
       sendJson(res, 200, {
         ...thread,
+        // Optional: where each outgoing message went. Old clients ignore it.
+        receipts: readReceipts(options.runsDir, thread.messages.filter(m => m.direction === 'outbound').map(m => m.id)),
         status: {
           kill,
           paused,
