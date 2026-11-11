@@ -4,7 +4,7 @@
  */
 import { userInfo } from 'node:os';
 import {
-  inviteMember, joinWithInvite, localHumanActor, memberIdForGithubUser, DEFAULT_TEAM, acquireClaim, appendEvent, decideApproval, releaseClaim, teamState, updateWorkspace, type TeamActor,
+  inviteMember, joinWithInvite, localHumanActor, memberIdForGithubUser, DEFAULT_TEAM, acquireClaim, appendEvent, decideApproval, describeAccessAction, releaseClaim, teamState, updateWorkspace, type TeamActor,
 } from '../core/teams/index.js';
 
 const USAGE = `Usage: phm team <view|join|invite|remove|role|link|approve|deny|claim|release|say> [--team <id>] [--as <name>] [--json]
@@ -15,7 +15,7 @@ const USAGE = `Usage: phm team <view|join|invite|remove|role|link|approve|deny|c
   remove <gh-user>             Revoke membership (owner/admin); drains that member's claims and reopens their accepted handoffs
   role <human:name> <admin|member>  Change a member role (owner/admin only)
   link <owner/repo>            Link a repository (owner/admin only)
-  approve|deny <approvalId>    Decide a consequential handoff (owner/admin only; identity is the local OS user/owner.json, never --as)
+  approve|deny <approvalId>    Decide a consequential handoff or an agent access request (owner/admin only; identity is the local OS user/owner.json, never --as)
   claim <owner/repo> [--branch b] [--path p] [--reason r] [--ttl-min n]
   release <claimId>
   say <text...>                Post a message to the team channel
@@ -59,7 +59,7 @@ export async function cmdTeam(argv: string[]): Promise<number> {
         for (const c of s.claims) lines.push(`  ⚑ ${c.target.repo}${c.target.branch ? `@${c.target.branch}` : ''}${c.target.path ? `:${c.target.path}` : ''} by ${c.holder} until ${c.expiresAt} [${c.id}]`);
         for (const h of s.handoffs.filter((x) => x.state !== 'completed' && x.state !== 'declined')) lines.push(`  → ${h.title} (${h.state}) ${h.from} → ${h.assignee ?? h.to ?? 'anyone'} [${h.id}]`);
         const pending = s.approvals.filter((a) => a.state === 'pending');
-        for (const a of pending) lines.push(`  ! approval needed: ${a.action} requested by ${a.requestedBy} — human owner/admin: phm team approve ${a.id} --team ${team}`);
+        for (const a of pending) lines.push(`  ! approval needed: ${a.access ? `access request (${describeAccessAction(a.access)})` : a.action} requested by ${a.requestedBy}${a.note ? ` — "${a.note}"` : ''} — human owner/admin: phm team approve ${a.id} --team ${team}`);
         for (const m of s.messages.slice(-5)) lines.push(`  # ${m.channel} ${m.from} (${m.ts}): ${m.text}`);
         lines.push('Local log only: matching team names on other machines do not sync state.');
         lines.push('Shared context: phm_team_context_add / phm_team_context_get (MCP), with an explicit owner scope (personal, company, or client:<name>). This overview does not print context entries.');
@@ -91,7 +91,7 @@ export async function cmdTeam(argv: string[]): Promise<number> {
         const r = joinWithInvite(rest[0]);
         return out(r, `${r.alreadyJoined ? 'Already joined' : 'Joined'} ${r.team} as ${r.member}. Your own local auth is used; nothing was shared.`);
       } else { const actor = localHumanActor(); const role = flag(rest, '--role'); const ev = appendEvent(team, actor, 'member.joined', role ? { role } : {}); return out(ev, `Joined ${team} as ${actor.id}.`); }
-      case 'approve': case 'deny': { const r = decideApproval(team, localHumanActor(), rest[0] ?? '', sub === 'approve' ? 'approve' : 'deny'); return out(r, `${r.approvalId}: ${r.state}`); }
+      case 'approve': case 'deny': { const r = decideApproval(team, localHumanActor(), rest[0] ?? '', sub === 'approve' ? 'approve' : 'deny'); return out(r, `${r.approvalId}: ${r.state}${'applied' in r && r.applied ? ` — applied ${r.applied.type} [${r.applied.eventId}]` : ''}`); }
       case 'claim': {
         const branch = flag(rest, '--branch'); const path = flag(rest, '--path'); const reason = flag(rest, '--reason') ?? ''; const ttl = flag(rest, '--ttl-min');
         const r = acquireClaim(team, me, { repo: rest[0] ?? '', branch, path }, reason, ttl ? Number(ttl) * 60_000 : undefined);

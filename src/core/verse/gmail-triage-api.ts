@@ -10,6 +10,16 @@ export const VERSE_GMAIL_TRIAGE_PATH = '/api/verse/comms/gmail-triage';
 /** Under the triage prefix so the registered route family already covers it. */
 export const VERSE_GMAIL_ARCHIVE_PLAN_PATH = '/api/verse/comms/gmail-triage/archive-plan';
 
+/** Saved exports support sample triage and planning only; they do not observe
+ * the live inbox or verify that an archive operation was executed. */
+function evidence(latest: unknown) {
+  return {
+    scope: latest === null ? 'unknown' : 'saved-local-export-sample',
+    liveInboxTargetState: 'unknown',
+    archiveExecution: 'unverified',
+  };
+}
+
 export interface GmailTriageApiDeps {
   /** Default: the fixed owner runs dir (neither env nor the request picks it). */
   runsDir?: string;
@@ -28,10 +38,12 @@ export function createGmailTriageApi(deps: GmailTriageApiDeps = {}): ApiModule {
     }
     const runsDir = deps.runsDir ?? fixedOwnerRunsDir();
     if (path === VERSE_GMAIL_ARCHIVE_PLAN_PATH) {
-      sendJson(res, 200, { schema: GMAIL_ARCHIVE_PLAN_LATEST_SCHEMA, latest: readGmailArchivePlanLatest(runsDir) });
+      const latest = readGmailArchivePlanLatest(runsDir);
+      sendJson(res, 200, { schema: GMAIL_ARCHIVE_PLAN_LATEST_SCHEMA, latest, evidence: evidence(latest) });
       return true;
     }
-    sendJson(res, 200, { schema: GMAIL_TRIAGE_LATEST_SCHEMA, latest: readGmailTriageLatest(runsDir) });
+    const latest = readGmailTriageLatest(runsDir);
+    sendJson(res, 200, { schema: GMAIL_TRIAGE_LATEST_SCHEMA, latest, evidence: evidence(latest) });
     return true;
   };
 }
