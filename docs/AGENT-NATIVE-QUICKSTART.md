@@ -63,6 +63,10 @@ same Phantom home. View presence, messages, claims and handoffs with
 tracks requests and transitions. Claims can conflict or expire. Registration,
 presence, and a handoff request do not grant authority or prove work ran;
 consequential handoffs require the owner's approval before acceptance.
+Workspace access changes (inviting a human, linking a repo, changing a role)
+go through `phm_team_access_request`, which files a pending approval a human
+owner/admin decides with `phm team approve|deny`; agents can request, never
+decide.
 `phm_team_context_add` and `phm_team_context_get` store and retrieve scoped,
 cited context. Supply the appropriate owner/project scope and provenance;
 do not put credentials in messages or context.

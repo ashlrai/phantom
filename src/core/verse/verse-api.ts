@@ -160,6 +160,7 @@ import {
   VERSE_MEMORY_BODY_MAX_BYTES,
 } from './types.js';
 import { handleVerseEventsSse, VERSE_EVENTS_PATH_RE, VERSE_SESSION_ID_RE } from './verse-stream.js';
+import { handleUiAppearance, VERSE_UI_APPEARANCE_PATH } from './ui-appearance-api.js';
 import type { ApiModule } from './api-modules.js';
 import { REASONING_API_PREFIX } from '../reasoning/types.js';
 import { VERSE_FLEET_CONTROL_HOLDS_PATH } from '../fleet/runs-lane-hold.js';
@@ -547,6 +548,9 @@ const WORKBENCH_IMPORTS: Readonly<Record<WorkbenchRouteFamilyId, () => Promise<W
   },
   ops: async () => {
     try { return (await import('./ops-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'ops-api.js'); }
+  },
+  goals: async () => {
+    try { return (await import('./goals-create-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'goals-create-api.js'); }
   },
 };
 
@@ -2545,6 +2549,8 @@ export async function handleVerseApi(
       sendJson(res, 200, engine.renameSession(id, title.trim()));
       return true;
     }
+
+    if (path === VERSE_UI_APPEARANCE_PATH) return handleUiAppearance(ctx, req, res, method);
 
     // ── workbench families (V3.10 Tracks B + C) ─────────────────────────
     // After every V1 route, like the modules below. Prefix-routed: a path a
