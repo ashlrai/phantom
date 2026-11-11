@@ -33,6 +33,15 @@ DEFAULT = {"codex-cmp": {"target": 10, "floor": 10, "ceiling": 32, "hard_cap": 3
            "claude-api": {"target": 4, "floor": 0, "ceiling": 8, "hard_cap": 8},   # target is re-paced every tick by claude-api.py
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
 import concurrency, batcher, batch_sessions
+import fleet_controller as fc
+# ---- fleet controller (RQ-FLEET-LOADBALANCER-1). Phase A (one readings bus, one writer for lane targets and holds, one
+# ledger line per tick) always runs and decides nothing new. FLEET_CTL_MODE=enforce applies phase B (graduated shed) and
+# phase C (cross-pool rebalance, producer backpressure); the default `shadow` computes and ledgers them without acting, so
+# a rollout can be watched before it binds. FLEET_CTL_PHASES (subset of "abc") narrows what enforce applies. The admission
+# gate below is untouched and stays the backstop above the shed bands. The controller only tightens.
+FC_ENFORCE = os.environ.get("FLEET_CTL_MODE", "shadow") == "enforce"
+FC_PHASES = set(os.environ.get("FLEET_CTL_PHASES", "abc")) & set("abc")
+FC_SHED_ON, FC_ROUTE_ON = FC_ENFORCE and "b" in FC_PHASES, FC_ENFORCE and "c" in FC_PHASES
 # Starvation thresholds. RQ-BATCH-SESSIONS-2 (Mason Nov 10) restores a real load gate: load1 over 2 x ncpu or kernel
 # memory pressure at warn (2) or above stops new claims. Process count and live worktree count only warn.
 def gate_limit(name, default):
@@ -344,6 +353,14 @@ def clamp_lane(lane):   # hard_cap wins over floor, ceiling and target, whoever 
     s_ = slots[lane]; hc = s_["hard_cap"] = _cap(s_.get("hard_cap"), DEFAULT[lane]["hard_cap"])
     s_["ceiling"] = min(s_["ceiling"], hc); s_["floor"] = min(s_["floor"], s_["ceiling"]); s_["target"] = min(s_["target"], hc)
 for _l in LANES: clamp_lane(_l)
+# Single writer: every lane target or hold change from here on goes through W, which holds an exclusive lock and clamps to
+# the hard_cap as it stands now. A second controller exits instead of racing this one.
+W = fc.SlotWriter.acquire(Q + "/fleet-controller.lock", slots, {_l: slots[_l]["hard_cap"] for _l in LANES}, NOW)
+if W is None: raise SystemExit(0)
+def tgt(l):   # the target a lane may launch against: the controller's effective target, never above the stored one
+    s_ = slots[l]; e = s_.get("effective_target")
+    if e is None: return s_["target"]
+    return min(s_["target"], e) if isinstance(e, int) and not isinstance(e, bool) and e >= 0 else min(s_["target"], s_["floor"])   # garbage: floor
 # ---- usage backoff (RQ-USAGE-BACKOFF-11 rev2): auto-hold a pool on a provider CLI usage/quota error line.
 # Only exact provider error lines (anchored) count, and only on a failed or EMPTY run (codex-cmp: only a run
 # with no work). Only held_by == "autobackoff" entries are ever auto-unheld or extended; manual holds are never touched.
@@ -445,8 +462,7 @@ def ab_unhold():
         if not isinstance(s_, dict) or not s_.get("held") or s_.get("held_by") != AB_BY: continue
         u = ab_epoch(s_.get("held_until"))
         if u is not None and u > NOW: continue
-        for k in ("held", "held_reason", "held_by", "held_until", "auth_failed"): s_.pop(k, None)
-        s_["last_change"] = NOW; ev("LANE_UNHOLD %s autobackoff expired" % lane)
+        W.unhold(lane, "autobackoff", "expired"); ev("LANE_UNHOLD %s autobackoff expired" % lane)
 def ab_scan(lane, alive_):
     s_ = slots[lane]; pats = AB_RX.get(AB_PROV.get(lane, ""))
     if not pats or (s_.get("held") and s_.get("held_by") != AB_BY): return   # manual hold: never touch
@@ -480,8 +496,7 @@ def ab_scan(lane, alive_):
             cur = ab_epoch(s_.get("held_until"))
             if cur is not None and cur >= rs: continue
         until = ab_iso(rs)
-        s_["held"] = True; s_["held_by"] = AB_BY; s_["held_until"] = until; s_["last_change"] = NOW
-        s_["held_reason"] = "autobackoff %s job=%s until=%s src=%s" % (pid, j, until, src)
+        W.hold(lane, "autobackoff", "autobackoff %s job=%s until=%s src=%s" % (pid, j, until, src), held_by=AB_BY, until=until)
         ev("LANE_HOLD %s autobackoff pattern=%s job=%s until=%s src=%s" % (lane, pid, j, until, src))
         metric({"event": "autobackoff_hold", "lane": lane, "job": j, "pattern": pid, "until": until, "src": src})
 # ---- auth backoff (RQ-LANERECOVERNOV1Q8): hold a lane on REPEATED authentication failures. Usage/quota
@@ -547,9 +562,8 @@ def ab_auth_scan(lane, alive_):
         cur = ab_epoch(s_.get("held_until"))
         if cur is not None and cur >= rs: return
     until = ab_iso(rs)
-    s_["held"] = True; s_["held_by"] = AB_BY; s_["held_until"] = until; s_["last_change"] = NOW
-    s_["auth_failed"] = True
-    s_["held_reason"] = "autobackoff %s job=%s until=%s src=default (%d auth-failed runs)" % (pid, j, until, count)
+    W.hold(lane, "authbackoff", "autobackoff %s job=%s until=%s src=default (%d auth-failed runs)" % (pid, j, until, count),
+           held_by=AB_BY, until=until, auth_failed=True)
     ev("LANE_HOLD %s autobackoff pattern=%s job=%s until=%s src=default (%d auth-failed runs)" % (lane, pid, j, until, count))
     metric({"event": "autobackoff_hold", "lane": lane, "job": j, "pattern": pid, "until": until, "src": "default", "auth_failures": count})
 ab_unhold()
@@ -1152,6 +1166,9 @@ def admission_gate():
     except ValueError: ncpu = os.cpu_count() or 1
     try: load1 = float(os.environ["LOADGATE_LOADAVG"]) if test and os.environ.get("LOADGATE_LOADAVG") else os.getloadavg()[0]
     except (ValueError, OSError): load1 = float("inf")   # unreadable load: reduce claims
+    try:
+        _l5, _l15 = ((float(os.environ.get("LOADGATE_LOAD5", load1)), load1) if test and "LOADGATE_LOADAVG" in os.environ else os.getloadavg()[1:])
+    except (ValueError, OSError): _l5 = _l15 = None
     procs = sum(1 for l in ps.splitlines() if l.strip())
     wts = sum(1 for bp in glob.glob(R + "/*.base") if os.path.basename(bp)[:-5] in alive and (lambda b: bool(b) and os.path.isdir(b[2]))(base(os.path.basename(bp)[:-5])))
     age, last_tick, why = TICK_AGE_F.result()
@@ -1186,6 +1203,7 @@ def admission_gate():
     if wts > GATE_WORKTREES_MAX: g["warnings"].append("worktrees %d > %d" % (wts, GATE_WORKTREES_MAX))
     if age is None: g["warnings"].append("daemon_status_unavailable (%s)" % why)
     elif age > GATE_TICK_MAX_S: g["warnings"].append("daemon_tick_stale %ds > %ds (Phantom daemon last tick: %s)" % (age, GATE_TICK_MAX_S, last_tick))
+    g.update(load5=_l5, load15=_l15)
     g.update(load1=load1, ncpu=ncpu, load_max=load_max, procs=procs, worktrees=wts, daemon_tick_age_s=None if age is None else int(age), daemon_last_tick_at=last_tick)
     g["tripped"] = bool(g["reasons"])
     return g
@@ -1195,7 +1213,7 @@ try: LOCAL_MID_CAP = max(0, int(os.environ["LOCAL_MID_CAP"])) if "LOCAL_MID_CAP"
 except ValueError: LOCAL_MID_CAP = None
 if LOCAL_MID_CAP is None: LOCAL_MID_CAP = 1 if GATE["tripped"] else (4 if GATE["load1"] < GATE["ncpu"] else 2)
 def lane_target_sum():   # held lanes launch nothing so they add nothing
-    return sum(slots[l]["target"] for l in LANES if not (slots[l].get("held") or l in hold))
+    return sum(tgt(l) for l in LANES if not (slots[l].get("held") or l in hold))
 def global_cap():   # min(sum of unheld lane targets, adaptive cap, operator hard_cap)
     return max(0, min([lane_target_sum(), CONC["cap"]] + ([slots["hard_cap"]] if "hard_cap" in slots else [])))
 
@@ -1277,11 +1295,20 @@ if _gate["depth"] is None:
 ev("QUEUE_GATE allow=%s depth=%s target=%s src=dispatchd" % (_gate["allow"], _gate["depth"], _gate["target"]))
 _ready_before_restock = rd(Q + "/ready.tsv").splitlines()
 rate_parked = any("PARKED-MERGERATE." in l for l in _ready_before_restock)
+_bp = jload(Q + "/backpressure.json", {})
+def _bp_factor(lane):
+    try:
+        if (FC_ROUTE_ON and _bp.get("schema") == fc.BACKPRESSURE_SCHEMA and _bp.get("enforced") is True and NOW < _bp["expires"] and NOW >= _bp["ts"] - 60):
+            return max(0.0, min(1.0, float(_bp["lanes"][lane]["factor"])))
+    except (KeyError, TypeError, ValueError, AttributeError): pass
+    return 1.0
 for lane in ("codex-cmp", "codex-personal", "devin", "claude-api", "codex-local"):
     sl = slots[lane]
     if sl.get("held") or lane in hold: continue
+    _bpf = _bp_factor(lane)   # phase C producer backpressure from last tick's advice; 1.0 when absent, stale or not enforced
+    if _bpf <= 0: continue
     qn = sum(1 for l in _ready_before_restock if not l.startswith("PARKED-") and l.split("\t")[2:3] == [lane])
-    if _gate["allow"] and (rate_parked or qn < 3 * max(sl["target"] - running[lane], 4)) and os.path.exists(Q + "/router-queue.md") and not os.path.exists(Q + "/RESTOCK_OFF"):
+    if _gate["allow"] and (rate_parked or qn < 3 * max(tgt(lane) - running[lane], 4) * _bpf) and os.path.exists(Q + "/router-queue.md") and not os.path.exists(Q + "/RESTOCK_OFF"):
         try:
             _run(["/bin/bash", R + "/bin/restock.sh"], 4)
         except (OSError, subprocess.SubprocessError):
@@ -1372,6 +1399,23 @@ def _devin_spike():   # DEVIN-LEVERAGE-20261026, computed in dispatchd itself (M
                "non_pr": sum(1 for r in fin if r.get("empty") or r.get("job") not in pub)}
         _dv["step_down"] = len(fin) >= DEVIN_STEP["window"] and _dv["non_pr"] > DEVIN_STEP["max_non_pr"]
     return _dv
+tick_phase("controller_bus", 10)
+# ---- fleet controller signal bus: the one readings struct for this tick. Built once; the concurrency AIMD, the shed level
+# and the ledger all read it. Unreadable values stay None and fail closed in the planner (never zero).
+_BUDGET_OV = jload(Q + "/budget-overrides.json", {})
+FC_LANE_VIEW0 = fc.caps_snapshot(slots, LANES)
+FC_STATE, FC_NOTE = fc.load_state(Q + "/fleet-controller.json", NOW)
+_FC_PREV = FC_STATE["level"]
+BUS = fc.build_readings(NOW, load=(GATE["load1"], GATE.get("load5"), GATE.get("load15")), ncpu=GATE["ncpu"], mem_free_pct=free,
+    memory_pressure=GATE["memory_pressure"], swap_gb=GATE["swap_gb"], swap_growth_gb=GATE["swap_growth_gb"] if GATE["swap_gb"] is not None else None,
+    swap_window_s=GATE_SWAP_WINDOW_S, procs=GATE["procs"], worktrees=GATE["worktrees"], disk_free_gb=disk_free_gb, disk_gate=DISK_GATE,
+    limits={"swap_growth_gb": GATE_SWAP_GROWTH_GB, "procs": GATE_PROCS_MAX, "worktrees": GATE_WORKTREES_MAX},
+    queue_by_lane=qdepth, queue_by_tier=fc.tier_depth([l for l in lines if not parked_row(l)], TIERS),
+    quota=fc.lane_quota(_BUDGET_OV, LANES), merge=fc.merge_stats(JOBS_RAW, NOW), holds=sorted(hold))
+FC_WOULD_LEVEL, FC_STATE, FC_WHY = fc.shed_level(BUS, FC_STATE, NOW)
+if FC_NOTE == "state_unreadable": FC_WHY = ["fail_closed:state_unreadable"] + FC_WHY
+if FC_WOULD_LEVEL != _FC_PREV: ev("FLEET_SHED level %d->%d (%s) mode=%s" % (_FC_PREV, FC_WOULD_LEVEL, "; ".join(FC_WHY), "enforce" if FC_SHED_ON else "shadow"))
+FC_SHED = FC_WOULD_LEVEL if FC_SHED_ON else 0
 tick_phase("adapt", 10)
 for lane in LANES:
     try: ab_scan(lane, alive)
@@ -1383,12 +1427,12 @@ for lane in LANES:
     if lane == "claude-api":
         ap = PACE_F.result(); nt = max(0, min(int(ap.get("target") or 0), s["ceiling"]))
         if nt != s["target"]: ev("SLOTS %s %d->%d paced (pool=%s need=$%s/h)" % (lane, s["target"], nt, ap.get("pool"), ap.get("need_usd_per_hour")))
-        s["target"] = nt; s["api_pool"] = ap.get("pool"); s["api_reason"] = ap.get("reason")
+        W.set_target(lane, nt, "api-pace", touch=False); W.annotate(lane, api_pool=ap.get("pool"), api_reason=ap.get("reason"))
         if s.get("held") or lane in hold: continue
         hit = ratelimited(lane, s["last_change"])
         if hit and hit[1] in ("rate_limit", "model_capacity"): rl_seen.append(NOW)
         if hit and hit[1] == "credits_exhausted":
-            s["held"] = True; s["held_reason"] = "credits exhausted (%s %s)" % (hit[0], TS); s["last_change"] = NOW
+            W.hold(lane, "credits", "credits exhausted (%s %s)" % (hit[0], TS))
             ev("LANE_HOLD %s credits exhausted (%s); supervisor clears held in slots.json" % (lane, hit[0]))
         continue
     if s.get("held") or lane in hold: continue
@@ -1397,7 +1441,7 @@ for lane in LANES:
     if hit:
         metric({"event": "pool", "lane": lane, "job": hit[0], "kind": hit[1], "mem_free_pct": free, "swap_gb": swap})
     if hit and hit[1] == "credits_exhausted":
-        s["held"] = True; s["held_reason"] = "credits exhausted (%s %s)" % (hit[0], TS); s["last_change"] = NOW
+        W.hold(lane, "credits", "credits exhausted (%s %s)" % (hit[0], TS))
         ev("LANE_HOLD %s credits exhausted (%s); supervisor clears held in slots.json" % (lane, hit[0])); continue
     if hit and hit[1] == "model_capacity":
         ev("MODEL_CAPACITY_SEEN %s %s (no slot change)" % (lane, hit[0])); hit = None
@@ -1407,15 +1451,15 @@ for lane in LANES:
         nt = max(s["floor"], s["target"] // 2)
         s["last_change"] = NOW
         if nt != s["target"]:
-            ev("SLOTS %s %d->%d %s seen (%s)" % (lane, s["target"], nt, hit[1], hit[0])); s["target"] = nt
+            ev("SLOTS %s %d->%d %s seen (%s)" % (lane, s["target"], nt, hit[1], hit[0])); W.set_target(lane, nt, "ratelimit", hit[1], touch=False)
     elif (running[lane] >= s["target"] and qdepth[lane] > 0 and s["target"] < s["ceiling"]
-          and DISK_GATE == "green" and not GATE["tripped"]   # LOADGATE: the ramp pauses while the gate is tripped
+          and DISK_GATE == "green" and not GATE["tripped"] and not FC_SHED   # LOADGATE: the ramp pauses while the gate is tripped or the controller sheds
           and (AP["memory"]["raise_ok"] if AP and AP.get("memory", {}).get("known")
                else (free is not None and free > 30))   # fallback when autopilot is unavailable: free memory only, no absolute swap block
           and NOW - s["last_change"] >= RAISE_GAP):
         nt = min(s["ceiling"], s["hard_cap"], s["target"] + 2)
         ev("SLOTS %s %d->%d (free=%s%% swap=%.1fG)" % (lane, s["target"], nt, free, swap or 0))
-        s["target"] = nt; s["last_change"] = NOW
+        W.set_target(lane, nt, "ramp")
     if lane == "devin":   # more than 3 of the last 10 devin runs without a PR: -2, floor 6, once per new finish
         dv = _devin_spike()
         if dv["step_down"] and dv["last_job"] and dv["last_job"] != s.get("step_seen"):
@@ -1423,14 +1467,42 @@ for lane in LANES:
             s["step_seen"] = dv["last_job"]
             if nt != s["target"]:
                 ev("SLOTS devin %d->%d step-down (%d of last %d without PR)" % (s["target"], nt, dv["non_pr"], dv["last_n"]))
-                s["target"] = nt; s["last_change"] = NOW
+                W.set_target(lane, nt, "devin-step")
     if lane != "claude-api" and DISK_GATE == "halve" and PREV_DISK_GATE != "halve":
         nt = max(s["floor"], s["target"] // 2)
-        if nt != s["target"]: ev("SLOTS %s %d->%d disk gate halve" % (lane, s["target"], nt)); s["target"] = nt; s["last_change"] = NOW
-    if s["target"] < s["floor"]: s["target"] = s["floor"]
+        if nt != s["target"]: ev("SLOTS %s %d->%d disk gate halve" % (lane, s["target"], nt)); W.set_target(lane, nt, "disk-halve")
+    if s["target"] < s["floor"]: W.set_target(lane, s["floor"], "floor", touch=False)
 try:   # atomic; a failed write never breaks the tick (rev2 A4)
     _dl = R + "/.autopilot-disk-gate.tmp"; open(_dl, "w").write(DISK_GATE + "\n"); os.replace(_dl, R + "/.autopilot-disk-gate")
 except Exception as e: log("autopilot disk-level write failed %s" % type(e).__name__)
+tick_phase("controller", 10)
+# ---- fleet controller plan: effective targets from the adapt result, the shed level and the lane quality weight. Any
+# error freezes to floors (fail closed). Applied only in enforce mode; shadow applies the unshed plan and ledgers the rest.
+FC_VIEW = {l: {"desired": slots[l]["target"], "floor": slots[l]["floor"], "bound": min(slots[l]["hard_cap"], W.pins[l]),
+               "held": bool(slots[l].get("held") or l in hold), "held_by": slots[l].get("held_by")} for l in LANES}
+try:
+    FC_QUALITY = fc.lane_quality(BUS["merge"]) if BUS["merge"] else {}
+    PLAN_WOULD = fc.plan(BUS, FC_VIEW, FC_WOULD_LEVEL, FC_QUALITY, FC_WHY)
+    PLAN = PLAN_WOULD if FC_SHED_ON else fc.plan(BUS, FC_VIEW, 0, {}, ["shadow"] if FC_WOULD_LEVEL else [])
+except Exception as e:
+    log("fleet controller plan failed %s; freezing to floors" % type(e).__name__)
+    FC_QUALITY = {}
+    PLAN_WOULD = fc.frozen_plan(FC_VIEW, "controller_error:" + type(e).__name__)
+    PLAN = PLAN_WOULD if FC_SHED_ON else fc.plan(BUS, FC_VIEW, 0, {}, [])
+W.apply_plan(PLAN)
+for _v in fc.verify_tighten_only(FC_LANE_VIEW0, slots, LANES):   # a cap rose or a target passed a cap: undo and say so
+    ev("FLEET_CTL_VIOLATION " + _v)
+for _l in LANES:
+    _hc = FC_LANE_VIEW0[_l]["hard_cap"]
+    if isinstance(_hc, int) and slots[_l].get("hard_cap") != _hc and not (isinstance(slots[_l].get("hard_cap"), int) and slots[_l]["hard_cap"] < _hc): slots[_l]["hard_cap"] = _hc
+    clamp_lane(_l)
+    if isinstance(slots[_l].get("effective_target"), int): slots[_l]["effective_target"] = min(slots[_l]["effective_target"], slots[_l]["target"])
+try: fc.save_json(Q + "/fleet-controller.json", FC_STATE)
+except OSError as e: log("fleet controller state write failed %s" % type(e).__name__)
+_tiers_cap = fc.tier_capacity(PLAN, lambda lane, t: True, sorted(TIERS))
+try: fc.save_json(Q + "/backpressure.json", fc.backpressure(PLAN, BUS["queue_by_tier"], _tiers_cap, NOW, enforced=FC_ROUTE_ON))
+except OSError as e: log("backpressure write failed %s" % type(e).__name__)
+FC_MOVES = []
 
 # ---- adaptive concurrency (RQ-QUEUE-BATCH-1): one AIMD decision per tick, logged on every change
 CONC_FLOOR, CONC_CEILING = concurrency.bounds(slots.get("hard_cap"))
@@ -1441,10 +1513,7 @@ def conc_adjusted(adj):
     ev(concurrency.describe(adj))
     metric({"event": "concurrency", "from": adj["from"], "to": adj["to"], "reason": adj["reason"], "zones": adj["zones"]})
 _demand = sum(running.values()) >= CONC["cap"] and bool(lines) and lane_target_sum() > CONC["cap"]
-conc_adjusted(concurrency.decide(CONC, {
-    "load1": GATE["load1"], "ncpu": GATE["ncpu"], "load_per_cpu_max": GATE_LOAD_PER_CPU, "memory_pressure": GATE["memory_pressure"],
-    "mem_free_pct": free, "swap_gb": GATE["swap_gb"], "swap_growth_gb": GATE["swap_growth_gb"], "swap_growth_max_gb": GATE_SWAP_GROWTH_GB,
-    "disk_free_gb": disk_free_gb, "disk_hard_stop_gb": DISK_HARD_STOP_GB, "procs": GATE["procs"], "procs_max": GATE_PROCS_MAX},
+conc_adjusted(concurrency.decide(CONC, fc.concurrency_signals(BUS, GATE_LOAD_PER_CPU, DISK_HARD_STOP_GB, GATE_SWAP_GROWTH_GB, GATE_PROCS_MAX),
     NOW, _demand, CONC_FLOOR, CONC_CEILING))
 
 tick_phase("launch", 30)
@@ -1476,6 +1545,22 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             if alt:
                 ev("DEVIN_ROUTE %s %s -> %s" % (f[0], why, alt)); f = f[:2] + [alt] + f[3:]
         cand.append(f)
+    if FC_ROUTE_ON and cand:   # phase C: lines queued on a pool held by usage backoff move to pools with idle slots
+        _mj = jload(R + "/models.json", {})
+        def _tier_ok(dest, tier):
+            fam = "codex" if dest.startswith("codex") and dest != "codex-local" else dest
+            return not _mj or (fam + "." + tier) in _mj or fam in _mj
+        def _route_ok(job, dest):   # the existing route hysteresis: move cap and launch lock still bind; a backed-off pool is hard_down
+            rec, why = route_decision(route_state.get(job), dest, NOW, True, False)
+            if why: return False
+            route_state[job] = rec; return True
+        FC_MOVES = fc.rebalance([(f[0], f[2], f[3]) for f in cand], fc.reroute_sources(slots, LANES, hold), PLAN["lanes"], running,
+                                FC_QUALITY, _tier_ok, _route_ok, GATE["claim_limit"], hold)
+        if FC_MOVES:
+            _dest = {j: d for j, _, d in FC_MOVES}
+            for f in cand:
+                if f[0] in _dest: ev("FLEET_REBALANCE %s %s->%s (pool backed off)" % (f[0], f[2], _dest[f[0]])); f[2] = _dest[f[0]]
+            jsave(Q + "/route-state.json", route_state)
     # The key is global across pools; blocked jobs are retained below while
     # scanning continues, so a capped FIX-MAIN sibling cannot consume a claim.
     ready_ranks = _ready_repo_ranks()
@@ -1535,7 +1620,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         size = min(batcher.size_for(batch_tuning, f[2]), BS_CFG["max_lines"])
         picked = batcher.pick_members(task_info(f), pool, size, BS_CFG["min_lines"])
         if not picked: return None
-        has_capacity = lambda l: not (slots[l].get("held") or l in hold) and running[l] < slots[l]["target"]
+        has_capacity = lambda l: not (slots[l].get("held") or l in hold) and running[l] < tgt(l)
         lane_ = batcher.choose_lane({c["lane"] for c in picked} & set(BS_CFG["lanes"]), batcher.lane_scores(batch_stats()), has_capacity, f[2])
         return (picked, lane_, size) if lane_ else None
     for f in cand:
@@ -1562,7 +1647,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         if target and target in drain_targets:
             rest.append(line); seen.add(j); continue
         if (len(launched) >= GATE["claim_limit"] or s.get("held") or lane in hold
-                or running[lane] >= s["target"] or sum(running.values()) >= GCAP or j in alive or j in reaping or j in publishing):
+                or running[lane] >= tgt(lane) or sum(running.values()) >= GCAP or j in alive or j in reaping or j in publishing):
             rest.append(line); seen.add(j); continue
         if lane == "codex-local":
             if _size_hint(j, pf) > 60:
@@ -1677,6 +1762,10 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         running[lane] += 1; local_mid += lane == "codex-local" and tier == "mid"; launched.append(j); ev("LAUNCH %s %s %s %s" % (j, repo, lane, tier))
 else:
     rest = lines
+FC_MODE = "enforce" if FC_ENFORCE else "shadow"
+FC_LEDGER = fc.ledger_record(NOW, BUS, PLAN, FC_MODE, W.mutations, FC_MOVES, fc.ambiguous_holds(slots, LANES),
+                             shadow=PLAN_WOULD if PLAN_WOULD is not PLAN else None)
+fc.append_ledger(MD + "/fleet-controller.jsonl", FC_LEDGER)
 # Reconcile concurrent parked-row rewrites as well as appended rows.
 lk = qlock("dispatchd-write", 30)
 if lk is None:
@@ -2007,8 +2096,11 @@ evs = logtail(EV, 65536).splitlines()[-25:]   # tail read: the events log grows 
 st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "paused": pause or None,
       "mem_free_pct": free, "swap_gb": round(swap, 2) if swap is not None else None,
       "autopilot": AP,
+      "fleet_controller": {"mode": FC_MODE, "phases": "".join(sorted(FC_PHASES)), "shed_level": PLAN["level"], "shed": PLAN["level_name"],
+                           "would_shed_level": PLAN_WOULD["level"], "reasons": PLAN_WOULD["reasons"], "objective_score": FC_LEDGER["objective_score"],
+                           "reroutes": len(FC_MOVES), "ledger": "metrics/fleet-controller.jsonl", "ambiguous_holds": FC_LEDGER["ambiguous_holds"]},
       "lanes": {l: {"running": running[l], "target": slots[l]["target"], "floor": slots[l]["floor"],
-                    "ceiling": slots[l]["ceiling"], "hard_cap": slots[l]["hard_cap"], "held": bool(slots[l].get("held") or l in hold),
+                    "effective_target": tgt(l), "ceiling": slots[l]["ceiling"], "hard_cap": slots[l]["hard_cap"], "held": bool(slots[l].get("held") or l in hold),
                     "queued": qdepth[l]} for l in LANES},
       "queue_depth": len(rest), "invalid_queue_lines": bad, "launched_this_tick": launched,
       "reaping": sorted(set(reaping) | publishing), "kept_worktrees": sorted(kept),
@@ -2020,7 +2112,7 @@ st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%
       "batching": {"enabled": BATCHING, "launched_this_tick": batches,
                    "size_target": {l: batcher.size_for(batch_tuning, l) for l in batcher.BATCH_LANES}}}
 # budget per lane: overrides file (Grok Bot writes Mason's readings) + log-derived token burn
-ov = jload(Q + "/budget-overrides.json", {}); budget = {}
+ov = _BUDGET_OV; budget = {}
 mets = JOBS_RAW
 def epoch(t):
     try: return time.mktime(time.strptime(t[:19], "%Y-%m-%dT%H:%M:%S"))
