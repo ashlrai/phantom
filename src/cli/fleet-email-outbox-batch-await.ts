@@ -32,19 +32,6 @@ export async function cmdFleetEmailOutboxBatchAwait(args: string[], deps: Deps =
   const timeoutMs = number('--timeout-ms', NaN); const pollMs = number('--poll-ms', 1000);
   if (!stdin || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000 ||
       !Number.isSafeInteger(pollMs) || pollMs < 100 || pollMs > 10_000) return usage();
-  let input = Buffer.alloc(0);
-  try {
-    for await (const chunk of deps.stdin ?? process.stdin) {
-      const bytes = Buffer.from(chunk);
-      if (input.length + bytes.length > 16 * 1024) return usage();
-      input = Buffer.concat([input, bytes]);
-    }
-  } catch { return usage(); }
-  let names: unknown;
-  try { names = JSON.parse(input.toString('utf8')) as unknown; } catch { return usage(); }
-  if (!Array.isArray(names) || names.length < 1 || names.length > 50 ||
-      !names.every((name: unknown) => typeof name === 'string' && name.toLowerCase().endsWith('.reply.eml') && !name.includes('..') && !/[/\\\0]/.test(name)) ||
-      new Set(names).size !== names.length) return usage();
   const output = (result: BatchResult): number => {
     (deps.stdout ?? console.log)(json ? JSON.stringify(result) : result.rows.map((row) => `${row.name}: ${row.state}${row.reason ? ` (${row.reason})` : ''}`).join('\n') + (result.cancelled ? '\ncancelled' : result.sourceFailure ? '\nsource-failure' : result.timedOut ? '\ntimed-out' : ''));
     return result.cancelled ? 130 : result.timedOut || result.sourceFailure || result.rows.some((row) => row.state === 'stuck') ? 1 : 0;
@@ -55,8 +42,39 @@ export async function cmdFleetEmailOutboxBatchAwait(args: string[], deps: Deps =
   signals.on('SIGINT', cancel); signals.on('SIGTERM', cancel);
   deps.signal?.addEventListener('abort', cancel, { once: true });
   if (deps.signal?.aborted) cancel();
-  const empty = (): BatchResult => ({ rows: (names as string[]).map((name) => ({ name, state: 'missing' })), timedOut: false, cancelled: controller.signal.aborted, sourceFailure: !controller.signal.aborted });
+  let names: unknown = [];
   try {
+    const cancelled = (): number => output({ rows: [], timedOut: false, cancelled: true, sourceFailure: false });
+    if (controller.signal.aborted) return cancelled();
+    let input = Buffer.alloc(0);
+    const source = deps.stdin ?? process.stdin;
+    let iterator: AsyncIterator<string | Uint8Array>;
+    try { iterator = source[Symbol.asyncIterator](); } catch { return usage(); }
+    let finished = false;
+    let wake: (() => void) | undefined;
+    const aborted = new Promise<null>((resolve) => { wake = () => resolve(null); });
+    controller.signal.addEventListener('abort', wake!, { once: true });
+    try {
+      while (true) {
+        const next = await Promise.race([iterator.next(), aborted]);
+        if (next === null || controller.signal.aborted) return cancelled();
+        if (next.done) { finished = true; break; }
+        const bytes = Buffer.from(next.value);
+        if (input.length + bytes.length > 16 * 1024) return usage();
+        input = Buffer.concat([input, bytes]);
+      }
+    } catch { return controller.signal.aborted ? cancelled() : usage(); }
+    finally {
+      controller.signal.removeEventListener('abort', wake!);
+      if (!finished && source !== process.stdin && iterator.return) {
+        void Promise.resolve().then(() => iterator.return!()).catch(() => {});
+      }
+    }
+    try { names = JSON.parse(input.toString('utf8')) as unknown; } catch { return usage(); }
+    if (!Array.isArray(names) || names.length < 1 || names.length > 50 ||
+        !names.every((name: unknown) => typeof name === 'string' && name.toLowerCase().endsWith('.reply.eml') && !name.includes('..') && !/[/\\\0]/.test(name)) ||
+        new Set(names).size !== names.length) return usage();
+    const empty = (): BatchResult => ({ rows: (names as string[]).map((name) => ({ name, state: 'missing' })), timedOut: false, cancelled: controller.signal.aborted, sourceFailure: !controller.signal.aborted });
     if (controller.signal.aborted) return output(empty());
     const config = await readEmailDropConfig(deps.runsDir ?? join(homedir(), '.ashlr-runs'));
     if (controller.signal.aborted || !config.config || config.state === 'invalid') return output(empty());

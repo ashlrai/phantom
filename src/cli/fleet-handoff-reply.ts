@@ -5,7 +5,7 @@ import { replyHandoffBus } from '../core/fleet/handoff-bus-reply.js';
 
 const usage = 'Usage: ashlr fleet handoff-reply --id <message-id> --to <exact-recipient> '
   + '--snapshot <absolute-json> --reply-id <distinct-id> --spool-dir <absolute-private-dir> '
-  + '--timeout-ms <1..3600000> -- <program> [args...]';
+  + '--timeout-ms <1..3600000> [--cwd <absolute-directory>] -- <program> [args...]';
 const example = 'Example: ashlr fleet handoff-reply --id handoff-7 --to WORKER-9 '
   + '--snapshot /home/worker/context.json --reply-id handoff-7-exit '
   + '--spool-dir /home/worker/replies --timeout-ms 600000 -- node worker.mjs --flag value';
@@ -30,18 +30,20 @@ export async function cmdFleetHandoffReply(args: string[],
   const flags = new Map<string, string>();
   for (let i = 0; i < split; i += 2) {
     const key = args[i]!, value = args[i + 1];
-    if (!['--id', '--to', '--snapshot', '--reply-id', '--spool-dir', '--timeout-ms'].includes(key) ||
+    if (!['--id', '--to', '--snapshot', '--reply-id', '--spool-dir', '--timeout-ms', '--cwd'].includes(key) ||
         flags.has(key) || i + 1 >= split || !value || value.includes('\0')) return invalid();
     flags.set(key, value);
   }
   const id = flags.get('--id'), to = flags.get('--to'), snapshot = flags.get('--snapshot');
   const replyId = flags.get('--reply-id'), spoolDir = flags.get('--spool-dir'), timeout = flags.get('--timeout-ms');
+  const cwd = flags.get('--cwd');
   const timeoutMs = timeout !== undefined && /^\d+(?![\s\S])/.test(timeout) ? Number(timeout) : NaN;
   if (!id || !token(id) || !to || !token(to) || !replyId || !token(replyId) ||
       !snapshot || !isAbsolute(snapshot) || !spoolDir || !isAbsolute(spoolDir) ||
+      (cwd !== undefined && !isAbsolute(cwd)) ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 3600000) return invalid();
   const result = await replyHandoffBus(
-    { id, to, snapshot, replyId, spoolDir, timeoutMs, argv: args.slice(split + 1) }, options, io);
+    { id, to, snapshot, replyId, spoolDir, timeoutMs, cwd, argv: args.slice(split + 1) }, options, io);
   // Static statuses and numeric codes only: no routing IDs, record paths or child/context data.
   (io.stderr ?? process.stderr).write(
     `${JSON.stringify({ workerExit: result.workerExit, delivery: { status: result.delivery.status } })}\n`);

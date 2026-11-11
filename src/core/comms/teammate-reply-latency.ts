@@ -18,6 +18,8 @@ export interface TeammateLatencySummary {
   maxMinutes: number | null;
   withinTarget: number;
   oldestUnanswered: { rowid: number; ageMinutes: number; intent: 'reply' | 'leader' } | null;
+  /** Newest inbound text time in the readable tail (ISO). Not window-limited: it is a contact fact, not a latency stat. Null when no text rows parse. */
+  latestTextAt: string | null;
   sourceState: TeammateSourceState;
 }
 
@@ -45,11 +47,15 @@ export function summarizeTeammateLatency(
   let texts = 0, unanswered = 0, ignorable = 0;
   let oldest: TeammateLatencySummary['oldestUnanswered'] = null;
   let oldestAt = Infinity;
+  let latestTextAt: string | null = null;
+  let latestTextMs = -Infinity;
   const seen = new Set<number>();
   for (const r of rows) {
     if (!validRowid(r.rowid) || typeof r.at !== 'string' || typeof r.text !== 'string' || seen.has(r.rowid)) continue;
     const at = Date.parse(r.at);
-    if (!Number.isFinite(at) || opts.now - at > windowMs) continue;
+    if (!Number.isFinite(at)) continue;
+    if (at > latestTextMs) { latestTextMs = at; latestTextAt = r.at; }
+    if (opts.now - at > windowMs) continue;
     seen.add(r.rowid);
     texts++;
     const intent = classifyTeammateIntent(r.text);
@@ -81,6 +87,7 @@ export function summarizeTeammateLatency(
     maxMinutes: n === 0 ? null : round1(latencies[n - 1]!),
     withinTarget: latencies.filter((m) => m <= targetMinutes).length,
     oldestUnanswered: oldest,
+    latestTextAt,
     sourceState: opts.sourceState ?? 'healthy',
   };
 }
