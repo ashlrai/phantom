@@ -15,14 +15,24 @@ const count = (value: number): string => Number.isSafeInteger(value) && value >=
 
 /** Never forward free text, identifiers, paths, diagnostics, or raw reader objects. */
 export async function emailFleetStatus(runsDir: string | undefined, now: () => Date, readers: EmailFleetStatusReaders = {}): Promise<string> {
-  const at = now();
+  let at: Date | undefined;
+  try {
+    const candidate = now();
+    if (Number.isFinite(candidate.getTime())) at = candidate;
+  } catch {
+    // A failed clock must not discard independent reader results.
+  }
+  const requireTime = (): Date => {
+    if (!at) throw new Error('clock unavailable');
+    return at;
+  };
   const [runs, workers, supply, quota] = await Promise.allSettled([
-    Promise.resolve().then(readers.runs ?? (() => readFleetRunsDirState({ runsDir, now: () => at.getTime() }))),
-    Promise.resolve().then(readers.workers ?? (() => listLiveWorkers({ now: () => at.getTime() }))),
-    Promise.resolve().then(readers.supply ?? (() => readStatusSupply(runsDir, () => at))),
-    Promise.resolve().then(() => (readers.readQuota ?? (() => readQuotaLines(at.getTime())))()),
+    Promise.resolve().then(readers.runs ?? (() => { const time = requireTime(); return readFleetRunsDirState({ runsDir, now: () => time.getTime() }); })),
+    Promise.resolve().then(readers.workers ?? (() => { const time = requireTime(); return listLiveWorkers({ now: () => time.getTime() }); })),
+    Promise.resolve().then(readers.supply ?? (() => { const time = requireTime(); return readStatusSupply(runsDir, () => time); })),
+    Promise.resolve().then(() => (readers.readQuota ?? (() => readQuotaLines(requireTime().getTime())))()),
   ]);
-  const lines = [`Phantom fleet status (${at.toISOString()})`];
+  const lines = [`Phantom fleet status (${at ? at.toISOString() : 'unavailable'})`];
   if (runs.status !== 'fulfilled' || runs.value.sources.status !== 'healthy') {
     lines.push('Runs status: unavailable');
   } else {

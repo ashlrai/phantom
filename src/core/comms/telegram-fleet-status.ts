@@ -13,7 +13,10 @@ export interface TelegramFleetStatusDeps {
   now?: () => Date;
 }
 
-const LANES = ['codex-cmp', 'codex-personal', 'claude', 'devin', 'claude-api', 'codex-local'] as const;
+const LANES = [
+  'codex-cmp', 'codex-personal', 'claude', 'devin', 'claude-api', 'codex-local',
+  'devin-flash', 'gemini', 'zai', 'agy', 'grok', 'cursor',
+] as const;
 const SOURCES = ['status', 'claimed', 'events', 'metrics', 'claudeLane', 'switches', 'drop'] as const;
 const count = (value: number | null | undefined): string =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? String(value) : 'unavailable';
