@@ -76,6 +76,8 @@ import { listSwarms, loadSwarm } from '../swarm/store.js';
 import { buildRollup } from '../observability/rollup.js';
 import { loadGenome } from '../genome/store.js';
 import { recall } from '../genome/recall.js';
+import { buildApprovalsProjection, decideTeamApproval } from '../approvals/surface.js';
+import { DEFAULT_TEAM } from '../teams/index.js';
 import { decideApprovalRequest, listProposals, loadProposal, setStatus } from '../inbox/store.js';
 import { approvalRequestForProposal, isApprovalRequestRevision } from '../inbox/pending-authority.js';
 import {
@@ -2202,6 +2204,52 @@ export async function handleApi(
     }
 
     // ── GET /api/control ────────────────────────────────────────────────────
+    // RQ-DESK-APPROVALS-1: the human "needs you" projection (same JSON as
+    // `phm approvals --json`). Read class, behind the read-session gate.
+    if (path === '/api/approvals' && method === 'GET') {
+      const team = getQueryParam(req.url ?? '/', 'team');
+      sendJson(res, 200, buildApprovalsProjection(team || undefined));
+      return true;
+    }
+
+    // POST /api/approvals/team/:id/decision {decision, team?}: the human's
+    // click is the approval. Gated like every dispatch mutation (404 without
+    // --allow-dispatch, token + JSON); identity is derived locally by
+    // decideApproval (localHumanActor), never taken from the body.
+    if (path.startsWith('/api/approvals/team/') && method === 'POST') {
+      if (!ctx.allowDispatch) {
+        sendJson(res, 404, { error: 'not found' });
+        return true;
+      }
+      const parts = path.slice('/api/approvals/team/'.length).split('/');
+      const id = decodeURIComponent(parts[0] ?? '');
+      if (!id || parts[1] !== 'decision' || parts.length !== 2) {
+        sendJson(res, 404, { error: `not found: ${method} ${path}` });
+        return true;
+      }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let body: unknown;
+      try {
+        body = JSON.parse(await readBody(req, 4096));
+      } catch {
+        sendJson(res, 400, { error: 'expected a bounded JSON decision' });
+        return true;
+      }
+      const b = body as Record<string, unknown> | null;
+      if (!b || typeof b !== 'object' || Array.isArray(b) || Object.keys(b).some((k) => k !== 'decision' && k !== 'team')
+        || (b['decision'] !== 'approve' && b['decision'] !== 'deny') || (b['team'] !== undefined && typeof b['team'] !== 'string')) {
+        sendJson(res, 400, { error: 'expected decision (approve or deny) and optional team' });
+        return true;
+      }
+      try {
+        sendJson(res, 200, decideTeamApproval((b['team'] as string | undefined) || DEFAULT_TEAM, id, b['decision']));
+      } catch (e) {
+        // Agent-process env, non-owner/admin, stale or already-decided: all refusals, none applied.
+        sendJson(res, 403, { error: e instanceof Error ? e.message : 'approval refused' });
+      }
+      return true;
+    }
+
     // M61: unified Mission Control snapshot. No auth — same read class as
     // /api/fleet and /api/daemon. Never throws; each section degrades independently.
     if (path === '/api/control' && method === 'GET') {
