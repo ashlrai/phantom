@@ -1322,6 +1322,8 @@
     "src/core/verse/turn-queue.ts",
     "src/core/verse/turn-status.ts",
     "src/core/verse/types.ts",
+    "src/core/verse/ui-appearance-api.ts",
+    "src/core/verse/ui-appearance-file.ts",
     "src/core/verse/verse-api.ts",
     "src/core/verse/verse-log.ts",
     "src/core/verse/verse-mcp-grants.ts",
