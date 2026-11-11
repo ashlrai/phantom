@@ -254,7 +254,7 @@
 }
 
 /* One per MOUNTED surface. Only the current one is visible; the others keep
-   their state behind it (`hidden` + `inert`, set by VerseApp). `[hidden]`
+   their state behind it (`hidden` + `inert`, set by PhantomApp). `[hidden]`
    must be restated: an author `display` beats the UA's `display: none`. */
 /* The mode row already occupies the native titlebar band. Child headers and
    drag handles must not reserve it again below that row. In focus mode the
@@ -367,9 +367,9 @@
 .shell[data-home-narrow] > .rail { display: none; }
 
 /* Narrow layout (<960px, or pinned in Settings ▸ Appearance ▸ Layout). The
-   rail is icon-only (VerseApp never expands it), the tab row sits above the
+   rail is icon-only (PhantomApp never expands it), the tab row sits above the
    Leader conversation, and Resources floats as a drawer instead of docking
-   (VerseApp withholds data-resources="docked"). Same tree as wide. */
+   (PhantomApp withholds data-resources="docked"). Same tree as wide. */
 .shell[data-layout='narrow'] > .section > .workModes {
   gap: 0;
   padding-inline: var(--space-2);
