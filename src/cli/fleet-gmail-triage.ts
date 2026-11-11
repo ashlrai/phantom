@@ -30,18 +30,23 @@ export async function cmdFleetGmailTriage(args: string[]): Promise<number> {
     classify: async message => classifyGmailHeuristic(message), composeReply: async message => holdingReply(message),
     summarizeUpdate: async message => summarizeUpdateLine(message), runsDir });
   const plan = archivePlan(messages, classifications);
+  let persistence: 'saved' | 'skipped' | 'failed' = 'skipped';
   if (save) {
     try {
       writeGmailTriageLatest(runsDir, { dir, scanned: report.scanned, updates: report.updates.length, drafted: report.drafted, review: report.review,
         failed: report.failed, unreadInSample: plan.unread, target: plan.target, archiveCandidateCount: plan.archiveCandidates.length });
-    } catch { console.error('Could not save the triage summary.'); }
+      persistence = 'saved';
+    } catch {
+      persistence = 'failed';
+      console.error('Could not save the triage summary; the shared latest result was not updated.');
+    }
   }
-  if (json) console.log(JSON.stringify({ schema: 'fleet.gmail-triage.v1', report, archivePlan: plan }));
+  if (json) console.log(JSON.stringify({ schema: 'fleet.gmail-triage.v1', report, archivePlan: plan, persistence }));
   else {
     console.log(`Scanned: ${report.scanned}; updates: ${report.updates.length}; drafted: ${report.drafted}; review: ${report.review}; failed: ${report.failed}`);
     for (const update of report.updates) console.log(update);
     console.log(`Archive candidates: ${plan.archiveCandidates.length} (sample unread: ${plan.unread}, target: ${plan.target})`);
     for (const id of plan.archiveCandidates.slice(0, 10)) console.log(id);
   }
-  return 0;
+  return persistence === 'failed' ? 1 : 0;
 }
