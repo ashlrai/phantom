@@ -236,19 +236,17 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
       const message = imessageChannelMessage(msg);
       if (!isVerifiedMasonHandle(msg.handle, cfg)) {
         result.notMason++;
-        if (recordTeammateText(msg, deps.runsDir, now())) {
+        // Keep protocol frames out of the teammate findings mirror.
+        const frame = (deps.patchFrame ?? recordPatchFrame)(msg, { runsDir: deps.runsDir, now });
+        if (frame.handled) {
+          frames.frames++;
+          if (frame.outcome === 'completed') frames.completed++;
+          else if (frame.outcome === 'rejected') frames.rejected++;
+          else if (frame.outcome === 'refused') frames.refused++;
+          else if (frame.outcome === 'duplicate') frames.duplicate++;
+          else if (frame.outcome === 'unavailable') { result.deferred = true; break; }
+        } else if (recordTeammateText(msg, deps.runsDir, now())) {
           result.teammate++;
-          // Protocol frames are consumed by the durable transfer state using
-          // the raw text; only a ledger failure can lose a frame, so it defers.
-          const frame = (deps.patchFrame ?? recordPatchFrame)(msg, { runsDir: deps.runsDir, now });
-          if (frame.handled) {
-            frames.frames++;
-            if (frame.outcome === 'completed') frames.completed++;
-            else if (frame.outcome === 'rejected') frames.rejected++;
-            else if (frame.outcome === 'refused') frames.refused++;
-            else if (frame.outcome === 'duplicate') frames.duplicate++;
-            else if (frame.outcome === 'unavailable') { result.deferred = true; break; }
-          }
         } else {
           // A teammate's artifact is not receipted until its local record is durable.
           result.deferred = true;
