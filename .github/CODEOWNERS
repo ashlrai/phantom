@@ -366,6 +366,7 @@
 /test/engines-stream-family-310b.test.ts @masonwyatt23
 /test/enroll-secrets-offer.test.ts @masonwyatt23
 /test/enrollment-read-directory-churn.test.ts @masonwyatt23
+/test/episodic-memory.test.ts @masonwyatt23
 /test/execution-feedback-case.test.ts @masonwyatt23
 /test/execution-leases-310b.test.ts @masonwyatt23
 /test/external-skill-audit-trust-roots.test.ts @masonwyatt23
@@ -524,6 +525,7 @@
 /test/helpers/router-replay.ts @masonwyatt23
 /test/helpers/sidecar-ast-gate.ts @masonwyatt23
 /test/host-merge-310b.test.ts @masonwyatt23
+/test/idea-verdict-route.test.ts @masonwyatt23
 /test/improve-api.test.ts @masonwyatt23
 /test/improve-backlog-leverage.test.ts @masonwyatt23
 /test/improve-boundary.test.ts @masonwyatt23
