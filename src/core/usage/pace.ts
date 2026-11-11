@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -62,10 +62,20 @@ export function projectUsagePace(raw: unknown, now = Date.now()): PaceSnapshot {
   }) };
 }
 
-export async function readUsagePace(path = join(homedir(), '.ashlr-runs', 'queue', 'status.json')): Promise<PaceSnapshot> {
+export async function readUsagePace(path = join(homedir(), '.ashlr-runs', 'queue', 'status.json'), openFile: typeof open = open): Promise<PaceSnapshot> {
   try {
-    const text = await readFile(path, 'utf8');
-    if (text.length > 1024 * 1024) return projectUsagePace(null);
-    return projectUsagePace(JSON.parse(text) as unknown);
+    const handle = await openFile(path, 'r');
+    try {
+      const buffer = Buffer.alloc(1024 * 1024 + 1);
+      let length = 0;
+      while (length < buffer.length) {
+        const { bytesRead } = await handle.read(buffer, length, buffer.length - length, null);
+        if (bytesRead === 0) break;
+        length += bytesRead;
+      }
+      if (length > 1024 * 1024) return projectUsagePace(null);
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, length));
+      return projectUsagePace(JSON.parse(text) as unknown);
+    } finally { await handle.close(); }
   } catch { return projectUsagePace(null); }
 }
