@@ -218,6 +218,8 @@ const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
   // The desktop command center's library files and run handoffs.
   'fleet-library-files': 'handleFleetLibraryFilesApi',
   'fleet-handoffs': 'handleFleetHandoffsApi',
+  // Merges pane: where PRs wait (read-only merge-latency report).
+  'fleet-merge-latency': 'handleMergeLatencyApi',
 };
 
 const allPrefixes = WORKBENCH_ROUTE_FAMILIES.flatMap((family) => family.prefixes.map((prefix) => ({ family: family.id, prefix })));
