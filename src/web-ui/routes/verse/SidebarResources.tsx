@@ -7,6 +7,7 @@ import { apiGet } from '../../data/client.js';
 import { openFleetWorkspace } from './dock/dock-store.js';
 import { curatedWorkspace } from './fleet-hub/fleet-hub-model.js';
 import { DotResourceRow } from './resources/DotResourceRow.js';
+import { SpendDown } from './resources/SpendDown.js';
 import { usePanes } from './panes/pane-registry.js';
 import { setFocusMode } from './shell/focus-mode.js';
 import { usePollWhileVisible } from './shell/section-visibility.js';
