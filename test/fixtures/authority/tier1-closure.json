@@ -362,6 +362,7 @@
     "src/core/comms/imessage-findings-bridge.ts",
     "src/core/comms/imessage-inbox-bridge.ts",
     "src/core/comms/imessage-outbox.ts",
+    "src/core/comms/imessage-patch-transfer.ts",
     "src/core/comms/imessage-teammate-inbox.ts",
     "src/core/comms/imessage-teammate-transport.ts",
     "src/core/comms/imessage-teammate-worker.ts",
