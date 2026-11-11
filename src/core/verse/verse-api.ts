@@ -255,6 +255,8 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   { id: 'fleet-inbox-acks', load: async () => (await import('./fleet-inbox-acks-api.js')).handleFleetInboxAcksApi },
   { id: 'fleet-apps', load: async () => (await import('./fleet-apps-api.js')).handleFleetAppsApi },
   { id: 'fleet-standby' as MountedApiModuleId, load: async () => (await import('./fleet-standby-api.js')).handleFleetStandbyApi },
+  // Teammate iMessage reply age: GET /api/verse/comms/teammate-reply-age (core/verse/comms-teammate-reply-age-api.ts); read-only, times and flags only.
+  { id: 'comms-teammate-reply-age' as MountedApiModuleId, load: async () => (await import('./comms-teammate-reply-age-api.js')).handleCommsTeammateReplyAgeApi },
   // Self-tick last-run record: GET /api/verse/fleet/self-tick (core/verse/fleet-self-tick-api.ts); read-only, never takes the tick lock.
   { id: 'fleet-self-tick', load: async () => (await import('./fleet-self-tick-api.js')).handleFleetSelfTickApi },
   // Fleet graph registry: GET /api/verse/fleet/graph (core/verse/fleet-graph-api.ts); read-only.
