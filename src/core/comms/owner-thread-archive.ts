@@ -38,10 +38,23 @@ function validMessage(value: unknown, archive: Archive): value is OwnerThreadMes
     (m.fanout === undefined || (Array.isArray(m.fanout) && m.fanout.every(isOwnerChannel)));
 }
 
+// Overlapping archive ranges can carry the same message more than once. Copies
+// of one canonical message are identical in every contract field, so the full
+// record is the merge key: distinct records (even at the same seq) are kept,
+// never blended. Unknown extra fields do not participate in identity.
+function canonicalKey(message: OwnerThreadMessage): string {
+  return JSON.stringify([
+    message.seq, message.id, message.idempotencyKey, message.channel, message.senderId,
+    message.direction, message.at, message.text, message.replyTo ?? null,
+    message.fanout ?? null, message.channelRef ?? null,
+  ]);
+}
+
 export function readOwnerThreadHistory(options: { runsDir: string }, page: { before?: number; limit?: number } = {}) {
   const archives = listOwnerThreadArchives(options);
   const limit = Number.isSafeInteger(page.limit) && page.limit! > 0 ? Math.min(page.limit!, 500) : 50;
   let remainingBytes = TOTAL_BYTES; let skipped = 0;
+  const seen = new Set<string>();
   const messages: OwnerThreadMessage[] = [];
   const dir = join(options.runsDir, 'leader');
   // Prefix maxima account for ranges that extend beyond later-starting archives.
@@ -64,7 +77,11 @@ export function readOwnerThreadHistory(options: { runsDir: string }, page: { bef
       if (record.v !== 1 || record.threadId !== OWNER_THREAD_ID || !Array.isArray(record.messages) ||
           !record.messages.every(message => validMessage(message, archive))) throw new Error('invalid archive');
       for (const message of record.messages as OwnerThreadMessage[]) {
-        if (page.before === undefined || message.seq < page.before) messages.push({ ...message, text: scrubSecrets(message.text) });
+        if (page.before !== undefined && message.seq >= page.before) continue;
+        const key = canonicalKey(message);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        messages.push({ ...message, text: scrubSecrets(message.text) });
       }
       messages.sort((a, b) => a.seq - b.seq);
       if (messages.length > limit) messages.splice(0, messages.length - limit);
