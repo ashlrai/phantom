@@ -2,6 +2,7 @@
  * Counts and sender addresses only: no subjects, bodies or message ids. The plan proposes; nothing here moves mail. */
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { acquireLocalStoreLock, ownsLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 
 export const GMAIL_ARCHIVE_PLAN_LATEST_SCHEMA = 'fleet.gmail-archive-plan-latest.v1';
 const MAX_BYTES = 64 * 1024;
@@ -55,28 +56,39 @@ export function readGmailArchivePlanLatest(runsDir: string): GmailArchivePlanLat
   }
 }
 
-/** Replaces the plan for this inbox and keeps the others. Atomic: tmp file, then rename. */
+/** Replaces the plan for this inbox and keeps the others under a cross-process lock. */
 export function writeGmailArchivePlanLatest(runsDir: string, input: GmailArchivePlanInput): void {
-  const { now, ...rest } = input;
-  const entry: GmailArchivePlanEntry = {
-    ...rest, inbox: rest.inbox.slice(0, MAX_LABEL), at: (now?.() ?? new Date()).toISOString(),
-    topSenders: rest.topSenders.slice(0, MAX_TOP_SENDERS).map(s => ({ sender: s.sender.slice(0, MAX_SENDER), count: s.count })),
-  };
-  const others = (readGmailArchivePlanLatest(runsDir)?.plans ?? []).filter(p => p.inbox !== entry.inbox);
-  const record: GmailArchivePlanLatest = { schema: GMAIL_ARCHIVE_PLAN_LATEST_SCHEMA, plans: [entry, ...others].slice(0, MAX_INBOXES) };
   const path = gmailArchivePlanLatestPath(runsDir);
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
-  const fd = openSync(tmp, 'wx', 0o600);
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32' && (statSync(dir).mode & 0o200) === 0) throw new Error('Gmail archive plan directory is not writable');
+  const lock = acquireLocalStoreLock(`${path}.lock`, 0, { anchorPath: dir });
+  if (!lock) throw new Error('Gmail archive plan is locked or unavailable');
   try {
-    writeSync(fd, `${JSON.stringify(record)}\n`);
-    fsyncSync(fd);
-  } catch (err) {
+    const { now, ...rest } = input;
+    const entry: GmailArchivePlanEntry = {
+      ...rest, inbox: rest.inbox.slice(0, MAX_LABEL), at: (now?.() ?? new Date()).toISOString(),
+      topSenders: rest.topSenders.slice(0, MAX_TOP_SENDERS).map(s => ({ sender: s.sender.slice(0, MAX_SENDER), count: s.count })),
+    };
+    const others = (readGmailArchivePlanLatest(runsDir)?.plans ?? []).filter(p => p.inbox !== entry.inbox);
+    const record: GmailArchivePlanLatest = { schema: GMAIL_ARCHIVE_PLAN_LATEST_SCHEMA, plans: [entry, ...others].slice(0, MAX_INBOXES) };
+    const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
+    const fd = openSync(tmp, 'wx', 0o600);
+    try {
+      writeSync(fd, `${JSON.stringify(record)}\n`);
+      fsyncSync(fd);
+    } catch (err) {
+      closeSync(fd);
+      try { unlinkSync(tmp); } catch { /* best effort */ }
+      throw err;
+    }
     closeSync(fd);
-    try { unlinkSync(tmp); } catch { /* best effort */ }
-    throw err;
+    try {
+      if (!ownsLocalStoreLock(lock)) throw new Error('Gmail archive plan lock lost');
+      renameSync(tmp, path);
+    }
+    catch (err) { try { unlinkSync(tmp); } catch { /* best effort */ } throw err; }
+  } finally {
+    releaseLocalStoreLock(lock);
   }
-  closeSync(fd);
-  try { renameSync(tmp, path); }
-  catch (err) { try { unlinkSync(tmp); } catch { /* best effort */ } throw err; }
 }

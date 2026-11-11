@@ -29,6 +29,7 @@ import { openDockPane } from '../dock/dock-store.js';
 import { paneLinkUrl } from '../dock/pane-link.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { JobRefs } from '../fleet/JobRefs.js';
+import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import type { PaneHost } from '../panes/pane-registry.js';
 import { COMMS_STATUS_PATH, readCommsStatus } from '../fleet-inbox/comms-status-model.js';
 import { UNIFIED_INBOX_PATH, readUnifiedInboxView } from '../fleet-inbox/unified-inbox-model.js';
@@ -40,10 +41,16 @@ import { updateStatusQuery } from '../sections/update-status-queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { useActivity } from '../shell/useActivity.js';
 import { buildFeed, feedPaneLabel, filterFeed, type FeedFilter, type FeedKind } from './feed-model.js';
+import { buildAwayDigest } from './away-digest.js';
+import { AwayDigestCard } from './AwayDigestCard.js';
 import { FeedAskButton } from './FeedAskButton.js';
+import { feedTellText } from './feed-tell-text.js';
 import { releaseFeedItems } from './release-feed-items.js';
 import { isDismissed, useFeedDismissals } from './feed-dismiss-store.js';
 import { countNew, firstOlderIndex, useFeedSeen } from './feed-seen-store.js';
+import { useVerseUi } from '../useVerseUi.js';
+import { setFeedMutedKinds } from '../verse-ui-store.js';
+import { isFeedItemVisible } from './feed-mute.js';
 import styles from './feed.module.css';
 
 const unifiedInboxQuery: QueryDef<unknown> = { key: 'verse-fleet-comms-unified-inbox', fetch: signal => apiGet(UNIFIED_INBOX_PATH, signal) };
@@ -95,6 +102,8 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
   const refetchBus = useRefetch(agentBusPageQuery(0, 50));
   usePollWhileVisible(() => { refetchShared(); refetchLeader(); refetchRuns(); refetchOwner(); refetchBus(); refetchTeammate(); }, FEED_POLL_MS, { enabled: visible });
   const now = useNow(30_000);
+  const { feedMutedKinds } = useVerseUi();
+  const [showMuted, setShowMuted] = useState(false);
   const [filter, setFilter] = useState<FeedFilter>('all');
   const { map: dismissedMap, dismissItem, restoreItem } = useFeedDismissals();
   const [showDismissed, setShowDismissed] = useState(false);
@@ -150,23 +159,28 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
   }), [shared.data, leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data, inboxView, teammate?.error, comms, inboxPlans.data, inboxPlans.error]);
   const releaseItems = useMemo(() => releaseFeedItems(releaseStages.data, nativeUpdates, new Date().toISOString()), [releaseStages.data, nativeUpdates]);
   const combinedFeed = useMemo(() => [...feed, ...releaseItems].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 100), [feed, releaseItems]);
-  const filtered = filterFeed(combinedFeed, filter);
+  const filtered = filterFeed(combinedFeed.filter(item => isFeedItemVisible(item, feedMutedKinds)), filter);
   const shown = filtered.filter(item => !isDismissed(item, dismissedMap));
   const dismissed = filtered.filter(item => isDismissed(item, dismissedMap));
   const newCount = countNew(shown, seenAt);
   const olderAt = firstOlderIndex(shown, seenAt);
+  // The away summary covers the whole stream, not the filtered view; dismissed items are already seen.
+  const awayDigest = useMemo(
+    () => buildAwayDigest(combinedFeed.filter(item => !isDismissed(item, dismissedMap)), seenAt, now),
+    [combinedFeed, dismissedMap, seenAt, now]);
 
   // Leaving the Feed (hidden, or unmounted) after it was visible marks what it showed as seen,
   // so the count stays while he reads and is gone next time.
   const newestAt = useRef<string | undefined>(undefined);
   // Only while visible: the render that hides the Feed must not replace what it last showed.
-  if (visible) newestAt.current = combinedFeed.find(item => !isDismissed(item, dismissedMap))?.at;
+  if (visible) newestAt.current = combinedFeed.find(item => isFeedItemVisible(item, feedMutedKinds) && !isDismissed(item, dismissedMap))?.at;
   useEffect(() => {
     if (!visible) return undefined;
     return () => { if (newestAt.current) markSeen(newestAt.current); };
   }, [visible, markSeen]);
 
   return <div className={styles.root}>
+    {awayDigest ? <AwayDigestCard digest={awayDigest} onFilter={setFilter} onDismiss={() => markSeen(awayDigest.newestAt)} /> : null}
     <section aria-labelledby="feed-running-title" className={styles.running}>
       <h2 id="feed-running-title">Running chats</h2>
       {activity.status === 'stale' ? <CardNote tone="unknown">Activity is stale; showing the last successful read.</CardNote> : null}
@@ -203,24 +217,30 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
         {newCount > 0 && i === olderAt ? <li role="separator" aria-label="Earlier" className={styles.divider}>Earlier</li> : null}
         <li data-kind={item.kind}>
         <Card title={<JobRefs text={item.title} onOpenJob={openJob} />} caption={<time dateTime={item.at} title={new Date(item.at).toLocaleString('en-US')}>{formatRelative(item.at, now)}</time>}
-          actions={<><FeedAskButton item={item} /><span className={styles.kind} data-kind={item.kind}>{item.label ?? KIND_LABEL[item.kind]}</span></>}>
+          actions={<><FeedAskButton item={item} /><details><summary aria-label={`More actions for ${item.title}`}>⋯</summary><button type="button" onClick={() => setFeedMutedKinds([...feedMutedKinds, item.kind])}>Mute {KIND_LABEL[item.kind]}</button></details><span className={styles.kind} data-kind={item.kind}>{item.label ?? KIND_LABEL[item.kind]}</span></>}>
           {item.body ? <p className={styles.body}><JobRefs text={item.body} onOpenJob={openJob} /></p> : null}
           {/* Dot's texts keep their older "Open inbox" wording; every other owned item says where it goes. */}
           {item.kind === 'teammate' && item.pane ? <button type="button" className={styles.link} onClick={() => openPane(item.pane!)}>Open inbox</button>
             : item.pane && feedPaneLabel(item.pane) ? <a className={styles.link} href={paneLinkUrl(item.pane, null, false) ?? undefined}
               aria-label={`${feedPaneLabel(item.pane)}: ${item.title}`} onClick={event => { event.preventDefault(); openPane(item.pane!); }}>{feedPaneLabel(item.pane)}</a> : null}
           {item.href ? <a className={styles.link} href={item.href} target="_blank" rel="noopener noreferrer">Open</a> : null}
+          <button type="button" className={styles.dismiss} aria-label={`Tell the Leader about ${item.title}`} onClick={() => openInterjectDialog({ prefill: feedTellText(item) })}>Tell the Leader</button>
           <button type="button" className={styles.dismiss} aria-label={`Dismiss ${item.title}`} onClick={() => dismissItem(item)}>Dismiss</button>
         </Card>
         </li>
       </Fragment>)}
     </ol> : null}
+    {feedMutedKinds.length ? <div className={styles.dismissedBar}>
+      <span>{feedMutedKinds.length} kinds muted</span> · <button type="button" className={styles.dismiss} aria-expanded={showMuted} onClick={() => setShowMuted(v => !v)}>{showMuted ? 'Hide' : 'Show'}</button>
+      {showMuted ? feedMutedKinds.map(kind => <button key={kind} type="button" className={styles.dismiss} onClick={() => setFeedMutedKinds(feedMutedKinds.filter(k => k !== kind))}>Unmute {kind}</button>) : null}
+    </div> : null}
     {dismissed.length ? <div className={styles.dismissedBar}>
       <span>{dismissed.length} dismissed</span> · <button type="button" className={styles.dismiss} aria-expanded={showDismissed} onClick={() => setShowDismissed(v => !v)}>{showDismissed ? 'Hide' : 'Show'}</button>
     </div> : null}
     {showDismissed && dismissed.length ? <ol className={styles.list} aria-label="Dismissed">
       {dismissed.map(item => <li key={item.id} data-kind={item.kind} className={styles.dimmed}>
         <Card title={item.title} caption={<time dateTime={item.at}>{formatRelative(item.at, now)}</time>}>
+          <button type="button" className={styles.dismiss} aria-label={`Tell the Leader about ${item.title}`} onClick={() => openInterjectDialog({ prefill: feedTellText(item) })}>Tell the Leader</button>
           <button type="button" className={styles.dismiss} aria-label={`Restore ${item.title}`} onClick={() => restoreItem(item)}>Restore</button>
         </Card>
       </li>)}

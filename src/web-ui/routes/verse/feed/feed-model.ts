@@ -18,6 +18,7 @@
  * whose time does not parse, sorts newest first and caps the stream. Every
  * text is untrusted (model output, PR titles) and is rendered as plain text.
  */
+import { groupMergeBursts } from './feed-merge-burst.js';
 import type { FeedReport } from '../../../../core/feed.js';
 import { buildCommsDigestFeedItems, type CommsDigestInput } from '../../../../core/fleet/feed-comms-digest.js';
 import type { AppNotification } from '../../../components/notifications/types.js';
@@ -272,9 +273,8 @@ export function buildFeed(sources: FeedSources, limit = FEED_LIMIT, now = Date.n
     if (seen.has(item.id)) continue;
     seen.add(item.id);
     out.push(item);
-    if (out.length >= limit) break;
   }
-  return out;
+  return groupMergeBursts(out).slice(0, Math.max(0, limit));
 }
 
 export function filterFeed(items: readonly FeedItem[], filter: FeedFilter): FeedItem[] {
