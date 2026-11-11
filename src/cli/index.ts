@@ -2222,6 +2222,11 @@ async function main(): Promise<void> {
         process.exitCode = await cmdOrg(rest);
         break;
       }
+      case 'approvals': {
+        const { cmdApprovals } = await import('./approvals.js');
+        process.exitCode = await cmdApprovals(rest);
+        break;
+      }
       case 'team': {
         const { cmdTeam } = await import('./team.js');
         process.exitCode = await cmdTeam(rest);
