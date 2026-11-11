@@ -35,6 +35,16 @@ function notFound(res: ServerResponse): void {
   sendJson(res, 404, { error: 'not found' });
 }
 
+/** Shared dispatch and token gate for attachment reads. */
+export function authorizeLeaderAttachmentRead(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse): boolean {
+  if (!ctx.allowDispatch) { notFound(res); return false; }
+  if (!safeEqual(headerValue(req, 'x-ashlr-token'), ctx.token)) {
+    sendJson(res, 401, { error: 'unauthorized: missing or invalid x-ashlr-token' });
+    return false;
+  }
+  return true;
+}
+
 /** `name` is the path segment after `/api/verse/leader/attachment/`. */
 export async function handleLeaderAttachmentRead(
   ctx: VerseApiContext,
@@ -44,11 +54,7 @@ export async function handleLeaderAttachmentRead(
   name: string,
 ): Promise<boolean> {
   if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
-  if (!ctx.allowDispatch) { notFound(res); return true; }
-  if (!safeEqual(headerValue(req, 'x-ashlr-token'), ctx.token)) {
-    sendJson(res, 401, { error: 'unauthorized: missing or invalid x-ashlr-token' });
-    return true;
-  }
+  if (!authorizeLeaderAttachmentRead(ctx, req, res)) return true;
   const match = LEADER_ATTACHMENT_NAME_RE.exec(name);
   if (match === null) { notFound(res); return true; }
   const mime = MIME_BY_EXT[match[1] as keyof typeof MIME_BY_EXT];
