@@ -86,19 +86,24 @@ export function readRows(runsDir?: string): { rows: TeammateRow[]; state: Teamma
   const read = readPrivateFileTailCapped(file(runsDir), STORE_READ_BYTES);
   if (read === null) return { rows: [], state: 'missing' };
   let raw = read.text;
+  let degraded = false;
   if (read.truncated) {
     // Torn first line is dropped; the newest rows (the only ones rowid
     // dedupe and unanswered-text reads ever need) live at the tail.
     const firstBreak = raw.indexOf('\n');
+    if (firstBreak < 0) degraded = true;
     raw = firstBreak < 0 ? '' : raw.slice(firstBreak + 1);
   }
   const rows: TeammateRow[] = [];
-  let degraded = read.truncated;
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
     try {
       const row = JSON.parse(line) as unknown;
-      if (row && typeof row === 'object') rows.push(row as TeammateRow); else degraded = true;
+      if (row && typeof row === 'object' && !Array.isArray(row)) {
+        const entry = row as TeammateRow;
+        if (isTextRow(entry) || validRowid(entry.answered)) rows.push(entry);
+        else degraded = true;
+      } else degraded = true;
     } catch {
       degraded = true;
     }
