@@ -5,6 +5,7 @@
  */
 import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { z } from 'zod';
 import { pullOfficialUsageSensors, type UsageSensorPullOptions } from '../sensor-pull.js';
 import {
   USAGE_SENSOR_SCHEMA, USAGE_SENSOR_STALE_MS, parseUsageSensorSnapshot, presentUsageSensors,
@@ -169,6 +170,47 @@ function parseState(raw: unknown): AlertState {
   return { fired: out };
 }
 
+/** Sites whose readings live only in `extras` (the sensor schema has no lane for them). */
+const EXTRA_SITES = USAGE_SITES.filter(s => s.lane === null);
+
+const isoTimestamp = z.string().refine(value => {
+  const time = Date.parse(value);
+  return Number.isFinite(time) && new Date(time).toISOString() === value;
+});
+
+const persistedExtraSchema = z.object({
+  site: z.string().min(1),
+  budgetLane: z.string().min(1),
+  used: z.number().finite().nonnegative(),
+  limit: z.number().finite().positive(),
+  unit: z.enum(['percent', 'acu']),
+  observedAt: isoTimestamp,
+  resetAt: z.unknown(),
+}).strict();
+
+/**
+ * A persisted extra is evidence only while it is fresh and still inside the
+ * allowance window it was observed in. A known reset that has passed ends the
+ * window: the old numbers may be a pre-reset allowance and are omitted until a
+ * fresh reading exists. Missing or invalid reset evidence stays unknown (null)
+ * rather than fabricating a reset, and malformed counts, impossible limits and
+ * invalid observation timestamps reject the row entirely.
+ */
+function usablePersistedExtra(raw: unknown, nowMs: number): ExtraReading | null {
+  const parsed = persistedExtraSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  const d = parsed.data;
+  const site = EXTRA_SITES.find(s => s.id === d.site);
+  if (!site || d.budgetLane !== site.budgetLane) return null;
+  if (d.unit === 'percent' && (d.limit !== 100 || d.used > 100)) return null;
+  const observedMs = Date.parse(d.observedAt);
+  if (observedMs > nowMs || observedMs + USAGE_SENSOR_STALE_MS <= nowMs) return null;
+  const resetMs = typeof d.resetAt === 'string' ? Date.parse(d.resetAt) : NaN;
+  const resetAt = Number.isFinite(resetMs) && new Date(resetMs).toISOString() === d.resetAt ? d.resetAt : null;
+  if (resetAt !== null && resetMs <= nowMs) return null;
+  return { site: site.id, budgetLane: site.budgetLane, used: d.used, limit: d.limit, unit: d.unit, resetAt, observedAt: d.observedAt };
+}
+
 export async function runLiveUsageTick(options: LiveTickOptions): Promise<LiveTickResult> {
   const nowMs = options.nowMs ?? Date.now();
   const interval = options.intervalMs ?? 5 * 60_000;
@@ -177,8 +219,16 @@ export async function runLiveUsageTick(options: LiveTickOptions): Promise<LiveTi
   const snapshotPath = join(options.queueDir, 'usage-live.json');
   const prior = await readJson(snapshotPath);
   const history = parseUsageSensorSnapshot(prior);
-  const priorExtras = (prior && typeof prior === 'object' && Array.isArray((prior as { extras?: unknown }).extras)
-    ? (prior as { extras: ExtraReading[] }).extras : []);
+  const priorExtras: unknown[] = (prior && typeof prior === 'object' && Array.isArray((prior as { extras?: unknown }).extras)
+    ? (prior as { extras: unknown[] }).extras : []);
+  // Persisted extras count only while fresh and inside their observed window.
+  const persistedExtras = new Map<UsageSite['id'], ExtraReading>();
+  for (const raw of priorExtras) {
+    const e = usablePersistedExtra(raw, nowMs);
+    if (!e) continue;
+    const prev = persistedExtras.get(e.site);
+    if (!prev || Date.parse(e.observedAt) > Date.parse(prev.observedAt)) persistedExtras.set(e.site, e);
+  }
 
   // 1. Official readouts.
   const pulled = await pullOfficialUsageSensors({ ...options.official, nowMs });
@@ -201,9 +251,8 @@ export async function runLiveUsageTick(options: LiveTickOptions): Promise<LiveTi
       if (r.status === 'needs-signin') { needsSignin.push({ site: r.site, label: r.label, url: r.url }); continue; }
       if (r.status !== 'ok') continue;
       if (site.lane === null) {
-        const before = priorExtras.filter(e => e?.site === site.id).map(e => e.resetAt ?? null);
         extras.push({ site: site.id, budgetLane: site.budgetLane, used: r.used, limit: r.limit, unit: r.unit,
-          resetAt: snapReset(r.resetAt, before), observedAt: r.observedAt });
+          resetAt: snapReset(r.resetAt, [persistedExtras.get(site.id)?.resetAt ?? null]), observedAt: r.observedAt });
       } else {
         const before = history.filter(h => h.lane === site.lane && h.source === 'browser-visible').map(h => h.resetAt);
         fresh.push({ lane: site.lane, observedAt: r.observedAt, source: 'browser-visible',
@@ -221,10 +270,12 @@ export async function runLiveUsageTick(options: LiveTickOptions): Promise<LiveTi
   const kept = [...byLane.values()].flatMap(rows =>
     rows.sort((a, b) => Date.parse(a.observedAt) - Date.parse(b.observedAt)).slice(-HISTORY_PER_LANE));
   const report = presentUsageSensors(kept, nowMs);
-  // A failed browser pass keeps the last extra until its own reset passes; stale ones are dropped by the alert gate.
-  const liveExtras = extras.length ? extras : (options.browser ? [] : priorExtras.filter(e =>
-    typeof e?.budgetLane === 'string' && typeof e.used === 'number' && typeof e.limit === 'number'
-    && Date.parse(e.observedAt) + USAGE_SENSOR_STALE_MS > nowMs));
+  // A missed or failed browser pass keeps each site's last extra only while it
+  // is fresh and still inside its observed allowance window; a known reset ends
+  // it, and a fresh reading for one site never resurrects an expired sibling.
+  const freshSites = new Set(extras.map(e => e.site));
+  const liveExtras = [...extras];
+  for (const [site, e] of persistedExtras) if (!freshSites.has(site)) liveExtras.push(e);
 
   // 4. Alerts, deduped across ticks.
   const state = parseState(await readJson(join(options.queueDir, 'usage-live-state.json')));
