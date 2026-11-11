@@ -1,7 +1,8 @@
 /**
  * routes/verse/goals-pane/GoalsPane.tsx: every open goal, its progress, its
  * next milestone and the mission state, beside the Leader thread. Goals change
- * through `ashlr goals`; the only write here is a steering line to the Leader. Each source fails on
+ * through `ashlr goals` or the Add form; the only other write here is a
+ * steering line to the Leader. Each source fails on
  * its own. All text is untrusted and rendered as React text, never HTML.
  */
 import { useMemo } from 'react';
@@ -16,6 +17,7 @@ import { paneLinkUrl } from '../dock/pane-link.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { repoBacklogView } from '../fleet-merges/repo-backlog-model.js';
 import { repoBacklogQuery } from '../fleet-merges/repo-backlog-queries.js';
+import { GoalAddForm } from './GoalAddForm.js';
 import { GoalSteer } from './GoalSteer.js';
 import { GoalMetric, previousDayValue } from './GoalMetric.js';
 import { goalLine, goalsHeadline, openGoals } from './goals-pane-model.js';
@@ -73,10 +75,11 @@ export function GoalsPane({ visible = true, host }: Pick<Partial<PaneProps>, 'vi
         <span className={styles.metricValue}>{prGoal.value}</span>
         {prGoal.trend ? <span>{prGoal.trend}</span> : null}
       </p>
+      <GoalAddForm />
       {goalsFailed ? <CardNote tone="danger">{goals.error?.message ?? 'Could not read goals.'}</CardNote> : null}
       {loading ? <CardNote>Loading goals</CardNote> : null}
       {goals.data && lines.length === 0 ? (
-        <CardNote>No open goals. Add one with `ashlr goals add "&lt;objective&gt;"`.</CardNote>
+        <CardNote>No open goals. Add one above, or with `ashlr goals add "&lt;objective&gt;"`.</CardNote>
       ) : null}
       {lines.map(line => (
         <Card key={line.id} title={line.objective} caption={line.status}>
