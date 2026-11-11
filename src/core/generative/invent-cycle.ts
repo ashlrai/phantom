@@ -44,6 +44,7 @@ import {
   type OutwardMutationFence,
 } from '../sandbox/mutation-fence.js';
 import { inventWorkItems } from './invent.js';
+import { declinedIdeaFeedback } from '../ideas/idea-verdicts.js';
 
 /**
  * 3.10: drop the fleet's own mirror clones from a DEFAULT scan set. A standing
@@ -350,6 +351,11 @@ export async function runInventCycle(
     }
 
     const direction = await resolveDirection();
+    // RQ-PHX-IDEANOTNOW94: the owner's decline reasons go back into the loop's
+    // prompt text so it stops re-proposing what he turned down. Advisory —
+    // declinedIdeaFeedback never throws; an empty block keeps direction as-is.
+    const declined = declinedIdeaFeedback(Date.now());
+    const promptDirection = declined ? `${direction}\n\n${declined}` : direction;
     const ledger: CycleLedger = opts.skipDedup ? { entries: [] } : loadLedger();
 
     let invented = 0;
@@ -368,7 +374,7 @@ export async function runInventCycle(
         // Ask invent for a little extra so cycle-ledger dedup still leaves
         // enough to hit the cap; invent has its own dedup + maintenance filter.
         const items = await inventWorkItems(
-          { repo, repoState, direction },
+          { repo, repoState, direction: promptDirection },
           { cfg },
           { n: Math.max(remaining + 2, 3) },
         );
