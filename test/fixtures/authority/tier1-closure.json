@@ -370,6 +370,7 @@
     "src/core/comms/owner-thread.ts",
     "src/core/comms/pause.ts",
     "src/core/comms/requests.ts",
+    "src/core/comms/teammate-overdue.ts",
     "src/core/companion-inventory.ts",
     "src/core/config.ts",
     "src/core/connectors/profile.ts",
