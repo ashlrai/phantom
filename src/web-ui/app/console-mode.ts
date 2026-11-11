@@ -7,9 +7,12 @@ export function isResourceConsolePath(pathname = window.location.pathname): bool
   return pathname === '/resources/' || pathname === '/resources';
 }
 
-/** Ashlr Verse: the interactive chat console (src/web-ui/routes/verse). */
+/**
+ * The Phantom chat console (src/web-ui/routes/verse). `/app` is the Phantom
+ * name for the legacy `/verse`; both serve the same shell.
+ */
 export function isVerseConsolePath(pathname = window.location.pathname): boolean {
-  return pathname === '/verse/' || pathname === '/verse';
+  return pathname === '/verse/' || pathname === '/verse' || pathname === '/app/' || pathname === '/app';
 }
 
 /**
@@ -19,9 +22,18 @@ export function isVerseConsolePath(pathname = window.location.pathname): boolean
  * load (VerseMobileApp) to be controlled offline.
  */
 export const VERSE_MOBILE_PATH = '/verse/m/';
+/** The Phantom-named alias of VERSE_MOBILE_PATH. Not a service-worker scope. */
+export const APP_MOBILE_PATH = '/app/m/';
+
+/** The canonical phone path for the name the page was opened under. */
+export function mobilePathFor(pathname = window.location.pathname): string {
+  return pathname === '/app' || pathname === '/app/' || pathname === '/app/m' || pathname === '/app/m/'
+    ? APP_MOBILE_PATH
+    : VERSE_MOBILE_PATH;
+}
 
 export function isVerseMobilePath(pathname = window.location.pathname): boolean {
-  return pathname === '/verse/m/' || pathname === '/verse/m';
+  return pathname === '/verse/m/' || pathname === '/verse/m' || pathname === '/app/m/' || pathname === '/app/m';
 }
 
 /** No scoped console subscribes to the general Hub observer channel — Verse
@@ -82,14 +94,14 @@ export function prefersVerseMobile(win: Window = window): boolean {
 }
 
 /**
- * On `/verse` from a phone: become `/verse/m/` in place — no reload, no
+ * On `/verse` (or `/app`) from a phone: become `/verse/m/` (`/app/m/`) in place — no reload, no
  * second request, the same read session. Returns true when it switched. The
  * workbench's hash deep links name desktop surfaces, so they are dropped.
  */
 export function autoSelectVerseMobile(win: Window = window): boolean {
   if (!isVerseConsolePath(win.location.pathname) || !prefersVerseMobile(win)) return false;
   try {
-    win.history.replaceState(win.history.state, '', VERSE_MOBILE_PATH);
+    win.history.replaceState(win.history.state, '', mobilePathFor(win.location.pathname));
   } catch {
     return false;
   }
