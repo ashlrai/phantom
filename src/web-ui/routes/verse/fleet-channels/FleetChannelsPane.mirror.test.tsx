@@ -23,7 +23,7 @@ it('shows per-channel mirror counts and warns when none reached the bus', async 
   render(<FleetChannelsPane {...props} />);
   await screen.findByText('mirrored 2 of 3 in the last hour');
   expect(within(channel('Telegram')).getByText('mirrored 2 of 3 in the last hour')).not.toHaveAttribute('role', 'status');
-  expect(within(channel('Desktop app')).getByRole('status')).toHaveTextContent('mirrored 0 of 3 in the last hour · Messages reach the inbox but not the bus: the hub needs --allow-dispatch and a writable bus store');
+  expect(within(channel('Desktop app')).getByRole('status')).toHaveTextContent('mirrored 0 of 3 in the last hour · Messages reach the inbox but not the bus: Phantom needs --allow-dispatch and a writable bus store');
   expect(within(channel('Mobile')).getByText('mirrored 0 of 0 in the last hour')).toBeInTheDocument();
   expect(screen.getByText('Bus mirror checked against the last 100 envelopes')).toBeInTheDocument();
   expect(fetcher.mock.calls.some(([url]) => url.includes('after=3&limit=100'))).toBe(true);

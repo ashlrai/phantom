@@ -7,7 +7,7 @@ import {
   type ShipGapRead,
   type ShipGapReader,
 } from '../src/cli/fleet-ship-gap.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import type { CloudGh } from '../src/core/cloud/pr-actions.js';
 import { QUEUEGEN_REPOS } from '../src/core/drive/queuegen.js';
 

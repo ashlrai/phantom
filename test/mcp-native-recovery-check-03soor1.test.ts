@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { callNativeTool, listNativeTools } from '../src/core/mcp-native.js';
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import * as recoveryInvocations from '../src/core/fleet/apps-recovery-invocations.js';
 import * as recoveryVerdict from '../src/core/fleet/apps-recovery-verdict.js';
+
+registerFleetNativeTools();
 
 const name = 'phantom_fleet_apps_recovery_check';
 const validUuid = '550e8400-e29b-41d4-a716-446655440000';
