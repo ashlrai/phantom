@@ -1918,6 +1918,12 @@ export async function handleApi(
       return true;
     }
 
+    if (path === '/api/fleet/release-chain' && method === 'GET') {
+      const { releaseChainResponse } = await import('./release-chain-api.js');
+      sendJson(res, 200, releaseChainResponse());
+      return true;
+    }
+
     if (path === '/api/fleet/empty-jobs' && method === 'GET') {
       const { readEmptyJobs } = await import('../fleet/empty-jobs.js');
       const report = await readEmptyJobs();
