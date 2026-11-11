@@ -956,11 +956,13 @@
 /test/memory-evaluation.test.ts @masonwyatt23
 /test/memory-foundation-adversarial.test.ts @masonwyatt23
 /test/memory-foundation.test.ts @masonwyatt23
+/test/merge-actor-recovery-171.test.ts @masonwyatt23
 /test/merge-age-routing.test.ts @masonwyatt23
 /test/merge-backlog-hot-files.test.ts @masonwyatt23
 /test/merge-backlog-read.test.ts @masonwyatt23
 /test/merge-gate-latency.test.ts @masonwyatt23
 /test/merge-gates-310b.test.ts @masonwyatt23
+/test/merge-identity-registry.test.ts @masonwyatt23
 /test/merge-temp-worktree-reaper.test.ts @masonwyatt23
 /test/metrics-boundary.test.ts @masonwyatt23
 /test/metrics-pillar.test.ts @masonwyatt23
