@@ -6,14 +6,14 @@ admission: what dispatchd would decide about new claims right now, read-only.
   Reports 1-min loadavg, ncpu, the global running cap, running jobs, the install-lock
   holder and admit true/false with the reason. Exit 0 either way; 2 on bad arguments.
   Updated hosts report the dispatcher's admission.v2 snapshot, including its timestamp,
-  starvation signals, warnings and claim limit. Critical pressure, rapid swap growth
-  or low disk stop claims; high load halves claims. Older hosts use legacy probes, as
+  starvation signals, warnings and claim limit. Memory pressure at warn or above, rapid swap growth
+  or low disk stop claims, as does load1 over 2 x ncpu. Older hosts use legacy probes, as
   does a snapshot without a timestamp or older than 15 minutes (reported as stale).
   Cap = min(sum of unheld lane targets, adaptive cap, optional hard_cap in queue/slots.json).
   The adaptive cap (queue/concurrency.json) rises on headroom and backs off on pressure;
   hosts without it fall back to ncpu.
   At most one npm ci / pnpm install / bun install runs fleet-wide (queue/install.lock).
-  The runs directory is ASHLR_RUNS_DIR or ~/.ashlr-runs; queue/LOADGATE_OFF disables the gate.`;
+  The runs directory is ASHLR_RUNS_DIR or ~/.ashlr-runs. queue/LOADGATE_OFF no longer disables the gate.`;
 
 function render(r: AdmissionReport): string {
   const holder = r.installLock.holder;
