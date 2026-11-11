@@ -24,6 +24,18 @@ import {
 import type { BudgetMode, SeatBudgetPolicy, SeatHeadroom } from '../../../../core/routing/types.js';
 import { percentText, tidyProse } from '../autonomy/format.js';
 
+/** Enabled paid seats with a reserve or session ceiling in their effective policy. */
+export function automaticReserveSeats(view: BudgetView): Array<{ seatId: string; reservePercent: number; maxSessionWindowPercent: number | null }> {
+  return Object.entries(view.effective ?? {}).flatMap(([seatId, policy]) => {
+    if (!policy || !policy.enabled) return [];
+    const engine = view.seatInfo?.find((seat) => seat.seatId === seatId)?.engine;
+    if (engine ? engine === 'devin' || engine === 'local' : /^(devin|local)/i.test(seatId)) return [];
+    const ceiling = policy.maxSessionWindowPercent ?? null;
+    if (!(policy.reservePercent > 0 || (ceiling !== null && ceiling < 100))) return [];
+    return [{ seatId, reservePercent: policy.reservePercent, maxSessionWindowPercent: ceiling }];
+  }).sort((a, b) => a.seatId.localeCompare(b.seatId));
+}
+
 export type BudgetSeatStatus = 'eligible' | 'held' | 'off' | 'unknown';
 
 export const STATUS_WORDS: Readonly<Record<BudgetSeatStatus, string>> = {
