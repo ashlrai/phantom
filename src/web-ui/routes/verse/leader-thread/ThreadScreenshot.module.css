@@ -1,0 +1,29 @@
+.shotButton {
+  display: block;
+  align-self: flex-end;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: zoom-in;
+}
+
+.shot {
+  display: block;
+  max-width: 320px;
+  max-height: 240px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+/* Wider than the default 480px dialog so a screenshot reads at near-full size. */
+.shotDialog {
+  width: min(1100px, calc(100vw - var(--space-8)));
+}
+
+.shotFull {
+  display: block;
+  max-width: 100%;
+  max-height: 60vh;
+  margin: 0 auto;
+  border-radius: var(--radius-md);
+}

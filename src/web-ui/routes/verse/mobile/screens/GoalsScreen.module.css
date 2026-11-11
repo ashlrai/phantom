@@ -1,0 +1,55 @@
+/* routes/verse/mobile/screens/GoalsScreen.module.css — one card per open
+   goal inside the shared inset group; metric wording mirrors the pane's. */
+
+.headline {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: var(--font-weight-semibold);
+}
+
+.mission,
+.meta {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.goal {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+}
+
+.goal + .goal {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.objective {
+  font-weight: var(--font-weight-medium);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.metric {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.metricValue {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
