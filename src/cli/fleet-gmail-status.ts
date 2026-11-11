@@ -32,6 +32,7 @@ interface TriageStatus extends EvidenceStamp {
   state: 'present' | 'missing';
   label: string | null;
   counts: TriageCounts | null;
+  scope?: GmailTriageLatest['scope'];
 }
 
 interface ArchivePlanStatus extends EvidenceStamp {
@@ -79,6 +80,11 @@ function formatAge(ageSeconds: number | null): string {
   return ageSeconds === null ? 'unknown' : ageSeconds < 0 ? `${ageSeconds}s (clock skew)` : `${ageSeconds}s`;
 }
 
+function formatScope(scope: GmailTriageLatest['scope']): string {
+  return scope === undefined ? 'scope unknown'
+    : `scope ${scope.source}; scan limit ${scope.limit}; saved files ${scope.files}; truncated ${scope.truncated}`;
+}
+
 /** Reads both saved stores independently: missing triage never hides archive
  * plans and missing archive never hides triage. Never throws — the readers
  * already return null on absent, unreadable, oversized or invalid content. */
@@ -93,6 +99,7 @@ export function buildGmailStatusReport(runsDir: string, now: () => number = Date
         at: stampOf(triageRecord.at),
         ageSeconds: ageSecondsOf(triageRecord.at, nowMs),
         label: labelOf(triageRecord.dir),
+        ...(triageRecord.scope === undefined ? {} : { scope: triageRecord.scope }),
         counts: {
           scanned: triageRecord.scanned,
           updates: triageRecord.updates,
@@ -165,14 +172,14 @@ export async function cmdFleetGmailStatus(
     const c = triage.counts!;
     console.log(`Triage: present — label "${triage.label}"; saved ${triage.at}; age ${formatAge(triage.ageSeconds)}; `
       + `scanned ${c.scanned}; updates ${c.updates}; drafted ${c.drafted}; review ${c.review}; failed ${c.failed}; `
-      + `unread-in-sample ${c.unreadInSample}; target ${c.target}; archive candidates ${c.archiveCandidateCount}.`);
+      + `unread-in-sample ${c.unreadInSample}; target ${c.target}; archive candidates ${c.archiveCandidateCount}; ${formatScope(triage.scope)}.`);
   }
   console.log(`Triage inbox reports: ${report.triageInboxes.length} saved labels.`);
   for (const entry of report.triageInboxes) {
     const c = entry.counts!;
     console.log(`- "${entry.label}": saved ${entry.at}; age ${formatAge(entry.ageSeconds)}; `
       + `scanned ${c.scanned}; updates ${c.updates}; drafted ${c.drafted}; review ${c.review}; failed ${c.failed}; `
-      + `unread-in-sample ${c.unreadInSample}; target ${c.target}; archive candidates ${c.archiveCandidateCount}.`);
+      + `unread-in-sample ${c.unreadInSample}; target ${c.target}; archive candidates ${c.archiveCandidateCount}; ${formatScope(entry.scope)}.`);
   }
   if (report.archivePlans.state === 'missing') {
     console.log('Archive plans: missing — no saved archive plans.');
