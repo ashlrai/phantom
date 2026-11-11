@@ -12,7 +12,7 @@ function status(over: { lastAckAt?: string | null; teammate?: CommsStatus['teamm
     imessage: { configuration: { state: 'configured', reason: '' }, chatDb: { state: 'readable', reason: '' }, cursor: { state: 'present', reason: '' },
       ackSource: 'healthy', lastAckAt, acks24h: 3, nextStep: null },
     teammate: over.teammate === undefined
-      ? { windowHours: 24, targetMinutes: 5, texts: 4, answered: 3, unanswered: 2, medianMinutes: 7.5, withinTarget: 2, oldestUnanswered: { ageMinutes: 20 }, sourceState: 'healthy' }
+      ? { windowHours: 24, targetMinutes: 5, texts: 4, answered: 3, unanswered: 2, medianMinutes: 7.5, withinTarget: 2, oldestUnanswered: { ageMinutes: 20 }, latestTextAt: minutesAgo(4), sourceState: 'healthy' }
       : over.teammate,
     teammateSource: 'healthy', drafts: null, emailOutbox: null, sources: { drafts: 'healthy', emailOutbox: 'healthy' },
   };
@@ -31,7 +31,7 @@ describe('dotResourceRow', () => {
   });
 
   it('reads a real zero waiting count as 0, not missing', () => {
-    const t = { windowHours: 24, targetMinutes: 5, texts: 1, answered: 1, unanswered: 0, medianMinutes: 2, withinTarget: 1, oldestUnanswered: null, sourceState: 'healthy' } as const;
+    const t = { windowHours: 24, targetMinutes: 5, texts: 1, answered: 1, unanswered: 0, medianMinutes: 2, withinTarget: 1, oldestUnanswered: null, latestTextAt: minutesAgo(60), sourceState: 'healthy' } as const;
     expect(dotResourceRow(status({ teammate: t }), NOW).waitingCount).toBe(0);
   });
 
@@ -51,7 +51,7 @@ describe('dotResourceRow', () => {
   });
 
   it('drops reply speed and waiting count when the teammate log is not healthy', () => {
-    const t = { windowHours: 24, targetMinutes: 5, texts: 0, answered: 0, unanswered: 0, medianMinutes: null, withinTarget: 0, oldestUnanswered: null, sourceState: 'degraded' } as const;
+    const t = { windowHours: 24, targetMinutes: 5, texts: 0, answered: 0, unanswered: 0, medianMinutes: null, withinTarget: 0, oldestUnanswered: null, latestTextAt: null, sourceState: 'degraded' } as const;
     expect(dotResourceRow(status({ teammate: t }), NOW)).toMatchObject({ medianReplyMinutes: null, waitingCount: null, state: 'active' });
   });
 });

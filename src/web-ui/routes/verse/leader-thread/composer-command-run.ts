@@ -5,7 +5,7 @@
  * thread shows. It never throws: a failure becomes the line.
  *
  * Writes that succeed also post one short inbox note ("[composer] /pause:
- * done") so the leaders see what Mason did. /drop and /help are local, and
+ * done") so the leaders see what Mason did. /drop, /open and /help are local, and
  * /status is read-only, so they post nothing.
  */
 import { pauseFleet, resumeFleet } from '../../../data/mutations.js';
@@ -16,6 +16,7 @@ import { postJobStop, stopOutcomeText, type JobStopResult } from '../fleet-job-l
 import { postLaneHold, postReleaseHold } from '../fleet-lanes/lane-hold-release.js';
 import { suggestId, type DropJobDraft } from '../fleet-queue/drop-job-model.js';
 import { openDropJobSheet } from '../fleet-queue/drop-job-sheet-store.js';
+import { normalizePaneId } from '../shell/dock-catalog.js';
 import { isLaneTargets } from '../ops/lane-targets-model.js';
 import { commandArgError, helpLine, holdArgs, type ComposerCommandName } from './composer-commands.js';
 import { sendLeaderInboxMessage } from './leader-inbox-data.js';
@@ -32,6 +33,7 @@ export interface ComposerCommandDeps {
   releaseHold: (lane: string, reason: string) => Promise<unknown>;
   holdLane: (lane: string, minutes: number, reason: string) => Promise<unknown>;
   stopJob: (id: string) => Promise<JobStopResult>;
+  openPane: (id: string) => void;
   openDropSheet: (seed: DropJobDraft) => 'seeded' | 'kept';
   statusNow: () => Promise<string | null>;
   postNote: (text: string) => Promise<void>;
@@ -44,6 +46,7 @@ export const liveComposerDeps: ComposerCommandDeps = {
   releaseHold: postReleaseHold,
   holdLane: postLaneHold,
   stopJob: postJobStop,
+  openPane: openDockPane,
   openDropSheet: seed => {
     const outcome = openDropJobSheet(seed);
     // 'kept' leaves the unsent draft's sheet alone, like the other seeders.
@@ -88,7 +91,7 @@ export function commandGate(command: ComposerCommand): { reason: string; confirm
 }
 
 /** Runs the write and returns [system line, inbox outcome word]. */
-async function write(command: ComposerCommand, deps: ComposerCommandDeps): Promise<[string, string]> {
+async function write(command: ComposerCommand, deps: Omit<ComposerCommandDeps, 'openPane'>): Promise<[string, string]> {
   switch (command.name) {
     case 'pause':
       await deps.pauseFleet();
@@ -120,10 +123,17 @@ async function write(command: ComposerCommand, deps: ComposerCommandDeps): Promi
   }
 }
 
-export async function runComposerCommand(command: ComposerCommand, deps: ComposerCommandDeps): Promise<string> {
+export function runComposerCommand(command: ComposerCommand, deps: ComposerCommandDeps): Promise<string>;
+export function runComposerCommand(command: { name: Exclude<ComposerCommandName, 'open'>; arg: string }, deps: Omit<ComposerCommandDeps, 'openPane'>): Promise<string>;
+export async function runComposerCommand(command: ComposerCommand, deps: Omit<ComposerCommandDeps, 'openPane'> & Partial<Pick<ComposerCommandDeps, 'openPane'>>): Promise<string> {
   const argError = commandArgError(command);
   if (argError) return argError;
   if (command.name === 'help') return helpLine();
+  if (command.name === 'open') {
+    const id = normalizePaneId(command.arg)!;
+    deps.openPane!(id);
+    return `Opened ${id}.`;
+  }
   if (command.name === 'status') {
     // Read only: no token gate, no inbox note.
     try {
