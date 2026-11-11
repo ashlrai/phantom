@@ -25,18 +25,19 @@ import { useAuthPhase } from '../data/hooks.js';
 import { MobileShell } from '../routes/verse/mobile/MobileShell.js';
 import { Button, SkeletonList, ui } from '../routes/verse/mobile/ui.js';
 import { verseBootstrapQuery } from '../routes/verse/verse-bootstrap-query.js';
-import { VERSE_MOBILE_PATH } from './console-mode.js';
+import { mobilePathFor } from './console-mode.js';
 import '../design/global.css';
 
 const importSessionGate = () => import('../components/auth/SessionGate.js');
 const SessionGate = lazy(() => importSessionGate().then((m) => ({ default: m.SessionGate })));
 const RemoteMobileApp = lazy(() => import('../routes/verse/mobile/RemoteMobileApp.js').then((m) => ({ default: m.RemoteMobileApp })));
 
-/** `/verse/m` → `/verse/m/`, keeping the hash (the screen). */
+/** `/verse/m` → `/verse/m/` (`/app/m` → `/app/m/`), keeping the hash (the screen). */
 export function canonicalizeMobilePath(win: Window = window): void {
-  if (win.location.pathname === VERSE_MOBILE_PATH) return;
+  const target = mobilePathFor(win.location.pathname);
+  if (win.location.pathname === target) return;
   try {
-    win.history.replaceState(win.history.state, '', `${VERSE_MOBILE_PATH}${win.location.hash}`);
+    win.history.replaceState(win.history.state, '', `${target}${win.location.hash}`);
   } catch {
     /* the app works at either path; only offline launch needs the slash */
   }
@@ -130,7 +131,7 @@ function LocalVerseMobileApp() {
     <Boot>
       {phase === 'unauthenticated' ? (
         <Suspense fallback={CONNECTING}>
-          <SessionGate heading="Connect to your Mac" command="phm verse" subject={PRODUCT_NAME} mutationField />
+          <SessionGate heading="Connect to your Mac" command="phm console" subject={PRODUCT_NAME} mutationField />
         </Suspense>
       ) : unreachable ? (
         <div role="alert">
