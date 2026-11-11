@@ -3,7 +3,7 @@
  * src/tui/app.ts, the path m13.tui-once.test.ts deliberately never reaches:
  *
  *   - Alt-screen enter/leave, cursor hide/show, raw-mode toggling.
- *   - Raw keypress decoding: q/Q/Ctrl-C quit, 1-7 tab select, tab/shift-tab
+ *   - Raw keypress decoding: q/Q/Ctrl-C quit, 1-8 tab select, tab/shift-tab
  *     cycling (with wrap-around), j/k + arrow-key row movement (clamped),
  *     r/R/enter refresh, ignored keys.
  *   - SIGWINCH repaint (clear + redraw).
@@ -64,6 +64,23 @@ function makeSnapshot(): DashboardSnapshot {
     ],
     genome: { entries: 10, projects: 3 },
     inbox: { pending: 0 },
+    sessions: {
+      v: 1,
+      generatedAt: '2026-06-08T10:00:00.000Z',
+      runsDirPresent: true,
+      sourceState: 'healthy',
+      sources: { status: 'healthy', runs: 'healthy' },
+      lastTick: '2026-06-08T09:59:58.000Z',
+      paused: false,
+      queueDepth: 2,
+      lanes: [{ lane: 'codex-personal', running: 1, target: 2, queued: 2, held: false }],
+      sessions: [{
+        job: 'RQ-TEST-SESSION-1', repo: 'phantom', lane: 'codex-personal', tier: 'work',
+        status: 'running', exitCode: null,
+        startedAtMs: Date.parse('2026-06-08T09:50:00.000Z'), endedAtMs: null, kept: false,
+      }],
+      truncated: false,
+    },
   };
 }
 
@@ -264,7 +281,7 @@ describe('runInteractive — terminal lifecycle', () => {
 // ---------------------------------------------------------------------------
 
 describe('runInteractive — tab selection keys', () => {
-  it('digit keys 1-7 select the matching tab', async () => {
+  it('digit keys 1-8 select the matching tab', async () => {
     const s = await start();
 
     clearCaptured();
@@ -288,6 +305,10 @@ describe('runInteractive — tab selection keys', () => {
     expect(stripAnsi(captured())).toContain('No portfolio data'); // body, not the tab bar
 
     clearCaptured();
+    key('8');
+    expect(stripAnsi(captured())).toContain('RQ-TEST-SESSION-1'); // sessions rows
+
+    clearCaptured();
     key('1');
     expect(stripAnsi(captured())).toContain('Operator briefing');
 
@@ -297,7 +318,6 @@ describe('runInteractive — tab selection keys', () => {
   it('out-of-range digits and unknown keys are no-ops (no repaint)', async () => {
     const s = await start();
     clearCaptured();
-    key('8');
     key('9');
     key('0');
     key('x');
@@ -323,8 +343,8 @@ describe('runInteractive — tab selection keys', () => {
 
     clearCaptured();
     key('\x1b[Z'); // runs → overview
-    key('\x1b[Z'); // overview → wraps to portfolio (last tab)
-    expect(stripAnsi(captured())).toContain('No portfolio data');
+    key('\x1b[Z'); // overview → wraps to sessions (last tab)
+    expect(stripAnsi(captured())).toContain('RQ-TEST-SESSION-1');
 
     expect(await quit(s)).toBe(0);
   });

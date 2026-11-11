@@ -1124,6 +1124,20 @@ export async function buildSnapshot(cfg: AshlrConfig): Promise<DashboardSnapshot
     visibility = undefined;
   }
 
+  // ── Dispatcher sessions (OPTIONAL, TUI Sessions tab) ─────────────────────
+  // READ-ONLY + value-blind: queue/run claim markers + queue/status.json
+  // under the fleet runs dir (ASHLR_RUNS_DIR ?? ~/.ashlr-runs). Bounded scan,
+  // never throws — a missing runs dir reports sourceState 'missing' so the
+  // tab can say "no dispatcher state" instead of looking broken. Lazily
+  // imported like the other optional sections.
+  let sessions: DashboardSnapshot['sessions'] | undefined;
+  try {
+    const { readFleetSessions } = await import('./fleet/runs-sessions.js');
+    sessions = await readFleetSessions();
+  } catch {
+    sessions = undefined;
+  }
+
   return {
     generatedAt,
     repos: {
@@ -1182,5 +1196,8 @@ export async function buildSnapshot(cfg: AshlrConfig): Promise<DashboardSnapshot
     // M262: OPTIONAL real-time visibility god-view — omitted only if the
     // visibility builder itself could not be loaded.
     ...(visibility !== undefined ? { visibility } : {}),
+    // Dispatcher sessions — omitted only if the reader could not be loaded;
+    // a missing runs dir still reports sourceState 'missing' honestly.
+    ...(sessions !== undefined ? { sessions } : {}),
   };
 }
