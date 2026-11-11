@@ -310,6 +310,7 @@
 /test/codex-selected-producer.test.ts @masonwyatt23
 /test/codex-session-usage.test.ts @masonwyatt23
 /test/comms-agent-send-policy.test.ts @masonwyatt23
+/test/comms-send-policy-typefix-s133.test.ts @masonwyatt23
 /test/comms-telegram-leader-314.test.ts @masonwyatt23
 /test/comms-telegram-leader-thread-real-314.test.ts @masonwyatt23
 /test/completeness-gate-stash-hardening-310b.test.ts @masonwyatt23
@@ -402,9 +403,11 @@
 /test/fleet-ci-scheduled-sweep.test.ts @masonwyatt23
 /test/fleet-ci-step-cost.test.ts @masonwyatt23
 /test/fleet-ci-trigger-facts-01.test.ts @masonwyatt23
+/test/fleet-comms-status-policy-18.test.ts @masonwyatt23
 /test/fleet-companion-mcp.test.ts @masonwyatt23
 /test/fleet-conflict-risk.test.ts @masonwyatt23
 /test/fleet-control-315.test.ts @masonwyatt23
+/test/fleet-cos-loop.test.ts @masonwyatt23
 /test/fleet-daily-reds.test.ts @masonwyatt23
 /test/fleet-dep-gate.test.ts @masonwyatt23
 /test/fleet-gate-run.test.ts @masonwyatt23
@@ -1086,6 +1089,7 @@
 /test/resource-worker-kill.test.ts @masonwyatt23
 /test/reward-signal.test.ts @masonwyatt23
 /test/role-completion.test.ts @masonwyatt23
+/test/router-arms-replay.test.ts @masonwyatt23
 /test/router-calibration.test.ts @masonwyatt23
 /test/router-current-claude-models.test.ts @masonwyatt23
 /test/router-eval-harness.test.ts @masonwyatt23
@@ -1093,6 +1097,7 @@
 /test/router-queue-events.test.ts @masonwyatt23
 /test/router-queue-utf8-input-31k7.test.ts @masonwyatt23
 /test/router-queue.test.ts @masonwyatt23
+/test/router-task-arms.test.ts @masonwyatt23
 /test/router-typing.test.ts @masonwyatt23
 /test/routing-arms.test.ts @masonwyatt23
 /test/routing-bandit.test.ts @masonwyatt23
