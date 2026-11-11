@@ -550,6 +550,9 @@ const WORKBENCH_IMPORTS: Readonly<Record<WorkbenchRouteFamilyId, () => Promise<W
   ops: async () => {
     try { return (await import('./ops-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'ops-api.js'); }
   },
+  goals: async () => {
+    try { return (await import('./goals-create-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'goals-create-api.js'); }
+  },
 };
 
 /** The importer table, for the contract test (every family has exactly one). */

@@ -148,6 +148,46 @@ def attempt_identity(repo, prompt, home, runner=run):
         return {}
 
 
+# RQ-CODEXP-EMPTY-1: prompt_hash covers the whole prompt file, whose first line
+# names the job id and the lane ("Job X (pool L, tier T, ...)"). A re-cut under a
+# new id, a re-route to another lane, or any upstream commit therefore misses
+# prompt_empty_same_base_24h. task_hash names the task text alone, so a task that
+# already finished empty TASK_EMPTY_REPEAT times in 24 hours (any id, lane or base)
+# stops relaunching. Two attempts, not one: a single empty on an older base can
+# still be retried once on a newer one.
+TASK_EMPTY_REPEAT = 2
+TASK_MIN_CHARS = 16
+
+
+def task_hash(job, prompt):
+    """sha256 of the normalized `<job> (attrs): <task>` text, or None (fail open).
+
+    The job id inside the text, the attrs (pool, tier, priority) and whitespace
+    or case differences are excluded, so routing changes keep the same identity.
+    """
+    import hashlib
+    try:
+        line = next((t for t in prompt.splitlines() if t.startswith(job + " (")), "")
+        cut = line.find("): ")
+        if cut < 0: return None
+        text = line[cut + 3:].replace(job, "<job>")
+        text = " ".join(text.lower().split())
+        if len(text) < TASK_MIN_CHARS: return None
+        return hashlib.sha256(text.encode()).hexdigest()
+    except Exception:
+        return None
+
+
+def with_prompt(identity, job, prompt):
+    """Bind a repo/base identity to one prompt: prompt_hash plus task_hash when known."""
+    import hashlib
+    if not identity: return {}
+    out = dict(identity, prompt_hash=hashlib.sha256(prompt.encode()).hexdigest())
+    task = task_hash(job, prompt)
+    if task: out["task_hash"] = task
+    return out
+
+
 def empty_reason(job, identity, rows, now):
     """Only successful empty finishes suppress work. Auth failures must retry.
 
@@ -165,14 +205,18 @@ def empty_reason(job, identity, rows, now):
         evidence = dict(claims.get(key, {}), **row)
         if evidence.get('repo') != identity['repo']: continue
         latest[key] = evidence
+    task = identity.get('task_hash'); task_repeats = 0
     for key, row in latest.items():
         if row.get('empty') is not True or row.get('exit_code') != 0: continue
+        try: age = now - datetime.fromisoformat(str(row['ts']).replace('Z', '+00:00')).timestamp()
+        except (KeyError, ValueError, TypeError): age = None
+        recent = age is not None and 0 <= age < 86400
+        if task and recent and row.get('task_hash') == task: task_repeats += 1
         if row.get('base_sha') != identity['base_sha']: continue
         if key == job and job.startswith('RQ-UPKEEP-'): return 'upkeep_empty_same_base'
-        try: age = now - datetime.fromisoformat(str(row['ts']).replace('Z', '+00:00')).timestamp()
-        except (KeyError, ValueError, TypeError): continue
-        if 0 <= age < 86400 and row.get('prompt_hash') == identity['prompt_hash']:
+        if recent and row.get('prompt_hash') == identity['prompt_hash']:
             return 'prompt_empty_same_base_24h'
+    if task_repeats >= TASK_EMPTY_REPEAT: return 'task_empty_repeat_24h'
     return None
 
 
