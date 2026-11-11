@@ -46,7 +46,7 @@ export const NAV_GROUPS: NavGroup[] = [
       },
       {
         path: '/universe',
-        label: 'Universe',
+        label: 'Experiments',
         description: 'Compare experiments, follow variant lineages, and inspect the retained population.',
         implemented: true,
       },
@@ -92,6 +92,12 @@ export const NAV_GROUPS: NavGroup[] = [
         path: '/inbox',
         label: 'Proposals',
         description: 'Review, filter, and approve/reject proposals — including history (rejected/approved).',
+        implemented: true,
+      },
+      {
+        path: '/approvals',
+        label: 'Approvals',
+        description: 'Team approvals awaiting you, the Security pin queue, and explicit holds.',
         implemented: true,
       },
     ],
