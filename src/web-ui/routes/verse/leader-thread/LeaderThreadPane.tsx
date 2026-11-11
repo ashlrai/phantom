@@ -55,6 +55,7 @@ import { CopyPill } from '../apps/CopyPill.js';
 import { commandHints, completeCommand, parseComposerDraft } from './composer-commands.js';
 import { commandGate, liveComposerDeps, runComposerCommand, type ComposerCommand } from './composer-command-run.js';
 import { steerTargetId, steerTargetOutcome, type SteerTargetJobFacts } from './steer-target-outcome.js';
+import { DotReplyAge } from './DotReplyAge.js';
 
 /** Shared 'verse-fleet-runs' key so the pane rides the same cache and SSE invalidation as the other fleet panes. */
 const fleetRunsQuery: QueryDef<unknown> = {
@@ -459,7 +460,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       </details>
     </section>
     <DirectivesStrip read={directives.data} actions={actions} adding={addingDirective} onAddingChange={setAddingDirective} />
-    <header><button type="button" disabled={checkingStatus} onClick={() => void checkStatus()}>{checkingStatus ? 'Checking…' : 'Status now'}</button> <button type="button" aria-pressed={needsYouOnly} onClick={() => setNeedsYouOnly(value => !value)}>Needs you only</button> <button type="button" onClick={() => setFindOpen(true)}>Find</button></header>
+    <header><DotReplyAge visible={visible} /> <button type="button" disabled={checkingStatus} onClick={() => void checkStatus()}>{checkingStatus ? 'Checking…' : 'Status now'}</button> <button type="button" aria-pressed={needsYouOnly} onClick={() => setNeedsYouOnly(value => !value)}>Needs you only</button> <button type="button" onClick={() => setFindOpen(true)}>Find</button></header>
     {findOpen ? <div onKeyDown={event => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeFind(); }
     }}>
