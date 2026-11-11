@@ -26,13 +26,13 @@ it('renders both devices, scopes, dates and the exact copyable command', async (
   expect(screen.getByText('read')).toBeInTheDocument();
   expect(screen.getAllByText(/Created 2026-01-01.*never/)).toHaveLength(2);
   fireEvent.click(screen.getAllByRole('button', { name: 'Copy revoke command' })[0]);
-  await waitFor(() => expect(writeText).toHaveBeenCalledWith(`phm verse remote revoke ${id}`));
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith(`phm console remote revoke ${id}`));
   expect(await screen.findByText('Revoke command copied.')).toBeInTheDocument();
 });
 it('shows pairing instructions for an empty registry', async () => {
   mount();
   expect(await screen.findByText(/No phones are paired/)).toBeInTheDocument();
-  expect(screen.getByText('phm verse remote invite <Access-subject>')).toBeInTheDocument();
+  expect(screen.getByText('phm console remote invite <Access-subject>')).toBeInTheDocument();
 });
 it('hides the panel when the route is not in this build', async () => {
   const fetch = mount([], 404);

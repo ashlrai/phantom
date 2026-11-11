@@ -433,3 +433,10 @@ export type {
   OnboardStatusReport,
   OnboardUsageReading,
 } from '../../core/onboard.js';
+
+export type {
+  ApprovalsProjection,
+  TeamApprovalItem,
+  StagedPinItem,
+  HoldItem,
+} from '../../core/approvals/surface.js';
