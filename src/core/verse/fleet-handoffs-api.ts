@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
-import { listHandoffFiles, type HandoffFile } from '../fleet/handoff-files.js';
+import { readHandoffFiles, type HandoffFile, type HandoffReadResult } from '../fleet/handoff-files.js';
 
 export const VERSE_FLEET_HANDOFFS_PATH = '/api/verse/fleet/handoffs';
 
@@ -16,6 +16,7 @@ export interface FleetHandoffsApiDeps {
   runsDir?: string;
   /** Reader seam for tests. */
   list?: (runsDir: string) => Promise<HandoffFile[]>;
+  read?: (runsDir: string) => Promise<HandoffReadResult>;
   now?: () => Date;
 }
 
@@ -34,7 +35,9 @@ async function handoffState(runsDir: string): Promise<'present' | 'absent' | 'un
 export function createFleetHandoffsApi(deps: FleetHandoffsApiDeps = {}): ApiModule {
   const now = deps.now ?? (() => new Date());
   const runsDir = deps.runsDir ?? defaultRunsDir();
-  const list = deps.list ?? listHandoffFiles;
+  const read = deps.read ?? (deps.list
+    ? async (dir: string): Promise<HandoffReadResult> => ({ handoffs: await deps.list!(dir), state: 'complete' })
+    : readHandoffFiles);
 
   return async (ctx, _req, res, path, method) => {
     if (path !== VERSE_FLEET_HANDOFFS_PATH) return false;
@@ -53,7 +56,9 @@ export function createFleetHandoffsApi(deps: FleetHandoffsApiDeps = {}): ApiModu
       return true;
     }
     try {
-      sendJson(res, 200, { v: 1, observedAt, handoffs: await list(runsDir) });
+      const result = await read(runsDir);
+      sendJson(res, 200, { v: 1, observedAt, handoffs: result.handoffs,
+        ...(result.state === 'complete' ? {} : { state: result.state }) });
     } catch {
       sendJson(res, 200, { v: 1, observedAt, handoffs: [], state: 'unavailable' });
     }
