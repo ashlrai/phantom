@@ -31,6 +31,10 @@
  * Acknowledgement: the shared ack text (channel-ack-text.ts) is RECORDED to
  * <runs>/imessage/acks.jsonl. Nonduplicate acknowledgements pass through the
  * self-only outbox; third-party delivery remains denied pending Security review.
+ * A nonduplicate ack for a verified-Mason short status ask ("status", "phantom
+ * status", ...) instead carries the fixed owner digest from
+ * agents/owner-status-reply.ts through the same outbox to the same handle; the
+ * receipt, dedupe, cursor and acks.jsonl record are unchanged.
  *
  * Cursor rules: first run baselines to the current max ROWID (history is never
  * replayed). A message advances the cursor once it is receipted or permanently
@@ -43,6 +47,7 @@ import { sendIMessageOutbox } from './imessage-outbox.js';
 import { recordTeammateText, senderIdFor } from './imessage-teammate-inbox.js';
 import { bridgeTeammateFindings, type FindingsBridgeOptions, type FindingsBridgeReport } from './imessage-findings-bridge.js';
 import { appendFileSync, chmodSync, mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
   imessageAllowlist, isVerifiedMasonHandle, imessageStateDir, pollInboundSince, readCursor, readMaxRowId, writeCursor,
@@ -51,6 +56,17 @@ import {
 import { createChannelReceiver, OPERATOR_SENDER_ID, type ChannelAck, type ChannelMessage } from '../fleet/channel-envelope.js';
 import { formatChannelAck } from '../fleet/channel-ack-text.js';
 import type { AshlrConfig } from '../types.js';
+
+/** Fixed owner "status" auto-answer for a verified-Mason short ask; the same
+ * contract the Slack adapter injects (agents/slack-leader.ts SlackStatusReply). */
+export interface IMessageStatusReply {
+  /** Exact short owner asks only; anything else keeps the generic ack. */
+  ask(text: string): boolean;
+  /** Compose the digest answer for a gated ask. */
+  compose(runsDir: string, now: Date): Promise<string>;
+  /** Sent when compose throws. */
+  readonly fallback: string;
+}
 
 export interface IMessageIngestDeps {
   /** Shared runs context (inbox, receipts, queue, cursor). Default ~/.ashlr-runs. */
@@ -65,6 +81,10 @@ export interface IMessageIngestDeps {
   busRoot?: string;
   /** Findings bridge seam for tests; default the real pass. */
   bridgeFindings?: (options: FindingsBridgeOptions) => FindingsBridgeReport;
+  /** Owner "status" auto-answer seam for tests; the default lazily resolves
+   * agents/owner-status-reply.js, whose digest readers stay outside this
+   * module's Tier-1 import closure. */
+  statusReply?: IMessageStatusReply;
 }
 
 export type IMessageIngestState =
@@ -88,6 +108,17 @@ export interface IMessageIngestResult {
 }
 
 export { senderIdFor };
+
+// The status composer's digest readers must not join the Tier-1 import
+// closure, so the default seam is resolved at ack time through a lazy,
+// non-literal import; a load failure degrades to the generic ack rather than
+// failing a durable receipt.
+type OwnerStatusReplyModule = typeof import('../agents/owner-status-reply.js');
+const STATUS_REPLY_SPEC = '../agents/owner-status-reply.js';
+const loadStatusReply = async (): Promise<IMessageStatusReply | null> => {
+  try { return (await import(STATUS_REPLY_SPEC) as OwnerStatusReplyModule).ownerStatusReply(); }
+  catch { return null; }
+};
 
 /** Map one allowlisted chat.db row to a canonical channel message. */
 export function imessageChannelMessage(msg: IntakeMsg): ChannelMessage | null {
@@ -134,8 +165,22 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
     const polled = await (deps.poll ?? pollInboundSince)(cursor, cfg);
     if (!polled.ok) return { ...result, state: polled.state, cursor, findings: findings() };
 
+    const runsDir = deps.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
     let current = 0;
     let currentHandle = '';
+    let currentBody = '';
+    // Only the verified-Mason branch below calls receive, so the ack path never
+    // resolves a status reply for any other handle.
+    const ackText = async (ack: ChannelAck): Promise<string> => {
+      const generic = formatChannelAck(ack);
+      const reply = deps.statusReply ?? await loadStatusReply();
+      if (!reply) return generic;
+      let isAsk = false;
+      try { isAsk = reply.ask(currentBody); } catch { return generic; }
+      if (!isAsk) return generic;
+      try { return await reply.compose(runsDir, now()); }
+      catch { return reply.fallback; }
+    };
     const receive = createChannelReceiver({
       allowedSenderIds: new Set(imessageAllowlist(cfg).map(senderIdFor)),
       runsDir: deps.runsDir,
@@ -145,7 +190,7 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
       publish: null,
       acknowledge: async (ack) => {
         recordAck(ack, current, deps.runsDir, now());
-        if (ack.status !== 'duplicate') await sendIMessageOutbox(formatChannelAck(ack), cfg, currentHandle);
+        if (ack.status !== 'duplicate') await sendIMessageOutbox(await ackText(ack), cfg, currentHandle);
       },
     });
     for (const msg of polled.messages) {
@@ -162,6 +207,7 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
       } else if (message) {
         current = msg.rowid;
         currentHandle = msg.handle;
+        currentBody = message.body;
         const got = await receive({ ...message, canonicalSenderId: OPERATOR_SENDER_ID });
         if (got.ok) {
           if (got.ack.status === 'duplicate') result.duplicate++; else result.accepted++;
