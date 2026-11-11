@@ -119,6 +119,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'email-outbox-await': () => import('./fleet-email-outbox-await.js'),
   'email-outbox-batch-await': () => import('./fleet-email-outbox-batch-await.js'),
   'empties': () => import('./fleet-empties.js'),
+  'empty-causes': () => import('./fleet-empty-causes.js'),
   'empty-why': () => import('./fleet-empty-why.js'),
   'eval-report': () => import('./fleet-eval-report.js'),
   'filler': () => import('./fleet-filler.js'),

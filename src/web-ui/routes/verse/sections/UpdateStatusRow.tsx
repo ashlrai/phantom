@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { releaseChainLine } from './release-chain-line.js';
+import { releaseChainQuery } from './release-chain-query.js';
 import { refreshDesktopUpdates, useDesktopUpdates } from '../../../app/desktop-updates.js';
 import { Button, StatusBadge, Switch } from '../../../components/primitives/index.js';
 import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
@@ -45,6 +47,11 @@ export function UpdateStatusRow() {
     appVersion: APP_VERSION, desktopVersion: installedDesktopVersion(), now: Date.now(), nativeBridge: typeof bridge?.updates?.refresh === 'function' });
   const available = ['available', 'staged', 'waiting-for-idle', 'waiting-for-app-quit', 'installed'].includes(native?.phase ?? '')
     || (!!query.data && !('kind' in query.data) && (query.data.behind ?? 0) > 0);
+  const showChain = !available && !['checking', 'downloading', 'installing', 'adoption-held', 'disabled', 'uncommissioned'].includes(native?.phase ?? '');
+  const chain = useQuery(releaseChainQuery, { enabled: visible && documentVisible && showChain, freshMs: 60_000 });
+  const pollChain = useRefetch(releaseChainQuery);
+  usePollWhileVisible(pollChain, 60_000, { enabled: showChain });
+  const line = showChain ? releaseChainLine(chain.data, Date.now()) : null;
   const workers = useQuery(workersQuery, { enabled: visible && documentVisible && available, freshMs: 60_000 });
   const pollWorkers = useRefetch(workersQuery);
   usePollWhileVisible(pollWorkers, 60_000, { enabled: available });
@@ -69,6 +76,7 @@ export function UpdateStatusRow() {
     <>
     <SettingRow label="Updates" description={<>
       <span aria-live="polite">{checking ? 'Checking origin…' : status.headline} · {checkedAgo(lastFetchAt)}<br />{status.detail}{fetchFailed && !checking ? ' · fetch failed' : ''}</span>
+      {line && <><br /><span title={chain.data?.reason ?? undefined}>Release chain stopped at {line.step}: {line.reason} ({line.ageText})</span></>}
       {behind && <>
         <br />
         <span>Newest: {behind.first}{behind.moreCount > 0 ? ` (+${behind.moreCount} more)` : ''}</span>
