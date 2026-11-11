@@ -1780,6 +1780,15 @@ export const WORKBENCH_ROUTE_FAMILIES = [
     handler: 'handleOpsApi',
     prefixes: ['/api/verse/ops'],
   },
+  {
+    // The desktop Goals pane's one write: POST /api/verse/goals creates a
+    // goal (goals-create-api.ts). The pane's read stays on V2's GET /api/goals.
+    id: 'goals',
+    owner: 'desktop-command',
+    module: 'src/core/verse/goals-create-api.ts',
+    handler: 'handleGoalsCreateApi',
+    prefixes: ['/api/verse/goals'],
+  },
 ] as const satisfies readonly {
   id: string;
   owner: string;
