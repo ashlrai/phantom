@@ -4,7 +4,9 @@
  * here is a command; everything else (an unknown "/word" included) stays a
  * normal inbox message, unchanged.
  */
-export type ComposerCommandName = 'pause' | 'resume' | 'release' | 'hold' | 'stop' | 'drop' | 'status' | 'help';
+import { normalizePaneId } from '../shell/dock-catalog.js';
+
+export type ComposerCommandName = 'pause' | 'resume' | 'release' | 'hold' | 'stop' | 'drop' | 'status' | 'help' | 'open';
 
 export interface ComposerCommandSpec {
   name: ComposerCommandName;
@@ -22,6 +24,7 @@ export const COMPOSER_COMMANDS: readonly ComposerCommandSpec[] = [
   { name: 'stop', usage: '/stop <job-id>', summary: 'Stop one running job', arg: 'job-id' },
   { name: 'drop', usage: '/drop <text>', summary: 'Open the drop-job sheet with this text', arg: 'text' },
   { name: 'status', usage: '/status', summary: 'Print the live status line', arg: null },
+  { name: 'open', usage: '/open <pane>', summary: 'Open a pane (lanes, queue, releases, feed…)', arg: 'pane' },
   { name: 'help', usage: '/help', summary: 'List these commands', arg: null },
 ];
 
@@ -58,6 +61,7 @@ export function commandArgError(command: { name: ComposerCommandName; arg: strin
   const spec = commandSpec(command.name);
   if (!spec.arg) return null;
   if (!command.arg) return `/${spec.name} needs a ${spec.arg}: ${spec.usage}`;
+  if (spec.name === 'open' && !normalizePaneId(command.arg)) return `Unknown pane "${command.arg}". Try /open fleet-lanes.`;
   if (spec.name === 'release' && !LANE_ARG_RE.test(command.arg)) return LANE_ARG_ERROR;
   if (spec.name === 'hold') {
     const parts = holdArgs(command.arg);
