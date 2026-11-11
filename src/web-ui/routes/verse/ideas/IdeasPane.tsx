@@ -6,11 +6,11 @@
  * Backlog text is untrusted, so it renders as plain text only.
  */
 import { Fragment, useId, useMemo, useRef, useState } from 'react';
-import { openDockPane } from '../dock/dock-store.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { goalsQuery, type GoalSummary } from '../../../data/queries.js';
 import { openGoals } from '../goals-pane/goals-pane-model.js';
-import { filterIdeasByGoal, goalChipText, ideaGoalId } from './idea-goal-link.js';
+import { tagIdeas } from './ideas-goal-tag.js';
+import { IdeaGoalChip } from './IdeaGoalChip.js';
 import { Card, CardNote } from '../command/Surface.js';
 import { verseBacklogQuery } from '../autonomy/control-queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
@@ -27,6 +27,9 @@ export function IdeasPane({ visible = true }: { visible?: boolean }) {
   const backlog = useQuery(verseBacklogQuery, { enabled: visible, freshMs: IDEAS_POLL_MS });
   const goals = useQuery(goalsQuery, { enabled: visible });
   const [goalFilter, setGoalFilter] = useState('all');
+  const [onlyGoals, setOnlyGoals] = useState(() => {
+    try { return localStorage.getItem('phantom.ideas.only-goals.v1') === 'true'; } catch { return false; }
+  });
   const refetch = useRefetch(verseBacklogQuery);
   usePollWhileVisible(() => { refetch(); }, IDEAS_POLL_MS, { enabled: visible });
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
@@ -36,9 +39,24 @@ export function IdeasPane({ visible = true }: { visible?: boolean }) {
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
 
   const allRows = useMemo(() => rankIdeas(backlog.data?.items ?? []), [backlog.data]);
-  const rows = useMemo(() => filterIdeasByGoal(allRows, goalFilter), [allRows, goalFilter]);
-  const full = useMemo(() => groupByRepo(rows, Number.MAX_SAFE_INTEGER), [rows]);
-  const groups = useMemo(() => groupByRepo(rows, PER_REPO), [rows]);
+  const tagged = useMemo(() => {
+    const items = backlog.data?.items ?? [];
+    const matches = new Map(tagIdeas(items, goals.data ?? []).map(({ idea, goal }) => [idea, goal]));
+    return allRows.map(idea => ({ idea, goal: matches.get(items[Number(idea.key.slice(idea.key.lastIndexOf('#') + 1))]!) ?? null }));
+  }, [allRows, backlog.data, goals.data]);
+  const ordered = [...tagged.filter(row => row.goal), ...tagged.filter(row => !row.goal)]
+    .filter(row => (!onlyGoals || row.goal) && (goalFilter === 'all' || row.goal?.id === goalFilter));
+  const rows = ordered.map(row => row.idea);
+  const goalByKey = new Map(ordered.map(row => [row.idea.key, row.goal]));
+  const runs: typeof rows[] = [];
+  for (const row of rows) {
+    const last = runs[runs.length - 1];
+    if (last && last[0]!.repo === row.repo && Boolean(goalByKey.get(last[0]!.key)) === Boolean(goalByKey.get(row.key))) last.push(row);
+    else runs.push([row]);
+  }
+  const grouped = (limit: number) => runs.flatMap(run => groupByRepo(run, limit));
+  const full = grouped(Number.MAX_SAFE_INTEGER);
+  const groups = grouped(PER_REPO);
   const { counts, nudge } = useMemo(() => sourceCounts(rows), [rows]);
 
   const toggle = (repo: string) => setOpen(prev => {
@@ -88,7 +106,7 @@ export function IdeasPane({ visible = true }: { visible?: boolean }) {
         <span className={styles.meta}>{picked.size === 0 ? `Tick 2 to ${DRAFT_MAX} ideas to draft them as one job.` : `${picked.size} selected`}</span>
       </div>
       <div className={styles.groups}>
-        {groups.map((group, i) => <RepoCard key={group.repo} group={group} all={full[i]!} goals={goals.data ?? []} expanded={open.has(group.repo)} onToggle={() => toggle(group.repo)} picked={picked} drafts={drafts} busy={busy} onPick={togglePick} onDraft={draft} />)}
+        {groups.map((group, i) => <RepoCard key={`${group.repo}-${i}`} group={group} all={full[i]!} goalByKey={goalByKey} expanded={open.has(group.repo)} onToggle={() => toggle(group.repo)} picked={picked} drafts={drafts} busy={busy} onPick={togglePick} onDraft={draft} />)}
       </div>
     </>;
   }
@@ -98,12 +116,16 @@ export function IdeasPane({ visible = true }: { visible?: boolean }) {
       <option value="all">All</option>
       {openGoals(goals.data ?? []).map(goal => <option key={goal.id} value={goal.id}>{goal.objective}</option>)}
     </select></label>
+    <label><input type="checkbox" checked={onlyGoals} onChange={event => {
+      const value = event.target.checked; setOnlyGoals(value);
+      try { localStorage.setItem('phantom.ideas.only-goals.v1', String(value)); } catch { /* session only */ }
+    }} /> Only ideas that serve a goal</label>
     {body}
   </div>;
 }
 
-function RepoCard({ group, all, goals, expanded, onToggle, picked, drafts, busy, onPick, onDraft }: {
-  group: RepoGroup; all: RepoGroup; goals: readonly GoalSummary[]; expanded: boolean; onToggle: () => void;
+function RepoCard({ group, all, goalByKey, expanded, onToggle, picked, drafts, busy, onPick, onDraft }: {
+  group: RepoGroup; all: RepoGroup; goalByKey: ReadonlyMap<string, GoalSummary | null>; expanded: boolean; onToggle: () => void;
   picked: ReadonlySet<string>; drafts: ReadonlyMap<string, { state: IdeaDraftState; ids: readonly string[] }>;
   busy: boolean; onPick: (id: string) => void; onDraft: (ids: readonly string[], confirm?: boolean) => Promise<void>;
 }) {
@@ -117,7 +139,7 @@ function RepoCard({ group, all, goals, expanded, onToggle, picked, drafts, busy,
             onChange={() => { if (row.id !== null) onPick(row.id); }} aria-label={`Select ${row.title}`} />
             <span className={styles.title}>{row.title}</span></label>
           <span className={styles.meta}>{row.scoreText} · {row.source}</span>
-          {ideaGoalId(row) ? <button type="button" className={styles.toggle} onClick={() => openDockPane('goals')}>{goalChipText(ideaGoalId(row), goals)}</button> : null}
+          <IdeaGoalChip goal={goalByKey.get(row.key) ?? null} />
           <IdeaSteer idea={row} repo={group.repo} />
           <span className={styles.actions}>
             <button type="button" className={styles.toggle} disabled={busy || row.id === null}
