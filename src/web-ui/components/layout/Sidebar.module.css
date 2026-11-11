@@ -1,6 +1,37 @@
-.sidebar {
-  width: 240px;
+.frame {
+  position: relative;
+  width: var(--sidebar-width, 240px);
   flex-shrink: 0;
+  height: 100%;
+}
+
+/* 1px hairline with a 9px grab area, overhanging into <main>. */
+.resizer {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 9px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 1;
+  touch-action: none;
+}
+.resizer::after {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0; left: 4px; width: 1px;
+  background: transparent;
+}
+.resizer:hover::after,
+.frame[data-dragging='true'] .resizer::after { background: var(--accent-500); width: 2px; left: 3px; }
+.resizer:focus-visible { outline: none; }
+.resizer:focus-visible::after { background: var(--border-focus); width: 2px; left: 3px; box-shadow: var(--shadow-focus-ring); }
+
+:global(body[data-shell-resizing='true']) { user-select: none; cursor: col-resize; }
+
+.sidebar {
+  width: 100%;
+  box-sizing: border-box;
   height: 100%;
   overflow-y: auto;
   border-right: 1px solid var(--border-subtle);
@@ -76,8 +107,10 @@
 /* Compact width class from app/console-mode.ts (data-console-layout). The
    sidebar folds into a top strip: the brand row stays, and each group's
    leaves scroll sideways as chips instead of stacking down the page. */
+:root[data-console-layout='compact'] .frame { width: 100%; height: auto; }
+:root[data-console-layout='compact'] .resizer { display: none; }
 :root[data-console-layout='compact'] .sidebar {
-  width: 100%; height: auto; max-height: 42vh; overflow: auto;
+  height: auto; max-height: 42vh; overflow: auto;
   border-right: 0; border-bottom: 1px solid var(--border-subtle);
   padding: var(--space-2);
 }
