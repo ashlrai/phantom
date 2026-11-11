@@ -22,6 +22,7 @@
 import { Component, Suspense, lazy, useState, type ComponentType, type ErrorInfo, type ReactNode } from 'react';
 import { Button } from '../../../components/primitives/Button.js';
 import { EmptyState } from '../../../components/primitives/EmptyState.js';
+import { reportDesktopError } from '../../../lib/report-desktop-error.js';
 import type { VerseReviewScope, VerseTerminalLaunchVia } from '../../../../core/verse/workbench-types.js';
 
 // ===========================================================================
@@ -224,6 +225,8 @@ function slotComponent(id: SlotId): AnyComponent | null {
 interface BoundaryProps {
   kind: 'inline' | 'pane';
   label: string;
+  /** The crash-report surface — `pane:<slot id>` — so the ledger names the pane, not a label. */
+  surface: string;
   /** Drop the cached module and mount a fresh boundary (a failed lazy import stays failed otherwise). */
   onRetry: () => void;
   children: ReactNode;
@@ -239,6 +242,7 @@ class SlotBoundary extends Component<BoundaryProps, { failed: boolean }> {
   override componentDidCatch(error: Error, info: ErrorInfo): void {
     // The console, not the page: operator copy never carries a stack or a path.
     console.error(`[verse] ${this.props.label} failed`, error, info.componentStack);
+    reportDesktopError(this.props.surface, error, info.componentStack);
   }
 
   override render(): ReactNode {
@@ -285,7 +289,7 @@ function SlotHost<K extends SlotId>({
   };
   return (
     // A new key per attempt: a fresh boundary AND a fresh lazy component.
-    <SlotBoundary key={attempt} kind={kind} label={label} onRetry={retry}>
+    <SlotBoundary key={attempt} kind={kind} label={label} surface={`pane:${id}`} onRetry={retry}>
       <Suspense fallback={null}>
         <Resolved {...(props as unknown as Record<string, unknown>)} />
       </Suspense>
