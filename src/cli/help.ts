@@ -629,7 +629,8 @@ export function agentDocsText(): string {
   lines.push('phantom_agent_bus_post, phantom_fleet_drop_job, phantom_fleet_job_reassign,');
   lines.push('phantom_fleet_planner_run, phantom_fleet_apps_ensure, phantom_fleet_apps_changes,');
   lines.push('phantom_fleet_apps_status, phantom_fleet_apps_await, phantom_fleet_needs,');
-  lines.push('phantom_fleet_needs_resolve, phantom_fleet_orders, phantom_fleet_graph,');
+  lines.push('phantom_fleet_needs_resolve, phantom_fleet_needs_wait, phantom_fleet_orders,');
+  lines.push('phantom_fleet_graph,');
   lines.push('phantom_fleet_session, phantom_fleet_doctor.');
   lines.push('Tool discovery is not authorization. phantom_fleet_doctor only reads fleet health.');
   lines.push('Read-only observation tools: world_model, phantom_observe, phantom_observe_session,');
