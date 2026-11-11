@@ -10,7 +10,7 @@ import { resetVerseStore } from '../routes/verse/verse-store.js';
 import { reloadVerseUiForTest, resetVerseUi, VERSE_UI_STORAGE_KEY } from '../routes/verse/verse-ui-store.js';
 import { isScopedConsolePath, isVerseConsolePath } from './console-mode.js';
 import { listenForSidecarRestart, SIDECAR_RESTARTED_EVENT } from './sidecar-restart.js';
-import { preloadVerseFirstPaint, preloadVerseFonts, VerseConsoleApp } from './VerseConsoleApp.js';
+import { preloadVerseFirstPaint, preloadVerseFonts, PhantomConsoleApp } from './VerseConsoleApp.js';
 
 const READ = 'c'.repeat(64);
 const MUT = 'd'.repeat(64);
@@ -95,14 +95,14 @@ afterEach(() => {
   window.history.replaceState(null, '', '/');
 });
 
-describe('VerseConsoleApp', () => {
+describe('PhantomConsoleApp', () => {
   it('opens the decision inbox by desktop deep link and returns to the workspace', async () => {
     window.history.replaceState(null, '', '/verse/#/inbox');
     const net = verseFetch();
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
       String(input) === '/api/inbox' ? Response.json({ pending: 0, proposals: [] }) : (net.fetch as typeof fetch)(input, init)));
     markCheckComplete(true);
-    render(<VerseConsoleApp />);
+    render(<PhantomConsoleApp />);
     expect(await screen.findByRole('heading', { name: 'Decision inbox' })).toBeInTheDocument();
     expect(await screen.findByText(/No pending decisions/)).toBeInTheDocument();
     act(() => {
@@ -122,7 +122,7 @@ describe('VerseConsoleApp', () => {
   it('shows the Phantom session gate when the probe is unauthenticated', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL) => new Response(null, { status: 401 }));
     vi.stubGlobal('fetch', fetchMock);
-    render(<VerseConsoleApp />);
+    render(<PhantomConsoleApp />);
     expect(await screen.findByRole('heading', { name: 'Connect to Phantom' })).toBeInTheDocument();
     expect(screen.getByText('phm console', { selector: 'pre' })).toBeInTheDocument();
     expect(screen.getByText(/Phantom only ever talks to the Phantom server/)).toBeInTheDocument();
@@ -135,7 +135,7 @@ describe('VerseConsoleApp', () => {
     const { fetch, state } = verseFetch();
     vi.stubGlobal('fetch', fetch);
     window.__ASHLR_TOKENS__ = { readToken: READ, token: MUT };
-    render(<VerseConsoleApp />);
+    render(<PhantomConsoleApp />);
     await expectShellOnHome();
     expect(screen.queryByRole('heading', { name: 'Connect to Phantom' })).not.toBeInTheDocument();
     const sessionCall = state.calls.find((c) => c.path === '/api/session')!;
@@ -158,7 +158,7 @@ describe('VerseConsoleApp', () => {
     }));
     reloadVerseUiForTest();
     window.__ASHLR_TOKENS__ = { readToken: READ, token: MUT };
-    render(<VerseConsoleApp />);
+    render(<PhantomConsoleApp />);
 
     const rail = await screen.findByRole('navigation', { name: 'Phantom sections' });
     expect(within(rail).getByRole('button', { name: /^Fleet/ })).toHaveAttribute('aria-current', 'page');
@@ -208,7 +208,7 @@ describe('font preloads (no "preloaded but not used" on the connect screen)', ()
     const { fetch } = verseFetch();
     vi.stubGlobal('fetch', fetch);
     window.__ASHLR_TOKENS__ = { readToken: READ, token: MUT };
-    render(<VerseConsoleApp />);
+    render(<PhantomConsoleApp />);
     await expectShellOnHome();
     const hrefs = [...document.head.querySelectorAll('link[rel="preload"]')].map((l) => l.getAttribute('href') ?? '');
     expect(hrefs.some((h) => /SpaceGrotesk-latin/.test(h))).toBe(true);
@@ -291,7 +291,7 @@ describe('listenForSidecarRestart (desktop sidecar restart → immediate re-adop
   it('adopts late first native tokens after the watchdog already opened a tokenless gate', async () => {
     const { fetch, state } = verseFetch();
     vi.stubGlobal('fetch', fetch);
-    render(<VerseConsoleApp />);
+    render(<PhantomConsoleApp />);
     expect(await screen.findByRole('heading', { name: 'Connect to Phantom' })).toBeInTheDocument();
     expect(sessionPosts(state.calls)).toEqual([]);
     act(() => runNativeExistingWindow({ readToken: READ2, token: MUT2 }));
@@ -304,7 +304,7 @@ describe('listenForSidecarRestart (desktop sidecar restart → immediate re-adop
   it('late native read-only tokens authenticate without granting a mutation hold', async () => {
     const { fetch, state } = verseFetch();
     vi.stubGlobal('fetch', fetch);
-    render(<VerseConsoleApp />);
+    render(<PhantomConsoleApp />);
     expect(await screen.findByRole('heading', { name: 'Connect to Phantom' })).toBeInTheDocument();
     act(() => runNativeExistingWindow({ readToken: READ2 }));
     await expectShellOnHome();
@@ -315,7 +315,7 @@ describe('listenForSidecarRestart (desktop sidecar restart → immediate re-adop
   it('late native handoff refuses a foreign origin without a session exchange', async () => {
     const { fetch, state } = verseFetch();
     vi.stubGlobal('fetch', fetch);
-    render(<VerseConsoleApp />);
+    render(<PhantomConsoleApp />);
     expect(await screen.findByRole('heading', { name: 'Connect to Phantom' })).toBeInTheDocument();
     act(() => runNativeExistingWindow({ readToken: READ2 }, 'https://example.invalid'));
     await act(async () => { await Promise.resolve(); });
@@ -327,7 +327,7 @@ describe('listenForSidecarRestart (desktop sidecar restart → immediate re-adop
   it('an existing external server without a startup record receives no tokens or authority', async () => {
     const { fetch, state } = verseFetch();
     vi.stubGlobal('fetch', fetch);
-    render(<VerseConsoleApp />);
+    render(<PhantomConsoleApp />);
     expect(await screen.findByRole('heading', { name: 'Connect to Phantom' })).toBeInTheDocument();
     expect(nativeExistingWindowScript(null)).toBeNull();
     act(() => runNativeExistingWindow(null));
@@ -341,11 +341,18 @@ describe('listenForSidecarRestart (desktop sidecar restart → immediate re-adop
     const { fetch } = verseFetch();
     vi.stubGlobal('fetch', fetch);
     act(() => markCheckComplete(false));
-    render(<VerseConsoleApp />);
+    render(<PhantomConsoleApp />);
     expect(await screen.findByRole('heading', { name: 'Connect to Phantom' })).toBeInTheDocument();
     window.__ASHLR_TOKENS__ = { readToken: READ2, token: MUT2 };
     act(() => { window.dispatchEvent(new CustomEvent(SIDECAR_RESTARTED_EVENT)); });
     await expectShellOnHome();
     expect(screen.queryByRole('heading', { name: 'Connect to Phantom' })).not.toBeInTheDocument();
+  });
+});
+
+describe('legacy Verse component names', () => {
+  it('keeps VerseConsoleApp resolving to PhantomConsoleApp for external importers', async () => {
+    const mod = await import('./VerseConsoleApp.js');
+    expect(mod.VerseConsoleApp).toBe(mod.PhantomConsoleApp);
   });
 });
