@@ -362,6 +362,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'standby-config': () => import('./fleet-standby-config.js'),
   'starved': () => import('./fleet-starved.js'),
   'status-api': () => import('./fleet-status-api.js'),
+  'status-digest': () => import('./fleet-status-digest.js'),
   'sticky-loop': () => import('./fleet-sticky-loop.js'),
   'stranded': () => import('./fleet-stranded.js'),
   'stray-slots': () => import('./fleet-stray-slots.js'),

@@ -1323,6 +1323,11 @@ export async function handleApi(
 
   try {
     if (path.startsWith('/api/teams/') && await handleTeamInvites(req, res, ctx)) return true;
+    if (path === '/api/usage/spend' && method === 'GET') {
+      const { readUsageSpend } = await import('../usage/spend.js');
+      sendJson(res, 200, await readUsageSpend());
+      return true;
+    }
     if (path === HOST_SUMMARY_PATH) {
       if (method !== 'GET') {
         res.setHeader('Allow', 'GET');
