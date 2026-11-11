@@ -69,6 +69,7 @@ import type { VerseApiContext } from './verse-api.js';
 import type { NeedsYouItem } from './workbench-types.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { handleLeaderAttachment, VERSE_LEADER_ATTACHMENT_PATH } from './leader-attachment-api.js';
+import { handleLeaderAttachmentRead } from './leader-attachment-read-api.js';
 import { VERSE_LEADER_PATH, type LeaderAction, type LeaderMemo } from '../vision/leader-types.js';
 import { leaderRoot, listMemoIds, readLeaderMemo } from '../vision/leader-memo.js';
 import {
@@ -818,6 +819,9 @@ export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) =>
     return true;
   }
   if (path === VERSE_LEADER_ATTACHMENT_PATH) return handleLeaderAttachment(ctx, req, res, method);
+  if (path.startsWith(`${VERSE_LEADER_ATTACHMENT_PATH}/`)) {
+    return handleLeaderAttachmentRead(ctx, req, res, method, path.slice(VERSE_LEADER_ATTACHMENT_PATH.length + 1));
+  }
   if (path === `${VERSE_LEADER_PATH}/inbox`) {
     if (method === 'GET') {
       if (!ctx.readSession || !Number.isFinite(ctx.readSession.expiresAt) || ctx.readSession.expiresAt <= Date.now()) { sendJson(res, 401, { error: 'A current read session is required.' }); return true; }
