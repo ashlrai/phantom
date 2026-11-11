@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cmdFleetResetRelease } from '../src/cli/fleet-reset-release.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { resolveFleetSubcommand } from '../src/cli/fleet-subcommand-resolve.js';
 import { readLaneTargets } from '../src/core/fleet/runs-lane-targets.js';
 import { readResetReleases } from '../src/core/fleet/usage-reset-release.js';

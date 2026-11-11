@@ -8,6 +8,7 @@ import { createRemoteDeviceStore } from './remote-device-store.js';
 import { startRemoteReadGateway } from './remote-gateway.js';
 import { startRemoteAdminSocket } from './remote-admin.js';
 import { createRemotePush } from './remote-push.js';
+import { readLeaderRepliesForPush } from './remote-push-leader.js';
 import { createRemotePushWatcher } from './remote-push-watcher.js';
 import { loadOrCreateRemoteVapid } from './remote-push-vapid.js';
 import { createPhoneSessionCustody } from './phone-session-custody.js';
@@ -92,9 +93,10 @@ export async function startRemoteRuntime(configPath: string, hub: { port: number
       read: (since) => readLocal(`/api/verse/activity${since ? `?since=${encodeURIComponent(since)}` : ''}`),
       readFleet: () => readLocal('/api/verse/fleet/runs'),
       readNeedsMason: async () => listNeedsMason(),
+      readLeaderReplies: () => readLeaderRepliesForPush(readLocal),
       send: (kind, detail) => Promise.allSettled([
         Promise.resolve().then(() => push.send(kind, detail)),
-        Promise.resolve().then(() => telegram(kind, detail)),
+        Promise.resolve().then(() => kind === 'leader-reply' ? undefined : telegram(kind, detail)),
       ]),
     });
     watcher.start();
