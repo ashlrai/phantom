@@ -45,9 +45,9 @@ describe('scoped Universe console composition', () => {
     expect(screen.queryByText(root)).not.toBeInTheDocument();
     await user.type(screen.getByLabelText('Read token'), 'a'.repeat(64));
     await user.click(screen.getByRole('button', { name: 'Connect' }));
-    await screen.findByRole('heading', { name: 'Start your first universe' });
+    await screen.findByRole('heading', { name: 'Start your first experiment workspace' });
     expect(screen.getByRole('heading', { name: 'Phantom' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Universe store')).toHaveTextContent(root);
+    expect(screen.getByLabelText('Experiment store')).toHaveTextContent(root);
     expect(screen.getByText('Read-only observation')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Refresh' }));
     await waitFor(() => expect(request.mock.calls.filter(([path]) => path === '/api/universe')).toHaveLength(2));
@@ -90,7 +90,7 @@ describe('scoped Universe console composition', () => {
     await screen.findByRole('alert');
     available = true;
     await user.click(screen.getByRole('button', { name: 'Retry scope check' }));
-    await screen.findByRole('heading', { name: 'Start your first universe' });
+    await screen.findByRole('heading', { name: 'Start your first experiment workspace' });
     expired = true;
     await user.click(screen.getByRole('button', { name: 'Refresh' }));
     await screen.findByRole('heading', { name: 'Connect to Phantom' });

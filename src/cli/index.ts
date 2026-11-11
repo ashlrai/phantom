@@ -53,7 +53,8 @@
  *   swarms [--json]            List past swarm runs.
  *   tui [--once]               Interactive terminal dashboard (alias: dash).
  *   serve [--port N] [--open]  Local web dashboard + JSON API on 127.0.0.1 (default port 7777).
- *   verse [--port N] [--no-open]  Ashlr Verse console (serve with dispatch on) at /verse/.
+ *   console [--port N] [--no-open]  Phantom console (serve with dispatch on) at /app/. `verse` is the same command.
+ *   verse [--port N] [--no-open]  Alias of `console`; opens /verse/.
  *   issues [--retry] [--json]  Group failed queue jobs by error; --retry queues READY retries.
  *   gh <pr|issue|ci>           Read GitHub PRs / issues / CI status (read-only via gh CLI).
  *   gh pr create               Create a PR (explicit + confirm-gated mutation).
@@ -461,6 +462,12 @@ const loadVerseCmd = lazyCmd(
   () => import('./verse.js' as unknown as string),
   (m) => m.cmdVerse as Cmd,
   'verse command requires src/cli/verse.ts (Verse module not yet built).',
+);
+
+const loadConsoleCmd = lazyCmd(
+  () => import('./verse.js' as unknown as string),
+  (m) => m.cmdConsole as Cmd,
+  'console command requires src/cli/verse.ts (Verse module not yet built).',
 );
 
 const loadModelsCmd = lazyCmd(
@@ -2503,6 +2510,13 @@ async function main(): Promise<void> {
         // Ashlr Verse: serve with dispatch forced on, opens /verse/.
         const cmdVerse = await loadVerseCmd();
         process.exitCode = await cmdVerse(rest);
+        break;
+      }
+
+      case 'console': {
+        // The Phantom name for `verse`: same flags, opens /app/.
+        const cmdConsole = await loadConsoleCmd();
+        process.exitCode = await cmdConsole(rest);
         break;
       }
 
