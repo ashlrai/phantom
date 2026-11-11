@@ -64,20 +64,26 @@ class GateTests(unittest.TestCase):
         self.assertIsNone(a['reason'])
         self.assertNotIn('LOADGATE', events(home))
 
-    def test_loadavg_soft_limit_halves_claims(self):
+    def test_load_over_twice_ncpu_stops_new_claims(self):
+        # RQ-BATCH-SESSIONS-2: the host measured load1 352 on 18 cores; that must back off, not halve.
         home = self._case({'LOADGATE_NCPU': '18', 'LOADGATE_LOADAVG': '64'}, n=4,
                           prep=lambda h: stub_ps(h, 962))
-        self.assertEqual(len(launched(home)), 2)
-        self.assertTrue(admission(home)['admit'])
-        self.assertEqual(admission(home)['decision'], 'halve_claims')
-        self.assertEqual(len(ready_left(home)), 2)
+        self.assertEqual(launched(home), [])
+        a = admission(home)
+        self.assertFalse(a['admit'])
+        self.assertEqual(a['decision'], 'stop')
+        self.assertIn('loadavg 64.0 > 36.0 (2 x ncpu)', a['reason'])
+        self.assertEqual(len(ready_left(home)), 4)
+        self.assertIn('LOADGATE tripped: loadavg 64.0 > 36.0', events(home))
 
-    def test_loadavg_at_three_times_ncpu_admits_full_batch(self):
-        home = self._case({'LOADGATE_LOADAVG': '54'}, n=4)
+    def test_load_at_twice_ncpu_admits_a_full_tick(self):
+        home = self._case({'LOADGATE_LOADAVG': '36'}, n=4)
         self.assertEqual(len(launched(home)), 4)
+        self.assertEqual(admission(home)['decision'], 'admit')
 
-    def test_pressure_critical_blocks_and_warning_admits(self):
-        for pressure, expected in [('4', 0), ('8', 0), ('2', 1), ('1', 1)]:
+    def test_rising_memory_pressure_blocks(self):
+        # kern.memorystatus_vm_pressure_level: 1 normal, 2 warn, 4 critical. Warn is already a rise.
+        for pressure, expected in [('4', 0), ('8', 0), ('2', 0), ('1', 1)]:
             home = self._case({'LOADGATE_PRESSURE': pressure})
             self.assertEqual(len(launched(home)), expected)
             self.assertEqual(admission(home)['admit'], bool(expected))
@@ -132,7 +138,7 @@ class GateTests(unittest.TestCase):
         home = self._case({'GATE_PRESSURE_MIN': '8', 'LOADGATE_PRESSURE': '4',
                            'GATE_LOAD_PER_CPU': '4', 'LOADGATE_LOADAVG': '64'})
         self.assertTrue(admission(home)['admit'])
-        self.assertFalse(admission(home)['soft_load'])
+        self.assertEqual(admission(home)['load_max'], 72)
 
     def test_stale_daemon_tick_warns_but_admits(self):
         home = self._case(prep=lambda h: set_daemon_tick(h, '2020-01-01T00:00:00Z'))
@@ -177,10 +183,14 @@ class GateTests(unittest.TestCase):
         home = self._case(prep=lambda h: set_daemon_tick(h, t))
         self.assertEqual(launched(home), ['RQ-GATE-0'])
 
-    def test_owner_off_switch_disables_the_gate(self):
-        home = self._case({'LOADGATE_PRESSURE': '4'}, prep=lambda h: (h / '.ashlr-runs' / 'queue' / 'LOADGATE_OFF').write_text(''))
-        self.assertEqual(launched(home), ['RQ-GATE-0'])
-        self.assertTrue(admission(home)['disabled'])
+    def test_legacy_off_switch_no_longer_disables_the_gate(self):
+        for env in ({'LOADGATE_PRESSURE': '4'}, {'LOADGATE_LOADAVG': '352'}):
+            home = self._case(env, prep=lambda h: (h / '.ashlr-runs' / 'queue' / 'LOADGATE_OFF').write_text(''))
+            self.assertEqual(launched(home), [])
+            a = admission(home)
+            self.assertFalse(a['disabled'])
+            self.assertTrue(a['off_switch_ignored'])
+            self.assertIn('LOADGATE_OFF present and ignored', a['warnings'])
 
     def test_test_overrides_are_ignored_without_the_marker(self):
         def prep(home):
@@ -317,12 +327,13 @@ class AdaptiveConcurrencyTests(unittest.TestCase):
         self.assertIn({'from': 4, 'to': 6, 'reason': 'raise headroom'},
                       [{k: r[k] for k in ('from', 'to', 'reason')} for r in rows if r.get('event') == 'concurrency'])
 
-    def test_memory_pressure_warning_backs_off_before_the_gate_trips(self):
+    def test_memory_pressure_warning_trips_the_gate_and_backs_off_concurrency(self):
+        # RQ-BATCH-SESSIONS-2: rising pressure (warn, level 2) now stops claims as well as shrinking the cap.
         home = self._saturated(cap=8, env={'LOADGATE_PRESSURE': '2'})
-        self.assertTrue(admission(home)['admit'] is False)   # at cap: 8 running >= cap 6
+        self.assertTrue(admission(home)['admit'] is False)
         self.assertEqual(conc(home)['cap'], 6)
         self.assertIn('CONCURRENCY 8->6 backoff memory_pressure', events(home))
-        self.assertNotIn('LOADGATE tripped', events(home))
+        self.assertIn('LOADGATE tripped: memory_pressure 2 >= 2', events(home))
         self.assertEqual(launched(home), [])
 
     def test_swap_growth_and_high_load_back_off(self):
@@ -460,7 +471,7 @@ class AdmissionSnapshotTests(unittest.TestCase):
     def test_local_mid_cap_load_bands_and_override(self):
         tmp, home = ready_fixture(0)
         self.addCleanup(tmp.cleanup)
-        for load, expected in [('3.9', 4), ('4', 2), ('8', 2), ('8.1', 2)]:
+        for load, expected in [('3.9', 4), ('4', 2), ('8', 2), ('8.1', 1)]:   # over 2 x ncpu the gate trips: 1
             with self.subTest(load=load):
                 r = tick(home, {'LOADGATE_NCPU': '4', 'LOADGATE_LOADAVG': load})
                 self.assertEqual(r.returncode, 0, r.stderr)
@@ -471,7 +482,7 @@ class AdmissionSnapshotTests(unittest.TestCase):
         self.assertEqual(admission(home)['local_mid_cap'], 4)
 
     def test_local_mid_cap_limits_launches(self):
-        for load, expected in [('1', 4), ('4', 2), ('9', 2)]:
+        for load, expected in [('1', 4), ('4', 2), ('9', 0)]:   # 9 > 2 x 4 cpus: the gate stops claims
             with self.subTest(load=load):
                 slots = held_lanes()
                 slots['codex-local'] = {'target': 6, 'floor': 0, 'ceiling': 6, 'hard_cap': 6, 'last_change': int(1e15)}
@@ -484,6 +495,8 @@ class AdmissionSnapshotTests(unittest.TestCase):
                     (q / 'prompts' / f'{job}.md').write_text('fixture')
                     with (q / 'ready.tsv').open('a') as f:
                         f.write(f'{job}\tphantom\tcodex-local\tmid\t{q}/prompts/{job}.md\n')
+                    with (q / 'router-queue.md').open('a') as f:   # codex-local only takes lines declared under 60
+                        f.write(f'- READY {job} (pool=codex-local, tier=mid, repo=phantom, size<=40): fixture\n')
                 # Stub only the loopback health probe in the child process.
                 (home / 'sitecustomize.py').write_text(
                     'import urllib.request\n'
@@ -514,7 +527,7 @@ class AdmissionSnapshotTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         tick(home, {'LOADGATE_LOADAVG': '3.5', 'LOADGATE_NCPU': '10'})
         a = admission(home)
-        self.assertEqual((a['load1'], a['ncpu'], a['load_max'], a['procs'], a['worktrees']), (3.5, 10, 30.0, 1, 0))
+        self.assertEqual((a['load1'], a['ncpu'], a['load_max'], a['procs'], a['worktrees']), (3.5, 10, 20.0, 1, 0))
         self.assertEqual(a['schema'], 'dispatchd.admission.v2')
         self.assertEqual(json.loads((home / '.ashlr-runs' / 'queue' / 'status.json').read_text())['admission']['cap'], a['cap'])
 

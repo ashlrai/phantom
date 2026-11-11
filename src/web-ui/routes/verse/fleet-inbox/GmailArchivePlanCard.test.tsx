@@ -16,8 +16,8 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it('renders counts, senders, age and the nothing-is-deleted line per inbox', async () => {
   serve({ schema: SCHEMA, plans: [plan(), plan({ inbox: 'inbox-b', unread: 12, archiveCount: 0, topSenders: [] })] });
   render(<GmailArchivePlanCard visible />);
-  expect(await screen.findByText('140 unread now (target 100) · would archive 40')).toBeInTheDocument();
-  expect(screen.getByText('12 unread now (target 100) · would archive 0')).toBeInTheDocument();
+  expect(await screen.findByText('140 unread (source unknown) (target 100) · would archive 40')).toBeInTheDocument();
+  expect(screen.getByText('12 unread (source unknown) (target 100) · would archive 0')).toBeInTheDocument();
   expect(screen.getByText('Top senders: sender@example.com (25), news@example.com (10)')).toBeInTheDocument();
   expect(screen.getByText('inbox-a')).toBeInTheDocument();
   expect(screen.getAllByText(/3m ago/)).toHaveLength(2);
