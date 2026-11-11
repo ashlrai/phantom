@@ -46,7 +46,7 @@ export const NAV_GROUPS: NavGroup[] = [
       },
       {
         path: '/universe',
-        label: 'Universe',
+        label: 'Experiments',
         description: 'Compare experiments, follow variant lineages, and inspect the retained population.',
         implemented: true,
       },
