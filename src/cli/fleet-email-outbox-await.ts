@@ -4,9 +4,11 @@ import { readEmailDropConfig } from '../core/comms/email-drop-config.js';
 import { awaitEmailOutbox, type AwaitOptions, type AwaitResult } from '../core/comms/email-outbox-await.js';
 
 const USAGE = 'Usage: ashlr fleet email-outbox-await --name ARTIFACT.reply.eml --timeout-ms N [--poll-ms N] [--dir ABS] [--json]';
-type Deps = Partial<Pick<AwaitOptions, 'now' | 'read' | 'sleep' | 'signal'>> & { runsDir?: string };
+type Deps = Partial<Pick<AwaitOptions, 'now' | 'read' | 'sleep' | 'signal'>> & { runsDir?: string; readConfig?: typeof readEmailDropConfig };
 
 export async function cmdFleetEmailOutboxAwait(args: string[], deps: Deps = {}): Promise<number> {
+  const now = deps.now ?? Date.now;
+  const started = now();
   const values = new Map<string, string>();
   let json = false;
   const usage = (): number => { console.error(USAGE); return 2; };
@@ -46,12 +48,31 @@ export async function cmdFleetEmailOutboxAwait(args: string[], deps: Deps = {}):
     if (controller.signal.aborted) return output({ name, cancelled: true, timedOut: false });
     let outboxDir = dir;
     if (!outboxDir) {
-      const config = await readEmailDropConfig(deps.runsDir ?? join(homedir(), '.ashlr-runs'));
-      if (controller.signal.aborted) return output({ name, cancelled: true, timedOut: false });
+      const remaining = timeoutMs - (now() - started);
+      if (remaining <= 0) return output({ name, cancelled: false, timedOut: true });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let onAbort: (() => void) | undefined;
+      const boundary = new Promise<'cancelled' | 'timedOut'>((resolve) => {
+        onAbort = () => resolve('cancelled');
+        controller.signal.addEventListener('abort', onAbort, { once: true });
+        timer = setTimeout(() => resolve('timedOut'), remaining);
+      });
+      let config: Awaited<ReturnType<typeof readEmailDropConfig>> | 'cancelled' | 'timedOut';
+      try {
+        config = await Promise.race([Promise.resolve().then(() => (deps.readConfig ?? readEmailDropConfig)(deps.runsDir ?? join(homedir(), '.ashlr-runs'))), boundary]);
+      } finally {
+        clearTimeout(timer);
+        if (onAbort) controller.signal.removeEventListener('abort', onAbort);
+      }
+      if (controller.signal.aborted || config === 'cancelled') return output({ name, cancelled: true, timedOut: false });
+      if (config === 'timedOut' || now() - started >= timeoutMs) return output({ name, cancelled: false, timedOut: true });
       if (config.state === 'invalid' || !config.config) return output({ name, reason: 'source-failure', cancelled: false, timedOut: false });
       outboxDir = config.config.outboxDir ?? join(config.config.inboxDir, '..', 'outbox');
     }
-    return output(await awaitEmailOutbox({ dir: outboxDir, name, timeoutMs, pollMs, signal: controller.signal, now: deps.now, read: deps.read, sleep: deps.sleep }));
+    if (controller.signal.aborted) return output({ name, cancelled: true, timedOut: false });
+    const remaining = timeoutMs - (now() - started);
+    if (remaining <= 0) return output({ name, cancelled: false, timedOut: true });
+    return output(await awaitEmailOutbox({ dir: outboxDir, name, timeoutMs: remaining, pollMs, signal: controller.signal, now: deps.now, read: deps.read, sleep: deps.sleep }));
   } finally {
     process.removeListener('SIGINT', cancel);
     process.removeListener('SIGTERM', cancel);
