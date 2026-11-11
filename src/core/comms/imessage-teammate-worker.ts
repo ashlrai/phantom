@@ -10,6 +10,7 @@ import { ingestIMessages } from './imessage-inbox-bridge.js';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { ensurePrivateDirectory } from '../verse/preferences.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
+import { buildTeammateOperationalContext } from './teammate-context-evidence.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { classifyTeammateIntent, markTeammateTextsAnswered, readRows, readTeammateTexts } from './imessage-teammate-inbox.js';
@@ -41,15 +42,8 @@ function read(file: string, anchor: string, maxBytes: number): string | null {
 }
 
 /** Bounded projections of the existing leader/fleet records, not another context store. */
-export function teammateOperationalContext(runsDir: string): string {
-  const parts: string[] = [];
-  for (const relative of ['leader/VISION.md', 'supervisor/status-main-guardian.md', 'queue/status.json']) {
-    try { const text = read(join(runsDir, relative), runsDir, 128 * 1024); if (text) parts.push(`${relative}:\n${text.slice(0, 1200)}`); }
-    catch { parts.push(`${relative}: unavailable`); }
-  }
-  const source = process.env.PHANTOM_COMMS_SOURCE_SHA ?? 'unknown';
-  const desktop = process.env.PHANTOM_COMMS_DESKTOP_VERSION ?? 'unknown';
-  return scrubSecrets(`Observation time: ${new Date().toISOString()}\nResponder source: ${source}\nInstalled desktop version: ${desktop}\n${parts.join('\n')}`).slice(0, 4000);
+export function teammateOperationalContext(runsDir: string, now: () => number = Date.now): string {
+  return buildTeammateOperationalContext(runsDir, now());
 }
 
 /** Audited text-only transport: private bodies have no cloud route or tool authority. */
@@ -163,7 +157,7 @@ export async function runTeammateResponder(cfg: AshlrConfig, options: TeammateWo
       if (!row.text) {
         row.state = 'claimed'; row.claimUntil = now() + CLAIM_MS; save();
         try {
-          const text = await (options.generate ?? ((input, context) => generateLocalTeammateReply(input, context, options.signal, cfg)))(message.text, teammateOperationalContext(runs));
+          const text = await (options.generate ?? ((input, context) => generateLocalTeammateReply(input, context, options.signal, cfg)))(message.text, teammateOperationalContext(runs, now));
           if (!text.trim() || text.length > 3500 || scrubSecrets(text) !== text) throw new Error('Unsafe reply');
           row.text = `Phantom teammate reply [${row.rowid}]: ${text}\nNo acknowledgement needed.`;
           row.state = 'drafted'; save();

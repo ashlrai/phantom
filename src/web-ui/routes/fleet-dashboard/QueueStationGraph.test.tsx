@@ -4,8 +4,9 @@ import { QueueStationGraph } from './QueueStationGraph.js';
 import { fixtureQueueStatsSource, commandQueueStatsSource, queueNowQueueStatsSource } from '../../data/queue-stats/source.js';
 import { QUEUE_STATS_EMPTY, QUEUE_STATS_NORMAL, QUEUE_STATS_OVERLOADED } from '../../data/queue-stats/fixtures.js';
 import { QUEUE_NOW_FIXTURE } from '../../data/queue-stats/queue-now-fixture.js';
-// The shared preview gate reads `?agentWorkspace=1` from the current URL.
-afterEach(() => window.history.replaceState(null, '', '/'));
+import { AGENT_WORKSPACE_STORAGE_KEY } from '../../data/agent-workspace-flag.js';
+
+afterEach(() => localStorage.removeItem(AGENT_WORKSPACE_STORAGE_KEY));
 
 describe('QueueStationGraph', () => {
   it('renders nothing when the flag is off (default)', () => {
@@ -14,7 +15,7 @@ describe('QueueStationGraph', () => {
   });
 
   it('renders all 11 stations of the normal fixture when the flag is on', async () => {
-    window.history.replaceState(null, '', '/?agentWorkspace=1');
+    localStorage.setItem(AGENT_WORKSPACE_STORAGE_KEY, '1');
     render(<QueueStationGraph source={fixtureQueueStatsSource(QUEUE_STATS_NORMAL)} />);
     const node = await screen.findByTestId('station-pr_ci');
     expect(node.getAttribute('data-band')).toBe('amber');
