@@ -1683,10 +1683,6 @@ async function cmdOpen(args: string[]): Promise<void> {
 
   openInEditor(chosen.path, cfg);
   console.log(green('opened: ') + chosen.path);
-  const { planMarkdownOpen, ashlrMdInstallHint } = await import('./open.js');
-  const md = planMarkdownOpen(chosen.path, cfg);
-  if (md.kind === 'ashlr-md') console.log(dim('  via Ashlr MD'));
-  else if (md.reason === 'not-installed') console.log(dim(`  ${ashlrMdInstallHint()}`));
 }
 
 // ─── Command: tidy ────────────────────────────────────────────────────────────
@@ -3215,6 +3211,7 @@ async function main(): Promise<void> {
       case 'usage': {
         if (wantsHelp(rest)) {
           printCoreUsage('usage', 'Usage readings.', [
+            ['phm usage spend [--json]', 'See measured usage and projected unused capacity'],
             ['phm usage validate', 'Validate a usage reading'],
           ]);
           process.exitCode = 0;
