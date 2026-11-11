@@ -44,7 +44,15 @@ export function readOwnerThreadHistory(options: { runsDir: string }, page: { bef
   let remainingBytes = TOTAL_BYTES; let skipped = 0;
   const messages: OwnerThreadMessage[] = [];
   const dir = join(options.runsDir, 'leader');
-  for (const archive of [...archives].reverse()) {
+  // Prefix maxima account for ranges that extend beyond later-starting archives.
+  const maxLastSeq: number[] = [];
+  for (let i = 0; i < archives.length; i++) {
+    maxLastSeq[i] = Math.max(maxLastSeq[i - 1] ?? -Infinity, archives[i]!.lastSeq);
+  }
+  for (let i = archives.length - 1; i >= 0; i--) {
+    // Equal sequence numbers can still change the stable ordering at the boundary.
+    if (messages.length === limit && maxLastSeq[i]! < messages[0]!.seq) break;
+    const archive = archives[i]!;
     if (page.before !== undefined && archive.firstSeq >= page.before) continue;
     const result = readStableRegularFile(join(dir, archive.file), { anchorPath: dir, maxFileBytes: FILE_BYTES, remainingBytes });
     if (!result.ok) { skipped++; continue; }
@@ -58,8 +66,9 @@ export function readOwnerThreadHistory(options: { runsDir: string }, page: { bef
       for (const message of record.messages as OwnerThreadMessage[]) {
         if (page.before === undefined || message.seq < page.before) messages.push({ ...message, text: scrubSecrets(message.text) });
       }
+      messages.sort((a, b) => a.seq - b.seq);
+      if (messages.length > limit) messages.splice(0, messages.length - limit);
     } catch { skipped++; }
   }
-  messages.sort((a, b) => a.seq - b.seq);
-  return { schema: 'comms.owner-thread-history.v1' as const, messages: messages.slice(-limit), archives: archives.length, skipped };
+  return { schema: 'comms.owner-thread-history.v1' as const, messages, archives: archives.length, skipped };
 }
