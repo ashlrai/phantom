@@ -131,6 +131,7 @@ export function createFleetCommsStatusApi(deps: FleetCommsStatusApiDeps = {}): A
         unanswered: t.unanswered, ignorable: t.ignorable, medianMinutes: t.medianMinutes, p90Minutes: t.p90Minutes,
         maxMinutes: t.maxMinutes, withinTarget: t.withinTarget,
         oldestUnanswered: t.oldestUnanswered === null ? null : { ageMinutes: t.oldestUnanswered.ageMinutes },
+        latestTextAt: t.latestTextAt ?? null,
         sourceState: t.sourceState,
       };
       teammateSource = t.sourceState;
