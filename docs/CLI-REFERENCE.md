@@ -18,7 +18,7 @@ Terminal colors and trailing whitespace are removed, and em dashes become hyphen
 ```text
 Phantom - phm, the CLI for agentic engineers (ashlr remains compatible)
 
-    core            Core - index, navigate, configure (constitution, tune, index, …)
+    core            Core - index, navigate, configure (caps, constitution, tune, index, …)
     run             Run - local-first agent runs (run, runs, …)
     swarm           Swarm - specs + multi-agent fleets (spec, …)
     memory          Memory - shared genome (memory, recall, learn, …)
@@ -43,6 +43,7 @@ Phantom - phm, the CLI for agentic engineers (ashlr remains compatible)
 Phantom - every command (phm or ashlr)
 
   Core - index, navigate, configure
+    caps list|validate|generate [--registry <path>] [--out <dir>] [--pin-stage] [--check] [--json]                 Capability registry: surfaces, models, hosting edges, account references and capabilities; validate it and generate pinned per-agent adapters to staging (never into live agent config dirs). See docs/CAPABILITY-REGISTRY.md.
     constitution check [--root <repo>] [--json] [paths...]                                                         Check constitution rule definitions and references in prompts and templates (read-only).
     tune <prepare|evaluate>                                                                                        Prepare scrub-gated local model datasets or evaluate paired evidence.
     index [--refresh]                                                                                              Build or refresh the desktop index; show counts by category.
@@ -319,6 +320,7 @@ Phantom - every command (phm or ashlr)
     audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]         Tail the append-only audit trail; --team lists workspace actions (read-only).
     receipt list|status|show <run>|verify <run>|timeline <run> [--json]                        Read and verify signed run receipts (same as fleet receipt); timeline lists custody spawns in the run window, value-free (read-only).
     lanes fit --lane <lane> [--json]                                                           Show job kinds to send or avoid from measured PR rates.
+    lanes --json                                                                               Read dispatcher pools, slot caps and local endpoint health.
     lanes health [--json]                                                                      Per-lane calls, error rate, p50 latency and deployed commit over 12 h; flags runs stuck past their phase timeout.
     goals [--json]                                                                             Show dispatcher throughput, empty rates and resource resets.
 

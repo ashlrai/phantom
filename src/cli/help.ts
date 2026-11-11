@@ -770,6 +770,7 @@ const TOPIC_LABELS: Record<HelpTopic, string> = {
 
 /** The full command table (the former inline cmdHelp list), topic-tagged. */
 export const HELP_ENTRIES: HelpEntry[] = [
+  { cmd: 'caps list|validate|generate [--registry <path>] [--out <dir>] [--pin-stage] [--check] [--json]', desc: 'Capability registry: surfaces, models, hosting edges, account references and capabilities; validate it and generate pinned per-agent adapters to staging (never into live agent config dirs). See docs/CAPABILITY-REGISTRY.md.', topic: 'core' },
   { cmd: 'constitution check [--root <repo>] [--json] [paths...]', desc: 'Check constitution rule definitions and references in prompts and templates (read-only).', topic: 'core' },
   { cmd: 'tune <prepare|evaluate>', desc: 'Prepare scrub-gated local model datasets or evaluate paired evidence.', topic: 'core' },
   { cmd: 'jobs empty [--since 24h] [--json]', desc: 'Explain empty jobs from local notes and logs.', topic: 'observability' },
@@ -1054,6 +1055,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'improve register|measure|outcomes|promote|sync-backlog|discover|observe|lessons', desc: 'Record a proposal\'s deterministic metric, measure it at the PR\'s exact merge base and head, record merges and the reverts that cancel their credit, compare proposers against the deterministic baseline, register cloud backlog PRs that declare a metric, add backlog items from member issues, a red default branch and proposals, compare cloud runs served lessons against the holdout run without them, and queue auto-merge only when checks are green and the metric improved.', topic: 'integrations' },
   { cmd: 'steward disk [--apply] [--json]', desc: 'Measure Codex/Claude/Phantom log roots against retention + quota; dry run unless --apply (deletes oldest eligible files only).', topic: 'integrations' },
   { cmd: 'lanes fit --lane <lane> [--json]', desc: 'Show job kinds to send or avoid from measured PR rates.', topic: 'observability' },
+  { cmd: 'lanes --json', desc: 'Read dispatcher pools, slot caps and local endpoint health.', topic: 'observability' },
   { cmd: 'lanes health [--json]', desc: 'Per-lane calls, error rate, p50 latency and deployed commit over 12 h; flags runs stuck past their phase timeout.', topic: 'observability' },
   { cmd: 'approvals [--team <id>] [--json]', desc: 'What needs a human: pending team approvals, the Security pin queue (read-only) and explicit holds; same projection as the desktop Approvals panel.', topic: 'integrations' },
   { cmd: 'team <view|join|invite|role|link|approve|claim|release|say>', desc: 'Local-first team bus: presence, repo/branch/path claims, handoffs and human approval of consequential agent actions.', topic: 'integrations' },
