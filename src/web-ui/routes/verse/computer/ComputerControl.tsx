@@ -1,7 +1,7 @@
 import { PRODUCT_NAME } from '../../../app/product-brand.js';
 /**
  * routes/verse/computer/ComputerControl.tsx — everything the operator sees of
- * computer use (desktop control by Verse's agents), mounted ONCE by VerseApp
+ * computer use (desktop control by Verse's agents), mounted ONCE by PhantomApp
  * and only in a desktop shell that supports it (renders nothing elsewhere).
  *
  *   ACCESS SHEET        an agent asks to control apps: tick which (nothing is
