@@ -11,6 +11,15 @@ const MAX_TOP_SENDERS = 3;
 const MAX_LABEL = 64;
 const MAX_SENDER = 120;
 
+export interface GmailArchivePlanScope {
+  source: 'local-eml-export';
+  scanned: number;
+  files: number;
+  limit: number;
+  truncated: boolean;
+  unreadRepresentsLiveTotal: false;
+}
+
 export interface GmailArchivePlanEntry {
   inbox: string;
   at: string;
@@ -18,6 +27,7 @@ export interface GmailArchivePlanEntry {
   target: number;
   archiveCount: number;
   topSenders: { sender: string; count: number }[];
+  scope?: GmailArchivePlanScope;
 }
 export interface GmailArchivePlanLatest { schema: typeof GMAIL_ARCHIVE_PLAN_LATEST_SCHEMA; plans: GmailArchivePlanEntry[] }
 export type GmailArchivePlanInput = Omit<GmailArchivePlanEntry, 'at'> & { now?: () => Date };
@@ -27,6 +37,19 @@ export function gmailArchivePlanLatestPath(runsDir: string): string {
 }
 
 const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+
+// Reconstruct an allowlisted scope; unknown or malformed evidence is never promoted.
+function readScope(raw: unknown): GmailArchivePlanScope | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const s = raw as Record<string, unknown>;
+  if (s.source !== 'local-eml-export' || !isCount(s.scanned) || !isCount(s.files) ||
+      !isCount(s.limit) || s.limit < 1 || s.limit > 1000 || s.scanned > s.limit ||
+      s.scanned > s.files || typeof s.truncated !== 'boolean' ||
+      (s.truncated && (s.scanned !== s.limit || s.files <= s.scanned)) ||
+      s.unreadRepresentsLiveTotal !== false) return undefined;
+  return { source: 'local-eml-export', scanned: s.scanned, files: s.files, limit: s.limit,
+    truncated: s.truncated, unreadRepresentsLiveTotal: false };
+}
 
 function readEntry(raw: unknown): GmailArchivePlanEntry | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -38,7 +61,8 @@ function readEntry(raw: unknown): GmailArchivePlanEntry | null {
     if (!s || typeof s.sender !== 'string' || !isCount(s.count)) return null;
     topSenders.push({ sender: s.sender.slice(0, MAX_SENDER), count: s.count });
   }
-  return { inbox: e.inbox.slice(0, MAX_LABEL), at: e.at, unread: e.unread, target: e.target, archiveCount: e.archiveCount, topSenders };
+  const scope = readScope(e.scope);
+  return { inbox: e.inbox.slice(0, MAX_LABEL), at: e.at, unread: e.unread, target: e.target, archiveCount: e.archiveCount, topSenders, ...(scope ? { scope } : {}) };
 }
 
 /** The saved plans, or null when missing, unreadable, oversized or invalid. Never throws. */
@@ -58,6 +82,8 @@ export function readGmailArchivePlanLatest(runsDir: string): GmailArchivePlanLat
 
 /** Replaces the plan for this inbox and keeps the others under a cross-process lock. */
 export function writeGmailArchivePlanLatest(runsDir: string, input: GmailArchivePlanInput): void {
+  const scope = input.scope === undefined ? undefined : readScope(input.scope);
+  if (input.scope !== undefined && !scope) throw new Error('Invalid Gmail archive plan scope');
   const path = gmailArchivePlanLatestPath(runsDir);
   const dir = dirname(path);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -65,9 +91,9 @@ export function writeGmailArchivePlanLatest(runsDir: string, input: GmailArchive
   const lock = acquireLocalStoreLock(`${path}.lock`, 0, { anchorPath: dir });
   if (!lock) throw new Error('Gmail archive plan is locked or unavailable');
   try {
-    const { now, ...rest } = input;
+    const { now, scope: _scope, ...rest } = input;
     const entry: GmailArchivePlanEntry = {
-      ...rest, inbox: rest.inbox.slice(0, MAX_LABEL), at: (now?.() ?? new Date()).toISOString(),
+      ...rest, ...(scope ? { scope } : {}), inbox: rest.inbox.slice(0, MAX_LABEL), at: (now?.() ?? new Date()).toISOString(),
       topSenders: rest.topSenders.slice(0, MAX_TOP_SENDERS).map(s => ({ sender: s.sender.slice(0, MAX_SENDER), count: s.count })),
     };
     const others = (readGmailArchivePlanLatest(runsDir)?.plans ?? []).filter(p => p.inbox !== entry.inbox);
