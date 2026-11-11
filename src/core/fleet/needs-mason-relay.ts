@@ -13,6 +13,8 @@ export type NeedsMasonRelayResult = NeedsMasonResolveResult & { inbox: 'appended
 // Keyed by string so it compiles whether or not 'email' is in NeedsMasonOptions['source'].
 const INBOX_SOURCE: Readonly<Record<string, string>> = {
   desktop: 'Phantom desktop', cli: 'CLI', telegram: 'Telegram', phone: 'Phantom phone', email: 'Email',
+  // Agent-originated (MCP) relays must never read as Mason's own surface.
+  leader: 'Agent via MCP unverified',
 };
 const DEFAULT_INBOX_SOURCE = 'Phantom desktop';
 
