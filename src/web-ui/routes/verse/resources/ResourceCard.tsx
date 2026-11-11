@@ -32,6 +32,7 @@ import { windowSentence, type AccountStatus, type CapacityRow, type CapacityWind
 import type { ResourceReadinessRow } from '../../../../core/routing/readiness-types.js';
 import { ReadinessLines } from './ReadinessLines.js';
 import { ResourceFacts } from './ResourceFacts.js';
+import { UsagePaceChip } from './UsagePaceChip.js';
 import type { ResourceDisplayView } from './resource-display-model.js';
 import type { ResourceFactsView } from './resources-model.js';
 import { useWorldReading } from './world-card-reading.js';
@@ -104,6 +105,7 @@ function WindowMeter({ row, w, reservePercent, current = true }: { row: Capacity
         {ceiling !== null ? <span className={styles.meterTick} style={{ left: `${ceiling}%` }} /> : null}
       </span>
       <span className={styles.meterValue} aria-hidden="true">{value}</span>
+      {row.kind === 'subscription' && /week|seven_day/i.test(`${w.id} ${w.label}`) ? <UsagePaceChip usedFrac={current && w.usedPercent !== null ? w.usedPercent / 100 : null} ratePerHour={null} resetAt={w.resetsAt} now={Date.now()} /> : null}
       {resetText !== null ? <span className={styles.meterReset} title={resetText} aria-hidden="true">{resetText}</span> : null}
     </div>
   );
