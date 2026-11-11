@@ -4,10 +4,10 @@ import userEvent from '@testing-library/user-event';
 import { CompactNavStrip } from './CompactNavStrip.js';
 
 describe('CompactNavStrip', () => {
-  it('renders the four items with the Needs-you count', () => {
+  it('renders the seven items with the Needs-you count', () => {
     render(<CompactNavStrip active="leader" needsYouCount={3} onSelect={() => {}} />);
     const names = screen.getAllByRole('button').map((b) => b.textContent);
-    expect(names).toEqual(['Leader', 'Feed', 'Needs you3', 'Fleet']);
+    expect(names).toEqual(['Leader', 'Feed', 'Ideas', 'Goals', 'Library', 'Needs you3', 'Fleet']);
     expect(screen.getByLabelText('3 waiting')).toBeTruthy();
   });
 
