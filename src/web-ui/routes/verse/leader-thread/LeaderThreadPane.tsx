@@ -43,6 +43,7 @@ import { splitScreenshotMarkers } from './thread-screenshots.js';
 import { ThreadScreenshot } from './ThreadScreenshot.js';
 import { leaderCeoSummary } from './leader-ceo-model.js';
 import { LeaderOfficeStrip } from './LeaderOfficeStrip.js';
+import { DeliveryReceipt } from './DeliveryReceipt.js';
 import { OwnerChannelsStrip } from './OwnerChannelsStrip.js';
 import { leaderOfficeQuery } from './leader-office-data.js';
 import { mergeOwnerLines, ownerThreadLines, type LabeledLine } from './owner-thread-lines.js';
@@ -102,6 +103,7 @@ function LineView({ line, match, current }: { line: LabeledLine; match?: boolean
           {leader
             ? <div className={leaderStyles.leaderText}>
               <div className={leaderStyles.prose}><MessageMarkdown text={line.text} /></div>
+              {line.receipt ? <DeliveryReceipt items={line.receipt} /> : null}
               {refs.length ? <div className={styles.refs} aria-label="Mentioned">Mentioned: {refs.map((ref, index) => <span key={ref}>
                 {index ? ' ' : null}<JobRefs text={ref.replace(/([^#])#/, '$1 #')} onOpenJob={job => { requestWorkerLogJob(job); openDockPane('worker-log'); }} />
               </span>)}</div> : null}
@@ -256,7 +258,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const merged = useMemo(() => mergeThread(messages, inbox, now, runs.data, outbox, laneItems), [messages, inbox, outbox, laneItems, now, runs.data]);
   const busRows = useMemo(() => busRepliesToMason(busPage.data?.messages ?? [], now, outbox), [busPage.data, now, outbox]);
   const ownerRead = owner.data ?? NO_OWNER_THREAD;
-  const ownerLines = useMemo(() => ownerRead.paused ? [] : ownerThreadLines(ownerRead.lines, merged.lines), [ownerRead, merged.lines]);
+  const ownerLines = useMemo(() => ownerRead.paused ? [] : ownerThreadLines(ownerRead.lines, merged.lines, ownerRead.receipts ?? {}), [ownerRead, merged.lines]);
   const trace = useMemo(() => (orders.error ? null : narrowOrderTrace(orders.data)), [orders.data, orders.error]);
   const merges = useMemo(() => readMerges(runs.data), [runs.data]);
   const liveByJob = useMemo(() => new Map((narrowWorkers(runs.data)?.workers ?? []).map(worker => [worker.job, worker.ageSeconds] as const)), [runs.data]);
