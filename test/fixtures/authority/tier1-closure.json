@@ -1039,6 +1039,7 @@
     "src/core/run/blast-radius.ts",
     "src/core/run/browser-verify.ts",
     "src/core/run/budget.ts",
+    "src/core/run/checkpoints.ts",
     "src/core/run/completeness-gate.ts",
     "src/core/run/context-window.ts",
     "src/core/run/custody-ledger.ts",
