@@ -34,6 +34,7 @@ const steps = (fails: string[] = []): SelfTickSteps => ({
   'order-notices': async () => ({ exitCode: 0, output: '{"ok":"order-notices"}' }),
   'needs-triage': async () => ({ exitCode: 0, output: '{"ok":"needs-triage"}' }),
   'waste-incident': async () => ({ exitCode: 0, output: '{}' }),
+  'teammate-overdue': async () => ({ exitCode: fails.includes('teammate-overdue') ? 1 : 0, output: '{"ok":"teammate-overdue"}' }),
   'landed-sweep': async () => ({ exitCode: fails.includes('landed-sweep') ? 1 : 0, output: '{"ok":"landed-sweep"}' }),
 });
 
@@ -47,7 +48,7 @@ describe('fleet self-tick --last', () => {
     };
     expect(stored).toMatchObject({ at: AT, mode: 'dry-run', state: 'ran' });
     expect(stored.steps.map((s) => [s.step, s.state])).toEqual([
-      ['reset-release', 'ok'], ['lane-autohold', 'failed'], ['stray-stop', 'ok'], ['meter-incident', 'ok'], ['planner-tick', 'ok'], ['inbox-acks', 'ok'], ['order-notices', 'ok'], ['needs-triage', 'ok'], ['waste-incident', 'ok'], ['landed-sweep', 'ok'],
+      ['reset-release', 'ok'], ['lane-autohold', 'failed'], ['stray-stop', 'ok'], ['meter-incident', 'ok'], ['planner-tick', 'ok'], ['inbox-acks', 'ok'], ['order-notices', 'ok'], ['needs-triage', 'ok'], ['waste-incident', 'ok'], ['teammate-overdue', 'ok'], ['landed-sweep', 'ok'],
     ]);
   });
 
