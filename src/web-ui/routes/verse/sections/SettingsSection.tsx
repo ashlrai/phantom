@@ -3,7 +3,8 @@
  * (VERSE-CONTRACT-V2, owner A). Named export, NO props: the shell
  * lazy-mounts it and it reads everything it needs from the stores.
  *
- * One 720px reading column: Appearance (live, no save button), Chat (how
+ * One 720px reading column: Appearance and Layout (live, no save button;
+ * both are views over ~/.ashlr/ui.json — see Config file), Chat (how
  * reasoning shows), Desktop (system-wide shortcut, notifications — 3.10),
  * Connection (server, authority state, how to get tokens back), Keyboard (the
  * catalog's own table), the tour, and About. Each row is label + description
@@ -20,8 +21,10 @@ import { AboutPanel } from './AboutPanel.js';
 import { AppearancePanel } from './AppearancePanel.js';
 import { ChatSettingsPanel } from './ChatSettingsPanel.js';
 import { CommsLimitsRow } from './CommsLimitsRow.js';
+import { ConfigFilePanel } from './ConfigFilePanel.js';
 import { ConnectionPanel } from './ConnectionPanel.js';
 import { DesktopSettingsPanel } from './DesktopSettingsPanel.js';
+import { LayoutPanel } from './LayoutPanel.js';
 import { PlannerSlatePanel } from './PlannerSlatePanel.js';
 import { ResidentAwakePanel } from './ResidentAwakePanel.js';
 import { ShortcutsPanel } from './ShortcutsPanel.js';
@@ -42,11 +45,13 @@ export function SettingsSection() {
       <div className={styles.scroll}>
         <div className={styles.column}>
           <AppearancePanel appearance={appearance} onChange={set} onReset={reset} />
+          <LayoutPanel />
           <ChatSettingsPanel />
           <WorkspaceSettingsPanel />
           <DesktopSettingsPanel />
           <PlannerSlatePanel />
           <ResidentAwakePanel />
+          <ConfigFilePanel />
           <ConnectionPanel />
           <ConnectorsSettings />
           <CommsLimitsRow />

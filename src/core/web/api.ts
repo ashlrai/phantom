@@ -46,6 +46,7 @@ import { handleWbAction, WB_ACTION_PATH } from './wb-action-api.js';
 
 import { handleTeamInvites } from '../../api/team-invites.js';
 import { handleFrictionFeedback } from '../verse/feedback-api.js';
+import { handleUiSettingsApi, UI_SETTINGS_PATH } from './ui-settings-api.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { timingSafeEqual, randomBytes } from 'node:crypto';
 import { basename, resolve as resolvePath, sep as pathSep } from 'node:path';
@@ -1365,6 +1366,14 @@ export async function handleApi(
     if (path === '/api/config/effective' && method === 'GET') {
       sendJson(res, 200, loadEffectiveConfigSnapshot());
       return true;
+    }
+
+    // ── GET/PUT /api/ui-settings ────────────────────────────────────────────
+    // The operator's appearance + layout preferences, stored in ~/.ashlr/ui.json
+    // (src/core/ui-settings.ts). The file is the source of truth; the UI and
+    // agents edit the same document.
+    if (path === UI_SETTINGS_PATH) {
+      return handleUiSettingsApi(ctx, req, res, method);
     }
 
     // ── GET /api/portfolio ────────────────────────────────────────────────────
