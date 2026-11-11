@@ -233,7 +233,6 @@ describe('CLI verbs refuse unknown options before side effects', () => {
     { args: ['stack', 'add', 'postgres'], status: 2, err: /requires --yes/ },
     { args: ['stack', 'apply', 'my-recipe'], status: 2, err: /requires --yes/ },
     { args: ['plugins', 'enable', 'my-plug', '--yes', '--json'], status: 1, err: /no valid plugin named "my-plug"/ },
-    { args: ['plugins', 'disable', 'my-plug', '--json'], status: 1, err: /is not enabled/ },
   ];
 
   for (const { args, status, err } of reachesVerb) {
@@ -245,6 +244,15 @@ describe('CLI verbs refuse unknown options before side effects', () => {
       expect(r.stderr).not.toContain('test shim');
     });
   }
+
+  it('phm plugins disable my-plug --json passes the option check and reports already disabled', () => {
+    const r = run(['plugins', 'disable', 'my-plug', '--json']);
+    expect(r.status, r.stderr).toBe(0);
+    expect(JSON.parse(r.stdout)).toMatchObject({
+      ok: true, enabled: false, name: 'my-plug', already: true, dryRun: false,
+    });
+    expect(r.stderr).not.toContain('unknown option');
+  });
 
   it('plugins init --capability command still scaffolds a command plugin', () => {
     const r = run(['plugins', 'init', 'my-plug', '--capability', 'command', '--json']);
