@@ -219,6 +219,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{pass,checks:[{name,ok,secs,first_error}],changed_files}',
   },
   {
+    usage: 'phm verify done --worktree <path> [--contract <path>] [--plan]',
+    description: 'Evaluate a worktree\'s done-contract.v1 (DONE_CONTRACT.json or a BRIDGE_NOTES.md embed): floor checks, verify commands and attested acceptance items. No contract falls back to the notes-file expectation. JSON verdict on stdout, handoff on stderr; child output withheld. Exit 0 pass, 1 failed, 2 usage.',
+    safety: 'append',
+    jsonShape: '{pass,mode,job,source,notes_file,notes_present,checks:[{id,source,required,ok,secs,first_error}],acceptance:[{id,text,status,detail}],error}',
+  },
+  {
     usage: 'phm engineering-receipt --events <file.jsonl> [--claims <file>] [--task <text>] [--json]',
     description: 'Engineering receipt from recorded tool events only: Evidence plus model Claims, unsupported claims flagged UNVERIFIED, no-check-after-edit flagged. Requires PHANTOM_RECEIPTS=1; read-only, secrets scrubbed.',
     safety: 'read',
@@ -1077,6 +1083,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'seams status',                 desc: 'Same as `seams`: list seams + active impl; proves local-first + cloud gated on Mason.', topic: 'safety' },
   { cmd: 'test --changed [--base <ref>] [--json]', desc: 'Run tests related to changed files, or the full suite when unknown.', topic: 'safety' },
   { cmd: 'verify change --worktree <path> [--checks typecheck,unit,lint,secrets]', desc: 'Run trusted worktree checks; JSON verdict and ten-line handoff.', topic: 'safety' },
+  { cmd: 'verify done --worktree <path> [--contract <path>] [--plan]', desc: 'Evaluate a worktree\'s done-contract (floor + verify commands + attested acceptance); notes-file expectation when no contract exists.', topic: 'safety' },
   { cmd: 'engineering-receipt --events <file.jsonl> [--claims <file>] [--task <text>] [--json]', desc: 'Engineering receipt from tool events (Evidence) vs model statements (Claims); needs PHANTOM_RECEIPTS=1.', topic: 'safety' },
   { cmd: 'verify-safety',                desc: 'Read-only self-check of the hard safety invariants (enrollment/kill-switch/daemon/scrub/cloud-gate); mutates nothing.', topic: 'safety' },
   { cmd: 'verify-pr',                    desc: 'Verify an explicitly reviewed maintainer PR through the host-owned App check; no merge or deploy.', topic: 'safety' },
