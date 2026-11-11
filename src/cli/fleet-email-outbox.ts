@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { probeOutboxDir } from '../core/comms/email-diagnosis.js';
 import { readEmailDropConfig } from '../core/comms/email-drop-config.js';
 import { macMailTransport, readEmailOutbox, sendEmailOutbox, type EmailTransport } from '../core/comms/email-outbox.js';
 import {
@@ -97,7 +98,21 @@ export async function cmdFleetEmailOutbox(args: string[], deps: FleetEmailOutbox
   }
 
   if (!send) {
-    const listing = readEmailOutbox(outboxDir);
+    // readEmailOutbox degrades missing dirs to zero counts, so establish the source first (never creating it).
+    // Only fixed state codes are printed: no paths, raw errors, subjects or bodies.
+    let sourceState: string = 'unreadable';
+    let listing: ReturnType<typeof readEmailOutbox> | undefined;
+    try {
+      sourceState = probeOutboxDir(outboxDir);
+      if (sourceState === 'ok') listing = readEmailOutbox(outboxDir);
+    } catch {
+      sourceState = 'unreadable';
+    }
+    if (!listing) {
+      if (json) console.log(JSON.stringify({ error: 'email-outbox-source-unavailable', sourceState }));
+      else console.error(`email-outbox: source=${sourceState} (outbox unavailable; no counts)`);
+      return 1;
+    }
     if (json) console.log(JSON.stringify(listing));
     else {
       console.log(`email-outbox: queued=${listing.counts.queued} drafted=${listing.counts.drafted} sent=${listing.counts.sent} stuck=${listing.counts.stuck}`);

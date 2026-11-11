@@ -33,5 +33,5 @@ it('explains each outcome', () => {
   expect(postOutcomeText('full')).toMatch(/bus is full/i);
   expect(postOutcomeText('unavailable')).toMatch(/unavailable/i);
   expect(postOutcomeText('locked')).toMatch(/unlock/i);
-  expect(postOutcomeText('dispatch-disabled')).toBe('This hub was started without --allow-dispatch, so nothing can post.');
+  expect(postOutcomeText('dispatch-disabled')).toBe('Phantom was started without --allow-dispatch, so nothing can post.');
 });
