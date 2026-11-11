@@ -46,10 +46,11 @@ import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { isPatchFrameText, PATCH_FRAME_MARKERS, senderIdFor } from './imessage-teammate-inbox.js';
 
-// The marker test lives in the leaf inbox module so read-only observers (the
-// intent classifier there) never pull this module's fs/lock graph — importing
-// it here would also close an import cycle. Re-exported to keep one surface.
-export { isPatchFrameText };
+// The marker list and test live in the leaf inbox module so read-only
+// observers (the intent classifier there) never pull this module's fs/lock
+// graph — importing it here would also close an import cycle. Re-exported to
+// keep one surface.
+export { isPatchFrameText, PATCH_FRAME_MARKERS };
 
 // ---------------------------------------------------------------------------
 // Protocol bounds
