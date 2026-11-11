@@ -41,11 +41,71 @@ export interface SeatBudgetPolicy {
 export interface BudgetPolicy {
   /** Absent retains legacy reset ranking only; taper requires explicit enabled=true. */
   resetSpending?: { enabled: boolean };
+  /**
+   * Task-aware arms (additive flag). Absent, `enabled: false`, or a class with
+   * no valid arm leaves every route byte-identical to the baseline ranking.
+   * The flag lives only in the stored policy file; `POST /api/verse/budget`
+   * cannot change it.
+   */
+  taskArms?: TaskArmsPolicy;
   mode: BudgetMode;
   /** Keyed by seat id; a seat absent here gets the mode's default policy. */
   seats: Record<string, SeatBudgetPolicy>;
   /** ISO time of the last change. */
   updatedAt: string;
+}
+
+/** Every value `RoutingTask` can take (runtime list for validators). */
+export const ROUTING_TASKS: readonly RoutingTask[] = ['code', 'review', 'plan', 'bulk', 'leader'];
+
+export const ARM_EFFORTS = ['low', 'medium', 'high'] as const;
+/** Reasoning effort an arm asks the dispatch lane for. */
+export type ArmEffort = (typeof ARM_EFFORTS)[number];
+
+/**
+ * A per-arm token pacing budget over a rolling window: while the flag is on,
+ * an arm may serve work only while its observed spend in the current window
+ * is not ahead of the linear pace ceiling (see `paceCeilingAt` in
+ * resources/pacing.ts). Atomic jobs may cross the ceiling by their size.
+ */
+export interface TaskArmPace {
+  /** Rolling window length in milliseconds (1 ms .. 30 days). */
+  windowMs: number;
+  /** Tokens the arm may spend per window (1 .. 1e15). */
+  budgetTokens: number;
+  /**
+   * How far ahead of the ideal pace line the arm may run, as a fraction of
+   * `budgetTokens` (0..1, default `TASK_ARM_PACE_LEAD` in router.ts). A lead
+   * keeps a slow window from stalling a bursty arm.
+   */
+  leadFraction?: number;
+}
+
+/**
+ * One task-class arm: an (engine, model, effort) execution shape a class of
+ * autonomous work may run on. `engine` must name a `BudgetEngine` (policy.ts)
+ * to ever be selectable; any other value can never match a seat. `model` is
+ * the exact model the dispatch lane should run (`null` = the seat's default);
+ * the seat router does not verify the seat's catalog. `id` names the arm for
+ * outcome joins; absent, the key is `engine|model|effort`.
+ */
+export interface TaskArm {
+  id?: string;
+  engine: string;
+  model: string | null;
+  effort: ArmEffort;
+  pace?: TaskArmPace;
+}
+
+/**
+ * The task-aware arm flag and its per-class arm lists. A class absent from
+ * `classes` (or whose list holds no valid arm) keeps the baseline ranking;
+ * with at least one valid arm, only eligible seats that can serve an
+ * admissible arm may take that class of work.
+ */
+export interface TaskArmsPolicy {
+  enabled: boolean;
+  classes: Partial<Record<RoutingTask, TaskArm[]>>;
 }
 
 /**
@@ -71,6 +131,7 @@ export type SeatReasonKind =
   | 'grant'
   | 'lane'
   | 'demoted'
+  | 'task-arm'
   | 'other';
 
 /** One reason, as data: the sentence and — separately — when it lifts. */
@@ -103,10 +164,27 @@ export interface SeatExclusion {
   details?: SeatReason[];
 }
 
+/** The task arm a routed seat is serving; only set when the arm flag is on. */
+export interface SeatTaskArm {
+  /** The arm's stable key: its `id`, or `engine|model|effort` when it has none. */
+  key: string;
+  engine: string;
+  /** The model the dispatch lane should run; `null` = the seat's default. */
+  model: string | null;
+  effort: ArmEffort;
+  /**
+   * The observed merged green PRs per token this arm was ranked on
+   * (`RouteOptions.armStats`); `null` when the arm has no measured yield.
+   */
+  rewardPerToken: number | null;
+}
+
 /** Output of the pure `routeSeat(req, capacity, policy)`. */
 export interface SeatDecision {
   /** Chosen seat; null when no seat is eligible. */
   seatId: string | null;
+  /** The task arm the chosen seat serves (absent unless the arm flag steered). */
+  taskArm?: SeatTaskArm;
   /** Eligible seat ids, ranked best-first (the chosen one first when non-null). */
   candidates: string[];
   exclusions: SeatExclusion[];

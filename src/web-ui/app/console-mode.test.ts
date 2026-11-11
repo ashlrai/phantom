@@ -5,6 +5,7 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  APP_MOBILE_PATH,
   autoSelectVerseMobile,
   CONSOLE_LAYOUT_BREAKPOINTS,
   CONSOLE_LAYOUT_QUERIES,
@@ -12,6 +13,7 @@ import {
   isScopedConsolePath,
   isVerseConsolePath,
   isVerseMobilePath,
+  mobilePathFor,
   prefersVerseMobile,
   readVerseLayoutPreference,
   syncConsoleLayout,
@@ -64,6 +66,38 @@ describe('console paths', () => {
     // The phone app never opens the general Hub observer channel either.
     expect(isScopedConsolePath('/verse/m/')).toBe(true);
     expect(isScopedConsolePath('/')).toBe(false);
+  });
+});
+
+describe('Phantom /app aliases', () => {
+  it('/app and /app/m resolve exactly like /verse and /verse/m', () => {
+    for (const p of ['/app', '/app/']) {
+      expect(isVerseConsolePath(p)).toBe(true);
+      expect(isVerseMobilePath(p)).toBe(false);
+      expect(isScopedConsolePath(p)).toBe(true);
+    }
+    for (const p of ['/app/m', '/app/m/']) {
+      expect(isVerseMobilePath(p)).toBe(true);
+      expect(isVerseConsolePath(p)).toBe(false);
+      expect(isScopedConsolePath(p)).toBe(true);
+    }
+    expect(isVerseConsolePath('/application')).toBe(false);
+    expect(isVerseMobilePath('/app/mobile')).toBe(false);
+    expect(isVerseMobilePath('/app/m/x')).toBe(false);
+  });
+
+  it('keeps the name the page was opened under; the SW scope constant never moves', () => {
+    expect(VERSE_MOBILE_PATH).toBe('/verse/m/');
+    expect(APP_MOBILE_PATH).toBe('/app/m/');
+    expect(mobilePathFor('/verse/m')).toBe('/verse/m/');
+    expect(mobilePathFor('/app/m')).toBe('/app/m/');
+    expect(mobilePathFor('/app')).toBe('/app/m/');
+  });
+
+  it('moves /app to /app/m/ in place on a phone', () => {
+    const phone = fakeWindow({ pathname: '/app', phone: true });
+    expect(autoSelectVerseMobile(phone.win)).toBe(true);
+    expect(phone.path()).toBe('/app/m/');
   });
 });
 
