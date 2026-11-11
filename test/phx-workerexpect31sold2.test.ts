@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 
 const fake = vi.hoisted(() => ({ table: '', fail: false, reads: 0 }));
 vi.mock('../src/core/fleet/runs-live-workers.js', async importOriginal => {
