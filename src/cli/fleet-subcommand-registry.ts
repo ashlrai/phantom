@@ -303,6 +303,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'release-await': () => import('./fleet-release-await.js'),
   'release-candidate': () => import('./fleet-release-candidate.js'),
   'release-chain': () => import('./fleet-release-chain.js'),
+  'release-gate-start': () => import('./fleet-release-gate-start.js'),
   'release-live': () => import('./fleet-release-live.js'),
   'release-paced': () => import('./fleet-release-paced.js'),
   'release-retry-batch': () => import('./fleet-release-retry-batch.js'),
