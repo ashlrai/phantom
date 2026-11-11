@@ -1,9 +1,17 @@
 /**
  * routes/verse/goals-pane/GoalMetric.tsx: one goal's measured number, a 24h
  * delta arrow and a live/stale/unknown badge. Unknown renders as "unknown",
- * never 0.
+ * never 0. `useGoalMetrics` is the shared read half — the desktop pane and the
+ * phone screen bind the same readings the same way.
  */
-import type { GoalMetric as Metric } from '../../../../core/fleet/goal-metrics.js';
+import { useMemo } from 'react';
+import { bindGoalMetrics, type GoalMetricId, type GoalMetric as Metric, type MetricReading } from '../../../../core/fleet/goal-metrics.js';
+import { useQuery } from '../../../data/hooks.js';
+import type { GoalSummary } from '../../../data/queries.js';
+import { fleetMergesQuery } from '../fleet-merges/fleet-merges-queries.js';
+import { mergeBacklogQuery } from '../fleet-merges/merge-backlog-queries.js';
+import { readMergeSpeed } from '../fleet-merges/fleet-merges-model.js';
+import { openGoals } from './goals-pane-model.js';
 import styles from './goals-pane.module.css';
 
 export function metricValueText(m: Metric): string {
@@ -49,4 +57,33 @@ export function previousDayValue(key: string, value: number | null, now: number,
     try { store.setItem(`goal-metric:${key}`, JSON.stringify(samples)); } catch { /* quota or private mode */ }
   }
   return baseline?.value ?? null;
+}
+
+const generatedAtOf = (d: unknown): string | null => {
+  if (!d || typeof d !== 'object' || !('generatedAt' in d)) return null;
+  const value = d.generatedAt;
+  return typeof value === 'string' && value !== '' ? value : null;
+};
+
+/**
+ * The reads and binding behind the metric column: merge speed + DIRTY backlog
+ * count through `bindGoalMetrics`. Unknown stays unknown — a goal whose
+ * metric has no reading is never shown as 0. `enabled` gates both fetches.
+ */
+export function useGoalMetrics(goals: readonly GoalSummary[] | undefined, enabled: boolean): Record<string, Metric> {
+  const merges = useQuery(fleetMergesQuery, { enabled });
+  const backlog = useQuery(mergeBacklogQuery, { enabled });
+  return useMemo(() => {
+    const readings: Partial<Record<GoalMetricId, MetricReading>> = {};
+    const now = Date.now();
+    if (merges.data !== undefined) {
+      const value = readMergeSpeed(merges.data).perHour;
+      readings['merges-per-hour'] = { value, observedAt: generatedAtOf(merges.data), previous24h: previousDayValue('merges-per-hour', value, now) };
+    }
+    if (backlog.data?.source === 'ok') {
+      const value = backlog.data.counts.mergeState.DIRTY ?? 0;
+      readings['open-dirty-prs'] = { value, observedAt: generatedAtOf(backlog.data), previous24h: previousDayValue('open-dirty-prs', value, now) };
+    }
+    return bindGoalMetrics(openGoals(goals ?? []), readings, now);
+  }, [goals, merges.data, backlog.data]);
 }
