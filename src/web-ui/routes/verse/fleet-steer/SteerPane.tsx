@@ -6,7 +6,7 @@
  * (POST /api/wb/v1/action) with the held mutation token and a fresh
  * nonce each — never a second capability.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, SkeletonLine, Tag } from '../../../components/primitives/index.js';
 import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
@@ -21,6 +21,7 @@ import {
   actionFailureText, actionOutcomeText, isSteerPriority, noteProblem,
   postWbSteerAction, STOP_CONFIRM_MS, stopConfirmLabel, type WbActionBody,
 } from './steer-action.js';
+import { clearSteerNote, loadSteerNote, saveSteerNote } from './steer-note-keep.js';
 import styles from './fleet-steer.module.css';
 
 type SendState = { busy: boolean; text: string };
@@ -42,7 +43,21 @@ function QueueOption({ line }: { line: SteerQueueLine }) {
 }
 
 function NoteBox({ onSent }: { onSent: () => void }) {
-  const [text, setText] = useState('');
+  const [storage] = useState(() => {
+    try { return window.localStorage; } catch { return null; }
+  });
+  const [text, setText] = useState(() => loadSteerNote(storage));
+  const [restored, setRestored] = useState(() => text !== '');
+  const latestText = useRef(text);
+  useEffect(() => {
+    const timer = window.setTimeout(() => saveSteerNote(storage, text), 400);
+    return () => window.clearTimeout(timer);
+  }, [storage, text]);
+  useEffect(() => {
+    const flush = () => saveSteerNote(storage, latestText.current);
+    window.addEventListener('pagehide', flush);
+    return () => { window.removeEventListener('pagehide', flush); flush(); };
+  }, [storage]);
   const [send, setSend] = useState<SendState>({ busy: false, text: '' });
   const problem = noteProblem(text);
   const press = async () => {
@@ -52,7 +67,12 @@ function NoteBox({ onSent }: { onSent: () => void }) {
     try {
       const result = await postWbSteerAction(body);
       setSend({ busy: false, text: actionOutcomeText(body, result) });
-      setText('');
+      if (latestText.current === text) {
+        latestText.current = '';
+        clearSteerNote(storage);
+        setText('');
+      }
+      setRestored(false);
       onSent();
     } catch (error) {
       setSend({ busy: false, text: actionFailureText(error) });
@@ -65,10 +85,11 @@ function NoteBox({ onSent }: { onSent: () => void }) {
         className={styles.note}
         aria-label="Steer note"
         value={text}
-        onChange={(event) => setText(event.target.value)}
+        onChange={(event) => { latestText.current = event.target.value; setText(event.target.value); setRestored(false); }}
         placeholder="Tell the leaders what to do next."
         rows={3}
       />
+      {restored && <p className={styles.hint}>Restored your unsent note.</p>}
       <div className={styles.row}>
         <Button size="sm" disabled={send.busy || problem !== null} onClick={() => void press()}>Send note</Button>
         <span role="status" aria-live="polite" className={styles.status}>{send.text}</span>
