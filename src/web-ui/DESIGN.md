@@ -689,7 +689,7 @@ More, stored as layout state only).
   scopes, step-up) are in `mobile/device-permissions.ts`; they can only take
   authority away.
 - **Two budgets.** `check-first-paint-budget.mjs` measures the phone's own
-  first paint (`--mobile-budget-kb`, 250) from `VerseMobileApp` + the Home
+  first paint (`--mobile-budget-kb`, 250) from `PhantomMobileApp` + the Home
   frame. React is ~220 KB of it, so the first paint is a frame of skeletons;
   the runtime (activity loop, permissions, sheet, toasts), Home's cards and
   every other screen are preloaded chunks that download in parallel with the

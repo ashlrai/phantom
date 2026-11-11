@@ -19,8 +19,8 @@ syncConsoleLayout();
 function loadApp(): Promise<ComponentType> {
   if (isResourceConsolePath()) return import('./app/ResourcePoolConsoleApp.js').then((module) => module.ResourcePoolConsoleApp);
   if (isUniverseConsolePath()) return import('./app/UniverseConsoleApp.js').then((module) => module.UniverseConsoleApp);
-  if (isVerseMobilePath() || autoSelectVerseMobile()) return import('./app/VerseMobileApp.js').then((module) => module.VerseMobileApp);
-  if (isVerseConsolePath()) return import('./app/VerseConsoleApp.js').then((module) => module.VerseConsoleApp);
+  if (isVerseMobilePath() || autoSelectVerseMobile()) return import('./app/VerseMobileApp.js').then((module) => module.PhantomMobileApp);
+  if (isVerseConsolePath()) return import('./app/VerseConsoleApp.js').then((module) => module.PhantomConsoleApp);
   return import('./app/App.js').then((module) => module.App);
 }
 
