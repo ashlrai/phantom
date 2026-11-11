@@ -69,7 +69,7 @@ const JOB_LANE: Record<SelfLane, string> = {
 };
 
 interface Spec {
-  /** Rolling window length for estimates that roll a passed reset forward; null when unknowable. */
+  /** Window length used to calibrate accounting against a reading; null when unknowable. */
   periodMs: number | null;
   unit: 'tokens' | 'acus' | 'zai-credits' | 'none';
 }
@@ -190,19 +190,10 @@ export function estimateLane(lane: SelfLane, state: LaneState | undefined, rows:
   if (!state) return null;
   const asOf = Date.parse(state.asOf);
   if (!Number.isFinite(asOf) || asOf > nowMs) return null;
-  let resetMs = state.resetAt ? Date.parse(state.resetAt) : NaN;
-  let windowStart = asOf; let basePct = state.pctUsed;
-  let resetOut: string | null = state.resetAt;
-  if (Number.isFinite(resetMs) && nowMs >= resetMs) {
-    // A passed reset is evidence the window rolled. Roll it by the known period, else the next reset is unknown.
-    if (spec.periodMs === null) { resetOut = null; windowStart = resetMs; basePct = 0; }
-    else {
-      const k = Math.floor((nowMs - resetMs) / spec.periodMs) + 1;
-      windowStart = resetMs + (k - 1) * spec.periodMs; resetMs += k * spec.periodMs;
-      resetOut = isoOf(resetMs); basePct = 0;
-    }
-  }
-  const { units, unmeasured } = consumed(lane, rows, windowStart, nowMs);
+  const resetMs = state.resetAt ? Date.parse(state.resetAt) : NaN;
+  if (Number.isFinite(resetMs) && nowMs >= resetMs) return null;
+  const basePct = state.pctUsed;
+  const { units, unmeasured } = consumed(lane, rows, asOf, nowMs);
   let pct: number | null;
   if (units === 0) pct = basePct;
   else if (state.unitsPerPct && state.unitsPerPct > 0) pct = basePct + units / state.unitsPerPct;
@@ -210,8 +201,8 @@ export function estimateLane(lane: SelfLane, state: LaneState | undefined, rows:
   const used = pct === null ? null : clampPct(pct);
   const credits = state.limit !== null && used !== null ? Math.max(0, Math.round(state.limit * (1 - used / 100) * 100) / 100) : null;
   const hours = (nowMs - asOf) / HOUR;
-  const burn = used !== null && hours > 0 && resetOut === state.resetAt ? Math.max(0, Math.round((used - state.pctUsed) / hours * 100) / 100) : null;
-  return { ...base, weekly_used_pct: used, credits_remaining: credits, reset_at: resetOut,
+  const burn = used !== null && hours > 0 ? Math.max(0, Math.round((used - state.pctUsed) / hours * 100) / 100) : null;
+  return { ...base, weekly_used_pct: used, credits_remaining: credits, reset_at: state.resetAt,
     source: 'estimate:phantom-accounting+last-reading', burn_pct_per_hour: burn, ...(unmeasured ? { unmeasured_jobs: unmeasured } : {}) };
 }
 
@@ -260,11 +251,6 @@ export async function refreshLanes(input: RefreshInput): Promise<RefreshResult> 
       if (est) { entry = est; action = 'estimated'; }
       else { entry = unknownEntry(input.nowMs, lane === 'gemini' ? 'unknown:no-sanctioned-reader' : 'unknown:no-reading-or-estimate'); action = 'unknown'; }
     }
-    // Never replace a still-current typed number with an unknown.
-    if (action === 'unknown' && cur && finite(cur['weekly_used_pct']) && typeof cur['reset_at'] === 'string' &&
-      Date.parse(cur['reset_at']) > input.nowMs && cur['estimated'] !== true) {
-      outcomes.push({ lane, action: 'kept', entry: cur as unknown as BudgetEntry }); continue;
-    }
     overrides[lane] = { ...(cur ?? {}), ...entry };
     outcomes.push({ lane, action, entry });
   }
@@ -281,7 +267,8 @@ export function budgetEntryQuota(entry: unknown, nowMs: number, ttlMs = 2 * DEFA
   const e = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
   const asOf = typeof e['as_of'] === 'string' && Number.isFinite(Date.parse(e['as_of'])) ? e['as_of'] : null;
   const pct = e['weekly_used_pct'];
+  const reset = typeof e['reset_at'] === 'string' ? Date.parse(e['reset_at']) : NaN;
   if (asOf === null || !finite(pct) || pct < 0 || pct > 100 || Date.parse(asOf) > nowMs + 60_000 ||
-    nowMs - Date.parse(asOf) > ttlMs) return { value: null, asOf, ttlMs };
+    nowMs - Date.parse(asOf) > ttlMs || (Number.isFinite(reset) && nowMs >= reset)) return { value: null, asOf, ttlMs };
   return { value: { usedPercent: pct }, asOf, ttlMs };
 }
