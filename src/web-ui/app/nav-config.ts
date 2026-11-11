@@ -94,6 +94,12 @@ export const NAV_GROUPS: NavGroup[] = [
         description: 'Review, filter, and approve/reject proposals — including history (rejected/approved).',
         implemented: true,
       },
+      {
+        path: '/approvals',
+        label: 'Approvals',
+        description: 'Team approvals awaiting you, the Security pin queue, and explicit holds.',
+        implemented: true,
+      },
     ],
   },
   {
