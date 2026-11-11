@@ -1,5 +1,5 @@
 /** IO for lane-usage-self: sanctioned readers, jobs.jsonl accounting and the overrides file. */
-import { readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { open, readFile, rename, stat, writeFile, type FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { readLatestClaudeRateLimitEvent } from './claude-rate-limit-event.js';
@@ -23,15 +23,48 @@ async function readJson(path: string): Promise<Record<string, unknown>> {
   } catch { return {}; }
 }
 
-/** Last 4 MiB of jobs.jsonl: enough for a week of finish rows without reading an unbounded log. */
-export async function readJobRows(runsDir: string): Promise<JobRow[]> {
+/** Narrow filesystem seam so tests can prove the read is bounded; production uses node:fs/promises. */
+export interface JobLogIo { open: typeof open }
+
+/** Fill `buf` from `fh` at `position`, tolerating short reads; returns bytes actually read (less only at EOF). */
+async function readFully(fh: FileHandle, buf: Buffer, position: number): Promise<number> {
+  let got = 0;
+  while (got < buf.length) {
+    const { bytesRead } = await fh.read(buf, got, buf.length - got, position + got);
+    if (bytesRead === 0) break;
+    got += bytesRead;
+  }
+  return got;
+}
+
+/**
+ * Last <= 4 MiB of jobs.jsonl: enough for a week of finish rows without reading an unbounded log.
+ * Reads a bounded byte suffix through one handle (never the whole file) and cuts only at 0x0A, which
+ * cannot occur inside a multibyte UTF-8 sequence, so decoding is always on whole characters.
+ */
+export async function readJobRows(runsDir: string, io: JobLogIo = { open }): Promise<JobRow[]> {
   const path = join(runsDir, 'metrics', 'jobs.jsonl');
+  let fh: FileHandle | undefined;
   try {
-    const size = (await stat(path)).size;
-    const text = await readFile(path, 'utf8');
-    const tail = size > MAX_JOBS_TAIL ? text.slice(text.length - MAX_JOBS_TAIL) : text;
-    return parseJobRows(size > MAX_JOBS_TAIL ? tail.slice(tail.indexOf('\n') + 1) : tail);
-  } catch { return []; }
+    fh = await io.open(path, 'r');
+    const { size } = await fh.stat();
+    if (size <= 0) return [];
+    if (size <= MAX_JOBS_TAIL) {
+      const buf = Buffer.allocUnsafe(size);
+      const n = await readFully(fh, buf, 0);
+      return parseJobRows(buf.toString('utf8', 0, n));
+    }
+    // The window's first byte is the one just before the retained suffix, so total reads stay <= the cap.
+    const buf = Buffer.allocUnsafe(MAX_JOBS_TAIL);
+    const n = await readFully(fh, buf, size - MAX_JOBS_TAIL);
+    if (n === 0) return [];
+    // Suffix starts on a row boundary iff the preceding byte is a newline; otherwise drop the partial row.
+    const from = buf[0] === 0x0a ? 1 : buf.indexOf(0x0a, 1) + 1;
+    if (from === 0 || from >= n) return [];
+    return parseJobRows(buf.toString('utf8', from, n));
+  } catch { return []; } finally {
+    await fh?.close().catch(() => undefined);
+  }
 }
 
 export interface ReaderOptions {
