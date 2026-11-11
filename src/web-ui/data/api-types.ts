@@ -123,6 +123,25 @@ export type FleetLaneView = Omit<CoreFleetLaneView, 'slotTarget'> & { slotTarget
 export type FleetLaneSnapshot = Omit<CoreFleetLaneSnapshot, 'lanes'> & { lanes: FleetLaneView[] };
 
 /**
+ * RQ-SWE3-BOARDUI-1: the Leader-as-CEO board behind GET /api/fleet/board.
+ * `FleetBoardResponse` is the exact envelope `phm fleet board --json` prints;
+ * `FleetBoardV1` is the `fleet.leader-board.v1` state-file contract — both
+ * declared once in core/fleet/fleet-board-read.ts and re-exported type-only.
+ */
+export type {
+  FleetBoardConflictSample,
+  FleetBoardConflictTrend,
+  FleetBoardLane,
+  FleetBoardNeedsMasonItem,
+  FleetBoardNeedsMasonStatus,
+  FleetBoardRead,
+  FleetBoardResponse,
+  FleetBoardSourceState,
+  FleetBoardStatus,
+  FleetBoardV1,
+} from '../../core/fleet/fleet-board-read.js';
+
+/**
  * Structural shape shared by every "we might not actually know this"
  * field across the backend (daemon observation, control sections, goal
  * progress, …). Every real occurrence in src/core matches this shape —
