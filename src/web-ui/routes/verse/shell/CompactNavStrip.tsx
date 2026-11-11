@@ -4,6 +4,7 @@
  * carry a "N new" chip while not showing. Plain buttons, so Tab reaches them and Enter/Space activate; the current one carries
  * aria-current.
  */
+import { FeedNavBadge } from '../feed/FeedNavBadge.js';
 import styles from './CompactNavStrip.module.css';
 import { unreadLabel, type UnreadCounts } from './unread-counts.js';
 
@@ -30,11 +31,12 @@ export function CompactNavStrip({ active, needsYouCount, unread, onSelect }: Com
     <nav className={styles.strip} aria-label="Home views">
       {ITEMS.map((item) => {
         const count = item.id === 'needs-you' && needsYouCount ? needsYouCount : null;
-        const fresh = (item.id === 'leader' || item.id === 'feed') && active !== item.id ? unread?.[item.id] ?? 0 : 0;
+        const fresh = item.id === 'leader' && active !== item.id ? unread?.leader ?? 0 : 0;
         return (
           <button key={item.id} type="button" className={styles.item}
             aria-current={active === item.id ? 'page' : undefined} onClick={() => onSelect(item.id)}>
             {item.label}
+            {item.id === 'feed' ? <FeedNavBadge /> : null}
             {count !== null ? <span className={styles.count} aria-label={`${count} waiting`}>{count}</span> : null}
             {fresh ? <span className={styles.count} aria-label={`${fresh} new`}>{unreadLabel(fresh)}</span> : null}
           </button>
