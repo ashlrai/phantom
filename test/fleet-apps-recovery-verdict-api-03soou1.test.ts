@@ -2,12 +2,15 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, it, vi } from 'vitest';
+import { beforeAll, expect, it, vi } from 'vitest';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import { installFleetAppsRecoveryProviders } from '../src/core/fleet/app-recovery-install.js';
 import { readAppsRecoveryInvocations } from '../src/core/fleet/apps-recovery-invocations.js';
 import { appsRecoveryVerdict } from '../src/core/fleet/apps-recovery-verdict.js';
 import { createFleetAppsApi } from '../src/core/verse/fleet-apps-api.js';
 import type { VerseApiContext } from '../src/core/verse/verse-api.js';
+
+beforeAll(installFleetAppsRecoveryProviders);
 
 const path = '/api/verse/fleet/apps/recovery/check';
 const id = '12345678-1234-4123-8123-123456789abc';

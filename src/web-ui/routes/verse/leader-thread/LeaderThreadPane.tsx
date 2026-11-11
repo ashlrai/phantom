@@ -39,6 +39,8 @@ import { fleetInbox, fleetOutbox, lineChannel, lineSourceLabel, mergeThread } fr
 import { canSend, scrollTargetIndex, trimReply } from './thread-reply-model.js';
 import { stepMatch, threadMatches, type ThreadFindItem } from './thread-find-model.js';
 import { mentionedRefs } from './thread-refs.js';
+import { splitScreenshotMarkers } from './thread-screenshots.js';
+import { ThreadScreenshot } from './ThreadScreenshot.js';
 import { leaderCeoSummary } from './leader-ceo-model.js';
 import { LeaderOfficeStrip } from './LeaderOfficeStrip.js';
 import { DeliveryReceipt } from './DeliveryReceipt.js';
@@ -77,6 +79,9 @@ function LineView({ line, match, current }: { line: LabeledLine; match?: boolean
   const leader = line.who === 'leader';
   const iso = Number.isFinite(line.at) ? new Date(line.at).toISOString() : null;
   const clock = iso ? clockTime(iso) : '—';
+  if (line.quiet === 'status-ask') {
+    return <p className={styles.note} data-find-match={match || undefined} data-find-current={current || undefined}>You asked for status · <span className={leaderStyles.channel}>{lineSourceLabel(line.source)}</span> · <time dateTime={iso ?? undefined}>{clock}</time></p>;
+  }
   if (line.source === 'system') {
     return <p className={leaderStyles.system} data-find-match={match || undefined} data-find-current={current || undefined}>{line.text}{iso ? <> <time dateTime={iso}>{clock}</time></> : null}</p>;
   }
@@ -103,7 +108,11 @@ function LineView({ line, match, current }: { line: LabeledLine; match?: boolean
                 {index ? ' ' : null}<JobRefs text={ref.replace(/([^#])#/, '$1 #')} onOpenJob={job => { requestWorkerLogJob(job); openDockPane('worker-log'); }} />
               </span>)}</div> : null}
             </div>
-            : <div className={leaderStyles.masonItem}><p className={leaderStyles.bubble}>{line.text}</p></div>}
+            : <div className={leaderStyles.masonItem}>
+              {splitScreenshotMarkers(line.text).map((segment, index) => segment.kind === 'shot'
+                ? <ThreadScreenshot key={index} name={segment.name} raw={segment.raw} />
+                : segment.text.trim() !== '' ? <p key={index} className={leaderStyles.bubble}>{segment.text}</p> : null)}
+            </div>}
         </div>
       </div>
     </section>
@@ -262,7 +271,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     const out: ThreadFindItem[] = [];
     let day = '';
     for (const item of mergeByTime([...mergeOwnerLines(merged.lines, ownerLines), ...merged.undated], busRows)) {
-      if (needsYouOnly && (item.type !== 'line' || !((item.line.source === 'outbox' && (item.line.kind === 'decision' || item.line.kind === 'alert')) || (item.line.who === 'mason' && item.line.ack?.state === 'waiting')))) continue;
+      if (needsYouOnly && (item.type !== 'line' || !((item.line.source === 'outbox' && (item.line.kind === 'decision' || item.line.kind === 'alert')) || (item.line.who === 'mason' && !item.line.quiet && item.line.ack?.state === 'waiting')))) continue;
       const at = item.type === 'line' ? item.line.at : Date.parse(item.row.at);
       if (Number.isFinite(at)) {
         const d = new Date(at);
@@ -476,6 +485,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       <div className={leaderStyles.logInner}>
         {ownerRead.paused ? <p className={leaderStyles.system}>Owner channels paused</p> : null}
         {body}
+        {merged.hiddenNoise > 0 ? <p className={styles.note}>{merged.hiddenNoise} stray command {merged.hiddenNoise === 1 ? 'line' : 'lines'} hidden</p> : null}
         {commandLines.map(line => <LineView key={line.id} line={line} />)}
       </div>
     </div>

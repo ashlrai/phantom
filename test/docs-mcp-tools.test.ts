@@ -16,6 +16,7 @@ describe('MCP tools documentation', () => {
   it.each(toolNames)('tool "%s" declared in the native or desktop operator registry', toolName => {
     const sources = [
       readFileSync(join(root, 'src/core/mcp-native.ts'), 'utf8'),
+      readFileSync(join(root, 'src/core/mcp-native-fleet.ts'), 'utf8'),
       readFileSync(join(root, 'src/core/desktop/operator-mcp.ts'), 'utf8'),
     ].join('\n');
     const pattern = new RegExp(`name:\\s*['"]${escapeRegex(toolName)}['"]|tool\\(\\s*['"]${escapeRegex(toolName)}['"]`);
