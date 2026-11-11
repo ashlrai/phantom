@@ -23,6 +23,7 @@ import { SwarmsPanel } from './SwarmsPanel.js';
 import { DaemonPanel, DaemonPanelSkeleton } from './DaemonPanel.js';
 import styles from './FleetDashboardView.module.css';
 import { ResourcePanel } from './ResourcePanel.js';
+import { NodesPanel } from './NodesPanel.js';
 
 export function FleetDashboardView() {
   const snapshotQuery = useQuery(dashboardSnapshotQuery);
@@ -49,6 +50,8 @@ export function FleetDashboardView() {
       ) : null}
 
       <ResourcePanel />
+
+      <NodesPanel />
 
       <div className={styles.panels}>
         {snapshotQuery.status === 'loading' ? (
