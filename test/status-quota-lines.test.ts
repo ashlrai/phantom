@@ -82,7 +82,7 @@ describe('quotaLines', () => {
 
   it('flags a snapshot older than 30 minutes instead of passing it off as current', () => {
     const stale = quotaLines(snapshot([seat({ observedAt: iso(NOW - 45 * MIN) })], iso(NOW - 45 * MIN)), NOW);
-    expect(stale[0]).toBe('Quota (stale, read 45m ago):');
+    expect(stale[0]).toBe('Quota (stale, historical) Seat One: no windows reported');
     // A fresh seat reading is current even when the file itself was written earlier.
     const fresh = quotaLines(snapshot([seat({})], iso(NOW - 45 * MIN)), NOW);
     expect(fresh[0]).not.toContain('stale');
