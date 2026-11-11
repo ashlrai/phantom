@@ -18,6 +18,7 @@ import { dashboardSnapshotQuery, controlSnapshotQuery } from '../../data/queries
 import { useQuery } from '../../data/hooks.js';
 import { RefreshIndicator } from '../../components/primitives/RefreshIndicator.js';
 import { StatGrid, StatGridSkeleton } from './StatGrid.js';
+import { FleetHealthStrip } from '../../components/fleet/FleetHealthStrip.js';
 import { RunsPanel, RunsPanelSkeleton } from './RunsPanel.js';
 import { SwarmsPanel } from './SwarmsPanel.js';
 import { DaemonPanel, DaemonPanelSkeleton } from './DaemonPanel.js';
@@ -47,6 +48,8 @@ export function FleetDashboardView() {
       ) : snapshotQuery.data ? (
         <StatGrid snapshot={snapshotQuery.data} />
       ) : null}
+
+      <FleetHealthStrip />
 
       <ResourcePanel />
 
