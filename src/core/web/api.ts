@@ -87,6 +87,7 @@ import {
 } from '../daemon/public-observation.js';
 import { serviceStatus } from '../daemon/service.js';
 import { daemonServiceInstallOptions } from '../daemon/service-config.js';
+import { buildNodesSnapshot } from '../nodes/view.js';
 import { buildFleetStatus, readFleetDaemonStatus } from '../fleet/status.js';
 import { getCachedFleetStatus, primeFleetStatusCache } from './fleet-status-cache.js';
 // M61: Mission Control aggregator.
@@ -2260,6 +2261,15 @@ export async function handleApi(
     if (path === '/api/feed' && method === 'GET') {
       const { readFeed } = await import('../feed.js');
       sendJson(res, 200, await readFeed());
+      return true;
+    }
+
+    // ── GET /api/nodes ───────────────────────────────────────────────────────
+    // phantom.nodes.v1: nodes, caps, heartbeat age, live jobs, leader. Read-only
+    // and secret-free by construction (src/core/nodes/view.ts); same read class
+    // as /api/control.
+    if (path === '/api/nodes' && method === 'GET') {
+      sendJson(res, 200, buildNodesSnapshot());
       return true;
     }
 
