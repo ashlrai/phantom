@@ -13,13 +13,15 @@ import { readSource } from '../fleet/runs-parked-queue.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 export const LEADER_STATUS_SNAPSHOT_SCHEMA = 'leader.status-snapshot.v1';
+// Match fleet/status-api: dispatcher observations expire after 60 seconds.
+const MAX_QUEUE_AGE_MS = 60_000;
 const MAX_STATUS_BYTES = 1024 * 1024;
 const MAX_LANES = 16;
 
 export interface LeaderStatusLane { lane: string; merged: number; medianTtmS: number | null }
 export interface LeaderStatusSnapshot {
   schema: typeof LEADER_STATUS_SNAPSHOT_SCHEMA;
-  /** Null when queue/status.json has no rollup_24h, so "zero" is never invented. */
+  /** Null when the queue rollup is missing or its dispatcher tick is not fresh. */
   merged24h: number | null;
   medianTtmS: number | null;
   lanes: LeaderStatusLane[];
@@ -47,6 +49,7 @@ export function cleanLeaderReplyText(raw: string): string {
 }
 
 const count = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+const mergedCount = (value: unknown): number | null => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const laneName = (raw: string): string => raw.replace(/[^\w.-]/g, '').slice(0, 40);
 
@@ -55,15 +58,18 @@ export function summarizeQueueRollup(status: unknown): Pick<LeaderStatusSnapshot
   const rollup = object(object(status).rollup_24h);
   const byLane = object(rollup.by_lane);
   const lanes: LeaderStatusLane[] = [];
-  for (const [name, row] of Object.entries(byLane)) {
-    const merged = count(object(row).merged);
+  const entries = Object.entries(byLane);
+  let complete = entries.length > 0 && entries.length <= MAX_LANES;
+  for (const [name, row] of entries) {
+    const merged = mergedCount(object(row).merged);
     const lane = laneName(name);
+    if (merged === null || !lane) complete = false;
     if (merged !== null && lane) lanes.push({ lane, merged, medianTtmS: count(object(row).median_ttm_s) });
   }
   lanes.sort((a, b) => b.merged - a.merged || a.lane.localeCompare(b.lane));
-  const hasRollup = Object.keys(byLane).length > 0 || count(rollup.merged) !== null;
+  const inferred = complete ? lanes.reduce((sum, lane) => sum + lane.merged, 0) : null;
   return {
-    merged24h: hasRollup ? count(rollup.merged) ?? lanes.reduce((sum, lane) => sum + lane.merged, 0) : null,
+    merged24h: mergedCount(rollup.merged) ?? mergedCount(inferred),
     medianTtmS: count(rollup.median_ttm_s),
     lanes: lanes.slice(0, MAX_LANES),
   };
@@ -74,7 +80,13 @@ export async function readLeaderStatusSnapshot(opts: { runsDir?: string; now?: (
   const [queue, mains, journal] = await Promise.all([
     readSource(join(runsDir, 'queue', 'status.json'), MAX_STATUS_BYTES, false).then(source => {
       if (source.state !== 'healthy') return summarizeQueueRollup(null);
-      try { return summarizeQueueRollup(JSON.parse(source.text)); } catch { return summarizeQueueRollup(null); }
+      try {
+        const status: unknown = JSON.parse(source.text);
+        const tick = object(status).last_tick;
+        const age = (opts.now ?? Date.now)() - (typeof tick === 'string' ? Date.parse(tick) : NaN);
+        return Number.isFinite(age) && age >= 0 && age <= MAX_QUEUE_AGE_MS
+          ? summarizeQueueRollup(status) : summarizeQueueRollup(null);
+      } catch { return summarizeQueueRollup(null); }
     }),
     readFleetMainHealth({ runsDir, now: opts.now }).catch(() => null),
     readLeaderJournal({ runsDir, now: opts.now }).catch(() => null),
