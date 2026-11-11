@@ -13,13 +13,15 @@ import { readSource } from '../fleet/runs-parked-queue.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 export const LEADER_STATUS_SNAPSHOT_SCHEMA = 'leader.status-snapshot.v1';
+// Match fleet/status-api: dispatcher observations expire after 60 seconds.
+const MAX_QUEUE_AGE_MS = 60_000;
 const MAX_STATUS_BYTES = 1024 * 1024;
 const MAX_LANES = 16;
 
 export interface LeaderStatusLane { lane: string; merged: number; medianTtmS: number | null }
 export interface LeaderStatusSnapshot {
   schema: typeof LEADER_STATUS_SNAPSHOT_SCHEMA;
-  /** Null when queue/status.json has no rollup_24h, so "zero" is never invented. */
+  /** Null when the queue rollup is missing or its dispatcher tick is not fresh. */
   merged24h: number | null;
   medianTtmS: number | null;
   lanes: LeaderStatusLane[];
@@ -78,7 +80,13 @@ export async function readLeaderStatusSnapshot(opts: { runsDir?: string; now?: (
   const [queue, mains, journal] = await Promise.all([
     readSource(join(runsDir, 'queue', 'status.json'), MAX_STATUS_BYTES, false).then(source => {
       if (source.state !== 'healthy') return summarizeQueueRollup(null);
-      try { return summarizeQueueRollup(JSON.parse(source.text)); } catch { return summarizeQueueRollup(null); }
+      try {
+        const status: unknown = JSON.parse(source.text);
+        const tick = object(status).last_tick;
+        const age = (opts.now ?? Date.now)() - (typeof tick === 'string' ? Date.parse(tick) : NaN);
+        return Number.isFinite(age) && age >= 0 && age <= MAX_QUEUE_AGE_MS
+          ? summarizeQueueRollup(status) : summarizeQueueRollup(null);
+      } catch { return summarizeQueueRollup(null); }
     }),
     readFleetMainHealth({ runsDir, now: opts.now }).catch(() => null),
     readLeaderJournal({ runsDir, now: opts.now }).catch(() => null),
