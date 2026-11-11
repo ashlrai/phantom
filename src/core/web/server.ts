@@ -29,7 +29,7 @@ import { handleApi, drainSseConnections, drainSseSession, invalidateWebReadCache
 import { createReadProjectionWorker, type ReadProjectionReader } from './read-projections.js';
 import { governReadProjections } from './read-projection-governor.js';
 import { createReadSessionBoundary, headerValue, isAllowedHost, requestUrl, safeEqual, sendJson } from './read-session.js';
-import { serveStatic } from './static.js';
+import { isPhoneShellPath, serveStatic } from './static.js';
 import { gcRunStreams } from '../run/streaming.js';
 import { resetVerseEngine } from '../verse/verse-api.js';
 import { isPreviewFramePath } from '../verse/preview.js';
@@ -146,7 +146,7 @@ export async function startServer(
     const method = (req.method ?? 'GET').toUpperCase();
     // Browser speech is available only to the phone document itself. Keep the
     // default deny policy on the workbench, APIs, worker, and static assets.
-    if (method === 'GET' && (path === '/verse/m' || path === '/verse/m/')) {
+    if (method === 'GET' && isPhoneShellPath(path)) {
       res.setHeader('Permissions-Policy', 'camera=(), microphone=(self), geolocation=()');
     }
     const authority = sessions.authority(req, url);

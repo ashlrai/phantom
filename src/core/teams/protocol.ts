@@ -34,6 +34,7 @@ export const TEAM_EVENT_TYPES = [
   'member.removed',
   'member.role-changed',
   'repo.linked',
+  'invite.created',
   'agent.registered',
   'presence.heartbeat',
   'message.posted',
