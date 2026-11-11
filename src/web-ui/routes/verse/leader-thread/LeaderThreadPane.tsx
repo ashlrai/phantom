@@ -39,6 +39,8 @@ import { fleetInbox, fleetOutbox, lineChannel, lineSourceLabel, mergeThread } fr
 import { canSend, scrollTargetIndex, trimReply } from './thread-reply-model.js';
 import { stepMatch, threadMatches, type ThreadFindItem } from './thread-find-model.js';
 import { mentionedRefs } from './thread-refs.js';
+import { splitScreenshotMarkers } from './thread-screenshots.js';
+import { ThreadScreenshot } from './ThreadScreenshot.js';
 import { leaderCeoSummary } from './leader-ceo-model.js';
 import { LeaderOfficeStrip } from './LeaderOfficeStrip.js';
 import { OwnerChannelsStrip } from './OwnerChannelsStrip.js';
@@ -104,7 +106,11 @@ function LineView({ line, match, current }: { line: LabeledLine; match?: boolean
                 {index ? ' ' : null}<JobRefs text={ref.replace(/([^#])#/, '$1 #')} onOpenJob={job => { requestWorkerLogJob(job); openDockPane('worker-log'); }} />
               </span>)}</div> : null}
             </div>
-            : <div className={leaderStyles.masonItem}><p className={leaderStyles.bubble}>{line.text}</p></div>}
+            : <div className={leaderStyles.masonItem}>
+              {splitScreenshotMarkers(line.text).map((segment, index) => segment.kind === 'shot'
+                ? <ThreadScreenshot key={index} name={segment.name} raw={segment.raw} />
+                : segment.text.trim() !== '' ? <p key={index} className={leaderStyles.bubble}>{segment.text}</p> : null)}
+            </div>}
         </div>
       </div>
     </section>

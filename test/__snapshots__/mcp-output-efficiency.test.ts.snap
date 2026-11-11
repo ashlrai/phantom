@@ -149,6 +149,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "safety": "append",
     },
     {
+      "name": "phm_team_access_request",
+      "safety": "append",
+    },
+    {
       "name": "phm_team_context_add",
       "safety": "append",
     },
@@ -1517,6 +1521,62 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "phm_team_handoff",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "agentId": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "memberId": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "note": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "onBehalfOf": {
+          "type": "string",
+        },
+        "op": {
+          "description": "<description>",
+          "enum": [
+            "invite-member",
+            "link-repo",
+            "change-role",
+          ],
+          "type": "string",
+        },
+        "provider": {
+          "type": "string",
+        },
+        "repo": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "role": {
+          "description": "<description>",
+          "enum": [
+            "admin",
+            "member",
+          ],
+          "type": "string",
+        },
+        "team": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "required": [
+        "agentId",
+        "op",
+      ],
+      "type": "object",
+    },
+    "name": "phm_team_access_request",
   },
   {
     "inputSchema": {
