@@ -280,6 +280,7 @@
     "src/core/agents/slack-transport.ts",
     "src/core/agents/work-visibility.ts",
     "src/core/app-update-status.ts",
+    "src/core/approvals/surface.ts",
     "src/core/authority/canonical-json.ts",
     "src/core/authority/capability.ts",
     "src/core/authority/clamp.ts",
