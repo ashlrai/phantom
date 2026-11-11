@@ -57,6 +57,11 @@ Stored memory (doctrine, then preferences, then facts, up to 4000 characters)
 is added to the prompt. See `phm memory`. Memory never authorizes an action.
 The worker sends nothing.
 
+`phm fleet cos-loop --duration-ms 3600000 --json` repeats that one bounded
+pass for a bounded window — a host timer (for example launchd) or an agent
+can start it once and queued tasks get drafted without a person. The loop
+only drafts; sending still needs digest approval.
+
 ## Approve
 
 Read the whole draft, including recipient, thread and text, before approving.
