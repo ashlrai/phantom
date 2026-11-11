@@ -107,6 +107,7 @@ import { readUniverseGraph } from '../universe/graph-reader.js';
 import type { ProposalsReadResult } from '../inbox/store.js';
 import { handleRunEventsSse, RUN_EVENTS_PATH_RE } from './run-stream.js';
 import { buildHostSummary, HOST_SUMMARY_PATH } from './host-summary.js';
+import { handleUiSettingsApi, UI_SETTINGS_PATH } from './ui-settings-api.js';
 import { handleVerseApi, isVerseApiPath, verseSessionsDigest, verseSessionsSnapshot, verseAccountReadingsDigest } from '../verse/verse-api.js';
 import { handleIdeasDraftApi, isIdeasDraftPath } from './ideas-draft-route.js';
 // V2 autonomy control plane (mounted BEFORE handleVerseApi — see handleApi).
@@ -1360,6 +1361,14 @@ export async function handleApi(
     if (path === '/api/config/effective' && method === 'GET') {
       sendJson(res, 200, loadEffectiveConfigSnapshot());
       return true;
+    }
+
+    // ── GET/PUT /api/ui-settings ────────────────────────────────────────────
+    // The operator's appearance + layout preferences, stored in ~/.ashlr/ui.json
+    // (src/core/ui-settings.ts). The file is the source of truth; the UI and
+    // agents edit the same document.
+    if (path === UI_SETTINGS_PATH) {
+      return handleUiSettingsApi(ctx, req, res, method);
     }
 
     // ── GET /api/portfolio ────────────────────────────────────────────────────
