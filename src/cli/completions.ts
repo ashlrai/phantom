@@ -99,7 +99,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   repos: ['rank', 'proposals', '--json', '--recompute', '--help'],
   'release-articles': ['status', 'enable', 'disable', 'import', 'sync', '--help'],
   release: ['status', '--json', '--file', '--help'],
-  agents: ['bus', 'help'],
+  agents: ['bus', 'help', 'list', 'show', 'validate', 'versions'],
   // Mirror the verb switch in src/cli/wb.ts (cmdWb).
   wb: ['secrets', 'steer', 'reprioritize', 'stop', '--text', '--priority', '--apply', '--json', '--help'],
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
@@ -111,6 +111,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   run: ['show'],
   spec: ['new', 'list', 'show', 'refine'],
   swarm: ['show', 'verify', 'approve', 'rollback'],
+  verify: ['change', 'done', '--worktree', '--checks', '--contract', '--plan', '--help'],
   models: ['list', 'pull', 'start', 'inventory', 'routing', 'verify'],
   gh: ['pr', 'issue', 'ci'],
   vercel: ['ls', 'logs'],
