@@ -11,13 +11,13 @@ import { resetCommandBus } from './shell/command-bus.js';
 import { activity, shellFetch } from './shell/shell-fixtures.test-support.js';
 import { resetActivityForTest } from './shell/useActivity.js';
 import { mockViewport, type ViewportMock } from './shell/viewport.test-support.js';
-import { VerseApp } from './VerseApp.js';
+import { PhantomApp } from './VerseApp.js';
 import { resetVerseStore } from './verse-store.js';
 import { getVerseUiState, reloadVerseUiForTest, resetVerseUi } from './verse-ui-store.js';
 
 // RQ-PHX-UISTOREOLDSTATE82 — the render half of the 3.29.15 → 3.30.x upgrade:
 // test/verse-ui-store-upgrade-82.test.ts proves the blob loads to valid state;
-// these prove VerseApp opens on it — saved, migrated, or default surface.
+// these prove PhantomApp opens on it — saved, migrated, or default surface.
 
 const FIXTURE_DIR = resolve(process.cwd(), 'test/fixtures/verse-ui-store');
 const readFixture = (name: string): Record<string, unknown> =>
@@ -66,11 +66,11 @@ afterEach(() => {
 });
 
 async function mount(): Promise<void> {
-  render(<ToastProvider><VerseApp /></ToastProvider>);
+  render(<ToastProvider><PhantomApp /></ToastProvider>);
   await screen.findByRole('navigation', { name: 'Phantom sections' });
 }
 
-describe('VerseApp on a 3.29.15 persisted blob', () => {
+describe('PhantomApp on a 3.29.15 persisted blob', () => {
   it('opens on the saved Chat surface', async () => {
     seedFixture(readFixture('v3-29-15.json'));
     reloadVerseUiForTest();
