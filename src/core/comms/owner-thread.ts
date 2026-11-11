@@ -16,6 +16,7 @@ import { CHANNEL_BUS_TTL_MS } from '../fleet/channel-bus-publish.js';
 import { INBOX_MAX_CHARS } from '../fleet/mason-inbox.js';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import type { BusChannel, BusEnvelope } from '../fleet/bus-envelope.js';
+import { recordDelivery } from '../leader/delivery-receipts.js';
 import { isPaused } from './pause.js';
 import { killSwitchOn } from '../sandbox/policy.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -410,12 +411,21 @@ export async function sendOwnerReply(input: OwnerReplyInput, options: OwnerThrea
           deliveries.push({ channel, status: 'refused', reason: 'Channel transport refused the owner reply.' });
         }
       }
+      let messageId = prior?.id;
       if (!prior) {
         const stored = appendMessage(state, {
           idempotencyKey: key, channel: inbound.channel, senderId: 'leader', direction: 'outbound',
           at: new Date(clock(options)).toISOString(), text, replyTo: inbound.idempotencyKey, fanout: destinations,
         });
         mirror(options, stored);
+        messageId = stored.id;
+      }
+      // One receipt per channel so the desktop can show where the reply went, and what failed.
+      if (messageId) {
+        for (const row of deliveries) {
+          const ok = row.status === 'sent' || row.status === 'duplicate';
+          recordDelivery(options.runsDir, messageId, row.channel, ok ? 'delivered' : 'failed', ok ? undefined : row.reason);
+        }
       }
       const sent = deliveries.some(row => row.status === 'sent' || row.status === 'duplicate');
       const complete = deliveries.every(row => row.status === 'sent' || row.status === 'duplicate');
