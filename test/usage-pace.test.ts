@@ -9,7 +9,7 @@ const fixture = { schema: 'dispatchd.status.v1', last_tick: '2026-11-09T16:00:00
 describe('usage pace', () => {
   it('reports only fresh known forecasts and leaves stale and missing pools unknown', () => {
     const { pools } = projectUsagePace(fixture, now);
-    expect(pools.find(row => row.pool === 'codex-personal')).toEqual({ pool: 'codex-personal', projectedPercent: 64, hoursLeft: 123.6, recommendedSlots: 18 });
+    expect(pools.find(row => row.pool === 'codex-personal')).toEqual({ pool: 'codex-personal', projectedPercent: 64, hoursLeft: 123.6, recommendedSlots: 18, unusedPercent: 36 });
     expect(pools.find(row => row.pool === 'claude')?.projectedPercent).toBeNull();
     expect(pools.find(row => row.pool === 'zai')?.projectedPercent).toBeNull();
   });
