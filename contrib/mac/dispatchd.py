@@ -32,16 +32,17 @@ DEFAULT = {"codex-cmp": {"target": 10, "floor": 10, "ceiling": 32, "hard_cap": 3
            "devin": {"target": 6, "floor": 3, "ceiling": 10, "hard_cap": 10},   # DEVIN-LEVERAGE-20261026
            "claude-api": {"target": 4, "floor": 0, "ceiling": 8, "hard_cap": 8},   # target is re-paced every tick by claude-api.py
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
-import concurrency, batcher
-# Starvation thresholds; load, process count and live worktree count only warn.
+import concurrency, batcher, batch_sessions
+# Starvation thresholds. RQ-BATCH-SESSIONS-2 (Mason Nov 10) restores a real load gate: load1 over 2 x ncpu or kernel
+# memory pressure at warn (2) or above stops new claims. Process count and live worktree count only warn.
 def gate_limit(name, default):
     try:
         value = float(os.environ.get(name, default))
         return value if math.isfinite(value) and value > 0 else default
     except ValueError: return default
-GATE_LOAD_PER_CPU = gate_limit("GATE_LOAD_PER_CPU", 3.0)
+GATE_LOAD_PER_CPU = gate_limit("GATE_LOAD_PER_CPU", 2.0)
 GATE_PROCS_MAX = gate_limit("GATE_PROCS_MAX", 2500); GATE_WORKTREES_MAX = gate_limit("GATE_WORKTREES_MAX", 40)
-GATE_PRESSURE_MIN = gate_limit("GATE_PRESSURE_MIN", 4); GATE_SWAP_GROWTH_GB = gate_limit("GATE_SWAP_GROWTH_GB", 2)
+GATE_PRESSURE_MIN = gate_limit("GATE_PRESSURE_MIN", 2); GATE_SWAP_GROWTH_GB = gate_limit("GATE_SWAP_GROWTH_GB", 2)
 GATE_SWAP_WINDOW_S = gate_limit("GATE_SWAP_WINDOW_S", 300); GATE_TICK_MAX_S = gate_limit("GATE_TICK_MAX_S", 900)
 GATE_STATUS_TIMEOUT = gate_limit("GATE_STATUS_TIMEOUT", 30)
 LOCAL_HEALTH = "http://127.0.0.1:8123/v1/models"   # loopback only, no auth header, 2 s timeout, checked at most once per tick
@@ -69,6 +70,9 @@ def _run(cmd, timeout, **kw):
         except subprocess.TimeoutExpired:
             for pipe in (p.stdout, p.stderr):
                 if pipe: pipe.close()
+            # RQ-BATCH-SESSIONS-2: wait for the killed child too, or it stays <defunct> for the rest of the tick.
+            try: p.wait(timeout=1)
+            except subprocess.TimeoutExpired: pass   # uninterruptible kernel sleep: bounded, the exit reaps it
         log("SLOW %s interrupted (budget %.1fs), group killed" % (name, timeout)); raise
     if time.time() - t0 > 5: log("SLOW %s %.0fs" % (name, time.time() - t0))
     return subprocess.CompletedProcess(cmd, p.returncode, out, err)
@@ -82,9 +86,17 @@ def _phase_timeout(signum, frame):
     _EXPIRED.append(_PHASE)
     if _PHASE == "worktree_reap": raise MaintenanceDeadline()
     raise SystemExit("dispatcher phase budget exhausted: " + _PHASE)
+# Detached children (launch.sh, reap-one.sh, metrics-outcomes.sh) are polled at every phase change: launch.sh exits
+# within seconds of backgrounding its agent, and an unpolled child stays <defunct> until this tick exits.
+_SPAWNED = []
+def spawn(cmd, **kw):
+    p = subprocess.Popen(cmd, **kw); _SPAWNED.append(p); return p
+def reap_spawned():
+    _SPAWNED[:] = [p for p in _SPAWNED if p.poll() is None]
 def tick_phase(name, seconds=15):
     global _PHASE, _PHASE_START
     signal.setitimer(signal.ITIMER_REAL, 0)
+    reap_spawned()
     now = time.monotonic()
     _PHASES[_PHASE] = _PHASES.get(_PHASE, 0) + now - _PHASE_START
     _PHASE, _PHASE_START = name, now
@@ -733,8 +745,12 @@ def base(j):
     b = rd("%s/%s.base" % (R, j)).split()
     return b if len(b) >= 4 else None
 
-# ---- batching (RQ-QUEUE-BATCH-1): related ready tasks share one session; queue/BATCH_OFF is the off switch
-BATCHING = not os.path.exists(Q + "/BATCH_OFF")
+# ---- batching (RQ-QUEUE-BATCH-1, per-line since RQ-BATCH-SESSIONS-2): up to 10 related ready lines share one session,
+# each with its own lease (<job>.batched, O_EXCL), worktree (batch-launch.sh) and PR (the normal per-job reap).
+# queue/BATCH_OFF is the off switch; a missing bin/batch-launch.sh also keeps every line solo.
+BS_CFG = batch_sessions.load_config(R + "/bin/batch-sessions.json")
+BATCH_LAUNCH = R + "/bin/batch-launch.sh"
+BATCHING = not os.path.exists(Q + "/BATCH_OFF") and os.path.isfile(BATCH_LAUNCH)
 os.makedirs(Q + "/batches", exist_ok=True)
 BATCH_TUNING_PATH = Q + "/batch-tuning.json"; batch_tuning = batcher.load_tuning(BATCH_TUNING_PATH)
 _bstats = None
@@ -749,39 +765,115 @@ def batch_manifest(j):
     if not j.startswith(batcher.BATCH_PREFIX) or not JID.fullmatch(j): return None
     m = jload(Q + "/batches/" + j + ".json", None)
     return m if isinstance(m, dict) and m.get("schema") == batcher.SCHEMA and isinstance(m.get("members"), list) else None
+# A lease whose bundle manifest is gone can never be reaped; free it so the line is not stuck (the line itself left
+# ready.tsv at claim time, so the restocker re-adds it from router-queue.md).
+for _lp in glob.glob(RUN + "/*.batched"):
+    _m = os.path.basename(_lp)[:-8]; _owner = rd(_lp).strip()
+    if JID.fullmatch(_m) and not (_owner.startswith(batcher.BATCH_PREFIX) and os.path.isfile(Q + "/batches/" + _owner + ".json")):
+        try: os.remove(_lp); ev("LEASE_ORPHANED %s owner=%s released" % (_m, _owner or "?"))
+        except FileNotFoundError: pass
+def bundle_member_of(j):   # the live bundle leasing j, or None. Leased members are not sessions of their own yet.
+    return batch_sessions.lease_owner(RUN, j) if os.path.exists(RUN + "/" + j + ".batched") else None
 
-def requeue_member(x):   # the member's original ready line; its prompt may have been cleaned up since the claim
-    try: os.remove(RUN + "/" + x["job"] + ".batched")
+def _git(args, timeout=30):
+    try: return _run(["git"] + args, timeout)
+    except (OSError, subprocess.SubprocessError) as e: return subprocess.CompletedProcess(args, 1, "", type(e).__name__)
+def retire_member_worktree(m, bid, repo):
+    """Undo batch-launch.sh for one member that will not publish. Only a worktree the wrapper recorded for this
+    bundle is touched. A clean one is removed; one with changes is detached and moved under wt/.bundle-failed so
+    nothing is lost and the job path and branch are free for its solo retry. The branch is deleted only when it
+    has no unpublished commits."""
+    for x in (".prep-failed",):
+        try: os.remove(RUN + "/" + m + x)
+        except FileNotFoundError: pass
+    if rd(RUN + "/" + m + ".bundle-wt").strip() != bid: return "untouched"
+    wt = WTROOT + "/" + m; rp = H + "/Projects/ashlrai/" + repo; br = "codex-bridge/" + m; how = "gone"
+    if os.path.isdir(wt):
+        st = _git(["-C", wt, "status", "--porcelain", "--untracked-files=all"])
+        if st.returncode: return "kept (status failed)"
+        if not st.stdout.strip():
+            if _git(["-C", rp, "worktree", "remove", wt]).returncode: return "kept (remove failed)"
+            how = "removed"
+        else:
+            dest = WTROOT + "/.bundle-failed/" + m + "-" + str(int(NOW)); os.makedirs(WTROOT + "/.bundle-failed", exist_ok=True)
+            if _git(["-C", rp, "worktree", "move", wt, dest]).returncode: return "kept (move failed)"
+            _git(["-C", dest, "checkout", "-q", "--detach"]); how = "moved to " + dest
+    ahead = _git(["-C", rp, "rev-list", "--count", br, "--not", "--remotes"])
+    if ahead.returncode == 0 and ahead.stdout.strip() == "0": _git(["-C", rp, "branch", "-D", "-q", br])
+    for x in (".bundle-wt",):
+        try: os.remove(RUN + "/" + m + x)
+        except FileNotFoundError: pass
+    try: os.remove(R + "/" + m + ".base")
     except FileNotFoundError: pass
+    return how
+def requeue_member(x, bid, repo, into=None):   # the member's original ready line; its prompt may have been cleaned up since the claim
+    why = retire_member_worktree(x["job"], bid, repo)
+    if why.startswith("kept"):   # RQ-BATCH-SESSIONS-2: the line still goes back alone. A solo launch reuses the kept
+        ev("BUNDLE_MEMBER_KEPT %s %s %s" % (bid, x["job"], why))   # worktree, so nothing in it is lost and the lease
+    batch_sessions.release_lease(RUN, x["job"], bid)              # never outlives its bundle.
     if not isinstance(x.get("line"), str): return False
     pf = x["line"].split("\t")[4:5]
     if pf and not os.path.isfile(pf[0]) and os.path.realpath(pf[0]).startswith(Q + "/prompts/") and isinstance(x.get("prompt"), str):
         open(pf[0], "w").write(x["prompt"])
-    requeue.append(x["line"]); return True
-def release_batch(j, why):   # a batch that never started: every member goes back as it was, attempt refunded
+    (requeue if into is None else into).append(x["line"]); return True
+def _members(m):
+    return [x for x in m["members"] if isinstance(x, dict) and JID.fullmatch(str(x.get("job", "")))]
+def _handled(m, j, job, outcome):
+    """Record one member as finished in the manifest before the next one starts, so a reap that a maintenance
+    deadline interrupts resumes where it stopped instead of requeueing (and duplicating) members it already handled."""
+    m.setdefault("handled", {})[job] = outcome; jsave(Q + "/batches/" + j + ".json", m)
+def release_batch(j, why, into=None):   # a bundle that never started: every member goes back as it was, attempt refunded
     m = batch_manifest(j)
     if not m or m.get("reaped"): return
-    for x in m["members"]:
-        if not (isinstance(x, dict) and JID.fullmatch(str(x.get("job", "")))): continue
+    done = m.get("handled") if isinstance(m.get("handled"), dict) else {}
+    for x in _members(m):
+        if x["job"] in done: continue
         open(RUN + "/" + x["job"] + ".batch-attempts", "w").write(str(max(0, batch_attempts(x["job"]) - 1)))
-        requeue_member(x)
+        requeue_member(x, j, m.get("repo", ""), into); _handled(m, j, x["job"], "released")
     m.update(reaped=NOW, released=why); jsave(Q + "/batches/" + j + ".json", m)
     ev("BATCH_RELEASED %s %d tasks requeued (%s)" % (j, len(m["members"]), why))
+def handoff_member(x, bid):
+    """A done or skipped line becomes an ordinary finished job: its .base already exists, a .log pointing at the
+    bundle marks it finished, and the next reap pass publishes it on its own (one PR per line)."""
+    m = x["job"]
+    open(RUN + "/" + m + ".bundled-in", "w").write(bid)
+    if isinstance(x.get("line"), str): open(RUN + "/" + m + ".line", "w").write(x["line"] + "\n")   # repo and lane, as a solo claim
+    with open(R + "/" + m + ".log", "a") as f: f.write("bundled in %s; session log: %s/%s.log\n" % (bid, R, bid))
+    old = NOW - 600   # past the fresh-launch window, so the very next reap pass may publish it
+    for p in (R + "/" + m + ".base", R + "/" + m + ".log"):
+        try: os.utime(p, (old, old))
+        except OSError: pass
+    try: os.remove(RUN + "/" + m + ".bundle-wt")
+    except FileNotFoundError: pass
+    batch_sessions.release_lease(RUN, m, bid)
+    bp = R + "/" + m + ".base"   # the candidate cache refreshes every 10 min; join it now so the line publishes promptly
+    if bp not in _reap_candidates: _reap_candidates.append(bp); jsave(_reap_cache, _reap_candidates)
+def member_prepared(job, bid):
+    """batch-launch.sh gave this member its own worktree for this bundle. A .base alone is not proof: one left over
+    from an earlier solo attempt survives when the wrapper refuses the member (path or branch already exists)."""
+    return (rd(RUN + "/" + job + ".bundle-wt").strip() == bid and not os.path.exists(RUN + "/" + job + ".prep-failed")
+            and os.path.isdir(WTROOT + "/" + job) and os.path.isfile(R + "/" + job + ".base"))
 def reap_batch(j, wt, lane, wall_s):
-    """Per-task outcomes from the session's BRIDGE_NOTES.md checklist; tasks not done go back to ready.tsv."""
+    """Per-line outcomes from the session's BRIDGE_NOTES.md checklist. Done and skipped lines hand off to their own
+    per-job publish; every other line releases only its lease and goes back to ready.tsv alone."""
     m = batch_manifest(j)
     if not m or m.get("reaped"): return None
-    members = [x for x in m["members"] if isinstance(x, dict) and JID.fullmatch(str(x.get("job", "")))]
+    members = _members(m); repo = m.get("repo", "")
     notes = rd(wt + "/BRIDGE_NOTES.md")
     outcomes = batcher.parse_outcomes(notes, [x["job"] for x in members])
+    done = m.get("handled") if isinstance(m.get("handled"), dict) else {}
     retry = 0
     for x in members:
+        if x["job"] in done:   # handled by an earlier, interrupted pass
+            outcomes[x["job"]] = done[x["job"]]; continue
         o = outcomes[x["job"]]
-        metric({"event": "task_outcome", "job": x["job"], "batch": j, "lane": lane, "repo": m.get("repo"), "outcome": o})
-        if o in batcher.RETRY: retry += requeue_member(x)
-        else:
-            try: os.remove(RUN + "/" + x["job"] + ".batched")
-            except FileNotFoundError: pass
+        if o in ("done", "skipped") and not member_prepared(x["job"], j):
+            o = outcomes[x["job"]] = "deferred"   # no worktree was prepared: nothing of its own to publish
+        metric({"event": "task_outcome", "job": x["job"], "batch": j, "lane": lane, "repo": repo, "outcome": o,
+                "model": x.get("model")})
+        if o in batcher.RETRY: retry += requeue_member(x, j, repo)
+        else: handoff_member(x, j)
+        _handled(m, j, x["job"], o)
     old, new, why = batcher.tune(batch_tuning, lane, outcomes, wall_s, os.path.exists(RUN + "/" + j + ".timeout"), batch_stats(), NOW)
     batcher.save_json(BATCH_TUNING_PATH, batch_tuning)
     m.update(reaped=NOW, outcomes=outcomes); jsave(Q + "/batches/" + j + ".json", m)
@@ -789,10 +881,31 @@ def reap_batch(j, wt, lane, wall_s):
     ev("BATCH_REAPED %s done=%d skipped=%d failed=%d deferred=%d unreported=%d requeued=%d size[%s] %d->%d (%s)" % (
         j, n["done"], n["skipped"], n["failed"], n["deferred"], n["unreported"], retry, lane, old, new, why))
     return len(members)
+def retire_bundle_worktree(j, wt):
+    """The bundle's own worktree only holds its checklist: keep the notes beside the manifest, then remove it.
+    Anything else in it (an agent edited outside its lines) keeps it for a supervisor."""
+    st = _git(["-C", wt, "status", "--porcelain", "--untracked-files=all"])
+    left = [l for l in st.stdout.splitlines() if l.strip() and l[3:].strip() != "BRIDGE_NOTES.md"]
+    if st.returncode or left:
+        ev("KEPT %s bundle worktree has changes outside BRIDGE_NOTES.md" % j); return False
+    try: open(Q + "/batches/" + j + ".notes.md", "w").write(rd(wt + "/BRIDGE_NOTES.md"))
+    except OSError: pass
+    rp = H + "/Projects/ashlrai/" + (batch_manifest(j) or {}).get("repo", "")
+    if _git(["-C", rp, "worktree", "remove", "--force", wt]).returncode: ev("KEPT %s bundle worktree remove failed" % j); return False
+    ahead = _git(["-C", rp, "rev-list", "--count", "codex-bridge/" + j, "--not", "--remotes"])
+    if ahead.returncode == 0 and ahead.stdout.strip() == "0": _git(["-C", rp, "branch", "-D", "-q", "codex-bridge/" + j])
+    try: os.remove(R + "/" + j + ".base")
+    except FileNotFoundError: pass
+    return True
 
 
 # ---- per-job launch outcome (requeue PAUSED/HELD launches)
 requeue = []; fork_seen = []; rl_seen = []
+# Lines a bundle reap requeued after ready.tsv was already written (the reap phase runs after launch), carried over
+# when the lock was busy at the end of the previous tick.
+_REQUEUE_PENDING = Q + "/requeue-pending.tsv"
+if os.path.exists(_REQUEUE_PENDING):
+    requeue.extend(l for l in rd(_REQUEUE_PENDING).splitlines() if l.strip()); os.remove(_REQUEUE_PENDING)
 for p in glob.glob(RUN + "/*.dispatched"):
     j = os.path.basename(p)[:-11]
     if j in alive: continue
@@ -803,14 +916,16 @@ for p in glob.glob(RUN + "/*.dispatched"):
     if "launched " in out: os.remove(p); continue
     if re.search(r"^(PAUSED|HELD)", out, re.M):
         ln = rd(RUN + "/" + j + ".line").strip()
-        if ln: requeue.append(ln)
+        if batch_manifest(j): release_batch(j, "launch held")   # members go back alone; the bundle id never requeues
+        elif ln: requeue.append(ln)
         ev("LAUNCH_DEFERRED %s %s (requeued)" % (j, out.split(":")[0].strip()))
     elif re.search(r"^SKIPPED: BRANCH_IN_WORKTREE", out, re.M):
         ev("LAUNCH_SKIPPED %s BRANCH_IN_WORKTREE (not a failure, not requeued; see %s.launch)" % (j, j))
         release_batch(j, "launch skipped")
     elif not out.strip() and not base(j):
         ln = rd(RUN + "/" + j + ".line").strip()
-        if ln: requeue.append(ln)
+        if batch_manifest(j): release_batch(j, "launch interrupted")
+        elif ln: requeue.append(ln)
         ev("LAUNCH_INTERRUPTED %s (requeued)" % j)
     else:
         ev("LAUNCH_FAILED %s (see %s.launch)" % (j, j))
@@ -928,6 +1043,7 @@ for bp in glob.glob(R + "/*.base"):
     j = os.path.basename(bp)[:-5]; b = base(j)
     if not b or not JID.match(j): continue
     wt, pool = b[2], b[3]
+    if bundle_member_of(j): continue   # a leased bundle line: its bundle session holds the lane slot
     if j in alive:
         if pool in running: running[pool] += 1
         if pool == "codex-local" and _is_local_mid(j): local_mid += 1
@@ -952,7 +1068,7 @@ def reap_worktrees():
         j = os.path.basename(bp)[:-5]; b = base(j)
         if not b or not JID.match(j): continue
         wt, pool = b[2], b[3]
-        if j in alive:
+        if j in alive or bundle_member_of(j):
             continue
         if not os.path.isdir(wt) or j in reaping or j in publishing: continue
         attempt = _attempts.get(j, {})
@@ -965,6 +1081,18 @@ def reap_worktrees():
                 target = drain_target(j, _job_repo(j))
                 if target: drain_targets.add(target)
             continue
+        if batch_manifest(j):   # a bundle publishes nothing itself; its lines publish on their own next pass
+            if over_budget() or os.path.exists(RUN + "/" + j + ".keptlogged"): continue
+            try:
+                lp = "%s/%s.log" % (R, j); tl = logtail(lp, 20000); usage = job_usage(pool, wt, lp, tl)
+                wall_s = int(os.path.getmtime(lp) - os.path.getmtime(bp)) if os.path.exists(lp) else None
+                bsize = reap_batch(j, wt, pool, wall_s)
+                if bsize is not None and not os.path.exists(RUN + "/" + j + ".timeout"):
+                    metric({"event": "finish", "job": j, "lane": pool, "wall_s": wall_s, "batch_size": bsize,
+                            "exit_code": _rc(j), **usage, "cost": None})
+            except Exception as e: log("batch reap err %s %s" % (j, type(e).__name__))
+            if not retire_bundle_worktree(j, wt): open(RUN + "/" + j + ".keptlogged", "w").close()
+            log("REAP %s (%s) bundle" % (j, pool)); continue
         res = result(j)
         if j in keep or (res and not res.startswith(("RESULT PR", "RESULT EMPTY"))):
             kept.append(j)
@@ -993,17 +1121,16 @@ def reap_worktrees():
             usage = job_usage(pool, wt, lp, tl)
             nf, diff_lines, empty = job_diff_metrics(wt, b[0])
             wall_s = int(os.path.getmtime(lp) - os.path.getmtime(bp)) if os.path.exists(lp) else None
-            try: bsize = reap_batch(j, wt, pool, wall_s)
-            except Exception as e: bsize = None; log("batch reap err %s %s" % (j, type(e).__name__))
             if not attempt.get("finished") and not os.path.exists(RUN + "/" + j + ".timeout"):
-                metric({"event": "finish", "job": j, "lane": pool, "wall_s": wall_s, "batch_size": bsize,
+                metric({"event": "finish", "job": j, "lane": pool, "wall_s": wall_s,
+                    "bundle": rd(RUN + "/" + j + ".bundled-in").strip() or None,
                     "exit_code": _rc(j), **usage, "cost": None,
                     "diff_files": nf, "diff_lines": diff_lines, "empty": empty,
                     "failure_class": devin_failure(_rc(j), empty, tl) if pool == "devin" else None,
                     "pool_error": next((c for c, rx in CLS if any(rx.search(t) for t in errlines(tl.splitlines()[-30:]))), None)})
         except Exception as e: log("metric finish err %s %s" % (j, type(e).__name__))
         os.mkdir(RUN + "/" + j + ".reaping"); nreap += 1; publish_busy = True
-        subprocess.Popen(["/bin/bash", R + "/bin/reap-one.sh", j], stdin=subprocess.DEVNULL,
+        spawn(["/bin/bash", R + "/bin/reap-one.sh", j], stdin=subprocess.DEVNULL,
                          stdout=open(RUN + "/" + j + ".reap.log", "a"), stderr=subprocess.STDOUT, start_new_session=True)
         log("REAP %s (%s)" % (j, pool))
 
@@ -1018,7 +1145,8 @@ def _install_holder():   # the install-gate.py wrapper writes its holder JSON in
     except Exception: pass
     return None
 def admission_gate():
-    g = {"tripped": False, "reasons": [], "warnings": [], "disabled": os.path.exists(Q + "/LOADGATE_OFF")}
+    # queue/LOADGATE_OFF no longer waives anything: it is reported (off_switch_ignored) so an operator sees it is inert.
+    g = {"tripped": False, "reasons": [], "warnings": [], "disabled": False, "off_switch_ignored": os.path.exists(Q + "/LOADGATE_OFF")}
     test = os.path.exists(R + "/LOADGATE_TEST")
     try: ncpu = int(os.environ["LOADGATE_NCPU"]) if test and os.environ.get("LOADGATE_NCPU") else (os.cpu_count() or 1)
     except ValueError: ncpu = os.cpu_count() or 1
@@ -1043,8 +1171,8 @@ def admission_gate():
     growth = max(0, swap_gb - min(v[1] for v in samples)) if samples and swap_gb is not None else 0
     if swap_gb is not None: samples.append([NOW, swap_gb])
     load_max = GATE_LOAD_PER_CPU * ncpu
-    soft_load = load1 > load_max and not g["disabled"]
-    if load1 > load_max: g["warnings"].append("loadavg %.1f > %.1f" % (load1, load_max))
+    if load1 > load_max: g["reasons"].append("loadavg %.1f > %.1f (%g x ncpu)" % (load1, load_max, GATE_LOAD_PER_CPU))
+    if g["off_switch_ignored"]: g["warnings"].append("LOADGATE_OFF present and ignored")
     if procs > GATE_PROCS_MAX: g["warnings"].append("procs %d > %d" % (procs, GATE_PROCS_MAX))
     if pressure is None: g["warnings"].append("memory_pressure_unavailable")
     elif pressure >= GATE_PRESSURE_MIN: g["reasons"].append("memory_pressure %d >= %g" % (pressure, GATE_PRESSURE_MIN))
@@ -1053,14 +1181,13 @@ def admission_gate():
     if disk_hard_stop: g["reasons"].append("disk_free %gGB < %gGB" % (disk_free_gb, DISK_HARD_STOP_GB))
     g.update(memory_pressure=pressure, pressure_min=GATE_PRESSURE_MIN, swap_gb=swap_gb, swap_growth_gb=growth,
              swap_growth_max_gb=GATE_SWAP_GROWTH_GB, swap_window_s=GATE_SWAP_WINDOW_S, swap_samples=samples,
-             disk_free_gb=disk_free_gb, disk_hard_stop_gb=DISK_HARD_STOP_GB, soft_load=soft_load,
-             claim_limit=max(1, MAX_LAUNCH_PER_TICK // 2) if soft_load else MAX_LAUNCH_PER_TICK,
+             disk_free_gb=disk_free_gb, disk_hard_stop_gb=DISK_HARD_STOP_GB, claim_limit=MAX_LAUNCH_PER_TICK,
              procs_max=GATE_PROCS_MAX, worktrees_max=GATE_WORKTREES_MAX, tick_max_s=GATE_TICK_MAX_S)
     if wts > GATE_WORKTREES_MAX: g["warnings"].append("worktrees %d > %d" % (wts, GATE_WORKTREES_MAX))
     if age is None: g["warnings"].append("daemon_status_unavailable (%s)" % why)
     elif age > GATE_TICK_MAX_S: g["warnings"].append("daemon_tick_stale %ds > %ds (Phantom daemon last tick: %s)" % (age, GATE_TICK_MAX_S, last_tick))
     g.update(load1=load1, ncpu=ncpu, load_max=load_max, procs=procs, worktrees=wts, daemon_tick_age_s=None if age is None else int(age), daemon_last_tick_at=last_tick)
-    g["tripped"] = bool(g["reasons"]) and not g["disabled"]
+    g["tripped"] = bool(g["reasons"])
     return g
 GATE = admission_gate()
 # An explicit nonnegative override fixes the cap; malformed values fall back to the load-aware default.
@@ -1341,6 +1468,13 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
               and os.path.realpath(f[4]).startswith(Q + "/prompts/") and os.path.isfile(f[4]))
         if not ok:
             rest.append(l); bad += 1; continue
+        if f[2] == "devin":   # RQ-BATCH-SESSIONS-2: Devin keeps only small lines in repos it is set up for (free flash)
+            size = _size_hint(f[0], f[4])
+            why = batch_sessions.devin_route(f[1], None if size == math.inf else size, BS_CFG)
+            alt = next((x for x in BS_CFG["devin"]["fallback_lanes"] if x in LANES and x in slots
+                        and not (slots[x].get("held") or x in hold)), None) if why else None
+            if alt:
+                ev("DEVIN_ROUTE %s %s -> %s" % (f[0], why, alt)); f = f[:2] + [alt] + f[3:]
         cand.append(f)
     # The key is global across pools; blocked jobs are retained below while
     # scanning continues, so a capped FIX-MAIN sibling cannot consume a claim.
@@ -1382,7 +1516,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         return empty_gate_cache[key]
     def member_ok(f, lead=False):   # every check the loop below would apply to the job on its own, plus batch limits
         m = f[0]
-        return (batcher.batchable_id(m) and not drain_target(m, f[1]) and f[2] in batcher.BATCH_LANES and (lead or m not in seen) and not retired(m)
+        return (batcher.batchable_id(m) and not drain_target(m, f[1]) and f[2] in batcher.BATCH_LANES and f[2] in BS_CFG["lanes"]
+                and (lead or m not in seen) and not retired(m)
                 and not (result(m) or "").startswith("RESULT PR") and not disk_reuse_only
                 and m not in alive and m not in reaping and m not in publishing and m not in keep and m not in park_state
                 and not os.path.isdir(WTROOT + "/" + m) and not os.path.exists(RUN + "/" + m + ".batched")
@@ -1396,12 +1531,12 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         return _tasks[f[0]]
     def form_batch(f):   # -> (members, lane, size target) or None to launch f on its own
         if not (BATCHING and member_ok(f, lead=True)) or waste_risk(UIA.get(f[2]), f[2]): return None
-        pool = [task_info(c) for c in cand if c[1] == f[1] and c[3] == f[3] and c[0] != f[0] and member_ok(c) and not waste_risk(UIA.get(c[2]), c[2])]
-        size = batcher.size_for(batch_tuning, f[2])
-        picked = batcher.pick_members(task_info(f), pool, size)
+        pool = [task_info(c) for c in cand if c[1] == f[1] and c[0] != f[0] and member_ok(c) and not waste_risk(UIA.get(c[2]), c[2])]
+        size = min(batcher.size_for(batch_tuning, f[2]), BS_CFG["max_lines"])
+        picked = batcher.pick_members(task_info(f), pool, size, BS_CFG["min_lines"])
         if not picked: return None
         has_capacity = lambda l: not (slots[l].get("held") or l in hold) and running[l] < slots[l]["target"]
-        lane_ = batcher.choose_lane({c["lane"] for c in picked}, batcher.lane_scores(batch_stats()), has_capacity, f[2])
+        lane_ = batcher.choose_lane({c["lane"] for c in picked} & set(BS_CFG["lanes"]), batcher.lane_scores(batch_stats()), has_capacity, f[2])
         return (picked, lane_, size) if lane_ else None
     for f in cand:
         j, repo, lane, tier, pf = f[:5]; line = "\t".join(f)
@@ -1450,21 +1585,38 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             rest.append(line); continue
         if empty_gate(j, repo, pf, lane): continue
         batch = form_batch(f)
-        if batch:   # the batch session runs each member's own checks, so the per-job precheck is skipped
-            picked, lane, size = batch; area = picked[0]["area"]
+        if batch:   # leases first: a line another bundle already holds is dropped; too few left launches solo
+            picked, blane, size = batch; area = picked[0]["area"]
             bid = batcher.batch_id(repo, area, [c["job"] for c in picked])
-            pf = Q + "/prompts/" + bid + ".md"
-            open(pf, "w").write(batcher.render(bid, repo, area, [(c["job"], c["prompt"]) for c in picked]))
-            jsave(Q + "/batches/" + bid + ".json", {"schema": batcher.SCHEMA, "id": bid, "repo": repo, "tier": tier, "lane": lane,
-                  "area": area, "created_at": NOW, "size_target": size,
-                  "members": [{"job": c["job"], "lane": c["lane"], "line": "\t".join(c["f"]), "prompt": c["prompt"]} for c in picked]})
+            batch_id0 = bid; held = [c for c in picked if batch_sessions.acquire_lease(RUN, c["job"], bid)]
+            if len(held) != len(picked) and len(held) >= BS_CFG["min_lines"]:   # the member set, and so the id, changed:
+                bid = batcher.batch_id(repo, area, [c["job"] for c in held])       # re-key each lease in place (atomic)
+                held = [c for c in held if batch_sessions.rekey_lease(RUN, c["job"], batch_id0, bid)]
+            if len(held) < BS_CFG["min_lines"]:
+                for c in held: batch_sessions.release_lease(RUN, c["job"], bid)
+                for c in picked: batch_sessions.release_lease(RUN, c["job"], batch_id0)
+                batch = None
+            else:
+                picked = held; lane = blane
+        if batch:
+            tier = "work" if lane == "claude" else tier   # Sonnet orchestrates; hard lines get Opus subagents
+            members = []
             for c in picked:
+                model, why = batch_sessions.model_for(lane, c["tier"], c["prompt"], BS_CFG)
+                members.append({"job": c["job"], "lane": c["lane"], "tier": c["tier"], "model": model, "model_reason": why,
+                                "line": "\t".join(c["f"]), "prompt": c["prompt"]})
+            pf = Q + "/prompts/" + bid + ".md"
+            open(pf, "w").write(batch_sessions.render(bid, repo, area, members, WTROOT))
+            jsave(Q + "/batches/" + bid + ".json", {"schema": batcher.SCHEMA, "id": bid, "repo": repo, "tier": tier, "lane": lane,
+                  "area": area, "created_at": NOW, "size_target": size, "mode": "per-line", "members": members})
+            for c in members:
                 seen.add(c["job"])
                 open(RUN + "/" + c["job"] + ".batch-attempts", "w").write(str(batch_attempts(c["job"]) + 1))
-                open(RUN + "/" + c["job"] + ".batched", "w").write(bid)
-                metric({"event": "batch_claim", "job": c["job"], "batch": bid, "repo": repo, "lane": lane, "tier": tier, "area": area})
-            ev("BATCH %s %d tasks repo=%s area=%s lane=%s size_target=%d" % (bid, len(picked), repo, area, lane, size))
-            j = bid; s = slots[lane]; line = "\t".join([bid, repo, lane, tier, pf]); batches.append({"job": bid, "tasks": len(picked)})
+                metric({"event": "batch_claim", "job": c["job"], "batch": bid, "repo": repo, "lane": lane, "tier": c["tier"],
+                        "area": area, "model": c["model"]})
+            ev("BATCH %s %d tasks repo=%s area=%s lane=%s size_target=%d" % (bid, len(members), repo, area, lane, size))
+            j = bid; s = slots[lane]; line = "\t".join([bid, repo, lane, tier, pf]); batches.append({"job": bid, "tasks": len(members)})
+            batch = (members, lane, size)
         elif pc_n < PC_MAX and not over_budget():   # empty-run precheck (contrib/precheck.sh): no model call, fail open
             pc_n += 1; pc = precheck(j, repo, pf)
             if pc and pc[0] == 13:
@@ -1486,7 +1638,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             os.replace("%s/%s.publish" % (R, j), "%s/%s.publish.prev-%d" % (R, j, NOW))
         if j in keep:
             keep.discard(j); open(Q + "/keep.txt", "w").write("\n".join(sorted(keep)) + "\n")
-        for x in (".keptlogged", ".diskguard", ".phdrip", ".rc", ".timeout"):
+        for x in (".keptlogged", ".diskguard", ".phdrip", ".rc", ".timeout", ".bundled-in"):
             try: os.remove(RUN + "/" + j + x)
             except FileNotFoundError: pass
         identity = claim_identity(j, repo, pf)
@@ -1500,13 +1652,15 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         metric(dict(identity, event="claim", job=j, repo=repo, lane=lane, tier=tier))
         env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG") if k in os.environ}
         launch_cmd = (["/usr/bin/python3", "-I", R + "/bin/local_job.py"] if lane == "codex-local"
-                      else ["/bin/bash", R + "/bin/launch.sh"])
+                      else ["/bin/bash", BATCH_LAUNCH] if batch else ["/bin/bash", R + "/bin/launch.sh"])
         try:
-            subprocess.Popen(launch_cmd + [j, repo, lane, tier], stdin=open(pf),
+            spawn(launch_cmd + [j, repo, lane, tier], stdin=open(pf),
                              stdout=open("%s/%s.launch" % (R, j), "w"), stderr=subprocess.STDOUT,
                              env=env, start_new_session=True, cwd=H)
         except OSError as e:   # EAGAIN/ENOMEM: the host is past its process or memory limit. Back off now, retry later.
-            os.remove(RUN + "/" + j + ".dispatched"); rest.append(line)
+            os.remove(RUN + "/" + j + ".dispatched")
+            if batch: release_batch(j, "spawn failed", into=rest)   # members go back alone; the bundle id never queues
+            else: rest.append(line)
             CONC["fork_failures"].append(NOW); ev("FORK_FAILED %s %s (concurrency backoff)" % (j, type(e).__name__))
             conc_adjusted(concurrency.backoff(CONC, NOW, "backoff fork", {"fork": ("danger", len(CONC["fork_failures"]))}, CONC_FLOOR, CONC_CEILING))
             GCAP = min(GCAP, global_cap()); continue
@@ -1525,7 +1679,13 @@ else:
     rest = lines
 # Reconcile concurrent parked-row rewrites as well as appended rows.
 lk = qlock("dispatchd-write", 30)
-if lk is None: log("ready.lock busy; ready.tsv rewrite skipped (launched jobs stay guarded by alive/worktree checks)"); raise SystemExit(0)
+if lk is None:
+    # RQ-BATCH-SESSIONS-2: requeued lines (held launches, released bundle members, last tick's carry-over) exist only
+    # in memory until ready.tsv is rewritten. Carry the ones not launched or re-leased this tick to the next tick.
+    _carry = [l for l in requeue if l.split("\t")[0] not in launched and not os.path.exists(RUN + "/" + l.split("\t")[0] + ".batched")]
+    if _carry: open(_REQUEUE_PENDING, "a").write("".join(l + "\n" for l in _carry))
+    log("ready.lock busy; ready.tsv rewrite skipped (launched jobs stay guarded by alive/worktree checks; %d requeued lines carried over)" % len(_carry))
+    raise SystemExit(0)
 from collections import Counter
 current = rd(Q + "/ready.tsv").splitlines()
 old_counts, current_counts = Counter(_raw), Counter(current)
@@ -1554,6 +1714,7 @@ _reap_candidates = jload(_reap_cache, [])
 if not isinstance(_reap_candidates, list): _reap_candidates = []
 _reap_candidates = [p for p in _reap_candidates if isinstance(p, str) and os.path.dirname(p) == R and p.endswith(".base")]
 tick_phase("worktree_reap", gate_limit("WORKTREE_REAP_BUDGET_S", 15))
+_requeue_written = len(requeue)
 try:
     if not os.path.exists(_reap_stamp) or NOW - os.path.getmtime(_reap_stamp) >= 600:
         open(_reap_stamp, "w").close()
@@ -1562,6 +1723,14 @@ try:
     reap_worktrees()
 except MaintenanceDeadline:
     log("worktree maintenance budget exhausted; deferred")
+# Bundle lines that did not finish go back to ready.tsv now, appended under the same lock every writer uses.
+_late = requeue[_requeue_written:]
+if _late:
+    _lk = qlock("dispatchd-requeue", 30)
+    if _lk is None: open(_REQUEUE_PENDING, "a").write("".join(l + "\n" for l in _late))
+    else:
+        with open(Q + "/ready.tsv", "a") as f: f.write("".join(l + "\n" for l in _late))
+        _lk.close()
 tick_phase("status", 15)
 if rate_parked: _ph_open_prs()
 
@@ -1898,7 +2067,7 @@ st["verified_completion"] = verified_completion(mets, NOW, missing=not os.path.e
 stamp = MD + "/.outcomes.stamp"
 if not os.path.exists(stamp) or NOW - os.path.getmtime(stamp) > 600:
     open(stamp, "w").close()
-    subprocess.Popen(["/bin/bash", R + "/bin/metrics-outcomes.sh"], stdin=subprocess.DEVNULL, stdout=open(MD + "/outcomes.log", "a"),
+    spawn(["/bin/bash", R + "/bin/metrics-outcomes.sh"], stdin=subprocess.DEVNULL, stdout=open(MD + "/outcomes.log", "a"),
                      stderr=subprocess.STDOUT, start_new_session=True)
 _at_cap = "at_cap running %d >= cap %d" % (sum(running.values()), GCAP) if sum(running.values()) >= GCAP else None
 _block = [x for x in (_now_reason, "paused" if pause else None, _at_cap) if x]   # same verdict `phm pool admission` computes
@@ -1907,7 +2076,7 @@ adm = {"schema": "dispatchd.admission.v2", "ts": st["last_tick"], "admit": not _
        "daemon_tick_age_s": GATE["daemon_tick_age_s"], "local_mid_cap": LOCAL_MID_CAP, "cap": GCAP, "running": sum(running.values()), "hard_cap": slots.get("hard_cap"), "install_lock_holder": _install_holder(),
        "concurrency_cap": CONC["cap"], "concurrency_floor": CONC_FLOOR, "concurrency_ceiling": CONC_CEILING, "concurrency_zones": CONC.get("zones")}
 adm.update({k: v for k, v in GATE.items() if k != "tripped"})
-adm["decision"] = "stop" if _block else ("halve_claims" if GATE["soft_load"] else "admit")
+adm["decision"] = "stop" if _block else "admit"
 jsave(Q + "/admission.json", adm); st["admission"] = adm
 jsave(Q + "/status.json", st)
 log("tick run=%s q=%d launched=%d reap=%d pause=%s wall=%.0fs" % (json.dumps(running), len(rest), len(launched), nreap, bool(pause), time.time() - NOW))
