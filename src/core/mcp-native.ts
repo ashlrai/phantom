@@ -438,6 +438,16 @@ const TOOLS: NativeToolImpl[] = [
     },
   },
   {
+    name: 'phantom_fleet_verbs',
+    description: 'List fleet verbs, usage and summaries; optional grep. Read-only.',
+    inputSchema: { type: 'object', properties: { grep: { type: 'string', maxLength: 64 } }, additionalProperties: false },
+    safety: 'read',
+    handler: async args => {
+      const catalog = await import('./fleet/fleet-verbs-tool.js' as string) as typeof import('./fleet/fleet-verbs-tool.js');
+      return catalog.fleetVerbsCatalog(args.grep as string | undefined);
+    },
+  },
+  {
     name: 'phm_proactive_agents_list', description: 'List personal-agent profiles and readiness. Profiles do not verify adapters or authorize spending.',
     inputSchema: { type: 'object', properties: { accountId: { type: 'string' }, provider: { type: 'string', pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$', maxLength: 64 }, offset: { type: 'number' }, limit: { type: 'number' } }, additionalProperties: false },
     safety: 'read', handler: async args => (await import('./proactive/tools.js')).listProactiveProfiles(args),
@@ -1713,6 +1723,16 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       ('timeoutMs' in args && (!Number.isInteger(args.timeoutMs) || (args.timeoutMs as number) < 1 || (args.timeoutMs as number) > 30000)) ||
       ('intervalMs' in args && (!Number.isInteger(args.intervalMs) || (args.intervalMs as number) < 100 || (args.intervalMs as number) > 60000))
       ? 'invalid fleet apps await arguments' : null;
+  } else if (name === 'phantom_fleet_apps_watch') {
+    const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
+    const apps = args.apps;
+    invalid = !object || Object.keys(args).some(key => !['apps', 'durationMs', 'intervalMs', 'maxConsecutiveFailures'].includes(key)) ||
+      !Array.isArray(apps) || apps.length < 1 || apps.length > 8 || new Set(apps).size !== apps.length ||
+      apps.some(app => typeof app !== 'string' || !FLEET_APPS.some(allowed => allowed === app)) ||
+      !Number.isInteger(args.durationMs) || (args.durationMs as number) < 1 || (args.durationMs as number) > 10000 ||
+      ('intervalMs' in args && (!Number.isInteger(args.intervalMs) || (args.intervalMs as number) < 100 || (args.intervalMs as number) > 10000)) ||
+      ('maxConsecutiveFailures' in args && (!Number.isInteger(args.maxConsecutiveFailures) || (args.maxConsecutiveFailures as number) < 1 || (args.maxConsecutiveFailures as number) > 10))
+      ? 'invalid fleet apps watch arguments' : null;
   } else if (name === 'phantom_fleet_needs_wait') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
     invalid = !object || Object.keys(args).some(key => !['itemId', 'timeoutMs', 'pollMs'].includes(key)) ||
@@ -1775,6 +1795,11 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
   } else if (name === 'phm_agent_roster') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
     invalid = !object || Object.keys(args).length > 0 ? 'invalid roster arguments' : null;
+  } else if (name === 'phantom_fleet_verbs') {
+    const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
+    invalid = !object || Object.keys(args).some(key => key !== 'grep') ||
+      ('grep' in args && (typeof args.grep !== 'string' || [...args.grep].length > 64))
+      ? 'invalid fleet verbs arguments' : null;
   } else if (name === 'phantom_agent_bus_read' || name === 'phantom_agent_bus_status') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
     const keys = Object.keys(args);
@@ -1806,7 +1831,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
     cfg = loadConfig();
   } catch (err) {
     auditNativeCall(`${tool.name} keys=${argKeys} — config load failed`, 'error');
-    if (fleetObservation || ['phantom_fleet_apps_ensure', 'phantom_fleet_apps_await', 'phantom_fleet_apps_follow', 'phantom_fleet_apps_recovery_check', 'phantom_fleet_apps_recovery_batch'].includes(name)) return textResult({ error: 'Fleet configuration unavailable' }, true);
+    if (fleetObservation || ['phantom_fleet_apps_ensure', 'phantom_fleet_apps_await', 'phantom_fleet_apps_watch', 'phantom_fleet_apps_follow', 'phantom_fleet_apps_recovery_check', 'phantom_fleet_apps_recovery_batch'].includes(name)) return textResult({ error: 'Fleet configuration unavailable' }, true);
     return textResult(
       `${tool.name} failed: could not load ~/.ashlr/config.json (${err instanceof Error ? err.message : String(err)})`,
       true,
@@ -1871,6 +1896,10 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
     if (name === 'phantom_fleet_apps_await') {
       auditNativeCall(`${tool.name} keys=${argKeys} — await unavailable`, 'error');
       return textResult({ error: 'Fleet app await unavailable' }, true);
+    }
+    if (name === 'phantom_fleet_apps_watch') {
+      auditNativeCall(`${tool.name} keys=${argKeys} — watch unavailable`, 'error');
+      return textResult({ error: 'Fleet app watch unavailable' }, true);
     }
     if (fleetObservation) {
       auditNativeCall(`${tool.name} keys=${argKeys} — observation unavailable`, 'error');

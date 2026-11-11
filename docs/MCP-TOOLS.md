@@ -26,6 +26,7 @@ exports, verbatim from source.
 | `phantom_fleet_apps_recovery_check` | Check whether one recovery invocation retains fresh, healthy evidence in the local runs store. Reads only; never queries or launches apps. Returns stale, terminal, unhealthy, or unknown evidence outcomes without substituting healthy. |
 | `phantom_fleet_apps_recovery_wait` | Wait for retained recovery evidence for one invocation to become fresh and healthy or terminal. |
 | `phantom_fleet_apps_status` | Read the bounded local inventory of managed desktop app running states; unavailable and unknown states are reported explicitly. |
+| `phantom_fleet_apps_watch` | Supervise an explicit group of local managed apps through sequential batches under a shared deadline. |
 | `phantom_fleet_doctor` | Read the fleet health report, including checks and their reasons. |
 | `phantom_fleet_drop_job` | Queue a Phantom fleet job by writing RQ-PHX-<id>.md into the local runs drop folder. Ingest validates it later; nothing launches from this call. The body is a worker prompt and is treated as untrusted text. |
 | `phantom_fleet_job_reassign` | Move one queued (not yet launched) fleet job, or every queued Phantom job on a lane, to another lane and optionally tier by editing the local ready queue. Refuses held or down target lanes. dryRun plans without writing. |
@@ -44,6 +45,7 @@ exports, verbatim from source.
 | `phantom_leader_ask` | Give the leader an owner message. It reads the world, routes on the bus, or escalates a hard limit. KILL stops it. No new model spend. |
 | `phantom_leader_assign` | Assign one RQ to an org role with owner, due, status, and outcome. Claims the work key. KILL stops it. No new model spend. |
 | `phantom_fleet_session` | Read local Codex fleet session quota observations per account as resource.v1 JSON. Includes session/weekly usage and freshness; missing readings are unknown. No prompts, credentials, environment values or provider probes. |
+| `phantom_fleet_verbs` | List the read-only fleet verb catalog, optionally filtered by a grep word. |
 
 The recovery tools read retained observations, not live process state. History
 accepts `after`, `limit` (1–100, default 25), and an optional `invocationId`;
