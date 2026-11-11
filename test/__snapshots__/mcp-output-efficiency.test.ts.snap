@@ -45,6 +45,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "safety": "append",
     },
     {
+      "name": "phantom_fleet_needs_wait",
+      "safety": "read",
+    },
+    {
       "name": "phantom_fleet_orders",
       "safety": "read",
     },
@@ -344,6 +348,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "name": "phantom_fleet_apps_await",
       "safety": "read",
     },
+    {
+      "name": "phantom_fleet_apps_watch",
+      "safety": "append",
+    },
   ],
   "registryFields": [
     "tools",
@@ -590,6 +598,34 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "phantom_fleet_needs_resolve",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "itemId": {
+          "pattern": "^nm-[0-9a-f]{12}$",
+          "type": "string",
+        },
+        "pollMs": {
+          "default": 1000,
+          "maximum": 30000,
+          "minimum": 100,
+          "type": "integer",
+        },
+        "timeoutMs": {
+          "maximum": 30000,
+          "minimum": 1,
+          "type": "integer",
+        },
+      },
+      "required": [
+        "itemId",
+        "timeoutMs",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_fleet_needs_wait",
   },
   {
     "inputSchema": {
@@ -2582,6 +2618,53 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "phantom_fleet_apps_await",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "apps": {
+          "items": {
+            "enum": [
+              "Phantom",
+              "Codex",
+              "Claude",
+              "Grok Bot",
+              "ChatGPT",
+              "Cursor",
+              "Safari",
+              "Google Chrome",
+            ],
+            "type": "string",
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true,
+        },
+        "durationMs": {
+          "maximum": 10000,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "intervalMs": {
+          "maximum": 10000,
+          "minimum": 100,
+          "type": "integer",
+        },
+        "maxConsecutiveFailures": {
+          "maximum": 10,
+          "minimum": 1,
+          "type": "integer",
+        },
+      },
+      "required": [
+        "apps",
+        "durationMs",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_fleet_apps_watch",
   },
 ]
 `;
