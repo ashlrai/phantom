@@ -25,8 +25,39 @@ function parseHeaders(raw: string): Map<string, string> {
   return headers;
 }
 
+/** Messages an inbox read returns by default: the small, fast triage sample. */
+export const EML_INBOX_READ_DEFAULT = 100;
+/** Hard finite cap on one read. Planner sweeps opt into it so even a large export stays bounded. */
+export const EML_INBOX_READ_MAX = 1000;
+
+export interface EmlInboxReadOptions {
+  /** Newest-first cap for this read, clamped to [1, {@link EML_INBOX_READ_MAX}]. Omit for the triage default. */
+  limit?: number;
+}
+/** How much of the saved export one read covers. EML files carry no Gmail unread flag,
+ * so these counts describe the local sample, never a live unread total. */
+export interface EmlInboxReadScope {
+  /** Cap applied to this read after clamping. */
+  limit: number;
+  /** Regular `.eml` files within the byte limit found in the directory. */
+  files: number;
+  /** True when the cap stopped the read before every file was examined; unseen messages may remain. */
+  truncated: boolean;
+}
+export interface EmlInboxRead {
+  messages: GmailMessage[];
+  scope: EmlInboxReadScope;
+}
+
 /** Read newest saved messages, without following symlinks or modifying the folder. */
-export function readEmlInbox(dir: string): GmailMessage[] {
+export function readEmlInbox(dir: string, options?: EmlInboxReadOptions): GmailMessage[] {
+  return readEmlInboxDetailed(dir, options).messages;
+}
+
+/** Read newest saved messages and report how much of the export the sample covers. */
+export function readEmlInboxDetailed(dir: string, options?: EmlInboxReadOptions): EmlInboxRead {
+  const requested = Math.floor(options?.limit ?? EML_INBOX_READ_DEFAULT);
+  const limit = Number.isFinite(requested) ? Math.min(EML_INBOX_READ_MAX, Math.max(1, requested)) : EML_INBOX_READ_DEFAULT;
   const files = readdirSync(dir, { withFileTypes: true }).filter(e => e.isFile() && /\.eml$/i.test(e.name))
     .flatMap(e => {
       try {
@@ -36,8 +67,10 @@ export function readEmlInbox(dir: string): GmailMessage[] {
     }).sort((a, b) => b.mtime - a.mtime || a.name.localeCompare(b.name));
   const messages: GmailMessage[] = [];
   const seen = new Set<string>();
+  let examined = 0;
   for (const file of files) {
-    if (messages.length === 100) break;
+    if (messages.length === limit) break;
+    examined += 1;
     let fd: number | undefined;
     try {
       fd = openSync(join(dir, file.name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -67,7 +100,7 @@ export function readEmlInbox(dir: string): GmailMessage[] {
     } catch { /* Skip files that disappear or cannot be read safely. */ }
     finally { if (fd !== undefined) closeSync(fd); }
   }
-  return messages;
+  return { messages, scope: { limit, files: files.length, truncated: examined < files.length } };
 }
 
 export function classifyGmailHeuristic(message: GmailMessage, headers: EmlHeaders = headersByMessage.get(message) ?? new Map()): GmailClassification {

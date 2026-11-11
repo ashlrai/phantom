@@ -3,7 +3,7 @@ import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cmdFleetGrokUsage } from '../src/cli/fleet-grok-usage.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { grokUltraFleetPath, readGrokUltraRunway, recordManualGrokUltraReading } from '../src/core/fleet/grok-ultra-store.js';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from '../src/core/fleet/local-store-lock.js';
 

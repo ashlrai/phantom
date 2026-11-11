@@ -3,10 +3,13 @@ import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import { installFleetAppsRecoveryProviders } from '../src/core/fleet/app-recovery-install.js';
 import { createFleetAppsApi } from '../src/core/verse/fleet-apps-api.js';
 import type { VerseApiContext } from '../src/core/verse/verse-api.js';
+
+beforeAll(installFleetAppsRecoveryProviders);
 
 const path = '/api/verse/fleet/apps';
 const id = '12345678-1234-4123-8123-123456789abc';
