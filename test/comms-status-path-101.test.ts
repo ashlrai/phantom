@@ -80,7 +80,7 @@ const inboxPath = (): string => join(runsDir, 'leader', 'MASON-INBOX.md');
 const replyBody = (name: string): string => readFileSync(join(outboxDir, name), 'utf8');
 
 /** The same wiring cmdEmailCycle performs: saved config → one drop pass. */
-async function runPass(statusReaders?: EmailFleetStatusReaders): Promise<EmailDropCounts> {
+async function runPass(statusReaders?: EmailFleetStatusReaders, ownerStatusComposer?: (runsDir: string, now: Date) => Promise<string>): Promise<EmailDropCounts> {
   const saved = await readEmailDropConfig(runsDir);
   if (saved.state !== 'ok' || !saved.config) throw new Error(`config not ok: ${saved.state}`);
   const config: EmailDropConfig = saved.config;
@@ -93,6 +93,7 @@ async function runPass(statusReaders?: EmailFleetStatusReaders): Promise<EmailDr
     busRoot,
     now,
     ...(statusReaders ? { statusReaders } : {}),
+    ...(ownerStatusComposer ? { ownerStatusComposer } : {}),
   });
 }
 
@@ -272,36 +273,43 @@ describe('email status path through the configured drop', () => {
     expect(reply).not.toContain(root);
   });
 
-  it('plain-language "Phantom status" asks earn the threaded operator glance', async () => {
-    // The two outstanding natural-language asks route through the same claim
-    // and reply machinery as /fleet-status but answer with the shared glance.
+  it('plain-language "Phantom status" asks land in the inbox and earn the digest reply', async () => {
+    // Natural-language asks ride the ordinary receiver now: the mail is
+    // journaled like any order and the same-thread reply carries the owner
+    // status digest, so the /fleet-status readers are never consulted.
     const readers: EmailFleetStatusReaders = {
       runs: vi.fn(async () => healthyRuns()),
       workers: vi.fn(async () => healthyWorkers()),
       supply: vi.fn(async () => healthySupply()),
     };
+    const digest = 'Phantom status, 17:00 ET\nShipped (last 12h): none\nNeeds you: none';
     drop('a.eml', eml({ id: '<ask-101-a@example.com>', body: 'status' }));
     drop('b.eml', eml({ id: '<ask-101-b@example.com>', body: 'fleet status' }));
 
-    expect(await runPass(readers)).toEqual({ accepted: 2, duplicate: 0, refused: 0, failed: 0, status: { queued: 2, duplicate: 0 } });
-    expect(outboxReplies()).toEqual([replyFileName('ask-101-a@example.com'), replyFileName('ask-101-b@example.com')].sort());
-    for (const [file, id] of [[replyFileName('ask-101-a@example.com'), 'ask-101-a@example.com'], [replyFileName('ask-101-b@example.com'), 'ask-101-b@example.com']] as const) {
+    expect(await runPass(readers, async () => digest)).toEqual({ accepted: 2, duplicate: 0, refused: 0, failed: 0 });
+    const askReplyName = (id: string) => `${id.replace(/[^A-Za-z0-9._-]/g, '_')}.reply.eml`;
+    expect(outboxReplies()).toEqual([askReplyName('ask-101-a@example.com'), askReplyName('ask-101-b@example.com')].sort());
+    for (const [file, id] of [[askReplyName('ask-101-a@example.com'), 'ask-101-a@example.com'], [askReplyName('ask-101-b@example.com'), 'ask-101-b@example.com']] as const) {
       const reply = replyBody(file);
       expect(reply).toContain(`To: ${MASON}\r\n`);
-      expect(reply).toContain('Subject: Re: Phantom\r\n');
+      expect(reply).toContain('Subject: Re: status request\r\n');
       expect(reply).toContain(`In-Reply-To: <${id}>\r\n`);
       expect(reply).toContain(`References: <${id}>\r\n`);
-      // Empty-state glance on a fresh runs dir is deterministic.
-      expect(reply).toContain('Running unknown.');
-      expect(reply).toContain('Main health unknown.');
+      expect(reply).toContain(digest);
+      // Neither the generic ack receipt nor the retired glance leaks.
+      expect(reply).not.toContain('Received by Phantom');
+      expect(reply).not.toContain('Running unknown.');
       expect(reply).not.toContain('Inbox:');
       expect(reply).not.toContain(root);
     }
-    // The glance path reads the shared local state, never the status readers.
+    // The ask is a journaled order: the inbox entry exists and the status
+    // readers were never consulted.
     expect(readers.runs).not.toHaveBeenCalled();
     expect(readers.workers).not.toHaveBeenCalled();
     expect(readers.supply).not.toHaveBeenCalled();
-    expect(existsSync(inboxPath())).toBe(false);
+    const inbox = readFileSync(inboxPath(), 'utf8');
+    expect(inbox).toContain('status');
+    expect(inbox).toContain('fleet status');
     expect((await sendPass()).sent).toBe(2);
   });
 
