@@ -112,7 +112,7 @@ export function PlanningLab() {
       {releases.status === 'error' ? <p role="alert" className={styles.error}>Release readiness is unavailable. {readFailureReason(releases.error)}</p>
         : releases.data ? <ReleaseEvidence data={releases.data} /> : <p role="status" aria-busy="true">Reading release readiness…</p>}
     </> : null}
-    <MutationTokenDialog {...gate.dialog} tokenLabel="Mutation token" tokenHelp="the mutation token phm verse printed" />
+    <MutationTokenDialog {...gate.dialog} tokenLabel="Mutation token" tokenHelp="the mutation token phm console printed" />
   </section>;
 }
 
