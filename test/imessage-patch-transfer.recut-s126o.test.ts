@@ -4,7 +4,9 @@
  * the protocol and the ingest pipeline; this file pins what the recut itself
  * had to merge differently:
  *
- *   - Frame recognition uses the current transfer module public export.
+ *   - isPatchFrameText lives in the leaf teammate-inbox module (master moved
+ *     teammateNeedsReply there; importing the transfer module would close an
+ *     import cycle) and is re-exported through imessage-patch-transfer.js.
  *   - The findings watermark keeps master's hardened fail-closed read while
  *     carrying the announcedPatchIds ring, and stays backward compatible with
  *     pre-patch watermarks that never had the field.
@@ -32,10 +34,9 @@ vi.mock('node:child_process', async (importOriginal) => {
   };
 });
 
-import { classifyTeammateIntent, senderIdFor, teammateNeedsReply } from '../src/core/comms/imessage-teammate-inbox.js';
+import { classifyTeammateIntent, isPatchFrameText as isPatchFrameTextLeaf, senderIdFor, teammateNeedsReply } from '../src/core/comms/imessage-teammate-inbox.js';
 import { isPatchFrameText, recordPatchFrame, type PatchReceipt } from '../src/core/comms/imessage-patch-transfer.js';
-import { bridgeTeammateFindings, TEAMMATE_FINDINGS_TOPIC } from '../src/core/comms/imessage-findings-bridge.js';
-import * as findingsModule from '../src/core/comms/imessage-findings-bridge.js';
+import { bridgeTeammateFindings, teammatePatchEnvelope, TEAMMATE_FINDINGS_TOPIC } from '../src/core/comms/imessage-findings-bridge.js';
 import { ingestIMessages } from '../src/core/comms/imessage-inbox-bridge.js';
 import { listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 import { writeCursor, type IntakeMsg } from '../src/core/integrations/imessage.js';
@@ -78,10 +79,11 @@ afterEach(() => {
   rmSync(busRoot, { recursive: true, force: true });
 });
 
-describe('patch frame recognition', () => {
-  it('recognizes protocol markers through the transfer module public export', () => {
+describe('isPatchFrameText leaf placement (no import cycle)', () => {
+  it('is defined once in the leaf and re-exported by the transfer module', () => {
+    expect(isPatchFrameText).toBe(isPatchFrameTextLeaf);
     expect(isPatchFrameText('PATCH-BEGIN x 1 ' + '0'.repeat(64))).toBe(true);
-    expect(isPatchFrameText('PATCH-PART x 1/2\nc')).toBe(true);
+    expect(isPatchFrameTextLeaf('PATCH-PART x 1/2\nc')).toBe(true);
     expect(isPatchFrameText('PATCH-FOO x')).toBe(false);
   });
 
@@ -94,8 +96,6 @@ describe('patch frame recognition', () => {
     expect(teammateNeedsReply('can you check the gate?')).toBe(true);
   });
 });
-
-const teammatePatchEnvelope = (findingsModule as unknown as { teammatePatchEnvelope: (receipt: PatchReceipt) => unknown }).teammatePatchEnvelope;
 
 describe('teammatePatchEnvelope', () => {
   const receipt = (over: Partial<PatchReceipt> = {}): PatchReceipt =>
@@ -165,7 +165,7 @@ describe('ingestIMessages patch tallies on every exit path', () => {
       poll: async () => ({ ok: false, state: 'error' }),
     });
     expect(result.state).toBe('error');
-    expect((result as typeof result & { patches?: unknown }).patches).toMatchObject({ state: 'healthy', expired: 1, open: 0 });
+    expect(result.patches).toMatchObject({ state: 'healthy', expired: 1, open: 0 });
     expect(JSON.parse(readFileSync(join(imsgDir(), 'patches', 'stuck-1.receipt.json'), 'utf8'))).toMatchObject({ outcome: 'expired' });
   });
 
@@ -182,7 +182,7 @@ describe('ingestIMessages patch tallies on every exit path', () => {
       }),
     });
     expect(result).toMatchObject({ ok: true, state: 'ingested', teammate: 3 });
-    expect((result as typeof result & { patches?: unknown }).patches).toMatchObject({ frames: 3, completed: 1 });
+    expect(result.patches).toMatchObject({ frames: 3, completed: 1 });
     expect(result.findings).toMatchObject({ protocol: 3, posted: 0, announced: 1 });
     expect(existsSync(join(imsgDir(), 'patches', 'done-1.patch'))).toBe(true);
   });
