@@ -46,6 +46,17 @@ class ZoneTests(unittest.TestCase):
         self.assertEqual(c.zones(dict(HEALTHY, load1=float("inf")))["load"][0], "danger")
         self.assertEqual(c.zones(dict(HEALTHY, load1=float("nan")))["load"][0], "warn")
 
+    def test_load_above_two_cores_per_cpu_backs_off_even_with_relaxed_gate(self):
+        for per_cpu in (2.5, 3.0, 100.0):
+            signal = dict(HEALTHY, load1=36.0, load_per_cpu_max=per_cpu)
+            self.assertEqual(c.zones(signal)["load"][0], "danger")
+            self.assertEqual(c.decide(state(32), signal, 1000, True, 4, 64)["to"], 24)
+
+    def test_unknown_swap_growth_cannot_raise_cap(self):
+        signal = dict(HEALTHY, swap_growth_gb=None)
+        self.assertEqual(c.zones(signal)["swap"], ("warn", "unknown"))
+        self.assertIsNone(c.decide(state(18), signal, 1000, True, 4, 64))
+
     def test_rate_limits_warn_then_danger_and_any_fork_failure_is_danger(self):
         self.assertEqual(c.zones(dict(HEALTHY, rate_limits=1))["rate_limit"][0], "warn")
         self.assertEqual(c.zones(dict(HEALTHY, rate_limits=3))["rate_limit"][0], "danger")
