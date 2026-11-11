@@ -9,7 +9,8 @@ import { narrowOrderTrace } from '../fleet-inbox/order-trace-model.js';
 import { runsGraphQuery } from './runs-graph-queries.js';
 import { insertMention, matchRunningJobs, mentionQuery, targetsOf } from './interject-target-model.js';
 import { interjectOutcome } from './interject-outcome-model.js';
-import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
+import { subscribeSteerFocus, takeSteerFocus } from '../shell/steer-hotkey.js';
 import { inboxTailQuery, postInterjection, readInboxAck } from './interject-queries.js';
 import { mintInterjectRequestId } from './interject-request.js';
 import { interjectImageChip, interjectImageError, readInterjectImage, type InterjectImage } from './interject-image.js';
@@ -44,6 +45,14 @@ export function InterjectBox() {
   const [mentionClosed, setMentionClosed] = useState(false);
   const [selected, setSelected] = useState(0);
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const visible = useSectionVisible();
+  useEffect(() => {
+    if (!visible) return;
+    const focus = () => { if (takeSteerFocus()) textarea.current?.focus(); };
+    const unsubscribe = subscribeSteerFocus(focus);
+    focus();
+    return unsubscribe;
+  }, [visible]);
   const query = mentionClosed ? null : mentionQuery(draft, caret);
   const running = useQuery(runsGraphQuery, { enabled: query !== null, freshMs: 15_000 });
   const matches = query === null ? [] : matchRunningJobs(query, running.data?.workers ?? []);
@@ -192,7 +201,7 @@ export function InterjectBox() {
         if (file) { event.preventDefault(); attachImage(file); }
       }}>
       <label htmlFor={id}>Prompt, thought or interjection</label>
-      <textarea ref={textarea} id={id} rows={3} maxLength={6_000} value={draft} disabled={sending}
+      <textarea data-steer-box ref={textarea} id={id} rows={3} maxLength={6_000} value={draft} disabled={sending}
         placeholder="Tell the leaders. Lands in MASON-INBOX.md; the next leader pass reads it."
         onChange={event => { updateDraft(event.target.value); setCaret(event.target.selectionStart); setMentionClosed(false); setSelected(0); }}
         onSelect={event => setCaret(event.currentTarget.selectionStart)}
