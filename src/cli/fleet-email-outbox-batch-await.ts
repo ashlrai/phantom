@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { readEmailDropConfig } from '../core/comms/email-drop-config.js';
 import { awaitEmailOutboxBatch, type BatchOptions, type BatchResult } from '../core/comms/email-outbox-batch-await.js';
 
@@ -51,15 +52,32 @@ export async function cmdFleetEmailOutboxBatchAwait(args: string[], deps: Deps =
     let iterator: AsyncIterator<string | Uint8Array>;
     try { iterator = source[Symbol.asyncIterator](); } catch { return usage(); }
     let finished = false;
+    let inputExpired = false;
     let wake: (() => void) | undefined;
     const aborted = new Promise<null>((resolve) => { wake = () => resolve(null); });
     controller.signal.addEventListener('abort', wake!, { once: true });
+    const now = deps.now ?? (() => performance.now());
+    const inputStartedAt = now();
+    const inputDeadline = inputStartedAt + timeoutMs;
     try {
       while (true) {
-        const next = await Promise.race([iterator.next(), aborted]);
-        if (next === null || controller.signal.aborted) return cancelled();
-        if (next.done) { finished = true; break; }
-        const bytes = Buffer.from(next.value);
+        const remaining = inputDeadline - now();
+        if (remaining <= 0) { inputExpired = true; break; }
+        if (controller.signal.aborted) return cancelled();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const expired = new Promise<'expired'>((resolve) => { timer = setTimeout(() => resolve('expired'), remaining); });
+        let outcome: { kind: 'next'; result: IteratorResult<string | Uint8Array> } | { kind: 'abort' } | { kind: 'expired' };
+        try {
+          outcome = await Promise.race([
+            iterator.next().then((result) => ({ kind: 'next' as const, result })),
+            aborted.then((): { kind: 'abort' } => ({ kind: 'abort' })),
+            expired.then((): { kind: 'expired' } => ({ kind: 'expired' })),
+          ]);
+        } finally { clearTimeout(timer); }
+        if (outcome.kind === 'abort' || controller.signal.aborted) return cancelled();
+        if (outcome.kind === 'expired') { inputExpired = true; break; }
+        if (outcome.result.done) { finished = true; break; }
+        const bytes = Buffer.from(outcome.result.value);
         if (input.length + bytes.length > 16 * 1024) return usage();
         input = Buffer.concat([input, bytes]);
       }
@@ -70,6 +88,7 @@ export async function cmdFleetEmailOutboxBatchAwait(args: string[], deps: Deps =
         void Promise.resolve().then(() => iterator.return!()).catch(() => {});
       }
     }
+    if (inputExpired) return output({ rows: [], timedOut: true, cancelled: false, sourceFailure: false });
     try { names = JSON.parse(input.toString('utf8')) as unknown; } catch { return usage(); }
     if (!Array.isArray(names) || names.length < 1 || names.length > 50 ||
         !names.every((name: unknown) => typeof name === 'string' && name.toLowerCase().endsWith('.reply.eml') && !name.includes('..') && !/[/\\\0]/.test(name)) ||
@@ -79,7 +98,7 @@ export async function cmdFleetEmailOutboxBatchAwait(args: string[], deps: Deps =
     const config = await readEmailDropConfig(deps.runsDir ?? join(homedir(), '.ashlr-runs'));
     if (controller.signal.aborted || !config.config || config.state === 'invalid') return output(empty());
     const dir = config.config.outboxDir ?? join(config.config.inboxDir, '..', 'outbox');
-    return output(await awaitEmailOutboxBatch({ dir, names: names as string[], timeoutMs, pollMs, signal: controller.signal, now: deps.now, read: deps.read, sleep: deps.sleep }));
+    return output(await awaitEmailOutboxBatch({ dir, names: names as string[], timeoutMs: Math.max(0, timeoutMs - (now() - inputStartedAt)), pollMs, signal: controller.signal, now, read: deps.read, sleep: deps.sleep }));
   } finally {
     signals.removeListener('SIGINT', cancel); signals.removeListener('SIGTERM', cancel);
     deps.signal?.removeEventListener('abort', cancel);
