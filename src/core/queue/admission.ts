@@ -26,13 +26,15 @@ export interface AdmissionInput {
   load1: number; ncpu: number; procs: number; worktrees: number;
   /** Seconds since the ashlr daemon's lastTickAt, or null when unknown. */
   daemonTickAgeS: number | null; daemonWhy?: string | null;
-  slots: Record<string, unknown>; running: number; holder: InstallLockHolder | null; disabled?: boolean;
+  slots: Record<string, unknown>; running: number; holder: InstallLockHolder | null;
   /** dispatchd's adaptive cap from queue/concurrency.json, or null on hosts that have not run the controller. */
   adaptiveCap?: number | null;
 }
 export interface AdmissionReport {
   snapshot?: Record<string, unknown>;
-  admit: boolean; reason: string | null; reasons: string[]; disabled: boolean;
+  admit: boolean; reason: string | null; reasons: string[];
+  /** Only an older dispatchd snapshot can set this (its LOADGATE_OFF marker); live probes never disable the gate. */
+  disabled: boolean;
   load: { load1: number; max: number }; ncpu: number; procs: number; worktrees: number;
   daemon: { tickAgeSeconds: number | null; maxAgeSeconds: number; error: string | null };
   cap: number; hardCap: number | null; adaptiveCap: number | null; running: number; installLock: { holder: InstallLockHolder | null };
@@ -68,13 +70,11 @@ export function evaluateAdmission(input: AdmissionInput): AdmissionReport {
   else if (input.daemonTickAgeS > DAEMON_TICK_MAX_S) reasons.push(`daemon_tick_stale ${Math.floor(input.daemonTickAgeS)}s > ${DAEMON_TICK_MAX_S}s`);
   const adaptiveCap = input.adaptiveCap ?? null;
   const { cap, hardCap } = globalCap(input.slots, input.ncpu, adaptiveCap);
-  const disabled = input.disabled === true;
-  const tripped = reasons.length > 0 && !disabled;
-  const blockers = tripped ? [...reasons] : [];
+  const blockers = [...reasons];
   if (input.running >= cap) blockers.push(`at_cap running ${input.running} >= cap ${cap}`);
   const blocked = blockers.length > 0;
   return {
-    admit: !blocked, reason: blocked ? blockers.join('; ') : null, reasons, disabled,
+    admit: !blocked, reason: blocked ? blockers.join('; ') : null, reasons, disabled: false,
     load: { load1: input.load1, max: loadMax }, ncpu: input.ncpu, procs: input.procs, worktrees: input.worktrees,
     daemon: { tickAgeSeconds: input.daemonTickAgeS, maxAgeSeconds: DAEMON_TICK_MAX_S, error: input.daemonWhy ?? null },
     cap, hardCap, adaptiveCap, running: input.running, installLock: { holder: input.holder },
@@ -183,7 +183,8 @@ export async function readAdmission(opts: ReadAdmissionOptions = {}): Promise<Ad
 
   const report = evaluateAdmission({
     load1: (opts.load1 ?? (() => loadavg()[0]!))(), ncpu: (opts.ncpu ?? availableParallelism)(),
-    procs, worktrees, daemonTickAgeS, daemonWhy, slots, running, holder, adaptiveCap, disabled: await exists(join(queue, 'LOADGATE_OFF')),
+    // RQ-BATCH-SESSIONS-2: queue/LOADGATE_OFF no longer disables the gate (dispatchd reports it as off_switch_ignored).
+    procs, worktrees, daemonTickAgeS, daemonWhy, slots, running, holder, adaptiveCap,
   });
   return staleSnapshot ? { ...report, staleSnapshot } : report;
 }

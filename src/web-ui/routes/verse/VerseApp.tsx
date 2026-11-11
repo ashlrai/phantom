@@ -391,11 +391,11 @@ export function VerseApp() {
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.defaultPrevented) return;
-      if (getVerseUiState().overlay === 'palette') return;
       const command = matchKey(event, ['global']);
+      if (getVerseUiState().overlay === 'palette' && command?.id !== 'fleet.focus-steer') return;
       // After the match: foreignModalOpen scans the whole document, and most
       // keys (every character typed into the composer) bind to nothing.
-      if (!command || foreignModalOpen()) return;
+      if (!command || (command.id !== 'fleet.focus-steer' && foreignModalOpen())) return;
       // preventDefault BEFORE running: the chat's key fallback and the
       // transcript's ⌥↑/⌥↓ skip default-prevented events (C2), which is what
       // keeps one press from running two handlers. stopPropagation is not

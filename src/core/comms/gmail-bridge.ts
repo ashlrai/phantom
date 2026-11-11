@@ -35,6 +35,7 @@ export async function pollGmailBridge(deps: GmailBridgeDependencies): Promise<Gm
   if (messages.length > 100) throw new Error('Gmail inbox batch exceeds 100 messages');
   const report: GmailBridgeReport = { scanned: messages.length, updates: [], drafted: 0, review: 0, failed: 0 };
   const seen = new Set<string>();
+  let draftSources: Set<string> | undefined;
   for (const message of messages) {
     if (!message.id || seen.has(message.id)) { report.review++; continue; }
     seen.add(message.id);
@@ -44,9 +45,11 @@ export async function pollGmailBridge(deps: GmailBridgeDependencies): Promise<Gm
         report.updates.push(await deps.summarizeUpdate(message));
       } else if (classification === 'reply' && message.autoSubmitted?.toLowerCase() === 'no') {
         const source = `gmail-${createHash('sha256').update(message.id).digest('hex').slice(0, 16)}`;
-        if ((await listDrafts({ runsDir: deps.runsDir })).some((draft) => draft.source === source)) continue;
+        draftSources ??= new Set((await listDrafts({ runsDir: deps.runsDir })).map((draft) => draft.source));
+        if (draftSources.has(source)) continue;
         const body = await deps.composeReply(message);
         await createDraft({ to: message.from, subject: `Re: ${message.subject}`, body, source }, deps.runsDir);
+        draftSources.add(source);
         report.drafted++;
       } else {
         report.review++;
