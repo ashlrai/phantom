@@ -1124,6 +1124,7 @@
 /test/standing-wiring-310b.test.ts @masonwyatt23
 /test/standing-wiring-loop-310b.test.ts @masonwyatt23
 /test/status-custody.test.ts @masonwyatt23
+/test/status-quota-lines.test.ts @masonwyatt23
 /test/store-unreadable-refusal-310.test.ts @masonwyatt23
 /test/subscription-budget-override-310.test.ts @masonwyatt23
 /test/support/pool-commissioning-independent-fixture.ts @masonwyatt23
@@ -1137,6 +1138,7 @@
 /test/tick-hooks-defaults-310b.test.ts @masonwyatt23
 /test/tick-hooks-live-310b.test.ts @masonwyatt23
 /test/tick-hooks-loop-310b.test.ts @masonwyatt23
+/test/tier1-apps-boundary.test.ts @masonwyatt23
 /test/tier1-closure-cut.test.ts @masonwyatt23
 /test/tmp-scratch-sweep.test.ts @masonwyatt23
 /test/top-pools.test.ts @masonwyatt23

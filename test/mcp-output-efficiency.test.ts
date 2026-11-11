@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { dirname } from 'node:path';
 import { listNativeTools } from '../src/core/mcp-native.js';
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
+
+registerFleetNativeTools();
 
 const OLD_NATIVE_NAMES = [
   'phm_proactive_agents_list',
@@ -47,16 +50,7 @@ const ADDED_NATIVE_NAMES = [
   'phantom_fleet_drop_job',
   'phantom_fleet_job_reassign',
   'phantom_fleet_planner_run',
-  'phantom_fleet_apps_history',
-  'phantom_fleet_apps_follow',
-  'phantom_fleet_apps_recovery_wait',
-  'phantom_fleet_apps_recovery_check',
-  'phantom_fleet_apps_recovery_batch',
-  'phantom_fleet_apps_ensure',
-  'phantom_fleet_apps_changes',
-  'phantom_fleet_apps_status',
   'phantom_fleet_doctor',
-  'phantom_fleet_apps_await',
   'phantom_fleet_needs',
   'phantom_fleet_needs_resolve',
   'phantom_fleet_orders',
@@ -89,6 +83,15 @@ const ADDED_NATIVE_NAMES = [
   'ashlr_comms_agent_status',
   'ashlr_comms_agent_drafts',
   'ashlr_comms_agent_run',
+  'phantom_fleet_apps_history',
+  'phantom_fleet_apps_follow',
+  'phantom_fleet_apps_recovery_wait',
+  'phantom_fleet_apps_recovery_check',
+  'phantom_fleet_apps_recovery_batch',
+  'phantom_fleet_apps_ensure',
+  'phantom_fleet_apps_changes',
+  'phantom_fleet_apps_status',
+  'phantom_fleet_apps_await',
 ] as const;
 
 function classifyNativeNames(names: readonly string[]): { old: string[]; added: string[]; unallocated: string[] } {
