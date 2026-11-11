@@ -436,3 +436,5 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Repository ranking](REPO-RANK.md): `phm repos rank --json`, `phm repos rank --recompute --json` and `phm repos rank proposals --json`; daily local evidence, manual enrollment, read-only restock weights.
 
 - [PR triage](PR-TRIAGE.md): read-only open PR verdicts and JSON schema.
+
+- [oMLX dispatcher lane](../contrib/mac/README.md): memory-capped `omlx` pool, `127.0.0.1` health only, `phm lanes --json`; Security combined RETUNE pin required before installation.
