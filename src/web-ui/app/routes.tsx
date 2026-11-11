@@ -44,6 +44,7 @@ const FleetView = lazy(() => import('../routes/control/fleet/FleetView.js').then
 const SecurityView = lazy(() => import('../routes/control/security/SecurityView.js').then((module) => ({ default: module.SecurityView })));
 const GoalsView = lazy(() => import('../routes/goals/GoalsView.js').then((module) => ({ default: module.GoalsView })));
 const InboxView = lazy(() => import('../routes/inbox/InboxView.js').then((module) => ({ default: module.InboxView })));
+const ApprovalsView = lazy(() => import('../routes/approvals/ApprovalsView.js').then((module) => ({ default: module.ApprovalsView })));
 const AgentOsView = lazy(() => import('../routes/agent-os/AgentOsView.js').then((module) => ({ default: module.AgentOsView })));
 const ConnectView = lazy(() => import('../routes/connect/ConnectView.js').then((module) => ({ default: module.ConnectView })));
 const UniverseView = lazy(() => import('../routes/universe/UniverseView.js').then((module) => ({ default: module.UniverseView })));
@@ -51,9 +52,12 @@ const ConnectorsSettings = lazy(() => import('../routes/settings/connectors/Conn
 
 const SecretsView = lazy(() => import('../routes/settings/secrets/SecretsView.js').then(module => ({ default: module.SecretsView })));
 
+const TeamInviteAccept = lazy(() => import('../routes/TeamInviteAccept.js').then((module) => ({ default: module.TeamInviteAccept })));
+
 export function AppRoutes() {
   return (
     <Routes>
+      <Route path="/teams/:team/accept" element={<TeamInviteAccept />} />
       <Route element={<Shell />}>
         <Route index element={<Navigate to="/overview" replace />} />
         {ALL_NAV_LEAVES.map((leaf) =>
@@ -69,6 +73,7 @@ export function AppRoutes() {
         <Route path="/settings/secrets" element={<SecretsView />} />
         <Route path="/settings/connectors" element={<ConnectorsSettings />} />
         <Route path="/overview" element={<FleetDashboardView />} />
+        <Route path="/approvals" element={<ApprovalsView />} />
         <Route path="/agent-os" element={<AgentOsView />} />
         <Route path="/universe" element={<UniverseView />} />
         <Route path="/show" element={<ShowView />} />
