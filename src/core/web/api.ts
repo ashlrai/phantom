@@ -2200,7 +2200,7 @@ export async function handleApi(
     // `phm approvals --json`). Read class, behind the read-session gate.
     if (path === '/api/approvals' && method === 'GET') {
       const team = getQueryParam(req.url ?? '/', 'team');
-      sendJson(res, 200, buildApprovalsProjection(team || undefined));
+      sendJson(res, 200, await buildApprovalsProjection(team || undefined));
       return true;
     }
 

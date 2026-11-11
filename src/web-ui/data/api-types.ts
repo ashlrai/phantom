@@ -437,6 +437,8 @@ export type {
 export type {
   ApprovalsProjection,
   TeamApprovalItem,
+  ProposalApprovalItem,
+  DraftApprovalItem,
   StagedPinItem,
   HoldItem,
 } from '../../core/approvals/surface.js';

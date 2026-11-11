@@ -86,9 +86,9 @@ describe('staged pin queue', () => {
 });
 
 describe('team approvals', () => {
-  it('projects pending access requests with the CLI command, and nothing once decided', () => {
+  it('projects pending access requests with the CLI command, and nothing once decided', async () => {
     const r = requestAccess(T, codex, { type: 'member.invited', memberId: 'human:evan' }, 'needs evan');
-    const p = buildApprovalsProjection(T);
+    const p = await buildApprovalsProjection(T);
     expect(p.teamApprovals).toMatchObject({ state: 'ok' });
     expect(p.teamApprovals.items).toEqual([expect.objectContaining({
       id: r.approvalId, kind: 'access', requestedBy: codex.id, note: 'needs evan',
@@ -97,7 +97,7 @@ describe('team approvals', () => {
     expect(renderApprovals(p)).toContain(`phm team approve ${r.approvalId}`);
 
     expect(decideTeamApproval(T, r.approvalId, 'approve')).toMatchObject({ state: 'approved' });
-    expect(buildApprovalsProjection(T).teamApprovals.items).toEqual([]);
+    expect((await buildApprovalsProjection(T)).teamApprovals.items).toEqual([]);
   });
 
   it('refuses to decide from an agent process: the click is the approval, never an agent', () => {
@@ -108,8 +108,8 @@ describe('team approvals', () => {
     vi.unstubAllEnvs();
   });
 
-  it('reports an invalid team as unavailable, not as nothing pending', () => {
-    expect(buildApprovalsProjection('../escape').teamApprovals).toMatchObject({ state: 'unavailable', items: [] });
+  it('reports an invalid team as unavailable, not as nothing pending', async () => {
+    expect((await buildApprovalsProjection('../escape')).teamApprovals).toMatchObject({ state: 'unavailable', items: [] });
   });
 });
 
