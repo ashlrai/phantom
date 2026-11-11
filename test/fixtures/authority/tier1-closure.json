@@ -759,6 +759,7 @@
     "src/core/graph/registry.ts",
     "src/core/growth/read.ts",
     "src/core/growth/series.ts",
+    "src/core/ideas/idea-verdicts.ts",
     "src/core/improve/api.ts",
     "src/core/improve/backlog-sync.ts",
     "src/core/improve/discover.ts",
