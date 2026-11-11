@@ -10,12 +10,54 @@ import { selfCliPrefix, type AppsEnsureChildRunner } from './fleet-apps-ensure.j
 
 const execFileAsync = promisify(execFile);
 const usage = 'Usage: ashlr fleet apps-watch <app>... --duration-ms <1..300000> [--interval-ms <100..60000>] [--attempt-timeout-ms <1..300000>] [--root <dir>] [--stop-file <path>] [--max-consecutive-failures <1..10>] [--max-recoveries <1..1000>] [--bus] [--json | --jsonl]';
+
+/** Structured result returned by the supervision loop (no stdout rendering). */
+export interface FleetAppsWatchResult {
+  apps: string[];
+  outcome: 'completed' | 'failed' | 'cancelled';
+  cycles: number;
+  recoveries: number;
+  consecutiveFailures: number;
+  totalFailedCycles: number;
+  lastObservedState: { app: string; observedRunning: boolean | null }[] | null;
+  lastDiagnostics: AppsWatchDiagnostic[] | null;
+  reason?: 'recovery_limit';
+  bus?: { published: number; failed: number };
+}
+
+/** Per-cycle observation emitted by the loop; the CLI renders it as JSONL. */
+export interface FleetAppsWatchObservation {
+  type: 'observation';
+  cycle: number;
+  healthy: boolean;
+  recoveries: number;
+  consecutiveFailures: number;
+  totalFailedCycles: number;
+  observedState: { app: string; observedRunning: boolean | null }[] | null;
+  diagnostics: AppsWatchDiagnostic[] | null;
+}
+
+/** Options accepted by the structured watch helper. */
+export interface FleetAppsWatchOptions {
+  apps: string[];
+  durationMs: number;
+  intervalMs?: number;
+  attemptTimeoutMs?: number;
+  root?: string;
+  stopFile?: string;
+  maxConsecutiveFailures?: number;
+  maxRecoveries?: number;
+  bus?: boolean;
+}
+
 export interface FleetAppsWatchDeps {
   runChild?: AppsEnsureChildRunner;
   now?: () => number;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   signal?: AbortSignal;
   createBusPublisher?: typeof createAppsWatchPublisher;
+  /** Called for each observation; the CLI renders JSONL from it. */
+  onObservation?: (obs: FleetAppsWatchObservation) => void;
 }
 
 export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps = {}): Promise<number> {
@@ -62,10 +104,39 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
     else { if (n < 100 || n > 60000) return invalid(); interval = n; }
   }
   if (!apps.length || !duration || (json && jsonl)) return invalid();
+  let result: FleetAppsWatchResult;
+  try {
+    result = await watchFleetApps(
+      { apps, durationMs: duration, intervalMs: interval, attemptTimeoutMs: attemptTimeout, root, stopFile, maxConsecutiveFailures, maxRecoveries, bus },
+      { ...deps, onObservation: (obs) => { deps.onObservation?.(obs); if (jsonl) process.stdout.write(`${JSON.stringify(obs)}\n`); } },
+    );
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+  if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'summary', ...result })}\n`);
+  else if (json) process.stdout.write(`${JSON.stringify(result)}\n`);
+  else console.log(`${result.apps.join(', ')}: ${result.outcome}; cycles=${result.cycles}, recoveries=${result.recoveries}${result.reason === 'recovery_limit' ? '; recovery limit reached' : ''}${result.bus ? `; bus published=${result.bus.published}, failed=${result.bus.failed}` : ''}`);
+  return result.outcome === 'completed' ? 0 : 1;
+}
+
+/**
+ * Structured supervision loop — no stdout rendering.
+ * The CLI renders its result; the MCP tool returns it as structured data.
+ */
+export async function watchFleetApps(
+  options: FleetAppsWatchOptions,
+  deps: FleetAppsWatchDeps = {},
+): Promise<FleetAppsWatchResult> {
+  const { apps, durationMs: duration, intervalMs: interval = 1000, root, stopFile } = options;
+  const maxConsecutiveFailures = options.maxConsecutiveFailures ?? 1;
+  const maxRecoveries = options.maxRecoveries;
+  const attemptTimeout = options.attemptTimeoutMs;
+  const bus = options.bus ?? false;
   let runChild = deps.runChild;
   if (!runChild && !deps.signal?.aborted) {
     const prefix = selfCliPrefix();
-    if (prefix === null) { console.error('fleet apps-watch: cannot resolve the ashlr CLI entry'); return 1; }
+    if (prefix === null) throw new Error('fleet apps-watch: cannot resolve the ashlr CLI entry');
     runChild = async (argv, options) => {
       try {
         const { stdout } = await execFileAsync(process.execPath, [...prefix, ...argv], {
@@ -187,7 +258,7 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
       consecutiveFailures++;
       totalFailedCycles++;
       publish({ kind: 'apps-watch.observation.v1', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null, diagnostics: lastDiagnostics });
-      if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'observation', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null, diagnostics: lastDiagnostics })}\n`);
+      deps.onObservation?.({ type: 'observation', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null, diagnostics: lastDiagnostics });
       if (consecutiveFailures >= maxConsecutiveFailures) {
         outcome = 'failed';
       }
@@ -205,7 +276,7 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
     }
     consecutiveFailures = 0;
     publish({ kind: 'apps-watch.observation.v1', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null, diagnostics: lastDiagnostics });
-    if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'observation', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null, diagnostics: lastDiagnostics })}\n`);
+    deps.onObservation?.({ type: 'observation', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null, diagnostics: lastDiagnostics });
     if (maxRecoveries !== undefined && recoveries >= maxRecoveries) { recoveryLimitReached = true; outcome = 'failed'; break; }
     const left = remaining();
     if (left <= 0) break;
@@ -216,9 +287,7 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
   else if (signal?.aborted || fileStopped) outcome = 'cancelled';
   const details = { apps, outcome, cycles, recoveries, consecutiveFailures, totalFailedCycles, lastObservedState, lastDiagnostics };
   publish({ kind: 'apps-watch.summary.v1', ...details });
-  const summary = { ...details, ...(recoveryLimitReached && outcome === 'failed' && !fileError ? { reason: 'recovery_limit' } : {}), ...(bus ? { bus: { published, failed: publicationFailures } } : {}) };
-  if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'summary', ...summary })}\n`);
-  else if (json) process.stdout.write(`${JSON.stringify(summary)}\n`);
-  else console.log(`${apps.join(', ')}: ${outcome}; cycles=${cycles}, recoveries=${recoveries}${recoveryLimitReached && outcome === 'failed' && !fileError ? '; recovery limit reached' : ''}${bus ? `; bus published=${published}, failed=${publicationFailures}` : ''}`);
-  return outcome === 'completed' ? 0 : 1;
+  return { ...details,
+    ...(recoveryLimitReached && outcome === 'failed' && !fileError ? { reason: 'recovery_limit' as const } : {}),
+    ...(bus ? { bus: { published, failed: publicationFailures } } : {}) };
 }
