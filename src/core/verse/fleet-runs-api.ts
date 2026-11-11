@@ -30,6 +30,12 @@ import type { reassignQueuedJobs } from '../fleet/runs-reassign.js';
 import { isJobCommand, renderJobCommandReply, runTelegramJobCommand } from '../comms/telegram-job-command.js';
 
 export const VERSE_FLEET_RUNS_REASSIGN_PATH = '/api/verse/fleet/runs/reassign';
+import {
+  DESKTOP_ERRORS_POST_MAX_BODY_BYTES,
+  normaliseDesktopError,
+  recordDesktopError,
+  VERSE_DESKTOP_ERRORS_PATH,
+} from './desktop-error-report.js';
 import { emptyMission, readMissionControl, VERSE_FLEET_MISSION_PATH } from '../fleet/mission-control.js';
 import type { MissionControlV1 } from '../fleet/mission-control-types.js';
 
@@ -79,6 +85,7 @@ function parseInterjectImage(value: unknown): InterjectImage | 'invalid' | undef
  * — the filename is server-minted; a client name or path is never consulted. */
 function storeInterjectImage(image: InterjectImage, runsDir: string, stamp: string): string {
   const dir = join(runsDir, 'leader', 'inbound', 'screens');
+  // sync-io-ok: mkdir of ~/.ashlr-runs/leader/inbound/screens, private fleet state, never an operator folder
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const sha = createHash('sha256').update(image.bytes).digest('hex').slice(0, 8);
   const file = join(dir, `${stamp}-${sha}.${image.ext}`);
@@ -276,6 +283,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     requestAcksLoaded = true;
     const file = requestAcksFile!;
     const parent = requestAcksDir!;
+    // sync-io-ok: lstat of the interject ack ledger under ~/.ashlr-runs/channel-receipts, never an operator folder
     try { lstatSync(file); } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
       throw error;
@@ -302,6 +310,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         requestAcks.delete(requestAcks.keys().next().value!);
         text = serialize();
       }
+      // sync-io-ok: mkdir of ~/.ashlr-runs/channel-receipts, private fleet state, never an operator folder
       mkdirSync(dir, { recursive: true });
       writePrivateFileAtomically(join(dir, `.${randomUUID()}.tmp`), requestAcksFile, text,
         { anchorPath: dir, label: 'Interject request ledger' });
@@ -449,6 +458,29 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     catch { return emptyMission(now()); }
   }
   return async (ctx, req, res, path, method) => {
+    if (path === VERSE_DESKTOP_ERRORS_PATH) {
+      // A desktop pane's render crash, reported by the error boundary that
+      // caught it. Same local-only posture as the inbox POST below: the
+      // workbench mount already applied the dispatch + mutation gates for
+      // non-GETs, and both are re-checked here like every route in this file.
+      if (method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let raw: string;
+      try { raw = await readBody(req, DESKTOP_ERRORS_POST_MAX_BODY_BYTES); }
+      catch { sendJson(res, 413, { code: 'VERSE_TOO_LARGE', error: 'request body too large' }); return true; }
+      let body: unknown;
+      try { body = JSON.parse(raw); } catch { body = null; }
+      const normalised = normaliseDesktopError(body);
+      if (normalised === null) { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid desktop error body' }); return true; }
+      try {
+        const result = await recordDesktopError(deps.runsDir ?? defaultRunsDir(), normalised, now());
+        sendJson(res, result.recorded ? 201 : 200, { ok: true, recorded: result.recorded, fingerprint: result.fingerprint });
+      } catch {
+        sendJson(res, 503, { code: 'DESKTOP_ERRORS_UNAVAILABLE' });
+      }
+      return true;
+    }
     if (path === '/api/verse/fleet/runs/metrics') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
       sendJson(res, 200, await readMetricsPanel(deps.runsDir ?? defaultRunsDir()));

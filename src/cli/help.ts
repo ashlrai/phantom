@@ -614,8 +614,8 @@ export function agentDocsText(): string {
   lines.push('taskId; inspect coverage, omitted counts and observation time before treating it as complete.');
   lines.push('phm_agent_roster reads the unified live session roster. Unknown sources stay unknown.');
   lines.push('Team tools (docs/architecture/teams.md): phm_team_register, phm_team_publish,');
-  lines.push('phm_team_view, phm_team_claim, phm_team_handoff, phm_team_context_add and');
-  lines.push('phm_team_context_get. Claims are leases; consequential handoffs wait for human approval.');
+  lines.push('phm_team_view, phm_team_claim, phm_team_handoff, phm_team_access_request,');
+  lines.push('phm_team_context_add and phm_team_context_get. Claims are leases; consequential handoffs and access requests wait for human approval.');
   lines.push('Equivalent MCP tools (when wired via `ashlr wire`): ashlr_orient,');
   lines.push('ashlr_ask, ashlr_recall, ashlr_learn, ashlr_backlog, ashlr_health,');
   lines.push('ashlr_status, ashlr_impact, ashlr_pulse, ashlr_inbox_list,');
@@ -835,6 +835,8 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'recall "<query>"',             desc: 'Search shared genome memory; return top relevant entries with scores.', topic: 'memory' },
   { cmd: 'learn "<text>" [opts]',        desc: 'Append a note to shared genome memory (local-first, append-only).', topic: 'memory' },
   { cmd: 'genome',                       desc: 'Genome status/health: entry count, projects covered, store size.', topic: 'memory' },
+  { cmd: 'memory <add|list|search|forget>', desc: 'Manage local durable preferences, doctrine and facts.', topic: 'memory' },
+  { cmd: 'radar <list|run|diff>', desc: 'Observe public documentation and compare bounded local snapshots.', topic: 'knowledge' },
 
   { cmd: 'knowledge build',              desc: 'Index enrolled repos locally (read-only, secret-scrubbed) for portfolio RAG.', topic: 'knowledge' },
   { cmd: 'ask "<question>"',             desc: 'Local RAG across the indexed portfolio; cites repo/file:line. --allow-cloud opt-in. `ask status` prints the ask.status.v1 stream from the metrics jobs ledger.', topic: 'knowledge' },
@@ -977,6 +979,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'universe deliveries <id> [--root <path>] [--json]', desc: 'Read local delivery receipts; pending/degraded evidence is not completed or verified delivery.', topic: 'autonomy' },
   { cmd: 'eval [--limit N]',             desc: 'Local-agent eval harness: adaptive prompts OFF vs ON, steps/done/tokens (M44).', topic: 'run' },
   { cmd: 'eval attention [--window 1d|7d|30d]', desc: 'Metadata-only fleet attention report: context pressure, retrieval, yield, routing, and traces.', topic: 'run' },
+  { cmd: 'eval checkpoints --file <fixture.json> [--json]', desc: 'Compare scripted context retention and input-token estimates; requires PHANTOM_CHECKPOINTS=1.', topic: 'run' },
   { cmd: 'skills list [--status <s>] [--limit N] [--json]', desc: 'List skills learned from merged PRs (newest revision each; counts are real or "unknown").', topic: 'run' },
   { cmd: 'eval prompts --dataset <jobs.jsonl>', desc: 'Per-class prompt-variant A/B replay; promotes a variant only on a significant lift.', topic: 'run' },
   { cmd: 'skills audit <pack-path> [--json]', desc: 'Read-only quarantine audit for external skill structure, trigger routing, collisions, and behavioral fixtures.', topic: 'run' },

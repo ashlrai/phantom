@@ -7,6 +7,7 @@
  */
 
 import type { GuardianGlanceRow } from './guardian-glance.js';
+import { isStatusAsk } from './status-ask.js';
 
 export interface OperatorGlance {
   v: 1;
@@ -43,7 +44,6 @@ export interface OperatorGlanceInput {
   incidentText?: string | null;
 }
 
-const STATUS_ASK = /^(?:\/status(?:@\w+)?|status|glance|fleet status|what(?:'s| is|s) up|what(?:'s| is) happening|what(?:'s| is) running|how(?:'s| is|s) (?:the fleet|it going)|how are (?:we|things))\??$/i;
 
 const RATE_LIMIT = 500;
 const RATE_WINDOW_MS = 10 * 60_000;
@@ -67,7 +67,7 @@ export function allowOperatorMessage(key: string, nowMs: number): boolean {
 
 /** The whole message is a status ask. Anything longer is an order. */
 export function isOperatorStatusAsk(text: string): boolean {
-  return STATUS_ASK.test(text.trim());
+  return isStatusAsk(text);
 }
 
 function finitePct(value: number | null | undefined): number | null {
