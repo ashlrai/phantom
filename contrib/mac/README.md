@@ -1000,3 +1000,10 @@ empty finish or a merge. The synthetic replay regression demonstrates this
 accounting, not a prediction of fleet savings. Recheck the live window after
 installation; the target is fewer than 100 empty finishes and 120 empty
 minutes, while preserving MERGED throughput.
+
+## Fleet controller (RQ-FLEET-LOADBALANCER-1)
+
+`fleet_controller.py` is the single coordinator for lane targets and holds: one readings bus per tick, one writer, graduated
+shed, cross-pool rebalance and a JSONL ledger at `metrics/fleet-controller.jsonl`. Shadow by default
+(`FLEET_CTL_MODE=enforce` applies it). Design, bands and ledger schema: [FLEET-CONTROLLER.md](FLEET-CONTROLLER.md).
+Tests: `HOME=$(mktemp -d) python3 -B -m unittest contrib/mac/tests/test_fleet_controller.py contrib/mac/tests/test_fleet_controller_tick.py -v`.
