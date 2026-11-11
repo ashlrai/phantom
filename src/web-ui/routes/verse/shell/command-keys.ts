@@ -149,6 +149,7 @@ const KEYS = {
     'fleet.start': 'mod+alt+s',
     'fleet.pause': 'mod+alt+p',
     'fleet.interject': 'mod+alt+m',
+    'fleet.focus-steer': 'mod+shift+j',
     'fleet.resume': 'mod+alt+r',
     // Not `fleet.stop` (the shell's guarded palette row, which stays keyless):
     // this key opens the Fleet tab's own Stop confirmation.
