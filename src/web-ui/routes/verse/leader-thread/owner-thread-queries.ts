@@ -29,14 +29,19 @@ export interface OwnerChannelState {
   nextStep: string | null;
 }
 
+export type ReceiptState = 'delivered' | 'pending' | 'failed';
+/** Per message id, per channel. A channel with no entry is "unknown". */
+export type OwnerReceipts = Record<string, Record<string, { state: ReceiptState; reason?: string }>>;
+
 export interface OwnerThreadRead {
+  receipts?: OwnerReceipts;
   channels: OwnerChannelState[];
   lines: OwnerThreadLine[];
   /** The owner channels are killed or paused: the pane says so and shows no owner lines. */
   paused: boolean;
 }
 
-export const NO_OWNER_THREAD: OwnerThreadRead = { lines: [], paused: false, channels: [] };
+export const NO_OWNER_THREAD: OwnerThreadRead = { lines: [], paused: false, channels: [], receipts: {} };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -56,6 +61,20 @@ export function parseOwnerThread(value: unknown): OwnerThreadLine[] {
   return value.messages.flatMap(row => parseLine(row) ?? []);
 }
 
+/** Good receipts only; anything malformed is dropped (and so reads as unknown). */
+export function parseReceipts(value: unknown): OwnerReceipts {
+  const out: OwnerReceipts = {};
+  if (!isRecord(value)) return out;
+  for (const [id, byChannel] of Object.entries(value)) {
+    if (!isRecord(byChannel)) continue;
+    for (const [channel, row] of Object.entries(byChannel)) {
+      if (!isRecord(row) || (row.state !== 'delivered' && row.state !== 'pending' && row.state !== 'failed')) continue;
+      (out[id] ??= {})[channel] = { state: row.state, ...(typeof row.reason === 'string' ? { reason: row.reason } : {}) };
+    }
+  }
+  return out;
+}
+
 export function parseOwnerThreadRead(value: unknown): OwnerThreadRead {
   const status = isRecord(value) && isRecord(value.status) ? value.status : null;
   const channels = Array.isArray(status?.adapters) ? status.adapters.flatMap((row: unknown): OwnerChannelState[] => {
@@ -63,7 +82,7 @@ export function parseOwnerThreadRead(value: unknown): OwnerThreadRead {
       typeof row.reason !== 'string' || (row.nextStep !== null && typeof row.nextStep !== 'string')) return [];
     return [{ id: row.id, enabled: row.enabled, reason: row.reason, nextStep: row.nextStep }];
   }) : [];
-  return { lines: parseOwnerThread(value), paused: status?.kill === true || status?.paused === true, channels };
+  return { receipts: parseReceipts(isRecord(value) ? value.receipts : null), lines: parseOwnerThread(value), paused: status?.kill === true || status?.paused === true, channels };
 }
 
 export const ownerThreadQuery: QueryDef<OwnerThreadRead> = {
