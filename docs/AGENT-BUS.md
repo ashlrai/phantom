@@ -171,8 +171,8 @@ are the v2 layer above it.
 ### 4. Work feed
 
 Every job is `{id, owner, provider, repo, claimKeys[], status, updatedAt}`
-and every participant can read the feed (`{v:2, jobs:[...]}`). Jobs derive
-from `work.post` and `work.status` messages.
+and the planned feed is `{v:2, jobs:[...]}`. Jobs would derive from
+`work.post` and `work.status` messages; no feed projection is implemented yet.
 
 ### 5. Ownership table
 
