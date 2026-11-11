@@ -45,6 +45,7 @@ exports, verbatim from source.
 | `phantom_leader_ask` | Give the leader an owner message. It reads the world, routes on the bus, or escalates a hard limit. KILL stops it. No new model spend. |
 | `phantom_leader_assign` | Assign one RQ to an org role with owner, due, status, and outcome. Claims the work key. KILL stops it. No new model spend. |
 | `phantom_fleet_session` | Read local Codex fleet session quota observations per account as resource.v1 JSON. Includes session/weekly usage and freshness; missing readings are unknown. No prompts, credentials, environment values or provider probes. |
+| `phantom_fleet_verbs` | List the read-only fleet verb catalog, optionally filtered by a grep word. |
 
 The recovery tools read retained observations, not live process state. History
 accepts `after`, `limit` (1–100, default 25), and an optional `invocationId`;
