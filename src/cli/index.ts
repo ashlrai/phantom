@@ -3215,6 +3215,7 @@ async function main(): Promise<void> {
       case 'usage': {
         if (wantsHelp(rest)) {
           printCoreUsage('usage', 'Usage readings.', [
+            ['phm usage spend [--json]', 'See measured usage and projected unused capacity'],
             ['phm usage validate', 'Validate a usage reading'],
           ]);
           process.exitCode = 0;
