@@ -8,7 +8,7 @@ export const COS_STATUS_PATH = '/api/verse/fleet/cos/status';
 export const COS_APPROVE_PATH = '/api/verse/fleet/cos/approve';
 export const COS_RECONCILE_PATH = '/api/verse/fleet/cos/reconcile';
 
-export type CosDelivery = null | 'sending' | 'sent' | 'uncertain';
+export type CosDelivery = null | 'sending' | 'sent' | 'uncertain' | 'declined';
 
 export interface CosAsk { v: 1; id: string; ack: string; status: 'queued'; duplicate: boolean }
 export interface CosStatus {
@@ -38,7 +38,7 @@ export async function readCosTask(id: string, signal?: AbortSignal): Promise<Cos
     || (draft != null && (typeof draft.text !== 'string' || typeof draft.digest !== 'string'))) {
     throw new Error('The task status is unavailable.');
   }
-  const delivery = value.delivery === 'sending' || value.delivery === 'sent' || value.delivery === 'uncertain' ? value.delivery : null;
+  const delivery = value.delivery === 'sending' || value.delivery === 'sent' || value.delivery === 'uncertain' || value.delivery === 'declined' ? value.delivery : null;
   return { v: 1, id, jobStatus: value.jobStatus, channel: value.channel, draft: draft ?? null, delivery, needsYou: value.needsYou === true };
 }
 
@@ -64,6 +64,7 @@ export async function reconcileCosTask(id: string, verdict: CosReconcileVerdict)
 export function cosTaskLine(status: Pick<CosStatus, 'jobStatus' | 'draft' | 'delivery'> | null): string {
   if (!status) return 'Checking the task…';
   if (status.delivery === 'sent') return 'Sent';
+  if (status.delivery === 'declined') return 'Declined';
   if (status.delivery === 'uncertain') return 'Delivery uncertain; check the channel before any retry';
   if (status.delivery === 'sending') return 'Sending the approved reply…';
   if (status.draft) return 'Drafted · waiting for your approval';
