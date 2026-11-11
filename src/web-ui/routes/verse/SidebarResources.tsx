@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useId, useRef, useState } from 'react';
+import type { SpendSnapshot } from '../../../core/usage/spend.js';
 import type { HostSummary } from '../../../core/web/host-summary.js';
 import { Button } from '../../components/primitives/Button.js';
 import { Dialog } from '../../components/primitives/Dialog.js';
@@ -54,6 +55,7 @@ export const SidebarResources = memo(function SidebarResources() {
         <h2 className={styles.heading}>Dot</h2>
         <DotResourceRow />
       </section>
+      <SpendDown />
       <section aria-label="Machine">
         <h2 className={styles.heading}>Machine</h2>
         <button type="button" className={styles.entry} aria-haspopup="dialog" onClick={() => setMachineOpen(true)}>This machine</button>
@@ -115,4 +117,19 @@ function MachineSummary({ onClose }: { onClose: () => void }) {
       </div>
     </div>
   );
+}
+
+function SpendDown() {
+  const [data, setData] = useState<SpendSnapshot | null>(null);
+  const [failed, setFailed] = useState(false);
+  const refresh = useCallback(() => {
+    void apiGet<SpendSnapshot>('/api/usage/spend').then(value => { setData(value); setFailed(false); }).catch(() => { setData(null); setFailed(true); });
+  }, []);
+  useEffect(() => { refresh(); }, [refresh]);
+  usePollWhileVisible(refresh, 60_000);
+  return <section aria-label="Spend down"><h2 className={styles.heading}>Spend down</h2>
+    {!data ? <p className={styles.dotRow}>{failed ? 'unknown (status unavailable)' : 'Reading usage…'}</p> : data.pools.map(row =>
+      <div className={styles.dotRow} key={row.pool}><span className={styles.dotLabel}>{row.pool}</span>
+        <span className={styles.note}>{row.reason ? `unknown (${row.reason})` : `${row.usedPercent}% used · reset ${new Date(row.resetAt!).toLocaleString()} · ${row.hoursLeft!.toFixed(1)} hours left · ${row.burnPerHour}% per hour · ${row.projectedUnusedPercent!.toFixed(1)}% unused at reset`}</span></div>)}
+  </section>;
 }
