@@ -36,7 +36,10 @@ const MAX_NPM_RUNTIME_ENTRIES_PER_DIRECTORY = 10_000;
 const MAX_NPM_RUNTIME_BYTES = 512 * 1024 * 1024;
 const MAX_NPM_RUNTIME_DEPTH = 48;
 const MAX_NPM_RUNTIME_SCAN_MS = 30_000;
-const MAX_NPM_CLI_TIMEOUT_MS = 180_000;
+// `npm pack --dry-run` still gzips the whole ~130 MB, ~16k-file package to
+// report its integrity; it measured 60-215 s on a loaded macOS host, so the
+// former 180 s cap killed healthy builds. The cap stays a hard bound.
+const MAX_NPM_CLI_TIMEOUT_MS = 600_000;
 const MAX_NPM_SNAPSHOT_CLEANUP_MS = 30_000;
 const WINDOWS_NPM_SNAPSHOT_AUTHORITY_TIMEOUT_MS = 30_000;
 const NPM_CLI_BOOTSTRAP = [
@@ -681,13 +684,29 @@ export function runTrustedNpmCli(args, options = {}, runtime = {}) {
   }
 }
 
+/**
+ * Why a trusted npm child did not succeed. A timeout or signal kill leaves
+ * stderr empty, so name the spawn error, signal or exit status as well.
+ */
+export function describeNpmCliFailure(result) {
+  const stderr = typeof result?.stderr === 'string' ? result.stderr.trim() : '';
+  const cause = result?.error?.code === 'ETIMEDOUT'
+    ? `timed out after ${MAX_NPM_CLI_TIMEOUT_MS} ms`
+    : result?.error
+      ? `spawn failed: ${result.error.code ?? result.error.message}`
+      : result?.signal
+        ? `killed by ${result.signal}`
+        : `exited ${result?.status}`;
+  return stderr ? `${cause}: ${stderr}` : cause;
+}
+
 export function buildReleaseDependencyInventory() {
   const packed = runTrustedNpmCli(
     ['pack', '--dry-run', '--ignore-scripts', '--json'],
     { cwd: repositoryRoot, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
   );
   if (packed.status !== 0) {
-    throw new Error(`release dependency inventory npm pack: ${packed.stderr.trim()}`);
+    throw new Error(`release dependency inventory npm pack: ${describeNpmCliFailure(packed)}`);
   }
   const report = JSON.parse(packed.stdout);
   const packagedFiles = report[0]?.files;
