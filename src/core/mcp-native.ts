@@ -341,9 +341,27 @@ const TOOLS: NativeToolImpl[] = [
       const { resolveNeedsMasonWithInbox } = await import('./fleet/needs-mason-relay.js');
       const result = await resolveNeedsMasonWithInbox(
         { itemId: args.itemId as string, ...(typeof args.reply === 'string' ? { reply: args.reply } : {}) },
-        { runsDir: process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), source: 'cli' });
+        // MCP callers are agents, not Mason: record the agent surface, never 'cli'.
+        { runsDir: process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), source: 'leader' });
       if (!result.ok) return { error: result.error, status: result.code, itemId: args.itemId, inbox: result.inbox };
       return { v: 1, status: 'resolved', itemId: result.itemId, duplicate: result.duplicate, cursor: result.cursor, inbox: result.inbox };
+    },
+  },
+  {
+    name: 'phantom_fleet_needs_wait',
+    description: 'Wait within a bounded deadline for an existing needs-you item to be resolved.',
+    inputSchema: { type: 'object', properties: {
+      itemId: { type: 'string', pattern: '^nm-[0-9a-f]{12}$' },
+      timeoutMs: { type: 'integer', minimum: 1, maximum: 30000 },
+      pollMs: { type: 'integer', minimum: 100, maximum: 30000, default: 1000 },
+    }, required: ['itemId', 'timeoutMs'], additionalProperties: false },
+    safety: 'read',
+    handler: async args => {
+      const itemId = args.itemId as string;
+      const { waitNeedsMason } = await import('./fleet/needs-mason-wait.js');
+      const status = await waitNeedsMason({ id: itemId, timeoutMs: args.timeoutMs as number,
+        pollMs: (args.pollMs as number | undefined) ?? 1000 });
+      return { itemId, status };
     },
   },
   {
@@ -1695,6 +1713,13 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       ('timeoutMs' in args && (!Number.isInteger(args.timeoutMs) || (args.timeoutMs as number) < 1 || (args.timeoutMs as number) > 30000)) ||
       ('intervalMs' in args && (!Number.isInteger(args.intervalMs) || (args.intervalMs as number) < 100 || (args.intervalMs as number) > 60000))
       ? 'invalid fleet apps await arguments' : null;
+  } else if (name === 'phantom_fleet_needs_wait') {
+    const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
+    invalid = !object || Object.keys(args).some(key => !['itemId', 'timeoutMs', 'pollMs'].includes(key)) ||
+      typeof args.itemId !== 'string' || !/^nm-[0-9a-f]{12}$/.test(args.itemId) ||
+      !Number.isInteger(args.timeoutMs) || (args.timeoutMs as number) < 1 || (args.timeoutMs as number) > 30000 ||
+      ('pollMs' in args && (!Number.isInteger(args.pollMs) || (args.pollMs as number) < 100 || (args.pollMs as number) > 30000))
+      ? 'invalid fleet needs wait arguments' : null;
   } else if (name === 'phantom_fleet_drop_job') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
     invalid = !object || Object.keys(args).some(key => !['id', 'lane', 'tier', 'body'].includes(key)) ||
