@@ -7,6 +7,7 @@
  * iMessage bodies stay in this private file. Their bus mirror is redacted.
  * KILL and the comms pause halt every adapter before a transport is called.
  */
+import { teammateReplyGapFromInbox, type TeammateReplyGap } from './teammate-reply-gap.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { linkSync, lstatSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
@@ -114,6 +115,8 @@ export interface OwnerCommsStatus {
   paused: boolean;
   messages: number;
   adapters: OwnerAdapterStatus[];
+  /** Additive: how long teammate texts have waited for a reply (metadata only). */
+  replyGap: TeammateReplyGap[];
 }
 
 function clock(options: OwnerThreadOptions): number {
@@ -556,6 +559,7 @@ export function readOwnerCommsStatus(options: OwnerThreadOptions): OwnerCommsSta
     threadId: OWNER_THREAD_ID,
     kill, paused: hold, messages,
     adapters: listAdapterStatus(options.settings, kill, hold),
+    replyGap: teammateReplyGapFromInbox(clock(options), options.runsDir),
   };
 }
 
