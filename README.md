@@ -208,7 +208,7 @@ phm --version
 phm verse
 ```
 
-`phm verse` serves [http://127.0.0.1:7777/verse/](http://127.0.0.1:7777/verse/). The package exports `@ashlr/phantom`, `@ashlr/phantom/core`, `@ashlr/phantom/types`, `@ashlr/phantom/plugin`, and `@ashlr/phantom/universe`.
+`phm verse` serves [http://127.0.0.1:7777/verse/](http://127.0.0.1:7777/verse/). `phm console` is the same command under the Phantom name and opens `/app/`; `/app/` and `/app/m/` alias `/verse/` and `/verse/m/`, which keep working. The package exports `@ashlr/phantom`, `@ashlr/phantom/core`, `@ashlr/phantom/types`, `@ashlr/phantom/plugin`, and `@ashlr/phantom/universe`.
 
 Optional cloud handoff, off unless you launch it. Cloud launch spends Claude credits. The Devin API connection requires macOS and Devin sessions spend ACUs:
 

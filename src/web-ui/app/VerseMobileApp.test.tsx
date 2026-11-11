@@ -114,10 +114,17 @@ describe('VerseMobileApp', () => {
     act(() => markCheckComplete(false));
     render(<VerseMobileApp />);
     expect(await screen.findByRole('heading', { name: 'Connect to your Mac' })).toBeInTheDocument();
-    expect(screen.getByText('phm verse', { selector: 'pre' })).toBeInTheDocument();
+    expect(screen.getByText('phm console', { selector: 'pre' })).toBeInTheDocument();
     expect(screen.getByText(/Phantom only ever talks to the Phantom server/)).toBeInTheDocument();
     expect(fetch).not.toHaveBeenCalled();
     expect(window.location.pathname).toBe('/verse/m/');
+  });
+
+  it('keeps /app/m under its Phantom name, adding only the trailing slash', async () => {
+    window.history.replaceState(null, '', '/app/m#/needs');
+    canonicalizeMobilePath(window);
+    expect(window.location.pathname).toBe('/app/m/');
+    expect(window.location.hash).toBe('#/needs');
   });
 
   it('with a session draws the phone shell and makes the page installable', async () => {

@@ -30,7 +30,7 @@ import type {
   PortfolioSummary,
   ModelStatsReadResult,
 } from './api-types.js';
-import type { SourceQuality } from './api-types.js';
+import type { ApprovalsProjection, SourceQuality } from './api-types.js';
 
 export interface QueryDef<T> {
   key: string;
@@ -45,6 +45,11 @@ export const dashboardSnapshotQuery: QueryDef<DashboardSnapshot> = {
 export const controlSnapshotQuery: QueryDef<ControlSnapshot> = {
   key: 'control-snapshot',
   fetch: (signal) => apiGet<ControlSnapshot>('/api/control', signal),
+};
+
+export const approvalsQuery: QueryDef<ApprovalsProjection> = {
+  key: 'approvals',
+  fetch: (signal) => apiGet<ApprovalsProjection>('/api/approvals', signal),
 };
 
 export const agentOsSnapshotQuery: QueryDef<AgentOsSnapshotResponse> = {
