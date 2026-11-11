@@ -45,6 +45,7 @@ export const TEAM_EVENT_TYPES = [
   'claim.released',
   'approval.requested',
   'approval.decided',
+  'access.requested',
   'context.added',
 ] as const;
 export type TeamEventType = typeof TEAM_EVENT_TYPES[number];
@@ -65,6 +66,41 @@ export const CONSEQUENTIAL_ACTIONS = ['push-main', 'deploy', 'release', 'merge',
 export type ConsequentialAction = typeof CONSEQUENTIAL_ACTIONS[number];
 
 export interface ClaimTarget { repo: string; branch?: string; path?: string }
+
+/**
+ * Workspace mutations an agent may file as an `access.requested` approval: the
+ * stored request IS the pending mutation and, once a human owner/admin
+ * approves, applies verbatim through the workspace path. Member removal stays
+ * human-initiated, so it is not in this union.
+ */
+export type AccessRequestAction =
+  | { type: 'member.invited'; memberId: string }
+  | { type: 'member.role-changed'; memberId: string; role: 'admin' | 'member' }
+  | { type: 'repo.linked'; repo: string };
+
+const HUMAN_MEMBER_ID_RE = /^human:[a-z0-9][a-z0-9._-]*$/i;
+export function validHumanMemberId(value: unknown): value is string {
+  return typeof value === 'string' && validId(value) && HUMAN_MEMBER_ID_RE.test(value);
+}
+
+export const REPO_NAME_RE = /^[\w.-]+\/[\w.-]+$/;
+
+/** Structural parse of an `access.requested` payload's `request` field (state-independent). */
+export function parseAccessRequestAction(value: unknown): AccessRequestAction | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  switch (v['type']) {
+    case 'member.invited':
+      return validHumanMemberId(v['memberId']) ? { type: 'member.invited', memberId: v['memberId'] } : null;
+    case 'member.role-changed':
+      return validHumanMemberId(v['memberId']) && (v['role'] === 'admin' || v['role'] === 'member')
+        ? { type: 'member.role-changed', memberId: v['memberId'], role: v['role'] } : null;
+    case 'repo.linked':
+      return typeof v['repo'] === 'string' && REPO_NAME_RE.test(v['repo']) ? { type: 'repo.linked', repo: v['repo'].toLowerCase() } : null;
+    default:
+      return null;
+  }
+}
 
 /** Two claims collide when they share a repo and neither narrows away from the other. */
 export function claimsOverlap(a: ClaimTarget, b: ClaimTarget): boolean {

@@ -3,10 +3,10 @@
 # Installed to ~/.ashlr-runs/bin/restock.py via swap.sh and sha-pinned by selfrun.sh (G1-CODE-PIN); run as
 # `restock.py [--dry-run] [--per-lane N]`. RQ-QUEUEGEN-BOLD-30 + SPEC-AMEND Security #5 + RQ-DEVINROUTEDEFAULTQ7
 # + RQ-QUEUE-AUTOUNPARK-1 (PARKED-DEP / DEPENDENCY GATE / UNPARK). Security must re-pin before live bin/ install.
-import os, re, sys, json, time, fcntl, subprocess, math, hashlib
+import os, re, sys, json, time, fcntl, subprocess, math
 from datetime import datetime, timezone
 from launch_precheck import (precheck, park, parked as precheck_parked, park_key,
-                             attempt_identity, empty_reason, read_attempts)
+                             attempt_identity, empty_reason, read_attempts, with_prompt)
 import queue_gate
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; EV = R + "/dispatch-events.log"
 gate = queue_gate.read_gate(Q)
@@ -236,8 +236,7 @@ def empty_gate(j, repo, prompt):
     if repo not in empty_bases: empty_bases[repo] = attempt_identity(repo, "", H)
     base = empty_bases[repo]
     if not base: return None
-    identity = dict(base); identity["prompt_hash"] = hashlib.sha256(prompt.encode()).hexdigest()
-    return empty_reason(j, identity, empty_attempts, ts)
+    return empty_reason(j, with_prompt(base, j, prompt), empty_attempts, ts)
 # RQ-QUEUE-AUTOUNPARK-1: each tick, unpark PARKED-DEP rows whose DEPENDENCY GATE ids are all MERGED in jobs.jsonl.
 # Unpark rewrites the ready.tsv row only — the prompt body (including "no merge without Security pin") is untouched.
 unparks = []   # (job, deps, ready_line, launch_line)
