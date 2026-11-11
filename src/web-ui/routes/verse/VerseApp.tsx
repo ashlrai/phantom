@@ -72,6 +72,7 @@ import { onActivityCompletions, useActivity } from './shell/useActivity.js';
 import { useViewport } from './shell/viewport.js';
 import { CompactNavStrip, type CompactNavId } from './shell/CompactNavStrip.js';
 import { useUnreadTitle } from './shell/last-seen-store.js';
+import { HOME_PANE_IDS } from './shell/home-view.js';
 import { setHomeChoice, useHomeView } from './shell/home-view-store.js';
 import type { UnreadCounts } from './shell/unread-counts.js';
 import type { WarmupOptions } from './shell/warmup.js';
@@ -513,13 +514,13 @@ export function PhantomApp() {
   const currentPage = sectionEntry(ui.section);
   // The landing view (Leader by default) replaces the Home section; below 720
   // the compact strip carries navigation and, above the phone layout, the rail steps aside on it.
-  const homePane = home.view === 'leader' ? 'leader-thread' : home.view === 'feed' ? 'feed' : null;
+  const homePane = home.view === 'live' ? null : HOME_PANE_IDS[home.view];
   const homeShowing = ui.section === 'live' && homePane !== null;
   // The tab row (Leader / Feed / Needs you / Fleet) replaces side columns in a narrow window.
   const tabRow = narrow || home.layout === 'compact';
   const homeNarrow = homeShowing && home.layout === 'compact' && !compact;
   const stripActive: CompactNavId | null = ui.overlay === 'needs-you' ? 'needs-you'
-    : ui.section === 'fleet' ? 'fleet' : homeShowing ? (home.view === 'feed' ? 'feed' : 'leader') : null;
+    : ui.section === 'fleet' ? 'fleet' : homeShowing && home.view !== 'live' ? home.view : null;
   useUnreadTitle(unread.leader + unread.feed + (needsYouCount ?? 0));
   const selectCompactNav = (id: CompactNavId) => {
     closeVerseOverlay();
@@ -545,7 +546,7 @@ export function PhantomApp() {
       data-focus={focus ? 'on' : undefined}
       data-home-narrow={homeNarrow || undefined}
     >
-      <Suspense fallback={null}><WindowTitle /><HomeUnread viewing={homeShowing ? (home.view === 'feed' ? 'feed' : 'leader') : null} onCounts={onUnread} /></Suspense>
+      <Suspense fallback={null}><WindowTitle /><HomeUnread viewing={homeShowing && (home.view === 'feed' || home.view === 'leader') ? home.view : null} onCounts={onUnread} /></Suspense>
       <nav className={styles.rail} data-rail={expanded ? 'expanded' : 'collapsed'} aria-label={`${PRODUCT_NAME} sections`}>
         {/*
           Desktop shell: the window's top 48px is overlaid by the OS title bar
