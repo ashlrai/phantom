@@ -43,7 +43,6 @@ describe('drop-folder fleet status', () => {
   it('queues one threaded, counts-only reply and suppresses replays even with a changed body', async () => {
     const state = await readFleetRunsDirState({ runsDir, now: () => now().getTime() });
     state.sources.status = 'healthy'; state.paused = false;
-    state.lastTick = '2026-11-01T04:07:55.000Z';
     state.lanes = [{ lane: 'secret-path', running: 2, target: 3, queued: 1, held: true,
       floor: null, ceiling: null, heldReason: '/private/key secret', tokensLastHour: null, merged24h: null, mergeRate24h: null }];
     state.events = [{ at: '', kind: 'secret', text: '/private/raw-log-secret' }];

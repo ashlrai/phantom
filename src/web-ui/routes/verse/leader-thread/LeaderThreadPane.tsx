@@ -1,4 +1,3 @@
-import { DotReplyAge } from './DotReplyAge.js';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { OUTBOX_KIND_LABEL } from '../../../../core/fleet/outbox-kind.js';
 import { computeLaneHealth, laneHealthLine, stuckBadge } from '../../../../core/fleet/lane-health.js';
@@ -460,7 +459,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       </details>
     </section>
     <DirectivesStrip read={directives.data} actions={actions} adding={addingDirective} onAddingChange={setAddingDirective} />
-    <header><DotReplyAge visible={visible} /> <button type="button" disabled={checkingStatus} onClick={() => void checkStatus()}>{checkingStatus ? 'Checking…' : 'Status now'}</button> <button type="button" aria-pressed={needsYouOnly} onClick={() => setNeedsYouOnly(value => !value)}>Needs you only</button> <button type="button" onClick={() => setFindOpen(true)}>Find</button></header>
+    <header><button type="button" disabled={checkingStatus} onClick={() => void checkStatus()}>{checkingStatus ? 'Checking…' : 'Status now'}</button> <button type="button" aria-pressed={needsYouOnly} onClick={() => setNeedsYouOnly(value => !value)}>Needs you only</button> <button type="button" onClick={() => setFindOpen(true)}>Find</button></header>
     {findOpen ? <div onKeyDown={event => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeFind(); }
     }}>

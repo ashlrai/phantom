@@ -61,10 +61,8 @@ export async function cmdIMessage(args: string[]): Promise<number> {
         const r = await ingestIMessages(cfg);
         await sendLeaderReplies(cfg); // best effort; dry run unless comms.leaderRepliesSend is true
         const f = r.findings;
-        const mirror = f === null || (f.posted === 0 && f.pending === 0 && f.announced === 0) ? '' : `, findings +${f.posted}${f.announced > 0 ? `, patches +${f.announced}` : ''}${f.pending > 0 ? ` (${f.pending} pending)` : ''}`;
-        const p = r.patches;
-        const transfers = p === null || (p.frames === 0 && p.expired === 0) ? '' : `, patch frames ${p.frames}${p.completed > 0 ? `, artifacts +${p.completed}` : ''}${p.rejected > 0 ? `, rejected ${p.rejected}` : ''}${p.expired > 0 ? `, expired ${p.expired}` : ''}`;
-        out({ dryRun: false, ...r }, `iMessage poll: ${r.state}; scanned ${r.scanned}, accepted ${r.accepted}, duplicate ${r.duplicate}, refused ${r.refused}${r.deferred ? ', deferred' : ''}${r.notMason > 0 ? `, not Mason ${r.notMason}` : ''}${r.teammate > 0 ? `, teammate ${r.teammate}` : ''}${mirror}${transfers}`);
+        const mirror = f === null || (f.posted === 0 && f.pending === 0) ? '' : `, findings +${f.posted}${f.pending > 0 ? ` (${f.pending} pending)` : ''}`;
+        out({ dryRun: false, ...r }, `iMessage poll: ${r.state}; scanned ${r.scanned}, accepted ${r.accepted}, duplicate ${r.duplicate}, refused ${r.refused}${r.deferred ? ', deferred' : ''}${r.notMason > 0 ? `, not Mason ${r.notMason}` : ''}${r.teammate > 0 ? `, teammate ${r.teammate}` : ''}${mirror}`);
         return r.ok ? 0 : 1;
       }
       // Dry run: read only, cursor untouched, counts only.

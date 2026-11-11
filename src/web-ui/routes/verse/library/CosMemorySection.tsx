@@ -4,7 +4,7 @@
  * go through the mutation token. Every string from the server renders as plain
  * text, never HTML.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { MemoryEntry, MemoryKind } from '../../../../core/cos/memory.js';
 import { ApiError, apiGet, apiPost } from '../../../data/client.js';
 import { useMutationHold, useQuery, useRefetch } from '../../../data/hooks.js';
@@ -28,8 +28,6 @@ const cosMemoryQuery: QueryDef<MemoryEntry[]> = {
 const failure = (err: unknown): string =>
   err instanceof ApiError ? cosMemoryOutcome(err.status, err.detail) : cosMemoryOutcome(0);
 
-export const LIBRARY_MEMORY_POLL_MS = 15_000;
-
 export function CosMemorySection({ visible }: { visible: boolean }) {
   const memory = useQuery(cosMemoryQuery, { enabled: visible });
   const refetch = useRefetch(cosMemoryQuery);
@@ -40,13 +38,6 @@ export function CosMemorySection({ visible }: { visible: boolean }) {
   const [sending, setSending] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [note, setNote] = useState('');
-  const [expanded, setExpanded] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!visible) return undefined;
-    const timer = setInterval(refetch, LIBRARY_MEMORY_POLL_MS);
-    return () => clearInterval(timer);
-  }, [visible, refetch]);
 
   async function remember() {
     if (!token) { setNote(cosMemoryOutcome(401)); return; }
@@ -84,7 +75,6 @@ export function CosMemorySection({ visible }: { visible: boolean }) {
     <section className={styles.section} aria-label="What Phantom remembers about you">
       <h2>What Phantom remembers about you</h2>
       <p className={styles.meta}>The Leader reads this before every request. Forget anything that is wrong.</p>
-      {memory.error && memory.data ? <CardNote tone="danger">Could not refresh memory{memory.error instanceof ApiError ? ` (HTTP ${memory.error.status})` : ''}.</CardNote> : null}
       {memory.error && !memory.data ? (
         <CardNote tone="danger">What Phantom remembers is unavailable right now.</CardNote>
       ) : !memory.data ? (
@@ -96,9 +86,7 @@ export function CosMemorySection({ visible }: { visible: boolean }) {
           {rows.map((row) => (
             <li key={row.id} className={styles.busRow}>
               <span className={styles.busWho}><span className={styles.chip}>{row.kind}</span> {row.source} · {row.age}</span>
-              <button type="button" className={styles.hit} aria-expanded={expanded === row.id} onClick={() => setExpanded(expanded === row.id ? null : row.id)}>
-                <span className={styles.busText} style={expanded === row.id ? undefined : { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{row.text}</span>
-              </button>
+              <span className={styles.busText}>{row.text}</span>
               {confirming === row.id ? (
                 <div className={styles.actions}>
                   <span className={styles.meta}>Forget this for good?</span>

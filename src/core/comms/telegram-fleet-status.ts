@@ -29,29 +29,21 @@ const timestamp = (value: string | null | undefined): string => {
 };
 
 export async function telegramFleetStatus(deps: TelegramFleetStatusDeps = {}): Promise<string> {
-  let now = new Date(NaN);
-  try { now = (deps.now ?? (() => new Date()))(); } catch { /* Clock evidence is unavailable. */ }
-  const clock = now instanceof Date ? now.getTime() : NaN;
-  const time = Number.isFinite(clock) ? new Date(clock).toISOString() : 'unavailable';
+  const now = (deps.now ?? (() => new Date()))();
+  const time = Number.isFinite(now.getTime()) ? now.toISOString() : 'unavailable';
   const [runsResult, workersResult, supplyResult, quotaResult] = await Promise.allSettled([
-    Promise.resolve().then(() => (deps.readRuns ?? (() => readFleetRunsDirState({ runsDir: deps.runsDir, now: () => clock })))()),
-    Promise.resolve().then(() => (deps.readWorkers ?? (() => listLiveWorkers({ now: () => clock })))()),
+    Promise.resolve().then(() => (deps.readRuns ?? (() => readFleetRunsDirState({ runsDir: deps.runsDir, now: () => now.getTime() })))()),
+    Promise.resolve().then(() => (deps.readWorkers ?? (() => listLiveWorkers({ now: () => now.getTime() })))()),
     Promise.resolve().then(() => (deps.readSupply ?? (() => readStatusSupply(deps.runsDir, () => now)))()),
-    Promise.resolve().then(() => (deps.readQuota ?? (() => readQuotaLines(clock)))()),
+    Promise.resolve().then(() => (deps.readQuota ?? (() => readQuotaLines(now.getTime())))()),
   ]);
   const runs = runsResult.status === 'fulfilled' ? runsResult.value : null;
   const workers = workersResult.status === 'fulfilled' ? workersResult.value : null;
-  const tick = timestamp(runs?.lastTick);
-  const tickMs = tick === 'unavailable' ? NaN : Date.parse(tick);
-  const age = clock - tickMs;
-  const dispatcher = runs?.sources.status === 'healthy' && Number.isFinite(age) && age >= 0 && age <= 60_000;
-  const observation = dispatcher ? 'current' : Number.isFinite(age) && age > 60_000 ? 'stale' : 'unknown';
   const observed = workers?.sourceState === 'healthy' ? workers.workers : null;
   const rows = LANES.map(lane => {
-    const laneData = runs?.lanes.find(item => item.lane === lane);
-    const reported = dispatcher ? laneData : undefined;
+    const reported = runs?.lanes.find(item => item.lane === lane);
     const live = observed ? count(observed.filter(item => item.lane === lane).length) : 'unavailable';
-    const usage = runs?.sources.metrics === 'healthy' ? count(laneData?.tokensLastHour) : 'unavailable';
+    const usage = runs?.sources.metrics === 'healthy' ? count(reported?.tokensLastHour) : 'unavailable';
     return `${lane}: observed ${live}; reported ${count(reported?.running)}; queue ${count(reported?.queued)}; target ${count(reported?.target)}; held ${reported ? (reported.held ? 'yes' : 'no') : 'unavailable'}; tokens/1h ${usage}`;
   });
   const other = observed ? count(observed.filter(item => !LANES.some(lane => lane === item.lane)).length) : 'unavailable';
@@ -60,7 +52,7 @@ export async function telegramFleetStatus(deps: TelegramFleetStatusDeps = {}): P
     `Fleet status at ${time}`,
     ...rows,
     `Other lanes: observed ${other}; reported/queue/target/held unavailable`,
-    `Last tick: ${tick} (dispatcher observation ${observation})`,
+    `Last tick: ${timestamp(runs?.lastTick)}`,
     `Sources: runs=${health(runs?.sourceState)}, workers=${health(workers?.sourceState)}; ${sources}`,
     'Usage: token counts are local completed-job metrics; quota lines come from provider windows; unavailable when unknown.',
     ...(quotaResult.status === 'fulfilled' ? boundedQuotaLines(quotaResult.value) : ['Quota: unavailable']),

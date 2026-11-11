@@ -8,7 +8,6 @@
  */
 import type { BusChannel } from '../fleet/bus-envelope.js';
 import { CHANNEL_BUS_TTL_MS } from '../fleet/channel-bus-publish.js';
-import { acceptLocalMailboxOnce } from './local-mailbox-receipts.js';
 import { appendInboxEntry } from '../fleet/mason-inbox.js';
 import { createLeaderNetwork } from '../agents/leader-network.js';
 import { readLeaderNetworkConfig } from '../agents/leader-network-runtime.js';
@@ -64,26 +63,12 @@ export function createLeaderMailbox(options: { runsDir: string; configDir?: stri
       try {
         // iMessage text stays in the local leader inbox. It does not ride the shared bus.
         if (message.channel === 'imessage') {
-          if (!message.idempotencyKey) return { status: 'refused' as const, reason: 'Leader inbox needs an idempotency key.' };
-          let refused = false;
-          const once = await acceptLocalMailboxOnce({
-            runsDir: options.runsDir,
-            identity: { channel: message.channel, senderId: message.senderId, idempotencyKey: message.idempotencyKey },
-            now: options.now,
-          }, async () => {
-            const written = await appendInboxEntry(message.text, {
-              runsDir: options.runsDir, source: 'imessage', now: () => new Date(message.receivedAt),
-            });
-            refused = !written.ok && written.reason !== 'write-failed';
-            return written.ok ? written.id : null;
+          const written = await appendInboxEntry(message.text, {
+            runsDir: options.runsDir, source: 'imessage', now: () => new Date(message.receivedAt),
           });
-          if (once.state === 'accepted' || once.state === 'duplicate') {
-            return { status: once.state, requestId: once.requestId };
-          }
-          if (once.state === 'declined' && refused) {
-            return { status: 'refused' as const, reason: 'Leader inbox refused the owner message.' };
-          }
-          return { status: 'unavailable' as const, reason: 'Leader inbox is unavailable.' };
+          return written.ok
+            ? { status: 'accepted' as const, requestId: written.id }
+            : { status: 'refused' as const, reason: 'Leader inbox refused the owner message.' };
         }
         const sources = readLeaderNetworkConfig({ configDir: options.configDir, runsDir: options.runsDir });
         const channel = ownerChannelToBus(message.channel);

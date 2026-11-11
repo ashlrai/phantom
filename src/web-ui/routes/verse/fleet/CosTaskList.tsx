@@ -9,7 +9,6 @@ const CHANNELS: Record<string, string> = { telegram: 'Telegram', email: 'Email',
 function stateLabel(task: CosTaskListRow): string {
   if (task.needsYou) return 'Needs your approval';
   if (task.delivery === 'sent') return 'Sent';
-  if (task.delivery === 'declined') return 'Declined';
   if (task.delivery === 'uncertain') return 'Delivery uncertain';
   if (task.delivery === 'sending') return 'Sending';
   switch (task.jobStatus) {

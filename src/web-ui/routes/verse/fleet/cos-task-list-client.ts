@@ -5,7 +5,7 @@ export const COS_LIST_PATH = '/api/verse/fleet/cos/list?limit=20';
 /** Mirrored desktop wire contract; deliberately independent of src/core. */
 export interface CosTaskListRow {
   id: string; jobStatus: string; channel: string; needsYou: boolean;
-  delivery: null | 'sending' | 'sent' | 'uncertain' | 'declined'; hasDraft: boolean; request: string;
+  delivery: null | 'sending' | 'sent' | 'uncertain'; hasDraft: boolean; request: string;
 }
 
 function isRow(value: unknown): value is CosTaskListRow {
@@ -15,7 +15,7 @@ function isRow(value: unknown): value is CosTaskListRow {
     && typeof row.jobStatus === 'string' && /^[A-Z][A-Z_]*$/.test(row.jobStatus)
     && typeof row.channel === 'string' && row.channel.length > 0
     && typeof row.needsYou === 'boolean' && typeof row.hasDraft === 'boolean'
-    && (row.delivery === null || row.delivery === 'sending' || row.delivery === 'sent' || row.delivery === 'uncertain' || row.delivery === 'declined')
+    && (row.delivery === null || row.delivery === 'sending' || row.delivery === 'sent' || row.delivery === 'uncertain')
     && typeof row.request === 'string' && row.request.length <= 140 && !/[\r\n\u2028\u2029]/.test(row.request);
 }
 

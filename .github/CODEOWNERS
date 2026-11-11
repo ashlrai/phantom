@@ -310,7 +310,6 @@
 /test/codex-selected-producer.test.ts @masonwyatt23
 /test/codex-session-usage.test.ts @masonwyatt23
 /test/comms-agent-send-policy.test.ts @masonwyatt23
-/test/comms-send-policy-typefix-s133.test.ts @masonwyatt23
 /test/comms-telegram-leader-314.test.ts @masonwyatt23
 /test/comms-telegram-leader-thread-real-314.test.ts @masonwyatt23
 /test/completeness-gate-stash-hardening-310b.test.ts @masonwyatt23
@@ -407,7 +406,6 @@
 /test/fleet-companion-mcp.test.ts @masonwyatt23
 /test/fleet-conflict-risk.test.ts @masonwyatt23
 /test/fleet-control-315.test.ts @masonwyatt23
-/test/fleet-cos-loop.test.ts @masonwyatt23
 /test/fleet-daily-reds.test.ts @masonwyatt23
 /test/fleet-dep-gate.test.ts @masonwyatt23
 /test/fleet-gate-run.test.ts @masonwyatt23

@@ -21,7 +21,6 @@ number.
 - [`CONTRACT-SELECTOR.md`](./CONTRACT-SELECTOR.md) — hourly ranker that funds the top candidates as READY lines and records picks with predicted value.
 - [`CONTRACT-OPERATOR-GLANCE.md`](./CONTRACT-OPERATOR-GLANCE.md) — one glance and plain-language orders for phone, Telegram, and email.
 - [`CONTRACT-CHANNELS.md`](./CONTRACT-CHANNELS.md) — `phm channels add` (config only, credentials in custody) and `phm channels status --json` (real counts or `unknown`).
-- [`CONTRACT-DONE-CONTRACT-V1.md`](./CONTRACT-DONE-CONTRACT-V1.md) — layered per-job done contract (floor + frozen acceptance + verify commands) and the `phm verify done` validator.
 
 - `CONTRACT-M3.md` … `CONTRACT-M30.md` — v1 (M1–M20) + v2 (M21–M30, the Autonomous Engineering Organization).
 - `CONTRACT-H1.md` … — v2.1 "Harden & Prove" (end-to-end chain harness, crash recovery, concurrency/budget stress, …).

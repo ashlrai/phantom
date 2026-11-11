@@ -360,4 +360,4 @@ Tier-1 import diagnosis: `npx tsx scripts/tier1-why.ts <file> [--json]` prints a
 
 ## Portable agent profiles
 
-See [agent profiles](docs/AGENT-PROFILES.md) for strict TOML metadata, version pins and restrictive send policy. Read profiles with `phm agents list|show|validate|versions --json`. Profiles grant no transport or spending authority; the email outbox runs outside sends through `checkSend`, which can only ever draft or deny.
+See [agent profiles](docs/AGENT-PROFILES.md) for strict TOML metadata, version pins and restrictive send policy. Read profiles with `phm agents list|show|validate|versions --json`. Profiles grant no transport or spending authority; email outbox wiring is deferred.

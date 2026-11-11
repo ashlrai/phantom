@@ -3,7 +3,7 @@ import { emailFleetStatus, type EmailFleetStatusReaders } from '../src/core/comm
 
 const readers: EmailFleetStatusReaders = {
   runs: async () => ({
-    sources: { status: 'healthy' }, paused: false, lastTick: '2026-11-11T11:59:30.000Z',
+    sources: { status: 'healthy' }, paused: false,
     lanes: [{ lane: '/private/message', running: 2, target: 3, queued: 1, held: true }],
   }) as Awaited<ReturnType<NonNullable<EmailFleetStatusReaders['runs']>>>,
   workers: async () => { throw new Error('/private/worker message contents'); },
@@ -21,8 +21,7 @@ describe('email fleet status clock failures', () => {
   ])('preserves safe independent evidence with an %s', async (_name, clock) => {
     const body = await emailFleetStatus(undefined, clock, readers);
     expect(body).toContain('Phantom fleet status (unavailable)');
-    expect(body).toContain('Runs status: unavailable');
-    expect(body).not.toContain('running: 2');
+    expect(body).toContain('running: 2');
     expect(body).toContain('Supply: devin 4 phantom / 1 filler');
     expect(body).toContain('Live workers: unavailable');
     expect(body).toContain('Quota: unavailable');

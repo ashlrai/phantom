@@ -6,7 +6,6 @@ import { apiGet } from '../../data/client.js';
 import { openFleetWorkspace } from './dock/dock-store.js';
 import { curatedWorkspace } from './fleet-hub/fleet-hub-model.js';
 import { DotResourceRow } from './resources/DotResourceRow.js';
-import { SpendDown } from './resources/SpendDown.js';
 import { usePanes } from './panes/pane-registry.js';
 import { setFocusMode } from './shell/focus-mode.js';
 import { usePollWhileVisible } from './shell/section-visibility.js';
@@ -55,7 +54,6 @@ export const SidebarResources = memo(function SidebarResources() {
         <h2 className={styles.heading}>Dot</h2>
         <DotResourceRow />
       </section>
-      <SpendDown />
       <section aria-label="Machine">
         <h2 className={styles.heading}>Machine</h2>
         <button type="button" className={styles.entry} aria-haspopup="dialog" onClick={() => setMachineOpen(true)}>This machine</button>

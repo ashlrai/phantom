@@ -18,7 +18,6 @@
  */
 import {
   MODE_DESCRIPTIONS,
-  engineOfSeatId,
   type CapacityEngine,
   type BudgetView,
 } from '../../../../core/routing/policy.js';
@@ -29,8 +28,8 @@ import { percentText, tidyProse } from '../autonomy/format.js';
 export function automaticReserveSeats(view: BudgetView): Array<{ seatId: string; reservePercent: number; maxSessionWindowPercent: number | null }> {
   return Object.entries(view.effective ?? {}).flatMap(([seatId, policy]) => {
     if (!policy || !policy.enabled) return [];
-    const engine = view.seatInfo?.find((seat) => seat.seatId === seatId)?.engine ?? engineOfSeatId(seatId);
-    if (engine === 'devin' || engine === 'local') return [];
+    const engine = view.seatInfo?.find((seat) => seat.seatId === seatId)?.engine;
+    if (engine ? engine === 'local' : /^(devin|local)/i.test(seatId)) return [];
     const ceiling = policy.maxSessionWindowPercent ?? null;
     if (!(policy.reservePercent > 0 || (ceiling !== null && ceiling < 100))) return [];
     return [{ seatId, reservePercent: policy.reservePercent, maxSessionWindowPercent: ceiling }];
