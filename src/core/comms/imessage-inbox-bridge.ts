@@ -41,6 +41,7 @@
 
 import { sendIMessageOutbox } from './imessage-outbox.js';
 import { recordTeammateText, senderIdFor } from './imessage-teammate-inbox.js';
+import { recordPatchFrame, sweepPatchTransfers } from './imessage-patch-transfer.js';
 import { bridgeTeammateFindings, type FindingsBridgeOptions, type FindingsBridgeReport } from './imessage-findings-bridge.js';
 import { appendFileSync, chmodSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -153,7 +154,12 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
       const message = imessageChannelMessage(msg);
       if (!isVerifiedMasonHandle(msg.handle, cfg)) {
         result.notMason++;
-        if (recordTeammateText(msg, deps.runsDir, now())) result.teammate++;
+        // Protocol frames stay in the private transfer store, never the findings mirror.
+        // A failed ledger write must leave the cursor before this frame for retry.
+        const frame = recordPatchFrame(msg, { runsDir: deps.runsDir, now });
+        if (frame.handled) {
+          if (frame.outcome === 'unavailable') { result.deferred = true; break; }
+        } else if (recordTeammateText(msg, deps.runsDir, now())) result.teammate++;
         else {
           // A teammate's artifact is not receipted until its local record is durable.
           result.deferred = true;
@@ -177,6 +183,7 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
       cursor = msg.rowid;
     }
     if (cursor !== start) writeCursor(cursor, deps.runsDir, now);
+    sweepPatchTransfers({ runsDir: deps.runsDir, now });
     return { ...result, ok: !result.deferred, state: 'ingested', cursor, findings: findings() };
   } catch {
     return result;
