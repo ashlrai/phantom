@@ -361,3 +361,5 @@ Tier-1 import diagnosis: `npx tsx scripts/tier1-why.ts <file> [--json]` prints a
 ## Portable agent profiles
 
 See [agent profiles](docs/AGENT-PROFILES.md) for strict TOML metadata, version pins and restrictive send policy. Read profiles with `phm agents list|show|validate|versions --json`. Profiles grant no transport or spending authority; the email outbox runs outside sends through `checkSend`, which can only ever draft or deny.
+
+- [oMLX dispatcher lane](contrib/mac/README.md): memory-capped `omlx` pool, `127.0.0.1` health only, `phm lanes --json`; Security combined RETUNE pin required before installation.
