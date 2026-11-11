@@ -153,6 +153,7 @@ export interface VerseUiState {
   recentActions: readonly string[];
   /** Most-recently-used chats, current first (⌃Tab). */
   recentChats: readonly string[];
+  feedMutedKinds: string[];
   // ── not persisted ──
   /** Surfaces kept mounted (hidden + inert) behind the current one, most recent first. */
   mounted: readonly VerseSectionId[];
@@ -186,6 +187,7 @@ const DEFAULTS: VerseUiState = {
   resourcesWidth: VERSE_RESOURCES.def,
   recentActions: [],
   recentChats: [],
+  feedMutedKinds: [],
   mounted: ['live'],
   overlay: null,
   needsYouSplit: 'all',
@@ -219,6 +221,7 @@ interface PersistedV3 {
   resourcesWidth: number;
   recentActions: string[];
   recentChats: string[];
+  feedMutedKinds: string[];
   lastLaunchDay: string | null;
   chatMovedAnnounced: boolean;
   dock: unknown;
@@ -301,6 +304,7 @@ export function loadVerseUi(options: LoadOptions = {}): VerseUiState {
       return paneId === null ? id : `pane.${paneId}`;
     }),
     recentChats: stringList(src['recentChats'], RECENT_CHATS_LIMIT, /^[\w.-]{1,200}$/),
+    feedMutedKinds: stringList(src['feedMutedKinds'], 100, /^[a-z][a-z0-9-]{0,63}$/),
     mounted: [section],
     overlay,
     history: { entries: [{ section, sessionId: null }], index: 0 },
@@ -326,6 +330,7 @@ function persist(next: VerseUiState): void {
     resourcesWidth: next.resourcesWidth,
     recentActions: [...next.recentActions],
     recentChats: [...next.recentChats],
+    feedMutedKinds: [...next.feedMutedKinds],
     lastLaunchDay,
     chatMovedAnnounced,
     dock: getDockState(),
@@ -346,6 +351,7 @@ const PERSISTED_FIELDS = [
   'resourcesWidth',
   'recentActions',
   'recentChats',
+  'feedMutedKinds',
 ] as const satisfies readonly (keyof VerseUiState)[];
 
 /** Snapshot identity only changes when something actually changed. */
@@ -542,6 +548,10 @@ export function setVerseNeedsYouSplit(split: NeedsYouSplit): void {
 // ===========================================================================
 // Preferences
 // ===========================================================================
+
+export function setFeedMutedKinds(kinds: string[]): void {
+  patch({ feedMutedKinds: stringList(kinds, 100, /^[a-z][a-z0-9-]{0,63}$/) });
+}
 
 export function setVerseRailExpanded(expanded: boolean): void {
   patch({ railExpanded: expanded });

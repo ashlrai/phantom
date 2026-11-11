@@ -25,10 +25,14 @@ export const VERSE_LEADER_ATTACHMENT_PATH = '/api/verse/leader/attachment';
 export const LEADER_ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
 
 const EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' } as const;
-type AttachmentType = keyof typeof EXT;
+export type AttachmentType = keyof typeof EXT;
+/** Extension → declared Content-Type, the inverse of EXT (the read route's lookup). */
+export const MIME_BY_EXT = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp' } as const satisfies Record<string, AttachmentType>;
+/** The stored name shape: sha256-first-16 plus the extension its magic declared. */
+export const LEADER_ATTACHMENT_NAME_RE = /^[0-9a-f]{16}\.(png|jpg|webp)$/;
 
 /** Magic bytes must agree with the declared type. */
-function matchesMagic(type: AttachmentType, b: Buffer): boolean {
+export function matchesMagic(type: AttachmentType, b: Buffer): boolean {
   if (type === 'image/png') return b.length >= 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
   if (type === 'image/jpeg') return b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
   return b.length >= 12 && b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP';
@@ -54,6 +58,11 @@ function runsDir(): string {
   return process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
 }
 
+/** `<runs dir>/inbox-attachments` — the ONE directory screenshots are stored in and read from. */
+export function leaderAttachmentDir(): string {
+  return join(runsDir(), 'inbox-attachments');
+}
+
 export async function handleLeaderAttachment(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse, method: string): Promise<boolean> {
   if (method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
   if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
@@ -72,7 +81,7 @@ export async function handleLeaderAttachment(ctx: VerseApiContext, req: Incoming
   if (!matchesMagic(kind, body)) { sendJson(res, 415, { error: `the bytes are not a ${type} image` }); return true; }
 
   const sha256 = createHash('sha256').update(body).digest('hex');
-  const dir = join(runsDir(), 'inbox-attachments');
+  const dir = leaderAttachmentDir();
   const path = join(dir, `${sha256.slice(0, 16)}.${EXT[kind]}`);
   try {
     await mkdir(dir, { recursive: true, mode: 0o700 });
