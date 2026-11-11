@@ -105,7 +105,7 @@ describe('UniverseView', () => {
     current.runs = [];
     current.elites = [];
     const fetch = mount(overview({ universes: [current] }));
-    await screen.findByRole('heading', { name: 'This universe is registered' });
+    await screen.findByRole('heading', { name: 'This experiment workspace is registered' });
     expect(screen.getByRole('heading', { name: 'Phantom' })).toBeInTheDocument();
     expect(screen.getByText(/Verify the evaluator and required runtime before starting/)).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledOnce();
@@ -130,7 +130,7 @@ describe('UniverseView', () => {
   it.each([false, true])('pins every displayed operational command to the scoped store (populated: %s)', async (populated) => {
     const root = "/private/lab's $data; with spaces";
     mount(populated ? overview({ campaigns: [campaign()], deliveryReports: [deliveryReport()] }) : overview({ universes: [] }), root);
-    await screen.findByRole('heading', { name: populated ? 'Compiler laboratory' : 'Start your first universe' });
+    await screen.findByRole('heading', { name: populated ? 'Compiler laboratory' : 'Start your first experiment workspace' });
     const commands = [...document.querySelectorAll('code')]
       .flatMap((node) => (node.textContent ?? '').split('\n'))
       .filter((line) => line.startsWith('ashlr universe '));
@@ -407,7 +407,7 @@ describe('UniverseView', () => {
   it('does not describe unreadable history as a first-run empty state', async () => {
     mount(overview({ sourceState: 'degraded', universes: [], reasons: ['Invalid experiment record'] }));
     expect(await screen.findByText('Invalid experiment record')).toBeInTheDocument();
-    expect(screen.queryByText('Start your first universe')).not.toBeInTheDocument();
+    expect(screen.queryByText('Start your first experiment workspace')).not.toBeInTheDocument();
   });
 
   it('does not infer an empty archive or a replacement winner from degraded history', async () => {
@@ -518,7 +518,7 @@ describe('UniverseView', () => {
       overview({ campaigns: [campaign({ state: 'ready', owner: null, reason: null })] });
     const fetch = mount(initial);
     await screen.findByText('Refreshes every 15 seconds while visible');
-    await waitFor(() => expect(screen.queryByLabelText('Loading Universe experiments')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByLabelText('Loading experiments')).not.toBeInTheDocument());
     expect(vi.mocked(window.setInterval).mock.calls.filter(([, delay]) => delay === 3_000 || delay === 15_000).at(-1)?.[1]).toBe(15_000);
     fetch.mockResolvedValueOnce(new Response(JSON.stringify(overview({ campaigns: [campaign()] }))));
     await act(async () => { tick?.(); });

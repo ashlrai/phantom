@@ -79,12 +79,12 @@ down by 2, never below the floor 6, and at most once per new completion
 (`step_seen` in `slots.json`). A held devin lane never adjusts. The devin lane
 sits in dispatchd's restock trigger loop beside the codex lanes.
 
-Starvation admission (RQ-LOADGATE-RETUNE). Claims stop on macOS
-`kern.memorystatus_vm_pressure_level >= 4`, swap growth greater than 2 GiB
+Starvation admission (RQ-LOADGATE-RETUNE; real load gate restored by RQ-BATCH-SESSIONS-2).
+Claims stop on load1 above 2 x ncpu, on macOS
+`kern.memorystatus_vm_pressure_level >= 2` (warn: pressure has risen), swap growth greater than 2 GiB
 within the last 300 seconds, or free disk below `DISK_HARD_STOP_GB` (30 GB).
 Swap samples persist across ticks in `admission.json`; startup needs a prior
 sample and expired samples do not trip. Missing pressure or swap probes warn.
-Load above 3 x ncpu halves the four new claims per tick to two, without tripping.
 Process count above 2500 only warns. Worktree count above 40 only warns and
 counts existing directories whose job is in the live `alive` set. Stale daemon
 status also only warns. The ramp pauses only on a hard trip. Running jobs are
@@ -98,18 +98,18 @@ past its `hard_cap`. dispatchd writes `queue/admission.json` (also embedded in
 `status.json`) and logs `LOADGATE tripped|clear` once per change. `phm pool
 admission --json` reports the same verdict read-only. `ashlr fleet admission --json`
 reads the embedded block and says, per lane, whether work is held, at target,
-blocked by the global cap, or ok. `queue/LOADGATE_OFF` is the
-owner's off switch. The `codex-local` mid-tier cap is 4 while the gate is clear
+blocked by the global cap, or ok. `queue/LOADGATE_OFF` no longer waives the gate:
+it is reported as `off_switch_ignored` with a warning. The `codex-local` mid-tier cap is 4 while the gate is clear
 and load is below `ncpu`, 2 at or above `ncpu`, and 1 while the gate is tripped.
 `LOCAL_MID_CAP` overrides this cap with a nonnegative integer; the effective value
 is recorded as `local_mid_cap` in `admission.json`.
 
-Threshold environment overrides: `GATE_PRESSURE_MIN=4`, `GATE_SWAP_GROWTH_GB=2`,
-`GATE_SWAP_WINDOW_S=300`, `GATE_LOAD_PER_CPU=3`, `GATE_PROCS_MAX=2500`,
+Threshold environment overrides: `GATE_PRESSURE_MIN=2`, `GATE_SWAP_GROWTH_GB=2`,
+`GATE_SWAP_WINDOW_S=300`, `GATE_LOAD_PER_CPU=2`, `GATE_PROCS_MAX=2500`,
 `GATE_WORKTREES_MAX=40`, `GATE_TICK_MAX_S=900`, `GATE_STATUS_TIMEOUT=30`,
 and `DISK_HARD_STOP_GB=30`. Gate limits accept positive finite numbers.
 `dispatchd.admission.v2` records all signals, thresholds, warnings, claim limit,
-swap samples and the `admit`, `halve_claims` or `stop` decision. Signal fixtures
+swap samples and the `admit` or `stop` decision. Signal fixtures
 `LOADGATE_LOADAVG`, `LOADGATE_NCPU`, `LOADGATE_PRESSURE`, `LOADGATE_SWAP_GB`
 require `$HOME/.ashlr-runs/LOADGATE_TEST`; disk fixtures separately require
 `DISKGUARD_TEST` and `DISKGUARD_FREE_GB`.
@@ -195,7 +195,7 @@ multiplicative decrease, and keeps its state in `queue/concurrency.json`:
 
 | Signal | ok (headroom) | danger (back off) | Starvation gate trips at |
 |---|---|---|---|
-| load1 / (ncpu x `GATE_LOAD_PER_CPU`) | < 0.5 | >= 0.8 | warns only at 1.0 |
+| load1 / (ncpu x min(`GATE_LOAD_PER_CPU`, 2.5)) | < 0.5 | >= 0.8 | warns only at 1.0 |
 | `kern.memorystatus_vm_pressure_level` | 1 | >= 2 | 4 |
 | `memory_pressure` free % | >= 25 | < 15 | n/a |
 | swap growth in the gate window | < 0.25 x `GATE_SWAP_GROWTH_GB` | >= 0.5 x | 1.0 x |
@@ -203,6 +203,10 @@ multiplicative decrease, and keeps its state in `queue/concurrency.json`:
 | processes / `GATE_PROCS_MAX` | < 0.7 | >= 0.85 | warns only |
 | fork failures (15 min) | 0 | >= 1 | n/a |
 | provider 429 / overload hits (15 min) | 0 | >= 3 | per-lane halving |
+
+The load danger threshold is never above twice the CPU count, even if the legacy
+load gate is disabled or configured more loosely. Unknown swap growth holds the
+cap rather than counting as zero growth.
 
 - **Raise**: +2, at most every 120 s, and only when every signal is ok and the cap
   is the binding limit: running sessions are at the cap, work is queued, and the
@@ -228,47 +232,86 @@ as a `concurrency` event in `metrics/jobs.jsonl`. `admission.json` carries
 `concurrency` block with `settled_6h`, the time-weighted cap over six hours.
 `python3 concurrency.py [state.json]` prints the same summary.
 
-**Batching.** `batcher.py` lets one session handle many related tasks. When a
-launchable job has at least 2 related ready peers (same repo and tier, and the same
-area: the source directory its prompt names most, such as `src/core/queue`), dispatchd
-launches them together as `RQ-BATCH-<REPO>-<AREA>-<hash>`. Prompts without paths group
-by job family (`RQ-PHX-*`). Tasks from areas too small to batch alone merge per repo;
-they never take members from an area that can batch alone. Batches are evened out
-(n tasks over `ceil(n / size)` batches) and are bounded by 200 000 prompt
+**Batch sessions (per-line PRs).** `batcher.py` and `batch_sessions.py` let one session
+handle up to 10 related ready lines (RQ-BATCH-SESSIONS-2). When a launchable job has at
+least 1 related ready peer (same repo and the same area: the source directory its
+prompt names most, such as `src/core/queue`), dispatchd launches them together as
+`RQ-BATCH-<REPO>-<AREA>-<hash>`. Prompts without paths group by job family
+(`RQ-PHX-*`). Tiers may mix. Tasks from areas too small to batch alone merge per repo;
+they never take members from an area that can batch alone. Bundles are evened out
+(n tasks over `ceil(n / size)` bundles) and are bounded by 200 000 prompt
 characters. These never batch: release (`RQ-REL-`), desktop (`RQ-DESK-`), main-repair
 (`RQ-FIX-MAIN-`) and PR-maintenance kinds (`LAND`, `FIXUP`, `RECUT`, `SALVAGE`,
-`CONSOLIDATE`, `CLOSE`), plus `codex-local`, parked, kept and retired jobs.
+`CONSOLIDATE`, `CLOSE`), plus `codex-local`, `claude-api` (API credits), parked, kept
+and retired jobs.
 
-The batch prompt (`queue/prompts/<batch>.md`) tells the session to fan out
-subagents. It also carries a per-task checklist that the session keeps in
-`BRIDGE_NOTES.md`, one line per task:
-`- [x] <JOB> — done: ...` or `- [ ] <JOB> — failed|skipped|deferred: ...`.
-`queue/batches/<batch>.json` records the members, their original ready lines and
-prompts. Each member gets `queue/run/<job>.batched` while the batch runs (a
-duplicate ready line is dropped as `SKIP_BATCHED`) and a `batch_claim` metric.
+Every line keeps its own single-claim lease, `queue/run/<job>.batched`, created with
+`O_EXCL` and released only by the bundle that owns it. A duplicate ready line is
+dropped as `SKIP_BATCHED`; a lease whose bundle manifest is gone is released as
+`LEASE_ORPHANED`. dispatchd runs `batch-launch.sh` instead of `launch.sh` for a
+bundle. The wrapper gives each leased line its own linked worktree
+(`wt/<job>`, branch `codex-bridge/<job>`, node_modules as an APFS clone) and `.base`
+record, then execs the unchanged `launch.sh` for the session. A line it cannot prepare
+gets `<job>.prep-failed` and is reported deferred. The bundle prompt
+(`queue/prompts/<batch>.md`) gives each line its worktree and subagent model and tells
+the session to fan out one subagent per line, with one BRIDGE_NOTES.md per line
+worktree. The session keeps a checklist in its own BRIDGE_NOTES.md:
+`- [x] <JOB>: done: ...` or `- [ ] <JOB>: failed|skipped|deferred: ...`.
+`queue/batches/<batch>.json` records the members, their models, original ready lines
+and prompts.
 
 At reap, every member gets its own `task_outcome` metric (`done`, `skipped`,
-`failed`, `deferred` or `unreported`). Members that are failed, deferred or
-unreported go back to `ready.tsv` as individual lines. A task runs in at most 2
-batches (`<job>.batch-attempts`) and then only solo. The `BATCH_REAPED` event
-summarises the counts. The batch per-job precheck is skipped, because the session
-checks each task.
+`failed`, `deferred` or `unreported`, plus `model`). Done and skipped lines are handed
+to the normal per-job reap (`<job>.bundled-in`, a pointer `.log`), so `reap-one.sh`
+and `publish.sh` ship each one as its own PR; their `finish` rows carry `bundle`.
+Every other line releases only its own lease: its worktree is removed when clean or
+moved to `wt/.bundle-failed/` when it has changes, and the line goes back to
+`ready.tsv` alone. When its worktree can be neither removed nor moved
+(`BUNDLE_MEMBER_KEPT`), the line still goes back alone and its solo retry reuses the
+worktree. Each handled member is recorded in the manifest (`handled`), so a reap the
+maintenance deadline interrupts resumes without requeueing anyone twice. A bundle
+whose spawn fails (EAGAIN, ENOMEM) puts its members back in the same tick. Requeued
+lines that miss the end-of-tick `ready.tsv` write (lock busy) are carried in
+`queue/requeue-pending.tsv` to the next tick. The bundle's own worktree only holds the checklist, which is kept
+as `queue/batches/<batch>.notes.md` before the worktree is removed. A line runs in at
+most 2 bundles (`<job>.batch-attempts`) and then only solo.
 
-Batch size starts at 16 per lane and stays between 4 and 64
+Model mix (`batch-sessions.json`, subscriptions only): Claude lines get Sonnet
+subagents, and Opus for `tier=frontier` or hard markers (architecture, migration,
+concurrency, security and similar). The Claude bundle session itself runs at `work`
+tier. Fable is never assigned here; the broker's `fable-share` keeps its benchmarked
+share. Codex lanes run `gpt-6.1-terra`; Devin runs the free `swe-2-flash`. With the
+file installed, Devin keeps only lines from `eligible_repos` declaring `size<=100`
+or less; the rest log `DEVIN_ROUTE <job> repo-not-eligible|size-not-sm -> <lane>`
+and move to the first unheld fallback lane.
+
+Bundle size starts at 8 per lane and stays between 2 and 10
 (`queue/batch-tuning.json`). After each reap it grows x 1.25 when at least 85% of
 tasks are done or skipped within 4 h. It shrinks x 0.7 below 60%, on a timeout, or
-when the lane's batches complete fewer tasks per session-hour than its single
+when the lane's bundles complete fewer tasks per session-hour than its single
 sessions. The lane is the one with the most tasks per session-hour among the lanes
 the router proposed for the members that have a free slot (3 or more sessions of
-history; otherwise the lead's lane). Batches never move to a lane the router did
-not propose. `python3 batcher.py report [--json] [--window-h 168]` prints tasks per
-session-hour and per million tokens by lane and by mode (single vs batch): the
-before/after comparison. Only PR-published work counts. `queue/BATCH_OFF` is the off
-switch.
+history; otherwise the lead's lane). `python3 batcher.py report [--json]` prints
+tasks per session-hour and per million tokens by lane and mode. `python3
+batch_sessions.py northstar --cutover <epoch> [--window-h 24] [--record]` prints
+tasks finished per session, iterations (finished sessions) per hour and merged PRs
+per iteration before and after the cutover. With `--record` it appends both rows to
+`metrics/northstar.jsonl` and writes `bus/batch-sessions-first-numbers.md`.
+`queue/BATCH_OFF`, or a missing `bin/batch-launch.sh`, keeps every line solo.
+
+**Mac hygiene.** `python3 zombie_report.py` groups `<defunct>` processes by
+parent pid and names the parent command, which is the process that does not wait.
+dispatchd polls its detached children at every phase, and `_run` and
+`process_snapshot` wait for a child they killed. `python3 wt_closed_prune.py`
+lists worktrees whose ledger history ends MERGED or CLOSED and that are clean,
+unclaimed, not kept and not named by a running process. `--apply` removes up to
+`--max` (200) of them with `git worktree remove`, never `--force`, and keeps
+branches.
 
 ## Installing the dispatcher
 
-`install.sh` diffs `dispatchd.py`, `concurrency.py`, `batcher.py`, `install-gate.py` and `launch-gate.sh` against
+`install.sh` diffs `dispatchd.py`, `concurrency.py`, `batcher.py`, `batch_sessions.py`, `batch-launch.sh`,
+`batch-sessions.json`, `install-gate.py` and `launch-gate.sh` against
 `~/.ashlr-runs/bin` (or `$ASHLR_RUNS_BIN`, or `--bin DIR`) and installs the ones that
 differ, copying each replaced file to `<file>.bak-macdispatch-<YYYYmmdd-HHMMSS>`
 first. It prints the new sha256 of every file for Security to pin, refuses symlink
@@ -926,6 +969,23 @@ empty are also excluded during restocking, until the base changes. Failed or
 unknown exits remain eligible, so authentication failures do not become cached
 no-ops. Missing refs, malformed metrics, and Git errors allow launch.
 
+The prompt hash covers the whole prompt file, whose first line names the job id
+and lane, so it never matches a re-cut under a new id, a re-route to another
+lane, or the same task after any upstream commit (RQ-CODEXP-EMPTY-1). Claims
+therefore also record `task_hash`: the sha256 of the `<job> (attrs): <task>`
+text with the job id, attrs, case and spacing removed. When two attempts of one
+task in the same repo finished successfully empty within 24 hours, on any id,
+lane or base, the next one is skipped with reason `task_empty_repeat_24h`. One
+empty attempt alone still retries. A prompt without a task line has no
+`task_hash` and is never suppressed by this rule.
+
+The launcher candidate (`host-integration/launch.candidate.sh` and
+`launch.patch`) asks a run that ends with no change to print
+`EMPTY_REASON: <code>` and put the same line first in `BRIDGE_NOTES.md`. The
+code is `duplicate-landed`, `prompt-unclear`, `blocked` or `no-change-needed`.
+`phm fleet empty-causes --lane <lane>` reads that line first when it classifies
+a lane's empty runs; see [FLEET-VERBS](../../docs/FLEET-VERBS.md).
+
 Suppressed work records `event=skipped_empty`, with a reason, instead of a
 model launch or finish. Existing shell precheck skips use that event too.
 Committed changes count as work even when the worktree is clean. Claim metadata
@@ -940,3 +1000,10 @@ empty finish or a merge. The synthetic replay regression demonstrates this
 accounting, not a prediction of fleet savings. Recheck the live window after
 installation; the target is fewer than 100 empty finishes and 120 empty
 minutes, while preserving MERGED throughput.
+
+## Fleet controller (RQ-FLEET-LOADBALANCER-1)
+
+`fleet_controller.py` is the single coordinator for lane targets and holds: one readings bus per tick, one writer, graduated
+shed, cross-pool rebalance and a JSONL ledger at `metrics/fleet-controller.jsonl`. Shadow by default
+(`FLEET_CTL_MODE=enforce` applies it). Design, bands and ledger schema: [FLEET-CONTROLLER.md](FLEET-CONTROLLER.md).
+Tests: `HOME=$(mktemp -d) python3 -B -m unittest contrib/mac/tests/test_fleet_controller.py contrib/mac/tests/test_fleet_controller_tick.py -v`.
