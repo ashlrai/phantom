@@ -357,3 +357,11 @@ enrollment remains a manual config change. See [repo ranking](docs/REPO-RANK.md)
 Preview a local routines JSON array with `ashlr automations import --from routines.json --dry-run --json`, then import with `ashlr automations import --from routines.json --json`. Imports start disabled and skip existing names. See [Automations](docs/VERSE.md#automations-315) for the format and schedule restrictions.
 
 Tier-1 import diagnosis: `npx tsx scripts/tier1-why.ts <file> [--json]` prints a shortest runtime chain or unreachable. See [Tier-1 why](docs/TIER1-WHY.md). Keep fleet apps outside Tier-1; run `test/tier1-apps-boundary.test.ts`. Snapshot regeneration remains Mason-only.
+
+## Portable agent profiles
+
+See [agent profiles](docs/AGENT-PROFILES.md) for strict TOML metadata, version
+pins, doctrine paths and restrictive send policy. Command contract:
+`phm agents list --json`, `phm agents show helper --json`,
+`phm agents validate helper --json`, `phm agents versions helper --json`.
+Outside email recipients stay drafts while `limitsTodo` is true. Profiles never grant transport or spending authority.
