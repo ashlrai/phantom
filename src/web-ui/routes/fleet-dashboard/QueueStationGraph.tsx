@@ -2,11 +2,10 @@
  * routes/fleet-dashboard/QueueStationGraph.tsx: live station graph
  * (RQ-QUEUE-5). Plain SVG, one node per station (11, flow order) colored by
  * rho band (grey when rho is n/a), with queue length; the bottleneck gets a thick outline. Renders
- * nothing unless the shared `agentWorkspace` preview flag (`?agentWorkspace=1`,
- * routes/verse/agents/agent-workspace-flag.ts) is on.
+ * nothing unless the `agentWorkspace` flag is on.
  */
 import { useEffect, useState } from 'react';
-import { agentWorkspaceEnabled } from '../verse/agents/agent-workspace-flag.js';
+import { isAgentWorkspaceEnabled } from '../../data/agent-workspace-flag.js';
 import {
   QUEUE_STATIONS,
   RHO_COLORS,
@@ -24,12 +23,12 @@ const GAP = 24;
 export interface QueueStationGraphProps {
   source?: QueueStatsSource;
   refreshMs?: number;
-  /** Override for tests; defaults to the shared `?agentWorkspace=1` preview gate. */
+  /** Override for tests; defaults to the local agentWorkspace gate. */
   enabled?: boolean;
 }
 
 export function QueueStationGraph({ source, refreshMs = 15_000, enabled }: QueueStationGraphProps) {
-  const on = enabled ?? agentWorkspaceEnabled();
+  const on = enabled ?? isAgentWorkspaceEnabled();
   const [src] = useState(() => source ?? fixtureQueueStatsSource());
   const [stats, setStats] = useState<QueueStatsV1 | null>(null);
   const [error, setError] = useState<string | null>(null);
