@@ -377,6 +377,7 @@
     "src/core/comms/requests.ts",
     "src/core/comms/teammate-context-evidence.ts",
     "src/core/comms/teammate-overdue.ts",
+    "src/core/comms/teammate-reply-gap.ts",
     "src/core/companion-inventory.ts",
     "src/core/config.ts",
     "src/core/connectors/profile.ts",
