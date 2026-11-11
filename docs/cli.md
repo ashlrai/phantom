@@ -333,6 +333,7 @@ Every command, grouped by topic.
     audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]         Tail the append-only audit trail; --team lists workspace actions (read-only).
     receipt list|status|show <run>|verify <run>|timeline <run> [--json]                        Read and verify signed run receipts (same as fleet receipt); timeline lists custody spawns in the run window, value-free (read-only).
     lanes fit --lane <lane> [--json]                                                           Show job kinds to send or avoid from measured PR rates.
+    lanes --json                                                                               Read dispatcher pools, slot caps and local endpoint health.
     lanes health [--json]                                                                      Per-lane calls, error rate, p50 latency and deployed commit over 12 h; flags runs stuck past their phase timeout.
     goals [--json]                                                                             Show dispatcher throughput, empty rates and resource resets.
 
