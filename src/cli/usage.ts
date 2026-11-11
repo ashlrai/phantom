@@ -16,6 +16,7 @@
  */
 
 import { cmdUsageSensors } from './usage-sensors.js';
+import { cmdUsageLive } from './usage-live.js';
 import { makeColors, isTty } from './ui.js';
 
 const { bold, dim, cyan, green, yellow, red } = makeColors(isTty());
@@ -188,6 +189,7 @@ export async function cmdUsage(args: string[]): Promise<number> {
     return 0;
   }
   if (args[0] === 'sensors') return cmdUsageSensors(args.slice(1));
+  if (args[0] === 'live') return cmdUsageLive(args.slice(1));
   if (args[0] === 'validate') {
     if ((args.length !== 2 && args.length !== 3) || !args[1] || args[1].startsWith('-') ||
         (args.length === 3 && args[2] !== '--json')) {
@@ -260,6 +262,8 @@ function printUsage(): void {
   console.log('  prints each lane reading, its age and whether it is stale.');
   console.log('  A reading at or after staleAfter is unknown and is not headroom.');
   console.log('  --refresh uses official APIs and CLIs only.');
+  console.log('  phm usage live [--json] [--watch] [--browser [--headed]] [--interval <seconds>]');
+  console.log('  tracks usage, resets and alerts at 80 and 95 percent; --browser reads the usage pages.');
   console.log('  Reading a snapshot automatically refreshes stale Codex personal usage');
   console.log('  when its pool home is configured; the snapshot is not rewritten.');
   console.log('  Codex refresh uses PHANTOM_SENSOR_CODEX_CMP_HOME and');

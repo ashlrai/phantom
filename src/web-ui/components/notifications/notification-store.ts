@@ -13,8 +13,8 @@
  *     secret — same class of persistence as the theme toggle).
  *   - Throttle for the OS Notification API: a real desktop notification only
  *     fires for an id the store has never seen before, at critical/high
- *     severity or a fleet merge or lane release, in an unmuted category, while permission is granted — never
- *     once per poll for a still-active issue.
+ *     severity, a fleet merge or lane release, or a reply to Mason, in an
+ *     unmuted category while permission is granted — never once per poll.
  */
 import type { AppNotification, NotificationCategory } from './types.js';
 import { sortNotifications } from './deriveNotifications.js';
@@ -106,10 +106,17 @@ export function getNotificationSnapshot(): NotificationStoreState {
   return state;
 }
 
+export function wantsDesktopNotification(n: AppNotification): boolean {
+  if (n.id === 'leader-reply:more') return false;
+  return n.severity === 'critical' || n.severity === 'high'
+    || n.id.startsWith('leader-reply:') || n.id.startsWith('bus-reply:')
+    || (n.category === 'fleet' && (n.id.startsWith('fleet-merge:') || n.id.startsWith('fleet-lane-released-')));
+}
+
 /**
  * Replace the full derived set for this poll cycle. Fires a throttled
  * desktop notification for any id that is BOTH new (never seen before in
- * this tab) and unmuted critical/high or a fleet merge or lane release — never for an id already active.
+ * this tab), unmuted, and eligible — never for an id already active.
  */
 export function reconcileNotifications(derived: AppNotification[]): void {
   const previousIds = new Set(allItems.map((n) => n.id));
@@ -118,8 +125,7 @@ export function reconcileNotifications(derived: AppNotification[]): void {
   if (desktopEnabled && currentDesktopPermission() === 'granted') {
     for (const n of derived) {
       if (mutedCategories.has(n.category)) continue;
-      if (n.severity !== 'critical' && n.severity !== 'high'
-        && !(n.category === 'fleet' && (n.id.startsWith('fleet-merge:') || n.id.startsWith('fleet-lane-released-')))) continue;
+      if (!wantsDesktopNotification(n)) continue;
       if (previousIds.has(n.id) || everSeenIds.has(n.id)) continue;
       everSeenIds.add(n.id);
       try {
