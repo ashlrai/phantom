@@ -35,6 +35,8 @@ export interface TeammateLatency {
   medianMinutes: number | null;
   withinTarget: number;
   oldestUnanswered: { ageMinutes: number } | null;
+  /** Newest inbound text time (ISO); absent on older servers, null when no text is on record. */
+  latestTextAt: string | null;
   sourceState: 'healthy' | 'missing' | 'degraded';
 }
 
@@ -106,8 +108,12 @@ function readTeammate(value: unknown): TeammateLatency | null {
     || !isCount(withinTarget) || !isSourceState(sourceState)) return null;
   if (medianMinutes !== null && !isCount(medianMinutes)) return null;
   if (oldestUnanswered !== null && !(isRecord(oldestUnanswered) && isCount(oldestUnanswered.ageMinutes))) return null;
+  const { latestTextAt } = value;
+  if (latestTextAt !== undefined && latestTextAt !== null
+    && (typeof latestTextAt !== 'string' || !Number.isFinite(Date.parse(latestTextAt)))) return null;
   return { windowHours, targetMinutes, texts, answered, unanswered, medianMinutes: medianMinutes as number | null,
-    withinTarget, oldestUnanswered: oldestUnanswered === null ? null : { ageMinutes: (oldestUnanswered as { ageMinutes: number }).ageMinutes }, sourceState };
+    withinTarget, oldestUnanswered: oldestUnanswered === null ? null : { ageMinutes: (oldestUnanswered as { ageMinutes: number }).ageMinutes },
+    latestTextAt: typeof latestTextAt === 'string' ? latestTextAt : null, sourceState };
 }
 
 /** Strict narrowing: a response that fails the shape is absent, never repaired. */
