@@ -372,6 +372,7 @@
     "src/core/comms/owner-thread.ts",
     "src/core/comms/pause.ts",
     "src/core/comms/requests.ts",
+    "src/core/comms/teammate-context-evidence.ts",
     "src/core/comms/teammate-overdue.ts",
     "src/core/companion-inventory.ts",
     "src/core/config.ts",
