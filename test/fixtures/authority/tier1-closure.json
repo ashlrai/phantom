@@ -366,6 +366,7 @@
     "src/core/comms/imessage-teammate-transport.ts",
     "src/core/comms/imessage-teammate-worker.ts",
     "src/core/comms/leader-mailbox.ts",
+    "src/core/comms/leader-status-snapshot.ts",
     "src/core/comms/owner-channel.ts",
     "src/core/comms/owner-live-transport.ts",
     "src/core/comms/owner-thread.ts",
