@@ -5,6 +5,7 @@
  */
 import type { PaneHost, PaneProps } from '../panes/pane-registry.js';
 import { getPane } from '../panes/pane-registry.js';
+import type { HomeChoice } from './home-view.js';
 import styles from './HomeSurface.module.css';
 
 const NOOP = () => {};
@@ -14,7 +15,7 @@ const HOST: PaneHost = {
 };
 const REQUESTS: PaneProps['requests'] = { terminal: null, preview: null, diff: null };
 
-export function HomeSurface({ paneId, visible, compact }: { paneId: 'leader-thread' | 'feed'; visible: boolean; compact: boolean }) {
+export function HomeSurface({ paneId, visible, compact }: { paneId: HomeChoice | 'leader-thread'; visible: boolean; compact: boolean }) {
   const pane = getPane(paneId);
   if (!pane) return null;
   const Pane = pane.component;
