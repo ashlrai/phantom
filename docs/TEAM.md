@@ -124,6 +124,15 @@ human as the audit actor. A denial changes nothing, and a request that became
 stale (for example, the member was invited already) refuses the approval so it
 can be denied instead.
 
+The desktop app's **Approvals** page and `phm approvals [--json]` show the same
+projection: pending approvals, the Security pin queue (staged packages under
+`~/.ashlr-runs/staged/`, read-only; pins stay with Security) and explicit holds
+from `$ASHLR_HOME/holds.json` (`{"holds":[{"id","title","detail?","since?","resolvedAt?"}]}`;
+a hold stays listed until it has `resolvedAt` or is removed). The page's
+Approve/Deny buttons make the same decision as `phm team approve|deny`: the
+server derives the human identity from the local OS user, refuses agent
+processes, and never accepts an identity from the request.
+
 ### Onboarding walkthrough checks
 
 Repeat these checks after changing onboarding guidance:
