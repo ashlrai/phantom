@@ -51,8 +51,10 @@ These verbs are registered under `phm agents`. Versions lists current and archiv
 revision in a private `<id>.versions/` directory. `pinAgentProfile` resolves an exact
 revision and refuses missing versions. Session/job integration is not implemented. `checkSend` is a pure fail-closed
 decision function: while `limitsTodo` is true (the default) it returns `draft`, and denied
-recipients or unlisted channels return `deny`. It is not yet wired into the email outbox:
-that wiring changes the Tier-1 authority closure and needs the owner-only regen. The
+recipients or unlisted channels return `deny`. The email outbox calls `checkSend` for every
+recipient outside its allowlist: while `limitsTodo` is true (the default) the
+message stays a draft for `phm drafts approve`, and denied recipients are refused.
+Allowlisted verified-self replies are unchanged. The
 existing chief-of-staff approval path is unchanged.
 
 Mapping reference: [Managed Agents setup](https://platform.claude.com/docs/en/managed-agents/agent-setup).
