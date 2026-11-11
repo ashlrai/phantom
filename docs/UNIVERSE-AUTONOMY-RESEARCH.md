@@ -1,5 +1,9 @@
 # Ashlr Universe autonomy engineering
 
+The product direction is [VISION.md](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md). This brief is the Universe
+research acceptance sequence. Its yield metric is a measure for that loop,
+not the product vision.
+
 ## Engineering objective
 
 Ashlr Universe should turn a declared engineering objective and available compute into a continuing sequence of useful, verified improvements. The differentiator is not an unusually busy agent dashboard. It is an operating loop that chooses worthwhile work, executes it, establishes what changed, preserves useful discoveries, and improves its own methods without losing operational control.

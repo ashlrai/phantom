@@ -1,8 +1,8 @@
 # Architecture
 
 Phantom by AshlrAI (package `@ashlr/phantom`, formerly Ashlr Verse; see
-[Phantom brand](PHANTOM-BRAND.md)) is the local engineering agent workbench whose
-integrated objective is the [North Star](NORTH-STAR.md).
+[Phantom brand](PHANTOM-BRAND.md)) is the local engineering agent workbench.
+The product direction is the [vision](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md).
 It ships a TypeScript/ESM CLI and SDK plus a React web console, with Node 22.15+
 as the package runtime floor. `phm` and the compatible `ashlr` command share one
 launcher, `bin/ashlr`, which imports the compiled `dist/cli/index.js`. The backend
@@ -45,8 +45,7 @@ These are separate executable paths, not one automatically commissioned loop:
 | Scoped consoles → `src/core/web/` + `src/web-ui/` | Observe one Universe store or inspect/control one explicit resource pool | Loopback authentication; Universe console is read-only, resource mutations require execution enablement and separate authority | [Universe console](ASHLR-UNIVERSE.md#observe-one-universe-store), [resource console](RESOURCE-POOLS.md#operate-the-resource-console) |
 | General Phantom / legacy fleet | Shared configuration, enrolled-repository status, proposal and goal workflows | General dashboard is distinct from the scoped consoles; resident dispatch remains dormant as described below | [General Phantom setup](QUICKSTART.md#general-hub-and-legacy-fleet-setup) |
 
-The [North Star](NORTH-STAR.md) is the integrated product objective: useful accepted
-changes per measured token and hour. The opt-in [resource generation bridge](ASHLR-UNIVERSE.md#generate-candidates-through-an-enrolled-resource-pool)
+The product direction is the [vision](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md). The opt-in [resource generation bridge](ASHLR-UNIVERSE.md#generate-candidates-through-an-enrolled-resource-pool)
 links recorded task receipts to candidate generation and independent artifact
 evaluation; it does not commission accounts or establish production acceptance.
 Effectiveness assessment still requires evidence tied to the actual produced
