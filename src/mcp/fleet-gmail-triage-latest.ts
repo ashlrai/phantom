@@ -15,8 +15,12 @@ export interface FleetGmailTriageLatestReport {
   schema: 'fleet.mcp.gmail-triage-latest.v1';
   state: 'present' | 'missing';
   latest: GmailTriageLatest | null;
-  /** unreadInSample > target when present, else null. */
+  /** Compatibility comparison of unreadInSample > target, not inbox health. */
   overTarget: boolean | null;
+  /** The comparison covers only the saved sample; missing data has unknown scope. */
+  overTargetScope: 'sample' | 'unknown';
+  /** Saved samples cannot establish whether the live inbox meets its target. */
+  liveInboxTargetState: 'unknown';
   /** Seconds since the saved result; null when missing or its timestamp is unparseable. */
   ageSeconds: number | null;
 }
@@ -34,13 +38,15 @@ export function readFleetGmailTriageLatest(
   now: () => Date = () => new Date(),
 ): FleetGmailTriageLatestReport {
   const latest = readGmailTriageLatest(runsDir);
-  if (!latest) return { schema: 'fleet.mcp.gmail-triage-latest.v1', state: 'missing', latest: null, overTarget: null, ageSeconds: null };
+  if (!latest) return { schema: 'fleet.mcp.gmail-triage-latest.v1', state: 'missing', latest: null, overTarget: null, overTargetScope: 'unknown', liveInboxTargetState: 'unknown', ageSeconds: null };
   const at = Date.parse(latest.at);
   return {
     schema: 'fleet.mcp.gmail-triage-latest.v1',
     state: 'present',
     latest,
     overTarget: latest.unreadInSample > latest.target,
+    overTargetScope: 'sample',
+    liveInboxTargetState: 'unknown',
     ageSeconds: Number.isFinite(at) ? Math.max(0, Math.floor((now().getTime() - at) / 1000)) : null,
   };
 }
