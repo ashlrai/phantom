@@ -54,7 +54,7 @@ vi.mock('../src/core/config.js', async (importOriginal) => {
 });
 
 import { cmdEnroll } from '../src/cli/sandbox.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { handleApi } from '../src/core/web/api.js';
 
 beforeEach(() => {

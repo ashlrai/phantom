@@ -84,6 +84,7 @@ or control apps.
 | `phm_team_view` | Read team members, presence, claims, handoffs, approvals and recent messages. |
 | `phm_team_claim` | Acquire or release a repo, branch or path lease. Conflicts do not override another holder. |
 | `phm_team_handoff` | Request, accept, complete or decline a handoff. Push-main, deploy, release, merge, rotate-secret, external-message, delete and spend require human owner/admin approval before acceptance. |
+| `phm_team_access_request` | File a workspace access request: invite-member (human:<name>), link-repo (owner/name) or change-role (admin|member). Recorded as a pending approval a human owner/admin decides with phm team approve|deny; an approved request applies with the approver as its audit actor. Agents can request, never decide. |
 | `phm_team_context_add` | Add shared context scoped by owner (personal/company/client:<name>), project and person, with provenance. Credential-shaped values are refused; use phm_<name> references. |
 | `phm_team_context_get` | Retrieve cited context within a token budget. Client and personal scopes remain isolated. |
 

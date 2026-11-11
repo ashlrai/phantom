@@ -16,15 +16,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useRunStream, RUN_STREAM_POLL_MS, type RunStreamPhase, type RunStreamTransport } from './useRunStream.js';
 import { StatusBadge } from '../primitives/StatusBadge.js';
 import { SkeletonLine } from '../primitives/Skeleton.js';
-import type { RunStep } from '../../data/api-types.js';
+import { STEP_KIND_LABEL } from './live-session.js';
 import styles from './RunStreamPanel.module.css';
-
-const STEP_KIND_LABEL: Record<RunStep['kind'], string> = {
-  plan: 'Plan',
-  model: 'Model',
-  tool: 'Tool',
-  synthesize: 'Synthesize',
-};
 
 function formatElapsed(startIso: string, endIso?: string): string {
   const start = new Date(startIso).getTime();
