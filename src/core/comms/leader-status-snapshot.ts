@@ -47,6 +47,7 @@ export function cleanLeaderReplyText(raw: string): string {
 }
 
 const count = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+const mergedCount = (value: unknown): number | null => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const laneName = (raw: string): string => raw.replace(/[^\w.-]/g, '').slice(0, 40);
 
@@ -55,15 +56,18 @@ export function summarizeQueueRollup(status: unknown): Pick<LeaderStatusSnapshot
   const rollup = object(object(status).rollup_24h);
   const byLane = object(rollup.by_lane);
   const lanes: LeaderStatusLane[] = [];
-  for (const [name, row] of Object.entries(byLane)) {
-    const merged = count(object(row).merged);
+  const entries = Object.entries(byLane);
+  let complete = entries.length > 0 && entries.length <= MAX_LANES;
+  for (const [name, row] of entries) {
+    const merged = mergedCount(object(row).merged);
     const lane = laneName(name);
+    if (merged === null || !lane) complete = false;
     if (merged !== null && lane) lanes.push({ lane, merged, medianTtmS: count(object(row).median_ttm_s) });
   }
   lanes.sort((a, b) => b.merged - a.merged || a.lane.localeCompare(b.lane));
-  const hasRollup = Object.keys(byLane).length > 0 || count(rollup.merged) !== null;
+  const inferred = complete ? lanes.reduce((sum, lane) => sum + lane.merged, 0) : null;
   return {
-    merged24h: hasRollup ? count(rollup.merged) ?? lanes.reduce((sum, lane) => sum + lane.merged, 0) : null,
+    merged24h: mergedCount(rollup.merged) ?? mergedCount(inferred),
     medianTtmS: count(rollup.median_ttm_s),
     lanes: lanes.slice(0, MAX_LANES),
   };
