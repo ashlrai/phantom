@@ -65,12 +65,14 @@ describe('CommandPalette', () => {
     const input = screen.getByPlaceholderText('Navigate or run a command…');
     await waitFor(() => expect(input).toHaveFocus());
 
-    // "fleet" matches two nav commands: "Fleet Dashboard" (/overview),
-    // registered first, then "Fleet" (/control/fleet).
+    // "fleet" matches three nav commands in nav order: "Fleet Dashboard"
+    // (/overview), "Show Mode" (/show — its description mentions fleet
+    // activity), then "Fleet" (/control/fleet).
     await user.type(input, 'fleet');
     await waitFor(() => expect(screen.getByText('Fleet Dashboard')).toBeInTheDocument());
     expect(screen.getByText('Fleet')).toBeInTheDocument();
 
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
     fireEvent.keyDown(input, { key: 'ArrowDown' });
     fireEvent.keyDown(input, { key: 'Enter' });
 

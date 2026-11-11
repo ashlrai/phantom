@@ -16,7 +16,10 @@ import { makeFixture, makeCfg, type H1Fixture } from './helpers/h1-fixture.js';
 import { buildOrientation } from '../src/core/orient.js';
 import { estimateRun } from '../src/core/observability/estimate.js';
 import { nativeToolDefs, callNativeTool } from '../src/core/mcp-native.js';
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { AGENT_COMMANDS } from '../src/cli/help.js';
+
+registerFleetNativeTools();
 
 let fx: H1Fixture;
 
@@ -161,6 +164,7 @@ describe('native MCP tool surface lock', () => {
       'phm_proactive_agents_list:read',
       'phm_proactive_agents_update:append',
       'phm_task_context:read',
+      'phm_team_access_request:append',
       'phm_team_claim:append',
       'phm_team_context_add:append',
       'phm_team_context_get:read',

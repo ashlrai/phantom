@@ -10,7 +10,7 @@
 # RQ-DEVINTOKENSN9SQ8 rev: finish rows carry the usage each lane already reports — claude*/claude-api
 # result JSON usage, devin's sessions.db tokens + billed ACUs, the 'tokens used' log line — with
 # usage_source and a usage_missing reason when nothing was recorded.
-import os, re, json, time, fcntl, subprocess, glob, math, datetime, sqlite3, urllib.parse, hashlib
+import os, re, json, time, fcntl, subprocess, glob, math, datetime, sqlite3, urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
 WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
@@ -1094,7 +1094,7 @@ def ratelimited(lane, since):
 # ---- precheck: returns (code, reason) to skip, None to launch. Timeout/error/usage -> launch.
 PC_MAX = 8
 from launch_precheck import (precheck as shared_precheck, park_key, parked, park,
-                             attempt_identity, empty_reason, read_attempts)
+                             attempt_identity, empty_reason, read_attempts, with_prompt)
 PARK_PATH = Q + "/precheck-parked.json"
 park_state = jload(PARK_PATH, {})
 if not isinstance(park_state, dict): park_state = {}
@@ -1366,17 +1366,14 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         if re.search(r"^- RETIRED (?:\S+ )*?%s[ \[(]" % re.escape(j), rq, re.M): return "RETIRED in router-queue.md"
         return None
     empty_gate_cache = {}
-    def claim_identity(repo, prompt_path):
+    def claim_identity(j, repo, prompt_path):   # task_hash joins re-cuts and re-routes of one task (launch_precheck)
         if repo not in base_identities:
             base_identities[repo] = attempt_identity(repo, "", H, _run)
-        identity = dict(base_identities[repo])
-        if identity:
-            identity['prompt_hash'] = hashlib.sha256(rd(prompt_path).encode()).hexdigest()
-        return identity
+        return with_prompt(base_identities[repo], j, rd(prompt_path))
     def empty_gate(j, repo, prompt_path, lane):
         key = (j, repo, prompt_path)
         if key not in empty_gate_cache:
-            identity = claim_identity(repo, prompt_path)
+            identity = claim_identity(j, repo, prompt_path)
             reason = empty_reason(j, identity, empty_attempts, NOW) if identity else None
             if reason:
                 metric(dict(identity, event="skipped_empty", job=j, lane=lane, reason=reason))
@@ -1492,7 +1489,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         for x in (".keptlogged", ".diskguard", ".phdrip", ".rc", ".timeout"):
             try: os.remove(RUN + "/" + j + x)
             except FileNotFoundError: pass
-        identity = claim_identity(repo, pf)
+        identity = claim_identity(j, repo, pf)
         risk = waste_risk(UIA.get(lane), lane) if not batch else None
         boost = waste_boost(UIA.get(lane), lane, tier) if risk else None
         reason = boost[1] if boost else ("use-it-all %s waste risk: pool preferred" % risk if risk else None)
