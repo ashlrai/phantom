@@ -1088,6 +1088,7 @@
 /test/resource-worker-kill.test.ts @masonwyatt23
 /test/reward-signal.test.ts @masonwyatt23
 /test/role-completion.test.ts @masonwyatt23
+/test/router-arms-replay.test.ts @masonwyatt23
 /test/router-calibration.test.ts @masonwyatt23
 /test/router-current-claude-models.test.ts @masonwyatt23
 /test/router-eval-harness.test.ts @masonwyatt23
@@ -1095,6 +1096,7 @@
 /test/router-queue-events.test.ts @masonwyatt23
 /test/router-queue-utf8-input-31k7.test.ts @masonwyatt23
 /test/router-queue.test.ts @masonwyatt23
+/test/router-task-arms.test.ts @masonwyatt23
 /test/router-typing.test.ts @masonwyatt23
 /test/routing-arms.test.ts @masonwyatt23
 /test/routing-bandit.test.ts @masonwyatt23
