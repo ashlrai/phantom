@@ -3,7 +3,7 @@
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { fixedOwnerRunsDir } from '../comms/owner-channel.js';
-import { GMAIL_TRIAGE_LATEST_SCHEMA, readGmailTriageLatest } from '../comms/gmail-triage-latest.js';
+import { GMAIL_TRIAGE_LATEST_SCHEMA, readGmailTriageInboxReports, readGmailTriageLatest } from '../comms/gmail-triage-latest.js';
 import { GMAIL_ARCHIVE_PLAN_LATEST_SCHEMA, readGmailArchivePlanLatest } from '../comms/gmail-archive-plan-latest.js';
 
 export const VERSE_GMAIL_TRIAGE_PATH = '/api/verse/comms/gmail-triage';
@@ -43,7 +43,10 @@ export function createGmailTriageApi(deps: GmailTriageApiDeps = {}): ApiModule {
       return true;
     }
     const latest = readGmailTriageLatest(runsDir);
-    sendJson(res, 200, { schema: GMAIL_TRIAGE_LATEST_SCHEMA, latest, evidence: evidence(latest) });
+    // `inboxes` is the bounded per-label projection; null when storage is missing
+    // or invalid, so absent data stays unknown rather than looking healthy.
+    const inboxes = readGmailTriageInboxReports(runsDir)?.inboxes ?? null;
+    sendJson(res, 200, { schema: GMAIL_TRIAGE_LATEST_SCHEMA, latest, inboxes, evidence: evidence(latest) });
     return true;
   };
 }
