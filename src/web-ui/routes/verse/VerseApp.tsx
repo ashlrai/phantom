@@ -327,7 +327,7 @@ const WindowTitle = lazy(() => import('./shell/WindowTitle.js'));
 const HomeUnread = lazy(() => import('./shell/WindowTitle.js').then((m) => ({ default: m.HomeUnread })));
 const NO_UNREAD: UnreadCounts = { leader: 0, feed: 0 };
 
-export function VerseApp() {
+export function PhantomApp() {
   const guardOpen = useGuardState().request !== null;
   const ui = useVerseUi();
   const theme = useTheme();
@@ -711,6 +711,9 @@ export function VerseApp() {
     </div>
   );
 }
+
+/** @deprecated Legacy name for {@link PhantomApp}; kept so external imports keep resolving. */
+export const VerseApp = PhantomApp;
 
 /**
  * The rail foot's capacity ring for the scarcest seat. Its own component so
