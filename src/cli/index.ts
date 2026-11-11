@@ -53,7 +53,8 @@
  *   swarms [--json]            List past swarm runs.
  *   tui [--once]               Interactive terminal dashboard (alias: dash).
  *   serve [--port N] [--open]  Local web dashboard + JSON API on 127.0.0.1 (default port 7777).
- *   verse [--port N] [--no-open]  Ashlr Verse console (serve with dispatch on) at /verse/.
+ *   console [--port N] [--no-open]  Phantom console (serve with dispatch on) at /app/. `verse` is the same command.
+ *   verse [--port N] [--no-open]  Alias of `console`; opens /verse/.
  *   issues [--retry] [--json]  Group failed queue jobs by error; --retry queues READY retries.
  *   gh <pr|issue|ci>           Read GitHub PRs / issues / CI status (read-only via gh CLI).
  *   gh pr create               Create a PR (explicit + confirm-gated mutation).
@@ -81,7 +82,7 @@ import { DEVIN_CHAT_TURN_FLAG } from '../core/devin/chat-turn-invocation.js';
 import { VERSE_MCP_STDIO_COMMAND } from '../core/verse/verse-mcp-stdio-invocation.js';
 import { planTidy, applyTidy } from '../core/tidy.js';
 import { openInEditor } from './open.js';
-import { pick } from './picker.js';
+import { pick, selectionFailure } from './picker.js';
 import { classifyRepos } from './status.js';
 import { pad, makeColors } from './ui.js';
 import { authoritySetupPlatformRefusal } from './first-run-guidance.js';
@@ -227,7 +228,7 @@ const loadSkillsAuditWorkerCmd = lazyCmd(
 // ─── M49 fleet control plane + observability ──────────────────────────────────
 
 const loadFleetCmd = lazyCmd(
-  () => import('./fleet.js' as unknown as string),
+  () => import('./fleet-entry.js'),
   (m) => m.cmdFleet as Cmd,
   'fleet command requires src/cli/fleet.ts (M49 module not yet built).',
 );
@@ -461,6 +462,12 @@ const loadVerseCmd = lazyCmd(
   () => import('./verse.js' as unknown as string),
   (m) => m.cmdVerse as Cmd,
   'verse command requires src/cli/verse.ts (Verse module not yet built).',
+);
+
+const loadConsoleCmd = lazyCmd(
+  () => import('./verse.js' as unknown as string),
+  (m) => m.cmdConsole as Cmd,
+  'console command requires src/cli/verse.ts (Verse module not yet built).',
 );
 
 const loadModelsCmd = lazyCmd(
@@ -1189,7 +1196,13 @@ async function cmdGo(args: string[]): Promise<void> {
   }
 
   if (!chosen) {
-    die('Nothing selected.', 1);
+    const pool = candidates.length > 0 ? candidates : idx.items;
+    const failure = selectionFailure('go', {
+      headless: process.stdin.isTTY !== true || process.stdout.isTTY !== true,
+      query,
+      itemCount: pool.length,
+    });
+    die(failure.message, failure.code);
   }
 
   if (openFlag) {
@@ -1660,7 +1673,12 @@ async function cmdOpen(args: string[]): Promise<void> {
   }
 
   if (!chosen) {
-    die('Nothing selected.', 1);
+    const failure = selectionFailure('open', {
+      headless: process.stdin.isTTY !== true || process.stdout.isTTY !== true,
+      query,
+      itemCount: idx.items.length,
+    });
+    die(failure.message, failure.code);
   }
 
   openInEditor(chosen.path, cfg);
@@ -2222,6 +2240,11 @@ async function main(): Promise<void> {
         process.exitCode = await cmdOrg(rest);
         break;
       }
+      case 'approvals': {
+        const { cmdApprovals } = await import('./approvals.js');
+        process.exitCode = await cmdApprovals(rest);
+        break;
+      }
       case 'team': {
         const { cmdTeam } = await import('./team.js');
         process.exitCode = await cmdTeam(rest);
@@ -2498,6 +2521,13 @@ async function main(): Promise<void> {
         // Ashlr Verse: serve with dispatch forced on, opens /verse/.
         const cmdVerse = await loadVerseCmd();
         process.exitCode = await cmdVerse(rest);
+        break;
+      }
+
+      case 'console': {
+        // The Phantom name for `verse`: same flags, opens /app/.
+        const cmdConsole = await loadConsoleCmd();
+        process.exitCode = await cmdConsole(rest);
         break;
       }
 

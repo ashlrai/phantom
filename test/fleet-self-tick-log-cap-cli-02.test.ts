@@ -36,6 +36,7 @@ const steps: SelfTickSteps = {
   'order-notices': stub('order-notices'),
   'needs-triage': stub('needs-triage'),
   'waste-incident': stub('waste-incident'),
+  'teammate-overdue': stub('teammate-overdue'),
   'landed-sweep': stub('landed-sweep'),
 };
 
