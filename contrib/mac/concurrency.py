@@ -65,7 +65,7 @@ def zones(sig):
     z = {}
     ncpu, per_cpu = sig.get("ncpu") or 1, sig.get("load_per_cpu_max") or 3.0
     load1 = sig.get("load1")   # dispatchd reports an unreadable load as inf: danger, like its claim halving
-    z["load"] = _ratio_zone(None if load1 is None else load1 / (ncpu * per_cpu), 0.5, 0.8)
+    z["load"] = _ratio_zone(None if load1 is None else load1 / (ncpu * min(per_cpu, 2.5)), 0.5, 0.8)
     pressure = sig.get("memory_pressure")   # kern.memorystatus_vm_pressure_level: 1 normal, 2 warn, 4 critical
     z["memory_pressure"] = (("warn", "unknown") if pressure is None else
                             ("ok", pressure) if pressure <= 1 else ("danger", pressure))
@@ -75,10 +75,10 @@ def zones(sig):
     else:
         z["mem_free"] = ("danger" if free < 15 else "warn" if free < 25 else "ok", free)
     growth, growth_max = sig.get("swap_growth_gb"), sig.get("swap_growth_max_gb") or 2.0
-    if sig.get("swap_gb") is None:
+    if sig.get("swap_gb") is None or growth is None:
         z["swap"] = ("warn", "unknown")
     else:
-        z["swap"] = _ratio_zone((growth or 0) / growth_max, 0.25, 0.5)
+        z["swap"] = _ratio_zone(growth / growth_max, 0.25, 0.5)
     disk, stop = sig.get("disk_free_gb"), sig.get("disk_hard_stop_gb") or 30.0
     z["disk"] = _ratio_zone(None if disk is None else stop / max(disk, 1e-9), 0.4, 2 / 3)   # warn < 2.5x stop, danger < 1.5x
     procs, procs_max = sig.get("procs"), sig.get("procs_max") or 2500
