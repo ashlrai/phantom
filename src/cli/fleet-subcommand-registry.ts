@@ -4,6 +4,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'act': () => import('./fleet-act.js'),
   'activity': () => import('./fleet-activity.js'),
   'admission': () => import('./fleet-admission.js'),
+  'agent-profiles': () => import('./fleet-agent-profiles.js'),
   'api-pools': () => import('./fleet-api-pools.js'),
   'app': () => import('./fleet-app.js'),
   'app-await': () => import('./fleet-app-await.js'),
