@@ -32,7 +32,7 @@ describe('channel bus mirrors', () => {
     expect(rows.get('telegram')).toMatchObject({ inbox: 3, mirrored: 2, tone: 'ok', text: 'mirrored 2 of 3 in the last hour' });
     expect(rows.get('desktop')).toMatchObject({ inbox: 3, mirrored: 0, tone: 'warn' });
     expect(rows.get('other')).toMatchObject({ inbox: 1, mirrored: 0, tone: 'warn' });
-    expect(mirrorHint('warn', 'available')).toBe('Messages reach the inbox but not the bus: the hub needs --allow-dispatch and a writable bus store');
+    expect(mirrorHint('warn', 'available')).toBe('Messages reach the inbox but not the bus: Phantom needs --allow-dispatch and a writable bus store');
     expect(mirrorHint('warn', 'unavailable')).toBe('Bus unavailable, cannot verify');
     expect(mirrorHint('none', 'unavailable')).toBe('Bus unavailable, cannot verify');
     expect(mirrorHint('warn', 'loading')).toBeNull();
