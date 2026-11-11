@@ -4,7 +4,7 @@ import type { QueryDef } from '../../../data/queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { CopyPill } from '../apps/CopyPill.js';
 import { EMAIL_DROP_USAGE } from '../fleet-channels/fleet-channels-model.js';
-import { COMMS_STATUS_PATH, commsStatusLines, imessageStatusLine, readCommsStatus, teammateLatencyLine } from './comms-status-model.js';
+import { COMMS_STATUS_PATH, commsStatusLines, imessageStatusLine, readCommsStatus, teammateLatencyLine, sendPolicyLine } from './comms-status-model.js';
 import { CommsCutoverList } from './CommsCutoverList.js';
 import { readCutover } from './comms-cutover-model.js';
 import styles from './fleet-inbox.module.css';
@@ -31,6 +31,13 @@ export function CommsStatusCard({ visible }: { visible: boolean }) {
     {parsed.teammate !== null
       ? <p className={styles.meta}>{teammateLatencyLine(parsed.teammate)}</p>
       : parsed.teammateSource === 'degraded' && <p className={styles.meta}>Dot reply speed unknown (teammate log unreadable)</p>}
+    {parsed.sendPolicy !== null && <p className={styles.meta}>
+      {sendPolicyLine(parsed.sendPolicy)}
+      {!parsed.sendPolicy.confirmed && <>
+        {' '}<CopyPill text="confirmedByMason = true" label="Copy the line to add yourself" what="the line you add to comms.toml yourself" />
+        {' '}<CopyPill text="~/.ashlr/comms.toml" label="Copy the file path" what="the path of the file you edit yourself" />
+      </>}
+    </p>}
     {lines.stuckReasons !== null && <p className={styles.meta}>{lines.stuckReasons}</p>}
     {cutover !== null && <CommsCutoverList view={cutover} />}
   </section>;
