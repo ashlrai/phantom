@@ -1,7 +1,7 @@
 /** Local-only Gmail triage. The caller supplies a read-only mailbox adapter;
  * this module never receives credentials and has no provider write operation. */
 import { createHash } from 'node:crypto';
-import { createDraft } from '../cos/drafts.js';
+import { createDraft, listDrafts } from '../cos/drafts.js';
 
 export interface GmailMessage {
   id: string;
@@ -23,6 +23,7 @@ export interface GmailBridgeDependencies {
 export interface GmailBridgeReport {
   scanned: number;
   updates: string[];
+  /** New drafts created during this poll; existing drafts are not counted. */
   drafted: number;
   review: number;
   failed: number;
@@ -42,8 +43,9 @@ export async function pollGmailBridge(deps: GmailBridgeDependencies): Promise<Gm
       if (classification === 'update') {
         report.updates.push(await deps.summarizeUpdate(message));
       } else if (classification === 'reply' && message.autoSubmitted?.toLowerCase() === 'no') {
-        const body = await deps.composeReply(message);
         const source = `gmail-${createHash('sha256').update(message.id).digest('hex').slice(0, 16)}`;
+        if ((await listDrafts({ runsDir: deps.runsDir })).some((draft) => draft.source === source)) continue;
+        const body = await deps.composeReply(message);
         await createDraft({ to: message.from, subject: `Re: ${message.subject}`, body, source }, deps.runsDir);
         report.drafted++;
       } else {
