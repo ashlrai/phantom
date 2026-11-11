@@ -36,12 +36,26 @@ export function senderIdFor(handle: string): string {
   return `imessage:${createHash('sha256').update(handle.trim().toLowerCase()).digest('hex').slice(0, 16)}`;
 }
 
+/**
+ * Chunked patch-transfer frame markers (imessage-patch-transfer.ts). The
+ * marker list lives in this leaf module so the intent classifier and the
+ * transfer's own parser share one definition without an import cycle.
+ */
+export const PATCH_FRAME_MARKERS = ['PATCH-BEGIN', 'PATCH-PART', 'PATCH-END'] as const;
+
+/** True for any text that opens with a protocol marker (even a malformed one). */
+export function isPatchFrameText(text: string): boolean {
+  return typeof text === 'string' && PATCH_FRAME_MARKERS.some((m) => text === m || text.startsWith(`${m} `));
+}
+
 export type TeammateSourceState = 'healthy' | 'missing' | 'degraded';
 
 /** Pure acknowledgements cannot cause agent-to-agent acknowledgement loops. */
 export function teammateNeedsReply(text: string): boolean {
   // Code chunks often contain question marks/requests as source literals. They are
   // artifacts to retain, never conversation requests to answer once per chunk.
+  // PATCH-BEGIN/PART/END frames are transfer protocol, never conversation.
+  if (isPatchFrameText(text)) return false;
   if (/^.{0,80}\b(?:patch|artifact|chunk)\s+\d+\/\d+\b/i.test(text) || /^(?:diff --git |--- [ab/] |```)/.test(text)) return false;
   return !/^\s*(ack(?:nowledged)?|thanks|thank you|received|noted|got it|ok(?:ay)?|👍)[.!\s]*$/i.test(text)
     && /\?|\b(?:please|can you|could you|request(?:ing)?|need you|probe)\b/i.test(text);
