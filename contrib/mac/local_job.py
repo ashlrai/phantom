@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Bound the entire host launcher, including preparation, for codex-local only.
+"""Bound the entire host launcher, including preparation, for local lanes.
 
 The child retains the existing launcher and its sandbox checks. No provider call,
 credential access, worktree mutation or publishing happens in this supervisor.
@@ -37,7 +37,7 @@ def supervise(command, marker, cap=WALL_CAP_S):
 
 def main():
     job, repo, lane, tier = sys.argv[1:]
-    if lane != 'codex-local' or not job or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-' for c in job):
+    if lane not in ('codex-local', 'omlx') or not job or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-' for c in job):
         raise SystemExit('invalid local job')
     root = Path.home() / '.ashlr-runs'
     marker = root / 'queue' / 'run' / (job + '.timeout')
