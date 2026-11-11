@@ -47,6 +47,7 @@ import { localHumanActor } from '../teams/identity.js';
 import { validId, type TeamEvent } from '../teams/protocol.js';
 import { appendEvent, readEvents } from '../teams/store.js';
 import { foldTeam, type Handoff, type Member } from '../teams/state.js';
+import { describeAccessAction } from '../teams/workspace.js';
 import { createCompanionCoordinator } from '../proactive/coordination.js';
 import type { CompanionList, CompanionTask } from '../proactive/coordination-types.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -234,7 +235,7 @@ async function boardRows(deps: BoardDeps, team: string): Promise<{
     const state = safe(() => foldTeam(team, deps.teamEvents(team), deps.now()));
     if (state) {
       sources.handoff = 'healthy';
-      const pendingApproval = new Set(state.approvals.filter((a) => a.state === 'pending').map((a) => a.handoffId));
+      const pendingApproval = new Set(state.approvals.filter((a) => a.state === 'pending' && a.handoffId).map((a) => a.handoffId));
       for (const h of state.handoffs) {
         rows.push({
           id: `handoff:${h.id}`,
@@ -399,7 +400,7 @@ function buildLeaders(events: TeamEvent[], team: string, canPost: boolean, now: 
       .map((h) => ({ id: h.id, from: h.from, to: h.to, title: h.title, state: h.state, updatedAt: h.updatedAt })),
     pendingApprovals: state.approvals
       .filter((a) => a.state === 'pending')
-      .map((a) => ({ id: a.id, handoffId: a.handoffId, action: a.action, requestedBy: a.requestedBy })),
+      .map((a) => ({ id: a.id, handoffId: a.handoffId ?? '', action: a.action ?? (a.access ? `access ${describeAccessAction(a.access)}` : ''), requestedBy: a.requestedBy })),
     canPost,
   };
 }
