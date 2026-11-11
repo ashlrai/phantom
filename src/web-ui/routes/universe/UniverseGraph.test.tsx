@@ -62,6 +62,7 @@ describe('Universe evidence graph', () => {
     expect(fetch).not.toHaveBeenCalled();
     const user = await open();
     expect(fetch).toHaveBeenCalledOnce();
+    expect(screen.getByRole('option', { name: 'Experiment workspace' })).toBeInTheDocument();
     expect(String(fetch.mock.calls[0]![0])).toContain('/api/universe/graph?universeId=compiler');
     await user.click(screen.getByRole('button', { name: 'Inspect trial: First candidate' }));
     await user.selectOptions(screen.getByLabelText('Entity type'), 'trial');

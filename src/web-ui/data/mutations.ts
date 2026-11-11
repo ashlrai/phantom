@@ -71,6 +71,12 @@ export async function decideApprovalRequest(id: string, revision: string, decisi
   invalidateProposalViews(id);
 }
 
+/** The click is the approval: the server derives the human identity locally and never reads one from here. */
+export async function decideTeamApproval(id: string, decision: 'approve' | 'deny', team?: string): Promise<void> {
+  await post(`/api/approvals/team/${encodeURIComponent(id)}/decision`, team ? { decision, team } : { decision });
+  invalidate('approvals');
+}
+
 export interface OpenTargetRequest {
   path: string;
   target: 'editor' | 'finder';
