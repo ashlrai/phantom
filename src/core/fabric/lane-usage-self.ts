@@ -281,6 +281,7 @@ export function budgetEntryQuota(entry: unknown, nowMs: number, ttlMs = 2 * DEFA
   const e = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
   const asOf = typeof e['as_of'] === 'string' && Number.isFinite(Date.parse(e['as_of'])) ? e['as_of'] : null;
   const pct = e['weekly_used_pct'];
-  if (asOf === null || !finite(pct) || pct < 0 || pct > 100 || Date.parse(asOf) > nowMs + 60_000) return { value: null, asOf, ttlMs };
+  if (asOf === null || !finite(pct) || pct < 0 || pct > 100 || Date.parse(asOf) > nowMs + 60_000 ||
+    nowMs - Date.parse(asOf) > ttlMs) return { value: null, asOf, ttlMs };
   return { value: { usedPercent: pct }, asOf, ttlMs };
 }
