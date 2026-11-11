@@ -676,10 +676,10 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
     >
       {entry.content}
       <span className={styles.moveControls}>
-        <button type="button" aria-label={`Move ${entry.name} up`} title={`Move ${entry.name} up`}
-          disabled={index === 0} onClick={() => move(entry.key, ids[index - 1]!)}><span aria-hidden="true">↑</span></button>
-        <button type="button" aria-label={`Move ${entry.name} down`} title={`Move ${entry.name} down`}
-          disabled={index === ids.length - 1} onClick={() => move(entry.key, ids[index + 1]!)}><span aria-hidden="true">↓</span></button>
+        <Tooltip label={`Move ${entry.name} up`}><button type="button" aria-label={`Move ${entry.name} up`}
+          disabled={index === 0} onClick={() => move(entry.key, ids[index - 1]!)}><span aria-hidden="true">↑</span></button></Tooltip>
+        <Tooltip label={`Move ${entry.name} down`}><button type="button" aria-label={`Move ${entry.name} down`}
+          disabled={index === ids.length - 1} onClick={() => move(entry.key, ids[index + 1]!)}><span aria-hidden="true">↓</span></button></Tooltip>
       </span>
     </div>
   ); });
@@ -687,12 +687,11 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   if (ordered.length === 0) return null;
   return (
     <div className={styles.bar} data-expanded={expanded || undefined} data-compact={expanded && resources.compact || undefined} role="group" aria-label="Resources at a glance" aria-busy={data.refreshing || undefined}>
-      {expanded ? <button type="button" className={styles.densityToggle}
+      {expanded ? <Tooltip label={resources.compact ? 'Expand resource details' : 'Compact resources; hover or focus for details'} placement="bottom"><button type="button" className={styles.densityToggle}
         aria-label="Compact resources" aria-pressed={resources.compact}
-        title={resources.compact ? 'Expand resource details' : 'Compact resources; hover or focus for details'}
         onClick={() => setResourcesCompact(!resources.compact)}>
         <span>Resources</span>{resources.compact ? <IconChevronDown /> : <IconChevronUp />}
-      </button> : null}
+      </button></Tooltip> : null}
       {expanded ? <button type="button" className={styles.densityToggle} aria-pressed={providerView !== 0} onClick={() => setProviderView(value => value ? 0 : 1)}>
         {providerView ? 'Show account view' : 'Group by provider'}
       </button> : null}
