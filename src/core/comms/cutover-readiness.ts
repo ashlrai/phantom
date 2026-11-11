@@ -156,21 +156,44 @@ function teammate(finding: Finding | undefined, readerDown: boolean): CutoverCap
     : { state: 'unverified', reason: imsgReason(finding), nextStep: NEXT_IMSG_DOCTOR };
 }
 
+const GMAIL_EVIDENCE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+// An observation is current only on its own timestamp: a valid, non-future
+// instant inside the evidence window. A fresh sibling inbox never freshens a
+// stale, invalid or future-dated one.
+function gmailObservationCurrent(at: string, nowMs: number): boolean {
+  const t = Date.parse(at);
+  return Number.isFinite(t) && t <= nowMs && nowMs - t <= GMAIL_EVIDENCE_WINDOW_MS;
+}
+
 function gmailInboxTriage(
   triage: ReturnType<typeof readGmailTriageLatest>, plans: ReturnType<typeof readGmailArchivePlanLatest>, nowMs: number,
 ): CutoverCapability {
   const entries = plans?.plans ?? [];
   if (!triage && entries.length === 0)
     return { state: 'unverified', reason: 'gmail-triage-evidence-missing', nextStep: 'phm fleet gmail-triage' };
+  // An over-target sample stays a conservative blocker even though export
+  // counts are not live totals and may not cover every inbox.
   if (entries.some(p => p.unread > p.target))
     return { state: 'blocked', reason: 'gmail-inbox-over-target', nextStep: 'phm fleet gmail-archive-plan' };
-  const times = [...(triage ? [triage.at] : []), ...entries.map(p => p.at)].map(at => Date.parse(at));
-  const newest = Math.max(...times);
-  if (!Number.isFinite(newest) || newest > nowMs || nowMs - newest > 24 * 60 * 60 * 1000)
+
+  const stamps = [...(triage ? [triage.at] : []), ...entries.map(p => p.at)];
+  const current = stamps.filter(at => gmailObservationCurrent(at, nowMs)).length;
+  if (current === 0)
     return { state: 'unverified', reason: 'gmail-triage-evidence-stale', nextStep: 'phm fleet gmail-triage' };
-  return entries.length > 0
-    ? { state: 'ready', reason: 'gmail-inboxes-within-target', nextStep: 'phm fleet gmail-archive-plan' }
-    : { state: 'unverified', reason: 'gmail-unread-not-evidenced', nextStep: 'phm fleet gmail-archive-plan' };
+  if (current !== stamps.length)
+    return { state: 'unverified', reason: 'gmail-triage-evidence-partial', nextStep: 'phm fleet gmail-triage' };
+  if (entries.length === 0)
+    return { state: 'unverified', reason: 'gmail-unread-not-evidenced', nextStep: 'phm fleet gmail-archive-plan' };
+  // Every saved count is a local .eml export sample: plan scope is fixed to
+  // source 'local-eml-export' with unreadRepresentsLiveTotal false, and a
+  // missing or truncated scope is weaker still. No observation can evidence
+  // a live inbox total, so this capability can never read 'ready'.
+  if (entries.some(p => p.scope === undefined))
+    return { state: 'unverified', reason: 'gmail-inbox-scope-unknown', nextStep: 'phm fleet gmail-archive-plan' };
+  if (entries.some(p => p.scope?.truncated))
+    return { state: 'unverified', reason: 'gmail-inbox-export-truncated', nextStep: 'phm fleet gmail-archive-plan' };
+  return { state: 'unverified', reason: 'gmail-inbox-live-total-unverified', nextStep: 'phm fleet gmail-archive-plan' };
 }
 
 /**
