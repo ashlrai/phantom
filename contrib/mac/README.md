@@ -944,20 +944,28 @@ overlap: worktree totals include their `node_modules` and `target` directories.
 ### Read merge latency
 
 Run `python3 contrib/mac/merge-latency.py --jobs jobs.jsonl` for JSON evidence
-(`merge-latency.v1`). Optional `--now <ISO timestamp>` makes replays repeatable;
-`--stale-hours 24` sets the inactivity threshold. This offline CLI reads only the
-supplied ledger; it never requests merges or bypasses required checks.
+(`merge-latency.v1`). `--jobs` defaults to `~/.ashlr-runs/metrics/jobs.jsonl`.
+Optional `--now <ISO timestamp>` makes replays repeatable; `--stale-hours 24`
+sets the inactivity threshold; `--since-hours N` keeps only jobs whose earliest
+queue or publish boundary falls in the last N hours. This offline CLI reads only
+the supplied ledger; it never requests merges or bypasses required checks.
 
 Queue-to-merge seconds use nearest-rank p50/p90/p95/p99 for jobs with exactly one
-queued and one merged observation. Exact duplicate rows count once. Missing,
-reversed, future, repeated-attempt or conflicting boundaries remain unmeasured;
-empty percentiles are null. Use attempt-specific job IDs. Blocking seconds sum
-explicit HELD/BLOCKED reason intervals until the next timestamped observation
-(or now for unresolved jobs); unobserved time is not inferred. Candidates flag
-PRs with stale observations, conflicting outcomes/PR identities or a latest
-CONFLICTING mergeability observation. These are investigation candidates, not
-merge eligibility decisions. Inputs support job/jobId/job_id, ts/timestamp/at,
-state/outcome/status and prUrl/url/pr; reconciled mergedAt/closedAt take priority.
+queued and one merged observation; `publishedToMergeSeconds` applies the same
+boundary rules to the publish-to-merge span. Exact duplicate rows count once.
+Missing, reversed, future, repeated-attempt or conflicting boundaries remain
+unmeasured; empty percentiles are null. Use attempt-specific job IDs. `byPool`
+repeats the measured queue-to-merge percentiles per `pool` label (`unknown`
+when a job's rows carry none). `queued` counts jobs with a queue or publish
+boundary and no terminal outcome, plus the oldest one's age; `closed` counts
+jobs closed without a merge. `generatedAt` echoes the report instant. Blocking
+seconds sum explicit HELD/BLOCKED reason intervals until the next timestamped
+observation (or now for unresolved jobs); unobserved time is not inferred.
+Candidates flag PRs with stale observations, conflicting outcomes/PR identities
+or a latest CONFLICTING mergeability observation. These are investigation
+candidates, not merge eligibility decisions. Inputs support job/jobId/job_id,
+ts/timestamp/at, state/outcome/status and prUrl/url/pr; reconciled
+mergedAt/closedAt take priority.
 
 ### Empty launch suppression
 
