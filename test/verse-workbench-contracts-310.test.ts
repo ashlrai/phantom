@@ -208,6 +208,8 @@ const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
   'cos-memory': 'handleCosMemoryApi',
   // The desktop command center: board, router, releases and the leaders' channel.
   ops: 'handleOpsApi',
+  // The desktop Goals pane's write: POST /api/verse/goals.
+  goals: 'handleGoalsCreateApi',
   'owner-thread': 'handleOwnerThreadApi',
   'gmail-triage': 'handleGmailTriageApi',
   'release-stages': 'handleReleaseStagesApi',
