@@ -52,9 +52,12 @@ const ConnectorsSettings = lazy(() => import('../routes/settings/connectors/Conn
 
 const SecretsView = lazy(() => import('../routes/settings/secrets/SecretsView.js').then(module => ({ default: module.SecretsView })));
 
+const TeamInviteAccept = lazy(() => import('../routes/TeamInviteAccept.js').then((module) => ({ default: module.TeamInviteAccept })));
+
 export function AppRoutes() {
   return (
     <Routes>
+      <Route path="/teams/:team/accept" element={<TeamInviteAccept />} />
       <Route element={<Shell />}>
         <Route index element={<Navigate to="/overview" replace />} />
         {ALL_NAV_LEAVES.map((leaf) =>
