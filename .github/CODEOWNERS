@@ -366,6 +366,7 @@
 /test/engines-stream-family-310b.test.ts @masonwyatt23
 /test/enroll-secrets-offer.test.ts @masonwyatt23
 /test/enrollment-read-directory-churn.test.ts @masonwyatt23
+/test/episodic-memory.test.ts @masonwyatt23
 /test/execution-feedback-case.test.ts @masonwyatt23
 /test/execution-leases-310b.test.ts @masonwyatt23
 /test/external-skill-audit-trust-roots.test.ts @masonwyatt23
@@ -524,6 +525,7 @@
 /test/helpers/router-replay.ts @masonwyatt23
 /test/helpers/sidecar-ast-gate.ts @masonwyatt23
 /test/host-merge-310b.test.ts @masonwyatt23
+/test/idea-verdict-route.test.ts @masonwyatt23
 /test/improve-api.test.ts @masonwyatt23
 /test/improve-backlog-leverage.test.ts @masonwyatt23
 /test/improve-boundary.test.ts @masonwyatt23
@@ -1123,6 +1125,7 @@
 /test/standing-wiring-310b.test.ts @masonwyatt23
 /test/standing-wiring-loop-310b.test.ts @masonwyatt23
 /test/status-custody.test.ts @masonwyatt23
+/test/status-quota-lines.test.ts @masonwyatt23
 /test/store-unreadable-refusal-310.test.ts @masonwyatt23
 /test/subscription-budget-override-310.test.ts @masonwyatt23
 /test/support/pool-commissioning-independent-fixture.ts @masonwyatt23
@@ -1136,6 +1139,7 @@
 /test/tick-hooks-defaults-310b.test.ts @masonwyatt23
 /test/tick-hooks-live-310b.test.ts @masonwyatt23
 /test/tick-hooks-loop-310b.test.ts @masonwyatt23
+/test/tier1-apps-boundary.test.ts @masonwyatt23
 /test/tier1-closure-cut.test.ts @masonwyatt23
 /test/tmp-scratch-sweep.test.ts @masonwyatt23
 /test/top-pools.test.ts @masonwyatt23
