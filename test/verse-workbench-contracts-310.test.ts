@@ -213,6 +213,9 @@ const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
   'release-stages': 'handleReleaseStagesApi',
   'comms-inbox': 'handleCommsInboxApi',
   'comms-teammate-reply': 'handleCommsTeammateReplyApi',
+  // The desktop command center's library files and run handoffs.
+  'fleet-library-files': 'handleFleetLibraryFilesApi',
+  'fleet-handoffs': 'handleFleetHandoffsApi',
 };
 
 const allPrefixes = WORKBENCH_ROUTE_FAMILIES.flatMap((family) => family.prefixes.map((prefix) => ({ family: family.id, prefix })));

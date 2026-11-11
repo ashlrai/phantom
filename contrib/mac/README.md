@@ -195,7 +195,7 @@ multiplicative decrease, and keeps its state in `queue/concurrency.json`:
 
 | Signal | ok (headroom) | danger (back off) | Starvation gate trips at |
 |---|---|---|---|
-| load1 / (ncpu x `GATE_LOAD_PER_CPU`) | < 0.5 | >= 0.8 | warns only at 1.0 |
+| load1 / (ncpu x min(`GATE_LOAD_PER_CPU`, 2.5)) | < 0.5 | >= 0.8 | warns only at 1.0 |
 | `kern.memorystatus_vm_pressure_level` | 1 | >= 2 | 4 |
 | `memory_pressure` free % | >= 25 | < 15 | n/a |
 | swap growth in the gate window | < 0.25 x `GATE_SWAP_GROWTH_GB` | >= 0.5 x | 1.0 x |
@@ -203,6 +203,10 @@ multiplicative decrease, and keeps its state in `queue/concurrency.json`:
 | processes / `GATE_PROCS_MAX` | < 0.7 | >= 0.85 | warns only |
 | fork failures (15 min) | 0 | >= 1 | n/a |
 | provider 429 / overload hits (15 min) | 0 | >= 3 | per-lane halving |
+
+The load danger threshold is never above twice the CPU count, even if the legacy
+load gate is disabled or configured more loosely. Unknown swap growth holds the
+cap rather than counting as zero growth.
 
 - **Raise**: +2, at most every 120 s, and only when every signal is ok and the cap
   is the binding limit: running sessions are at the cap, work is queued, and the
