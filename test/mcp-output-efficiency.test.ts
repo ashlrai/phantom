@@ -66,6 +66,7 @@ const ADDED_NATIVE_NAMES = [
   'phantom_observe_session',
   'phantom_fleet_graph',
   'phantom_fleet_session',
+  'phantom_fleet_verbs',
   'phm_agent_roster',
   'phm_context_brief',
   'phm_claim_acquire',
