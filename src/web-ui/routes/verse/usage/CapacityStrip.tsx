@@ -35,6 +35,7 @@ import type { BudgetView } from '../../../../core/routing/policy.js';
 import type { SeatHealthReport } from '../../../../core/verse/health-types.js';
 import type { VerseBootstrap, VerseSeat } from '../../../data/api-types.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
+import { Tooltip } from '../../../components/primitives/Tooltip.js';
 import { MonogramTile } from '../apps/MonogramTile.js';
 import { budgetQuery } from '../budget/budget-queries.js';
 import { useSeatHealth } from '../health/useSeatHealth.js';
@@ -158,10 +159,10 @@ function WindowBar({
   }
   return (
     <div className={styles.bar} data-binding={w.binding || undefined} data-compact={compact || undefined}>
-      <span className={styles.barLabel} title={w.label}>{w.label.replace(/ window$/, '')}</span>
+      <Tooltip label={w.label} placement="top"><span className={styles.barLabel} tabIndex={0}>{w.label.replace(/ window$/, '')}</span></Tooltip>
       {track}
       {value}
-      {!compact && row.quotaCurrent !== false && w.resetText !== null ? <span className={styles.reset} title={w.resetText}>{w.resetText}</span> : null}
+      {!compact && row.quotaCurrent !== false && w.resetText !== null ? <Tooltip label={w.resetText} placement="top"><span className={styles.reset} tabIndex={0}>{w.resetText}</span></Tooltip> : null}
     </div>
   );
 }
@@ -260,16 +261,16 @@ function CapacityRowView({
         {!compact && (reserve !== null || row.credits !== null) ? (
           <p className={styles.meta}>
             {reserve !== null ? (
-              <span title={reserve.why}>
+              <Tooltip label={reserve.why} placement="top"><span tabIndex={0}>
                 {reserve.label}
                 {/* "Autonomy off — all yours" already says it; no second "Off". */}
                 {reserve.autonomy === 'off' ? null : (
                   <> · Autonomy: <span className={styles.autonomy} data-status={reserve.autonomy}>{reserve.autonomyWord}</span></>
                 )}
-              </span>
+              </span></Tooltip>
             ) : null}
             {reserve !== null && row.credits !== null ? ' · ' : null}
-            {row.credits !== null ? <span title={nativeCreditBalanceTitle(row.creditBalance) ?? undefined}>{row.credits}</span> : null}
+            {row.credits !== null ? <Tooltip content={nativeCreditBalanceTitle(row.creditBalance)} placement="top"><span tabIndex={nativeCreditBalanceTitle(row.creditBalance) === null ? undefined : 0}>{row.credits}</span></Tooltip> : null}
           </p>
         ) : null}
       </div>

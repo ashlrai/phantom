@@ -579,6 +579,11 @@ const TOOLS: NativeToolImpl[] = [
     handler: async args => (await import('./teams/tools.js')).teamHandoff(args),
   },
   {
+    name: 'phm_team_access_request', description: 'File a workspace access request: invite-member (human:<name>), link-repo (owner/name) or change-role (admin|member). Recorded as a pending approval a human owner/admin decides with phm team approve|deny; an approved request applies with the approver as its audit actor. Agents can request, never decide.',
+    inputSchema: TEAM_TOOL_SCHEMAS.phm_team_access_request, safety: 'append',
+    handler: async args => (await import('./teams/tools.js')).teamAccessRequest(args),
+  },
+  {
     name: 'phm_team_context_add', description: 'Add shared context scoped by owner (personal/company/client:<name>), project and person, with provenance. Credential-shaped values are refused; use phm_<name> references.',
     inputSchema: TEAM_TOOL_SCHEMAS.phm_team_context_add, safety: 'append',
     handler: async args => (await import('./teams/tools.js')).teamContextAdd(args),
