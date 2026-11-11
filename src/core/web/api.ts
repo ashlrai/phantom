@@ -105,6 +105,7 @@ import type { ProposalsReadResult } from '../inbox/store.js';
 import { handleRunEventsSse, RUN_EVENTS_PATH_RE } from './run-stream.js';
 import { buildHostSummary, HOST_SUMMARY_PATH } from './host-summary.js';
 import { handleVerseApi, isVerseApiPath, verseSessionsDigest, verseSessionsSnapshot, verseAccountReadingsDigest } from '../verse/verse-api.js';
+import { handleIdeasDraftApi, isIdeasDraftPath } from './ideas-draft-route.js';
 // V2 autonomy control plane (mounted BEFORE handleVerseApi — see handleApi).
 import { handleVerseControlApi, isVerseControlPath } from '../verse/control-api.js';
 // GitHub, reachable from Verse (docs/VERSE-WORKSPACES.md §2) — also BEFORE handleVerseApi.
@@ -2098,11 +2099,62 @@ export async function handleApi(
 
     // ── GET /api/backlog ────────────────────────────────────────────────────
     // M31: read-only — the persisted backlog (never triggers a scan).
+    // RQ-PHX-IDEANOTNOW94: items carry their latest idea verdict, when one is
+    // on file, so the Ideas view can hide "never" and recent "not now" rows
+    // (and label the ones that came back). Additive field, same read class.
     if (path === '/api/backlog' && method === 'GET') {
       const { loadBacklog } = await import('../portfolio/backlog.js');
       const backlog = loadBacklog();
+      if (backlog && backlog.items.length > 0) {
+        const { readIdeaVerdicts } = await import('../ideas/idea-verdicts.js');
+        const verdicts = readIdeaVerdicts();
+        if (verdicts.size > 0) {
+          backlog.items = backlog.items.map((item) => {
+            const entry = verdicts.get(item.id);
+            return entry ? { ...item, verdict: { verdict: entry.verdict, reason: entry.reason, at: entry.at } } : item;
+          });
+        }
+      }
       sendJson(res, 200, backlog ?? null);
       return true;
+    }
+
+    // ── POST /api/ideas/verdict ─────────────────────────────────────────────
+    // RQ-PHX-IDEANOTNOW94: record Mason's "not now" / "never" on one backlog
+    // idea. Same posture as every mutation route: 404 w/o dispatch, token +
+    // JSON required; the append-only store never deletes lines.
+    if (path === '/api/ideas/verdict' && method === 'POST') {
+      if (!ctx.allowDispatch) {
+        sendJson(res, 404, { error: 'not found' });
+        return true;
+      }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let body: unknown;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        sendJson(res, 400, { error: 'invalid JSON body' });
+        return true;
+      }
+      const { parseIdeaVerdict, recordIdeaVerdict } = await import('../ideas/idea-verdicts.js');
+      const parsed = parseIdeaVerdict(body);
+      if (!parsed.ok) {
+        sendJson(res, 400, { error: parsed.error });
+        return true;
+      }
+      const entry = recordIdeaVerdict(parsed);
+      if (!entry) {
+        sendJson(res, 500, { error: 'could not record the verdict' });
+        return true;
+      }
+      sendJson(res, 200, { ok: true, entry });
+      return true;
+    }
+
+    // ── POST /api/ideas/draft (Ideas pane → one drop-job draft) ─────────────
+    // Gated inside the handler: --allow-dispatch + token + JSON Content-Type.
+    if (isIdeasDraftPath(path)) {
+      return handleIdeasDraftApi(ctx, req, res, method);
     }
 
     // ── GET /api/impact ─────────────────────────────────────────────────────

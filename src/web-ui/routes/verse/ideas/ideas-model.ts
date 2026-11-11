@@ -8,6 +8,7 @@ import { repoDisplayName } from '../autonomy/format.js';
 
 export interface IdeaRow {
   key: string;
+  /** The backlog id the server drafts from; null when the item has none. */
   id: string | null;
   title: string;
   repo: string;
@@ -17,6 +18,16 @@ export interface IdeaRow {
   source: string;
   /** Set on goal-drift ideas: the goal they came from. */
   goal?: { id: string; name: string };
+  /** Latest owner verdict on this idea, when the server annotated one. */
+  verdict?: IdeaRowVerdict;
+}
+
+/** The owner's verdict on an idea; 'never' hides it, 'not-now' for a week. */
+export interface IdeaRowVerdict {
+  verdict: 'not-now' | 'never';
+  reason: string;
+  /** ISO timestamp the verdict was recorded; '' when the server sent none. */
+  at: string;
 }
 
 export interface RepoGroup {
@@ -47,6 +58,10 @@ export function rankIdeas(items: readonly VerseBacklogItem[]): IdeaRow[] {
     const goalName = text((item as { goalName?: unknown }).goalName);
     const source = text(item.source) ?? UNKNOWN_SOURCE;
     const score = typeof item.score === 'number' && Number.isFinite(item.score) ? item.score : null;
+    const rawVerdict = item.verdict?.verdict;
+    const verdict: IdeaRowVerdict | undefined = rawVerdict === 'not-now' || rawVerdict === 'never'
+      ? { verdict: rawVerdict, reason: text(item.verdict?.reason) ?? '', at: text(item.verdict?.at) ?? '' }
+      : undefined;
     rows.push({
       key: `${id ?? title}#${order}`,
       id: id ?? null,
@@ -56,6 +71,7 @@ export function rankIdeas(items: readonly VerseBacklogItem[]): IdeaRow[] {
       scoreText: score === null ? 'unscored' : `score ${score}`,
       source,
       ...(source === 'goal-drift' && goalId ? { goal: { id: goalId, name: goalName ?? goalId } } : {}),
+      ...(verdict ? { verdict } : {}),
       order,
     });
   });
