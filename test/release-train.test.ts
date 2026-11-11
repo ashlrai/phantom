@@ -10,7 +10,7 @@ import {
   enqueueReleasePullRequest, hostedTrainGate, isReleasePleaseCommit,
   successorTagConflict, refusePublishIfSuccessorConflict,
   markWritesApplied, mergeStageDone, observeTrain, pauseReleaseTrain, readSentinel, releaseGithubCall, releaseKillDecision, selectUpdaterFeed,
-  TRAIN_SCHEMA, updaterFeedMatches, WEBSITE_HOOK,
+  TRAIN_SCHEMA, trainStepSummary, updaterFeedMatches, WEBSITE_HOOK,
   type ReleaseWrite, type TrainObservation,
 } from '../src/core/release/train.js';
 
@@ -367,6 +367,104 @@ describe('release train', () => {
     expect(observed.head?.tag).toBe(goodTag);
     expect(observed.skippedTags).toEqual([{ tag: badTag, reason: expect.stringContaining(`release_message_mismatch: tag=${badTag}`) }]);
     expect(buildTrain(observed).state.tag).toBe(goodTag);
+  });
+
+  // RQ-RELEASE-TRAIN-UNBLOCK-1: v3.30.32 was a hand bump in bridge PR #4735
+  // (RQ-UPKEEP-REL). No `chore(<scope>): release 3.30.32` commit exists at or
+  // under the tag, so the guard must keep refusing it. Recovery is the next
+  // release-please patch, which must not be blocked by the skipped tag.
+  const upkeepSubject = 'bridge(RQ-UPKEEP-REL-phantom-20261110): RQ-UPKEEP-REL-phantom-20261110: release 3.30.32 (#4735)';
+  const released31 = 'chore(master): release 3.30.31 (#4613)\n\n* chore(release): sync candidate version carriers to 3.30.31\n';
+
+  it('never reads a bridge subject that mentions a release as a release-please commit', () => {
+    expect(isReleasePleaseCommit(`${upkeepSubject}\n\nCo-authored-by: x`, '3.30.32')).toBe(false);
+    expect(isReleasePleaseCommit('bridge(RQ-UPKEEP-REL-phantom-20261110): chore(master): release 3.30.32', '3.30.32')).toBe(false);
+    expect(isReleasePleaseCommit('Revert "chore(master): release 3.30.32 (#1)"', '3.30.32')).toBe(false);
+    expect(isReleasePleaseCommit(released31, '3.30.32')).toBe(false);
+    expect(isReleasePleaseCommit('chore(master): release 3.30.32 (#4999)', '3.30.32')).toBe(true);
+  });
+
+  it('skips the hand-bumped v3.30.32 tag and still enqueues the next release-please PR', async () => {
+    const bridge = 'bf68264b99aff8f8ad5728304f118e8a5924aa4d';
+    const rp31 = 'da181be3b956e4ba69c4bcf81e625b29c0673cbf';
+    const rpHead = '1cb235a8ab23ad920213ef04e716e086a8f0fa8b';
+    const pkg = (version: string) => ({ encoding: 'base64', content: Buffer.from(JSON.stringify({ name: '@ashlr/phantom', version })).toString('base64') });
+    const signed31 = ['phantom-3.30.31.tgz', 'phantom-3.30.31.tgz.sig', 'Phantom.app.tar.gz', 'Phantom.app.tar.gz.sig', 'manifest.json', 'manifest.json.sig', 'latest.json']
+      .map((name) => ({ name, created_at: '2026-11-10T09:00:00Z' }));
+    const data: Record<string, unknown> = {
+      'repos/ashlrai/phantom': { id: 1263526319, full_name: 'ashlrai/phantom' },
+      'repos/ashlrai/phantom/commits/master': { sha },
+      [`repos/ashlrai/phantom/contents/package.json?ref=${sha}`]: pkg('3.30.32'),
+      'repos/ashlrai/phantom/git/ref/tags/v3.30.32': { ref: 'refs/tags/v3.30.32', object: { type: 'commit', sha: bridge } },
+      [`repos/ashlrai/phantom/commits/${bridge}`]: { sha: bridge, commit: { message: `${upkeepSubject}\n\nCo-authored-by: Mason Wyatt <x@users.noreply.github.com>\n`, committer: { date: '2026-11-10T13:12:59Z' } } },
+      [`repos/ashlrai/phantom/compare/${bridge}...${sha}`]: { status: 'ahead', ahead_by: 70 },
+      [`repos/ashlrai/phantom/contents/package.json?ref=${bridge}`]: pkg('3.30.32'),
+      // The ancestor walk sees only bridges and the previous release: nothing to thread.
+      [`repos/ashlrai/phantom/commits?sha=${bridge}&per_page=30`]: [
+        { commit: { message: upkeepSubject } }, { commit: { message: 'bridge(RQ-RELEASE-ISOLATED-BUILD-1): notes (#4677)' } }, { commit: { message: released31 } },
+      ],
+      [`repos/ashlrai/phantom/commits/${rp31}`]: { sha: rp31, commit: { message: released31, committer: { date: '2026-11-10T08:00:00Z' } } },
+      [`repos/ashlrai/phantom/compare/${rp31}...${sha}`]: { status: 'ahead', ahead_by: 140 },
+      'repos/ashlrai/phantom/tags?per_page=100&page=1': [{ name: 'v3.30.32', commit: { sha: bridge } }, { name: 'v3.30.31', commit: { sha: rp31 } }],
+      'repos/ashlrai/phantom/releases?per_page=100&page=1': [
+        { id: 32, tag_name: 'v3.30.32', draft: true, name: 'Phantom 3.30.32', body: 'notes', created_at: '2026-11-10T13:40:00Z', assets: [] },
+        { id: 31, tag_name: 'v3.30.31', draft: false, name: 'Phantom 3.30.31', body: 'notes', created_at: '2026-11-10T08:10:00Z', assets: signed31 },
+      ],
+      'repos/ashlrai/phantom/pulls?state=open&per_page=100&page=1': [
+        { number: 4760, title: 'chore(master): release 3.30.33', head: { ref: 'release-please--branches--master--components--phantom' } },
+      ],
+      'repos/ashlrai/phantom/pulls/4760': {
+        number: 4760, title: 'chore(master): release 3.30.33', node_id: 'PR_kwDO_test', state: 'open', merged_at: null,
+        mergeable: true, mergeable_state: 'clean', head: { ref: 'release-please--branches--master--components--phantom', sha: rpHead },
+      },
+      [`repos/ashlrai/phantom/commits/${rpHead}/check-runs?filter=latest&per_page=100`]: {
+        total_count: 1, check_runs: [{ name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } }],
+      },
+      'updater/latest.json': { version: '3.30.31' },
+      'registry/npm/@ashlr/phantom/3.30.31': { version: '3.30.31', time: '2026-11-10T09:05:00Z' },
+      ...greenCi(rp31),
+    };
+    const observed = await observeTrain(async (path) => {
+      if (Object.hasOwn(data, path)) return data[path];
+      if (path.includes('/actions/workflows/')) return { total_count: 0, workflow_runs: [] };
+      throw new Error(`unexpected ${path}`);
+    }, '2026-11-11T04:00:00Z', 60, { fleet: 'inactive', autorun: 'inactive' });
+
+    // Guard holds: v3.30.32 is skipped with the exact refusal, nothing threads a release message.
+    expect(observed.head).toMatchObject({ tag: 'v3.30.31', sha: rp31 });
+    expect(observed.head?.releaseMessage).toBeUndefined();
+    expect(observed.skippedTags).toEqual([{ tag: 'v3.30.32', reason: `release_message_mismatch: tag=v3.30.32 first_line=${JSON.stringify(upkeepSubject)} expected=chore(<scope>): release 3.30.32` }]);
+
+    // ...and does not block the recovery: the green 3.30.33 release PR is enqueued.
+    const plan = buildTrain(observed);
+    expect(plan.exitCode).toBe(0);
+    expect(plan.state).toMatchObject({ stopped: false, tag: 'v3.30.31' });
+    expect(plan.writes).toEqual([enqueueReleasePullRequest('PR_kwDO_test')]);
+    expect(plan.state.superseded).toEqual([]);
+    const summary = trainStepSummary(plan.state);
+    expect(summary).toContain('- release_message_mismatch: tag=v3.30.32');
+    expect(summary).toContain('the next release-please tag supersedes their drafts');
+
+    // Once release-please tags 3.30.33, the orphan 3.30.32 draft is superseded, never published.
+    const rp33 = 'e'.repeat(40);
+    const next = buildTrain(observation({
+      masterVersion: '3.30.33',
+      tags: [{ name: 'v3.30.33', sha: rp33 }, { name: 'v3.30.32', sha: bridge }, { name: 'v3.30.31', sha: rp31 }],
+      head: { tag: 'v3.30.33', sha: rp33, message: 'chore(master): release 3.30.33 (#4760)\n', ancestry: 'identical', committedAt: '2026-11-11T05:00:00Z' },
+      releases: [
+        { id: 33, tag_name: 'v3.30.33', draft: true, name: 'Phantom 3.30.33', body: 'notes', created_at: '2026-11-11T05:05:00Z', assets: [] },
+        { id: 32, tag_name: 'v3.30.32', draft: true, name: 'Phantom 3.30.32', body: 'notes', created_at: '2026-11-10T13:40:00Z', assets: [] },
+      ],
+    }));
+    expect(next.state).toMatchObject({ stopped: false, tag: 'v3.30.33', superseded: ['v3.30.32'] });
+    expect(next.writes).toContainEqual({
+      method: 'PATCH', path: 'repos/ashlrai/phantom/releases/32',
+      body: { name: 'Phantom 3.30.32 (superseded by v3.30.33)', body: 'notes\n\nSuperseded by v3.30.33. This draft stays unpublished.\n', draft: true, prerelease: false },
+    });
+  });
+
+  it('keeps the step summary to the reason when nothing was skipped', () => {
+    expect(trainStepSummary({ reason: 'proceed', skippedTags: [] })).toBe('### Release train\n\nproceed\n');
   });
 
   it('dispatches attest and npm for the tagged sha and leaves signing to the Mac wrapper', () => {

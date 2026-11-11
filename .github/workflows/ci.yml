@@ -99,6 +99,20 @@ jobs:
         run: |
           node --test .github/tests/ci-mcp-selection.test.mjs
           node .github/scripts/ci-mcp-selection.mjs
+      # Only the release-please PR may change the release version. A hand bump
+      # still gets a tag and draft from auto-tag, but the release train refuses
+      # it (release_message_mismatch) and it is never published (#4098, #4735).
+      # PR-only: the merge queue admits a PR after its PR checks pass.
+      - name: Require release-please provenance for version bumps
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          node --test .github/tests/release-version-provenance.test.mjs
+          node .github/scripts/release-version-provenance.mjs
       - name: Set up Node.js 22
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:

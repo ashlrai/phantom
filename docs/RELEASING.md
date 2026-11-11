@@ -178,6 +178,17 @@ What runs without a per-release approval:
   checks green master, cadence and version carriers.
 - `auto-tag.yml` still creates `vX.Y.Z` and the draft after required checks
   on that commit.
+- Only the release-please PR changes the release version. The `Quick
+  typecheck` job refuses a pull request that changes the `package.json`
+  version or `.release-please-manifest.json` unless its head is a
+  `release-please--*` branch of `ashlrai/phantom`
+  (`.github/scripts/release-version-provenance.mjs`). A hand bump that lands
+  anyway still gets a tag and draft from auto-tag. The train skips it as
+  `release_message_mismatch`, keeps admitting the last release-please tag and
+  merging the next release PR. That release then supersedes the orphan draft,
+  which stays unpublished. This happened with `v3.30.25` (#4098) and `v3.30.32`
+  (#4735). Recover with the next release-please patch. Do not retag, and do not
+  widen the release-subject match.
 - A `workflow_dispatch` of `ci.yml` with `release_gate=true` builds that
   candidate. The ref is the tag when the tag is behind master, and `master`
   when the SHAs match. Attestation uses the same ref, so the checkout SHA is
