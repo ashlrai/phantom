@@ -341,7 +341,8 @@ const TOOLS: NativeToolImpl[] = [
       const { resolveNeedsMasonWithInbox } = await import('./fleet/needs-mason-relay.js');
       const result = await resolveNeedsMasonWithInbox(
         { itemId: args.itemId as string, ...(typeof args.reply === 'string' ? { reply: args.reply } : {}) },
-        { runsDir: process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), source: 'cli' });
+        // MCP callers are agents, not Mason: record the agent surface, never 'cli'.
+        { runsDir: process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), source: 'leader' });
       if (!result.ok) return { error: result.error, status: result.code, itemId: args.itemId, inbox: result.inbox };
       return { v: 1, status: 'resolved', itemId: result.itemId, duplicate: result.duplicate, cursor: result.cursor, inbox: result.inbox };
     },
