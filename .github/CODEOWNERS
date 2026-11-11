@@ -532,6 +532,7 @@
 /test/improve-boundary.test.ts @masonwyatt23
 /test/improve-cli-boundary.test.ts @masonwyatt23
 /test/improve-discover.test.ts @masonwyatt23
+/test/improve-hot-patch.test.ts @masonwyatt23
 /test/improve-lesson-trial.test.ts @masonwyatt23
 /test/improve-observe.test.ts @masonwyatt23
 /test/improve-outcomes.test.ts @masonwyatt23
@@ -970,6 +971,7 @@
 /test/node-router.test.ts @masonwyatt23
 /test/north-star-measured-leverage.test.ts @masonwyatt23
 /test/one-ask-best-of-n-winner.test.ts @masonwyatt23
+/test/one-ask-intake.test.ts @masonwyatt23
 /test/ops-release-pr-merge-api.test.ts @masonwyatt23
 /test/ops-release-pr-merge.test.ts @masonwyatt23
 /test/orchestrator-bash-standing-310b.test.ts @masonwyatt23
