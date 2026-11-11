@@ -9,7 +9,7 @@
 # Live files are sha-pinned by Security (G1-CODE-PIN / GS_SHA): re-pin the sha256 values printed here before the next tick.
 set -u
 src=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-FILES="process_snapshot.py dispatchd.py concurrency.py batcher.py local_job.py restock.py launch_precheck.py install-gate.py launch-gate.sh judge_gate.py"
+FILES="process_snapshot.py dispatchd.py concurrency.py batcher.py batch_sessions.py batch-launch.sh batch-sessions.json local_job.py restock.py launch_precheck.py install-gate.py launch-gate.sh judge_gate.py"
 bin=${ASHLR_RUNS_BIN:-$HOME/.ashlr-runs/bin}; dry=0; json=0
 while [ $# -gt 0 ]; do
   case $1 in
@@ -38,7 +38,7 @@ for f in $FILES; do
   if [ "$status" = changed ]; then [ "$json" = 1 ] || diff -u "$d" "$s" | head -n 400; fi
   if [ "$dry" = 0 ] && { [ "$status" = changed ] || [ "$status" = new ]; }; then
     tmp=$d.tmp.$$
-    mode=755
+    mode=755; case $f in *.json) mode=644 ;; esac
     if [ "$status" = changed ]; then
       backup=$d.bak-macdispatch-$stamp
       cp -p "$d" "$backup" || { status=error; backup=; }
