@@ -1,6 +1,7 @@
 /** One-shot local coordination; message labels do not authenticate or authorize execution. */
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxReceipt } from './bus-inbox.js';
 import { BUS_PRIORITIES } from './bus-envelope.js';
+import { isClaimableWork } from './bus-protocol.js';
 import { mutateBusWorkClaim, validBusClaimRequest } from './bus-work-claims.js';
 
 export interface BusNextRequest { to: string; owner: string; leaseMs: number; root?: string }
@@ -19,9 +20,7 @@ export function claimNextBusWork(request: BusNextRequest): BusNextResult {
     scanned += result.messages.length;
     if (scanned > BUS_INBOX_MAX_MESSAGES || result.nextCursor < cursor) return { status: 'retryable' };
     for (const receipt of result.messages) {
-      const body = receipt.envelope.body;
-      if (receipt.envelope.to === request.to && body !== null && typeof body === 'object' &&
-          !Array.isArray(body) && body.kind === 'work') candidates.push(receipt);
+      if (receipt.envelope.to === request.to && isClaimableWork(receipt.envelope.body)) candidates.push(receipt);
     }
     if (result.messages.length < BUS_INBOX_MAX_READ) { finished = true; break; }
     if (result.nextCursor <= cursor) return { status: 'retryable' };

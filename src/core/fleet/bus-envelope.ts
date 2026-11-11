@@ -3,6 +3,7 @@
  * Pure validation only: addresses are routing labels, never authenticated identities.
  */
 import { isProxy } from 'node:util/types';
+import { protocolIssue } from './bus-protocol.js';
 
 export const BUS_PRIORITIES = ['P0', 'P1', 'P2', 'P3'] as const;
 export type BusPriority = typeof BUS_PRIORITIES[number];
@@ -187,6 +188,8 @@ export function validateBusEnvelope(input: unknown): BusEnvelopeValidationResult
       ? encode(input as unknown as BusEnvelope<unknown>)
       : encode({ id, from, to, priority, ttl, body } as BusEnvelope<unknown>);
     const value = JSON.parse(encoded.json) as BusEnvelope;
+    const protocolProblem = protocolIssue(value);
+    if (protocolProblem) refuse('invalid-field', '$.body.protocol', protocolProblem);
     if (hasChannelMetadata) {
       if (!BUS_CHANNELS.includes(value.channel as BusChannel)) {
         refuse('invalid-field', '$.channel', 'Unknown channel.');
