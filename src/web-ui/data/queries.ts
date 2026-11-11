@@ -15,6 +15,7 @@ import type {
   DashboardSnapshot,
   DecisionEntry,
   FleetActivitySnapshot,
+  FleetBoardResponse,
   FleetLaneSnapshot,
   FleetStatus,
   VerifiedCompletionReport,
@@ -129,6 +130,19 @@ export const fleetStatusQuery: QueryDef<FleetStatus> = {
 export const fleetActivityQuery: QueryDef<FleetActivitySnapshot> = {
   key: 'fleet-activity',
   fetch: (signal) => apiGet<FleetActivitySnapshot>('/api/fleet-activity', signal),
+};
+
+/**
+ * RQ-SWE3-BOARDUI-1: the Leader-as-CEO board (GET /api/fleet/board →
+ * core/web/api.ts over core/fleet/fleet-board-read.ts) — lanes, READY depth
+ * by tier, merges in the last hour, conflicting-PR trend and needs-Mason
+ * items, read from the same coordination/leader-board.json `phm fleet board`
+ * prints. `status` carries 'ok'|'missing'|'unavailable'; a 200 with
+ * board:null means no tick has recorded one yet — not an error, and not zero.
+ */
+export const fleetBoardQuery: QueryDef<FleetBoardResponse> = {
+  key: 'fleet-board',
+  fetch: (signal) => apiGet<FleetBoardResponse>('/api/fleet/board', signal),
 };
 
 /**
