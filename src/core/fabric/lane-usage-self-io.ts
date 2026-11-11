@@ -8,8 +8,8 @@ import { readDevinUsage } from './readers/devin-usage.js';
 import { parseClaudeUsage } from './status-readings.js';
 import { readClaudeQuotaReading, usableClaudeWeekly } from '../fleet/claude-quota-reading.js';
 import {
-  DEFAULT_MAX_AGE_MS, parseJobRows, refreshLanes,
-  type JobRow, type RefreshResult, type SanctionedReader, type SelfLane, type SelfState,
+  DEFAULT_MAX_AGE_MS, OWNED_FIELDS, parseJobRows, refreshLanes,
+  type BudgetEntry, type JobRow, type RefreshResult, type SanctionedReader, type SelfLane, type SelfState,
 } from './lane-usage-self.js';
 
 const MAX_FILE = 8 * 1024 * 1024;
@@ -138,15 +138,43 @@ export async function runSelfRefresh(o: ReaderOptions & { lanes?: readonly SelfL
     ...(o.lanes ? { lanes: o.lanes } : {}),
   });
   if (!o.dryRun) {
-    // Re-read just before writing so a concurrent writer's other keys are not lost.
+    // Re-read just before writing: a concurrent writer may have changed any root key or any lane's
+    // target, policy or metadata while the readers ran. Only lanes this pass read or estimated are
+    // touched, and within them only OWNED_FIELDS are applied to the freshly read row.
     const fresh = await readJson(overridesPath);
     for (const out of result.outcomes) {
-      if (out.action !== 'kept') fresh[out.lane] = result.overrides[out.lane];
+      if (out.action === 'kept' || !out.entry) continue;
+      fresh[out.lane] = withOwnedFields(fresh, out.lane, out.entry);
     }
     await atomicWrite(overridesPath, fresh);
     await atomicWrite(statePath, result.state);
   }
   return result;
+}
+
+const hasOwn = (o: object, key: string): boolean => Object.prototype.hasOwnProperty.call(o, key);
+
+/**
+ * The lane's row as the concurrent writer left it. Only an own plain-object value counts: a string,
+ * array or null row is replaced by an empty one, and nothing is inherited from a prototype. The copy
+ * keeps every other property the writer stored.
+ */
+function currentRow(root: Record<string, unknown>, lane: string): Record<string, unknown> {
+  const v = hasOwn(root, lane) ? root[lane] : undefined;
+  return v && typeof v === 'object' && !Array.isArray(v) ? { ...(v as Record<string, unknown>) } : {};
+}
+
+/**
+ * Apply this pass's owned usage fields to the fresh row. An owned field the pass did not produce is
+ * removed, so a stale estimate-only count (unmeasured_jobs) cannot sit beside a new reading.
+ */
+function withOwnedFields(root: Record<string, unknown>, lane: string, entry: BudgetEntry): Record<string, unknown> {
+  const row = currentRow(root, lane);
+  for (const field of OWNED_FIELDS) {
+    if (hasOwn(entry, field)) row[field] = entry[field];
+    else delete row[field];
+  }
+  return row;
 }
 
 async function atomicWrite(path: string, value: unknown): Promise<void> {
