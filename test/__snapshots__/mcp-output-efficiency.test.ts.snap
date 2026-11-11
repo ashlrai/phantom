@@ -45,6 +45,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "safety": "append",
     },
     {
+      "name": "phantom_fleet_needs_wait",
+      "safety": "read",
+    },
+    {
       "name": "phantom_fleet_orders",
       "safety": "read",
     },
@@ -70,6 +74,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
     },
     {
       "name": "phantom_fleet_session",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_fleet_verbs",
       "safety": "read",
     },
     {
@@ -146,6 +154,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
     },
     {
       "name": "phm_team_handoff",
+      "safety": "append",
+    },
+    {
+      "name": "phm_team_access_request",
       "safety": "append",
     },
     {
@@ -339,6 +351,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
     {
       "name": "phantom_fleet_apps_await",
       "safety": "read",
+    },
+    {
+      "name": "phantom_fleet_apps_watch",
+      "safety": "append",
     },
   ],
   "registryFields": [
@@ -591,6 +607,34 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "itemId": {
+          "pattern": "^nm-[0-9a-f]{12}$",
+          "type": "string",
+        },
+        "pollMs": {
+          "default": 1000,
+          "maximum": 30000,
+          "minimum": 100,
+          "type": "integer",
+        },
+        "timeoutMs": {
+          "maximum": 30000,
+          "minimum": 1,
+          "type": "integer",
+        },
+      },
+      "required": [
+        "itemId",
+        "timeoutMs",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_fleet_needs_wait",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
         "limit": {
           "maximum": 100,
           "minimum": 1,
@@ -665,6 +709,19 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "phantom_fleet_session",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "grep": {
+          "maxLength": 64,
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "phantom_fleet_verbs",
   },
   {
     "inputSchema": {
@@ -1517,6 +1574,62 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "phm_team_handoff",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "agentId": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "memberId": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "note": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "onBehalfOf": {
+          "type": "string",
+        },
+        "op": {
+          "description": "<description>",
+          "enum": [
+            "invite-member",
+            "link-repo",
+            "change-role",
+          ],
+          "type": "string",
+        },
+        "provider": {
+          "type": "string",
+        },
+        "repo": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "role": {
+          "description": "<description>",
+          "enum": [
+            "admin",
+            "member",
+          ],
+          "type": "string",
+        },
+        "team": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "required": [
+        "agentId",
+        "op",
+      ],
+      "type": "object",
+    },
+    "name": "phm_team_access_request",
   },
   {
     "inputSchema": {
@@ -2522,6 +2635,53 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "phantom_fleet_apps_await",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "apps": {
+          "items": {
+            "enum": [
+              "Phantom",
+              "Codex",
+              "Claude",
+              "Grok Bot",
+              "ChatGPT",
+              "Cursor",
+              "Safari",
+              "Google Chrome",
+            ],
+            "type": "string",
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true,
+        },
+        "durationMs": {
+          "maximum": 10000,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "intervalMs": {
+          "maximum": 10000,
+          "minimum": 100,
+          "type": "integer",
+        },
+        "maxConsecutiveFailures": {
+          "maximum": 10,
+          "minimum": 1,
+          "type": "integer",
+        },
+      },
+      "required": [
+        "apps",
+        "durationMs",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_fleet_apps_watch",
   },
 ]
 `;

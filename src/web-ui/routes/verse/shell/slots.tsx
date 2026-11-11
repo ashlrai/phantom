@@ -17,7 +17,7 @@
  * exactly its slot's props, as a NAMED export (`export function BranchBar`).
  *
  * Resolution uses `import.meta.glob` with literal paths — the same "absent
- * file is an absent key" mechanism VerseApp uses for sections.
+ * file is an absent key" mechanism PhantomApp uses for sections.
  */
 import { Component, Suspense, lazy, useState, type ComponentType, type ErrorInfo, type ReactNode } from 'react';
 import { Button } from '../../../components/primitives/Button.js';

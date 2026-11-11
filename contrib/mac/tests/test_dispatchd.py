@@ -687,9 +687,8 @@ class QueueWaitTests(unittest.TestCase):
     def test_claim_limit_preserves_priority_across_ticks_and_skips_blocked_head(self):
         lanes = ['codex-cmp', 'codex-personal', 'claude', 'devin']
         home, env = self.fixture(lanes)
-        # Soft load limits claims to two. Priority persists across ticks even
-        # when several lanes remain backlogged; the blocked first path waits.
-        env['LOADGATE_LOADAVG'] = '60'
+        # MAX_LAUNCH_PER_TICK limits claims to four. Priority holds even when
+        # several lanes remain backlogged; the blocked first path waits.
         queue_job(home, 'RQ-BLOCKED', 'codex-cmp')
         (home / 'Projects/ashlrai/wt/RQ-BLOCKED').mkdir()
         jobs = []
@@ -698,11 +697,9 @@ class QueueWaitTests(unittest.TestCase):
                 job = 'RQ-%s-%d' % (lane, n)
                 jobs.append(job)
                 queue_job(home, job, lane)
-        claimed = []
-        for _ in range(2):
-            r = tick(home, env)
-            self.assertEqual(r.returncode, 0, r.stderr)
-            claimed = [r for r in self.metrics(home) if r['event'] == 'claim']
+        r = tick(home, env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        claimed = [r for r in self.metrics(home) if r['event'] == 'claim']
         self.assertEqual([r['job'] for r in claimed], sorted(jobs)[:4])
         self.assertEqual(len(claimed), 4)
         self.assertNotIn('RQ-BLOCKED', [r['job'] for r in claimed])

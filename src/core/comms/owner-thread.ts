@@ -587,3 +587,18 @@ export async function pullOwnerChannel(channel: OwnerChannel, options: OwnerThre
   }
   return results;
 }
+
+/** Record a local-only notice in the owner thread, without invoking transports. */
+export async function postOwnerThreadNotice(text: string, idempotencyKey: string, options: OwnerThreadOptions): Promise<OwnerThreadResult> {
+  const clean = cleanText(text);
+  if (!clean || !KEY.test(idempotencyKey)) return { status: 'refused' };
+  try {
+    return await transaction(options, async state => {
+      if (state.archivedKeys?.includes(keyDigest(idempotencyKey)) || state.messages.some(m => m.idempotencyKey === idempotencyKey)) {
+        return { status: 'duplicate' as const };
+      }
+      const stored = appendMessage(state, { idempotencyKey, channel: 'imessage', senderId: 'leader', direction: 'outbound', at: new Date(clock(options)).toISOString(), text: clean });
+      return { status: 'accepted' as const, seq: stored.seq };
+    });
+  } catch { return { status: 'unavailable' }; }
+}
