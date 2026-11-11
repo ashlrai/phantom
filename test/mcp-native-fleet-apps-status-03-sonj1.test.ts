@@ -21,7 +21,7 @@ describe('native fleet apps status', () => {
     registerFleetNativeTools();
     registerFleetNativeTools();
     expect(listNativeTools()).toEqual(before);
-    expect(before.filter(tool => tool.name.startsWith('phantom_fleet_apps_'))).toHaveLength(9);
+    expect(before.filter(tool => tool.name.startsWith('phantom_fleet_apps_'))).toHaveLength(10);
   });
   it('advertises a closed read-only tool and rejects arguments before reading', async () => {
     expect(listNativeTools().find(tool => tool.name === name)?.inputSchema).toEqual({ type: 'object', properties: {}, additionalProperties: false });
