@@ -16,6 +16,7 @@ import { openDockPane } from '../dock/dock-store.js';
 import { agentBusMissing, agentBusPageQuery, agentBusStatusQuery } from '../fleet-bus/agent-bus-queries.js';
 import { verseSessionsQuery } from '../verse-queries.js';
 import { CosMemorySection } from './CosMemorySection.js';
+import { MediaSection } from './MediaSection.js';
 import { HandoffsSection } from './HandoffsSection.js';
 import { narrowHandoffs, type HandoffsResponse } from './library-handoffs-model.js';
 import { leaderFileRows, narrowLeaderFiles, type LeaderFilesResponse } from './library-leader-files-model.js';
@@ -246,6 +247,7 @@ export function LibraryPane({ visible = true }: { visible?: boolean }) {
       <PastChats />
       <AgentConversation visible={visible} />
       <LeaderFiles visible={visible} />
+      <MediaSection visible={visible} />
       <HandoffsSection data={handoffs.data} error={handoffs.error} />
     </div>
   );

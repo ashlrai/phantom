@@ -101,6 +101,10 @@ export async function startServer(
   const sessions = createReadSessionBoundary({ onRotate: drainSseConnections, onRevokeSession: drainSseSession });
   const { readToken } = sessions;
   const token = randomBytes(32).toString('hex');
+  // Fleet apps recovery readers stay out of the Tier-1 closure; this bootstrap
+  // is outside it, so it is the production install point for the provider slot.
+  const { installFleetAppsRecoveryProviders } = await import('../fleet/app-recovery-install.js');
+  await installFleetAppsRecoveryProviders();
   // The production default isolates synchronous metadata aggregation from the
   // HTTP loop. Explicit null keeps injected, in-process readers available to
   // hermetic route tests; there is no runtime fallback after a worker failure.
