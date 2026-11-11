@@ -29,7 +29,7 @@ it('sends teammate counts and minutes, never text, senders or rowids', async () 
   const { body, text } = await call({ teammateLatency: (at) => summarizeTeammateLatency(rows, { now: at }) });
   expect(body.teammate).toMatchObject({
     texts: 2, answered: 1, unanswered: 1, medianMinutes: 2, withinTarget: 1,
-    oldestUnanswered: { ageMinutes: 30 }, sourceState: 'healthy',
+    oldestUnanswered: { ageMinutes: 30 }, latestTextAt: '2026-11-09T11:30:00.000Z', sourceState: 'healthy',
   });
   expect(body.sources.teammate).toBe('healthy');
   for (const secret of ['MARKER-TEXT', '+1555', 'handle', 'rowid', '424242', '424243']) expect(text).not.toContain(secret);
