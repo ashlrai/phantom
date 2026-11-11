@@ -3,6 +3,8 @@ node_modules/
 src/raycast/node_modules/
 
 # Build output
+# bun build --compile temp output
+*.bun-build
 dist/
 
 # Test coverage
