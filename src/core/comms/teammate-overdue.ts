@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { readTeammateTexts, type TeammateText } from './imessage-teammate-inbox.js';
+import { classifyTeammateIntent, readTeammateTexts, type TeammateText } from './imessage-teammate-inbox.js';
 import { emptyOwnerSettings } from './owner-channel.js';
 import { postOwnerThreadNotice } from './owner-thread.js';
 
-/** The inbox reader supplies pending texts with answered markers already removed. */
+/** The inbox reader supplies pending texts with answered markers already removed. Intents the inbox classifier marks `ignore` (acknowledgements, patch artifacts) need no reply, so they never raise an owner notice; they are not marked answered here. */
 export function findOverdueTeammateTexts(pending: readonly TeammateText[], opts: { now: number; thresholdMs?: number }): TeammateText[] {
-  return pending.filter(t => opts.now - Date.parse(t.at) > (opts.thresholdMs ?? 5 * 60_000))
+  return pending.filter(t => opts.now - Date.parse(t.at) > (opts.thresholdMs ?? 5 * 60_000)
+      && classifyTeammateIntent(t.text) !== 'ignore')
     .sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || a.rowid - b.rowid);
 }
 
