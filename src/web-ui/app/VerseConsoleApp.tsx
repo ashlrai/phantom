@@ -157,7 +157,7 @@ export function VerseConsoleApp() {
   if (phase === 'unauthenticated') {
     return (
       <Suspense fallback={<p className={styles.checking} role="status">Checking for an existing Phantom session…</p>}>
-        <SessionGate heading={`Connect to ${PRODUCT_NAME}`} command="phm verse" subject={PRODUCT_NAME} mutationField />
+        <SessionGate heading={`Connect to ${PRODUCT_NAME}`} command="phm console" subject={PRODUCT_NAME} mutationField />
       </Suspense>
     );
   }

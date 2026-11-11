@@ -51,6 +51,7 @@ describe('on-demand engineering outcomes', () => {
     expect(screen.getByText('run-1')).toBeInTheDocument(); expect(screen.getByText('trial-1')).toBeInTheDocument();
     fireEvent.click(screen.getByText('Campaign and worker attribution'));
     expect(screen.getByText('local-fixture')).toBeInTheDocument(); expect(screen.getByText('local / fixture-model')).toBeInTheDocument();
+    expect(screen.getByText('Experiment workspace')).toBeInTheDocument();
     expect(screen.getByText('c'.repeat(64))).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledOnce();
     const request = vi.mocked(fetch).mock.calls[0]!;
