@@ -54,7 +54,7 @@ import {
   formatAutoMergeCanaryStatus,
   projectAutoMergeCanaryStatus,
 } from '../src/cli/automerge-canary.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import {
   automergeCanaryStatus,
   automergeCanaryStoreDirectory,
