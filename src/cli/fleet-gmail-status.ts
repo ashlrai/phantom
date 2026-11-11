@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { readGmailArchivePlanLatest } from '../core/comms/gmail-archive-plan-latest.js';
-import { readGmailTriageLatest } from '../core/comms/gmail-triage-latest.js';
+import { readGmailTriageInboxReports, type GmailTriageLatest } from '../core/comms/gmail-triage-latest.js';
 
 const USAGE = `Usage: ashlr fleet gmail-status [--runs-dir <dir>] [--json]
 Report the saved Gmail evidence under <runs-dir>/comms: the latest triage counts
@@ -54,6 +54,7 @@ export interface GmailStatusReport {
   liveInbox: 'unknown';
   archiveExecution: 'unverified';
   triage: TriageStatus;
+  triageInboxes: TriageStatus[];
   archivePlans: ArchiveStatus;
 }
 
@@ -75,7 +76,7 @@ function ageSecondsOf(at: string, nowMs: number): number | null {
 }
 
 function formatAge(ageSeconds: number | null): string {
-  return ageSeconds === null ? 'unknown' : `${ageSeconds}s`;
+  return ageSeconds === null ? 'unknown' : ageSeconds < 0 ? `${ageSeconds}s (clock skew)` : `${ageSeconds}s`;
 }
 
 /** Reads both saved stores independently: missing triage never hides archive
@@ -83,12 +84,11 @@ function formatAge(ageSeconds: number | null): string {
  * already return null on absent, unreadable, oversized or invalid content. */
 export function buildGmailStatusReport(runsDir: string, now: () => number = Date.now): GmailStatusReport {
   const nowMs = now();
-  const triageRecord = readGmailTriageLatest(runsDir);
+  const triageStore = readGmailTriageInboxReports(runsDir);
+  const triageRecord = triageStore?.latest ?? null;
   const archiveStore = readGmailArchivePlanLatest(runsDir);
 
-  const triage: TriageStatus = triageRecord === null
-    ? { state: 'missing', at: null, ageSeconds: null, label: null, counts: null }
-    : {
+  const projectTriage = (triageRecord: GmailTriageLatest): TriageStatus => ({
         state: 'present',
         at: stampOf(triageRecord.at),
         ageSeconds: ageSecondsOf(triageRecord.at, nowMs),
@@ -103,7 +103,12 @@ export function buildGmailStatusReport(runsDir: string, now: () => number = Date
           target: triageRecord.target,
           archiveCandidateCount: triageRecord.archiveCandidateCount,
         },
-      };
+      });
+  const triage: TriageStatus = triageRecord === null
+    ? { state: 'missing', at: null, ageSeconds: null, label: null, counts: null }
+    : projectTriage(triageRecord);
+  const triageInboxes = (triageStore?.inboxes ?? []).map(projectTriage)
+    .sort((a, b) => (a.label ?? '').localeCompare(b.label ?? '') || (a.at ?? '').localeCompare(b.at ?? ''));
 
   const plans: ArchivePlanStatus[] = (archiveStore?.plans ?? []).map(plan => ({
     inbox: labelOf(plan.inbox),
@@ -125,6 +130,7 @@ export function buildGmailStatusReport(runsDir: string, now: () => number = Date
     liveInbox: 'unknown',
     archiveExecution: 'unverified',
     triage,
+    triageInboxes,
     archivePlans,
   };
 }
@@ -158,6 +164,13 @@ export async function cmdFleetGmailStatus(
   } else {
     const c = triage.counts!;
     console.log(`Triage: present — label "${triage.label}"; saved ${triage.at}; age ${formatAge(triage.ageSeconds)}; `
+      + `scanned ${c.scanned}; updates ${c.updates}; drafted ${c.drafted}; review ${c.review}; failed ${c.failed}; `
+      + `unread-in-sample ${c.unreadInSample}; target ${c.target}; archive candidates ${c.archiveCandidateCount}.`);
+  }
+  console.log(`Triage inbox reports: ${report.triageInboxes.length} saved labels.`);
+  for (const entry of report.triageInboxes) {
+    const c = entry.counts!;
+    console.log(`- "${entry.label}": saved ${entry.at}; age ${formatAge(entry.ageSeconds)}; `
       + `scanned ${c.scanned}; updates ${c.updates}; drafted ${c.drafted}; review ${c.review}; failed ${c.failed}; `
       + `unread-in-sample ${c.unreadInSample}; target ${c.target}; archive candidates ${c.archiveCandidateCount}.`);
   }
