@@ -31,20 +31,34 @@ const STALE_AFTER_MS = 30 * 60_000;
 const CLAUDE_SESSION_WINDOW_IDS = new Set(['five_hour', 'session']);
 
 /**
- * The freshest observation the snapshot carries: each seat's own observedAt
- * when it offers one, the snapshot's publishedAt otherwise. Null when no
- * timestamp parses — the caller then cannot prove the data is stale.
+ * One emitted seat's own freshness. `fresh`/`stale` carry the seat's evidence
+ * age; `unknown` means neither its observedAt nor the snapshot's publishedAt
+ * parses, so freshness can be claimed neither way. A fresh seat never masks
+ * a stale neighbour: each seat is judged on its own timestamps.
  */
-function snapshotAgeMs(snapshot: CapacitySnapshot, nowMs: number): number | null {
-  const published = Date.parse(snapshot.publishedAt);
-  let freshest = Number.NEGATIVE_INFINITY;
-  for (const seat of snapshot.seats) {
-    const observed = typeof seat?.observedAt === 'string' ? Date.parse(seat.observedAt) : NaN;
-    const stamp = Number.isFinite(observed) ? observed : published;
-    if (Number.isFinite(stamp) && stamp > freshest) freshest = stamp;
-  }
-  if (!Number.isFinite(freshest) && Number.isFinite(published)) freshest = published;
-  return Number.isFinite(freshest) ? nowMs - freshest : null;
+type SeatFreshness =
+  | { kind: 'fresh' }
+  | { kind: 'stale'; ageMs: number }
+  | { kind: 'unknown' };
+
+/**
+ * The seat's evidence age: its own observedAt when that parses, the
+ * snapshot's publishedAt only when the seat offers no usable reading time.
+ * Null age means neither timestamp parses — freshness is unknown, never
+ * assumed current.
+ */
+function seatFreshness(seat: SeatCapacity, publishedMs: number, nowMs: number): SeatFreshness {
+  const observed = typeof seat?.observedAt === 'string' ? Date.parse(seat.observedAt) : NaN;
+  const stamp = Number.isFinite(observed) ? observed : publishedMs;
+  if (!Number.isFinite(stamp)) return { kind: 'unknown' };
+  const ageMs = nowMs - stamp;
+  return ageMs > STALE_AFTER_MS ? { kind: 'stale', ageMs } : { kind: 'fresh' };
+}
+
+function freshnessTag(freshness: SeatFreshness): string {
+  if (freshness.kind === 'stale') return ` (stale, read ${Math.round(freshness.ageMs / 60_000)}m ago)`;
+  if (freshness.kind === 'unknown') return ' (freshness unknown)';
+  return '';
 }
 
 function seatName(seat: SeatCapacity): string {
@@ -71,31 +85,43 @@ function windowText(window: CapacityWindow, nowMs: number): string {
   return `${id}: ${used} · ${reset}${window.limitReached === true ? ' (limit reached)' : ''}`;
 }
 
-function seatLine(seat: SeatCapacity, nowMs: number): string {
+function seatLine(seat: SeatCapacity, freshness: SeatFreshness, nowMs: number): string {
   const windows = (Array.isArray(seat?.windows) ? seat.windows : [])
     .filter((window) => window !== null && typeof window === 'object')
     .filter((window) => !(seat?.engine === 'claude' && CLAUDE_SESSION_WINDOW_IDS.has(window.id)));
   const detail = windows.length === 0
     ? 'no windows reported'
     : windows.map((window) => windowText(window, nowMs)).join('; ');
-  const line = `Quota ${seatName(seat)}: ${detail}`;
+  const line = `Quota ${seatName(seat)}${freshnessTag(freshness)}: ${detail}`;
   return line.length > MAX_LINE_CHARS ? `${line.slice(0, MAX_LINE_CHARS - 1)}…` : line;
 }
 
 /**
  * One line per seat (at most 8, each at most 160 chars):
- * `Quota <seat label or seatId>: <window>: <used>% · <reset>; <window>: ...`
- * A snapshot older than 30 minutes is prefixed `Quota (stale, read <N>m ago):`;
- * no snapshot at all reads as the desktop being off, not as zero usage.
+ * `Quota <seat label or seatId>[ (stale, read <N>m ago)|(freshness unknown)]: <window>: <used>% · <reset>; <window>: ...`
+ * Freshness is judged per emitted seat — a just-observed seat cannot hide a
+ * stale neighbour. When every emitted seat is stale the snapshot keeps the
+ * single `Quota (stale, read <N>m ago):` banner (its freshest stale age);
+ * mixed or unqualified snapshots qualify each seat on its own line instead.
+ * No snapshot at all reads as the desktop being off, not as zero usage.
  */
 export function quotaLines(snapshot: CapacitySnapshot | null, nowMs: number): string[] {
   if (!snapshot || !Array.isArray(snapshot.seats)) return ['Quota: unavailable (Phantom desktop not running)'];
   const now = Number.isFinite(nowMs) ? nowMs : Date.now();
-  const lines = snapshot.seats.slice(0, MAX_SEATS).map((seat) => seatLine(seat, now));
-  if (lines.length === 0) lines.push('Quota: no seats reported');
-  const age = snapshotAgeMs(snapshot, now);
-  if (age !== null && age > STALE_AFTER_MS) {
-    lines.unshift(`Quota (stale, read ${Math.round(age / 60_000)}m ago):`);
+  const publishedMs = Date.parse(snapshot.publishedAt);
+  const emitted = snapshot.seats.slice(0, MAX_SEATS);
+  const freshness = emitted.map((seat) => seatFreshness(seat, publishedMs, now));
+  const lines = emitted.map((seat, index) => seatLine(seat, freshness[index]!, now));
+  if (lines.length === 0) {
+    lines.push('Quota: no seats reported');
+    if (Number.isFinite(publishedMs) && now - publishedMs > STALE_AFTER_MS) {
+      lines.unshift(`Quota (stale, read ${Math.round((now - publishedMs) / 60_000)}m ago):`);
+    }
+    return lines;
+  }
+  if (freshness.every((state) => state.kind === 'stale')) {
+    const freshestStale = Math.min(...freshness.map((state) => (state as { ageMs: number }).ageMs));
+    lines.unshift(`Quota (stale, read ${Math.round(freshestStale / 60_000)}m ago):`);
   }
   return lines;
 }
