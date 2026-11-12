@@ -90,7 +90,7 @@ function failureNote(r: SelfUpdateRunResult, timeoutMs: number): string {
 }
 
 /** The `ashlr update --json` payload fields we read (src/cli/update.ts UpdateResult). */
-function updateReport(stdout: string): { updated?: unknown; upToDate?: unknown; commitAfter?: unknown; versionAfter?: unknown; versionLatest?: unknown } | null {
+function updateReport(stdout: string): { updated?: unknown; upToDate?: unknown; commitAfter?: unknown; versionAfter?: unknown; versionLatest?: unknown; smokeOk?: unknown } | null {
   const text = stdout.trim();
   if (!text.startsWith('{')) return null;
   try { return JSON.parse(text); } catch { return null; }
@@ -279,6 +279,7 @@ async function runApply(deps: SelfUpdateApplyDeps): Promise<SelfUpdateApplyResul
   const report = updateReport(update.stdout);
   if (report?.updated === true) {
     if (typeof report.commitAfter === 'string' && report.commitAfter) toCommit = report.commitAfter;
+    if (report.smokeOk === false) return step('update', t0, false, 'smoke test failed', 'failed', 'smoke test failed')!;
     const version = [report.versionAfter, report.versionLatest].find((v): v is string => typeof v === 'string' && v !== '') ?? null;
     return step('update', t0, true, version ? `updated to ${version}` : null, 'updated')!;
   }
