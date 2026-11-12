@@ -1932,6 +1932,14 @@ export async function handleApi(
       return true;
     }
 
+    // Read-only release-chain status: same local signing/feed evidence as
+    // `phm fleet release-chain`, same no-auth read class as /api/fleet/lanes.
+    if (path === '/api/fleet/release-chain' && method === 'GET') {
+      const { releaseChainResponse } = await import('./release-chain-api.js');
+      sendJson(res, 200, releaseChainResponse());
+      return true;
+    }
+
     if (path === '/api/worklog' && method === 'GET') {
       const { readWorklog } = await import('../fleet/worklog.js');
       try { sendJson(res, 200, await readWorklog()); }
