@@ -31,7 +31,11 @@ export interface OwnerChannelState {
 
 export interface ReplyGapState { teammate: string; unansweredCount: number; oldestUnansweredMs: number; state: 'ok' | 'late' | 'unknown' }
 
+export type ReceiptState = 'delivered' | 'pending' | 'failed';
+export type OwnerReceipts = Record<string, Record<string, { state: ReceiptState; reason?: string }>>;
+
 export interface OwnerThreadRead {
+  receipts?: OwnerReceipts;
   channels: OwnerChannelState[];
   /** Additive; absent on reads from daemons that predate reply-gap metadata. */
   replyGap?: ReplyGapState[];
@@ -60,6 +64,19 @@ export function parseOwnerThread(value: unknown): OwnerThreadLine[] {
   return value.messages.flatMap(row => parseLine(row) ?? []);
 }
 
+export function parseReceipts(value: unknown): OwnerReceipts {
+  const out: OwnerReceipts = Object.create(null);
+  if (!isRecord(value)) return out;
+  for (const [id, byChannel] of Object.entries(value)) {
+    if (!isRecord(byChannel)) continue;
+    for (const [channel, row] of Object.entries(byChannel)) {
+      if (!isRecord(row) || (row.state !== 'delivered' && row.state !== 'pending' && row.state !== 'failed')) continue;
+      (out[id] ??= Object.create(null))[channel] = { state: row.state, ...(typeof row.reason === 'string' ? { reason: row.reason } : {}) };
+    }
+  }
+  return out;
+}
+
 export function parseOwnerThreadRead(value: unknown): OwnerThreadRead {
   const status = isRecord(value) && isRecord(value.status) ? value.status : null;
   const channels = Array.isArray(status?.adapters) ? status.adapters.flatMap((row: unknown): OwnerChannelState[] => {
@@ -72,7 +89,7 @@ export function parseOwnerThreadRead(value: unknown): OwnerThreadRead {
       (row.state !== 'ok' && row.state !== 'late' && row.state !== 'unknown')) return [];
     return [{ teammate: row.teammate, unansweredCount: row.unansweredCount, oldestUnansweredMs: row.oldestUnansweredMs, state: row.state }];
   }) : [];
-  return { lines: parseOwnerThread(value), paused: status?.kill === true || status?.paused === true, channels, replyGap };
+  return { receipts: parseReceipts(isRecord(value) ? value.receipts : null), lines: parseOwnerThread(value), paused: status?.kill === true || status?.paused === true, channels, replyGap };
 }
 
 export const ownerThreadQuery: QueryDef<OwnerThreadRead> = {
