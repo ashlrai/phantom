@@ -1,17 +1,8 @@
 import { useEffect } from 'react';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { fleetActivityQuery, fleetLanesQuery, verifiedCompletionQuery } from '../../../data/queries.js';
-import { ProviderLogo, type ProviderEngine } from '../../../components/primitives/ProviderLogo.js';
+import { ProviderLogo, providerEngine } from '../../../components/primitives/ProviderLogo.js';
 import styles from './LiveFleetBoard.module.css';
-
-function provider(lane: string): ProviderEngine | null {
-  const name = lane.toLowerCase();
-  if (name.includes('claude')) return 'claude';
-  if (name.includes('codex')) return 'codex';
-  if (name.includes('grok')) return 'grok';
-  if (name.includes('devin')) return 'devin';
-  return null;
-}
 
 /** Polls the bounded local projections while visible; readings retain their own observation times. */
 export function LiveFleetBoard() {
@@ -46,7 +37,7 @@ export function LiveFleetBoard() {
           {lanes.status === 'error' ? <p role="alert">Lane refresh failed{lanes.data ? ' · showing last reading' : ''}.</p> : null}
           {!lanes.data ? <p>Loading lane resources…</p> : lanes.data.lanes.length === 0 ? <p>No lanes observed.</p> : (
             <ul className={styles.lanes}>{lanes.data.lanes.map(lane => {
-              const mark = provider(lane.lane);
+              const mark = providerEngine(lane.lane);
               const pct = lane.credit.state === 'observed' && lane.credit.remainingPct !== null && Number.isFinite(lane.credit.remainingPct)
                 ? Math.max(0, Math.min(100, lane.credit.remainingPct)) : null;
               return <li key={lane.lane} className={styles.lane}>
