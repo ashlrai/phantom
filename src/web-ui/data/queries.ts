@@ -16,6 +16,7 @@ import type {
   DecisionEntry,
   FleetActivitySnapshot,
   FleetLaneSnapshot,
+  FleetSessionsV1,
   FleetStatus,
   VerifiedCompletionReport,
   ApprovalRequest,
@@ -139,6 +140,17 @@ export const fleetActivityQuery: QueryDef<FleetActivitySnapshot> = {
 export const fleetLanesQuery: QueryDef<FleetLaneSnapshot> = {
   key: 'fleet-lanes',
   fetch: (signal) => apiGet<FleetLaneSnapshot>('/api/fleet/lanes', signal),
+};
+
+/**
+ * fleet.sessions.v1 — unified dispatchd agent-session list: queued/parked/
+ * launching/running/publishing/exited/stale sessions plus a bounded finished
+ * tail, read-only from the runs dir (GET /api/fleet/sessions →
+ * getFleetSessions()). Value-blind: no prompt paths, env or secrets.
+ */
+export const fleetSessionsQuery: QueryDef<FleetSessionsV1> = {
+  key: 'fleet-sessions',
+  fetch: (signal) => apiGet<FleetSessionsV1>('/api/fleet/sessions', signal),
 };
 
 /**

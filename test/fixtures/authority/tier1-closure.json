@@ -702,6 +702,7 @@
     "src/core/fleet/runs-parked-queue.ts",
     "src/core/fleet/runs-reassign.ts",
     "src/core/fleet/runs-resource-ledger.ts",
+    "src/core/fleet/runs-sessions.ts",
     "src/core/fleet/runs-stall-windows.ts",
     "src/core/fleet/runs-switches.ts",
     "src/core/fleet/scanner-observation-digest.ts",
