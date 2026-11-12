@@ -125,3 +125,73 @@ HOME) and `claude-max` (Phantom's own sanitized `rate_limit_event` store, `utili
 as a 0..1 fraction) are read. No `~/.codex`, `~/.claude`, auth file, keychain or
 environment is read, nothing calls login/logout, and only numeric fields are logged.
 Other pools stay unread; the 30-minute debounce makes a 2-hour cadence safe.
+
+## Live usage tracker
+
+`phm usage live` keeps usage, limits, resets and alerts current. One pass by
+default; `--watch` repeats and wakes ten seconds after the earliest `reset_at`
+it has read, never later than `--interval` (60 to 3600 seconds, default 300).
+
+1. Official readouts first: Devin's org API, the Codex App Server, Claude's
+   rate-limit status and Phantom's own accounting (the same pull as
+   `phm usage sensors --refresh`).
+2. With `--browser`, a lane that has no official readout is read from its usage
+   page in one persistent profile under `~/.ashlr-runs/usage-browser/`:
+   claude.ai Settings > Usage, ChatGPT Codex usage, Devin billing, z.ai and
+   Google AI Studio. Only the rendered visible text is parsed, and only
+   `NN% used` or `N of M ACUs` shapes. The driver is Playwright, loaded only
+   when installed; without it the pass is official readouts only. Add
+   `--headed` once to sign in, the normal way, in that browser. The driver has
+   no cookie, token, storage or keychain access and refuses a profile outside
+   the usage browser directory or inside a Codex home. A page that shows a
+   sign-in is recorded as a needs-signin item with its exact URL and the pass
+   continues.
+3. Output, all in the queue directory (`--queue-dir`, default `~/.ashlr-runs/queue`):
+   `usage-live.json` (a `usage.sensors.v1` snapshot, readable by
+   `phm usage sensors --file`), `usage-live-budget.json` (lane entries in the
+   status.json budget shape: `weekly_used_pct`, `reset_at`, `source`,
+   `burn_pct_per_hour`, `projected_exhaustion`, plus `estimated`, which is true
+   for anything scraped or derived) and `usage-live-state.json` (alert dedupe).
+   Alerts append to `usage-live-alerts.jsonl` in the bus directory (`--bus-dir`,
+   default `~/.ashlr-runs/bus`): `cap-80`, `cap-95` and `expire-unspent`, each
+   once per reset window, plus `needs-signin` once per site per day. The first
+   pass writes `usage-live-first-readings.md` there, including the sites that
+   need a one-time sign-in.
+
+A relative reset such as "in 2 hr 15 min" is re-derived on each pass, so a new
+instant within ten minutes of the earlier one keeps the earlier one. Unknown
+stays unknown: a page with no matching numbers produces no reading and never a
+zero. The `browser-visible` source is estimated, not provider-official.
+
+## Self-maintained lane budgets (no human reading)
+
+`src/cli/usage-self.ts` is a one-shot refresh that keeps `weekly_used_pct`, `credits_remaining`,
+`reset_at`, `source`, `estimated` and `as_of` fresh for claude, codex-personal, devin, zai, gemini
+and omlx in `queue/budget-overrides.json`, the file dispatchd copies into `status.json` `budget`.
+`contrib/mac/com.ashlr.usage-self.plist.in` runs it every 10 minutes (installing it is an operator step).
+
+```sh
+npx tsx src/cli/usage-self.ts --runs-dir /absolute/runs --codex-home /absolute/personal/pool/home --dry-run
+```
+
+Per lane, in order: a sanctioned reading, then an estimate, then unknown.
+
+| Lane | Sanctioned reading | Estimate when none |
+| --- | --- | --- |
+| claude | Phantom's parsed `/usage` reading (`metrics/claude-quota.json`), else its sanitized `rate_limit_event` store | last reading plus `jobs.jsonl` tokens, weekly reset rolled forward 7 days |
+| codex-personal | Codex App Server `account/rateLimits/read` with an explicit pool HOME (`--codex-home`; no `~/.codex*` path is accepted) | same as claude |
+| devin | org cycle ACU reader (`devin-api-v3-org-cycle`) | last reading plus `acus` from `jobs.jsonl`; the next cycle end is unknown, so `reset_at` becomes null |
+| zai | the `zai` row of `queue/resources.json` while fresh | 10 000 credits per week from `docs/lanes/zai.md`, credits computed from `jobs.jsonl`, reset Monday 00:00 UTC |
+| gemini | none verified | none: all numbers null, `source: unknown:no-sanctioned-reader` |
+| omlx | loopback `/v1/models` model count (capacity only, no percent, no reset) | none |
+
+Rules: a reading is re-read when missing, estimated, older than 30 minutes, or past `reset_at`. A fresh
+non-estimated entry from any other writer is kept. Estimates set `estimated: true` and are calibrated
+only from data (units per percent derived from the last reading), never from an invented limit; with no
+calibration the percent stays null and the autopilot holds the current target. Jobs without token or ACU
+counts are reported in `unmeasured_jobs`, so an estimate is then a lower bound. Only the fields above are
+rewritten; other keys in a lane block (`allowance`, `gift`, `compact`) are preserved.
+
+`phm resources autopilot --overrides FILE` gives a quota lane with no usable reading its budget entry,
+so an estimate keeps the lane paced instead of held. The zai, gemini and omlx entries reach `status.json`
+only after the dispatchd change staged in `contrib/mac/staged-pin/RQ-USAGE-SELF-2-dispatchd.md` is pinned by Security.
