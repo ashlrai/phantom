@@ -541,6 +541,7 @@
 /test/improve-promote-redteam.test.ts @masonwyatt23
 /test/improve-reverted.test.ts @masonwyatt23
 /test/int4-confine-engines-310b.test.ts @masonwyatt23
+/test/intent-stale-native-preservation-09spw1.test.ts @masonwyatt23
 /test/job-memory-accounting.test.ts @masonwyatt23
 /test/judge-credential-export-r3b-310b.test.ts @masonwyatt23
 /test/judge-seat-lanes-310b.test.ts @masonwyatt23
