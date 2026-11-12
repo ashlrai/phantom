@@ -159,6 +159,23 @@ const tools: NativeToolImpl[] = [
       intervalMs: (args.intervalMs as number | undefined) ?? 1000,
     }),
   },
+  {
+    name: 'phantom_fleet_apps_watch',
+    description: 'Supervise an explicit group of local managed apps through sequential batches under a shared deadline.',
+    get inputSchema() { return { type: 'object', properties: {
+      apps: { type: 'array', items: { type: 'string', enum: [...FLEET_APPS] }, minItems: 1, maxItems: 8, uniqueItems: true },
+      durationMs: { type: 'integer', minimum: 1, maximum: 10000 },
+      intervalMs: { type: 'integer', minimum: 100, maximum: 10000 },
+      maxConsecutiveFailures: { type: 'integer', minimum: 1, maximum: 10 },
+    }, required: ['apps', 'durationMs'], additionalProperties: false }; },
+    safety: 'append',
+    handler: async args => (await import('../cli/fleet-apps-watch.js')).watchFleetApps({
+      apps: args.apps as string[],
+      durationMs: args.durationMs as number,
+      intervalMs: (args.intervalMs as number | undefined) ?? 1000,
+      maxConsecutiveFailures: (args.maxConsecutiveFailures as number | undefined) ?? 1,
+    }),
+  },
 ];
 
 export function registerFleetNativeTools(): void {
