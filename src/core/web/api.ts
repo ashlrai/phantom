@@ -2172,6 +2172,12 @@ export async function handleApi(
       return true;
     }
 
+    if (path === '/api/ideas' && method === 'GET') {
+      const { readIdeas } = await import('../fleet/ideas.js');
+      sendJson(res, 200, await readIdeas());
+      return true;
+    }
+
     // ── GET /api/backlog ────────────────────────────────────────────────────
     // M31: read-only — the persisted backlog (never triggers a scan).
     // RQ-PHX-IDEANOTNOW94: items carry their latest idea verdict, when one is

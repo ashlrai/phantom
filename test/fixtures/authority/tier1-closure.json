@@ -597,6 +597,7 @@
     "src/core/fleet/grok-ultra-store.ts",
     "src/core/fleet/host-merge.ts",
     "src/core/fleet/hot-files.ts",
+    "src/core/fleet/ideas.ts",
     "src/core/fleet/idle-lanes.ts",
     "src/core/fleet/inbox-ack.ts",
     "src/core/fleet/inbox-channel-line.ts",
