@@ -16,7 +16,9 @@ API + tamper evidence + auditability*, not containment:
    executes** until you have explicitly enabled the name.
 2. **Explicit, informed enablement.** `ashlr plugins enable <name>` shows the
    declared capabilities and a trust warning, requires confirmation, and pins
-   the entry file's sha256 into your config.
+   the entry file's sha256 into your config. When stdin is not a terminal the
+   command does not prompt: pass `--yes`. `phm plugins enable <name> --dry-run`,
+   and the same flag on `init` and `disable`, write nothing.
 3. **Tamper evidence.** Any later change to the entry file refuses to load
    (integrity mismatch, audited) until you re-run `enable`.
 4. **Capability declarations enforced.** A plugin contributing something it
