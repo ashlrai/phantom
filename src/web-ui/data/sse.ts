@@ -24,6 +24,7 @@ export const SSE_EVENT_NAMES = [
   'fleet-activity-ping',
   'fleet-activity-observation',
   'snapshot',
+  'leader-thread',
   'session-expired',
 ] as const;
 export type SseEventName = (typeof SSE_EVENT_NAMES)[number];
@@ -60,6 +61,7 @@ const EVENT_TO_CACHE_KEYS: Record<SseEventName, string[]> = {
   // Agent OS snapshots are immutable records but their current authenticated
   // projection advances alongside the server's general snapshot signal.
   snapshot: ['dashboard-snapshot', 'agent-os-snapshot'],
+  'leader-thread': [],
   'session-expired': [],
 };
 
@@ -70,6 +72,21 @@ let source: EventSource | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempt = 0;
 
+let live = false;
+const liveListeners = new Set<() => void>();
+
+function setLive(next: boolean): void {
+  if (live === next) return;
+  live = next;
+  for (const listener of [...liveListeners]) listener();
+}
+
+export function isSseLive(): boolean { return live; }
+export function subscribeSseLive(listener: () => void): () => void {
+  liveListeners.add(listener);
+  return () => { liveListeners.delete(listener); };
+}
+
 function backoffMs(): number {
   // 1s, 2s, 4s, 8s, capped at 15s — the server's own poll floor is ~1.5s so
   // there is no benefit reconnecting faster than that even on attempt 0.
@@ -77,6 +94,7 @@ function backoffMs(): number {
 }
 
 function teardown(): void {
+  setLive(false);
   if (source) {
     source.close();
     source = null;
@@ -109,6 +127,7 @@ function connect(): void {
 
   es.onopen = () => {
     reconnectAttempt = 0;
+    setLive(true);
   };
 
   for (const name of SSE_EVENT_NAMES) {
@@ -149,7 +168,7 @@ function connect(): void {
     // auth-store reports the session as expired (see the subscribeAuth
     // wiring at the bottom of this file).
     es.close();
-    if (source === es) source = null;
+    if (source === es) { source = null; setLive(false); }
     if (getAuthSnapshot().phase === 'authenticated') scheduleReconnect();
   };
 }
