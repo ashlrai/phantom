@@ -8,12 +8,12 @@ export type ReleaseRunner = (argv: string[]) => Promise<{ code: number; stdout: 
 export const validReleaseRepo = (repo: string): boolean => /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo);
 const execFileAsync = promisify(execFile);
 const hasUnsafeChars = (value: string): boolean => [...value].some(char => /\s/.test(char) || char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127);
-const defaultRun: ReleaseRunner = async argv => {
+export const ghRunner: ReleaseRunner = async argv => {
   try { const { stdout } = await execFileAsync('gh', argv); return { code: 0, stdout }; }
   catch { return { code: 1, stdout: '' }; }
 };
 
-export async function fetchLatestRelease(repo: string, run: ReleaseRunner = defaultRun, tag?: string): Promise<ReleaseFact | null> {
+export async function fetchLatestRelease(repo: string, run: ReleaseRunner = ghRunner, tag?: string): Promise<ReleaseFact | null> {
   if (!validReleaseRepo(repo)) return null;
   try {
     const result = await run(['api', tag ? `repos/${repo}/releases/tags/${encodeURIComponent(tag)}` : `repos/${repo}/releases/latest`]);
