@@ -9,6 +9,9 @@
  *                             shared single-flight cache + failure backoff
  *                             (web/fleet-status-cache.ts getCachedWbGhStatus)
  *   GET /api/wb/v1/budget   → budget policy + per-seat usage projection
+ *   GET /api/wb/v1/fleet    → composite live fleet workbench view (lanes,
+ *                             jobs, PRs, leader state — see
+ *                             workbench-fleet-view.ts)
  *   GET /api/wb/v1/events   → SSE stream of workbench.event.v1 kinds
  *                             (wb.snapshot / wb.gh / wb.action) (wb-events.ts)
  *
@@ -53,6 +56,11 @@ import { fleetInventoryPath, readFleetInventory } from '../fleet/graph-seed.js';
 import { QueueStore } from '../queue/store.js';
 import { sendJson } from './read-session.js';
 import { handleWbEventsSse, WB_EVENTS_PATH, type WbEventsDeps } from './wb-events.js';
+import {
+  handleWbFleetView,
+  WB_FLEET_PATH,
+  type WorkbenchFleetViewDeps,
+} from './workbench-fleet-view.js';
 
 // ---------------------------------------------------------------------------
 // Routes
@@ -64,8 +72,9 @@ export const WB_BUDGET_PATH = '/api/wb/v1/budget';
 export const WB_SECRETS_PATH = '/api/wb/v1/secrets';
 export const WB_LOCUS_PATH = '/api/wb/v1/locus';
 export const WB_STEER_PATH = '/api/wb/v1/steer';
+export { WB_FLEET_PATH };
 
-const WB_ROUTES = new Set([WB_SNAPSHOT_PATH, WB_GH_PATH, WB_BUDGET_PATH, WB_SECRETS_PATH, WB_STEER_PATH, WB_LOCUS_PATH]);
+const WB_ROUTES = new Set([WB_SNAPSHOT_PATH, WB_GH_PATH, WB_BUDGET_PATH, WB_SECRETS_PATH, WB_STEER_PATH, WB_LOCUS_PATH, WB_FLEET_PATH]);
 
 /** True for every `/api/wb/v1/*` path — handled (or 404d) by this module. */
 export function isWbApiPath(path: string): boolean {
@@ -191,6 +200,8 @@ export interface WbApiDeps extends WbGhDeps {
   readSession?: { id: string; expiresAt: number };
   /** Test seams for GET /api/wb/v1/events (cadence, gh read). */
   events?: WbEventsDeps;
+  /** Test seams for GET /api/wb/v1/fleet (queue dir, clock). */
+  fleet?: WorkbenchFleetViewDeps;
 }
 
 async function handleWbGh(
@@ -422,6 +433,8 @@ export async function handleWbApi(
     await handleWbGh(cfg, res, deps);
   } else if (path === WB_STEER_PATH) {
     await handleWbSteer(cfg, res, steerDeps);
+  } else if (path === WB_FLEET_PATH) {
+    await handleWbFleetView(res, cfg, { paths: deps.paths, gh: deps.gh, ...deps.fleet });
   } else {
     handleWbBudget(res);
   }
