@@ -1525,6 +1525,25 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/queue/stats ────────────────────────────────────────────────
+    // RQ-QUEUE-5: the live station graph's feed — the same estimateQueueStats
+    // over the private queue-visit journal that `phm queue stats --json`
+    // prints. ?window=<seconds> selects a single window (default 3600),
+    // mirroring the CLI's --window flag. Read-only; same read-authority class
+    // as /api/pulse (the server boundary requires a read session).
+    if (path === '/api/queue/stats' && method === 'GET') {
+      const rawSeconds = getQueryParam(req.url ?? '', 'window');
+      const seconds = rawSeconds === undefined ? 3600 : Number(rawSeconds);
+      if (!Number.isFinite(seconds) || seconds <= 0) {
+        sendJson(res, 400, { error: 'window must be a positive number of seconds' });
+        return true;
+      }
+      const { readQueueVisits } = await import('../queue/journal.js');
+      const { estimateQueueStats } = await import('../queue/stats.js');
+      sendJson(res, 200, estimateQueueStats(await readQueueVisits(), Date.now(), [seconds * 1000]));
+      return true;
+    }
+
     // ── GET /api/models ──────────────────────────────────────────
     // M335: joined per-model economics — ROI (M322) + real-world outcomes
     // (M332) + best-of-N win rates (M333). Read-only. ?window=7d|30d|all
@@ -1929,6 +1948,14 @@ export async function handleApi(
       const { readEmptyJobs } = await import('../fleet/empty-jobs.js');
       const report = await readEmptyJobs();
       sendJson(res, report ? 200 : 503, report ?? { error: 'Jobs ledger is unreadable.' });
+      return true;
+    }
+
+    // Read-only release-chain status: same local signing/feed evidence as
+    // `phm fleet release-chain`, same no-auth read class as /api/fleet/lanes.
+    if (path === '/api/fleet/release-chain' && method === 'GET') {
+      const { releaseChainResponse } = await import('./release-chain-api.js');
+      sendJson(res, 200, releaseChainResponse());
       return true;
     }
 
