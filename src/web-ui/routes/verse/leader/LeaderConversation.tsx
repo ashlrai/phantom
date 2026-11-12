@@ -28,8 +28,9 @@
  * "Leader is thinking…" shows while a send is in flight and, when the server
  * said it will reply later (reply: null), until the Leader's next message —
  * for at most AWAIT_REPLY_MS. Meanwhile the thread polls every 3 s instead
- * of 10 s. A Leader event on the shared stream also triggers a refresh;
- * polling remains in place because an open stream does not prove topic support.
+ * of 10 s. While the shared event stream is open the server pushes a
+ * `leader-thread` event on every write (use-leader-thread-push), so polling
+ * relaxes to a 30 s backstop; with the stream down it is the only refresh.
  */
 import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { LeaderStateV1 } from '../../../../core/vision/leader-types.js';
@@ -68,6 +69,7 @@ import styles from './leader.module.css';
 
 export const THREAD_POLL_MS = 10_000;
 export const THREAD_POLL_THINKING_MS = 3_000;
+export const THREAD_POLL_PUSHED_MS = 30_000;
 export const DIRECTIVES_POLL_MS = 30_000;
 
 /**
@@ -169,8 +171,8 @@ export function LeaderConversation({ leader, actions, dormant }: LeaderConversat
   const rows = useMemo(() => groupThread(entries, now), [entries, now]);
   const thinking = awaitingReply(entries, awaiting, now);
 
-  useLeaderThreadPush(refetchThread);
-  usePollWhileVisible(refetchThread, thinking ? THREAD_POLL_THINKING_MS : THREAD_POLL_MS);
+  const push = useLeaderThreadPush(refetchThread);
+  usePollWhileVisible(refetchThread, push.live ? THREAD_POLL_PUSHED_MS : thinking ? THREAD_POLL_THINKING_MS : THREAD_POLL_MS);
   usePollWhileVisible(refetchDirectives, DIRECTIVES_POLL_MS);
 
   // A send's echo is dropped once a server read carries it.
