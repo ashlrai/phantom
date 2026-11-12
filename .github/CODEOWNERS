@@ -963,6 +963,7 @@
 /test/merge-gate-latency.test.ts @masonwyatt23
 /test/merge-gates-310b.test.ts @masonwyatt23
 /test/merge-identity-recut.test.ts @masonwyatt23
+/test/merge-plan-original-preservation-202s.test.ts @masonwyatt23
 /test/merge-temp-worktree-reaper.test.ts @masonwyatt23
 /test/metrics-boundary.test.ts @masonwyatt23
 /test/metrics-pillar.test.ts @masonwyatt23
@@ -1033,6 +1034,7 @@
 /test/red-team-routing-310.test.ts @masonwyatt23
 /test/red-type-fix-c175.test.ts @masonwyatt23
 /test/redact-known.test.ts @masonwyatt23
+/test/redfix-test-c205.test.ts @masonwyatt23
 /test/refix-loop.test.ts @masonwyatt23
 /test/release-articles.test.ts @masonwyatt23
 /test/release-path-policy-v2.test.ts @masonwyatt23
