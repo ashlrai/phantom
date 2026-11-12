@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import type { AshlrConfig, WebServerOptions, WebServerHandle } from '../types.js';
 import { handleUsageResourcesApi } from '../verse/usage-resources-api.js';
+import { handleFleetBoardApi } from '../verse/fleet-board-api.js';
 import { handleApi, drainSseConnections, drainSseSession, invalidateWebReadCaches } from './api.js';
 import { createReadProjectionWorker, type ReadProjectionReader } from './read-projections.js';
 import { governReadProjections } from './read-projection-governor.js';
@@ -203,6 +204,7 @@ export async function startServer(
       readSession: authority?.kind === 'session' ? authority.session : undefined,
       readProjections: readProjections ?? undefined,
       usageResourcesApi: handleUsageResourcesApi,
+      fleetBoardApi: handleFleetBoardApi,
     })
       .then((handled) => {
         // A mutation can partially succeed and still return 409/500 (for
