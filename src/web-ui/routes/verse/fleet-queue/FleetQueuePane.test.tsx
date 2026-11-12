@@ -42,3 +42,11 @@ it('reports a degraded source', async () => {
   render(<FleetQueuePane {...props} />);
   expect(await screen.findByText('Queue data may be incomplete.')).toBeInTheDocument();
 });
+
+it('shows measured and unknown waiting ages', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...fixture(), stuck: { eventsAvailable: true, jobs: [{ id: 'RQ-A', age_s: 42 }, { id: 'RQ-B', age: 'unknown' }] } })));
+  render(<FleetQueuePane {...props} />);
+  const region = await screen.findByRole('region', { name: 'Waiting to launch' });
+  expect(region).toHaveTextContent('RQ-A · 42 seconds');
+  expect(region).toHaveTextContent('RQ-B · age unknown');
+});

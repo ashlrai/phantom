@@ -1,4 +1,3 @@
-import { DotReplyAge } from './DotReplyAge.js';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { OUTBOX_KIND_LABEL } from '../../../../core/fleet/outbox-kind.js';
 import { computeLaneHealth, laneHealthLine, stuckBadge } from '../../../../core/fleet/lane-health.js';
@@ -34,6 +33,7 @@ import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import leaderStyles from '../leader/leader.module.css';
 import styles from './leader-thread.module.css';
+import { DotReplyAge } from './DotReplyAge.js';
 import { busRepliesToMason, mergeByTime, type BusReply } from './thread-bus-replies.js';
 import { appendLaneLog, laneEventItems, laneTransitions, loadLaneLog, type LaneEvent } from './thread-lane-events.js';
 import { fleetInbox, fleetOutbox, lineChannel, lineSourceLabel, mergeThread } from './thread-merge-model.js';
@@ -475,7 +475,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     {statusNow !== null ? <section aria-label="Status now" role="status"><p style={{ whiteSpace: 'pre-wrap' }}>{statusNow}</p><button type="button" onClick={() => setStatusNow(null)}>Dismiss</button></section> : null}
     <p className={styles.note}>{busRows.length} bus replies</p>
     {busUnavailable ? <p className={styles.note} role="status">Durable bus unavailable</p> : null}
-    <OwnerChannelsStrip channels={ownerRead.channels} paused={ownerRead.paused} />
+    <OwnerChannelsStrip channels={ownerRead.channels} paused={ownerRead.paused} replyGap={ownerRead.replyGap} />
     <div ref={logRef} className={leaderStyles.log} role="log" aria-label="Conversation with the Leader" aria-live="polite" aria-relevant="additions" tabIndex={0}
       onScroll={() => {
         const el = logRef.current;

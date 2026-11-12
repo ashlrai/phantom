@@ -70,7 +70,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'test', 'check', 'feed',
   'worklog', 'library',
   // Dispatched by index.ts but missing here (caught by cli-registry-drift).
-  'constitution', 'wb',
+  'constitution', 'wb', 'caps',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
@@ -181,6 +181,8 @@ const SUBCOMMANDS: Record<string, string[]> = {
   // Mirror the verb switch in src/cli/cloud.ts (runCloudCli).
   capacity: ['publish'],
   checkpoint: ['resume', '--json', '--help'],
+  // Mirror the verb switch in src/cli/caps.ts (cmdCaps).
+  caps: ['list', 'validate', 'generate', '--registry', '--out', '--check', '--pin-stage', '--json', '--help'],
   // Mirror the verb switch in src/cli/trail.ts (cmdTrail).
   trail: ['claim', 'beat', 'release', 'save', 'list', 'show', 'resume', 'sweep', '--json', '--help'],
   // Mirror the verb switch in src/cli/sessions.ts (cmdSessions).
