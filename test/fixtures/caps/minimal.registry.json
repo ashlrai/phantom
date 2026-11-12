@@ -1,0 +1,61 @@
+{
+  "schema": "caps.registry.v1",
+  "version": 1,
+  "surfaces": [
+    { "id": "claude-code", "name": "Claude Code", "kind": "cli", "lane": "claude", "engine": "claude", "adapter": "claude-code" },
+    { "id": "codex-cli", "name": "Codex CLI", "kind": "cli", "lane": "codex", "engine": "codex", "adapter": "codex" },
+    { "id": "devin-cli", "name": "Devin CLI", "kind": "cli", "lane": "devin", "engine": "devin-cli", "adapter": "devin" },
+    { "id": "gemini-cli", "name": "Gemini CLI", "kind": "cli", "lane": "gemini", "adapter": "gemini" },
+    { "id": "glm-lite", "name": "GLM Lite", "kind": "cloud", "lane": "zai", "adapter": "none", "hostedOnly": true },
+    {
+      "id": "local-omlx", "name": "Local oMLX", "kind": "local-runtime", "lane": "local", "engine": "local-coder", "adapter": "local-model",
+      "network": { "bind": "127.0.0.1", "keyForwarding": false, "egressAllowlistRef": "no-egress" }
+    }
+  ],
+  "models": [
+    { "id": "claude-opus-5-5", "name": "Claude Opus 5.5", "lane": "claude", "family": "claude-opus", "catalogId": "claude:claude-opus-5-5", "providerModelId": "claude-opus-5-5" },
+    { "id": "claude-fable-5-2", "name": "Claude Fable 5.2", "lane": "claude", "family": "claude-fable", "catalogId": "claude:claude-fable-5-2", "providerModelId": "claude-fable-5-2", "allowance": "claude-max-weekly-fable" },
+    { "id": "gpt-6.1-sol", "name": "GPT-6.1 Sol", "lane": "codex", "family": "gpt", "catalogId": "codex:gpt-6.1-sol", "providerModelId": "gpt-6.1-sol" },
+    { "id": "glm-5.3", "name": "GLM 5.3", "lane": "zai", "family": "glm", "catalogId": null, "providerModelId": "glm-5.3" },
+    { "id": "qwen-local", "name": "Qwen local", "lane": "local", "family": "qwen", "catalogId": "local-coder:qwen3.8:27b-ctx64k", "providerModelId": "qwen3.8:27b-ctx64k" }
+  ],
+  "hosting": [
+    { "host": "devin-cli", "guest": "glm-lite", "via": "devin-subagent" },
+    { "host": "devin-cli", "guest": "gemini-cli", "via": "devin-subagent" }
+  ],
+  "sessions": [
+    { "id": "weyv-lead", "name": "Weyv lead", "surface": "claude-code", "model": "claude-fable-5-2", "role": "lead", "capabilities": ["phantom-gateway"] }
+  ],
+  "accounts": [
+    { "id": "slack-bot", "provider": "slack", "store": "phantom-secrets", "credentialName": "SLACK_BOT_TOKEN", "scopes": ["chat:write"] },
+    { "id": "search-api", "provider": "search", "store": "phantom-secrets", "credentialName": "SEARCH_API_KEY", "scopes": ["search:read"] }
+  ],
+  "egressAllowlists": [{ "id": "no-egress", "hosts": [] }],
+  "capabilities": [
+    {
+      "id": "phantom-gateway", "kind": "mcp", "description": "Phantom MCP gateway.",
+      "surfaces": ["claude-code", "codex-cli", "devin-cli", "gemini-cli"],
+      "effects": ["read"], "sensitivity": { "external_send": false, "spend": false, "delete": false },
+      "launch": { "command": "phm", "args": ["mcp"] }
+    },
+    {
+      "id": "web-search", "kind": "mcp", "description": "Search with a named API key.",
+      "surfaces": ["claude-code", "codex-cli", "gemini-cli"], "accounts": ["search-api"],
+      "effects": ["read"], "sensitivity": { "external_send": false, "spend": false, "delete": false },
+      "launch": { "command": "search-mcp", "args": [], "env": [{ "name": "SEARCH_API_KEY", "account": "search-api" }] }
+    },
+    {
+      "id": "slack-post", "kind": "mcp", "description": "Post to Slack.",
+      "surfaces": ["claude-code", "codex-cli"], "accounts": ["slack-bot"],
+      "effects": ["post-slack"], "sensitivity": { "external_send": true, "spend": false, "delete": false }, "hardLimitGates": ["outside-send"],
+      "launch": { "command": "slack-mcp", "args": [], "env": [{ "name": "SLACK_BOT_TOKEN", "account": "slack-bot" }] }
+    },
+    {
+      "id": "browser-verify", "kind": "skill", "description": "Loopback browser check.",
+      "surfaces": ["claude-code"],
+      "effects": ["read"], "sensitivity": { "external_send": false, "spend": false, "delete": false },
+      "control": { "backend": "cdp-loopback", "profile": "per-run", "bind": "127.0.0.1" },
+      "autoFile": { "fields": ["capability-id", "outcome"] }
+    }
+  ]
+}

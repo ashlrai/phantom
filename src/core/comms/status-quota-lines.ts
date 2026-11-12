@@ -30,12 +30,20 @@ const STALE_AFTER_MS = 30 * 60_000;
  */
 const CLAUDE_SESSION_WINDOW_IDS = new Set(['five_hour', 'session']);
 
-/** Freshness belongs to the seat, not to its newest neighbor. */
-function freshness(seat: SeatCapacity, publishedAt: string, nowMs: number): string {
-  const source = seat?.observedAt == null ? publishedAt : seat.observedAt;
+/**
+ * The honesty tag for one reading time: '' when current, `(stale, historical) `
+ * past the stale bound, `(freshness unknown) ` when the stamp or the clock
+ * cannot be trusted (unparseable, or in the future).
+ */
+function freshnessTag(source: unknown, nowMs: number): string {
   const stamp = typeof source === 'string' ? Date.parse(source) : NaN;
   if (!Number.isFinite(nowMs) || !Number.isFinite(stamp) || stamp > nowMs) return '(freshness unknown) ';
   return nowMs - stamp > STALE_AFTER_MS ? '(stale, historical) ' : '';
+}
+
+/** Freshness belongs to the seat, not to its newest neighbor. */
+function freshness(seat: SeatCapacity, publishedAt: string, nowMs: number): string {
+  return freshnessTag(seat?.observedAt == null ? publishedAt : seat.observedAt, nowMs);
 }
 
 function seatName(seat: SeatCapacity): string {
@@ -78,11 +86,17 @@ function seatLine(seat: SeatCapacity, publishedAt: string, nowMs: number): strin
  * `Quota <seat label or seatId>: <window>: <used>% · <reset>; <window>: ...`
  * Each stale or unverified observation is marked on its own line;
  * no snapshot at all reads as the desktop being off, not as zero usage.
+ * A seat-less snapshot is judged by its publishedAt the same way, so an
+ * old empty publication (for example every seat dropped by validation)
+ * cannot read as a current "no seats" report.
  */
 export function quotaLines(snapshot: CapacitySnapshot | null, nowMs: number): string[] {
   if (!snapshot || !Array.isArray(snapshot.seats)) return ['Quota: unavailable (Phantom desktop not running)'];
   const lines = snapshot.seats.slice(0, MAX_SEATS).map((seat) => seatLine(seat, snapshot.publishedAt, nowMs));
-  if (lines.length === 0) lines.push('Quota: no seats reported');
+  if (lines.length === 0) {
+    const tag = freshnessTag(snapshot.publishedAt, nowMs).trimEnd();
+    lines.push(tag ? `Quota ${tag}: no seats reported` : 'Quota: no seats reported');
+  }
   return lines;
 }
 

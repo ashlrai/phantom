@@ -29,14 +29,17 @@ export interface OwnerChannelState {
   nextStep: string | null;
 }
 
+export interface ReplyGapState { teammate: string; unansweredCount: number; oldestUnansweredMs: number; state: 'ok' | 'late' | 'unknown' }
+
 export interface OwnerThreadRead {
   channels: OwnerChannelState[];
+  replyGap: ReplyGapState[];
   lines: OwnerThreadLine[];
   /** The owner channels are killed or paused: the pane says so and shows no owner lines. */
   paused: boolean;
 }
 
-export const NO_OWNER_THREAD: OwnerThreadRead = { lines: [], paused: false, channels: [] };
+export const NO_OWNER_THREAD: OwnerThreadRead = { lines: [], paused: false, channels: [], replyGap: [] };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -63,7 +66,12 @@ export function parseOwnerThreadRead(value: unknown): OwnerThreadRead {
       typeof row.reason !== 'string' || (row.nextStep !== null && typeof row.nextStep !== 'string')) return [];
     return [{ id: row.id, enabled: row.enabled, reason: row.reason, nextStep: row.nextStep }];
   }) : [];
-  return { lines: parseOwnerThread(value), paused: status?.kill === true || status?.paused === true, channels };
+  const replyGap = Array.isArray(status?.replyGap) ? status.replyGap.flatMap((row: unknown): ReplyGapState[] => {
+    if (!isRecord(row) || typeof row.teammate !== 'string' || typeof row.unansweredCount !== 'number' || typeof row.oldestUnansweredMs !== 'number' ||
+      (row.state !== 'ok' && row.state !== 'late' && row.state !== 'unknown')) return [];
+    return [{ teammate: row.teammate, unansweredCount: row.unansweredCount, oldestUnansweredMs: row.oldestUnansweredMs, state: row.state }];
+  }) : [];
+  return { lines: parseOwnerThread(value), paused: status?.kill === true || status?.paused === true, channels, replyGap };
 }
 
 export const ownerThreadQuery: QueryDef<OwnerThreadRead> = {
