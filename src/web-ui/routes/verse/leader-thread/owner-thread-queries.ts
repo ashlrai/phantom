@@ -33,7 +33,7 @@ export interface ReplyGapState { teammate: string; unansweredCount: number; olde
 
 export interface OwnerThreadRead {
   channels: OwnerChannelState[];
-  replyGap: ReplyGapState[];
+  replyGap?: ReplyGapState[];
   lines: OwnerThreadLine[];
   /** The owner channels are killed or paused: the pane says so and shows no owner lines. */
   paused: boolean;
