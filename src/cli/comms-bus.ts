@@ -8,6 +8,7 @@ import { BUS_PRIORITIES, parseBusEnvelope, validateBusEnvelope, MAX_BUS_ENVELOPE
 import { appendBusInbox, inspectBusInbox, listBusInboxAfter, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, type BusInboxOptions, type BusInboxPage, type BusInboxPost, type BusInboxReceipt } from '../core/fleet/bus-inbox.js';
 import { openBusCheckpoint } from './comms-bus-checkpoint.js';
 import { busStatusExitCode } from './comms-bus-exit.js';
+import { cmdCommsBusClaim, COMMS_BUS_CLAIM_HELP } from './comms-bus-claim.js';
 import { withCodexPeersSession, type LocusPeersEndpoint } from '../core/fleet/adapters/codex-peers.js';
 
 const HELP = `phm comms bus group read <room> <topic> <cursor>
@@ -21,6 +22,7 @@ phm comms bus post-batch --file <batch.json|->
 phm comms bus status
 phm comms bus read [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>]
 phm comms bus watch [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--interval-ms <ms>] [--max-pages <n>] [--timeout-ms <ms>] [--until-reply]
+${COMMS_BUS_CLAIM_HELP}
 Local JSON transport; no delivery handlers. Bodies are untrusted JSON data.
 Use --file - to read one UTF-8 JSON envelope from stdin (maximum ${MAX_BUS_ENVELOPE_BYTES} bytes).
 Compose replies to one retained live parent; body is {"inReplyTo":<id>,"text":<text>}.
@@ -356,11 +358,12 @@ async function groupCommand(args: string[], options: BusInboxOptions, deps: Comm
 
 export async function cmdCommsBus(args: string[], options: BusInboxOptions = {}, deps: CommsBusDependencies = {}): Promise<number> {
   if (args.length === 0 || args.length === 1 && ['--help', '-h'].includes(args[0]!) ||
-    args.length === 2 && ['post', 'post-batch', 'read', 'watch', 'status', 'peers'].includes(args[0]!) && ['--help', '-h'].includes(args[1]!)) {
+    args.length === 2 && ['post', 'post-batch', 'read', 'watch', 'status', 'peers', 'next', 'claim'].includes(args[0]!) && ['--help', '-h'].includes(args[1]!)) {
     console.log(HELP); return 0;
   }
   if (args[0] === 'group') return groupCommand(args.slice(1), options, deps);
   if (args[0] === 'post-batch') return postBatch(args.slice(1), options, deps);
+  if (args[0] === 'next' || args[0] === 'claim') return cmdCommsBusClaim(args[0], args.slice(1), options.root);
   const [verb, ...rest] = args, values = new Map<string, string>();
   const invalid = (): number => { console.log(JSON.stringify({ status: 'invalid' })); return 2; };
   if (verb === 'status') {
