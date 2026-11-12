@@ -126,6 +126,8 @@ describe('native MCP tool surface lock', () => {
       'desktop_scroll:append',
       'desktop_type:append',
       'desktop_windows:read',
+      'intent_link:append',
+      'intent_ship:append',
       'phantom_agent_bus_post:append',
       'phantom_agent_bus_read:read',
       'phantom_agent_bus_status:read',
