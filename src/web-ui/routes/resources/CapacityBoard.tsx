@@ -1,5 +1,8 @@
 import type { ResourceConsoleSnapshot, ResourceConsoleGroup } from '../../../core/resources/console-types.js';
 import type { ResourceObservation } from '../../../core/resources/pool-policy.js';
+import { PROVIDER_LABELS, providerOfName } from '../../../core/fabric/provider-cards.js';
+import { Meter } from '../../components/primitives/Meter.js';
+import { ProviderMark } from './ProviderMark.js';
 import { StatusBadge } from '../../components/primitives/StatusBadge.js';
 import styles from './ResourcePoolView.module.css';
 
@@ -81,9 +84,11 @@ function CapacityLane({ group, snapshot, selectedWorkerId, onSelect, historical 
   group: ResourceConsoleGroup; snapshot: ResourceConsoleSnapshot; selectedWorkerId: string | null; onSelect: (id: string) => void; historical: boolean;
 }) {
   const workers = snapshot.pool.workers.filter((worker) => group.workerIds.includes(worker.id));
+  const vendor = workers.map((worker) => providerOfName(worker.provider)).find((id) => id !== null) ?? null;
   return <section className={styles.capacityLane} aria-label={`Capacity group ${group.capacityKey}`}>
     <div className={styles.capacitySource}>
-      <span className={styles.sourceGlyph} aria-hidden="true">⇄</span><h3>{group.capacityKey}</h3>
+      {vendor ? <ProviderMark provider={vendor} label={PROVIDER_LABELS[vendor]} />
+        : <span className={styles.sourceGlyph} aria-hidden="true">⇄</span>}<h3>{group.capacityKey}</h3>
       <p className={styles.slotCount}><strong>{resourceNumber(group.occupiedSlots)}</strong> / {group.maxConcurrent} occupied</p>
       <p className={styles.caption}>{workers.length} {workers.length === 1 ? 'worker' : 'workers sharing capacity'}</p>
       <p className={styles.caption}>{resourceNumber(group.recentTaskCount)} / {group.maxTasksPerWindow} tasks in the operator window</p>
@@ -105,6 +110,9 @@ function CapacityLane({ group, snapshot, selectedWorkerId, onSelect, historical 
             <span className={styles.caption}>{candidate?.reason === 'operator-capped-unknown-quota' ? 'Unknown quota · operator caps only'
               : candidate ? `${candidate.usedPercent === null ? 'Quota not measured' : `${candidate.usedPercent}% maximum window utilization`} · inspect all windows`
                 : exclusion?.reasons.map(resourceReason).join('; ') || 'Routing evidence unavailable'}</span>
+            <Meter variant="line" aria-label={`${worker.id} highest window utilization`}
+              value={candidate?.usedPercent ?? null} max={candidate?.usedPercent == null ? null : 100}
+              valueText={candidate?.usedPercent == null ? 'unknown' : `${candidate.usedPercent}%`} />
             {occupied ? <span className={styles.occupied}>{occupied} occupied task reservation{occupied === 1 ? '' : 's'}</span> : null}
           </button>
         </li>;
