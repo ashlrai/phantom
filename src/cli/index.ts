@@ -2463,6 +2463,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'caps': {
+        const { cmdCaps } = await import('./caps.js');
+        process.exitCode = await cmdCaps(rest);
+        break;
+      }
+
       case 'constitution': {
         const { cmdConstitution } = await import('./constitution.js');
         process.exitCode = await cmdConstitution(rest);

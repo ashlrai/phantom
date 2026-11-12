@@ -87,6 +87,7 @@ import {
 } from '../daemon/public-observation.js';
 import { serviceStatus } from '../daemon/service.js';
 import { daemonServiceInstallOptions } from '../daemon/service-config.js';
+import { buildNodesSnapshot } from '../nodes/view.js';
 import { buildFleetStatus, readFleetDaemonStatus } from '../fleet/status.js';
 import { getCachedFleetStatus, primeFleetStatusCache } from './fleet-status-cache.js';
 // M61: Mission Control aggregator.
@@ -1988,6 +1989,20 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/sessions ──────────────────────────────────────────
+    // Unified agent-session list (fleet.sessions.v1): queued/parked/
+    // launching/running/publishing/exited/stale sessions plus a bounded
+    // finished tail, assembled read-only from the dispatchd runs dir
+    // (queue/ready.tsv, queue/run/*.line markers, metrics/jobs.jsonl tail,
+    // sanitized ps join). VALUE-BLIND: prompt paths, env, secrets and raw
+    // command lines never leave the projection. Same no-auth read class as
+    // /api/fleet/lanes; never throws on absent/degraded inputs.
+    if (path === '/api/fleet/sessions' && method === 'GET') {
+      const { getFleetSessions } = await import('../fleet/runs-sessions.js');
+      sendJson(res, 200, await getFleetSessions());
+      return true;
+    }
+
     // ── GET /api/fleet/job ───────────────────────────────────────────────
     // RQ-PHX-JOBDETAIL: single-job detail from the dispatchd runs dir —
     // state, lane/model provenance, publish outcome and a scrubbed bounded
@@ -2260,6 +2275,15 @@ export async function handleApi(
     if (path === '/api/feed' && method === 'GET') {
       const { readFeed } = await import('../feed.js');
       sendJson(res, 200, await readFeed());
+      return true;
+    }
+
+    // ── GET /api/nodes ───────────────────────────────────────────────────────
+    // phantom.nodes.v1: nodes, caps, heartbeat age, live jobs, leader. Read-only
+    // and secret-free by construction (src/core/nodes/view.ts); same read class
+    // as /api/control.
+    if (path === '/api/nodes' && method === 'GET') {
+      sendJson(res, 200, buildNodesSnapshot());
       return true;
     }
 
