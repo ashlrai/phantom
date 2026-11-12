@@ -46,6 +46,7 @@ import { handleWbAction, WB_ACTION_PATH } from './wb-action-api.js';
 
 import { handleTeamInvites } from '../../api/team-invites.js';
 import { handleFrictionFeedback } from '../verse/feedback-api.js';
+import { watchLeaderThread } from './leader-thread-watch.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { timingSafeEqual, randomBytes } from 'node:crypto';
 import { basename, resolve as resolvePath, sep as pathSep } from 'node:path';
@@ -215,7 +216,7 @@ let sseHistoryProjection: SseHistoryProjection | null = null;
  * No `topics` parameter means every group (the historical behaviour).
  */
 export const SSE_TOPICS = [
-  'verse-sessions', 'verse-account-readings', 'runs', 'swarms', 'inbox', 'daemon', 'fleet-activity', 'snapshot',
+  'verse-sessions', 'verse-account-readings', 'runs', 'swarms', 'inbox', 'daemon', 'fleet-activity', 'snapshot', 'leader-thread',
 ] as const;
 export type SseTopic = typeof SSE_TOPICS[number];
 
@@ -1139,6 +1140,13 @@ function handleSseEvents(
     }
   }
 
+  // Leader thread: written by other processes (leader tick, Telegram, iMessage),
+  // so the file system says when it changed. No message bodies: the client
+  // refetches through the authenticated thread route.
+  const unwatchLeaderThread = topics.has('leader-thread')
+    ? watchLeaderThread(() => sendNamed('leader-thread', { at: new Date().toISOString() }))
+    : () => {};
+
   // Send an initial snapshot immediately.
   pushVerseSessionsIfChanged();
   pushAccountReadingsIfChanged();
@@ -1166,6 +1174,7 @@ function handleSseEvents(
     if (cleaned) return;
     cleaned = true;
     verseSessionPushers.delete(pushVerseSessionsIfChanged);
+    unwatchLeaderThread();
     clearInterval(intervalId);
     if (backpressureTimer) clearTimeout(backpressureTimer);
     if (expiryTimer) clearTimeout(expiryTimer);
@@ -1522,6 +1531,25 @@ export async function handleApi(
         ? await ctx.readProjections.read('pulse', { window })
         : buildRollup(window, cfg);
       sendJson(res, 200, rollup);
+      return true;
+    }
+
+    // ── GET /api/queue/stats ────────────────────────────────────────────────
+    // RQ-QUEUE-5: the live station graph's feed — the same estimateQueueStats
+    // over the private queue-visit journal that `phm queue stats --json`
+    // prints. ?window=<seconds> selects a single window (default 3600),
+    // mirroring the CLI's --window flag. Read-only; same read-authority class
+    // as /api/pulse (the server boundary requires a read session).
+    if (path === '/api/queue/stats' && method === 'GET') {
+      const rawSeconds = getQueryParam(req.url ?? '', 'window');
+      const seconds = rawSeconds === undefined ? 3600 : Number(rawSeconds);
+      if (!Number.isFinite(seconds) || seconds <= 0) {
+        sendJson(res, 400, { error: 'window must be a positive number of seconds' });
+        return true;
+      }
+      const { readQueueVisits } = await import('../queue/journal.js');
+      const { estimateQueueStats } = await import('../queue/stats.js');
+      sendJson(res, 200, estimateQueueStats(await readQueueVisits(), Date.now(), [seconds * 1000]));
       return true;
     }
 
@@ -1925,10 +1953,24 @@ export async function handleApi(
       return true;
     }
 
+    if (path === '/api/fleet/release-chain' && method === 'GET') {
+      const { releaseChainResponse } = await import('./release-chain-api.js');
+      sendJson(res, 200, releaseChainResponse());
+      return true;
+    }
+
     if (path === '/api/fleet/empty-jobs' && method === 'GET') {
       const { readEmptyJobs } = await import('../fleet/empty-jobs.js');
       const report = await readEmptyJobs();
       sendJson(res, report ? 200 : 503, report ?? { error: 'Jobs ledger is unreadable.' });
+      return true;
+    }
+
+    // Read-only release-chain status: same local signing/feed evidence as
+    // `phm fleet release-chain`, same no-auth read class as /api/fleet/lanes.
+    if (path === '/api/fleet/release-chain' && method === 'GET') {
+      const { releaseChainResponse } = await import('./release-chain-api.js');
+      sendJson(res, 200, releaseChainResponse());
       return true;
     }
 
