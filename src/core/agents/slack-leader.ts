@@ -1,4 +1,5 @@
 /** Trusted Socket Mode owner adapter for the existing Leader network. */
+import { takeLeaderReplyBatch } from './leader-reply-queue.js';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -152,7 +153,9 @@ export async function flushSlackLeaderReplies(options: SlackLeaderOptions = {}):
     const network = createLeaderNetwork({ ...sources, runsDir: options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'),
       busRoot: options.busRoot, now: options.now, appendInbox: leaderInboxAppender(options), deliver: (identity, message) => deliverSlackLeaderMessage(identity, message, options) });
     let sent = 0;
-    for (const pending of (await network.pending()).filter(row => row.envelope.channel === 'slack').slice(0, 5)) {
+    const directory = join(options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'leader');
+    const batch = takeLeaderReplyBatch((await network.pending()).filter(row => row.envelope.channel === 'slack' && row.replyText), directory, 'slack-reply-cursor.json');
+    for (const pending of batch) {
       if (options.signal?.aborted) break;
       if (pending.replyText && (await network.reply(pending.requestId, pending.replyText)).status === 'sent') sent++;
     }
