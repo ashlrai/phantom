@@ -1,4 +1,3 @@
-import { DotReplyAge } from './DotReplyAge.js';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { OUTBOX_KIND_LABEL } from '../../../../core/fleet/outbox-kind.js';
 import { computeLaneHealth, laneHealthLine, stuckBadge } from '../../../../core/fleet/lane-health.js';
@@ -34,6 +33,7 @@ import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import leaderStyles from '../leader/leader.module.css';
 import styles from './leader-thread.module.css';
+import { DotReplyAge } from './DotReplyAge.js';
 import { busRepliesToMason, mergeByTime, type BusReply } from './thread-bus-replies.js';
 import { appendLaneLog, laneEventItems, laneTransitions, loadLaneLog, type LaneEvent } from './thread-lane-events.js';
 import { fleetInbox, fleetOutbox, lineChannel, lineSourceLabel, mergeThread } from './thread-merge-model.js';

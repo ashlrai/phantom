@@ -2463,6 +2463,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'caps': {
+        const { cmdCaps } = await import('./caps.js');
+        process.exitCode = await cmdCaps(rest);
+        break;
+      }
+
       case 'constitution': {
         const { cmdConstitution } = await import('./constitution.js');
         process.exitCode = await cmdConstitution(rest);
@@ -3148,6 +3154,12 @@ async function main(): Promise<void> {
         // goes through the lanes' own gates; `fire --dry-run` writes nothing.
         const cmdAutomations = await loadAutomationsCmd();
         process.exitCode = await cmdAutomations(rest);
+        break;
+      }
+
+      case 'routines': {
+        const { runRoutinesCli } = await import('./routines.js');
+        process.exitCode = await runRoutinesCli(rest);
         break;
       }
 
