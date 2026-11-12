@@ -1945,6 +1945,20 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/board ─────────────────────────────────────────────
+    // Recovered from #5007 (25fd5bbab7). Serves the leader board recorded at
+    // <runs>/coordination/leader-board.json as {schema, status, ageSeconds,
+    // board}. READ-ONLY bounded, symlink-refusing read; a missing/corrupt
+    // recording reports 'missing'/'unavailable' with a null board, never a
+    // synthesized one. Same read-auth class as /api/fleet/lanes.
+    if (path === '/api/fleet/board' && method === 'GET') {
+      const { defaultFleetBoardRunsDir, fleetBoardResponse, readFleetBoard } = await import('../fleet/fleet-board-read.js');
+      const read = await readFleetBoard({ runsDir: defaultFleetBoardRunsDir() })
+        .catch((): { status: 'unavailable'; board: null } => ({ status: 'unavailable', board: null }));
+      sendJson(res, 200, fleetBoardResponse(read, Date.now()));
+      return true;
+    }
+
     // ── GET /api/fleet/lanes ─────────────────────────────────────────────
     // RQ-PHANTOM-ENG-CONSOLE: per-lane engineering console projection —
     // credit left, queue depth, live jobs and merges/hour per router lane,
