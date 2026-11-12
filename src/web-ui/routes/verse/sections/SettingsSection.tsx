@@ -21,6 +21,7 @@ import { AppearancePanel } from './AppearancePanel.js';
 import { ChatSettingsPanel } from './ChatSettingsPanel.js';
 import { CommsLimitsRow } from './CommsLimitsRow.js';
 import { ConnectionPanel } from './ConnectionPanel.js';
+import { QuietHoursRow } from './QuietHoursRow.js';
 import { DesktopSettingsPanel } from './DesktopSettingsPanel.js';
 import { PlannerSlatePanel } from './PlannerSlatePanel.js';
 import { ResidentAwakePanel } from './ResidentAwakePanel.js';
@@ -45,6 +46,7 @@ export function SettingsSection() {
           <ChatSettingsPanel />
           <WorkspaceSettingsPanel />
           <DesktopSettingsPanel />
+          <QuietHoursRow />
           <PlannerSlatePanel />
           <ResidentAwakePanel />
           <ConnectionPanel />
