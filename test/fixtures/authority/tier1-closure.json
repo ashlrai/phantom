@@ -718,6 +718,8 @@
     "src/core/fleet/self-tick-log-cap.ts",
     "src/core/fleet/self-tick.ts",
     "src/core/fleet/self.ts",
+    "src/core/fleet/session-guidance-io.ts",
+    "src/core/fleet/session-guidance.ts",
     "src/core/fleet/shared-store.ts",
     "src/core/fleet/skill-attestation.ts",
     "src/core/fleet/skill-library.ts",
