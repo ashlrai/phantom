@@ -2620,6 +2620,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'ideas': {
+        const { cmdIdeas } = await import('./ideas.js');
+        process.exitCode = await cmdIdeas(rest);
+        break;
+      }
+
       case 'backlog': {
         const cmdBacklog = await loadBacklogCmd();
         process.exitCode = await cmdBacklog(rest);
