@@ -46,6 +46,7 @@ import { handleWbAction, WB_ACTION_PATH } from './wb-action-api.js';
 
 import { handleTeamInvites } from '../../api/team-invites.js';
 import { handleFrictionFeedback } from '../verse/feedback-api.js';
+import { watchLeaderThread } from './leader-thread-watch.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { timingSafeEqual, randomBytes } from 'node:crypto';
 import { basename, resolve as resolvePath, sep as pathSep } from 'node:path';
@@ -215,7 +216,7 @@ let sseHistoryProjection: SseHistoryProjection | null = null;
  * No `topics` parameter means every group (the historical behaviour).
  */
 export const SSE_TOPICS = [
-  'verse-sessions', 'verse-account-readings', 'runs', 'swarms', 'inbox', 'daemon', 'fleet-activity', 'snapshot',
+  'verse-sessions', 'verse-account-readings', 'runs', 'swarms', 'inbox', 'daemon', 'fleet-activity', 'snapshot', 'leader-thread',
 ] as const;
 export type SseTopic = typeof SSE_TOPICS[number];
 
@@ -1139,6 +1140,13 @@ function handleSseEvents(
     }
   }
 
+  // Leader thread: written by other processes (leader tick, Telegram, iMessage),
+  // so the file system says when it changed. No message bodies: the client
+  // refetches through the authenticated thread route.
+  const unwatchLeaderThread = topics.has('leader-thread')
+    ? watchLeaderThread(() => sendNamed('leader-thread', { at: new Date().toISOString() }))
+    : () => {};
+
   // Send an initial snapshot immediately.
   pushVerseSessionsIfChanged();
   pushAccountReadingsIfChanged();
@@ -1166,6 +1174,7 @@ function handleSseEvents(
     if (cleaned) return;
     cleaned = true;
     verseSessionPushers.delete(pushVerseSessionsIfChanged);
+    unwatchLeaderThread();
     clearInterval(intervalId);
     if (backpressureTimer) clearTimeout(backpressureTimer);
     if (expiryTimer) clearTimeout(expiryTimer);
