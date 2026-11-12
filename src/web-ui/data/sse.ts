@@ -56,8 +56,8 @@ const EVENT_TO_CACHE_KEYS: Record<SseEventName, string[]> = {
   // 'fleet' (fleetStatusQuery, /control/fleet's queue depth + lease health)
   // has no dedicated SSE event of its own, so it rides these instead of only
   // refreshing on mount.
-  'fleet-activity-ping': ['fleet-activity', 'fleet'],
-  'fleet-activity-observation': ['fleet-activity', 'fleet'],
+  'fleet-activity-ping': ['fleet-activity', 'fleet', 'fleet-sessions'],
+  'fleet-activity-observation': ['fleet-activity', 'fleet', 'fleet-sessions'],
   // Agent OS snapshots are immutable records but their current authenticated
   // projection advances alongside the server's general snapshot signal.
   snapshot: ['dashboard-snapshot', 'agent-os-snapshot'],
