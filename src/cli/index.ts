@@ -3153,6 +3153,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'routines': {
+        const { runRoutinesCli } = await import('./routines.js');
+        process.exitCode = await runRoutinesCli(rest);
+        break;
+      }
+
       case 'resource': {
         const { cmdResource } = await import('./resource.js');
         process.exitCode = await cmdResource(rest);
