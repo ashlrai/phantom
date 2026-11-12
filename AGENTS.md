@@ -357,3 +357,16 @@ enrollment remains a manual config change. See [repo ranking](docs/REPO-RANK.md)
 Preview a local routines JSON array with `ashlr automations import --from routines.json --dry-run --json`, then import with `ashlr automations import --from routines.json --json`. Imports start disabled and skip existing names. See [Automations](docs/VERSE.md#automations-315) for the format and schedule restrictions.
 
 Tier-1 import diagnosis: `npx tsx scripts/tier1-why.ts <file> [--json]` prints a shortest runtime chain or unreachable. See [Tier-1 why](docs/TIER1-WHY.md). Keep fleet apps outside Tier-1; run `test/tier1-apps-boundary.test.ts`. Snapshot regeneration remains Mason-only.
+
+## Portable agent profiles
+
+See [agent profiles](docs/AGENT-PROFILES.md) for strict TOML metadata, version pins and restrictive send policy. Read profiles with `phm agents list|show|validate|versions --json`. Profiles grant no transport or spending authority; the email outbox runs outside sends through `checkSend`, which can only ever draft or deny.
+
+- [oMLX dispatcher lane](contrib/mac/README.md): memory-capped `omlx` pool, `127.0.0.1` health only, `phm lanes --json`; Security combined RETUNE pin required before installation.
+
+## App drive
+
+`phm drive <devin|claude|codex|phantom> <start|status|send-prompt|read-result> --json`
+uses enrolled CLI/API seats through authenticated numeric loopback. See
+[App drive](docs/APP-DRIVE.md) for examples and DESK integration limits.
+Security 606e84d2 must pin new loopback-client changes before merge.

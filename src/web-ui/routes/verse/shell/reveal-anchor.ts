@@ -5,7 +5,7 @@
  * Needs-you items, Leader memos and Command cards point INTO a surface
  * ("memo:m-7" on Mind, "seat:claude-a" on Apps). Whoever raises it calls
  * `setVerseSection(section, anchor)` (or dispatches VERSE_ANCHOR_EVENT); the
- * shell listens once (VerseApp, through shell/anchor-requests.ts) and reveals
+ * shell listens once (PhantomApp, through shell/anchor-requests.ts) and reveals
  * the element here.
  *
  * WHY WAIT, AND FOR HOW LONG. The target surface may be a lazy chunk that has
