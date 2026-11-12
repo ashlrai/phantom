@@ -48,6 +48,9 @@ undefined/
 # Committed fleet job-detail fixture: *.log would otherwise hide it
 !/test/fixtures/runs-job/RQ-FIXTURE-RUN.log
 
+# Committed fleet-lanes fixture journal (documented in test/fixtures/fleet-lanes/README.md)
+!/test/fixtures/fleet-lanes/queue/usage-readings.log
+
 # Routing eval report (npm run eval:routing). The corpus stays checked in.
 eval/routing/out/
 
