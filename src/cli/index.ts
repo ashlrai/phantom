@@ -82,7 +82,7 @@ import { DEVIN_CHAT_TURN_FLAG } from '../core/devin/chat-turn-invocation.js';
 import { VERSE_MCP_STDIO_COMMAND } from '../core/verse/verse-mcp-stdio-invocation.js';
 import { planTidy, applyTidy } from '../core/tidy.js';
 import { openInEditor } from './open.js';
-import { pick } from './picker.js';
+import { pick, selectionFailure } from './picker.js';
 import { classifyRepos } from './status.js';
 import { pad, makeColors } from './ui.js';
 import { authoritySetupPlatformRefusal } from './first-run-guidance.js';
@@ -1196,7 +1196,13 @@ async function cmdGo(args: string[]): Promise<void> {
   }
 
   if (!chosen) {
-    die('Nothing selected.', 1);
+    const pool = candidates.length > 0 ? candidates : idx.items;
+    const failure = selectionFailure('go', {
+      headless: process.stdin.isTTY !== true || process.stdout.isTTY !== true,
+      query,
+      itemCount: pool.length,
+    });
+    die(failure.message, failure.code);
   }
 
   if (openFlag) {
@@ -1667,7 +1673,12 @@ async function cmdOpen(args: string[]): Promise<void> {
   }
 
   if (!chosen) {
-    die('Nothing selected.', 1);
+    const failure = selectionFailure('open', {
+      headless: process.stdin.isTTY !== true || process.stdout.isTTY !== true,
+      query,
+      itemCount: idx.items.length,
+    });
+    die(failure.message, failure.code);
   }
 
   openInEditor(chosen.path, cfg);
@@ -2452,6 +2463,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'caps': {
+        const { cmdCaps } = await import('./caps.js');
+        process.exitCode = await cmdCaps(rest);
+        break;
+      }
+
       case 'constitution': {
         const { cmdConstitution } = await import('./constitution.js');
         process.exitCode = await cmdConstitution(rest);
@@ -3140,6 +3157,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'routines': {
+        const { runRoutinesCli } = await import('./routines.js');
+        process.exitCode = await runRoutinesCli(rest);
+        break;
+      }
+
       case 'resource': {
         const { cmdResource } = await import('./resource.js');
         process.exitCode = await cmdResource(rest);
@@ -3204,6 +3227,7 @@ async function main(): Promise<void> {
       case 'usage': {
         if (wantsHelp(rest)) {
           printCoreUsage('usage', 'Usage readings.', [
+            ['phm usage spend [--json]', 'See measured usage and projected unused capacity'],
             ['phm usage validate', 'Validate a usage reading'],
           ]);
           process.exitCode = 0;

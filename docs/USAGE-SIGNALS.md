@@ -162,3 +162,36 @@ A relative reset such as "in 2 hr 15 min" is re-derived on each pass, so a new
 instant within ten minutes of the earlier one keeps the earlier one. Unknown
 stays unknown: a page with no matching numbers produces no reading and never a
 zero. The `browser-visible` source is estimated, not provider-official.
+
+## Self-maintained lane budgets (no human reading)
+
+`src/cli/usage-self.ts` is a one-shot refresh that keeps `weekly_used_pct`, `credits_remaining`,
+`reset_at`, `source`, `estimated` and `as_of` fresh for claude, codex-personal, devin, zai, gemini
+and omlx in `queue/budget-overrides.json`, the file dispatchd copies into `status.json` `budget`.
+`contrib/mac/com.ashlr.usage-self.plist.in` runs it every 10 minutes (installing it is an operator step).
+
+```sh
+npx tsx src/cli/usage-self.ts --runs-dir /absolute/runs --codex-home /absolute/personal/pool/home --dry-run
+```
+
+Per lane, in order: a sanctioned reading, then an estimate, then unknown.
+
+| Lane | Sanctioned reading | Estimate when none |
+| --- | --- | --- |
+| claude | Phantom's parsed `/usage` reading (`metrics/claude-quota.json`), else its sanitized `rate_limit_event` store | last reading plus `jobs.jsonl` tokens, weekly reset rolled forward 7 days |
+| codex-personal | Codex App Server `account/rateLimits/read` with an explicit pool HOME (`--codex-home`; no `~/.codex*` path is accepted) | same as claude |
+| devin | org cycle ACU reader (`devin-api-v3-org-cycle`) | last reading plus `acus` from `jobs.jsonl`; the next cycle end is unknown, so `reset_at` becomes null |
+| zai | the `zai` row of `queue/resources.json` while fresh | 10 000 credits per week from `docs/lanes/zai.md`, credits computed from `jobs.jsonl`, reset Monday 00:00 UTC |
+| gemini | none verified | none: all numbers null, `source: unknown:no-sanctioned-reader` |
+| omlx | loopback `/v1/models` model count (capacity only, no percent, no reset) | none |
+
+Rules: a reading is re-read when missing, estimated, older than 30 minutes, or past `reset_at`. A fresh
+non-estimated entry from any other writer is kept. Estimates set `estimated: true` and are calibrated
+only from data (units per percent derived from the last reading), never from an invented limit; with no
+calibration the percent stays null and the autopilot holds the current target. Jobs without token or ACU
+counts are reported in `unmeasured_jobs`, so an estimate is then a lower bound. Only the fields above are
+rewritten; other keys in a lane block (`allowance`, `gift`, `compact`) are preserved.
+
+`phm resources autopilot --overrides FILE` gives a quota lane with no usable reading its budget entry,
+so an estimate keeps the lane paced instead of held. The zai, gemini and omlx entries reach `status.json`
+only after the dispatchd change staged in `contrib/mac/staged-pin/RQ-USAGE-SELF-2-dispatchd.md` is pinned by Security.
