@@ -687,7 +687,7 @@ class QueueWaitTests(unittest.TestCase):
     def test_claim_limit_preserves_priority_across_ticks_and_skips_blocked_head(self):
         lanes = ['codex-cmp', 'codex-personal', 'claude', 'devin']
         home, env = self.fixture(lanes)
-        # MAX_LAUNCH_PER_TICK limits claims to four. Priority holds even when
+        # MAX_LAUNCH_PER_TICK limits claims to eight. Priority holds even when
         # several lanes remain backlogged; the blocked first path waits.
         queue_job(home, 'RQ-BLOCKED', 'codex-cmp')
         (home / 'Projects/ashlrai/wt/RQ-BLOCKED').mkdir()
@@ -700,8 +700,8 @@ class QueueWaitTests(unittest.TestCase):
         r = tick(home, env)
         self.assertEqual(r.returncode, 0, r.stderr)
         claimed = [r for r in self.metrics(home) if r['event'] == 'claim']
-        self.assertEqual([r['job'] for r in claimed], sorted(jobs)[:4])
-        self.assertEqual(len(claimed), 4)
+        self.assertEqual([r['job'] for r in claimed], sorted(jobs)[:8])
+        self.assertEqual(len(claimed), 8)
         self.assertNotIn('RQ-BLOCKED', [r['job'] for r in claimed])
         self.assertIn('RQ-BLOCKED', [line.split('\t')[0] for line in ready_lines(home)])
 
@@ -743,9 +743,13 @@ class DispatchPriorityTests(unittest.TestCase):
                 ('RQ-FIX-MAIN-A', 'devin')]
         for job, lane in jobs:
             queue_job(home, job, lane)
+        # MAX_LAUNCH_PER_TICK is 8; pad the lowest bucket so the cap still binds.
+        for n in range(4):
+            queue_job(home, 'RQ-TAIL-%d' % n, 'codex-cmp')
         self.run_tick(home, env)
-        self.assertEqual(self.claims(home), ['RQ-FIX-MAIN-A', 'RQ-REL-A', 'RQ-DESK-A', 'LAND-A'])
-        self.assertEqual([line.split('\t')[0] for line in ready_lines(home)], ['RQ-OTHER'])
+        self.assertEqual(self.claims(home), ['RQ-FIX-MAIN-A', 'RQ-REL-A', 'RQ-DESK-A', 'LAND-A',
+                                              'RQ-OTHER', 'RQ-TAIL-0', 'RQ-TAIL-1', 'RQ-TAIL-2'])
+        self.assertEqual([line.split('\t')[0] for line in ready_lines(home)], ['RQ-TAIL-3'])
 
     def test_land_fixup_and_recut_share_a_bucket_before_other_jobs(self):
         home, env = self.fixture()
