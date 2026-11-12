@@ -144,6 +144,13 @@ or control apps.
 | --- | --- |
 | `world_model` | Read the cached ashlr.world-model/v1 snapshot. Every signal has source, observedAt and freshness. Unknown is never zero. blindSpots lists each unknown field by path with a stable id. |
 
+## `intent_` — Intent Evidence
+
+| Tool | Description |
+| --- | --- |
+| `intent_link` | Record caller-supplied merged pull evidence on matching directives. Supplied claims are not verified. |
+| `intent_ship` | Record caller-supplied release evidence on matching directives. Supplied claims are not verified. |
+
 ## `phantom-fleet` — Isolated Fleet Server (`phm mcp fleet`)
 
 The standalone read-only server started by `phm mcp fleet`, separate from the
