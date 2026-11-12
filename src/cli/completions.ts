@@ -45,7 +45,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'agents',
   'benchmark', 'queue', 'issues', 'incident', 'chain', 'select', 'pool',
   // 3.15 automations.
-  'automations',
+  'automations', 'routines',
   // 3.15 Jev decision layer.
   'jev',
   // 3.15 private repo wiki.
@@ -70,7 +70,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'test', 'check', 'feed',
   'worklog', 'library',
   // Dispatched by index.ts but missing here (caught by cli-registry-drift).
-  'constitution', 'wb',
+  'constitution', 'wb', 'caps',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
@@ -99,7 +99,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   repos: ['rank', 'proposals', '--json', '--recompute', '--help'],
   'release-articles': ['status', 'enable', 'disable', 'import', 'sync', '--help'],
   release: ['status', '--json', '--file', '--help'],
-  agents: ['bus', 'help'],
+  agents: ['bus', 'help', 'list', 'show', 'validate', 'versions'],
   // Mirror the verb switch in src/cli/wb.ts (cmdWb).
   wb: ['secrets', 'steer', 'reprioritize', 'stop', '--text', '--priority', '--apply', '--json', '--help'],
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
@@ -111,6 +111,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   run: ['show'],
   spec: ['new', 'list', 'show', 'refine'],
   swarm: ['show', 'verify', 'approve', 'rollback'],
+  verify: ['change', 'done', '--worktree', '--checks', '--contract', '--plan', '--help'],
   models: ['list', 'pull', 'start', 'inventory', 'routing', 'verify'],
   gh: ['pr', 'issue', 'ci'],
   vercel: ['ls', 'logs'],
@@ -134,7 +135,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'status', 'session', 'watch', 'events', 'lanes', 'lane-slots', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
     'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue', 'outcomes', 'backlog', 'lane-slots',
-    'shed-plan', 'deploy-plan', 'job-latency', 'supply', 'eval-report', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'pr-hygiene', 'merge-batch', 'rebase-plan', 'bus', 'usage', 'research-digest', 'drive',
+    'shed-plan', 'deploy-plan', 'job-latency', 'supply', 'eval-report', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'pr-hygiene', 'merge-batch', 'rebase-plan', 'merge-plan', 'bus', 'usage', 'research-digest', 'drive',
   ],
   bus: ['thread', 'task', 'send', 'inbox', 'ack', '--from', '--to', '--body', '--id', '--priority', '--ttl', '--limit', '--peer', '--root', '--queue-root', '--json', '--help'],
   estates: ['--repo', '--json', '--help'],
@@ -180,6 +181,8 @@ const SUBCOMMANDS: Record<string, string[]> = {
   // Mirror the verb switch in src/cli/cloud.ts (runCloudCli).
   capacity: ['publish'],
   checkpoint: ['resume', '--json', '--help'],
+  // Mirror the verb switch in src/cli/caps.ts (cmdCaps).
+  caps: ['list', 'validate', 'generate', '--registry', '--out', '--check', '--pin-stage', '--json', '--help'],
   // Mirror the verb switch in src/cli/trail.ts (cmdTrail).
   trail: ['claim', 'beat', 'release', 'save', 'list', 'show', 'resume', 'sweep', '--json', '--help'],
   // Mirror the verb switch in src/cli/sessions.ts (cmdSessions).
@@ -193,6 +196,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   playbook: ['list', 'show', 'new', 'edit', 'run', 'help'],
   // Mirror the verb switch in src/cli/automations.ts (runAutomationsCli).
   automations: ['list', 'templates', 'add', 'import', 'enable', 'disable', 'remove', 'fire', 'help'],
+  routines: ['run', 'explain', 'help'],
   // Mirrors the dispatch in src/cli/universe.ts (cmdUniverse).
   universe: ['demo', 'init', 'run', 'status', 'archive', 'campaign', 'portfolio', 'integration', 'deliver', 'deliveries', 'graph', 'compare',
     'controller', 'console', 'resources', 'firm', 'preparation-measurement', 'preparation-measurement-capture',

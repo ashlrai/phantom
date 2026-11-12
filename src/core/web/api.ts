@@ -87,6 +87,7 @@ import {
 } from '../daemon/public-observation.js';
 import { serviceStatus } from '../daemon/service.js';
 import { daemonServiceInstallOptions } from '../daemon/service-config.js';
+import { buildNodesSnapshot } from '../nodes/view.js';
 import { buildFleetStatus, readFleetDaemonStatus } from '../fleet/status.js';
 import { getCachedFleetStatus, primeFleetStatusCache } from './fleet-status-cache.js';
 // M61: Mission Control aggregator.
@@ -108,6 +109,7 @@ import type { ProposalsReadResult } from '../inbox/store.js';
 import { handleRunEventsSse, RUN_EVENTS_PATH_RE } from './run-stream.js';
 import { buildHostSummary, HOST_SUMMARY_PATH } from './host-summary.js';
 import { handleVerseApi, isVerseApiPath, verseSessionsDigest, verseSessionsSnapshot, verseAccountReadingsDigest } from '../verse/verse-api.js';
+import { handleIdeasDraftApi, isIdeasDraftPath } from './ideas-draft-route.js';
 // V2 autonomy control plane (mounted BEFORE handleVerseApi — see handleApi).
 import { handleVerseControlApi, isVerseControlPath } from '../verse/control-api.js';
 // GitHub, reachable from Verse (docs/VERSE-WORKSPACES.md §2) — also BEFORE handleVerseApi.
@@ -1322,6 +1324,11 @@ export async function handleApi(
 
   try {
     if (path.startsWith('/api/teams/') && await handleTeamInvites(req, res, ctx)) return true;
+    if (path === '/api/usage/spend' && method === 'GET') {
+      const { readUsageSpend } = await import('../usage/spend.js');
+      sendJson(res, 200, await readUsageSpend());
+      return true;
+    }
     if (path === HOST_SUMMARY_PATH) {
       if (method !== 'GET') {
         res.setHeader('Allow', 'GET');
@@ -1515,6 +1522,25 @@ export async function handleApi(
         ? await ctx.readProjections.read('pulse', { window })
         : buildRollup(window, cfg);
       sendJson(res, 200, rollup);
+      return true;
+    }
+
+    // ── GET /api/queue/stats ────────────────────────────────────────────────
+    // RQ-QUEUE-5: the live station graph's feed — the same estimateQueueStats
+    // over the private queue-visit journal that `phm queue stats --json`
+    // prints. ?window=<seconds> selects a single window (default 3600),
+    // mirroring the CLI's --window flag. Read-only; same read-authority class
+    // as /api/pulse (the server boundary requires a read session).
+    if (path === '/api/queue/stats' && method === 'GET') {
+      const rawSeconds = getQueryParam(req.url ?? '', 'window');
+      const seconds = rawSeconds === undefined ? 3600 : Number(rawSeconds);
+      if (!Number.isFinite(seconds) || seconds <= 0) {
+        sendJson(res, 400, { error: 'window must be a positive number of seconds' });
+        return true;
+      }
+      const { readQueueVisits } = await import('../queue/journal.js');
+      const { estimateQueueStats } = await import('../queue/stats.js');
+      sendJson(res, 200, estimateQueueStats(await readQueueVisits(), Date.now(), [seconds * 1000]));
       return true;
     }
 
@@ -1931,6 +1957,14 @@ export async function handleApi(
       return true;
     }
 
+    // Read-only release-chain status: same local signing/feed evidence as
+    // `phm fleet release-chain`, same no-auth read class as /api/fleet/lanes.
+    if (path === '/api/fleet/release-chain' && method === 'GET') {
+      const { releaseChainResponse } = await import('./release-chain-api.js');
+      sendJson(res, 200, releaseChainResponse());
+      return true;
+    }
+
     if (path === '/api/worklog' && method === 'GET') {
       const { readWorklog } = await import('../fleet/worklog.js');
       try { sendJson(res, 200, await readWorklog()); }
@@ -1985,6 +2019,20 @@ export async function handleApi(
       sendJson(res, 200, await readVerifiedCompletion({
         verifiedWindowMs: Number.isFinite(rawHours) && rawHours > 0 ? Math.min(rawHours, 168) * 3_600_000 : undefined,
       }));
+      return true;
+    }
+
+    // ── GET /api/fleet/sessions ──────────────────────────────────────────
+    // Unified agent-session list (fleet.sessions.v1): queued/parked/
+    // launching/running/publishing/exited/stale sessions plus a bounded
+    // finished tail, assembled read-only from the dispatchd runs dir
+    // (queue/ready.tsv, queue/run/*.line markers, metrics/jobs.jsonl tail,
+    // sanitized ps join). VALUE-BLIND: prompt paths, env, secrets and raw
+    // command lines never leave the projection. Same no-auth read class as
+    // /api/fleet/lanes; never throws on absent/degraded inputs.
+    if (path === '/api/fleet/sessions' && method === 'GET') {
+      const { getFleetSessions } = await import('../fleet/runs-sessions.js');
+      sendJson(res, 200, await getFleetSessions());
       return true;
     }
 
@@ -2160,6 +2208,12 @@ export async function handleApi(
       return true;
     }
 
+    // ── POST /api/ideas/draft (Ideas pane → one drop-job draft) ─────────────
+    // Gated inside the handler: --allow-dispatch + token + JSON Content-Type.
+    if (isIdeasDraftPath(path)) {
+      return handleIdeasDraftApi(ctx, req, res, method);
+    }
+
     // ── GET /api/impact ─────────────────────────────────────────────────────
     // M31: read-only knowledge-graph impact for ?target=<file|symbol>.
     if (path === '/api/impact' && method === 'GET') {
@@ -2254,6 +2308,15 @@ export async function handleApi(
     if (path === '/api/feed' && method === 'GET') {
       const { readFeed } = await import('../feed.js');
       sendJson(res, 200, await readFeed());
+      return true;
+    }
+
+    // ── GET /api/nodes ───────────────────────────────────────────────────────
+    // phantom.nodes.v1: nodes, caps, heartbeat age, live jobs, leader. Read-only
+    // and secret-free by construction (src/core/nodes/view.ts); same read class
+    // as /api/control.
+    if (path === '/api/nodes' && method === 'GET') {
+      sendJson(res, 200, buildNodesSnapshot());
       return true;
     }
 
