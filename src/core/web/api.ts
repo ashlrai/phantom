@@ -1996,6 +1996,23 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/board ─────────────────────────────────────────────
+    // RQ-SWE3-BOARDUI-1: the Leader-as-CEO board the last Leader tick
+    // recorded at <runs>/coordination/leader-board.json — lanes, READY depth
+    // by tier, merges in the last hour, the conflicting-PR trend and what is
+    // blocked on Mason, in the same {schema, status, ageSeconds, board}
+    // envelope `phm fleet board --json` prints. READ-ONLY bounded fs read;
+    // a missing/corrupt recording reports 'missing'/'unavailable' with a
+    // null board, never a synthesized one. Same no-auth read class as
+    // /api/fleet/lanes.
+    if (path === '/api/fleet/board' && method === 'GET') {
+      const { defaultFleetBoardRunsDir, fleetBoardResponse, readFleetBoard } = await import('../fleet/fleet-board-read.js');
+      const read = await readFleetBoard({ runsDir: defaultFleetBoardRunsDir() })
+        .catch((): { status: 'unavailable'; board: null } => ({ status: 'unavailable', board: null }));
+      sendJson(res, 200, fleetBoardResponse(read, Date.now()));
+      return true;
+    }
+
     // ── GET /api/fleet/lanes ─────────────────────────────────────────────
     // RQ-PHANTOM-ENG-CONSOLE: per-lane engineering console projection —
     // credit left, queue depth, live jobs and merges/hour per router lane,
