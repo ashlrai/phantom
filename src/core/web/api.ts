@@ -1989,6 +1989,20 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/sessions ──────────────────────────────────────────
+    // Unified agent-session list (fleet.sessions.v1): queued/parked/
+    // launching/running/publishing/exited/stale sessions plus a bounded
+    // finished tail, assembled read-only from the dispatchd runs dir
+    // (queue/ready.tsv, queue/run/*.line markers, metrics/jobs.jsonl tail,
+    // sanitized ps join). VALUE-BLIND: prompt paths, env, secrets and raw
+    // command lines never leave the projection. Same no-auth read class as
+    // /api/fleet/lanes; never throws on absent/degraded inputs.
+    if (path === '/api/fleet/sessions' && method === 'GET') {
+      const { getFleetSessions } = await import('../fleet/runs-sessions.js');
+      sendJson(res, 200, await getFleetSessions());
+      return true;
+    }
+
     // ── GET /api/fleet/job ───────────────────────────────────────────────
     // RQ-PHX-JOBDETAIL: single-job detail from the dispatchd runs dir —
     // state, lane/model provenance, publish outcome and a scrubbed bounded

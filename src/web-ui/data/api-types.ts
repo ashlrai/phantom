@@ -121,6 +121,16 @@ export type { FleetLaneCreditView } from '../../core/fleet/lane-console.js';
 /** `slotTarget` is optional here so a response from an older server still type-checks. */
 export type FleetLaneView = Omit<CoreFleetLaneView, 'slotTarget'> & { slotTarget?: number | null };
 export type FleetLaneSnapshot = Omit<CoreFleetLaneSnapshot, 'lanes'> & { lanes: FleetLaneView[] };
+/** fleet.sessions.v1 — unified dispatchd session list behind GET /api/fleet/sessions. */
+export type {
+  FleetSessionsV1,
+  FleetSessionV1,
+  FleetSessionStatus,
+  FleetSessionSourceState,
+  FleetSessionLive,
+  FleetSessionOutcome,
+  FleetSessionsDispatcherV1,
+} from '../../core/fleet/runs-sessions.js';
 
 /**
  * Structural shape shared by every "we might not actually know this"
