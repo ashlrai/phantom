@@ -47,6 +47,7 @@ import { handleWbAction, WB_ACTION_PATH } from './wb-action-api.js';
 import { handleTeamInvites } from '../../api/team-invites.js';
 import { handleFrictionFeedback } from '../verse/feedback-api.js';
 import { watchLeaderThread } from './leader-thread-watch.js';
+import { handleUiSettingsApi, UI_SETTINGS_PATH } from './ui-settings-api.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { timingSafeEqual, randomBytes } from 'node:crypto';
 import { basename, resolve as resolvePath, sep as pathSep } from 'node:path';
@@ -1377,6 +1378,14 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET/PUT /api/ui-settings ────────────────────────────────────────────
+    // The operator's appearance + layout preferences, stored in ~/.ashlr/ui.json
+    // (src/core/ui-settings.ts). The file is the source of truth; the UI and
+    // agents edit the same document.
+    if (path === UI_SETTINGS_PATH) {
+      return handleUiSettingsApi(ctx, req, res, method);
+    }
+
     // ── GET /api/portfolio ────────────────────────────────────────────────────
     // M29: read-only org-level portfolio projection. Reuses buildSnapshot (the
     // same enrollment/index-scoped read as /api/snapshot) and surfaces ONLY the
@@ -2160,6 +2169,12 @@ export async function handleApi(
       const { loadPreviousReport } = await import('../quality/store.js');
       const report = loadPreviousReport();
       sendJson(res, 200, report ?? null);
+      return true;
+    }
+
+    if (path === '/api/ideas' && method === 'GET') {
+      const { readIdeas } = await import('../fleet/ideas.js');
+      sendJson(res, 200, await readIdeas());
       return true;
     }
 
