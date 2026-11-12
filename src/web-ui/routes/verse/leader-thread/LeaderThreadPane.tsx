@@ -33,6 +33,7 @@ import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import leaderStyles from '../leader/leader.module.css';
 import styles from './leader-thread.module.css';
+import { DotReplyAge } from './DotReplyAge.js';
 import { busRepliesToMason, mergeByTime, type BusReply } from './thread-bus-replies.js';
 import { appendLaneLog, laneEventItems, laneTransitions, loadLaneLog, type LaneEvent } from './thread-lane-events.js';
 import { fleetInbox, fleetOutbox, lineChannel, lineSourceLabel, mergeThread } from './thread-merge-model.js';
@@ -459,7 +460,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       </details>
     </section>
     <DirectivesStrip read={directives.data} actions={actions} adding={addingDirective} onAddingChange={setAddingDirective} />
-    <header><button type="button" disabled={checkingStatus} onClick={() => void checkStatus()}>{checkingStatus ? 'Checking…' : 'Status now'}</button> <button type="button" aria-pressed={needsYouOnly} onClick={() => setNeedsYouOnly(value => !value)}>Needs you only</button> <button type="button" onClick={() => setFindOpen(true)}>Find</button></header>
+    <header><DotReplyAge visible={visible} /> <button type="button" disabled={checkingStatus} onClick={() => void checkStatus()}>{checkingStatus ? 'Checking…' : 'Status now'}</button> <button type="button" aria-pressed={needsYouOnly} onClick={() => setNeedsYouOnly(value => !value)}>Needs you only</button> <button type="button" onClick={() => setFindOpen(true)}>Find</button></header>
     {findOpen ? <div onKeyDown={event => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeFind(); }
     }}>
@@ -474,7 +475,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     {statusNow !== null ? <section aria-label="Status now" role="status"><p style={{ whiteSpace: 'pre-wrap' }}>{statusNow}</p><button type="button" onClick={() => setStatusNow(null)}>Dismiss</button></section> : null}
     <p className={styles.note}>{busRows.length} bus replies</p>
     {busUnavailable ? <p className={styles.note} role="status">Durable bus unavailable</p> : null}
-    <OwnerChannelsStrip channels={ownerRead.channels} paused={ownerRead.paused} />
+    <OwnerChannelsStrip channels={ownerRead.channels} paused={ownerRead.paused} replyGap={ownerRead.replyGap} />
     <div ref={logRef} className={leaderStyles.log} role="log" aria-label="Conversation with the Leader" aria-live="polite" aria-relevant="additions" tabIndex={0}
       onScroll={() => {
         const el = logRef.current;
