@@ -322,7 +322,7 @@ for chat seats (`src/core/verse/verse-mcp-types.ts`).
 
 | File | Responsibility |
 |------|---------------|
-| `api.ts` | REST API, including `/api/fleet`, `/api/inbox`, `/api/runs`, `/api/swarms`, `/api/genome`, `/api/pulse`, `/api/goals`; mounts the Phantom console routes from `src/core/verse/verse-api.ts`. |
+| `api.ts` | REST API, including `/api/fleet`, `/api/inbox`, `/api/runs`, `/api/swarms`, `/api/genome`, `/api/pulse`, `/api/queue/stats`, `/api/goals`; mounts the Phantom console routes from `src/core/verse/verse-api.ts`. |
 | `server.ts` | Loopback HTTP server plus separate read and mutation capabilities: read header/cookie for content, independent raw token for enabled actions. |
 | `control.ts` | Control endpoints: pause, resume, approve, reject. |
 
