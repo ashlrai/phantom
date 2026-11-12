@@ -8,7 +8,7 @@ const HELP = `Usage: phm queue stuck [--json]
        phm queue yield [--since 24h] [--json]
        phm queue report --events <file> [--json]
        phm queue dedupe [--file <router-queue.md>] [--apply] [--json]
-       phm queue add|claim|done|block|replay|list|import|export [options]
+       phm queue add|claim|done|block|replay|list|import|export|spawn|promote|serve [options]
 
 stats: sliding windows over the local visit journal (~/.ashlr/queue/visits.jsonl).
   Windows default to 1h, 24h and 7d. Rates per second; wait in seconds.
@@ -81,7 +81,7 @@ async function cmdQueueReport(args: string[]): Promise<number> {
 
 export async function cmdQueue(args: string[]): Promise<number> {
   let command: string | undefined;
-  const valueOptions = new Set(['--since', '--query', '--mode', '--dir', '--priority', '--pool', '--tier', '--repo', '--scope', '--acceptance', '--deps', '--owner', '--pr-url', '--reason', '--window', '--events']);
+  const valueOptions = new Set(['--since', '--query', '--mode', '--dir', '--priority', '--pool', '--tier', '--repo', '--scope', '--acceptance', '--deps', '--owner', '--pr-url', '--reason', '--window', '--events', '--port', '--token-file']);
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--') { command = args[i + 1]; break; }
@@ -90,7 +90,7 @@ export async function cmdQueue(args: string[]): Promise<number> {
   }
   if (command === 'yield') return (await import('./queue-yield.js')).cmdQueueYield(args.slice(args.indexOf('yield') + 1));
   if (command === 'dedupe') return (await import('./queue-dedupe.js')).cmdQueueDedupe(args.slice(args.indexOf('dedupe') + 1));
-  if (['add', 'claim', 'done', 'block', 'replay', 'list', 'import', 'export'].includes(command ?? '') ||
+  if (['add', 'claim', 'done', 'block', 'replay', 'list', 'import', 'export', 'spawn', 'promote', 'serve'].includes(command ?? '') ||
       args.some(arg => arg === '--dir' || arg.startsWith('--dir='))) {
     return (await import('./job-queue.js')).cmdJobQueue(args);
   }

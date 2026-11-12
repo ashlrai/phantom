@@ -17,7 +17,9 @@ export interface QueueJob {
   replayedAt?: string;
   prUrl?: string;
   blockedReason?: string;
+  /** Parent job id for spawn.v1 decomposition children; absent on top-level work. */
   parent?: string;
+  /** Decomposition depth (0 = top-level); bounded by SPAWN_LIMITS.maxDepth at intake. */
   depth?: number;
 }
 /** A job-shaped line that could not be parsed; retained verbatim instead of failing the import. */
