@@ -819,6 +819,7 @@
     "src/core/knowledge/graph.ts",
     "src/core/knowledge/index.ts",
     "src/core/knowledge/wiki/scan.ts",
+    "src/core/leader/delivery-receipts.ts",
     "src/core/learn/experiments.ts",
     "src/core/learn/harness-registry.ts",
     "src/core/learn/harness-types.ts",

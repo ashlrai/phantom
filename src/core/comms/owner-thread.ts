@@ -8,6 +8,7 @@
  * KILL and the comms pause halt every adapter before a transport is called.
  */
 import { teammateReplyGapFromInbox, type TeammateReplyGap } from './teammate-reply-gap.js';
+import { recordDelivery } from '../leader/delivery-receipts.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { linkSync, lstatSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
@@ -413,12 +414,20 @@ export async function sendOwnerReply(input: OwnerReplyInput, options: OwnerThrea
           deliveries.push({ channel, status: 'refused', reason: 'Channel transport refused the owner reply.' });
         }
       }
+      let messageId = prior?.id;
       if (!prior) {
         const stored = appendMessage(state, {
           idempotencyKey: key, channel: inbound.channel, senderId: 'leader', direction: 'outbound',
           at: new Date(clock(options)).toISOString(), text, replyTo: inbound.idempotencyKey, fanout: destinations,
         });
         mirror(options, stored);
+        messageId = stored.id;
+      }
+      if (messageId) {
+        for (const row of deliveries) {
+          const ok = row.status === 'sent' || row.status === 'duplicate';
+          recordDelivery(options.runsDir, messageId, row.channel, ok ? 'delivered' : 'failed', ok ? undefined : row.reason);
+        }
       }
       const sent = deliveries.some(row => row.status === 'sent' || row.status === 'duplicate');
       const complete = deliveries.every(row => row.status === 'sent' || row.status === 'duplicate');
