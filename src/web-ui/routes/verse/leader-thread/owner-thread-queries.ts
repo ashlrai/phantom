@@ -37,6 +37,7 @@ export type OwnerReceipts = Record<string, Record<string, { state: ReceiptState;
 export interface OwnerThreadRead {
   receipts?: OwnerReceipts;
   channels: OwnerChannelState[];
+  /** Additive; absent on reads from daemons that predate reply-gap metadata. */
   replyGap?: ReplyGapState[];
   lines: OwnerThreadLine[];
   /** The owner channels are killed or paused: the pane says so and shows no owner lines. */
