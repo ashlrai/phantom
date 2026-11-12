@@ -265,6 +265,17 @@ an `ApiError` with that code.
 
 ---
 
+## 5a. UI settings — one file
+
+Appearance (theme, accent, density, display size/font, radius, motion) and
+layout (sidebar/resources width, panel visibility) live in `~/.ashlr/ui.json`,
+defined once in `src/core/ui-settings-schema.ts` (schema, defaults, total
+normalizer; no node imports so the browser can bundle it) with file IO in
+`src/core/ui-settings.ts` and `GET`/`PUT /api/ui-settings` (PUT needs
+`--allow-dispatch` plus the mutation token). Agents edit the file directly;
+the UI's sync layer and Settings panels consume the same API. To add a
+setting: add it to the schema, then to the owning store — nothing else.
+
 ## 6. Auth — two tokens, two lifecycles
 
 Mirrors `server.ts` exactly; see `data/auth-store.ts`'s header comment for
