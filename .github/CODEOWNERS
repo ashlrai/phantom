@@ -1204,6 +1204,7 @@
 /test/verse-mcp-control-api.test.ts @masonwyatt23
 /test/verse-mcp-grants-types.test.ts @masonwyatt23
 /test/verse-mcp-scope.test.ts @masonwyatt23
+/test/verse-merge-latency-api.test.ts @masonwyatt23
 /test/verse-merge-pace-api-02.test.ts @masonwyatt23
 /test/verse-multimodel-auto-316.test.ts @masonwyatt23
 /test/verse-reliability.test.ts @masonwyatt23
