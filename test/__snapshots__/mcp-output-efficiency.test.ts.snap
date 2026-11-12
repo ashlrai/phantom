@@ -9,6 +9,14 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
   ],
   "native": [
     {
+      "name": "intent_link",
+      "safety": "append",
+    },
+    {
+      "name": "intent_ship",
+      "safety": "append",
+    },
+    {
       "name": "phantom_agent_bus_read",
       "safety": "read",
     },
@@ -373,6 +381,87 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
 
 exports[`native MCP tool inventory > preserves the complete input schema contract for every listed tool 1`] = `
 [
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "maxLength": 35,
+          "type": "string",
+        },
+        "branch": {
+          "maxLength": 300,
+          "minLength": 1,
+          "type": "string",
+        },
+        "number": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "repo": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string",
+        },
+        "title": {
+          "maxLength": 300,
+          "minLength": 1,
+          "type": "string",
+        },
+        "url": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "repo",
+        "number",
+        "title",
+      ],
+      "type": "object",
+    },
+    "name": "intent_link",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "maxLength": 35,
+          "type": "string",
+        },
+        "notes": {
+          "maxLength": 10000,
+          "minLength": 1,
+          "type": "string",
+        },
+        "release": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string",
+        },
+        "rq": {
+          "items": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string",
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "type": "array",
+        },
+      },
+      "required": [
+        "release",
+      ],
+      "type": "object",
+    },
+    "name": "intent_ship",
+  },
   {
     "inputSchema": {
       "additionalProperties": false,
