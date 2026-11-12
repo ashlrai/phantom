@@ -21,6 +21,8 @@ export interface FleetQueueV1 {
   groups: ParkedGroup[];
   /** Parked dependency rows still waiting on MERGED outcomes (RQ-QUEUE-AUTOUNPARK-1). */
   unmetDeps?: ParkedUnmetDep[];
+  /** READY router jobs without a recorded LAUNCH; null when unreadable (RQ-QUEUEAGE2N9JQ8). */
+  stuck?: import('../queue/stuck.js').StuckQueue | null;
   skips: PrecheckSkip[];
   skipsLast24h: number | null;
 }

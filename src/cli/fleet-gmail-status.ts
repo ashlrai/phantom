@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
-import { readGmailArchivePlanLatest } from '../core/comms/gmail-archive-plan-latest.js';
+import { readGmailArchivePlanLatest, type GmailArchivePlanEntry } from '../core/comms/gmail-archive-plan-latest.js';
 import { readGmailTriageInboxReports, type GmailTriageLatest } from '../core/comms/gmail-triage-latest.js';
 
 const USAGE = `Usage: ashlr fleet gmail-status [--runs-dir <dir>] [--json]
@@ -40,6 +40,7 @@ interface ArchivePlanStatus extends EvidenceStamp {
   unread: number;
   target: number;
   archiveCount: number;
+  scope?: GmailArchivePlanEntry['scope'];
 }
 
 interface ArchiveStatus {
@@ -124,6 +125,7 @@ export function buildGmailStatusReport(runsDir: string, now: () => number = Date
     unread: plan.unread,
     target: plan.target,
     archiveCount: plan.archiveCount,
+    ...(plan.scope === undefined ? {} : { scope: plan.scope }),
   })).sort((a, b) => a.inbox.localeCompare(b.inbox) || (a.at ?? '').localeCompare(b.at ?? ''));
 
   const archivePlans: ArchiveStatus = archiveStore === null
@@ -186,7 +188,8 @@ export async function cmdFleetGmailStatus(
   } else {
     console.log(`Archive plans: ${report.archivePlans.planCount} saved ${report.archivePlans.planCount === 1 ? 'inbox' : 'inboxes'} (plans only — execution unverified).`);
     for (const plan of report.archivePlans.plans) {
-      console.log(`- "${plan.inbox}": saved ${plan.at}; age ${formatAge(plan.ageSeconds)}; unread ${plan.unread}; target ${plan.target}; archive count ${plan.archiveCount}.`);
+      console.log(`- "${plan.inbox}": saved ${plan.at}; age ${formatAge(plan.ageSeconds)}; unread ${plan.unread}; target ${plan.target}; archive count ${plan.archiveCount}; `
+        + (plan.scope === undefined ? 'scope unknown' : `scope ${plan.scope.source}; scanned ${plan.scope.scanned}; scan limit ${plan.scope.limit}; saved files ${plan.scope.files}; truncated ${plan.scope.truncated}; unread is not a live total`) + '.');
     }
   }
   return 0;
