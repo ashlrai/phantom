@@ -184,6 +184,17 @@ export const verifiedCompletionQuery: QueryDef<VerifiedCompletionReport> = {
 };
 
 /**
+ * fleet.sessions.v1 — unified dispatchd agent-session list: queued/parked/
+ * launching/running/publishing/exited/stale sessions plus a bounded finished
+ * tail, read-only from the runs dir (GET /api/fleet/sessions →
+ * getFleetSessions()). Value-blind: no prompt paths, env or secrets.
+ */
+export const fleetSessionsQuery: QueryDef<FleetSessionsV1> = {
+  key: 'fleet-sessions',
+  fetch: (signal) => apiGet<FleetSessionsV1>('/api/fleet/sessions', signal),
+};
+
+/**
  * GET /api/goals returns a bare array of ad-hoc per-goal projections built
  * inline in src/core/web/api.ts (`path === '/api/goals'`, ~line 1654) — there
  * is no exported backend type for this shape (unlike every other resource
