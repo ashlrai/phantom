@@ -20,6 +20,13 @@ const STATUS_TONE: Record<string, Tone> = {
   pending: 'neutral',
   queued: 'neutral',
   waiting: 'neutral',
+  // fleet.sessions.v1 dispatchd lifecycle (runs-sessions.ts).
+  parked: 'info',
+  launching: 'running',
+  publishing: 'running',
+  exited: 'warning',
+  stale: 'warning',
+  finished: 'neutral',
   running: 'running',
   active: 'running',
   in_progress: 'running',
