@@ -12,7 +12,7 @@
  * never polls MORE often than the server already pushes.
  */
 import { getReadClientProof, getAuthSnapshot, reportSessionExpired, subscribeAuth } from './auth-store.js';
-import { invalidate, invalidatePrefix } from './cache.js';
+import { invalidate, invalidateObserved, invalidatePrefix } from './cache.js';
 import { isScopedConsolePath } from '../app/console-mode.js';
 
 export const SSE_EVENT_NAMES = [
@@ -121,6 +121,12 @@ function connect(): void {
         payload = undefined;
       }
       for (const key of EVENT_TO_CACHE_KEYS[name]) invalidate(key);
+      if (name === 'fleet-activity-ping' || name === 'fleet-activity-observation') {
+        // Queue visits change with fleet activity; 'queue-stats-<windowSec>'
+        // keys are parameterized, so sweep the prefix — mounted subscribers
+        // (the Fleet Dashboard station graph) refetch, unmounted ones don't.
+        invalidateObserved('queue-stats-');
+      }
       if (name === 'inbox') {
         // Parameterized inbox queries (one cache key per filter combo / per
         // proposal id) aren't in EVENT_TO_CACHE_KEYS's static map — sweep
