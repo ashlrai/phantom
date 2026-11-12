@@ -8,7 +8,9 @@ import { BUS_PRIORITIES, parseBusEnvelope, validateBusEnvelope, MAX_BUS_ENVELOPE
 import { appendBusInbox, inspectBusInbox, listBusInboxAfter, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, type BusInboxOptions, type BusInboxPage, type BusInboxPost, type BusInboxReceipt } from '../core/fleet/bus-inbox.js';
 import { openBusCheckpoint } from './comms-bus-checkpoint.js';
 import { busStatusExitCode } from './comms-bus-exit.js';
+import { cmdCommsBusClaim, COMMS_BUS_CLAIM_HELP } from './comms-bus-claim.js';
 import { withCodexPeersSession, type LocusPeersEndpoint } from '../core/fleet/adapters/codex-peers.js';
+import { BUS_PROTOCOL_KINDS, BUS_PROTOCOL_VERSION, isTopicPattern, protocolOf, topicMatches } from '../core/fleet/bus-protocol.js';
 
 const HELP = `phm comms bus group read <room> <topic> <cursor>
 phm comms bus group presence <room> <topic>
@@ -19,9 +21,15 @@ phm comms bus post --file <envelope.json|->
 phm comms bus post --reply-to <id> --id <new-id> --from <address> --text <text> [--ttl-ms <ms>]
 phm comms bus post-batch --file <batch.json|->
 phm comms bus status
-phm comms bus read [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>]
-phm comms bus watch [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--interval-ms <ms>] [--max-pages <n>] [--timeout-ms <ms>] [--until-reply]
+phm comms bus read [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--kind <task|result|review|status|question>] [--topic <name|ns.*>]
+phm comms bus watch [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--kind <task|result|review|status|question>] [--topic <name|ns.*>] [--interval-ms <ms>] [--max-pages <n>] [--timeout-ms <ms>] [--until-reply]
+${COMMS_BUS_CLAIM_HELP}
 Local JSON transport; no delivery handlers. Bodies are untrusted JSON data.
+Protocol v${BUS_PROTOCOL_VERSION}: a body may carry {"protocol":{"version":1,"kind":<kind>,"topic"?,"payload_ref"?}}.
+kind is task, result, review, status or question; topic is a namespaced name (fleet.*, repo.*, human.*)
+equal to the envelope --to, and payload_ref is an opaque printable reference (at most 256 characters).
+A topic message sets to to its topic. --topic matches an exact name or a namespace prefix such as fleet.*.
+Protocol fields are validated on post; invalid protocol exits 2. Filters are routing data, not authorization.
 Use --file - to read one UTF-8 JSON envelope from stdin (maximum ${MAX_BUS_ENVELOPE_BYTES} bytes).
 Compose replies to one retained live parent; body is {"inReplyTo":<id>,"text":<text>}.
 Reply priority comes from the parent; TTL defaults to 60000 ms and must be a positive safe integer.
@@ -91,7 +99,7 @@ export interface CommsBusDependencies {
   peers?: CommsBusPeersDeps;
 }
 
-type BusFilters = { id?: string; inReplyTo?: string; to?: string; from?: string; excludeFrom?: string; priority?: string };
+type BusFilters = { id?: string; inReplyTo?: string; to?: string; from?: string; excludeFrom?: string; priority?: string; kind?: string; topic?: string };
 
 function composeReply(values: Map<string, string>, options: BusInboxOptions, deps: CommsBusDependencies): BusInboxPost {
   const parentId = values.get('--reply-to')!, id = values.get('--id')!, from = values.get('--from')!;
@@ -194,7 +202,7 @@ async function postBatch(args: string[], options: BusInboxOptions, deps: CommsBu
 }
 
 function filterPage(page: BusInboxPage, filters: BusFilters): BusInboxPage {
-  if (page.status !== 'ok' || filters.id === undefined && filters.inReplyTo === undefined && filters.to === undefined && filters.from === undefined && filters.excludeFrom === undefined && filters.priority === undefined) return page;
+  if (page.status !== 'ok' || Object.values(filters).every(value => value === undefined)) return page;
   return { ...page, messages: page.messages.filter(({ envelope }) =>
     (filters.id === undefined || envelope.id === filters.id) &&
     (filters.inReplyTo === undefined || envelope.body !== null && typeof envelope.body === 'object' &&
@@ -202,7 +210,9 @@ function filterPage(page: BusInboxPage, filters: BusFilters): BusInboxPage {
     (filters.to === undefined || envelope.to === filters.to) &&
     (filters.from === undefined || envelope.from === filters.from) &&
     (filters.excludeFrom === undefined || envelope.from !== filters.excludeFrom) &&
-    (filters.priority === undefined || envelope.priority === filters.priority)) };
+    (filters.priority === undefined || envelope.priority === filters.priority) &&
+    (filters.kind === undefined || protocolOf(envelope.body)?.kind === filters.kind) &&
+    (filters.topic === undefined || topicMatches(filters.topic, protocolOf(envelope.body)?.topic ?? ''))) };
 }
 
 function waitForPoll(ms: number, signal: AbortSignal): Promise<void> {
@@ -356,11 +366,12 @@ async function groupCommand(args: string[], options: BusInboxOptions, deps: Comm
 
 export async function cmdCommsBus(args: string[], options: BusInboxOptions = {}, deps: CommsBusDependencies = {}): Promise<number> {
   if (args.length === 0 || args.length === 1 && ['--help', '-h'].includes(args[0]!) ||
-    args.length === 2 && ['post', 'post-batch', 'read', 'watch', 'status', 'peers'].includes(args[0]!) && ['--help', '-h'].includes(args[1]!)) {
+    args.length === 2 && ['post', 'post-batch', 'read', 'watch', 'status', 'peers', 'next', 'claim'].includes(args[0]!) && ['--help', '-h'].includes(args[1]!)) {
     console.log(HELP); return 0;
   }
   if (args[0] === 'group') return groupCommand(args.slice(1), options, deps);
   if (args[0] === 'post-batch') return postBatch(args.slice(1), options, deps);
+  if (args[0] === 'next' || args[0] === 'claim') return cmdCommsBusClaim(args[0], args.slice(1), options.root);
   const [verb, ...rest] = args, values = new Map<string, string>();
   const invalid = (): number => { console.log(JSON.stringify({ status: 'invalid' })); return 2; };
   if (verb === 'status') {
@@ -375,7 +386,7 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
     const token = rest[i]!, inline = /^(--id|--in-reply-to|--reply-to|--to|--from|--exclude-from|--text)=(.*)$/s.exec(token);
     const key = inline?.[1] ?? token;
     const label = key === '--id' || key === '--in-reply-to' || key === '--reply-to' || key === '--to' || key === '--from' || key === '--exclude-from' || key === '--text';
-    const flags = verb === 'post' ? ['--file', '--reply-to', '--id', '--from', '--text', '--ttl-ms'] : verb === 'watch' ? ['--checkpoint', '--after', '--limit', '--interval-ms', '--max-pages', '--timeout-ms', '--until-reply', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority'] : ['--checkpoint', '--after', '--limit', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority'];
+    const flags = verb === 'post' ? ['--file', '--reply-to', '--id', '--from', '--text', '--ttl-ms'] : verb === 'watch' ? ['--checkpoint', '--after', '--limit', '--interval-ms', '--max-pages', '--timeout-ms', '--until-reply', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority', '--kind', '--topic'] : ['--checkpoint', '--after', '--limit', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority', '--kind', '--topic'];
     if (!flags.includes(key) || values.has(key)) return invalid();
     if (key === '--until-reply') { values.set(key, 'true'); continue; }
     const value = inline ? inline[2] : rest[++i];
@@ -387,8 +398,10 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
     const value = values.get(key);
     if (value !== undefined && (!/^(0|[1-9][0-9]*)$/.test(value) || !Number.isSafeInteger(Number(value)))) return invalid();
   }
-  const filters = { id: values.get('--id'), inReplyTo: values.get('--in-reply-to'), to: values.get('--to'), from: values.get('--from'), excludeFrom: values.get('--exclude-from'), priority: values.get('--priority') };
+  const filters = { id: values.get('--id'), inReplyTo: values.get('--in-reply-to'), to: values.get('--to'), from: values.get('--from'), excludeFrom: values.get('--exclude-from'), priority: values.get('--priority'), kind: values.get('--kind'), topic: values.get('--topic') };
   if (filters.priority !== undefined && !BUS_PRIORITIES.includes(filters.priority as BusPriority)) return invalid();
+  if (filters.kind !== undefined && !(BUS_PROTOCOL_KINDS as readonly string[]).includes(filters.kind)) return invalid();
+  if (filters.topic !== undefined && !isTopicPattern(filters.topic)) return invalid();
   for (const label of [filters.id, filters.inReplyTo, filters.to, filters.from, filters.excludeFrom]) {
     if (label !== undefined && !validateBusEnvelope({ id: label, from: label, to: label, priority: 'P3', ttl: 1, body: null }).ok) return invalid();
   }
