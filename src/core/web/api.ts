@@ -48,6 +48,7 @@ import { handleTeamInvites } from '../../api/team-invites.js';
 import { handleFrictionFeedback } from '../verse/feedback-api.js';
 import { handleUiSettingsApi, UI_SETTINGS_PATH } from './ui-settings-api.js';
 import { watchLeaderThread } from './leader-thread-watch.js';
+import { handleUiSettingsApi, UI_SETTINGS_PATH } from './ui-settings-api.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { timingSafeEqual, randomBytes } from 'node:crypto';
 import { basename, resolve as resolvePath, sep as pathSep } from 'node:path';
@@ -2169,6 +2170,12 @@ export async function handleApi(
       const { loadPreviousReport } = await import('../quality/store.js');
       const report = loadPreviousReport();
       sendJson(res, 200, report ?? null);
+      return true;
+    }
+
+    if (path === '/api/ideas' && method === 'GET') {
+      const { readIdeas } = await import('../fleet/ideas.js');
+      sendJson(res, 200, await readIdeas());
       return true;
     }
 
