@@ -125,6 +125,12 @@ export const NAV_GROUPS: NavGroup[] = [
         implemented: true,
       },
       {
+        path: '/control/board',
+        label: 'Fleet Board',
+        description: 'The Leader board — lanes, queue depth by tier, merge rate, conflicting PRs, and what needs Mason.',
+        implemented: true,
+      },
+      {
         path: '/control/security',
         label: 'Security',
         description: 'Supply-chain / binshield findings from the cached backlog.',
