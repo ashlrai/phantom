@@ -9,7 +9,7 @@ import { resetCommandBus } from './shell/command-bus.js';
 import { ciFacts } from './shell/ci-needs-you.test-support.js';
 import { activity, approvalNeed, shellFetch, vetoNeed } from './shell/shell-fixtures.test-support.js';
 import { resetActivityForTest } from './shell/useActivity.js';
-import { VerseApp } from './VerseApp.js';
+import { PhantomApp } from './VerseApp.js';
 import { resetVerseStore } from './verse-store.js';
 import { resetVerseUi } from './verse-ui-store.js';
 
@@ -32,7 +32,7 @@ beforeEach(() => {
 afterEach(() => { markCheckComplete(false); resetActivityForTest(); vi.unstubAllGlobals(); });
 
 it('adds CI to the rail before the drawer opens', async () => {
-  render(<ToastProvider><VerseApp /></ToastProvider>);
+  render(<ToastProvider><PhantomApp /></ToastProvider>);
   const rail = await screen.findByRole('navigation', { name: 'Phantom sections' });
   expect(await within(rail).findByRole('button', { name: 'Needs you, 3' }, { timeout: 20_000 })).toBeInTheDocument();
 }, 60_000);

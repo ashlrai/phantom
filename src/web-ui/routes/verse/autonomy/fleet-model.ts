@@ -664,7 +664,7 @@ export function localOnlySourceNote(policy: LocalOnlyPolicy | null): string | nu
     case 'latch':
       return 'This process already observed a persisted local-only and has pinned it for its own lifetime, so turning it off takes effect for new dispatches but not for the seams that latched. Restart the server to clear it.';
     case 'config':
-      return 'Stored in the hub config and applied on the next dispatch.';
+      return 'Stored in the Phantom config and applied on the next dispatch.';
     case 'off':
       return 'Not configured; cloud engines are reachable.';
     default:

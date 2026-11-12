@@ -25,11 +25,12 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import type { AshlrConfig, WebServerOptions, WebServerHandle } from '../types.js';
 import { handleUsageResourcesApi } from '../verse/usage-resources-api.js';
+import { handleMergeLatencyApi } from '../verse/merge-latency-api.js';
 import { handleApi, drainSseConnections, drainSseSession, invalidateWebReadCaches } from './api.js';
 import { createReadProjectionWorker, type ReadProjectionReader } from './read-projections.js';
 import { governReadProjections } from './read-projection-governor.js';
 import { createReadSessionBoundary, headerValue, isAllowedHost, requestUrl, safeEqual, sendJson } from './read-session.js';
-import { serveStatic } from './static.js';
+import { isPhoneShellPath, serveStatic } from './static.js';
 import { gcRunStreams } from '../run/streaming.js';
 import { resetVerseEngine } from '../verse/verse-api.js';
 import { isPreviewFramePath } from '../verse/preview.js';
@@ -101,6 +102,10 @@ export async function startServer(
   const sessions = createReadSessionBoundary({ onRotate: drainSseConnections, onRevokeSession: drainSseSession });
   const { readToken } = sessions;
   const token = randomBytes(32).toString('hex');
+  // Fleet apps recovery readers stay out of the Tier-1 closure; this bootstrap
+  // is outside it, so it is the production install point for the provider slot.
+  const { installFleetAppsRecoveryProviders } = await import('../fleet/app-recovery-install.js');
+  await installFleetAppsRecoveryProviders();
   // The production default isolates synchronous metadata aggregation from the
   // HTTP loop. Explicit null keeps injected, in-process readers available to
   // hermetic route tests; there is no runtime fallback after a worker failure.
@@ -142,7 +147,7 @@ export async function startServer(
     const method = (req.method ?? 'GET').toUpperCase();
     // Browser speech is available only to the phone document itself. Keep the
     // default deny policy on the workbench, APIs, worker, and static assets.
-    if (method === 'GET' && (path === '/verse/m' || path === '/verse/m/')) {
+    if (method === 'GET' && isPhoneShellPath(path)) {
       res.setHeader('Permissions-Policy', 'camera=(), microphone=(self), geolocation=()');
     }
     const authority = sessions.authority(req, url);
@@ -199,6 +204,7 @@ export async function startServer(
       readSession: authority?.kind === 'session' ? authority.session : undefined,
       readProjections: readProjections ?? undefined,
       usageResourcesApi: handleUsageResourcesApi,
+      mergeLatencyApi: handleMergeLatencyApi,
     })
       .then((handled) => {
         // A mutation can partially succeed and still return 409/500 (for
