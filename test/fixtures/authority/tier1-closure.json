@@ -1419,6 +1419,7 @@
     "src/core/web/fleet-status-cache.ts",
     "src/core/web/host-summary.ts",
     "src/core/web/ideas-draft-route.ts",
+    "src/core/web/leader-thread-watch.ts",
     "src/core/web/read-projections.ts",
     "src/core/web/read-session-revocations.ts",
     "src/core/web/read-session.ts",
