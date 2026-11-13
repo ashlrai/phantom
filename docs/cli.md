@@ -29,7 +29,7 @@ Topic summary and discovery hints.
 ```text
   Phantom - phm, the CLI for agentic engineers (ashlr remains compatible)
 
-    core            Core - index, navigate, configure (caps, constitution, tune, index, …)
+    core            Core - index, navigate, configure (caps, constitution, tune, …)
     run             Run - local-first agent runs (run, runs, …)
     swarm           Swarm - specs + multi-agent fleets (spec, …)
     memory          Memory - shared genome (memory, recall, learn, …)
@@ -230,6 +230,7 @@ Every command, grouped by topic.
     benchmark run|--compare-reports                                                                                                                               Explicit local-agent benchmark trials, or offline matched-receipt comparison; real checkers and private traces.
     devin connect [--org org-…]                                                                                                                                   Connect Devin (Cognition): paste the API key at a hidden prompt; it is verified and stored in the macOS Keychain, never in a file.
     devin launch "<task>" [--repo o/n] [--base b]                                                                                                                 Start a Devin session that delivers a PR on ashlr-devin/<id> through the standing gates (spends ACUs, hard-capped per session; never merges).
+    routines list|status|run <id>|tick|migrate|launchd|run <file.json>|explain <id>|export|import|rebalance                                                       Routines: UTC-cron YAML schedules with executor failover; learned local-first placement runs; portable provider placement registry. See docs/ROUTINES.md.
     automations list|templates|add|enable|disable|remove                                                                                                          Automations: labelled issues, a red default branch, RRULE schedules, a local webhook or Telegram /task become tasks for the fleet, cloud, Devin or review - with queue, per-day, concurrency and spend limits.
     automations fire <id> [--dry-run]                                                                                                                             Check one automation's trigger now and dispatch what it finds through the lane's own gates (grant, KILL, budgets); --dry-run shows what would happen and writes nothing.
     jev status [--json]                                                                                                                                           Jev (TypeSafe) typed decisions today: on/keyed, decisions by kind, avg confidence, fallback rate, est. cost, latency. Reads the local ledger only.
