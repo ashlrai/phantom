@@ -1321,6 +1321,7 @@ export async function handleApi(
     readSession?: { id: string; expiresAt: number };
     readProjections?: ReadProjectionReader;
     usageResourcesApi?: import('../verse/api-modules.js').ApiModule;
+    mergeLatencyApi?: import('../verse/api-modules.js').ApiModule;
   },
 ): Promise<boolean> {
   const path = reqPath(req);
@@ -1996,6 +1997,23 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/board ─────────────────────────────────────────────
+    // RQ-SWE3-BOARDUI-1: the Leader-as-CEO board the last Leader tick
+    // recorded at <runs>/coordination/leader-board.json — lanes, READY depth
+    // by tier, merges in the last hour, the conflicting-PR trend and what is
+    // blocked on Mason, in the same {schema, status, ageSeconds, board}
+    // envelope `phm fleet board --json` prints. READ-ONLY bounded fs read;
+    // a missing/corrupt recording reports 'missing'/'unavailable' with a
+    // null board, never a synthesized one. Same no-auth read class as
+    // /api/fleet/lanes.
+    if (path === '/api/fleet/board' && method === 'GET') {
+      const { defaultFleetBoardRunsDir, fleetBoardResponse, readFleetBoard } = await import('../fleet/leader-journal.js');
+      const read = await readFleetBoard({ runsDir: defaultFleetBoardRunsDir() })
+        .catch((): { status: 'unavailable'; board: null } => ({ status: 'unavailable', board: null }));
+      sendJson(res, 200, fleetBoardResponse(read, Date.now()));
+      return true;
+    }
+
     // ── GET /api/fleet/lanes ─────────────────────────────────────────────
     // RQ-PHANTOM-ENG-CONSOLE: per-lane engineering console projection —
     // credit left, queue depth, live jobs and merges/hour per router lane,
@@ -2169,6 +2187,12 @@ export async function handleApi(
       const { loadPreviousReport } = await import('../quality/store.js');
       const report = loadPreviousReport();
       sendJson(res, 200, report ?? null);
+      return true;
+    }
+
+    if (path === '/api/ideas' && method === 'GET') {
+      const { readIdeas } = await import('../fleet/ideas.js');
+      sendJson(res, 200, await readIdeas());
       return true;
     }
 
@@ -2692,10 +2716,20 @@ export async function handleApi(
     // GETs are already behind the read-session boundary (server.ts); POSTs
     // apply ctx.allowDispatch + passesMutationGate inside handleVerseApi.
     if (isVerseApiPath(path)) {
+      const verseCtx = { cfg, token: ctx.token, allowDispatch: ctx.allowDispatch, readSession: ctx.readSession,
+        usageResourcesApi: ctx.usageResourcesApi,
+        ...(ctx.readProjections ? { readProjections: ctx.readProjections } : {}) };
+      // Merge-latency report (GET /api/verse/fleet/merge-latency): injected by
+      // the composition root and served before the mounted module table, so the
+      // frozen mount order and the Tier-1 import closure are both untouched.
+      if (path === '/api/verse/fleet/merge-latency' || path.startsWith('/api/verse/fleet/merge-latency/')) {
+        if (path !== '/api/verse/fleet/merge-latency') { sendJson(res, 404, { error: 'Merge latency route not found.' }); return true; }
+        if (ctx.mergeLatencyApi) return ctx.mergeLatencyApi(verseCtx, req, res, path, method);
+        sendJson(res, 503, { error: 'Merge latency is unavailable.' });
+        return true;
+      }
       const handled = await handleVerseApi(
-        { cfg, token: ctx.token, allowDispatch: ctx.allowDispatch, readSession: ctx.readSession,
-          usageResourcesApi: ctx.usageResourcesApi,
-          ...(ctx.readProjections ? { readProjections: ctx.readProjections } : {}) },
+        verseCtx,
         req,
         res,
         path,
