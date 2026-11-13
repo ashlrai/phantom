@@ -64,7 +64,7 @@ export interface IntentContext {
 const ACTION_ID_RE = /\bla-\d{14}-[a-f0-9]{6}-\d{1,3}\b/g;
 const REPO_RE = /\b(?:in|on|for|to|at)\s+(?:repo\s+)?([A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100})\b/i;
 
-const STATUS_RE = /^\s*\/?(?:status|update|updates|brief|briefing|report|sitrep|progress|what'?s\s+up|whats\s+up|wassup|sup|what'?s\s+new|where\s+are\s+we|how'?s\s+it\s+going|how\s+are\s+we\s+doing|what'?s\s+happening|anything\s+new)\s*(?:\?|!|\.)*\s*$/i;
+const STATUS_RE = /^\s*(?:(?:phantom|leader)\s*[,:]?\s+)?\/?(?:status|update|updates|brief|briefing|report|sitrep|progress|what'?s\s+up|whats\s+up|wassup|sup|what'?s\s+new|where\s+are\s+we|how'?s\s+it\s+going|how\s+are\s+we\s+doing|what'?s\s+happening|anything\s+new)\s*(?:\?|!|\.)*\s*$/i;
 const DETAIL_RE = /^\s*(?:more|details?|the\s+rest|go\s+on|full\s+version|expand|continue)\s*(?:\?|!|\.)*\s*$/i;
 /** Unambiguous approvals; the short words ("yes", "ok") count only as the whole message (≤ 3 words). */
 const APPROVE_RE = /^\s*(?:approve[ds]?|go\s+ahead|do\s+it|ship\s+it|lgtm|green\s*light|send\s+it)\b/i;
