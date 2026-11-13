@@ -62,6 +62,7 @@ import { UsagePace } from './UsagePace.js';
 import { ResetsTimeline } from './ResetsTimeline.js';
 import { CreditPools } from './CreditPools.js';
 import { DevinResource } from './DevinResource.js';
+import { DotResource } from './DotResource.js';
 import { JevResource } from './JevResource.js';
 import { LocalResources } from './LocalResources.js';
 import { ResourceCard } from './ResourceCard.js';
@@ -492,6 +493,14 @@ export function ResourcesDrawer({ mode, compact = false, now: fixedNow }: Resour
           <h3 id={`${titleId}-decisions`} className={styles.groupTitle}>Decision layer</h3>
           <ul className={styles.cards}>
             <JevResource />
+          </ul>
+        </section>
+
+        <section className={styles.group} aria-labelledby={`${titleId}-fleet`}>
+          <h3 id={`${titleId}-fleet`} className={styles.groupTitle}>Fleet</h3>
+          <p className={styles.groupBlurb}>Teammates on their own allowance — contact and reply state only.</p>
+          <ul className={styles.cards}>
+            <DotResource />
           </ul>
         </section>
       </div>

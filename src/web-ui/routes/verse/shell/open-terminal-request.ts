@@ -8,7 +8,7 @@
  *   - a `verse://terminal/<tab>/<block>` link in chat text (MessageMarkdown),
  *   - a Needs-you row whose target is a terminal (drawer, Command card).
  *
- * VerseApp listens (it holds the toast) and runs shell/open-terminal.ts, a
+ * PhantomApp listens (it holds the toast) and runs shell/open-terminal.ts, a
  * lazy chunk: this module is on the first-paint path and stays tiny —
  * validation and an event, nothing else.
  */

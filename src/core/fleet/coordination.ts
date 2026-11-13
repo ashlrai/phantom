@@ -1,6 +1,6 @@
 /** Host-only advisory coordination. A lease never authorizes execution or spawns work. */
 import { createHash, randomUUID } from 'node:crypto';
-import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readSync, writeSync, type Stats } from 'node:fs';
+import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readSync, renameSync, unlinkSync, writeSync, type Stats } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { acquireLocalStoreLock, ownsLocalStoreLock, releaseLocalStoreLock } from './local-store-lock.js';
@@ -68,7 +68,7 @@ function privateFile(fd: number): Stats {
   if (!stat.isFile() || stat.nlink !== 1 || (typeof process.getuid === 'function' && stat.uid !== process.getuid()) || (stat.mode & 0o077) !== 0 || stat.size > MAX_BYTES) throw new Error('Unsafe ledger');
   return stat;
 }
-function readEvents(path: string, allowMissing = false): Event[] {
+function readEvents(path: string, allowMissing = false): { events: Event[]; stat: Stats | null } {
   let fd: number | undefined;
   try {
     fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -83,9 +83,9 @@ function readEvents(path: string, allowMissing = false): Event[] {
     if (raw && !raw.endsWith('\n')) throw new Error('Torn ledger');
     const lines = raw ? raw.slice(0, -1).split('\n') : [];
     if (lines.length > MAX_ROWS) throw new Error('Ledger limit');
-    return lines.map(line => parseEvent(JSON.parse(line)));
+    return { events: lines.map(line => parseEvent(JSON.parse(line))), stat: before };
   } catch (error) {
-    if (allowMissing && (error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    if (allowMissing && (error as NodeJS.ErrnoException).code === 'ENOENT') return { events: [], stat: null };
     throw error;
   } finally { if (fd !== undefined) closeSync(fd); }
 }
@@ -99,13 +99,62 @@ function replay(events: Event[]): State {
   }
   return state;
 }
+function stateEvents(state: State): Event[] {
+  return [
+    ...[...state.claims.values()].map((claim): Event => ({ version: 1, kind: 'claim', at: claim.claimedAt, claim })),
+    ...state.messages.map((message): Event => ({ version: 1, kind: 'post', at: message.at, message })),
+    ...state.proposals.map((proposal): Event => ({ version: 1, kind: 'assign', at: proposal.at, proposal })),
+  ];
+}
+function encodeEvents(events: Event[]): Buffer {
+  return Buffer.from(events.map(event => JSON.stringify(event) + '\n').join(''));
+}
+function writeAll(fd: number, bytes: Buffer): void {
+  let offset = 0;
+  while (offset < bytes.length) {
+    const written = writeSync(fd, bytes, offset, bytes.length - offset);
+    if (!written) throw new Error('Short ledger write');
+    offset += written;
+  }
+}
+function requireUnchangedLedger(path: string, expected: Stats): void {
+  const named = lstatSync(path);
+  if (!named.isFile() || named.isSymbolicLink() || named.nlink !== 1 || named.dev !== expected.dev || named.ino !== expected.ino
+    || named.size !== expected.size || named.mtimeMs !== expected.mtimeMs || named.mode !== expected.mode || named.uid !== expected.uid) throw new Error('Changing ledger');
+}
+/** Replace only validated history, under the same lock used by every appender. */
+function compactLedger(path: string, expected: Stats, events: Event[], lock: NonNullable<ReturnType<typeof acquireLocalStoreLock>>): void {
+  const bytes = encodeEvents(events);
+  if (events.length > MAX_ROWS || bytes.length > MAX_BYTES) throw new Error('Live ledger limit');
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  let fd: number | undefined;
+  let created = false;
+  try {
+    fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
+    created = true;
+    const opened = privateFile(fd);
+    writeAll(fd, bytes);
+    fsyncSync(fd);
+    const named = lstatSync(temporary);
+    if (named.isSymbolicLink() || named.dev !== opened.dev || named.ino !== opened.ino || privateFile(fd).size !== bytes.length) throw new Error('Changing compacted ledger');
+    closeSync(fd); fd = undefined;
+    requireUnchangedLedger(path, expected);
+    if (!ownsLocalStoreLock(lock)) throw new Error('Lost ledger lock');
+    renameSync(temporary, path);
+    created = false;
+    fsyncDirectory(dirname(path));
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+    if (created) unlinkSync(temporary);
+  }
+}
 function cleanClaim(claim: OwnedClaim): FleetClaim {
   return { id: scrubSecrets(claim.id), repo: scrubSecrets(claim.repo), task: scrubSecrets(claim.task), agent: scrubSecrets(claim.agent), claimedAt: claim.claimedAt, expiresAt: claim.expiresAt };
 }
 export function readFleetBoard(options: FleetCoordinationOptions = {}): FleetBoard {
   const now = options.now ?? Date.now();
   try {
-    const state = replay(readEvents(options.path ?? fleetCoordinationPath()));
+    const state = replay(readEvents(options.path ?? fleetCoordinationPath()).events);
     const claims = [...state.claims.values()];
     return { schema: 'fleet.coordination.v1', state: 'known', claims: claims.filter(c => c.expiresAt > now).map(cleanClaim),
       messages: state.messages.filter(m => m.expiresAt > now).map(m => ({ ...m, id: scrubSecrets(m.id), from: scrubSecrets(m.from), to: scrubSecrets(m.to), body: scrubSecrets(m.body) })),
@@ -123,19 +172,31 @@ function mutate<T>(options: FleetCoordinationOptions, operation: (state: State, 
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     lock = acquireLocalStoreLock(`${path}.lock`, 2000);
     if (!lock) return { ok: false, error: 'unavailable' };
-    const events = readEvents(path, true);
-    const state = replay(events);
+    const ledger = readEvents(path, true);
+    const state = replay(ledger.events);
     const reaped: Event[] = [];
     for (const claim of state.claims.values()) if (claim.expiresAt <= now) { state.claims.delete(claim.id); reaped.push({ version: 1, kind: 'reap', at: now, id: claim.id }); }
+    state.messages = state.messages.filter(message => message.expiresAt > now);
+    state.proposals = state.proposals.filter(proposal => proposal.expiresAt > now);
     const result = operation(state, now);
     if (!result.ok) return result;
-    const bytes = Buffer.from([...reaped, result.value.event].map(e => JSON.stringify(e) + '\n').join(''));
-    if (events.length + reaped.length + 1 > MAX_ROWS || !ownsLocalStoreLock(lock)) return { ok: false, error: 'unavailable' };
+    const bytes = encodeEvents([...reaped, result.value.event]);
+    if (!ownsLocalStoreLock(lock)) return { ok: false, error: 'unavailable' };
+    if (ledger.stat && (ledger.events.length + reaped.length + 1 >= MAX_ROWS * 0.8 || ledger.stat.size + bytes.length >= MAX_BYTES * 0.8)) {
+      // Replay the mutation too: releases and handoffs can free capacity even
+      // when all remaining history was live. Expired data never survives compaction.
+      compactLedger(path, ledger.stat, stateEvents(replay([...stateEvents(state), result.value.event])), lock);
+      return { ok: true, value: result.value.value };
+    }
+    if (ledger.events.length + reaped.length + 1 > MAX_ROWS) return { ok: false, error: 'unavailable' };
     fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
     const stat = privateFile(fd);
+    if (ledger.stat) {
+      requireUnchangedLedger(path, ledger.stat);
+      if (stat.ino !== ledger.stat.ino || stat.dev !== ledger.stat.dev) throw new Error('Changing ledger');
+    } else if (stat.size !== 0) throw new Error('Changing ledger');
     if (stat.size + bytes.length > MAX_BYTES) return { ok: false, error: 'unavailable' };
-    let offset = 0;
-    while (offset < bytes.length) { const n = writeSync(fd, bytes, offset, bytes.length - offset); if (!n) throw new Error('Short append'); offset += n; }
+    writeAll(fd, bytes);
     fsyncSync(fd);
     fsyncDirectory(dirname(path));
     return { ok: true, value: result.value.value };
