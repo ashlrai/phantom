@@ -1187,14 +1187,23 @@ jobs:
           const lanes = ['site', 'docs', ...full, 'release-build'];
           const selected = lane === 'full' ? full : [lane];
           // PR and merge queue: the independent quick check runs for every lane.
-          const chosen = release ? ['release-build'] : fast ? ['quick'] : selected;
-          const excluded = ['quick', ...lanes].filter((name) => !chosen.includes(name));
+          // Mason directive 2026-11-13: quick typecheck is advisory on fast events —
+          // it still runs and reports, but a failure (e.g. CODEOWNERS drift on a
+          // stale branch) does not block the merge. The daily full lane and
+          // main-guardian remain the correctness floor. Secret-shape, secret-scan
+          // and classify stay hard requirements.
+          const chosen = release ? ['release-build'] : fast ? [] : selected;
+          const advisory = fast && !release ? ['quick'] : [];
+          const excluded = ['quick', ...lanes].filter((name) => !chosen.includes(name) && !advisory.includes(name));
           // A reusable workflow_call runs under the caller's push event: the Windows
           // service lane is deferred there, so it must be skipped, never failed.
           const deferred = process.env.EVENT_NAME === 'push' ? ['windows-service-authority'] : [];
           for (const name of chosen) {
             if (deferred.includes(name) && outcome(name) === 'skipped') { console.log(`${name} deferred to the daily run`); continue; }
             if (outcome(name) !== 'success') throw new Error(`${lane} CI required job ${name} concluded ${outcome(name) ?? 'missing'}`);
+          }
+          for (const name of advisory) {
+            if (outcome(name) !== 'skipped' && outcome(name) !== 'success') console.log(`ADVISORY ${name} concluded ${outcome(name) ?? 'missing'} — not blocking (fast lane)`);
           }
           for (const name of excluded) {
             if (outcome(name) !== 'skipped') throw new Error(`${lane} CI excluded job ${name} concluded ${outcome(name) ?? 'missing'}`);
