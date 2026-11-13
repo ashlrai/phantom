@@ -1440,6 +1440,7 @@
     "src/core/web/wb-action-api.ts",
     "src/core/web/wb-events.ts",
     "src/core/web/wb-read-api.ts",
+    "src/core/web/workbench-fleet-view.ts",
     "src/core/website/host-adapter.ts",
     "src/core/website/host-release.ts",
     "src/core/website/output-materialization.ts",
