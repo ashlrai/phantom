@@ -1,0 +1,157 @@
+{
+  "schema": "caps.registry.v1",
+  "version": 1,
+  "surfaces": [
+    { "id": "claude-code", "name": "Claude Code", "kind": "cli", "lane": "claude", "engine": "claude", "adapter": "claude-code" },
+    { "id": "claude-desktop", "name": "Claude Desktop", "kind": "desktop", "lane": "claude", "adapter": "claude-code" },
+    { "id": "codex-cli", "name": "Codex CLI", "kind": "cli", "lane": "codex", "engine": "codex", "adapter": "codex" },
+    { "id": "codex-desktop", "name": "Codex Desktop", "kind": "desktop", "lane": "codex", "adapter": "codex" },
+    { "id": "devin-cli", "name": "Devin CLI", "kind": "cli", "lane": "devin", "engine": "devin-cli", "adapter": "devin", "description": "Hub surface: hosts other agents through hosting edges." },
+    { "id": "devin-desktop", "name": "Devin Desktop", "kind": "desktop", "lane": "devin", "adapter": "devin", "description": "Hub surface: hosts other agents through hosting edges." },
+    { "id": "glm-lite", "name": "GLM Lite (hosted in Devin)", "kind": "cloud", "lane": "zai", "adapter": "none", "hostedOnly": true },
+    { "id": "cursor-desktop", "name": "Cursor Desktop", "kind": "desktop", "lane": "cursor", "adapter": "cursor" },
+    { "id": "cursor-cloud", "name": "Cursor cloud sessions", "kind": "cloud", "lane": "cursor", "adapter": "cursor" },
+    { "id": "cursor-agent", "name": "Cursor agent CLI", "kind": "cli", "lane": "cursor", "adapter": "cursor" },
+    { "id": "grok-build", "name": "Grok Build", "kind": "cli", "lane": "grok", "engine": "grok-cli", "adapter": "grok-build" },
+    { "id": "grok-bot-desktop", "name": "Grok Bot Desktop", "kind": "bot", "lane": "grok", "adapter": "none" },
+    { "id": "gemini-cli", "name": "Gemini CLI", "kind": "cli", "lane": "gemini", "adapter": "gemini" },
+    { "id": "copilot-cli", "name": "GitHub Copilot CLI", "kind": "cli", "lane": "copilot", "adapter": "copilot" },
+    { "id": "qwen-code", "name": "Qwen Code (hosted in Devin)", "kind": "cloud", "lane": "qwen", "adapter": "none", "hostedOnly": true },
+    {
+      "id": "local-omlx", "name": "Local oMLX / Qwen", "kind": "local-runtime", "lane": "local", "engine": "local-coder", "adapter": "local-model",
+      "network": { "bind": "127.0.0.1", "keyForwarding": false, "egressAllowlistRef": "local-no-egress" }
+    }
+  ],
+  "models": [
+    { "id": "claude-opus-5-5", "name": "Claude Opus 5.5", "lane": "claude", "family": "claude-opus", "catalogId": "claude:claude-opus-5-5", "providerModelId": "claude-opus-5-5" },
+    { "id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5", "lane": "claude", "family": "claude-sonnet", "catalogId": "claude:claude-sonnet-5-5", "providerModelId": "claude-sonnet-5-5" },
+    { "id": "claude-haiku-5-5", "name": "Claude Haiku 5.5", "lane": "claude", "family": "claude-haiku", "catalogId": "claude:claude-haiku-5-5", "providerModelId": "claude-haiku-5-5" },
+    { "id": "claude-fable-5-2", "name": "Claude Fable 5.2", "lane": "claude", "family": "claude-fable", "catalogId": "claude:claude-fable-5-2", "providerModelId": "claude-fable-5-2", "allowance": "claude-max-weekly-fable" },
+    { "id": "gpt-6.1-sol", "name": "GPT-6.1 Sol", "lane": "codex", "family": "gpt", "catalogId": "codex:gpt-6.1-sol", "providerModelId": "gpt-6.1-sol" },
+    { "id": "gpt-6.1-terra", "name": "GPT-6.1 Terra", "lane": "codex", "family": "gpt", "catalogId": "codex:gpt-6.1-terra", "providerModelId": "gpt-6.1-terra" },
+    { "id": "swe-2-high", "name": "Devin SWE-2 (high)", "lane": "devin", "family": "devin-swe", "catalogId": null, "providerModelId": "swe-2-high" },
+    { "id": "grok-4.7", "name": "Grok 4.7", "lane": "grok", "family": "grok", "catalogId": "grok-cli:grok-4.7", "providerModelId": "grok-4.7" },
+    { "id": "grok-4.7-build-fast", "name": "Grok 4.7 Build Fast", "lane": "grok", "family": "grok", "catalogId": "grok-cli:grok-4.7-build-fast", "providerModelId": "grok-4.7-build-fast" },
+    { "id": "glm-5.3", "name": "GLM 5.3", "lane": "zai", "family": "glm", "catalogId": null, "providerModelId": "glm-5.3" },
+    { "id": "qwen3.8-27b-local", "name": "Qwen 3.8 27B (local)", "lane": "local", "family": "qwen", "catalogId": "local-coder:qwen3.8:27b-ctx64k", "providerModelId": "qwen3.8:27b-ctx64k" }
+  ],
+  "hosting": [
+    { "host": "devin-desktop", "guest": "glm-lite", "via": "devin-hosted-agent" },
+    { "host": "devin-desktop", "guest": "cursor-agent", "via": "devin-hosted-agent" },
+    { "host": "devin-desktop", "guest": "grok-build", "via": "devin-hosted-agent" },
+    { "host": "devin-desktop", "guest": "gemini-cli", "via": "devin-hosted-agent" },
+    { "host": "devin-desktop", "guest": "copilot-cli", "via": "devin-hosted-agent" },
+    { "host": "devin-desktop", "guest": "qwen-code", "via": "devin-hosted-agent" },
+    { "host": "devin-desktop", "guest": "codex-cli", "via": "devin-hosted-agent" },
+    { "host": "devin-cli", "guest": "glm-lite", "via": "devin-subagent" },
+    { "host": "devin-cli", "guest": "cursor-agent", "via": "devin-subagent" },
+    { "host": "devin-cli", "guest": "grok-build", "via": "devin-subagent" },
+    { "host": "devin-cli", "guest": "gemini-cli", "via": "devin-subagent" },
+    { "host": "devin-cli", "guest": "copilot-cli", "via": "devin-subagent" },
+    { "host": "devin-cli", "guest": "qwen-code", "via": "devin-subagent" },
+    { "host": "devin-cli", "guest": "codex-cli", "via": "devin-subagent" }
+  ],
+  "sessions": [
+    { "id": "weyv-lead", "name": "Weyv lead", "surface": "claude-code", "model": "claude-fable-5-2", "role": "lead", "capabilities": ["phantom-gateway", "locus", "lexicon"] }
+  ],
+  "accounts": [
+    { "id": "github", "provider": "github", "store": "host-session", "credentialName": null, "scopes": ["repo", "workflow"] },
+    { "id": "slack-bot", "provider": "slack", "store": "phantom-secrets", "credentialName": "SLACK_BOT_TOKEN", "scopes": ["chat:write"] },
+    { "id": "apple-mail", "provider": "apple-mail", "store": "host-session", "credentialName": null, "scopes": ["mail:send"] },
+    { "id": "apple-messages", "provider": "apple-messages", "store": "host-session", "credentialName": null, "scopes": ["messages:send"] },
+    { "id": "devin-billing", "provider": "devin", "store": "phantom-secrets", "credentialName": "DEVIN_API_KEY", "scopes": ["billing:write"] }
+  ],
+  "egressAllowlists": [
+    { "id": "local-no-egress", "hosts": [] }
+  ],
+  "capabilities": [
+    {
+      "id": "phantom-gateway", "kind": "mcp", "description": "Phantom MCP gateway (phm mcp).",
+      "surfaces": ["claude-code", "claude-desktop", "codex-cli", "codex-desktop", "devin-cli", "devin-desktop", "cursor-desktop", "cursor-agent", "grok-build", "gemini-cli", "copilot-cli"],
+      "effects": ["read", "write-local"], "sensitivity": { "external_send": false, "spend": false, "delete": false },
+      "launch": { "command": "phm", "args": ["mcp"] }
+    },
+    {
+      "id": "phantom-secrets", "kind": "mcp", "description": "Phantom Secrets companion: vault names and leases, never values in agent context.",
+      "surfaces": ["claude-code", "codex-cli", "devin-cli", "devin-desktop", "cursor-desktop"],
+      "effects": ["read"], "sensitivity": { "external_send": false, "spend": false, "delete": false }, "hardLimitGates": ["secrets"],
+      "launch": { "command": "npx", "args": ["-y", "phantom-secrets-mcp@0.7.9"] }
+    },
+    {
+      "id": "locus", "kind": "mcp", "description": "Locus companion: repository and fleet location index.",
+      "surfaces": ["claude-code", "claude-desktop", "codex-cli", "codex-desktop", "devin-cli", "devin-desktop", "cursor-desktop", "cursor-agent", "gemini-cli", "copilot-cli"],
+      "effects": ["read"], "sensitivity": { "external_send": false, "spend": false, "delete": false },
+      "launch": { "command": "npx", "args": ["-y", "@ashlrai/locus-mcp@0.7.0"] }
+    },
+    {
+      "id": "lexicon", "kind": "mcp", "description": "Lexicon companion: voice vocabulary corrections.",
+      "surfaces": ["claude-code", "claude-desktop", "codex-cli", "codex-desktop", "devin-cli", "devin-desktop", "cursor-desktop"],
+      "effects": ["read"], "sensitivity": { "external_send": false, "spend": false, "delete": false },
+      "launch": { "command": "npx", "args": ["-y", "-p", "@ashlr/lexicon@0.5.9", "lexicon-mcp"] }
+    },
+    {
+      "id": "stack", "kind": "mcp", "description": "ashlr-stack companion: provider and stack inventory.",
+      "surfaces": ["claude-code", "codex-cli", "devin-cli", "devin-desktop"],
+      "effects": ["read"], "sensitivity": { "external_send": false, "spend": false, "delete": false },
+      "launch": { "command": "npx", "args": ["-y", "-p", "@ashlr/stack@0.3.6", "-p", "ashlr-stack-mcp@0.3.6", "-p", "phantom-secrets@0.7.9", "ashlr-stack-mcp"] }
+    },
+    {
+      "id": "ashlr", "kind": "mcp", "description": "ashlr-plugin MCP: token-efficient read, grep and edit tools.",
+      "surfaces": ["claude-code", "codex-cli", "devin-cli", "devin-desktop"],
+      "effects": ["read", "write-local"], "sensitivity": { "external_send": false, "spend": false, "delete": false },
+      "launch": { "command": "npx", "args": ["-y", "-p", "ashlr-plugin@1.36.4", "ashlr-mcp"] }
+    },
+    {
+      "id": "slack-post", "kind": "connector", "description": "Post a Slack message as the fleet bot.",
+      "surfaces": ["claude-code", "codex-cli"], "accounts": ["slack-bot"],
+      "effects": ["post-slack"], "sensitivity": { "external_send": true, "spend": false, "delete": false }, "hardLimitGates": ["outside-send"]
+    },
+    {
+      "id": "mail-send", "kind": "connector", "description": "Send mail through Apple Mail.",
+      "surfaces": ["claude-desktop", "claude-code"], "accounts": ["apple-mail"],
+      "effects": ["send-mail"], "sensitivity": { "external_send": true, "spend": false, "delete": false }, "hardLimitGates": ["outside-send"],
+      "control": { "backend": "applescript" }
+    },
+    {
+      "id": "messages-send", "kind": "connector", "description": "Send an iMessage through Messages.",
+      "surfaces": ["claude-desktop", "claude-code"], "accounts": ["apple-messages"],
+      "effects": ["send-message"], "sensitivity": { "external_send": true, "spend": false, "delete": false }, "hardLimitGates": ["outside-send"],
+      "control": { "backend": "jxa" }
+    },
+    {
+      "id": "devin-acu-topup", "kind": "connector", "description": "Buy Devin ACUs.",
+      "surfaces": ["devin-desktop"], "accounts": ["devin-billing"],
+      "effects": ["spend"], "sensitivity": { "external_send": false, "spend": true, "delete": false }, "hardLimitGates": ["money"]
+    },
+    {
+      "id": "gh", "kind": "cli", "description": "GitHub CLI for PRs, issues and checks.",
+      "surfaces": ["claude-code", "codex-cli", "devin-cli", "cursor-agent", "grok-build", "gemini-cli", "copilot-cli"], "accounts": ["github"],
+      "effects": ["read", "write-remote"], "sensitivity": { "external_send": false, "spend": false, "delete": false },
+      "launch": { "command": "gh", "args": [] }
+    },
+    {
+      "id": "gh-repo-delete", "kind": "cli", "description": "Delete a GitHub repository.",
+      "surfaces": ["claude-code"], "accounts": ["github"],
+      "effects": ["delete-data"], "sensitivity": { "external_send": false, "spend": false, "delete": true }, "hardLimitGates": ["destroy-data"],
+      "launch": { "command": "gh", "args": ["repo", "delete"] }
+    },
+    {
+      "id": "browser-verify", "kind": "skill", "description": "Verify a local web UI in a loopback browser with a per-run profile.",
+      "surfaces": ["claude-code", "codex-cli"],
+      "effects": ["read"], "sensitivity": { "external_send": false, "spend": false, "delete": false },
+      "control": { "backend": "playwright-loopback", "profile": "per-run", "bind": "127.0.0.1" },
+      "autoFile": { "fields": ["capability-id", "surface-id", "job-id", "outcome", "duration-ms", "error-code"] }
+    },
+    {
+      "id": "shortcuts-run", "kind": "connector", "description": "Run a named, owner-approved macOS Shortcut.",
+      "surfaces": ["claude-desktop"],
+      "effects": ["write-local"], "sensitivity": { "external_send": false, "spend": false, "delete": false },
+      "control": { "backend": "shortcuts" }
+    },
+    {
+      "id": "ashlr-plugin", "kind": "plugin", "description": "ashlr Claude Code plugin (skills, hooks, MCP).",
+      "surfaces": ["claude-code"],
+      "effects": ["read", "write-local"], "sensitivity": { "external_send": false, "spend": false, "delete": false }
+    }
+  ]
+}
