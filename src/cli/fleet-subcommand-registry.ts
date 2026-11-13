@@ -177,6 +177,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'imessage-path': () => import('./fleet-imessage-path.js'),
   'inbox': () => import('./fleet-inbox.js'),
   'inbox-acks': () => import('./fleet-inbox-acks.js'),
+  'incident-gate': () => import('./fleet-incident-gate.js'),
   'intent': () => import('./fleet-intent.js'),
   'intent-edit': () => import('./fleet-intent-edit.js'),
   'intent-evidence': () => import('./fleet-intent-evidence.js'),
