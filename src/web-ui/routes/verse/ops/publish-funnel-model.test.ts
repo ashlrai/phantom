@@ -8,7 +8,7 @@ const fixture = (): FunnelInput => ({
     { job: 'RQ-TWO', lane: null, url: 'https://github.com/example/repo/pull/2', at: '2026-10-31T09:30:00Z' },
     { job: 'RQ-THREE', lane: null, url: null, at: '2026-10-31T09:20:00Z' },
   ],
-  mergesLastHour: { count: 2 as number | null, items: [
+  mergesLastHour: { count: 2, items: [
     { repo: 'example/repo', number: 1, title: 'bridge: RQ-ONE' },
     { repo: 'example/repo', number: 2, title: 'Other title' },
   ] }, sources: { merges: 'healthy' },
