@@ -1,3 +1,4 @@
+import { formatFleetMetrics } from '../core/fleet/metrics-feed.js';
 /**
  * `ashlr fleet` — M49 fleet control plane + observability CLI.
  *
@@ -113,6 +114,7 @@ export function formatFleetStatus(s: FleetStatus): string {
       : '';
 
   lines.push('Fleet status' + pausedTag);
+  if (s.metrics) lines.push(...formatFleetMetrics(s.metrics));
   if (s.memory) {
     const memory = s.memory;
     lines.push(`Memory: PAUSE ${memory.pause.state}${memory.pause.reason ? ` (${memory.pause.reason})` : ''}`);
