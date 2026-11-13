@@ -45,15 +45,20 @@ export function regenerateCodemap(text, root) {
   let output = '';
   let cursor = 0;
   let open;
+  const completed = new Set();
+  let seen = 0;
   for (const match of text.matchAll(marker)) {
+    seen += 1;
     const name = match[1];
     const kind = match[2];
     if (!CODEMAP_SECTIONS.has(name)) throw new Error(`Unknown codemap section: ${name}`);
     if (kind === 'start') {
       if (open) throw new Error('Nested codemap block');
+      if (completed.has(name)) throw new Error(`Duplicate codemap section: ${name}`);
       open = { name, end: match.index + match[0].length };
     } else {
       if (!open) throw new Error('Unmatched codemap end');
+      if (name !== open.name) throw new Error(`Mismatched codemap end: ${open.name} closed by ${name}`);
       const newline = text.includes('\r\n') ? '\r\n' : '\n';
       const block = codemapInventory(root, CODEMAP_SECTIONS.get(open.name)).join(newline);
       const inner = text.slice(open.end, match.index);
@@ -61,13 +66,16 @@ export function regenerateCodemap(text, root) {
       const endIndent = (/\n([ \t]*)$/.exec(inner) ?? [null, ''])[1];
       output += `${text.slice(cursor, open.end)}${newline}${block}${newline}${endIndent}${match[0]}`;
       cursor = match.index + match[0].length;
+      completed.add(open.name);
       open = undefined;
     }
   }
   if (open) throw new Error('Unclosed codemap block');
-  output += text.slice(cursor);
   // Reject malformed markers rather than silently passing a mistyped block.
   if (/<!--[^>]*?codemap\s*:/.test(text.replace(marker, ''))) throw new Error('Malformed codemap marker');
+  // A document with no codemap markers at all is not a partial map; fail closed.
+  if (!seen) throw new Error('No codemap markers in document');
+  output += text.slice(cursor);
   return output;
 }
 
