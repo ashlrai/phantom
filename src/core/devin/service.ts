@@ -39,6 +39,8 @@ import { DevinApiError, DevinClient, devinFailureSentence, type DevinFetch, type
 import { buildDevinPrompt, DEVIN_REPORT_SCHEMA } from './delivery-contract.js';
 import { playbookForLaunch } from '../playbooks/lanes.js';
 import { probeDevinCli, type DevinCliProbe } from './cli-probe.js';
+import { devinCliFleetModelPricing, devinCliFleetModelSource, devinCliLaneModelEntries, resolveDevinCliFleetModel } from './cli-engine.js';
+import { getLaneModelSnapshot, type LaneModelSnapshot } from '../fleet/lane-models.js';
 import { buildDevinChatPrompt } from './chat-contract.js';
 import { getDevinModelCatalog, summarizeDevinModels, type DevinModelCatalog } from './models.js';
 import { hasDevinKey, readDevinKey, removeDevinKey, storeDevinKey, type DevinKeyStoreDeps } from './secret.js';
@@ -64,6 +66,7 @@ import {
   DEVIN_SESSION_TAG,
   DEVIN_TASK_SCHEMA_VERSION,
   type DevinFailureCode,
+  type DevinFleetModelInfo,
   type DevinGate,
   type DevinLaunchRequest,
   type DevinLaunchResponse,
@@ -97,6 +100,8 @@ export interface DevinServiceDeps {
   cliProbe?: () => Promise<Pick<DevinCliProbe, 'state'> & { cliPath?: string | null }>;
   /** The CLI's model catalog for the overview (tests; default: models.ts, never listing on the request). */
   modelCatalog?: () => Promise<DevinModelCatalog>;
+  /** models.json's lane→model view for the overview's fleetModel row (tests; default: fleet/lane-models.ts). */
+  laneModels?: () => Promise<Pick<LaneModelSnapshot, 'lanes'>>;
 }
 
 /** Internal launches from the fleet carry their work item. */
@@ -772,6 +777,21 @@ export async function launchDevinTask(req: DevinLaunchRequest | DevinInternalLau
 // Overview / messages
 // ---------------------------------------------------------------------------
 
+/**
+ * The fleet lane's resolved model, its origin and honest pricing evidence, plus
+ * every `devin*` key models.json carries. Reporting only. Absent, unreadable or
+ * failing models.json yields an empty lane list, never a failure.
+ */
+async function devinFleetModelInfo(deps: DevinServiceDeps, section: AshlrConfig['devin'] | undefined, now: Date): Promise<DevinFleetModelInfo> {
+  let laneModels: DevinFleetModelInfo['laneModels'] = [];
+  try {
+    const snapshot = await (deps.laneModels ?? (() => getLaneModelSnapshot({})))();
+    laneModels = devinCliLaneModelEntries(snapshot?.lanes ?? []);
+  } catch { /* models.json evidence is optional. */ }
+  const configured = resolveDevinCliFleetModel(section);
+  return { configured, source: devinCliFleetModelSource(section), pricing: devinCliFleetModelPricing(configured, now.getTime()), laneModels };
+}
+
 /** Cheap: reads disk (+ a cached Keychain presence check). No Devin API call. */
 export async function devinOverview(deps: DevinServiceDeps = {}): Promise<DevinOverviewResponse> {
   const now = (deps.now ?? (() => new Date()))();
@@ -798,6 +818,7 @@ export async function devinOverview(deps: DevinServiceDeps = {}): Promise<DevinO
     tasks: tasks.slice(0, OVERVIEW_TASK_LIMIT),
     cli: { state: probe.state, usage: 'not-reported' },
     ...(models ? { models } : {}),
+    fleetModel: await devinFleetModelInfo(deps, readConfig(deps), now),
   };
 }
 
