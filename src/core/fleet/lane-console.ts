@@ -179,6 +179,11 @@ const LIVE_STATUSES = new Set([
   'WORKING', 'PUBLISHING', 'PUBLISH_UNKNOWN',
 ]);
 
+/** True when a normalized (uppercased) queue status names an in-flight job. */
+export function isLiveQueueStatus(status: string): boolean {
+  return LIVE_STATUSES.has(status.toUpperCase());
+}
+
 /** Terminal merge evidence. DONE alone is not a merge — it must name a land. */
 const MERGE_WORDS = new Set([
   'land', 'landed', 'merge', 'merged', 'pr-merge', 'pr-merged',
