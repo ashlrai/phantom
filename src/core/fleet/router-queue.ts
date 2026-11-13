@@ -46,9 +46,19 @@ export interface RouterConflict {
   /** When the bridge verified the conflict (rejected when it postdates the read). */
   observedAt: string;
 }
-interface MergeReceipt extends RouterMerge { status: 'queued' | 'done' }
+interface MergeReceipt extends RouterMerge {
+  status: 'queued' | 'done';
+  /** When the queue accepted the event; null on receipts written before timing existed. */
+  enqueuedAt: string | null;
+  /** When the job was acknowledged complete; null while outstanding. */
+  completedAt: string | null;
+}
 /** 'superseded': a newer head's recut (or the PR's merge) made this one stale. */
-interface ConflictReceipt extends RouterConflict { status: 'queued' | 'done' | 'superseded' }
+interface ConflictReceipt extends RouterConflict {
+  status: 'queued' | 'done' | 'superseded';
+  enqueuedAt: string | null;
+  completedAt: string | null;
+}
 type Receipt = MergeReceipt | ConflictReceipt;
 export interface RouterMergeJob {
   id: string;
@@ -119,40 +129,65 @@ function repoOf(prUrl: string): string {
   return match[1]!;
 }
 
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
+const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
+
+/** A bounded ISO instant not further than 60 s in the future (clock-skew allowance). */
+function pastTime(value: unknown): value is string {
+  return typeof value === 'string' && ISO_TIME.test(value) &&
+    Number.isFinite(Date.parse(value)) && Date.parse(value) <= Date.now() + 60_000;
+}
+
+/** Receipt timing fields are either both absent (pre-timing rows) or both present. */
+function timing(row: Record<string, unknown>): { enqueuedAt: string | null; completedAt: string | null } {
+  const hasEnqueued = 'enqueuedAt' in row;
+  const hasCompleted = 'completedAt' in row;
+  if (hasEnqueued !== hasCompleted) fail();
+  if (!hasEnqueued) return { enqueuedAt: null, completedAt: null };
+  const enqueuedAt = row['enqueuedAt'];
+  const completedAt = row['completedAt'];
+  if ((enqueuedAt !== null && !pastTime(enqueuedAt)) || (completedAt !== null && !pastTime(completedAt))) fail();
+  return { enqueuedAt: enqueuedAt ?? null, completedAt: completedAt ?? null };
+}
+
 function mergeOf(value: unknown, repos: Set<string>, receipt: true): MergeReceipt;
 function mergeOf(value: unknown, repos: Set<string>): RouterMerge;
 function mergeOf(value: unknown, repos: Set<string>, receipt = false): MergeReceipt {
   const row = record(value);
-  keys(row, `v,state,prUrl,headSha,mergeSha,mergedAt${receipt ? ',status' : ''}`);
+  const hasTiming = 'enqueuedAt' in row || 'completedAt' in row;
+  keys(row, `v,state,prUrl,headSha,mergeSha,mergedAt${receipt ? `,status${hasTiming ? ',enqueuedAt,completedAt' : ''}` : ''}`);
   if (row['v'] !== 1 || row['state'] !== 'MERGED' || typeof row['prUrl'] !== 'string' ||
     !repos.has(repoOf(row['prUrl'])) || typeof row['headSha'] !== 'string' || !SHA.test(row['headSha']) ||
-    typeof row['mergeSha'] !== 'string' || !SHA.test(row['mergeSha']) || typeof row['mergedAt'] !== 'string' ||
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(row['mergedAt']) ||
-    !Number.isFinite(Date.parse(row['mergedAt'])) || Date.parse(row['mergedAt']) > Date.now() + 60_000 ||
+    typeof row['mergeSha'] !== 'string' || !SHA.test(row['mergeSha']) || !pastTime(row['mergedAt']) ||
     (receipt && row['status'] !== 'queued' && row['status'] !== 'done')) fail();
-  return { v: 1, state: 'MERGED', prUrl: row['prUrl'], headSha: row['headSha'],
-    mergeSha: row['mergeSha'], mergedAt: row['mergedAt'], status: receipt ? row['status'] as MergeReceipt['status'] : 'queued' };
+  const at = receipt ? timing(row) : { enqueuedAt: null, completedAt: null };
+  return { v: 1, state: 'MERGED', prUrl: row['prUrl'] as string, headSha: row['headSha'] as string,
+    mergeSha: row['mergeSha'] as string, mergedAt: row['mergedAt'] as string,
+    status: receipt ? row['status'] as MergeReceipt['status'] : 'queued',
+    enqueuedAt: at.enqueuedAt, completedAt: at.completedAt };
 }
 
-const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
-/** A git ref a PR base may carry: bounded charset, no '..', no trailing '/' or '.lock'. */
+/** A git ref a PR base may carry: bounded charset, no '..', '@{', trailing '/' or '.lock'. */
 function baseRefName(value: unknown): value is string {
-  return typeof value === 'string' && BRANCH.test(value) && !value.includes('..') && !value.endsWith('/') && !value.endsWith('.lock');
+  return typeof value === 'string' && BRANCH.test(value) && !value.includes('..') &&
+    !value.endsWith('/') && !value.endsWith('.lock') && !value.includes('@{');
 }
 
 function conflictOf(value: unknown, repos: Set<string>, receipt: true): ConflictReceipt;
 function conflictOf(value: unknown, repos: Set<string>): RouterConflict;
 function conflictOf(value: unknown, repos: Set<string>, receipt = false): ConflictReceipt {
   const row = record(value);
-  keys(row, `v,state,prUrl,headSha,baseRef,observedAt${receipt ? ',status' : ''}`);
+  const hasTiming = 'enqueuedAt' in row || 'completedAt' in row;
+  keys(row, `v,state,prUrl,headSha,baseRef,observedAt${receipt ? `,status${hasTiming ? ',enqueuedAt,completedAt' : ''}` : ''}`);
   if (row['v'] !== 1 || row['state'] !== 'CONFLICTING' || typeof row['prUrl'] !== 'string' ||
     !repos.has(repoOf(row['prUrl'])) || typeof row['headSha'] !== 'string' || !SHA.test(row['headSha']) ||
-    !baseRefName(row['baseRef']) || typeof row['observedAt'] !== 'string' ||
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(row['observedAt']) ||
-    !Number.isFinite(Date.parse(row['observedAt'])) || Date.parse(row['observedAt']) > Date.now() + 60_000 ||
+    !baseRefName(row['baseRef']) || !pastTime(row['observedAt']) ||
     (receipt && row['status'] !== 'queued' && row['status'] !== 'done' && row['status'] !== 'superseded')) fail();
-  return { v: 1, state: 'CONFLICTING', prUrl: row['prUrl'], headSha: row['headSha'], baseRef: row['baseRef'],
-    observedAt: row['observedAt'], status: receipt ? row['status'] as ConflictReceipt['status'] : 'queued' };
+  const at = receipt ? timing(row) : { enqueuedAt: null, completedAt: null };
+  return { v: 1, state: 'CONFLICTING', prUrl: row['prUrl'] as string, headSha: row['headSha'] as string,
+    baseRef: row['baseRef'], observedAt: row['observedAt'] as string,
+    status: receipt ? row['status'] as ConflictReceipt['status'] : 'queued',
+    enqueuedAt: at.enqueuedAt, completedAt: at.completedAt };
 }
 
 function receiptOf(value: unknown, repos: Set<string>): Receipt {
@@ -344,7 +379,7 @@ export function enqueueRouterFollowup(event: unknown, root = routerQueueRoot()):
       return { status: 'duplicate', jobId: idOf(merge) };
     }
     if (state.receipts.length >= ROUTER_QUEUE_LIMITS.jobs) fail();
-    state.receipts.push({ ...merge, status: 'queued' });
+    state.receipts.push({ ...merge, status: 'queued', enqueuedAt: new Date().toISOString(), completedAt: null });
     return { status: 'enqueued', jobId: idOf(merge) };
   });
 }
@@ -374,6 +409,8 @@ export function enqueueRouterRecut(event: unknown, root = routerQueueRoot()): { 
       for (const r of recuts) if (r.status === 'queued') r.status = 'superseded';
       match.status = 'queued';
       match.observedAt = conflict.observedAt;
+      match.enqueuedAt = new Date().toISOString();
+      match.completedAt = null;
       return { status: 'enqueued', jobId };
     }
     for (const r of recuts) {
@@ -383,7 +420,7 @@ export function enqueueRouterRecut(event: unknown, root = routerQueueRoot()): { 
     }
     if (state.receipts.length >= ROUTER_QUEUE_LIMITS.jobs) fail();
     for (const r of recuts) if (r.status === 'queued') r.status = 'superseded';
-    state.receipts.push({ ...conflict, status: 'queued' });
+    state.receipts.push({ ...conflict, status: 'queued', enqueuedAt: new Date().toISOString(), completedAt: null });
     return { status: 'enqueued', jobId };
   });
 }
@@ -421,6 +458,7 @@ export function completeRouterJob(jobId: string, root = routerQueueRoot()): { st
     const receipt = state.receipts.find((r) => idOf(r) === jobId);
     if (!receipt) fail();
     receipt.status = 'done';
+    receipt.completedAt = new Date().toISOString();
     return { status: 'done', jobId };
   });
 }
