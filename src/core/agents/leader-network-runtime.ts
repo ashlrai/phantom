@@ -18,6 +18,7 @@ import { cleanLeaderReplyText, readLeaderStatusSnapshot, renderLeaderStatus } fr
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { checkSendPolicy, parseCommsConfirmation, parseTeamIdentities, type DeliverResult, type TeamIdentity } from './channel-policy.js';
 import { createLeaderNetwork, parseMasonIdentities, type LeaderNetworkOptions } from './leader-network.js';
+import { classifyIntentByRules } from '../vision/leader-intent.js';
 import type { BusEnvelope } from '../fleet/bus-envelope.js';
 import { approvedLeaderInboxAppender, type LeaderInboxAppender } from './leader-inbox-writer.js';
 
@@ -202,6 +203,8 @@ export function defaultLeaderDelivery(cfg: AshlrConfig, options: LeaderRuntimeOp
 export interface LeaderNetworkTickDeps {
   reply?: (text: string) => Promise<string | null>;
   deliver?: NonNullable<LeaderNetworkOptions['deliver']>;
+  /** Deterministic status brief for status requests; no model seat needed. Computed at most once per tick. */
+  statusBrief?: () => Promise<string>;
 }
 
 const STATUS_ASK = /\b(status|state|how (?:is|are)|numbers|merged|mains?)\b/i;
@@ -258,10 +261,14 @@ export async function tickLeaderNetwork(cfg: AshlrConfig, options: LeaderRuntime
     const pending = await network.pending();
     const batch = takeLeaderReplyBatch(pending, directory, 'network-cursor.json');
     let replies = 0;
+    let brief: Promise<string | null> | undefined;
+    const statusBrief = () => brief ??= (deps.statusBrief ?? (async () => (await import('../comms/leader-line.js')).instantBrief(cfg)))()
+      .then(value => value.trim() ? value : null, () => null);
     for (const request of batch) {
       try {
         let reply = request.replyText;
         const text = typeof request.envelope.body === 'string' ? request.envelope.body : messageText(request.envelope);
+        if (!reply && text && classifyIntentByRules(text).kind === 'status') reply = await statusBrief() ?? undefined;
         if (!reply && text) reply = await (deps.reply ?? (input => generateLeaderReply(input, cfg, options)))(text) ?? undefined;
         if (reply) {
           const result = await network.reply(request.requestId, reply);
