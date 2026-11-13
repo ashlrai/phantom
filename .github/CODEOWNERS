@@ -310,6 +310,7 @@
 /test/codex-selected-producer.test.ts @masonwyatt23
 /test/codex-session-usage.test.ts @masonwyatt23
 /test/comms-agent-send-policy.test.ts @masonwyatt23
+/test/comms-send-policy-typefix-s133.test.ts @masonwyatt23
 /test/comms-telegram-leader-314.test.ts @masonwyatt23
 /test/comms-telegram-leader-thread-real-314.test.ts @masonwyatt23
 /test/completeness-gate-stash-hardening-310b.test.ts @masonwyatt23
@@ -402,9 +403,11 @@
 /test/fleet-ci-scheduled-sweep.test.ts @masonwyatt23
 /test/fleet-ci-step-cost.test.ts @masonwyatt23
 /test/fleet-ci-trigger-facts-01.test.ts @masonwyatt23
+/test/fleet-comms-status-policy-18.test.ts @masonwyatt23
 /test/fleet-companion-mcp.test.ts @masonwyatt23
 /test/fleet-conflict-risk.test.ts @masonwyatt23
 /test/fleet-control-315.test.ts @masonwyatt23
+/test/fleet-cos-loop.test.ts @masonwyatt23
 /test/fleet-daily-reds.test.ts @masonwyatt23
 /test/fleet-dep-gate.test.ts @masonwyatt23
 /test/fleet-gate-run.test.ts @masonwyatt23
@@ -431,6 +434,7 @@
 /test/fleet-merge-retry.test.ts @masonwyatt23
 /test/fleet-merge-state-class.test.ts @masonwyatt23
 /test/fleet-post-merge-verify-31.test.ts @masonwyatt23
+/test/fleet-release-gate-start-05srq2.test.ts @masonwyatt23
 /test/fleet-self-loop-02soly1.test.ts @masonwyatt23
 /test/fleet-self-loop-await-live-02some2.test.ts @masonwyatt23
 /test/fleet-self-loop-await-record-02somd2.test.ts @masonwyatt23
@@ -531,12 +535,14 @@
 /test/improve-boundary.test.ts @masonwyatt23
 /test/improve-cli-boundary.test.ts @masonwyatt23
 /test/improve-discover.test.ts @masonwyatt23
+/test/improve-hot-patch.test.ts @masonwyatt23
 /test/improve-lesson-trial.test.ts @masonwyatt23
 /test/improve-observe.test.ts @masonwyatt23
 /test/improve-outcomes.test.ts @masonwyatt23
 /test/improve-promote-redteam.test.ts @masonwyatt23
 /test/improve-reverted.test.ts @masonwyatt23
 /test/int4-confine-engines-310b.test.ts @masonwyatt23
+/test/intent-fleet-merge-observe-preservation-231s.test.ts @masonwyatt23
 /test/job-memory-accounting.test.ts @masonwyatt23
 /test/judge-credential-export-r3b-310b.test.ts @masonwyatt23
 /test/judge-seat-lanes-310b.test.ts @masonwyatt23
@@ -957,6 +963,8 @@
 /test/merge-backlog-read.test.ts @masonwyatt23
 /test/merge-gate-latency.test.ts @masonwyatt23
 /test/merge-gates-310b.test.ts @masonwyatt23
+/test/merge-identity-recut.test.ts @masonwyatt23
+/test/merge-plan-original-preservation-202s.test.ts @masonwyatt23
 /test/merge-temp-worktree-reaper.test.ts @masonwyatt23
 /test/metrics-boundary.test.ts @masonwyatt23
 /test/metrics-pillar.test.ts @masonwyatt23
@@ -969,6 +977,7 @@
 /test/node-router.test.ts @masonwyatt23
 /test/north-star-measured-leverage.test.ts @masonwyatt23
 /test/one-ask-best-of-n-winner.test.ts @masonwyatt23
+/test/one-ask-intake.test.ts @masonwyatt23
 /test/ops-release-pr-merge-api.test.ts @masonwyatt23
 /test/ops-release-pr-merge.test.ts @masonwyatt23
 /test/orchestrator-bash-standing-310b.test.ts @masonwyatt23
@@ -1025,7 +1034,9 @@
 /test/recut-loop-landed-03.test.ts @masonwyatt23
 /test/recut-loop.test.ts @masonwyatt23
 /test/red-team-routing-310.test.ts @masonwyatt23
+/test/red-type-fix-c175.test.ts @masonwyatt23
 /test/redact-known.test.ts @masonwyatt23
+/test/redfix-test-c205.test.ts @masonwyatt23
 /test/refix-loop.test.ts @masonwyatt23
 /test/release-articles.test.ts @masonwyatt23
 /test/release-path-policy-v2.test.ts @masonwyatt23
@@ -1085,6 +1096,7 @@
 /test/resource-worker-kill.test.ts @masonwyatt23
 /test/reward-signal.test.ts @masonwyatt23
 /test/role-completion.test.ts @masonwyatt23
+/test/router-arms-replay.test.ts @masonwyatt23
 /test/router-calibration.test.ts @masonwyatt23
 /test/router-current-claude-models.test.ts @masonwyatt23
 /test/router-eval-harness.test.ts @masonwyatt23
@@ -1092,6 +1104,7 @@
 /test/router-queue-events.test.ts @masonwyatt23
 /test/router-queue-utf8-input-31k7.test.ts @masonwyatt23
 /test/router-queue.test.ts @masonwyatt23
+/test/router-task-arms.test.ts @masonwyatt23
 /test/router-typing.test.ts @masonwyatt23
 /test/routing-arms.test.ts @masonwyatt23
 /test/routing-bandit.test.ts @masonwyatt23
@@ -1194,6 +1207,7 @@
 /test/verse-mcp-control-api.test.ts @masonwyatt23
 /test/verse-mcp-grants-types.test.ts @masonwyatt23
 /test/verse-mcp-scope.test.ts @masonwyatt23
+/test/verse-merge-latency-api.test.ts @masonwyatt23
 /test/verse-merge-pace-api-02.test.ts @masonwyatt23
 /test/verse-multimodel-auto-316.test.ts @masonwyatt23
 /test/verse-reliability.test.ts @masonwyatt23

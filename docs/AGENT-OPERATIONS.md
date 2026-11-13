@@ -78,6 +78,24 @@ desktop app; `scripts/` build, gate and check tooling. See
 [CONTRIBUTING.md](../CONTRIBUTING.md#project-layout) and
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
+### Routing eval
+
+`npm run eval:routing` scores hybrid local and frontier routing on the corpus in `test/fixtures/routing-eval/corpus.json`. It is offline. The model client is a stub, and the command does not open a network connection or read a key. It is not a CI job. The normal test suite only checks the hard invariants in `test/routing-complexity-invariants.test.ts`.
+
+The command prints a JSON report and writes the same JSON to `eval/routing/out/routing-eval.json`. That directory is gitignored.
+
+Read the report like this:
+
+- `shareRoutedLocal` is the fraction of tasks kept on the local tier.
+- `escalationReasons` counts tasks that carried each reason for leaving local. One task can carry more than one reason.
+- `accuracy` is the fraction whose tier matches `expectedTier` on the fixture. Misses are listed in `mismatches`.
+- `frontierDollarsAvoided` is a labeled estimate of what the local-tier tasks would have cost on the frontier rate card in `src/core/routing-eval/prices.ts`. The rates are not a bill and not a live provider price. `localInputTokens` and `localOutputTokens` are the token totals that produced `usd`.
+- `modelCalls` is how many times the stub was invoked. A correct run prints 0.
+
+Exit 0 means every fixture matched and no invariant failed. Exit 1 means a mismatch, a broken invariant, or a model call. Exit 2 means the corpus could not be read.
+
+The decision lives in `src/core/routing/policy.ts` (`decideComplexityTier`) and the limits live in `src/core/routing/tiers.ts`. Local loops are edit, test, lint, and draft. The policy escalates for planning, architecture, a Tier-1 path, a merge onto the default branch, a merge or credential role, a second failed verify attempt, context above the local limit (32,768 tokens), or a local inference host that is not loopback. Tier-1 uses `matchProtectedPath` for this repo, including test paths named in `importsTier1`. The policy does not read file contents.
+
 **Docs.** The map is [docs/README.md](README.md). `scripts/check-documentation.mjs`
 checks the operator entrypoints in its `OPERATOR_DOCUMENTATION` list. Each of
 those (except `README.md`) must also appear in `package.json` `files`
@@ -889,3 +907,17 @@ refix, review or ok. A failed open-PR read still emits the versioned shape
 with `reads.open: 'failed'` (exit 1); a failed merged or prompts read degrades
 only the superseded leg. Read-only — `gh pr list` calls only. See
 [pr-hygiene](fleet/pr-hygiene.md) for the report shape.
+
+### Production stack-trace hot patches
+
+Set `PHM_HOT_PATCH_LOG` in the Phantom server's environment to the path of a
+local, regular log file to opt in. With cloud self-improvement enabled, its
+normal discovery pass reads the last 256 KiB and queues up to ten distinct Node.js
+error stacks for the configured repository. It extracts only exception class
+names and relative `src/` or `lib/` stack locations; log messages, absolute paths,
+and function names are not sent to the agent. Configure the log producer to emit
+repository-relative frames. The fix agent is asked to reproduce the failure with
+a regression test and deliver a small draft PR, or report no-change when the
+signal is insufficient. Existing cloud budgets, backlog deduplication, and PR
+review gates apply. Unset the variable to disable intake; already queued items
+remain in the backlog.
