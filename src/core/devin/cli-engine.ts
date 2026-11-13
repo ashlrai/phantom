@@ -117,6 +117,49 @@ export function resolveDevinCliFleetModel(section: AshlrConfig['devin'] | undefi
   return DEVIN_CLI_FLEET_DEFAULT_MODEL;
 }
 
+/** 'config' when `devin.fleetModel` is the value the resolver reads, else 'default'. Pure. */
+export function devinCliFleetModelSource(section: AshlrConfig['devin'] | undefined): 'config' | 'default' {
+  const candidate = section?.fleetModel;
+  return typeof candidate === 'string' && MODEL_ID_RE.test(candidate.trim()) ? 'config' : 'default';
+}
+
+export type DevinCliFleetPromo = 'free' | 'not-free' | 'unknown';
+
+/**
+ * The overview's promotional reading of the resolved fleet model: 'free' ONLY
+ * on isDevinCliFreeModel's answer at `nowMs` (a model id alone never proves a
+ * free route); 'not-free' on a `-lightning` id or once the conservative
+ * evidence boundary has passed; else 'unknown' — a pre-boundary id the free
+ * list does not name is never claimed free. Pure.
+ */
+export function devinCliFleetModelPromo(model: string, nowMs = Date.now()): DevinCliFleetPromo {
+  if (isDevinCliFreeModel(model, nowMs)) return 'free';
+  if (model.endsWith('-lightning') || (Number.isFinite(nowMs) && nowMs >= DEVIN_CLI_PROMOTION_EVIDENCE_BOUNDARY)) return 'not-free';
+  return 'unknown';
+}
+
+/**
+ * Every `devin*` key the lane-model map resolves to (the lane-models.ts
+ * snapshot's `via`s, so a `devin.fast` models.json key is named exactly),
+ * each flagged `paid` on a `-lightning` id — those are the ids a fleet run
+ * redirects to swe-2-flash-max. Sorted by key; an empty lane set in, an empty
+ * list out. Pure.
+ */
+export function devinCliLaneModelEntries(
+  lanes: readonly { lane: string; tiers: readonly { via: string | null; model: string | null }[] }[],
+): Array<{ key: string; model: string; paid: boolean }> {
+  const resolved = new Map<string, string>();
+  for (const lane of lanes) {
+    if (!lane.lane.startsWith('devin')) continue;
+    for (const row of lane.tiers) {
+      if (row.via === null || row.model === null || !row.via.startsWith('devin') || resolved.has(row.via)) continue;
+      resolved.set(row.via, row.model);
+    }
+  }
+  return [...resolved.entries()].sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, model]) => ({ key, model, paid: model.endsWith('-lightning') }));
+}
+
 export interface DevinCliLaneInput {
   /** cfg.devin. */
   section: AshlrConfig['devin'] | undefined;

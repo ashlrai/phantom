@@ -10,6 +10,7 @@ import {
   DEVIN_PROMPT_MAX_CHARS,
   DEVIN_USAGE_URL,
   type DevinBudgetView,
+  type DevinFleetModelInfo,
   type DevinOverviewResponse,
   type DevinStatus,
   type DevinSelfIdentitySummary,
@@ -138,6 +139,38 @@ export function devinModelsLines(models: unknown): { catalog: string; defaultLin
   const price = def['free'] === true ? 'Free' : typeof def['price'] === 'string' && def['price'] ? def['price'] : null;
   const defaultLine = `Default: ${def['label']}${price ? ` (${price})` : ''}`;
   return { catalog, defaultLine, stale: models['source'] === 'fallback' };
+}
+
+/**
+ * The optional `fleetModel` field, narrowly checked: an older server omits it
+ * (null → render nothing new), a malformed one is never guessed at. Pure.
+ */
+export function devinFleetModelEvidence(raw: unknown): DevinFleetModelInfo | null {
+  if (!isRecord(raw)) return null;
+  if (typeof raw['configured'] !== 'string' || raw['configured'].length === 0 || raw['configured'].length > 128) return null;
+  if (raw['source'] !== 'config' && raw['source'] !== 'default') return null;
+  if (raw['promo'] !== 'free' && raw['promo'] !== 'not-free' && raw['promo'] !== 'unknown') return null;
+  const laneModels = raw['laneModels'];
+  if (!Array.isArray(laneModels) || laneModels.length > 200
+    || !laneModels.every(row => isRecord(row)
+      && typeof row['key'] === 'string' && row['key'].length > 0 && row['key'].length <= 128
+      && typeof row['model'] === 'string' && row['model'].length > 0 && row['model'].length <= 128
+      && typeof row['paid'] === 'boolean')) return null;
+  return raw as unknown as DevinFleetModelInfo;
+}
+
+/**
+ * "Fleet model: swe-2-flash-max · free promo" (or "· not free" / "· free
+ * status unknown") plus one warning per paid models.json key: a `-lightning`
+ * id is a paid model a fleet run redirects to swe-2-flash-max. Pure.
+ */
+export function devinFleetModelLines(fleetModel: DevinFleetModelInfo): { row: string; warnings: string[] } {
+  const promo = fleetModel.promo === 'free' ? 'free promo' : fleetModel.promo === 'not-free' ? 'not free' : 'free status unknown';
+  return {
+    row: `Fleet model: ${fleetModel.configured} · ${promo}`,
+    warnings: fleetModel.laneModels.filter(lane => lane.paid)
+      .map(lane => `models.json ${lane.key} = ${lane.model} is a paid model; fleet runs fall back to swe-2-flash-max.`),
+  };
 }
 
 /** "12 ACUs", "1 ACU", "2.5 ACUs". */
