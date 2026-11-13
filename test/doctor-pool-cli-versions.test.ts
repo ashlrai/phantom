@@ -23,13 +23,13 @@ function roster() {
 describe('doctor per-pool CLI floors', () => {
   it('reports each enrolled command independently against the shared floor', async () => {
     vi.mocked(readResourceJson).mockReturnValue(roster());
-    runner.mockImplementation(async argv => ({ stdout: argv[0] === '/private/claude-a' ? '2.1.308 (Claude Code)'
-      : argv[0] === '/private/claude-b' ? '2.1.309 (Claude Code)' : 'codex-cli 0.164.0',
+    runner.mockImplementation(async argv => ({ stdout: argv[0] === '/private/claude-a' ? '2.1.310 (Claude Code)'
+      : argv[0] === '/private/claude-b' ? '2.1.311 (Claude Code)' : 'codex-cli 0.164.0',
     stderr: '', exitCode: 0, timedOut: false, cancelled: false, signal: null }));
     const checks = await checkPoolCliVersions('/owned');
     expect(checks.map(({ id, status, detail }) => ({ id, status, detail }))).toEqual([
-      { id: 'pool-cli:claude-a', status: 'fail', detail: 'Claude Code 2.1.308; minimum 2.1.309 (outdated)' },
-      { id: 'pool-cli:claude-b', status: 'pass', detail: 'Claude Code 2.1.309; minimum 2.1.309 (supported)' },
+      { id: 'pool-cli:claude-a', status: 'fail', detail: 'Claude Code 2.1.310; minimum 2.1.311 (outdated)' },
+      { id: 'pool-cli:claude-b', status: 'pass', detail: 'Claude Code 2.1.311; minimum 2.1.311 (supported)' },
       { id: 'pool-cli:codex-cmp', status: 'pass', detail: 'Codex 0.164.0; minimum 0.164.0 (supported)' },
     ]);
     expect(runner.mock.calls.map(([argv]) => argv)).toEqual([
@@ -70,7 +70,7 @@ describe('doctor per-pool CLI floors', () => {
     vi.spyOn(performance, 'now').mockImplementation(() => now);
     runner.mockImplementation(async () => {
       now = 10_001;
-      return { stdout: '2.1.309 (Claude Code)', stderr: '', exitCode: 0, timedOut: false, cancelled: false, signal: null };
+      return { stdout: '2.1.311 (Claude Code)', stderr: '', exitCode: 0, timedOut: false, cancelled: false, signal: null };
     });
     const checks = await checkPoolCliVersions('/owned');
     expect(checks.map(check => check.status)).toEqual(['pass', 'warn', 'warn']);
