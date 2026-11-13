@@ -87,6 +87,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Measure lane/model reliability across N clean-worktree trials and feed routing | [pass^k offline eval suite](https://github.com/ashlrai/phantom/blob/master/docs/EVAL-PASSK.md) |
 | Navigate source entry points, subsystems and contracts | [Code map (source guide)](https://github.com/ashlrai/phantom/blob/master/docs/CODEMAP.md) |
 | A/B test prompt variants per job class and promote only significant winners | [Prompt-variant A/B eval](https://github.com/ashlrai/phantom/blob/master/docs/router/prompt-ab.md) |
+| Use the one-ask scope preflight in code | [One-ask intake boundary — source guide](https://github.com/ashlrai/phantom/blob/master/docs/ONE-ASK-INTAKE.md) |
 | Understand the current components and their boundaries | [Architecture](ARCHITECTURE.md#current-runtime-map) |
 | Follow source responsibilities, flows and extension points | [Architecture knowledge map](https://github.com/ashlrai/phantom/blob/master/docs/ARCHITECTURE-KNOWLEDGE.md) |
 | Review documentation inventory and audit coverage | [Documentation audit](https://github.com/ashlrai/phantom/blob/master/docs/DOCUMENTATION-AUDIT.md) |
