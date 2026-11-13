@@ -1683,10 +1683,6 @@ async function cmdOpen(args: string[]): Promise<void> {
 
   openInEditor(chosen.path, cfg);
   console.log(green('opened: ') + chosen.path);
-  const { planMarkdownOpen, ashlrMdInstallHint } = await import('./open.js');
-  const md = planMarkdownOpen(chosen.path, cfg);
-  if (md.kind === 'ashlr-md') console.log(dim('  via Ashlr MD'));
-  else if (md.reason === 'not-installed') console.log(dim(`  ${ashlrMdInstallHint()}`));
 }
 
 // ─── Command: tidy ────────────────────────────────────────────────────────────
@@ -2200,6 +2196,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'land': {
+        const { cmdLand } = await import('./land.js');
+        process.exitCode = await cmdLand(rest);
+        break;
+      }
+
       case 'metrics': {
         if (wantsHelp(rest)) {
           printCoreUsage('metrics', 'Local metrics reports.', [
@@ -2617,6 +2619,12 @@ async function main(): Promise<void> {
       case 'enroll': {
         const cmdEnroll = await loadEnrollCmd();
         process.exitCode = await cmdEnroll(rest);
+        break;
+      }
+
+      case 'ideas': {
+        const { cmdIdeas } = await import('./ideas.js');
+        process.exitCode = await cmdIdeas(rest);
         break;
       }
 

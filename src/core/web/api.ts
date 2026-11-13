@@ -46,6 +46,9 @@ import { handleWbAction, WB_ACTION_PATH } from './wb-action-api.js';
 
 import { handleTeamInvites } from '../../api/team-invites.js';
 import { handleFrictionFeedback } from '../verse/feedback-api.js';
+import { COMMS_CONFIRM_PATH, handleCommsConfirmRoute } from './comms-confirm-route.js';
+import { watchLeaderThread } from './leader-thread-watch.js';
+import { handleUiSettingsApi, UI_SETTINGS_PATH } from './ui-settings-api.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { timingSafeEqual, randomBytes } from 'node:crypto';
 import { basename, resolve as resolvePath, sep as pathSep } from 'node:path';
@@ -215,7 +218,7 @@ let sseHistoryProjection: SseHistoryProjection | null = null;
  * No `topics` parameter means every group (the historical behaviour).
  */
 export const SSE_TOPICS = [
-  'verse-sessions', 'verse-account-readings', 'runs', 'swarms', 'inbox', 'daemon', 'fleet-activity', 'snapshot',
+  'verse-sessions', 'verse-account-readings', 'runs', 'swarms', 'inbox', 'daemon', 'fleet-activity', 'snapshot', 'leader-thread',
 ] as const;
 export type SseTopic = typeof SSE_TOPICS[number];
 
@@ -1139,6 +1142,13 @@ function handleSseEvents(
     }
   }
 
+  // Leader thread: written by other processes (leader tick, Telegram, iMessage),
+  // so the file system says when it changed. No message bodies: the client
+  // refetches through the authenticated thread route.
+  const unwatchLeaderThread = topics.has('leader-thread')
+    ? watchLeaderThread(() => sendNamed('leader-thread', { at: new Date().toISOString() }))
+    : () => {};
+
   // Send an initial snapshot immediately.
   pushVerseSessionsIfChanged();
   pushAccountReadingsIfChanged();
@@ -1166,6 +1176,7 @@ function handleSseEvents(
     if (cleaned) return;
     cleaned = true;
     verseSessionPushers.delete(pushVerseSessionsIfChanged);
+    unwatchLeaderThread();
     clearInterval(intervalId);
     if (backpressureTimer) clearTimeout(backpressureTimer);
     if (expiryTimer) clearTimeout(expiryTimer);
@@ -1311,6 +1322,7 @@ export async function handleApi(
     readSession?: { id: string; expiresAt: number };
     readProjections?: ReadProjectionReader;
     usageResourcesApi?: import('../verse/api-modules.js').ApiModule;
+    mergeLatencyApi?: import('../verse/api-modules.js').ApiModule;
   },
 ): Promise<boolean> {
   const path = reqPath(req);
@@ -1366,6 +1378,14 @@ export async function handleApi(
     if (path === '/api/config/effective' && method === 'GET') {
       sendJson(res, 200, loadEffectiveConfigSnapshot());
       return true;
+    }
+
+    // ── GET/PUT /api/ui-settings ────────────────────────────────────────────
+    // The operator's appearance + layout preferences, stored in ~/.ashlr/ui.json
+    // (src/core/ui-settings.ts). The file is the source of truth; the UI and
+    // agents edit the same document.
+    if (path === UI_SETTINGS_PATH) {
+      return handleUiSettingsApi(ctx, req, res, method);
     }
 
     // ── GET /api/portfolio ────────────────────────────────────────────────────
@@ -1944,6 +1964,12 @@ export async function handleApi(
       return true;
     }
 
+    if (path === '/api/fleet/release-chain' && method === 'GET') {
+      const { releaseChainResponse } = await import('./release-chain-api.js');
+      sendJson(res, 200, releaseChainResponse());
+      return true;
+    }
+
     if (path === '/api/fleet/empty-jobs' && method === 'GET') {
       const { readEmptyJobs } = await import('../fleet/empty-jobs.js');
       const report = await readEmptyJobs();
@@ -1969,6 +1995,23 @@ export async function handleApi(
     if (path === '/api/fleet/machine' && method === 'GET') {
       const { readFleetMachine } = await import('../fleet/machine.js');
       sendJson(res, 200, await readFleetMachine());
+      return true;
+    }
+
+    // ── GET /api/fleet/board ─────────────────────────────────────────────
+    // RQ-SWE3-BOARDUI-1: the Leader-as-CEO board the last Leader tick
+    // recorded at <runs>/coordination/leader-board.json — lanes, READY depth
+    // by tier, merges in the last hour, the conflicting-PR trend and what is
+    // blocked on Mason, in the same {schema, status, ageSeconds, board}
+    // envelope `phm fleet board --json` prints. READ-ONLY bounded fs read;
+    // a missing/corrupt recording reports 'missing'/'unavailable' with a
+    // null board, never a synthesized one. Same no-auth read class as
+    // /api/fleet/lanes.
+    if (path === '/api/fleet/board' && method === 'GET') {
+      const { defaultFleetBoardRunsDir, fleetBoardResponse, readFleetBoard } = await import('../fleet/leader-journal.js');
+      const read = await readFleetBoard({ runsDir: defaultFleetBoardRunsDir() })
+        .catch((): { status: 'unavailable'; board: null } => ({ status: 'unavailable', board: null }));
+      sendJson(res, 200, fleetBoardResponse(read, Date.now()));
       return true;
     }
 
@@ -2145,6 +2188,12 @@ export async function handleApi(
       const { loadPreviousReport } = await import('../quality/store.js');
       const report = loadPreviousReport();
       sendJson(res, 200, report ?? null);
+      return true;
+    }
+
+    if (path === '/api/ideas' && method === 'GET') {
+      const { readIdeas } = await import('../fleet/ideas.js');
+      sendJson(res, 200, await readIdeas());
       return true;
     }
 
@@ -2624,6 +2673,11 @@ export async function handleApi(
       return handleFrictionFeedback(ctx, req, res);
     }
 
+    // Before the V1 catch-all, which 404s every /api/verse/* path it does not know.
+    if (path === COMMS_CONFIRM_PATH) {
+      return handleCommsConfirmRoute(ctx, req, res, method);
+    }
+
     // ── /api/verse/{control,caps,scope,audit,daemon,safety} (V2 control) ────
     // MUST come before the V1 verse handler below: isVerseApiPath() matches
     // every /api/verse/* path and 404s what it does not recognize, so the
@@ -2668,10 +2722,20 @@ export async function handleApi(
     // GETs are already behind the read-session boundary (server.ts); POSTs
     // apply ctx.allowDispatch + passesMutationGate inside handleVerseApi.
     if (isVerseApiPath(path)) {
+      const verseCtx = { cfg, token: ctx.token, allowDispatch: ctx.allowDispatch, readSession: ctx.readSession,
+        usageResourcesApi: ctx.usageResourcesApi,
+        ...(ctx.readProjections ? { readProjections: ctx.readProjections } : {}) };
+      // Merge-latency report (GET /api/verse/fleet/merge-latency): injected by
+      // the composition root and served before the mounted module table, so the
+      // frozen mount order and the Tier-1 import closure are both untouched.
+      if (path === '/api/verse/fleet/merge-latency' || path.startsWith('/api/verse/fleet/merge-latency/')) {
+        if (path !== '/api/verse/fleet/merge-latency') { sendJson(res, 404, { error: 'Merge latency route not found.' }); return true; }
+        if (ctx.mergeLatencyApi) return ctx.mergeLatencyApi(verseCtx, req, res, path, method);
+        sendJson(res, 503, { error: 'Merge latency is unavailable.' });
+        return true;
+      }
       const handled = await handleVerseApi(
-        { cfg, token: ctx.token, allowDispatch: ctx.allowDispatch, readSession: ctx.readSession,
-          usageResourcesApi: ctx.usageResourcesApi,
-          ...(ctx.readProjections ? { readProjections: ctx.readProjections } : {}) },
+        verseCtx,
         req,
         res,
         path,
