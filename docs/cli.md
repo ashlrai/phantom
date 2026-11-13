@@ -29,7 +29,7 @@ Topic summary and discovery hints.
 ```text
   Phantom - phm, the CLI for agentic engineers (ashlr remains compatible)
 
-    core            Core - index, navigate, configure (constitution, tune, index, …)
+    core            Core - index, navigate, configure (caps, constitution, tune, …)
     run             Run - local-first agent runs (run, runs, …)
     swarm           Swarm - specs + multi-agent fleets (spec, …)
     memory          Memory - shared genome (memory, recall, learn, …)
@@ -56,6 +56,7 @@ Every command, grouped by topic.
   Phantom - every command (phm or ashlr)
 
   Core - index, navigate, configure
+    caps list|validate|generate [--registry <path>] [--out <dir>] [--pin-stage] [--check] [--json]                 Capability registry: surfaces, models, hosting edges, account references and capabilities; validate it and generate pinned per-agent adapters to staging (never into live agent config dirs). See docs/CAPABILITY-REGISTRY.md.
     constitution check [--root <repo>] [--json] [paths...]                                                         Check constitution rule definitions and references in prompts and templates (read-only).
     tune <prepare|evaluate>                                                                                        Prepare scrub-gated local model datasets or evaluate paired evidence.
     index [--refresh]                                                                                              Build or refresh the desktop index; show counts by category.
@@ -229,6 +230,7 @@ Every command, grouped by topic.
     benchmark run|--compare-reports                                                                                                                               Explicit local-agent benchmark trials, or offline matched-receipt comparison; real checkers and private traces.
     devin connect [--org org-…]                                                                                                                                   Connect Devin (Cognition): paste the API key at a hidden prompt; it is verified and stored in the macOS Keychain, never in a file.
     devin launch "<task>" [--repo o/n] [--base b]                                                                                                                 Start a Devin session that delivers a PR on ashlr-devin/<id> through the standing gates (spends ACUs, hard-capped per session; never merges).
+    routines list|status|run <id>|tick|migrate|launchd|run <file.json>|explain <id>|export|import|rebalance                                                       Routines: UTC-cron YAML schedules with executor failover; learned local-first placement runs; portable provider placement registry. See docs/ROUTINES.md.
     automations list|templates|add|enable|disable|remove                                                                                                          Automations: labelled issues, a red default branch, RRULE schedules, a local webhook or Telegram /task become tasks for the fleet, cloud, Devin or review - with queue, per-day, concurrency and spend limits.
     automations fire <id> [--dry-run]                                                                                                                             Check one automation's trigger now and dispatch what it finds through the lane's own gates (grant, KILL, budgets); --dry-run shows what would happen and writes nothing.
     jev status [--json]                                                                                                                                           Jev (TypeSafe) typed decisions today: on/keyed, decisions by kind, avg confidence, fallback rate, est. cost, latency. Reads the local ledger only.
@@ -332,6 +334,7 @@ Every command, grouped by topic.
     audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]         Tail the append-only audit trail; --team lists workspace actions (read-only).
     receipt list|status|show <run>|verify <run>|timeline <run> [--json]                        Read and verify signed run receipts (same as fleet receipt); timeline lists custody spawns in the run window, value-free (read-only).
     lanes fit --lane <lane> [--json]                                                           Show job kinds to send or avoid from measured PR rates.
+    lanes --json                                                                               Read dispatcher pools, slot caps and local endpoint health.
     lanes health [--json]                                                                      Per-lane calls, error rate, p50 latency and deployed commit over 12 h; flags runs stuck past their phase timeout.
     goals [--json]                                                                             Show dispatcher throughput, empty rates and resource resets.
 
