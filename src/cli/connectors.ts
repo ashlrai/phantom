@@ -1,6 +1,7 @@
 import { ConnectorError, importClients, readProfile, updateProfile, validateProfile } from '../core/connectors/profile.js';
 
 import { runConnector } from '../core/connectors/run.js';
+import { execConnector, execSession } from '../core/connectors/exec.js';
 import { buildToolMesh } from '../core/connectors/mesh.js';
 import { createTool, discoverTools, invokeTool, readRegistry, removeTool, revokeTool, type NewTool } from '../core/connectors/registry.js';
 
@@ -10,7 +11,8 @@ phm connectors import [--json]
 phm connectors mesh [--lane <lane>] [--json]
 phm connectors tool list [--lane <lane>]|show <id>|remove <id>|revoke <id> --reason <text>|create --spec <json>|invoke <id> --lane <lane> [--param name=value] [--json]
 phm connectors run <id> --scope <scope> --tool <tool> --lane <lane> [--json] -- <args>
-Run is denied pending Security review; credentials are Phantom Secrets names. See docs/CONNECTORS.md.`;
+phm connectors exec <id> --tool <tool> --lane <lane> [--project <dir>] [--json] -- <command> [args]
+Run is denied pending Security review; credentials are Phantom Secrets names. Exec starts a cli or mcp-stdio connector; credentials are injected by phantom exec as session tokens, never values. See docs/CONNECTORS.md.`;
 
 export async function cmdConnectors(args: string[]): Promise<number> {
   const separator = args.indexOf('--');
@@ -34,7 +36,18 @@ export async function cmdConnectors(args: string[]): Promise<number> {
       await runConnector(id, { scope: selectors.scope ?? '', tool: selectors.tool ?? '', lane: selectors.lane ?? '' }, args.slice(separator + 1));
       return 0;
     }
-    if (separator >= 0) throw new ConnectorError('Argument separator is supported only for run.');
+    if (verb === 'exec' || verb === 'exec-session') {
+      const id = a.shift();
+      const { values } = flags(a, ['--tool', '--lane', '--project']);
+      const cmd = args.slice(separator + 1);
+      if (separator < 0 || !id || !cmd.length) throw new ConnectorError('Use phm connectors exec <id> --tool <tool> --lane <lane> -- <command> [args].');
+      const selectors = { tool: values['--tool'] ?? '', lane: values['--lane'] ?? '' };
+      // Success writes nothing: stdout belongs to the child (MCP stdio protocol).
+      return verb === 'exec'
+        ? await execConnector(id, selectors, cmd, { project: values['--project'] })
+        : await execSession(id, selectors, cmd);
+    }
+    if (separator >= 0) throw new ConnectorError('Argument separator is supported only for run and exec.');
     if (verb === 'mesh') {
       const lane = a[0] === '--lane' ? a[1] : undefined;
       if (a.length !== (lane ? 2 : 0)) throw new ConnectorError('Unexpected arguments. Run phm connectors --help.');
