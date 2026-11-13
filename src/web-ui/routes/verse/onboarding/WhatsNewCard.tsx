@@ -10,11 +10,17 @@ import { listPanes } from '../panes/index.js';
 import { APP_VERSION } from '../sections/app-version.js';
 import { setVerseSection } from '../verse-ui-store.js';
 import { markReleaseSeen } from './onboarding-store.js';
+import { whatsNewQuery } from './whats-new-query.js';
 import styles from './onboarding.module.css';
+
+const MAX_SHOWN = 6;
 
 export function WhatsNewCard() {
   const { data } = useQuery(fleetSourcesQuery);
   const copy = whatsNewCopy(readFleetPresence(data));
+  const { data: notes } = useQuery(whatsNewQuery(APP_VERSION));
+  const bullets = Array.isArray(notes?.bullets) ? notes.bullets.filter(b => typeof b === 'string' && b !== '') : [];
+  const shown = bullets.slice(0, MAX_SHOWN);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') markReleaseSeen(APP_VERSION);
@@ -42,7 +48,12 @@ export function WhatsNewCard() {
         <h2 id="whats-new-title" className={styles.title}>What's new in Phantom {APP_VERSION}</h2>
       </header>
       <div className={styles.body}>
-        {copy.bullets.map(bullet => <p key={bullet} className={styles.lead}>{bullet}</p>)}
+        {shown.length > 0
+          ? <>
+            {shown.map(bullet => <p key={bullet} className={styles.lead}>{bullet}</p>)}
+            {bullets.length > shown.length && <p className={styles.lead}>and {bullets.length - shown.length} more</p>}
+          </>
+          : copy.bullets.map(bullet => <p key={bullet} className={styles.lead}>{bullet}</p>)}
       </div>
       <footer className={styles.foot}>
         <Button variant="primary" size="sm" onClick={openPrimary}>{copy.primary.label}</Button>
