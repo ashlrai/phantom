@@ -46,6 +46,7 @@ import { handleWbAction, WB_ACTION_PATH } from './wb-action-api.js';
 
 import { handleTeamInvites } from '../../api/team-invites.js';
 import { handleFrictionFeedback } from '../verse/feedback-api.js';
+import { handleUiSettingsApi, UI_SETTINGS_PATH } from './ui-settings-api.js';
 import { watchLeaderThread } from './leader-thread-watch.js';
 import { handleUiSettingsApi, UI_SETTINGS_PATH } from './ui-settings-api.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
