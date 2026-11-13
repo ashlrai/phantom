@@ -36,6 +36,8 @@ describe('sidebar resources', () => {
     const { calls } = installFetch(() => json({ error: 'unexpected read' }, 500));
     const user = userEvent.setup();
     render(<SidebarResources />);
+    // Spend reads belong to the mocked resource, never an inline sidebar copy.
+    expect(screen.queryByRole('region', { name: 'Spend down' })).toBeNull();
     for (const name of ['Agents', 'Routines', 'Machine']) {
       expect(screen.getByRole('region', { name })).toBeVisible();
     }
