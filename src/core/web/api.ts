@@ -1321,6 +1321,7 @@ export async function handleApi(
     readSession?: { id: string; expiresAt: number };
     readProjections?: ReadProjectionReader;
     usageResourcesApi?: import('../verse/api-modules.js').ApiModule;
+    mergeLatencyApi?: import('../verse/api-modules.js').ApiModule;
   },
 ): Promise<boolean> {
   const path = reqPath(req);
@@ -2715,10 +2716,20 @@ export async function handleApi(
     // GETs are already behind the read-session boundary (server.ts); POSTs
     // apply ctx.allowDispatch + passesMutationGate inside handleVerseApi.
     if (isVerseApiPath(path)) {
+      const verseCtx = { cfg, token: ctx.token, allowDispatch: ctx.allowDispatch, readSession: ctx.readSession,
+        usageResourcesApi: ctx.usageResourcesApi,
+        ...(ctx.readProjections ? { readProjections: ctx.readProjections } : {}) };
+      // Merge-latency report (GET /api/verse/fleet/merge-latency): injected by
+      // the composition root and served before the mounted module table, so the
+      // frozen mount order and the Tier-1 import closure are both untouched.
+      if (path === '/api/verse/fleet/merge-latency' || path.startsWith('/api/verse/fleet/merge-latency/')) {
+        if (path !== '/api/verse/fleet/merge-latency') { sendJson(res, 404, { error: 'Merge latency route not found.' }); return true; }
+        if (ctx.mergeLatencyApi) return ctx.mergeLatencyApi(verseCtx, req, res, path, method);
+        sendJson(res, 503, { error: 'Merge latency is unavailable.' });
+        return true;
+      }
       const handled = await handleVerseApi(
-        { cfg, token: ctx.token, allowDispatch: ctx.allowDispatch, readSession: ctx.readSession,
-          usageResourcesApi: ctx.usageResourcesApi,
-          ...(ctx.readProjections ? { readProjections: ctx.readProjections } : {}) },
+        verseCtx,
         req,
         res,
         path,
