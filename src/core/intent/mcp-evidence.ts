@@ -51,8 +51,8 @@ export async function recordEvidence(name: EvidenceToolName, args: Record<string
     const { assertMetadata } = await import('../connectors/profile.js');
     assertMetadata(JSON.stringify(args));
     const { ledgerFilePresent, readLedger, writeLedger } = await import('./store.js');
-    const ledger = await readLedger();
     if (!await ledgerFilePresent()) return { ok: false, error: 'Intent ledger unavailable.' };
+    const ledger = await readLedger();
     const at = (args.at as string | undefined) ?? new Date().toISOString();
     if (name === 'intent_ship') {
       const { noteShippedRelease } = await import('./release.js');
