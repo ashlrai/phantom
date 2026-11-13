@@ -12,6 +12,9 @@
  *   REBASE — mergeStateStatus is DIRTY: `check=merge-tree conflicts="…"`
  *            with the conflicting paths from `git merge-tree --write-tree
  *            --name-only <baseSha> <headSha>` instead of a generic FIXUP.
+ *            The line also carries `cluster=clu-<n>`: the file-overlap
+ *            cluster of the repo's open PRs (rebase-order.ts), so downstream
+ *            consumers can identify conflicting siblings.
  *
  * Dedupe is one line per PR per 24h keyed `<repo>#<n>`, but it is
  * evidence-aware: the state entry records the headSha the line was minted
@@ -46,6 +49,7 @@
 
 import { assertQueueTier } from './queue-tier.js';
 import { collapseJobOutcomes, type JobOutcome } from '../queue/job-outcomes.js';
+import { clusterKey, fileClusters } from '../fleet/rebase-order.js';
 
 export const QUEUEGEN_CYCLE_CAP = 20;
 export const QUEUEGEN_PR_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -260,14 +264,15 @@ export function fixupLine(repo: string, pr: QueuegenPr, check: QueuegenCheck, fi
   return `- READY ${fixupId(repo, pr)} (${opts.fixupPriority}, pool=${opts.pool}, tier=${tier}, repo=${short}, after none, queuegen ${stamp}): ${pinned ? `${QUEUEGEN_SECURITY_PIN} ` : ''}${singleLine(text)}`;
 }
 
-export function rebaseLine(repo: string, pr: QueuegenPr, conflicts: readonly string[], pinned: boolean, stamp: string, opts: Required<Pick<QueuegenOptions, 'rebasePriority' | 'pool' | 'tier'>>): string {
+export function rebaseLine(repo: string, pr: QueuegenPr, conflicts: readonly string[], pinned: boolean, stamp: string, opts: Required<Pick<QueuegenOptions, 'rebasePriority' | 'pool' | 'tier'>>, cluster?: string): string {
   const tier = assertQueueTier(opts.tier);
   const short = shortName(repo);
   const shown = conflicts.slice(0, 8);
   const suffix = conflicts.length > shown.length ? ` +${conflicts.length - shown.length} more` : '';
   const file = shown[0] ?? '';
   const text = `REBASE ${short}#${pr.number} branch=${noWs(pr.headRef, 120)} head=${noWs(pr.headSha.slice(0, 7), 12)} file=${noWs(file, 200)} check="merge-tree" acceptance="git merge-tree --write-tree ${noWs(pr.baseSha, 40)} ${noWs(pr.headSha, 40)}" conflicts="${quoted(shown.join(', '), 400)}${suffix}": resolve every listed conflict against the base and push to the head branch. https://github.com/${repo}/pull/${pr.number}`;
-  return `- READY ${rebaseId(repo, pr)} (${opts.rebasePriority}, pool=${opts.pool}, tier=${tier}, repo=${short}, after none, queuegen ${stamp}): ${pinned ? `${QUEUEGEN_SECURITY_PIN} ` : ''}${singleLine(text)}`;
+  const clu = cluster ? `, cluster=${noWs(cluster, 40)}` : '';
+  return `- READY ${rebaseId(repo, pr)} (${opts.rebasePriority}, pool=${opts.pool}, tier=${tier}, repo=${short}${clu}, after none, queuegen ${stamp}): ${pinned ? `${QUEUEGEN_SECURITY_PIN} ` : ''}${singleLine(text)}`;
 }
 
 function emptyState(): QueuegenState {
@@ -428,6 +433,13 @@ export function runQueuegenCycle(io: QueuegenIo, options: QueuegenOptions = {}):
         io.log(`QUEUEGEN_GH_ERROR list ${repo}`);
         throw error;
       }
+      // Cluster this repo's open PRs by touched-file overlap once per listing;
+      // every REBASE line carries its cluster key.
+      const clusterOf = new Map<number, string>();
+      for (const members of fileClusters(prs)) {
+        const key = clusterKey(members.map((m) => m.number));
+        for (const m of members) clusterOf.set(m.number, key);
+      }
       const short = shortName(repo);
       for (const pr of prs) {
         if (summary.emitted >= cycleCap) { summary.capped = true; break outer; }
@@ -465,7 +477,7 @@ export function runQueuegenCycle(io: QueuegenIo, options: QueuegenOptions = {}):
           if (conflicts.length === 0) { summary.skipped++; continue; }
           checkName = 'merge-tree';
           file = conflicts[0] ?? '';
-          line = rebaseLine(repo, pr, conflicts, pinned, stamp, emit);
+          line = rebaseLine(repo, pr, conflicts, pinned, stamp, emit, clusterOf.get(pr.number));
         } else {
           let checks: QueuegenCheck[];
           try {
