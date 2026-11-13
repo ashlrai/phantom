@@ -148,6 +148,7 @@ or control apps.
 
 | Tool | Description |
 | --- | --- |
+| `intent_import` | Import local JSONL files or an ashlr.intent-ledger/v1 document, deduplicating directives and retaining provenance. |
 | `intent_link` | Record caller-supplied merged pull evidence on matching directives. Supplied claims are not verified. |
 | `intent_ship` | Record caller-supplied release evidence on matching directives. Supplied claims are not verified. |
 
