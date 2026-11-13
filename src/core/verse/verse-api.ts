@@ -2102,6 +2102,11 @@ export async function handleVerseApi(
       sendJson(res, 503, { error: 'Usage resources are unavailable.' });
       return true;
     }
+    if (path === `${VERSE_API_PREFIX}/whats-new` || path.startsWith(`${VERSE_API_PREFIX}/whats-new/`)) {
+      // Read-only release notes; unknown children 404 here rather than evaluating the mounted modules.
+      if (path !== `${VERSE_API_PREFIX}/whats-new`) { sendJson(res, 404, { error: 'Whats-new route not found.' }); return true; }
+      return (await import('./whats-new-api.js')).handleWhatsNewApi(req, res, path, method);
+    }
     // ── GET /api/verse/bootstrap ─────────────────────────────────────────
     if (path === `${VERSE_API_PREFIX}/bootstrap` && method === 'GET') {
       const engine = await getVerseEngine();
