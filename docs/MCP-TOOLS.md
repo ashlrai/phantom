@@ -148,6 +148,8 @@ or control apps.
 
 | Tool | Description |
 | --- | --- |
+| `intent_add` | Record a local directive. Tracking does not authorize action. |
+| `intent_update` | Revise a local directive and record caller-reported verification evidence. Tracking does not authorize action. |
 | `intent_link` | Record caller-supplied merged pull evidence on matching directives. Supplied claims are not verified. |
 | `intent_ship` | Record caller-supplied release evidence on matching directives. Supplied claims are not verified. |
 
