@@ -23,6 +23,9 @@ describe('drive node decision boundaries', () => {
     expect(box).toMatch(/CLI sessions signed in there are usable by every agent on the box/u);
     expect(box).toMatch(/does not isolate one agent from another or remove vendor access/u);
     expect(box).toContain('Never copy auth directories from the Mac.');
+    expect(box).toMatch(/not an assumption that the box shares the Mac's LAN or credentials/u);
+    expect(text).not.toMatch(/(?:box|node|machine) (?:is|sits|runs) (?:on|in) (?:the |Mason's |Mac's )?(?:local network|LAN)/iu);
+    expect(section('Option D: a small paid VM')).toMatch(/Neither hosted option inherits the Mac's physical custody/u);
   });
 
   it('preserves heavy-build routing and treats shared capacity as unverified', () => {

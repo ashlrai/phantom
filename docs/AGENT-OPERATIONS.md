@@ -889,3 +889,21 @@ refix, review or ok. A failed open-PR read still emits the versioned shape
 with `reads.open: 'failed'` (exit 1); a failed merged or prompts read degrades
 only the superseded leg. Read-only — `gh pr list` calls only. See
 [pr-hygiene](fleet/pr-hygiene.md) for the report shape.
+
+### Required-check merge path
+
+Run `phm doctor merge-path --repo owner/name --json` to compare the default
+branch's classic protection and effective ruleset checks with check-run names
+and commit-status contexts on the 20 most recently updated PR heads targeting
+that branch. Repeat `--repo` to inspect multiple repositories; `--branch` selects
+one branch for all of them. The command makes GitHub GET requests only and
+requires `gh` authentication with access to branch protection, rules, and PRs.
+
+The JSON `results` array identifies each `repo`, `branch`, `signal`, and
+`missingContexts`. `MERGE_PATH_BROKEN` means a required name was absent from
+all sampled heads; a dispatcher can use that signal to file a P0
+`FIX-MERGE-PATH` job identifying the repository, branch, and missing names.
+`MERGE_PATH_UNKNOWN` means required checks exist but no PR heads were available.
+Read errors exit nonzero without claiming a healthy result. A match proves only
+that a name appeared in the sample, not that it will run for every PR or that
+its GitHub App identity matches the required check.
