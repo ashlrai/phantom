@@ -28,6 +28,7 @@ const DOCS = [
   'CONTRIBUTING.md',
   'docs/AGENT-OPERATIONS.md',
   'docs/AGENT-MCP-CLI.md',
+  'docs/CLI-AGENT-READINESS.md',
   'docs/HUB-REFERENCE.md',
   'docs/MISSION-OS.md',
   'docs/README.md',
