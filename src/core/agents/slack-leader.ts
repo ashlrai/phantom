@@ -24,6 +24,10 @@ export interface SlackStatusReply {
   readonly fallback: string;
 }
 
+/** Outcome of the in-thread status answer; on `answered: false` the ask was
+ * written to MASON-INBOX as a P0 order instead (today's behavior). */
+export interface SlackStatusAnswer { answered: boolean; reason: string }
+
 export interface SlackLeaderOptions extends LeaderRuntimeOptions {
   call?: SlackCall; signal?: AbortSignal;
   /** Test seam for the owner "status" auto-answer; unset leaves asks to the Leader. */
@@ -57,7 +61,7 @@ export function configuredSlackCall(config: SlackDeliveryPolicy['config'], signa
 }
 
 /** Called only with a mapper result from the authenticated socket, before peer-bus append. */
-export async function ingestSlackLeaderEnvelope(message: BusEnvelope, options: SlackLeaderOptions = {}): Promise<{ owned: boolean; durable: boolean }> {
+export async function ingestSlackLeaderEnvelope(message: BusEnvelope, options: SlackLeaderOptions = {}): Promise<{ owned: boolean; durable: boolean; statusAnswer?: Promise<SlackStatusAnswer> }> {
   const checked = validateBusEnvelope(message);
   if (!checked.ok || message.channel !== 'slack' || message.external !== false || message.sender?.human !== true ||
       message.sender.vendor !== 'slack' || !isSlackUserId(message.sender.agent_id) || message.from !== `slack:${message.sender.agent_id}`) return { owned: false, durable: false };
@@ -78,34 +82,65 @@ export async function ingestSlackLeaderEnvelope(message: BusEnvelope, options: S
         user.is_restricted === true || user.is_ultra_restricted === true || options.signal?.aborted) return { owned: true, durable: false };
   } catch { return { owned: true, durable: false }; }
   const runsDir = options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
-  const network = createLeaderNetwork({ ...sources, runsDir, busRoot: options.busRoot, now: options.now, appendInbox: leaderInboxAppender(options),
+  const body = checked.value.body;
+  const text = body && typeof body === 'object' && !Array.isArray(body) && typeof body.text === 'string' ? body.text : undefined;
+  const appendInbox = leaderInboxAppender(options);
+  // A pure status ask is answered in-thread instead of becoming a second P0
+  // order in the operator's MASON-INBOX. Only the installed host's sole writer
+  // owns that deferral: it is what writes today's P0 block when the answer
+  // cannot be delivered, so nothing is ever dropped. An injected writer or
+  // the local leader journal keeps its durable record at ingest instead.
+  const statusReply = options.statusReply, statusAsk = Boolean(statusReply && text !== undefined && statusReply.ask(text));
+  const deferInbox = statusAsk && appendInbox !== undefined && options.appendInbox === undefined;
+  const receivedAt = (options.now ?? Date.now)();
+  const network = createLeaderNetwork({ ...sources, runsDir, busRoot: options.busRoot, now: options.now, appendInbox,
     deliver: (owner, reply) => deliverSlackLeaderMessage(owner, reply, options) });
   const result = await network.ingest({ message: {
     // A namespaced 128-bit receipt avoids secret-value heuristics on raw digests.
     ...checked.value, id: `slack-owner-${createHash('sha256').update(message.id).digest('hex').slice(0, 32)}`, from: 'mason',
     sender: { agent_id: 'mason', vendor: 'phantom', human: true, team: true },
-  }, verifiedSender: identity, receivedAt: (options.now ?? Date.now)() });
-  const statusReply = options.statusReply, body = result.envelope?.body;
-  if (result.status === 'accepted' && result.requestId && statusReply &&
-      body && typeof body === 'object' && !Array.isArray(body) &&
-      typeof body.text === 'string' && statusReply.ask(body.text)) {
+  }, verifiedSender: identity, receivedAt, ...(deferInbox ? { inboxAlreadyRecorded: true } : {}) });
+  let statusAnswer: Promise<SlackStatusAnswer> | undefined;
+  if (statusAsk && result.requestId && result.status !== 'duplicate') {
     // Detached so the socket ack is not held behind the brief read or the post;
     // the reply goes through the same journaled route and never alters ingest.
-    const requestId = result.requestId, compose = statusReply.compose.bind(statusReply);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    void Promise.race([compose(runsDir, new Date((options.now ?? Date.now)())),
-      new Promise<string>(resolve => { timer = setTimeout(() => resolve(statusReply.fallback), 10_000); })])
-      .catch(() => statusReply.fallback).finally(() => clearTimeout(timer))
-      .then(text => network.reply(requestId, text)).catch(() => {});
+    const fallback = deferInbox ? {
+      requestId: result.requestId, channel: 'slack' as const, ownerId: identity.id, receivedAt,
+      // Byte-identical to what the network itself would hand the sole writer.
+      text: text!.replace(/\r\n?/g, '\n').trim(),
+    } : undefined;
+    statusAnswer = (result.status === 'accepted'
+      ? answerOwnerStatus(statusReply!, result.requestId, network, runsDir, new Date(receivedAt))
+      : Promise.resolve({ answered: false, reason: 'ask did not reach the Leader bus' }))
+      .then(async outcome => {
+        if (outcome.answered || !fallback) return outcome;
+        try { await appendInbox!(fallback); } catch {
+          console.warn(`[slack-leader] status ask not answered in-thread (${outcome.reason}) and the MASON-INBOX fallback failed; it stays pending for the Leader`);
+          return { answered: false, reason: `${outcome.reason}; inbox fallback failed` };
+        }
+        console.warn(`[slack-leader] status ask not answered in-thread (${outcome.reason}); recorded it in MASON-INBOX as P0 instead`);
+        return outcome;
+      });
   }
   const durable = result.status === 'accepted' || result.status === 'duplicate' || result.recorded === true;
   // Same unified owner thread the other channels feed; the Slack thread ref rides along so the reply goes back to it.
-  if (durable) {
-    const body = checked.value.body;
-    const text = body && typeof body === 'object' && !Array.isArray(body) && typeof body.text === 'string' ? body.text : undefined;
-    if (text) await noteUnifiedOwner('slack', identity.id, text, checked.value.id, (options.now ?? Date.now)(), options, message.channel_ref);
-  }
-  return { owned: true, durable };
+  if (durable && text) await noteUnifiedOwner('slack', identity.id, text, checked.value.id, receivedAt, options, message.channel_ref);
+  return { owned: true, durable, ...(statusAnswer ? { statusAnswer } : {}) };
+}
+
+/** Compose with the existing status builder and send through the journaled
+ * Leader reply (MASON-OUTBOX record, bus publish, same Slack thread). */
+async function answerOwnerStatus(statusReply: SlackStatusReply, requestId: string, network: ReturnType<typeof createLeaderNetwork>, runsDir: string, now: Date): Promise<SlackStatusAnswer> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const text = await Promise.race([statusReply.compose(runsDir, now),
+    new Promise<string>(resolve => { timer = setTimeout(() => resolve(statusReply.fallback), 10_000); })])
+    .catch(() => statusReply.fallback).finally(() => clearTimeout(timer));
+  try {
+    const sent = await network.reply(requestId, text);
+    return sent.status === 'sent' || sent.status === 'duplicate'
+      ? { answered: true, reason: 'answered in-thread' }
+      : { answered: false, reason: `reply ${sent.status}${sent.reason ? `: ${sent.reason}` : ''}` };
+  } catch { return { answered: false, reason: 'reply threw' }; }
 }
 
 /** Same-channel/thread delivery, with the existing send-intent journal owning uncertainty. */

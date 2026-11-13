@@ -1,0 +1,20 @@
+# Explicit opt-in: nothing runs until `phm routines run` or a tick is invoked.
+# Costs are relative USD estimates, not live pricing. Limits count attempts/day UTC.
+executors:
+  - { id: codex-personal, kind: codex, tier: frontier, capabilities: [research], cost: 0, dailyLimit: 20 }
+  - { id: claude-personal, kind: claude, tier: frontier, capabilities: [research], cost: 0.01, dailyLimit: 20 }
+  # Other accounts: duplicate codex with a unique id and codexHome: /absolute/path.
+  # Shell, oMLX and Devin remain disabled until the operator sets dailyLimit.
+  - { id: shell, kind: shell, tier: local, capabilities: [shell], cost: 0, dailyLimit: 0 }
+  - { id: omlx, kind: omlx, tier: local, capabilities: [research], model: local-model, cost: 0, dailyLimit: 0 }
+  - { id: devin, kind: devin, tier: frontier, capabilities: [research], repo: ashlrai/phantom, cost: 1, dailyLimit: 0 }
+routines:
+  - id: ai-tooling-changelog-radar
+    schedule: '0 13 * * *'
+    prompt: >-
+      Research official changelogs for Codex, Claude Code, Devin and Grok.
+      Report changes since yesterday with dated source links, practical impact,
+      and explicitly mark products with no verified changes. Return Markdown.
+    capabilities: [research]
+    tier: frontier
+    output: ai-tooling-changelog-radar.md
