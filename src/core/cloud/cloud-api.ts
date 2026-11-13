@@ -625,6 +625,7 @@ export function startCloudScheduler(env: NodeJS.ProcessEnv = process.env, deps: 
     const { autoDiscover } = await import('../improve/discover.js');
     const found = await autoDiscover();
     if (found.added) try { log(`cloud backlog: ${found.added} new item(s) discovered`); } catch { /* never throws */ }
+    if (found.errors.length) try { log(`cloud discovery: ${found.errors.length} source(s) unavailable`); } catch { /* never throws */ }
     return improveGuarded({ count: 1, auto: true });
   });
   const state: SchedulerState = { timers: [], running: {}, lastError: {} };

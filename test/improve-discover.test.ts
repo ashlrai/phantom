@@ -88,18 +88,27 @@ describe('backlog discovery', () => {
 
 describe('scheduled auto-discover', () => {
   beforeEach(() => resetAutoDiscoverForTests());
+  const digest = async () => ({ items: [], errors: [] });
   const at = (ms: number) => () => new Date(Date.UTC(2026, 9, 15) + ms);
 
   it('does nothing while self-improvement is off', async () => {
     updateCloudBudget({ selfImprove: { enabled: false } });
-    expect(await autoDiscover({ gh: gh(), proposals: [], now: at(0) })).toEqual({ ran: false, added: 0, errors: [] });
+    expect(await autoDiscover({ gh: gh(), digest, proposals: [], now: at(0) })).toEqual({ ran: false, added: 0, errors: [] });
     expect(readUserBacklogItems()).toEqual([]);
+  });
+
+  it('feeds digest items into the scheduled backlog', async () => {
+    updateCloudBudget({ selfImprove: { enabled: true, repo: 'ashlrai/phantom' } });
+    const item = { id: 'digest-test', priority: 2, area: 'test-speed', repo: 'ashlrai/phantom', title: 'Speed up tests', prompt: 'Measure and improve tests.' };
+    const result = await autoDiscover({ gh: gh(false), digest: async () => ({ items: [item], errors: [] }), now: at(0), hasNext: () => true });
+    expect(result.added).toBe(2);
+    expect(readUserBacklogItems().some(i => i.id === item.id)).toBe(true);
   });
 
   it('refills on its interval, and sooner when the backlog ran dry', async () => {
     updateCloudBudget({ selfImprove: { enabled: true, repo: 'ashlrai/phantom' } });
     let hasNext = true;
-    const run = (ms: number) => autoDiscover({ gh: gh(), proposals: [], now: at(ms), hasNext: () => hasNext });
+    const run = (ms: number) => autoDiscover({ gh: gh(), digest, proposals: [], now: at(ms), hasNext: () => hasNext });
     // Unattended: labelled issues only, never the member rule (issue 7 is unlabelled).
     expect(await run(0)).toMatchObject({ ran: true, added: 2, errors: [] });
     expect(readUserBacklogItems().map((i) => i.id)).toEqual([`ci-red-${SHA.slice(0, 12)}`, 'issue-10']);

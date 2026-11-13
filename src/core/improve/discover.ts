@@ -105,6 +105,7 @@ export interface AutoDiscoverDeps extends DiscoverDeps {
   now?: () => Date;
   /** Whether the backlog still has an item to launch (default: reads it). */
   hasNext?: () => boolean;
+  digest?: typeof import('./digest.js').improvementDigest;
 }
 
 /**
@@ -127,8 +128,10 @@ export async function autoDiscover(deps: AutoDiscoverDeps = {}): Promise<{ ran: 
     if (!due) return { ran: false, added: 0, errors: [] };
     lastAutoDiscoverAt = now;
     const res = await discoverBacklog(budget.repo, { ...deps, issueLabels: [AUTO_DISCOVER_ISSUE_LABEL] });
-    const added = backlog.appendUserBacklogItems(res.items.filter((i) => backlog.validBacklogItem(i) !== null));
-    return { ran: true, added, errors: res.errors };
+    const { improvementDigest } = await import('./digest.js');
+    const digest = await (deps.digest ?? improvementDigest)(budget.repo, deps.gh ?? defaultGh, now);
+    const added = backlog.appendUserBacklogItems([...res.items, ...digest.items].filter((i) => backlog.validBacklogItem(i) !== null));
+    return { ran: true, added, errors: [...res.errors, ...digest.errors] };
   } catch (err) {
     return { ran: false, added: 0, errors: [err instanceof Error ? err.message : String(err)] };
   }
