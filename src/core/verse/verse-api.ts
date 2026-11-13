@@ -253,7 +253,7 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   { id: 'fleet-memory', load: async () => (await import('./fleet-memory-api.js')).handleFleetMemoryApi },
   // Local desktop app status and bounded launch, focus and restart actions.
   { id: 'fleet-inbox-acks', load: async () => (await import('./fleet-inbox-acks-api.js')).handleFleetInboxAcksApi },
-  { id: 'fleet-apps', load: async () => (await import('./fleet-apps-api.js')).handleFleetAppsApi },
+  { id: 'fleet-apps', load: async () => (await import('./fleet-apps-recovery-api.js')).handleFleetAppsRecoveryApi },
   { id: 'fleet-standby' as MountedApiModuleId, load: async () => (await import('./fleet-standby-api.js')).handleFleetStandbyApi },
   // Self-tick last-run record: GET /api/verse/fleet/self-tick (core/verse/fleet-self-tick-api.ts); read-only, never takes the tick lock.
   { id: 'fleet-self-tick', load: async () => (await import('./fleet-self-tick-api.js')).handleFleetSelfTickApi },
@@ -2101,6 +2101,11 @@ export async function handleVerseApi(
       if (ctx.usageResourcesApi) return ctx.usageResourcesApi(ctx, req, res, path, method);
       sendJson(res, 503, { error: 'Usage resources are unavailable.' });
       return true;
+    }
+    if (path === `${VERSE_API_PREFIX}/whats-new` || path.startsWith(`${VERSE_API_PREFIX}/whats-new/`)) {
+      // Read-only release notes; unknown children 404 here rather than evaluating the mounted modules.
+      if (path !== `${VERSE_API_PREFIX}/whats-new`) { sendJson(res, 404, { error: 'Whats-new route not found.' }); return true; }
+      return (await import('./whats-new-api.js')).handleWhatsNewApi(req, res, path, method);
     }
     // ── GET /api/verse/bootstrap ─────────────────────────────────────────
     if (path === `${VERSE_API_PREFIX}/bootstrap` && method === 'GET') {

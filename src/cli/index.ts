@@ -2200,6 +2200,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'land': {
+        const { cmdLand } = await import('./land.js');
+        process.exitCode = await cmdLand(rest);
+        break;
+      }
+
       case 'metrics': {
         if (wantsHelp(rest)) {
           printCoreUsage('metrics', 'Local metrics reports.', [
@@ -2463,6 +2469,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'caps': {
+        const { cmdCaps } = await import('./caps.js');
+        process.exitCode = await cmdCaps(rest);
+        break;
+      }
+
       case 'constitution': {
         const { cmdConstitution } = await import('./constitution.js');
         process.exitCode = await cmdConstitution(rest);
@@ -2611,6 +2623,12 @@ async function main(): Promise<void> {
       case 'enroll': {
         const cmdEnroll = await loadEnrollCmd();
         process.exitCode = await cmdEnroll(rest);
+        break;
+      }
+
+      case 'ideas': {
+        const { cmdIdeas } = await import('./ideas.js');
+        process.exitCode = await cmdIdeas(rest);
         break;
       }
 
@@ -3151,6 +3169,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'routines': {
+        const { runRoutinesCli } = await import('./routines.js');
+        process.exitCode = await runRoutinesCli(rest);
+        break;
+      }
+
       case 'resource': {
         const { cmdResource } = await import('./resource.js');
         process.exitCode = await cmdResource(rest);
@@ -3215,6 +3239,7 @@ async function main(): Promise<void> {
       case 'usage': {
         if (wantsHelp(rest)) {
           printCoreUsage('usage', 'Usage readings.', [
+            ['phm usage spend [--json]', 'See measured usage and projected unused capacity'],
             ['phm usage validate', 'Validate a usage reading'],
           ]);
           process.exitCode = 0;
