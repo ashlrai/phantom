@@ -69,6 +69,8 @@ import type { VerseApiContext } from './verse-api.js';
 import type { NeedsYouItem } from './workbench-types.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { handleLeaderAttachment, VERSE_LEADER_ATTACHMENT_PATH } from './leader-attachment-api.js';
+import { handleLeaderAttachmentList } from './leader-attachment-list-api.js';
+import { handleLeaderAttachmentRead } from './leader-attachment-read-api.js';
 import { VERSE_LEADER_PATH, type LeaderAction, type LeaderMemo } from '../vision/leader-types.js';
 import { leaderRoot, listMemoIds, readLeaderMemo } from '../vision/leader-memo.js';
 import {
@@ -86,6 +88,7 @@ import {
   appendMasonMessage,
   approveLeaderAction,
   listLeaderThread,
+  postLeaderMessage,
   readLeaderQuestion,
   submitLeaderQuestion,
   syncLeaderMemosToThread,
@@ -636,6 +639,14 @@ async function handleThreadRoutes(ctx: VerseApiContext, req: IncomingMessage, re
         sendInvalid(res, 'replyTo must be a message id');
         return true;
       }
+      const { isOwnerStatusRequest, composeOwnerStatusReply } = await import('../agents/owner-status-reply.js');
+      if (isOwnerStatusRequest(body['text'] as string)) {
+        const { message } = await appendMasonMessage(body['text'] as string, { channel: 'verse', cfg: ctx.cfg, recordOnly: true, ...(replyTo ? { replyTo } : {}) });
+        const text = await composeOwnerStatusReply(hooks.plannerRunsRoot?.() ?? join(homedir(), '.ashlr-runs'), new Date());
+        const reply = postLeaderMessage({ channel: 'verse', kind: 'message', text, replyTo: message.id, delivery: {} });
+        sendJson(res, 200, { message, reply });
+        return true;
+      }
       const result = await appendMasonMessage(body['text'] as string, { channel: 'verse', cfg: ctx.cfg, ...(replyTo ? { replyTo } : {}) });
       sendJson(res, 200, result);
       return true;
@@ -817,7 +828,11 @@ export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) =>
     }
     return true;
   }
+  if (path === '/api/verse/leader/attachments') return handleLeaderAttachmentList(ctx, req, res, method);
   if (path === VERSE_LEADER_ATTACHMENT_PATH) return handleLeaderAttachment(ctx, req, res, method);
+  if (path.startsWith(`${VERSE_LEADER_ATTACHMENT_PATH}/`)) {
+    return handleLeaderAttachmentRead(ctx, req, res, method, path.slice(VERSE_LEADER_ATTACHMENT_PATH.length + 1));
+  }
   if (path === `${VERSE_LEADER_PATH}/inbox`) {
     if (method === 'GET') {
       if (!ctx.readSession || !Number.isFinite(ctx.readSession.expiresAt) || ctx.readSession.expiresAt <= Date.now()) { sendJson(res, 401, { error: 'A current read session is required.' }); return true; }

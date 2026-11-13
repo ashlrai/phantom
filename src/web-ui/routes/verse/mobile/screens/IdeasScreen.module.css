@@ -1,0 +1,28 @@
+/* routes/verse/mobile/screens/IdeasScreen.module.css — ranked backlog rows
+   inside per-repo sections; meta lines mirror the pane's sources row. */
+
+.headline {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: var(--font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  margin: 0;
+  display: block;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.toggle {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-600);
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+}

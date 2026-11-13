@@ -1,12 +1,45 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
-import { parseState } from '../drive/nodes/state.js';
+import { parseState, type NodeAuth } from '../drive/nodes/state.js';
 import { NODE_OFFLINE_MS } from '../drive/nodes/router.js';
 
 export const NODES_SCHEMA = 'phantom.nodes.v1';
 export const NODE_STALE_MS = 90_000;
 export const NODE_DOWN_MS = NODE_OFFLINE_MS;
+
+export type NodeStatus = 'ready' | 'stale' | 'down' | 'unknown';
+export type NodeRole = 'leader' | 'standby' | 'worker';
+
+/** One node's row in the phantom.nodes.v1 snapshot — the same fields `phm fleet nodes` prints. */
+export interface NodeRow {
+  id: string;
+  role: NodeRole;
+  owners: string[];
+  caps: string[];
+  status: NodeStatus;
+  heartbeatAt: string | null;
+  heartbeatAgeMs: number | null;
+  liveJobs: string[];
+  ghAuth: NodeAuth;
+  leader: boolean;
+  source: 'registry';
+}
+
+/**
+ * The phantom.nodes.v1 snapshot served at GET /api/nodes and printed by
+ * `phm fleet nodes --json`. Secret-free by construction: any record holding a
+ * token-shaped value drops the whole snapshot to an error instead.
+ */
+export interface NodesSnapshot {
+  schema: typeof NODES_SCHEMA;
+  generatedAt: string;
+  sourcePath: string;
+  observedAt: string | null;
+  leaderId: string | null;
+  nodes: NodeRow[];
+  error: string | null;
+}
 const secret = /(gh[pousr]_[a-z0-9]{20,}|github_pat_[a-z0-9_]{20,}|sk-[a-z0-9_-]{20,}|xox[abprs]-[a-z0-9-]{10,}|AKIA[0-9A-Z]{16}|eyJ[a-z0-9_-]{10,}\.[a-z0-9_-]{10,}|bearer\s+\S{16,}|[a-f0-9]{40,}|[a-z0-9+/_-]{48,}={0,2})/i;
 function containsSecret(value: unknown): boolean {
   if (typeof value === 'string') return secret.test(value);
@@ -14,10 +47,10 @@ function containsSecret(value: unknown): boolean {
   return !!value && typeof value === 'object' && Object.entries(value).some(([k, v]) => secret.test(k) || containsSecret(v));
 }
 
-export function buildNodesSnapshot(deps: { dir?: string; nowMs?: number } = {}) {
+export function buildNodesSnapshot(deps: { dir?: string; nowMs?: number } = {}): NodesSnapshot {
   const now = deps.nowMs ?? Date.now();
   const file = join(deps.dir ?? join(ashlrHome(), 'nodes'), 'nodes.json');
-  const base = { schema: NODES_SCHEMA, generatedAt: new Date(now).toISOString(), sourcePath: file };
+  const base: Pick<NodesSnapshot, 'schema' | 'generatedAt' | 'sourcePath'> = { schema: NODES_SCHEMA, generatedAt: new Date(now).toISOString(), sourcePath: file };
   let text: string;
   try { text = readFileSync(file, 'utf8'); } catch (error) {
     return { ...base, observedAt: null, leaderId: null, nodes: [], error: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'inventory missing' : 'inventory unreadable' };
@@ -33,7 +66,7 @@ export function buildNodesSnapshot(deps: { dir?: string; nowMs?: number } = {}) 
   }
   const lease = state.leader;
   const leaderId = lease && lease.expiresAt > now && state.nodes.some(n => n.nodeId === lease.nodeId && n.session === lease.session && n.expiresAt > now) ? lease.nodeId : null;
-  const nodes = state.nodes.map(n => {
+  const nodes = state.nodes.map((n): NodeRow => {
     const age = n.heartbeatAt > 0 ? Math.max(0, now - n.heartbeatAt) : null;
     const status = age === null || n.heartbeatAt > now ? 'unknown' : n.expiresAt <= now || age >= NODE_DOWN_MS ? 'down' : age > NODE_STALE_MS ? 'stale' : 'ready';
     const role = n.nodeId === leaderId ? 'leader' : n.nodeId === state.pool?.backup || n.nodeId === lease?.nodeId ? 'standby' : 'worker';
