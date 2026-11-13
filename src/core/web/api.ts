@@ -46,6 +46,7 @@ import { handleWbAction, WB_ACTION_PATH } from './wb-action-api.js';
 
 import { handleTeamInvites } from '../../api/team-invites.js';
 import { handleFrictionFeedback } from '../verse/feedback-api.js';
+import { COMMS_CONFIRM_PATH, handleCommsConfirmRoute } from './comms-confirm-route.js';
 import { watchLeaderThread } from './leader-thread-watch.js';
 import { handleUiSettingsApi, UI_SETTINGS_PATH } from './ui-settings-api.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -2670,6 +2671,11 @@ export async function handleApi(
 
     if (path === '/api/verse/feedback') {
       return handleFrictionFeedback(ctx, req, res);
+    }
+
+    // Before the V1 catch-all, which 404s every /api/verse/* path it does not know.
+    if (path === COMMS_CONFIRM_PATH) {
+      return handleCommsConfirmRoute(ctx, req, res, method);
     }
 
     // ── /api/verse/{control,caps,scope,audit,daemon,safety} (V2 control) ────
