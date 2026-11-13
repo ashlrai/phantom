@@ -12,6 +12,7 @@ import { runDetailQuery } from '../../../data/queries.js';
 import { useQuery } from '../../../data/hooks.js';
 import { useScrollRestore } from '../../../hooks/useScrollRestore.js';
 import { StatusBadge } from '../../../components/primitives/StatusBadge.js';
+import { RunStreamPanel } from '../../../components/stream/index.js';
 import { RefreshIndicator } from '../../../components/primitives/RefreshIndicator.js';
 import { SkeletonLine } from '../../../components/primitives/Skeleton.js';
 import type { RunState, RunTask } from '../../../data/api-types.js';
@@ -132,6 +133,13 @@ export function RunDetailView() {
           </div>
         ) : null}
       </dl>
+
+      {run.status === 'running' ? (
+        <section className={styles.section} aria-label="Live stream">
+          <h2 className={styles.sectionTitle}>Live stream</h2>
+          <RunStreamPanel runId={run.id} />
+        </section>
+      ) : null}
 
       {run.result ? (
         <section className={styles.section}>
