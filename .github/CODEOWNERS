@@ -541,6 +541,7 @@
 /test/improve-promote-redteam.test.ts @masonwyatt23
 /test/improve-reverted.test.ts @masonwyatt23
 /test/int4-confine-engines-310b.test.ts @masonwyatt23
+/test/intent-fleet-merge-observe-preservation-231s.test.ts @masonwyatt23
 /test/job-memory-accounting.test.ts @masonwyatt23
 /test/judge-credential-export-r3b-310b.test.ts @masonwyatt23
 /test/judge-seat-lanes-310b.test.ts @masonwyatt23
@@ -962,6 +963,7 @@
 /test/merge-gate-latency.test.ts @masonwyatt23
 /test/merge-gates-310b.test.ts @masonwyatt23
 /test/merge-identity-recut.test.ts @masonwyatt23
+/test/merge-plan-original-preservation-202s.test.ts @masonwyatt23
 /test/merge-temp-worktree-reaper.test.ts @masonwyatt23
 /test/metrics-boundary.test.ts @masonwyatt23
 /test/metrics-pillar.test.ts @masonwyatt23
@@ -1032,6 +1034,7 @@
 /test/red-team-routing-310.test.ts @masonwyatt23
 /test/red-type-fix-c175.test.ts @masonwyatt23
 /test/redact-known.test.ts @masonwyatt23
+/test/redfix-test-c205.test.ts @masonwyatt23
 /test/refix-loop.test.ts @masonwyatt23
 /test/release-articles.test.ts @masonwyatt23
 /test/release-path-policy-v2.test.ts @masonwyatt23
@@ -1202,6 +1205,7 @@
 /test/verse-mcp-control-api.test.ts @masonwyatt23
 /test/verse-mcp-grants-types.test.ts @masonwyatt23
 /test/verse-mcp-scope.test.ts @masonwyatt23
+/test/verse-merge-latency-api.test.ts @masonwyatt23
 /test/verse-merge-pace-api-02.test.ts @masonwyatt23
 /test/verse-multimodel-auto-316.test.ts @masonwyatt23
 /test/verse-reliability.test.ts @masonwyatt23
