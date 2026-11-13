@@ -164,6 +164,9 @@ records the source checkout's overview and full command table.
 
 ## For coding agents
 
+Command scores and the remaining agent gaps are in
+[CLI agent readiness](CLI-AGENT-READINESS.md).
+
 Start with the selected command registry from the binary you intend to use:
 
 ```sh
@@ -241,6 +244,8 @@ documentation. Use focused local checks while iterating, then follow the
 canonical release guide for required hosted qualification and publication.
 
 - [Local model inventory](https://github.com/ashlrai/phantom/blob/master/docs/MODEL-INVENTORY.md): opt-in Mac benchmarks, admission and fleet schema.
+
+- [Routines](https://github.com/ashlrai/phantom/blob/master/docs/ROUTINES.md): UTC-cron YAML schedules with executor failover, learned local-first placement runs, and a portable provider placement registry.
 
 ## All documents
 
@@ -351,6 +356,7 @@ canonical release guide for required hosted qualification and publication.
 - [Rebase-wave status](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-REBASE-STATUS.md) — read-only conflict and queue coverage snapshot.
 - [Merge queue latency](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-LATENCY.md) — record observed queue transitions, inspect blocker and eligibility timing, and re-arm dropped auto-merges after transient queue failures.
 - [Merge-batch planner](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-BATCH.md) — read-only file-overlap batching of open PRs with a least-rebase-churn order.
+- [Merge-plan scoreboard](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-PLAN.md) — read-only merges/hour, failure causes, rebase candidates and superseded-duplicate close proposals from one PR snapshot, with before/after diffs.
 - [Rebase-plan](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-REBASE-PLAN.md) — read-only conflict-to-queue wiring: clusters conflicting bridge PRs by file overlap and emits ready.tsv-ready rebase-job specs.
 
 - [Empty job reasons](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-EMPTIES.md): group recorded empty outcomes and review filler suggestions.
