@@ -201,7 +201,13 @@ mod platform {
     fn launch(
         stage: &Stage,
         apply: bool,
-    ) -> Result<(std::process::Child, std::process::ChildStdout), &'static str> {
+    ) -> Result<
+        (
+            ashlr_desktop::child_reaper::ReapOnDrop,
+            std::process::ChildStdout,
+        ),
+        &'static str,
+    > {
         if !policy::stage_id(&stage.id) {
             return Err("host-unavailable");
         }
@@ -212,7 +218,13 @@ mod platform {
         home: &std::path::Path,
         stage: &Stage,
         apply: bool,
-    ) -> Result<(std::process::Child, std::process::ChildStdout), &'static str> {
+    ) -> Result<
+        (
+            ashlr_desktop::child_reaper::ReapOnDrop,
+            std::process::ChildStdout,
+        ),
+        &'static str,
+    > {
         if !policy::stage_id(&stage.id) {
             return Err("host-unavailable");
         }
@@ -230,7 +242,9 @@ mod platform {
         cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        let mut child = cmd.spawn().map_err(|_| "host-unavailable")?;
+        let mut child = ashlr_desktop::child_reaper::ReapOnDrop::new(
+            cmd.spawn().map_err(|_| "host-unavailable")?,
+        );
         let stdout = child.stdout.take().ok_or("host-unavailable")?;
         let fd = stdout.as_raw_fd();
         unsafe {
@@ -243,7 +257,7 @@ mod platform {
     }
     // No worker kill: an apply child may own a transaction. Its host protocol has its own finite deadline.
     fn first_result(
-        mut child: std::process::Child,
+        mut child: ashlr_desktop::child_reaper::ReapOnDrop,
         mut pipe: std::process::ChildStdout,
         stage: &Stage,
         budget: Duration,
@@ -897,7 +911,13 @@ mod platform {
                 .spawn()
                 .unwrap();
             let pipe = child.stdout.take().unwrap();
-            let r = first_result(child, pipe, &stage, Duration::from_secs(1)).unwrap();
+            let r = first_result(
+                ashlr_desktop::child_reaper::ReapOnDrop::new(child),
+                pipe,
+                &stage,
+                Duration::from_secs(1),
+            )
+            .unwrap();
             assert_eq!(r.state, "waiting-native-exit");
             assert!(!policy::ready_to_handoff(&r));
         }

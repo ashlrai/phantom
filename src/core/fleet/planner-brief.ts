@@ -14,6 +14,7 @@ import { wasteRiskBriefLines } from './planner-waste.js';
 import { planWriteBudget, writeBudgetBriefLines, writeBudgetLanesFromStatus, type WriteBudgetLaneInput } from './planner-write-budget.js';
 import { realSupplyBriefLines, type RealSupplyV1 } from './planner-real-supply.js';
 import { readSource, type Source } from './runs-parked-queue.js';
+import { isStatusAsk } from './status-ask.js';
 
 const MAX_BYTES = 8 * 1024 * 1024;
 /** Rendered byte budget for the MASON INBOX section; newest complete orders win. */
@@ -144,8 +145,22 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
     const picked: string[] = [];
     let used = 0;
     let omitted = 0;
+    let statusCount = 0;
+    let newestStatus = '';
+    const easternTime = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
     for (let i = entries.length - 1; i >= 0; i--) {
       const entry = entries[i]!;
+      const channel = INBOX_CHANNEL_LINE.test(entry.heading);
+      const body = [channel ? entry.heading.replace(/^\S+\s+\[src:[^\]]+\]\s+/, '') : '', ...entry.body].join('\n');
+      if (isStatusAsk(body)) {
+        statusCount++;
+        const time = channel
+          ? easternTime.format(new Date(entry.heading.split(/\s/, 1)[0]!))
+          : entry.heading.slice(3, 19);
+        if (time > newestStatus) newestStatus = time;
+        ackEntries.unshift([entry.heading, ...entry.body].join('\n'));
+        continue;
+      }
       let complete = true;
       let rendered = [entry.heading, ...entry.body].join('\n');
       let bytes = Buffer.byteLength(rendered) + 1;
@@ -161,8 +176,9 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
       if (complete) ackEntries.unshift([entry.heading, ...entry.body].join('\n'));
     }
     if (omitted) inboxBody.push(`(${omitted} older entr${omitted === 1 ? 'y' : 'ies'} omitted — over the ${INBOX_BUDGET_LABEL} inbox budget)`);
+    if (statusCount) inboxBody.push(`(${statusCount} status ask(s) omitted; the channel auto-answers them: ${newestStatus} ET)`);
     inboxBody.push(...picked);
-    if (!picked.length && !fragment && !inboxCut && !omitted) inboxBody.push('(no entries)');
+    if (!picked.length && !fragment && !inboxCut && !omitted && !statusCount) inboxBody.push('(no entries)');
   }
   const inboxLineCount = inboxBody.reduce((total, part) => total + part.split('\n').length, 0);
   let merges: string[] = [];
