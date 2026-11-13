@@ -43,6 +43,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/routines.test.ts', // Real CLI adapter subprocesses and private ledger files.
   'test/episodic-memory.test.ts', // Real Git revisions and persistent JSONL acceptance fixtures.
   'test/agent-checkpoints.test.ts', // Restarts a real Node process and observes fresh Git state.
   'test/bus-cli.test.ts', // Real CLI subprocesses and concurrent durable mailbox sends in disposable homes.

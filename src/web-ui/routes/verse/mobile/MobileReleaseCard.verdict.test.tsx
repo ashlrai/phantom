@@ -11,7 +11,7 @@ const pr: ReleasePr = {
   checks: [], failing: [] as string[], pending: 0, blocked: false, summary: '3.29.16 green, waiting for merge',
 };
 
-function release(entry: Record<string, unknown> = {}, prOverrides: Partial<typeof pr> = {}) {
+function release(entry: Record<string, unknown> = {}, prOverrides: Partial<ReleasePr> = {}) {
   return {
     v: 1, generatedAt: '2026-11-01T12:00:00Z', sourceState: 'healthy',
     repos: [{ repo: 'example/phantom', path: '/fixture/phantom', pr: { ...pr, ...prOverrides }, notes: [], ...entry }],
