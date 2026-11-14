@@ -2,8 +2,8 @@
  * routes/verse/fleet-board/CoordAnswerStrip.tsx — the compact "Coordination
  * answer" strip at the top of the Fleet Board pane (RQ-PHX-COORDANSWERSTRIP322):
  * Mason/Dot's Nov13 13:13 ET order as one REACHABLE / BLOCKED line with the
- * reasons in plain words. Reuses the three existing query defs
- * (runtime-identity, comms-status channel health, work board) so the shared
+ * reasons in plain words. Reuses the existing query defs
+ * (runtime-identity, comms-status channel health, work board) plus the advisory claims ledger so the shared
  * cache still serves one request each; polls at 15 s while visible. Read-only.
  */
 import { useQuery, useRefetch } from '../../../data/hooks.js';
@@ -13,6 +13,7 @@ import { narrowChannelHealth, type ChannelHealthView } from '../fleet-channels/c
 import { runtimeIdentityQuery } from '../fleet-host/runtime-identity-query.js';
 import type { RuntimeIdentityView } from '../fleet-host/runtime-identity-model.js';
 import { deriveCoordAnswer, type CoordBoardView } from './coord-answer-model.js';
+import { coordinationClaimsQuery, type CoordLedgerView } from './coordination-claims-query.js';
 import { workBoardQuery } from './work-board-section.js';
 import styles from './fleet-board.module.css';
 
@@ -20,10 +21,12 @@ export function CoordAnswerStrip({ visible }: { visible: boolean }) {
   const runtime = useQuery(runtimeIdentityQuery, { enabled: visible, freshMs: 0 });
   const channels = useQuery(channelHealthQuery, { enabled: visible, freshMs: 0 });
   const board = useQuery(workBoardQuery, { enabled: visible, freshMs: 0 });
+  const ledger = useQuery(coordinationClaimsQuery, { enabled: visible, freshMs: 0 });
   const refetchRuntime = useRefetch(runtimeIdentityQuery);
   const refetchChannels = useRefetch(channelHealthQuery);
   const refetchBoard = useRefetch(workBoardQuery);
-  usePollWhileVisible(() => { refetchRuntime(); refetchChannels(); refetchBoard(); }, 15_000, { enabled: visible });
+  const refetchLedger = useRefetch(coordinationClaimsQuery);
+  usePollWhileVisible(() => { refetchRuntime(); refetchChannels(); refetchBoard(); refetchLedger(); }, 15_000, { enabled: visible });
 
   // undefined = the read has not settled; null/{available:false} = settled as
   // unavailable (missing route or failed read) — never conflated with loading.
@@ -35,7 +38,12 @@ export function CoordAnswerStrip({ visible }: { visible: boolean }) {
   const boardView: CoordBoardView | null | undefined =
     board.data === undefined && board.status === 'error' ? null : board.data;
 
-  const answer = deriveCoordAnswer({ runtime: runtimeView, channels: channelsView, board: boardView, now: Date.now() });
+  // A failed (non-404) ledger read is shown as unreadable, not as loading.
+  const ledgerView: CoordLedgerView | null | undefined =
+    ledger.data === undefined && ledger.status === 'error'
+      ? { state: 'unknown', generatedAt: null, claims: [], expiredClaims: null } : ledger.data;
+
+  const answer = deriveCoordAnswer({ runtime: runtimeView, channels: channelsView, board: boardView, ledger: ledgerView, now: Date.now() });
 
   return (
     <section className={styles.coordAnswer} aria-labelledby="fb-coord-answer" data-verdict={answer.verdict}>
