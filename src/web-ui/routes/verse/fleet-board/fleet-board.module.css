@@ -38,3 +38,7 @@
 .coordRows dd[data-ok='false'] { color: var(--danger-text, var(--text-primary)); }
 .coordRows dd[data-ok='unknown'] { color: var(--text-tertiary); }
 .coordMissing { display: flex; flex-direction: column; gap: var(--space-1); list-style: none; margin: 0; padding: 0; font-size: var(--text-xs-size); color: var(--text-secondary); }
+
+.recheckHistory { display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--text-xs-size); color: var(--text-secondary); }
+.recheckHeld, .recheckNote { margin: 0; }
+.recheckChanges { display: flex; flex-direction: column; gap: var(--space-1); list-style: none; margin: 0; padding: 0; }
