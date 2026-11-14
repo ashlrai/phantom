@@ -37,6 +37,10 @@
  * leaves host, version and fleet-state fields reported as evidence while the
  * section says UNKNOWN with the exact freshness reason.
  *
+ * A VERIFIED work-board item is past execution and is never the pick; the
+ * newest one with an owner and claim receipt rides along as task.lastVerified
+ * evidence only and never changes a state, the pick or missing[].
+ *
  * Output is sanitized through sanitizeIdentityText (home → ~, IPs dropped);
  * no message bodies, leases or env values ever reach the result.
  *
@@ -155,6 +159,11 @@ export interface FleetRecheckTask {
   unowned: number;
   /** RUNNING/ASSIGNED candidates lacking a claim receipt. */
   unclaimed: number;
+  /** Newest VERIFIED (finished) item with an owner and claim receipt from the
+   * same single board read; evidence only, never the pick. */
+  lastVerified: {
+    id: string; owner: string; claimReceipt: string; asOf: string; source: string;
+  } | null;
   missing: string[];
 }
 
@@ -421,7 +430,7 @@ function taskSection(
 ): FleetRecheckTask {
   const section: FleetRecheckTask = {
     state: 'UNKNOWN', source: 'work-board', asOf,
-    task: null, unowned: 0, unclaimed: 0, missing: ['task: reader failed'],
+    task: null, unowned: 0, unclaimed: 0, lastVerified: null, missing: ['task: reader failed'],
   };
   if (!read.ok) return section;
   const board = read.value;
@@ -429,6 +438,16 @@ function taskSection(
     section.state = 'BLOCKED';
     section.missing = [`task: work board inbox ${board.inbox}`];
     return section;
+  }
+  let newestMs = Number.NEGATIVE_INFINITY;
+  for (const item of board.items) {
+    if (item.state !== 'VERIFIED' || !item.owner || !item.claimReceipt) continue;
+    const ms = Date.parse(item.asOf);
+    if (!Number.isFinite(ms) || ms <= newestMs) continue;
+    newestMs = ms;
+    section.lastVerified = {
+      id: item.id, owner: item.owner, claimReceipt: item.claimReceipt, asOf: item.asOf, source: item.source,
+    };
   }
   const eligible = board.items.filter(item => item.state === 'RUNNING' || item.state === 'ASSIGNED');
   const owned = (item: (typeof eligible)[number]): item is typeof item & { owner: string } =>
