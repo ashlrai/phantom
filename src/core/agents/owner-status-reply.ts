@@ -1,8 +1,8 @@
 /** Fixed, read-only status answer for a verified owner's short "status" ask. */
+import { isStatusAsk } from '../fleet/status-ask.js';
 import { buildStatusDigest } from '../leader/status-digest.js';
 import { gatherStatusDigestInput } from '../leader/status-digest-sources.js';
 
-const STATUS_ASKS = new Set(['status', 'phantom status', 'fleet status', '/status', "what's the status", 'whats the status']);
 /** The five-line digest from real state; the heading is swapped for the clock below. */
 const digestBrief = async (runsDir: string, now: Date): Promise<string> =>
   ['Morning leader brief', ...buildStatusDigest(await gatherStatusDigestInput(runsDir, now))].join('\n');
@@ -13,8 +13,7 @@ export const OWNER_STATUS_FALLBACK = "Phantom status: the status read failed; yo
 export function isOwnerStatusRequest(text: string): boolean {
   const trimmed = typeof text === 'string' ? text.trim() : '';
   if (trimmed.length > 40) return false;
-  const ask = trimmed.toLowerCase().replace(/’/g, "'").replace(/[?.!]+$/, '').trim();
-  return STATUS_ASKS.has(ask);
+  return isStatusAsk(trimmed);
 }
 
 function easternClock(now: Date): string {

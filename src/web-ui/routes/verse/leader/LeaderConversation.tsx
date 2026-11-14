@@ -28,8 +28,9 @@
  * "Leader is thinking…" shows while a send is in flight and, when the server
  * said it will reply later (reply: null), until the Leader's next message —
  * for at most AWAIT_REPLY_MS. Meanwhile the thread polls every 3 s instead
- * of 10 s. There is no Leader event stream to subscribe to (/api/events has
- * no leader topic), so polling while visible is the honest refresh.
+ * of 10 s. While the shared event stream is open the server pushes a
+ * `leader-thread` event on every write (use-leader-thread-push), so polling
+ * relaxes to a 30 s backstop; with the stream down it is the only refresh.
  */
 import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { LeaderStateV1 } from '../../../../core/vision/leader-types.js';
@@ -44,6 +45,7 @@ import type { OptionalRead } from '../command/surface-data.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { DirectivesStrip } from './DirectivesStrip.js';
 import { LeaderBriefCard } from './LeaderBriefCard.js';
+import { useLeaderThreadPush } from './use-leader-thread-push.js';
 import { getLeaderFocus, isLeaderFocusLive, subscribeLeaderFocus, takeLeaderFocus } from './leader-focus.js';
 import { LeaderComposer, type LeaderComposerHandle } from './LeaderComposer.js';
 import { answerLeaderQuestion, fetchOlderThread, leaderDirectivesQuery, leaderThreadQuery, sendLeaderMessage, THREAD_PAGE_SIZE } from './thread-data.js';
@@ -67,6 +69,7 @@ import styles from './leader.module.css';
 
 export const THREAD_POLL_MS = 10_000;
 export const THREAD_POLL_THINKING_MS = 3_000;
+export const THREAD_POLL_PUSHED_MS = 30_000;
 export const DIRECTIVES_POLL_MS = 30_000;
 
 /**
@@ -168,7 +171,8 @@ export function LeaderConversation({ leader, actions, dormant }: LeaderConversat
   const rows = useMemo(() => groupThread(entries, now), [entries, now]);
   const thinking = awaitingReply(entries, awaiting, now);
 
-  usePollWhileVisible(refetchThread, thinking ? THREAD_POLL_THINKING_MS : THREAD_POLL_MS);
+  const push = useLeaderThreadPush(refetchThread);
+  usePollWhileVisible(refetchThread, push.live ? THREAD_POLL_PUSHED_MS : thinking ? THREAD_POLL_THINKING_MS : THREAD_POLL_MS);
   usePollWhileVisible(refetchDirectives, DIRECTIVES_POLL_MS);
 
   // A send's echo is dropped once a server read carries it.

@@ -24,7 +24,7 @@ export function PairedDevicesRows() {
   return <Panel title="Paired devices">
     <PendingPhoneRows />
     {read.error ? <p>Paired devices unavailable.</p> : !read.data ? <p>Loading paired devices…</p>
-      : read.data.devices.length === 0 ? <p>No phones are paired. Run <code>phm verse remote invite &lt;Access-subject&gt;</code> to pair one.</p>
+      : read.data.devices.length === 0 ? <p>No phones are paired. Run <code>phm console remote invite &lt;Access-subject&gt;</code> to pair one.</p>
         : sortDevices(read.data.devices).map(device => {
           const command = revokeCommand(device.id);
           return <SettingRow key={device.id} label={<>{device.label} · {device.email}</>}
