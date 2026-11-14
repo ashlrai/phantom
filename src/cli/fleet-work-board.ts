@@ -9,7 +9,9 @@ import { listWorkBoard } from '../core/comms/work-board.js';
 
 const usage = 'Usage: ashlr fleet work-board [--root <absolute>] [--thread <channel_ref>] [--limit <1..100>] [--json]\n'
   + 'Prints one line per request: ID STATE as-of=... source=... owner-missing=... owner=... claim=... channel=... ref=...,\n'
-  + 'then a footer: items=N truncated=yes|no inbox=ok|unavailable as-of=<now>. Read-only.';
+  + 'then a footer: items=N truncated=yes|no inbox=ok|unavailable as-of=<now>, plus claims=missing|unavailable\n'
+  + 'when the claims table is absent or unreadable (a validated table, even an empty one, prints no claims token).\n'
+  + 'Read-only.';
 
 export async function cmdFleetWorkBoard(args: string[]): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(usage); return 0; }
@@ -37,6 +39,10 @@ export async function cmdFleetWorkBoard(args: string[]): Promise<number> {
       + `owner=${item.owner ?? 'unknown'} claim=${item.claimReceipt ?? 'unknown'} `
       + `channel=${item.channel} ref=${item.channelRef ?? 'none'}`);
   }
-  console.log(`items=${board.items.length} truncated=${board.truncated ? 'yes' : 'no'} inbox=${board.inbox} as-of=${asOf}`);
+  // The claims table state rides the footer only when it is not the nominal
+  // readable state, so a missing or unreadable table can never pass as
+  // verified absence of ownership; 'available' keeps the legacy footer.
+  const claimsNote = board.claims !== undefined && board.claims !== 'available' ? ` claims=${board.claims}` : '';
+  console.log(`items=${board.items.length} truncated=${board.truncated ? 'yes' : 'no'} inbox=${board.inbox} as-of=${asOf}${claimsNote}`);
   return 0;
 }
