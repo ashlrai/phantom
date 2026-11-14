@@ -76,7 +76,7 @@ describe('fleet order state api', () => {
     const boom = async (): Promise<OrderTraceV1> => { throw new Error('SECRET-boom /Users/fakehome/.ashlr-runs'); };
     const r = await call(api({ read: boom }), ORDERS);
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ v: 1, asOf: NOW.toISOString(), sources: 'unavailable', orders: [] });
+    expect(r.body).toEqual({ v: 1, asOf: NOW.toISOString(), sources: 'unavailable', live: 'unavailable', orders: [] });
     expect(r.text).not.toMatch(/SECRET|fakehome/);
   });
 });

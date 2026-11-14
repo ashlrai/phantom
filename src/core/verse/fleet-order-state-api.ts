@@ -2,14 +2,18 @@
  * Mason's inbox orders classified RECEIVED / ASSIGNED / RUNNING / BLOCKED /
  * VERIFIED from the real order trace, served as a sub-path of the work-board
  * family (chained from fleet-work-board-api.ts) so no new route family is
- * registered. Reads local files only, writes nothing, and never returns order
- * text bodies, file paths or a thrown message: an unreadable trace answers
- * 200 with sources 'unavailable' and no orders. */
+ * registered. RUNNING comes from the live process table (listLiveWorkers),
+ * the same source as the CLI: a launched or published job with a live worker
+ * proves it, reported through the body's `live` field. Reads local files and
+ * the host process table only, writes nothing, and never returns order text
+ * bodies, pids, command lines, file paths or a thrown message: an unreadable
+ * trace answers 200 with sources 'unavailable' and no orders. */
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { parseOrderAt } from '../../cli/fleet-orders.js';
-import { classifyOrder, mostAdvancedJob } from '../fleet/order-work-state.js';
+import { classifyOrder, mostAdvancedJob, type LiveJobIds } from '../fleet/order-work-state.js';
 import { readOrderTrace, type OrderTraceV1 } from '../fleet/order-trace.js';
+import { listLiveWorkers, type LiveWorkersSnapshot } from '../fleet/runs-live-workers.js';
 import { sanitizePublicJson } from '../util/public-json.js';
 
 export const VERSE_FLEET_ORDER_STATE_PATH = '/api/verse/fleet/work-board/orders';
@@ -22,11 +26,14 @@ export interface FleetOrderStateApiDeps {
   read?: (opts: { now?: () => number }) => Promise<OrderTraceV1>;
   /** Clock seam for tests; stamps asOf and feeds the classifier. */
   now?: () => Date;
+  /** Live-worker snapshot seam for tests. Default: listLiveWorkers(). */
+  live?: () => Promise<LiveWorkersSnapshot>;
 }
 
 export function createFleetOrderStateApi(deps: FleetOrderStateApiDeps = {}): ApiModule {
   const read = deps.read ?? ((opts) => readOrderTrace(opts));
   const now = deps.now ?? (() => new Date());
+  const readLive = deps.live ?? listLiveWorkers;
   return async (_ctx, req, res, path, method) => {
     if (path !== VERSE_FLEET_ORDER_STATE_PATH) return false;
     if (method !== 'GET') {
@@ -56,8 +63,17 @@ export function createFleetOrderStateApi(deps: FleetOrderStateApiDeps = {}): Api
     try {
       trace = await read({ now: () => nowMs });
     } catch {
-      sendJson(res, 200, { v: 1, asOf: nowIso, sources: 'unavailable', orders: [] });
+      sendJson(res, 200, { v: 1, asOf: nowIso, sources: 'unavailable', live: 'unavailable', orders: [] });
       return true;
+    }
+    let live: LiveJobIds | undefined;
+    let liveState: 'healthy' | 'unavailable';
+    try {
+      const snapshot = await readLive();
+      liveState = snapshot.sourceState;
+      if (liveState === 'healthy') live = { jobIds: new Set(snapshot.workers.map((w) => w.job)), at: snapshot.generatedAt };
+    } catch {
+      liveState = 'unavailable';
     }
     let orders = [...trace.orders].sort((a, b) => b.at.localeCompare(a.at));
     if (since !== undefined) {
@@ -69,8 +85,9 @@ export function createFleetOrderStateApi(deps: FleetOrderStateApiDeps = {}): Api
       generatedAt: trace.generatedAt,
       asOf: nowIso,
       sources: trace.sources,
+      live: liveState,
       orders: orders.slice(0, LIMIT).map((o) => {
-        const c = classifyOrder(o, trace.generatedAt, nowIso);
+        const c = classifyOrder(o, trace.generatedAt, nowIso, live);
         return {
           at: o.at, source: o.source, key: o.key,
           state: c.state, asOf: c.asOf, evidenceSource: c.source,
