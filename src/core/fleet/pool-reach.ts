@@ -29,7 +29,7 @@ export interface PoolReachHost {
   online: boolean | 'unknown';
   lastSeen: string | 'unknown';
   ageSeconds: number | 'unknown';
-  /** The alias names this computer: online is certain without a peer record. */
+  /** The alias names this computer: online is certain only when the complete peer list shows no competitor. */
   isSelf: boolean;
 }
 
@@ -96,6 +96,7 @@ function reachForSlot(
     // The alias names this computer but peers also claim it; which identity
     // the alias reaches is uncertain, so online stays unknown.
     reason = `${slot}: ${alias} matches this computer and ${matches.length} tailnet peers`;
+    if (truncated) reason += '; peer list truncated, more matches may be hidden';
   } else if (matches.length > 1) {
     // Two peers claim the alias; naming one would be a guess.
     reason = `${slot}: ${alias} matches ${matches.length} tailnet peers`;
@@ -113,18 +114,26 @@ function reachForSlot(
       host.ageSeconds = peer.ageSeconds;
     }
   } else if (isSelf) {
-    host.matched = peers.self;
-    if (backendNotRunning) {
-      reason = `${slot}: ${alias} names this computer but the tailscale backend is not running; connectivity unknown`;
+    if (truncated) {
+      // No retained peer claims the alias, but a capped list cannot prove
+      // that peers past the cap do not; the self match stays evidence only,
+      // so matched and online remain unknown until a complete read.
+      reason = `${slot}: ${alias} names this computer but the peer list is truncated; identity not proven unique`;
+    } else {
+      host.matched = peers.self;
+      if (backendNotRunning) {
+        reason = `${slot}: ${alias} names this computer but the tailscale backend is not running; connectivity unknown`;
+      }
     }
   } else {
     reason = truncated
       ? `${slot}: peer list truncated; cannot confirm ${alias}`
       : `${slot}: no tailnet peer named ${alias}`;
   }
-  // Self is certain only when no peer competes for the alias, and online is
-  // certain only while the backend does not report a non-running state.
-  if (isSelf && matches.length === 0 && !backendNotRunning) host.online = true;
+  // Self is certain only when no peer competes for the alias and the peer
+  // list is complete; online is certain only while the backend does not
+  // report a non-running state.
+  if (isSelf && matches.length === 0 && !truncated && !backendNotRunning) host.online = true;
   return { host, reason };
 }
 
