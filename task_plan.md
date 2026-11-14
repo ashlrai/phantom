@@ -17,26 +17,27 @@ Sequential full lint also interrupted after more than five minutes without furth
 
 ---
 
-# Shared capability-routed queue
+# Task Plan: RQ-ROUTER-JEV-1
 
 ## Goal
-Replace enqueue-time lane binding with dispatch-time capability routing, preserving launch fences and security controls. Leave all work uncommitted.
+Ship an advisory, schema-validated router with local-first decisions, bounded escalation, deterministic fallback and dispatcher audit records. Leave changes uncommitted and under 20 files.
 
 ## Phases
-- [x] Read agent prerequisites and establish scope.
-- [x] Trace queue producers, dispatch admission, hysteresis and tests; attempt duplicate check (remote access unavailable).
-- [x] Implement shared requirements, routing, audit records and priority ordering.
-- [x] Update queue documentation and agent indexes.
-- [x] Run affected tests, verification, typecheck, lint and docs checks; write BRIDGE_NOTES.md.
+- [x] Read repository and Phantom gateway instructions; install isolated CLI.
+- [x] Inspect configuration and client contracts.
+- [x] Implement typed routing and read-only dispatcher observation.
+- [x] Add regression coverage and documentation.
+- [ ] Run required checks and write BRIDGE_NOTES.md.
 
-## Errors encountered
-- Global npm install refused EPERM in the configured global prefix; retry with isolated /tmp prefix.
-- Phantom wire status exited 1 due to protected or unavailable editor configs. No auth/config changes attempted.
-- Restored missing tsgo and ESLint dependencies with npm run install:worktree.
-- Baseline replay reproduced two pre-existing Mac fixture failures; supplied missing admission evidence and corrected the stale claim-limit expectation without changing gates.
-- Repository verification failed on existing authority roots/closure and CODEOWNERS drift. Snapshot regeneration is Mason-only under AGENTS.md.
-- Full lint failed on three existing no-control-regex errors; separate real-IO guard reports 12 existing missing members. Changed-file lint and console synchronous-IO guard pass.
-- Optional queue-api test failed on environment-refused loopback HTTP (EPERM); relevant named suites pass.
+## Decisions Made
+- Reuse existing Jev transport and its budget / kill controls.
+- No launch behavior or live fleet installs change.
+
+## Errors Encountered
+- Global npm installation EPERM; installed successfully with /tmp/rq-router-jev-tools prefix.
 
 ## Status
-Complete source candidate with 223 TypeScript tests and 94 focused Mac tests passing. Typecheck, focused lint and docs pass. Full lint, the real-IO membership guard, authority drift and one optional HTTP suite retain unrelated failures. Security review and re-pin are required for live adoption; no installation or publication performed.
+Verifying implementation and dispatcher fixtures.
+
+- Initial typecheck could not start (missing tsgo); npm run install:worktree restored dependencies.
+- MCP doctor reported unavailable companion servers; wire/authority inspection was read-only. No gateway configuration or auth was changed.
