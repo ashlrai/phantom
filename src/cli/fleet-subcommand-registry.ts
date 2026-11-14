@@ -274,6 +274,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'needs-wait': () => import('./fleet-needs-wait.js'),
   'needs-wait-group': () => import('./fleet-needs-wait-group.js'),
   'order-notices': () => import('./fleet-order-notices.js'),
+  'order-results': () => import('./fleet-order-results.js'),
   'order-state': () => import('./fleet-order-state.js'),
   'orders': () => import('./fleet-orders.js'),
   'outcome-why': () => import('./fleet-outcome-why.js'),
