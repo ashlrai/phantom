@@ -28,6 +28,10 @@ const healthyBoard: FleetBoard = {
   claims: [{
     id: 'fake-claim-1', repo: 'ashlrai/phantom', task: 'fake recheck task',
     agent: 'fake-lane-agent', claimedAt: NOW_MS - 1_000, expiresAt: NOW_MS + 3_600_000,
+  }, {
+    // Live claim for the work-board owner; the task↔ledger join requires one.
+    id: 'fake-claim-2', repo: 'ashlrai/phantom', task: 'fake owner task',
+    agent: 'fake-owner-agent', claimedAt: NOW_MS - 2_000, expiresAt: NOW_MS + 3_600_000,
   }],
   messages: [], proposals: [], expiredClaims: 2,
 };
@@ -82,10 +86,13 @@ describe('readFleetRecheck', () => {
       fleetState: { ageSeconds: 60, stale: false }, missing: [],
     });
     expect(recheck.sections.claims).toMatchObject({
-      state: 'VERIFIED', active: 1, expiredClaims: 2, missing: [],
+      state: 'VERIFIED', active: 2, expiredClaims: 2, missing: [],
     });
     expect(recheck.sections.claims.top).toEqual([{
       agent: 'fake-lane-agent', repo: 'ashlrai/phantom', task: 'fake recheck task',
+      expiresAt: new Date(NOW_MS + 3_600_000).toISOString(),
+    }, {
+      agent: 'fake-owner-agent', repo: 'ashlrai/phantom', task: 'fake owner task',
       expiresAt: new Date(NOW_MS + 3_600_000).toISOString(),
     }]);
     expect(recheck.sections.bridge).toMatchObject({ state: 'VERIFIED', missingBridge: null, missing: [] });
@@ -208,7 +215,7 @@ describe('readFleetRecheck', () => {
     expect(recheck.sections.task.missing.join('\n')).toContain('inbox unavailable');
   });
 
-  it('a throwing reader marks only its own section UNKNOWN', async () => {
+  it('a throwing ledger reader marks claims UNKNOWN and the owner claim unverified', async () => {
     const recheck = await readFleetRecheck(deps({
       readFleetBoard: () => { throw new Error('ledger exploded'); },
     }));
@@ -217,7 +224,8 @@ describe('readFleetRecheck', () => {
     });
     expect(recheck.sections.runtime.state).toBe('VERIFIED');
     expect(recheck.sections.bridge.state).toBe('VERIFIED');
-    expect(recheck.sections.task.state).toBe('VERIFIED');
+    // The task pick survives but its owner claim can no longer be proven.
+    expect(recheck.sections.task.state).toBe('UNKNOWN');
     expect(recheck.overall.state).toBe('UNKNOWN');
     expect(recheck.overall.missing).toContain('claims: reader failed');
   });

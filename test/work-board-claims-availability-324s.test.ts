@@ -117,17 +117,16 @@ describe('listWorkBoard claims availability', { timeout: 60_000 }, () => {
     expect(JSON.stringify(board)).not.toContain(claim.token!);
   });
 
-  it('an unavailable inbox keeps the legacy result shape with no claims key', () => {
-    // A valid claims table beside an unreadable inbox: the board has no
-    // items and the failure projection is byte-identical to before — claims
-    // availability is only asserted on boards that list items.
+  it('an unavailable inbox still reports the claims table state', () => {
+    // RQ-PHX-BOARDINBOXFAILCLAIMS325S: the claims source is evidence about
+    // the claims store, not the inbox — a failed scan must not drop it, so
+    // an outage cannot masquerade as an unread claims table either.
     mkdirSync(join(root, 'bus-work-claims'), { mode: 0o700 });
     writeFileSync(claimsFile(), '[]', { mode: 0o600 });
     mkdirSync(join(root, 'bus-inbox'), { mode: 0o700 });
     writeFileSync(join(root, 'bus-inbox', 'messages.json'), 'invalid', { mode: 0o600 });
     const board = listWorkBoard({ root, now });
-    expect(board).toEqual({ items: [], inbox: 'unavailable', truncated: false });
-    expect(board.claims).toBeUndefined();
+    expect(board).toEqual({ items: [], inbox: 'unavailable', truncated: false, claims: 'available' });
   });
 });
 

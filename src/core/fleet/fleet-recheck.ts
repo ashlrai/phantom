@@ -3,7 +3,9 @@
  * readers behind `ashlr fleet recheck` — runtime identity, the claims ledger,
  * channel health and the work board — so a single answer can say which host is
  * answering, whether shared state is fresh, which bridge is missing and which
- * authorized task is running.
+ * authorized task is running. The task pick is joined against the same ledger
+ * read used for the claims section: a work-board owner verifies only when that
+ * exact agent holds a live, unexpired coordination claim right now.
  *
  * Every reader is injected (defaults come from the modules themselves), each
  * read is bounded at SECTION_TIMEOUT_MS, and a reader that throws or stalls
@@ -25,7 +27,7 @@ import { join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
 import { listWorkBoard, type WorkBoardResult } from '../comms/work-board.js';
 import { readChannelHealth, type ChannelHealth, type ChannelHealthReport, type ChannelName } from './channel-health.js';
-import { readFleetBoard, type FleetBoard } from './coordination.js';
+import { readFleetBoard, type FleetBoard, type FleetClaim } from './coordination.js';
 import {
   defaultRuntimeIdentityDeps,
   readRuntimeIdentity,
@@ -102,6 +104,8 @@ export interface FleetRecheckTaskPick {
   state: 'RUNNING' | 'ASSIGNED';
   owner: string;
   claimReceipt: string;
+  /** Live ledger claim held by owner; null unless the join found one. */
+  ledgerClaim: { id: string; repo: string; expiresAt: string } | null;
   asOf: string;
   source: string;
 }
@@ -263,7 +267,21 @@ function bridgeSection(read: { ok: true; value: ChannelHealthReport } | { ok: fa
   return section;
 }
 
-function taskSection(read: { ok: true; value: WorkBoardResult } | { ok: false }, asOf: string): FleetRecheckTask {
+/** Newest live ledger claim for owner; expiry is judged against the recheck's own now, not the reader's. */
+function liveClaimFor(board: FleetBoard, owner: string, nowMs: number): FleetClaim | undefined {
+  let best: FleetClaim | undefined;
+  for (const claim of board.claims) {
+    if (claim.agent !== owner || !(claim.expiresAt > nowMs)) continue;
+    if (best === undefined || claim.claimedAt > best.claimedAt) best = claim;
+  }
+  return best;
+}
+
+function taskSection(
+  read: { ok: true; value: WorkBoardResult } | { ok: false },
+  asOf: string,
+  ledger: { ok: true; value: FleetBoard } | { ok: false },
+): FleetRecheckTask {
   const section: FleetRecheckTask = {
     state: 'UNKNOWN', source: 'work-board', asOf,
     task: null, unowned: 0, unclaimed: 0, missing: ['task: reader failed'],
@@ -285,17 +303,44 @@ function taskSection(read: { ok: true; value: WorkBoardResult } | { ok: false },
   const qualified = eligible
     .filter((item): item is typeof item & { owner: string; claimReceipt: string } => owned(item) && claimed(item))
     .sort((a, b) => Date.parse(b.receivedAt) - Date.parse(a.receivedAt));
-  const pick = qualified.find(item => item.state === 'RUNNING') ?? qualified[0];
+  // The same settled ledger read claimsSection saw: unreadable means the reader
+  // failed or the board reported state 'unknown' — never re-read the ledger.
+  const ledgerBoard = ledger.ok && ledger.value.state === 'known' ? ledger.value : undefined;
+  const nowMs = Date.parse(asOf); // asOf is the injected now's ISO stamp; NaN when the clock read failed.
+  const liveFor = (owner: string): FleetClaim | undefined =>
+    ledgerBoard === undefined ? undefined : liveClaimFor(ledgerBoard, owner, nowMs);
+  // Prefer a qualified item whose owner holds a live claim (RUNNING before
+  // ASSIGNED); only when none matches fall back to the plain newest-first pick.
+  const matched = qualified.filter(item => liveFor(item.owner) !== undefined);
+  const pick = matched.find(item => item.state === 'RUNNING') ?? matched[0]
+    ?? qualified.find(item => item.state === 'RUNNING') ?? qualified[0];
   if (pick !== undefined) {
-    section.state = 'VERIFIED';
-    section.missing = [];
-    section.task = {
+    const base = {
       id: pick.id,
       state: pick.state as 'RUNNING' | 'ASSIGNED',
       owner: pick.owner,
       claimReceipt: pick.claimReceipt,
       asOf: pick.asOf,
       source: pick.source,
+    };
+    if (ledgerBoard === undefined) {
+      section.state = 'UNKNOWN';
+      section.task = { ...base, ledgerClaim: null };
+      section.missing = ['task: claims ledger unreadable, owner claim unverified'];
+      return section;
+    }
+    const claim = liveFor(pick.owner);
+    if (claim === undefined) {
+      section.state = 'BLOCKED';
+      section.task = { ...base, ledgerClaim: null };
+      section.missing = [`task: owner ${pick.owner} holds no live coordination claim`];
+      return section;
+    }
+    section.state = 'VERIFIED';
+    section.missing = [];
+    section.task = {
+      ...base,
+      ledgerClaim: { id: claim.id, repo: claim.repo, expiresAt: new Date(claim.expiresAt).toISOString() },
     };
     return section;
   }
@@ -328,7 +373,7 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
     runtime: runtimeSection(runtime, asOf),
     claims: claimsSection(claims, asOf),
     bridge: bridgeSection(bridge, asOf),
-    task: taskSection(board, asOf),
+    task: taskSection(board, asOf, claims),
   };
   const states = Object.values(sections).map(section => section.state);
   const verified = states.every(state => state === 'VERIFIED');
