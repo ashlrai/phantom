@@ -111,6 +111,7 @@ import { readUniverseGraph } from '../universe/graph-reader.js';
 import type { ProposalsReadResult } from '../inbox/store.js';
 import { handleRunEventsSse, RUN_EVENTS_PATH_RE } from './run-stream.js';
 import { buildHostSummary, HOST_SUMMARY_PATH } from './host-summary.js';
+import { handleUiSettingsApi, UI_SETTINGS_PATH } from './ui-settings-api.js';
 import { handleVerseApi, isVerseApiPath, verseSessionsDigest, verseSessionsSnapshot, verseAccountReadingsDigest } from '../verse/verse-api.js';
 import { handleIdeasDraftApi, isIdeasDraftPath } from './ideas-draft-route.js';
 // V2 autonomy control plane (mounted BEFORE handleVerseApi — see handleApi).
@@ -2112,6 +2113,23 @@ export async function handleApi(
         return true;
       }
       sendJson(res, 200, await getFleetJobChanges(id));
+      return true;
+    }
+
+    // ── GET /api/fleet/job/activity ──────────────────────────────────────
+    // RQ-RADAR-DESKTOP-ACTIVITY: one merged, searchable activity stream per
+    // job — ledger events, commands seen in the worker log, changed files and
+    // the worker's reports. READ-ONLY; same no-auth read class as the rest
+    // of /api/fleet/job*.
+    if (path === '/api/fleet/job/activity' && method === 'GET') {
+      const { getFleetJobActivity } = await import('../fleet/runs-job-activity.js');
+      const { isFleetJobId } = await import('../fleet/runs-job-detail.js');
+      const id = getQueryParam(req.url ?? '', 'id');
+      if (!id || !isFleetJobId(id)) {
+        sendJson(res, 400, { error: 'valid job id required' });
+        return true;
+      }
+      sendJson(res, 200, await getFleetJobActivity(id));
       return true;
     }
 
