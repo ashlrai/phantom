@@ -72,6 +72,7 @@ import { readChannelHealth, type ChannelHealthReport } from './channel-health.js
 import { readFleetBoard, type FleetBoard, type FleetClaim } from './coordination.js';
 import { listCoordination } from '../agents/claim-store.js';
 import { listLiveWorkers, type LiveWorkersSnapshot } from './runs-live-workers.js';
+import { defaultPoolReachDeps, readPoolReach, type PoolReach } from './pool-reach.js';
 import { defaultTailnetPeersDeps, readTailnetPeers, type TailnetPeers } from './tailnet-peers.js';
 import {
   bindPickToCoordination,
@@ -191,6 +192,8 @@ export interface FleetRecheck {
   asOf: string;
   /** Evidence only; see the header. Always present from readFleetRecheck. */
   tailnet?: FleetRecheckTailnet | null;
+  /** Node pool failover reachability; evidence only, never changes a state or the pick. */
+  pool?: PoolReach | null;
   sections: {
     runtime: {
       state: FleetRecheckState;
@@ -257,6 +260,7 @@ export function defaultFleetRecheckDeps(now: () => Date): Required<FleetRecheckD
     },
     listLiveWorkers: () => listLiveWorkers(),
     readTailnetPeers: () => readTailnetPeers(defaultTailnetPeersDeps()),
+    readPool: () => readPoolReach(defaultPoolReachDeps()),
   };
 }
 
@@ -271,6 +275,7 @@ export type FleetRecheckDeps = {
   listCoordination?: () => Promise<RecheckCoordinationListing> | RecheckCoordinationListing;
   listLiveWorkers?: () => Promise<LiveWorkersSnapshot> | LiveWorkersSnapshot;
   readTailnetPeers?: () => Promise<TailnetPeers> | TailnetPeers;
+  readPool?: () => Promise<PoolReach> | PoolReach;
 };
 
 type ReaderResult<T> = { ok: true; value: T } | { ok: false };
@@ -728,6 +733,13 @@ function tailnetEvidence(
   }
 }
 
+function poolEvidence(r: ReaderResult<PoolReach>, asOf: string): PoolReach {
+  const failed: PoolReach = { asOf, self: UNKNOWN, role: UNKNOWN, hosts: [], reasons: ['pool: reader failed'] };
+  if (!r.ok) return failed;
+  const v = r.value;
+  return v !== null && typeof v === 'object' && Array.isArray(v.hosts) && Array.isArray(v.reasons) ? v : failed;
+}
+
 const RANK: Record<FleetRecheckState, number> = { VERIFIED: 0, UNKNOWN: 1, BLOCKED: 2 };
 
 export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<FleetRecheck> {
@@ -747,9 +759,13 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
   if (deps.readTailnetPeers === undefined) {
     d.readTailnetPeers = () => readTailnetPeers({ ...defaultTailnetPeersDeps(), now: () => now });
   }
+  if (deps.readPool === undefined) {
+    const poolDeps = defaultPoolReachDeps();
+    d.readPool = () => readPoolReach({ ...poolDeps, peers: { ...poolDeps.peers, now: () => now } });
+  }
 
-  // All seven readers run concurrently, each inside its own 5 s bound.
-  const [runtime, claims, bridge, board, coordination, live, tailnet] = await Promise.all([
+  // All eight readers run concurrently, each inside its own 5 s bound.
+  const [runtime, claims, bridge, board, coordination, live, tailnet, pool] = await Promise.all([
     attempt(d.readRuntimeIdentity),
     attempt(d.readFleetBoard),
     attempt(d.readChannelHealth),
@@ -757,6 +773,7 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
     attempt(d.listCoordination),
     attempt(d.listLiveWorkers),
     attempt(d.readTailnetPeers),
+    attempt(d.readPool),
   ]);
 
   const sections = {
@@ -774,6 +791,7 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
     schema: FLEET_RECHECK_SCHEMA,
     asOf,
     tailnet: tailnetEvidence(tailnet, asOf, home),
+    pool: poolEvidence(pool, asOf),
     sections,
     overall: { state: verified ? 'VERIFIED' : worst, missing },
   };
