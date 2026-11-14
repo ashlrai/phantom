@@ -10,7 +10,7 @@
 import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { FleetRecheck } from './fleet-recheck.js';
-import { sanitizeIdentityText } from './runtime-identity.js';
+import { sanitizeIdentityText, UNKNOWN } from './runtime-identity.js';
 
 export const RECHECK_RECORD_SCHEMA = 'fleet.recheck-record.v1';
 export const RECHECK_LOG_MAX_LINES = 500;
@@ -35,7 +35,13 @@ export interface RecheckRecord {
   overall: string;
   sections: {
     runtime: { state: string; host: string; installedVersion: string; asOf: string };
-    claims: { state: string; active: number | null; asOf: string };
+    claims: {
+      state: string;
+      /** Live-claim count from the verdict; null when the ledger was
+       * unreadable. Writes and reads both require a non-negative integer. */
+      active: number | null;
+      asOf: string;
+    };
     bridge: { state: string; missingBridge: string | null; asOf: string };
     task: {
       state: string; id: string | null; owner: string | null; claimReceipt: string | null; asOf: string;
@@ -80,20 +86,37 @@ function boundLastVerified(lv: FleetRecheck['sections']['task']['lastVerified'])
   };
 }
 
+/** Stored string-or-null evidence: anything that is not a string collapses to
+ * null so a malformed verdict can never write a wrong-typed row. */
+const textOrNull = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+
+/** Stored claims.active evidence: a non-negative integer count or null. */
+const activeOrNull = (v: unknown): number | null =>
+  (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : null);
+
 /** Projection only: nothing beyond the named fields is copied from the verdict. */
 export function projectRecheck(r: FleetRecheck): RecheckRecord {
   const { runtime, claims, bridge, task } = r.sections;
+  const boardTask = task.task ?? null;
   return {
     schema: RECHECK_RECORD_SCHEMA,
     asOf: r.asOf,
     overall: r.overall.state,
     sections: {
-      runtime: { state: runtime.state, host: runtime.host, installedVersion: runtime.installedVersion, asOf: runtime.asOf },
-      claims: { state: claims.state, active: claims.active, asOf: claims.asOf },
-      bridge: { state: bridge.state, missingBridge: bridge.missingBridge, asOf: bridge.asOf },
+      runtime: {
+        state: runtime.state,
+        host: textOrNull(runtime.host) ?? UNKNOWN,
+        installedVersion: textOrNull(runtime.installedVersion) ?? UNKNOWN,
+        asOf: runtime.asOf,
+      },
+      claims: { state: claims.state, active: activeOrNull(claims.active), asOf: claims.asOf },
+      bridge: { state: bridge.state, missingBridge: textOrNull(bridge.missingBridge), asOf: bridge.asOf },
       task: {
-        state: task.state, id: task.task?.id ?? null, owner: task.task?.owner ?? null,
-        claimReceipt: task.task?.claimReceipt ?? null, asOf: task.asOf,
+        state: task.state,
+        id: textOrNull(boardTask?.id),
+        owner: textOrNull(boardTask?.owner),
+        claimReceipt: textOrNull(boardTask?.claimReceipt),
+        asOf: task.asOf,
         lastVerified: boundLastVerified(task.lastVerified),
       },
       missing: {
@@ -176,12 +199,33 @@ function isLastVerifiedField(v: unknown): boolean {
 function isRecord(v: unknown): v is RecheckRecord {
   if (typeof v !== 'object' || v === null) return false;
   const o = v as Record<string, unknown>;
-  const s = o.sections as Record<string, unknown> | undefined;
-  return o.schema === RECHECK_RECORD_SCHEMA && typeof o.asOf === 'string' && typeof o.overall === 'string'
-    && typeof s === 'object' && s !== null
-    && ['runtime', 'claims', 'bridge', 'task'].every(k => typeof (s[k] as Record<string, unknown> | undefined)?.state === 'string')
-    && (s['missing'] === undefined || s['missing'] === null || isMissing(s['missing']))
-    && isLastVerifiedField((s['task'] as Record<string, unknown> | undefined)?.['lastVerified']);
+  const s = o.sections;
+  if (o.schema !== RECHECK_RECORD_SCHEMA || typeof o.asOf !== 'string' || typeof o.overall !== 'string'
+    || typeof s !== 'object' || s === null) return false;
+  const sections = s as Record<string, unknown>;
+  const part = (key: string): Record<string, unknown> | undefined => {
+    const x = sections[key];
+    return typeof x === 'object' && x !== null ? x as Record<string, unknown> : undefined;
+  };
+  const runtime = part('runtime');
+  const claims = part('claims');
+  const bridge = part('bridge');
+  const task = part('task');
+  if (runtime === undefined || claims === undefined || bridge === undefined || task === undefined) return false;
+  const nullableString = (x: unknown): boolean => x === null || typeof x === 'string';
+  const active = claims['active'];
+  return typeof runtime['state'] === 'string'
+    && typeof runtime['host'] === 'string' && typeof runtime['installedVersion'] === 'string'
+    && typeof runtime['asOf'] === 'string'
+    && typeof claims['state'] === 'string'
+    && (active === null || (typeof active === 'number' && Number.isInteger(active) && active >= 0))
+    && typeof claims['asOf'] === 'string'
+    && typeof bridge['state'] === 'string' && nullableString(bridge['missingBridge'])
+    && typeof bridge['asOf'] === 'string'
+    && typeof task['state'] === 'string' && nullableString(task['id']) && nullableString(task['owner'])
+    && nullableString(task['claimReceipt']) && typeof task['asOf'] === 'string'
+    && isLastVerifiedField(task['lastVerified'])
+    && (sections['missing'] === undefined || sections['missing'] === null || isMissing(sections['missing']));
 }
 
 /** Newest-first rows; unreadable or malformed lines are counted, not thrown. */
