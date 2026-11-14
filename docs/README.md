@@ -282,6 +282,7 @@ canonical release guide for required hosted qualification and publication.
 - [Elite agent efficiency roadmap](ELITE-AGENT-EFFICIENCY.md)
 - [Execution Identity V1](https://github.com/ashlrai/phantom/blob/master/docs/EXECUTION-IDENTITY-V1.md)
 - [Friction loop doctrine](https://github.com/ashlrai/phantom/blob/master/docs/doctrine/FRICTION-LOOP.md)
+- [Constraints and guardrails ledger](https://github.com/ashlrai/phantom/blob/master/docs/strategy/CONSTRAINTS.md)
 - [Grok Bot beside Phantom](https://github.com/ashlrai/phantom/blob/master/docs/GROK-BOT-COMPANION.md)
 - [Harness digest contribution format](https://github.com/ashlrai/phantom/blob/master/docs/HARNESS-DIGEST-FORMAT.md)
 - [Historical release and operator reference](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING-HISTORICAL.md)
