@@ -1,9 +1,10 @@
 /**
  * core/fleet/recheck-record.ts: retained, sanitized as-of evidence for
  * `ashlr fleet recheck`. Projects a FleetRecheck verdict to a small row (no
- * claim task text, no message bodies) and appends it to
- * `<root>/fleet/recheck-log.jsonl`, capped at 500 lines. Takes no lock beyond
- * the atomic rename, sends nothing, and grants no authority. Never throws.
+ * claim task text, no message bodies) plus bounded per-section missing[]
+ * reason lists, and appends it to `<root>/fleet/recheck-log.jsonl`, capped at
+ * 500 lines. Takes no lock beyond the atomic rename, sends nothing, and
+ * grants no authority. Never throws.
  */
 import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -12,6 +13,20 @@ import { sanitizeIdentityText } from './runtime-identity.js';
 
 export const RECHECK_RECORD_SCHEMA = 'fleet.recheck-record.v1';
 export const RECHECK_LOG_MAX_LINES = 500;
+/** Per-list reason cap and per-reason character cap, applied at record time. */
+export const RECHECK_MISSING_MAX = 8;
+export const RECHECK_REASON_MAX = 160;
+
+/** Bounded, sanitized missing-reason evidence: why the verdict did not verify.
+ * Lists mirror the verdict's own missing[] fields (overall is the flattened
+ * cross-section list); nothing beyond those strings is copied. */
+export interface RecheckMissing {
+  overall: string[];
+  runtime: string[];
+  claims: string[];
+  bridge: string[];
+  task: string[];
+}
 
 export interface RecheckRecord {
   schema: typeof RECHECK_RECORD_SCHEMA;
@@ -22,6 +37,8 @@ export interface RecheckRecord {
     claims: { state: string; active: number | null; asOf: string };
     bridge: { state: string; missingBridge: string | null; asOf: string };
     task: { state: string; id: string | null; owner: string | null; claimReceipt: string | null; asOf: string };
+    /** Reason evidence; null on rows recorded before reasons were retained. */
+    missing: RecheckMissing | null;
   };
 }
 
@@ -29,6 +46,19 @@ export type AppendResult = { ok: true; record: RecheckRecord } | { ok: false; re
 
 export function recheckLogPath(root: string): string {
   return join(root, 'fleet', 'recheck-log.jsonl');
+}
+
+/** Copy at most RECHECK_MISSING_MAX non-empty strings, each capped at
+ * RECHECK_REASON_MAX characters; anything else is dropped, never serialized. */
+function boundReasons(list: unknown): string[] {
+  if (!Array.isArray(list)) return [];
+  const out: string[] = [];
+  for (const reason of list) {
+    if (typeof reason !== 'string' || reason === '') continue;
+    out.push(reason.slice(0, RECHECK_REASON_MAX));
+    if (out.length >= RECHECK_MISSING_MAX) break;
+  }
+  return out;
 }
 
 /** Projection only: nothing beyond the named fields is copied from the verdict. */
@@ -45,6 +75,13 @@ export function projectRecheck(r: FleetRecheck): RecheckRecord {
       task: {
         state: task.state, id: task.task?.id ?? null, owner: task.task?.owner ?? null,
         claimReceipt: task.task?.claimReceipt ?? null, asOf: task.asOf,
+      },
+      missing: {
+        overall: boundReasons(r.overall.missing),
+        runtime: boundReasons(runtime.missing),
+        claims: boundReasons(claims.missing),
+        bridge: boundReasons(bridge.missing),
+        task: boundReasons(task.missing),
       },
     },
   };
@@ -79,13 +116,21 @@ export function appendRecheckRecord(root: string, recheck: FleetRecheck, home: s
 
 export interface ReadRecords { rows: RecheckRecord[]; skipped: number; missing: boolean }
 
+function isMissing(v: unknown): v is RecheckMissing {
+  if (typeof v !== 'object' || v === null) return false;
+  const m = v as Record<string, unknown>;
+  return ['overall', 'runtime', 'claims', 'bridge', 'task']
+    .every(k => Array.isArray(m[k]) && (m[k] as unknown[]).every(x => typeof x === 'string'));
+}
+
 function isRecord(v: unknown): v is RecheckRecord {
   if (typeof v !== 'object' || v === null) return false;
   const o = v as Record<string, unknown>;
-  const s = o.sections as Record<string, Record<string, unknown>> | undefined;
+  const s = o.sections as Record<string, unknown> | undefined;
   return o.schema === RECHECK_RECORD_SCHEMA && typeof o.asOf === 'string' && typeof o.overall === 'string'
     && typeof s === 'object' && s !== null
-    && ['runtime', 'claims', 'bridge', 'task'].every(k => typeof s[k]?.state === 'string');
+    && ['runtime', 'claims', 'bridge', 'task'].every(k => typeof (s[k] as Record<string, unknown> | undefined)?.state === 'string')
+    && (s['missing'] === undefined || s['missing'] === null || isMissing(s['missing']));
 }
 
 /** Newest-first rows; unreadable or malformed lines are counted, not thrown. */
@@ -102,7 +147,7 @@ export function readRecheckRecords(root: string, last: number): ReadRecords {
     if (l.trim() === '') continue;
     try {
       const v: unknown = JSON.parse(l);
-      if (isRecord(v)) rows.push(v); else skipped++;
+      if (isRecord(v)) { v.sections.missing ??= null; rows.push(v); } else skipped++;
     } catch { skipped++; }
   }
   return { rows: rows.reverse().slice(0, last), skipped, missing: false };
