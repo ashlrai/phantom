@@ -275,3 +275,78 @@ describe('withRetry — return type', () => {
     expect(result).toBeUndefined();
   });
 });
+
+// Invalid policies must fail before the operation can produce side effects.
+describe('withRetry — policy validation', () => {
+  it.each([0, -1, 1.5, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1])(
+    'rejects invalid maxAttempts %s before invoking callbacks', async (maxAttempts) => {
+      const fn = vi.fn(async () => 'unexpected');
+      const retryable = vi.fn(alwaysRetryable);
+      await expect(withRetry(fn, policy(maxAttempts), retryable)).rejects.toThrow(RangeError);
+      expect(fn).not.toHaveBeenCalled();
+      expect(retryable).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([-1, NaN, Infinity, -Infinity])(
+    'rejects invalid baseDelayMs %s before invoking callbacks', async (baseDelayMs) => {
+      const fn = vi.fn(async () => 'unexpected');
+      const retryable = vi.fn(alwaysRetryable);
+      await expect(withRetry(fn, policy(2, baseDelayMs), retryable)).rejects.toThrow(RangeError);
+      expect(fn).not.toHaveBeenCalled();
+      expect(retryable).not.toHaveBeenCalled();
+    },
+  );
+
+  it('preserves the initial attempt bound when callbacks mutate the policy', async () => {
+    const mutablePolicy = policy(2);
+    const error = new Error('transient');
+    const fn = vi.fn(async () => {
+      mutablePolicy.maxAttempts = Infinity;
+      throw error;
+    });
+    const retryable = vi.fn(() => {
+      mutablePolicy.baseDelayMs = Infinity;
+      return true;
+    });
+    await expect(withRetry(fn, mutablePolicy, retryable)).rejects.toBe(error);
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(retryable).toHaveBeenCalledTimes(1);
+  });
+
+  it('rethrows non-Error values unchanged without classifying the final failure', async () => {
+    const retryable = vi.fn(alwaysRetryable);
+    await expect(withRetry(async () => { throw undefined; }, policy(1), retryable))
+      .rejects.toBeUndefined();
+    expect(retryable).not.toHaveBeenCalled();
+  });
+});
+
+describe('withRetry — delay boundaries', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    { base: 10_000, delays: [10_000, 20_000, 30_000, 30_000] },
+    { base: Number.MAX_VALUE, delays: [30_000, 30_000, 30_000, 30_000] },
+    { base: 0.5, delays: [0.5, 1, 2, 4] },
+  ])('caps every delay for base $base', async ({ base, delays }) => {
+    const observed: number[] = [];
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback: () => void, ms?: number) => {
+      observed.push(ms!);
+      callback();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    });
+    const error = new Error('transient');
+    await expect(withRetry(async () => { throw error; }, policy(5, base), alwaysRetryable))
+      .rejects.toBe(error);
+    expect(observed).toEqual(delays);
+  });
+
+  it('keeps zero-delay retries timer-free beyond the exponential overflow boundary', async () => {
+    const timer = vi.spyOn(globalThis, 'setTimeout');
+    const fn = vi.fn(async () => { throw new Error('transient'); });
+    await expect(withRetry(fn, policy(1030), alwaysRetryable)).rejects.toThrow('transient');
+    expect(fn).toHaveBeenCalledTimes(1030);
+    expect(timer).not.toHaveBeenCalled();
+  });
+});
