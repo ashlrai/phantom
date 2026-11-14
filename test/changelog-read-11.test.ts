@@ -30,11 +30,23 @@ afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, f
 describe('changelogSection', () => {
   it('returns only the requested version, links reduced to text, refs stripped', () => {
     expect(changelogSection(FIXTURE, '3.30.28')).toEqual([
-      '**verse:** show release notes in the card',
+      'verse: show release notes in the card',
       'plain bullet',
       'dash bullet',
     ]);
     expect(changelogSection(FIXTURE, '3.30.27')).toEqual(['older change only in 3.30.27']);
+  });
+
+  it('reads the shipped "## [x.y.z] - date" heading and its **scope:** bullets as plain text', () => {
+    const md = '## [Unreleased]\n\n## [3.30.31] - 2026-11-10\n\n\n### Fixes\n\n'
+      + '* **ci:** fail the quick job when generated files are stale ([#4612](https://example.com/issues/4612)) ([bfc5371](https://example.com/commit/bfc5371))\n'
+      + '* **release:** drop perms (fix-forward [#4607](https://example.com/issues/4607)) ([#4608](https://example.com/issues/4608))\n\n'
+      + '## [3.30.30] - 2026-11-10\n\n* older\n';
+    expect(changelogSection(md, '3.30.31')).toEqual([
+      'ci: fail the quick job when generated files are stale',
+      'release: drop perms (fix-forward #4607)',
+    ]);
+    expect(changelogSection(md, '3.30.30')).toEqual(['older']);
   });
 
   it('accepts a bare "## x.y.z" heading', () => {
