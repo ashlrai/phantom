@@ -292,6 +292,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'planner-tick': () => import('./fleet-planner-tick.js'),
   'post': () => import('./fleet-post.js'),
   'post-merge-verify': () => import('./fleet-post-merge-verify.js'),
+  'pr-cockpit': () => import('./fleet-pr-cockpit.js'),
   'pr-hygiene': () => import('./fleet-pr-hygiene.js'),
   'pr-repeats': () => import('./fleet-pr-repeats.js'),
   'pr-wait': () => import('./fleet-pr-wait.js'),
