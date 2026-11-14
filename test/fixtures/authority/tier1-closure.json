@@ -729,6 +729,7 @@
     "src/core/fleet/quota.ts",
     "src/core/fleet/ready-row-edit.ts",
     "src/core/fleet/ready-supply.ts",
+    "src/core/fleet/recheck-computers-delta.ts",
     "src/core/fleet/recheck-coordination-bind.ts",
     "src/core/fleet/recheck-record.ts",
     "src/core/fleet/recut-loop.ts",
