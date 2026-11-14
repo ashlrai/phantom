@@ -24,12 +24,14 @@ export async function cmdFleetWorkTrace(args: string[]): Promise<number> {
     else if (key === '--root' && root === undefined) root = value;
     else { console.error(usage); return 2; }
   }
-  if (!id || (root !== undefined && (!isAbsolute(root) || root.includes('\0')))) { console.error(usage); return 2; }
+  if (!id || !id.trim() || (root !== undefined && (!isAbsolute(root) || root.includes('\0')))) { console.error(usage); return 2; }
   const now = Date.now();
   const { evidence, sources } = collectBusWorkItemEvidence(id, { root: root ?? join(ashlrHome(), 'fleet'), now });
-  const result = { id, ...classifyWorkItem(evidence, new Date(now).toISOString()), inbox: sources.inbox, claims: sources.claims };
+  const result = { id, ...classifyWorkItem(evidence, new Date(now).toISOString()), inbox: sources.inbox, claims: sources.claims,
+    owner: evidence.owner ?? null, claimReceipt: evidence.claimReceipt ?? null };
   if (json) console.log(JSON.stringify(result));
   else console.log(`${result.id} ${result.state} as-of=${result.asOf} source=${result.source} `
-    + `missing=${result.missing.length ? result.missing.join(',') : 'none'} inbox=${result.inbox} claims=${result.claims}`);
+    + `missing=${result.missing.length ? result.missing.join(',') : 'none'} inbox=${result.inbox} claims=${result.claims} `
+    + `owner=${result.owner ?? 'null'} claimReceipt=${result.claimReceipt ?? 'null'}`);
   return 0;
 }
