@@ -330,6 +330,7 @@
 /test/custody-ledger.test.ts @masonwyatt23
 /test/custody-no-phantom-toml-copy.test.ts @masonwyatt23
 /test/custody-unwrapped-fleet.test.ts @masonwyatt23
+/test/custody-wrap-receipt.test.ts @masonwyatt23
 /test/daemon-capacity-publisher-310.test.ts @masonwyatt23
 /test/daemon-cli-310b.test.ts @masonwyatt23
 /test/daemon-cli-help-safety.test.ts @masonwyatt23
@@ -363,6 +364,7 @@
 /test/devin-usage-reader.test.ts @masonwyatt23
 /test/dispatch-router-310b.test.ts @masonwyatt23
 /test/doctor-dedupe.test.ts @masonwyatt23
+/test/doctor-merge-path-cli.test.ts @masonwyatt23
 /test/drive-pool-routing.test.ts @masonwyatt23
 /test/drive-sim/policy.ts @masonwyatt23
 /test/elite-self-land-315.test.ts @masonwyatt23
@@ -559,6 +561,7 @@
 /test/improve-reverted.test.ts @masonwyatt23
 /test/int4-confine-engines-310b.test.ts @masonwyatt23
 /test/intent-fleet-merge-observe-preservation-231s.test.ts @masonwyatt23
+/test/intent-import-native-preservation-09spz1.test.ts @masonwyatt23
 /test/intent-merge-batch-owner-qualification-292s.test.ts @masonwyatt23
 /test/intent-merge-batch-recovery-09sql1.test.ts @masonwyatt23
 /test/intent-merge-batch-recovery-228s.test.ts @masonwyatt23
@@ -996,12 +999,15 @@
 /test/merge-backlog-read.test.ts @masonwyatt23
 /test/merge-cockpit-exact-206s.test.ts @masonwyatt23
 /test/merge-cockpit-owner-qualification-302s.test.ts @masonwyatt23
+/test/merge-cockpit.test.ts @masonwyatt23
 /test/merge-gate-latency.test.ts @masonwyatt23
 /test/merge-gates-310b.test.ts @masonwyatt23
 /test/merge-graph-original-246s.test.ts @masonwyatt23
 /test/merge-identity-owner-preservation-297s.test.ts @masonwyatt23
 /test/merge-identity-recut.test.ts @masonwyatt23
 /test/merge-identity-registry.test.ts @masonwyatt23
+/test/merge-path-readonly.test.ts @masonwyatt23
+/test/merge-path.test.ts @masonwyatt23
 /test/merge-plan-original-preservation-202s.test.ts @masonwyatt23
 /test/merge-plan-owner-preservation-304s.test.ts @masonwyatt23
 /test/merge-plan-preservation-167.test.ts @masonwyatt23
@@ -1075,6 +1081,8 @@
 /test/recut-loop-attempts.test.ts @masonwyatt23
 /test/recut-loop-landed-03.test.ts @masonwyatt23
 /test/recut-loop.test.ts @masonwyatt23
+/test/recut-mcp-c343.test.ts @masonwyatt23
+/test/recut-range-4480-4599.test.ts @masonwyatt23
 /test/red-team-routing-310.test.ts @masonwyatt23
 /test/red-type-fix-c175.test.ts @masonwyatt23
 /test/redact-known.test.ts @masonwyatt23
