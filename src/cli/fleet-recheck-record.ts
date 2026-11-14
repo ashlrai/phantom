@@ -10,6 +10,8 @@ const usage = 'Usage: ashlr fleet recheck-record [--last N [--json]]\n'
   + 'Without flags: runs the read-only recheck and appends one sanitized row to the\n'
   + 'local recheck log (newest 500 kept); prints "recorded <overall> as-of=<asOf>".\n'
   + '--last N (1..50, default 5): prints the newest N rows, newest first; --json prints them as an array.\n'
+  + 'Nonverified rows print the first missing reason not already named by missingBridge\n'
+  + '("unrecorded" when the row predates retained reasons).\n'
   + 'Exit 0 when the write succeeded, 1 when it failed, 2 on bad arguments.';
 
 export interface FleetRecheckRecordDeps {
@@ -22,7 +24,14 @@ export interface FleetRecheckRecordDeps {
 
 function row(r: RecheckRecord): string {
   const s = r.sections;
-  return `${r.asOf} ${r.overall} runtime=${s.runtime.state} claims=${s.claims.state} bridge=${s.bridge.state} task=${s.task.state}`;
+  const base = `${r.asOf} ${r.overall} runtime=${s.runtime.state} claims=${s.claims.state} bridge=${s.bridge.state} task=${s.task.state}`;
+  if (r.overall === 'VERIFIED') return base;
+  if (s.missing === null) return `${base} missing=unrecorded`;
+  // The v1 row already names the bridge gap in missingBridge; show the first
+  // recorded reason that field does not cover.
+  const shown = s.missing.overall.filter(reason => reason !== s.bridge.missingBridge);
+  if (shown.length === 0) return base;
+  return `${base} missing=${shown[0]}${shown.length > 1 ? ` (+${shown.length - 1} more)` : ''}`;
 }
 
 export async function cmdFleetRecheckRecord(args: string[], deps: FleetRecheckRecordDeps = {}): Promise<number> {
