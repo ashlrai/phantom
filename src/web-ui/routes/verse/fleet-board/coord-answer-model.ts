@@ -147,27 +147,37 @@ export function deriveCoordAnswer({ runtime, channels, board, ledger, now }: Coo
   else if (board === null) row('Example task', 'unavailable', 'unknown');
   else {
     const items = Array.isArray(board.items) ? board.items : [];
-    const active = items.filter((i) => i.state === 'RUNNING' || i.state === 'VERIFIED').sort(newestFirst);
-    const pick = active[0] ?? items.filter((i) => i.state === 'ASSIGNED').sort(newestFirst)[0] ?? null;
-    if (pick === null || typeof pick.id !== 'string' || pick.id === '') {
+    // Same rule as the server verdict (fleet-recheck taskSection): eligible =
+    // RUNNING or ASSIGNED; qualified = owned AND claimed, newest first; pick =
+    // first RUNNING among qualified, else first qualified. (The server's
+    // ledger-owner preference is skipped: the strip's ledger is evidence only.)
+    const named = (v: string | null | undefined): string | null => (typeof v === 'string' && v !== '' ? v : null);
+    const eligible = items
+      .filter((i) => (i.state === 'RUNNING' || i.state === 'ASSIGNED') && typeof i.id === 'string' && i.id !== '')
+      .sort(newestFirst);
+    const qualified = eligible.filter((i) => named(i.owner) !== null && named(i.claimReceipt) !== null);
+    const pick = qualified.find((i) => i.state === 'RUNNING') ?? qualified[0] ?? eligible[0] ?? null;
+    if (pick === null) {
       row('Example task', 'none', 'unknown');
-      missing.push('no RUNNING, VERIFIED or ASSIGNED task on the board');
+      missing.push('no RUNNING or ASSIGNED task on the board');
     } else {
       const ref = pick.channelRef ?? 'no channel ref';
-      exampleTask = { id: pick.id, state: pick.state ?? 'unknown', channelRef: pick.channelRef ?? null };
+      exampleTask = { id: pick.id!, state: pick.state ?? 'unknown', channelRef: pick.channelRef ?? null };
       // The server shape (src/core/comms/work-board.ts) emits owner and
       // claimReceipt on every item; an older payload lacks the keys entirely.
       const carriesClaim = 'owner' in pick || 'claimReceipt' in pick;
-      const owner = typeof pick.owner === 'string' && pick.owner !== '' ? pick.owner : null;
-      const receipt = typeof pick.claimReceipt === 'string' && pick.claimReceipt !== '' ? pick.claimReceipt : null;
       if (!carriesClaim) {
         row('Example task', `${pick.id} · ${pick.state} · ${ref}`, 'unknown');
         missing.push('owner/claim not in web payload');
-      } else if (owner !== null && receipt !== null) {
-        row('Example task', `${pick.id} · ${pick.state} · owner ${owner} · ${ref}`, true);
+      } else if (qualified.length > 0) {
+        row('Example task', `${pick.id} · ${pick.state} · owner ${named(pick.owner)} · ${ref}`, true);
       } else {
         row('Example task', `${pick.id} · ${pick.state} · no named owner/claim · ${ref}`, false);
-        missing.push(`example task ${pick.id} has no named owner/claim`);
+        missing.push('no RUNNING or ASSIGNED task with a named owner and claim receipt');
+        const unowned = eligible.filter((i) => named(i.owner) === null).length;
+        const unclaimed = eligible.filter((i) => named(i.claimReceipt) === null).length;
+        if (unowned > 0) missing.push(`${unowned} task(s) lack a named owner`);
+        if (unclaimed > 0) missing.push(`${unclaimed} task(s) lack a claim receipt`);
       }
     }
   }
