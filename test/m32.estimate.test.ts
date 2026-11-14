@@ -46,6 +46,17 @@ function seedRun(id: string, goal: string, tokens: number, opts?: { steps?: numb
 }
 
 describe('estimateRun', () => {
+  it.each([
+    [undefined, 0.066],
+    [5_000, 0.033],
+  ])('prices the historical token split with maxTokens=%s', async (maxTokens, expected) => {
+    seedRun('reference', 'estimate cloud reference', 10_000);
+    const est = await estimateRun('estimate cloud reference', { maxTokens }, makeCfg());
+    expect(est.wouldBeCloudUsd).toBeCloseTo(expected, 10);
+    expect(est.estCostUsd.median).toBe(0);
+    expect(est.budgetClamped).toBe(maxTokens !== undefined);
+  });
+
   it('returns a zeroed low-confidence estimate on empty history (never throws)', async () => {
     const est = await estimateRun('anything at all', {}, makeCfg());
     expect(est.sampleSize).toBe(0);

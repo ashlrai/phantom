@@ -15,9 +15,7 @@
 
 import type { AshlrConfig, RunEstimate } from '../types.js';
 
-/** Reference cloud pricing ($/M tokens) — mirrors forecast.ts. */
-const CLOUD_REF_PRICE_IN = 3.0;
-const CLOUD_REF_PRICE_OUT = 15.0;
+import { estCostUsd } from '../run/budget.js';
 
 /** Minimum samples for medium/high confidence. */
 const MEDIUM_SAMPLES = 3;
@@ -59,10 +57,7 @@ function percentile(sorted: number[], p: number): number {
 }
 
 function cloudCost(tokensIn: number, tokensOut: number): number {
-  return (
-    (Math.max(0, tokensIn) / 1_000_000) * CLOUD_REF_PRICE_IN +
-    (Math.max(0, tokensOut) / 1_000_000) * CLOUD_REF_PRICE_OUT
-  );
+  return estCostUsd('anthropic', Math.max(0, tokensIn), Math.max(0, tokensOut));
 }
 
 function buildEstimate(
