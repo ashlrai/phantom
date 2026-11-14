@@ -4,8 +4,13 @@
  * thread asks "can you reach live state". Backs `ashlr fleet recheck --reply`.
  *
  * The formatter is pure: no I/O, no clock reads, only the verdict's own asOf.
- * Output is one plain-text block capped at 900 characters, five evidence lines
- * plus a verdict line. A VERIFIED reply closes with "Evidence only; this reply
+ * Output is one plain-text block capped at 900 characters: five evidence lines
+ * plus a verdict line, and one optional "Last verified:" evidence line right
+ * after the Task line when the task section carries lastVerified (the newest
+ * finished item with a named owner and claim receipt). That line is dropped
+ * first when the reply would exceed the cap, so evidence never clips the
+ * verdict line. One optional "Running job:" line follows (dropped before Last verified) when task.liveWorker carries process-table evidence;
+ * it is explicitly not a claim. A VERIFIED reply closes with "Evidence only; this reply
  * grants no dispatch."; anything else names what is missing. The words
  * 'routed' and 'dispatched' never appear — evidence is observed, not claimed.
  *
@@ -46,7 +51,14 @@ export function formatRecheckReply(r: FleetRecheck): string {
   const top = claims.top.slice(0, TOP_CLAIMS)
     .map(c => `${scrub(c.agent)}/${scrub(c.repo)}`).join(', ') || 'none';
   const missing = r.overall.missing.map(scrub).join('; ') || 'no missing detail';
-  const lines = [
+  const lv = task.lastVerified ?? null;
+  const lastVerified = lv === null ? null
+    : `Last verified: ${scrub(lv.id)} · owner ${scrub(lv.owner)} · claim ${scrub(lv.claimReceipt)} · as of ${scrub(lv.asOf)} (evidence only)`;
+  const lw = task.liveWorker ?? null;
+  const running = lw === null ? null
+    : `Running job: ${scrub(lw.job)} · ${scrub(lw.repo)} · lane ${scrub(lw.lane)}/${scrub(lw.tier)}`
+      + ` · up ${lw.ageSeconds === null ? 'unknown' : `${lw.ageSeconds}s`} · as of ${scrub(lw.asOf)} (process evidence, not a claim)`;
+  const build = (withLast: boolean, withRunning: boolean): string => [
     `Phantom recheck ${r.overall.state} · as of ${scrub(r.asOf)} · source fleet-recheck`,
     `Runtime: ${scrub(runtime.host)} · ${scrub(runtime.installedVersion)} · fleet state ${age}`
       + `${runtime.fleetState.stale === true ? ' · stale' : ''} (${runtime.state})`,
@@ -56,12 +68,16 @@ export function formatRecheckReply(r: FleetRecheck): string {
     task.task === null
       ? `Task: none, ${scrub(task.missing[0] ?? 'no task evidence')} (${task.state})`
       : `Task: ${scrub(task.task.id)} ${task.task.state} · owner ${scrub(task.task.owner)} · claim ${scrub(task.task.claimReceipt)} (${task.state})`,
+    ...(withLast && lastVerified !== null ? [lastVerified] : []),
+    ...(withRunning && running !== null ? [running] : []),
     r.overall.state === 'VERIFIED'
       ? 'Evidence only; this reply grants no dispatch.'
       : r.overall.state === 'BLOCKED'
         ? `BLOCKED on: ${missing}`
         : `UNKNOWN: ${missing}`,
-  ];
-  const text = lines.join('\n');
+  ].join('\n');
+  let text = build(true, true);
+  if (text.length > REPLY_MAX) text = build(true, false);
+  if (text.length > REPLY_MAX) text = build(false, false);
   return text.length <= REPLY_MAX ? text : `${text.slice(0, REPLY_MAX - 1)}…`;
 }
