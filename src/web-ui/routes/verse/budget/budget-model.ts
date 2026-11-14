@@ -18,6 +18,7 @@
  */
 import {
   MODE_DESCRIPTIONS,
+  type BudgetEngine,
   type CapacityEngine,
   type BudgetView,
 } from '../../../../core/routing/policy.js';
@@ -28,8 +29,13 @@ import { percentText, tidyProse } from '../autonomy/format.js';
 export function automaticReserveSeats(view: BudgetView): Array<{ seatId: string; reservePercent: number; maxSessionWindowPercent: number | null }> {
   return Object.entries(view.effective ?? {}).flatMap(([seatId, policy]) => {
     if (!policy || !policy.enabled) return [];
-    const engine = view.seatInfo?.find((seat) => seat.seatId === seatId)?.engine;
-    if (engine ? engine === 'local' : /^(devin|local)/i.test(seatId)) return [];
+    // seatInfo's engine is authoritative when the seat is listed; without a
+    // row the id prefix is the only signal — `devin*`/`local*` seats are
+    // never paid seats with a provider reserve to clear. The wire type says
+    // CapacityEngine, but BudgetView is JSON: a 'devin' engine can still
+    // arrive, so the check reads the wider BudgetEngine union.
+    const engine = view.seatInfo?.find((seat) => seat.seatId === seatId)?.engine as BudgetEngine | undefined;
+    if (engine ? engine === 'devin' || engine === 'local' : /^(devin|local)/i.test(seatId)) return [];
     const ceiling = policy.maxSessionWindowPercent ?? null;
     if (!(policy.reservePercent > 0 || (ceiling !== null && ceiling < 100))) return [];
     return [{ seatId, reservePercent: policy.reservePercent, maxSessionWindowPercent: ceiling }];

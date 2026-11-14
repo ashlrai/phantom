@@ -276,6 +276,50 @@ are refused. Spending stays with each member; nothing here changes billing.
 The leader reads `phm org plan --json` each planning pass and applies it within each
 member's contributed limits. Private data, mail and messages are never pooled.
 
+### Assign responsibilities without expanding authority
+
+The leader starts with `phm org show --json` to identify declared members,
+machines, lane contributions, agent roles and reporting lines. Each co-founder
+uses `phm org join` on their own machine to opt in only the lane share they
+intend to contribute. Join records do not transfer provider sign-in or permit
+another agent to enroll someone else's capacity.
+
+The leader then reads `phm org plan --json`, or supplies an explicit queue
+snapshot with `--queue`, and uses the returned assignments, roles and
+`unassigned` reasons to allocate responsibility within existing contributions.
+Planning is a proposal, not a queue write, reservation, credential grant or
+permission to spend. Check model capability and [lane tool parity](AGENT-TOOLCHAIN.md#lane-tool-parity-audit-rq-delegate-scope-1)
+before turning an assignment into a brief. Use a [tier-scaled scope](QUEUE.md#tier-scaled-session-scope)
+and one mergeable PR per job; account for live claims and open PRs.
+
+Agents may propose owners, role changes, related feature work, queue priorities,
+lane choices and narrower contribution use. The leader can execute already
+authorized work within the member's opted-in limits without a per-job Mason
+approval. New member contributions require that member's own declaration and
+opt-in; a planner cannot raise shares or borrow another member's auth. Team
+access changes use the existing human owner/admin process described in
+[Team](TEAM.md#invite-join-and-remove-a-teammate).
+
+Mason is needed for passwords, 2FA, device approvals and payments, including
+new spending. Security-pinned changes and hold-list work retain their existing
+review requirements; private data cannot be made public. Org membership, a
+plan or a larger session brief grants none of those exceptions. Do not add a
+new approval step for routine responsibility assignment.
+
+Read-only planning example using synthetic ids:
+
+```sh
+phm org show --json
+printf '%s\n' '[{"id":"RQ-FEATURE","priority":1,"costPct":2,"lane":"devin"}]' > /tmp/org-scope-jobs.json
+phm org plan --queue /tmp/org-scope-jobs.json --json
+```
+
+For opt-in on a member's own declared machine, substitute its declared ids:
+
+```sh
+phm org join --member <member-id> --machine <machine-id> --lane devin=20 --json
+```
+
 ```bash
 cp docs/examples/org.toml ~/.ashlr/org.toml
 phm org join --member evan-deloria --machine evan-mac --lane claude=20 --json

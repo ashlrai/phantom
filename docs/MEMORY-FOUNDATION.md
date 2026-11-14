@@ -312,3 +312,28 @@ does not invalidate unchanged blobs. Git/storage errors propagate rather than
 silently treating unverifiable entries as applicable. Accepted entries include
 all recorded evidence. This hook does not automatically inject memory into
 agent prompts; evaluation callers must opt in explicitly.
+
+## Dynamic active memory
+
+`src/core/memory/active.ts` persists screened, caller-reviewed snapshots as
+immutable private files. `saveRepositoryMemory(repo, snapshot)` stores a nonempty,
+single-project snapshot under `~/.phantom/active-memory/<canonical-root-hash>/<project>/`.
+`repositoryMemoryContext(repo, snapshotId, revision, query)` selects that repository
+and project before loading evidence. Worktrees have separate identities; moving a
+repository requires saving a new snapshot. Owner and audience filtering still
+applies inside each snapshot. Scope labels are caller claims, not authorization.
+
+Every retrieval rechecks in-scope `file:` citations against SHA-256 of the entire
+current file. Edits (including uncommitted changes), deletion, missing files,
+escaping symlinks, unsupported locators and files above 1 MiB exclude the affected
+facts and their dependent facts through the existing pack builder. Invalidated
+facts remain on disk for audit; an explicitly authored new revision refreshes them.
+These checks describe the worktree at retrieval time and do not lock later edits.
+
+Active retrieval opts into `preferFresh` ranking: relevance and evidence quality
+come first, then more recent observations break ties. Default pack ranking stays
+stable for existing consumers. Snapshot records never grant execution
+permission. `resumeAgentCheckpointWithMemory` also supports explicit snapshot
+paths with live citation checks; callers using that lower-level API must bind the
+path to the intended repository themselves. Snapshot creation and revision choice
+are explicit; this version does not extract or approve facts automatically.

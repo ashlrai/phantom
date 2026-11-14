@@ -69,6 +69,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Quarantine a flaky test only with a tracked, expiring ledger row | [Quarantine ledger](https://github.com/ashlrai/phantom/blob/master/docs/QUARANTINE-LEDGER.md) |
 | See real candidates, rejection and parent-linked improvement without model credentials | [Executable demo](DEMO.md) |
 | Understand the objective and how progress is measured | [Phantom North Star](NORTH-STAR.md) |
+| Route future work toward the optimized organization architecture | [Phantom end-state architecture](https://github.com/ashlrai/phantom/blob/master/docs/strategy/ENDSTATE.md) |
 | Plan the chat-first assistant delivery sequence | [Chat-first child jobs](https://github.com/ashlrai/phantom/blob/master/docs/plans/CHAT-FIRST-NORTH-STAR.md) |
 | Separate tested firm machinery from remaining activation and integration work | [Autonomy gap map](AUTONOMY-GAP.md) |
 | Exercise signed graph execution and a deliberately lying candidate | [Firm graph fixture](FIRM-DEMO.md) |
@@ -87,6 +88,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Measure lane/model reliability across N clean-worktree trials and feed routing | [pass^k offline eval suite](https://github.com/ashlrai/phantom/blob/master/docs/EVAL-PASSK.md) |
 | Navigate source entry points, subsystems and contracts | [Code map (source guide)](https://github.com/ashlrai/phantom/blob/master/docs/CODEMAP.md) |
 | A/B test prompt variants per job class and promote only significant winners | [Prompt-variant A/B eval](https://github.com/ashlrai/phantom/blob/master/docs/router/prompt-ab.md) |
+| Use the one-ask scope preflight in code | [One-ask intake boundary — source guide](https://github.com/ashlrai/phantom/blob/master/docs/ONE-ASK-INTAKE.md) |
 | Understand the current components and their boundaries | [Architecture](ARCHITECTURE.md#current-runtime-map) |
 | Follow source responsibilities, flows and extension points | [Architecture knowledge map](https://github.com/ashlrai/phantom/blob/master/docs/ARCHITECTURE-KNOWLEDGE.md) |
 | Review documentation inventory and audit coverage | [Documentation audit](https://github.com/ashlrai/phantom/blob/master/docs/DOCUMENTATION-AUDIT.md) |
@@ -245,6 +247,8 @@ canonical release guide for required hosted qualification and publication.
 
 - [Local model inventory](https://github.com/ashlrai/phantom/blob/master/docs/MODEL-INVENTORY.md): opt-in Mac benchmarks, admission and fleet schema.
 
+- [Routines](https://github.com/ashlrai/phantom/blob/master/docs/ROUTINES.md): UTC-cron YAML schedules with executor failover, learned local-first placement runs, and a portable provider placement registry.
+
 ## All documents
 
 - [Agent network channels](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-NETWORK-CHANNELS.md)
@@ -278,6 +282,7 @@ canonical release guide for required hosted qualification and publication.
 - [Elite agent efficiency roadmap](ELITE-AGENT-EFFICIENCY.md)
 - [Execution Identity V1](https://github.com/ashlrai/phantom/blob/master/docs/EXECUTION-IDENTITY-V1.md)
 - [Friction loop doctrine](https://github.com/ashlrai/phantom/blob/master/docs/doctrine/FRICTION-LOOP.md)
+- [Constraints and guardrails ledger](https://github.com/ashlrai/phantom/blob/master/docs/strategy/CONSTRAINTS.md)
 - [Grok Bot beside Phantom](https://github.com/ashlrai/phantom/blob/master/docs/GROK-BOT-COMPANION.md)
 - [Harness digest contribution format](https://github.com/ashlrai/phantom/blob/master/docs/HARNESS-DIGEST-FORMAT.md)
 - [Historical release and operator reference](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING-HISTORICAL.md)
@@ -341,8 +346,9 @@ canonical release guide for required hosted qualification and publication.
 - [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references only.
 
 - [Verify a worktree change](https://github.com/ashlrai/phantom/blob/master/docs/VERIFY-CHANGE.md): local toolchain checks and safe verdicts.
+- [Done contract](https://github.com/ashlrai/phantom/blob/master/docs/DONE-CONTRACT.md): the layered `done-contract.v1` file schema, floor checks, frozen acceptance criteria, verify commands, and `phm verify done`, the one generic validator (backward compatible with freeform bridge notes).
 
-- [Tier-1 import diagnosis](TIER1-WHY.md) — shortest runtime chains and the fleet apps boundary.
+- [Tier-1 import diagnosis](https://github.com/ashlrai/phantom/blob/master/docs/TIER1-WHY.md): shortest runtime chains and the fleet apps boundary.
 
 - [Agent checkpoints](AGENT-CHECKPOINT.md): explicit durable state and resume format.
 - [Stigmergic coordination](https://github.com/ashlrai/phantom/blob/master/docs/STIGMERGY.md): `phm trail` file markers, claim/lease, heartbeats, resumable checkpoints; agents pick up stalled work.
@@ -353,8 +359,11 @@ canonical release guide for required hosted qualification and publication.
 - [Rebase-wave status](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-REBASE-STATUS.md) — read-only conflict and queue coverage snapshot.
 - [Merge queue latency](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-LATENCY.md) — record observed queue transitions, inspect blocker and eligibility timing, and re-arm dropped auto-merges after transient queue failures.
 - [Merge-batch planner](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-BATCH.md) — read-only file-overlap batching of open PRs with a least-rebase-churn order.
+- [Merge-plan scoreboard](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-PLAN.md) — read-only merges/hour, failure causes, rebase candidates and superseded-duplicate close proposals from one PR snapshot, with before/after diffs.
 - [Rebase-plan](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-REBASE-PLAN.md) — read-only conflict-to-queue wiring: clusters conflicting bridge PRs by file overlap and emits ready.tsv-ready rebase-job specs.
 
 - [Empty job reasons](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-EMPTIES.md): group recorded empty outcomes and review filler suggestions.
 
 [Fable 5.2 orchestration and host handoff](https://github.com/ashlrai/phantom/blob/master/docs/FABLE-ORCHESTRATOR.md)
+
+- [Typed routing decisions](ROUTING.md): local-first typed route advice, bounded schema retry and dispatcher audit records.
