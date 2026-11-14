@@ -15,8 +15,11 @@ everything else.
 
 ## Pull request scope
 
-- Keep pull requests small and single-concern. Move unrelated refactors or
-  drive-by fixes into a separate task instead of enlarging the diff.
+- Deliver one coherent, mergeable pull request per job within its tier budget.
+  Frontier briefs may combine related concerns to finish the complete feature,
+  with tests and docs, up to 40 files / 600 changed lines. Work stays at
+  15 / 200, mid at 8 / 120, and fast at 2 / 80. Explicit narrower task limits
+  win. Move unrelated refactors or drive-by fixes into a separate task.
 - Never touch `.github/**`, CODEOWNERS, or release/publish configuration.
 - Never add, print, commit, or message secrets, API keys, tokens, or
   environment variable dumps.
