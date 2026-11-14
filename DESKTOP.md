@@ -150,3 +150,5 @@ authority Stop and zero execution leases and requests an operator restart.
 This change preserves those gates. Daemon-specific admission, bounded
 sidecar-job deferral in the app, and automatic relaunch need a coordinated
 host installer change before seamless application can ship.
+
+`phm update why --json` reads the installed app version and the public update feed without downloading or installing an update. It reports the feed version and a plain-language reason. A newer feed entry does not prove its signature is valid; signature verification requires the updater to inspect the signed artifact.
