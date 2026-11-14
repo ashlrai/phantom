@@ -29,6 +29,7 @@ import {
 import { workResultBody, type WorkResultBody } from '../comms/work-result-body.js';
 import { postBusReply, replyResult, type ReplyResult } from '../fleet/bus-reply-post.js';
 import { sanitizePublicJson } from '../util/public-json.js';
+import { VERSE_FLEET_ORDER_STATE_PATH, handleFleetOrderStateApi } from './fleet-order-state-api.js';
 
 export const VERSE_FLEET_WORK_BOARD_PATH = '/api/verse/fleet/work-board';
 export const VERSE_FLEET_WORK_RESULT_PATH = `${VERSE_FLEET_WORK_BOARD_PATH}/result`;
@@ -44,6 +45,8 @@ export interface FleetWorkBoardApiDeps {
   now?: () => Date;
   /** Poster seam for tests. Default: postBusReply() at the default fleet root, as the CLI. */
   postReply?: (requestId: string, replyId: string, body: WorkResultBody) => ReplyResult;
+  /** Sub-path module for /work-board/orders. Default: handleFleetOrderStateApi. */
+  orders?: ApiModule;
 }
 
 const MAX_ID_CHARS = 200;
@@ -116,7 +119,9 @@ export function createFleetWorkBoardApi(deps: FleetWorkBoardApiDeps = {}): ApiMo
   const read = deps.read ?? ((opts) => listWorkBoard(opts));
   const now = deps.now ?? (() => new Date());
   const post = deps.postReply ?? ((requestId, replyId, body) => postBusReply(requestId, replyId, body));
-  return async (_ctx, req, res, path, method) => {
+  const orders = deps.orders ?? handleFleetOrderStateApi;
+  return async (ctx, req, res, path, method) => {
+    if (path === VERSE_FLEET_ORDER_STATE_PATH) return orders(ctx, req, res, path, method);
     if (path === VERSE_FLEET_WORK_RESULT_PATH) {
       if (method !== 'POST') sendJson(res, 405, { error: 'method not allowed' });
       else await handleResultPost(req, res, post);
