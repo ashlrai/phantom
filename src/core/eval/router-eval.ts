@@ -25,6 +25,7 @@
  * not counterfactual certainty.
  */
 
+import { asRecord, fail, optString, parseDatasetLine } from './dataset-jsonl.js';
 import { createHash } from 'node:crypto';
 
 // ---------------------------------------------------------------------------
@@ -92,29 +93,12 @@ export interface RouterEvalDataset {
   sha256: string;
 }
 
-function fail(file: string, line: number, why: string): never {
-  throw new Error(`${file}:${line}: ${why}`);
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
-}
-
 function optNumber(file: string, line: number, rec: Record<string, unknown>, key: string, integer = false): number | undefined {
   const v = rec[key];
   if (v === undefined || v === null) return undefined;
   if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || (integer && !Number.isSafeInteger(v))) {
     fail(file, line, `bad ${key}`);
   }
-  return v;
-}
-
-function optString(file: string, line: number, rec: Record<string, unknown>, key: string): string | undefined {
-  const v = rec[key];
-  if (v === undefined || v === null) return undefined;
-  if (typeof v !== 'string') fail(file, line, `bad ${key}`);
   return v;
 }
 
@@ -169,12 +153,7 @@ export function parseRouterEvalDataset(text: string, file = 'jobs.jsonl'): Route
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i]!.trim();
     if (raw === '' || raw.startsWith('#')) continue;
-    let rec: Record<string, unknown>;
-    try {
-      rec = JSON.parse(raw);
-    } catch {
-      fail(file, i + 1, 'not JSON');
-    }
+    const rec = parseDatasetLine(raw, file, i + 1);
     if (rec!.v !== 1) fail(file, i + 1, `unsupported v ${JSON.stringify(rec!.v)}`);
     if (rec!.kind === 'meta') {
       if (jobs.length > 0) fail(file, i + 1, 'meta must precede job lines');
