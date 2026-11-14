@@ -10,7 +10,7 @@ import {
   loadAgentNetworkConfig, loadCommsConfirmation, slackChannelForTopic, slackThreadRef,
   type AgentNetworkConfig, type SlackBridgeConfig,
 } from './slack-network.js';
-import { readSlackJournal, type SlackJournalRead } from './slack-journal.js';
+import { readSlackJournal, type SlackJournalRead, type SlackObservation } from './slack-journal.js';
 import { readSlackSendReceipts } from './slack-send-receipts.js';
 import { bindSlackReplies, type InboundRequest } from './slack-reply-binding.js';
 import {
@@ -103,6 +103,21 @@ function nextStep(state: AgentNetworkConfig['state'], slack: AgentNetworkConfig[
 const IGNORED_REASON_CODE = /^[a-z0-9][a-z0-9_.:-]{0,63}$/;
 const IGNORED_REASONS_MAX_ROWS = 8;
 
+/**
+ * Ingested journal rows that carry the ids a reply can bind to, in journal
+ * order. Rows without channel/message/thread ids are skipped: they cannot be
+ * bound, so callers must treat them as unanswered rather than answered.
+ */
+export function slackInboundRequests(entries: readonly SlackObservation[]): InboundRequest[] {
+  const requests: InboundRequest[] = [];
+  for (const entry of entries) {
+    if (entry.decision === 'ingested' && entry.channelId && entry.messageTs && entry.threadTs) {
+      requests.push({ at: entry.at, channelId: entry.channelId, messageTs: entry.messageTs, threadTs: entry.threadTs });
+    }
+  }
+  return requests;
+}
+
 export function buildSlackBridgeStatus(options: SlackBridgeStatusOptions = {}): SlackBridgeStatus {
   const now = options.now ?? (() => new Date());
   const config = loadAgentNetworkConfig({ ...(options.configPath ? { path: options.configPath } : {}), ...(options.home ? { home: options.home } : {}) });
@@ -110,14 +125,11 @@ export function buildSlackBridgeStatus(options: SlackBridgeStatusOptions = {}): 
   const journal = readSlackJournal({ ...(options.runsDir ? { runsDir: options.runsDir } : {}), limit: 4096 });
   let ingested = 0;
   let ignored = 0;
-  const requests: InboundRequest[] = [];
+  const requests = slackInboundRequests(journal.entries);
   const reasonRows = new Map<string, { count: number; lastAt: string }>();
   for (const entry of journal.entries) {
     if (entry.decision === 'ingested') {
       ingested++;
-      if (entry.channelId && entry.messageTs && entry.threadTs) {
-        requests.push({ at: entry.at, channelId: entry.channelId, messageTs: entry.messageTs, threadTs: entry.threadTs });
-      }
     } else {
       ignored++;
       const reason = entry.reason === undefined ? 'unspecified' : IGNORED_REASON_CODE.test(entry.reason) ? entry.reason : 'invalid-reason';
