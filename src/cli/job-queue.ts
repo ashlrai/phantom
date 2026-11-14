@@ -7,8 +7,10 @@ import { draftCosResult } from '../core/cos/intake.js';
 import { dirname } from 'node:path';
 
 const HELP = `Usage: phm queue <command> [--dir <queue-directory>] [--json]
-  add <id> --priority P0 --pool <pool> --tier <tier> --repo <repo>
-      --scope <text> --acceptance <text> [--deps <id,id>]
+  add <id> --priority P0 --tier <tier> --repo <repo>
+      --scope <text> --acceptance <text> [--deps <id,id>] [--pool <hint>]
+      [--preferred-lane <hint>] [--needs git,gh,node] [--min-tier <tier>]
+      [--max-cost-class local|included|metered] [--exclusive] [--impact <score>]
   claim <id> --owner <worker>
   done <id> --owner <worker> [--pr-url <https-url>] [--result <text>]
   block <id> --owner <worker> --reason <text>
@@ -23,15 +25,15 @@ export async function cmdJobQueue(args: string[]): Promise<number> {
   let json = args.includes('--json');
   try {
     const { values: parsedValues, positionals } = parseArgs({ args, allowPositionals: true, strict: true, options: {
-      failed: { type: 'boolean' }, 'dry-run': { type: 'boolean' }, json: { type: 'boolean' }, md: { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
-      ...Object.fromEntries(['since', 'query', 'mode', 'dir', 'priority', 'pool', 'tier', 'repo', 'scope', 'acceptance', 'deps', 'owner', 'pr-url', 'reason', 'result'].map(key => [key, { type: 'string' as const }])),
+      exclusive: { type: 'boolean' }, failed: { type: 'boolean' }, 'dry-run': { type: 'boolean' }, json: { type: 'boolean' }, md: { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
+      ...Object.fromEntries(['since', 'query', 'mode', 'dir', 'priority', 'pool', 'tier', 'repo', 'scope', 'acceptance', 'deps', 'owner', 'pr-url', 'reason', 'result', 'preferred-lane', 'needs', 'min-tier', 'max-cost-class', 'impact'].map(key => [key, { type: 'string' as const }])),
     } });
     const values: Record<string, string | boolean | undefined> = parsedValues;
     json = values.json === true;
     if (values.help || !positionals.length) { console.log(HELP); return 0; }
     const [command, operand] = positionals;
     const allowed: Record<string, string[]> = {
-      add: ['priority', 'pool', 'tier', 'repo', 'scope', 'acceptance', 'deps'], claim: ['owner'],
+      add: ['priority', 'pool', 'tier', 'repo', 'scope', 'acceptance', 'deps', 'preferred-lane', 'needs', 'min-tier', 'max-cost-class', 'exclusive', 'impact'], claim: ['owner'],
       replay: ['failed', 'since', 'query', 'mode', 'dry-run'], done: ['owner', 'pr-url', 'result'], block: ['owner', 'reason'], list: [], import: [], export: ['md'],
     };
     if (!Object.hasOwn(allowed, command)) throw new Error(`Unknown queue command: ${command}`);
@@ -48,7 +50,17 @@ export async function cmdJobQueue(args: string[]): Promise<number> {
       case 'replay':
         if (!values.failed) throw new Error('Required: --failed');
         result = await store.replay({ since: values.since as string | undefined, query: values.query as string | undefined, mode: values.mode as import('../core/queue/replay.js').ReplayOptions['mode'], dryRun: values['dry-run'] === true }); break;
-      case 'add': result = await store.add({ id: operand, status: 'READY', priority: required('priority'), pool: required('pool'), tier: required('tier'), repo: required('repo'), scope: required('scope'), acceptance: required('acceptance'), deps: typeof values.deps === 'string' ? values.deps.split(',') : [], claims: [] }); break;
+      case 'add': result = await store.add({
+        id: operand, status: 'READY', priority: required('priority'), pool: typeof values.pool === 'string' ? values.pool : 'any',
+        tier: required('tier'), repo: required('repo'), scope: required('scope'), acceptance: required('acceptance'),
+        deps: typeof values.deps === 'string' ? values.deps.split(',') : [], claims: [],
+        ...(values['preferred-lane'] !== undefined ? { preferred_lane: required('preferred-lane') } : {}),
+        ...(values.needs !== undefined ? { needs: required('needs').split(',') } : {}),
+        ...(values['min-tier'] !== undefined ? { min_tier: required('min-tier') as import('../core/queue/schema.js').QueueJob['min_tier'] } : {}),
+        ...(values['max-cost-class'] !== undefined ? { max_cost_class: required('max-cost-class') as import('../core/queue/schema.js').QueueJob['max_cost_class'] } : {}),
+        ...(values.exclusive !== undefined ? { exclusive: values.exclusive === true } : {}),
+        ...(values.impact !== undefined ? { impact: Number(required('impact')) } : {}),
+      }); break;
       case 'claim': result = await store.claim(operand, required('owner')); break;
       case 'done': {
         if (operand.startsWith('cos-')) {
