@@ -435,6 +435,7 @@
 /test/fleet-live-api-310b.test.ts @masonwyatt23
 /test/fleet-local-gate.test.ts @masonwyatt23
 /test/fleet-merge-age.test.ts @masonwyatt23
+/test/fleet-merge-batch-runner.test.ts @masonwyatt23
 /test/fleet-merge-delay.test.ts @masonwyatt23
 /test/fleet-merge-latency.test.ts @masonwyatt23
 /test/fleet-merge-pace-core-02.test.ts @masonwyatt23

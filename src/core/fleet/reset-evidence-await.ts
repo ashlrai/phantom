@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { lstatSync } from 'node:fs';
-import { abortableSleep, isAwaitMs } from './needs-mason-answer-await.js';
+import { abortableSleep, boundedAwait, isAwaitMs, wireAwaitCancel } from '../util/await-support.js';
 import { readUsageResets, type UsageResetRow } from './usage-reset-detect.js';
 import { scrubPrivateText } from '../util/scrub.js';
 
@@ -67,46 +67,18 @@ export async function awaitResetEvidence(options: { lane: string; timeoutMs: num
     return state === 'stop' ? 'cancelled' : state === 'go' ? undefined : 'failed';
   };
   const controller = new AbortController();
-  const cancel = (): void => controller.abort();
-  process.on('SIGINT', cancel); process.on('SIGTERM', cancel);
-  signal?.addEventListener('abort', cancel, { once: true });
-  if (signal?.aborted) cancel();
+  const detach = wireAwaitCancel(controller, signal);
   // Race each operation against both cancellation and the remaining deadline.
   // Promise.race attaches rejection handlers even to a reader that finishes late.
-  const bounded = async <T>(operation: () => Promise<T>): Promise<
-    { kind: 'value'; value: T } | { kind: 'deadline' | 'cancelled' | 'failed' }> => {
-    const timer = new AbortController();
-    let onAbort: () => void = () => {};
-    const cancelled = new Promise<{ kind: 'cancelled' }>(resolve => {
-      onAbort = () => resolve({ kind: 'cancelled' });
-      controller.signal.addEventListener('abort', onAbort, { once: true });
-      if (controller.signal.aborted) onAbort();
-    });
-    try {
-      const monitor = async (): Promise<{ kind: 'deadline' | 'cancelled' | 'failed' }> => {
-        while (!timer.signal.aborted) {
-          const remaining = deadline - now();
-          if (remaining <= 0) return { kind: 'deadline' };
-          await sleep(stopFile === undefined ? remaining : Math.min(250, remaining), timer.signal);
-          if (timer.signal.aborted) return { kind: 'failed' };
-          if (now() >= deadline) return { kind: 'deadline' };
-          const stop = checkStop();
-          if (stop) return { kind: stop };
-        }
-        return { kind: 'failed' };
-      };
-      return await Promise.race([
-        Promise.resolve().then(operation).then(value => ({ kind: 'value' as const, value }), () => ({ kind: 'failed' as const })),
-        monitor().catch(() => ({ kind: 'failed' as const })),
-        cancelled,
-      ]);
-    } finally { timer.abort(); controller.signal.removeEventListener('abort', onAbort); }
+  const bound = {
+    cancel: controller.signal, deadlineMs: deadline, now, sleep,
+    watch: stopFile === undefined ? undefined : checkStop,
   };
   try {
     while (!controller.signal.aborted && now() < deadline) {
       const stop = checkStop();
       if (stop) { result.outcome = stop; break; }
-      const read = await bounded(() => (deps.read ?? readUsageResets)({ runsDir }));
+      const read = await boundedAwait(() => (deps.read ?? readUsageResets)({ runsDir }), bound);
       if (controller.signal.aborted) { result.outcome = 'cancelled'; break; }
       if (now() >= deadline || read.kind === 'deadline') break;
       if (read.kind !== 'value') { result.outcome = read.kind; break; }
@@ -124,7 +96,7 @@ export async function awaitResetEvidence(options: { lane: string; timeoutMs: num
           && timestamp > boundary && timestamp <= wallNow()) {
         result.outcome = 'observed'; break;
       }
-      const wait = await bounded(() => sleep(Math.min(pollMs, deadline - now()), controller.signal));
+      const wait = await boundedAwait(() => sleep(Math.min(pollMs, deadline - now()), controller.signal), bound);
       if (controller.signal.aborted) { result.outcome = 'cancelled'; break; }
       if (wait.kind === 'failed') { result.outcome = 'failed'; break; }
       if (wait.kind === 'cancelled') { result.outcome = 'cancelled'; break; }
@@ -132,9 +104,6 @@ export async function awaitResetEvidence(options: { lane: string; timeoutMs: num
     }
     if (controller.signal.aborted) result.outcome = 'cancelled';
   } catch { result.outcome = 'failed'; }
-  finally {
-    controller.abort(); process.off('SIGINT', cancel); process.off('SIGTERM', cancel);
-    signal?.removeEventListener('abort', cancel);
-  }
+  finally { detach(); }
   return result;
 }

@@ -53,6 +53,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Your task | Canonical guide |
 |-----------|-----------------|
 | Run tests for changed files | [Test changed files](https://github.com/ashlrai/phantom/blob/master/docs/TEST-CHANGED.md) |
+| Review the proposed risk-based CI path and savings model | [Frictionless merge path](https://github.com/ashlrai/phantom/blob/master/docs/ci/FRICTIONLESS-PATH.md) |
 | Replay CI test feedback and order failures first | [CI test feedback](https://github.com/ashlrai/phantom/blob/master/docs/CI-TEST-FEEDBACK.md) |
 | Inspect changed-file and test dependency relationships | [PR impact map](https://github.com/ashlrai/phantom/blob/master/docs/CI-IMPACT-MAP.md) |
 | Review agent-native CI, risk selection and post-merge metrics | [CI rightsizing proposal](https://github.com/ashlrai/phantom/blob/master/docs/strategy/CI-RIGHTSIZING.md) |
@@ -71,6 +72,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | See real candidates, rejection and parent-linked improvement without model credentials | [Executable demo](DEMO.md) |
 | Understand the objective and how progress is measured | [Phantom North Star](NORTH-STAR.md) |
 | Route future work toward the optimized organization architecture | [Phantom end-state architecture](https://github.com/ashlrai/phantom/blob/master/docs/strategy/ENDSTATE.md) |
+| Map org repository ownership, leverage and proposed cross-repo work | [Org repository map](https://github.com/ashlrai/phantom/blob/master/docs/strategy/ORG-REPO-MAP.md) |
 | Plan the chat-first assistant delivery sequence | [Chat-first child jobs](https://github.com/ashlrai/phantom/blob/master/docs/plans/CHAT-FIRST-NORTH-STAR.md) |
 | Separate tested firm machinery from remaining activation and integration work | [Autonomy gap map](AUTONOMY-GAP.md) |
 | Exercise signed graph execution and a deliberately lying candidate | [Firm graph fixture](FIRM-DEMO.md) |
@@ -367,4 +369,4 @@ canonical release guide for required hosted qualification and publication.
 
 [Fable 5.2 orchestration and host handoff](https://github.com/ashlrai/phantom/blob/master/docs/FABLE-ORCHESTRATOR.md)
 
-- [Typed routing decisions](ROUTING.md): local-first typed route advice, bounded schema retry and dispatcher audit records.
+- [Typed routing decisions](https://github.com/ashlrai/phantom/blob/master/docs/ROUTING.md): local-first typed route advice, bounded schema retry and dispatcher audit records.
