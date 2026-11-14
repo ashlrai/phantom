@@ -122,7 +122,11 @@ describe('channel health default readers', () => {
         expect(c.state).toBe('UNKNOWN');
         expect(c.unansweredCount).toBe(2);
         expect(c.missing).toContain(`${c.channel} reply correlation unavailable`);
-        expect(c.proof).toEqual({ requestCoverage: 'unproven', futureDatedCount: 0 });
+        // Slack rows carry no bus outcome, so durable admission stays unverified;
+        // iMessage has no per-row evidence and reports no durableIngress at all.
+        expect(c.proof).toEqual(c.channel === 'slack'
+          ? { requestCoverage: 'unproven', futureDatedCount: 0, durableIngress: { posted: 0, duplicate: 0, failed: 0, unverified: 2 } }
+          : { requestCoverage: 'unproven', futureDatedCount: 0 });
         expect(c.lastInboundAt).toBe(ago(6));
       }
       expect(slack.lastReplyAt).toBe(new Date(NOW.getTime() - 5 * 60_000).toISOString());
