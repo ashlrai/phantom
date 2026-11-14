@@ -1,6 +1,6 @@
 /** Read-only desktop surface for `ashlr fleet order-state --json`: each of
  * Mason's inbox orders classified RECEIVED / ASSIGNED / RUNNING / BLOCKED /
- * VERIFIED from the real order trace, served as a sub-path of the work-board
+ * VERIFIED from the real order trace (each row names its sanitized owner job + lane), served as a sub-path of the work-board
  * family (chained from fleet-work-board-api.ts) so no new route family is
  * registered. Reads local files and one fresh live-worker snapshot per
  * request (the same listLiveWorkers evidence the CLI uses, so RUNNING is
@@ -19,6 +19,14 @@ import { sanitizePublicJson } from '../util/public-json.js';
 export const VERSE_FLEET_ORDER_STATE_PATH = '/api/verse/fleet/work-board/orders';
 
 const LIMIT = 20;
+const OWNER_JOB = /^RQ-[A-Z0-9][A-Z0-9-]{0,79}$/;
+const OWNER_LANE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+/** Owner = the most advanced job, emitted only when its id is a plain RQ id. */
+function ownerOf(job: { id: string; lane: string | null } | undefined): { job: string; lane: string | null } | null {
+  if (job === undefined || !OWNER_JOB.test(job.id)) return null;
+  return { job: job.id, lane: job.lane !== null && OWNER_LANE.test(job.lane) ? job.lane : null };
+}
 const MAX_SINCE_HOURS = 720;
 
 export interface FleetOrderStateApiDeps {
@@ -91,10 +99,11 @@ export function createFleetOrderStateApi(deps: FleetOrderStateApiDeps = {}): Api
       live: liveState,
       orders: orders.slice(0, LIMIT).map((o) => {
         const c = classifyOrder(o, trace.generatedAt, nowIso, live);
+        const best = mostAdvancedJob(o);
         return {
           at: o.at, source: o.source, key: o.key,
           state: c.state, asOf: c.asOf, evidenceSource: c.source,
-          missing: c.missing, pr: mostAdvancedJob(o)?.url ?? null,
+          missing: c.missing, pr: best?.url ?? null, owner: ownerOf(best),
         };
       }),
     }));

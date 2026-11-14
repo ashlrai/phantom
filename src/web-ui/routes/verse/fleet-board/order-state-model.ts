@@ -19,6 +19,8 @@ export interface OrderRow {
   evidenceSource: string;
   missing: string[];
   pr: string | null;
+  /** Absent on older servers; treated as null. */
+  owner?: { job: string; lane: string | null } | null;
 }
 
 export interface OrderStateBody {
@@ -37,7 +39,15 @@ export const MAX_ORDER_ROWS = 20;
 const PR_URL = /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+$/;
 const isState = (v: unknown): v is OrderState => typeof v === 'string' && (ORDER_STATES as readonly string[]).includes(v);
 
-function parseRow(raw: unknown): OrderRow | null {
+function parseOwner(raw: unknown): { job: string; lane: string | null } | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.job !== 'string' || o.job === '') return null;
+  if (o.lane !== null && o.lane !== undefined && typeof o.lane !== 'string') return null;
+  return { job: o.job, lane: typeof o.lane === 'string' && o.lane !== '' ? o.lane : null };
+}
+
+export function parseRow(raw: unknown): OrderRow | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   if (typeof r.at !== 'string' || typeof r.source !== 'string' || typeof r.key !== 'string') return null;
@@ -47,7 +57,7 @@ function parseRow(raw: unknown): OrderRow | null {
   return {
     at: r.at, source: r.source, key: r.key, state: r.state, asOf: r.asOf,
     evidenceSource: typeof r.evidenceSource === 'string' ? r.evidenceSource : '',
-    missing: r.missing as string[], pr: r.pr as string | null,
+    missing: r.missing as string[], pr: r.pr as string | null, owner: parseOwner(r.owner),
   };
 }
 
@@ -70,6 +80,7 @@ export interface OrderRowView {
   missingText: string;
   prUrl: string | null;
   prLabel: string | null;
+  ownerText: string;
 }
 
 const pad = (n: number): string => String(n).padStart(2, '0');
@@ -81,8 +92,13 @@ function clock(iso: string): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+const OWNER_JOB_MAX = 60;
+
 export function orderRowView(row: OrderRow): OrderRowView {
   const pr = row.pr !== null && PR_URL.test(row.pr) ? row.pr : null;
+  const owner = row.owner ?? null;
+  const ownerText = owner === null ? 'no owner'
+    : `${owner.job.slice(0, OWNER_JOB_MAX)}${owner.lane !== null ? ` (${owner.lane})` : ''}`;
   return {
     key: row.key,
     time: clock(row.at),
@@ -92,5 +108,6 @@ export function orderRowView(row: OrderRow): OrderRowView {
     missingText: row.missing.length > 0 ? row.missing.join(', ') : 'none',
     prUrl: pr,
     prLabel: pr === null ? null : `PR #${pr.slice(pr.lastIndexOf('/') + 1)}`,
+    ownerText,
   };
 }
