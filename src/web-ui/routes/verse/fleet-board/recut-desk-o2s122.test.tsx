@@ -50,6 +50,8 @@ it('registers the session-independent Board pane in the dock registry', () => {
 it('fetches /api/fleet/board and renders lanes, depth and the needs-Mason item', async () => {
   const envelope: FleetBoardResponse = { schema: 'fleet.leader-board.v1', status: 'ok', ageSeconds: 150, board: BOARD };
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    // The pane also mounts the work-board section (RQ-PHX-WORKBOARDPANE318); that route is covered separately.
+    if (String(input).startsWith('/api/fleet/work-board')) return new Response('{}', { status: 404 });
     expect(String(input)).toBe('/api/fleet/board');
     return new Response(JSON.stringify(envelope), { status: 200 });
   });
@@ -65,7 +67,7 @@ it('fetches /api/fleet/board and renders lanes, depth and the needs-Mason item',
   expect(screen.getByText('approve the staging deploy')).toBeInTheDocument();
   // A lane the tick could not measure prints 'unknown', never 0.
   expect(screen.getAllByText('unknown').length).toBeGreaterThanOrEqual(1);
-  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(fetchMock.mock.calls.filter((c) => String(c[0]) === '/api/fleet/board')).toHaveLength(1);
 });
 
 it('reports a missing recording as the designed empty state, not a zeroed board', async () => {
