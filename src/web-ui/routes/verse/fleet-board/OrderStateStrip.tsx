@@ -34,6 +34,7 @@ export function OrderStateStrip({ visible = true }: { visible?: boolean }) {
               <span className={styles.mono}>{v.time}</span>
               <span>{v.source}</span>
               <span className={styles.orderState} data-state={v.state}>{v.state}</span>
+              <span>owner: {v.ownerText}</span>
               {unchecked && v.state === 'ASSIGNED' ? <span className={styles.orderNote}> (unchecked)</span> : null}
               <span>{v.asOfText}</span>
               <span>missing: {v.missingText}</span>
