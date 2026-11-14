@@ -56,6 +56,13 @@
  * evidence only: it never changes a state, overall, missing[], the pick or any
  * claim field, and grants no routing or dispatch.
  *
+ * Top-level orders is Mason-inbox order evidence (how many of his last-24h
+ * orders sit in each work state under the order-trace classification). It is
+ * read through its own injectable reader under the same SECTION_TIMEOUT_MS
+ * bound; a reader that throws or stalls yields empty counts and
+ * ['orders: reader failed']. It is evidence only: it never changes a state,
+ * overall, missing[], the pick or any claim field, and grants nothing.
+ *
  * Output is sanitized through sanitizeIdentityText (home → ~, IPs dropped);
  * no message bodies, leases or env values ever reach the result.
  *
@@ -72,7 +79,9 @@ import { readChannelHealth, type ChannelHealthReport } from './channel-health.js
 import { readFleetBoard, type FleetBoard, type FleetClaim } from './coordination.js';
 import { listCoordination } from '../agents/claim-store.js';
 import { listLiveWorkers, type LiveWorkersSnapshot } from './runs-live-workers.js';
+import { readOrderTrace, type OrderTraceV1 } from './order-trace.js';
 import { defaultPoolReachDeps, readPoolReach, type PoolReach } from './pool-reach.js';
+import { summarizeOrders, type RecheckOrders } from './recheck-orders-line.js';
 import { defaultTailnetPeersDeps, readTailnetPeers, type TailnetPeers } from './tailnet-peers.js';
 import {
   bindPickToCoordination,
@@ -194,6 +203,8 @@ export interface FleetRecheck {
   tailnet?: FleetRecheckTailnet | null;
   /** Node pool failover reachability; evidence only, never changes a state or the pick. */
   pool?: PoolReach | null;
+  /** Mason's last-24h inbox orders by work state; evidence only, never changes a state or the pick. */
+  orders?: RecheckOrders | null;
   sections: {
     runtime: {
       state: FleetRecheckState;
@@ -261,6 +272,7 @@ export function defaultFleetRecheckDeps(now: () => Date): Required<FleetRecheckD
     listLiveWorkers: () => listLiveWorkers(),
     readTailnetPeers: () => readTailnetPeers(defaultTailnetPeersDeps()),
     readPool: () => readPoolReach(defaultPoolReachDeps()),
+    readOrders: () => readOrderTrace(),
   };
 }
 
@@ -276,6 +288,7 @@ export type FleetRecheckDeps = {
   listLiveWorkers?: () => Promise<LiveWorkersSnapshot> | LiveWorkersSnapshot;
   readTailnetPeers?: () => Promise<TailnetPeers> | TailnetPeers;
   readPool?: () => Promise<PoolReach> | PoolReach;
+  readOrders?: () => Promise<OrderTraceV1> | OrderTraceV1;
 };
 
 type ReaderResult<T> = { ok: true; value: T } | { ok: false };
@@ -740,6 +753,18 @@ function poolEvidence(r: ReaderResult<PoolReach>, asOf: string): PoolReach {
   return v !== null && typeof v === 'object' && Array.isArray(v.hosts) && Array.isArray(v.reasons) ? v : failed;
 }
 
+function ordersEvidence(r: ReaderResult<OrderTraceV1>, asOf: string, nowIso: string): RecheckOrders {
+  const failed: RecheckOrders = { asOf, windowHours: 24, counts: {}, total: 0, reasons: ['orders: reader failed'] };
+  if (!r.ok) return failed;
+  const v = r.value;
+  if (v === null || typeof v !== 'object' || !Array.isArray(v.orders)) return failed;
+  try {
+    return summarizeOrders(v, nowIso);
+  } catch {
+    return failed;
+  }
+}
+
 const RANK: Record<FleetRecheckState, number> = { VERIFIED: 0, UNKNOWN: 1, BLOCKED: 2 };
 
 export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<FleetRecheck> {
@@ -763,9 +788,12 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
     const poolDeps = defaultPoolReachDeps();
     d.readPool = () => readPoolReach({ ...poolDeps, peers: { ...poolDeps.peers, now: () => now } });
   }
+  if (deps.readOrders === undefined) {
+    d.readOrders = () => readOrderTrace({ now: () => nowMs });
+  }
 
-  // All eight readers run concurrently, each inside its own 5 s bound.
-  const [runtime, claims, bridge, board, coordination, live, tailnet, pool] = await Promise.all([
+  // All nine readers run concurrently, each inside its own 5 s bound.
+  const [runtime, claims, bridge, board, coordination, live, tailnet, pool, orders] = await Promise.all([
     attempt(d.readRuntimeIdentity),
     attempt(d.readFleetBoard),
     attempt(d.readChannelHealth),
@@ -774,6 +802,7 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
     attempt(d.listLiveWorkers),
     attempt(d.readTailnetPeers),
     attempt(d.readPool),
+    attempt(d.readOrders),
   ]);
 
   const sections = {
@@ -792,6 +821,7 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
     asOf,
     tailnet: tailnetEvidence(tailnet, asOf, home),
     pool: poolEvidence(pool, asOf),
+    orders: ordersEvidence(orders, asOf, asOf),
     sections,
     overall: { state: verified ? 'VERIFIED' : worst, missing },
   };
