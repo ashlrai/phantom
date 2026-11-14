@@ -44,6 +44,7 @@ const recordingSteps = (order: SelfTickStepName[], failing: SelfTickStepName[] =
     'teammate-overdue': step('teammate-overdue'),
     'landed-sweep': step('landed-sweep'),
     'board-notify': step('board-notify'),
+    'recheck-record': step('recheck-record'),
   };
 };
 
@@ -80,10 +81,10 @@ describe('self-tick survives a failed last-report write', () => {
       writeLast: throwingWrite(writes),
     });
 
-    expect(order).toEqual(['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'owner-live', 'order-notices', 'board-notify', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep']);
+    expect(order).toEqual(['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'owner-live', 'order-notices', 'board-notify', 'recheck-record', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep']);
     expect(writes).toHaveLength(1);
     expect(first.report.steps.map((s) => [s.step, s.state])).toEqual([
-      ['reset-release', 'ok'], ['lane-autohold', 'failed'], ['stray-stop', 'ok'], ['meter-incident', 'ok'], ['planner-tick', 'ok'], ['inbox-acks', 'ok'], ['owner-live', 'ok'], ['order-notices', 'ok'], ['board-notify', 'ok'], ['needs-triage', 'ok'], ['waste-incident', 'ok'], ['teammate-overdue', 'ok'], ['landed-sweep', 'ok'],
+      ['reset-release', 'ok'], ['lane-autohold', 'failed'], ['stray-stop', 'ok'], ['meter-incident', 'ok'], ['planner-tick', 'ok'], ['inbox-acks', 'ok'], ['owner-live', 'ok'], ['order-notices', 'ok'], ['board-notify', 'ok'], ['recheck-record', 'ok'], ['needs-triage', 'ok'], ['waste-incident', 'ok'], ['teammate-overdue', 'ok'], ['landed-sweep', 'ok'],
     ]);
     expect(first.exitCode).toBe(1);
     expect(existsSync(LOCK())).toBe(false);
@@ -95,7 +96,7 @@ describe('self-tick survives a failed last-report write', () => {
     expect(second.lock).toBe('acquired');
     expect(second.report.state).toBe('ran');
     expect(second.exitCode).toBe(0);
-    expect(orderAgain).toEqual(['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'owner-live', 'order-notices', 'board-notify', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep']);
+    expect(orderAgain).toEqual(['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'owner-live', 'order-notices', 'board-notify', 'recheck-record', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep']);
     expect(existsSync(LOCK())).toBe(false);
   });
 
@@ -107,7 +108,7 @@ describe('self-tick survives a failed last-report write', () => {
       writeLast: throwingWrite(writes),
     });
 
-    expect(order).toEqual(['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'owner-live', 'order-notices', 'board-notify', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep']);
+    expect(order).toEqual(['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'owner-live', 'order-notices', 'board-notify', 'recheck-record', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep']);
     expect(writes).toHaveLength(1);
     expect(first.report.steps.every((s) => s.state === 'ok')).toBe(true);
     expect(first.exitCode).toBe(0);
@@ -119,7 +120,7 @@ describe('self-tick survives a failed last-report write', () => {
     });
     expect(second.lock).toBe('acquired');
     expect(second.report.state).toBe('ran');
-    expect(orderAgain).toEqual(['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'owner-live', 'order-notices', 'board-notify', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep']);
+    expect(orderAgain).toEqual(['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'owner-live', 'order-notices', 'board-notify', 'recheck-record', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep']);
     expect(second.exitCode).toBe(1);
     expect(existsSync(LOCK())).toBe(false);
   });
