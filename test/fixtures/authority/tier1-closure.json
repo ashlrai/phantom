@@ -1029,6 +1029,7 @@
     "src/core/resources/credit-pool-snapshot.ts",
     "src/core/resources/engineering-worker-rpc.ts",
     "src/core/resources/execution-veto.ts",
+    "src/core/resources/fleet-usage.ts",
     "src/core/resources/grok-account-probe.ts",
     "src/core/resources/grokbot/contract.ts",
     "src/core/resources/grokbot/ledger.ts",
