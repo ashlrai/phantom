@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cmdFleetImessagePath } from '../src/cli/fleet-imessage-path.js';
 import { resolveFleetSubcommand } from '../src/cli/fleet-subcommand-resolve.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 import type { AshlrConfig } from '../src/core/types.js';
 
