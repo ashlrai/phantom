@@ -95,8 +95,18 @@ export function parseTailnetStatus(raw: string, now: Date, home: string): Tailne
     reasons.push('tailscale unavailable or status unreadable');
     return result;
   }
-  const status = parsed as { Self?: { HostName?: unknown }; Peer?: unknown };
+  const status = parsed as { 
+    Self?: { HostName?: unknown }; 
+    Peer?: unknown;
+    BackendState?: unknown;
+  };
   result.self = clean(status.Self?.HostName, home) ?? UNKNOWN;
+
+  // Check if the backend is not in a running state
+  const backendState = status.BackendState;
+  if (typeof backendState === 'string' && backendState !== 'Running') {
+    reasons.push(`tailscale backend not running: ${backendState}`);
+  }
 
   const peerMap = status.Peer;
   if (typeof peerMap !== 'object' || peerMap === null || Array.isArray(peerMap)) {
@@ -107,7 +117,17 @@ export function parseTailnetStatus(raw: string, now: Date, home: string): Tailne
   const peers: TailnetPeer[] = [];
   for (const value of Object.values(peerMap)) {
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-      peers.push(toPeer(value as Record<string, unknown>, nowMs, home));
+      const peer = toPeer(value as Record<string, unknown>, nowMs, home);
+      // When backend is not running, peers that were online should not be considered current reachability
+      if (typeof backendState === 'string' && backendState !== 'Running') {
+        // Filter out peers that were online but backend is not running
+        // This preserves the fact that the peer data was available but avoids false positive reachability
+        if (peer.online === true) {
+          // Keep reasons about the backend state but don't report online peers
+          continue;
+        }
+      }
+      peers.push(peer);
     }
   }
   peers.sort(byOnlineThenName);
