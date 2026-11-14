@@ -249,6 +249,21 @@ describe('buildForecast — spentUsd', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildForecast — localSavingsUsd', () => {
+  it.each([
+    [1_000_000, 0, 3],
+    [0, 1_000_000, 15],
+    [7_000, 3_000, 0.066],
+    [-100, 1_000_000, 15],
+    [1_000_000, -100, 3],
+    [-100, -200, 0],
+  ])('prices local tokens (%s in, %s out) at the cloud reference', (tokensIn, tokensOut, expected) => {
+    mockBuildRollup.mockReturnValue(makeRollup('7d', {}, [
+      { model: 'ollama', tokensIn, tokensOut, estCostUsd: 0, calls: 1 },
+      { model: 'claude-sonnet', tokensIn: 1_000_000, tokensOut: 1_000_000, estCostUsd: 18, calls: 1 },
+    ]));
+    expect(buildForecast('7d', makeConfig()).localSavingsUsd).toBeCloseTo(expected, 10);
+  });
+
   it('is > 0 when local tokens were processed', () => {
     // Pure local run: $0 spent, but savings > 0 because those tokens would have cost cloud money
     mockBuildRollup.mockReturnValue(
