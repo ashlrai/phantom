@@ -240,6 +240,55 @@ tier name itself. The vocabulary lives in
 [`queue-tier.ts`](../src/core/drive/queue-tier.ts). Keep it identical to
 `TIERS` in `contrib/mac/dispatchd.py`.
 
+### Tier-scaled session scope
+
+Choose a job's tier for the model that will actually run it. Use `frontier`
+for complete features spanning related concerns on models such as
+`gpt-6-astra`, Opus or `swe-2-max`; keep small models on `fast`. A model name
+or pool alone never upgrades a task's tier. Check the launcher's selected model
+before assigning a larger brief.
+
+| Tier | Files per PR | Changed-line budget | Top-level areas in admission lint |
+| --- | ---: | ---: | ---: |
+| `frontier` | 40 | 600 | 8 |
+| `work` | 15 | 200 | 1 |
+| `mid` | 8 | 120 | 1 |
+| `fast` | 2 | 80 | 1 |
+
+`QUEUE_TIER_SCOPE` in `src/core/drive/queue-tier.ts` defines these planning
+budgets. Queuegen FIXUP and REBASE envelopes emit `max-files=` and `size<=`.
+The Mac restocker and launcher candidate emit matching scope and acceptance:
+finish the complete feature, not the minimum demo; add tests, run them, and
+update docs. Frontier briefs can combine related concerns, with **one mergeable
+PR per job**. Narrower explicit task limits and named-file restrictions win.
+The local-model lane always receives the fast prompt budget.
+
+Admission lint checks declared `EST-LINES` against the tier's line budget
+and checks the union of declared and inferred top-level areas. A tierless
+envelope uses work defaults. An explicit `size<=` can lower the estimate cap;
+`max-files=` can lower the file planning budget. JSON results include effective
+`scope: {tier, maxFiles, maxLines, maxAreas}` on valid admission lines. File
+counts are prompt budgets, not a measurement of the eventual diff. Missing
+estimates remain `review`; unknown or conflicting tiers remain `invalid`.
+Unbounded scope is still rejected. Explicit operator `--max-lines` and
+`--max-areas` options override tier defaults, with narrower envelope caps retained.
+
+Copy-paste an offline admission example after building the source:
+
+```sh
+printf '%s\n' '- READY RQ-FEATURE (pool=devin, tier=frontier, repo=phantom, max-files=40, size<=600): Finish src/feature.ts with test/feature.test.ts and docs/feature.md EST-LINES=600' | node scripts/router-lint.mjs --json
+python3 contrib/mac/restock.py --dry-run --json
+```
+
+The second command reads local queue state and includes `scope_budgets` in its
+JSON plan. Neither command launches work. The restocker and launcher are
+repository candidates; Security must review and re-pin them before any live
+installation. Existing secret, sandbox, hold-list, publish and merge controls
+still apply. Work-only supply writers keep `size<=200`; empty-job retries
+retain their deliberately smaller recovery brief. No tracked general prompt
+template contains the literal `Under 15 files`; explicit owner-authored caps
+are preserved verbatim.
+
 ### Queuegen dedupe and empty-outcome suppression
 
 `queuegen` ([`queuegen.ts`](../src/core/drive/queuegen.ts), run by
