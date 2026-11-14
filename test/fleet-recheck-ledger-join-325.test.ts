@@ -69,9 +69,13 @@ function deps(over: Partial<FleetRecheckDeps> = {}): FleetRecheckDeps {
     readFleetBoard: () => healthyBoard,
     readChannelHealth: () => healthyChannels,
     listWorkBoard: () => healthyWork,
+    listCoordination: () => ({ source: 'unavailable', claims: [] }),
+    listLiveWorkers: () => { throw new Error('absent'); },
     ...over,
   };
 }
+
+const ASSOCIATION_MISSING = 'task: no coordination-claim field associates a claim with board item fake-request-1; owner match is not task identity';
 
 describe('fleet recheck task ↔ ledger join', () => {
   it('verifies the task with ledgerClaim.id when the owner holds a live claim', async () => {
@@ -83,14 +87,10 @@ describe('fleet recheck task ↔ ledger join', () => {
       ],
     };
     const recheck = await readFleetRecheck(deps({ readFleetBoard: () => board }));
-    expect(recheck.sections.task.state).toBe('VERIFIED');
-    expect(recheck.sections.task.missing).toEqual([]);
-    // Several claims for the same agent take the newest claimedAt.
-    expect(recheck.sections.task.task?.ledgerClaim).toEqual({
-      id: 'fake-claim-new', repo: 'ashlrai/phantom',
-      expiresAt: new Date(NOW_MS + 3_600_000).toISOString(),
-    });
-    expect(recheck.overall.state).toBe('VERIFIED');
+    expect(recheck.sections.task.state).toBe('UNKNOWN');
+    expect(recheck.sections.task.missing).toEqual([ASSOCIATION_MISSING]);
+    expect(recheck.sections.task.task?.ledgerClaim).toBeNull();
+    expect(recheck.overall.state).toBe('UNKNOWN');
   });
 
   it('blocks when the owner\'s only claim expired relative to the injected now', async () => {
@@ -99,11 +99,11 @@ describe('fleet recheck task ↔ ledger join', () => {
       claims: [fakeClaim({ expiresAt: NOW_MS - 1 })],
     };
     const recheck = await readFleetRecheck(deps({ readFleetBoard: () => board }));
-    expect(recheck.sections.task.state).toBe('BLOCKED');
+    expect(recheck.sections.task.state).toBe('UNKNOWN');
     expect(recheck.sections.task.task?.ledgerClaim).toBeNull();
     expect(recheck.sections.task.task).toMatchObject({ id: 'fake-request-1', owner: 'agent-alpha' });
-    expect(recheck.sections.task.missing).toContain('task: owner agent-alpha holds no live coordination claim');
-    expect(recheck.overall.state).toBe('BLOCKED');
+    expect(recheck.sections.task.missing).toEqual([ASSOCIATION_MISSING]);
+    expect(recheck.overall.state).toBe('UNKNOWN');
   });
 
   it('marks the task UNKNOWN when the ledger reader throws', async () => {
@@ -127,9 +127,9 @@ describe('fleet recheck task ↔ ledger join', () => {
       ],
     };
     const recheck = await readFleetRecheck(deps({ listWorkBoard: () => work }));
-    expect(recheck.sections.task.state).toBe('VERIFIED');
+    expect(recheck.sections.task.state).toBe('UNKNOWN');
     expect(recheck.sections.task.task).toMatchObject({ id: 'older-request', owner: 'agent-alpha' });
-    expect(recheck.sections.task.task?.ledgerClaim?.id).toBe('fake-claim-1');
+    expect(recheck.sections.task.task?.ledgerClaim).toBeNull();
   });
 
   it('treats a claim agent that differs only in case as no match', async () => {
@@ -138,8 +138,8 @@ describe('fleet recheck task ↔ ledger join', () => {
       claims: [fakeClaim({ agent: 'Agent-Alpha' })],
     };
     const recheck = await readFleetRecheck(deps({ readFleetBoard: () => board }));
-    expect(recheck.sections.task.state).toBe('BLOCKED');
+    expect(recheck.sections.task.state).toBe('UNKNOWN');
     expect(recheck.sections.task.task?.ledgerClaim).toBeNull();
-    expect(recheck.sections.task.missing).toContain('task: owner agent-alpha holds no live coordination claim');
+    expect(recheck.sections.task.missing).toEqual([ASSOCIATION_MISSING]);
   });
 });
