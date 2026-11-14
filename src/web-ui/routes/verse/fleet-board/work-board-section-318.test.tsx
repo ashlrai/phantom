@@ -31,7 +31,7 @@ const WORK = {
 function stubFetch(work: () => Response) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.startsWith('/api/fleet/work-board')) return work();
+    if (url.startsWith('/api/verse/fleet/work-board')) return work();
     return new Response(JSON.stringify({ schema: 'fleet.leader-board.v1', status: 'missing', ageSeconds: null, board: null }), { status: 200 });
   });
   vi.stubGlobal('fetch', fetchMock);
@@ -45,7 +45,7 @@ it('renders state counts and rows, even with no Leader board', async () => {
   render(<FleetBoardPane {...PROPS} />);
 
   await waitFor(() => expect(screen.getByText('wi-fake-bloc')).toBeInTheDocument());
-  expect(fetchMock.mock.calls.map((c) => String(c[0]))).toContain('/api/fleet/work-board?limit=20');
+  expect(fetchMock.mock.calls.map((c) => String(c[0]))).toContain('/api/verse/fleet/work-board?limit=20');
   expect(screen.getByText('No Leader board yet')).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'Work items' })).toBeInTheDocument();
 
@@ -60,7 +60,7 @@ it('renders state counts and rows, even with no Leader board', async () => {
   const rows = screen.getAllByRole('row');
   const blocked = rows.find((r) => within(r).queryByText('wi-fake-bloc'))!;
   expect(within(blocked).getByText('named owner')).toBeInTheDocument();
-  expect(within(blocked).getByText('none')).toBeInTheDocument();
+  expect(within(blocked).getAllByText('none')).toHaveLength(2);
   expect(within(blocked).getByText('5m')).toBeInTheDocument();
   expect(within(blocked).getByTitle('wi-fake-blocked-0001')).toBeInTheDocument();
   expect(screen.queryByText('should not show')).not.toBeInTheDocument();

@@ -9,7 +9,7 @@
  * claims inspection, so a board response is one internally consistent
  * evidence projection even while the fleet churns; nothing is cached across
  * calls. */
-import { inspectBusWorkClaims, type BusWorkClaimView } from '../fleet/bus-work-claims.js';
+import { inspectBusWorkClaims, type BusWorkClaimView, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import type { BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { deriveBusWorkItemEvidence, readBusInboxEvidence } from './work-item-bus-evidence.js';
 import { classifyWorkItem, type WorkItemState } from './work-item-state.js';
@@ -41,6 +41,13 @@ export interface WorkBoardResult {
   /** 'ok' when the inbox scan settled; 'unavailable' when a page failed. */
   inbox: 'ok' | 'unavailable';
   truncated: boolean;
+  /** State of the claims table from the same single inspection that fed the
+   * items: 'missing' (no table yet), 'available' (validated rows, possibly
+   * zero) or 'unavailable' (present but unreadable/invalid). Table state is
+   * never ownership evidence — an 'unavailable' table means owners are
+   * unknown, not absent. Optional so hand-built fixtures still compile;
+   * listWorkBoard always sets it. */
+  claims?: BusWorkClaimsInspection['source'];
 }
 
 /** A request is any envelope that does not answer another message: replies
@@ -61,17 +68,29 @@ function limit(opts: { limit?: number }): number {
 }
 
 export function listWorkBoard(opts: { root: string; now: number; limit?: number; channelRef?: string }): WorkBoardResult {
-  const empty: WorkBoardResult = { items: [], inbox: 'unavailable', truncated: false };
   const now = Number.isSafeInteger(opts.now) && opts.now >= 0 ? opts.now : 0;
+  // One claims inspection for the whole board, taken even when the inbox
+  // scan fails so the result still reports the table's real state. A missing
+  // or unreadable table yields no claim rows — items still list, owners stay
+  // null, and `claims` keeps 'missing'/'unavailable' distinct from a
+  // validated empty table.
+  let claims: BusWorkClaimView[] = [];
+  let claimsSource: BusWorkClaimsInspection['source'] = 'unavailable';
+  try {
+    const inspection = inspectBusWorkClaims(opts.root);
+    claimsSource = inspection.source;
+    claims = inspection.claims;
+  } catch { /* stays unavailable: no claim rows */ }
+  // The claims source rides every result, including a failed inbox scan:
+  // during an inbox outage the board still reports whether the claims table
+  // was validated-empty, missing or unreadable instead of dropping the one
+  // piece of ownership evidence the inspection already produced.
+  const empty: WorkBoardResult = { items: [], inbox: 'unavailable', truncated: false, claims: claimsSource };
   try {
     // One settled bounded inbox read for the whole board; an unsettled or
     // churning scan reports 'unavailable', never a partial listing.
     const read = readBusInboxEvidence(opts.root);
     if (read.status !== 'ok') return empty;
-    // One claims inspection for the whole board. A missing or unreadable
-    // table yields no claim rows — items still list, owners stay null.
-    let claims: BusWorkClaimView[] = [];
-    try { claims = inspectBusWorkClaims(opts.root).claims; } catch { /* unavailable: no claim rows */ }
     const requests: BusInboxReceipt[] = [];
     for (const row of read.receipts) {
       if (!isRequest(row)) continue;
@@ -97,6 +116,6 @@ export function listWorkBoard(opts: { root: string; now: number; limit?: number;
         claimReceipt: evidence.claimReceipt ?? null,
       };
     });
-    return { items, inbox: 'ok', truncated: requests.length > kept.length };
+    return { items, inbox: 'ok', truncated: requests.length > kept.length, claims: claimsSource };
   } catch { return empty; }
 }
