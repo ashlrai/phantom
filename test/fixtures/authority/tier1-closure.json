@@ -875,6 +875,7 @@
     "src/core/intent/evidence.ts",
     "src/core/intent/import.ts",
     "src/core/intent/ledger.ts",
+    "src/core/intent/mcp-evidence.ts",
     "src/core/intent/merge-batch.ts",
     "src/core/intent/read.ts",
     "src/core/intent/release.ts",
