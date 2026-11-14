@@ -415,3 +415,19 @@ describe('buildForecast — edge cases', () => {
     expect(() => buildForecast('7d', makeConfig())).not.toThrow();
   });
 });
+
+describe('buildForecast — reference pricing', () => {
+  it.each([
+    [1_000_000, 0, 3],
+    [0, 1_000_000, 15],
+    [-1_000_000, 1_000_000, 15],
+    [1_000_000, -1_000_000, 3],
+    [-1, -1, 0],
+  ])('prices local input %s and output %s at %s USD', (tokensIn, tokensOut, expected) => {
+    mockBuildRollup.mockReturnValue(makeRollup('7d', {}, [
+      { model: 'ollama', tokensIn, tokensOut, estCostUsd: 0, calls: 1 },
+      { model: 'claude', tokensIn: 1_000_000, tokensOut: 1_000_000, estCostUsd: 18, calls: 1 },
+    ]));
+    expect(buildForecast('7d', makeConfig()).localSavingsUsd).toBe(expected);
+  });
+});
