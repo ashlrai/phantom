@@ -9,7 +9,8 @@
  * after the Task line when the task section carries lastVerified (the newest
  * finished item with a named owner and claim receipt). That line is dropped
  * first when the reply would exceed the cap, so evidence never clips the
- * verdict line. A VERIFIED reply closes with "Evidence only; this reply
+ * verdict line. One optional "Running job:" line follows (dropped before Last verified) when task.liveWorker carries process-table evidence;
+ * it is explicitly not a claim. A VERIFIED reply closes with "Evidence only; this reply
  * grants no dispatch."; anything else names what is missing. The words
  * 'routed' and 'dispatched' never appear — evidence is observed, not claimed.
  *
@@ -53,7 +54,11 @@ export function formatRecheckReply(r: FleetRecheck): string {
   const lv = task.lastVerified ?? null;
   const lastVerified = lv === null ? null
     : `Last verified: ${scrub(lv.id)} · owner ${scrub(lv.owner)} · claim ${scrub(lv.claimReceipt)} · as of ${scrub(lv.asOf)} (evidence only)`;
-  const build = (withLast: boolean): string => [
+  const lw = task.liveWorker ?? null;
+  const running = lw === null ? null
+    : `Running job: ${scrub(lw.job)} · ${scrub(lw.repo)} · lane ${scrub(lw.lane)}/${scrub(lw.tier)}`
+      + ` · up ${lw.ageSeconds === null ? 'unknown' : `${lw.ageSeconds}s`} · as of ${scrub(lw.asOf)} (process evidence, not a claim)`;
+  const build = (withLast: boolean, withRunning: boolean): string => [
     `Phantom recheck ${r.overall.state} · as of ${scrub(r.asOf)} · source fleet-recheck`,
     `Runtime: ${scrub(runtime.host)} · ${scrub(runtime.installedVersion)} · fleet state ${age}`
       + `${runtime.fleetState.stale === true ? ' · stale' : ''} (${runtime.state})`,
@@ -64,13 +69,15 @@ export function formatRecheckReply(r: FleetRecheck): string {
       ? `Task: none, ${scrub(task.missing[0] ?? 'no task evidence')} (${task.state})`
       : `Task: ${scrub(task.task.id)} ${task.task.state} · owner ${scrub(task.task.owner)} · claim ${scrub(task.task.claimReceipt)} (${task.state})`,
     ...(withLast && lastVerified !== null ? [lastVerified] : []),
+    ...(withRunning && running !== null ? [running] : []),
     r.overall.state === 'VERIFIED'
       ? 'Evidence only; this reply grants no dispatch.'
       : r.overall.state === 'BLOCKED'
         ? `BLOCKED on: ${missing}`
         : `UNKNOWN: ${missing}`,
   ].join('\n');
-  let text = build(true);
-  if (text.length > REPLY_MAX) text = build(false);
+  let text = build(true, true);
+  if (text.length > REPLY_MAX) text = build(true, false);
+  if (text.length > REPLY_MAX) text = build(false, false);
   return text.length <= REPLY_MAX ? text : `${text.slice(0, REPLY_MAX - 1)}…`;
 }
