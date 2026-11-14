@@ -196,7 +196,8 @@ displayed draft digest. Do not treat a queued job or result draft as send author
 
 ## Apps control
 
-`phm apps list|open|quit|focus|status [--json]` manages desktop apps named in
+`phm apps list|open|quit|focus|status [--json]` and
+`phm apps request open|quit|focus <app> --json` manage desktop apps named in
 `~/.ashlr/apps-allow.json` (empty by default). Copy and paste these commands;
 see [APPS-CONTROL](docs/APPS-CONTROL.md):
 
@@ -205,6 +206,11 @@ phm apps list --json
 phm apps status Notes --json
 phm apps quit Notes --json
 ```
+
+The Fleet Host Allowed apps card and GET/POST `/api/verse/apps/control` share
+the CLI service. Allowlist entries accept `actions` and `mode: "request"` policies;
+Phantom lifecycle actions always queue to needs-you without desktop or launcher
+calls. Requests and resolved needs-you replies grant no execution or send authority.
 
 Allowlisted apps only, through the desktop adapter, every action logged to the
 feed. A quit with unsaved work goes to needs-you (exit 3). No keystrokes, no
