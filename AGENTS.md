@@ -371,3 +371,7 @@ See [agent profiles](docs/AGENT-PROFILES.md) for strict TOML metadata, version p
 uses enrolled CLI/API seats through authenticated numeric loopback. See
 [App drive](docs/APP-DRIVE.md) for examples and DESK integration limits.
 Security 606e84d2 must pin new loopback-client changes before merge.
+
+## Typed routing decisions
+
+`phm route decide --input request.json --json` validates a closed set from local model, slot and admission snapshots. Local fast, one schema retry, existing Jev escalation and deterministic fallback share a 450 ms service budget. Advisory only; dispatcher observations append `metrics/route.explain.jsonl` without changing launches. See [typed routing](docs/ROUTING.md) for the request schema and a copy-paste offline example.
