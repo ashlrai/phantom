@@ -20,7 +20,7 @@ const TS_A = 'T0FAKEWS/C0FAKECH/1700000000.000323';
 const AT = '2026-11-13T22:30:00.000Z';
 
 const notice = (over: Partial<BoardNotice> = {}): BoardNotice => ({
-  itemId: 'req-proof-1', state: 'BLOCKED', asOf: AT, detail: 'fake-dep', source: 'bus-reply:rb-proof',
+  itemId: 'req-proof-1', state: 'BLOCKED', asOf: AT, delta: 'fake-digest-1', detail: 'fake-dep', source: 'bus-reply:rb-proof',
   text: `BLOCKED req-proof-1 as of ${AT} — fake-dep (source: bus-reply:rb-proof)`,
   sourceChannel: 'slack', sourceThread: TS_A, ...over,
 });
@@ -137,7 +137,12 @@ describe('sendNotifications receipt proof', () => {
     const retried = await sendNotifications(plan2.notices, { senders: { slack: duplicate }, ledgerPath });
     expect(retried[0]!.status).toBe('duplicate');
     const sentSet = readBoardNotifySent(ledgerPath)!;
-    expect(sentSet).toEqual(new Set([boardNotifyLedgerKey('req-proof-1', 'BLOCKED')]));
+    // Every row yields the (itemId, state) entry key; a delta-carrying row
+    // also yields its (itemId, state, delta) key.
+    expect(sentSet).toEqual(new Set([
+      boardNotifyLedgerKey('req-proof-1', 'BLOCKED'),
+      boardNotifyLedgerKey('req-proof-1', 'BLOCKED', plan2.notices[0]!.delta),
+    ]));
 
     // Restart: a fresh read of the same private ledger still dedupes, so a
     // later pass plans nothing and the sender is never called again.
@@ -147,7 +152,8 @@ describe('sendNotifications receipt proof', () => {
     const replay = vi.fn();
     await sendNotifications(plan3.notices, { senders: { slack: replay }, ledgerPath });
     expect(replay).not.toHaveBeenCalled();
-    expect(readBoardNotifySent(ledgerPath)!.size).toBe(1);
+    // One delivered row yields two dedupe keys: the entry key and the delta key.
+    expect(readBoardNotifySent(ledgerPath)!.size).toBe(2);
   });
 
   it('an append failure mid-batch leaves later notices pending and retryable', async () => {
