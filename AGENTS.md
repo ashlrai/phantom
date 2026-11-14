@@ -360,4 +360,13 @@ Tier-1 import diagnosis: `npx tsx scripts/tier1-why.ts <file> [--json]` prints a
 
 ## Portable agent profiles
 
-See [agent profiles](docs/AGENT-PROFILES.md) for strict TOML metadata, version pins and restrictive send policy. Read profiles with `phm agents list|show|validate|versions --json`. Profiles grant no transport or spending authority; email outbox wiring is deferred.
+See [agent profiles](docs/AGENT-PROFILES.md) for strict TOML metadata, version pins and restrictive send policy. Read profiles with `phm agents list|show|validate|versions --json`. Profiles grant no transport or spending authority; the email outbox runs outside sends through `checkSend`, which can only ever draft or deny.
+
+- [oMLX dispatcher lane](contrib/mac/README.md): memory-capped `omlx` pool, `127.0.0.1` health only, `phm lanes --json`; Security combined RETUNE pin required before installation.
+
+## App drive
+
+`phm drive <devin|claude|codex|phantom> <start|status|send-prompt|read-result> --json`
+uses enrolled CLI/API seats through authenticated numeric loopback. See
+[App drive](docs/APP-DRIVE.md) for examples and DESK integration limits.
+Security 606e84d2 must pin new loopback-client changes before merge.

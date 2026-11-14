@@ -1,5 +1,6 @@
 /** Production boundary for the CEO network. Only trusted channel receivers call
  * receiptLeaderChannel; bus sender labels never establish operator identity. */
+import { takeLeaderReplyBatch } from './leader-reply-queue.js';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -17,6 +18,7 @@ import { cleanLeaderReplyText, readLeaderStatusSnapshot, renderLeaderStatus } fr
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { checkSendPolicy, parseCommsConfirmation, parseTeamIdentities, type DeliverResult, type TeamIdentity } from './channel-policy.js';
 import { createLeaderNetwork, parseMasonIdentities, type LeaderNetworkOptions } from './leader-network.js';
+import { classifyIntentByRules } from '../vision/leader-intent.js';
 import type { BusEnvelope } from '../fleet/bus-envelope.js';
 import { approvedLeaderInboxAppender, type LeaderInboxAppender } from './leader-inbox-writer.js';
 
@@ -201,6 +203,8 @@ export function defaultLeaderDelivery(cfg: AshlrConfig, options: LeaderRuntimeOp
 export interface LeaderNetworkTickDeps {
   reply?: (text: string) => Promise<string | null>;
   deliver?: NonNullable<LeaderNetworkOptions['deliver']>;
+  /** Deterministic status brief for status requests; no model seat needed. Computed at most once per tick. */
+  statusBrief?: () => Promise<string>;
 }
 
 const STATUS_ASK = /\b(status|state|how (?:is|are)|numbers|merged|mains?)\b/i;
@@ -255,22 +259,16 @@ export async function tickLeaderNetwork(cfg: AshlrConfig, options: LeaderRuntime
   try {
     const network = createLeaderNetwork({ ...sources, runsDir: runsRoot(options), busRoot: options.busRoot, now: options.now, appendInbox: leaderInboxAppender(options), deliver: deps.deliver ?? defaultLeaderDelivery(cfg, options) });
     const pending = await network.pending();
-    // Round-robin through retained requests: an unavailable channel or model
-    // must not monopolize every bounded batch for months.
-    const cursorFile = join(directory, 'network-cursor.json');
-    const cursorRead = readStableRegularFile(cursorFile, { anchorPath: directory, maxFileBytes: 1024, remainingBytes: 1024 });
-    let offset = 0;
-    if (cursorRead.ok) {
-      try { const value: unknown = JSON.parse(cursorRead.text); if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) offset = value; } catch { /* scheduling metadata only */ }
-    }
-    const start = pending.length ? offset % pending.length : 0;
-    const batch = [...pending.slice(start), ...pending.slice(0, start)].slice(0, 5);
-    writePrivateFileAtomic(cursorFile, JSON.stringify(pending.length ? (start + batch.length) % pending.length : 0));
+    const batch = takeLeaderReplyBatch(pending, directory, 'network-cursor.json');
     let replies = 0;
+    let brief: Promise<string | null> | undefined;
+    const statusBrief = () => brief ??= (deps.statusBrief ?? (async () => (await import('../comms/leader-line.js')).instantBrief(cfg)))()
+      .then(value => value.trim() ? value : null, () => null);
     for (const request of batch) {
       try {
         let reply = request.replyText;
         const text = typeof request.envelope.body === 'string' ? request.envelope.body : messageText(request.envelope);
+        if (!reply && text && classifyIntentByRules(text).kind === 'status') reply = await statusBrief() ?? undefined;
         if (!reply && text) reply = await (deps.reply ?? (input => generateLeaderReply(input, cfg, options)))(text) ?? undefined;
         if (reply) {
           const result = await network.reply(request.requestId, reply);
