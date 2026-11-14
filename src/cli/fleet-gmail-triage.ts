@@ -67,7 +67,8 @@ export async function cmdFleetGmailTriage(args: string[]): Promise<number> {
   if (save) {
     try {
       writeGmailTriageLatest(runsDir, { dir, scanned: report.scanned, updates: report.updates.length, drafted: report.drafted, review: report.review,
-        failed: report.failed, unreadInSample: plan.unread, target: plan.target, archiveCandidateCount: plan.archiveCandidates.length });
+        failed: report.failed, unreadInSample: plan.unread, target: plan.target, archiveCandidateCount: plan.archiveCandidates.length,
+        scope: { source: 'local-eml-export', files: scope.files, limit: scope.limit, truncated: scope.truncated } });
       persistence = 'saved';
     } catch {
       persistence = 'failed';

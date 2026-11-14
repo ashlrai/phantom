@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
-import { readGmailArchivePlanLatest } from '../core/comms/gmail-archive-plan-latest.js';
-import { readGmailTriageLatest } from '../core/comms/gmail-triage-latest.js';
+import { readGmailArchivePlanLatest, type GmailArchivePlanEntry } from '../core/comms/gmail-archive-plan-latest.js';
+import { readGmailTriageInboxReports, type GmailTriageLatest } from '../core/comms/gmail-triage-latest.js';
 
 const USAGE = `Usage: ashlr fleet gmail-status [--runs-dir <dir>] [--json]
 Report the saved Gmail evidence under <runs-dir>/comms: the latest triage counts
@@ -32,6 +32,7 @@ interface TriageStatus extends EvidenceStamp {
   state: 'present' | 'missing';
   label: string | null;
   counts: TriageCounts | null;
+  scope?: GmailTriageLatest['scope'];
 }
 
 interface ArchivePlanStatus extends EvidenceStamp {
@@ -39,6 +40,7 @@ interface ArchivePlanStatus extends EvidenceStamp {
   unread: number;
   target: number;
   archiveCount: number;
+  scope?: GmailArchivePlanEntry['scope'];
 }
 
 interface ArchiveStatus {
@@ -54,6 +56,7 @@ export interface GmailStatusReport {
   liveInbox: 'unknown';
   archiveExecution: 'unverified';
   triage: TriageStatus;
+  triageInboxes: TriageStatus[];
   archivePlans: ArchiveStatus;
 }
 
@@ -75,7 +78,12 @@ function ageSecondsOf(at: string, nowMs: number): number | null {
 }
 
 function formatAge(ageSeconds: number | null): string {
-  return ageSeconds === null ? 'unknown' : `${ageSeconds}s`;
+  return ageSeconds === null ? 'unknown' : ageSeconds < 0 ? `${ageSeconds}s (clock skew)` : `${ageSeconds}s`;
+}
+
+function formatScope(scope: GmailTriageLatest['scope']): string {
+  return scope === undefined ? 'scope unknown'
+    : `scope ${scope.source}; scan limit ${scope.limit}; saved files ${scope.files}; truncated ${scope.truncated}`;
 }
 
 /** Reads both saved stores independently: missing triage never hides archive
@@ -83,16 +91,16 @@ function formatAge(ageSeconds: number | null): string {
  * already return null on absent, unreadable, oversized or invalid content. */
 export function buildGmailStatusReport(runsDir: string, now: () => number = Date.now): GmailStatusReport {
   const nowMs = now();
-  const triageRecord = readGmailTriageLatest(runsDir);
+  const triageStore = readGmailTriageInboxReports(runsDir);
+  const triageRecord = triageStore?.latest ?? null;
   const archiveStore = readGmailArchivePlanLatest(runsDir);
 
-  const triage: TriageStatus = triageRecord === null
-    ? { state: 'missing', at: null, ageSeconds: null, label: null, counts: null }
-    : {
+  const projectTriage = (triageRecord: GmailTriageLatest): TriageStatus => ({
         state: 'present',
         at: stampOf(triageRecord.at),
         ageSeconds: ageSecondsOf(triageRecord.at, nowMs),
         label: labelOf(triageRecord.dir),
+        ...(triageRecord.scope === undefined ? {} : { scope: triageRecord.scope }),
         counts: {
           scanned: triageRecord.scanned,
           updates: triageRecord.updates,
@@ -103,7 +111,12 @@ export function buildGmailStatusReport(runsDir: string, now: () => number = Date
           target: triageRecord.target,
           archiveCandidateCount: triageRecord.archiveCandidateCount,
         },
-      };
+      });
+  const triage: TriageStatus = triageRecord === null
+    ? { state: 'missing', at: null, ageSeconds: null, label: null, counts: null }
+    : projectTriage(triageRecord);
+  const triageInboxes = (triageStore?.inboxes ?? []).map(projectTriage)
+    .sort((a, b) => (a.label ?? '').localeCompare(b.label ?? '') || (a.at ?? '').localeCompare(b.at ?? ''));
 
   const plans: ArchivePlanStatus[] = (archiveStore?.plans ?? []).map(plan => ({
     inbox: labelOf(plan.inbox),
@@ -112,6 +125,7 @@ export function buildGmailStatusReport(runsDir: string, now: () => number = Date
     unread: plan.unread,
     target: plan.target,
     archiveCount: plan.archiveCount,
+    ...(plan.scope === undefined ? {} : { scope: plan.scope }),
   })).sort((a, b) => a.inbox.localeCompare(b.inbox) || (a.at ?? '').localeCompare(b.at ?? ''));
 
   const archivePlans: ArchiveStatus = archiveStore === null
@@ -125,6 +139,7 @@ export function buildGmailStatusReport(runsDir: string, now: () => number = Date
     liveInbox: 'unknown',
     archiveExecution: 'unverified',
     triage,
+    triageInboxes,
     archivePlans,
   };
 }
@@ -159,14 +174,22 @@ export async function cmdFleetGmailStatus(
     const c = triage.counts!;
     console.log(`Triage: present — label "${triage.label}"; saved ${triage.at}; age ${formatAge(triage.ageSeconds)}; `
       + `scanned ${c.scanned}; updates ${c.updates}; drafted ${c.drafted}; review ${c.review}; failed ${c.failed}; `
-      + `unread-in-sample ${c.unreadInSample}; target ${c.target}; archive candidates ${c.archiveCandidateCount}.`);
+      + `unread-in-sample ${c.unreadInSample}; target ${c.target}; archive candidates ${c.archiveCandidateCount}; ${formatScope(triage.scope)}.`);
+  }
+  console.log(`Triage inbox reports: ${report.triageInboxes.length} saved labels.`);
+  for (const entry of report.triageInboxes) {
+    const c = entry.counts!;
+    console.log(`- "${entry.label}": saved ${entry.at}; age ${formatAge(entry.ageSeconds)}; `
+      + `scanned ${c.scanned}; updates ${c.updates}; drafted ${c.drafted}; review ${c.review}; failed ${c.failed}; `
+      + `unread-in-sample ${c.unreadInSample}; target ${c.target}; archive candidates ${c.archiveCandidateCount}; ${formatScope(entry.scope)}.`);
   }
   if (report.archivePlans.state === 'missing') {
     console.log('Archive plans: missing — no saved archive plans.');
   } else {
     console.log(`Archive plans: ${report.archivePlans.planCount} saved ${report.archivePlans.planCount === 1 ? 'inbox' : 'inboxes'} (plans only — execution unverified).`);
     for (const plan of report.archivePlans.plans) {
-      console.log(`- "${plan.inbox}": saved ${plan.at}; age ${formatAge(plan.ageSeconds)}; unread ${plan.unread}; target ${plan.target}; archive count ${plan.archiveCount}.`);
+      console.log(`- "${plan.inbox}": saved ${plan.at}; age ${formatAge(plan.ageSeconds)}; unread ${plan.unread}; target ${plan.target}; archive count ${plan.archiveCount}; `
+        + (plan.scope === undefined ? 'scope unknown' : `scope ${plan.scope.source}; scanned ${plan.scope.scanned}; scan limit ${plan.scope.limit}; saved files ${plan.scope.files}; truncated ${plan.scope.truncated}; unread is not a live total`) + '.');
     }
   }
   return 0;
