@@ -4,8 +4,10 @@
  * prose. Pure: no I/O, no clock — the caller passes `nowIso`.
  *
  * Honesty bounds of this source:
- * - the trace keeps no fresh per-job timestamp, so `runningEvidence` is never
- *   synthesized here and RUNNING stays unreachable;
+ * - the trace keeps no fresh per-job timestamp, so RUNNING is reachable only
+ *   when the caller passes a live-worker snapshot (`live`): a launched or
+ *   published job whose id has a live worker gets `runningEvidence` stamped
+ *   at the snapshot's time;
  * - the trace carries no dependency edge, so `blocker` is never set and
  *   BLOCKED stays unreachable. */
 import { parseOrderAt } from '../../cli/fleet-orders.js';
@@ -25,6 +27,15 @@ export function mostAdvancedJob(order: TraceOrder): OrderTraceJob | undefined {
   return best;
 }
 
+/** Live-worker membership handed in by the caller: `jobIds` are the job ids
+ * with a live worker right now and `at` is the snapshot's generation time.
+ * The trace alone cannot prove RUNNING; without this argument nothing here
+ * synthesizes `runningEvidence`. */
+export interface LiveJobIds {
+  jobIds: ReadonlySet<string>;
+  at: string;
+}
+
 const GITHUB_PULL = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/(\d+)\/?$/;
 
 /** A github pull URL carries a verifiable pr number; any other url is not a
@@ -37,9 +48,10 @@ export function pullRequest(url: string | null): { url: string; pr: number } | n
 
 /** Evidence for one order. A queued line is not a claim: it can name an
  * owner (the routed lane) but never a durable claim receipt. Launched or
- * published jobs are real claims (owner + job id); merged jobs additionally
+ * published jobs are real claims (owner + job id) and report running when
+ * the caller's live snapshot names the job id; merged jobs additionally
  * verify the order when the trace recorded a github pull URL. */
-export function orderEvidence(order: TraceOrder, traceGeneratedAt: string): WorkItemEvidence {
+export function orderEvidence(order: TraceOrder, traceGeneratedAt: string, live?: LiveJobIds): WorkItemEvidence {
   const evidence: WorkItemEvidence = { id: order.key };
   const received = parseOrderAt(order.at);
   if (received !== null) evidence.receivedAt = new Date(received).toISOString();
@@ -48,7 +60,12 @@ export function orderEvidence(order: TraceOrder, traceGeneratedAt: string): Work
   if (job.lane !== null) evidence.owner = job.lane;
   if (job.state === 'queued') return evidence;
   evidence.claimReceipt = job.id;
-  if (job.state !== 'merged') return evidence;
+  if (job.state !== 'merged') {
+    if ((job.state === 'launched' || job.state === 'published') && live?.jobIds.has(job.id)) {
+      evidence.runningEvidence = { source: `live-worker ${job.id}`, at: live.at };
+    }
+    return evidence;
+  }
   const pull = pullRequest(job.url);
   if (pull !== null) {
     evidence.verified = { pr: pull.pr, artifact: pull.url, source: 'order-trace', at: traceGeneratedAt };
@@ -56,6 +73,6 @@ export function orderEvidence(order: TraceOrder, traceGeneratedAt: string): Work
   return evidence;
 }
 
-export function classifyOrder(order: TraceOrder, generatedAt: string, nowIso: string): WorkItemClassification {
-  return classifyWorkItem(orderEvidence(order, generatedAt), nowIso);
+export function classifyOrder(order: TraceOrder, generatedAt: string, nowIso: string, live?: LiveJobIds): WorkItemClassification {
+  return classifyWorkItem(orderEvidence(order, generatedAt, live), nowIso);
 }
