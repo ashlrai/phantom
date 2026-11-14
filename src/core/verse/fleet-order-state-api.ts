@@ -11,7 +11,10 @@
  * file paths, worker command lines, hold reasons or a thrown message: an
  * unreadable trace answers 200 with sources 'unavailable' and no orders,
  * and an unavailable live or lanes read degrades to live/lanes
- * 'unavailable' without failing the request or claiming BLOCKED. */
+ * 'unavailable' without failing the request or claiming BLOCKED. Every
+ * reader is time-bounded (8 s default, timeoutMs seam for tests) so a hung
+ * local evidence read degrades instead of stalling the endpoint; a slow
+ * reader that settles after the bound is never trusted. */
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { parseOrderAt } from '../../cli/fleet-orders.js';
@@ -28,6 +31,26 @@ export const VERSE_FLEET_ORDER_STATE_PATH = '/api/verse/fleet/work-board/orders'
 const LIMIT = 20;
 const OWNER_JOB = /^RQ-[A-Z0-9][A-Z0-9-]{0,79}$/;
 const OWNER_LANE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+/** Per-reader bound: a hung trace, live or lanes read degrades instead of
+ * stalling the desktop endpoint. */
+export const VERSE_FLEET_ORDER_STATE_TIMEOUT_MS = 8_000;
+
+/** Bounded read: a throw or timeout rejects so the caller can degrade. The
+ * timer is cleared on settle, and a reader that finishes or rejects after
+ * the bound is already handled by the race — never a second response. */
+async function bounded<T>(run: () => Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      run(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 /** Owner row = { job, lane } for the public boundary, emitted only when the
  * job id is a plain RQ id and the lane a lower-case lane id. */
@@ -51,12 +74,15 @@ export interface FleetOrderStateApiDeps {
    * once per valid GET, after all validation; a throw or a non-'healthy'
    * sourceState leaves BLOCKED unproven without failing the request. */
   lanes?: () => Promise<LaneTargetsV1>;
+  /** Per-reader bound in ms (default VERSE_FLEET_ORDER_STATE_TIMEOUT_MS). */
+  timeoutMs?: number;
 }
 
 export function createFleetOrderStateApi(deps: FleetOrderStateApiDeps = {}): ApiModule {
   const read = deps.read ?? ((opts) => readOrderTrace(opts));
   const liveRead = deps.live ?? listLiveWorkers;
   const lanesRead = deps.lanes ?? readLaneTargets;
+  const timeoutMs = deps.timeoutMs ?? VERSE_FLEET_ORDER_STATE_TIMEOUT_MS;
   const now = deps.now ?? (() => new Date());
   return async (_ctx, req, res, path, method) => {
     if (path !== VERSE_FLEET_ORDER_STATE_PATH) return false;
@@ -85,7 +111,7 @@ export function createFleetOrderStateApi(deps: FleetOrderStateApiDeps = {}): Api
     const nowIso = new Date(nowMs).toISOString();
     let trace: OrderTraceV1;
     try {
-      trace = await read({ now: () => nowMs });
+      trace = await bounded(() => read({ now: () => nowMs }), timeoutMs);
     } catch {
       sendJson(res, 200, { v: 1, asOf: nowIso, sources: 'unavailable', orders: [] });
       return true;
@@ -93,7 +119,7 @@ export function createFleetOrderStateApi(deps: FleetOrderStateApiDeps = {}): Api
     let live: LiveJobIds | undefined;
     let liveState: 'healthy' | 'unavailable';
     try {
-      const snapshot = await liveRead();
+      const snapshot = await bounded(liveRead, timeoutMs);
       liveState = snapshot.sourceState;
       if (liveState === 'healthy') live = { jobIds: new Set(snapshot.workers.map((w) => w.job)), at: snapshot.generatedAt };
     } catch {
@@ -104,7 +130,7 @@ export function createFleetOrderStateApi(deps: FleetOrderStateApiDeps = {}): Api
     // sourceState yields no blocker evidence, so BLOCKED is not claimed.
     let lanes: LaneTargetsV1 | undefined;
     try {
-      const targets = await lanesRead();
+      const targets = await bounded(lanesRead, timeoutMs);
       if (targets.sourceState === 'healthy') lanes = targets;
     } catch { /* lanes stays undefined: no blocker evidence */ }
     const lanesState: 'healthy' | 'unavailable' = lanes === undefined ? 'unavailable' : 'healthy';
