@@ -313,6 +313,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'rebase-plan': () => import('./fleet-rebase-plan.js'),
   'rebase-status': () => import('./fleet-rebase-status.js'),
   'recheck': () => import('./fleet-recheck.js'),
+  'recheck-record': () => import('./fleet-recheck-record.js'),
   'recut-sweep': () => import('./fleet-recut-sweep.js'),
   'red-blame': () => import('./fleet-red-blame.js'),
   'red-fix': () => import('./fleet-red-fix.js'),
