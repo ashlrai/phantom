@@ -12,7 +12,8 @@ const usage = 'Usage: ashlr fleet recheck-record [--last N [--json]]\n'
   + '--last N (1..50, default 5): prints the newest N rows, newest first; --json prints them as an array.\n'
   + 'Nonverified rows print the first missing reason not already named by missingBridge\n'
   + '("unrecorded" when the row predates retained reasons).\n'
-  + 'Exit 0 when the write succeeded, 1 when it failed, 2 on bad arguments.';
+  + 'Exit 0 when the write succeeded, 1 when it failed or --last history is\n'
+  + 'unreadable, 2 on bad arguments.';
 
 export interface FleetRecheckRecordDeps {
   /** Ashlr home root; defaults to ashlrHome(). */
@@ -53,7 +54,12 @@ export async function cmdFleetRecheckRecord(args: string[], deps: FleetRecheckRe
   try {
     const root = deps.root ?? ashlrHome();
     if (last !== null) {
-      const { rows, skipped, missing } = readRecheckRecords(root, last);
+      const read = readRecheckRecords(root, last);
+      if (read.outcome === 'unreadable') {
+        console.error(`recheck history unavailable${read.failure ? `: ${read.failure}` : ''}`);
+        return 1;
+      }
+      const { rows, skipped, missing } = read;
       if (json) { console.log(JSON.stringify(rows)); return 0; }
       if (missing) { console.log('no recheck records'); return 0; }
       for (const r of rows) console.log(row(r));
