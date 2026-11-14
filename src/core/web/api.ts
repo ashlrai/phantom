@@ -2163,6 +2163,24 @@ export async function handleApi(
       return true;
     }
 
+    if (path === '/api/onboard/ecosystem' && method === 'GET') {
+      const { detectEcosystem } = await import('../onboard/ecosystem.js');
+      sendJson(res, 200, await detectEcosystem());
+      return true;
+    }
+    if (path === '/api/onboard/ecosystem/grant' && method === 'POST') {
+      if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      const { grantEcosystem, EcosystemGrantError } = await import('../onboard/ecosystem-grant.js');
+      try {
+        const receipt = await grantEcosystem(JSON.parse(await readBody(req)));
+        sendJson(res, 200, receipt);
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof EcosystemGrantError ? error.message : 'Onboarding grant unavailable. Check local file permissions and retry.' });
+      }
+      return true;
+    }
+
     // ── GET /api/onboard/status ── RQ-ONB-2 DETECT + RQ-ONB-7: per-catalog rows,
     // this computer's scheduled agents, and the resource-balancer summary.
     // `which` resolves binaries; the CLI's OWN status command supplies login
