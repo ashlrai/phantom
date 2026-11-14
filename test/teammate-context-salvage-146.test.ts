@@ -5,6 +5,7 @@ import { expect, it, vi } from 'vitest';
 import type { AshlrConfig } from '../src/core/types.js';
 import { recordTeammateText } from '../src/core/comms/imessage-teammate-inbox.js';
 import { runTeammateResponder, teammateOperationalContext } from '../src/core/comms/imessage-teammate-worker.js';
+import { CONTEXT_MAX_CHARS } from '../src/core/comms/teammate-context-evidence.js';
 
 it('passes attributed bounded file evidence through the real responder seam', async () => {
   const runsDir = mkdtempSync(join(tmpdir(), 'context-salvage-'));
@@ -25,7 +26,7 @@ it('passes attributed bounded file evidence through the real responder seam', as
       utimesSync(file, new Date(now - age), new Date(now - age));
     }
     const context = teammateOperationalContext(runsDir, () => now);
-    expect(context.length).toBeLessThanOrEqual(4000);
+    expect(context.length).toBeLessThanOrEqual(CONTEXT_MAX_CHARS);
     expect(context).toContain('Responder source: unknown');
     expect(context).toContain('Installed desktop version: unknown');
     for (const [path, label, marker] of [
