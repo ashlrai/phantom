@@ -32,6 +32,40 @@ export interface ChannelProof {
   requestCoverage: 'idle' | 'unproven' | 'verified';
   /** Receipt observations dated after `asOf`; excluded from evidence entirely. */
   futureDatedCount: number;
+  /**
+   * Durable bus-admission counts inside the recent inbound window. Present only
+   * when the source returns per-row outcomes; absent means coverage is unknown,
+   * never that admission succeeded. 'unverified' counts rows (e.g. legacy
+   * journal entries) that carry no bus outcome and so prove nothing either way.
+   */
+  durableIngress?: DurableIngressCounts;
+}
+
+/** Per-row durable-admission tally; counts only, never identifiers or payloads. */
+export interface DurableIngressCounts {
+  posted: number;
+  duplicate: number;
+  failed: number;
+  unverified: number;
+}
+
+/** Durable bus-post outcome recorded next to an ingested inbound row. */
+export type InboundAdmission = 'posted' | 'duplicate' | 'failed';
+
+/** One inbound observation; `admission` absent means durable admission is unproven. */
+export interface InboundObservation {
+  /** ISO receive time. */
+  at: string;
+  admission?: InboundAdmission;
+}
+
+export interface InboundEvidence {
+  rows: InboundObservation[];
+  /**
+   * Observation-store coverage. 'missing' and 'unreadable' are evidence gaps:
+   * they can never certify an idle healthy request path.
+   */
+  store: 'ok' | 'missing' | 'unreadable';
 }
 
 export interface ChannelHealth {
@@ -59,6 +93,13 @@ export interface ChannelSource {
   processAlive(): Promise<boolean | 'unknown'> | boolean | 'unknown';
   /** Inbound receive times (ISO), any order. */
   inbound(): Promise<string[]> | string[];
+  /**
+   * Optional richer inbound read; when present it supersedes inbound(). Rows
+   * carry durable-admission outcomes and `store` reports observation-store
+   * coverage. Sources without it keep honest unknown coverage: no
+   * durableIngress counts are invented for them.
+   */
+  inboundEvidence?(): Promise<InboundEvidence> | InboundEvidence;
   /** Reply receipt times (ISO), any order. Activity observations only -- no source binds a reply to a specific inbound. */
   replies(): Promise<string[]> | string[];
 }
@@ -98,6 +139,19 @@ function slackReplyTimes(): string[] {
   return out;
 }
 
+/** Slack journal rows -> inbound evidence. Only ids/outcomes survive; text, authors and error payloads never reach this surface. */
+function slackInboundEvidence(runsDir?: string): InboundEvidence {
+  const journal = readSlackJournal({ ...(runsDir ? { runsDir } : {}), limit: 4096 });
+  if (journal.state === 'degraded') return { store: 'unreadable', rows: [] };
+  if (journal.state === 'missing') return { store: 'missing', rows: [] };
+  return {
+    store: 'ok',
+    rows: journal.entries
+      .filter((e) => e.decision === 'ingested')
+      .map((e) => ({ at: e.at, ...(e.bus ? { admission: e.bus } : {}) })),
+  };
+}
+
 function defaultSources(runsDir?: string): Record<ChannelName, ChannelSource> {
   return {
     slack: {
@@ -115,10 +169,11 @@ function defaultSources(runsDir?: string): Record<ChannelName, ChannelSource> {
       },
       processAlive: () => pgrep('channels slack run'),
       inbound: () => {
-        const journal = readSlackJournal({ ...(runsDir ? { runsDir } : {}), limit: 4096 });
-        if (journal.state === 'degraded') throw new Error('slack-journal-unreadable');
-        return journal.entries.filter((e) => e.decision === 'ingested').map((e) => e.at);
+        const evidence = slackInboundEvidence(runsDir);
+        if (evidence.store !== 'ok') throw new Error('slack-journal-unreadable');
+        return evidence.rows.map((r) => r.at);
       },
+      inboundEvidence: () => slackInboundEvidence(runsDir),
       replies: slackReplyTimes,
     },
     imessage: {
@@ -160,9 +215,14 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
     return { ...base, state: 'BLOCKED', missing: [`${channel} bridge process not running`] };
   }
   if (base.processAlive === true) base.runtimeHost = host;
-  let inbound: number[], replies: number[];
+  let inbound: number[], replies: number[], evidence: InboundEvidence | null = null;
   try {
-    inbound = (await src.inbound()).map(ms).filter(Number.isFinite).sort((a, b) => a - b);
+    if (src.inboundEvidence) {
+      evidence = await src.inboundEvidence();
+      inbound = evidence.rows.map((r) => ms(r.at)).filter(Number.isFinite).sort((a, b) => a - b);
+    } else {
+      inbound = (await src.inbound()).map(ms).filter(Number.isFinite).sort((a, b) => a - b);
+    }
     replies = (await src.replies()).map(ms).filter(Number.isFinite).sort((a, b) => a - b);
   } catch {
     return { ...base, state: 'UNKNOWN', missing: [`${channel} receipt source unreadable`] };
@@ -179,14 +239,42 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
   const observedReplies = validReplies.length;
   const futureDated = inbound.filter((t) => t > nowMs).length + replies.filter((t) => t > nowMs).length;
   base.unansweredCount = pending.length;
-  base.proof = { requestCoverage: pending.length ? 'unproven' : 'idle', futureDatedCount: futureDated };
+  const proof: ChannelProof = { requestCoverage: pending.length ? 'unproven' : 'idle', futureDatedCount: futureDated };
+  // Durable-admission tally over the same recent window that can block LIVE.
+  // Rows without an outcome (legacy) are 'unverified': they neither prove a
+  // successful durable enqueue nor convict one. A 'failed' row is positive
+  // evidence the running socket could not durably enqueue the request.
+  let durableFailed = false;
+  if (evidence !== null && evidence.store === 'ok') {
+    const counts: DurableIngressCounts = { posted: 0, duplicate: 0, failed: 0, unverified: 0 };
+    for (const row of evidence.rows) {
+      const t = ms(row.at);
+      if (!Number.isFinite(t) || t > nowMs || nowMs - t > INBOUND_WINDOW_MS) continue;
+      if (row.admission === 'posted') counts.posted += 1;
+      else if (row.admission === 'duplicate') counts.duplicate += 1;
+      else if (row.admission === 'failed') { counts.failed += 1; durableFailed = true; }
+      else counts.unverified += 1;
+    }
+    proof.durableIngress = counts;
+  }
+  base.proof = proof;
+  // A missing or degraded observation store is an evidence gap, not an idle
+  // healthy request path: it can never produce LIVE.
+  if (evidence !== null && evidence.store !== 'ok') {
+    return {
+      ...base,
+      state: 'UNKNOWN',
+      missing: [evidence.store === 'missing' ? `${channel} inbound journal missing` : `${channel} receipt source unreadable`],
+    };
+  }
   if (base.processAlive === 'unknown') {
     return { ...base, state: 'UNKNOWN', missing: [`${channel} bridge process liveness unverifiable`] };
   }
   const reasons: string[] = [];
   if (pending.length && observedReplies) reasons.push(`${channel} reply correlation unavailable`);
   if (futureDated) reasons.push(`${channel} future-dated receipt ignored`);
-  if (pending.some((t) => nowMs - t > REPLY_GRACE_MS)) {
+  if (durableFailed) reasons.push(`${channel} durable ingress failed`);
+  if (pending.some((t) => nowMs - t > REPLY_GRACE_MS) || durableFailed) {
     return { ...base, state: 'DEGRADED', missing: reasons };
   }
   if (reasons.length) return { ...base, state: 'UNKNOWN', missing: reasons };
