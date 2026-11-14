@@ -442,6 +442,7 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Constraints and guardrails ledger](strategy/CONSTRAINTS.md): Status: docs-only proposal for RQ-RETHINK-CONSTRAINTS-1. Source baseline: 00b72c2ea60de124051bb687a80f94663378d3b5, inspected 2026-11-13.
 - [Dead code and stale artifact audit](strategy/DEADCODE-REPORT.md): Job: RQ-RETHINK-DEADCODE-1. Observed: 2026-11-13.
 - [Phantom end-state architecture](strategy/ENDSTATE.md): Status: proposed architecture, docs and spec only. Job: RQ-RETHINK-ENDSTATE-1.
+- [Fleet strategy: the next 30 days](strategy/FLEET-30D.md): Date: 2026-11-14. Horizon: November 14 through December 13, 2026.
 - [Phantom module map](strategy/MODULE-MAP.md): Snapshot of the source tree at 00b72c2ea60de124051bb687a80f94663378d3b5 on 2026-11-13, with file-level dependencies, test references, history and host-script evidence.
 - [Strategy: the Spawn fleet model vs Phantom's architecture](strategy/spawn-fleet-model.md): Job: RQ-SWE5-RESEARCH-LOOP (pool claude, tier frontier, repo phantom).
 - [Changed-files verification (scripts/verify-changed.mjs)](verify-changed.md): Run the local pre-merge check from the repository root:

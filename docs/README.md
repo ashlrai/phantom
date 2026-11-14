@@ -231,6 +231,10 @@ roots, budgets and acceptance evidence explicit.
 
 ## Deeper design and history
 
+The [30-day fleet strategy](https://github.com/ashlrai/phantom/blob/master/docs/strategy/FLEET-30D.md)
+ranks the delivery gaps, maps accountable roles to existing runtimes, and sets
+acceptance targets for November 14 through December 13, 2026.
+
 The [ecosystem design](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-NATIVE-ECOSYSTEM.md)
 describes federation across independent products. [Mission OS](MISSION-OS.md)
 documents mission contracts, and [runtime activation authority](RUNTIME_ACTIVATION_AUTHORITY.md)
@@ -366,4 +370,4 @@ canonical release guide for required hosted qualification and publication.
 
 [Fable 5.2 orchestration and host handoff](https://github.com/ashlrai/phantom/blob/master/docs/FABLE-ORCHESTRATOR.md)
 
-- [Typed routing decisions](ROUTING.md): local-first typed route advice, bounded schema retry and dispatcher audit records.
+- [Typed routing decisions](https://github.com/ashlrai/phantom/blob/master/docs/ROUTING.md): local-first typed route advice, bounded schema retry and dispatcher audit records.
