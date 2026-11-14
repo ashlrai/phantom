@@ -27,6 +27,14 @@
  * reported as evidence while the section verdict says UNKNOWN with the exact
  * freshness reason; a positively identified gap stays BLOCKED.
  *
+ * The runtime section holds the same contract for the identity read itself:
+ * id.asOf must be finite and within SECTION_TIMEOUT_MS of the captured now,
+ * so a cached historical RuntimeIdentity whose fleetState.stale flag was
+ * false can never verify merely because that flag is stale-friendly. An old,
+ * malformed or future-dated observation — or an unreadable verdict clock —
+ * leaves host, version and fleet-state fields reported as evidence while the
+ * section says UNKNOWN with the exact freshness reason.
+ *
  * Output is sanitized through sanitizeIdentityText (home → ~, IPs dropped);
  * no message bodies, leases or env values ever reach the result.
  *
@@ -52,6 +60,9 @@ import {
 export const FLEET_RECHECK_SCHEMA = 'fleet.recheck.v1';
 /** Per-reader bound; a stalled reader can never hold the verdict open. */
 export const SECTION_TIMEOUT_MS = 5_000;
+/** A runtime identity observation verifies only when captured within the same
+ * reader bound of the verdict clock, in either direction. */
+const RUNTIME_OBSERVATION_BOUND_MS = SECTION_TIMEOUT_MS;
 /** Claims listing cap and per-claim task text cap. */
 const TOP_CLAIMS = 5;
 const TASK_TEXT_MAX = 80;
@@ -190,7 +201,24 @@ async function attempt<T>(read: () => T | Promise<T>): Promise<{ ok: true; value
   }
 }
 
-function runtimeSection(read: { ok: true; value: RuntimeIdentity } | { ok: false }, asOf: string): FleetRecheckRuntime {
+/** Exact freshness failure for the runtime observation timestamp; null when
+ * id.asOf is finite and within RUNTIME_OBSERVATION_BOUND_MS of the verdict
+ * clock. A cached false fleetState.stale flag cannot substitute for this. */
+function runtimeObservationFreshness(asOf: string, nowMs: number): string | null {
+  const ms = Date.parse(asOf);
+  if (!Number.isFinite(ms)) return 'runtime: asOf malformed';
+  if (ms - nowMs > RUNTIME_OBSERVATION_BOUND_MS) return 'runtime: asOf in the future';
+  if (nowMs - ms > RUNTIME_OBSERVATION_BOUND_MS) {
+    return `runtime: asOf stale (${Math.floor((nowMs - ms) / 1000)}s old)`;
+  }
+  return null;
+}
+
+function runtimeSection(
+  read: { ok: true; value: RuntimeIdentity } | { ok: false },
+  asOf: string,
+  nowMs: number,
+): FleetRecheckRuntime {
   const section: FleetRecheckRuntime = {
     state: 'UNKNOWN', source: 'runtime-identity', asOf,
     host: UNKNOWN, tailnetName: UNKNOWN, installedVersion: UNKNOWN, sourceVersion: UNKNOWN,
@@ -204,13 +232,20 @@ function runtimeSection(read: { ok: true; value: RuntimeIdentity } | { ok: false
   section.installedVersion = id.installedVersion;
   section.sourceVersion = id.sourceVersion;
   section.fleetState = { ageSeconds: id.fleetState.ageSeconds, stale: id.fleetState.stale };
-  // VERIFIED only when a real host answers and the fleet-state read is fresh.
-  if (id.host !== UNKNOWN && id.fleetState.stale === false) {
+  // The observation must be provably fresh against the captured verdict
+  // clock: an unreadable clock leaves freshness unverifiable, never VERIFIED.
+  const freshness = Number.isFinite(nowMs)
+    ? runtimeObservationFreshness(id.asOf, nowMs)
+    : 'runtime: verdict clock unknown, observation freshness unverifiable';
+  // VERIFIED only when a real host answers, the fleet-state read is fresh and
+  // the identity observation itself was captured inside the reader bound.
+  if (id.host !== UNKNOWN && id.fleetState.stale === false && freshness === null) {
     section.state = 'VERIFIED';
     section.missing = [];
     return section;
   }
   section.missing = [...id.reasons];
+  if (freshness !== null) section.missing.push(freshness);
   if (section.missing.length === 0) {
     section.missing.push(id.fleetState.stale === true
       ? `fleetState: stale (${id.fleetState.ageSeconds}s old)`
@@ -459,7 +494,7 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
   ]);
 
   const sections = {
-    runtime: runtimeSection(runtime, asOf),
+    runtime: runtimeSection(runtime, asOf, nowMs),
     claims: claimsSection(claims, asOf, nowMs),
     bridge: bridgeSection(bridge, asOf, nowMs),
     task: taskSection(board, asOf, claims, nowMs),
