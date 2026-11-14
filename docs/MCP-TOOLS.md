@@ -151,10 +151,10 @@ or control apps.
 | `intent_add` | Record a local directive. Tracking does not authorize action. |
 | `intent_get` | Read one intent by id from the local ledger. |
 | `intent_import` | Import local JSONL files or an ashlr.intent-ledger/v1 document, deduplicating directives and retaining provenance. |
-| `intent_link` | Record caller-supplied merged pull evidence on matching directives. Supplied claims are not verified. |
+| `intent_link` | Record caller-supplied merged pull evidence. Moves open directives to merged; never verifies or closes. |
 | `intent_list` | List local owner directives and their provenance, optionally filtered by status. |
-| `intent_ship` | Record caller-supplied release evidence on matching directives. Supplied claims are not verified. |
-| `intent_stale` | Preview stale intents or refresh local tracking without closing or dispatching work. |
+| `intent_ship` | Record caller-supplied release evidence. Moves named directives to shipped; never verifies. |
+| `intent_stale` | List stale directives in the local intent ledger. apply true refreshes local tracking only (live directives re-queue, others keep their status with a sweep evidence row); recommendations never close work, dispatch jobs, verify remotely or claim completion. |
 | `intent_update` | Revise a local directive and record caller-reported verification evidence. Tracking does not authorize action. |
 
 ## `phantom-fleet` — Isolated Fleet Server (`phm mcp fleet`)
