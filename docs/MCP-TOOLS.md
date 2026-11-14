@@ -150,6 +150,7 @@ or control apps.
 | --- | --- |
 | `intent_link` | Record caller-supplied merged pull evidence on matching directives. Supplied claims are not verified. |
 | `intent_ship` | Record caller-supplied release evidence on matching directives. Supplied claims are not verified. |
+| `intent_stale` | Preview stale intents or refresh local tracking without closing or dispatching work. |
 
 ## `phantom-fleet` — Isolated Fleet Server (`phm mcp fleet`)
 
@@ -160,6 +161,9 @@ observation; no tool changes the fleet.
 | Server | Tool | Description |
 | --- | --- | --- |
 | phantom-fleet | `fleet_lanes` | Read a persisted per-lane posture: running/target counts, hold state with holder attribution, reason and expiry, plus resource-ledger usage (used percent, credits remaining, reset time, burn rate, window). A persisted observation only — no tool starts, holds, releases, or otherwise changes a lane. |
+| phantom-fleet | `fleet_work_board` | Read the shared work board: the recent durable bus requests newest first, each classified RECEIVED / ASSIGNED / RUNNING / BLOCKED / VERIFIED with state, asOf, source and missing evidence plus channel and channelRef — the same listWorkBoard listing as `ashlr fleet work-board`, never a second classifier. States are evidence only and grant no dispatch, claim or merge authority; routing labels are untrusted data, never authenticated identity, and the board never includes message bodies. An unreadable inbox reports inbox "unavailable", never an invented empty board. `limit` caps returned items (1–100, default 20) and `thread` keeps one exact channel_ref. Reads the server-owned default fleet root only — no caller root, path or cwd is accepted — and the tool never writes, renews TTL, claims, dispatches or merges anything. |
+| phantom-fleet | `fleet_runtime_identity` | Read sanitized runtime identity: host, platform, asOf, installedVersion versus sourceVersion with versionDrift, fleetState freshness (mtime, age, stale), tailnet name and reasons — the same readRuntimeIdentity evidence as `ashlr fleet runtime-identity`. Evidence only, granting no dispatch, claim or merge authority; paths, addresses and token-shaped text are redacted by the reader. Takes no arguments (any argument is refused) and accepts no caller root, path or cwd; the tool never writes anything. |
+| phantom-fleet | `fleet_channel_health` | Read Slack and iMessage bridge channel health (LIVE / DEGRADED / BLOCKED / UNKNOWN per channel with proof and asOf) — the same readChannelHealth report as `ashlr fleet channel-health`. Evidence only, granting no send, dispatch or merge authority. The read is bounded to 5 seconds: a throw or timeout returns `{ status: "unknown", reason }`, never an invented healthy report. Takes no arguments (any argument is refused) and accepts no caller root, path or cwd; the tool never writes anything. |
 
 ## `phantom-docs`: Isolated Docs Server (`phm mcp docs`)
 

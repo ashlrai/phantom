@@ -46,8 +46,8 @@ import { handleWbAction, WB_ACTION_PATH } from './wb-action-api.js';
 
 import { handleTeamInvites } from '../../api/team-invites.js';
 import { handleFrictionFeedback } from '../verse/feedback-api.js';
+import { COMMS_CONFIRM_PATH, handleCommsConfirmRoute } from './comms-confirm-route.js';
 import { watchLeaderThread } from './leader-thread-watch.js';
-import { handleUiSettingsApi, UI_SETTINGS_PATH } from './ui-settings-api.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { timingSafeEqual, randomBytes } from 'node:crypto';
 import { basename, resolve as resolvePath, sep as pathSep } from 'node:path';
@@ -110,6 +110,7 @@ import { readUniverseGraph } from '../universe/graph-reader.js';
 import type { ProposalsReadResult } from '../inbox/store.js';
 import { handleRunEventsSse, RUN_EVENTS_PATH_RE } from './run-stream.js';
 import { buildHostSummary, HOST_SUMMARY_PATH } from './host-summary.js';
+import { handleUiSettingsApi, UI_SETTINGS_PATH } from './ui-settings-api.js';
 import { handleVerseApi, isVerseApiPath, verseSessionsDigest, verseSessionsSnapshot, verseAccountReadingsDigest } from '../verse/verse-api.js';
 import { handleIdeasDraftApi, isIdeasDraftPath } from './ideas-draft-route.js';
 // V2 autonomy control plane (mounted BEFORE handleVerseApi — see handleApi).
@@ -2114,6 +2115,23 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/job/activity ──────────────────────────────────────
+    // RQ-RADAR-DESKTOP-ACTIVITY: one merged, searchable activity stream per
+    // job — ledger events, commands seen in the worker log, changed files and
+    // the worker's reports. READ-ONLY; same no-auth read class as the rest
+    // of /api/fleet/job*.
+    if (path === '/api/fleet/job/activity' && method === 'GET') {
+      const { getFleetJobActivity } = await import('../fleet/runs-job-activity.js');
+      const { isFleetJobId } = await import('../fleet/runs-job-detail.js');
+      const id = getQueryParam(req.url ?? '', 'id');
+      if (!id || !isFleetJobId(id)) {
+        sendJson(res, 400, { error: 'valid job id required' });
+        return true;
+      }
+      sendJson(res, 200, await getFleetJobActivity(id));
+      return true;
+    }
+
     // ── GET /api/estimate ───────────────────────────────────────────────────
     // M32: read-only pre-flight cost estimate (pure local computation over
     // persisted history — no token needed; same class as /api/pulse).
@@ -2142,6 +2160,24 @@ export async function handleApi(
       const repo = getQueryParam(req.url ?? '', 'repo');
       const result = await buildOrientation(cfg, repo);
       sendJson(res, 200, result);
+      return true;
+    }
+
+    if (path === '/api/onboard/ecosystem' && method === 'GET') {
+      const { detectEcosystem } = await import('../onboard/ecosystem.js');
+      sendJson(res, 200, await detectEcosystem());
+      return true;
+    }
+    if (path === '/api/onboard/ecosystem/grant' && method === 'POST') {
+      if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      const { grantEcosystem, EcosystemGrantError } = await import('../onboard/ecosystem-grant.js');
+      try {
+        const receipt = await grantEcosystem(JSON.parse(await readBody(req)));
+        sendJson(res, 200, receipt);
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof EcosystemGrantError ? error.message : 'Onboarding grant unavailable. Check local file permissions and retry.' });
+      }
       return true;
     }
 
@@ -2642,6 +2678,19 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/app/fleet-usage (fleet-usage.v1, Resources > Lane usage) ──
+    // Read-only projection of the runs dir; same read class as GET /api/resource.
+    if (path === '/api/app/fleet-usage') {
+      if (method !== 'GET') {
+        res.setHeader('Allow', 'GET');
+        sendJson(res, 405, { error: 'method not allowed' });
+        return true;
+      }
+      const { readFleetUsageFeed } = await import('../resources/fleet-usage.js');
+      sendJson(res, 200, await readFleetUsageFeed());
+      return true;
+    }
+
     // ── GET /api/wb/v1/{snapshot,gh,budget} (desktop native shell reads) ────
     // Versioned loopback read surface for desktop/src-tauri fleet ops.
     // GET-only; already behind the read-session boundary like every /api/* GET.
@@ -2670,6 +2719,11 @@ export async function handleApi(
 
     if (path === '/api/verse/feedback') {
       return handleFrictionFeedback(ctx, req, res);
+    }
+
+    // Before the V1 catch-all, which 404s every /api/verse/* path it does not know.
+    if (path === COMMS_CONFIRM_PATH) {
+      return handleCommsConfirmRoute(ctx, req, res, method);
     }
 
     // ── /api/verse/{control,caps,scope,audit,daemon,safety} (V2 control) ────
