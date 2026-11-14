@@ -37,3 +37,29 @@ export function heldLaneBlocker(order: TraceOrder, lanes: LaneTargetsV1 | undefi
     .join(', ');
   return { dependency, source: 'slots.json', at: lanes.generatedAt };
 }
+
+const JOB_ID = /^RQ-[A-Z0-9][A-Z0-9-]{0,79}$/;
+
+/** BLOCKED evidence for an order whose every job is launched and ended EMPTY
+ * (an `outcome` row with `empty: true` in metrics/jobs.jsonl): no worker is
+ * left to advance it, so the dead jobs are its dependency. Any queued,
+ * published, merged or still-unmarked launched job means no blocker, and a
+ * job id outside the strict RQ shape voids the blocker rather than being
+ * echoed. Pure: no I/O, no clock. `traceGeneratedAt` is unused today and kept
+ * so the signature matches the other blocker sources. */
+export function endedEmptyBlocker(order: TraceOrder, _traceGeneratedAt: string): WorkItemEvidence['blocker'] | undefined {
+  if (order.jobs.length === 0) return undefined;
+  const ids: string[] = [];
+  let newest = -Infinity;
+  for (const job of order.jobs) {
+    if (job.state !== 'launched' || job.endedEmptyAt === undefined || !JOB_ID.test(job.id)) return undefined;
+    const ms = Date.parse(job.endedEmptyAt);
+    if (!Number.isFinite(ms)) return undefined;
+    ids.push(job.id);
+    if (ms > newest) newest = ms;
+  }
+  ids.sort();
+  const shown = ids.slice(0, 3).map((id) => `job ${id} ended empty`);
+  if (ids.length > 3) shown.push(`+${ids.length - 3} more`);
+  return { dependency: shown.join(', '), source: 'metrics/jobs.jsonl', at: new Date(newest).toISOString() };
+}

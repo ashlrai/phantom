@@ -9,6 +9,9 @@ export interface OrderTraceJob {
   lane: string | null;
   state: 'queued' | 'launched' | 'published' | 'merged';
   url: string | null;
+  /** ISO time of the newest `outcome` row with `empty: true` for this job;
+   * set only on jobs that are neither merged nor published. */
+  endedEmptyAt?: string;
 }
 export interface OrderTraceV1 {
   v: 1;
@@ -102,6 +105,7 @@ export async function readOrderTrace(opts: { runsDir?: string; now?: () => numbe
   if ((!directories || !files.length) && result.sources.prompts === 'healthy') result.sources.prompts = 'missing';
   const publishes = new Map<string, { url: string; ts: number }>();
   const merges = new Map<string, string | null>();
+  const empties = new Map<string, number>();
   try {
     const text = await readFile(join(root, 'metrics', 'jobs.jsonl'), 'utf8');
     for (const line of text.split(/\r?\n/).filter(Boolean)) {
@@ -115,6 +119,11 @@ export async function readOrderTrace(opts: { runsDir?: string; now?: () => numbe
             : typeof row.prUrl === 'string' ? row.prUrl
             : typeof row.pr === 'string' ? row.pr : null;
           merges.set(id, url ?? merges.get(id) ?? null);
+        }
+        if (row.event === 'outcome' && row.empty === true && typeof id === 'string' && id.startsWith('RQ-') && typeof row.ts === 'string') {
+          // Same `+hhmm` offset tolerance as empty-job-ledger.ts.
+          const emptyTs = Date.parse(row.ts.trim().replace(/([+-]\d{2})(\d{2})$/, '$1:$2'));
+          if (Number.isFinite(emptyTs) && emptyTs >= (empties.get(id) ?? -Infinity)) empties.set(id, emptyTs);
         }
         if (row.event !== 'publish' || typeof row.job !== 'string' || typeof row.url !== 'string' ||
             typeof row.ts !== 'string' || !Number.isFinite(Date.parse(row.ts))) {
@@ -150,10 +159,12 @@ export async function readOrderTrace(opts: { runsDir?: string; now?: () => numbe
       // A still-queued job has no launch marker; queue/ready.tsv is the only
       // artifact naming its routed lane. The marker stays authoritative for
       // launched, published and merged jobs.
+      const emptyMs = state === 'merged' || state === 'published' ? undefined : empties.get(file.id);
+      const endedEmpty = emptyMs === undefined ? undefined : new Date(emptyMs).toISOString();
       if (state === 'queued' && lane === null) lane = queued.lanes.get(file.id) ?? null;
       for (const order of result.orders) {
         if (!cached.keys.includes(order.key) || order.jobs.some(job => job.id === file.id)) continue;
-        order.jobs.push({ id: file.id, lane, state, url: publish?.url ?? merges.get(file.id) ?? null });
+        order.jobs.push({ id: file.id, lane, state, url: publish?.url ?? merges.get(file.id) ?? null, ...(endedEmpty !== undefined ? { endedEmptyAt: endedEmpty } : {}) });
       }
     } catch { result.sources.prompts = 'degraded'; }
   }

@@ -21,6 +21,8 @@ export interface OrderRow {
   pr: string | null;
   /** Absent on older servers; treated as null. */
   owner?: { job: string; lane: string | null } | null;
+  /** Lane-hold dependency for BLOCKED rows; absent on older servers or when lanes are unreadable. */
+  blocker?: string | null;
 }
 
 export interface OrderStateBody {
@@ -28,6 +30,8 @@ export interface OrderStateBody {
   generatedAt?: string;
   asOf: string;
   sources: Record<string, string> | 'unavailable';
+  /** Lane-holds read health; absent on older servers. */
+  lanes?: 'healthy' | 'unavailable';
   orders: OrderRow[];
 }
 
@@ -37,6 +41,8 @@ export const ORDER_STATE_PATH = '/api/verse/fleet/work-board/orders';
 export const MAX_ORDER_ROWS = 20;
 
 const PR_URL = /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+$/;
+const BLOCKER_MAX = 200;
+const BLOCKER_SAFE = /^[a-z0-9 ,:.\-TZ]+$/i;
 const isState = (v: unknown): v is OrderState => typeof v === 'string' && (ORDER_STATES as readonly string[]).includes(v);
 
 function parseOwner(raw: unknown): { job: string; lane: string | null } | null {
@@ -45,6 +51,11 @@ function parseOwner(raw: unknown): { job: string; lane: string | null } | null {
   if (typeof o.job !== 'string' || o.job === '') return null;
   if (o.lane !== null && o.lane !== undefined && typeof o.lane !== 'string') return null;
   return { job: o.job, lane: typeof o.lane === 'string' && o.lane !== '' ? o.lane : null };
+}
+
+/** Lane names and ISO timestamps only; anything else (paths, markup) is dropped. */
+function parseBlocker(raw: unknown): string | null {
+  return typeof raw === 'string' && raw.length <= BLOCKER_MAX && BLOCKER_SAFE.test(raw) ? raw : null;
 }
 
 export function parseRow(raw: unknown): OrderRow | null {
@@ -58,6 +69,7 @@ export function parseRow(raw: unknown): OrderRow | null {
     at: r.at, source: r.source, key: r.key, state: r.state, asOf: r.asOf,
     evidenceSource: typeof r.evidenceSource === 'string' ? r.evidenceSource : '',
     missing: r.missing as string[], pr: r.pr as string | null, owner: parseOwner(r.owner),
+    blocker: parseBlocker(r.blocker),
   };
 }
 
@@ -81,6 +93,7 @@ export interface OrderRowView {
   prUrl: string | null;
   prLabel: string | null;
   ownerText: string;
+  blockerText: string | null;
 }
 
 const pad = (n: number): string => String(n).padStart(2, '0');
@@ -99,6 +112,8 @@ export function orderRowView(row: OrderRow): OrderRowView {
   const owner = row.owner ?? null;
   const ownerText = owner === null ? 'no owner'
     : `${owner.job.slice(0, OWNER_JOB_MAX)}${owner.lane !== null ? ` (${owner.lane})` : ''}`;
+  const blockerText = row.state === 'BLOCKED' && typeof row.blocker === 'string' && row.blocker !== ''
+    ? `waiting on: ${row.blocker}` : null;
   return {
     key: row.key,
     time: clock(row.at),
@@ -109,5 +124,6 @@ export function orderRowView(row: OrderRow): OrderRowView {
     prUrl: pr,
     prLabel: pr === null ? null : `PR #${pr.slice(pr.lastIndexOf('/') + 1)}`,
     ownerText,
+    blockerText,
   };
 }

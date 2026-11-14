@@ -11,10 +11,14 @@
  * - the trace carries no dependency edge, so BLOCKED is reachable only when
  *   the caller passes healthy lane targets (`lanes`, from slots.json): an
  *   unverified order whose every job is still queued on a held lane gets a
- *   `blocker` naming those lanes (heldLaneBlocker in order-lane-blocker.ts). */
+ *   `blocker` naming those lanes (heldLaneBlocker in order-lane-blocker.ts);
+ * - the only other dependency evidence is a job-ended-empty outcome row in
+ *   metrics/jobs.jsonl: an order whose every job is launched and ended empty
+ *   (none queued, published or merged) is BLOCKED on those jobs
+ *   (endedEmptyBlocker). Nothing here proves a relaunch is not coming. */
 import { parseOrderAt } from '../../cli/fleet-orders.js';
 import { classifyWorkItem, type WorkItemClassification, type WorkItemEvidence } from '../comms/work-item-state.js';
-import { heldLaneBlocker } from './order-lane-blocker.js';
+import { endedEmptyBlocker, heldLaneBlocker } from './order-lane-blocker.js';
 import type { OrderTraceJob, OrderTraceV1 } from './order-trace.js';
 import type { LaneTargetsV1 } from './runs-lane-targets.js';
 
@@ -79,7 +83,7 @@ export function orderEvidence(order: TraceOrder, traceGeneratedAt: string, live?
     evidence.verified = { pr: pull.pr, artifact: pull.url, source: 'order-trace', at: traceGeneratedAt };
     return evidence;
   }
-  const blocker = heldLaneBlocker(order, lanes);
+  const blocker = heldLaneBlocker(order, lanes) ?? endedEmptyBlocker(order, traceGeneratedAt);
   if (blocker !== undefined) evidence.blocker = blocker;
   let running: OrderTraceJob | undefined;
   for (const job of order.jobs) {

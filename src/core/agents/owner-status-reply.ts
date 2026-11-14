@@ -14,7 +14,8 @@ import { formatRecheckReply } from '../fleet/fleet-recheck-reply.js';
 import { isOrdersAsk } from '../fleet/orders-ask.js';
 import { formatOrdersReply } from '../fleet/orders-reply.js';
 import { readOrderTrace } from '../fleet/order-trace.js';
-import { listLiveWorkers } from '../fleet/runs-live-workers.js';
+import { listLiveWorkers, type LiveWorkersSnapshot } from '../fleet/runs-live-workers.js';
+import { readLaneTargets, type LaneTargetsV1 } from '../fleet/runs-lane-targets.js';
 import type { LiveJobIds } from '../fleet/order-work-state.js';
 
 /** The five-line digest from real state; the heading is swapped for the clock below. */
@@ -76,24 +77,54 @@ export async function composeOwnerRecheckReply(now: Date, deps: OwnerStatusDeps 
   } catch { return OWNER_RECHECK_FALLBACK; }
 }
 
-/** The default orders answer: the order trace plus one live-worker snapshot.
- * A failed live read degrades to live 'unavailable' — RUNNING is reported
- * unproven, never silently asserted; a failed trace read throws to the
- * caller's fallback. */
-const defaultOrdersReply = async (now: Date): Promise<string> => {
+/** Reader seams for the default orders answer; tests inject each reader so
+ * the real trace, process table and slots.json never load. */
+export interface DefaultOrdersReaders {
+  /** Order-trace reader; the default is readOrderTrace. A throw reaches the
+   * caller's fixed orders fallback. */
+  read?: typeof readOrderTrace;
+  /** Live-worker reader; the default is listLiveWorkers. A throw or an
+   * 'unavailable' sourceState names RUNNING unchecked in the reply. */
+  live?: () => Promise<LiveWorkersSnapshot>;
+  /** Lane-targets reader; the default is readLaneTargets. A throw or a
+   * non-'healthy' sourceState names BLOCKED unchecked in the reply. */
+  lanes?: () => Promise<LaneTargetsV1>;
+}
+
+/** The default orders answer: the order trace plus one live-worker snapshot
+ * and one lane-targets read. A failed live read degrades to live
+ * 'unavailable' — RUNNING is reported unproven, never silently asserted; a
+ * failed or non-healthy lanes read degrades to lanes 'unavailable' — BLOCKED
+ * is reported unchecked, never silently claimed; a failed trace read throws
+ * to the caller's fallback. */
+export async function defaultOrdersReply(now: Date, readers: DefaultOrdersReaders = {}): Promise<string> {
   const nowMs = now.getTime();
-  const trace = await readOrderTrace({ now: () => nowMs });
+  const trace = await (readers.read ?? readOrderTrace)({ now: () => nowMs });
   let live: LiveJobIds | undefined;
   let liveState: 'healthy' | 'unavailable';
   try {
-    const snapshot = await listLiveWorkers();
+    const snapshot = await (readers.live ?? listLiveWorkers)();
     liveState = snapshot.sourceState;
     if (liveState === 'healthy') live = { jobIds: new Set(snapshot.workers.map(w => w.job)), at: snapshot.generatedAt };
   } catch {
     liveState = 'unavailable';
   }
-  return formatOrdersReply({ trace, nowIso: new Date(nowMs).toISOString(), live, liveState });
-};
+  // Lane holds are read once per reply, the same evidence the order-state API
+  // and `fleet order-state` use. A throw or a non-healthy slots.json yields no
+  // blocker evidence, so BLOCKED is not claimed — and the reply names the
+  // read 'unavailable' rather than dropping the check silently. Hold reasons
+  // and changedBy are stripped before the snapshot leaves this function: the
+  // reply may name lanes and held-until timestamps only.
+  let lanes: LaneTargetsV1 | undefined;
+  try {
+    const targets = await (readers.lanes ?? readLaneTargets)();
+    if (targets.sourceState === 'healthy') {
+      lanes = { ...targets, lanes: targets.lanes.map(row => ({ ...row, heldReason: null, changedBy: null })) };
+    }
+  } catch { /* lanes stays undefined: no blocker evidence */ }
+  const lanesState: 'healthy' | 'unavailable' = lanes === undefined ? 'unavailable' : 'healthy';
+  return formatOrdersReply({ trace, nowIso: new Date(nowMs).toISOString(), live, liveState, lanes, lanesState });
+}
 
 /** Never throws, and never falls through to the status digest or the recheck
  * verdict: an orders ask gets the per-order reply or the fixed orders

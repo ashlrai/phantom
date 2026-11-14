@@ -22,12 +22,23 @@ export interface QueuedLanes {
 const DOTTED_POOL = /^([A-Z-]+)\.(.+)$/;
 
 /** Pure: job id → routed lane from ready.tsv text. Rows without an id are
- * skipped; a dotted status prefix on the pool cell is stripped to the lane. */
+ * skipped; a dotted status prefix on the pool cell is stripped to the lane.
+ * A job whose rows disagree on the lane is ambiguous: its mapping is dropped
+ * for the whole snapshot (tombstoned, so a later duplicate cannot restore
+ * it) rather than letting last-row-wins fabricate a blocker. Identical
+ * repeats keep the lane. One ambiguous job never marks the source degraded. */
 export function queuedLanesFromText(text: string): Map<string, string> {
   const lanes = new Map<string, string>();
+  const ambiguous = new Set<string>();
   for (const row of parseReadyTsv(normalizeLegacyRows(text)).rows) {
-    if (row.id === null) continue;
-    lanes.set(row.id, DOTTED_POOL.exec(row.pool)?.[2] ?? row.pool);
+    if (row.id === null || ambiguous.has(row.id)) continue;
+    const lane = DOTTED_POOL.exec(row.pool)?.[2] ?? row.pool;
+    const prior = lanes.get(row.id);
+    if (prior === undefined) lanes.set(row.id, lane);
+    else if (prior !== lane) {
+      lanes.delete(row.id);
+      ambiguous.add(row.id);
+    }
   }
   return lanes;
 }
