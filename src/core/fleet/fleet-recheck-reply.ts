@@ -25,6 +25,7 @@
  */
 import type { FleetRecheck } from './fleet-recheck.js';
 import { formatComputersLine } from './recheck-computers-line.js';
+import { formatPoolLine } from './recheck-pool-line.js';
 import { sanitizeIdentityText } from './runtime-identity.js';
 
 /** Hard cap on the whole reply, including the trailing ellipsis when clipped. */
@@ -64,11 +65,13 @@ export function formatRecheckReply(r: FleetRecheck): string {
     : `Running job: ${scrub(lw.job)} · ${scrub(lw.repo)} · lane ${scrub(lw.lane)}/${scrub(lw.tier)}`
       + ` · up ${lw.ageSeconds === null ? 'unknown' : `${lw.ageSeconds}s`} · as of ${scrub(lw.asOf)} (process evidence, not a claim)`;
   const computers = formatComputersLine(r.tailnet, scrub);
-  const build = (withLast: boolean, withRunning: boolean, withComputers: boolean): string => [
+  const pool = formatPoolLine(r.pool, scrub);
+  const build = (withLast: boolean, withRunning: boolean, withComputers: boolean, withPool = false): string => [
     `Phantom recheck ${r.overall.state} · as of ${scrub(r.asOf)} · source fleet-recheck`,
     `Runtime: ${scrub(runtime.host)} · ${scrub(runtime.installedVersion)} · fleet state ${age}`
       + `${runtime.fleetState.stale === true ? ' · stale' : ''} (${runtime.state})`,
     ...(withComputers && computers !== null ? [computers] : []),
+    ...(withComputers && withPool ? [pool] : []),
     `Claims: ${claims.active === null ? 'unknown' : claims.active} live, top: ${top} (${claims.state})`,
     `Bridge: slack ${channel('slack')}, imessage ${channel('imessage')}`
       + `${bridge.missingBridge === null ? '' : ` · missing: ${scrub(bridge.missingBridge)}`} (${bridge.state})`,
@@ -83,7 +86,8 @@ export function formatRecheckReply(r: FleetRecheck): string {
         ? `BLOCKED on: ${missing}`
         : `UNKNOWN: ${missing}`,
   ].join('\n');
-  let text = build(true, true, true);
+  let text = build(true, true, true, true);
+  if (text.length > REPLY_MAX) text = build(true, true, true);
   if (text.length > REPLY_MAX) text = build(true, true, false);
   if (text.length > REPLY_MAX) text = build(true, false, false);
   if (text.length > REPLY_MAX) text = build(false, false, false);
