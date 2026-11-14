@@ -3,8 +3,9 @@
  * against the previous snapshot, plan the ASSIGNED / BLOCKED / VERIFIED
  * notices that carry their required evidence, and reply in the thread the
  * request came from through the existing senders. RUNNING and RECEIVED
- * never post; the sent ledger keeps every `(itemId, state)` pair
- * once-only, and the first pass only baselines the snapshot so history
+ * never post; the sent ledger keeps every delivered `(itemId, state)`
+ * entry once-only and every distinct meaningful delta once-only, and
+ * the first pass only baselines the snapshot so history
  * is never replayed into threads. `--dry-run` prints the plan and writes
  * or sends nothing; the ~/.ashlr/KILL switch halts sends the same way it
  * halts every other outward channel. Labels grant no authority. */
@@ -31,10 +32,11 @@ const usage = 'Usage: ashlr fleet board-notify [--root <absolute>] [--state-dir 
   + 'First live pass only records the baseline snapshot; --dry-run prints the plan without sending or writing.';
 
 /** Deterministic reply identity: a repeated pass for the same
- * (itemId, state) posts the same envelope id, so bus dedupe — not luck —
- * is what makes a retry once-only. */
+ * (itemId, state, delta) posts the same envelope id, so bus dedupe —
+ * not luck — is what makes a retry once-only, while a new meaningful
+ * delta earns a new id. */
 function noticeReplyId(notice: BoardNotice): string {
-  const digest = createHash('sha256').update(`${notice.itemId}|${notice.state}`).digest('hex').slice(0, 24);
+  const digest = createHash('sha256').update(`${notice.itemId}|${notice.state}|${notice.delta}`).digest('hex').slice(0, 24);
   return `board-notify-${digest}`;
 }
 
