@@ -125,7 +125,7 @@ describe('planNotifications', () => {
 
 describe('sendNotifications', () => {
   const notice = (over: Partial<BoardNotice>): BoardNotice => ({
-    itemId: 'req-fake-1', state: 'BLOCKED', asOf: AT, detail: 'fake-dep', source: 'bus-reply:rb-1',
+    itemId: 'req-fake-1', state: 'BLOCKED', asOf: AT, delta: 'fake-digest-1', detail: 'fake-dep', source: 'bus-reply:rb-1',
     text: `BLOCKED req-fake-1 as of ${AT} — fake-dep (source: bus-reply:rb-1)`,
     sourceChannel: 'slack', sourceThread: TS_A, ...over,
   });
