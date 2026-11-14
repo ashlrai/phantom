@@ -1,8 +1,8 @@
 /**
  * `ashlr fleet self-tick` — one locked pass of Phantom's self-management for
- * a host timer or an agent with no desktop app open. It calls the twelve
+ * a host timer or an agent with no desktop app open. It calls the thirteen
  * one-shot stages in the fixed order reset-release → lane-autohold
- * → stray-stop → meter-incident → planner-tick → inbox-acks → owner-live → order-notices → needs-triage → waste-incident → teammate-overdue → landed-sweep, each with --json (plus --apply and --runs-dir when given),
+ * → stray-stop → meter-incident → planner-tick → inbox-acks → owner-live → order-notices → board-notify → needs-triage → waste-incident → teammate-overdue → landed-sweep, each with --json (plus --apply and --runs-dir when given),
  * and folds their parsed reports into one run report. Only one self-tick runs
  * per runs dir; a step that fails or throws never stops the later ones.
  */
@@ -13,6 +13,7 @@ import { cmdFleetLaneAutohold } from './fleet-lane-autohold.js';
 import { cmdFleetPlannerTick } from './fleet-planner-tick.js';
 import { cmdFleetInboxAcks, type FleetInboxAcksDeps } from './fleet-inbox-acks.js';
 import { cmdFleetOrderNotices, type FleetOrderNoticesDeps } from './fleet-order-notices.js';
+import { cmdFleetBoardNotify } from './fleet-board-notify.js';
 import { cmdFleetOwnerLive } from './fleet-owner-live.js';
 import type { OwnerThreadOptions } from '../core/comms/owner-thread.js';
 import { cmdFleetNeedsTriage } from './fleet-needs-triage.js';
@@ -36,7 +37,8 @@ frees counts as a free slot for the planner step), then lane-autohold, then
 stray-stop (bounded guarded recovery), then meter-incident (deduped flat-meter
 notices), then planner-tick, then inbox-acks (sends pending same-channel acks), then owner-live
 (sends each newly-live owner channel its one-time 'Leader is live here' notice), then order-notices
-(tells Mason when a merged job served one of his orders), then needs-triage
+(tells Mason when a merged job served one of his orders), then board-notify
+(posts once-only ASSIGNED / BLOCKED / VERIFIED work-board changes into each item's source thread; the first live pass only records a baseline), then needs-triage
 (auto-resolves Needs-you items outside the four hard limits; secrets, money,
 outside sends and data destruction stay for Mason), then waste-incident (reports high-waste lanes), then teammate-overdue (notices the owner thread about unanswered teammate texts), then landed-sweep (closes DIRTY PRs whose work already landed;
 last because it is the slowest). Without --apply nothing is released, held, spawned, acknowledged, notified or resolved — the
@@ -78,6 +80,8 @@ interface Dependencies {
   /** Needs-you triage read/resolve/bus seams for tests; production defaults are unchanged. */
   needsTriage?: Pick<NonNullable<Parameters<typeof cmdFleetNeedsTriage>[1]>, 'read' | 'resolve' | 'bus'>;
   wasteRead?: typeof readWasteRiskInputs;
+  /** board-notify verb seam so tests never reach a real sender or Slack. */
+  boardNotify?: (args: string[]) => Promise<number>;
 }
 
 /** The escaped, home-scrubbed spelling of one value for human output. */
@@ -108,6 +112,10 @@ function summary(step: string, report: unknown): string {
   if (step === 'order-notices') {
     const n = (value: unknown): number => typeof value === 'number' ? value : 0;
     return `sent=${n(row['sent'])} planned=${count(row['notices'])}`;
+  }
+  if (step === 'board-notify') {
+    const n = (value: unknown): number => typeof value === 'number' ? value : 0;
+    return `sent=${n(row['sent'])} planned=${n(row['planned'])}`;
   }
   if (step === 'needs-triage') {
     return `auto=${count(row['auto'])} needs-mason=${count(row['hardLimit'])}`;
@@ -150,7 +158,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
   // --last is a read-only report of the last recorded pass: nothing runs,
   // no lock is taken, so --apply has no meaning beside it.
   if (last && apply) return invalid();
-  // One root for the lock and all twelve steps: the verbs' own fallbacks
+  // One root for the lock and all thirteen steps: the verbs' own fallbacks
   // (ASHLR_RUNS_DIR, ~/.ashlr-runs) resolve here once, so the lock domain
   // and the released slots can never drift to different dirs.
   const home = deps.home ?? homedir();
@@ -228,6 +236,18 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
         deps.ownerOptions === undefined ? {} : { options: deps.ownerOptions })(argv);
     },
     'order-notices': bind(cmdFleetOrderNotices, { now, senders: deps.noticeSenders }),
+    'board-notify': async () => {
+      // The verb prints with console.log and has no output seam, so capture
+      // its stdout here. Steps run one at a time under the run lock.
+      const argv = ['--json', ...(apply ? [] : ['--dry-run']), ...(deps.busRoot === undefined ? [] : ['--root', resolve(deps.busRoot)])];
+      if (deps.boardNotify) return { exitCode: await deps.boardNotify(argv), output: '' };
+      const captured: string[] = [];
+      const realLog = console.log;
+      console.log = (...parts: unknown[]) => { captured.push(parts.join(' ')); };
+      try {
+        return { exitCode: await cmdFleetBoardNotify(argv), output: captured.join('\n') };
+      } finally { console.log = realLog; }
+    },
     'needs-triage': bind(cmdFleetNeedsTriage, { ...deps.needsTriage }),
     'waste-incident': bind(cmdFleetWasteIncident, { now, read: deps.wasteRead }),
     'landed-sweep': bind(cmdFleetLandedSweep, { now }),
