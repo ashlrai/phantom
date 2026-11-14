@@ -51,8 +51,7 @@ describe('channel health proof semantics', () => {
     expect(s.unansweredCount).toBe(1);
     expect(s.missing).toContain('slack future-dated receipt ignored');
     expect(s.proof.futureDatedCount).toBe(1);
-    // The future timestamp is still reported as the last observed activity.
-    expect(s.lastReplyAt).toBe(ahead(60));
+    expect(s.lastReplyAt).toBeNull();
   });
 
   it('a future-dated inbound is not counted as a current request', async () => {
@@ -123,7 +122,11 @@ describe('channel health default readers', () => {
         expect(c.state).toBe('UNKNOWN');
         expect(c.unansweredCount).toBe(2);
         expect(c.missing).toContain(`${c.channel} reply correlation unavailable`);
-        expect(c.proof).toEqual({ requestCoverage: 'unproven', futureDatedCount: 0 });
+        // Slack rows carry no bus outcome, so durable admission stays unverified;
+        // iMessage has no per-row evidence and reports no durableIngress at all.
+        expect(c.proof).toEqual(c.channel === 'slack'
+          ? { requestCoverage: 'unproven', futureDatedCount: 0, durableIngress: { posted: 0, duplicate: 0, failed: 0, unverified: 2 } }
+          : { requestCoverage: 'unproven', futureDatedCount: 0 });
         expect(c.lastInboundAt).toBe(ago(6));
       }
       expect(slack.lastReplyAt).toBe(new Date(NOW.getTime() - 5 * 60_000).toISOString());
