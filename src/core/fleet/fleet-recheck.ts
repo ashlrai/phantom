@@ -19,6 +19,14 @@
  * verdict grants no dispatch or claim authority, and 'routed' never appears as
  * a state.
  *
+ * The bridge section verifies only observations captured within its own
+ * reader bound of the verdict clock: the report's asOf and each required
+ * channel's asOf must be finite and within SECTION_TIMEOUT_MS of the captured
+ * now. A fresh wrapper timestamp cannot launder an old channel observation,
+ * and invalid, future or stale timestamps leave the observed channel state
+ * reported as evidence while the section verdict says UNKNOWN with the exact
+ * freshness reason; a positively identified gap stays BLOCKED.
+ *
  * Output is sanitized through sanitizeIdentityText (home → ~, IPs dropped);
  * no message bodies, leases or env values ever reach the result.
  *
@@ -90,7 +98,8 @@ export interface FleetRecheckBridgeChannel {
   state: ChannelHealth['state'];
   runtimeHost: string | null;
   processAlive: boolean | 'unknown';
-  /** First exact missing[] entry for a channel that is not verified live. */
+  /** Exact reason a channel does not verify: its missing[] entry, or the
+   * freshness failure when the observed state was live but unverifiable. */
   missingBridge: string | null;
 }
 
@@ -270,7 +279,31 @@ function bridgeChannelView(channel: ChannelHealth): FleetRecheckBridgeChannel {
   };
 }
 
-function bridgeSection(read: { ok: true; value: ChannelHealthReport } | { ok: false }, asOf: string): FleetRecheckBridge {
+/**
+ * A channel observation can only be evidence for this verdict when it was
+ * captured inside the reader's own bound: SECTION_TIMEOUT_MS in either
+ * direction of the captured verdict clock. An older asOf is a historical
+ * snapshot and a newer one is future-dated — neither may verify a bridge.
+ */
+const BRIDGE_OBSERVATION_BOUND_MS = SECTION_TIMEOUT_MS;
+
+/** Exact freshness failure for one observation timestamp; null when within
+ * BRIDGE_OBSERVATION_BOUND_MS of the verdict clock. */
+function observationFreshness(label: string, asOf: string, nowMs: number): string | null {
+  const ms = Date.parse(asOf);
+  if (!Number.isFinite(ms)) return `bridge: ${label} asOf malformed`;
+  if (ms - nowMs > BRIDGE_OBSERVATION_BOUND_MS) return `bridge: ${label} asOf in the future`;
+  if (nowMs - ms > BRIDGE_OBSERVATION_BOUND_MS) {
+    return `bridge: ${label} asOf stale (${Math.floor((nowMs - ms) / 1000)}s old)`;
+  }
+  return null;
+}
+
+function bridgeSection(
+  read: { ok: true; value: ChannelHealthReport } | { ok: false },
+  asOf: string,
+  nowMs: number,
+): FleetRecheckBridge {
   const section: FleetRecheckBridge = {
     state: 'UNKNOWN', source: 'channel-health', asOf,
     channels: [], missingBridge: null, missing: ['bridge: reader failed'],
@@ -278,17 +311,44 @@ function bridgeSection(read: { ok: true; value: ChannelHealthReport } | { ok: fa
   if (!read.ok) return section;
   const report = read.value;
   section.asOf = report.asOf;
-  section.channels = (['slack', 'imessage'] as const).map(name => {
+  const names = ['slack', 'imessage'] as const;
+  section.channels = names.map(name => {
     const channel = report.channels.find(c => c.channel === name);
     return channel !== undefined
       ? bridgeChannelView(channel)
       : { channel: name, state: 'UNKNOWN' as const, runtimeHost: null, processAlive: 'unknown' as const, missingBridge: `${name} bridge evidence absent` };
   });
-  const missing = section.channels.map(c => c.missingBridge).filter((m): m is string => m !== null);
-  section.missingBridge = missing[0] ?? null;
-  section.missing = missing;
-  // VERIFIED only when every channel is LIVE on a named runtime host.
-  section.state = missing.length === 0 ? 'VERIFIED' : 'BLOCKED';
+  // Positively identified gaps (absent channel, or a state that is not
+  // verified live) keep their exact reason and stay BLOCKED.
+  const gaps = section.channels.map(c => c.missingBridge).filter((m): m is string => m !== null);
+  // Freshness is bounded against the captured verdict clock, not the report's
+  // own wrapper timestamp: a fresh report.asOf cannot launder an old channel
+  // observation, and a stale report makes every channel inside unverifiable.
+  // A freshness failure can only stop a would-be VERIFIED observation — it
+  // never erases a known gap.
+  const freshness: string[] = [];
+  if (!Number.isFinite(nowMs)) {
+    freshness.push('bridge: verdict clock unknown, observation freshness unverifiable');
+  } else {
+    const reportReason = observationFreshness('channel-health report', report.asOf, nowMs);
+    if (reportReason !== null) freshness.push(reportReason);
+    names.forEach((name, i) => {
+      const view = section.channels[i]!;
+      if (view.missingBridge !== null) return; // a known gap needs no freshness verdict
+      const channel = report.channels.find(c => c.channel === name);
+      if (channel === undefined) return;
+      const reason = observationFreshness(`${name} channel`, channel.asOf, nowMs);
+      if (reason !== null) {
+        view.missingBridge = reason;
+        freshness.push(reason);
+      }
+    });
+  }
+  section.missing = [...gaps, ...freshness];
+  section.missingBridge = section.missing[0] ?? null;
+  // VERIFIED only when every channel is LIVE on a named runtime host and every
+  // observation timestamp is provably inside the verdict's freshness bound.
+  section.state = gaps.length > 0 ? 'BLOCKED' : freshness.length > 0 ? 'UNKNOWN' : 'VERIFIED';
   return section;
 }
 
@@ -401,7 +461,7 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
   const sections = {
     runtime: runtimeSection(runtime, asOf),
     claims: claimsSection(claims, asOf, nowMs),
-    bridge: bridgeSection(bridge, asOf),
+    bridge: bridgeSection(bridge, asOf, nowMs),
     task: taskSection(board, asOf, claims, nowMs),
   };
   const states = Object.values(sections).map(section => section.state);
