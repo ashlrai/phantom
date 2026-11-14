@@ -5,11 +5,12 @@
  */
 import { readInstalledBundleVersion, versionNewer } from '../app-update-status.js';
 import { gatherBriefFacts, type BriefFacts } from '../comms/leader-brief.js';
+import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import { readNeedsMason } from '../fleet/needs-mason-resolve.js';
 import { readFleetRunsDirState, type FleetRunsDirState } from '../fleet/runs-dir-state.js';
 import { readInboxEntries, type InboxEntry } from '../fleet/mason-inbox.js';
 import { defaultReleasePublicReader, verifyLatestWorkbenchRelease } from '../release-public-facts.js';
-import type { Fact, StatusDigestInput } from './status-digest.js';
+import type { Fact, StatusDigestInput, StatusDigestWorkClaims } from './status-digest.js';
 
 export interface StatusDigestSources {
   installedVersion: () => string | null;
@@ -19,6 +20,8 @@ export interface StatusDigestSources {
   runsState: (runsDir: string, nowMs: number) => Promise<Pick<FleetRunsDirState, 'lanes' | 'sources' | 'runsDirPresent'>>;
   needs: (runsDir: string) => { status: string; items: Array<{ text: string }> };
   inbox: (runsDir: string) => Promise<{ sourceState: string; entries: InboxEntry[] }>;
+  /** Read-only bus claims table snapshot; gather counts it against nowMs. Override with undefined to drop the claims line. */
+  workClaims?: (nowMs: number) => BusWorkClaimsInspection;
 }
 
 const HOUR = 3_600_000;
@@ -38,7 +41,23 @@ const defaults: StatusDigestSources = {
   runsState: (runsDir, nowMs) => readFleetRunsDirState({ runsDir, now: () => nowMs }),
   needs: runsDir => readNeedsMason({ runsDir }),
   inbox: runsDir => readInboxEntries({ runsDir, limit: 200 }),
+  workClaims: () => inspectBusWorkClaims(),
 };
+
+/** Counts the snapshot at nowMs: 'missing' → null, 'unavailable' → throw (the caller's fact() keeps the reason). */
+function countWorkClaims(inspection: BusWorkClaimsInspection, nowMs: number): StatusDigestWorkClaims | null {
+  if (inspection.source === 'unavailable') throw new Error('unavailable');
+  if (inspection.source === 'missing') return null;
+  const live = inspection.claims.filter(claim => claim.completedAt === null && claim.leaseUntil > nowMs);
+  const expired = inspection.claims.filter(claim => claim.completedAt === null && claim.leaseUntil <= nowMs).length;
+  return {
+    live: live.length,
+    completed: inspection.claims.length - live.length - expired,
+    expired,
+    owners: new Set(live.map(claim => claim.owner)).size,
+    asOfMs: nowMs,
+  };
+}
 
 const ET = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 /** Inbox headings carry "YYYY-MM-DD HH:MM" Eastern wall time. */
@@ -59,18 +78,20 @@ async function fact<T>(read: () => Promise<T> | T, reason: string): Promise<Fact
 export async function gatherStatusDigestInput(runsDir: string, now: Date, overrides: Partial<StatusDigestSources> = {}): Promise<StatusDigestInput> {
   const src = { ...defaults, ...overrides };
   const nowMs = now.getTime();
+  const readClaims = src.workClaims;
   const merged = (hours: number): Promise<Fact<number>> => fact(async () => {
     const facts = await src.mergeFacts(nowMs - hours * HOUR, nowMs);
     if (facts.mergeCountUnavailable) throw new Error('unavailable');
     return facts.shipped.filter(item => /^ashlrai\/phantom#\d+/.test(item.text)).length;
   }, 'GitHub merge count unavailable or incomplete');
 
-  const [installed, published, hour, day, runs, inbox] = await Promise.all([
+  const [installed, published, hour, day, runs, inbox, workClaims] = await Promise.all([
     fact(() => { const v = src.installedVersion(); if (!v) throw new Error('none'); return v; }, 'installed app version not readable'),
     fact(() => src.publishedVersion(nowMs), 'published release not readable'),
     merged(1), merged(24),
     fact(() => src.runsState(runsDir, nowMs), 'lane state not readable'),
     fact(() => src.inbox(runsDir), 'MASON-INBOX.md not readable'),
+    readClaims === undefined ? Promise.resolve(undefined) : fact(() => countWorkClaims(readClaims(nowMs), nowMs), 'bus claims table could not be read'),
   ]);
 
   const lanes: Fact<StatusDigestInput['lanes'] extends Fact<infer L> ? L : never> = !runs.ok ? runs
@@ -94,5 +115,5 @@ export async function gatherStatusDigestInput(runsDir: string, now: Date, overri
   }
 
   const updatePending = installed.ok && published.ok ? versionNewer(published.value, installed.value) : null;
-  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, lanes, needsMason: needsFact, topP0 };
+  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, lanes, needsMason: needsFact, topP0, workClaims };
 }
