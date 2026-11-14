@@ -2,7 +2,8 @@
  * core/fleet/recheck-record.ts: retained, sanitized as-of evidence for
  * `ashlr fleet recheck`. Projects a FleetRecheck verdict to a small row (no
  * claim task text, no message bodies) plus bounded per-section missing[]
- * reason lists, and appends it to `<root>/fleet/recheck-log.jsonl`, capped at
+ * reason lists and the task.lastVerified {id, owner, asOf} evidence triple,
+ * and appends it to `<root>/fleet/recheck-log.jsonl`, capped at
  * 500 lines. Takes no lock beyond the atomic rename, sends nothing, and
  * grants no authority. Never throws.
  */
@@ -36,7 +37,13 @@ export interface RecheckRecord {
     runtime: { state: string; host: string; installedVersion: string; asOf: string };
     claims: { state: string; active: number | null; asOf: string };
     bridge: { state: string; missingBridge: string | null; asOf: string };
-    task: { state: string; id: string | null; owner: string | null; claimReceipt: string | null; asOf: string };
+    task: {
+      state: string; id: string | null; owner: string | null; claimReceipt: string | null; asOf: string;
+      /** Newest finished board item proven done at record time; the id+owner+asOf
+       * triple is the evidence, never its claimReceipt or source. Absent on rows
+       * recorded before it was retained; read back as null. */
+      lastVerified?: { id: string; owner: string; asOf: string } | null;
+    };
     /** Reason evidence; null on rows recorded before reasons were retained. */
     missing: RecheckMissing | null;
   };
@@ -61,6 +68,18 @@ function boundReasons(list: unknown): string[] {
   return out;
 }
 
+/** The finished-item evidence triple, each string capped like a reason; the
+ * verdict's claimReceipt and source are deliberately not copied — the row
+ * names which task was last proven done, not how. */
+function boundLastVerified(lv: FleetRecheck['sections']['task']['lastVerified']): { id: string; owner: string; asOf: string } | null {
+  if (lv === null || lv === undefined) return null;
+  return {
+    id: lv.id.slice(0, RECHECK_REASON_MAX),
+    owner: lv.owner.slice(0, RECHECK_REASON_MAX),
+    asOf: lv.asOf.slice(0, RECHECK_REASON_MAX),
+  };
+}
+
 /** Projection only: nothing beyond the named fields is copied from the verdict. */
 export function projectRecheck(r: FleetRecheck): RecheckRecord {
   const { runtime, claims, bridge, task } = r.sections;
@@ -75,6 +94,7 @@ export function projectRecheck(r: FleetRecheck): RecheckRecord {
       task: {
         state: task.state, id: task.task?.id ?? null, owner: task.task?.owner ?? null,
         claimReceipt: task.task?.claimReceipt ?? null, asOf: task.asOf,
+        lastVerified: boundLastVerified(task.lastVerified),
       },
       missing: {
         overall: boundReasons(r.overall.missing),
@@ -144,6 +164,15 @@ function isMissing(v: unknown): v is RecheckMissing {
     .every(k => Array.isArray(m[k]) && (m[k] as unknown[]).every(x => typeof x === 'string'));
 }
 
+/** Stored lastVerified evidence: absent on pre-334 rows, null, or the
+ * {id, owner, asOf} string triple. Anything else marks the row malformed. */
+function isLastVerifiedField(v: unknown): boolean {
+  if (v === undefined || v === null) return true;
+  if (typeof v !== 'object') return false;
+  const lv = v as Record<string, unknown>;
+  return typeof lv.id === 'string' && typeof lv.owner === 'string' && typeof lv.asOf === 'string';
+}
+
 function isRecord(v: unknown): v is RecheckRecord {
   if (typeof v !== 'object' || v === null) return false;
   const o = v as Record<string, unknown>;
@@ -151,7 +180,8 @@ function isRecord(v: unknown): v is RecheckRecord {
   return o.schema === RECHECK_RECORD_SCHEMA && typeof o.asOf === 'string' && typeof o.overall === 'string'
     && typeof s === 'object' && s !== null
     && ['runtime', 'claims', 'bridge', 'task'].every(k => typeof (s[k] as Record<string, unknown> | undefined)?.state === 'string')
-    && (s['missing'] === undefined || s['missing'] === null || isMissing(s['missing']));
+    && (s['missing'] === undefined || s['missing'] === null || isMissing(s['missing']))
+    && isLastVerifiedField((s['task'] as Record<string, unknown> | undefined)?.['lastVerified']);
 }
 
 /** Newest-first rows; unreadable or malformed lines are counted, not thrown. */
@@ -169,7 +199,11 @@ export function readRecheckRecords(root: string, last: number): ReadRecords {
     if (l.trim() === '') continue;
     try {
       const v: unknown = JSON.parse(l);
-      if (isRecord(v)) { v.sections.missing ??= null; rows.push(v); } else skipped++;
+      if (isRecord(v)) {
+        v.sections.missing ??= null;
+        v.sections.task.lastVerified ??= null;
+        rows.push(v);
+      } else skipped++;
     } catch { skipped++; }
   }
   return { rows: rows.reverse().slice(0, last), skipped, missing: false, outcome: 'ok' };
