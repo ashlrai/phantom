@@ -5,11 +5,14 @@
  * section is VERIFIED, 1 otherwise. Read-only: nothing is written, sent or
  * dispatched, and the verdict grants no authority. */
 import { readFleetRecheck, type FleetRecheck, type FleetRecheckDeps } from '../core/fleet/fleet-recheck.js';
+import { formatRecheckReply } from '../core/fleet/fleet-recheck-reply.js';
 
-const usage = 'Usage: ashlr fleet recheck [--json]\n'
+const usage = 'Usage: ashlr fleet recheck [--json|--reply]\n'
   + 'Prints one read-only verdict: RUNTIME|CLAIMS|BRIDGE|TASK|OVERALL lines with\n'
-  + 'as-of and source, or the fleet.recheck.v1 object with --json. Exit 0 only\n'
-  + 'when all four sections verify; 1 otherwise; 2 on bad arguments.';
+  + 'as-of and source, the fleet.recheck.v1 object with --json, or a short\n'
+  + 'paste-ready thread reply with --reply (--reply and --json cannot combine).\n'
+  + 'Exit 0 only when all four sections verify; 1 otherwise; 2 on bad arguments.\n'
+  + '--reply always exits 0: the reply itself reports a BLOCKED or UNKNOWN verdict.';
 
 function num(value: number | null): string {
   return value === null ? 'unknown' : String(value);
@@ -44,13 +47,16 @@ function textLines(recheck: FleetRecheck): string[] {
 
 export async function cmdFleetRecheck(args: string[], deps: FleetRecheckDeps = {}): Promise<number> {
   let json = false;
+  let reply = false;
   for (const arg of args) {
     if (arg === '--help' || arg === '-h') { console.log(usage); return 0; }
-    if (arg === '--json' && !json) { json = true; continue; }
+    if (arg === '--json' && !json && !reply) { json = true; continue; }
+    if (arg === '--reply' && !reply && !json) { reply = true; continue; }
     console.error(usage);
     return 2;
   }
   const recheck = await readFleetRecheck(deps);
+  if (reply) { console.log(formatRecheckReply(recheck)); return 0; }
   if (json) console.log(JSON.stringify(recheck, null, 2));
   else for (const l of textLines(recheck)) console.log(l);
   return recheck.overall.state === 'VERIFIED' ? 0 : 1;
