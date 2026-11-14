@@ -6,12 +6,16 @@ import { join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
 import { listWorkBoard, type WorkBoardResult } from '../comms/work-board.js';
 import { summarizeWorkBoard, WORK_BOARD_UNKNOWN_LINE } from '../comms/work-board-summary.js';
+import { isRecheckAsk } from '../fleet/recheck-ask.js';
+import { readFleetRecheck } from '../fleet/fleet-recheck.js';
+import { formatRecheckReply } from '../fleet/fleet-recheck-reply.js';
 
 /** The five-line digest from real state; the heading is swapped for the clock below. */
 const digestBrief = async (runsDir: string, now: Date): Promise<string> =>
   ['Morning leader brief', ...buildStatusDigest(await gatherStatusDigestInput(runsDir, now))].join('\n');
 const MAX_REPLY_CHARS = 1500;
 export const OWNER_STATUS_FALLBACK = "Phantom status: the status read failed; your message is in the Leader's inbox and it will answer there.";
+export const OWNER_RECHECK_FALLBACK = "Phantom recheck: the recheck read failed; your message is in the Leader's inbox.";
 
 /** Exact short asks only; "status of the release pr #12" is a request for the Leader. */
 export function isOwnerStatusRequest(text: string): boolean {
@@ -32,6 +36,18 @@ export interface OwnerStatusDeps {
    * owner-status-runtime-line.ts). Opt-in: the Slack socket wiring passes
    * defaultRuntimeLine; absent or throwing means no line, never a failure. */
   runtime?: (now: Date) => Promise<string>;
+  /** The paste-ready fleet recheck verdict for a short "recheck" ask; the
+   * default reads the live verdict (readFleetRecheck + formatRecheckReply). */
+  recheck?: (now: Date) => Promise<string>;
+}
+
+const defaultRecheck = async (now: Date): Promise<string> => formatRecheckReply(await readFleetRecheck({ now: () => now }));
+
+/** Never throws, and never falls through to the status digest: a recheck ask
+ * gets the recheck verdict or the fixed recheck fallback. Read-only; the
+ * reply grants nothing. */
+export async function composeOwnerRecheckReply(now: Date, deps: OwnerStatusDeps = {}): Promise<string> {
+  try { return await (deps.recheck ?? defaultRecheck)(now); } catch { return OWNER_RECHECK_FALLBACK; }
 }
 
 const defaultBoard = (now: Date): WorkBoardResult => listWorkBoard({ root: join(ashlrHome(), 'fleet'), now: now.getTime(), limit: 20 });
@@ -71,7 +87,15 @@ export async function composeOwnerStatusReply(runsDir: string, now: Date, deps: 
 
 /** The fixed auto-answer the Slack socket wiring injects into the Leader adapter.
  * Imported only by non-closure modules (cli + tests), so the digest readers stay
- * outside the Tier-1 import closure that slack-leader.ts belongs to. */
-export function ownerStatusReply(deps: OwnerStatusDeps = {}): { ask: (text: string) => boolean; compose: (runsDir: string, now: Date) => Promise<string>; readonly fallback: string } {
-  return { ask: isOwnerStatusRequest, compose: (runsDir, now) => composeOwnerStatusReply(runsDir, now, deps), fallback: OWNER_STATUS_FALLBACK };
+ * outside the Tier-1 import closure that slack-leader.ts belongs to. The same
+ * holds for the fleet recheck readers: an exact "recheck" ask is answered with
+ * the recheck verdict, every other gated ask with the status digest. */
+export function ownerStatusReply(deps: OwnerStatusDeps = {}): { ask: (text: string) => boolean; compose: (runsDir: string, now: Date, text?: string) => Promise<string>; readonly fallback: string } {
+  return {
+    ask: text => isOwnerStatusRequest(text) || isRecheckAsk(text),
+    compose: (runsDir, now, text) => text !== undefined && isRecheckAsk(text)
+      ? composeOwnerRecheckReply(now, deps)
+      : composeOwnerStatusReply(runsDir, now, deps),
+    fallback: OWNER_STATUS_FALLBACK,
+  };
 }
