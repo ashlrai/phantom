@@ -7,11 +7,11 @@
  * Data lives in `~/.ashlr/ci-metrics.json` — one object keyed by repo.
  * Target: 7200 seconds (2 h).
  */
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { defaultGh, type Gh } from './autopilot/github.js';
 import { FLEET_REPOS } from './portfolio/restock-lint.js';
 import { ashlrHome } from './cloud/store.js';
+import { ensurePrivateDirectory, readPrivateFileCapped, writePrivateFileAtomic } from './verse/preferences.js';
 
 function metricsPath(): string { return join(ashlrHome(), 'ci-metrics.json'); }
 export const DAILY_TTG_TARGET_S = 7200;
@@ -31,10 +31,6 @@ export interface CiMetrics {
   generatedAt: string;
   target_s: number;
   repos: Record<string, CiMetricEntry>;
-}
-
-function ensurePrivateDirectory(dir: string): void {
-  try { mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch { /* ignore */ }
 }
 
 /** Read a workflow run's ISO timestamp as milliseconds. */
@@ -96,18 +92,33 @@ export async function computeDailyTtgS(gh: Gh = defaultGh): Promise<Record<strin
   return results;
 }
 
+/** Validate disk data before it can be reused by the CLI. Unknown measurements stay null. */
+function isCiMetrics(value: unknown): value is CiMetrics {
+  if (!value || typeof value !== 'object') return false;
+  const data = value as Partial<CiMetrics>;
+  if (data.v !== 1 || typeof data.generatedAt !== 'string' || !Number.isFinite(Date.parse(data.generatedAt))
+    || typeof data.target_s !== 'number' || !Number.isFinite(data.target_s) || data.target_s <= 0
+    || !data.repos || typeof data.repos !== 'object' || Array.isArray(data.repos)) return false;
+  const validRunId = (id: unknown): boolean => id === null || (typeof id === 'number' && Number.isSafeInteger(id) && id > 0);
+  return Object.entries(data.repos).every(([repo, entry]) => entry !== null && typeof entry === 'object'
+    && entry.repo === repo
+    && (entry.daily_ttg_s === null || (typeof entry.daily_ttg_s === 'number'
+      && Number.isFinite(entry.daily_ttg_s) && entry.daily_ttg_s >= 0))
+    && validRunId(entry.lastRedRunId) && validRunId(entry.lastGreenRunId));
+}
+
 export async function loadExistingMetrics(): Promise<CiMetrics | null> {
   try {
-    if (!existsSync(metricsPath())) return null;
-    const data = readFileSync(metricsPath(), 'utf-8');
-    const parsed = JSON.parse(data);
-    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.repos)) return null;
-    return parsed as CiMetrics;
+    const file = readPrivateFileCapped(metricsPath(), 1024 * 1024);
+    if (!file || file.truncated) return null;
+    const parsed: unknown = JSON.parse(file.text);
+    return isCiMetrics(parsed) ? parsed : null;
   } catch { return null; }
 }
 
 export async function saveMetrics(metrics: CiMetrics): Promise<string> {
-  ensurePrivateDirectory(join(ashlrHome(), 'ci-metrics'));
-  writeFileSync(metricsPath(), JSON.stringify(metrics, null, 2), { mode: 0o600 });
-  return metricsPath();
+  const path = metricsPath();
+  ensurePrivateDirectory(ashlrHome());
+  writePrivateFileAtomic(path, JSON.stringify(metrics, null, 2));
+  return path;
 }

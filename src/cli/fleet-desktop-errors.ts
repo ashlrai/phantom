@@ -60,7 +60,13 @@ export async function cmdFleetDesktopErrors(args: string[], deps: { runsDir?: st
       process.stderr.write(`${usage}\n`); return 2;
     }
   }
-  const groups = await readDesktopErrors(deps.runsDir ?? defaultRunsDir(), { sinceMs, limit: LIMIT });
+  let groups: DesktopErrorGroup[];
+  try {
+    groups = await readDesktopErrors(deps.runsDir ?? defaultRunsDir(), { sinceMs, limit: LIMIT });
+  } catch {
+    process.stderr.write('error: unable to read desktop errors\n');
+    return 1;
+  }
   if (json) { console.log(JSON.stringify({ v: 1, errors: groups })); return 0; }
   if (groups.length === 0) { console.log('No desktop errors recorded.'); return 0; }
   for (const line of formatDesktopErrorGroups(groups)) console.log(line);
