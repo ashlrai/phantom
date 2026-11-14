@@ -1,8 +1,8 @@
 /**
  * `ashlr fleet self-tick` — one locked pass of Phantom's self-management for
- * a host timer or an agent with no desktop app open. It calls the thirteen
+ * a host timer or an agent with no desktop app open. It calls the fourteen
  * one-shot stages in the fixed order reset-release → lane-autohold
- * → stray-stop → meter-incident → planner-tick → inbox-acks → owner-live → order-notices → board-notify → needs-triage → waste-incident → teammate-overdue → landed-sweep, each with --json (plus --apply and --runs-dir when given),
+ * → stray-stop → meter-incident → planner-tick → inbox-acks → owner-live → order-notices → board-notify → recheck-record → needs-triage → waste-incident → teammate-overdue → landed-sweep, each with --json (plus --apply and --runs-dir when given),
  * and folds their parsed reports into one run report. Only one self-tick runs
  * per runs dir; a step that fails or throws never stops the later ones.
  */
@@ -14,6 +14,7 @@ import { cmdFleetPlannerTick } from './fleet-planner-tick.js';
 import { cmdFleetInboxAcks, type FleetInboxAcksDeps } from './fleet-inbox-acks.js';
 import { cmdFleetOrderNotices, type FleetOrderNoticesDeps } from './fleet-order-notices.js';
 import { cmdFleetBoardNotify } from './fleet-board-notify.js';
+import { cmdFleetRecheckRecord } from './fleet-recheck-record.js';
 import { cmdFleetOwnerLive } from './fleet-owner-live.js';
 import type { OwnerThreadOptions } from '../core/comms/owner-thread.js';
 import { cmdFleetNeedsTriage } from './fleet-needs-triage.js';
@@ -38,10 +39,11 @@ stray-stop (bounded guarded recovery), then meter-incident (deduped flat-meter
 notices), then planner-tick, then inbox-acks (sends pending same-channel acks), then owner-live
 (sends each newly-live owner channel its one-time 'Leader is live here' notice), then order-notices
 (tells Mason when a merged job served one of his orders), then board-notify
-(posts once-only ASSIGNED / BLOCKED / VERIFIED work-board changes into each item's source thread; the first live pass only records a baseline), then needs-triage
+(posts once-only ASSIGNED / BLOCKED / VERIFIED work-board changes into each item's source thread; the first live pass only records a baseline), then recheck-record
+(appends the read-only fleet recheck verdict to the capped local recheck log; a dry run records nothing), then needs-triage
 (auto-resolves Needs-you items outside the four hard limits; secrets, money,
 outside sends and data destruction stay for Mason), then waste-incident (reports high-waste lanes), then teammate-overdue (notices the owner thread about unanswered teammate texts), then landed-sweep (closes DIRTY PRs whose work already landed;
-last because it is the slowest). Without --apply nothing is released, held, spawned, acknowledged, notified or resolved — the
+last because it is the slowest). Without --apply nothing is released, held, spawned, acknowledged, notified, resolved or recorded — the
 planner step still appends its observational PLANNER_TICK line to
 queue/dispatch-events.log either way. Only one self-tick runs per runs dir:
 a held queue/self-tick.lock reports 'busy' and exits 0. A step that fails or
@@ -82,6 +84,8 @@ interface Dependencies {
   wasteRead?: typeof readWasteRiskInputs;
   /** board-notify verb seam so tests never reach a real sender or Slack. */
   boardNotify?: (args: string[]) => Promise<number>;
+  /** recheck-record verb seam for tests; the real call is cmdFleetRecheckRecord([]). */
+  recheckRecord?: () => Promise<number>;
 }
 
 /** The escaped, home-scrubbed spelling of one value for human output. */
@@ -116,6 +120,10 @@ function summary(step: string, report: unknown): string {
   if (step === 'board-notify') {
     const n = (value: unknown): number => typeof value === 'number' ? value : 0;
     return `sent=${n(row['sent'])} planned=${n(row['planned'])}`;
+  }
+  if (step === 'recheck-record') {
+    const recorded = row['recorded'];
+    return typeof recorded === 'string' ? recorded : '';
   }
   if (step === 'needs-triage') {
     return `auto=${count(row['auto'])} needs-mason=${count(row['hardLimit'])}`;
@@ -158,7 +166,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
   // --last is a read-only report of the last recorded pass: nothing runs,
   // no lock is taken, so --apply has no meaning beside it.
   if (last && apply) return invalid();
-  // One root for the lock and all thirteen steps: the verbs' own fallbacks
+  // One root for the lock and all fourteen steps: the verbs' own fallbacks
   // (ASHLR_RUNS_DIR, ~/.ashlr-runs) resolve here once, so the lock domain
   // and the released slots can never drift to different dirs.
   const home = deps.home ?? homedir();
@@ -247,6 +255,36 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       try {
         return { exitCode: await cmdFleetBoardNotify(argv), output: captured.join('\n') };
       } finally { console.log = realLog; }
+    },
+    'recheck-record': async () => {
+      // The verb rejects the shared self-tick argv as unknown flags, so it is
+      // always called bare. A dry run writes nothing and never calls it.
+      if (!apply) {
+        return { exitCode: 0, output: JSON.stringify({ reason: 'dry-run', wouldRecord: true }) };
+      }
+      // The recheck log lives on the real account root; a custom runs dir is
+      // a test or sandbox fixture that must never write it. An injected seam
+      // is the explicit override, same as the other account-root steps.
+      const run = deps.recheckRecord ?? (root === join(homedir(), '.ashlr-runs')
+        ? () => cmdFleetRecheckRecord([])
+        : undefined);
+      if (!run) {
+        return { exitCode: 0, output: JSON.stringify({ reason: 'custom-runs-dir-no-recheck-root', wouldRecord: true }) };
+      }
+      // The verb prints with console.log and has no output seam, so capture
+      // its stdout here. Steps run one at a time under the run lock.
+      const captured: string[] = [];
+      const realLog = console.log;
+      const realError = console.error;
+      console.log = (...parts: unknown[]) => { captured.push(parts.join(' ')); };
+      console.error = (...parts: unknown[]) => { error(parts.join(' ')); };
+      try {
+        const exitCode = await run();
+        return { exitCode, output: JSON.stringify({ recorded: captured.join('\n') }) };
+      } finally {
+        console.log = realLog;
+        console.error = realError;
+      }
     },
     'needs-triage': bind(cmdFleetNeedsTriage, { ...deps.needsTriage }),
     'waste-incident': bind(cmdFleetWasteIncident, { now, read: deps.wasteRead }),
