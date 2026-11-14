@@ -34,6 +34,8 @@ Approval cards record consent and do not collect credentials.
 
 ## CLI
 
+- [Amplify](AMPLIFY.md): `phm amplify status|tick|goal --json` reads objective and fleet vitals; tick journals advisory actions without changing fleet state.
+
 - [Apps control](APPS-CONTROL.md): Manage allowlisted desktop apps (`~/.ashlr/apps-allow.json`, empty by default). Commands: `phm apps list|open|quit|focus|status [--json]`. Runs through the desktop adapter only, logs every action to the feed, sends a quit with unsaved work to needs-you.
 - [Desktop control](DESKTOPCTL.md): Drive Claude, Codex and Devin desktop apps as interchangeable resources through the `computer_*` tools (`~/.ashlr/desktopctl.json`, off by default). Commands: `phm desktopctl capabilities|status|run <resource> [--json]`. Reports TCC grant state per resource, never prompts for or changes grants; `browser` is read-only.
 - [Desktop operator](DESKTOP-OPERATOR.md): Read and drive Phantom, Devin, Codex, Claude, Grok and Cursor on this Mac. Commands: `phm desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]`. Writes post a bus intent first. `phm desktop doctor --json` reports Accessibility and Screen Recording for the `desktop-operator` binary.
@@ -60,6 +62,8 @@ Approval cards record consent and do not collect credentials.
 - [Plugins](PLUGINS.md): Extend Phantom without forking.
 
 ## Fleet
+
+- [Branch gardener](BRANCH-GARDENER.md): Dry-run-first org/fork branch hygiene, active-worktree and security guards, six-hour launchd template, per-ref SHA leases and stranded-work triage.
 
 - Parked dependency gates: `phm fleet parked --json` lists `PARKED-DEP` rows and `unmetDeps` (gate ids not yet `MERGED` in `jobs.jsonl`). Restock auto-unparks when every gate id is merged; unpark does not merge. See [Mac queue scripts](../contrib/mac/README.md).
 - [Channel guide](CHANNELS.md): Six inbound channels — `phm channels add <kind>` writes config only; `phm channels status --json` reads the rollup.
@@ -290,6 +294,7 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Metrics and observability](architecture/metrics.md): Status: Phase 1 shipped: telemetry schema + local store (src/core/metrics/telemetry.ts), PR significance/quality scoring, value attribution, a UCB1 allocator (scoring.ts), and a...
 - [Scale path: from personal computers to open compute](architecture/scale-path.md): This is the target architecture for Phantom's node router, not a claim that multi-host routing or multi-tenant isolation has shipped. Each stage builds on the previous one; adde...
 - [Phantom Teams: multi-human, multi-agent engineering](architecture/teams.md): Status: Phase 1 shipped (local-first bus, claims, handoffs with approval gates, scoped shared context, MCP tools, phm team CLI). Phases 2–4 below are design, not shipped. This s...
+- [Frictionless merge path](ci/FRICTIONLESS-PATH.md): Status: proposed pipeline; only the pure path classifier is implemented. No workflow, required check, publisher, release permission or host pin changes in this change. Baseline:...
 - [Ashlr Stack with Phantom](companions/ashlr-stack.md): Ashlr Stack provisions and wires development services (Supabase, Vercel, Stripe, GitHub, ...) through a CLI and MCP server.
 - [Lexicon with Phantom](companions/lexicon.md): Lexicon is a personal word list for voice-to-agents: one YAML file of the terms speech-to-text gets wrong (for example "Ashler" -> "Ashlr.AI").
 - [Locus with Phantom](companions/locus.md): Locus is the identity plane: it decides which GitHub / Vercel / Supabase / Cloudflare account a CLI command or MCP session may act as. MCP and CLI account auth belongs here; Pha...
@@ -439,10 +444,13 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Codex 0.165 follow-ups](router/codex-0165.md): RQ-RADAR-CODEX-0165 fixed the unknown-model path: a modelnotfound / Unknown model failure now drops the model into probedbad, retries the job without --model, and reroutes a cod...
 - [Router eval harness](router/eval.md): phm eval router --dataset jobs.jsonl [--policy NAME] [--decisions] [--json] [--write report.json] [--check baseline.json] replays a router or prompt policy over a frozen set of...
 - [Prompt-variant A/B evaluation and promotion](router/prompt-ab.md): phm eval prompts --dataset jobs.jsonl [--spec experiment.json] [--promote] [--write registry.json] [--check registry.json] [--json] replays prompt variants per job class over a...
+- [Agent-native CI: verify in the loop, observe every merge](strategy/CI-RIGHTSIZING.md): Status: advisory proposal, RQ-CI-RIGHTSIZING-1. Security review is required before applying the workflow patch. This change activates no workflow, ruleset, publisher, observer o...
 - [Constraints and guardrails ledger](strategy/CONSTRAINTS.md): Status: docs-only proposal for RQ-RETHINK-CONSTRAINTS-1. Source baseline: 00b72c2ea60de124051bb687a80f94663378d3b5, inspected 2026-11-13.
 - [Dead code and stale artifact audit](strategy/DEADCODE-REPORT.md): Job: RQ-RETHINK-DEADCODE-1. Observed: 2026-11-13.
 - [Phantom end-state architecture](strategy/ENDSTATE.md): Status: proposed architecture, docs and spec only. Job: RQ-RETHINK-ENDSTATE-1.
+- [Fleet strategy: the next 30 days](strategy/FLEET-30D.md): Date: 2026-11-14. Horizon: November 14 through December 13, 2026.
 - [Phantom module map](strategy/MODULE-MAP.md): Snapshot of the source tree at 00b72c2ea60de124051bb687a80f94663378d3b5 on 2026-11-13, with file-level dependencies, test references, history and host-script evidence.
+- [AshlrAI repository leverage map](strategy/ORG-REPO-MAP.md): Survey: 2026-11-14, public GitHub observations at approximately 09:42–09:44 UTC.
 - [Strategy: the Spawn fleet model vs Phantom's architecture](strategy/spawn-fleet-model.md): Job: RQ-SWE5-RESEARCH-LOOP (pool claude, tier frontier, repo phantom).
 - [Changed-files verification (scripts/verify-changed.mjs)](verify-changed.md): Run the local pre-merge check from the repository root:
 <!-- docs-index:end -->
