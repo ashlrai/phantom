@@ -8,6 +8,8 @@ Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent
 
 ## Start
 
+- [Ecosystem onboarding](ECOSYSTEM-ONBOARDING.md): `phm onboard --ecosystem --json` detects existing capabilities without values; one explicit grant wires the reviewed bundle and returns per-capability results.
+
 `phm connect` is not available in this checkout. Use `phantom add NAME` in a
 trusted terminal for a new Phantom Secrets name; keep credentials out of chat.
 Approval cards record consent and do not collect credentials.

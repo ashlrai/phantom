@@ -500,6 +500,7 @@ function printOnboardHelp(): void {
   console.log('');
   console.log(dim('Usage: ashlr onboard [--locus-firm] [--yes] [--json]'));
   console.log(dim('   or: ashlr onboard --rollback <repo> [--kill]'));
+  console.log(dim('   or: phm onboard --ecosystem [--json]  (detect and grant integrations)'));
   console.log('');
   console.log(`    ${cyan('ashlr onboard')}                    preflight → enroll ONE repo → dry-run PLAN → \`ashlr inbox\``);
   console.log(`    ${cyan('ashlr onboard --yes')}              non-TTY safe: print the numbered steps, enroll nothing`);
@@ -512,6 +513,10 @@ function printOnboardHelp(): void {
 }
 
 export async function cmdOnboard(args: string[]): Promise<number> {
+  if (args.includes('--ecosystem')) {
+    const { cmdOnboardEcosystem } = await import('./onboard-ecosystem.js');
+    return cmdOnboardEcosystem(args);
+  }
   if (args.includes('--help') || args.includes('-h')) {
     printOnboardHelp();
     return 0;
