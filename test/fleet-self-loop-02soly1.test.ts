@@ -68,6 +68,7 @@ const recordingSteps = () => {
     'needs-triage': stub('needs-triage'),
     'teammate-overdue': stub('teammate-overdue'),
     'landed-sweep': stub('landed-sweep'),
+    'cos-work': stub('cos-work'),
   } };
 };
 
@@ -282,9 +283,9 @@ describe('fleet self-loop', () => {
       { steps: rec.steps, now: clock.now, sleep: clock.sleep });
     expect(code).toBe(0);
     expect(rec.order).toEqual([
-      'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep',
-      'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep',
-      'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep',
+      'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep', 'cos-work',
+      'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep', 'cos-work',
+      'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep', 'cos-work',
     ]);
     for (const [index, argv] of rec.argvs.entries()) {
       const flag = rec.order[index] === 'inbox-acks' ? '--flush' : '--apply';
@@ -295,7 +296,7 @@ describe('fleet self-loop', () => {
     expect(outLines.length).toBe(1);
     expect(summary).toMatchObject({ ticks: 3, failures: 0, busy: 0, termination: 'duration' });
     expect(summary!.lastReport).toMatchObject({ mode: 'apply', state: 'ran' });
-    expect(summary!.lastReport!['steps']).toHaveLength(11);
+    expect(summary!.lastReport!['steps']).toHaveLength(12);
   });
 
   it('dry-run is the default: no --apply is forwarded and nothing is applied', async () => {

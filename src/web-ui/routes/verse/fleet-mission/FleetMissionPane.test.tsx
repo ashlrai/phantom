@@ -98,3 +98,22 @@ it('says a missing slice has not reported, and survives a missing route', async 
   render(<FleetMissionPane visible />);
   expect(await screen.findByText('This view is not in this build yet.')).toBeInTheDocument();
 });
+
+it('renders unknown costs and updates through a visible stream without polling', async () => {
+  const listeners = new Map<string, () => void>();
+  const close = vi.fn();
+  vi.stubGlobal('EventSource', class {
+    addEventListener(name: string, listener: () => void) { listeners.set(name, listener); }
+    close = close;
+  });
+  const fetch = vi.fn(async () => Response.json(briefing));
+  vi.stubGlobal('fetch', fetch);
+  const view = render(<FleetMissionPane visible />);
+  await screen.findByRole('heading', { name: 'Something needs a look.' });
+  fireEvent.click(screen.getByRole('button', { name: 'Merge timeline' }));
+  expect(screen.getByText('Cost per merged PR: unknown')).toBeInTheDocument();
+  listeners.get('mission')!();
+  await vi.waitFor(() => expect(fetch.mock.calls.length).toBeGreaterThanOrEqual(2));
+  view.unmount();
+  expect(close).toHaveBeenCalledOnce();
+});

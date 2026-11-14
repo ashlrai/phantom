@@ -43,6 +43,7 @@ const steps = (codes: Partial<Record<string, number>> = {}): SelfTickSteps => {
     'needs-triage': run('needs-triage'),
     'teammate-overdue': run('teammate-overdue'),
     'landed-sweep': run('landed-sweep'),
+    'cos-work': run('cos-work'),
   };
 };
 

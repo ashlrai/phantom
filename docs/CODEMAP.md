@@ -75,6 +75,7 @@ imports, individual files, semantics or contract coverage.
 
 <!-- codemap:core:start -->
 - `src/core/agents/`
+- `src/core/approvals/`
 - `src/core/ask/`
 - `src/core/ask-flow/`
 - `src/core/authority/`

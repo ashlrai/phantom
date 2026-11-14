@@ -95,6 +95,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'coordination': () => import('./fleet-coordination.js'),
   'cos': () => import('./fleet-cos.js'),
   'cos-decline': () => import('./fleet-cos-decline.js'),
+  'cos-loop': () => import('./fleet-cos-loop.js'),
   'cos-reconcile': () => import('./fleet-cos-reconcile.js'),
   'cos-work': () => import('./fleet-cos-work.js'),
   'daily-reds': () => import('./fleet-daily-reds.js'),

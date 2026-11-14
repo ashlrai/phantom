@@ -22,7 +22,7 @@ Phantom - phm, the CLI for agentic engineers (ashlr remains compatible)
     run             Run - local-first agent runs (run, runs, …)
     swarm           Swarm - specs + multi-agent fleets (spec, …)
     memory          Memory - shared genome (memory, recall, learn, …)
-    knowledge       Knowledge - portfolio RAG + graph (graph, knowledge, ask, …)
+    knowledge       Knowledge - portfolio RAG + graph (graph, radar, knowledge, …)
     autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (metrics, enroll, …)
     observability   Observability - cost, telemetry, audit (jobs, radar, observe, …)
     integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, checkpoint, …)
@@ -72,8 +72,9 @@ Phantom - every command (phm or ashlr)
     orient [--repo <r>] [--json]                                                                                   Session-start context: genome hits, health, backlog, pending proposals, attention (read-only).
     docs --agent [--json]                                                                                          Agent cheat sheet: the CLI-first contract (commands, safety classes, JSON shapes).
     check [--base <ref>] [--json]                                                                                  Run incremental typechecks, cached lint and affected tests from a Phantom checkout; development feedback only.
+    docs sync [--repo <name>] [--check] [--json]                                                                   Regenerate documentation indexes and report command coverage and drift.
     completions zsh|bash                                                                                           Print a shell completion script to stdout.
-    plugins init|list|info|enable|disable                                                                          Scaffold + manage plugins (~/.ashlr/plugins/) - default-off, integrity-pinned, audited (see docs/PLUGINS.md).
+    plugins init|list|info|enable|disable                                                                          Plugins under ~/.ashlr/plugins/ (default-off). --json on every verb. init, enable and disable take --dry-run (writes nothing). enable prompts only on a terminal; otherwise use --yes.
     x <name> [args...]                                                                                             Run an enabled plugin's command.
     help [<topic>|--all|--search <term>]                                                                           Topic-grouped help; --all prints every command; --search <term> filters.
     version                                                                                                        Print the installed ashlr version (aliases: --version, -v).
@@ -93,6 +94,7 @@ Phantom - every command (phm or ashlr)
     context read | write [--json]                                         Read current company context or save a sourced note.
     eval [--limit N]                                                      Local-agent eval harness: adaptive prompts OFF vs ON, steps/done/tokens (M44).
     eval attention [--window 1d|7d|30d]                                   Metadata-only fleet attention report: context pressure, retrieval, yield, routing, and traces.
+    eval checkpoints --file <fixture.json> [--json]                       Compare scripted context retention and input-token estimates; requires PHANTOM_CHECKPOINTS=1.
     skills list [--status <s>] [--limit N] [--json]                       List skills learned from merged PRs (newest revision each; counts are real or "unknown").
     eval prompts --dataset <jobs.jsonl>                                   Per-class prompt-variant A/B replay; promotes a variant only on a significant lift.
     skills audit <pack-path> [--json]                                     Read-only quarantine audit for external skill structure, trigger routing, collisions, and behavioral fixtures.
@@ -112,10 +114,12 @@ Phantom - every command (phm or ashlr)
     recall "<query>"                        Search shared genome memory; return top relevant entries with scores.
     learn "<text>" [opts]                   Append a note to shared genome memory (local-first, append-only).
     genome                                  Genome status/health: entry count, projects covered, store size.
+    memory <add|list|search|forget>         Manage local durable preferences, doctrine and facts.
     memory add|list|search|forget [--json]  Durable markdown memory under ~/.phantom/memory; secret-shaped text refused.
 
   Knowledge - portfolio RAG + graph
     graph nodes|edges|status [--json]  Read-only GRAPH-1 nodes, edges, and availability; unavailable data exits 1. See phm graph --help.
+    radar <list|run|diff>              Observe public documentation and compare bounded local snapshots.
     knowledge build                    Index enrolled repos locally (read-only, secret-scrubbed) for portfolio RAG.
     ask "<question>"                   Local RAG across the indexed portfolio; cites repo/file:line. --allow-cloud opt-in. `ask status` prints the ask.status.v1 stream from the metrics jobs ledger.
     knowledge impact <target>          Show references + dependents of a file/symbol within and across enrolled repos.
@@ -227,6 +231,7 @@ Phantom - every command (phm or ashlr)
     connectors add|list|remove|show|import [--json]                                                                                                               Manage credential-free connector profiles and import safe client metadata; vault references only.
     channels add <kind> | status [--json] | slack status|map [--json]                                                                                             Bring a channel up (config only, credentials stay in custody), read the per-channel rollup, or inspect the Slack bridge mapping offline.
     imessage doctor|poll [--apply] [--json]                                                                                                                       iMessage intake: doctor checks permissions and config; poll counts waiting messages (dry run), --apply receipts them. Never prints message text.
+    forum channels|read|post|reply|invite|bind|commitments|sweep|standup|tick|bridge                                                                              Fleet forum: authenticated posts, mentions, commitments, standups. Bodies are data.
     director                                                                                                                                                      Retired - the Leader handles this (see `ashlr leader`). Still prints the read-only fleet god-view; sends nothing.
     invent                                                                                                                                                        Generative backlog invention - propose novel high-value work items.
     universe <demo|init|run|status|archive>                                                                                                                       Local experiment evolution: run competing code variants, measure them, and reuse winning artifacts.
@@ -320,29 +325,31 @@ Phantom - every command (phm or ashlr)
     goals [--json]                                                                             Show dispatcher throughput, empty rates and resource resets.
 
   Integrations - MCP, GitHub, Vercel, editors
-    mcp                                                                              Run the MCP aggregation gateway on stdio (point any agent here; includes the native ashlr_* tools; list them with tools/list).
-    checkpoint save <source> <destination> <worktree> [--json]                       Save a handoff with a Git worktree inventory. See docs/AGENT-CHECKPOINT.md.
-    checkpoint resume <file> [--json]                                                Validate and print a structured agent checkpoint for a fresh session. See docs/AGENT-CHECKPOINT.md.
-    sessions list|revoke <id> [--json]                                               See running MCP gateway sessions and block one; every gateway call is logged (caller, tool, verdict) with arguments redacted, kept 14 days.
-    mcp list                                                                         List native ashlr tools + discovered MCP servers with per-server tool counts.
-    mcp doctor                                                                       Per-server MCP health: does it start? how many tools?
-    autopilot <pr> [--apply] [--watch]                                               Drive one of Phantom's own PRs to green: fix red CI and review feedback with an agent, merge a conflicting or behind base, re-run infra failures once, re-verify; stops and says why when a failure is not the PR's. Plan only unless --apply; never force-pushes or merges the PR.
-    metrics <summary|dashboard|record|recommend|ingest|levers>                       Local telemetry: value-weighted PRs shipped per token/second/$, leaderboards, UCB1 allocation, HTML dashboard, router-metrics ingest and opportunity proxies.
-    improve propose [--open-pr --repo <dir>]                                         Self-improvement loop: evidence-backed proposals ranked by realized leverage; --open-pr opens DRAFT PRs from an isolated worktree.
-    improve register|measure|outcomes|promote|sync-backlog|discover|observe|lessons  Record a proposal's deterministic metric, measure it at the PR's exact merge base and head, record merges and the reverts that cancel their credit, compare proposers against the deterministic baseline, register cloud backlog PRs that declare a metric, add backlog items from member issues, a red default branch and proposals, compare cloud runs served lessons against the holdout run without them, and queue auto-merge only when checks are green and the metric improved.
-    steward disk [--apply] [--json]                                                  Measure Codex/Claude/Phantom log roots against retention + quota; dry run unless --apply (deletes oldest eligible files only).
-    team <view|join|invite|role|link|approve|claim|release|say>                      Local-first team bus: presence, repo/branch/path claims, handoffs and human approval of consequential agent actions.
-    companions [--json] [--root <dir>] [--bin-dir <dir>]                             Read-only Secrets/Locus/Lexicon executable identity and version inventory; no runtime readiness or activation.
-    mcp install <claude|ashlrcode>                                                   Add the ashlr gateway to a target mcpServers config (backs up first).
-    gh <pr|issue|ci>                                                                 Read GitHub open PRs, issues, or CI status for the current repo (read-only).
-    gh pr create                                                                     Create a PR via gh CLI - explicit + confirm-gated (the only gh mutation).
-    vercel <ls|logs>                                                                 Read recent Vercel deployments or latest build logs (read-only).
-    wire [claude|codex|cursor|all]                                                   Wire ashlr MCP gateway into editor config(s); defaults to detected editors.
-    wire status [claude|codex|cursor|gemini|all]                                     Read-only report of whether each editor is wired to the ashlr gateway.
-    wire --claude-md                                                                 Print a CLAUDE.md snippet teaching agents the CLI-first ashlr usage (read-only).
-    notify test                                                                      Send a test ping to the configured webhook(s); no-op if none are set.
-    stack [status|list|providers|recommend|scan|doctor|add|apply]                    Ecosystem `stack` tool surface: read-only status/list/recommend, confirm-gated add/apply (real provisioning).
-    ecosystem doctor [--json] [--deep]                                               Read-only sibling-repository health scan across the ecosystem.
+    mcp                                                                                        Run the MCP aggregation gateway on stdio (point any agent here; includes the native ashlr_* tools; list them with tools/list).
+    checkpoint save <source> <destination> <worktree> [--json]                                 Save a handoff with a Git worktree inventory. See docs/AGENT-CHECKPOINT.md.
+    checkpoint resume <file> [--json]                                                          Validate and print a structured agent checkpoint for a fresh session. See docs/AGENT-CHECKPOINT.md.
+    sessions list|revoke <id> [--json]                                                         See running MCP gateway sessions and block one; every gateway call is logged (caller, tool, verdict) with arguments redacted, kept 14 days.
+    mcp list                                                                                   List native ashlr tools + discovered MCP servers with per-server tool counts.
+    mcp doctor                                                                                 Per-server MCP health: does it start? how many tools?
+    autopilot <pr> [--apply] [--watch]                                                         Drive one of Phantom's own PRs to green: fix red CI and review feedback with an agent, merge a conflicting or behind base, re-run infra failures once, re-verify; stops and says why when a failure is not the PR's. Plan only unless --apply; never force-pushes or merges the PR.
+    metrics <summary|dashboard|record|recommend|ingest|levers>                                 Local telemetry: value-weighted PRs shipped per token/second/$, leaderboards, UCB1 allocation, HTML dashboard, router-metrics ingest and opportunity proxies.
+    improve propose [--open-pr --repo <dir>]                                                   Self-improvement loop: evidence-backed proposals ranked by realized leverage; --open-pr opens DRAFT PRs from an isolated worktree.
+    improve register|measure|outcomes|promote|sync-backlog|discover|observe|lessons            Record a proposal's deterministic metric, measure it at the PR's exact merge base and head, record merges and the reverts that cancel their credit, compare proposers against the deterministic baseline, register cloud backlog PRs that declare a metric, add backlog items from member issues, a red default branch and proposals, compare cloud runs served lessons against the holdout run without them, and queue auto-merge only when checks are green and the metric improved.
+    steward disk [--apply] [--json]                                                            Measure Codex/Claude/Phantom log roots against retention + quota; dry run unless --apply (deletes oldest eligible files only).
+    approvals [--team <id>] [--json]                                                           What needs a human: pending team approvals, the Security pin queue (read-only) and explicit holds; same projection as the desktop Approvals panel.
+    team <view|join|invite|role|link|approve|claim|release|say>                                Local-first team bus: presence, repo/branch/path claims, handoffs and human approval of consequential agent actions.
+    companions [--json] [--root <dir>] [--bin-dir <dir>]                                       Read-only Secrets/Locus/Lexicon executable identity and version inventory; no runtime readiness or activation.
+    mcp install <claude|ashlrcode>                                                             Add the ashlr gateway to a target mcpServers config (backs up first).
+    gh <pr|issue|ci>                                                                           Read GitHub open PRs, issues, or CI status for the current repo (read-only).
+    gh pr create                                                                               Create a PR via gh CLI - explicit + confirm-gated (the only gh mutation).
+    pr cockpit --repo <owner/name> [--repo <owner/name> ...] [--json] [--offline] [--refresh]  Read-only GitHub snapshot of open PRs per repo: counts, rework edges, hold markers, five-minute cache. Cannot merge or close.
+    vercel <ls|logs>                                                                           Read recent Vercel deployments or latest build logs (read-only).
+    wire [claude|codex|cursor|all]                                                             Wire ashlr MCP gateway into editor config(s); defaults to detected editors.
+    wire status [claude|codex|cursor|gemini|all]                                               Read-only report of whether each editor is wired to the ashlr gateway.
+    wire --claude-md                                                                           Print a CLAUDE.md snippet teaching agents the CLI-first ashlr usage (read-only).
+    notify test                                                                                Send a test ping to the configured webhook(s); no-op if none are set.
+    stack [status|list|providers|recommend|scan|doctor|add|apply]                              Ecosystem `stack` tool surface: read-only status/list/recommend, confirm-gated add/apply (real provisioning).
+    ecosystem doctor [--json] [--deep]                                                         Read-only sibling-repository health scan across the ecosystem.
 
   Safety - sandboxes, invariants, activation
     daemon activation-preflight --request <path> [--json]                                 Read-only verification of operator-custodied signed candidate and rollback artifacts; grants no service authority.
@@ -370,14 +377,17 @@ Phantom - every command (phm or ashlr)
     demo [--no-cleanup] [--json]                                                          Watch the FULL autonomous chain run on a DISPOSABLE tmp repo (isolated tmp ~/.ashlr; proposal-only; auto-cleans). NEVER touches your portfolio or applies anything.
 
   Surfaces - TUI + web dashboard
-    top [--once] [--json]         Read-only per-pool capacity and reset pressure snapshot.
-    tui [--once]                  Interactive terminal dashboard (alias: dash). --once renders one frame and exits.
-    dash [--once]                 Alias of `tui` - interactive terminal dashboard.
-    dashboard [--stop|--status]   Open the persistent fleet dashboard service (ai.ashlr.serve); --status/--stop inspect or unload it (no install/repair - resident mutation is withheld).
-    serve [--port N]              Start local web dashboard + JSON API on 127.0.0.1 (default port 7777).
-    serve --open                  Start dashboard and open browser automatically.
-    serve --allow-dispatch        Enable guarded POST /api/run + web inbox approve/reject (prints session token).
-    verse [--port N] [--no-open]  Open the Phantom console at /verse/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.
+    top [--once] [--json]                                                  Read-only per-pool capacity and reset pressure snapshot.
+    tui [--once]                                                           Interactive terminal dashboard (alias: dash). --once renders one frame and exits.
+    dash [--once]                                                          Alias of `tui` - interactive terminal dashboard.
+    dashboard [--stop|--status]                                            Open the persistent fleet dashboard service (ai.ashlr.serve); --status/--stop inspect or unload it (no install/repair - resident mutation is withheld).
+    serve [--port N]                                                       Start local web dashboard + JSON API on 127.0.0.1 (default port 7777).
+    serve --open                                                           Start dashboard and open browser automatically.
+    serve --allow-dispatch                                                 Enable guarded POST /api/run + web inbox approve/reject (prints session token).
+    console [--port N] [--no-open]                                         Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.
+    verse [--port N] [--no-open]                                           Alias of `console` (the original name; same flags). Opens /verse/, the same page.
+    pages publish <file.md|file.json> [--slug <s>] [--title <t>] [--json]  Publish a report into the loopback dashboard at /pages/<slug> (stored under ~/.ashlr/pages; nothing public).
+    pages list [--json]                                                    List published report pages, newest first.
 
   Scaffold - new projects + shipping
     new <name> [opts]   Scaffold a project from a template (next-app, node-cli, mcp-server, minimal).

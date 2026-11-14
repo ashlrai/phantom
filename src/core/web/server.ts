@@ -29,6 +29,7 @@ import { handleApi, drainSseConnections, drainSseSession, invalidateWebReadCache
 import { createReadProjectionWorker, type ReadProjectionReader } from './read-projections.js';
 import { governReadProjections } from './read-projection-governor.js';
 import { createReadSessionBoundary, headerValue, isAllowedHost, requestUrl, safeEqual, sendJson } from './read-session.js';
+import { isPagesApiPath, pagesApiGetResponse } from '../cos/pages.js';
 import { isPhoneShellPath, serveStatic } from './static.js';
 import { gcRunStreams } from '../run/streaming.js';
 import { resetVerseEngine } from '../verse/verse-api.js';
@@ -193,6 +194,16 @@ export async function startServer(
     if (process.env.ASHLR_PHANTOM_DISCOVERY === '1' && method === 'GET') {
       if (path === PHANTOM_DISCOVERY_PATH) { sendJson(res, 200, phantomManifest); return; }
       if (path === PHANTOM_PING_PATH) { sendJson(res, 200, { ok: true }); return; }
+    }
+
+    // Published report pages (`phm pages publish`): read-only payloads under
+    // the same read authority the gate above just checked. Dispatched here
+    // rather than inside handleApi so the Tier-1 import closure of api.ts is
+    // untouched; non-GET traffic falls through to handleApi and 404s.
+    if (method === 'GET' && isPagesApiPath(path)) {
+      const out = pagesApiGetResponse(path);
+      sendJson(res, out.status, out.body);
+      return;
     }
 
     // ── 2. API routes ──────────────────────────────────────────────────────

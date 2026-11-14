@@ -1606,7 +1606,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                 and not (result(m) or "").startswith("RESULT PR") and not disk_reuse_only
                 and m not in alive and m not in reaping and m not in publishing and m not in keep and m not in park_state
                 and not os.path.isdir(WTROOT + "/" + m) and not os.path.exists(RUN + "/" + m + ".batched")
-                and batch_attempts(m) < batcher.MAX_ATTEMPTS)
+                and batch_attempts(m) < batcher.MAX_ATTEMPTS
+                and not _empty_check(f)[0])
     _tasks = {}
     def task_info(f):   # prompts are read only for same-repo, same-tier candidates of a lead that can launch now
         if f[0] not in _tasks:

@@ -25,15 +25,16 @@ function steps(calls: string[], over: Partial<SelfTickSteps> = {}): SelfTickStep
     'needs-triage': ok('needs-triage', {}),
     'teammate-overdue': ok('teammate-overdue', {}),
     'landed-sweep': ok('landed-sweep', { v: 1, closed: 1, planned: 2 }),
+    'cos-work': ok('cos-work', {}),
     ...over,
   };
 }
 
 describe('self-tick landed-sweep step', () => {
-  it('runs five steps in order with landed-sweep last', async () => {
+  it('runs twelve steps with cos-work last', async () => {
     const calls: string[] = [];
     const { report, exitCode } = await runSelfTick({ runsDir: tmp(), steps: steps(calls), now: () => 0 });
-    const order = ['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep'];
+    const order = ['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep', 'cos-work'];
     expect([...SELF_TICK_STEP_ORDER]).toEqual(order);
     expect(calls).toEqual(order);
     expect(report.steps.map(s => [s.step, s.state])).toEqual(order.map(n => [n, 'ok']));
@@ -47,7 +48,7 @@ describe('self-tick landed-sweep step', () => {
       steps: steps(calls, { 'landed-sweep': async () => { throw new Error('boom'); } }),
     });
     expect(report.steps.map(s => [s.step, s.state])).toEqual([
-      ['reset-release', 'ok'], ['lane-autohold', 'ok'], ['stray-stop', 'ok'], ['meter-incident', 'ok'], ['planner-tick', 'ok'], ['inbox-acks', 'ok'], ['order-notices', 'ok'], ['needs-triage', 'ok'], ['waste-incident', 'ok'], ['teammate-overdue', 'ok'], ['landed-sweep', 'failed'],
+            ['reset-release', 'ok'], ['lane-autohold', 'ok'], ['stray-stop', 'ok'], ['meter-incident', 'ok'], ['planner-tick', 'ok'], ['inbox-acks', 'ok'], ['order-notices', 'ok'], ['needs-triage', 'ok'], ['waste-incident', 'ok'], ['teammate-overdue', 'ok'], ['landed-sweep', 'failed'], ['cos-work', 'ok'],
     ]);
     expect(exitCode).toBe(1);
   });

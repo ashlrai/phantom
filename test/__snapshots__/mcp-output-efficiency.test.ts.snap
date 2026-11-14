@@ -21,6 +21,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "safety": "append",
     },
     {
+      "name": "phantom_forum",
+      "safety": "append",
+    },
+    {
       "name": "phantom_fleet_drop_job",
       "safety": "append",
     },
@@ -74,6 +78,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
     },
     {
       "name": "phantom_fleet_session",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_fleet_verbs",
       "safety": "read",
     },
     {
@@ -450,6 +458,75 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "adapter": {
+          "type": "string",
+        },
+        "author": {
+          "type": "string",
+        },
+        "body": {
+          "type": "string",
+        },
+        "channel": {
+          "type": "string",
+        },
+        "clientId": {
+          "type": "string",
+        },
+        "id": {
+          "type": "string",
+        },
+        "kind": {
+          "type": "string",
+        },
+        "limit": {
+          "type": "number",
+        },
+        "member": {
+          "type": "string",
+        },
+        "op": {
+          "enum": [
+            "channels",
+            "read",
+            "post",
+            "reply",
+            "commitments",
+            "sweep",
+            "standup",
+            "invite",
+            "bridge",
+            "tick",
+          ],
+          "type": "string",
+        },
+        "parent": {
+          "type": "string",
+        },
+        "runsDir": {
+          "type": "string",
+        },
+        "signature": {
+          "type": "string",
+        },
+        "thread": {
+          "type": "string",
+        },
+        "title": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "op",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_forum",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
         "body": {
           "maxLength": 7800,
           "minLength": 1,
@@ -705,6 +782,19 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "phantom_fleet_session",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "grep": {
+          "maxLength": 64,
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "phantom_fleet_verbs",
   },
   {
     "inputSchema": {

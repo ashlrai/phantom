@@ -1,8 +1,8 @@
 /**
  * self-tick.ts — one locked pass of Phantom's self-management, runnable by an
- * agent or a host timer with no desktop app open. Eleven one-shot stages run
- * together, including same-channel inbox acknowledgements, merged-order notices
- * and the Needs-you triage.
+ * agent or a host timer with no desktop app open. Twelve one-shot stages run
+ * together, including same-channel inbox acknowledgements, merged-order notices,
+ * the Needs-you triage and a bounded chief-of-staff draft.
  * runSelfTick is the single pass, each step injected as a seam in fixed order:
  *
  *   1. reset-release  — first, so a lane it frees counts as a free slot for
@@ -17,6 +17,7 @@
  *   9. waste-incident — raise high-waste incidents.
  *  10. teammate-overdue — notice the owner thread about unanswered teammate texts.
  *  11. landed-sweep   — close DIRTY PRs whose work already landed on master.
+ *  12. cos-work       — draft at most one pending chief-of-staff reply.
  *
  * A step that exits nonzero or throws is recorded 'failed'; later steps still
  * run. A hold a person placed is never released — that rule stays inside the
@@ -36,8 +37,8 @@ import {
 import { noticeOverdueTeammateTexts } from '../comms/teammate-overdue.js';
 import { writeSelfTickLast } from './self-tick-last.js';
 
-export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick' | 'inbox-acks' | 'order-notices' | 'needs-triage' | 'teammate-overdue' | 'landed-sweep' | 'stray-stop' | 'meter-incident' | 'waste-incident';
-/** Fixed execution order — release first so the planner sees freed slots; landed-sweep last. */
+export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'stray-stop' | 'meter-incident' | 'planner-tick' | 'inbox-acks' | 'order-notices' | 'needs-triage' | 'waste-incident' | 'teammate-overdue' | 'landed-sweep' | 'cos-work';
+/** Fixed execution order — release first so the planner sees freed slots; cos-work last. */
 export const SELF_TICK_STEP_ORDER: readonly SelfTickStepName[] = [
   'reset-release',
   'lane-autohold',
@@ -49,8 +50,10 @@ export const SELF_TICK_STEP_ORDER: readonly SelfTickStepName[] = [
   'needs-triage',
   'waste-incident',
   'teammate-overdue',
-  // Last: the slowest step (gh + git reads) must never delay release or the planner.
+  // Slow gh + git reads must not delay release or the planner.
   'landed-sweep',
+  // A model turn must never delay release, planner, acks, notices or the sweep.
+  'cos-work',
 ];
 /** Lock path relative to the runs dir, under the queue/ directory. */
 export const SELF_TICK_LOCK = 'queue/self-tick.lock';

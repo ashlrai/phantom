@@ -405,6 +405,7 @@
 /test/fleet-companion-mcp.test.ts @masonwyatt23
 /test/fleet-conflict-risk.test.ts @masonwyatt23
 /test/fleet-control-315.test.ts @masonwyatt23
+/test/fleet-cos-loop.test.ts @masonwyatt23
 /test/fleet-daily-reds.test.ts @masonwyatt23
 /test/fleet-dep-gate.test.ts @masonwyatt23
 /test/fleet-gate-run.test.ts @masonwyatt23
@@ -450,6 +451,7 @@
 /test/fleet-stray-slots-gate-sole3.test.ts @masonwyatt23
 /test/fleet-superseded-read.test.ts @masonwyatt23
 /test/fleet-write-budget-cli.test.ts @masonwyatt23
+/test/friction-ledger-03.test.ts @masonwyatt23
 /test/gate.test.ts @masonwyatt23
 /test/gateway-anthropic-client.test.ts @masonwyatt23
 /test/gateway-audit-marker.test.ts @masonwyatt23
@@ -956,6 +958,7 @@
 /test/merge-age-routing.test.ts @masonwyatt23
 /test/merge-backlog-hot-files.test.ts @masonwyatt23
 /test/merge-backlog-read.test.ts @masonwyatt23
+/test/merge-cockpit.test.ts @masonwyatt23
 /test/merge-gate-latency.test.ts @masonwyatt23
 /test/merge-gates-310b.test.ts @masonwyatt23
 /test/merge-temp-worktree-reaper.test.ts @masonwyatt23
@@ -1120,6 +1123,7 @@
 /test/schemas/fixtures/loop.v1.json @masonwyatt23
 /test/scrub-310.test.ts @masonwyatt23
 /test/scrub-corpus.test.ts @masonwyatt23
+/test/send-policy.test.ts @masonwyatt23
 /test/skill-library-wire-31.test.ts @masonwyatt23
 /test/spend-budget.test.ts @masonwyatt23
 /test/stale-git-locks.test.ts @masonwyatt23

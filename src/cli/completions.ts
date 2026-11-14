@@ -31,7 +31,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms', 'comms-agent',
   'channels', 'context', 'connectors', 'imessage', 'memory', 'route', 'radar', 'observe', 'growth', 'world', 'drafts',
   'director', 'best-of-n', 'invent', 'resource', 'resources', 'repos', 'usage', 'version', 'help',
-  'skills', 'universe', 'runtime', 'tune',
+  'skills', 'universe', 'runtime', 'tune', 'forum',
   // Dispatched by index.ts but previously missing here, so completion and
   // "did you mean" were blind to them (caught by cli-registry-drift).
   'verse', 'console', 'local-runtime',
@@ -71,10 +71,15 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'worklog', 'library',
   // Dispatched by index.ts but missing here (caught by cli-registry-drift).
   'constitution', 'wb',
+  // COS report pages for the loopback dashboard (RQ-COS-PAGES-1).
+  'pages',
+  // Read-only multi-repo PR pipeline snapshot (RQ-SWE-MERGECOCK-1).
+  'pr',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
 const SUBCOMMANDS: Record<string, string[]> = {
+  docs: ['sync', '--agent', '--json', '--help'],
   graph: ['nodes', 'edges', 'status', '--json', '--help'],
   sweep: ['report'],
   check: ['--base', '--json', '--help'],
@@ -84,7 +89,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   desktop: ['install', 'list-apps', 'windows', 'focus', 'read', 'scroll', 'type', 'click', 'screenshot', 'doctor', '--json', '--app', '--window', '--text', '--x', '--y', '--dx', '--dy', '--ref', '--help'],
   'desktop-update': ['inspect', 'apply', '--help'],
   desktopctl: ['capabilities', 'doctor', 'status', 'run', '--task', '--timeout', '--poll', '--json', '--help'],
-  app: ['update', 'status', '--json', '--help'],
+  app: ['update', 'status', 'state', '--json', '--help'],
   radar: ['list', 'run', 'diff', '--json', '--help'],
   'comms-agent': ['status', 'run', 'drafts', '--json', '--dir', '--lanes', '--help'],
   claim: ['acquire', 'release', '--lane', '--reason', '--json', '--help'],
@@ -99,7 +104,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   repos: ['rank', 'proposals', '--json', '--recompute', '--help'],
   'release-articles': ['status', 'enable', 'disable', 'import', 'sync', '--help'],
   release: ['status', '--json', '--file', '--help'],
-  agents: ['bus', 'help'],
+  agents: ['bus', 'help', 'list', 'show', 'validate', 'versions'],
   // Mirror the verb switch in src/cli/wb.ts (cmdWb).
   wb: ['secrets', 'steer', 'reprioritize', 'stop', '--text', '--priority', '--apply', '--json', '--help'],
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
@@ -135,6 +140,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
     'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue', 'outcomes', 'backlog', 'lane-slots',
     'shed-plan', 'deploy-plan', 'job-latency', 'supply', 'eval-report', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'pr-hygiene', 'merge-batch', 'rebase-plan', 'bus', 'usage', 'research-digest', 'drive',
+    'cos', 'cos-decline', 'cos-loop', 'cos-reconcile', 'cos-work', 'sticky-loop',
   ],
   bus: ['thread', 'task', 'send', 'inbox', 'ack', '--from', '--to', '--body', '--id', '--priority', '--ttl', '--limit', '--peer', '--root', '--queue-root', '--json', '--help'],
   estates: ['--repo', '--json', '--help'],
@@ -160,6 +166,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   friction: ['note', '--status', '--owner', '--runs-dir', '--no-record', '--json', '--help'],
   connectors: ['add', 'list', 'remove', 'show', 'import', 'run', '--json', '--help'],
   channels: ['add', 'status', 'slack', 'map', 'probe', 'run', '--seconds', '--json', '--help'],
+  forum: ['channels', 'read', 'post', 'reply', 'invite', 'bind', 'commitments', 'sweep', 'standup', 'tick', 'bridge', '--help'],
   stack: ['status', 'list', 'providers', 'recommend', 'scan', 'doctor', 'add', 'apply'],
   ecosystem: ['doctor'],
   roadmap: ['run', 'resume', 'status'],
@@ -167,6 +174,8 @@ const SUBCOMMANDS: Record<string, string[]> = {
   completions: ['zsh', 'bash'],
   plugins: ['init', 'list', 'info', 'enable', 'disable'],
   skills: ['list', 'audit'],
+  pages: ['publish', 'list', '--json', '--help'],
+  pr: ['cockpit', '--repo', '--json', '--offline', '--refresh', '--help'],
   runtime: ['install', 'status', 'rollback', 'run'],
   // Mirrors the verb switch in src/cli/local-runtime.ts (cmdLocalRuntime).
   'local-runtime': ['status', 'start', 'stop', 'restart', 'reshape', 'install', 'uninstall', 'logs', 'resolve-model', 'missing-model-guard'],

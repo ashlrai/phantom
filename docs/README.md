@@ -129,6 +129,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Compare the sanctioned programmatic interfaces of Grok Bot, OpenAI dots and Meta Muse before building peer adapters | [Peer interfaces research](https://github.com/ashlrai/phantom/blob/master/docs/PEERS-INTERFACES.md) |
 | Apply durable sessions, steering, tool discovery and context ideas to the existing harness | [Agent harness evolution](AGENT-HARNESS-EVOLUTION.md) |
 | Review graph registry, addressed bus and routing child jobs with dispatch blockers | [Graph and bus implementation backlog](https://github.com/ashlrai/phantom/blob/master/workplans/2026-10-26-graphbus/README.md) |
+| Read and post on the fleet forum, track commitments, and run the standup | [Fleet forum](FLEET-FORUM.md) |
 | Choose goal and Leader preferences, inspect review evidence, and run or compare local benchmarks | [Operator preferences and evidence](AGENT-HARNESS-EVOLUTION.md#operator-goal-and-leader-preferences) |
 | Estimate lane idle capacity and identify long-running jobs | [Idle allowance](https://github.com/ashlrai/phantom/blob/master/docs/IDLE-ALLOWANCE.md) |
 | Inspect recorded producer outcomes and their deterministic learning path | [Execution feedback](EXECUTION-FEEDBACK.md) |
@@ -279,6 +280,7 @@ canonical release guide for required hosted qualification and publication.
 - [Harness digest contribution format](https://github.com/ashlrai/phantom/blob/master/docs/HARNESS-DIGEST-FORMAT.md)
 - [Historical release and operator reference](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING-HISTORICAL.md)
 - [Hosting channel input](https://github.com/ashlrai/phantom/blob/master/docs/CHANNEL-HOST.md)
+- [Living docs sync (`scripts/docs-sync.mjs`)](https://github.com/ashlrai/phantom/blob/master/docs/LIVING-DOCS.md): one pass that regenerates every committed file the repo generates — CLI docs, llms.txt index, code map, changelog block — and reports a PR-ready plan.
 - [Living End-State portfolio shadow](https://github.com/ashlrai/phantom/blob/master/docs/LIVING-END-STATE.md)
 - [Local inference with Phantom](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-INFERENCE.md)
 - [Local proactive-agent coordination](PROACTIVE-COORDINATION.md)
@@ -355,3 +357,5 @@ canonical release guide for required hosted qualification and publication.
 - [Empty job reasons](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-EMPTIES.md): group recorded empty outcomes and review filler suggestions.
 
 [Fable 5.2 orchestration and host handoff](https://github.com/ashlrai/phantom/blob/master/docs/FABLE-ORCHESTRATOR.md)
+- [Merge cockpit](https://github.com/ashlrai/phantom/blob/master/docs/MERGE-COCKPIT.md) — read-only PR pipeline snapshots and rework links.
+- [Fleet app state](https://github.com/ashlrai/phantom/blob/master/docs/APP-STATE.md): one Mission reading for the app, CLI and API.

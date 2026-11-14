@@ -5,9 +5,11 @@
  * claim is never overwritten (EEXIST). Nothing is sent.
  */
 import { writeFile } from 'node:fs/promises';
-import { boundCosDraft, closeCosNeedsYou, cosDeliveryPath } from './intake.js';
+import { boundCosDraft, closeCosNeedsYou, cosDeliveryPath, cosStatus } from './intake.js';
 
 export async function declineCosDraft(id: string, digest: string, runsDir?: string): Promise<{ id: string; delivery: 'declined' }> {
+  const { draft } = await cosStatus(id, runsDir);
+  if (!draft) throw new Error('No chief-of-staff draft');
   if (!await boundCosDraft(id, digest, runsDir)) throw new Error('Explicit decline of the current draft is required');
   await writeFile(cosDeliveryPath(id, runsDir), JSON.stringify({ state: 'declined' }), { flag: 'wx', mode: 0o600 });
   // The durable decline remains authoritative if cleanup fails.

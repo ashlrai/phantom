@@ -224,7 +224,10 @@ export async function watchFleetApps(
     lastDiagnostics = null;
     lastObservedState = null;
     const result = await bounded(budget, s => {
-      return runChild!(['fleet', 'apps-ensure', ...apps, '--json', ...(root === undefined ? [] : ['--root', root]), '--timeout-ms', String(budget)], { timeoutMs: budget, signal: s });
+      return runChild!(
+        ['fleet', 'apps-ensure', ...apps, '--json', ...(root === undefined ? [] : ['--root', root]), '--timeout-ms', String(budget)],
+        { timeoutMs: budget, signal: s },
+      );
     }, attemptTimeout !== undefined);
     if (signal?.aborted) break;
     if (result.cause === 'attempt') {
@@ -254,11 +257,18 @@ export async function watchFleetApps(
       && apps.includes(row.app) && typeof row.observedRunning === 'boolean' && row.launched === true
       && rows.filter(other => other && typeof other === 'object' && other.app === row.app).length === 1).length;
     recoveries += recovered;
+    const observe = (healthyFlag: boolean): void => {
+      publish({ kind: 'apps-watch.observation.v1', cycle: cycles, healthy: healthyFlag, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null, diagnostics: lastDiagnostics ?? undefined });
+      deps.onObservation?.({
+        type: 'observation', cycle: cycles, healthy: healthyFlag, recoveries: recovered,
+        consecutiveFailures, totalFailedCycles,
+        observedState: valid ? lastObservedState : null, diagnostics: lastDiagnostics,
+      });
+    };
     if (!healthy) {
       consecutiveFailures++;
       totalFailedCycles++;
-      publish({ kind: 'apps-watch.observation.v1', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null, diagnostics: lastDiagnostics });
-      deps.onObservation?.({ type: 'observation', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null, diagnostics: lastDiagnostics });
+      observe(healthy);
       if (consecutiveFailures >= maxConsecutiveFailures) {
         outcome = 'failed';
       }
@@ -275,8 +285,7 @@ export async function watchFleetApps(
       continue;
     }
     consecutiveFailures = 0;
-    publish({ kind: 'apps-watch.observation.v1', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null, diagnostics: lastDiagnostics });
-    deps.onObservation?.({ type: 'observation', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null, diagnostics: lastDiagnostics });
+    observe(healthy);
     if (maxRecoveries !== undefined && recoveries >= maxRecoveries) { recoveryLimitReached = true; outcome = 'failed'; break; }
     const left = remaining();
     if (left <= 0) break;

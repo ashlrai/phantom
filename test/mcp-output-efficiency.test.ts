@@ -47,6 +47,7 @@ const ADDED_NATIVE_NAMES = [
   'phantom_agent_bus_read',
   'phantom_agent_bus_status',
   'phantom_agent_bus_post',
+  'phantom_forum',
   'phantom_fleet_drop_job',
   'phantom_fleet_job_reassign',
   'phantom_fleet_planner_run',
@@ -61,6 +62,7 @@ const ADDED_NATIVE_NAMES = [
   'phantom_observe_session',
   'phantom_fleet_graph',
   'phantom_fleet_session',
+  'phantom_fleet_verbs',
   'phm_agent_roster',
   'phm_context_brief',
   'phm_claim_acquire',
@@ -133,7 +135,7 @@ describe('native MCP tool inventory', () => {
     const tools = listNativeTools();
     const names = tools.map(tool => tool.name);
     const classified = classifyNativeNames(names);
-    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(86);
+    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(88);
     expect(new Set(names).size).toBe(names.length);
     expect(classified.old).toEqual([...OLD_NATIVE_NAMES]);
     expect(classified.added).toEqual([...ADDED_NATIVE_NAMES]);
@@ -191,11 +193,16 @@ describe('native MCP tool inventory', () => {
     const watch = addedTools.find(tool => tool.name === 'phantom_fleet_apps_watch')!;
     const watchBytes = Buffer.byteLength(JSON.stringify(watch)) + 1;
     expect(watchBytes).toBeLessThanOrEqual(640);
-    const addedBytes = addedTools.filter(tool => tool !== doctor && tool !== roster && tool !== spend && tool !== needs && tool !== needsWait && tool !== accessRequest && tool !== watch && !visibility.includes(tool) && !leaderTools.includes(tool) && !desktop.includes(tool) && !observeTools.includes(tool) && !ownerComms.includes(tool) && !agentComms.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
+    // phantom_forum and the fleet orders/graph/session/verbs tools measured
+    // 2,016 object bytes including commas; no unmeasured growth headroom.
+    const forumFleet = addedTools.filter(tool => tool.name === 'phantom_forum' || tool.name === 'phantom_fleet_orders' || tool.name === 'phantom_fleet_graph' || tool.name === 'phantom_fleet_session' || tool.name === 'phantom_fleet_verbs');
+    const forumFleetBytes = forumFleet.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
+    expect(forumFleetBytes).toBeLessThanOrEqual(2016);
+    const addedBytes = addedTools.filter(tool => tool !== doctor && tool !== roster && tool !== spend && tool !== needs && tool !== needsWait && tool !== accessRequest && tool !== watch && !forumFleet.includes(tool) && !visibility.includes(tool) && !leaderTools.includes(tool) && !desktop.includes(tool) && !observeTools.includes(tool) && !ownerComms.includes(tool) && !agentComms.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(addedBytes).toBeLessThanOrEqual(9884);
     // 24,205 + 9,884 preserves the historical headroom. Later tool groups are
     // measured on their own caps above.
-    expect(responseBytes(tools)).toBeLessThan(33400 + 689 + doctorBytes + rosterBytes + visibilityBytes + spendBytes + leaderBytes + desktopBytes + observeBytes + ownerCommsBytes + agentCommsBytes + needsBytes + needsWaitBytes + accessRequestBytes + watchBytes);
+    expect(responseBytes(tools)).toBeLessThan(33400 + 689 + doctorBytes + rosterBytes + visibilityBytes + spendBytes + leaderBytes + desktopBytes + observeBytes + ownerCommsBytes + agentCommsBytes + needsBytes + needsWaitBytes + accessRequestBytes + watchBytes + forumFleetBytes);
   });
 });
 

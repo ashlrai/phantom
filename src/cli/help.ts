@@ -38,6 +38,7 @@ export interface AgentCommandDoc {
  * actual effects and command-specific result/exit semantics.
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
+  { usage: 'phm app state --json', description: 'Read the same Mission state as the Fleet app.', safety: 'read', jsonShape: 'fleet.mission.v1' },
   {
     usage: 'phm bus send --from <label> --to <label> --body <json> [--id <id>] [--priority P0|P1|P2|P3] [--ttl <ms>] --json',
     description: 'Append one local durable mailbox message. Same ID and identical envelope deduplicate without renewing TTL. Labels grant no identity or authority; no remote dispatch or engine execution. Exit 0 accepted/replayed, 1 operational refusal, 2 usage.',
@@ -630,7 +631,7 @@ export function agentDocsText(): string {
   lines.push('phantom_fleet_planner_run, phantom_fleet_apps_ensure, phantom_fleet_apps_changes,');
   lines.push('phantom_fleet_apps_status, phantom_fleet_apps_await, phantom_fleet_needs,');
   lines.push('phantom_fleet_needs_resolve, phantom_fleet_orders, phantom_fleet_graph,');
-  lines.push('phantom_fleet_session, phantom_fleet_doctor.');
+  lines.push('phantom_fleet_session, phantom_fleet_verbs, phantom_fleet_doctor.');
   lines.push('Tool discovery is not authorization. phantom_fleet_doctor only reads fleet health.');
   lines.push('Read-only observation tools: world_model, phantom_observe, phantom_observe_session,');
   lines.push('phantom_spend_budget, phm_context_brief, phm_claim_acquire, phm_claim_release,');
@@ -690,6 +691,35 @@ function printDocsHelp(): void {
 export async function cmdDocs(args: string[]): Promise<number> {
   const json = args.includes('--json');
   const agent = args.includes('--agent');
+
+  if (args[0] === 'sync') {
+    if (args.includes('--help') || args.includes('-h')) {
+      process.stdout.write('Usage: ashlr docs sync [--repo <name>] [--check] [--json]\n'
+        + 'Regenerate documentation indexes and report command coverage and drift. See docs/DOCS-SYNC.md.\n');
+      return 0;
+    }
+    try {
+      let repo: string | undefined;
+      let check = false;
+      for (let i = 1; i < args.length; i++) {
+        const arg = args[i];
+        if (arg === '--json') continue;
+        if (arg === '--check') { check = true; continue; }
+        if (arg === '--repo' && args[i + 1] && !repo) { repo = args[++i]; continue; }
+        throw new Error(`Unknown or incomplete argument: ${arg}`);
+      }
+      const { syncDocs } = await import('../core/docs-sync.js');
+      const result = syncDocs(process.cwd(), repo, check);
+      if (json) process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+      else process.stdout.write(`${result.ok ? 'Docs are current' : result.fix}\n`);
+      return result.ok ? 0 : 1;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (json) process.stdout.write(JSON.stringify({ ok: false, error: message }) + '\n');
+      else process.stderr.write(`${message}\n`);
+      return 2;
+    }
+  }
 
   if (args.includes('--help') || args.includes('-h') || args[0] === 'help') {
     printDocsHelp();
@@ -806,6 +836,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'orient [--repo <r>] [--json]', desc: 'Session-start context: genome hits, health, backlog, pending proposals, attention (read-only).', topic: 'core' },
   { cmd: 'docs --agent [--json]',        desc: 'Agent cheat sheet: the CLI-first contract (commands, safety classes, JSON shapes).', topic: 'core' },
   { cmd: 'check [--base <ref>] [--json]', desc: 'Run incremental typechecks, cached lint and affected tests from a Phantom checkout; development feedback only.', topic: 'core' },
+  { cmd: 'docs sync [--repo <name>] [--check] [--json]', desc: 'Regenerate documentation indexes and report command coverage and drift.', topic: 'core' },
   { cmd: 'completions zsh|bash',         desc: 'Print a shell completion script to stdout.', topic: 'core' },
   { cmd: 'plugins init|list|info|enable|disable', desc: 'Plugins under ~/.ashlr/plugins/ (default-off). --json on every verb. init, enable and disable take --dry-run (writes nothing). enable prompts only on a terminal; otherwise use --yes.', topic: 'core' },
   { cmd: 'x <name> [args...]',           desc: "Run an enabled plugin's command.", topic: 'core' },
@@ -953,6 +984,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'connectors add|list|remove|show|import [--json]', desc: 'Manage credential-free connector profiles and import safe client metadata; vault references only.', topic: 'autonomy' },
   { cmd: 'channels add <kind> | status [--json] | slack status|map [--json]', desc: 'Bring a channel up (config only, credentials stay in custody), read the per-channel rollup, or inspect the Slack bridge mapping offline.', topic: 'autonomy' },
   { cmd: 'imessage doctor|poll [--apply] [--json]', desc: 'iMessage intake: doctor checks permissions and config; poll counts waiting messages (dry run), --apply receipts them. Never prints message text.', topic: 'autonomy' },
+  { cmd: 'forum channels|read|post|reply|invite|bind|commitments|sweep|standup|tick|bridge', desc: 'Fleet forum: authenticated posts, mentions, commitments, standups. Bodies are data.', topic: 'autonomy' },
   { cmd: 'director',                     desc: 'Retired — the Leader handles this (see `ashlr leader`). Still prints the read-only fleet god-view; sends nothing.', topic: 'autonomy' },
   { cmd: 'invent',                       desc: 'Generative backlog invention — propose novel high-value work items.', topic: 'autonomy' },
   { cmd: 'universe <demo|init|run|status|archive>', desc: 'Local experiment evolution: run competing code variants, measure them, and reuse winning artifacts.', topic: 'autonomy' },
@@ -1053,6 +1085,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'mcp install <claude|ashlrcode>', desc: 'Add the ashlr gateway to a target mcpServers config (backs up first).', topic: 'integrations' },
   { cmd: 'gh <pr|issue|ci>',             desc: 'Read GitHub open PRs, issues, or CI status for the current repo (read-only).', topic: 'integrations' },
   { cmd: 'gh pr create',                 desc: 'Create a PR via gh CLI — explicit + confirm-gated (the only gh mutation).', topic: 'integrations' },
+  { cmd: 'pr cockpit --repo <owner/name> [--repo <owner/name> ...] [--json] [--offline] [--refresh]', desc: 'Read-only GitHub snapshot of open PRs per repo: counts, rework edges, hold markers, five-minute cache. Cannot merge or close.', topic: 'integrations' },
   { cmd: 'vercel <ls|logs>',             desc: 'Read recent Vercel deployments or latest build logs (read-only).', topic: 'integrations' },
   { cmd: 'wire [claude|codex|cursor|all]', desc: 'Wire ashlr MCP gateway into editor config(s); defaults to detected editors.', topic: 'integrations' },
   { cmd: 'wire status [claude|codex|cursor|gemini|all]', desc: 'Read-only report of whether each editor is wired to the ashlr gateway.', topic: 'integrations' },
@@ -1093,6 +1126,8 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'serve --allow-dispatch',       desc: 'Enable guarded POST /api/run + web inbox approve/reject (prints session token).', topic: 'web' },
   { cmd: 'console [--port N] [--no-open]', desc: 'Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.', topic: 'web' },
   { cmd: 'verse [--port N] [--no-open]', desc: 'Alias of `console` (the original name; same flags). Opens /verse/, the same page.', topic: 'web' },
+  { cmd: 'pages publish <file.md|file.json> [--slug <s>] [--title <t>] [--json]', desc: 'Publish a report into the loopback dashboard at /pages/<slug> (stored under ~/.ashlr/pages; nothing public).', topic: 'web' },
+  { cmd: 'pages list [--json]',          desc: 'List published report pages, newest first.', topic: 'web' },
 
   { cmd: 'new <name> [opts]',            desc: 'Scaffold a project from a template (next-app, node-cli, mcp-server, minimal).', topic: 'scaffold' },
   { cmd: 'ship [path] [opts]',           desc: 'Pre-ship gate (lint/test/build) + optional confirm-gated deploy.', topic: 'scaffold' },

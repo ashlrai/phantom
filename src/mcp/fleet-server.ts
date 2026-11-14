@@ -682,8 +682,8 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const jobCurrent = name === 'fleet_job_current' ? parseFleetJobCurrentArgs(args) : null;
     const jobCurrentSnapshot = name === 'fleet_job_current_snapshot' ? parseFleetJobCurrentSnapshotArgs(args) : null;
     const jobPatchArgs = name === 'fleet_job_patch' ? parseFleetJobPatchArgs(args) : null;
-    const pathHistory = name === 'fleet_path_history' ? parseFleetPathHistoryArgs(args) : null;
     const pathCochanges = name === 'fleet_path_cochanges' ? parseFleetPathCochangesArgs(args) : null;
+    const pathHistory = name === 'fleet_path_history' ? parseFleetPathHistoryArgs(args) : null;
     const jobPrecheck = name === 'fleet_job_precheck' ? parseFleetJobPrecheckArgs(args) : null;
     const jobPrecheckBatch = name === 'fleet_job_precheck_batch' ? parseFleetJobPrecheckBatchArgs(args) : null;
     const emailOutbox = name === 'fleet_email_outbox' ? parseFleetEmailOutboxArgs(args) : null;
@@ -730,8 +730,8 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_job_history_batch' ? jobHistoryBatch === null :
         name === 'fleet_job_overlap' ? jobOverlap === null :
         name === 'fleet_job_current_batch' ? jobCurrentBatch === null :
-        name === 'fleet_job_current' ? jobCurrent === null :
         name === 'fleet_job_current_snapshot' ? jobCurrentSnapshot === null :
+        name === 'fleet_job_current' ? jobCurrent === null :
         name === 'fleet_job_patch' ? jobPatchArgs === null :
         name === 'fleet_job_history' ? jobHistory === null :
         name === 'fleet_reset_group_await' ? resetGroupAwait === null :
@@ -767,8 +767,8 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_job_history_batch' ? await (readers.jobHistoryBatch ?? readFleetJobHistoryBatch)(jobHistoryBatch as FleetJobHistoryBatchArgs)
         : name === 'fleet_job_overlap' ? await (readers.jobOverlap ?? readFleetJobOverlap)(jobOverlap as FleetJobOverlapArgs)
         : name === 'fleet_job_current_batch' ? await (readers.jobCurrentBatch ?? readFleetJobCurrentBatch)(jobCurrentBatch as FleetJobCurrentBatchArgs)
-        : name === 'fleet_job_current' ? await (readers.jobCurrent ?? readFleetJobCurrent)(jobCurrent as FleetJobCurrentArgs)
         : name === 'fleet_job_current_snapshot' ? await (readers.jobCurrentSnapshot ?? readFleetJobCurrentSnapshot)(jobCurrentSnapshot as FleetJobCurrentSnapshotArgs)
+        : name === 'fleet_job_current' ? await (readers.jobCurrent ?? readFleetJobCurrent)(jobCurrent as FleetJobCurrentArgs)
         : name === 'fleet_job_patch' ? await (readers.jobPatch ?? readFleetJobPatch)(jobPatchArgs as FleetJobPatchArgs)
         : name === 'fleet_job_precheck_batch' ? await (readers.jobPrecheckBatch ?? readFleetJobPrecheckBatch)(jobPrecheckBatch as FleetJobPrecheckBatchArgs)
         : name === 'fleet_job_precheck' ? await (readers.jobPrecheck ?? readFleetJobPrecheck)(jobPrecheck as FleetJobPrecheckArgs)

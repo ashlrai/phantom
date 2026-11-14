@@ -171,12 +171,13 @@ describe('fleet self-loop --stream', () => {
       'order-notices': stub('order-notices'),
       'needs-triage': stub('needs-triage'),
       'landed-sweep': stub('landed-sweep'),
+      'cos-work': stub('cos-work'),
     };
     const { code, records } = await run(
       ['--stream', '--apply', '--duration-ms', '1500', '--interval-ms', '1000', '--runs-dir', runsDir],
       { steps, now: clock.now, sleep: clock.sleep });
     expect(code).toBe(0);
-    expect(order).toHaveLength(14); // two full real passes
+    expect(order).toHaveLength(16); // two full real passes
     expect(records).toHaveLength(3);
     expect(records[0]).toMatchObject({ record: 'pass', pass: 1, exitCode: 0, state: 'ran' });
     expect(records[0]!['report']).toMatchObject({ mode: 'apply', state: 'ran' });

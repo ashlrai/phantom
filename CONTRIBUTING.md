@@ -64,6 +64,7 @@ To install the CLI while developing:
 | `npm run docs:sync` | Regenerate every generated docs surface (freshness blocks, site pages, CODEMAP inventory, llms indexes); `-- --check` reports drift without writing |
 | `node scripts/check-test-names.mjs` | Flag duplicate test names across `test/` that collide in name-keyed reports |
 | `node scripts/generate-cli-docs.mjs` | Regenerate `docs/cli.md` from `phm --help` output; `--check` compares without writing |
+| `node --import tsx scripts/docs-sync.mjs` | Living-docs sync: regenerate every repo-generated doc (`docs/cli.md`, `docs/CLI-REFERENCE.md`, `docs/llms.txt`, `docs/CODEMAP.md`, `CHANGELOG.md`'s sync block) in one pass; `--check` reports drift, `--write` writes, `--json` prints a PR-ready plan. See [docs/LIVING-DOCS.md](docs/LIVING-DOCS.md) |
 | `npm run typecheck` | Strict backend and web type checks, without emitting files |
 | `npm run build` | Check candidate version sync, compile the backend, generate the authority surface, copy assets, build the built-in preparation evaluator and the web console, then generate dependency inventory and Git build identity in `dist/` |
 

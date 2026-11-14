@@ -1,8 +1,8 @@
 /**
  * `ashlr fleet self-tick` — one locked pass of Phantom's self-management for
- * a host timer or an agent with no desktop app open. It calls the eleven
+ * a host timer or an agent with no desktop app open. It calls the twelve
  * one-shot stages in the fixed order reset-release → lane-autohold
- * → stray-stop → meter-incident → planner-tick → inbox-acks → order-notices → needs-triage → waste-incident → teammate-overdue → landed-sweep, each with --json (plus --apply and --runs-dir when given),
+ * → stray-stop → meter-incident → planner-tick → inbox-acks → order-notices → needs-triage → waste-incident → teammate-overdue → landed-sweep → cos-work, each with --json (plus --apply and --runs-dir when given),
  * and folds their parsed reports into one run report. Only one self-tick runs
  * per runs dir; a step that fails or throws never stops the later ones.
  */
@@ -16,6 +16,8 @@ import { cmdFleetOrderNotices, type FleetOrderNoticesDeps } from './fleet-order-
 import { cmdFleetNeedsTriage } from './fleet-needs-triage.js';
 import { cmdFleetWasteIncident } from './fleet-waste-incident.js';
 import type { readWasteRiskInputs } from '../core/resources/waste-risk-read.js';
+import { QueueStore } from '../core/queue/store.js';
+import { cmdFleetCosWork } from './fleet-cos-work.js';
 import { cmdFleetLandedSweep } from './fleet-landed-sweep.js';
 import type { SpawnLike } from '../core/fleet/planner-run.js';
 import { runSelfTick, type RunSelfTickOptions, type SelfTickStep, type SelfTickSteps } from '../core/fleet/self-tick.js';
@@ -35,8 +37,8 @@ stray-stop (bounded guarded recovery), then meter-incident (deduped flat-meter
 notices), then planner-tick, then inbox-acks (sends pending same-channel acks), then order-notices
 (tells Mason when a merged job served one of his orders), then needs-triage
 (auto-resolves Needs-you items outside the four hard limits; secrets, money,
-outside sends and data destruction stay for Mason), then waste-incident (reports high-waste lanes), then teammate-overdue (notices the owner thread about unanswered teammate texts), then landed-sweep (closes DIRTY PRs whose work already landed;
-last because it is the slowest). Without --apply nothing is released, held, spawned, acknowledged, notified or resolved — the
+outside sends and data destruction stay for Mason), then waste-incident (reports high-waste lanes), then teammate-overdue (notices the owner thread about unanswered teammate texts), then landed-sweep (closes DIRTY PRs whose work already landed),
+then cos-work (drafts at most one reply with a 3-minute cap). Without --apply nothing is released, held, spawned, acknowledged, notified or resolved — the
 planner step still appends its observational PLANNER_TICK line to
 queue/dispatch-events.log either way. Only one self-tick runs per runs dir:
 a held queue/self-tick.lock reports 'busy' and exits 0. A step that fails or
@@ -84,6 +86,9 @@ function summary(step: string, report: unknown): string {
   if (typeof report !== 'object' || report === null) return '';
   const row = report as Record<string, unknown>;
   const count = (value: unknown): number => Array.isArray(value) ? value.length : 0;
+  if (step === 'cos-work') {
+    return row['mode'] === 'dry-run' ? `pending=${row['pending']}` : `outcome=${row['outcome']}`;
+  }
   if (step === 'reset-release') {
     return `released=${count(row['released'])} planned=${count(row['planned'])}`;
   }
@@ -142,7 +147,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
   // --last is a read-only report of the last recorded pass: nothing runs,
   // no lock is taken, so --apply has no meaning beside it.
   if (last && apply) return invalid();
-  // One root for the lock and all eleven steps: the verbs' own fallbacks
+  // One root for the lock and all twelve steps: the verbs' own fallbacks
   // (ASHLR_RUNS_DIR, ~/.ashlr-runs) resolve here once, so the lock domain
   // and the released slots can never drift to different dirs.
   const home = deps.home ?? homedir();
@@ -214,6 +219,17 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     'needs-triage': bind(cmdFleetNeedsTriage, { ...deps.needsTriage }),
     'waste-incident': bind(cmdFleetWasteIncident, { now, read: deps.wasteRead }),
     'landed-sweep': bind(cmdFleetLandedSweep, { now }),
+    'cos-work': async (argv) => {
+      const result = await bind(cmdFleetCosWork, { now, spawn: deps.spawn, timeoutMs: 180_000 })(argv);
+      if (result.exitCode === 1) {
+        const report = JSON.parse(result.output) as { outcome?: string; id?: string };
+        if (report.outcome === 'blocked' && typeof report.id === 'string') {
+          const jobs = (await new QueueStore(join(root, 'queue')).read()).jobs;
+          if (jobs.some(job => job.id === report.id && job.status === 'READY')) return { ...result, exitCode: 0 };
+        }
+      }
+      return result;
+    },
   };
   const steps = { ...defaults, ...deps.steps };
   const inboxAcks = steps['inbox-acks'];

@@ -27,8 +27,8 @@ export async function cmdFleetCosDecline(args: string[]): Promise<number> {
     const result = await declineCosDraft(id, digest);
     console.log(json ? JSON.stringify({ v: 1, ...result }) : `declined ${result.id}`);
     return 0;
-  } catch {
-    outputError('Unable to decline this draft; check the job, digest, and delivery status');
+  } catch (error) {
+    outputError(error instanceof Error ? error.message : 'cos-decline failed');
     return 1;
   }
 }

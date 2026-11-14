@@ -19,7 +19,7 @@ import type { WasteRiskInput } from '../src/core/resources/waste-risk.js';
 
 const ORDER: SelfTickStepName[] = [
   'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick',
-  'inbox-acks', 'order-notices', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep',
+  'inbox-acks', 'order-notices', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep', 'cos-work',
 ];
 
 let home: string;

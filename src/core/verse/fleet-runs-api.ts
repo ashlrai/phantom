@@ -3,6 +3,7 @@ import { readMetricsPanel } from '../fleet/metrics-panel.js';
 import { applyOrderStatus, OrderStatusError } from './fleet-order-status.js';
 import { readOrdersView } from './fleet-orders-view.js';
 import { readInboxAckStates, type InboxAckState } from '../fleet/inbox-ack-state.js';
+import { handleMissionStream } from './verse-stream.js';
 import { getLaneModelSnapshot, type LaneModelSnapshot } from '../fleet/lane-models.js';
 import { VERSE_FLEET_LANE_MODELS_PATH, toFleetLaneModelsV1, type FleetLaneModelsV1 } from './fleet-lane-models-contract.js';
 import { homedir } from 'node:os';
@@ -517,6 +518,13 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         if (error instanceof OrderStatusError) sendJson(res, error.status, { code: 'ORDER_STATUS_REFUSED', error: error.message });
         else sendJson(res, 503, { code: 'ORDER_STATUS_UNAVAILABLE', error: 'The orders ledger could not be updated.' });
       }
+      return true;
+    }
+    if (path === `${VERSE_FLEET_MISSION_PATH}/events`) {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      if (!ctx.readSession) { sendJson(res, 401, { error: 'Read session required.' }); return true; }
+      const { forumRoot } = await import('../fleet/forum/service.js');
+      await handleMissionStream(req, res, ctx.readSession, [deps.runsDir ?? defaultRunsDir(), forumRoot()]);
       return true;
     }
     if (path === VERSE_FLEET_MISSION_PATH) {

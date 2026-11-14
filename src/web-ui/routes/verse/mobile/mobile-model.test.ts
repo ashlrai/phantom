@@ -25,6 +25,7 @@ describe('mobile-router', () => {
       { screen: 'runs' },
       { screen: 'inbox' },
       { screen: 'watch' },
+      { screen: 'forum' },
     ];
     for (const route of routes) expect(parseMobileHash(formatMobileHash(route))).toEqual(route);
     expect(formatMobileHash({ screen: 'agent', id: 'a b/c', pane: 'changes' })).toBe('#/agents/a%20b%2Fc/changes');

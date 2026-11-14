@@ -48,6 +48,7 @@ const ApprovalsView = lazy(() => import('../routes/approvals/ApprovalsView.js').
 const AgentOsView = lazy(() => import('../routes/agent-os/AgentOsView.js').then((module) => ({ default: module.AgentOsView })));
 const ConnectView = lazy(() => import('../routes/connect/ConnectView.js').then((module) => ({ default: module.ConnectView })));
 const UniverseView = lazy(() => import('../routes/universe/UniverseView.js').then((module) => ({ default: module.UniverseView })));
+const PagesView = lazy(() => import('../routes/pages/PagesView.js').then((module) => ({ default: module.PagesView })));
 const ConnectorsSettings = lazy(() => import('../routes/settings/connectors/ConnectorsView.js').then((module) => ({ default: module.ConnectorsSettings })));
 
 const SecretsView = lazy(() => import('../routes/settings/secrets/SecretsView.js').then(module => ({ default: module.SecretsView })));
@@ -78,6 +79,8 @@ export function AppRoutes() {
         <Route path="/universe" element={<UniverseView />} />
         <Route path="/show" element={<ShowView />} />
         <Route path="/journal" element={<JournalView />} />
+        <Route path="/pages" element={<PagesView />} />
+        <Route path="/pages/:slug" element={<PagesView />} />
         <Route path="/intelligence/pulse" element={<PulseView />} />
         <Route path="/intelligence/genome" element={<GenomeView />} />
         <Route path="/intelligence/production" element={<ProductionView />} />
