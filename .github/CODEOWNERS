@@ -254,6 +254,7 @@
 /test/agent-bus-adapters.test.ts @masonwyatt23
 /test/agent-bus-api-mirror.test.ts @masonwyatt23
 /test/agent-network-policy.test.ts @masonwyatt23
+/test/amplify.test.ts @masonwyatt23
 /test/anthropic-messages-client.test.ts @masonwyatt23
 /test/ask-fanout-budget.test.ts @masonwyatt23
 /test/authority-api-310b.test.ts @masonwyatt23
@@ -434,6 +435,7 @@
 /test/fleet-live-api-310b.test.ts @masonwyatt23
 /test/fleet-local-gate.test.ts @masonwyatt23
 /test/fleet-merge-age.test.ts @masonwyatt23
+/test/fleet-merge-batch-runner.test.ts @masonwyatt23
 /test/fleet-merge-delay.test.ts @masonwyatt23
 /test/fleet-merge-latency.test.ts @masonwyatt23
 /test/fleet-merge-pace-core-02.test.ts @masonwyatt23
