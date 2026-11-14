@@ -319,6 +319,7 @@
 /test/connector-manager.test.ts @masonwyatt23
 /test/context-checked-gate-worktree-01.test.ts @masonwyatt23
 /test/context-compiler-improve.test.ts @masonwyatt23
+/test/core-recut-s1-c212.test.ts @masonwyatt23
 /test/count-preferences.test.ts @masonwyatt23
 /test/cross-review-cli.test.ts @masonwyatt23
 /test/custody-client-310b.test.ts @masonwyatt23
@@ -326,6 +327,7 @@
 /test/custody-ledger.test.ts @masonwyatt23
 /test/custody-no-phantom-toml-copy.test.ts @masonwyatt23
 /test/custody-unwrapped-fleet.test.ts @masonwyatt23
+/test/custody-wrap-receipt.test.ts @masonwyatt23
 /test/daemon-capacity-publisher-310.test.ts @masonwyatt23
 /test/daemon-cli-310b.test.ts @masonwyatt23
 /test/daemon-cli-help-safety.test.ts @masonwyatt23
@@ -403,6 +405,8 @@
 /test/fleet-ci-scheduled-sweep.test.ts @masonwyatt23
 /test/fleet-ci-step-cost.test.ts @masonwyatt23
 /test/fleet-ci-trigger-facts-01.test.ts @masonwyatt23
+/test/fleet-comms-policy-owner-unconfirmed-287.test.ts @masonwyatt23
+/test/fleet-comms-policy-roundtrip-original-260.test.ts @masonwyatt23
 /test/fleet-comms-status-policy-18.test.ts @masonwyatt23
 /test/fleet-companion-mcp.test.ts @masonwyatt23
 /test/fleet-conflict-risk.test.ts @masonwyatt23
@@ -420,6 +424,7 @@
 /test/fleet-guardian-resume-loop-02solq1.test.ts @masonwyatt23
 /test/fleet-guardian-stream-input-budget-02solz3.test.ts @masonwyatt23
 /test/fleet-guardian-verify-loop-01.test.ts @masonwyatt23
+/test/fleet-incident-gate.test.ts @masonwyatt23
 /test/fleet-lane-truth-gate-sole2.test.ts @masonwyatt23
 /test/fleet-learning-loop-sweeps.test.ts @masonwyatt23
 /test/fleet-live-api-310b.test.ts @masonwyatt23
@@ -430,11 +435,13 @@
 /test/fleet-merge-pace-core-02.test.ts @masonwyatt23
 /test/fleet-merge-pace.test.ts @masonwyatt23
 /test/fleet-merge-queue-age.test.ts @masonwyatt23
+/test/fleet-merge-queue-prep.test.ts @masonwyatt23
 /test/fleet-merge-recover.test.ts @masonwyatt23
 /test/fleet-merge-retry.test.ts @masonwyatt23
 /test/fleet-merge-state-class.test.ts @masonwyatt23
 /test/fleet-post-merge-verify-31.test.ts @masonwyatt23
 /test/fleet-release-gate-start-05srq2.test.ts @masonwyatt23
+/test/fleet-release-gate-start-original-243s.test.ts @masonwyatt23
 /test/fleet-self-loop-02soly1.test.ts @masonwyatt23
 /test/fleet-self-loop-await-live-02some2.test.ts @masonwyatt23
 /test/fleet-self-loop-await-record-02somd2.test.ts @masonwyatt23
@@ -542,6 +549,13 @@
 /test/improve-reverted.test.ts @masonwyatt23
 /test/int4-confine-engines-310b.test.ts @masonwyatt23
 /test/intent-fleet-merge-observe-preservation-231s.test.ts @masonwyatt23
+/test/intent-merge-batch-owner-qualification-292s.test.ts @masonwyatt23
+/test/intent-merge-batch-recovery-228s.test.ts @masonwyatt23
+/test/intent-provenance-complete-recovery-102.test.ts @masonwyatt23
+/test/intent-provenance-original-242s.test.ts @masonwyatt23
+/test/intent-provenance-owner-cli-290s.test.ts @masonwyatt23
+/test/intent-stale-native-preservation-09spw1.test.ts @masonwyatt23
+/test/intent-stale-native-recovery-212s.test.ts @masonwyatt23
 /test/job-memory-accounting.test.ts @masonwyatt23
 /test/judge-credential-export-r3b-310b.test.ts @masonwyatt23
 /test/judge-seat-lanes-310b.test.ts @masonwyatt23
@@ -957,12 +971,18 @@
 /test/memory-evaluation.test.ts @masonwyatt23
 /test/memory-foundation-adversarial.test.ts @masonwyatt23
 /test/memory-foundation.test.ts @masonwyatt23
+/test/merge-actor-exact-205s.test.ts @masonwyatt23
 /test/merge-age-routing.test.ts @masonwyatt23
+/test/merge-autopilot.test.ts @masonwyatt23
 /test/merge-backlog-hot-files.test.ts @masonwyatt23
 /test/merge-backlog-read.test.ts @masonwyatt23
+/test/merge-cockpit-exact-206s.test.ts @masonwyatt23
 /test/merge-gate-latency.test.ts @masonwyatt23
 /test/merge-gates-310b.test.ts @masonwyatt23
+/test/merge-graph-original-246s.test.ts @masonwyatt23
+/test/merge-identity-owner-preservation-297s.test.ts @masonwyatt23
 /test/merge-identity-recut.test.ts @masonwyatt23
+/test/merge-identity-registry.test.ts @masonwyatt23
 /test/merge-plan-original-preservation-202s.test.ts @masonwyatt23
 /test/merge-temp-worktree-reaper.test.ts @masonwyatt23
 /test/metrics-boundary.test.ts @masonwyatt23
@@ -1028,6 +1048,7 @@
 /test/quarantine-ledger.test.ts @masonwyatt23
 /test/receipt-key.test.ts @masonwyatt23
 /test/receipt-later-hooks.test.ts @masonwyatt23
+/test/recut-core-o1-s140.test.ts @masonwyatt23
 /test/recut-loop-attempts.test.ts @masonwyatt23
 /test/recut-loop-landed-03.test.ts @masonwyatt23
 /test/recut-loop.test.ts @masonwyatt23
@@ -1099,6 +1120,8 @@
 /test/router-current-claude-models.test.ts @masonwyatt23
 /test/router-eval-harness.test.ts @masonwyatt23
 /test/router-lint.test.ts @masonwyatt23
+/test/router-queue-conflict-preservation-211s.test.ts @masonwyatt23
+/test/router-queue-conflict-recovery-198s.test.ts @masonwyatt23
 /test/router-queue-events.test.ts @masonwyatt23
 /test/router-queue-utf8-input-31k7.test.ts @masonwyatt23
 /test/router-queue.test.ts @masonwyatt23
@@ -1111,6 +1134,7 @@
 /test/routing-calibration-properties.test.ts @masonwyatt23
 /test/routing-capacity-history.test.ts @masonwyatt23
 /test/routing-interactive-scope.test.ts @masonwyatt23
+/test/routing-off-policy-research.test.ts @masonwyatt23
 /test/routing-outcome-learning.test.ts @masonwyatt23
 /test/routing-readiness-314.test.ts @masonwyatt23
 /test/routing-router-weights.test.ts @masonwyatt23
@@ -1128,6 +1152,9 @@
 /test/schemas/fixtures/loop.v1.json @masonwyatt23
 /test/scrub-310.test.ts @masonwyatt23
 /test/scrub-corpus.test.ts @masonwyatt23
+/test/send-policy-email-outbox.test.ts @masonwyatt23
+/test/send-policy-recut2.test.ts @masonwyatt23
+/test/send-policy.test.ts @masonwyatt23
 /test/skill-library-wire-31.test.ts @masonwyatt23
 /test/spend-budget.test.ts @masonwyatt23
 /test/stale-git-locks.test.ts @masonwyatt23
