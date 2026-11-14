@@ -72,6 +72,7 @@ import { onActivityCompletions, useActivity } from './shell/useActivity.js';
 import { useViewport } from './shell/viewport.js';
 import { CompactNavStrip, type CompactNavId } from './shell/CompactNavStrip.js';
 import { useUnreadTitle } from './shell/last-seen-store.js';
+import { HOME_PANE_IDS } from './shell/home-view.js';
 import { setHomeChoice, useHomeView } from './shell/home-view-store.js';
 import type { UnreadCounts } from './shell/unread-counts.js';
 import type { WarmupOptions } from './shell/warmup.js';
@@ -327,7 +328,7 @@ const WindowTitle = lazy(() => import('./shell/WindowTitle.js'));
 const HomeUnread = lazy(() => import('./shell/WindowTitle.js').then((m) => ({ default: m.HomeUnread })));
 const NO_UNREAD: UnreadCounts = { leader: 0, feed: 0 };
 
-export function VerseApp() {
+export function PhantomApp() {
   const guardOpen = useGuardState().request !== null;
   const ui = useVerseUi();
   const theme = useTheme();
@@ -391,11 +392,11 @@ export function VerseApp() {
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.defaultPrevented) return;
-      if (getVerseUiState().overlay === 'palette') return;
       const command = matchKey(event, ['global']);
+      if (getVerseUiState().overlay === 'palette' && command?.id !== 'fleet.focus-steer') return;
       // After the match: foreignModalOpen scans the whole document, and most
       // keys (every character typed into the composer) bind to nothing.
-      if (!command || foreignModalOpen()) return;
+      if (!command || (command.id !== 'fleet.focus-steer' && foreignModalOpen())) return;
       // preventDefault BEFORE running: the chat's key fallback and the
       // transcript's ⌥↑/⌥↓ skip default-prevented events (C2), which is what
       // keeps one press from running two handlers. stopPropagation is not
@@ -513,13 +514,13 @@ export function VerseApp() {
   const currentPage = sectionEntry(ui.section);
   // The landing view (Leader by default) replaces the Home section; below 720
   // the compact strip carries navigation and, above the phone layout, the rail steps aside on it.
-  const homePane = home.view === 'leader' ? 'leader-thread' : home.view === 'feed' ? 'feed' : null;
+  const homePane = home.view === 'live' ? null : HOME_PANE_IDS[home.view];
   const homeShowing = ui.section === 'live' && homePane !== null;
   // The tab row (Leader / Feed / Needs you / Fleet) replaces side columns in a narrow window.
   const tabRow = narrow || home.layout === 'compact';
   const homeNarrow = homeShowing && home.layout === 'compact' && !compact;
   const stripActive: CompactNavId | null = ui.overlay === 'needs-you' ? 'needs-you'
-    : ui.section === 'fleet' ? 'fleet' : homeShowing ? (home.view === 'feed' ? 'feed' : 'leader') : null;
+    : ui.section === 'fleet' ? 'fleet' : homeShowing && home.view !== 'live' ? home.view : null;
   useUnreadTitle(unread.leader + unread.feed + (needsYouCount ?? 0));
   const selectCompactNav = (id: CompactNavId) => {
     closeVerseOverlay();
@@ -545,7 +546,7 @@ export function VerseApp() {
       data-focus={focus ? 'on' : undefined}
       data-home-narrow={homeNarrow || undefined}
     >
-      <Suspense fallback={null}><WindowTitle /><HomeUnread viewing={homeShowing ? (home.view === 'feed' ? 'feed' : 'leader') : null} onCounts={onUnread} /></Suspense>
+      <Suspense fallback={null}><WindowTitle /><HomeUnread viewing={homeShowing && (home.view === 'feed' || home.view === 'leader') ? home.view : null} onCounts={onUnread} /></Suspense>
       <nav className={styles.rail} data-rail={expanded ? 'expanded' : 'collapsed'} aria-label={`${PRODUCT_NAME} sections`}>
         {/*
           Desktop shell: the window's top 48px is overlaid by the OS title bar
@@ -711,6 +712,9 @@ export function VerseApp() {
     </div>
   );
 }
+
+/** @deprecated Legacy name for {@link PhantomApp}; kept so external imports keep resolving. */
+export const VerseApp = PhantomApp;
 
 /**
  * The rail foot's capacity ring for the scarcest seat. Its own component so

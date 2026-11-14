@@ -27,6 +27,7 @@ import { writeWorldExport } from './export.js';
 import { loadGrowthFacts } from '../growth/read.js';
 import { growthSnapshot } from '../growth/series.js';
 import { projectWorldModel, type IntentWorldReading } from './project.js';
+import { defaultAppUpdateStatusDeps, readAppUpdateStatus, type AppUpdateStatus } from '../app-update-status.js';
 import { WORLD_CACHE_TTL_MS, type WorldModel } from './types.js';
 import type { ObserveSnapshot } from '../observe/types.js';
 
@@ -163,7 +164,23 @@ function busReadable(): boolean | null {
   }
 }
 
-export async function buildWorldModel(options: ReadObserveOptions = {}): Promise<CachedWorld> {
+export function updatePhaseFromStatus(status: AppUpdateStatus): 'ok' | 'unknown' {
+  return typeof status.current === 'string' ? 'ok' : 'unknown';
+}
+
+export function readUpdatePhase(
+  read: () => AppUpdateStatus = () => readAppUpdateStatus(defaultAppUpdateStatusDeps()),
+): 'ok' | 'unknown' {
+  try {
+    return updatePhaseFromStatus(read());
+  } catch {
+    return 'unknown';
+  }
+}
+
+type WorldReadOptions = ReadObserveOptions & { readUpdatePhase?: () => 'ok' | 'unknown' | 'failed' };
+
+export async function buildWorldModel(options: WorldReadOptions = {}): Promise<CachedWorld> {
   const nowMs = options.nowMs ?? Date.now();
   const [humanSteps, bottlenecks, pullFile, roster, sensors, queue, ci] = await Promise.all([
     readJsonFile(options.humanStepsFile ?? humanStepsPath()),
@@ -180,6 +197,7 @@ export async function buildWorldModel(options: ReadObserveOptions = {}): Promise
   const steps = humanSteps === null ? null : parseHumanSteps(humanSteps);
   const blocks = bottlenecks === null ? null : parseBottlenecks(bottlenecks);
   const outcomes = parsedPulls ? headlinesFor(parsedPulls.pulls, nowMs, options.windowDays ?? 7, parsedPulls.complete) : null;
+  const updatePhase = options.updatePhase ?? (options.readUpdatePhase ?? readUpdatePhase)();
   const observeInput: ObserveInput = {
     nowMs,
     windowMs: options.windowMs,
@@ -192,7 +210,7 @@ export async function buildWorldModel(options: ReadObserveOptions = {}): Promise
     pulls: parsedPulls?.pulls,
     pullsComplete: parsedPulls?.complete,
     pullsReason: parsedPulls ? null : 'No pull export was provided',
-    updatePhase: options.updatePhase,
+    updatePhase,
   };
   const observe = assembleObserve(observeInput);
   const model = projectWorldModel({
@@ -206,7 +224,7 @@ export async function buildWorldModel(options: ReadObserveOptions = {}): Promise
     busReadable: busReadable(),
     queue,
     ci,
-    updatePhase: options.updatePhase ?? null,
+    updatePhase,
     bottlenecks: blocks && blocks.top.length > 0 ? blocks.top.length : null,
     bottlenecksObservedAt: blocks?.top.length ? new Date(nowMs).toISOString() : null,
     stepsRemaining: steps?.stepsRemaining ?? null,
@@ -235,13 +253,14 @@ function isRoster(value: unknown): value is AgentRoster {
   return value !== null && typeof value === 'object' && Array.isArray((value as AgentRoster).sources);
 }
 
-function cacheable(options: ReadObserveOptions): boolean {
+function cacheable(options: WorldReadOptions): boolean {
   return options.force !== true && options.humanStepsFile === undefined && options.bottlenecksFile === undefined
     && options.pullsFile === undefined && options.pulls === undefined && options.loadRoster === undefined
-    && options.loadSensors === undefined && options.readClaims === undefined && options.updatePhase === undefined;
+    && options.loadSensors === undefined && options.readClaims === undefined && options.updatePhase === undefined
+    && options.readUpdatePhase === undefined;
 }
 
-export async function readWorldModel(options: ReadObserveOptions & { force?: boolean } = {}): Promise<CachedWorld> {
+export async function readWorldModel(options: WorldReadOptions & { force?: boolean } = {}): Promise<CachedWorld> {
   const nowMs = options.nowMs ?? Date.now();
   if (cacheable(options) && memory && nowMs - memory.at >= 0 && nowMs - memory.at < WORLD_CACHE_TTL_MS) {
     return stamp(memory.model, true, nowMs - memory.at);

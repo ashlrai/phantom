@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Button } from '../../../components/primitives/Button.js';
-import { getQuerySnapshot, refetchQuery } from '../../../data/cache.js';
+import { getQuerySnapshot, refetchQuery, subscribeQuery } from '../../../data/cache.js';
 import { ApiError, readFailureReason } from '../../../data/client.js';
 import { useMutationHold, useQuery, useRefetch } from '../../../data/hooks.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { captionFor, stepAllowed, type LaneTargetRow, type LaneTargetsV1 } from './lane-targets-model.js';
+import { laneBacklogHint } from './lane-backlog-hint.js';
 import { laneTargetsQuery, postLaneTarget } from './lane-targets-queries.js';
+import type { FleetRuns } from './ops-runs-model.js';
 import { opsRunsQuery } from './ops-runs-queries.js';
 import styles from './ops.module.css';
 import targets from './lane-targets.module.css';
@@ -21,6 +23,12 @@ export function LaneTargets() {
   const writing = useRef(false);
   const active = useRef(true);
   const data = posted ?? read.data;
+  // Passive read of the shared Ops runs cache: this card adds no request or poll of its own.
+  // OpsRuns keeps it fresh, and a lane change below refetches it.
+  const runs = useSyncExternalStore(
+    listener => subscribeQuery(opsRunsQuery.key, listener),
+    () => getQuerySnapshot<FleetRuns | null>(opsRunsQuery.key),
+  );
 
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => {
@@ -33,9 +41,10 @@ export function LaneTargets() {
   }, [confirm]);
   usePollWhileVisible(() => { if (!writing.current) refetch(); }, 10_000, { enabled: data !== null });
 
-  async function change(row: LaneTargetRow, delta: -1 | 1): Promise<void> {
-    if (writing.current || !hold.hasHold || !stepAllowed(row, delta)) return;
-    const target = row.target + delta;
+  async function change(row: LaneTargetRow, delta: -1 | 1 | 'raise', raiseTo?: number): Promise<void> {
+    if (writing.current || !hold.hasHold) return;
+    if (delta === 'raise' ? raiseTo === undefined || raiseTo <= row.target || raiseTo > row.ceiling : !stepAllowed(row, delta)) return;
+    const target = delta === 'raise' ? raiseTo! : row.target + delta;
     if (delta === -1 && target === 0 && (!confirm || confirm.lane !== row.lane || Date.now() >= confirm.until)) {
       setConfirm({ lane: row.lane, until: Date.now() + 5_000 });
       return;
@@ -73,6 +82,8 @@ export function LaneTargets() {
         {data.lanes.map(row => {
           const confirming = confirm?.lane === row.lane && row.target === 1;
           const caption = captionFor(row, Date.now());
+          const live = runs.data?.lanes.find(lane => lane.lane === row.lane);
+          const hint = laneBacklogHint(row, live ? { running: live.running, queued: live.queued } : null);
           return <div key={row.lane} className={targets.row}>
             <div className={targets.controls}>
               <strong>{row.lane}</strong>
@@ -81,6 +92,8 @@ export function LaneTargets() {
               <Button size="sm" aria-label={`Raise ${row.lane} target to ${row.target + 1}`} disabled={!hold.hasHold || pending || !stepAllowed(row, 1)} onClick={() => void change(row, 1)}>+</Button>
               {row.held ? <span className={styles.chip} data-tone="bad" title={row.heldReason ?? undefined}>Held</span> : null}
             </div>
+            {hint.line ? <p className={styles.note}>{hint.line}{hint.raiseTo !== null
+              ? <> <Button size="sm" disabled={!hold.hasHold || pending} onClick={() => void change(row, 'raise', hint.raiseTo!)}>Raise to {hint.raiseTo}</Button></> : null}</p> : null}
             {caption ? <p className={styles.note}>{caption}</p> : null}
             {error?.lane === row.lane ? <p className={styles.note} role="status">{error.message}</p> : null}
           </div>;

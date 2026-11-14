@@ -10,7 +10,10 @@ import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../s
 import { usageResetsQuery } from '../shell/usage-resets-query.js';
 import { DropQueueCard } from './DropQueueCard.js';
 import { StandbyCard } from './StandbyCard.js';
+import { RuntimeIdentityCard } from './RuntimeIdentityCard.js';
 import { AppsCard } from './AppsCard.js';
+import { DiskForecastCard } from './DiskForecastCard.js';
+import { AllowedAppsCard } from './AllowedAppsCard.js';
 import { MemoryGuardCard } from './MemoryGuardCard.js';
 import { DiskRunwayCard } from './DiskRunwayCard.js';
 import { hostView } from './fleet-host-model.js';
@@ -58,6 +61,7 @@ export function FleetHostPane({ visible }: Pick<PaneProps, 'visible'>) {
       <p className={styles.headline}>Fleet Mac health</p>
       <button type="button" className={styles.refresh} onClick={refresh}>Refresh</button>
     </header>
+    <AllowedAppsCard visible={visible} />
     {data === null ? <p className={styles.muted}>The fleet runs API has not landed in this build yet.</p>
       : !data ? <p className={styles.muted} role="status">{read.status === 'error' ? 'Fleet runs are unavailable.' : 'Reading fleet runs…'}</p>
       : <>
@@ -100,9 +104,11 @@ export function FleetHostPane({ visible }: Pick<PaneProps, 'visible'>) {
         <ResetReleasesSection visible={visible} />
         <DropQueueCard visible={visible} />
         <MemoryGuardCard visible={visible} />
+        <DiskForecastCard visible={visible} />
         <DiskRunwayCard visible={visible} />
         <AppsCard visible={visible} />
         <StandbyCard visible={visible} />
+        <RuntimeIdentityCard visible={visible} />
         <p className={styles.muted}>Orchestrator agents: {host.orchestratorAgents ?? '—'}</p>
       </>}
   </div>;

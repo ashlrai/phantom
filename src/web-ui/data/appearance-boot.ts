@@ -32,3 +32,7 @@ export function bootAppearance(): void {
 }
 
 bootAppearance();
+
+// Keep every local console in step with the server-side appearance record —
+// a chunk of its own, off the first-paint path (web-ui/data/appearance-sync.ts).
+void import('./appearance-sync.js').then((m) => m.startAppearanceSync(), () => undefined);
