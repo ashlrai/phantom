@@ -51,7 +51,6 @@ export async function recordEvidence(name: EvidenceToolName, args: Record<string
     const { assertMetadata } = await import('../connectors/profile.js');
     assertMetadata(JSON.stringify(args));
     const { ledgerFilePresent, readLedger, writeLedger } = await import('./store.js');
-    const ledger = await readLedger();
     if (!await ledgerFilePresent()) return { ok: false, error: 'Intent ledger unavailable.' };
     const at = (args.at as string | undefined) ?? new Date().toISOString();
     if (name === 'intent_ship') {
@@ -60,6 +59,7 @@ export async function recordEvidence(name: EvidenceToolName, args: Record<string
         rq: (args.rq as string[] | undefined)?.map(normalizeRq) }, { now: at });
       return { ok: true, ...result };
     }
+    const ledger = await readLedger();
     const { linkMergedPull } = await import('./evidence.js');
     const matches = linkMergedPull(ledger, { repo: args.repo as string, number: args.number as number,
       title: args.title as string, branch: args.branch as string | undefined, url: args.url as string | undefined }, at);
