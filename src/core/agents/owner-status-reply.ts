@@ -28,6 +28,10 @@ export interface OwnerStatusDeps {
   brief?: (runsDir: string, now: Date) => Promise<string>;
   /** Work-board read; the default scans the durable bus inbox under ~/.ashlr/fleet. */
   board?: (now: Date) => WorkBoardResult;
+  /** One sanitized runtime-identity + channel-health line (see
+   * owner-status-runtime-line.ts). Opt-in: the Slack socket wiring passes
+   * defaultRuntimeLine; absent or throwing means no line, never a failure. */
+  runtime?: (now: Date) => Promise<string>;
 }
 
 const defaultBoard = (now: Date): WorkBoardResult => listWorkBoard({ root: join(ashlrHome(), 'fleet'), now: now.getTime(), limit: 20 });
@@ -37,16 +41,31 @@ function workLines(now: Date, board: OwnerStatusDeps['board']): string[] {
   try { return summarizeWorkBoard((board ?? defaultBoard)(now), now); } catch { return [WORK_BOARD_UNKNOWN_LINE]; }
 }
 
+/** The runtime line is evidence, not a gate: an absent or throwing seam
+ * changes nothing else in the reply. One line only — anything after the
+ * first newline is dropped so it always sits directly under the heading. */
+async function runtimeLine(now: Date, seam: OwnerStatusDeps['runtime']): Promise<string> {
+  if (seam === undefined) return '';
+  try { return (await seam(now)).split('\n', 1)[0]; } catch { return ''; }
+}
+
 /** Never throws: a failed read still tells the owner where the ask went.
- * The digest has priority: work-board lines are appended whole, or dropped last-first. */
+ * The digest has priority: the runtime line sits directly under the heading;
+ * work-board lines are dropped last-first, then the runtime line, never the
+ * digest. */
 export async function composeOwnerStatusReply(runsDir: string, now: Date, deps: OwnerStatusDeps = {}): Promise<string> {
   try {
     const brief = await (deps.brief ?? digestBrief)(runsDir, now);
     const text = brief.replace(/^Morning leader brief/, `Phantom status, ${easternClock(now)} ET`);
+    const [heading, ...digestRest] = text.split('\n');
+    const runtime = await runtimeLine(now, deps.runtime);
     const lines = workLines(now, deps.board);
-    while (lines.length > 0 && [text, ...lines].join('\n').length > MAX_REPLY_CHARS) lines.pop();
-    const full = [text, ...lines].join('\n');
-    return full.length > MAX_REPLY_CHARS ? `${full.slice(0, MAX_REPLY_CHARS - 1)}…` : full;
+    const assemble = (withRuntime: boolean): string =>
+      [heading, ...(withRuntime && runtime !== '' ? [runtime] : []), ...digestRest, ...lines].join('\n');
+    while (lines.length > 0 && assemble(true).length > MAX_REPLY_CHARS) lines.pop();
+    const full = assemble(true);
+    const dropped = runtime !== '' && full.length > MAX_REPLY_CHARS ? assemble(false) : full;
+    return dropped.length > MAX_REPLY_CHARS ? `${dropped.slice(0, MAX_REPLY_CHARS - 1)}…` : dropped;
   } catch { return OWNER_STATUS_FALLBACK; }
 }
 
