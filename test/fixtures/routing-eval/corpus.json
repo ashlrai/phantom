@@ -1,0 +1,496 @@
+{
+  "schema": "phantom-routing-eval-corpus/v1",
+  "tasks": [
+    {
+      "id": "edit-preview",
+      "taskKind": "edit",
+      "touchedPaths": ["src/core/verse/preview.ts"],
+      "contextTokens": 4000,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 600
+    },
+    {
+      "id": "edit-quickstart",
+      "taskKind": "edit",
+      "touchedPaths": ["docs/QUICKSTART.md"],
+      "contextTokens": 2500,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 400
+    },
+    {
+      "id": "edit-demo",
+      "taskKind": "edit",
+      "touchedPaths": ["docs/DEMO.md"],
+      "contextTokens": 1800,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 300
+    },
+    {
+      "id": "edit-help",
+      "taskKind": "edit",
+      "touchedPaths": ["src/cli/help.ts"],
+      "contextTokens": 8000,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 900
+    },
+    {
+      "id": "edit-prompt-layers",
+      "taskKind": "edit",
+      "touchedPaths": ["src/core/run/prompts/layers.ts"],
+      "contextTokens": 6000,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 700
+    },
+    {
+      "id": "edit-ask",
+      "taskKind": "edit",
+      "touchedPaths": ["src/core/knowledge/ask.ts"],
+      "contextTokens": 5000,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 500
+    },
+    {
+      "id": "edit-workbench-types",
+      "taskKind": "edit",
+      "touchedPaths": ["src/core/verse/workbench-types.ts"],
+      "contextTokens": 12000,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 400
+    },
+    {
+      "id": "edit-budget-control",
+      "taskKind": "edit",
+      "touchedPaths": ["src/web-ui/routes/verse/budget/BudgetControl.tsx"],
+      "contextTokens": 9000,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 800
+    },
+    {
+      "id": "edit-at-local-limit",
+      "taskKind": "edit",
+      "touchedPaths": ["src/core/verse/preview.ts"],
+      "contextTokens": 32768,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 200
+    },
+    {
+      "id": "edit-one-verify-failure",
+      "taskKind": "edit",
+      "touchedPaths": ["src/core/verse/preview.ts"],
+      "contextTokens": 3000,
+      "priorVerifyFailures": 1,
+      "expectedTier": "local",
+      "assumedOutputTokens": 400
+    },
+    {
+      "id": "edit-two-ordinary-files",
+      "taskKind": "edit",
+      "touchedPaths": ["docs/DEMO.md", "src/core/verse/preview.ts"],
+      "contextTokens": 7000,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 1000
+    },
+    {
+      "id": "edit-north-star-doc",
+      "taskKind": "edit",
+      "touchedPaths": ["docs/NORTH-STAR.md"],
+      "contextTokens": 3200,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 350
+    },
+    {
+      "id": "edit-architecture-doc",
+      "taskKind": "edit",
+      "touchedPaths": ["docs/ARCHITECTURE.md"],
+      "contextTokens": 6000,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 450
+    },
+    {
+      "id": "test-preview-layout",
+      "taskKind": "test",
+      "touchedPaths": ["test/preview-layout.test.ts"],
+      "contextTokens": 3500,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 500
+    },
+    {
+      "id": "test-capacity-strip",
+      "taskKind": "test",
+      "touchedPaths": ["src/web-ui/routes/verse/usage/CapacityStrip.test.tsx"],
+      "contextTokens": 4500,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 600
+    },
+    {
+      "id": "test-knowledge-ask",
+      "taskKind": "test",
+      "touchedPaths": ["test/knowledge-ask.test.ts"],
+      "contextTokens": 2000,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 300
+    },
+    {
+      "id": "test-prompt-layers",
+      "taskKind": "test",
+      "touchedPaths": ["test/prompt-layers.test.ts"],
+      "contextTokens": 2800,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 400
+    },
+    {
+      "id": "test-one-verify-failure",
+      "taskKind": "test",
+      "touchedPaths": ["test/preview-layout.test.ts"],
+      "contextTokens": 3000,
+      "priorVerifyFailures": 1,
+      "expectedTier": "local",
+      "assumedOutputTokens": 400
+    },
+    {
+      "id": "lint-preview",
+      "taskKind": "lint",
+      "touchedPaths": ["src/core/verse/preview.ts"],
+      "contextTokens": 1500,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 200
+    },
+    {
+      "id": "lint-help",
+      "taskKind": "lint",
+      "touchedPaths": ["src/cli/help.ts"],
+      "contextTokens": 2200,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 150
+    },
+    {
+      "id": "lint-budget-control",
+      "taskKind": "lint",
+      "touchedPaths": ["src/web-ui/routes/verse/budget/BudgetControl.tsx"],
+      "contextTokens": 2600,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 180
+    },
+    {
+      "id": "lint-quickstart",
+      "taskKind": "lint",
+      "touchedPaths": ["docs/QUICKSTART.md"],
+      "contextTokens": 800,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 100
+    },
+    {
+      "id": "lint-one-verify-failure",
+      "taskKind": "lint",
+      "touchedPaths": ["src/core/verse/preview.ts"],
+      "contextTokens": 1600,
+      "priorVerifyFailures": 1,
+      "expectedTier": "local",
+      "assumedOutputTokens": 120
+    },
+    {
+      "id": "draft-demo",
+      "taskKind": "draft",
+      "touchedPaths": ["docs/DEMO.md"],
+      "contextTokens": 1200,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 700
+    },
+    {
+      "id": "draft-preview",
+      "taskKind": "draft",
+      "touchedPaths": ["src/core/verse/preview.ts"],
+      "contextTokens": 2000,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 500
+    },
+    {
+      "id": "draft-help",
+      "taskKind": "draft",
+      "touchedPaths": ["src/cli/help.ts"],
+      "contextTokens": 2400,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 600
+    },
+    {
+      "id": "edit-draft-role",
+      "taskKind": "edit",
+      "role": "draft",
+      "touchedPaths": ["src/core/verse/preview.ts"],
+      "contextTokens": 1800,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 300
+    },
+    {
+      "id": "edit-review-role",
+      "taskKind": "edit",
+      "role": "review",
+      "touchedPaths": ["docs/QUICKSTART.md"],
+      "contextTokens": 5000,
+      "priorVerifyFailures": 0,
+      "expectedTier": "local",
+      "assumedOutputTokens": 800
+    },
+    {
+      "id": "edit-localhost",
+      "taskKind": "edit",
+      "touchedPaths": ["src/core/verse/preview.ts"],
+      "contextTokens": 2000,
+      "priorVerifyFailures": 0,
+      "inferenceHost": "localhost",
+      "expectedTier": "local",
+      "assumedOutputTokens": 200
+    },
+    {
+      "id": "edit-ipv6-loopback",
+      "taskKind": "edit",
+      "touchedPaths": ["src/core/knowledge/ask.ts"],
+      "contextTokens": 2100,
+      "priorVerifyFailures": 0,
+      "inferenceHost": "::1",
+      "expectedTier": "local",
+      "assumedOutputTokens": 200
+    },
+    {
+      "id": "test-explicit-loopback",
+      "taskKind": "test",
+      "touchedPaths": ["test/preview-layout.test.ts"],
+      "contextTokens": 1900,
+      "priorVerifyFailures": 0,
+      "inferenceHost": "127.0.0.1",
+      "expectedTier": "local",
+      "assumedOutputTokens": 250
+    },
+    {
+      "id": "lint-bracket-ipv6",
+      "taskKind": "lint",
+      "touchedPaths": ["src/cli/help.ts"],
+      "contextTokens": 1700,
+      "priorVerifyFailures": 0,
+      "inferenceHost": "[::1]",
+      "expectedTier": "local",
+      "assumedOutputTokens": 100
+    },
+    {
+      "id": "plan-demo",
+      "taskKind": "plan",
+      "touchedPaths": ["docs/DEMO.md"],
+      "contextTokens": 4000,
+      "priorVerifyFailures": 0,
+      "expectedTier": "frontier",
+      "assumedOutputTokens": 1500
+    },
+    {
+      "id": "plan-preview",
+      "taskKind": "plan",
+      "touchedPaths": ["src/core/verse/preview.ts"],
+      "contextTokens": 800,
+      "priorVerifyFailures": 0,
+      "expectedTier": "frontier",
+      "assumedOutputTokens": 1200
+    },
+    {
+      "id": "architecture-budget-control",
+      "taskKind": "architecture",
+      "touchedPaths": ["src/web-ui/routes/verse/budget/BudgetControl.tsx"],
+      "contextTokens": 9000,
+      "priorVerifyFailures": 0,
+      "expectedTier": "frontier",
+      "assumedOutputTokens": 2000
+    },
+    {
+      "id": "architecture-doc",
+      "taskKind": "architecture",
+      "touchedPaths": ["docs/ARCHITECTURE.md"],
+      "contextTokens": 11000,
+      "priorVerifyFailures": 0,
+      "expectedTier": "frontier",
+      "assumedOutputTokens": 1800
+    },
+    {
+      "id": "edit-tier1-policy",
+      "taskKind": "edit",
+      "touchedPaths": ["src/core/routing/policy.ts"],
+      "contextTokens": 5000,
+      "priorVerifyFailures": 0,
+      "expectedTier": "frontier",
+      "assumedOutputTokens": 800
+    },
+    {
+      "id": "edit-tier1-merge",
+      "taskKind": "edit",
+      "touchedPaths": ["src/core/inbox/merge.ts"],
+      "contextTokens": 8000,
+      "priorVerifyFailures": 0,
+      "expectedTier": "frontier",
+      "assumedOutputTokens": 900
+    },
+    {
+      "id": "edit-tier1-daemon-loop",
+      "taskKind": "edit",
+      "touchedPaths": ["src/core/daemon/loop.ts"],
+      "contextTokens": 7000,
+      "priorVerifyFailures": 0,
+      "expectedTier": "frontier",
+      "assumedOutputTokens": 700
+    },
+    {
+      "id": "edit-ci-workflow",
+      "taskKind": "edit",
+      "touchedPaths": [".github/workflows/ci.yml"],
+      "contextTokens": 3000,
+      "priorVerifyFailures": 0,
+      "expectedTier": "frontier",
+      "assumedOutputTokens": 400
+    },
+    {
+      "id": "edit-codeowners",
+      "taskKind": "edit",
+      "touchedPaths": [".github/CODEOWNERS"],
+      "contextTokens": 2000,
+      "priorVerifyFailures": 0,
+      "expectedTier": "frontier",
+      "assumedOutputTokens": 200
+    },
+    {
+      "id": "edit-package-manifest",
+      "taskKind": "edit",
+      "touchedPaths": ["package.json"],
+      "contextTokens": 1500,
+      "priorVerifyFailures": 0,
+      "expectedTier": "frontier",
+      "assumedOutputTokens": 100
+    },
+    {
+      "id": "edit-dotenv-path",
+      "taskKind": "edit",
+      "touchedPaths": [".env"],
+      "contextTokens": 500,
+      "priorVerifyFailures": 0,
+      "expectedTier": "frontier",
+      "assumedOutputTokens": 50
+    },
+    {
+      "id": "test-router-stem",
+      "taskKind": "test",
+      "touchedPaths": ["test/routing-seat-router.test.ts"],
+      "contextTokens": 4000,
+      "priorVerifyFailures": 0,
+      "expectedTier": "frontier",
+      "assumedOutputTokens": 500
+    },
+    {
+      "id": "test-imports-tier1",
+      "taskKind": "test",
+      "touchedPaths": ["test/preview-layout.test.ts"],
+      "importsTier1": ["test/preview-layout.test.ts"],
+      "contextTokens": 3600,
+      "priorVerifyFailures": 0,
+      "expectedTier": "frontier",
+      "assumedOutputTokens": 400
+    },
+    {
+      "id": "edit-repeated-verify-failure",
+      "taskKind": "edit",
+      "touchedPaths": ["src/core/verse/preview.ts"],
+      "contextTokens": 3000,
+      "priorVerifyFailures": 2,
+      "expectedTier": "frontier",
+      "assumedOutputTokens": 400
+    },
+    {
+      "id": "lint-many-verify-failures",
+      "taskKind": "lint",
+      "touchedPaths": ["src/cli/help.ts"],
+      "contextTokens": 2000,
+      "priorVerifyFailures": 5,
+      "expectedTier": "frontier",
+      "assumedOutputTokens": 150
+    },
+    {
+      "id": "edit-over-local-limit",
+      "taskKind": "edit",
+      "touchedPaths": ["src/core/verse/preview.ts"],
+      "contextTokens": 32769,
+      "priorVerifyFailures": 0,
+      "expectedTier": "frontier",
+      "assumedOutputTokens": 200
+    },
+    {
+      "id": "edit-main-merge",
+      "taskKind": "edit",
+      "touchedPaths": ["src/core/verse/preview.ts"],
+      "contextTokens": 4000,
+      "priorVerifyFailures": 0,
+      "mainMerge": true,
+      "expectedTier": "frontier",
+      "assumedOutputTokens": 600
+    },
+    {
+      "id": "draft-merge-role",
+      "taskKind": "draft",
+      "role": "merge",
+      "touchedPaths": ["docs/DEMO.md"],
+      "contextTokens": 1000,
+      "priorVerifyFailures": 0,
+      "expectedTier": "frontier",
+      "assumedOutputTokens": 300
+    },
+    {
+      "id": "lint-credential-role",
+      "taskKind": "lint",
+      "role": "credential",
+      "touchedPaths": ["src/core/verse/preview.ts"],
+      "contextTokens": 1200,
+      "priorVerifyFailures": 0,
+      "expectedTier": "frontier",
+      "assumedOutputTokens": 100
+    },
+    {
+      "id": "edit-off-loopback",
+      "taskKind": "edit",
+      "touchedPaths": ["src/core/verse/preview.ts"],
+      "contextTokens": 2000,
+      "priorVerifyFailures": 0,
+      "inferenceHost": "10.0.0.8",
+      "expectedTier": "frontier",
+      "assumedOutputTokens": 200
+    },
+    {
+      "id": "plan-stacked-escalation",
+      "taskKind": "plan",
+      "role": "merge",
+      "touchedPaths": ["src/core/routing/router.ts"],
+      "contextTokens": 40000,
+      "priorVerifyFailures": 3,
+      "mainMerge": true,
+      "inferenceHost": "192.168.0.2",
+      "expectedTier": "frontier",
+      "assumedOutputTokens": 2000
+    }
+  ]
+}

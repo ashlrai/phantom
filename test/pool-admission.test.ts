@@ -57,11 +57,11 @@ describe('evaluateAdmission gates', () => {
     const r = evaluateAdmission(healthy({ running: 10 }));
     expect(r).toMatchObject({ admit: false, reason: 'at_cap running 10 >= cap 10' });
   });
-  it('an owner-disabled gate lists reasons but admits (cap still applies)', () => {
-    const r = evaluateAdmission(healthy({ load1: 500, disabled: true }));
-    expect(r).toMatchObject({ admit: true, disabled: true, reason: null });
+  it('live probes never disable the gate: a tripped reason always blocks, alongside the cap (RQ-BATCH-SESSIONS-2)', () => {
+    const r = evaluateAdmission(healthy({ load1: 500 }));
+    expect(r).toMatchObject({ admit: false, disabled: false });
     expect(r.reasons).toHaveLength(1);
-    expect(evaluateAdmission(healthy({ load1: 500, disabled: true, running: 10 })).admit).toBe(false);
+    expect(evaluateAdmission(healthy({ load1: 500, running: 10 })).reason).toMatch(/^loadavg 500\.0 > .*; at_cap /);
   });
 });
 
@@ -166,9 +166,11 @@ describe('readAdmission and phm pool admission', () => {
     await writeFile(join(queue, 'install.lock'), '');
     expect((await readAdmission(probes({ pidAlive: () => true }))).installLock.holder).toBeNull();
   });
-  it('queue/LOADGATE_OFF disables the gate', async () => {
+  it('queue/LOADGATE_OFF no longer disables the gate (RQ-BATCH-SESSIONS-2)', async () => {
     await writeFile(join(queue, 'LOADGATE_OFF'), '');
-    expect(await readAdmission(probes({ load1: () => 500 }))).toMatchObject({ admit: true, disabled: true });
+    const report = await readAdmission(probes({ load1: () => 500 }));
+    expect(report).toMatchObject({ admit: false, disabled: false });
+    expect(report.reason).toMatch(/loadavg 500\.0 >/);
   });
   it('missing slots and status read as cap 0 and nothing running, blocking claims', async () => {
     await rm(join(queue, 'slots.json')); await rm(join(queue, 'status.json'));

@@ -208,11 +208,21 @@ const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
   'cos-memory': 'handleCosMemoryApi',
   // The desktop command center: board, router, releases and the leaders' channel.
   ops: 'handleOpsApi',
+  // The desktop Goals pane's write: POST /api/verse/goals.
+  goals: 'handleGoalsCreateApi',
   'owner-thread': 'handleOwnerThreadApi',
   'gmail-triage': 'handleGmailTriageApi',
   'release-stages': 'handleReleaseStagesApi',
   'comms-inbox': 'handleCommsInboxApi',
   'comms-teammate-reply': 'handleCommsTeammateReplyApi',
+  // The desktop command center's library files and run handoffs.
+  'fleet-library-files': 'handleFleetLibraryFilesApi',
+  'fleet-handoffs': 'handleFleetHandoffsApi',
+  // The desktop command center's runtime identity, claims ledger and work board.
+  'fleet-runtime-identity': 'handleFleetRuntimeIdentityApi',
+  'fleet-recheck': 'handleFleetRecheckApi',
+  'fleet-coordination-claims': 'handleFleetCoordinationClaimsApi',
+  'fleet-work-board': 'handleFleetWorkBoardApi',
 };
 
 const allPrefixes = WORKBENCH_ROUTE_FAMILIES.flatMap((family) => family.prefixes.map((prefix) => ({ family: family.id, prefix })));

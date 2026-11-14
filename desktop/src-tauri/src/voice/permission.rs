@@ -37,7 +37,9 @@ pub fn map_status(raw: isize) -> MicStatus {
 /// ever passed to `open` — never a string from the page.
 pub fn open_settings(url: &'static str) {
     debug_assert!(url == PRIVACY_MICROPHONE_URL || url == SOUND_INPUT_URL);
-    let _ = std::process::Command::new("/usr/bin/open").arg(url).spawn();
+    if let Ok(child) = std::process::Command::new("/usr/bin/open").arg(url).spawn() {
+        drop(ashlr_desktop::child_reaper::ReapOnDrop::new(child));
+    }
 }
 
 #[cfg(target_os = "macos")]

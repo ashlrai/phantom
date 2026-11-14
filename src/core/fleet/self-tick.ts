@@ -1,8 +1,8 @@
 /**
  * self-tick.ts — one locked pass of Phantom's self-management, runnable by an
- * agent or a host timer with no desktop app open. Ten one-shot stages run
- * together, including same-channel inbox acknowledgements, merged-order notices
- * and the Needs-you triage.
+ * agent or a host timer with no desktop app open. Fourteen one-shot stages run
+ * together, including same-channel inbox acknowledgements, the once-per-channel
+ * leader-live notice, merged-order notices and the Needs-you triage.
  * runSelfTick is the single pass, each step injected as a seam in fixed order:
  *
  *   1. reset-release  — first, so a lane it frees counts as a free slot for
@@ -12,10 +12,16 @@
  *   4. meter-incident — deduped flat-meter notices.
  *   5. planner-tick   — the autorun decision over the post-release picture.
  *   6. inbox-acks     — send pending same-channel acknowledgements.
- *   7. order-notices  — tell Mason when a merged job served one of his orders.
- *   8. needs-triage   — auto-resolve Needs-you items outside the four hard limits.
- *   9. waste-incident — raise high-waste incidents.
- *  10. landed-sweep   — close DIRTY PRs whose work already landed on master.
+ *   7. owner-live     — answer each newly-live owner channel once with
+ *      'Leader is live here, reply to talk to me.'
+ *   8. order-notices  — tell Mason when a merged job served one of his orders.
+ *   9. board-notify   — post once-only work-board changes into source threads.
+ *  10. recheck-record — append the read-only fleet recheck verdict to the
+ *      retained recheck log.
+ *  11. needs-triage   — auto-resolve Needs-you items outside the four hard limits.
+ *  12. waste-incident — raise high-waste incidents.
+ *  13. teammate-overdue — notice the owner thread about unanswered teammate texts and Slack requests.
+ *  14. landed-sweep   — close DIRTY PRs whose work already landed on master.
  *
  * A step that exits nonzero or throws is recorded 'failed'; later steps still
  * run. A hold a person placed is never released — that rule stays inside the
@@ -32,9 +38,10 @@ import {
   releaseLocalStoreLock,
   type LocalStoreLockAcquireResult,
 } from './local-store-lock.js';
+import { noticeOverdueSlackRequests, noticeOverdueTeammateTexts } from '../comms/teammate-overdue.js';
 import { writeSelfTickLast } from './self-tick-last.js';
 
-export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick' | 'inbox-acks' | 'order-notices' | 'needs-triage' | 'landed-sweep' | 'stray-stop' | 'meter-incident' | 'waste-incident';
+export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick' | 'inbox-acks' | 'owner-live' | 'order-notices' | 'board-notify' | 'recheck-record' | 'needs-triage' | 'teammate-overdue' | 'landed-sweep' | 'stray-stop' | 'meter-incident' | 'waste-incident';
 /** Fixed execution order — release first so the planner sees freed slots; landed-sweep last. */
 export const SELF_TICK_STEP_ORDER: readonly SelfTickStepName[] = [
   'reset-release',
@@ -43,9 +50,13 @@ export const SELF_TICK_STEP_ORDER: readonly SelfTickStepName[] = [
   'meter-incident',
   'planner-tick',
   'inbox-acks',
+  'owner-live',
   'order-notices',
+  'board-notify',
+  'recheck-record',
   'needs-triage',
   'waste-incident',
+  'teammate-overdue',
   // Last: the slowest step (gh + git reads) must never delay release or the planner.
   'landed-sweep',
 ];
@@ -59,7 +70,7 @@ export interface SelfTickStepRun {
 }
 /** A step seam gets the shared argv (--json, maybe --apply, --runs-dir). */
 export type SelfTickStep = (args: string[]) => Promise<SelfTickStepRun>;
-export type SelfTickSteps = Record<SelfTickStepName, SelfTickStep>;
+export type SelfTickSteps = Record<Exclude<SelfTickStepName, 'teammate-overdue' | 'board-notify' | 'recheck-record'>, SelfTickStep> & Partial<Record<'teammate-overdue' | 'board-notify' | 'recheck-record', SelfTickStep>>;
 
 export interface SelfTickStepResult {
   step: SelfTickStepName;
@@ -129,7 +140,15 @@ export async function runSelfTick(options: RunSelfTickOptions): Promise<SelfTick
   try {
     for (const step of SELF_TICK_STEP_ORDER) {
       try {
-        const run = options.steps[step];
+        const run = options.steps[step] ?? (step === 'teammate-overdue' ? async () => {
+          const result = await noticeOverdueTeammateTexts({ runsDir, now: options.now, apply: options.apply });
+          const slack = await noticeOverdueSlackRequests({ runsDir, now: options.now, apply: options.apply });
+          return { exitCode: 0, output: JSON.stringify({ ...result, slack }) };
+        } : undefined);
+        if (!run && (step === 'board-notify' || step === 'recheck-record')) {
+          report.steps.push({ step, state: 'ok', exitCode: 0, report: { reason: 'step-not-configured' } });
+          continue;
+        }
         if (!run) {
           report.steps.push({ step, state: 'failed', exitCode: 1, report: { reason: 'step-not-configured' } });
           continue;

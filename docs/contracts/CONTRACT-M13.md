@@ -179,3 +179,32 @@ Use `@raycast/api`'s built-in polling/revalidation (e.g. `usePromise` /
   (bounded + local-first like `ashlr run`).
 - TUI must restore the terminal on quit/signal/throw.
 - Preserve all existing behavior and the 1184 passing tests. No git commit.
+
+---
+
+## Amendment — Sessions tab (RQ-SWE-TUI-SESSIONS-1, recut RQ-PHX-RECUTCOREOLDC189)
+
+A later read-only extension added an eighth tab. The shared-type block above is
+the original M13 spec; the current contract lives in `src/core/types/dashboard.ts`.
+
+- `DashboardSnapshot` gains an OPTIONAL `sessions?: FleetSessionsV1` field —
+  omitted only when the reader module cannot be loaded; a missing runs dir
+  still reports `sourceState: 'missing'` honestly. Optional so pre-existing
+  producers and fixtures stay valid.
+- `TuiTab` gains `'sessions'`; the tab bar shows `8:Sessions` and `TAB_ORDER`
+  ends with `'sessions'` (digits `1`–`8`, wrap-around cycling).
+- `src/core/fleet/runs-sessions.ts` `getFleetSessions()` (fleet.sessions.v1)
+  is the bounded, read-only, value-blind projection behind the tab:
+  `queue/ready.tsv`, `queue/status.json`, `queue/run/<job>.{line,dispatched,
+  rc,timeout,fin,reaping}` markers and `metrics/jobs.jsonl` under
+  `ASHLR_RUNS_DIR ?? ~/.ashlr-runs`, joined with an injectable ps table.
+  It emits only job id, repo, lane, tier, marker-derived status, exit code and
+  timing — never prompt paths, worktree paths, `.publish`/`.launch`/`.log`
+  contents, environment values or secrets (every emitted string passes
+  `scrubSecrets` + a strict shape check; reads are `O_NOFOLLOW` and
+  size-capped).
+- The renderer stays pure: `bodySessions` shows job/repo/lane/status/elapsed
+  only, renders active rows then a bounded `recent` tail, degrades to
+  explicit missing/degraded text, and `j`/`k` selection is bounded by
+  `snap.sessions.sessions.length`. Enter still only refreshes — the TUI
+  remains reads-only.

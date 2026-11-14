@@ -12,8 +12,13 @@ import { readImessageAckEvidence } from '../comms/imessage-ack-evidence.js';
 import { buildCommsCutoverReadiness, type CommsCutoverReport } from '../comms/cutover-readiness.js';
 import { readEmailOutbox } from '../comms/email-outbox.js';
 import { readTeammateLatency, type TeammateLatencySummary } from '../comms/teammate-reply-latency.js';
+import { readLocalSendPolicy } from '../agents/send-gate.js';
+import { readChannelHealth, type ChannelHealthReport } from '../fleet/channel-health.js';
+import { buildSlackBridgeStatus, type SlackBridgeStatus } from '../agents/slack-status.js';
+import { sanitizeIdentityText } from '../fleet/runtime-identity.js';
 
 export const VERSE_FLEET_COMMS_STATUS_PATH = '/api/verse/fleet/comms-status';
+const CHANNEL_HEALTH_TIMEOUT_MS = 5_000;
 
 export interface FleetCommsStatusApiDeps {
   /** Default: ASHLR_RUNS_DIR, then ~/.ashlr-runs. */
@@ -28,6 +33,12 @@ export interface FleetCommsStatusApiDeps {
   teammateLatency?: (now: number) => TeammateLatencySummary | Promise<TeammateLatencySummary>;
   /** Off-Grok-Bot cutover seam for tests. Default: buildCommsCutoverReadiness over runsDir. */
   cutover?: (runsDir: string) => Promise<CommsCutoverReport>;
+  /** Send-policy reader (read-only). Default: ~/.ashlr/comms.toml and agent-network.toml. */
+  sendPolicy?: typeof readLocalSendPolicy;
+  /** Slack/iMessage bridge health reader. Default: readChannelHealth() on the request clock. */
+  channelHealth?: () => Promise<ChannelHealthReport>;
+  /** Slack request-to-receipt binding seam. Default: buildSlackBridgeStatus().replies on the request clock. */
+  slackReplies?: () => SlackBridgeStatus['replies'];
   /** Clock seam for tests; stamps generatedAt. */
   now?: () => Date;
 }
@@ -45,6 +56,10 @@ interface EmailOutboxStatus {
   stuck: number;
   stuckReasons: Record<string, number>;
 }
+
+const SLACK_CHANNEL_ID = /^[CDG][A-Z0-9]{2,31}$/;
+const SLACK_TS = /^\d{1,12}\.\d{1,9}$/;
+const SLACK_SAMPLE_MAX = 5;
 
 const defaultRunsDir = (): string => process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
 
@@ -131,6 +146,7 @@ export function createFleetCommsStatusApi(deps: FleetCommsStatusApiDeps = {}): A
         unanswered: t.unanswered, ignorable: t.ignorable, medianMinutes: t.medianMinutes, p90Minutes: t.p90Minutes,
         maxMinutes: t.maxMinutes, withinTarget: t.withinTarget,
         oldestUnanswered: t.oldestUnanswered === null ? null : { ageMinutes: t.oldestUnanswered.ageMinutes },
+        latestTextAt: t.latestTextAt ?? null,
         sourceState: t.sourceState,
       };
       teammateSource = t.sourceState;
@@ -152,6 +168,67 @@ export function createFleetCommsStatusApi(deps: FleetCommsStatusApiDeps = {}): A
       cutoverSource = 'degraded';
     }
 
+    // Counts and channel names only: never identity ids, addresses or the home path.
+    let sendPolicy: { confirmed: boolean; teamIdentities: number; channels: string[] } | null = null;
+    let sendPolicySource: 'healthy' | 'degraded' = 'healthy';
+    try {
+      const policy = (deps.sendPolicy ?? readLocalSendPolicy)();
+      sendPolicy = {
+        confirmed: policy.confirmedByMason === true,
+        teamIdentities: policy.teamIdentities.length,
+        channels: [...new Set(policy.teamIdentities.map(identity => String(identity.channel)))].sort(),
+      };
+    } catch {
+      sendPolicySource = 'degraded';
+    }
+
+    // The bridge health report as returned, except runtimeHost redacted like
+    // runtime-identity output. A throw or a read past the timeout degrades the
+    // field to 'unavailable'; it never fails the route.
+    let channelHealth: ChannelHealthReport | { schemaVersion: 1; asOf: string; channels: never[]; error: 'unavailable' };
+    let healthTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const report = await Promise.race([
+        (deps.channelHealth ?? (() => readChannelHealth({ now: () => generatedAt })))(),
+        new Promise<never>((_resolve, reject) => {
+          healthTimer = setTimeout(() => reject(new Error('channel-health-timeout')), CHANNEL_HEALTH_TIMEOUT_MS);
+        }),
+      ]);
+      const home = homedir();
+      channelHealth = {
+        ...report,
+        channels: report.channels.map((channel) => ({
+          ...channel,
+          runtimeHost: channel.runtimeHost === null ? null : sanitizeIdentityText(channel.runtimeHost, home),
+        })),
+      };
+    } catch {
+      channelHealth = { schemaVersion: 1, asOf: generatedAt.toISOString(), channels: [], error: 'unavailable' };
+    } finally {
+      if (healthTimer !== undefined) clearTimeout(healthTimer);
+    }
+
+    // Counts, states and Slack ids/timestamps only: never text, author ids, tokens or paths.
+    let slackReplies: {
+      state: SlackBridgeStatus['replies']['state']; answered: number; unanswered: number;
+      oldestUnansweredAt: string | null; uncertainSends: number;
+      sample: { channelId: string; threadTs: string; at: string }[];
+    } | null = null;
+    let slackRepliesSource: 'healthy' | 'degraded' = 'healthy';
+    try {
+      const r = (deps.slackReplies ?? (() => buildSlackBridgeStatus({ now: () => generatedAt }).replies))();
+      slackReplies = {
+        state: r.state, answered: r.answered, unanswered: r.unanswered,
+        oldestUnansweredAt: r.oldestUnansweredAt, uncertainSends: r.uncertainSends,
+        sample: r.unansweredSample
+          .filter(row => SLACK_CHANNEL_ID.test(row.channelId) && SLACK_TS.test(row.threadTs))
+          .slice(0, SLACK_SAMPLE_MAX)
+          .map(row => ({ channelId: row.channelId, threadTs: row.threadTs, at: row.at })),
+      };
+    } catch {
+      slackRepliesSource = 'degraded';
+    }
+
     sendJson(res, 200, {
       version: 1,
       generatedAt: generatedAt.toISOString(),
@@ -161,7 +238,10 @@ export function createFleetCommsStatusApi(deps: FleetCommsStatusApiDeps = {}): A
       imessage,
       teammate,
       cutover,
-      sources: { drafts: draftsSource, emailOutbox: emailOutboxSource, imessage: imessageSource, teammate: teammateSource, cutover: cutoverSource },
+      sendPolicy,
+      sources: { drafts: draftsSource, emailOutbox: emailOutboxSource, imessage: imessageSource, teammate: teammateSource, cutover: cutoverSource, sendPolicy: sendPolicySource, slackReplies: slackRepliesSource },
+      slackReplies,
+      channelHealth,
     });
   }
 

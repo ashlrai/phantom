@@ -16,6 +16,7 @@
  */
 
 import { cmdUsageSensors } from './usage-sensors.js';
+import { cmdUsageLive } from './usage-live.js';
 import { makeColors, isTty } from './ui.js';
 
 const { bold, dim, cyan, green, yellow, red } = makeColors(isTty());
@@ -179,6 +180,14 @@ function renderTable(usage: import('../core/usage/frontier-usage.js').FrontierUs
 
 export async function cmdUsage(args: string[]): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) { printUsage(); return 0; }
+  if (args[0] === 'spend') {
+    if (args.length > 2 || (args[1] !== undefined && args[1] !== '--json')) { console.error('Usage: phm usage spend [--json]'); return 2; }
+    const { readUsageSpend } = await import('../core/usage/spend.js');
+    const spend = await readUsageSpend();
+    if (args[1] === '--json') console.log(JSON.stringify(spend, null, 2));
+    else for (const row of spend.pools) console.log(row.reason ? `${row.pool}: unknown (${row.reason})` : `${row.pool}: ${row.usedPercent}% used; reset ${row.resetAt}; ${row.hoursLeft!.toFixed(1)} hours left; ${row.burnPerHour}% per hour; ${row.projectedUnusedPercent!.toFixed(1)}% unused at reset`);
+    return 0;
+  }
   if (args[0] === 'pace') {
     if (args.length > 2 || (args[1] !== undefined && args[1] !== '--json')) { console.error('Usage: phm usage pace [--json]'); return 2; }
     const { readUsagePace } = await import('../core/usage/pace.js');
@@ -188,6 +197,7 @@ export async function cmdUsage(args: string[]): Promise<number> {
     return 0;
   }
   if (args[0] === 'sensors') return cmdUsageSensors(args.slice(1));
+  if (args[0] === 'live') return cmdUsageLive(args.slice(1));
   if (args[0] === 'validate') {
     if ((args.length !== 2 && args.length !== 3) || !args[1] || args[1].startsWith('-') ||
         (args.length === 3 && args[2] !== '--json')) {
@@ -254,12 +264,15 @@ function printUsage(): void {
   console.log(b('  ashlr usage') + d(' [--json]'));
   console.log('');
   console.log('  Show per-engine frontier usage: calls, tokens, cost, and window state.');
+  console.log('  phm usage spend [--json] shows measured burn and unused capacity at reset.');
   console.log('  phm usage pace [--json] shows included-quota forecasts by pool.');
   console.log('  phm usage validate <file> [--json] checks usage-reading.v1 JSONL records.');
   console.log('  phm usage sensors --json [--refresh] [--file <snapshot>]');
   console.log('  prints each lane reading, its age and whether it is stale.');
   console.log('  A reading at or after staleAfter is unknown and is not headroom.');
   console.log('  --refresh uses official APIs and CLIs only.');
+  console.log('  phm usage live [--json] [--watch] [--browser [--headed]] [--interval <seconds>]');
+  console.log('  tracks usage, resets and alerts at 80 and 95 percent; --browser reads the usage pages.');
   console.log('  Reading a snapshot automatically refreshes stale Codex personal usage');
   console.log('  when its pool home is configured; the snapshot is not rewritten.');
   console.log('  Codex refresh uses PHANTOM_SENSOR_CODEX_CMP_HOME and');

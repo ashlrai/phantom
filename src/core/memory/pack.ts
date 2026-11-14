@@ -122,8 +122,9 @@ function numbers(text: string): Set<string> { return new Set(text.match(/\d+(?:\
  * no lexical match is admitted only when its score reaches `minScore`, and then ranks by that score below every lexical match.
  * With `singleTermFloor`, a fact that shares only one query term is dropped when its score is below that floor: one shared
  * word ("password", "pager") is the usual way a question nothing answers still pulls in an unrelated fact.
+ * Active retrieval sets `preferFresh` to break relevance ties by observation time; default selection remains stable.
  */
-export interface MemoryPackOptions { changedSourceIds: string[]; semantic?: MemorySemanticOption }
+export interface MemoryPackOptions { changedSourceIds: string[]; semantic?: MemorySemanticOption; preferFresh?: boolean }
 export interface MemorySemanticOption { scores: Record<string, number>; minScore: number; singleTermFloor?: number }
 const unitScore = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= -1 && value <= 1;
 function validSemantic(value: unknown): boolean {
@@ -136,7 +137,8 @@ function validSemantic(value: unknown): boolean {
 function validOptions(value: unknown): value is MemoryPackOptions {
   if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) return false;
   const keys = Object.keys(value);
-  if (!keys.includes('changedSourceIds') || keys.some(key => key !== 'changedSourceIds' && key !== 'semantic')) return false;
+  if (!keys.includes('changedSourceIds') || keys.some(key => key !== 'changedSourceIds' && key !== 'semantic' && key !== 'preferFresh')) return false;
+  if (keys.includes('preferFresh') && typeof (value as { preferFresh: unknown }).preferFresh !== 'boolean') return false;
   if (keys.includes('semantic') && !validSemantic((value as { semantic: unknown }).semantic)) return false;
   const ids = (value as { changedSourceIds: unknown }).changedSourceIds;
   return Array.isArray(ids) && ids.length <= MEMORY_LIMITS.events * MEMORY_LIMITS.refs && ids.every(validMemoryId) && new Set(ids).size === ids.length;
@@ -161,10 +163,12 @@ export function buildMemoryContextPack(snapshotInput: unknown, queryInput: unkno
     if (!validMemoryPackQuery(query)) { output.receipt.stopReasons.push('invalid-query'); return output; }
   } catch { output.receipt.stopReasons.push('invalid-query'); return output; }
   let changed: Set<string>;
+  let preferFresh = false;
   let semantic: { scores: Map<string, number>; minScore: number; singleTermFloor: number | null } | null = null;
   try {
     if (!validOptions(optionsInput)) { output.receipt.stopReasons.push('invalid-options'); return output; }
     changed = new Set(optionsInput.changedSourceIds);
+    preferFresh = optionsInput.preferFresh === true;
     if (optionsInput.semantic) semantic = { scores: new Map(Object.entries(optionsInput.semantic.scores)), minScore: optionsInput.semantic.minScore,
       singleTermFloor: optionsInput.semantic.singleTermFloor ?? null };
   } catch { output.receipt.stopReasons.push('invalid-options'); return output; }
@@ -207,7 +211,20 @@ export function buildMemoryContextPack(snapshotInput: unknown, queryInput: unkno
     && !view.eligible.some(other => other !== event && !stale.has(other) && sourceTier(other) === 'primary' && agreesOn(event, other))));
   stale.forEach(event => output.receipt.exclusions.push({ eventId: event.eventId, reason: 'source-changed' }));
   secondary.forEach(event => output.receipt.exclusions.push({ eventId: event.eventId, reason: 'weaker-evidence' }));
-  const eligibleWords = view.eligible.filter(event => !stale.has(event) && !secondary.has(event)).map(event => ({ event, words: factTerms(event) }));
+  // Live source checks happen after temporal projection; propagate those exclusions through derivations too.
+  const blocked = new Set([...stale, ...secondary].map(event => event.eventId));
+  const children = new Map<string, MemoryFactEvent[]>();
+  for (const event of view.eligible) for (const parent of event.derivedFrom) {
+    children.set(parent, [...(children.get(parent) ?? []), event]);
+  }
+  const queue = [...blocked];
+  for (let i = 0; i < queue.length; i++) for (const child of children.get(queue[i]!) ?? []) {
+    if (blocked.has(child.eventId)) continue;
+    blocked.add(child.eventId);
+    queue.push(child.eventId);
+    output.receipt.exclusions.push({ eventId: child.eventId, reason: 'dependency-ineligible' });
+  }
+  const eligibleWords = view.eligible.filter(event => !blocked.has(event.eventId)).map(event => ({ event, words: factTerms(event) }));
   // Rarer matched terms break ties between equal match counts, then exact-word matches beat vocabulary matches.
   // Deterministic over the eligible set only.
   const frequency = new Map<string, number>();
@@ -221,6 +238,7 @@ export function buildMemoryContextPack(snapshotInput: unknown, queryInput: unkno
     return { event, score, rarity: matched.reduce((sum, word) => sum + 1 / frequency.get(word)!, 0),
       exact: matched.filter(word => set.has(word)).length, meaning: meaning ?? -1 };
   }).sort((a, b) => b.score - a.score || b.rarity - a.rarity || b.exact - a.exact || b.meaning - a.meaning
+    || (preferFresh ? (b.event.observedAt ?? b.event.recordedAt).localeCompare(a.event.observedAt ?? a.event.recordedAt) : 0)
     || (a.event.eventId < b.event.eventId ? -1 : a.event.eventId > b.event.eventId ? 1 : 0));
   const chunks: string[] = [];
   const head = header(query);
