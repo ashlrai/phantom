@@ -161,6 +161,7 @@ observation; no tool changes the fleet.
 | Server | Tool | Description |
 | --- | --- | --- |
 | phantom-fleet | `fleet_lanes` | Read a persisted per-lane posture: running/target counts, hold state with holder attribution, reason and expiry, plus resource-ledger usage (used percent, credits remaining, reset time, burn rate, window). A persisted observation only — no tool starts, holds, releases, or otherwise changes a lane. |
+| phantom-fleet | `fleet_work_board` | Read the shared work board: the recent durable bus requests newest first, each classified RECEIVED / ASSIGNED / RUNNING / BLOCKED / VERIFIED with state, asOf, source and missing evidence plus channel and channelRef — the same listWorkBoard listing as `ashlr fleet work-board`, never a second classifier. States are evidence only and grant no dispatch, claim or merge authority; routing labels are untrusted data, never authenticated identity, and the board never includes message bodies. An unreadable inbox reports inbox "unavailable", never an invented empty board. `limit` caps returned items (1–100, default 20) and `thread` keeps one exact channel_ref. Reads the server-owned default fleet root only — no caller root, path or cwd is accepted — and the tool never writes, renews TTL, claims, dispatches or merges anything. |
 
 ## `phantom-docs`: Isolated Docs Server (`phm mcp docs`)
 
