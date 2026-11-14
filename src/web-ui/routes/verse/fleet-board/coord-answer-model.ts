@@ -28,7 +28,12 @@ export interface CoordAnswer {
   /** Plain-words reasons the answer is not fully REACHABLE. */
   missing: string[];
   exampleTask: CoordExampleTask | null;
+  /** Newest finished (VERIFIED) task with a named owner and claim receipt —
+   * evidence only; never affects verdict, missing or exampleTask. */
+  lastVerified: CoordLastVerified | null;
 }
+
+export interface CoordLastVerified { id: string; owner: string; asOf: string; }
 
 /** The work-board payload as the strip reads it: every field optional — the
  * route is absent on older builds and pre-claim payloads lack the
@@ -39,6 +44,8 @@ export interface CoordBoardItem {
   state?: string;
   channelRef?: string | null;
   receivedAt?: string;
+  /** When the item's state was last classified (server WorkBoardItem.asOf). */
+  asOf?: string;
   owner?: string | null;
   claimReceipt?: string | null;
 }
@@ -182,7 +189,26 @@ export function deriveCoordAnswer({ runtime, channels, board, ledger, now }: Coo
     }
   }
 
+  // Evidence only (same rule as fleet-recheck taskSection's lastVerified loop:
+  // VERIFIED, owned AND claimed, finite asOf, newest wins, first wins a tie).
+  let lastVerified: CoordLastVerified | null = null;
+  if (board === undefined) row('Last verified', 'unknown', 'unknown');
+  else if (board === null) row('Last verified', 'unavailable', 'unknown');
+  else {
+    let newestMs = Number.NEGATIVE_INFINITY;
+    for (const it of Array.isArray(board.items) ? board.items : []) {
+      if (it.state !== 'VERIFIED' || typeof it.id !== 'string' || it.id === '') continue;
+      if (typeof it.owner !== 'string' || it.owner === '' || typeof it.claimReceipt !== 'string' || it.claimReceipt === '') continue;
+      const ms = Date.parse(it.asOf ?? '');
+      if (!Number.isFinite(ms) || ms <= newestMs) continue;
+      newestMs = ms;
+      lastVerified = { id: it.id, owner: it.owner, asOf: it.asOf! };
+    }
+    if (lastVerified === null) row('Last verified', 'none', 'unknown');
+    else row('Last verified', `${lastVerified.id} · owner ${lastVerified.owner} · ${formatRelative(lastVerified.asOf, now)}`, true);
+  }
+
   const loading = runtime === undefined || channels === undefined || board === undefined;
   const verdict: CoordVerdict = loading ? 'LOADING' : runtimeFresh && inboxOk && liveChannel ? 'REACHABLE' : 'BLOCKED';
-  return { verdict, rows, missing, exampleTask };
+  return { verdict, rows, missing, exampleTask, lastVerified };
 }
