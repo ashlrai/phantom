@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { buildCapabilityAudit } from '../src/core/fleet/capability-audit.js';
 import { cmdFleetCapabilityAudit } from '../src/cli/fleet-capability-audit.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 
 describe('capability audit reconciliation', () => {
   it('isolates returned records across arrays and reports', () => {
