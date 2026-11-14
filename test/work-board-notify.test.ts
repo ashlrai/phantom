@@ -169,7 +169,7 @@ describe('sendNotifications', () => {
   it('a duplicate receipt still counts as delivered and is ledgered once', async () => {
     const appended: BoardNotifyLedgerRow[] = [];
     const results = await sendNotifications([notice({})], {
-      senders: { slack: vi.fn().mockResolvedValue({ status: 'duplicate' }) },
+      senders: { slack: vi.fn().mockResolvedValue({ status: 'duplicate', receipt: 'fake-dup-1' }) },
       appendLedger: row => appended.push(row),
     });
     expect(results[0]!.status).toBe('duplicate');
@@ -327,7 +327,7 @@ describe('cmdFleetBoardNotify on real durable stores', { timeout: 60_000 }, () =
   it('halts sends under KILL without advancing the snapshot, and --dry-run sends and writes nothing', async () => {
     post(slackRequest('slack-order-3', TS_B));
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const slack = vi.fn().mockResolvedValue({ status: 'sent' });
+    const slack = vi.fn().mockResolvedValue({ status: 'sent', receipt: 'fake-ts-kill' });
     // Dry-run before any snapshot shows the plan but leaves no state.
     expect(await cmdFleetBoardNotify(['--root', root, '--state-dir', dir, '--dry-run', '--json'], { senders: { slack }, now: () => now })).toBe(0);
     expect(lastJson(log)).toMatchObject({ status: 'dry-run', baselined: true });
