@@ -146,7 +146,9 @@ class PhaseBTick(TickCase):
         slots = {'devin': devin_slot(target=10, floor=0, ceiling=10, hard_cap=10, last_change=int(1e15))}
         home = self.run_tick([(f'RQ-FC-{i}', 'devin', 'work') for i in range(8)], dict(self.ENF, LOADGATE_LOADAVG='23'), slots=slots)
         self.assertEqual(slots_of(home)['devin']['effective_target'], 5)
-        self.assertEqual(len(launched(home)), 4)   # also capped by MAX_LAUNCH_PER_TICK
+        self.assertEqual(len(launched(home)), 5)   # effective target is stricter than the eight-claim tick limit
+        admission = json.loads((home / '.ashlr-runs/queue/admission.json').read_text())
+        self.assertEqual(admission['claim_limit'], 8)
 
     def test_missing_memory_signal_fails_closed_to_floors(self):
         home = self.run_tick(self.JOBS, dict(self.ENF, LOADGATE_PRESSURE='unreadable'))   # no pressure level and no free percentage
@@ -210,7 +212,8 @@ class PhaseCTick(TickCase):
     def slots(self, **extra):
         s = {'codex-cmp': {'held': True, 'held_by': 'autobackoff', 'held_until': FAR, 'held_reason': 'usage limit', 'target': 10, 'floor': 0,
                            'ceiling': 32, 'hard_cap': 32, 'last_change': 0},
-             'codex-personal': {'target': 4, 'floor': 0, 'ceiling': 32, 'hard_cap': 32, 'last_change': int(1e15)}}
+             'codex-personal': {'target': 4, 'floor': 0, 'ceiling': 32, 'hard_cap': 32, 'last_change': int(1e15)},
+             'devin': {'held': True}}
         s.update(extra)
         return s
 
@@ -222,19 +225,22 @@ class PhaseCTick(TickCase):
         self.assertIn('FLEET_REBALANCE RQ-FC-A codex-cmp->codex-personal', events(home))
         route = json.loads((home / '.ashlr-runs' / 'queue' / 'route-state.json').read_text())
         self.assertEqual(route['RQ-FC-A']['pool'], 'codex-personal')
-        self.assertEqual(route['RQ-FC-A']['moves'] and len(route['RQ-FC-A']['moves']), 1)
+        self.assertEqual(route['RQ-FC-A']['moves'], [])   # enqueue hints are not previous assignments
+        self.assertTrue(route['RQ-FC-A']['launched'])
         rec, = ledger(home)
         self.assertEqual([(m['job'], m['from'], m['to']) for m in rec['reroutes']],
                          [('RQ-FC-A', 'codex-cmp', 'codex-personal'), ('RQ-FC-B', 'codex-cmp', 'codex-personal')])
 
-    def test_shadow_mode_moves_nothing(self):
+    def test_shared_market_operates_with_controller_in_shadow(self):
         home = self.run_tick(self.JOBS, slots=self.slots())
-        self.assertEqual(launched(home), [])
-        self.assertEqual({r[2] for r in ready(home)}, {'codex-cmp'})
+        self.assertEqual(sorted(launched(home)), ['RQ-FC-A', 'RQ-FC-B'])
+        self.assertEqual(ready(home), [])
+        self.assertTrue(slots_of(home)['codex-cmp']['held'])
 
-    def test_phase_b_alone_does_not_reroute(self):
+    def test_shared_market_operates_alongside_phase_b(self):
         home = self.run_tick(self.JOBS, {'FLEET_CTL_MODE': 'enforce', 'FLEET_CTL_PHASES': 'b'}, slots=self.slots())
-        self.assertEqual(launched(home), [])
+        self.assertEqual(sorted(launched(home)), ['RQ-FC-A', 'RQ-FC-B'])
+        self.assertTrue(slots_of(home)['codex-cmp']['held'])
 
     def test_headroom_is_respected(self):
         slots = self.slots(**{'codex-personal': {'target': 1, 'floor': 0, 'ceiling': 32, 'hard_cap': 32, 'last_change': int(1e15)}})
@@ -242,12 +248,14 @@ class PhaseCTick(TickCase):
         self.assertEqual(len(launched(home)), 1)
         self.assertEqual([r[2] for r in ready(home)], ['codex-cmp'])   # the second line waits where it was
 
-    def test_manual_hold_pool_is_not_routed_around(self):
+    def test_manual_hold_blocks_the_executor_while_unclaimed_work_uses_headroom(self):
         slots = self.slots(**{'codex-cmp': {'held': True, 'held_by': 'Masbot', 'held_reason': 'operator', 'target': 10, 'floor': 0,
                                             'ceiling': 32, 'hard_cap': 32, 'last_change': 0}})
         home = self.run_tick(self.JOBS, self.ENF, slots=slots)
-        self.assertEqual(launched(home), [])
-        self.assertEqual({r[2] for r in ready(home)}, {'codex-cmp'})
+        self.assertEqual(sorted(launched(home)), ['RQ-FC-A', 'RQ-FC-B'])
+        self.assertEqual(ready(home), [])
+        self.assertTrue(slots_of(home)['codex-cmp']['held'])
+        self.assertEqual(slots_of(home)['codex-cmp']['held_by'], 'Masbot')
 
     def test_route_hysteresis_move_cap_and_launch_lock_still_bind(self):
         now = time.time()
