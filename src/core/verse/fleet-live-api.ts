@@ -1980,7 +1980,14 @@ export const handleFleetLiveApi: ApiModule = async (ctx, req, res, path, method)
     }
     const { readFleetQueue } = await import('../fleet/runs-parked-queue.js');
     const { sanitizePublicJson } = await import('../util/public-json.js');
-    sendJson(res, 200, sanitizePublicJson(await readFleetQueue({ limit })));
+    const queue = await readFleetQueue({ limit });
+    // Keep the stuck read out of runs-parked-queue.ts: that module sits in the
+    // Tier-1 import closure and a literal import() of queue/stuck.js would grow
+    // it. This route file is outside the closure.
+    queue.stuck = await import('../queue/stuck.js')
+      .then(({ readStuckQueue }) => readStuckQueue())
+      .catch(() => null);
+    sendJson(res, 200, sanitizePublicJson(queue));
     return true;
   }
   if (path === '/api/verse/fleet/live/outside-prs') {

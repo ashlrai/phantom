@@ -44,7 +44,11 @@ import { handleWbAction, WB_ACTION_PATH } from './wb-action-api.js';
  *    (tracked by server.ts).
  */
 
+import { handleTeamInvites } from '../../api/team-invites.js';
 import { handleFrictionFeedback } from '../verse/feedback-api.js';
+import { COMMS_CONFIRM_PATH, handleCommsConfirmRoute } from './comms-confirm-route.js';
+import { watchLeaderThread } from './leader-thread-watch.js';
+import { handleUiSettingsApi, UI_SETTINGS_PATH } from './ui-settings-api.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { timingSafeEqual, randomBytes } from 'node:crypto';
 import { basename, resolve as resolvePath, sep as pathSep } from 'node:path';
@@ -76,6 +80,8 @@ import { listSwarms, loadSwarm } from '../swarm/store.js';
 import { buildRollup } from '../observability/rollup.js';
 import { loadGenome } from '../genome/store.js';
 import { recall } from '../genome/recall.js';
+import { buildApprovalsProjection, decideTeamApproval } from '../approvals/surface.js';
+import { DEFAULT_TEAM } from '../teams/index.js';
 import { decideApprovalRequest, listProposals, loadProposal, setStatus } from '../inbox/store.js';
 import { approvalRequestForProposal, isApprovalRequestRevision } from '../inbox/pending-authority.js';
 import {
@@ -84,6 +90,7 @@ import {
 } from '../daemon/public-observation.js';
 import { serviceStatus } from '../daemon/service.js';
 import { daemonServiceInstallOptions } from '../daemon/service-config.js';
+import { buildNodesSnapshot } from '../nodes/view.js';
 import { buildFleetStatus, readFleetDaemonStatus } from '../fleet/status.js';
 import { getCachedFleetStatus, primeFleetStatusCache } from './fleet-status-cache.js';
 // M61: Mission Control aggregator.
@@ -105,6 +112,7 @@ import type { ProposalsReadResult } from '../inbox/store.js';
 import { handleRunEventsSse, RUN_EVENTS_PATH_RE } from './run-stream.js';
 import { buildHostSummary, HOST_SUMMARY_PATH } from './host-summary.js';
 import { handleVerseApi, isVerseApiPath, verseSessionsDigest, verseSessionsSnapshot, verseAccountReadingsDigest } from '../verse/verse-api.js';
+import { handleIdeasDraftApi, isIdeasDraftPath } from './ideas-draft-route.js';
 // V2 autonomy control plane (mounted BEFORE handleVerseApi — see handleApi).
 import { handleVerseControlApi, isVerseControlPath } from '../verse/control-api.js';
 // GitHub, reachable from Verse (docs/VERSE-WORKSPACES.md §2) — also BEFORE handleVerseApi.
@@ -210,7 +218,7 @@ let sseHistoryProjection: SseHistoryProjection | null = null;
  * No `topics` parameter means every group (the historical behaviour).
  */
 export const SSE_TOPICS = [
-  'verse-sessions', 'verse-account-readings', 'runs', 'swarms', 'inbox', 'daemon', 'fleet-activity', 'snapshot',
+  'verse-sessions', 'verse-account-readings', 'runs', 'swarms', 'inbox', 'daemon', 'fleet-activity', 'snapshot', 'leader-thread',
 ] as const;
 export type SseTopic = typeof SSE_TOPICS[number];
 
@@ -1134,6 +1142,13 @@ function handleSseEvents(
     }
   }
 
+  // Leader thread: written by other processes (leader tick, Telegram, iMessage),
+  // so the file system says when it changed. No message bodies: the client
+  // refetches through the authenticated thread route.
+  const unwatchLeaderThread = topics.has('leader-thread')
+    ? watchLeaderThread(() => sendNamed('leader-thread', { at: new Date().toISOString() }))
+    : () => {};
+
   // Send an initial snapshot immediately.
   pushVerseSessionsIfChanged();
   pushAccountReadingsIfChanged();
@@ -1161,6 +1176,7 @@ function handleSseEvents(
     if (cleaned) return;
     cleaned = true;
     verseSessionPushers.delete(pushVerseSessionsIfChanged);
+    unwatchLeaderThread();
     clearInterval(intervalId);
     if (backpressureTimer) clearTimeout(backpressureTimer);
     if (expiryTimer) clearTimeout(expiryTimer);
@@ -1306,6 +1322,7 @@ export async function handleApi(
     readSession?: { id: string; expiresAt: number };
     readProjections?: ReadProjectionReader;
     usageResourcesApi?: import('../verse/api-modules.js').ApiModule;
+    mergeLatencyApi?: import('../verse/api-modules.js').ApiModule;
   },
 ): Promise<boolean> {
   const path = reqPath(req);
@@ -1318,6 +1335,12 @@ export async function handleApi(
   const method = (req.method ?? 'GET').toUpperCase();
 
   try {
+    if (path.startsWith('/api/teams/') && await handleTeamInvites(req, res, ctx)) return true;
+    if (path === '/api/usage/spend' && method === 'GET') {
+      const { readUsageSpend } = await import('../usage/spend.js');
+      sendJson(res, 200, await readUsageSpend());
+      return true;
+    }
     if (path === HOST_SUMMARY_PATH) {
       if (method !== 'GET') {
         res.setHeader('Allow', 'GET');
@@ -1355,6 +1378,14 @@ export async function handleApi(
     if (path === '/api/config/effective' && method === 'GET') {
       sendJson(res, 200, loadEffectiveConfigSnapshot());
       return true;
+    }
+
+    // ── GET/PUT /api/ui-settings ────────────────────────────────────────────
+    // The operator's appearance + layout preferences, stored in ~/.ashlr/ui.json
+    // (src/core/ui-settings.ts). The file is the source of truth; the UI and
+    // agents edit the same document.
+    if (path === UI_SETTINGS_PATH) {
+      return handleUiSettingsApi(ctx, req, res, method);
     }
 
     // ── GET /api/portfolio ────────────────────────────────────────────────────
@@ -1511,6 +1542,25 @@ export async function handleApi(
         ? await ctx.readProjections.read('pulse', { window })
         : buildRollup(window, cfg);
       sendJson(res, 200, rollup);
+      return true;
+    }
+
+    // ── GET /api/queue/stats ────────────────────────────────────────────────
+    // RQ-QUEUE-5: the live station graph's feed — the same estimateQueueStats
+    // over the private queue-visit journal that `phm queue stats --json`
+    // prints. ?window=<seconds> selects a single window (default 3600),
+    // mirroring the CLI's --window flag. Read-only; same read-authority class
+    // as /api/pulse (the server boundary requires a read session).
+    if (path === '/api/queue/stats' && method === 'GET') {
+      const rawSeconds = getQueryParam(req.url ?? '', 'window');
+      const seconds = rawSeconds === undefined ? 3600 : Number(rawSeconds);
+      if (!Number.isFinite(seconds) || seconds <= 0) {
+        sendJson(res, 400, { error: 'window must be a positive number of seconds' });
+        return true;
+      }
+      const { readQueueVisits } = await import('../queue/journal.js');
+      const { estimateQueueStats } = await import('../queue/stats.js');
+      sendJson(res, 200, estimateQueueStats(await readQueueVisits(), Date.now(), [seconds * 1000]));
       return true;
     }
 
@@ -1914,10 +1964,24 @@ export async function handleApi(
       return true;
     }
 
+    if (path === '/api/fleet/release-chain' && method === 'GET') {
+      const { releaseChainResponse } = await import('./release-chain-api.js');
+      sendJson(res, 200, releaseChainResponse());
+      return true;
+    }
+
     if (path === '/api/fleet/empty-jobs' && method === 'GET') {
       const { readEmptyJobs } = await import('../fleet/empty-jobs.js');
       const report = await readEmptyJobs();
       sendJson(res, report ? 200 : 503, report ?? { error: 'Jobs ledger is unreadable.' });
+      return true;
+    }
+
+    // Read-only release-chain status: same local signing/feed evidence as
+    // `phm fleet release-chain`, same no-auth read class as /api/fleet/lanes.
+    if (path === '/api/fleet/release-chain' && method === 'GET') {
+      const { releaseChainResponse } = await import('./release-chain-api.js');
+      sendJson(res, 200, releaseChainResponse());
       return true;
     }
 
@@ -1931,6 +1995,23 @@ export async function handleApi(
     if (path === '/api/fleet/machine' && method === 'GET') {
       const { readFleetMachine } = await import('../fleet/machine.js');
       sendJson(res, 200, await readFleetMachine());
+      return true;
+    }
+
+    // ── GET /api/fleet/board ─────────────────────────────────────────────
+    // RQ-SWE3-BOARDUI-1: the Leader-as-CEO board the last Leader tick
+    // recorded at <runs>/coordination/leader-board.json — lanes, READY depth
+    // by tier, merges in the last hour, the conflicting-PR trend and what is
+    // blocked on Mason, in the same {schema, status, ageSeconds, board}
+    // envelope `phm fleet board --json` prints. READ-ONLY bounded fs read;
+    // a missing/corrupt recording reports 'missing'/'unavailable' with a
+    // null board, never a synthesized one. Same no-auth read class as
+    // /api/fleet/lanes.
+    if (path === '/api/fleet/board' && method === 'GET') {
+      const { defaultFleetBoardRunsDir, fleetBoardResponse, readFleetBoard } = await import('../fleet/leader-journal.js');
+      const read = await readFleetBoard({ runsDir: defaultFleetBoardRunsDir() })
+        .catch((): { status: 'unavailable'; board: null } => ({ status: 'unavailable', board: null }));
+      sendJson(res, 200, fleetBoardResponse(read, Date.now()));
       return true;
     }
 
@@ -1975,6 +2056,20 @@ export async function handleApi(
       sendJson(res, 200, await readVerifiedCompletion({
         verifiedWindowMs: Number.isFinite(rawHours) && rawHours > 0 ? Math.min(rawHours, 168) * 3_600_000 : undefined,
       }));
+      return true;
+    }
+
+    // ── GET /api/fleet/sessions ──────────────────────────────────────────
+    // Unified agent-session list (fleet.sessions.v1): queued/parked/
+    // launching/running/publishing/exited/stale sessions plus a bounded
+    // finished tail, assembled read-only from the dispatchd runs dir
+    // (queue/ready.tsv, queue/run/*.line markers, metrics/jobs.jsonl tail,
+    // sanitized ps join). VALUE-BLIND: prompt paths, env, secrets and raw
+    // command lines never leave the projection. Same no-auth read class as
+    // /api/fleet/lanes; never throws on absent/degraded inputs.
+    if (path === '/api/fleet/sessions' && method === 'GET') {
+      const { getFleetSessions } = await import('../fleet/runs-sessions.js');
+      sendJson(res, 200, await getFleetSessions());
       return true;
     }
 
@@ -2113,6 +2208,12 @@ export async function handleApi(
       return true;
     }
 
+    if (path === '/api/ideas' && method === 'GET') {
+      const { readIdeas } = await import('../fleet/ideas.js');
+      sendJson(res, 200, await readIdeas());
+      return true;
+    }
+
     // ── GET /api/backlog ────────────────────────────────────────────────────
     // M31: read-only — the persisted backlog (never triggers a scan).
     // RQ-PHX-IDEANOTNOW94: items carry their latest idea verdict, when one is
@@ -2167,6 +2268,12 @@ export async function handleApi(
       return true;
     }
 
+    // ── POST /api/ideas/draft (Ideas pane → one drop-job draft) ─────────────
+    // Gated inside the handler: --allow-dispatch + token + JSON Content-Type.
+    if (isIdeasDraftPath(path)) {
+      return handleIdeasDraftApi(ctx, req, res, method);
+    }
+
     // ── GET /api/impact ─────────────────────────────────────────────────────
     // M31: read-only knowledge-graph impact for ?target=<file|symbol>.
     if (path === '/api/impact' && method === 'GET') {
@@ -2202,6 +2309,52 @@ export async function handleApi(
     }
 
     // ── GET /api/control ────────────────────────────────────────────────────
+    // RQ-DESK-APPROVALS-1: the human "needs you" projection (same JSON as
+    // `phm approvals --json`). Read class, behind the read-session gate.
+    if (path === '/api/approvals' && method === 'GET') {
+      const team = getQueryParam(req.url ?? '/', 'team');
+      sendJson(res, 200, buildApprovalsProjection(team || undefined));
+      return true;
+    }
+
+    // POST /api/approvals/team/:id/decision {decision, team?}: the human's
+    // click is the approval. Gated like every dispatch mutation (404 without
+    // --allow-dispatch, token + JSON); identity is derived locally by
+    // decideApproval (localHumanActor), never taken from the body.
+    if (path.startsWith('/api/approvals/team/') && method === 'POST') {
+      if (!ctx.allowDispatch) {
+        sendJson(res, 404, { error: 'not found' });
+        return true;
+      }
+      const parts = path.slice('/api/approvals/team/'.length).split('/');
+      const id = decodeURIComponent(parts[0] ?? '');
+      if (!id || parts[1] !== 'decision' || parts.length !== 2) {
+        sendJson(res, 404, { error: `not found: ${method} ${path}` });
+        return true;
+      }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let body: unknown;
+      try {
+        body = JSON.parse(await readBody(req, 4096));
+      } catch {
+        sendJson(res, 400, { error: 'expected a bounded JSON decision' });
+        return true;
+      }
+      const b = body as Record<string, unknown> | null;
+      if (!b || typeof b !== 'object' || Array.isArray(b) || Object.keys(b).some((k) => k !== 'decision' && k !== 'team')
+        || (b['decision'] !== 'approve' && b['decision'] !== 'deny') || (b['team'] !== undefined && typeof b['team'] !== 'string')) {
+        sendJson(res, 400, { error: 'expected decision (approve or deny) and optional team' });
+        return true;
+      }
+      try {
+        sendJson(res, 200, decideTeamApproval((b['team'] as string | undefined) || DEFAULT_TEAM, id, b['decision']));
+      } catch (e) {
+        // Agent-process env, non-owner/admin, stale or already-decided: all refusals, none applied.
+        sendJson(res, 403, { error: e instanceof Error ? e.message : 'approval refused' });
+      }
+      return true;
+    }
+
     // M61: unified Mission Control snapshot. No auth — same read class as
     // /api/fleet and /api/daemon. Never throws; each section degrades independently.
     if (path === '/api/control' && method === 'GET') {
@@ -2215,6 +2368,15 @@ export async function handleApi(
     if (path === '/api/feed' && method === 'GET') {
       const { readFeed } = await import('../feed.js');
       sendJson(res, 200, await readFeed());
+      return true;
+    }
+
+    // ── GET /api/nodes ───────────────────────────────────────────────────────
+    // phantom.nodes.v1: nodes, caps, heartbeat age, live jobs, leader. Read-only
+    // and secret-free by construction (src/core/nodes/view.ts); same read class
+    // as /api/control.
+    if (path === '/api/nodes' && method === 'GET') {
+      sendJson(res, 200, buildNodesSnapshot());
       return true;
     }
 
@@ -2528,6 +2690,11 @@ export async function handleApi(
       return handleFrictionFeedback(ctx, req, res);
     }
 
+    // Before the V1 catch-all, which 404s every /api/verse/* path it does not know.
+    if (path === COMMS_CONFIRM_PATH) {
+      return handleCommsConfirmRoute(ctx, req, res, method);
+    }
+
     // ── /api/verse/{control,caps,scope,audit,daemon,safety} (V2 control) ────
     // MUST come before the V1 verse handler below: isVerseApiPath() matches
     // every /api/verse/* path and 404s what it does not recognize, so the
@@ -2572,10 +2739,20 @@ export async function handleApi(
     // GETs are already behind the read-session boundary (server.ts); POSTs
     // apply ctx.allowDispatch + passesMutationGate inside handleVerseApi.
     if (isVerseApiPath(path)) {
+      const verseCtx = { cfg, token: ctx.token, allowDispatch: ctx.allowDispatch, readSession: ctx.readSession,
+        usageResourcesApi: ctx.usageResourcesApi,
+        ...(ctx.readProjections ? { readProjections: ctx.readProjections } : {}) };
+      // Merge-latency report (GET /api/verse/fleet/merge-latency): injected by
+      // the composition root and served before the mounted module table, so the
+      // frozen mount order and the Tier-1 import closure are both untouched.
+      if (path === '/api/verse/fleet/merge-latency' || path.startsWith('/api/verse/fleet/merge-latency/')) {
+        if (path !== '/api/verse/fleet/merge-latency') { sendJson(res, 404, { error: 'Merge latency route not found.' }); return true; }
+        if (ctx.mergeLatencyApi) return ctx.mergeLatencyApi(verseCtx, req, res, path, method);
+        sendJson(res, 503, { error: 'Merge latency is unavailable.' });
+        return true;
+      }
       const handled = await handleVerseApi(
-        { cfg, token: ctx.token, allowDispatch: ctx.allowDispatch, readSession: ctx.readSession,
-          usageResourcesApi: ctx.usageResourcesApi,
-          ...(ctx.readProjections ? { readProjections: ctx.readProjections } : {}) },
+        verseCtx,
         req,
         res,
         path,
