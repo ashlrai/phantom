@@ -1656,6 +1656,7 @@ export const WORKBENCH_ROUTE_FAMILIES = [
   { id: 'team', owner: 'desktop-command', module: 'src/core/verse/team-api.ts', handler: 'handleTeamApi', prefixes: ['/api/verse/team'] },
   { id: 'fleet-comms-status', owner: 'desktop-command', module: 'src/core/verse/fleet-comms-status-api.ts', handler: 'handleFleetCommsStatusApi', prefixes: ['/api/verse/fleet/comms-status'] },
   { id: 'fleet-runtime-identity', owner: 'desktop-command', module: 'src/core/verse/fleet-runtime-identity-api.ts', handler: 'handleFleetRuntimeIdentityApi', prefixes: ['/api/verse/fleet/runtime-identity'] },
+  { id: 'fleet-recheck', owner: 'desktop-command', module: 'src/core/verse/fleet-recheck-api.ts', handler: 'handleFleetRecheckApi', prefixes: ['/api/verse/fleet/recheck'] },
   { id: 'fleet-coordination-claims', owner: 'desktop-command', module: 'src/core/verse/fleet-coordination-claims-api.ts', handler: 'handleFleetCoordinationClaimsApi', prefixes: ['/api/verse/fleet/coordination-claims'] },
   { id: 'fleet-work-board', owner: 'desktop-command', module: 'src/core/verse/fleet-work-board-api.ts', handler: 'handleFleetWorkBoardApi', prefixes: ['/api/verse/fleet/work-board'] },
   { id: 'fleet-library-files', owner: 'desktop-command', module: 'src/core/verse/fleet-library-files-api.ts', handler: 'handleFleetLibraryFilesApi', prefixes: ['/api/verse/fleet/library-files'] },
