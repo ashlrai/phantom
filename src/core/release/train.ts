@@ -544,6 +544,22 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   };
 }
 
+/**
+ * Step summary for the workflow run. A skipped tag is not a blocker: it has no
+ * release-please commit (e.g. a hand version bump), is never published, and is
+ * superseded once the next release-please tag is admitted.
+ */
+export function trainStepSummary(state: Pick<TrainState, 'reason' | 'skippedTags'>): string {
+  const skipped = state.skippedTags ?? [];
+  const lines = [`### Release train`, '', state.reason];
+  if (skipped.length > 0) {
+    lines.push('', 'Skipped tags. They have no release-please commit, so the train never publishes them;'
+      + ' the next release-please tag supersedes their drafts. Not a blocker for the candidate above.');
+    for (const item of skipped) lines.push(`- ${item.reason}`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
 export function markWritesApplied(state: TrainState): TrainState {
   const steps: TrainState['steps'] = { ...state.steps, supersede: { status: 'complete' } };
   const order = ['build', 'attest', 'sign', 'notarize', 'npm', 'feed', 'docs', 'finalize'];
@@ -996,7 +1012,7 @@ async function main(): Promise<number> {
   const json = `${JSON.stringify(state, null, 2)}\n`;
   if (process.env.GITHUB_STEP_SUMMARY) {
     const { appendFileSync } = await import('node:fs');
-    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Release train\n\n${state.reason}\n\n${(state.skippedTags ?? []).map((item) => `- ${item.reason}`).join('\n')}\n`);
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, trainStepSummary(state));
   }
   if (out) writeFileSync(out, json, { mode: 0o644 });
   process.stdout.write(json);
