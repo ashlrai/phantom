@@ -29,6 +29,11 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 - Hold list (Mason's own holds): phantom #197 #878 #743 #725 #738 #744 #693 #1228; phantom-secrets #140 #197 #375 #168 #418 #136; ashlr-plugin #152 #157.
 
 ## Tools for agents working here
+
+- Ecosystem onboarding: `phm onboard --ecosystem --json` previews names/state only.
+  Grant a reviewed selection with `phm onboard --ecosystem --grant --plan <planId> --select lexicon,stack --json`.
+  `--yes` never grants. Locked vaults offer existing-vault access; imports stay
+  in Secrets' trusted terminal. See [ecosystem onboarding](docs/ECOSYSTEM-ONBOARDING.md).
 - This repo's `.mcp.json` declares five companion MCP servers: `phantom-secrets`, `locus`, `lexicon`, `stack`, `ashlr` (Ashlr.AI Plugin). What each is for, its limits, and how to approve it: [docs/AGENT-TOOLCHAIN.md](docs/AGENT-TOOLCHAIN.md).
 - In a Phantom cloud task, list the companion tools you actually called in the report's `toolsUsed` field (an empty list if none); `phm cloud list` shows it as the session's claim.
 - Team org: `phm org show --json`, `phm org join --member <id> --machine <id> --lane <lane>[=<share>] --json` (each co-founder on their own machine; opt-in per lane, no auth read, nothing sent) and `phm org plan --json` (proposes queue assignments and roles within each member's contributed limits from the router's usage and reset data; the leader reads it each planning pass). Private data is never pooled; spending stays with each member. See [docs/AGENT-NETWORK.md](docs/AGENT-NETWORK.md#team-org).
@@ -47,7 +52,7 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 - Releases and publishes run through each repo's sanctioned release workflow, which any agent may dispatch.
 
 ## Ground rules
-- Keep diffs small and reviewable, with one concern per PR.
+- Keep diffs reviewable, with one coherent mergeable outcome per PR. Frontier jobs may combine related concerns within their tier scope; move unrelated work to another job.
 - Never commit secrets. Use Phantom Secrets placeholders.
 - Never force-push to the default branch.
 
@@ -58,6 +63,7 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 - When authority drift fails, run `npm run authority:regen` and list each new Tier-1 root in the PR body for CODEOWNERS review.
 - Shared work market (RQ-SHARED-QUEUE-1): jobs carry `needs`, `min_tier`, `max_cost_class`, `exclusive`, priority and impact; `pool`/`lane` are `preferred_lane` hints. Dispatch selects a capable, healthy executor with quota and capacity. An unknown hint is open; explicit local execution stays local. Inspect `metrics/work-market.jsonl` for `work-market.v1` reason codes and `phm route explain --json` for hysteresis receipts. Source changes require Security review and re-pin before `contrib/mac/install.sh`; never install over the live pinned dispatcher. See [queue market](docs/QUEUE.md).
 - Queue tiers: router-queue `tier=` must be `frontier`, `work`, `mid` or `fast`. `queuegen` and `router-lint` refuse any other value (`standard` means `work`), because dispatchd skips unknown tiers silently. See [docs/QUEUE.md](docs/QUEUE.md#tier-values).
+- Session scope: frontier plans up to 40 files / 600 changed lines across related concerns; work 15 / 200, mid 8 / 120, fast 2 / 80. One mergeable PR per job; explicit narrower named-file limits win. See [tier-scaled scope](docs/QUEUE.md#tier-scaled-session-scope), [lane tool parity](docs/AGENT-TOOLCHAIN.md#lane-tool-parity-audit-rq-delegate-scope-1), and [org responsibilities](docs/AGENT-NETWORK.md#assign-responsibilities-without-expanding-authority). Restock dry-run JSON reports `scope_budgets`; live script installation still needs Security review and re-pinning.
 - Layout: `src/cli/` command dispatchers, `src/core/` logic, `src/web-ui/` console, `test/` backend suites (`m<N>.<topic>.test.ts`), `docs/` guides indexed by `docs/README.md`.
 - Mac dispatcher: `contrib/mac/dispatchd.py` is the single source for the live `~/.ashlr-runs/bin/dispatchd.py`. Change it here, never on the host. `contrib/mac/install.sh` diffs and installs it (plus `install-gate.py` and `launch-gate.sh`) with timestamped backups, but only after Security has reviewed and re-pinned the files; agents preview with `contrib/mac/install.sh --dry-run --json` and never run it against the live directory. Copy-paste install, once pinned: `contrib/mac/install.sh --json`. See [contrib/mac/README.md](contrib/mac/README.md#installing-the-dispatcher).
 - Fleet machinery: `fleet/manifest.json` (`fleet.machinery.v1`) inventories every `~/.ashlr-runs/bin` file by class. `managed` installs via `python3 fleet/sync.py`, `manual`/`pinned` are report-only (pinned GATES v3 files stay ops-side). Agents preview with `fleet/sync.py --json` or `--bin <scratch>` and never `--apply` live. Migration plan: [docs/MACHINERY-MIGRATION.md](docs/MACHINERY-MIGRATION.md).
