@@ -19,7 +19,7 @@ function item(id: string, state: string, extra: Record<string, unknown> = {}) {
 
 function stub(items: unknown[]) {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-    if (String(input).startsWith('/api/fleet/work-board')) {
+    if (String(input).startsWith('/api/verse/fleet/work-board')) {
       return new Response(JSON.stringify({ items, inbox: 'ok', truncated: false, asOf: ago(0) }), { status: 200 });
     }
     return new Response(JSON.stringify({ schema: 'fleet.leader-board.v1', status: 'missing', ageSeconds: null, board: null }), { status: 200 });
