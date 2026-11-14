@@ -2116,6 +2116,23 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/job/activity ──────────────────────────────────────
+    // RQ-RADAR-DESKTOP-ACTIVITY: one merged, searchable activity stream per
+    // job — ledger events, commands seen in the worker log, changed files and
+    // the worker's reports. READ-ONLY; same no-auth read class as the rest
+    // of /api/fleet/job*.
+    if (path === '/api/fleet/job/activity' && method === 'GET') {
+      const { getFleetJobActivity } = await import('../fleet/runs-job-activity.js');
+      const { isFleetJobId } = await import('../fleet/runs-job-detail.js');
+      const id = getQueryParam(req.url ?? '', 'id');
+      if (!id || !isFleetJobId(id)) {
+        sendJson(res, 400, { error: 'valid job id required' });
+        return true;
+      }
+      sendJson(res, 200, await getFleetJobActivity(id));
+      return true;
+    }
+
     // ── GET /api/estimate ───────────────────────────────────────────────────
     // M32: read-only pre-flight cost estimate (pure local computation over
     // persisted history — no token needed; same class as /api/pulse).
