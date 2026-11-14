@@ -4,6 +4,7 @@
 import { homedir } from 'node:os';
 import { ashlrHome } from '../core/cloud/store.js';
 import { readFleetRecheck, type FleetRecheck, type FleetRecheckDeps } from '../core/fleet/fleet-recheck.js';
+import { computersDelta } from '../core/fleet/recheck-computers-delta.js';
 import { appendRecheckRecord, readRecheckRecords, type RecheckRecord } from '../core/fleet/recheck-record.js';
 
 const usage = 'Usage: ashlr fleet recheck-record [--last N [--json [--envelope]]]\n'
@@ -12,7 +13,9 @@ const usage = 'Usage: ashlr fleet recheck-record [--last N [--json [--envelope]]
   + '--last N (1..50, default 5): prints the newest N rows, newest first; --json prints them as an array.\n'
   + '--envelope requires --last N --json and includes history read evidence.\n'
   + 'Nonverified rows print the first missing reason not already named by missingBridge\n'
-  + '("unrecorded" when the row predates retained reasons).\n'
+  + '("unrecorded" when the row predates retained reasons). When the newest two rows\n'
+  + 'carry tailnet evidence and a computer changed, one line names it: "Computers\n'
+  + 'changed since <asOf>: offline <names>; online <names>".\n'
   + 'Exit 0 when the write succeeded, 1 when it failed or --last history is\n'
   + 'unreadable, 2 on bad arguments.';
 
@@ -67,6 +70,12 @@ export async function cmdFleetRecheckRecord(args: string[], deps: FleetRecheckRe
       if (json) { console.log(JSON.stringify(rows)); return 0; }
       if (missing) { console.log('no recheck records'); return 0; }
       for (const r of rows) console.log(row(r));
+      // Computer evidence is additive: the line appears only when the newest
+      // two rows are comparable and name an actual change.
+      const delta = computersDelta(rows[0], rows[1] ?? null);
+      if (delta.comparable && (delta.wentOffline.length > 0 || delta.cameOnline.length > 0)) {
+        console.log(`Computers changed since ${delta.since}: offline ${delta.wentOffline.join(', ') || '-'}; online ${delta.cameOnline.join(', ') || '-'}`);
+      }
       if (skipped > 0) console.log(`skipped=${skipped}`);
       return 0;
     }
