@@ -14,7 +14,7 @@
  * lines and pids never cross this boundary.
  */
 import { parseOrderAt } from '../cli/fleet-orders.js';
-import { classifyOrder, mostAdvancedJob, type LiveJobIds } from '../core/fleet/order-work-state.js';
+import { classifyOrder, mostAdvancedJob, pullRequest, type LiveJobIds, type TraceOrder } from '../core/fleet/order-work-state.js';
 import { readOrderTrace, type OrderTraceV1 } from '../core/fleet/order-trace.js';
 import { listLiveWorkers, type LiveWorkersSnapshot } from '../core/fleet/runs-live-workers.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
@@ -66,6 +66,19 @@ async function bounded<T>(run: () => Promise<T>, timeoutMs: number): Promise<T> 
   }
 }
 
+/** The artifact that actually verified an order: the first merged job
+ * carrying a valid github pull URL, scanned in trace order — the same
+ * precedence orderEvidence applies. A merged sibling with a non-PR url can
+ * never stand in for it, and no merged proof means no VERIFIED artifact. */
+function verificationArtifact(order: TraceOrder): string | null {
+  for (const job of order.jobs) {
+    if (job.state !== 'merged') continue;
+    const pull = pullRequest(job.url);
+    if (pull !== null) return pull.url;
+  }
+  return null;
+}
+
 /** The same JSON the verse API sends: classified order rows newest first,
  * capped at FLEET_ORDER_STATE_LIMIT, through the shared public-JSON scrub. */
 export async function readFleetOrderState(deps: FleetOrderStateDeps = {}): Promise<unknown> {
@@ -109,10 +122,15 @@ export async function readFleetOrderState(deps: FleetOrderStateDeps = {}): Promi
     live: liveState,
     orders: orders.slice(0, FLEET_ORDER_STATE_LIMIT).map((o) => {
       const c = classifyOrder(o, trace.generatedAt, nowIso, live);
+      // VERIFIED names the merged PR that supplied the verification, never
+      // an unrelated sibling's url; every other state keeps the
+      // most-advanced job's url exactly as before.
+      const pr = c.state === 'VERIFIED' ? verificationArtifact(o) ?? mostAdvancedJob(o)?.url ?? null
+        : mostAdvancedJob(o)?.url ?? null;
       return {
         at: o.at, source: o.source, key: o.key,
         state: c.state, asOf: c.asOf, evidenceSource: c.source,
-        missing: c.missing, pr: mostAdvancedJob(o)?.url ?? null,
+        missing: c.missing, pr,
       };
     }),
   });
