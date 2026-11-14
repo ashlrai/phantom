@@ -1,7 +1,7 @@
 /**
  * coord-answer-model.test.ts — RQ-PHX-COORDANSWERSTRIP322. The pure verdict:
  * REACHABLE only on a non-stale runtime + ok inbox + one LIVE bridge; honest
- * 'unknown' rendering; the RUNNING/VERIFIED-then-ASSIGNED example-task pick;
+ * 'unknown' rendering; the server-parity (RUNNING-then-ASSIGNED, owned+claimed) example-task pick;
  * and the rule that an owner is never invented. Fake hosts and ids only.
  */
 import { expect, it } from 'vitest';
@@ -83,13 +83,13 @@ it('prints unknown for a missing runtime route (null) and blocks the verdict', (
   expect(answer.missing).toContain('runtime identity not available on this build');
 });
 
-it('picks the newest RUNNING or VERIFIED item, else the newest ASSIGNED', () => {
+it('picks a qualified RUNNING item first, else the newest ASSIGNED', () => {
   const pickOrder = [
     item('wi-fake-assigned', 'ASSIGNED', 1 * 60_000, { owner: 'claude', claimReceipt: 'r1' }),
     item('wi-fake-verified', 'VERIFIED', 3 * 60_000, { owner: 'devin', claimReceipt: 'r2' }),
     item('wi-fake-running', 'RUNNING', 5 * 60_000, { owner: 'devin', claimReceipt: 'r3' }),
   ];
-  expect(derive(runtime(), channels(chan('slack', 'LIVE')), board(pickOrder)).exampleTask?.id).toBe('wi-fake-verified');
+  expect(derive(runtime(), channels(chan('slack', 'LIVE')), board(pickOrder)).exampleTask?.id).toBe('wi-fake-running');
   const fallback = [
     item('wi-fake-older', 'ASSIGNED', 9 * 60_000),
     item('wi-fake-received', 'RECEIVED', 1 * 60_000),
@@ -109,12 +109,12 @@ it('never presents an unowned item as owned, whatever the payload carries', () =
     board([item('wi-fake-0003', 'RUNNING', 60_000, { owner: null, claimReceipt: null })]));
   expect(row(nullKeys, 'Example task').ok).toBe(false);
   expect(row(nullKeys, 'Example task').value).not.toContain('owner ');
-  expect(nullKeys.missing).toContain('example task wi-fake-0003 has no named owner/claim');
+  expect(nullKeys.missing).toContain('no RUNNING or ASSIGNED task with a named owner and claim receipt');
 });
 
-it('reports no example task when nothing is RUNNING, VERIFIED or ASSIGNED', () => {
+it('reports no example task when nothing is RUNNING or ASSIGNED', () => {
   const answer = derive(runtime(), channels(chan('slack', 'LIVE')), board([item('wi-fake-blocked', 'BLOCKED', 60_000)]));
   expect(answer.exampleTask).toBeNull();
   expect(row(answer, 'Example task').value).toBe('none');
-  expect(answer.missing).toContain('no RUNNING, VERIFIED or ASSIGNED task on the board');
+  expect(answer.missing).toContain('no RUNNING or ASSIGNED task on the board');
 });
