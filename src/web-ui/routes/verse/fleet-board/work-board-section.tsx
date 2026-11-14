@@ -22,6 +22,9 @@ interface WorkBoardItemView {
   channelRef: string | null;
   receivedAt: string;
   state: WorkState;
+  /** Absent on older servers; only a non-empty string counts (see textOrNull). */
+  owner?: string | null;
+  claimReceipt?: string | null;
   asOf: string;
   source: string;
   missing: string[];
@@ -41,6 +44,21 @@ export const workBoardQuery: QueryDef<WorkBoardResponse> = {
   key: 'fleet-work-board',
   fetch: (signal) => apiGet<WorkBoardResponse>(`/api/fleet/work-board?limit=${LIMIT}`, signal),
 };
+
+const OWNED_STATES: readonly WorkState[] = ['ASSIGNED', 'RUNNING', 'VERIFIED'];
+const RECEIPT_SHORT = 24;
+
+/** Only a non-empty string is a value; anything else (missing, number, object) is null. */
+function textOrNull(v: unknown): string | null {
+  return typeof v === 'string' && v !== '' ? v : null;
+}
+
+function ownerLabel(item: WorkBoardItemView): string {
+  const owner = textOrNull(item.owner);
+  if (owner !== null) return owner;
+  // Nov12 contract: a state that implies an owner but has none must be visible.
+  return OWNED_STATES.includes(item.state) ? 'owner missing' : 'unassigned';
+}
 
 function formatItemAge(receivedAt: string, now: number): string {
   const t = Date.parse(receivedAt);
@@ -79,24 +97,35 @@ export function WorkBoardSection({ visible }: { visible: boolean }) {
           ))}
         </ul>
         {data.items.length > 0 ? (
+          <p className={styles.note}>
+            {data.items.filter((i) => textOrNull(i.owner) !== null).length} of {data.items.length} items have a named owner
+          </p>
+        ) : null}
+        {data.items.length > 0 ? (
           <table className={styles.table}>
             <thead>
               <tr>
-                <th scope="col">State</th><th scope="col">Id</th><th scope="col">Channel</th>
+                <th scope="col">State</th><th scope="col">Id</th>
+                <th scope="col">Owner</th><th scope="col">Claim</th><th scope="col">Channel</th>
                 <th scope="col">Ref</th><th scope="col">Age</th><th scope="col">Missing</th>
               </tr>
             </thead>
             <tbody>
-              {data.items.map((item) => (
+              {data.items.map((item) => {
+                const receipt = textOrNull(item.claimReceipt);
+                return (
                 <tr key={item.id}>
                   <td><span className={styles.workChip} data-state={item.state}>{item.state}</span></td>
                   <td className={styles.mono} title={item.id}>{item.id.slice(0, 12)}</td>
+                  <td>{ownerLabel(item)}</td>
+                  <td className={styles.mono} title={receipt ?? undefined}>{receipt === null ? 'none' : receipt.slice(0, RECEIPT_SHORT)}</td>
                   <td>{item.channel}</td>
                   <td className={styles.mono}>{item.channelRef ?? 'none'}</td>
                   <td className={styles.numeric}>{formatItemAge(item.receivedAt, now)}</td>
                   <td>{item.state === 'VERIFIED' ? '' : item.missing.join(', ')}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         ) : null}
