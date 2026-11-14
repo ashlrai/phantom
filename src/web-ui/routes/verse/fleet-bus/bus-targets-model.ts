@@ -1,6 +1,10 @@
 import type { FleetRuns } from '../ops/ops-runs-model.js';
 
-type Runs = Pick<FleetRuns, 'lanes' | 'workers'> | null | undefined;
+// Only the addressable fields are read, so callers and tests need not build a full snapshot.
+type Runs = {
+  lanes: readonly Pick<FleetRuns['lanes'][number], 'lane'>[];
+  workers: readonly Pick<FleetRuns['workers'][number], 'job' | 'ageSeconds'>[];
+} | null | undefined;
 // Address validation in src/core/fleet/bus-envelope.ts (TOKEN and MAX_BUS_ADDRESS_LENGTH).
 const ADDRESS = /^[\x21-\x7e]+(?![\s\S])/;
 const valid = (value: string) => value.length <= 128 && ADDRESS.test(value);

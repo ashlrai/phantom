@@ -21,7 +21,7 @@ afterEach(() => { rmSync(home, { recursive: true, force: true }); });
 
 it('orders needs-triage after order-notices and before landed-sweep', () => {
   const at = (name: SelfTickStepName) => SELF_TICK_STEP_ORDER.indexOf(name);
-  expect(at('needs-triage')).toBe(at('order-notices') + 1);
+  expect(at('needs-triage')).toBe(at('board-notify') + 1);
   expect(at('needs-triage')).toBeLessThan(at('landed-sweep'));
 });
 
