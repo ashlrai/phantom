@@ -205,7 +205,19 @@ function runtimeSection(read: { ok: true; value: RuntimeIdentity } | { ok: false
   return section;
 }
 
-function claimsSection(read: { ok: true; value: FleetBoard } | { ok: false }, asOf: string): FleetRecheckClaims {
+/** A claim is live at the verdict only with finite, ordered timestamps and
+ * claimedAt <= now < expiresAt; future, expired and malformed rows never count. */
+function claimLiveAt(claim: FleetClaim, nowMs: number): boolean {
+  return Number.isFinite(claim.claimedAt) && Number.isFinite(claim.expiresAt)
+    && claim.expiresAt > claim.claimedAt
+    && claim.claimedAt <= nowMs && nowMs < claim.expiresAt;
+}
+
+function claimsSection(
+  read: { ok: true; value: FleetBoard } | { ok: false },
+  asOf: string,
+  nowMs: number,
+): FleetRecheckClaims {
   const section: FleetRecheckClaims = {
     state: 'UNKNOWN', source: 'coordination', asOf,
     active: null, expiredClaims: null, top: [], missing: ['claims: reader failed'],
@@ -216,11 +228,19 @@ function claimsSection(read: { ok: true; value: FleetBoard } | { ok: false }, as
     section.missing = ['claims: ledger state unknown (unreadable)'];
     return section;
   }
+  // An unreadable verdict clock leaves claim liveness unverifiable: keep the
+  // ledger-supplied reaped count but never report a VERIFIED count or listing.
+  if (!Number.isFinite(nowMs)) {
+    section.expiredClaims = board.expiredClaims;
+    section.missing = ['claims: verdict clock unknown, claim liveness unverifiable'];
+    return section;
+  }
   section.state = 'VERIFIED';
   section.missing = [];
-  section.active = board.claims.length;
+  const live = board.claims.filter(claim => claimLiveAt(claim, nowMs));
+  section.active = live.length;
   section.expiredClaims = board.expiredClaims ?? 0;
-  section.top = [...board.claims]
+  section.top = [...live]
     .sort((a, b) => b.claimedAt - a.claimedAt || b.expiresAt - a.expiresAt)
     .slice(0, TOP_CLAIMS)
     .map(claim => ({
@@ -267,11 +287,11 @@ function bridgeSection(read: { ok: true; value: ChannelHealthReport } | { ok: fa
   return section;
 }
 
-/** Newest live ledger claim for owner; expiry is judged against the recheck's own now, not the reader's. */
+/** Newest claim for owner that is live at the verdict's captured now; expiry and start are both judged against it. */
 function liveClaimFor(board: FleetBoard, owner: string, nowMs: number): FleetClaim | undefined {
   let best: FleetClaim | undefined;
   for (const claim of board.claims) {
-    if (claim.agent !== owner || !(claim.expiresAt > nowMs)) continue;
+    if (claim.agent !== owner || !claimLiveAt(claim, nowMs)) continue;
     if (best === undefined || claim.claimedAt > best.claimedAt) best = claim;
   }
   return best;
@@ -281,6 +301,7 @@ function taskSection(
   read: { ok: true; value: WorkBoardResult } | { ok: false },
   asOf: string,
   ledger: { ok: true; value: FleetBoard } | { ok: false },
+  nowMs: number,
 ): FleetRecheckTask {
   const section: FleetRecheckTask = {
     state: 'UNKNOWN', source: 'work-board', asOf,
@@ -306,7 +327,6 @@ function taskSection(
   // The same settled ledger read claimsSection saw: unreadable means the reader
   // failed or the board reported state 'unknown' — never re-read the ledger.
   const ledgerBoard = ledger.ok && ledger.value.state === 'known' ? ledger.value : undefined;
-  const nowMs = Date.parse(asOf); // asOf is the injected now's ISO stamp; NaN when the clock read failed.
   const liveFor = (owner: string): FleetClaim | undefined =>
     ledgerBoard === undefined ? undefined : liveClaimFor(ledgerBoard, owner, nowMs);
   // Prefer a qualified item whose owner holds a live claim (RUNNING before
@@ -323,10 +343,12 @@ function taskSection(
       asOf: pick.asOf,
       source: pick.source,
     };
-    if (ledgerBoard === undefined) {
+    if (ledgerBoard === undefined || !Number.isFinite(nowMs)) {
       section.state = 'UNKNOWN';
       section.task = { ...base, ledgerClaim: null };
-      section.missing = ['task: claims ledger unreadable, owner claim unverified'];
+      section.missing = [ledgerBoard === undefined
+        ? 'task: claims ledger unreadable, owner claim unverified'
+        : 'task: verdict clock unknown, owner claim unverified'];
       return section;
     }
     const claim = liveFor(pick.owner);
@@ -358,8 +380,9 @@ const RANK: Record<FleetRecheckState, number> = { VERIFIED: 0, UNKNOWN: 1, BLOCK
 export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<FleetRecheck> {
   const d: Required<FleetRecheckDeps> = { ...defaultFleetRecheckDeps(deps.now), ...deps };
   const now = d.now();
+  const nowMs = now.getTime();
   const home = (() => { try { return d.homeDir(); } catch { return ''; } })();
-  const asOf = Number.isFinite(now.getTime()) ? now.toISOString() : UNKNOWN;
+  const asOf = Number.isFinite(nowMs) ? now.toISOString() : UNKNOWN;
 
   // All four readers run concurrently, each inside its own 5 s bound.
   const [runtime, claims, bridge, board] = await Promise.all([
@@ -371,9 +394,9 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
 
   const sections = {
     runtime: runtimeSection(runtime, asOf),
-    claims: claimsSection(claims, asOf),
+    claims: claimsSection(claims, asOf, nowMs),
     bridge: bridgeSection(bridge, asOf),
-    task: taskSection(board, asOf, claims),
+    task: taskSection(board, asOf, claims, nowMs),
   };
   const states = Object.values(sections).map(section => section.state);
   const verified = states.every(state => state === 'VERIFIED');

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { apiGet } from '../../../data/client.js';
 import { DESKTOP_UPDATE_REASONS } from '../../../app/desktop-update-reasons.js';
 import { setDesktopPreference } from '../../../app/desktop-state.js';
 import { refreshDesktopUpdates, useDesktopUpdates, type DesktopUpdateState } from '../../../app/desktop-updates.js';
@@ -19,11 +20,20 @@ const notes: Partial<Record<DesktopUpdateState['phase'], string>> = {
 /** Native facts only; changing the switch waits for the native acknowledgement. */
 export function UpdateStatus() {
   const state = useDesktopUpdates();
+  const [why, setWhy] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stages, setStages] = useState<ReleaseStagesView | null>(null);
   const [stagesKey, setStagesKey] = useState(0);
   useEffect(() => { refreshDesktopUpdates(); }, []);
+  useEffect(() => {
+    if (state?.phase !== 'idle' && state?.phase !== 'current') return;
+    const controller = new AbortController();
+    apiGet<unknown>('/api/verse/update/why', controller.signal).then(value => {
+      if (value && typeof value === 'object' && 'message' in value && typeof value.message === 'string') setWhy(value.message);
+    }, () => { if (!controller.signal.aborted) setWhy('Update status is unknown.'); });
+    return () => { controller.abort(); };
+  }, [state?.phase, stagesKey]);
   useEffect(() => { setPending(false); setError(null); }, [state?.enabled]);
   useEffect(() => {
     if (!pending) return;
@@ -34,8 +44,8 @@ export function UpdateStatus() {
   const text = updateStatusText(state);
   const idleOrCurrent = state.phase === 'idle' || state.phase === 'current';
   const stuck = idleOrCurrent && stages ? newerUninstallable(stages, state.version) : null;
-  const badge = stuck ? `v${stuck.tag.replace(/^v/u, '')} published · not installable yet` : text.badge;
-  const { detail } = text;
+  const badge = idleOrCurrent ? (why ?? (stuck ? `v${stuck.tag.replace(/^v/u, '')} published · not installable yet` : 'Checking the update feed…')) : text.badge;
+  const detail = idleOrCurrent ? null : text.detail;
   const downloading = state.phase === 'downloading';
   return <details className={styles.status}>
     <summary aria-label={`Desktop updates: ${badge}`}>{badge}</summary>
