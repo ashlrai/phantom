@@ -19,6 +19,7 @@ import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import type { FleetBoardV1 } from '../../../data/api-types.js';
 import { CoordAnswerStrip } from './CoordAnswerStrip.js';
+import { RecheckHistoryStrip } from './RecheckHistoryStrip.js';
 import { WorkBoardSection } from './work-board-section.js';
 import styles from './fleet-board.module.css';
 
@@ -189,6 +190,7 @@ export function FleetBoardPane({ visible }: PaneProps) {
       </header>
 
       <CoordAnswerStrip visible={visible} />
+      <RecheckHistoryStrip visible={visible} />
 
       {query.status === 'loading' || query.status === 'idle' ? (
         <>
