@@ -51,8 +51,7 @@ describe('channel health proof semantics', () => {
     expect(s.unansweredCount).toBe(1);
     expect(s.missing).toContain('slack future-dated receipt ignored');
     expect(s.proof.futureDatedCount).toBe(1);
-    // The future timestamp is still reported as the last observed activity.
-    expect(s.lastReplyAt).toBe(ahead(60));
+    expect(s.lastReplyAt).toBeNull();
   });
 
   it('a future-dated inbound is not counted as a current request', async () => {
