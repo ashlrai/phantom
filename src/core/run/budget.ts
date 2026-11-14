@@ -110,6 +110,17 @@ export function __resetBudgetMeterednessCacheForTests(): void {
 // ---------------------------------------------------------------------------
 
 /**
+ * Hypothetical cloud cost at the Anthropic reference rates, never actual spend.
+ * Keep this independent of meteredness: savings and pre-flight estimates must
+ * not resolve host engines/accounts just to price their reference token split.
+ * Clamp each counter independently so a negative value cannot cancel usage.
+ */
+export function cloudReferenceCost(tokensIn: number, tokensOut: number): number {
+  return (Math.max(0, tokensIn) / 1_000_000) * PRICE_IN['anthropic']! +
+    (Math.max(0, tokensOut) / 1_000_000) * PRICE_OUT['anthropic']!;
+}
+
+/**
  * Return a fresh, zeroed RunUsage.
  */
 export function newUsage(): RunUsage {

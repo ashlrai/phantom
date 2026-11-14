@@ -1026,3 +1026,9 @@ per worker, capped at six; unknown memory disables admission. Stored slot
 settings cannot exceed this memory cap. Claims use the bounded local supervisor
 and completions use the shared reaper. Security must review the combined RETUNE
 and omlx dispatcher pin before installation; never edit the live dispatcher.
+
+# Remote branch hygiene
+
+See [Branch gardener](../../docs/BRANCH-GARDENER.md) for org/fork classification,
+protected and active branch guards, dry-run configuration and the six-hour launchd
+template. This is independent of worktree/disk pruning and does not install itself.
