@@ -6,6 +6,7 @@
  * plus one live-worker snapshot (listLiveWorkers), exactly as the verse
  * work-board/orders API does. Evidence only: it grants no claim, dispatch or
  * merge authority, and a queued line names an owner but is not a claim.
+ * The owner names the job carrying the order and is evidence, not a claim.
  *
  * Each read is time-bounded (8 s per reader). A trace read that throws or
  * times out answers sources 'unavailable' with no orders and no live read; a
@@ -15,7 +16,7 @@
  */
 import { parseOrderAt } from '../cli/fleet-orders.js';
 import { classifyOrder, mostAdvancedJob, type LiveJobIds } from '../core/fleet/order-work-state.js';
-import { readOrderTrace, type OrderTraceV1 } from '../core/fleet/order-trace.js';
+import { readOrderTrace, type OrderTraceJob, type OrderTraceV1 } from '../core/fleet/order-trace.js';
 import { listLiveWorkers, type LiveWorkersSnapshot } from '../core/fleet/runs-live-workers.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
@@ -49,6 +50,20 @@ export type FleetOrderStateArgs = Pick<FleetOrderStateDeps, 'sinceHours'>;
  * { status: 'invalid' } rather than failing the call. */
 export function parseFleetOrderStateArgs(args: Record<string, unknown>): FleetOrderStateArgs | null {
   return Object.keys(args).every(key => key === 'sinceHours') ? { sinceHours: args['sinceHours'] } : null;
+}
+
+/** Job ids the owner field may name: the fleet's RQ-… shape only, so a
+ * malformed trace line can never smuggle text across this boundary. */
+const OWNER_JOB = /^RQ-[A-Z0-9][A-Z0-9-]{0,79}$/;
+/** Lane names the owner field may carry: lower-case dispatcher lane ids only. */
+const OWNER_LANE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+/** The job carrying the order, sanitized for this boundary: null when no
+ * trace job qualifies, lane null when the lane is absent or outside the
+ * lane-id shape. */
+function orderOwner(job: OrderTraceJob | undefined): { job: string; lane: string | null } | null {
+  if (job === undefined || !OWNER_JOB.test(job.id)) return null;
+  return { job: job.id, lane: job.lane !== null && OWNER_LANE.test(job.lane) ? job.lane : null };
 }
 
 /** Bounded read: a throw or timeout rejects so the caller can degrade. */
@@ -109,10 +124,12 @@ export async function readFleetOrderState(deps: FleetOrderStateDeps = {}): Promi
     live: liveState,
     orders: orders.slice(0, FLEET_ORDER_STATE_LIMIT).map((o) => {
       const c = classifyOrder(o, trace.generatedAt, nowIso, live);
+      const job = mostAdvancedJob(o);
       return {
         at: o.at, source: o.source, key: o.key,
         state: c.state, asOf: c.asOf, evidenceSource: c.source,
-        missing: c.missing, pr: mostAdvancedJob(o)?.url ?? null,
+        missing: c.missing, pr: job?.url ?? null,
+        owner: orderOwner(job),
       };
     }),
   });
