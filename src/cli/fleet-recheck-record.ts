@@ -6,10 +6,11 @@ import { ashlrHome } from '../core/cloud/store.js';
 import { readFleetRecheck, type FleetRecheck, type FleetRecheckDeps } from '../core/fleet/fleet-recheck.js';
 import { appendRecheckRecord, readRecheckRecords, type RecheckRecord } from '../core/fleet/recheck-record.js';
 
-const usage = 'Usage: ashlr fleet recheck-record [--last N [--json]]\n'
+const usage = 'Usage: ashlr fleet recheck-record [--last N [--json [--envelope]]]\n'
   + 'Without flags: runs the read-only recheck and appends one sanitized row to the\n'
   + 'local recheck log (newest 500 kept); prints "recorded <overall> as-of=<asOf>".\n'
   + '--last N (1..50, default 5): prints the newest N rows, newest first; --json prints them as an array.\n'
+  + '--envelope requires --last N --json and includes history read evidence.\n'
   + 'Nonverified rows print the first missing reason not already named by missingBridge\n'
   + '("unrecorded" when the row predates retained reasons).\n'
   + 'Exit 0 when the write succeeded, 1 when it failed or --last history is\n'
@@ -38,10 +39,12 @@ function row(r: RecheckRecord): string {
 export async function cmdFleetRecheckRecord(args: string[], deps: FleetRecheckRecordDeps = {}): Promise<number> {
   let last: number | null = null;
   let json = false;
+  let envelope = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--help' || arg === '-h') { console.log(usage); return 0; }
     if (arg === '--json' && !json) { json = true; continue; }
+    if (arg === '--envelope' && !envelope) { envelope = true; continue; }
     if (arg === '--last' && last === null) {
       const raw = args[++i];
       const n = raw !== undefined && /^\d{1,3}$/.test(raw) ? Number(raw) : 0;
@@ -50,11 +53,12 @@ export async function cmdFleetRecheckRecord(args: string[], deps: FleetRecheckRe
     console.error(usage);
     return 2;
   }
-  if (json && last === null) { console.error(usage); return 2; }
+  if ((json && last === null) || (envelope && (!json || last === null))) { console.error(usage); return 2; }
   try {
     const root = deps.root ?? ashlrHome();
     if (last !== null) {
       const read = readRecheckRecords(root, last);
+      if (envelope) { console.log(JSON.stringify(read)); return read.outcome === 'unreadable' ? 1 : 0; }
       if (read.outcome === 'unreadable') {
         console.error(`recheck history unavailable${read.failure ? `: ${read.failure}` : ''}`);
         return 1;
