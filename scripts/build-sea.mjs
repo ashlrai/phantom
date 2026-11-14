@@ -231,7 +231,19 @@ export function parseHostedBuildArguments(args) {
     attestorSha: flags['--attestor-sha'], attestorRun: Number(flags['--attestor-run']), attestorAttempt: Number(flags['--attestor-attempt']) };
 }
 
-export function ensureSeaBuild({ args, root, build = () => execSync('npm run build', { cwd: root, stdio: 'inherit' }),
+// Hosted tag CI runs the desktop build on macos-15 runners where tsc + vite
+// exceed Node's ~2GB default old-space and die with "JavaScript heap out of
+// memory". NODE_OPTIONS is a ceiling, not a reservation; raise it only under
+// Actions and only when the caller has not already chosen a heap size.
+function hostedBuildEnv() {
+  const env = { ...process.env };
+  if (env.GITHUB_ACTIONS === 'true' && !/max-old-space-size/.test(env.NODE_OPTIONS ?? '')) {
+    env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ''} --max-old-space-size=5120`.trim();
+  }
+  return env;
+}
+
+export function ensureSeaBuild({ args, root, build = () => execSync('npm run build', { cwd: root, stdio: 'inherit', env: hostedBuildEnv() }),
   identity = createBuildIdentity, verify = verifyArtifact, validate = validateAdoptedArtifact }) {
   const hosted = parseHostedBuildArguments(args);
   if (!hosted) { build(); return { mode: 'local' }; }
