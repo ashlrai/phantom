@@ -77,6 +77,11 @@
   overflow-wrap: anywhere;
 }
 
+.reviewLink {
+  color: var(--text-accent, var(--text-primary));
+  font-size: var(--text-sm-size);
+}
+
 .actions {
   display: flex;
   gap: var(--space-2);

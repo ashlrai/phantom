@@ -125,7 +125,9 @@ stale (for example, the member was invited already) refuses the approval so it
 can be denied instead.
 
 The desktop app's **Approvals** page and `phm approvals [--json]` show the same
-projection: pending approvals, the Security pin queue (staged packages under
+projection: pending team approvals, pending inbox proposals (consent through
+the same revision-bound decision the approval card uses), pending outbound
+email drafts (terminal-only), the Security pin queue (staged packages under
 `~/.ashlr-runs/staged/`, read-only; pins stay with Security) and explicit holds
 from `$ASHLR_HOME/holds.json` (`{"holds":[{"id","title","detail?","since?","resolvedAt?"}]}`;
 a hold stays listed until it has `resolvedAt` or is removed). The page's
