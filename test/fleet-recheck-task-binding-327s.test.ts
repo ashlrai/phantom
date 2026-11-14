@@ -78,7 +78,7 @@ function deps(over: Partial<FleetRecheckDeps> = {}): FleetRecheckDeps {
   };
 }
 
-const ASSOCIATION_MISSING = 'task: no coordination-claim field associates a claim with board item fake-request-1; owner match is not task identity';
+const ASSOCIATION_MISSING = 'task: no live claim by agent-alpha carries [board:fake-request-1]; owner match is not task identity';
 
 describe('fleet recheck task ↔ ledger binding', () => {
   it('reports UNKNOWN, never VERIFIED, when the owner holds a live claim for an unrelated task/repo/id', async () => {

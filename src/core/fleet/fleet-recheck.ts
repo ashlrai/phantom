@@ -4,13 +4,16 @@
  * channel health and the work board — so a single answer can say which host is
  * answering, whether shared state is fresh, which bridge is missing and which
  * authorized task is running. The task pick is joined against the same ledger
- * read used for the claims section, but no FleetClaim field identifies a
- * work-board item: claim.id is a ledger uuid, claim.task is free text, and the
- * item's claimReceipt is a bus-work-claims coordinate
- * (`bus-claim:<id>:<cursor>:<receivedAt>`), not a coordination claim id. Owner
- * equality alone is not task identity, so the task section reports the observed
- * pick with ledgerClaim null and an exact missing-association reason instead
- * of verifying on an owner's unrelated lease.
+ * read used for the claims section through the claim-board-ref producer
+ * contract (claim-board-ref.ts): a claim is bound to board item X only when its
+ * free-text task carries exactly one `[board:X]` token (zero is unbound, two or
+ * more are ambiguous and unbound). The task section verifies only when a claim
+ * live at the verdict clock is held by the item's board owner AND carries that
+ * item's token; `ashlr fleet claim-item` is the producer. Owner equality alone
+ * is never task identity, and a token on another agent's claim never verifies —
+ * either way the observed pick is reported with ledgerClaim null and an exact
+ * reason naming the contract. The ledger schema is unchanged: claim.id stays a
+ * ledger uuid and the item's claimReceipt stays a bus-work-claims coordinate.
  *
  * Every reader is injected (defaults come from the modules themselves), each
  * read is bounded at SECTION_TIMEOUT_MS, and a reader that throws or stalls
@@ -39,6 +42,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
 import { listWorkBoard, type WorkBoardResult } from '../comms/work-board.js';
+import { parseBoardRef } from './claim-board-ref.js';
 import { readChannelHealth, type ChannelHealth, type ChannelHealthReport, type ChannelName } from './channel-health.js';
 import { readFleetBoard, type FleetBoard, type FleetClaim } from './coordination.js';
 import {
@@ -118,7 +122,7 @@ export interface FleetRecheckTaskPick {
   state: 'RUNNING' | 'ASSIGNED';
   owner: string;
   claimReceipt: string;
-  /** Live ledger claim held by owner; null unless the join found one. */
+  /** Live ledger claim held by owner carrying [board:<id>]; null unless the join found one. */
   ledgerClaim: { id: string; repo: string; expiresAt: string } | null;
   asOf: string;
   source: string;
@@ -362,6 +366,20 @@ function liveClaimFor(board: FleetBoard, owner: string, nowMs: number): FleetCla
   return best;
 }
 
+/** Newest claim live at the verdict that is bound to itemId by exactly one
+ * [board:<itemId>] token, preferring one held by owner; a non-owner result is
+ * returned only so the section can name who holds the token — it never verifies. */
+function boundClaimFor(board: FleetBoard, itemId: string, owner: string, nowMs: number): FleetClaim | undefined {
+  let mine: FleetClaim | undefined;
+  let other: FleetClaim | undefined;
+  for (const claim of board.claims) {
+    if (!claimLiveAt(claim, nowMs) || parseBoardRef(claim.task).itemId !== itemId) continue;
+    if (claim.agent === owner) { if (mine === undefined || claim.claimedAt > mine.claimedAt) mine = claim; }
+    else if (other === undefined || claim.claimedAt > other.claimedAt) other = claim;
+  }
+  return mine ?? other;
+}
+
 function taskSection(
   read: { ok: true; value: WorkBoardResult } | { ok: false },
   asOf: string,
@@ -394,12 +412,18 @@ function taskSection(
   const ledgerBoard = ledger.ok && ledger.value.state === 'known' ? ledger.value : undefined;
   const liveFor = (owner: string): FleetClaim | undefined =>
     ledgerBoard === undefined ? undefined : liveClaimFor(ledgerBoard, owner, nowMs);
-  // Prefer a qualified item whose owner holds a live claim (RUNNING before
-  // ASSIGNED) as a weak liveness signal for the pick; only when none matches
-  // fall back to the plain newest-first pick. This ordering never verifies:
-  // no claim field binds a lease to the item.
+  const boundTo = (item: (typeof qualified)[number]): FleetClaim | undefined => {
+    const claim = ledgerBoard === undefined ? undefined : boundClaimFor(ledgerBoard, item.id, item.owner, nowMs);
+    return claim?.agent === item.owner ? claim : undefined;
+  };
+  // Pick order, RUNNING before ASSIGNED within each tier: an item whose owner
+  // holds a live claim carrying its [board:<id>] token; else an item whose
+  // owner holds any live claim (a weak liveness signal that never verifies);
+  // else the plain newest-first pick.
+  const bound = qualified.filter(item => boundTo(item) !== undefined);
   const matched = qualified.filter(item => liveFor(item.owner) !== undefined);
-  const pick = matched.find(item => item.state === 'RUNNING') ?? matched[0]
+  const pick = bound.find(item => item.state === 'RUNNING') ?? bound[0]
+    ?? matched.find(item => item.state === 'RUNNING') ?? matched[0]
     ?? qualified.find(item => item.state === 'RUNNING') ?? qualified[0];
   if (pick !== undefined) {
     const base = {
@@ -418,18 +442,26 @@ function taskSection(
         : 'task: verdict clock unknown, owner claim unverified'];
       return section;
     }
-    // The coordination ledger and the work board share no explicit identity
-    // field: FleetClaim {id, repo, task, agent, claimedAt, expiresAt} cannot be
-    // joined to a WorkBoardItem {id, owner, claimReceipt} — the receipt is a
-    // bus-work-claims coordinate, claim.task is free text, and claim.id is a
-    // ledger uuid. Until a producer contract names the association, owner
-    // equality proves nothing about this task, so the pick stays UNKNOWN with
+    // Task identity comes only from the claim-board-ref contract: a live claim
+    // held by the board owner whose task carries exactly one [board:<id>]
+    // token. Owner equality alone, or the token on another agent's claim,
+    // proves nothing about this task, so the pick stays UNKNOWN with
     // ledgerClaim null rather than verifying on an unrelated lease.
+    const claim = boundClaimFor(ledgerBoard, pick.id, pick.owner, nowMs);
+    if (claim !== undefined && claim.agent === pick.owner) {
+      section.state = 'VERIFIED';
+      section.task = {
+        ...base,
+        ledgerClaim: { id: claim.id, repo: claim.repo, expiresAt: new Date(claim.expiresAt).toISOString() },
+      };
+      section.missing = [];
+      return section;
+    }
     section.state = 'UNKNOWN';
     section.task = { ...base, ledgerClaim: null };
-    section.missing = [
-      `task: no coordination-claim field associates a claim with board item ${pick.id}; owner match is not task identity`,
-    ];
+    section.missing = [claim === undefined
+      ? `task: no live claim by ${pick.owner} carries [board:${pick.id}]; owner match is not task identity`
+      : `task: [board:${pick.id}] claim held by ${claim.agent}, not board owner ${pick.owner}`];
     return section;
   }
   section.state = 'BLOCKED';
