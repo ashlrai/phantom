@@ -20,6 +20,20 @@ import { readPrivateFileCapped } from '../verse/preferences.js';
 export type ChannelName = 'slack' | 'imessage';
 export type ChannelState = 'LIVE' | 'DEGRADED' | 'BLOCKED' | 'UNKNOWN';
 
+export interface ChannelProof {
+  /**
+   * 'idle': no pending inbound inside the window -- a LIVE state then proves
+   *   process and configuration health only, never that a request was answered.
+   * 'unproven': pending inbound exists but no source binds a reply receipt to
+   *   the request it answers, so later outbound can never clear it.
+   * 'verified': reserved for sources that return per-request reply bindings;
+   *   no current source provides them.
+   */
+  requestCoverage: 'idle' | 'unproven' | 'verified';
+  /** Receipt observations dated after `asOf`; excluded from evidence entirely. */
+  futureDatedCount: number;
+}
+
 export interface ChannelHealth {
   channel: ChannelName;
   configured: boolean;
@@ -28,6 +42,8 @@ export interface ChannelHealth {
   lastInboundAt: string | null;
   lastReplyAt: string | null;
   unansweredCount: number;
+  /** Additive proof metadata: separates observed activity from verified coverage. */
+  proof: ChannelProof;
   state: ChannelState;
   missing: string[];
   /** ISO time every timestamp above was read at. */
@@ -43,7 +59,7 @@ export interface ChannelSource {
   processAlive(): Promise<boolean | 'unknown'> | boolean | 'unknown';
   /** Inbound receive times (ISO), any order. */
   inbound(): Promise<string[]> | string[];
-  /** Reply receipt times (ISO), any order. */
+  /** Reply receipt times (ISO), any order. Activity observations only -- no source binds a reply to a specific inbound. */
   replies(): Promise<string[]> | string[];
 }
 
@@ -127,7 +143,9 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
   const asOf = now.toISOString();
   const base: ChannelHealth = {
     channel, configured: false, processAlive: 'unknown', runtimeHost: null,
-    lastInboundAt: null, lastReplyAt: null, unansweredCount: 0, state: 'UNKNOWN', missing: [], asOf,
+    lastInboundAt: null, lastReplyAt: null, unansweredCount: 0,
+    proof: { requestCoverage: 'idle', futureDatedCount: 0 },
+    state: 'UNKNOWN', missing: [], asOf,
   };
   let configMissing: string[];
   try { configMissing = await src.configMissing(); } catch {
@@ -151,15 +169,26 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
   }
   base.lastInboundAt = inbound.length ? isoOrNull(inbound[inbound.length - 1]!) : null;
   base.lastReplyAt = replies.length ? isoOrNull(replies[replies.length - 1]!) : null;
-  // An inbound is answered when some reply receipt is at or after it.
-  const lastReply = replies.length ? replies[replies.length - 1]! : -Infinity;
-  const unanswered = inbound.filter((t) => now.getTime() - t <= INBOUND_WINDOW_MS && t > lastReply);
-  base.unansweredCount = unanswered.length;
+  const nowMs = now.getTime();
+  // Timestamp order is activity evidence only: no current source binds a reply
+  // receipt to the inbound it answers, so a later reply can never clear a
+  // pending inbound. Future-dated observations are rejected as evidence.
+  const pending = inbound.filter((t) => t <= nowMs && nowMs - t <= INBOUND_WINDOW_MS);
+  const observedReplies = replies.filter((t) => t <= nowMs).length;
+  const futureDated = inbound.filter((t) => t > nowMs).length + replies.filter((t) => t > nowMs).length;
+  base.unansweredCount = pending.length;
+  base.proof = { requestCoverage: pending.length ? 'unproven' : 'idle', futureDatedCount: futureDated };
   if (base.processAlive === 'unknown') {
     return { ...base, state: 'UNKNOWN', missing: [`${channel} bridge process liveness unverifiable`] };
   }
-  const stale = unanswered.some((t) => now.getTime() - t > REPLY_GRACE_MS);
-  return { ...base, state: stale ? 'DEGRADED' : 'LIVE' };
+  const reasons: string[] = [];
+  if (pending.length && observedReplies) reasons.push(`${channel} reply correlation unavailable`);
+  if (futureDated) reasons.push(`${channel} future-dated receipt ignored`);
+  if (pending.some((t) => nowMs - t > REPLY_GRACE_MS)) {
+    return { ...base, state: 'DEGRADED', missing: reasons };
+  }
+  if (reasons.length) return { ...base, state: 'UNKNOWN', missing: reasons };
+  return { ...base, state: 'LIVE' };
 }
 
 export async function readChannelHealth(deps: ChannelHealthDeps = {}): Promise<ChannelHealthReport> {
