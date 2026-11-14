@@ -189,6 +189,25 @@ let plannerRunStartedAt: string | null = null;
 
 const TOOLS: NativeToolImpl[] = [
   {
+    name: 'intent_add',
+    description: 'Record a local directive. Tracking does not authorize action.',
+    inputSchema: { type: 'object', properties: {
+      title: { type: 'string' }, source: { type: 'string' }, owner: { type: 'string' },
+      rq: { type: 'array', items: { type: 'string' } }, status: { type: 'string' },
+      verbatim: { type: 'boolean' }, partial: { type: 'boolean' }, staleAfterMs: { type: 'integer', minimum: 60000, maximum: 31536000000 },
+    }, required: ['title', 'source'], additionalProperties: false },
+    safety: 'append', handler: async args => (await import('./intent/native-edit.js' as string) as typeof import('./intent/native-edit.js')).nativeEdit('intent_add', args),
+  },
+  {
+    name: 'intent_update',
+    description: 'Revise a local directive and record caller-reported verification evidence. Tracking does not authorize action.',
+    inputSchema: { type: 'object', properties: {
+      id: { type: 'string' }, title: { type: 'string' }, source: { type: 'string' }, owner: { type: 'string' },
+      rq: { type: 'array', items: { type: 'string' } }, status: { type: 'string' }, evidence: { type: 'string' }, partial: { type: 'boolean' },
+    }, required: ['id'], additionalProperties: false },
+    safety: 'append', handler: async args => (await import('./intent/native-edit.js' as string) as typeof import('./intent/native-edit.js')).nativeEdit('intent_update', args),
+  },
+  {
     name: 'intent_list',
     description: 'List local owner directives and their provenance, optionally filtered by status.',
     inputSchema: { type: 'object', properties: { status: { type: 'string', enum: ['proposed', 'queued', 'in-progress', 'merged', 'shipped', 'verified', 'superseded', 'closed', 'unknown'] } }, additionalProperties: false },
@@ -1705,7 +1724,9 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
   // The general validator intentionally tolerates unknown fields and only checks
   // primitive types. Bus calls need the exact wire contract before any append.
   let invalid: string | null;
-  if (name === 'intent_link' || name === 'intent_ship') {
+  if (name === 'intent_add' || name === 'intent_update') {
+    invalid = ((await import('./intent/native-edit.js' as string)) as typeof import('./intent/native-edit.js')).validNativeEdit(name, rawArgs) ? null : 'invalid intent arguments';
+  } else if (name === 'intent_link' || name === 'intent_ship') {
     invalid = ((await import('./intent/mcp-evidence.js' as string)) as typeof import('./intent/mcp-evidence.js')).validEvidenceArgs(name, rawArgs) ? null : 'invalid intent evidence arguments';
   } else if (name === 'intent_list' || name === 'intent_get') {
     const { isIntentStatus, validIntentId } = await import('./intent/schema.js');
@@ -1902,7 +1923,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
     cfg = loadConfig();
   } catch (err) {
     auditNativeCall(`${tool.name} keys=${argKeys} — config load failed`, 'error');
-    if (fleetObservation || ['intent_link', 'intent_ship', 'phantom_fleet_apps_ensure', 'phantom_fleet_apps_await', 'phantom_fleet_apps_watch', 'phantom_fleet_apps_follow', 'phantom_fleet_apps_recovery_check', 'phantom_fleet_apps_recovery_batch'].includes(name)) return textResult({ error: 'Fleet configuration unavailable' }, true);
+    if (fleetObservation || ['intent_add', 'intent_update', 'intent_link', 'intent_ship', 'phantom_fleet_apps_ensure', 'phantom_fleet_apps_await', 'phantom_fleet_apps_watch', 'phantom_fleet_apps_follow', 'phantom_fleet_apps_recovery_check', 'phantom_fleet_apps_recovery_batch'].includes(name)) return textResult({ error: 'Fleet configuration unavailable' }, true);
     return textResult(
       `${tool.name} failed: could not load ~/.ashlr/config.json (${err instanceof Error ? err.message : String(err)})`,
       true,

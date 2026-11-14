@@ -24,8 +24,13 @@ import {
   nativeToolDefs,
   callNativeTool,
 } from '../src/core/mcp-native.js';
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { handleApi } from '../src/core/web/api.js';
 import { recordAgentAction } from '../src/core/fleet/agent-action-ledger.js';
+
+// The docs catalog covers the full gateway surface: the MCP CLI entry installs
+// the fleet-apps tools (src/cli/mcp.ts), so the contract check must see them too.
+registerFleetNativeTools();
 
 let fx: H1Fixture;
 
