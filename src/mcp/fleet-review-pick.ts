@@ -29,15 +29,25 @@ export async function readFleetReviewPick(args: FleetReviewPickArgs = {}, deps: 
     return sanitizePublicJson({ status: 'invalid', reason: 'limit must be an integer from 1 to 100.' });
   }
   const repo = (args.repo as string | undefined) ?? 'ashlrai/phantom';
-  const unavailable = (reason: string) => ({
-    schema: REVIEW_PICK_SCHEMA, repo, picked: null, reason,
+  const clock = deps.now ?? Date.now;
+  const validNow = () => {
+    const value = clock();
+    if (!Number.isSafeInteger(value) || !Number.isFinite(new Date(value).getTime())) throw new Error('invalid clock');
+    return value;
+  };
+  const unavailable = (reason: string) => {
+    let observed: number;
+    try { observed = validNow(); } catch { observed = Date.now(); }
+    return {
+    schema: REVIEW_PICK_SCHEMA, as_of: new Date(observed).toISOString(), repo, picked: null, reason,
     source: {
       prs: 'unavailable',
       claims: { 'claimed-tsv': 'unavailable', 'bus-work-claims': 'unavailable', coordination: 'unavailable', 'live-workers': 'unavailable' },
       unavailable: ['claimed-tsv', 'bus-work-claims', 'coordination', 'live-workers'],
     },
     skipped: [], unowned_candidates: 0,
-  });
+    };
+  };
   const timeoutMs = typeof deps.timeoutMs === 'number' && Number.isFinite(deps.timeoutMs) && deps.timeoutMs > 0
     ? deps.timeoutMs : FLEET_REVIEW_PICK_TIMEOUT_MS;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -47,7 +57,7 @@ export async function readFleetReviewPick(args: FleetReviewPickArgs = {}, deps: 
       Promise.resolve().then(() => readReviewPick({
         repo, limit: args.limit as number | undefined,
         gh: deps.gh, readClaimedTsv: deps.readClaimedTsv, inspectBusWork: deps.inspectBusWork,
-        readBoard: deps.readBoard, listWorkers: deps.listWorkers, now: deps.now,
+        readBoard: deps.readBoard, listWorkers: deps.listWorkers, now: validNow,
       })),
       new Promise(resolve => {
         timer = setTimeout(() => resolve(unavailable('review-pick read timed out')), timeoutMs);
