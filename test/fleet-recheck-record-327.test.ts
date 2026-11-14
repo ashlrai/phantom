@@ -40,7 +40,7 @@ describe('fleet recheck-record', () => {
     expect(text).not.toContain('/Users/');
     const row = JSON.parse(text);
     expect(Object.keys(row).sort()).toEqual(['asOf', 'overall', 'schema', 'sections']);
-    expect(row.sections.task).toEqual({ state: 'VERIFIED', id: 'T-1', owner: 'fake-agent', claimReceipt: 'rcpt-1', asOf: iso(1) });
+    expect(row.sections.task).toEqual({ state: 'VERIFIED', id: 'T-1', owner: 'fake-agent', claimReceipt: 'rcpt-1', asOf: iso(1), lastVerified: null });
     expect(row.sections.claims).toEqual({ state: 'VERIFIED', active: 2, asOf: iso(1) });
   });
 
