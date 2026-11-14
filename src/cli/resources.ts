@@ -169,6 +169,7 @@ function printResourcesHelp(): void {
   console.log('         phm resources stale [--json]');
   console.log('         phm resources sample [--json]');
   console.log('         phm resources ledger [--json]');
+  console.log('         phm resources usage [--json]');
   console.log('         phm resources personal [--refresh] [--json] [--home <absolute-path>]');
   console.log('         phm resources pool status|run|observe|probe|console|benchmark --help');
   console.log('         phm resources launcher --help');
@@ -259,6 +260,10 @@ export async function cmdResources(args: string[]): Promise<number> {
   if (args[0] === 'launcher') {
     const { cmdResourceLauncher } = await import('./resource-launcher.js');
     return cmdResourceLauncher(args.slice(1));
+  }
+  if (args[0] === 'usage') {
+    const { cmdResourceUsage } = await import('./resource-usage.js');
+    return cmdResourceUsage(args.slice(1));
   }
   if (args[0] === 'autopilot') {
     const { cmdResourceAutopilot } = await import('./resource-autopilot.js');
