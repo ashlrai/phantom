@@ -8,9 +8,11 @@
  * terminal state (MERGED or CLOSED), and the newest dated PR row is older
  * than 20 minutes. Each stuck row names repo, PR url and age in minutes.
  *
- * The ledger read is injected (`readFile`) so the report is fully testable.
- * An unreadable ledger is reported as `known:false` — never guessed as zero
- * stuck. Torn JSONL lines are skipped, not fatal. A PR url with no parseable
+ * The fold lives in core/fleet/stuck-fixes.ts (shared with
+ * `GET /api/verse/runs-history/stuck-fixes`); the ledger read here is
+ * injected (`readFile`) so the report is fully testable. An unreadable
+ * ledger is reported as `known:false` — never guessed as zero stuck.
+ * Torn JSONL lines are skipped, not fatal. A PR url with no parseable
  * timestamp cannot prove age, so it is left out rather than guessed.
  *
  * Exit codes: 0 ledger read, 1 ledger unread, 2 bad usage.

@@ -15,6 +15,7 @@
  *   GET /api/verse/runs-history/lane-streaks[?minutes=15..1440]
  *                                               → LaneEmptyStreaksV1 (default 90 min)
  *   GET /api/verse/runs-history/main-health     → FleetMainHealthV1 (main-guardian status)
+ *   GET /api/verse/runs-history/stuck-fixes     → StuckFixesV1 (guardian fix PRs past 20 min)
  *   any other method on any of these paths      → 405
  *   any other path                              → false (next module runs)
  *

@@ -83,7 +83,7 @@ describe('surface prefetch', () => {
     const { fetchMock } = stubSurfaceFetch({ kind: 'live' });
     await prefetchSurfaceData('command');
     expect(getPaths(fetchMock)).toContain('/api/verse/cloud');
-    // Lazy only: the table reaches the cloud module, VerseApp never does.
+    // Lazy only: the table reaches the cloud module, PhantomApp never does.
     expect(SURFACE_PREFETCH.command!.map((d) => d.key)).toContain('verse-cloud');
   });
 
