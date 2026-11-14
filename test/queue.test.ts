@@ -6,6 +6,8 @@ import { importMarkdown, exportMarkdown } from '../src/core/queue/markdown.js';
 import { validateQueue, type QueueJob } from '../src/core/queue/schema.js';
 import { QueueStore } from '../src/core/queue/store.js';
 import { cmdQueue } from '../src/cli/queue.js';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 const dirs: string[] = [];
 async function store(): Promise<QueueStore> {
   const dir = await mkdtemp(join(tmpdir(), 'phantom-queue-')); dirs.push(dir); return new QueueStore(dir);
@@ -13,6 +15,43 @@ async function store(): Promise<QueueStore> {
 const job = (id = 'RQ-TEST'): QueueJob => ({ id, status: 'READY', priority: 'P0', pool: 'codex-personal', tier: 'frontier', repo: 'phantom', deps: [], scope: 'Own the queue', acceptance: 'Tests pass', claims: [] });
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
 describe('queue.v1', () => {
+  it('routes shared jobs through real dispatcher ticks with capability, quota and hysteresis fences', async () => {
+    const s = await store();
+    const output = execFileSync('python3', ['-B', '-m', 'unittest', 'discover', '-s', 'contrib/mac/tests', '-p', 'test_work_market.py'], {
+      cwd: fileURLToPath(new URL('..', import.meta.url)), env: { ...process.env, HOME: s.directory }, timeout: 45_000, encoding: 'utf8',
+    });
+    expect(output).not.toContain('FAILED');
+  });
+  it('enqueues shared requirements without a lane and preserves them through JSON and Markdown', async () => {
+    const s = await store();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdQueue(['add', 'RQ-MARKET', '--dir', s.directory, '--json', '--priority', 'P0', '--tier', 'frontier', '--repo', 'phantom', '--scope', 'Own the market', '--acceptance', 'Dispatch by capability', '--needs', 'git,gh,node,secrets:TEST_NAME', '--min-tier', 'work', '--max-cost-class', 'included', '--exclusive', '--impact', '9'])).toBe(0);
+    const doc = await s.read();
+    const expected = { pool: 'any', needs: ['git', 'gh', 'node', 'secrets:TEST_NAME'], min_tier: 'work', max_cost_class: 'included', exclusive: true, impact: 9 };
+    expect(doc.jobs[0]).toMatchObject(expected);
+    expect(importMarkdown(exportMarkdown(doc)).jobs[0]).toMatchObject(expected);
+    const restored = await store();
+    await restored.import(JSON.parse(JSON.stringify(doc)));
+    expect((await restored.read()).jobs).toEqual(doc.jobs);
+    const laneFree = { ...doc.jobs[0] };
+    delete laneFree.pool;
+    const withoutLane = await store();
+    await withoutLane.add(laneFree);
+    expect((await withoutLane.read()).jobs[0].pool).toBeUndefined();
+    expect(exportMarkdown(await withoutLane.read())).toContain('pool=any');
+  });
+  it('keeps a preferred lane as a hint and refuses malformed capability requirements before mutation', async () => {
+    const s = await store();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const args = ['add', 'RQ-MARKET', '--dir', s.directory, '--json', '--priority', 'P0', '--tier', 'work', '--repo', 'phantom', '--scope', 'Market', '--acceptance', 'Pass'];
+    for (const flags of [['--needs', 'secrets:bad=value'], ['--min-tier', 'standard'], ['--max-cost-class', 'free'], ['--impact', 'NaN']]) {
+      expect(await cmdQueue([...args, ...flags])).toBe(1);
+      expect((await s.read()).jobs).toEqual([]);
+    }
+    expect(await cmdQueue([...args, '--preferred-lane', 'retired-lane'])).toBe(0);
+    expect((await s.read()).jobs[0].preferred_lane).toBe('retired-lane');
+    expect(importMarkdown('- READY RQ-BAD (needs=secrets:bad=value): Work.').raw).toHaveLength(1);
+  });
   it('round trips router fixture byte-for-byte including CRLF and absent final newline', async () => {
     const fixture = await readFile(new URL('./fixtures/queue/router-queue.md', import.meta.url), 'utf8');
     for (const text of [fixture, fixture.replace(/\n/g, '\r\n'), fixture.trimEnd()]) {

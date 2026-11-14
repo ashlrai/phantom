@@ -40,7 +40,7 @@ DEFAULT = {"omlx": {"target": OMLX_CAP, "floor": 0, "ceiling": OMLX_CAP, "hard_c
            "devin": {"target": 6, "floor": 3, "ceiling": 10, "hard_cap": 10},   # DEVIN-LEVERAGE-20261026
            "claude-api": {"target": 4, "floor": 0, "ceiling": 8, "hard_cap": 8},   # target is re-paced every tick by claude-api.py
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
-import concurrency, batcher, batch_sessions
+import concurrency, batcher, batch_sessions, work_market
 import fleet_controller as fc
 # ---- fleet controller (RQ-FLEET-LOADBALANCER-1). Phase A (one readings bus, one writer for lane targets and holds, one
 # ledger line per tick) always runs and decides nothing new. FLEET_CTL_MODE=enforce applies phase B (graduated shed) and
@@ -360,6 +360,12 @@ def jsave(p, obj):
 
 os.makedirs(RUN, exist_ok=True); os.makedirs(Q + "/prompts", exist_ok=True)
 slots = jload(Q + "/slots.json", {})
+for lane, entry in list(slots.items()):
+    if (lane not in DEFAULT and isinstance(entry, dict) and entry.get("executor_ready") is True
+            and re.fullmatch(r"[a-z][a-z0-9-]*", lane) and isinstance(entry.get("capabilities"), list)
+            and all(type(entry.get(k)) is int and entry[k] >= 0 for k in ("target", "ceiling", "hard_cap"))):
+        LANES.append(lane)
+        DEFAULT[lane] = {"target": 0, "floor": 0, "ceiling": entry["ceiling"], "hard_cap": entry["hard_cap"]}
 for k, v in DEFAULT.items():
     s = slots.setdefault(k, dict(v)); [s.setdefault(a, b) for a, b in v.items()]; s.setdefault("last_change", 0)
 def _cap(v, d):   # a hard_cap is a non-negative int; anything else (missing, bool, garbage) falls back to the default
@@ -1269,10 +1275,16 @@ if not isinstance(park_state, dict): park_state = {}
 def precheck(j, repo, pf):
     return shared_precheck(j, repo, rd(pf), H, R, _run)
 
+def market_metric(decision):
+    # Separate event stream keeps existing lifecycle consumers compatible.
+    row = dict(decision, ts=NOW)
+    fd = os.open(MD + "/work-market.jsonl", os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    with os.fdopen(fd, "a") as stream: stream.write(json.dumps(row, separators=(",", ":")) + "\n")
+
 # Route proposals arrive as ready.tsv pool changes; receipts outlive queue removal.
 def route_decision(record, proposed, now, hard_down=False, launched=False):
     if record is None:
-        return {"pool": proposed, "decided_at": now, "moves": []}, None
+        return {"pool": proposed, "decided_at": now, "moves": [], "launched": launched}, None
     record = dict(record)
     record["launched"] = record.get("launched", False) or launched
     record["moves"] = [t for t in record["moves"] if t > now - 21600]
@@ -1324,7 +1336,7 @@ def _bp_factor(lane):
             return max(0.0, min(1.0, float(_bp["lanes"][lane]["factor"])))
     except (KeyError, TypeError, ValueError, AttributeError): pass
     return 1.0
-for lane in ("codex-cmp", "codex-personal", "devin", "claude-api", "codex-local", "omlx"):
+for lane in LANES:
     sl = slots[lane]
     if sl.get("held") or lane in hold or (lane == "omlx" and sl["target"] == 0): continue
     _bpf = _bp_factor(lane)   # phase C producer backpressure from last tick's advice; 1.0 when absent, stale or not enforced
@@ -1364,25 +1376,41 @@ try:
     route_state = json.loads(rd(Q + "/route-state.json")) if os.path.exists(Q + "/route-state.json") else {}
     assert isinstance(route_state, dict)
     for receipt in route_state.values():
-        assert receipt["pool"] in LANES and type(receipt["decided_at"]) in (int, float) and math.isfinite(receipt["decided_at"])
+        assert isinstance(receipt["pool"], str) and re.fullmatch(r"[a-z][a-z0-9-]*", receipt["pool"])
+        assert type(receipt["decided_at"]) in (int, float) and math.isfinite(receipt["decided_at"])
         assert isinstance(receipt["moves"], list) and all(type(t) in (int, float) and math.isfinite(t) for t in receipt["moves"])
+        assert all(key not in receipt or type(receipt[key]) is bool for key in ("assigned", "launched"))
 except (ValueError, TypeError, KeyError, AssertionError):
     lk.close(); ev("ROUTE_STATE_INVALID tick held"); raise SystemExit(1)
 routed = []
 for line in _raw + requeue:
     f = line.split("\t")
-    if parked_row(line) or len(f) < 5 or not JID.fullmatch(f[0]) or f[2] not in LANES:
+    if parked_row(line) or len(f) < 5 or not JID.fullmatch(f[0]):
         routed.append(line); continue
     job, proposed = f[0], f[2]
+    # Capture the enqueue hint before reconciling any external pool proposal.
+    if len(f) == 5:
+        match = re.search(r"(?m)^- [A-Z][A-Z-]* (?:[A-Za-z0-9._:@/-]+ )*?" + re.escape(job) + r"(?: r\d+)? \(([^)\n]*)\):", PRIORITY_QUEUE)
+        try:
+            spec = work_market.from_envelope(match.group(1)) if match else work_market.requirements(f)
+            f.append(json.dumps(spec, separators=(",", ":")))
+        except (ValueError, TypeError):
+            # Validation in the launch phase records the rejection.
+            f.append("null")
     previous = route_state.get(job)
     launched_line = rd(RUN + "/" + job + ".line").strip().split("\t")
     launched = os.path.exists(RUN + "/" + job + ".dispatched") or len(launched_line) >= 5
     if previous is None and len(launched_line) >= 5 and launched_line[2] in LANES:
         previous = {"pool": launched_line[2], "decided_at": NOW, "moves": []}
+    if proposed not in LANES:
+        if previous: proposed = previous["pool"]
+        else:
+            routed.append("\t".join(f)); continue
     current = slots.get(previous["pool"], {}) if previous else {}
     hard_down = (current.get("auth_failed") is True or (type(current.get("quota")) in (int, float) and current["quota"] == 0)
                  or (current.get("held") and current.get("held_reason") == "auth_failure"))
     record, reason = route_decision(previous, proposed, NOW, hard_down, launched)
+    if previous is None and not launched: record["assigned"] = False
     route_state[job] = record
     if reason:
         ev("ROUTE_HOLD %s %s->%s reason=%s" % (job, record["pool"], proposed, reason))
@@ -1396,7 +1424,7 @@ lines = [l for l in routed if l.strip() and not l.startswith("#")]
 # Per-job receipts survive ticks and queue rewrites without rescanning the metrics log.
 for l in lines:
     f = l.split("\t")
-    if parked_row(l) or len(f) < 5 or not JID.fullmatch(f[0]) or f[2] not in LANES or f[3] not in TIERS: continue
+    if parked_row(l) or len(f) < 5 or not JID.fullmatch(f[0]) or f[3] not in TIERS: continue
     receipt = RUN + "/" + f[0] + ".enqueued"
     try:
         with open(receipt, "x") as out: out.write(str(time.time()))
@@ -1554,39 +1582,30 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         if parked_row(l):
             rest.append(l); continue
         f = l.split("\t")
-        ok = (len(f) >= 5 and JID.match(f[0]) and f[2] in LANES and f[3] in TIERS
+        ok = (len(f) >= 5 and JID.fullmatch(f[0]) and f[3] in TIERS
               and os.path.isdir(H + "/Projects/ashlrai/" + f[1]) and "/" not in f[1]
               and os.path.realpath(f[4]).startswith(Q + "/prompts/") and os.path.isfile(f[4]))
         if not ok:
             rest.append(l); bad += 1; continue
-        if f[2] == "devin":   # RQ-BATCH-SESSIONS-2: Devin keeps only small lines in repos it is set up for (free flash)
-            size = _size_hint(f[0], f[4])
-            why = batch_sessions.devin_route(f[1], None if size == math.inf else size, BS_CFG)
-            alt = next((x for x in BS_CFG["devin"]["fallback_lanes"] if x in LANES and x in slots
-                        and not (slots[x].get("held") or x in hold)), None) if why else None
-            if alt:
-                ev("DEVIN_ROUTE %s %s -> %s" % (f[0], why, alt)); f = f[:2] + [alt] + f[3:]
+        try:
+            spec = work_market.requirements(f)
+            if len(f) == 5:
+                match = re.search(r"(?m)^- [A-Z][A-Z-]* (?:[A-Za-z0-9._:@/-]+ )*?" + re.escape(f[0]) + r"(?: r\d+)? \(([^)\n]*)\):", PRIORITY_QUEUE)
+                if match: spec = work_market.from_envelope(match.group(1))
+        except (ValueError, TypeError):
+            market_metric({"event": "route_decision", "schema": "work-market.v1", "job": f[0],
+                    "chosen_lane": None, "rejected_lanes": [], "reason_codes": ["invalid_requirements"]})
+            rest.append(l); bad += 1; continue
+        # Retain the original preference even after writing the chosen lane back.
+        f = f[:5] + [json.dumps(spec, separators=(",", ":"))]
         cand.append(f)
-    if FC_ROUTE_ON and cand:   # phase C: lines queued on a pool held by usage backoff move to pools with idle slots
-        _mj = jload(R + "/models.json", {})
-        def _tier_ok(dest, tier):
-            fam = "codex" if dest.startswith("codex") and dest != "codex-local" else dest
-            return not _mj or (fam + "." + tier) in _mj or fam in _mj
-        def _route_ok(job, dest):   # the existing route hysteresis: move cap and launch lock still bind; a backed-off pool is hard_down
-            rec, why = route_decision(route_state.get(job), dest, NOW, True, False)
-            if why: return False
-            route_state[job] = rec; return True
-        FC_MOVES = fc.rebalance([(f[0], f[2], f[3]) for f in cand], fc.reroute_sources(slots, LANES, hold), PLAN["lanes"], running,
-                                FC_QUALITY, _tier_ok, _route_ok, GATE["claim_limit"], hold)
-        if FC_MOVES:
-            _dest = {j: d for j, _, d in FC_MOVES}
-            for f in cand:
-                if f[0] in _dest: ev("FLEET_REBALANCE %s %s->%s (pool backed off)" % (f[0], f[2], _dest[f[0]])); f[2] = _dest[f[0]]
-            jsave(Q + "/route-state.json", route_state)
+    market_models = jload(R + "/models.json", {})
+    market_specs = {f[0]: work_market.requirements(f) for f in cand}
     # The key is global across pools; blocked jobs are retained below while
     # scanning continues, so a capped FIX-MAIN sibling cannot consume a claim.
     ready_ranks = _ready_repo_ranks()
-    cand.sort(key=lambda f: (not bool(waste_risk(UIA.get(f[2]), f[2])), _bucket(f[0]), ready_ranks.get(f[1], len(ready_ranks)),
+    cand.sort(key=lambda f: (*work_market.priority(market_specs[f[0]]), not bool(waste_risk(UIA.get(f[2]), f[2])), _bucket(f[0]),
+                             ready_ranks.get(f[1], len(ready_ranks)),
                              *_job_priority(f[0], f[1], f[4], f[4])[1:]))
     seen = set(); pc_n = 0; local_ok = None
     empty_attempts = read_attempts(R); base_identities = {}
@@ -1623,7 +1642,9 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         return empty_gate_cache[key]
     def member_ok(f, lead=False):   # every check the loop below would apply to the job on its own, plus batch limits
         m = f[0]
-        return (batcher.batchable_id(m) and not drain_target(m, f[1]) and f[2] in batcher.BATCH_LANES and f[2] in BS_CFG["lanes"]
+        return (not market_specs[m].get("needs") and not market_specs[m].get("exclusive")
+                and not market_specs[m].get("min_tier") and not market_specs[m].get("max_cost_class")
+                and f[2] in LANES and batcher.batchable_id(m) and not drain_target(m, f[1]) and f[2] in batcher.BATCH_LANES and f[2] in BS_CFG["lanes"]
                 and (lead or m not in seen) and not retired(m)
                 and not (result(m) or "").startswith("RESULT PR") and not disk_reuse_only
                 and m not in alive and m not in reaping and m not in publishing and m not in keep and m not in park_state
@@ -1638,16 +1659,19 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         return _tasks[f[0]]
     def form_batch(f):   # -> (members, lane, size target) or None to launch f on its own
         if not (BATCHING and member_ok(f, lead=True)) or waste_risk(UIA.get(f[2]), f[2]): return None
-        pool = [task_info(c) for c in cand if c[1] == f[1] and c[0] != f[0] and member_ok(c) and not waste_risk(UIA.get(c[2]), c[2])]
+        pool = [task_info(c) for c in cand if c[1] == f[1] and c[2] == f[2] and c[0] != f[0] and member_ok(c) and not waste_risk(UIA.get(c[2]), c[2])]
         size = min(batcher.size_for(batch_tuning, f[2]), BS_CFG["max_lines"])
         picked = batcher.pick_members(task_info(f), pool, size, BS_CFG["min_lines"])
         if not picked: return None
         has_capacity = lambda l: not (slots[l].get("held") or l in hold) and running[l] < tgt(l)
         lane_ = batcher.choose_lane({c["lane"] for c in picked} & set(BS_CFG["lanes"]), batcher.lane_scores(batch_stats()), has_capacity, f[2])
         return (picked, lane_, size) if lane_ else None
+    market_view = work_market.lane_view(LANES, slots, running, {l: tgt(l) for l in LANES},
+                                        hold, market_models, BUS["quota"], JOBS_RAW,
+                                        jload(Q + "/adaptive.json", {}), NOW)
     for f in cand:
         j, repo, lane, tier, pf = f[:5]; line = "\t".join(f)
-        s = slots[lane]; res = result(j)
+        res = result(j)
         if j in seen: continue  # duplicate line
         why = retired(j)
         if why:
@@ -1668,6 +1692,37 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             rest.append(line); seen.add(j); continue
         if target and target in drain_targets:
             rest.append(line); seen.add(j); continue
+        spec = market_specs[j]
+        view = {dest: dict(v, running=running[dest]) for dest, v in market_view.items()}
+        for dest in LANES:
+            if dest == "devin":
+                size = _size_hint(j, pf)
+                why = batch_sessions.devin_route(repo, None if size == math.inf else size, BS_CFG)
+                if why and (spec.get("preferred_lane") != "devin" or any(
+                        x in view and not view[x]["held"] for x in BS_CFG["devin"]["fallback_lanes"])):
+                    view[dest]["unavailable"] = "devin_scope_unavailable"
+            if dest == "omlx" and not OMLX_OK: view[dest]["unavailable"] = "local_unhealthy"
+            if dest == "codex-local" and spec.get("preferred_lane") == dest:
+                if local_ok is None: local_ok = _local_healthy()
+                if not local_ok: view[dest]["unavailable"] = "local_unhealthy"
+                elif _size_hint(j, pf) > 60 or (tier == "mid" and local_mid >= LOCAL_MID_CAP):
+                    view[dest]["unavailable"] = "local_scope_unavailable"
+        decision, receipt = work_market.choose(j, spec, tier, view, route_state.get(j), NOW, route_decision)
+        if len(launched) >= GATE["claim_limit"] or sum(running.values()) >= GCAP:
+            decision["chosen_lane"] = None; decision["reason_codes"].append("global_admission")
+        market_metric(decision)
+        if decision["chosen_lane"] is None:
+            rest.append(line); seen.add(j); continue
+        lane = decision["chosen_lane"]
+        if spec.get("preferred_lane") == "devin" and lane != "devin":
+            size = _size_hint(j, pf)
+            why = batch_sessions.devin_route(repo, None if size == math.inf else size, BS_CFG)
+            if why: ev("DEVIN_ROUTE %s %s -> %s" % (j, why, lane))
+        if lane != f[2] and f[2] in LANES:
+            FC_MOVES.append((j, f[2], lane))
+            ev("FLEET_REBALANCE %s %s->%s (shared market)" % (j, f[2], lane))
+        f[2] = lane; line = "\t".join(f); s = slots[lane]
+        # Persist at actual claim below, after prechecks and batch formation.
         if (len(launched) >= GATE["claim_limit"] or s.get("held") or lane in hold
                 or running[lane] >= tgt(lane) or sum(running.values()) >= GCAP or j in alive or j in reaping or j in publishing):
             rest.append(line); seen.add(j); continue
@@ -1754,6 +1809,19 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         boost = waste_boost(UIA.get(lane), lane, tier) if risk else None
         reason = boost[1] if boost else ("use-it-all %s waste risk: pool preferred" % risk if risk else None)
         if boost: tier = boost[0]
+        for route_job in ([c["job"] for c in batch[0]] if batch else [j]):
+            prior = route_state.get(route_job)
+            if prior and not prior.get("assigned", True): prior = None
+            rec, why = route_decision(prior, lane, NOW, work_market.hard_down(slots.get(prior["pool"], {})) if prior else False)
+            if why and rec["pool"] != lane: raise RuntimeError("batch route violated hysteresis")
+            rec.update(assigned=True, launched=True)
+            route_state[route_job] = rec
+        route_lk = qlock("market-claim")
+        if route_lk is None:
+            if batch: release_batch(j, "route lock busy", into=rest)
+            else: rest.append(line)
+            continue
+        jsave(Q + "/route-state.json", route_state); route_lk.close()
         open(RUN + "/" + j + ".line", "w").write(line + "\n")
         open("%s/%s.launch" % (R, j), "w").close()  # discard the previous attempt before claiming
         open(RUN + "/" + j + ".dispatched", "w").write(str(int(NOW)))
