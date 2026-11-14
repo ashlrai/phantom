@@ -10,7 +10,7 @@ import { CoordAnswerStrip } from './CoordAnswerStrip.js';
 
 const RUNTIME_PATH = '/api/verse/fleet/runtime-identity';
 const COMMS_PATH = '/api/verse/fleet/comms-status';
-const BOARD_PATH = '/api/fleet/work-board';
+const BOARD_PATH = '/api/verse/fleet/work-board';
 const NOW = Date.now();
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });

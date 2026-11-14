@@ -9,10 +9,19 @@
  * channel senders the caller injects, so the daemon, the CLI or a test can
  * wire the real bus/Slack paths without this file knowing a credential.
  * Once-only is durable, not incidental: a JSONL ledger under
- * `~/.ashlr-runs/work-board-notify/` dedupes `(itemId, to-state)` across
- * passes, and a row is appended only after a send returns a durable
- * receipt. A failed send writes nothing and retries on the next pass.
- * Labels and claim owners are untrusted data and grant no authority. */
+ * `~/.ashlr-runs/work-board-notify/` dedupes across passes, and a row is
+ * appended only after a send returns a durable receipt. A failed send
+ * writes nothing and retries on the next pass. Dedupe has two keys: the
+ * `(itemId, to-state)` entry key keeps the original once-per-state rule
+ * for state changes (every row, legacy or new, still yields it), and a
+ * delta key — sha256 of the normalized meaningful evidence plus the
+ * channel/thread binding — dedupes same-state changes so a blocker,
+ * owner/claim or verified-artifact change posts once while an
+ * asOf-only or irrelevant-field change never does. Legacy rows carry
+ * no delta and therefore only fence state entries; a same-state delta
+ * is provably new against the snapshot and may post. Labels and claim
+ * owners are untrusted data and grant no authority. */
+import { createHash } from 'node:crypto';
 import { appendFileSync, chmodSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
@@ -100,9 +109,11 @@ function transitionEvidence(item: BoardSnapshotItem): BoardTransitionEvidence {
   return evidence;
 }
 
-/** Diff two board snapshots into per-item state transitions. Items that
- * vanished from the board and items whose state did not change produce
- * nothing; a re-posted id is a new transition only when its state moved. */
+/** Diff two board snapshots into per-item transitions. Items that
+ * vanished produce nothing. A state change always transitions; a
+ * same-state item transitions only when its meaningful delta — the
+ * normalized evidence plus channel/thread binding — actually moved, so
+ * asOf-only or irrelevant-field churn stays silent. */
 export function diffBoard(
   prev: readonly BoardSnapshotItem[],
   next: readonly BoardSnapshotItem[],
@@ -111,7 +122,10 @@ export function diffBoard(
   const transitions: BoardTransition[] = [];
   for (const item of next) {
     const prior = before.get(item.id);
-    if (prior && prior.state === item.state) continue;
+    if (prior && prior.state === item.state) {
+      if (!(BOARD_NOTIFY_STATES as readonly string[]).includes(item.state)) continue;
+      if (snapshotDeltaMaterial(prior) === snapshotDeltaMaterial(item)) continue;
+    }
     transitions.push({
       itemId: item.id,
       from: prior?.state ?? null,
@@ -128,6 +142,9 @@ export interface BoardNotice {
   itemId: string;
   state: BoardNotifyState;
   asOf: string;
+  /** sha256 prefix of the meaningful-delta material; the durable dedupe
+   * identity and the sender idempotency input. */
+  delta: string;
   /** The one fact the thread needs: owner, dependency or artifact. */
   detail: string;
   /** Evidence source label, e.g. `claim:<receipt>` or `bus-reply:<id>`. */
@@ -153,8 +170,74 @@ export interface BoardNotifyPlan {
 const field = (value: string, max: number): string =>
   value.replace(/[\r\n]+/g, ' ').replace(/[^\x20-\x7e]/g, '?').slice(0, max).trim();
 
-export function boardNotifyLedgerKey(itemId: string, state: string): string {
-  return `${itemId} ${state}`;
+export function boardNotifyLedgerKey(itemId: string, state: string, delta?: string): string {
+  return delta === undefined ? `${itemId} ${state}` : `${itemId} ${state} ${delta}`;
+}
+
+const normDeltaField = (v: string | null | undefined): string => (v ?? '').replace(/\s+/g, ' ').trim();
+
+/** The evidence fields a meaningful delta is computed from. */
+export interface BoardNotifyDeltaFields {
+  state: WorkItemState;
+  channel: string;
+  thread: string | null;
+  owner?: string | null;
+  claimReceipt?: string | null;
+  dependency?: string | null;
+  pr?: number;
+  head?: string | null;
+  tests?: string | null;
+  artifact?: string | null;
+}
+
+/** Canonical meaningful-delta material for a postable state: the
+ * normalized evidence the thread needs (ASSIGNED owner+claim, BLOCKED
+ * dependency, VERIFIED pr/head/tests/artifact) bound to the channel and
+ * thread it routes to, so a reroute is a new identity. `asOf` and the
+ * source label are excluded — they move every pass and would defeat
+ * dedupe. Returns null for silent states or missing evidence; the
+ * planner drops those loud before keying. */
+export function boardNotifyDeltaMaterial(f: BoardNotifyDeltaFields): string | null {
+  let core: Record<string, string | number | null>;
+  if (f.state === 'ASSIGNED') {
+    const owner = normDeltaField(f.owner), claim = normDeltaField(f.claimReceipt);
+    if (owner === '' || claim === '') return null;
+    core = { owner, claim };
+  } else if (f.state === 'BLOCKED') {
+    const dependency = normDeltaField(f.dependency);
+    if (dependency === '') return null;
+    core = { dependency };
+  } else if (f.state === 'VERIFIED') {
+    const head = normDeltaField(f.head), tests = normDeltaField(f.tests), artifact = normDeltaField(f.artifact);
+    if (f.pr === undefined && head === '' && tests === '' && artifact === '') return null;
+    core = { pr: f.pr ?? null, head: head === '' ? null : head, tests: tests === '' ? null : tests, artifact: artifact === '' ? null : artifact };
+  } else return null;
+  return JSON.stringify({ channel: f.channel, thread: f.thread, ...core });
+}
+
+/** Fixed-width digest of the delta material; carried on notices, ledger
+ * rows and sender idempotency ids. */
+export function boardNotifyDeltaDigest(material: string): string {
+  return createHash('sha256').update(material).digest('hex').slice(0, 24);
+}
+
+function snapshotDeltaMaterial(item: BoardSnapshotItem): string | null {
+  return boardNotifyDeltaMaterial({
+    state: item.state, channel: item.channel, thread: item.channelRef,
+    owner: item.owner, claimReceipt: item.claimReceipt,
+    dependency: item.blocker?.dependency ?? null,
+    pr: item.verified?.pr,
+    head: item.verified?.head ?? null, tests: item.verified?.tests ?? null, artifact: item.verified?.artifact ?? null,
+  });
+}
+
+function transitionDeltaMaterial(t: BoardTransition): string | null {
+  return boardNotifyDeltaMaterial({
+    state: t.to, channel: t.sourceChannel, thread: t.sourceThread,
+    owner: t.evidence.owner ?? null, claimReceipt: t.evidence.claimReceipt ?? null,
+    dependency: t.evidence.dependency ?? null, pr: t.evidence.pr,
+    head: t.evidence.head ?? null, tests: t.evidence.tests ?? null, artifact: t.evidence.artifact ?? null,
+  });
 }
 
 /** Compose the single-line thread message; the whole line is scrubbed so
@@ -209,16 +292,28 @@ export function planNotifications(
       try { log?.(`board-notify ${t.itemId}: ${missing}`); } catch { /* logging never breaks the plan */ }
       continue;
     }
-    const key = boardNotifyLedgerKey(t.itemId, state);
-    if (sentLedger.has(key) || planned.has(key)) {
+    const material = transitionDeltaMaterial(t);
+    if (material === null) continue; // unreachable: missingNoticeEvidence already proved the fields
+    const delta = boardNotifyDeltaDigest(material);
+    const deltaKey = boardNotifyLedgerKey(t.itemId, state, delta);
+    const entryKey = boardNotifyLedgerKey(t.itemId, state);
+    // A state entry keeps the original once-per-(itemId,state) rule: any
+    // prior row — legacy or delta-carrying — fences it. A same-state
+    // delta dedupes only on its exact delta identity; a legacy row
+    // cannot prove which delta it delivered, but the snapshot proves
+    // this one is new, so it does not block.
+    const entered = t.from !== t.to;
+    if (sentLedger.has(deltaKey) || planned.has(deltaKey)
+      || (entered && (sentLedger.has(entryKey) || planned.has(entryKey)))) {
       dropped.push({ itemId: t.itemId, state, reason: `${state} dropped: already notified` });
       continue;
     }
-    planned.add(key);
+    planned.add(deltaKey);
+    if (entered) planned.add(entryKey);
     const text = detail(t, state);
     if (text === null) continue; // unreachable: missingNoticeEvidence already proved a detail
     notices.push({
-      itemId: t.itemId, state, asOf: t.evidence.asOf, detail: text,
+      itemId: t.itemId, state, asOf: t.evidence.asOf, delta, detail: text,
       source: t.evidence.source,
       text: boardNoticeText(state, t.itemId, t.evidence.asOf, text, t.evidence.source),
       sourceChannel: t.sourceChannel, sourceThread: t.sourceThread,
@@ -253,6 +348,9 @@ export interface BoardNotifyLedgerRow {
   channel: string;
   thread: string | null;
   receipt: string | null;
+  /** Delta digest of the delivered meaningful change; absent on rows
+   * written before delta dedupe existed (legacy rows). */
+  delta?: string;
 }
 
 const LEDGER_FILE = 'sent.jsonl';
@@ -276,9 +374,14 @@ export function boardNotifySnapshotPath(stateDir: string): string {
   return join(stateDir, SNAPSHOT_FILE);
 }
 
-/** Dedupe set of `(itemId, state)` keys ever sent. Returns null when the
- * ledger cannot be read or is truncated — the caller must fail closed
- * rather than risk a second post. A missing ledger is an empty set. */
+/** Dedupe keys of everything ever sent: every row yields the
+ * `(itemId, state)` entry key (the original once-per-state rule), and a
+ * row carrying `delta` also yields the `(itemId, state, delta)` key.
+ * Legacy rows without `delta` therefore fence state entries exactly as
+ * before but cannot fence a same-state delta they never recorded.
+ * Returns null when the ledger cannot be read or is truncated — the
+ * caller must fail closed rather than risk a second post. A missing
+ * ledger is an empty set. */
 export function readBoardNotifySent(ledgerPath: string): Set<string> | null {
   const read = readPrivateFileCapped(ledgerPath, LEDGER_MAX_BYTES);
   if (read === null) return new Set();
@@ -287,10 +390,12 @@ export function readBoardNotifySent(ledgerPath: string): Set<string> | null {
   for (const line of read.text.split('\n')) {
     if (!line.trim()) continue;
     try {
-      const row = JSON.parse(line) as { v?: unknown; itemId?: unknown; state?: unknown };
+      const row = JSON.parse(line) as { v?: unknown; itemId?: unknown; state?: unknown; delta?: unknown };
       if (row.v === 1 && boundedString(row.itemId, 128)
         && (BOARD_NOTIFY_STATES as readonly string[]).includes(String(row.state))) {
-        sent.add(boardNotifyLedgerKey(row.itemId, String(row.state)));
+        const itemId = row.itemId, state = String(row.state);
+        sent.add(boardNotifyLedgerKey(itemId, state));
+        if (boundedString(row.delta, 64)) sent.add(boardNotifyLedgerKey(itemId, state, row.delta));
       }
     } catch { /* skip a torn line */ }
   }
@@ -415,7 +520,7 @@ export async function sendNotifications(
         v: 1, at: new Date((opts.now ?? Date.now)()).toISOString(),
         itemId: notice.itemId, state: notice.state,
         channel: notice.sourceChannel, thread: notice.sourceThread,
-        receipt: senderReceipt,
+        receipt: senderReceipt, delta: notice.delta,
       });
     } catch {
       try { opts.log?.(`board-notify ${notice.itemId}: ledger append failed`); } catch { /* keep going */ }
