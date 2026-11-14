@@ -10,6 +10,8 @@ import type { ChannelHealth, ChannelHealthReport } from '../src/core/fleet/chann
 import type { FleetBoard } from '../src/core/fleet/coordination.js';
 import type { RuntimeIdentity } from '../src/core/fleet/runtime-identity.js';
 import type { WorkBoardItem, WorkBoardResult } from '../src/core/comms/work-board.js';
+import type { CoordinationView } from '../src/core/agents/claim-store.js';
+import type { LiveWorkersSnapshot } from '../src/core/fleet/runs-live-workers.js';
 
 const NOW = new Date('2026-11-13T12:00:00.000Z');
 const NOW_MS = NOW.getTime();
@@ -61,6 +63,19 @@ function fakeItem(over: Partial<WorkBoardItem> = {}): WorkBoardItem {
 
 const healthyWork: WorkBoardResult = { items: [fakeItem()], inbox: 'ok', truncated: false };
 
+// The claim-store row bus-work-claims writes when the pick's bus claim is
+// acquired: message origin, queue:<id> key, receipt coordinates as sourceId,
+// same owner, lease live at the verdict clock.
+const coordRow: CoordinationView = {
+  origin: 'message', key: 'queue:fake-request-1', owner: 'fake-owner-agent',
+  leaseUntil: NOW_MS + 3_600_000, sourceId: 'fake-request-1:1:1700000000000',
+  live: true, repo: null, branch: null, path: null, started: null,
+};
+
+const emptyWorkers: LiveWorkersSnapshot = {
+  v: 1, generatedAt: ISO, sourceState: 'healthy', workers: [], leaders: [], orchestratorAgents: 0,
+};
+
 function deps(over: Partial<FleetRecheckDeps> = {}): FleetRecheckDeps {
   return {
     now: () => NOW,
@@ -69,6 +84,8 @@ function deps(over: Partial<FleetRecheckDeps> = {}): FleetRecheckDeps {
     readFleetBoard: () => healthyBoard,
     readChannelHealth: () => healthyChannels,
     listWorkBoard: () => healthyWork,
+    listCoordination: () => ({ source: 'available', claims: [coordRow] }),
+    listLiveWorkers: async () => emptyWorkers,
     ...over,
   };
 }
@@ -218,6 +235,8 @@ describe('readFleetRecheck', () => {
   it('a throwing ledger reader marks claims UNKNOWN and the owner claim unverified', async () => {
     const recheck = await readFleetRecheck(deps({
       readFleetBoard: () => { throw new Error('ledger exploded'); },
+      // With no claim-store binding the owner claim cannot be proven either.
+      listCoordination: () => ({ source: 'unavailable', claims: [] }),
     }));
     expect(recheck.sections.claims).toMatchObject({
       state: 'UNKNOWN', active: null, expiredClaims: null, top: [], missing: ['claims: reader failed'],
