@@ -29,6 +29,11 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 - Hold list (Mason's own holds): phantom #197 #878 #743 #725 #738 #744 #693 #1228; phantom-secrets #140 #197 #375 #168 #418 #136; ashlr-plugin #152 #157.
 
 ## Tools for agents working here
+
+- Ecosystem onboarding: `phm onboard --ecosystem --json` previews names/state only.
+  Grant a reviewed selection with `phm onboard --ecosystem --grant --plan <planId> --select lexicon,stack --json`.
+  `--yes` never grants. Locked vaults offer existing-vault access; imports stay
+  in Secrets' trusted terminal. See [ecosystem onboarding](docs/ECOSYSTEM-ONBOARDING.md).
 - This repo's `.mcp.json` declares five companion MCP servers: `phantom-secrets`, `locus`, `lexicon`, `stack`, `ashlr` (Ashlr.AI Plugin). What each is for, its limits, and how to approve it: [docs/AGENT-TOOLCHAIN.md](docs/AGENT-TOOLCHAIN.md).
 - In a Phantom cloud task, list the companion tools you actually called in the report's `toolsUsed` field (an empty list if none); `phm cloud list` shows it as the session's claim.
 - Team org: `phm org show --json`, `phm org join --member <id> --machine <id> --lane <lane>[=<share>] --json` (each co-founder on their own machine; opt-in per lane, no auth read, nothing sent) and `phm org plan --json` (proposes queue assignments and roles within each member's contributed limits from the router's usage and reset data; the leader reads it each planning pass). Private data is never pooled; spending stays with each member. See [docs/AGENT-NETWORK.md](docs/AGENT-NETWORK.md#team-org).
