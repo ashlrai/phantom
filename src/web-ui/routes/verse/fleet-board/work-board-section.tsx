@@ -2,7 +2,7 @@
  * routes/verse/fleet-board/work-board-section.tsx — the shared coordination
  * work board inside the existing Fleet Board pane (RQ-PHX-WORKBOARDPANE318).
  *
- * Reads GET /api/fleet/work-board (the `ashlr fleet work-board --json` shape).
+ * Reads GET /api/verse/fleet/work-board (the `ashlr fleet work-board --json` shape).
  * Independent of leader-board.json: it renders even when the Leader board is
  * missing. Honest states only — an unreadable inbox or an undeployed route is
  * a printed note, never an empty table or a row of fake zeros. All data is
@@ -42,7 +42,7 @@ const LIMIT = 20;
 
 export const workBoardQuery: QueryDef<WorkBoardResponse> = {
   key: 'fleet-work-board',
-  fetch: (signal) => apiGet<WorkBoardResponse>(`/api/fleet/work-board?limit=${LIMIT}`, signal),
+  fetch: (signal) => apiGet<WorkBoardResponse>(`/api/verse/fleet/work-board?limit=${LIMIT}`, signal),
 };
 
 const OWNED_STATES: readonly WorkState[] = ['ASSIGNED', 'RUNNING', 'VERIFIED'];

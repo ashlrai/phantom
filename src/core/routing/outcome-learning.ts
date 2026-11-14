@@ -29,6 +29,8 @@ export interface OutcomeCellView {
   jobType: string;
   repo: string;
   attempts: number;
+  /** Attempts counted as failures because the PR sat unmerged past the horizon. Included in `attempts`. */
+  censored: number;
   merges: number;
   /** Merges that did not break main. This is what routing treats as success. */
   goodMerges: number;
@@ -90,6 +92,23 @@ export interface LearnedJob {
   priority: LearnedPriority;
 }
 
+/**
+ * Censored reward. An assignment with no outcome yet is pending. Once it is
+ * older than the horizon it is read as a failed attempt (reward 0, allowance
+ * spent) instead of missing data. See docs/router/censored-reward.md.
+ */
+export interface CensorOptions {
+  nowMs: number;
+  /** Minutes an unresolved assignment may stay pending. Absent derives it from the log. */
+  horizonMinutes?: number;
+}
+
+/** The `router` slice of the config that switches censoring on. */
+export interface CensorConfig {
+  censorUnmerged?: boolean;
+  censorHorizonHours?: number;
+}
+
 export interface RouteLearningOptions {
   nowMs: number;
   /** Thompson sampling. Absent still explores, so a cold resource can be tried. */
@@ -118,6 +137,7 @@ interface AssignEvent {
   model: string;
   jobType: string;
   repo: string;
+  atMs: number;
 }
 
 interface OutcomeEvent {
@@ -230,14 +250,14 @@ function pickIdent(kv: Record<string, string>, positional: string[], index: numb
   return ident(value) ? value! : null;
 }
 
-function assignFrom(fields: { positional: string[]; kv: Record<string, string> }): AssignEvent | null {
+function assignFrom(fields: { positional: string[]; kv: Record<string, string> }, atMs: number): AssignEvent | null {
   const job = pickIdent(fields.kv, fields.positional, 0, 'job');
   const repo = pickIdent(fields.kv, fields.positional, 1, 'repo');
   const resource = pickIdent(fields.kv, fields.positional, 2, 'resource');
   const model = pickIdent(fields.kv, fields.positional, 3, 'model');
   const jobType = pickIdent(fields.kv, fields.positional, 4, 'jobType', 'type');
   if (!job || !repo || !resource || !model || !jobType) return null;
-  return { kind: 'assign', job, repo, resource, model, jobType };
+  return { kind: 'assign', job, repo, resource, model, jobType, atMs };
 }
 
 function outcomeFrom(fields: { positional: string[]; kv: Record<string, string> }): OutcomeEvent | null {
@@ -276,7 +296,7 @@ function jsonEvent(row: Record<string, unknown>): ParsedEvent | null {
     if (typeof value === 'string' || typeof value === 'number') kv[key] = String(value);
   }
   if (event === 'assign' || event === 'assigned' || event === 'launch' || event === 'launched') {
-    return assignFrom({ positional: [], kv });
+    return assignFrom({ positional: [], kv }, Date.parse(String(row['ts'])));
   }
   if (event === 'outcome' || event === 'result' || event === 'resolved') {
     return outcomeFrom({ positional: [], kv });
@@ -313,7 +333,7 @@ function parseEvents(text: string): { events: ParsedEvent[]; malformed: number }
     // loop's assignments, and a real dispatch log is full of them.
     if (kind !== 'OUTCOME' && fields.positional.length < 5
       && !Object.hasOwn(fields.kv, 'resource') && !Object.hasOwn(fields.kv, 'model')) continue;
-    const event = kind === 'OUTCOME' ? outcomeFrom(fields) : assignFrom(fields);
+    const event = kind === 'OUTCOME' ? outcomeFrom(fields) : assignFrom(fields, eventMs(match[1]!, match[2]!));
     if (!event) malformed += 1;
     else events.push(event);
   }
@@ -323,7 +343,7 @@ function parseEvents(text: string): { events: ParsedEvent[]; malformed: number }
 function blankCell(resource: string, model: string, jobType: string, repo: string): Cell {
   return {
     resource, model, jobType, repo,
-    attempts: 0, merges: 0, goodMerges: 0, breakages: 0, dirty: 0, fixups: 0,
+    attempts: 0, censored: 0, merges: 0, goodMerges: 0, breakages: 0, dirty: 0, fixups: 0,
     usage: 0, mergeMinutes: 0, timedMerges: 0,
     mergeRate: 0, goodMergeRate: 0, breakageRate: 0, dirtyRate: 0, fixupRate: 0,
     meanUsage: 0, meanMinutesToMerge: null,
@@ -349,7 +369,35 @@ function publish(cell: Cell): OutcomeCellView {
   };
 }
 
-function fold(events: readonly ParsedEvent[], malformed: number): OutcomeLearning {
+/** A day. The merge queue is not instant, so a younger unresolved PR is still pending. */
+const CENSOR_FLOOR_MINUTES = 24 * 60;
+/** Twice the slowest ordinary merge: past that, waiting longer is not going to merge it. */
+const CENSOR_SLACK = 2;
+
+/**
+ * The horizon H, from the log: twice the 95th percentile (nearest rank) of the
+ * minutes-to-merge of merged jobs, never under one day. With no timed merges it
+ * is the floor.
+ */
+function derivedCensorHorizon(events: readonly ParsedEvent[]): number {
+  const minutes = events
+    .filter((e): e is OutcomeEvent => e.kind === 'outcome' && e.state === 'merged' && e.minutes !== null)
+    .map((e) => e.minutes!)
+    .sort((a, b) => a - b);
+  if (minutes.length === 0) return CENSOR_FLOOR_MINUTES;
+  const p95 = minutes[Math.max(0, Math.ceil(0.95 * minutes.length) - 1)]!;
+  return Math.max(CENSOR_FLOOR_MINUTES, CENSOR_SLACK * p95);
+}
+
+/** Turn the router config into censor options. Off unless `censorUnmerged` is exactly true. */
+export function censorFromConfig(router: CensorConfig | undefined, nowMs: number): CensorOptions | undefined {
+  if (router?.censorUnmerged !== true) return undefined;
+  const hours = router.censorHorizonHours;
+  const horizonMinutes = typeof hours === 'number' && Number.isFinite(hours) && hours > 0 ? hours * 60 : undefined;
+  return { nowMs, ...(horizonMinutes === undefined ? {} : { horizonMinutes }) };
+}
+
+function fold(events: readonly ParsedEvent[], malformed: number, censor?: CensorOptions): OutcomeLearning {
   const cells = new Map<string, Cell>();
   const open = new Map<string, AssignEvent>();
   let finished = 0;
@@ -399,6 +447,9 @@ function fold(events: readonly ParsedEvent[], malformed: number): OutcomeLearnin
     cells.set(key, cell);
     finished += 1;
   }
+  if (censor !== undefined && Number.isFinite(censor.nowMs)) {
+    finished += censorStale(cells, open, events, censor);
+  }
   return {
     finished,
     malformed,
@@ -408,10 +459,58 @@ function fold(events: readonly ParsedEvent[], malformed: number): OutcomeLearnin
   };
 }
 
-/** Learn from a dispatch event log. Malformed lines are counted and skipped. */
-export function learnOutcomes(text: string): OutcomeLearning {
+/**
+ * Count each assignment still unresolved past the horizon as one failed attempt
+ * in its cell. Younger ones stay pending and are not counted. The allowance a
+ * censored attempt spent is unknown, so it is charged the mean of its cell's
+ * finished attempts (the fleet mean for a cell with none): that keeps a lane
+ * from looking cheap because its PRs never reported a cost. Merged scoring is
+ * untouched. Returns how many attempts were added.
+ */
+function censorStale(
+  cells: Map<string, Cell>,
+  open: ReadonlyMap<string, AssignEvent>,
+  events: readonly ParsedEvent[],
+  censor: CensorOptions,
+): number {
+  const horizon = censor.horizonMinutes !== undefined && Number.isFinite(censor.horizonMinutes) && censor.horizonMinutes > 0
+    ? censor.horizonMinutes
+    : derivedCensorHorizon(events);
+  const stale = new Map<string, { assign: AssignEvent; count: number }>();
+  for (const assign of open.values()) {
+    if (!((censor.nowMs - assign.atMs) / 60_000 > horizon)) continue;
+    const key = cellKey(assign.resource, assign.model, assign.jobType, assign.repo);
+    const entry = stale.get(key) ?? { assign, count: 0 };
+    entry.count += 1;
+    stale.set(key, entry);
+  }
+  let fleetUsage = 0;
+  let fleetAttempts = 0;
+  for (const cell of cells.values()) {
+    fleetUsage += cell.usage;
+    fleetAttempts += cell.attempts;
+  }
+  const fleetMean = fleetAttempts > 0 ? fleetUsage / fleetAttempts : 0;
+  let added = 0;
+  for (const [key, { assign, count }] of stale) {
+    const cell = cells.get(key) ?? blankCell(assign.resource, assign.model, assign.jobType, assign.repo);
+    const mean = cell.attempts > 0 ? cell.usage / cell.attempts : fleetMean;
+    cell.attempts += count;
+    cell.censored += count;
+    cell.usage += mean * count;
+    cells.set(key, cell);
+    added += count;
+  }
+  return added;
+}
+
+/**
+ * Learn from a dispatch event log. Malformed lines are counted and skipped.
+ * Without `censor`, an assignment with no outcome is invisible, as before.
+ */
+export function learnOutcomes(text: string, censor?: CensorOptions): OutcomeLearning {
   const parsed = parseEvents(text);
-  return fold(parsed.events, parsed.malformed);
+  return fold(parsed.events, parsed.malformed, censor);
 }
 
 function stableId(parts: readonly string[]): string {
@@ -520,6 +619,7 @@ function evidenceFor(learning: OutcomeLearning, resource: string, model: string,
   const sum = blankCell(resource, model, jobType, repo);
   for (const cell of pooled) {
     sum.attempts += cell.attempts;
+    sum.censored += cell.censored;
     sum.merges += cell.merges;
     sum.goodMerges += cell.goodMerges;
     sum.breakages += cell.breakages;
@@ -805,7 +905,8 @@ function cellSentence(cell: OutcomeCellView): string {
   const time = cell.meanMinutesToMerge === null ? 'time to merge unknown' : `${Math.round(cell.meanMinutesToMerge)} min to merge`;
   return `${resourceWords(cell.resource)} (${modelWords(cell.model)}) on ${cell.repo} ${cell.jobType} jobs: `
     + `${Math.round(cell.mergeRate * 100)}% merge, ${time}, usage ${formatUsage(cell.meanUsage)}, `
-    + `${Math.round(cell.breakageRate * 100)}% breakage.`;
+    + `${Math.round(cell.breakageRate * 100)}% breakage`
+    + (cell.censored > 0 ? `, ${cell.censored} unmerged past the horizon.` : '.');
 }
 
 /** Plain sentences for the desktop panel and the CLI. */
