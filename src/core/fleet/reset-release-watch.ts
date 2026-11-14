@@ -10,7 +10,7 @@
  */
 import { lstatSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
-import { abortableSleep, isAwaitMs } from './needs-mason-answer-await.js';
+import { abortableSleep, isAwaitMs, wireAwaitCancel } from '../util/await-support.js';
 import {
   runResetReleaseOnce, type ResetReleaseResult, type RunResetReleaseOptions,
 } from './usage-reset-release.js';
@@ -77,10 +77,7 @@ export async function watchResetReleases(options: ResetWatchOptions,
   let passes = 0, released = 0, errors = 0, lastError: string | null = null;
   const fail = (why: string): void => { outcome = 'failed'; lastError = why; };
   const controller = new AbortController();
-  const abort = (): void => controller.abort();
-  process.on('SIGINT', abort); process.on('SIGTERM', abort);
-  signal?.addEventListener('abort', abort, { once: true });
-  if (signal?.aborted) abort();
+  const detach = wireAwaitCancel(controller, signal);
   // The stop-file sentinel is checked between stages; signals interrupt awaits.
   const gate = (): ResetWatchOutcome | undefined => {
     if (controller.signal.aborted) return 'cancelled';
@@ -162,9 +159,7 @@ export async function watchResetReleases(options: ResetWatchOptions,
   } finally {
     clearTimeout(timer);
     controller.signal.removeEventListener('abort', onAbort);
-    controller.abort(); // dispose an owned abortable sleep if it is still pending
-    process.off('SIGINT', abort); process.off('SIGTERM', abort);
-    signal?.removeEventListener('abort', abort);
+    detach(); // also disposes an owned abortable sleep if it is still pending
   }
   return { outcome, passes, released, errors, lastError, ...(inFlight ? { inFlight: true } : {}) };
 }
