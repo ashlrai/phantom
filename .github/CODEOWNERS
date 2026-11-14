@@ -560,7 +560,9 @@
 /test/int4-confine-engines-310b.test.ts @masonwyatt23
 /test/intent-fleet-merge-observe-preservation-231s.test.ts @masonwyatt23
 /test/intent-merge-batch-owner-qualification-292s.test.ts @masonwyatt23
+/test/intent-merge-batch-recovery-09sql1.test.ts @masonwyatt23
 /test/intent-merge-batch-recovery-228s.test.ts @masonwyatt23
+/test/intent-merge-batch-restoration-09sqc1.test.ts @masonwyatt23
 /test/intent-merge-receipt-recovery-151.test.ts @masonwyatt23
 /test/intent-merge-snapshot-recovery-09spq1.test.ts @masonwyatt23
 /test/intent-merge-snapshot.recut-s130.test.ts @masonwyatt23
@@ -1093,6 +1095,7 @@
 /test/resolve-remote-branch-head.test.ts @masonwyatt23
 /test/resource-account-identity-witness.test.ts @masonwyatt23
 /test/resource-allocation-policy.test.ts @masonwyatt23
+/test/resource-claude-resignin.test.ts @masonwyatt23
 /test/resource-console-engineering-acceptance.test.ts @masonwyatt23
 /test/resource-console-engineering-check.test.ts @masonwyatt23
 /test/resource-console-engineering-core.test.ts @masonwyatt23
@@ -1157,6 +1160,7 @@
 /test/routing-budget-store.test.ts @masonwyatt23
 /test/routing-calibration-properties.test.ts @masonwyatt23
 /test/routing-capacity-history.test.ts @masonwyatt23
+/test/routing-censored-reward.test.ts @masonwyatt23
 /test/routing-complexity-invariants.test.ts @masonwyatt23
 /test/routing-interactive-scope.test.ts @masonwyatt23
 /test/routing-off-policy-research.test.ts @masonwyatt23
@@ -1234,6 +1238,7 @@
 /test/universe-supervisor-enrollment-stop.test.ts @masonwyatt23
 /test/universe-value-allocation-store.test.ts @masonwyatt23
 /test/universe-value-allocation.test.ts @masonwyatt23
+/test/update-why.test.ts @masonwyatt23
 /test/usage-sensors.test.ts @masonwyatt23
 /test/verify-check-run-313.test.ts @masonwyatt23
 /test/verify-commands-confine-310b.test.ts @masonwyatt23
