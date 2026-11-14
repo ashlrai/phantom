@@ -457,3 +457,5 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [PR triage](PR-TRIAGE.md): read-only open PR verdicts and JSON schema.
 
 - [oMLX dispatcher lane](../contrib/mac/README.md): memory-capped `omlx` pool, `127.0.0.1` health only, `phm lanes --json`; Security combined RETUNE pin required before installation.
+
+- [Typed routing decisions](ROUTING.md): `phm route decide --input request.json --json` uses local fast, bounded Jev escalation and deterministic fallback over eligible candidates. Advisory dispatcher records go to `metrics/route.explain.jsonl`; launches stay unchanged.
