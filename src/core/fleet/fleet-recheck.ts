@@ -47,6 +47,15 @@
  * newest one with an owner and claim receipt rides along as task.lastVerified
  * evidence only and never changes a state, the pick or missing[].
  *
+ * Top-level tailnet is tailscale peer evidence (which fleet computers this
+ * host can see on the tailnet): counts of online/offline/unknown peers, up to
+ * TAILNET_CAP peers (online first) and reasons[]. It sits beside sections, not
+ * inside one, so the four-section overall logic is untouched. It is read through
+ * its own injectable reader under the same SECTION_TIMEOUT_MS bound; a reader
+ * that throws or stalls yields zero counts and ['tailnet: reader failed']. It is
+ * evidence only: it never changes a state, overall, missing[], the pick or any
+ * claim field, and grants no routing or dispatch.
+ *
  * Output is sanitized through sanitizeIdentityText (home → ~, IPs dropped);
  * no message bodies, leases or env values ever reach the result.
  *
@@ -63,6 +72,8 @@ import { readChannelHealth, type ChannelHealthReport } from './channel-health.js
 import { readFleetBoard, type FleetBoard, type FleetClaim } from './coordination.js';
 import { listCoordination } from '../agents/claim-store.js';
 import { listLiveWorkers, type LiveWorkersSnapshot } from './runs-live-workers.js';
+import { defaultPoolReachDeps, readPoolReach, type PoolReach } from './pool-reach.js';
+import { defaultTailnetPeersDeps, readTailnetPeers, type TailnetPeers } from './tailnet-peers.js';
 import {
   bindPickToCoordination,
   type RecheckCoordinationClaim,
@@ -84,6 +95,8 @@ export const SECTION_TIMEOUT_MS = 5_000;
 const RUNTIME_OBSERVATION_BOUND_MS = SECTION_TIMEOUT_MS;
 /** Claims listing cap and per-claim task text cap. */
 const TOP_CLAIMS = 5;
+/** Tailnet peers listed in the verdict; counts still cover every peer read. */
+const TAILNET_CAP = 8;
 
 export type FleetRecheckState = 'VERIFIED' | 'UNKNOWN' | 'BLOCKED';
 
@@ -162,9 +175,25 @@ export interface FleetRecheckClaims {
   missing: string[];
 }
 
+export interface FleetRecheckTailnet {
+  source: 'tailscale-status';
+  asOf: string;
+  self: string;
+  online: number;
+  offline: number;
+  unknown: number;
+  /** Online first, capped at TAILNET_CAP. */
+  peers: { name: string; online: boolean | 'unknown'; ageSeconds: number | 'unknown' }[];
+  reasons: string[];
+}
+
 export interface FleetRecheck {
   schema: typeof FLEET_RECHECK_SCHEMA;
   asOf: string;
+  /** Evidence only; see the header. Always present from readFleetRecheck. */
+  tailnet?: FleetRecheckTailnet | null;
+  /** Node pool failover reachability; evidence only, never changes a state or the pick. */
+  pool?: PoolReach | null;
   sections: {
     runtime: {
       state: FleetRecheckState;
@@ -230,6 +259,8 @@ export function defaultFleetRecheckDeps(now: () => Date): Required<FleetRecheckD
       } catch { return { source: 'unavailable' as const, claims: [] }; }
     },
     listLiveWorkers: () => listLiveWorkers(),
+    readTailnetPeers: () => readTailnetPeers(defaultTailnetPeersDeps()),
+    readPool: () => readPoolReach(defaultPoolReachDeps()),
   };
 }
 
@@ -243,6 +274,8 @@ export type FleetRecheckDeps = {
   listWorkBoard?: () => Promise<WorkBoardResult> | WorkBoardResult;
   listCoordination?: () => Promise<RecheckCoordinationListing> | RecheckCoordinationListing;
   listLiveWorkers?: () => Promise<LiveWorkersSnapshot> | LiveWorkersSnapshot;
+  readTailnetPeers?: () => Promise<TailnetPeers> | TailnetPeers;
+  readPool?: () => Promise<PoolReach> | PoolReach;
 };
 
 type ReaderResult<T> = { ok: true; value: T } | { ok: false };
@@ -668,6 +701,45 @@ function taskSection(
   return section;
 }
 
+function tailnetEvidence(
+  r: ReaderResult<TailnetPeers>, asOf: string, home: string,
+): FleetRecheckTailnet {
+  const empty: FleetRecheckTailnet = {
+    source: 'tailscale-status', asOf, self: UNKNOWN, online: 0, offline: 0, unknown: 0,
+    peers: [], reasons: ['tailnet: reader failed'],
+  };
+  if (!r.ok) return empty;
+  try {
+    const v = r.value;
+    const clean = (x: unknown): string => sanitizeIdentityText(String(x ?? ''), home).slice(0, 120) || UNKNOWN;
+    const peers = v.peers.map(p => ({
+      name: clean(p.name),
+      online: p.online === true ? true : p.online === false ? false : ('unknown' as const),
+      ageSeconds: typeof p.ageSeconds === 'number' && Number.isFinite(p.ageSeconds) ? p.ageSeconds : ('unknown' as const),
+    }));
+    const order = (o: boolean | 'unknown') => (o === true ? 0 : o === false ? 1 : 2);
+    return {
+      source: 'tailscale-status',
+      asOf: typeof v.asOf === 'string' ? v.asOf : asOf,
+      self: clean(v.self),
+      online: peers.filter(p => p.online === true).length,
+      offline: peers.filter(p => p.online === false).length,
+      unknown: peers.filter(p => p.online === 'unknown').length,
+      peers: peers.sort((a, b) => order(a.online) - order(b.online)).slice(0, TAILNET_CAP),
+      reasons: v.reasons.map(clean),
+    };
+  } catch {
+    return empty;
+  }
+}
+
+function poolEvidence(r: ReaderResult<PoolReach>, asOf: string): PoolReach {
+  const failed: PoolReach = { asOf, self: UNKNOWN, role: UNKNOWN, hosts: [], reasons: ['pool: reader failed'] };
+  if (!r.ok) return failed;
+  const v = r.value;
+  return v !== null && typeof v === 'object' && Array.isArray(v.hosts) && Array.isArray(v.reasons) ? v : failed;
+}
+
 const RANK: Record<FleetRecheckState, number> = { VERIFIED: 0, UNKNOWN: 1, BLOCKED: 2 };
 
 export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<FleetRecheck> {
@@ -683,15 +755,25 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
   const nowMs = now.getTime();
   const home = (() => { try { return d.homeDir(); } catch { return ''; } })();
   const asOf = Number.isFinite(nowMs) ? now.toISOString() : UNKNOWN;
+  // The default tailnet reader shares the captured verdict clock (one now()).
+  if (deps.readTailnetPeers === undefined) {
+    d.readTailnetPeers = () => readTailnetPeers({ ...defaultTailnetPeersDeps(), now: () => now });
+  }
+  if (deps.readPool === undefined) {
+    const poolDeps = defaultPoolReachDeps();
+    d.readPool = () => readPoolReach({ ...poolDeps, peers: { ...poolDeps.peers, now: () => now } });
+  }
 
-  // All six readers run concurrently, each inside its own 5 s bound.
-  const [runtime, claims, bridge, board, coordination, live] = await Promise.all([
+  // All eight readers run concurrently, each inside its own 5 s bound.
+  const [runtime, claims, bridge, board, coordination, live, tailnet, pool] = await Promise.all([
     attempt(d.readRuntimeIdentity),
     attempt(d.readFleetBoard),
     attempt(d.readChannelHealth),
     attempt(d.listWorkBoard),
     attempt(d.listCoordination),
     attempt(d.listLiveWorkers),
+    attempt(d.readTailnetPeers),
+    attempt(d.readPool),
   ]);
 
   const sections = {
@@ -708,6 +790,8 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
   const result: FleetRecheck = {
     schema: FLEET_RECHECK_SCHEMA,
     asOf,
+    tailnet: tailnetEvidence(tailnet, asOf, home),
+    pool: poolEvidence(pool, asOf),
     sections,
     overall: { state: verified ? 'VERIFIED' : worst, missing },
   };

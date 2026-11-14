@@ -4,13 +4,16 @@
  * Covers: newUsage, addUsage, overBudget thresholds, estCostUsd local=0 / cloud>0.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
+  __resetBudgetMeterednessCacheForTests,
   newUsage,
   addUsage,
   overBudget,
   estCostUsd,
+  cloudReferenceCost,
 } from '../src/core/run/budget.js';
+import * as localOnly from '../src/core/policy/local-only.js';
 import type { RunBudget, RunUsage } from '../src/core/types.js';
 
 // ---------------------------------------------------------------------------
@@ -175,6 +178,27 @@ describe('overBudget — both limits exceeded simultaneously', () => {
 // ---------------------------------------------------------------------------
 // estCostUsd — local providers always 0; cloud providers > 0
 // ---------------------------------------------------------------------------
+
+describe('cloudReferenceCost', () => {
+  it('prices the fixed reference without resolving host meteredness', () => {
+    __resetBudgetMeterednessCacheForTests();
+    const meteredness = vi.spyOn(localOnly, 'subjectMeteredness').mockImplementation(() => {
+      throw new Error('Reference pricing must not inspect the host registry');
+    });
+    try {
+      expect(cloudReferenceCost(1_000_000, 1_000_000)).toBe(18);
+      expect(meteredness).not.toHaveBeenCalled();
+    } finally {
+      meteredness.mockRestore();
+    }
+  });
+
+  it('clamps each negative token count independently', () => {
+    expect(cloudReferenceCost(-1_000_000, 1_000_000)).toBe(15);
+    expect(cloudReferenceCost(1_000_000, -1_000_000)).toBe(3);
+    expect(cloudReferenceCost(-1, -1)).toBe(0);
+  });
+});
 
 describe('estCostUsd — local providers return 0', () => {
   it('ollama costs 0 regardless of tokens', () => {
