@@ -25,12 +25,13 @@ import { readReviewPick, type ReviewPickReport } from '../core/fleet/review-pick
 import { readReviewPickAcross } from '../core/fleet/review-pick-multi.js';
 import type { LiveWorkersSnapshot } from '../core/fleet/runs-live-workers.js';
 
-const USAGE = `Usage: phm fleet review-pick [--repo <owner/name>]... [--limit <n>] [--root <abs>] [--json]
+const USAGE = `Usage: phm fleet review-pick [--repo <owner/name>]... [--limit <n>] [--timeout-ms <ms>] [--root <abs>] [--json]
 Print one currently unowned review task: an open, non-draft PR that no live
 claim (claimed.tsv, bus work claims, coordination board) or running worker
 names, with its repo, head and owner 'none'. Defaults --repo ashlrai/phantom,
---limit 100, --root ~/.ashlr-runs. Repeat --repo for one pick per repo (up to
-10 distinct repos) and an overall first pick. Read-only.`;
+--limit 100, --timeout-ms 15000, --root ~/.ashlr-runs. --timeout-ms bounds
+each source read, 1-60000. Repeat --repo for one pick per repo (up to 10
+distinct repos) and an overall first pick. Read-only.`;
 
 const REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 const DEFAULT_REPO = 'ashlrai/phantom';
@@ -80,6 +81,7 @@ export async function cmdFleetReviewPick(args: string[], deps: FleetReviewPickDe
 
   const repos: string[] = [];
   let limit: number | null = null;
+  let timeoutMs: number | null = null;
   let root = deps.runsDir;
   let json = false;
   for (let i = 0; i < args.length; i++) {
@@ -103,6 +105,15 @@ export async function cmdFleetReviewPick(args: string[], deps: FleetReviewPickDe
       limit = Number(value);
       continue;
     }
+    if (arg === '--timeout-ms' && timeoutMs === null) {
+      const value = args[++i];
+      if (!/^\d+$/.test(value ?? '') || Number(value) < 1 || Number(value) > 60_000) {
+        err(`error: --timeout-ms requires 1-60000, got: ${value ?? '(missing)'}\n${USAGE}\n`);
+        return 2;
+      }
+      timeoutMs = Number(value);
+      continue;
+    }
     if (arg === '--root') {
       const value = args[++i];
       if (value === undefined || looksLikeOption(value) || !isAbsolute(value)) {
@@ -118,6 +129,7 @@ export async function cmdFleetReviewPick(args: string[], deps: FleetReviewPickDe
 
   const options = {
     ...(limit === null ? {} : { limit }),
+    ...(timeoutMs === null ? {} : { readTimeoutMs: timeoutMs }),
     ...(root === undefined ? {} : { runsDir: root }),
     ...(deps.gh === undefined ? {} : { gh: deps.gh }),
     ...(deps.readClaimedTsv === undefined ? {} : { readClaimedTsv: deps.readClaimedTsv }),
