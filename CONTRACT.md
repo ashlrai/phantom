@@ -377,3 +377,58 @@ last tick; `generatedAt` is the read time. Recent outcomes are the producer's
 (null at the underlying 50-record cap). No free text, environment,
 credentials, paths, or job contents are returned. Partial source health must be
 checked before interpreting observations as complete.
+
+## Persistent fleet worker sessions (RQ-CMP-ORG-RUNTIME-1)
+
+`src/core/fleet/session-pool.ts` exports `sessionPoolPolicy(policy?:
+SessionPoolPolicy): Required<SessionPoolPolicy>` and
+`runSessionPool(ports: SessionPoolPorts, policy?: SessionPoolPolicy,
+signal?: AbortSignal): Promise<SessionPoolResult>`.
+
+- Policy fields: `tasks` (default 100, range 1–100), `rotateAfterTasks`
+  (25, 1–100), `rotateAfterMs` and `taskTimeoutMs` (1,800,000 each,
+  range 1–1,800,000), `renewEveryMs` (3,000, range 1–3,000). A context rotates
+  between tasks; its maximum age is rotation age plus one task timeout.
+- Ports: unique non-secret `id`, `now(): number`, `held(): boolean`,
+  `heartbeat(): void`, `pull(): Pulled | null`, `renew(JobClaim): JobClaim | null`,
+  `complete(JobClaim, resultRef: string): boolean`, `leave(): void`,
+  `open(): SessionExecutor`, `emit(SessionPoolEvent): void`. Queue ports are
+  synchronous authority transactions, matching the existing node pool. Lease
+  periods must exceed the renewal interval plus transport latency.
+- `SessionExecutor` provides `run(Pulled, AbortSignal): Promise<string>` and
+  synchronous `close(): void`, which must fence/terminate outstanding work.
+  One context handles sequential tasks; only one task is claimed at a time.
+- Result: `{ completed: number, contexts: number, reason:
+  'limit' | 'empty' | 'aborted' | 'held' | 'failed' }`. After valid setup the pool
+  owns cleanup, including failure paths. Invalid policy/identity throws.
+- Node, leader and task fences remain authoritative. Renew before execution,
+  periodically during execution and before completion. Death, cancellation,
+  timeout or lost authority stops the batch. Unfinished tasks become routable
+  at claim expiry (30 seconds by default), including after SIGKILL or failed
+  leave. Completed tasks never requeue. External effects require sink-side
+  fencing; this does not promise exactly-once effects.
+- `SessionPoolEvent`: schema `fleet.session-pool.v1`, ISO `ts`, `sessionId`,
+  `context` number and `event` (`session_start`, `session_rotate`, `launch`,
+  `finish`, `session_stop`). Task rows include unique attempt `job` and logical
+  `jobId`; finish `outcome` is `completed` or `lease-expiry`. No prompts, output,
+  credentials or fencing tokens are logged. Metrics failure stops admission.
+
+The host adapter exports `openSessionRunner(runner: string): SessionExecutor`
+and `runHostSessionPool(runner: string, policy: SessionPoolPolicy,
+signal?: AbortSignal): Promise<SessionPoolResult>`. The latter validates the
+operator-owned executable, requires existing node-pool configuration and local
+provider login, honors host pause/KILL/capacity, joins with one slot, and appends
+to `~/.ashlr-runs/metrics/jobs.jsonl`. It refuses jobs requiring secret access.
+
+`phm fleet session run --runner /absolute/owned/runner --tasks 100
+--rotate-after 25 --json` invokes a persistent `runner session` process per
+context. Stdin carries one JSON line `{protocol: "phm-session-worker/v1", job,
+claim}` per task. Stdout must return exactly one line `{protocol:
+"phm-session-worker/v1", jobId, token, resultRef}` (at most 4 KiB), matching
+that task's fence. Only an ID-shaped result reference is retained. Stderr is
+ignored. The runner must sandbox provider work, fence each effect at its sink,
+retain context between tasks, and terminate on stdin EOF. A new process resets
+context. Arbitrary queued commands are never executed. This protocol requires
+a compatible host runner; existing one-shot `runner run` programs need an
+adapter. Exit codes: 0 drained/batch limit, 1 held/interrupted/failed, 2 usage.
+Existing `fleet session <job> --json [--follow]` behavior is preserved.
