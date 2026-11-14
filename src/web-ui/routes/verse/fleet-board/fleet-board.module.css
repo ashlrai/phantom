@@ -46,3 +46,10 @@
 .replyCopied { margin: 0; color: var(--text-tertiary); }
 .resultForm { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-1) 0; }
 .resultForm label { color: var(--text-secondary); font-size: var(--text-xs-size); }
+.orderStrip { display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--text-xs-size); color: var(--text-secondary); }
+.orderNote { margin: 0; color: var(--text-tertiary); }
+.orderRows { display: flex; flex-direction: column; gap: var(--space-1); list-style: none; margin: 0; padding: 0; }
+.orderRow { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); }
+.orderState { font-family: var(--font-mono); font-weight: var(--font-weight-semibold); border-radius: var(--radius-sm); padding: 0 var(--space-1); color: var(--status-unknown-fg); background: var(--status-unknown-bg); }
+.orderState[data-state='VERIFIED'] { color: var(--status-success-fg); background: var(--status-success-bg); }
+.orderState[data-state='BLOCKED'] { color: var(--status-danger-fg); background: var(--status-danger-bg); }
