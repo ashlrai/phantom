@@ -1,5 +1,6 @@
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { abortableSleep } from '../util/await-support.js';
 import { readEmailOutbox, type EmailOutboxListing, type EmailOutboxStuckReason } from './email-outbox.js';
 
 export interface AwaitResult {
@@ -39,15 +40,6 @@ function readSource(dir: string): EmailOutboxListing {
   return readEmailOutbox(dir);
 }
 
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal.aborted) { resolve(); return; }
-    const done = (): void => { clearTimeout(timer); signal.removeEventListener('abort', done); resolve(); };
-    const timer = setTimeout(done, ms);
-    signal.addEventListener('abort', done, { once: true });
-  });
-}
-
 export async function awaitEmailOutbox(options: AwaitOptions): Promise<AwaitResult> {
   const { name, signal } = options;
   const now = options.now ?? Date.now;
@@ -72,6 +64,6 @@ export async function awaitEmailOutbox(options: AwaitOptions): Promise<AwaitResu
     }
     const remaining = deadline - now();
     if (remaining <= 0) return result({ state, timedOut: true });
-    await (options.sleep ?? sleep)(Math.min(options.pollMs, remaining), signal);
+    await (options.sleep ?? abortableSleep)(Math.min(options.pollMs, remaining), signal);
   }
 }

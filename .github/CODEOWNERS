@@ -254,6 +254,7 @@
 /test/agent-bus-adapters.test.ts @masonwyatt23
 /test/agent-bus-api-mirror.test.ts @masonwyatt23
 /test/agent-network-policy.test.ts @masonwyatt23
+/test/amplify.test.ts @masonwyatt23
 /test/anthropic-messages-client.test.ts @masonwyatt23
 /test/ask-fanout-budget.test.ts @masonwyatt23
 /test/authority-api-310b.test.ts @masonwyatt23
@@ -434,6 +435,7 @@
 /test/fleet-live-api-310b.test.ts @masonwyatt23
 /test/fleet-local-gate.test.ts @masonwyatt23
 /test/fleet-merge-age.test.ts @masonwyatt23
+/test/fleet-merge-batch-runner.test.ts @masonwyatt23
 /test/fleet-merge-delay.test.ts @masonwyatt23
 /test/fleet-merge-latency.test.ts @masonwyatt23
 /test/fleet-merge-pace-core-02.test.ts @masonwyatt23
@@ -563,12 +565,14 @@
 /test/intent-fleet-merge-observe-preservation-231s.test.ts @masonwyatt23
 /test/intent-import-native-preservation-09spz1.test.ts @masonwyatt23
 /test/intent-merge-batch-owner-qualification-292s.test.ts @masonwyatt23
+/test/intent-merge-batch-preservation-09spu2.test.ts @masonwyatt23
 /test/intent-merge-batch-recovery-09sql1.test.ts @masonwyatt23
 /test/intent-merge-batch-recovery-228s.test.ts @masonwyatt23
 /test/intent-merge-batch-restoration-09sqc1.test.ts @masonwyatt23
 /test/intent-merge-receipt-recovery-151.test.ts @masonwyatt23
 /test/intent-merge-snapshot-recovery-09spq1.test.ts @masonwyatt23
 /test/intent-merge-snapshot.recut-s130.test.ts @masonwyatt23
+/test/intent-native-stale-preservation-232s.test.ts @masonwyatt23
 /test/intent-provenance-complete-recovery-102.test.ts @masonwyatt23
 /test/intent-provenance-original-242s.test.ts @masonwyatt23
 /test/intent-provenance-owner-cli-290s.test.ts @masonwyatt23

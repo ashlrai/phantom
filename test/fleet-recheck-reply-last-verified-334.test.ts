@@ -84,7 +84,8 @@ describe('formatRecheckReply last verified line', () => {
     const base = await readFleetRecheck(deps([]));
     const blocked = (n: number): FleetRecheck => ({ ...base, overall: { ...base.overall, state: 'BLOCKED', missing: ['m'.repeat(n)] } });
     // Size the reason so the reply fits only without the evidence line.
-    const room = 880 - formatRecheckReply(blocked(0)).length;
+    // The Computers line is dropped first, so size against the reply without it.
+    const room = 880 - formatRecheckReply(blocked(0)).split('\n').filter(l => !l.startsWith('Computers:')).join('\n').length;
     const v = withLast(blocked(room), 'agent-alpha');
     expect(formatRecheckReply(blocked(room)).length).toBeLessThanOrEqual(900);
     const reply = formatRecheckReply(v);

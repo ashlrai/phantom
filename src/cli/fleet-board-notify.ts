@@ -99,6 +99,29 @@ function slackNoteSender(root: string, readConfig: () => ReturnType<typeof loadA
   };
 }
 
+/** What a durable sender receipt proves. Never `slack-delivered`: this command
+ * has no Slack transport receipt to read. */
+interface NoticeDelivery {
+  evidence: 'bus-reply-posted' | 'slack-bus-note-enqueued' | 'sender-receipt';
+  transport: 'bus-durable' | 'unconfirmed';
+  duplicate: boolean;
+}
+
+function deliveryFor(channel: string, injected: boolean, duplicate: boolean): NoticeDelivery {
+  if (injected) return { evidence: 'sender-receipt', transport: 'unconfirmed', duplicate };
+  return channel === 'slack'
+    ? { evidence: 'slack-bus-note-enqueued', transport: 'unconfirmed', duplicate }
+    : { evidence: 'bus-reply-posted', transport: 'bus-durable', duplicate };
+}
+
+function describeResult(status: string, d: NoticeDelivery | undefined): string {
+  if (!d) return status;
+  const dup = d.duplicate ? ' (already recorded)' : '';
+  if (d.evidence === 'bus-reply-posted') return `posted to bus${dup}`;
+  if (d.evidence === 'slack-bus-note-enqueued') return `queued for slack drain, transport delivery unconfirmed${dup}`;
+  return `receipt recorded, transport delivery unconfirmed${dup}`;
+}
+
 export interface BoardNotifyDeps {
   /** Channel senders; the default wires the real bus reply and the slack
    * drain note when `~/.ashlr/agent-network.toml` maps the channel. */
@@ -171,20 +194,47 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
       lines: [`board-notify: baseline recorded for ${next.length} item(s); transitions post from the next pass`] });
   }
 
+  const injected = deps.senders !== undefined;
   const senders: BoardNotifySenders = deps.senders ?? {
     bus: busReplySender(busRoot),
     slack: slackNoteSender(busRoot, deps.readConfig ?? loadAgentNetworkConfig),
   };
-  const results = await sendNotifications(plan.notices, { senders, ledgerPath });
+  // Evidence is derived from which sender produced the durable receipt, never
+  // from the receipt text: the default Slack sender only appends a bus note
+  // for the separate Slack drain, so transport delivery stays unconfirmed.
+  const evidence = new Map<BoardNotice, NoticeDelivery>();
+  const tracked: Record<string, BoardNotifySender> = {};
+  for (const [channel, sender] of Object.entries(senders)) {
+    if (!sender) continue;
+    tracked[channel] = async notice => {
+      const receipt = await sender(notice);
+      if (receipt.status === 'sent' || receipt.status === 'duplicate') {
+        evidence.set(notice, deliveryFor(channel, injected, receipt.status === 'duplicate'));
+      }
+      return receipt;
+    };
+  }
+  const results = await sendNotifications(plan.notices, { senders: tracked, ledgerPath });
   const delivered = results.filter(r => r.status === 'sent' || r.status === 'duplicate');
+  const deliveries = results.map(r => ({ itemId: r.notice.itemId, state: r.notice.state, status: r.status,
+    ...(evidence.get(r.notice) ?? { evidence: 'none', transport: 'none' }) }));
+  const count = (e: NoticeDelivery['evidence']): number => deliveries.filter(d => d.evidence === e).length;
+  const queued = count('slack-bus-note-enqueued');
+  const busPosted = count('bus-reply-posted');
   const pending = new Set(results.filter(r => r.status !== 'sent' && r.status !== 'duplicate').map(r => r.notice.itemId));
-  writeBoardNotifySnapshot(dir, snapshotAfterSend(prev, next, pending));
+  // A truncated listing is a bounded projection, not the whole board:
+  // preserve prior rows for items outside the page so their baselines —
+  // including pending undelivered updates — are not silently discarded.
+  writeBoardNotifySnapshot(dir, snapshotAfterSend(prev, next, pending, { preserveUnseen: board.truncated }));
   return emit({
     status: 'completed', transitions: transitions.length, planned: plan.notices.length,
-    sent: delivered.length, pending: pending.size, dropped: plan.dropped,
+    // `sent` is the legacy count of durable sender receipts (incl. dedupes). It
+    // is NOT a count of Slack deliveries: see `queued`, `busPosted`, `deliveries`.
+    sent: delivered.length, queued, busPosted, pending: pending.size, dropped: plan.dropped,
+    deliveries,
     lines: [
-      `board-notify: transitions=${transitions.length} planned=${plan.notices.length} sent=${delivered.length} pending=${pending.size} dropped=${plan.dropped.length}`,
-      ...results.map(r => `${r.status === 'sent' || r.status === 'duplicate' ? 'posted' : r.status} [${r.notice.sourceChannel}${r.notice.sourceThread ? ` ${r.notice.sourceThread}` : ''}] ${r.notice.text}${r.reason ? ` (${r.reason})` : ''}`),
+      `board-notify: transitions=${transitions.length} planned=${plan.notices.length} receipts=${delivered.length} queued=${queued} bus-posted=${busPosted} pending=${pending.size} dropped=${plan.dropped.length}`,
+      ...results.map(r => `${describeResult(r.status, evidence.get(r.notice))} [${r.notice.sourceChannel}${r.notice.sourceThread ? ` ${r.notice.sourceThread}` : ''}] ${r.notice.text}${r.reason ? ` (${r.reason})` : ''}`),
       ...plan.dropped.map(d => `dropped ${d.itemId}: ${d.reason}`),
     ],
   });

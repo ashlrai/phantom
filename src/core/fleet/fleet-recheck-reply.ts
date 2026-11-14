@@ -5,12 +5,16 @@
  *
  * The formatter is pure: no I/O, no clock reads, only the verdict's own asOf.
  * Output is one plain-text block capped at 900 characters: five evidence lines
- * plus a verdict line, and one optional "Last verified:" evidence line right
+ * plus a verdict line. A "Computers:" evidence line (which fleet computers this
+ * host sees on the tailnet; see recheck-computers-line.ts) follows the Runtime
+ * line. It is the first line dropped when the reply would exceed the cap, then
+ * Running job, then Last verified, so the verdict line is never clipped.
+ * One optional "Last verified:" evidence line sits
  * after the Task line when the task section carries lastVerified (the newest
- * finished item with a named owner and claim receipt). That line is dropped
- * first when the reply would exceed the cap, so evidence never clips the
- * verdict line. One optional "Running job:" line follows (dropped before Last verified) when task.liveWorker carries process-table evidence;
- * it is explicitly not a claim. A VERIFIED reply closes with "Evidence only; this reply
+ * finished item with a named owner and claim receipt), dropped last of the
+ * three. One optional "Running job:" line follows it (dropped before Last
+ * verified) when task.liveWorker carries process-table evidence; it is
+ * explicitly not a claim. A VERIFIED reply closes with "Evidence only; this reply
  * grants no dispatch."; anything else names what is missing. The words
  * 'routed' and 'dispatched' never appear — evidence is observed, not claimed.
  *
@@ -20,6 +24,8 @@
  * leak it into a thread reply.
  */
 import type { FleetRecheck } from './fleet-recheck.js';
+import { formatComputersLine } from './recheck-computers-line.js';
+import { formatPoolLine } from './recheck-pool-line.js';
 import { sanitizeIdentityText } from './runtime-identity.js';
 
 /** Hard cap on the whole reply, including the trailing ellipsis when clipped. */
@@ -58,10 +64,14 @@ export function formatRecheckReply(r: FleetRecheck): string {
   const running = lw === null ? null
     : `Running job: ${scrub(lw.job)} · ${scrub(lw.repo)} · lane ${scrub(lw.lane)}/${scrub(lw.tier)}`
       + ` · up ${lw.ageSeconds === null ? 'unknown' : `${lw.ageSeconds}s`} · as of ${scrub(lw.asOf)} (process evidence, not a claim)`;
-  const build = (withLast: boolean, withRunning: boolean): string => [
+  const computers = formatComputersLine(r.tailnet, scrub);
+  const pool = formatPoolLine(r.pool, scrub);
+  const build = (withLast: boolean, withRunning: boolean, withComputers: boolean, withPool = false): string => [
     `Phantom recheck ${r.overall.state} · as of ${scrub(r.asOf)} · source fleet-recheck`,
     `Runtime: ${scrub(runtime.host)} · ${scrub(runtime.installedVersion)} · fleet state ${age}`
       + `${runtime.fleetState.stale === true ? ' · stale' : ''} (${runtime.state})`,
+    ...(withComputers && computers !== null ? [computers] : []),
+    ...(withComputers && withPool ? [pool] : []),
     `Claims: ${claims.active === null ? 'unknown' : claims.active} live, top: ${top} (${claims.state})`,
     `Bridge: slack ${channel('slack')}, imessage ${channel('imessage')}`
       + `${bridge.missingBridge === null ? '' : ` · missing: ${scrub(bridge.missingBridge)}`} (${bridge.state})`,
@@ -76,8 +86,10 @@ export function formatRecheckReply(r: FleetRecheck): string {
         ? `BLOCKED on: ${missing}`
         : `UNKNOWN: ${missing}`,
   ].join('\n');
-  let text = build(true, true);
-  if (text.length > REPLY_MAX) text = build(true, false);
-  if (text.length > REPLY_MAX) text = build(false, false);
+  let text = build(true, true, true, true);
+  if (text.length > REPLY_MAX) text = build(true, true, true);
+  if (text.length > REPLY_MAX) text = build(true, true, false);
+  if (text.length > REPLY_MAX) text = build(true, false, false);
+  if (text.length > REPLY_MAX) text = build(false, false, false);
   return text.length <= REPLY_MAX ? text : `${text.slice(0, REPLY_MAX - 1)}…`;
 }
