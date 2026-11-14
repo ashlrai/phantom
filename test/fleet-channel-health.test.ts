@@ -14,11 +14,14 @@ const run = (slack: ChannelSource, imessage: ChannelSource = src()) =>
 afterEach(() => vi.restoreAllMocks());
 
 describe('channel health', () => {
-  it('LIVE when alive and every recent inbound has a later reply', async () => {
+  it('a later reply cannot clear pending inbound; uncorrelated traffic is not LIVE', async () => {
     const r = await run(src({ inbound: () => [ago(30), ago(20)], replies: () => [ago(19)] }));
     const s = r.channels[0]!;
-    expect(s).toMatchObject({ channel: 'slack', state: 'LIVE', processAlive: true, runtimeHost: 'fake-host', unansweredCount: 0, missing: [] });
+    expect(s).toMatchObject({ channel: 'slack', state: 'DEGRADED', processAlive: true, runtimeHost: 'fake-host', unansweredCount: 2 });
+    expect(s.missing).toContain('slack reply correlation unavailable');
+    expect(s.proof).toMatchObject({ requestCoverage: 'unproven', futureDatedCount: 0 });
     expect(s.lastInboundAt).toBe(ago(20));
+    expect(s.lastReplyAt).toBe(ago(19));
     expect(s.asOf).toBe(NOW.toISOString());
   });
   it('LIVE inside the 10 minute reply grace; DEGRADED beyond it', async () => {
