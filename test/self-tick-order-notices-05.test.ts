@@ -28,7 +28,7 @@ afterEach(() => { rmSync(home, { recursive: true, force: true }); });
 
 it('orders order-notices after inbox-acks and owner-live, before landed-sweep', () => {
   expect(SELF_TICK_STEP_ORDER).toEqual([
-    'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'owner-live', 'order-notices', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep',
+    'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'owner-live', 'order-notices', 'board-notify', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep',
   ]);
 });
 
