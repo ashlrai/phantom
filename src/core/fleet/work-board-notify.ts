@@ -1,7 +1,8 @@
 /** Board → source-thread notifier for Mason/Dot's Nov12 22:29 + 22:30 ET
  * orders: only meaningful work-state changes go back to the thread the
  * request came from — ASSIGNED (named owner + durable claim receipt),
- * BLOCKED (named dependency) and VERIFIED (a PR, head or test artifact).
+ * BLOCKED (named dependency) and VERIFIED (every supplied PR, head,
+ * tests or artifact field).
  * RUNNING and RECEIVED stay silent; conversational acknowledgments are
  * never posted.
  *
@@ -141,7 +142,8 @@ export interface BoardNotice {
   /** sha256 prefix of the meaningful-delta material; the durable dedupe
    * identity and the sender idempotency input. */
   delta: string;
-  /** The one fact the thread needs: owner, dependency or artifact. */
+  /** The bounded evidence line the thread needs: owner + claim receipt,
+   * the dependency, or the labeled verification fields. */
   detail: string;
   /** Evidence source label, e.g. `claim:<receipt>` or `bus-reply:<id>`. */
   source: string;
@@ -247,15 +249,25 @@ export function boardNoticeText(state: BoardNotifyState, itemId: string, asOf: s
   return scrubSecrets(`${state} ${field(itemId, 80)} as of ${field(asOf, 40)} — ${detail} (source: ${field(source, 120)})`);
 }
 
+/** The bounded evidence a postable state cites: ASSIGNED names the owner
+ * with its durable claim receipt labeled alongside, BLOCKED names the
+ * dependency, and VERIFIED joins every supplied field with its label so
+ * combined evidence stays parseable. A lone artifact already cites
+ * itself, so it keeps the unlabeled single-field form. Every untrusted
+ * value goes through `field`, keeping the line single and bounded. */
 function detail(t: BoardTransition, state: BoardNotifyState): string | null {
   const e = t.evidence;
-  if (state === 'ASSIGNED') return e.owner ? field(e.owner, 120) : null;
+  if (state === 'ASSIGNED') {
+    if (!e.owner || !e.claimReceipt) return null;
+    return `${field(e.owner, 120)} (claim ${field(e.claimReceipt, 160)})`;
+  }
   if (state === 'BLOCKED') return e.dependency ? field(e.dependency, 160) : null;
-  if (e.pr !== undefined) return `PR #${e.pr}`;
-  if (e.head) return `head ${field(e.head, 40)}`;
-  if (e.artifact) return field(e.artifact, 160);
-  if (e.tests) return `tests ${field(e.tests, 120)}`;
-  return null;
+  const parts: string[] = [];
+  if (e.pr !== undefined) parts.push(`PR #${e.pr}`);
+  if (e.head) parts.push(`head ${field(e.head, 40)}`);
+  if (e.tests) parts.push(`tests ${field(e.tests, 120)}`);
+  if (e.artifact) parts.push(parts.length === 0 ? field(e.artifact, 160) : `artifact ${field(e.artifact, 160)}`);
+  return parts.length === 0 ? null : parts.join(' ');
 }
 
 /** The evidence each postable state must cite; null means it may post. */
