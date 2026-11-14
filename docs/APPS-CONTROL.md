@@ -1,71 +1,126 @@
 # Apps control
 
-`phm apps` lets Phantom open, quit, raise and check other desktop apps on your
-Mac, but only the apps you name. It is off until you add some.
+The Phantom desktop Fleet Host pane's **Allowed apps** card and `phm apps` use
+one typed app-control service. Enrollment is empty by default. Actions are
+open, focus, quit and status; app-level requests can go to Needs you without
+operating the desktop.
 
 ## Allow an app
 
 Create `~/.ashlr/apps-allow.json`. A missing or empty file allows nothing.
+Names, bundle ids and objects remain supported. At most 64 entries; names
+and bundle ids must be unambiguous, case-insensitively. Invalid action policies
+and unknown object fields fail closed.
+
+This example is configuration to review and copy, not automatic enrollment:
 
 ```json
-{ "apps": ["Notes", { "name": "Pages", "bundleId": "com.apple.iWork.Pages" }] }
+{
+  "apps": [
+    { "name": "Devin", "actions": ["open", "focus", "quit", "status"] },
+    { "name": "Codex", "actions": ["open", "focus", "quit", "status"] },
+    { "name": "Claude", "actions": ["open", "focus", "quit", "status"] },
+    { "name": "Cursor", "actions": ["open", "focus", "quit", "status"] },
+    { "name": "Grokbot", "actions": ["open", "focus", "quit", "status"] },
+    { "name": "Messages", "actions": ["open", "focus", "status"], "mode": "request" },
+    { "name": "Safari", "bundleId": "com.apple.Safari", "actions": ["open", "focus", "status"] },
+    { "name": "Chrome", "bundleId": "com.google.Chrome", "actions": ["open", "focus", "status"] },
+    { "name": "Phantom", "bundleId": "ai.ashlr.desktop", "actions": ["open", "focus", "quit", "status"] }
+  ]
+}
 ```
 
-An entry is an app name, a bundle id, or an object with both. Up to 64 entries.
-The target you pass must equal an entry's name or bundle id (case-insensitive).
+Use the app's actual installed name; optional `bundleId` pins its identity and
+allows opening an app that is stopped. Names and ids are not guessed for Devin,
+Codex, Claude, Cursor or Grokbot. Without a bundle id a stopped app cannot be
+opened. Other browsers use the same explicit enrollment mechanism.
+
+`actions` is an optional array drawn from `open`, `focus`, `quit`, `status`.
+Omitting it preserves all four actions; an empty array permits none.
+`mode` is `direct` by default or `request`. Request mode queues mutations for
+review while status stays a read. Phantom always has effective request mode,
+even if its entry says direct. This never removes Phantom from the desktop
+screen-control denylist. The system denylist and tier ceilings still apply to
+other apps regardless of enrollment. Browser read-only grants do not permit
+pressing Quit; omit quit from their policy as above.
 
 ## Commands
 
 ```sh
 phm apps list --json
-phm apps status Notes --json
-phm apps quit Notes --json
-phm apps open com.apple.Notes --json
-phm apps focus Notes --json
+phm apps status Cursor --json
+phm apps open com.apple.Safari --json
+phm apps focus Cursor --json
+phm apps quit Cursor --json
+phm apps request focus Cursor --json
+phm apps request quit Phantom --json
+phm comms status --json
+phm fleet mission --json
+phm fleet needs --json
 ```
 
-- `list` shows only the allowed apps and whether each is running.
-- `status` says whether an allowed app is running and frontmost.
-- `quit` presses the app's own Quit menu item.
-- `open` and `focus` start or raise an app.
+Without `--json` the same facts print as text. Exit codes: 0 done, 1 refused
+or failed, 2 usage error, 3 successfully recorded in Needs you.
 
-Without `--json` the same facts print as plain text.
+The list returns `apps` with `name`, `bundleId`, effective `actions` and `mode`,
+`running` and `frontmost` (null when unavailable), plus `connected` and `logged`.
+Action reports contain `ok`, `action`, `app`, `outcome` (`done`, `refused`,
+`failed`, `needs-you`), `code`, `detail`, `running`, `frontmost`, `logged`.
+A failed needs-you write reports `needs-you-unavailable`, never a queued request.
 
-Exit codes: 0 done, 1 refused or failed, 2 usage error, 3 sent to needs-you.
+## Typed desktop API
 
-JSON result: `ok`, `action`, `app`, `outcome` (`done`, `refused`, `failed`,
-`needs-you`), `code`, `detail`, `running`, `frontmost`, `logged`.
+On the existing loopback server, GET `/api/verse/apps/control` returns the same
+list; POST accepts exactly `{ "action": "focus", "app": "Cursor" }` or
+`{ "action": "quit", "app": "Phantom", "request": true }`. Status is also a
+POST action; reads do not execute app mutations. Unknown fields and malformed
+requests return 400. POST requires dispatch enabled and the existing JSON
+mutation-token gate. Both routes require a local peer and reject the mobile
+channel. No new listener or authentication mechanism is added.
 
-## What it will not do
+HTTP 200 means done, 202 means recorded in Needs you, 422 means refused or
+failed, 503 means unavailable. The adapter uses its own console grant scope;
+a caller cannot select another agent's session or borrow its grants. The
+Allowed apps card displays only enrolled policy actions and disables controls
+when its reading fails. The separate Managed apps recovery diagnostics use
+the existing fixed-catalog host-script API; their inventory does not enroll
+apps in this allowlist.
 
-- It acts on an app only if it is in the allowlist. Anything else is refused.
-- It runs only through the desktop adapter (`src/core/verse/desktop-adapters.ts`),
-  which speaks the `computer_*` tools. Your per-chat grant, tier ceilings, the
-  confirmation card, the denylist (Phantom itself, password managers, the
-  keychain), takeover and KILL all still apply.
-- It does not type, press keys, or read what is inside an app. To decide whether
-  a quit is safe it reads control labels and window titles only.
-- It does not change TCC grants or touch the TCC helper.
+## Unsaved work and limits
 
-## Unsaved work
+Quit reads control labels and window titles for Save/Don't Save controls,
+edited/unsaved titles or an open sheet. A positive signal, unreadable, empty
+or truncated tree blocks quitting and records a Needs you item. No field values
+or app contents are returned by apps control. Save or discard in the app,
+then retry through the same policy checks. The adapter presses only the app's
+own Quit menu item, never a discard or save confirmation.
 
-Before quitting, Phantom looks for a Save or Don't Save button, a window titled
-edited or unsaved, or an open sheet. If it finds one, or cannot read the app at
-all, it does not quit. It adds an item to your needs-you list (`NEEDS-MASON.md`)
-and exits 3. Save or discard in the app, then run the quit again. The check errs
-toward asking you.
+Every operation writes feed intent and result entries, including refusals.
+If intent cannot be recorded, no action runs. KILL and comms pause block app
+mutations. Actions retain the desktop adapter's per-chat grants, tier ceilings,
+confirmation cards, takeover and native KILL enforcement. No typing,
+keystrokes, message reads or TCC changes are added.
 
-## The feed
+Open/focus need the host LaunchServices launcher. An unconnected macOS shell
+can open an explicitly allowlisted bundle id with `/usr/bin/open -b`. A
+connected desktop that refuses its app listing cannot use that fallback.
+Status/focus/quit otherwise need a desktop connection; list preserves unknown
+state when disconnected. The API uses the existing desktop relay and refuses
+when it is unavailable.
 
-Every action writes two entries to the bus inbox that feeds the fleet feed: one
-before it runs and one with the result, including refusals. If the first entry
-cannot be written the action does not run.
+## Fleet jobs and Phantom self-control
 
-## Connection and launcher
+A fleet job can run `phm apps request focus Cursor --json` rather than operate
+an app. Allowlist and action policy are checked before queuing. A request-only
+entry also turns ordinary mutation commands into requests. No desktop or
+launcher calls run for either case.
 
-Actions need a desktop connection (a Phantom desktop chat that holds the app
-grant). From a plain shell there is none, so actions fail with "not connected"
-and nothing happens. `list` still shows your allowlist with state unknown.
-
-No `computer_*` tool starts or raises an app, so `open` and `focus` also need a
-launcher supplied by the host. Without one they are refused as `unsupported`.
+The request appends to `NEEDS-MASON.md`, which the existing Fleet inbox and
+`phm fleet needs --json` read. The existing resolve path records the owner's
+reply on Agent Bus. The job reads that reply and decides its next step under
+current policy; neither a request nor resolution automatically executes an
+action or grants a transport. Unsafe quits must be retried only after unsaved
+work is handled. Phantom lifecycle requests stay request-only; its own session
+work runs through the existing typed session API, not screen control. Outbound
+messages still use the separate drafts flow and its send policy. An app request
+is never send authority.

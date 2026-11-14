@@ -8,6 +8,8 @@ Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent
 
 ## Start
 
+- [Ecosystem onboarding](ECOSYSTEM-ONBOARDING.md): `phm onboard --ecosystem --json` detects existing capabilities without values; one explicit grant wires the reviewed bundle and returns per-capability results.
+
 `phm connect` is not available in this checkout. Use `phantom add NAME` in a
 trusted terminal for a new Phantom Secrets name; keep credentials out of chat.
 Approval cards record consent and do not collect credentials.
@@ -23,13 +25,16 @@ Approval cards record consent and do not collect credentials.
 - [Agent roster](AGENT-ROSTER.md): Unified live session roster. `phm agents roster --json` and MCP `phm_agent_roster`. Unknown sources stay unknown.
 - [Bus threads and task board](BUS-THREADS.md): `phm bus thread|task` shared local board; task claims are real fenced SharedStore queue claims with atomic pre-execution handoff. Cooperative routing labels only, no execution authority.
 - [Agent operations](AGENT-OPERATIONS.md): Cold-start checklist for building and operating Phantom from source.
+- [Tier-scaled session scope](QUEUE.md#tier-scaled-session-scope): Frontier 40 files / 600 lines; work 15 / 200; mid 8 / 120; fast 2 / 80. One mergeable PR per job, explicit narrower limits preserved. Offline lint JSON and restock dry-run examples.
+- [Lane tool parity audit](AGENT-TOOLCHAIN.md#lane-tool-parity-audit-rq-delegate-scope-1): MCP servers supplied by each launch path, unverified lane state and gaps to flag before assigning work.
+- [Org responsibility assignment](AGENT-NETWORK.md#assign-responsibilities-without-expanding-authority): Use org show, member opt-in and org plan within contributed limits; proposals and Mason-only actions.
 - [Automatic work](AUTOMATIC-OUTCOMES.md): Chat routing and fleet outcomes.
 - [Autonomy setup](AUTONOMY-SETUP.md): Dormant macOS autonomy. Status is not activation.
 - [Friction loop doctrine](doctrine/FRICTION-LOOP.md): How autonomy work is chosen — delegate everything, find where delegation stops for a human step, remove the step without removing the protection, and measure the signal after merge.
 
 ## CLI
 
-- [Apps control](APPS-CONTROL.md): Manage allowlisted desktop apps (`~/.ashlr/apps-allow.json`, empty by default). Commands: `phm apps list|open|quit|focus|status [--json]`. Runs through the desktop adapter only, logs every action to the feed, sends a quit with unsaved work to needs-you.
+- [Apps control](APPS-CONTROL.md): Manage allowlisted desktop apps (`~/.ashlr/apps-allow.json`, empty by default). Commands: `phm apps list|open|quit|focus|status [--json]`, `phm apps request focus Cursor --json`. Per-app actions and request mode; shared Fleet Host Allowed apps card and typed `/api/verse/apps/control` API. Logged to the feed; unsaved quits and Phantom lifecycle requests go to needs-you without automatic execution.
 - [Desktop control](DESKTOPCTL.md): Drive Claude, Codex and Devin desktop apps as interchangeable resources through the `computer_*` tools (`~/.ashlr/desktopctl.json`, off by default). Commands: `phm desktopctl capabilities|status|run <resource> [--json]`. Reports TCC grant state per resource, never prompts for or changes grants; `browser` is read-only.
 - [Desktop operator](DESKTOP-OPERATOR.md): Read and drive Phantom, Devin, Codex, Claude, Grok and Cursor on this Mac. Commands: `phm desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]`. Writes post a bus intent first. `phm desktop doctor --json` reports Accessibility and Screen Recording for the `desktop-operator` binary.
 - [Drafts](DRAFTS.md): Outbound mail to anyone but you is written as a draft and surfaces as a needs-you item. Commands: `phm drafts list|show|approve|reject --json`. Example: `phm drafts list --status pending --json`. Approve records your decision and does not send.
@@ -435,6 +440,7 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Prompt-variant A/B evaluation and promotion](router/prompt-ab.md): phm eval prompts --dataset jobs.jsonl [--spec experiment.json] [--promote] [--write registry.json] [--check registry.json] [--json] replays prompt variants per job class over a...
 - [Dead code and stale artifact audit](strategy/DEADCODE-REPORT.md): Job: RQ-RETHINK-DEADCODE-1. Observed: 2026-11-13.
 - [Phantom end-state architecture](strategy/ENDSTATE.md): Status: proposed architecture, docs and spec only. Job: RQ-RETHINK-ENDSTATE-1.
+- [Phantom module map](strategy/MODULE-MAP.md): Snapshot of the source tree at 00b72c2ea60de124051bb687a80f94663378d3b5 on 2026-11-13, with file-level dependencies, test references, history and host-script evidence.
 - [Strategy: the Spawn fleet model vs Phantom's architecture](strategy/spawn-fleet-model.md): Job: RQ-SWE5-RESEARCH-LOOP (pool claude, tier frontier, repo phantom).
 - [Changed-files verification (scripts/verify-changed.mjs)](verify-changed.md): Run the local pre-merge check from the repository root:
 <!-- docs-index:end -->
@@ -456,3 +462,5 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [PR triage](PR-TRIAGE.md): read-only open PR verdicts and JSON schema.
 
 - [oMLX dispatcher lane](../contrib/mac/README.md): memory-capped `omlx` pool, `127.0.0.1` health only, `phm lanes --json`; Security combined RETUNE pin required before installation.
+
+- [Typed routing decisions](ROUTING.md): `phm route decide --input request.json --json` uses local fast, bounded Jev escalation and deterministic fallback over eligible candidates. Advisory dispatcher records go to `metrics/route.explain.jsonl`; launches stay unchanged.
