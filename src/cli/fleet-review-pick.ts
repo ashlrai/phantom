@@ -22,13 +22,15 @@ import type { CloudGh } from '../core/cloud/pr-actions.js';
 import type { BusWorkClaimsInspection } from '../core/fleet/bus-work-claims.js';
 import type { FleetBoard } from '../core/fleet/coordination.js';
 import { readReviewPick, type ReviewPickReport } from '../core/fleet/review-pick.js';
+import { readReviewPickAcross } from '../core/fleet/review-pick-multi.js';
 import type { LiveWorkersSnapshot } from '../core/fleet/runs-live-workers.js';
 
-const USAGE = `Usage: phm fleet review-pick [--repo <owner/name>] [--limit <n>] [--root <abs>] [--json]
+const USAGE = `Usage: phm fleet review-pick [--repo <owner/name>]... [--limit <n>] [--root <abs>] [--json]
 Print one currently unowned review task: an open, non-draft PR that no live
 claim (claimed.tsv, bus work claims, coordination board) or running worker
 names, with its repo, head and owner 'none'. Defaults --repo ashlrai/phantom,
---limit 100, --root ~/.ashlr-runs. Read-only.`;
+--limit 100, --root ~/.ashlr-runs. Repeat --repo for one pick per repo (up to
+10 distinct repos) and an overall first pick. Read-only.`;
 
 const REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 const DEFAULT_REPO = 'ashlrai/phantom';
@@ -76,20 +78,20 @@ export async function cmdFleetReviewPick(args: string[], deps: FleetReviewPickDe
   const err = deps.stderr ?? ((text: string) => { process.stderr.write(text); });
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { out(`${USAGE}\n`); return 0; }
 
-  let repo: string | null = null;
+  const repos: string[] = [];
   let limit: number | null = null;
   let root = deps.runsDir;
   let json = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--json' && !json) { json = true; continue; }
-    if (arg === '--repo' && repo === null) {
+    if (arg === '--repo') {
       const value = args[++i];
       if (!REPO_RE.test(value ?? '')) {
         err(`error: --repo requires <owner/name>, got: ${value ?? '(missing)'}\n${USAGE}\n`);
         return 2;
       }
-      repo = value!;
+      repos.push(value!);
       continue;
     }
     if (arg === '--limit' && limit === null) {
@@ -114,8 +116,7 @@ export async function cmdFleetReviewPick(args: string[], deps: FleetReviewPickDe
     return 2;
   }
 
-  const report = await readReviewPick({
-    repo: repo ?? DEFAULT_REPO,
+  const options = {
     ...(limit === null ? {} : { limit }),
     ...(root === undefined ? {} : { runsDir: root }),
     ...(deps.gh === undefined ? {} : { gh: deps.gh }),
@@ -124,7 +125,16 @@ export async function cmdFleetReviewPick(args: string[], deps: FleetReviewPickDe
     ...(deps.readBoard === undefined ? {} : { readBoard: deps.readBoard }),
     ...(deps.listWorkers === undefined ? {} : { listWorkers: deps.listWorkers }),
     ...(deps.now === undefined ? {} : { now: deps.now }),
-  });
+  };
+  if (repos.length > 1) {
+    const report = await readReviewPickAcross(repos, options);
+    out(json ? `${JSON.stringify(report)}\n` : [
+      ...report.repos.map(row => `${row.repo}: ${row.picked === null ? 'none' : `#${row.picked.pr}`} (${row.reason})`),
+      `first: ${report.first === null ? `none (${report.reason})` : `${report.first.repo}#${report.first.pr}`}`,
+    ].join('\n') + '\n');
+    return report.repos.some(row => row.source.prs === 'unavailable' || row.source.unavailable.length > 0) ? 1 : 0;
+  }
+  const report = await readReviewPick({ ...options, repo: repos[0] ?? DEFAULT_REPO });
   out(json ? `${JSON.stringify(report)}\n` : textReport(report));
   return report.source.prs === 'unavailable' || report.source.unavailable.length > 0 ? 1 : 0;
 }
