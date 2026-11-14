@@ -299,8 +299,9 @@ export function InterjectBox() {
       <div className={styles.ack}><span className={styles.dot} data-state={ackState(entryTime(entry.at), newestPass)} aria-hidden="true" />{ackText(ackState(entryTime(entry.at), newestPass))}</div>
       {(() => {
         const outcome = interjectOutcome(entry.at, ackState(entryTime(entry.at), newestPass) === 'seen', trace);
-        return <div className={styles.ack} data-outcome={outcome.stage}>
-          {outcome.href ? <a href={outcome.href} target="_blank" rel="noopener noreferrer">{outcome.text}</a> : outcome.text}
+        const { state, missing } = outcome.contract;
+        return <div className={styles.ack} data-outcome={outcome.stage} data-contract={state} title={missing.length ? `missing: ${missing.join(', ')}` : undefined}>
+          {`${state} · `}{outcome.href ? <a href={outcome.href} target="_blank" rel="noopener noreferrer">{outcome.text}</a> : outcome.text}
         </div>;
       })()}
     </li>)}</ol> : <p>{read.status === 'error' ? 'The inbox tail is unavailable.' : read.data ? 'Nothing in the inbox yet.' : 'Reading the inbox…'}</p>}
