@@ -17,6 +17,8 @@ import {
 } from './fleet-inbox.js';
 import { readFleetLanes } from './fleet-lanes.js';
 import { parseFleetSelfTickLastArgs, readFleetSelfTickLast } from './fleet-self-tick.js';
+import { MAX_FLEET_RECHECK_HISTORY, DEFAULT_FLEET_RECHECK_HISTORY, parseFleetRecheckArgs, parseFleetRecheckHistoryArgs,
+  readFleetRecheckTool, readFleetRecheckHistoryTool, type FleetRecheckHistoryArgs } from './fleet-recheck.js';
 import { readFleetUsageResets } from './fleet-usage-resets.js';
 import {
   MAX_FLEET_RESET_HISTORY, parseFleetResetHistoryArgs, readFleetResetHistory, type FleetResetHistoryArgs,
@@ -215,6 +217,8 @@ export interface FleetReaders {
   ciReceiptAwaitBatch?: (input: FleetCiReceiptAwaitBatchArgs, signal: AbortSignal) => Promise<unknown>;
   releaseCandidate?: (input: FleetReleaseCandidateArgs) => Promise<unknown>;
   intentRead?: (input: FleetIntentReadArgs) => Promise<unknown>;
+  recheck?: () => Promise<unknown>;
+  recheckHistory?: (input: FleetRecheckHistoryArgs) => Promise<unknown>;
 }
 
 /** SDK transport injection permits a real protocol round trip without a child. */
@@ -761,11 +765,26 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations,
     },
+    {
+      name: 'fleet_recheck',
+      description: 'Run the read-only fleet recheck verdict: runtime identity, the claims ledger, Slack/iMessage bridge channel health and the work board joined into per-section VERIFIED / UNKNOWN / BLOCKED states with missing reasons — the same readFleetRecheck() evidence as `ashlr fleet recheck`. Evidence only; it grants no dispatch, claim, send or merge authority. Takes no arguments: no caller root, path or cwd is accepted, and the tool never appends to the recheck log or writes anything.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_recheck_history',
+      description: 'Read the retained recheck verdict rows from the local recheck log (fleet/recheck-log.jsonl): newest-first rows with per-section states and recorded missing reasons, plus skipped (malformed-line) and missing (no log yet) flags — the same readRecheckRecords() evidence as `ashlr fleet recheck-record --last`. Evidence only; it grants no dispatch, claim, send or merge authority. `last` caps returned rows (1–50, default 5). No caller root, path or cwd is accepted, and the tool never records a row or writes anything.',
+      inputSchema: {
+        type: 'object', properties: { last: { type: 'integer', minimum: 1, maximum: MAX_FLEET_RECHECK_HISTORY, default: DEFAULT_FLEET_RECHECK_HISTORY } },
+        additionalProperties: false,
+      },
+      annotations,
+    },
   ] }));
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_work_board' && name !== 'fleet_runtime_identity' && name !== 'fleet_channel_health' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last') {
+    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_work_board' && name !== 'fleet_runtime_identity' && name !== 'fleet_channel_health' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -811,10 +830,14 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const ciReceiptAwaitBatch = name === 'fleet_ci_receipt_await_batch' ? parseFleetCiReceiptAwaitBatchArgs(args) : null;
     const intentRead = name === 'fleet_intent_read' ? parseFleetIntentReadArgs(args) : null;
     const selfTickLastArgs = name === 'fleet_self_tick_last' ? parseFleetSelfTickLastArgs(args) : null;
+    const recheckArgs = name === 'fleet_recheck' ? parseFleetRecheckArgs(args) : null;
+    const recheckHistory = name === 'fleet_recheck_history' ? parseFleetRecheckHistoryArgs(args) : null;
     const releaseCandidate = name === 'fleet_release_candidate' ? parseFleetReleaseCandidateArgs(args) : null;
     if (name === 'fleet_work_board' ? workBoard === null :
         name === 'fleet_intent_read' ? intentRead === null :
         name === 'fleet_self_tick_last' ? selfTickLastArgs === null :
+        name === 'fleet_recheck' ? recheckArgs === null :
+        name === 'fleet_recheck_history' ? recheckHistory === null :
         name === 'fleet_release_candidate' ? releaseCandidate === null :
         name === 'fleet_staging_inventory' ? fleetStagingInventory === null :
         name === 'fleet_staging_inventory_retry' ? retry === null :
@@ -867,6 +890,8 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_channel_health' ? await readFleetChannelHealth(readers.channelHealth)
         : name === 'fleet_lanes' ? await (readers.lanes ?? readFleetLanes)()
         : name === 'fleet_self_tick_last' ? await (readers.selfTickLast ?? (() => readFleetSelfTickLast()))()
+        : name === 'fleet_recheck' ? await (readers.recheck ?? (() => readFleetRecheckTool()))()
+        : name === 'fleet_recheck_history' ? await (readers.recheckHistory ?? readFleetRecheckHistoryTool)(recheckHistory as FleetRecheckHistoryArgs)
         : name === 'fleet_usage_resets' ? await (readers.usageResets ?? readFleetUsageResets)()
         : name === 'fleet_reset_group_await' ? await (readers.resetGroupAwait ?? readFleetResetGroupAwait)(resetGroupAwait as FleetResetGroupAwaitArgs)
         : name === 'fleet_reset_await' ? await (readers.resetAwait ?? readFleetResetAwait)(resetAwait as FleetResetAwaitArgs)
