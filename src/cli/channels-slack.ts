@@ -63,6 +63,8 @@ function printStatus(status: SlackBridgeStatus): void {
   console.log(`team identities: slack=${status.teamIdentities.slack} total=${status.teamIdentities.total}`);
   console.log(`comms confirmedByMason: ${cell(status.comms.confirmedByMason)}`);
   console.log(`journal: ${status.journal.state} ingested=${status.journal.ingested} ignored=${status.journal.ignored} last=${cell(status.journal.lastAt)}`);
+  const r = status.replies;
+  console.log(`replies: ${r.state} answered=${r.answered} unanswered=${r.unanswered} oldest=${cell(r.oldestUnansweredAt)} uncertain=${r.uncertainSends}`);
   console.log(`ready: ${cell(status.ready)}`);
   // Configuration readiness is not transport evidence: only an authenticated
   // probe/run observes health, so status reports the honest unknown triple.
