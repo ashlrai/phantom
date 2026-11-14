@@ -8,6 +8,7 @@
  */
 import { formatRelative } from '../autonomy/format.js';
 import { formatAge, type RuntimeIdentityView } from '../fleet-host/runtime-identity-model.js';
+import type { CoordLedgerView } from './coordination-claims-query.js';
 import type { ChannelHealthRow, ChannelHealthView } from '../fleet-channels/channel-health-model.js';
 
 export type CoordVerdict = 'REACHABLE' | 'BLOCKED' | 'LOADING';
@@ -47,6 +48,8 @@ export interface CoordAnswerInput {
   runtime: RuntimeIdentityView | null | undefined;
   channels: ChannelHealthView | undefined;
   board: CoordBoardView | null | undefined;
+  /** Advisory claims ledger — evidence only; never affects the verdict. */
+  ledger?: CoordLedgerView | null;
   now: number;
 }
 
@@ -64,7 +67,7 @@ function newestFirst(a: CoordBoardItem, b: CoordBoardItem): number {
   return rank(b) - rank(a);
 }
 
-export function deriveCoordAnswer({ runtime, channels, board, now }: CoordAnswerInput): CoordAnswer {
+export function deriveCoordAnswer({ runtime, channels, board, ledger, now }: CoordAnswerInput): CoordAnswer {
   const missing: string[] = [];
   const rows: CoordAnswerRow[] = [];
   const row = (label: string, value: string, ok: boolean | 'unknown') => rows.push({ label, value, ok });
@@ -99,6 +102,24 @@ export function deriveCoordAnswer({ runtime, channels, board, now }: CoordAnswer
   } else {
     row('Claims/work read', 'unknown', 'unknown');
     missing.push('work-board inbox state unknown');
+  }
+
+  const LEDGER = 'Claims ledger';
+  const MAX_NAMES = 3;
+  if (ledger === undefined) row(LEDGER, 'unknown', 'unknown');
+  else if (ledger === null) {
+    row(LEDGER, 'not on this build', 'unknown');
+    missing.push('claims ledger not available on this build');
+  } else if (ledger.state !== 'known') {
+    row(LEDGER, 'ledger unreadable', false);
+    missing.push('claims ledger unreadable');
+  } else {
+    const n = ledger.claims.length;
+    const names = [...new Set(ledger.claims.map((c) => c.agent))];
+    const shown = names.slice(0, MAX_NAMES).join(', ') + (names.length > MAX_NAMES ? ` +${names.length - MAX_NAMES}` : '');
+    const asOf = `as of ${formatRelative(ledger.generatedAt, now)}`;
+    row(LEDGER, n > 0 ? `${n} live · agents ${shown} · ${asOf}` : `0 live · ${asOf}`, n > 0 ? true : 'unknown');
+    if (n === 0) missing.push('no live coordination claim');
   }
 
   let liveChannel = false;
