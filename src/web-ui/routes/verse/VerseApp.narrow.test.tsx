@@ -17,7 +17,7 @@ import { mockViewport, type ViewportMock } from './shell/viewport.test-support.j
 import { reloadResourcesUiForTest } from './resources/resources-store.js';
 import { resetVerseStore } from './verse-store.js';
 import { resetVerseUi, setVerseSection } from './verse-ui-store.js';
-import { VerseApp } from './VerseApp.js';
+import { PhantomApp } from './VerseApp.js';
 
 let viewport: ViewportMock | null = null;
 const root = () => document.querySelector<HTMLElement>('[data-layout]');
@@ -25,7 +25,7 @@ const root = () => document.querySelector<HTMLElement>('[data-layout]');
 function mountAt(width: number) {
   viewport = mockViewport(width);
   setVerseSection('chat');
-  return render(<ToastProvider><VerseApp /></ToastProvider>);
+  return render(<ToastProvider><PhantomApp /></ToastProvider>);
 }
 
 beforeEach(() => {
@@ -56,7 +56,7 @@ afterEach(() => {
   window.history.replaceState(null, '', '/');
 });
 
-describe('VerseApp narrow layout', () => {
+describe('PhantomApp narrow layout', () => {
   it('at 800px the root is narrow, the rail is icon-only and the section tabs render', async () => {
     mountAt(800);
     expect(root()).toHaveAttribute('data-layout', 'narrow');
