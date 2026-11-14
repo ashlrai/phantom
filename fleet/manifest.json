@@ -11,6 +11,7 @@
   },
   "files": [
     { "src": "contrib/mac/process_snapshot.py", "root": "runs-bin", "class": "managed", "note": "installed before its dispatcher consumer" },
+    { "src": "contrib/mac/work_market.py", "root": "runs-bin", "class": "managed", "note": "capability routing; Security re-pin before live install" },
     { "src": "contrib/mac/dispatchd.py", "root": "runs-bin", "class": "managed", "note": "per-tick supervisor; Security re-pin before live install" },
     { "src": "contrib/mac/concurrency.py", "root": "runs-bin", "class": "managed" },
     { "src": "contrib/mac/batcher.py", "root": "runs-bin", "class": "managed" },
