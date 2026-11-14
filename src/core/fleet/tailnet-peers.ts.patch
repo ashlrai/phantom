@@ -1,0 +1,74 @@
+--- a/src/core/fleet/tailnet-peers.ts
++++ b/src/core/fleet/tailnet-peers.ts
+@@ -1,5 +1,5 @@
+ /**
+  * core/fleet/tailnet-peers.ts: sanitized, read-only evidence of which tailnet
+  * peers this host can see right now. Backs `ashlr fleet tailnet-peers [--json]`.
+  *
+  * Every dependency is injected so tests never run real tailscale. Only
+  * Self.HostName and each peer's HostName, OS, Online and LastSeen are read;
+  * addresses, DNS names, keys and every other field are never copied out. A
+  * field that cannot be read is the string "unknown" plus a `reasons[]` entry;
+  * nothing is guessed and nothing throws.
+  */
+-import { execFileSync } from 'node:child_process';
+-import { homedir } from 'node:os';
+-import { sanitizeIdentityText, UNKNOWN } from './runtime-identity.js';
++import { execFileSync } from 'node:child_process';
++import { homedir } from 'node:os';
++import { sanitizeIdentityText, UNKNOWN } from './runtime-identity.js';
+ 
+ /** Never report more peers than this; the rest are summarized in reasons[]. */
+ export const TAILNET_PEER_LIMIT = 64;
+@@ -100,7 +103,16 @@ export function parseTailnetStatus(raw: string, now: Date, home: string): TailnetPeers {
+   const reasons: string[] = [];
+   const nowMs = now.getTime();
+   const result: TailnetPeers = {
+     asOf: Number.isFinite(nowMs) ? now.toISOString() : UNKNOWN,
+     self: UNKNOWN,
+     peers: [],
+     reasons,
+   };
+ 
+   let parsed: unknown;
+   try {
+     parsed = JSON.parse(raw);
+   } catch {
+     reasons.push('tailscale unavailable or status unreadable');
+     return result;
+   }
+   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+     reasons.push('tailscale unavailable or status unreadable');
+     return result;
+   }
+   const status = parsed as { 
+     Self?: { HostName?: unknown }; 
+     Peer?: unknown;
+     BackendState?: unknown;
+   };
+   result.self = clean(status.Self?.HostName, home) ?? UNKNOWN;
+ 
+   // Check if the backend is not in a running state
+   const backendState = status.BackendState;
+   if (typeof backendState === 'string' && backendState !== 'Running') {
+-    reasons.push(`tailscale backend not running: ${backendState}`);
++    // Sanitize the backend state to prevent leaking sensitive information
++    let sanitizedBackendState = UNKNOWN;
++    if (typeof backendState === 'string') {
++      // For known states, preserve them but sanitize the content
++      const knownStates = ['Running', 'Stopped', 'Starting', 'UnknownState', 'TearingDown'];
++      if (knownStates.includes(backendState)) {
++        sanitizedBackendState = backendState;
++      } else {
++        // For unknown or unexpected states, sanitize the content
++        sanitizedBackendState = sanitizeIdentityText(backendState, home);
++        // If sanitization results in an empty string, provide a default unknown reason
++        if (sanitizedBackendState === '' || sanitizedBackendState === 'unknown') {
++          sanitizedBackendState = 'unknown';
++        }
++      }
++    }
++    reasons.push(`tailscale backend not running: ${sanitizedBackendState}`);
+   }
+ 
+   const peerMap = status.Peer;

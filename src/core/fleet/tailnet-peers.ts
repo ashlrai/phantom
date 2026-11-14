@@ -103,9 +103,11 @@ export function parseTailnetStatus(raw: string, now: Date, home: string): Tailne
   result.self = clean(status.Self?.HostName, home) ?? UNKNOWN;
 
   // Check if the backend is not in a running state
+  // Check if the backend is not in a running state
   const backendState = status.BackendState;
   if (typeof backendState === 'string' && backendState !== 'Running') {
-    reasons.push(`tailscale backend not running: ${backendState}`);
+    // Sanitize the backend state to prevent leaking sensitive information
+    reasons.push(`tailscale backend not running: ${sanitizeIdentityText(backendState, home)}`);
   }
 
   const peerMap = status.Peer;
