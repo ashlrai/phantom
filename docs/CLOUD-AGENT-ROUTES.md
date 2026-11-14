@@ -30,6 +30,7 @@ not automatically the host's state.
 | --- | --- |
 | `fleet_work_board` | The same bus work board; optional `limit` and exact `thread` filter. |
 | `fleet_runtime_identity` | Sanitized host/platform, installed versus source version, drift, fleet-state freshness and reasons. |
+| `fleet_review_pick` | Read-only unowned review task route, also available as `ashlr fleet review-pick`: repository, PR/head and current owner; unavailable ownership evidence withholds the pick. Grants no claim. |
 | `fleet_order_state` | Inbox order classifications and missing evidence; optional `sinceHours` from 1–720. |
 | `fleet_tailnet_peers` | Sanitized peer names, OS, online/last-seen evidence, ages, reasons and `asOf`; no addresses or keys. |
 | `fleet_pool_reach` | Whether configured primary/backup SSH aliases match online tailnet peers, with role and reasons. |
