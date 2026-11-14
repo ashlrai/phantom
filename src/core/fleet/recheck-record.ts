@@ -87,9 +87,13 @@ export function projectRecheck(r: FleetRecheck): RecheckRecord {
   };
 }
 
-function reasonOf(error: unknown): string {
+function safeErrorCode(error: unknown, fallback: string): string {
   const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === 'string' && /^[A-Z0-9_]+$/.test(code) ? code : 'write error';
+  return typeof code === 'string' && /^[A-Z0-9_]+$/.test(code) ? code : fallback;
+}
+
+function reasonOf(error: unknown): string {
+  return safeErrorCode(error, 'write error');
 }
 
 export function appendRecheckRecord(root: string, recheck: FleetRecheck, home: string): AppendResult {
@@ -114,7 +118,24 @@ export function appendRecheckRecord(root: string, recheck: FleetRecheck, home: s
   }
 }
 
-export interface ReadRecords { rows: RecheckRecord[]; skipped: number; missing: boolean }
+/** Outcome of the history read itself. Emitted on attempted reads: 'ok' means
+ * the log was read — an empty file is a successful empty read, not absent
+ * history; 'unreadable' means the read failed and rows/skipped/missing cannot
+ * tell it apart from a fresh empty file. Absent history (ENOENT) keeps the
+ * legacy {missing:true} shape with no outcome, so the three states stay
+ * distinguishable through the result: missing → absent, outcome 'unreadable'
+ * → failed read, otherwise a successful read. */
+export type RecheckReadOutcome = 'ok' | 'unreadable';
+
+export interface ReadRecords {
+  rows: RecheckRecord[];
+  skipped: number;
+  missing: boolean;
+  outcome?: RecheckReadOutcome;
+  /** Bounded safe failure code when outcome is 'unreadable' (errno-style or
+   * 'read error'); never an error message, stack, path or file content. */
+  failure?: string;
+}
 
 function isMissing(v: unknown): v is RecheckMissing {
   if (typeof v !== 'object' || v === null) return false;
@@ -139,7 +160,8 @@ export function readRecheckRecords(root: string, last: number): ReadRecords {
   try {
     text = readFileSync(recheckLogPath(root), 'utf8');
   } catch (error) {
-    return { rows: [], skipped: 0, missing: (error as { code?: unknown })?.code === 'ENOENT' };
+    if ((error as { code?: unknown })?.code === 'ENOENT') return { rows: [], skipped: 0, missing: true };
+    return { rows: [], skipped: 0, missing: false, outcome: 'unreadable', failure: safeErrorCode(error, 'read error') };
   }
   const rows: RecheckRecord[] = [];
   let skipped = 0;
@@ -150,5 +172,5 @@ export function readRecheckRecords(root: string, last: number): ReadRecords {
       if (isRecord(v)) { v.sections.missing ??= null; rows.push(v); } else skipped++;
     } catch { skipped++; }
   }
-  return { rows: rows.reverse().slice(0, last), skipped, missing: false };
+  return { rows: rows.reverse().slice(0, last), skipped, missing: false, outcome: 'ok' };
 }
