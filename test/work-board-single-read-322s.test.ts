@@ -178,7 +178,7 @@ describe('listWorkBoard consistency under churn', { timeout: 60_000 }, () => {
       .mockImplementationOnce((after, limit, options) => real.listBusInboxAfter(after, limit, options));
 
     const board = listWorkBoard({ root, now });
-    expect(board).toEqual({ items: [], inbox: 'unavailable', truncated: false });
+    expect(board).toEqual({ items: [], inbox: 'unavailable', truncated: false, claims: 'missing' });
 
     const { evidence, sources } = collectBusWorkItemEvidence('fake-partial', { root, now });
     expect(sources.inbox).toBe('unavailable');
@@ -193,7 +193,7 @@ describe('listWorkBoard consistency under churn', { timeout: 60_000 }, () => {
     chmodSync(file, 0o600);
 
     const board = listWorkBoard({ root, now });
-    expect(board).toEqual({ items: [], inbox: 'unavailable', truncated: false });
+    expect(board).toEqual({ items: [], inbox: 'unavailable', truncated: false, claims: 'missing' });
     const { evidence, sources } = collectBusWorkItemEvidence('fake-corrupt', { root, now });
     expect(sources.inbox).toBe('unavailable');
     expect(evidence).toEqual({ id: 'fake-corrupt' });
