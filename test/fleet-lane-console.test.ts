@@ -30,7 +30,7 @@ import {
   parseUsageJournals,
   type FleetLaneSnapshot,
 } from '../src/core/fleet/lane-console.js';
-import { cmdFleet, formatFleetLanes } from '../src/cli/fleet.js';
+import { cmdFleet, formatFleetLanes } from '../src/cli/fleet-entry.js';
 import { makeCfg } from './helpers/h1-fixture.js';
 import { readAuthHeaders, startServer } from './helpers/authenticated-web-server.js';
 

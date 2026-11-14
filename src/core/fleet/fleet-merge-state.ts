@@ -98,6 +98,50 @@ export interface FleetPrMemo {
   verifyCheck?: VerifyCheckMemo | null;
 }
 
+/**
+ * What the merge autopilot (`phm land auto`, merge-autopilot.ts) did to this
+ * PR, remembered so the per-PR cap holds across runs: at most
+ * AUTOPILOT_MAX_ACTIONS_PER_PR acts inside AUTOPILOT_ACTION_WINDOW_MS.
+ */
+export type AutopilotActionKind = 'update-branch' | 'drain-task' | 'fixup-task';
+
+export interface AutopilotActionMemo {
+  kind: AutopilotActionKind;
+  at: string;
+  detail: string | null;
+}
+
+export interface AutopilotMemo {
+  actions: AutopilotActionMemo[];
+}
+
+export const AUTOPILOT_ACTION_KINDS: readonly AutopilotActionKind[] = ['update-branch', 'drain-task', 'fixup-task'];
+/** Per-PR cap: at most this many autopilot acts inside the rolling window. */
+export const AUTOPILOT_MAX_ACTIONS_PER_PR = 3;
+export const AUTOPILOT_ACTION_WINDOW_MS = 24 * 60 * 60 * 1000;
+/** Retained rows; the cap reads only the ones still inside the window. */
+export const AUTOPILOT_MEMO_MAX_ACTIONS = 32;
+const MAX_AUTOPILOT_DETAIL_CHARS = 300;
+
+/** Actions this record still counts against the cap at `nowMs`. */
+export function autopilotActionsWithin(record: Pick<FleetMergeStateV1, 'autopilot'>, windowMs: number, nowMs: number): AutopilotActionMemo[] {
+  return (record.autopilot?.actions ?? []).filter((action) => {
+    const at = Date.parse(action.at);
+    return Number.isFinite(at) && nowMs - at < windowMs;
+  });
+}
+
+/** How many acts the cap still allows this PR at `nowMs` (0 = capped). */
+export function autopilotActionBudget(record: Pick<FleetMergeStateV1, 'autopilot'>, nowMs: number): number {
+  return Math.max(0, AUTOPILOT_MAX_ACTIONS_PER_PR - autopilotActionsWithin(record, AUTOPILOT_ACTION_WINDOW_MS, nowMs).length);
+}
+
+/** Ledger one applied act on the record (bounded to the newest AUTOPILOT_MEMO_MAX_ACTIONS). */
+export function recordAutopilotAction(record: FleetMergeStateV1, kind: AutopilotActionKind, detail: string | null, nowIso: string): void {
+  const actions = [...(record.autopilot?.actions ?? []), { kind, at: nowIso, detail }].slice(-AUTOPILOT_MEMO_MAX_ACTIONS);
+  record.autopilot = { actions };
+}
+
 /** The host-merge authority for one merge attempt (host-merge-revocation-protocol). */
 export interface MergeAttemptMemo {
   identity: HostMergeRevocationIdentityV1;
@@ -163,6 +207,8 @@ export interface FleetMergeStateV1 {
   pr: FleetPrMemo | null;
   merge: MergeAttemptMemo | null;
   landing: LandingRecord | null;
+  /** RQ-MERGEAUTOPILOTQ7: what `phm land auto` did to the PR (the 3-per-24 h cap); absent before. */
+  autopilot?: AutopilotMemo | null;
   /** `merge:landed` row written (reverts: U4 writes `revert:landed`, so this stays true once landed). */
   landingLedgered: boolean;
   /** Terminal disposition; null while in flight. */
@@ -258,6 +304,20 @@ function validate(raw: unknown, key: string): FleetMergeStateV1 | string {
   }
   if (raw['merge'] !== null && !isObject(raw['merge'])) return 'record merge attempt is invalid';
   if (raw['landing'] !== null && !isObject(raw['landing'])) return 'record landing is invalid';
+  if (raw['autopilot'] !== undefined && raw['autopilot'] !== null) {
+    const memo = raw['autopilot'];
+    if (!isObject(memo) || !Array.isArray(memo['actions']) || memo['actions'].length > AUTOPILOT_MEMO_MAX_ACTIONS) {
+      return 'record autopilot memo is invalid';
+    }
+    for (const action of memo['actions'] as unknown[]) {
+      if (!isObject(action)
+        || !AUTOPILOT_ACTION_KINDS.includes(action['kind'] as AutopilotActionKind)
+        || typeof action['at'] !== 'string' || action['at'].length > 40 || !Number.isFinite(Date.parse(action['at']))
+        || (action['detail'] !== null && (typeof action['detail'] !== 'string' || action['detail'].length > MAX_AUTOPILOT_DETAIL_CHARS))) {
+        return 'record autopilot memo is invalid';
+      }
+    }
+  }
   return raw as unknown as FleetMergeStateV1;
 }
 

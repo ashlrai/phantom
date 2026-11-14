@@ -43,6 +43,11 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/queue.test.ts', // Real Python dispatcher ticks in disposable homes for the shared work market.
+  'test/delegation-scope-prompts.test.ts', // real Python and shell prompt builders plus isolated restock fixture subprocesses
+  'test/routines.test.ts', // Real CLI adapter subprocesses and private ledger files.
+  'test/episodic-memory.test.ts', // Real Git revisions and persistent JSONL acceptance fixtures.
+  'test/agent-checkpoints.test.ts', // Restarts a real Node process and observes fresh Git state.
   'test/bus-cli.test.ts', // Real CLI subprocesses and concurrent durable mailbox sends in disposable homes.
   'test/agent-tools-registry.test.ts', // Spawns a real child to read the tool registry.
   'test/constitution-recutnonphxold60.test.ts', // Spawns the CLI through tsx to prove `constitution` dispatches.
@@ -267,6 +272,7 @@ export const REAL_IO_TEST_FILES = [
   'test/verse-local-dispatch.test.ts', // real loopback HTTP server standing in for Ollama's discovery endpoints
   'test/local-inference-probe.test.ts', // real loopback HTTP server standing in for a local /models endpoint (P3 probe)
   'test/radar-local-bench-redirect.test.ts', // two real loopback HTTP servers: a redirector and a second listener the body must never reach
+  'test/local-tool-calls.test.ts', // real loopback HTTP servers standing in for OMLX/Ollama-style tool-call endpoints
   'test/verse-accounts.test.ts', // real collector lease acquisition and private evidence files in a tmp root
   'test/verse-api.test.ts', // real web server bind + SSE tails against an in-memory fake engine
   'test/verse-api-context.test.ts', // real web server bind + real memory/preference files in a tmp HOME (V3.9 routes)

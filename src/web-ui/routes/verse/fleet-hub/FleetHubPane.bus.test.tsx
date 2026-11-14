@@ -52,5 +52,5 @@ it('polls status and page while visible and stops when hidden', async () => {
 it('shows the update message when the route is missing', async () => {
   vi.mocked(fetch).mockImplementation((path) => String(path).endsWith('/fleet/runs') ? response(runs) : response({ error: 'fake' }, 404));
   render(<FleetHubPane visible />);
-  await waitFor(() => expect(screen.getByText('Update the hub for the durable bus').closest('button')).toHaveAttribute('data-tone', 'unknown'));
+  await waitFor(() => expect(screen.getByText('Update Phantom for the durable bus').closest('button')).toHaveAttribute('data-tone', 'unknown'));
 });

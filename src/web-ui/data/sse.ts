@@ -12,7 +12,7 @@
  * never polls MORE often than the server already pushes.
  */
 import { getReadClientProof, getAuthSnapshot, reportSessionExpired, subscribeAuth } from './auth-store.js';
-import { invalidate, invalidatePrefix } from './cache.js';
+import { invalidate, invalidateObserved, invalidatePrefix } from './cache.js';
 import { isScopedConsolePath } from '../app/console-mode.js';
 
 export const SSE_EVENT_NAMES = [
@@ -24,6 +24,7 @@ export const SSE_EVENT_NAMES = [
   'fleet-activity-ping',
   'fleet-activity-observation',
   'snapshot',
+  'leader-thread',
   'session-expired',
 ] as const;
 export type SseEventName = (typeof SSE_EVENT_NAMES)[number];
@@ -55,11 +56,12 @@ const EVENT_TO_CACHE_KEYS: Record<SseEventName, string[]> = {
   // 'fleet' (fleetStatusQuery, /control/fleet's queue depth + lease health)
   // has no dedicated SSE event of its own, so it rides these instead of only
   // refreshing on mount.
-  'fleet-activity-ping': ['fleet-activity', 'fleet'],
-  'fleet-activity-observation': ['fleet-activity', 'fleet'],
+  'fleet-activity-ping': ['fleet-activity', 'fleet', 'fleet-sessions'],
+  'fleet-activity-observation': ['fleet-activity', 'fleet', 'fleet-sessions'],
   // Agent OS snapshots are immutable records but their current authenticated
   // projection advances alongside the server's general snapshot signal.
   snapshot: ['dashboard-snapshot', 'agent-os-snapshot'],
+  'leader-thread': [],
   'session-expired': [],
 };
 
@@ -70,6 +72,21 @@ let source: EventSource | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempt = 0;
 
+let live = false;
+const liveListeners = new Set<() => void>();
+
+function setLive(next: boolean): void {
+  if (live === next) return;
+  live = next;
+  for (const listener of [...liveListeners]) listener();
+}
+
+export function isSseLive(): boolean { return live; }
+export function subscribeSseLive(listener: () => void): () => void {
+  liveListeners.add(listener);
+  return () => { liveListeners.delete(listener); };
+}
+
 function backoffMs(): number {
   // 1s, 2s, 4s, 8s, capped at 15s — the server's own poll floor is ~1.5s so
   // there is no benefit reconnecting faster than that even on attempt 0.
@@ -77,6 +94,7 @@ function backoffMs(): number {
 }
 
 function teardown(): void {
+  setLive(false);
   if (source) {
     source.close();
     source = null;
@@ -109,6 +127,7 @@ function connect(): void {
 
   es.onopen = () => {
     reconnectAttempt = 0;
+    setLive(true);
   };
 
   for (const name of SSE_EVENT_NAMES) {
@@ -121,6 +140,12 @@ function connect(): void {
         payload = undefined;
       }
       for (const key of EVENT_TO_CACHE_KEYS[name]) invalidate(key);
+      if (name === 'fleet-activity-ping' || name === 'fleet-activity-observation') {
+        // Queue visits change with fleet activity; 'queue-stats-<windowSec>'
+        // keys are parameterized, so sweep the prefix — mounted subscribers
+        // (the Fleet Dashboard station graph) refetch, unmounted ones don't.
+        invalidateObserved('queue-stats-');
+      }
       if (name === 'inbox') {
         // Parameterized inbox queries (one cache key per filter combo / per
         // proposal id) aren't in EVENT_TO_CACHE_KEYS's static map — sweep
@@ -143,7 +168,7 @@ function connect(): void {
     // auth-store reports the session as expired (see the subscribeAuth
     // wiring at the bottom of this file).
     es.close();
-    if (source === es) source = null;
+    if (source === es) { source = null; setLive(false); }
     if (getAuthSnapshot().phase === 'authenticated') scheduleReconnect();
   };
 }
