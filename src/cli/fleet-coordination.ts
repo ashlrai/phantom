@@ -5,8 +5,9 @@ import {
 } from '../core/fleet/coordination.js';
 
 import { returnFleetClaim } from '../core/fleet/coordination-return.js';
+import { projectCoordinationReturns } from '../core/fleet/coordination-returns-view.js';
 
-const USAGE = 'Usage: ashlr fleet coordination <claim|release|return|handoff|board|post|inbox|assign> [options]';
+const USAGE = 'Usage: ashlr fleet coordination <claim|release|return|returns|handoff|board|post|inbox|assign> [options]';
 export const FLEET_COORDINATION_HELP = [
   USAGE,
   '  claim --repo owner/repo --task "work" --agent name [--ttl-seconds 3600] [--json]',
@@ -14,6 +15,7 @@ export const FLEET_COORDINATION_HELP = [
   '  return <claim-id> --agent name --lease <lease> (--pr n --head sha | --tests text | --artifact text | --blocked dependency) [--ttl-seconds 86400] [--json] — evidence, not authority; does not merge, verify or close anything; agent labels do not authenticate senders (the lease fences only release).',
   '  handoff <claim-id> --agent name --lease <lease> --to name [--ttl-seconds 3600] [--json]',
   '  board [--json]',
+  '  returns [--json] — RESULT receipts from coordination return, newest first; evidence, not authority.',
   '  post --from name --to name --message "text" [--id id] [--ttl-seconds 3600] [--json]',
   '  inbox --agent name [--json]',
   '  assign --repo owner/repo --task "work" --to name [--ttl-seconds 3600] [--json]',
@@ -23,7 +25,7 @@ export const FLEET_COORDINATION_HELP = [
 const VALUES: Record<string, string[]> = {
   claim: ['--repo', '--task', '--agent', '--ttl-seconds'], release: ['--agent', '--lease'],
   return: ['--agent', '--lease', '--pr', '--head', '--tests', '--artifact', '--blocked', '--ttl-seconds'],
-  handoff: ['--agent', '--lease', '--to', '--ttl-seconds'], board: [],
+  handoff: ['--agent', '--lease', '--to', '--ttl-seconds'], board: [], returns: [],
   post: ['--from', '--to', '--message', '--id', '--ttl-seconds'], inbox: ['--agent'],
   assign: ['--repo', '--task', '--to', '--ttl-seconds'],
 };
@@ -56,6 +58,11 @@ export async function cmdFleetCoordination(args: string[]): Promise<number> {
     // Structured local output makes explicit unknown/error states visible in both modes.
     console.log(JSON.stringify(result, null, json ? undefined : 2));
   };
+  if (sub === 'returns') {
+    const result = projectCoordinationReturns(readFleetBoard(), Date.now());
+    output(result);
+    return result.state === 'known' ? 0 : 1;
+  }
   if (sub === 'board' || sub === 'inbox') {
     if (sub === 'inbox' && !value('agent')) return invalid();
     const board = readFleetBoard();
