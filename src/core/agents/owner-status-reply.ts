@@ -1,8 +1,12 @@
 /** Fixed, read-only status answer for a verified owner's short "status" ask. */
+import { isStatusAsk } from '../fleet/status-ask.js';
 import { buildStatusDigest } from '../leader/status-digest.js';
 import { gatherStatusDigestInput } from '../leader/status-digest-sources.js';
+import { join } from 'node:path';
+import { ashlrHome } from '../cloud/store.js';
+import { listWorkBoard, type WorkBoardResult } from '../comms/work-board.js';
+import { summarizeWorkBoard, WORK_BOARD_UNKNOWN_LINE } from '../comms/work-board-summary.js';
 
-const STATUS_ASKS = new Set(['status', 'phantom status', 'fleet status', '/status', "what's the status", 'whats the status']);
 /** The five-line digest from real state; the heading is swapped for the clock below. */
 const digestBrief = async (runsDir: string, now: Date): Promise<string> =>
   ['Morning leader brief', ...buildStatusDigest(await gatherStatusDigestInput(runsDir, now))].join('\n');
@@ -13,26 +17,61 @@ export const OWNER_STATUS_FALLBACK = "Phantom status: the status read failed; yo
 export function isOwnerStatusRequest(text: string): boolean {
   const trimmed = typeof text === 'string' ? text.trim() : '';
   if (trimmed.length > 40) return false;
-  const ask = trimmed.toLowerCase().replace(/’/g, "'").replace(/[?.!]+$/, '').trim();
-  return STATUS_ASKS.has(ask);
+  return isStatusAsk(trimmed);
 }
 
 function easternClock(now: Date): string {
   return new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(now);
 }
 
-/** Never throws: a failed read still tells the owner where the ask went. */
-export async function composeOwnerStatusReply(runsDir: string, now: Date, deps: { brief?: (runsDir: string, now: Date) => Promise<string> } = {}): Promise<string> {
+export interface OwnerStatusDeps {
+  brief?: (runsDir: string, now: Date) => Promise<string>;
+  /** Work-board read; the default scans the durable bus inbox under ~/.ashlr/fleet. */
+  board?: (now: Date) => WorkBoardResult;
+  /** One sanitized runtime-identity + channel-health line (see
+   * owner-status-runtime-line.ts). Opt-in: the Slack socket wiring passes
+   * defaultRuntimeLine; absent or throwing means no line, never a failure. */
+  runtime?: (now: Date) => Promise<string>;
+}
+
+const defaultBoard = (now: Date): WorkBoardResult => listWorkBoard({ root: join(ashlrHome(), 'fleet'), now: now.getTime(), limit: 20 });
+
+/** A failed board read never touches the digest: it only becomes the "unknown" line. */
+function workLines(now: Date, board: OwnerStatusDeps['board']): string[] {
+  try { return summarizeWorkBoard((board ?? defaultBoard)(now), now); } catch { return [WORK_BOARD_UNKNOWN_LINE]; }
+}
+
+/** The runtime line is evidence, not a gate: an absent or throwing seam
+ * changes nothing else in the reply. One line only — anything after the
+ * first newline is dropped so it always sits directly under the heading. */
+async function runtimeLine(now: Date, seam: OwnerStatusDeps['runtime']): Promise<string> {
+  if (seam === undefined) return '';
+  try { return (await seam(now)).split('\n', 1)[0]; } catch { return ''; }
+}
+
+/** Never throws: a failed read still tells the owner where the ask went.
+ * The digest has priority: the runtime line sits directly under the heading;
+ * work-board lines are dropped last-first, then the runtime line, never the
+ * digest. */
+export async function composeOwnerStatusReply(runsDir: string, now: Date, deps: OwnerStatusDeps = {}): Promise<string> {
   try {
     const brief = await (deps.brief ?? digestBrief)(runsDir, now);
     const text = brief.replace(/^Morning leader brief/, `Phantom status, ${easternClock(now)} ET`);
-    return text.length > MAX_REPLY_CHARS ? `${text.slice(0, MAX_REPLY_CHARS - 1)}…` : text;
+    const [heading, ...digestRest] = text.split('\n');
+    const runtime = await runtimeLine(now, deps.runtime);
+    const lines = workLines(now, deps.board);
+    const assemble = (withRuntime: boolean): string =>
+      [heading, ...(withRuntime && runtime !== '' ? [runtime] : []), ...digestRest, ...lines].join('\n');
+    while (lines.length > 0 && assemble(true).length > MAX_REPLY_CHARS) lines.pop();
+    const full = assemble(true);
+    const dropped = runtime !== '' && full.length > MAX_REPLY_CHARS ? assemble(false) : full;
+    return dropped.length > MAX_REPLY_CHARS ? `${dropped.slice(0, MAX_REPLY_CHARS - 1)}…` : dropped;
   } catch { return OWNER_STATUS_FALLBACK; }
 }
 
 /** The fixed auto-answer the Slack socket wiring injects into the Leader adapter.
  * Imported only by non-closure modules (cli + tests), so the digest readers stay
  * outside the Tier-1 import closure that slack-leader.ts belongs to. */
-export function ownerStatusReply(deps: { brief?: (runsDir: string, now: Date) => Promise<string> } = {}): { ask: (text: string) => boolean; compose: (runsDir: string, now: Date) => Promise<string>; readonly fallback: string } {
+export function ownerStatusReply(deps: OwnerStatusDeps = {}): { ask: (text: string) => boolean; compose: (runsDir: string, now: Date) => Promise<string>; readonly fallback: string } {
   return { ask: isOwnerStatusRequest, compose: (runsDir, now) => composeOwnerStatusReply(runsDir, now, deps), fallback: OWNER_STATUS_FALLBACK };
 }

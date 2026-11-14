@@ -5,7 +5,9 @@
  *   slack status [--json]                       agent-network.toml parse state,
  *                                               bridge ids, mappings, phm_
  *                                               reference names (never values),
- *                                               journal counts, next step
+ *                                               journal counts, transport
+ *                                               health (always unknown --
+ *                                               status never probes), next step
  *   slack map [--topic <t>] [--snapshot <file>] [--json]
  *                                               dry-run: topic<->channel table,
  *                                               one topic's route, and -- with a
@@ -26,6 +28,7 @@ import { loadAgentNetworkConfig, loadCommsConfirmation } from '../core/agents/sl
 import { listBusInboxAfter } from '../core/fleet/bus-inbox.js';
 import { createSlackLeaderAdapter, flushSlackLeaderReplies, readSlackDeliveryPolicy } from '../core/agents/slack-leader.js';
 import { ownerStatusReply } from '../core/agents/owner-status-reply.js';
+import { defaultRuntimeLine } from '../core/agents/owner-status-runtime-line.js';
 
 const SLACK_USAGE = `usage: phm channels slack status [--json]
        phm channels slack map [--topic <topic>] [--snapshot <file>] [--json]
@@ -61,6 +64,9 @@ function printStatus(status: SlackBridgeStatus): void {
   console.log(`comms confirmedByMason: ${cell(status.comms.confirmedByMason)}`);
   console.log(`journal: ${status.journal.state} ingested=${status.journal.ingested} ignored=${status.journal.ignored} last=${cell(status.journal.lastAt)}`);
   console.log(`ready: ${cell(status.ready)}`);
+  // Configuration readiness is not transport evidence: only an authenticated
+  // probe/run observes health, so status reports the honest unknown triple.
+  console.log(`transport: health=${status.transport.health} observedAt=${status.transport.observedAt ?? 'unknown'} probe=${status.transport.probeCommand}`);
   if (status.next) console.log(`next: ${status.next}`);
 }
 
@@ -186,7 +192,7 @@ async function cmdSlackTransport(args: string[], run: boolean): Promise<number> 
     if (run) {
       socket = await openSlackSocket({ call, config, ingest: { config, teamIdentities: parsed.teamIdentities },
         signal: controller.signal,
-        leaderAdapter: createSlackLeaderAdapter({ call, signal: controller.signal, statusReply: ownerStatusReply() }),
+        leaderAdapter: createSlackLeaderAdapter({ call, signal: controller.signal, statusReply: ownerStatusReply({ runtime: defaultRuntimeLine }) }),
         readIngest: () => {
           const current = readSlackDeliveryPolicy();
           return current && JSON.stringify(current.config) === JSON.stringify(config) ? { config, teamIdentities: current.teamIdentities } : undefined;

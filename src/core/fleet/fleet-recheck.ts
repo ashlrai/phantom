@@ -1,0 +1,391 @@
+/**
+ * core/fleet/fleet-recheck.ts: one read-only verdict joining the four runtime
+ * readers behind `ashlr fleet recheck` — runtime identity, the claims ledger,
+ * channel health and the work board — so a single answer can say which host is
+ * answering, whether shared state is fresh, which bridge is missing and which
+ * authorized task is running. The task pick is joined against the same ledger
+ * read used for the claims section: a work-board owner verifies only when that
+ * exact agent holds a live, unexpired coordination claim right now.
+ *
+ * Every reader is injected (defaults come from the modules themselves), each
+ * read is bounded at SECTION_TIMEOUT_MS, and a reader that throws or stalls
+ * marks only its own section UNKNOWN with '<section>: reader failed'; the whole
+ * recheck never fails. Nothing is written, sent or inferred from prose — the
+ * verdict grants no dispatch or claim authority, and 'routed' never appears as
+ * a state.
+ *
+ * Output is sanitized through sanitizeIdentityText (home → ~, IPs dropped);
+ * no message bodies, leases or env values ever reach the result.
+ *
+ * Overall: VERIFIED only when all four sections verify. Otherwise the worst
+ * section state wins, ranked BLOCKED > UNKNOWN > VERIFIED — a positively
+ * identified gap (missing bridge, no eligible task) is a worse answer than an
+ * unreadable reader — with missing[] gathered across sections.
+ */
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { ashlrHome } from '../cloud/store.js';
+import { listWorkBoard, type WorkBoardResult } from '../comms/work-board.js';
+import { readChannelHealth, type ChannelHealth, type ChannelHealthReport, type ChannelName } from './channel-health.js';
+import { readFleetBoard, type FleetBoard, type FleetClaim } from './coordination.js';
+import {
+  defaultRuntimeIdentityDeps,
+  readRuntimeIdentity,
+  sanitizeIdentityText,
+  UNKNOWN,
+  type RuntimeIdentity,
+} from './runtime-identity.js';
+
+export const FLEET_RECHECK_SCHEMA = 'fleet.recheck.v1';
+/** Per-reader bound; a stalled reader can never hold the verdict open. */
+export const SECTION_TIMEOUT_MS = 5_000;
+/** Claims listing cap and per-claim task text cap. */
+const TOP_CLAIMS = 5;
+const TASK_TEXT_MAX = 80;
+
+export type FleetRecheckState = 'VERIFIED' | 'UNKNOWN' | 'BLOCKED';
+
+export interface FleetRecheckRuntime {
+  state: FleetRecheckState;
+  source: 'runtime-identity';
+  asOf: string;
+  host: string;
+  tailnetName: string;
+  installedVersion: string;
+  sourceVersion: string;
+  fleetState: { ageSeconds: number | 'unknown'; stale: boolean | 'unknown' };
+  missing: string[];
+}
+
+export interface FleetRecheckClaim {
+  agent: string;
+  repo: string;
+  /** Claim task text truncated to 80 characters. */
+  task: string;
+  /** ISO expiry of the live claim. */
+  expiresAt: string;
+}
+
+export interface FleetRecheckClaims {
+  state: FleetRecheckState;
+  source: 'coordination';
+  asOf: string;
+  /** Live claim count; null while the ledger is unreadable. */
+  active: number | null;
+  /** Reaped-claim count from the ledger; null while unreadable. */
+  expiredClaims: number | null;
+  /** Up to five live claims, newest first. */
+  top: FleetRecheckClaim[];
+  missing: string[];
+}
+
+export interface FleetRecheckBridgeChannel {
+  channel: ChannelName;
+  /** Raw channel-health state: LIVE | DEGRADED | BLOCKED | UNKNOWN. */
+  state: ChannelHealth['state'];
+  runtimeHost: string | null;
+  processAlive: boolean | 'unknown';
+  /** First exact missing[] entry for a channel that is not verified live. */
+  missingBridge: string | null;
+}
+
+export interface FleetRecheckBridge {
+  state: FleetRecheckState;
+  source: 'channel-health';
+  asOf: string;
+  channels: FleetRecheckBridgeChannel[];
+  /** First non-verified channel's missing entry — the bridge to name in a reply. */
+  missingBridge: string | null;
+  missing: string[];
+}
+
+export interface FleetRecheckTaskPick {
+  id: string;
+  state: 'RUNNING' | 'ASSIGNED';
+  owner: string;
+  claimReceipt: string;
+  /** Live ledger claim held by owner; null unless the join found one. */
+  ledgerClaim: { id: string; repo: string; expiresAt: string } | null;
+  asOf: string;
+  source: string;
+}
+
+export interface FleetRecheckTask {
+  state: FleetRecheckState;
+  source: 'work-board';
+  asOf: string;
+  task: FleetRecheckTaskPick | null;
+  /** RUNNING/ASSIGNED candidates lacking a named owner. */
+  unowned: number;
+  /** RUNNING/ASSIGNED candidates lacking a claim receipt. */
+  unclaimed: number;
+  missing: string[];
+}
+
+export interface FleetRecheck {
+  schema: typeof FLEET_RECHECK_SCHEMA;
+  asOf: string;
+  sections: {
+    runtime: FleetRecheckRuntime;
+    claims: FleetRecheckClaims;
+    bridge: FleetRecheckBridge;
+    task: FleetRecheckTask;
+  };
+  overall: { state: FleetRecheckState; missing: string[] };
+}
+
+/** Every reader injectable; omitted readers fall back to the live modules. */
+export interface FleetRecheckDeps {
+  now?: () => Date;
+  /** Home directory, used only to redact it from output. */
+  homeDir?: () => string;
+  readRuntimeIdentity?: () => RuntimeIdentity | Promise<RuntimeIdentity>;
+  readChannelHealth?: () => ChannelHealthReport | Promise<ChannelHealthReport>;
+  readFleetBoard?: () => FleetBoard | Promise<FleetBoard>;
+  listWorkBoard?: () => WorkBoardResult | Promise<WorkBoardResult>;
+}
+
+/** Live readers, wired exactly as the standalone fleet commands wire them. */
+export function defaultFleetRecheckDeps(now: () => Date = () => new Date()): Required<FleetRecheckDeps> {
+  return {
+    now,
+    homeDir: () => homedir(),
+    readRuntimeIdentity: () => readRuntimeIdentity(defaultRuntimeIdentityDeps()),
+    readChannelHealth: () => readChannelHealth(),
+    readFleetBoard: () => readFleetBoard(),
+    listWorkBoard: () => listWorkBoard({ root: join(ashlrHome(), 'fleet'), now: now().getTime() }),
+  };
+}
+
+/** Run one reader inside the section bound; a throw or stall is a section failure, never a crash. */
+async function attempt<T>(read: () => T | Promise<T>): Promise<{ ok: true; value: T } | { ok: false }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const value = await Promise.race([
+      Promise.resolve().then(read),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('section reader timed out')), SECTION_TIMEOUT_MS);
+        timer.unref();
+      }),
+    ]);
+    return { ok: true, value };
+  } catch {
+    return { ok: false };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+function runtimeSection(read: { ok: true; value: RuntimeIdentity } | { ok: false }, asOf: string): FleetRecheckRuntime {
+  const section: FleetRecheckRuntime = {
+    state: 'UNKNOWN', source: 'runtime-identity', asOf,
+    host: UNKNOWN, tailnetName: UNKNOWN, installedVersion: UNKNOWN, sourceVersion: UNKNOWN,
+    fleetState: { ageSeconds: 'unknown', stale: 'unknown' }, missing: ['runtime: reader failed'],
+  };
+  if (!read.ok) return section;
+  const id = read.value;
+  section.asOf = id.asOf;
+  section.host = id.host;
+  section.tailnetName = id.tailnetName;
+  section.installedVersion = id.installedVersion;
+  section.sourceVersion = id.sourceVersion;
+  section.fleetState = { ageSeconds: id.fleetState.ageSeconds, stale: id.fleetState.stale };
+  // VERIFIED only when a real host answers and the fleet-state read is fresh.
+  if (id.host !== UNKNOWN && id.fleetState.stale === false) {
+    section.state = 'VERIFIED';
+    section.missing = [];
+    return section;
+  }
+  section.missing = [...id.reasons];
+  if (section.missing.length === 0) {
+    section.missing.push(id.fleetState.stale === true
+      ? `fleetState: stale (${id.fleetState.ageSeconds}s old)`
+      : `fleetState: freshness ${id.fleetState.stale}`);
+  }
+  return section;
+}
+
+function claimsSection(read: { ok: true; value: FleetBoard } | { ok: false }, asOf: string): FleetRecheckClaims {
+  const section: FleetRecheckClaims = {
+    state: 'UNKNOWN', source: 'coordination', asOf,
+    active: null, expiredClaims: null, top: [], missing: ['claims: reader failed'],
+  };
+  if (!read.ok) return section;
+  const board = read.value;
+  if (board.state !== 'known') {
+    section.missing = ['claims: ledger state unknown (unreadable)'];
+    return section;
+  }
+  section.state = 'VERIFIED';
+  section.missing = [];
+  section.active = board.claims.length;
+  section.expiredClaims = board.expiredClaims ?? 0;
+  section.top = [...board.claims]
+    .sort((a, b) => b.claimedAt - a.claimedAt || b.expiresAt - a.expiresAt)
+    .slice(0, TOP_CLAIMS)
+    .map(claim => ({
+      agent: claim.agent,
+      repo: claim.repo,
+      task: claim.task.slice(0, TASK_TEXT_MAX),
+      expiresAt: new Date(claim.expiresAt).toISOString(),
+    }));
+  return section;
+}
+
+function bridgeChannelView(channel: ChannelHealth): FleetRecheckBridgeChannel {
+  const verified = channel.state === 'LIVE' && channel.runtimeHost !== null;
+  return {
+    channel: channel.channel,
+    state: channel.state,
+    runtimeHost: channel.runtimeHost,
+    processAlive: channel.processAlive,
+    // Name the exact missing piece for a non-verified channel; missing[] can be
+    // empty on a bare DEGRADED, so fall back to the observed state itself.
+    missingBridge: verified ? null : channel.missing[0] ?? `${channel.channel} bridge ${channel.state.toLowerCase()}`,
+  };
+}
+
+function bridgeSection(read: { ok: true; value: ChannelHealthReport } | { ok: false }, asOf: string): FleetRecheckBridge {
+  const section: FleetRecheckBridge = {
+    state: 'UNKNOWN', source: 'channel-health', asOf,
+    channels: [], missingBridge: null, missing: ['bridge: reader failed'],
+  };
+  if (!read.ok) return section;
+  const report = read.value;
+  section.asOf = report.asOf;
+  section.channels = (['slack', 'imessage'] as const).map(name => {
+    const channel = report.channels.find(c => c.channel === name);
+    return channel !== undefined
+      ? bridgeChannelView(channel)
+      : { channel: name, state: 'UNKNOWN' as const, runtimeHost: null, processAlive: 'unknown' as const, missingBridge: `${name} bridge evidence absent` };
+  });
+  const missing = section.channels.map(c => c.missingBridge).filter((m): m is string => m !== null);
+  section.missingBridge = missing[0] ?? null;
+  section.missing = missing;
+  // VERIFIED only when every channel is LIVE on a named runtime host.
+  section.state = missing.length === 0 ? 'VERIFIED' : 'BLOCKED';
+  return section;
+}
+
+/** Newest live ledger claim for owner; expiry is judged against the recheck's own now, not the reader's. */
+function liveClaimFor(board: FleetBoard, owner: string, nowMs: number): FleetClaim | undefined {
+  let best: FleetClaim | undefined;
+  for (const claim of board.claims) {
+    if (claim.agent !== owner || !(claim.expiresAt > nowMs)) continue;
+    if (best === undefined || claim.claimedAt > best.claimedAt) best = claim;
+  }
+  return best;
+}
+
+function taskSection(
+  read: { ok: true; value: WorkBoardResult } | { ok: false },
+  asOf: string,
+  ledger: { ok: true; value: FleetBoard } | { ok: false },
+): FleetRecheckTask {
+  const section: FleetRecheckTask = {
+    state: 'UNKNOWN', source: 'work-board', asOf,
+    task: null, unowned: 0, unclaimed: 0, missing: ['task: reader failed'],
+  };
+  if (!read.ok) return section;
+  const board = read.value;
+  if (board.inbox !== 'ok') {
+    section.state = 'BLOCKED';
+    section.missing = [`task: work board inbox ${board.inbox}`];
+    return section;
+  }
+  const eligible = board.items.filter(item => item.state === 'RUNNING' || item.state === 'ASSIGNED');
+  const owned = (item: (typeof eligible)[number]): item is typeof item & { owner: string } =>
+    typeof item.owner === 'string' && item.owner.length > 0;
+  const claimed = (item: (typeof eligible)[number]): item is typeof item & { claimReceipt: string } =>
+    typeof item.claimReceipt === 'string' && item.claimReceipt.length > 0;
+  section.unowned = eligible.filter(item => !owned(item)).length;
+  section.unclaimed = eligible.filter(item => !claimed(item)).length;
+  const qualified = eligible
+    .filter((item): item is typeof item & { owner: string; claimReceipt: string } => owned(item) && claimed(item))
+    .sort((a, b) => Date.parse(b.receivedAt) - Date.parse(a.receivedAt));
+  // The same settled ledger read claimsSection saw: unreadable means the reader
+  // failed or the board reported state 'unknown' — never re-read the ledger.
+  const ledgerBoard = ledger.ok && ledger.value.state === 'known' ? ledger.value : undefined;
+  const nowMs = Date.parse(asOf); // asOf is the injected now's ISO stamp; NaN when the clock read failed.
+  const liveFor = (owner: string): FleetClaim | undefined =>
+    ledgerBoard === undefined ? undefined : liveClaimFor(ledgerBoard, owner, nowMs);
+  // Prefer a qualified item whose owner holds a live claim (RUNNING before
+  // ASSIGNED); only when none matches fall back to the plain newest-first pick.
+  const matched = qualified.filter(item => liveFor(item.owner) !== undefined);
+  const pick = matched.find(item => item.state === 'RUNNING') ?? matched[0]
+    ?? qualified.find(item => item.state === 'RUNNING') ?? qualified[0];
+  if (pick !== undefined) {
+    const base = {
+      id: pick.id,
+      state: pick.state as 'RUNNING' | 'ASSIGNED',
+      owner: pick.owner,
+      claimReceipt: pick.claimReceipt,
+      asOf: pick.asOf,
+      source: pick.source,
+    };
+    if (ledgerBoard === undefined) {
+      section.state = 'UNKNOWN';
+      section.task = { ...base, ledgerClaim: null };
+      section.missing = ['task: claims ledger unreadable, owner claim unverified'];
+      return section;
+    }
+    const claim = liveFor(pick.owner);
+    if (claim === undefined) {
+      section.state = 'BLOCKED';
+      section.task = { ...base, ledgerClaim: null };
+      section.missing = [`task: owner ${pick.owner} holds no live coordination claim`];
+      return section;
+    }
+    section.state = 'VERIFIED';
+    section.missing = [];
+    section.task = {
+      ...base,
+      ledgerClaim: { id: claim.id, repo: claim.repo, expiresAt: new Date(claim.expiresAt).toISOString() },
+    };
+    return section;
+  }
+  section.state = 'BLOCKED';
+  section.missing = eligible.length === 0
+    ? ['task: no RUNNING or ASSIGNED board item']
+    : ['task: no RUNNING or ASSIGNED item with a named owner and claim receipt'];
+  if (section.unowned > 0) section.missing.push(`task: ${section.unowned} candidate(s) lack a named owner`);
+  if (section.unclaimed > 0) section.missing.push(`task: ${section.unclaimed} candidate(s) lack a claim receipt`);
+  return section;
+}
+
+const RANK: Record<FleetRecheckState, number> = { VERIFIED: 0, UNKNOWN: 1, BLOCKED: 2 };
+
+export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<FleetRecheck> {
+  const d: Required<FleetRecheckDeps> = { ...defaultFleetRecheckDeps(deps.now), ...deps };
+  const now = d.now();
+  const home = (() => { try { return d.homeDir(); } catch { return ''; } })();
+  const asOf = Number.isFinite(now.getTime()) ? now.toISOString() : UNKNOWN;
+
+  // All four readers run concurrently, each inside its own 5 s bound.
+  const [runtime, claims, bridge, board] = await Promise.all([
+    attempt(d.readRuntimeIdentity),
+    attempt(d.readFleetBoard),
+    attempt(d.readChannelHealth),
+    attempt(d.listWorkBoard),
+  ]);
+
+  const sections = {
+    runtime: runtimeSection(runtime, asOf),
+    claims: claimsSection(claims, asOf),
+    bridge: bridgeSection(bridge, asOf),
+    task: taskSection(board, asOf, claims),
+  };
+  const states = Object.values(sections).map(section => section.state);
+  const verified = states.every(state => state === 'VERIFIED');
+  const worst = states.reduce((a, b) => (RANK[b] > RANK[a] ? b : a), 'VERIFIED' as FleetRecheckState);
+  const missing = Object.values(sections).flatMap(section => section.missing);
+
+  const result: FleetRecheck = {
+    schema: FLEET_RECHECK_SCHEMA,
+    asOf,
+    sections,
+    overall: { state: verified ? 'VERIFIED' : worst, missing },
+  };
+  // One sanitize pass over the finished verdict: home → ~, IPs → [ip].
+  return JSON.parse(sanitizeIdentityText(JSON.stringify(result), home)) as FleetRecheck;
+}
