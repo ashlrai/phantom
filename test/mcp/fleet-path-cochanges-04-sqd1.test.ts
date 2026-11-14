@@ -90,18 +90,21 @@ describe('fleet_path_cochanges over MCP', () => {
   });
 
   it('applies the shared public scrub to evidence and keeps explicit truncation flags', async () => {
+    const token = 'ghp_' + 'A1b2C3d4'.repeat(3);
     const home = process.env.HOME!;
     const read = vi.fn(async (path: string) => ({
       path, resolvedRef: sha('d'), sampledCount: 100, examinedCount: 20,
       commitsTruncated: true, matchesTruncated: true, pathsTruncated: true, omittedPaths: 3,
-      paths: [{ path: `${home}/docs/example.txt`, count: 7, evidence: [{ sha: sha('e'), jobId: 'RQ-LEAK-1' }] }],
+      paths: [{ path: `${home}/docs/${token}.txt`, count: 7, evidence: [{ sha: sha('e'), jobId: 'RQ-LEAK-1' }] }],
       notice: 'Cochange evidence does not prove a dependency or authorize edits.',
     }));
     const client = await connect(input => readFleetPathCochanges(input, { read }));
     const raw = await client.callTool({ name: 'fleet_path_cochanges', arguments: { path: 'x.ts', limit: 1 } });
     expect(read).toHaveBeenCalledWith('x.ts', { limit: 1 });
     expect(parse(raw)).toMatchObject({ commitsTruncated: true, matchesTruncated: true, pathsTruncated: true, omittedPaths: 3 });
+    expect(JSON.stringify(raw)).not.toContain(token);
     expect(JSON.stringify(raw)).not.toContain(home);
+    expect(JSON.stringify(raw)).toContain('REDACTED');
     expect(JSON.stringify(raw)).toContain('~');
   });
 
@@ -123,12 +126,12 @@ describe('fleet_path_cochanges over MCP', () => {
   });
 
   it('reports reader failures as a sanitized tool error, never fabricated evidence', async () => {
-    const client = await connect(async () => { throw new Error('fatal: private local detail'); });
+    const client = await connect(async () => { throw new Error('fatal: not a git repo; token ghp_secretvalue'); });
     const result = await client.callTool({ name: 'fleet_path_cochanges', arguments: { path: 'x.ts' } });
     expect(result.isError).toBe(true);
     const text = (result.content as Array<{ text: string }>)[0].text;
     expect(text).toBe('Fleet observation unavailable; inspect local configuration and fleet stores.');
-    expect(JSON.stringify(result)).not.toMatch(/private local detail/);
+    expect(JSON.stringify(result)).not.toMatch(/ghp_|not a git repo/);
   });
 
   it('rejects unknown tools without disturbing the rest of the server', async () => {

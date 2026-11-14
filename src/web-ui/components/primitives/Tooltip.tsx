@@ -31,6 +31,11 @@
  * and takes arbitrary nodes (the Meter's numbers, for one), so it stays as the
  * other half of a union rather than being renamed out from under its callers.
  * Exactly one of the two is required.
+ *
+ * NO TOOLTIP ON TOUCH. A tap has no hover, and browsers replay it as
+ * compatibility mouse events (and, on Android, focus) a few hundred ms later —
+ * which would pop a bubble that nothing can dismiss. A `touchstart` on the
+ * trigger therefore silences hover/focus opening for TOUCH_SUPPRESS_MS.
  */
 import {
   cloneElement,
@@ -44,6 +49,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
   type ReactNode,
+  type TouchEvent as ReactTouchEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
 import styles from './Tooltip.module.css';
@@ -56,6 +62,8 @@ export type TooltipPlacement = 'top' | 'bottom' | 'left' | 'right';
  * the control, and a delay there just reads as lag.
  */
 const OPEN_DELAY_MS = 160;
+/** Compat mouse/focus events follow a touch within this window; ignore them. */
+const TOUCH_SUPPRESS_MS = 1000;
 /** Distance between the trigger's edge and the bubble. */
 const GAP = 8;
 /** Smallest distance the bubble may sit from the viewport edge. */
@@ -70,6 +78,7 @@ interface TooltipTriggerProps {
   onMouseLeave?: (event: ReactMouseEvent<HTMLElement>) => void;
   onFocus?: (event: ReactFocusEvent<HTMLElement>) => void;
   onBlur?: (event: ReactFocusEvent<HTMLElement>) => void;
+  onTouchStart?: (event: ReactTouchEvent<HTMLElement>) => void;
 }
 
 interface TooltipCommonProps {
@@ -145,6 +154,7 @@ export function Tooltip(props: TooltipProps) {
   const id = useId();
   const triggerRef = useRef<HTMLElement | null>(null);
   const bubbleRef = useRef<HTMLDivElement | null>(null);
+  const lastTouch = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cancelTimer = useCallback(() => {
@@ -202,7 +212,10 @@ export function Tooltip(props: TooltipProps) {
   const empty = body === null || body === undefined || body === '';
   if (disabled || empty) return children;
 
+  const touching = () => Date.now() - lastTouch.current < TOUCH_SUPPRESS_MS;
+
   function openAfterDelay(element: HTMLElement) {
+    if (touching()) return;
     triggerRef.current = element;
     cancelTimer();
     timer.current = setTimeout(() => {
@@ -212,6 +225,7 @@ export function Tooltip(props: TooltipProps) {
   }
 
   function openNow(element: HTMLElement) {
+    if (touching()) return;
     triggerRef.current = element;
     cancelTimer();
     setOpen(true);
@@ -222,6 +236,11 @@ export function Tooltip(props: TooltipProps) {
 
   const trigger = cloneElement(children, {
     'aria-describedby': describedBy,
+    onTouchStart: (event: ReactTouchEvent<HTMLElement>) => {
+      children.props.onTouchStart?.(event);
+      lastTouch.current = Date.now();
+      close();
+    },
     onMouseEnter: (event: ReactMouseEvent<HTMLElement>) => {
       children.props.onMouseEnter?.(event);
       openAfterDelay(event.currentTarget);
@@ -262,6 +281,7 @@ export function Tooltip(props: TooltipProps) {
           not focusable, so there is no focus to mirror.
         */
         data-disabled-trigger={triggerDisabled ? 'true' : undefined}
+        onTouchStart={() => { lastTouch.current = Date.now(); close(); }}
         onMouseOver={triggerDisabled ? (event) => openNow(event.currentTarget) : undefined}
         onMouseOut={triggerDisabled ? close : undefined}
       >

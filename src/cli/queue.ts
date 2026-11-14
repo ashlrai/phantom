@@ -81,7 +81,7 @@ async function cmdQueueReport(args: string[]): Promise<number> {
 
 export async function cmdQueue(args: string[]): Promise<number> {
   let command: string | undefined;
-  const valueOptions = new Set(['--since', '--query', '--mode', '--dir', '--priority', '--pool', '--tier', '--repo', '--scope', '--acceptance', '--deps', '--owner', '--pr-url', '--reason', '--window', '--events']);
+  const valueOptions = new Set(['--since', '--query', '--mode', '--dir', '--priority', '--pool', '--tier', '--repo', '--scope', '--acceptance', '--deps', '--owner', '--pr-url', '--reason', '--window', '--events', '--preferred-lane', '--needs', '--min-tier', '--max-cost-class', '--impact']);
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--') { command = args[i + 1]; break; }
