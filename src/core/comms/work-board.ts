@@ -81,10 +81,11 @@ export function listWorkBoard(opts: { root: string; now: number; limit?: number;
     claimsSource = inspection.source;
     claims = inspection.claims;
   } catch { /* stays unavailable: no claim rows */ }
-  // The unavailable-inbox result keeps its exact legacy shape (no `claims`
-  // key) so existing consumers' equality checks are untouched; claims
-  // availability is reported whenever the board actually lists items.
-  const empty: WorkBoardResult = { items: [], inbox: 'unavailable', truncated: false };
+  // The claims source rides every result, including a failed inbox scan:
+  // during an inbox outage the board still reports whether the claims table
+  // was validated-empty, missing or unreadable instead of dropping the one
+  // piece of ownership evidence the inspection already produced.
+  const empty: WorkBoardResult = { items: [], inbox: 'unavailable', truncated: false, claims: claimsSource };
   try {
     // One settled bounded inbox read for the whole board; an unsettled or
     // churning scan reports 'unavailable', never a partial listing.
