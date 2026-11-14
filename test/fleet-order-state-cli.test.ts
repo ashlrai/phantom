@@ -3,6 +3,7 @@ import { cmdFleetOrderState } from '../src/cli/fleet-order-state.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 import { resolveFleetSubcommand } from '../src/cli/fleet-subcommand-resolve.js';
 import type { OrderTraceV1 } from '../src/core/fleet/order-trace.js';
+import type { LiveWorkersSnapshot } from '../src/core/fleet/runs-live-workers.js';
 
 const PR_URL = 'https://github.com/ashlrai/phantom/pull/123';
 const trace = (sources: Partial<OrderTraceV1['sources']> = {}): OrderTraceV1 => ({
@@ -17,7 +18,8 @@ const trace = (sources: Partial<OrderTraceV1['sources']> = {}): OrderTraceV1 => 
   ],
 });
 const now = () => Date.parse('2026-11-13T12:00:00Z');
-const run = (args: string[], t = trace()) => cmdFleetOrderState(args, { read: async () => t, now });
+const noLive: LiveWorkersSnapshot = { v: 1, generatedAt: '2026-11-13T12:00:00.000Z', sourceState: 'healthy', workers: [], leaders: [], orchestratorAgents: 0 };
+const run = (args: string[], t = trace()) => cmdFleetOrderState(args, { read: async () => t, now, live: async () => noLive });
 const out = (log: ReturnType<typeof vi.spyOn>) => log.mock.calls.map((c) => String(c[0])).join('\n');
 
 afterEach(() => vi.restoreAllMocks());
