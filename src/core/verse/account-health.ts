@@ -874,7 +874,9 @@ function nativeReport(seat: VerseSeat, facts: SeatAccountFacts | null, checkedAt
   let resetAt: string | null = null;
 
   if (connection === 'signed-out') {
-    reasons.push(`${PROVIDER_CLI[engine]} reports this account is not signed in.`);
+    reasons.push(engine === 'claude' && facts?.credential.lastRefreshAt != null
+      ? 'Claude auth expired: needs re-sign-in. Claude Code reports this account is not signed in.'
+      : `${PROVIDER_CLI[engine]} reports this account is not signed in.`);
     reasons.push("Reconnect opens the account's own sign-in in Terminal; Phantom never sees the credentials.");
     fix = { kind: 'reauth' };
   } else if (connection === 'exhausted') {

@@ -70,6 +70,10 @@ afterEach(() => {
 });
 
 describe('parsePassKDataset', () => {
+  it.each(['null', '[]', '42', '"text"', 'true'])('rejects non-object JSON %s with its source location', (value) => {
+    expect(() => parsePassKDataset(`# comment\n${value}`, 'fixture.jsonl')).toThrow('fixture.jsonl:2: line must be an object');
+  });
+
   it('parses the shipped golden set', () => {
     const text = readFileSync(resolve(__dirname, '..', 'benchmarks', 'passk', 'golden-tasks.jsonl'), 'utf8');
     const ds = parsePassKDataset(text, 'golden-tasks.jsonl');

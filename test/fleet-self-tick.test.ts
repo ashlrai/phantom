@@ -13,7 +13,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cmdFleetSelfTick } from '../src/cli/fleet-self-tick.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { resolveFleetSubcommand } from '../src/cli/fleet-subcommand-resolve.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 import {
@@ -125,10 +125,14 @@ const recording = () => {
     'meter-incident': stub('meter-incident'),
     'planner-tick': stub('planner-tick'),
     'inbox-acks': stub('inbox-acks'),
+    'owner-live': stub('owner-live'),
     'waste-incident': stub('waste-incident'),
     'order-notices': stub('order-notices'),
     'needs-triage': stub('needs-triage'),
+    'teammate-overdue': stub('teammate-overdue'),
     'landed-sweep': stub('landed-sweep'),
+    'board-notify': stub('board-notify'),
+    'recheck-record': stub('recheck-record'),
   };
   return { order, argvs, stub, steps };
 };
@@ -158,7 +162,7 @@ describe('fleet self-tick', () => {
     const rec = recording();
     const { code, report } = await run(['--json', '--runs-dir', runsDir], { steps: rec.steps });
     expect(code).toBe(0);
-    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'needs-triage', 'waste-incident', 'landed-sweep']);
+    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'owner-live', 'order-notices', 'board-notify', 'recheck-record', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep']);
     expect(report).toMatchObject({ v: 1, at: NOW_ISO, mode: 'dry-run', state: 'ran' });
     expect(report!.steps.map((s) => s.step)).toEqual(rec.order);
     expect(report!.steps.every((s) => s.state === 'ok' && s.exitCode === 0
@@ -175,7 +179,7 @@ describe('fleet self-tick', () => {
       steps: { ...rec.steps, 'reset-release': throwing },
     });
     expect(code).toBe(1);
-    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'needs-triage', 'waste-incident', 'landed-sweep']);
+    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'owner-live', 'order-notices', 'board-notify', 'recheck-record', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep']);
     expect(report!.steps[0]).toMatchObject({ step: 'reset-release', state: 'failed', exitCode: 1, report: null });
     expect(report!.steps.slice(1).every((s) => s.state === 'ok')).toBe(true);
   });
@@ -186,7 +190,7 @@ describe('fleet self-tick', () => {
       steps: { ...rec.steps, 'lane-autohold': rec.stub('lane-autohold', 1, 'not json') },
     });
     expect(code).toBe(1);
-    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'needs-triage', 'waste-incident', 'landed-sweep']);
+    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'owner-live', 'order-notices', 'board-notify', 'recheck-record', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep']);
     expect(report!.steps[1]).toMatchObject({ step: 'lane-autohold', state: 'failed', exitCode: 1, report: null });
   });
 
@@ -207,7 +211,7 @@ describe('fleet self-tick', () => {
     const { code, report } = await run(['--apply', '--json', '--runs-dir', runsDir], { steps: rec.steps });
     expect(code).toBe(0);
     expect(report!.mode).toBe('apply');
-    for (const name of ['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'order-notices', 'needs-triage', 'waste-incident', 'landed-sweep']) {
+    for (const name of ['reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'owner-live', 'order-notices', 'board-notify', 'recheck-record', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep']) {
       expect(rec.argvs[name]).toContain('--apply');
       expect(rec.argvs[name]).toContain('--json');
       expect(rec.argvs[name]).toEqual(expect.arrayContaining(['--runs-dir', runsDir]));

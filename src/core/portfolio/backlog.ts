@@ -55,6 +55,7 @@ import {
 import { withSelfHealQueueLock } from '../fleet/self-heal.js';
 import { sanitizeSourceBaseDigest } from '../fleet/source-base-digest.js';
 import { isStrictWorkItem } from './queued-autonomy.js';
+import { ideaVerdictLive, readIdeaVerdicts, type IdeaVerdictEntry } from '../ideas/idea-verdicts.js';
 
 // ---------------------------------------------------------------------------
 // M133: normalized title for dedup matching
@@ -107,6 +108,25 @@ export function backlogPath(): string {
 export { scoreItem, sourceTierMultiplier } from './scoring.js';
 
 const LOW_VALUE_MAINTENANCE_SOURCES = new Set(['dep', 'lint', 'hygiene', 'todo']);
+
+/**
+ * RQ-PHX-IDEANOTNOW94: the owner's live idea verdicts ("never", plus "not now"
+ * still inside its seven-day window). A verdict suppresses the idea wherever
+ * the loop would surface it — a fresh scan cannot resurrect it and a direct
+ * enqueue cannot re-add it. Never throws: a verdict-read failure yields an
+ * empty map, keeping the backlog deliverable.
+ */
+function liveIdeaVerdicts(nowMs = Date.now()): Map<string, IdeaVerdictEntry> {
+  try {
+    const out = new Map<string, IdeaVerdictEntry>();
+    for (const [id, entry] of readIdeaVerdicts()) {
+      if (ideaVerdictLive(entry, nowMs)) out.set(id, entry);
+    }
+    return out;
+  } catch {
+    return new Map();
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Persistence
@@ -238,7 +258,8 @@ export function enqueueBacklogItemsDetailed(items: WorkItem[]): { ok: boolean; e
       const existing = loadBacklog();
       const existingItems = existing?.items ?? [];
       const existingIds = new Set(existingItems.map((item) => item.id));
-      const fresh = items.filter((item) => !existingIds.has(item.id));
+      const suppressed = liveIdeaVerdicts();
+      const fresh = items.filter((item) => !existingIds.has(item.id) && !suppressed.has(item.id));
       if (fresh.length === 0) return 0;
       persistBacklogUnlocked({
         generatedAt: new Date().toISOString(),
@@ -723,13 +744,25 @@ export async function buildBacklog(opts?: {
     }
   }
 
+  // RQ-PHX-IDEANOTNOW94: live idea verdicts suppress items a fresh scan would
+  // otherwise re-surface — "never" permanently, "not now" for seven days.
+  const suppressedVerdicts = liveIdeaVerdicts();
+  let verdictSkipped = 0;
+  const deliverableItems = suppressedVerdicts.size === 0 ? finalItems : finalItems.filter((item) => {
+    if (suppressedVerdicts.has(item.id)) {
+      verdictSkipped++;
+      return false;
+    }
+    return true;
+  });
+
   const completeObservations = mergeConcurrentObservations(observations, undefined) ?? [];
   const observationsTruncated = completeObservations.length > MAX_PERSISTED_SCANNER_OBSERVATIONS;
   const backlog: Backlog = {
     generatedAt: now,
     snapshotId: randomBytes(16).toString('hex'),
     repos,
-    items: finalItems,
+    items: deliverableItems,
     observations: completeObservations.slice(0, MAX_PERSISTED_SCANNER_OBSERVATIONS),
     observationSourceState: observationsTruncated || sourceIncomplete ? 'degraded' : 'healthy',
     ...(observationsTruncated ? { observationsTruncated: true } : {}),
@@ -749,11 +782,12 @@ export async function buildBacklog(opts?: {
   // Audit record (metadata only; never secrets).
   const filteredMsg = filtered.length > 0 ? `; ${filtered.length} trivial/low-value item(s) filtered (minItemValue=${minValue})` : '';
   const dedupMsg = pendingDedupCount > 0 ? `; ${pendingDedupCount} item(s) deduplicated vs open pending proposals` : '';
+  const verdictMsg = verdictSkipped > 0 ? `; ${verdictSkipped} item(s) skipped by idea verdicts` : '';
   audit({
     action: 'backlog:refresh',
     repo: null,
     sandboxId: null,
-    summary: `backlog refreshed: ${repos.length} repo(s), ${finalItems.length} item(s)${filteredMsg}${dedupMsg}`,
+    summary: `backlog refreshed: ${repos.length} repo(s), ${deliverableItems.length} item(s)${filteredMsg}${dedupMsg}${verdictMsg}`,
     result: 'ok',
   });
 

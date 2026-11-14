@@ -64,6 +64,7 @@ imports, individual files, semantics or contract coverage.
 - `src/api/`
 - `src/cli/`
 - `src/core/`
+- `src/doctor/`
 - `src/fleet/`
 - `src/mcp/`
 - `src/planning/`
@@ -81,6 +82,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/autonomy/`
 - `src/core/autopilot/`
 - `src/core/bridge/`
+- `src/core/caps/`
 - `src/core/classify/`
 - `src/core/cloud/`
 - `src/core/comms/`
@@ -111,12 +113,14 @@ imports, individual files, semantics or contract coverage.
 - `src/core/goals/`
 - `src/core/graph/`
 - `src/core/growth/`
+- `src/core/ideas/`
 - `src/core/improve/`
 - `src/core/inbox/`
 - `src/core/incident/`
 - `src/core/integrations/`
 - `src/core/intent/`
 - `src/core/knowledge/`
+- `src/core/leader/`
 - `src/core/learn/`
 - `src/core/learning/`
 - `src/core/lifecycle/`
