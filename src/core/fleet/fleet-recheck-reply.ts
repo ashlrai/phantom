@@ -4,13 +4,18 @@
  * thread asks "can you reach live state". Backs `ashlr fleet recheck --reply`.
  *
  * The formatter is pure: no I/O, no clock reads, only the verdict's own asOf.
- * Output is one plain-text block capped at 900 characters: five evidence lines
+ * Output is one plain-text block capped at 900 characters: evidence lines
  * plus a verdict line. A "Computers:" evidence line (which fleet computers this
  * host sees on the tailnet; see recheck-computers-line.ts) follows the Runtime
- * line. It is the first line dropped when the reply would exceed the cap, then
- * Running job, then Last verified, so the verdict line is never clipped.
+ * line, then a "Pool:" line (node-pool reachability; see
+ * recheck-pool-line.ts). An optional "Orders 24h:" evidence line (Mason's
+ * inbox orders over the last 24h classified by order-trace; see
+ * recheck-orders-line.ts) sits directly after the Task line when the verdict
+ * carries orders evidence the trace could prove. It is the first line
+ * dropped when the reply would exceed the cap, then Pool, then Computers,
+ * then Running job, then Last verified, so the verdict line is never clipped.
  * One optional "Last verified:" evidence line sits
- * after the Task line when the task section carries lastVerified (the newest
+ * after the Orders line when the task section carries lastVerified (the newest
  * finished item with a named owner and claim receipt), dropped last of the
  * three. One optional "Running job:" line follows it (dropped before Last
  * verified) when task.liveWorker carries process-table evidence; it is
@@ -25,6 +30,7 @@
  */
 import type { FleetRecheck } from './fleet-recheck.js';
 import { formatComputersLine } from './recheck-computers-line.js';
+import { formatOrdersLine } from './recheck-orders-line.js';
 import { formatPoolLine } from './recheck-pool-line.js';
 import { sanitizeIdentityText } from './runtime-identity.js';
 
@@ -66,7 +72,8 @@ export function formatRecheckReply(r: FleetRecheck): string {
       + ` · up ${lw.ageSeconds === null ? 'unknown' : `${lw.ageSeconds}s`} · as of ${scrub(lw.asOf)} (process evidence, not a claim)`;
   const computers = formatComputersLine(r.tailnet, scrub);
   const pool = formatPoolLine(r.pool, scrub);
-  const build = (withLast: boolean, withRunning: boolean, withComputers: boolean, withPool = false): string => [
+  const orders = formatOrdersLine(r.orders, scrub);
+  const build = (withOrders: boolean, withLast: boolean, withRunning: boolean, withComputers: boolean, withPool = false): string => [
     `Phantom recheck ${r.overall.state} · as of ${scrub(r.asOf)} · source fleet-recheck`,
     `Runtime: ${scrub(runtime.host)} · ${scrub(runtime.installedVersion)} · fleet state ${age}`
       + `${runtime.fleetState.stale === true ? ' · stale' : ''} (${runtime.state})`,
@@ -78,6 +85,7 @@ export function formatRecheckReply(r: FleetRecheck): string {
     task.task === null
       ? `Task: none, ${scrub(task.missing[0] ?? 'no task evidence')} (${task.state})`
       : `Task: ${scrub(task.task.id)} ${task.task.state} · owner ${scrub(task.task.owner)} · claim ${scrub(task.task.claimReceipt)} (${task.state})`,
+    ...(withOrders && orders !== null ? [orders] : []),
     ...(withLast && lastVerified !== null ? [lastVerified] : []),
     ...(withRunning && running !== null ? [running] : []),
     r.overall.state === 'VERIFIED'
@@ -86,10 +94,11 @@ export function formatRecheckReply(r: FleetRecheck): string {
         ? `BLOCKED on: ${missing}`
         : `UNKNOWN: ${missing}`,
   ].join('\n');
-  let text = build(true, true, true, true);
-  if (text.length > REPLY_MAX) text = build(true, true, true);
-  if (text.length > REPLY_MAX) text = build(true, true, false);
-  if (text.length > REPLY_MAX) text = build(true, false, false);
-  if (text.length > REPLY_MAX) text = build(false, false, false);
+  let text = build(true, true, true, true, true);
+  if (text.length > REPLY_MAX) text = build(false, true, true, true, true);
+  if (text.length > REPLY_MAX) text = build(false, true, true, true);
+  if (text.length > REPLY_MAX) text = build(false, true, true, false);
+  if (text.length > REPLY_MAX) text = build(false, true, false, false);
+  if (text.length > REPLY_MAX) text = build(false, false, false, false);
   return text.length <= REPLY_MAX ? text : `${text.slice(0, REPLY_MAX - 1)}…`;
 }
