@@ -4,8 +4,13 @@
  * channel health and the work board — so a single answer can say which host is
  * answering, whether shared state is fresh, which bridge is missing and which
  * authorized task is running. The task pick is joined against the same ledger
- * read used for the claims section: a work-board owner verifies only when that
- * exact agent holds a live, unexpired coordination claim right now.
+ * read used for the claims section, but no FleetClaim field identifies a
+ * work-board item: claim.id is a ledger uuid, claim.task is free text, and the
+ * item's claimReceipt is a bus-work-claims coordinate
+ * (`bus-claim:<id>:<cursor>:<receivedAt>`), not a coordination claim id. Owner
+ * equality alone is not task identity, so the task section reports the observed
+ * pick with ledgerClaim null and an exact missing-association reason instead
+ * of verifying on an owner's unrelated lease.
  *
  * Every reader is injected (defaults come from the modules themselves), each
  * read is bounded at SECTION_TIMEOUT_MS, and a reader that throws or stalls
@@ -330,7 +335,9 @@ function taskSection(
   const liveFor = (owner: string): FleetClaim | undefined =>
     ledgerBoard === undefined ? undefined : liveClaimFor(ledgerBoard, owner, nowMs);
   // Prefer a qualified item whose owner holds a live claim (RUNNING before
-  // ASSIGNED); only when none matches fall back to the plain newest-first pick.
+  // ASSIGNED) as a weak liveness signal for the pick; only when none matches
+  // fall back to the plain newest-first pick. This ordering never verifies:
+  // no claim field binds a lease to the item.
   const matched = qualified.filter(item => liveFor(item.owner) !== undefined);
   const pick = matched.find(item => item.state === 'RUNNING') ?? matched[0]
     ?? qualified.find(item => item.state === 'RUNNING') ?? qualified[0];
@@ -351,19 +358,18 @@ function taskSection(
         : 'task: verdict clock unknown, owner claim unverified'];
       return section;
     }
-    const claim = liveFor(pick.owner);
-    if (claim === undefined) {
-      section.state = 'BLOCKED';
-      section.task = { ...base, ledgerClaim: null };
-      section.missing = [`task: owner ${pick.owner} holds no live coordination claim`];
-      return section;
-    }
-    section.state = 'VERIFIED';
-    section.missing = [];
-    section.task = {
-      ...base,
-      ledgerClaim: { id: claim.id, repo: claim.repo, expiresAt: new Date(claim.expiresAt).toISOString() },
-    };
+    // The coordination ledger and the work board share no explicit identity
+    // field: FleetClaim {id, repo, task, agent, claimedAt, expiresAt} cannot be
+    // joined to a WorkBoardItem {id, owner, claimReceipt} — the receipt is a
+    // bus-work-claims coordinate, claim.task is free text, and claim.id is a
+    // ledger uuid. Until a producer contract names the association, owner
+    // equality proves nothing about this task, so the pick stays UNKNOWN with
+    // ledgerClaim null rather than verifying on an unrelated lease.
+    section.state = 'UNKNOWN';
+    section.task = { ...base, ledgerClaim: null };
+    section.missing = [
+      `task: no coordination-claim field associates a claim with board item ${pick.id}; owner match is not task identity`,
+    ];
     return section;
   }
   section.state = 'BLOCKED';
