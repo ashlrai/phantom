@@ -22,7 +22,7 @@ function record(asOf: string): RecheckRecord {
       runtime: { state: 'VERIFIED', host: 'fake-host', installedVersion: 'fake', asOf },
       claims: { state: 'VERIFIED', active: 0, asOf },
       bridge: { state: 'VERIFIED', missingBridge: null, asOf },
-      task: { state: 'VERIFIED', id: null, owner: null, claimReceipt: null, asOf },
+      task: { state: 'VERIFIED', id: null, owner: null, claimReceipt: null, asOf, lastVerified: null },
       missing: null,
     },
   };

@@ -25,6 +25,8 @@ interface WorkBoardItemView {
   /** Absent on older servers; only a non-empty string counts (see textOrNull). */
   owner?: string | null;
   claimReceipt?: string | null;
+  /** Absent on older servers; validated by resultView before use. */
+  result?: unknown;
   asOf: string;
   source: string;
   missing: string[];
@@ -51,6 +53,31 @@ const RECEIPT_SHORT = 24;
 /** Only a non-empty string is a value; anything else (missing, number, object) is null. */
 function textOrNull(v: unknown): string | null {
   return typeof v === 'string' && v !== '' ? v : null;
+}
+
+const HEAD_SHORT = 8;
+
+interface ResultView { text: string; title?: string }
+
+/** Defensive read of the optional result: unknown kind or wrong types give null. */
+function resultView(raw: unknown): ResultView | null {
+  if (raw === null || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  if (r['kind'] === 'blocked') {
+    const dep = textOrNull(r['dependency']);
+    return dep === null ? null : { text: `blocked on: ${dep}` };
+  }
+  if (r['kind'] !== 'verified') return null;
+  const pr = typeof r['pr'] === 'number' && Number.isInteger(r['pr']) && r['pr'] > 0 ? r['pr'] : null;
+  const head = textOrNull(r['head']);
+  const tests = textOrNull(r['tests']);
+  const artifact = textOrNull(r['artifact']);
+  const parts: string[] = [];
+  if (pr !== null) parts.push(head === null ? `PR #${pr}` : `PR #${pr} @${head.slice(0, HEAD_SHORT)}`);
+  if (tests !== null) parts.push(`tests: ${tests}`);
+  if (artifact !== null) parts.push(`artifact: ${artifact}`);
+  if (parts.length === 0) return null;
+  return { text: parts.join(', '), title: head ?? undefined };
 }
 
 function ownerLabel(item: WorkBoardItemView): string {
@@ -105,7 +132,7 @@ export function WorkBoardSection({ visible }: { visible: boolean }) {
           <table className={styles.table}>
             <thead>
               <tr>
-                <th scope="col">State</th><th scope="col">Id</th>
+                <th scope="col">State</th><th scope="col">Result</th><th scope="col">Id</th>
                 <th scope="col">Owner</th><th scope="col">Claim</th><th scope="col">Channel</th>
                 <th scope="col">Ref</th><th scope="col">Age</th><th scope="col">Missing</th>
               </tr>
@@ -113,9 +140,11 @@ export function WorkBoardSection({ visible }: { visible: boolean }) {
             <tbody>
               {data.items.map((item) => {
                 const receipt = textOrNull(item.claimReceipt);
+                const result = resultView(item.result);
                 return (
                 <tr key={item.id}>
                   <td><span className={styles.workChip} data-state={item.state}>{item.state}</span></td>
+                  <td className={styles.mono} title={result?.title}>{result?.text ?? ''}</td>
                   <td className={styles.mono} title={item.id}>{item.id.slice(0, 12)}</td>
                   <td>{ownerLabel(item)}</td>
                   <td className={styles.mono} title={receipt ?? undefined}>{receipt === null ? 'none' : receipt.slice(0, RECEIPT_SHORT)}</td>
