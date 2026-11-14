@@ -51,7 +51,7 @@ it('fetches /api/fleet/board and renders lanes, depth and the needs-Mason item',
   const envelope: FleetBoardResponse = { schema: 'fleet.leader-board.v1', status: 'ok', ageSeconds: 150, board: BOARD };
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     // The pane also mounts the work-board section (RQ-PHX-WORKBOARDPANE318); that route is covered separately.
-    if (String(input).startsWith('/api/fleet/work-board')) return new Response('{}', { status: 404 });
+    if (String(input).startsWith('/api/verse/fleet/work-board')) return new Response('{}', { status: 404 });
     expect(String(input)).toBe('/api/fleet/board');
     return new Response(JSON.stringify(envelope), { status: 200 });
   });
