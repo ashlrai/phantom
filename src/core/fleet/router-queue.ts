@@ -478,3 +478,78 @@ export function completeRouterJob(jobId: string, root = routerQueueRoot()): { st
     return { status: 'done', jobId };
   });
 }
+
+// ---------------------------------------------------------------------------
+// Queue age and merge latency
+// ---------------------------------------------------------------------------
+
+/** One kind's queue-health snapshot; null where no measurement honestly exists. */
+export interface RouterQueueKindStats {
+  /** Receipts waiting to be read/done (queue depth). */
+  outstanding: number;
+  /** Age of outstanding work, ms since each receipt entered the queue (event time for pre-timing receipts). */
+  oldestAgeMs: number | null;
+  meanAgeMs: number | null;
+  /** Receipts acknowledged complete. */
+  done: number;
+  /** Event → completion in ms — merge latency for merges, conflict→recut-done for recuts. */
+  meanLatencyMs: number | null;
+  maxLatencyMs: number | null;
+  /** Enqueue → completion in ms (queue residence). */
+  meanQueueMs: number | null;
+  maxQueueMs: number | null;
+  /** Done receipts too old to carry completion timing; excluded, never zero-filled. */
+  latencyUnknown: number;
+}
+
+export interface RouterQueueStats {
+  v: 1;
+  generatedAt: string;
+  totals: { outstanding: number; done: number; superseded: number };
+  merge: RouterQueueKindStats;
+  conflict: RouterQueueKindStats;
+}
+
+function kindStats(receipts: readonly Receipt[], nowMs: number): RouterQueueKindStats {
+  const queued = receipts.filter((r) => r.status === 'queued');
+  const done = receipts.filter((r) => r.status === 'done');
+  const eventAt = (r: Receipt): number => Date.parse(r.state === 'MERGED' ? r.mergedAt : r.observedAt);
+  const arrived = (r: Receipt): number => Date.parse(r.enqueuedAt ?? '') || eventAt(r);
+  const ages = queued.map((r) => Math.max(0, nowMs - arrived(r)));
+  const timed = done.filter((r) => r.completedAt !== null);
+  const latencies = timed.map((r) => Math.max(0, Date.parse(r.completedAt!) - eventAt(r)));
+  const queues = timed.map((r) => Math.max(0, Date.parse(r.completedAt!) - arrived(r)));
+  const mean = (xs: number[]): number | null => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+  const max = (xs: number[]): number | null => (xs.length ? Math.max(...xs) : null);
+  return {
+    outstanding: queued.length,
+    oldestAgeMs: max(ages),
+    meanAgeMs: mean(ages),
+    done: done.length,
+    meanLatencyMs: mean(latencies),
+    maxLatencyMs: max(latencies),
+    meanQueueMs: mean(queues),
+    maxQueueMs: max(queues),
+    latencyUnknown: done.length - timed.length,
+  };
+}
+
+/**
+ * Queue age and merge latency over recorded receipts — how long follow-up and
+ * recut work waits outstanding, and how long completed work took end to end.
+ * Read under the same lock and audit discipline as every other queue read.
+ */
+export function routerQueueStats(nowMs = Date.now(), root = routerQueueRoot()): RouterQueueStats {
+  if (!Number.isFinite(nowMs)) fail();
+  return transaction(root, (state) => ({
+    v: 1,
+    generatedAt: new Date(nowMs).toISOString(),
+    totals: {
+      outstanding: state.receipts.filter((r) => r.status === 'queued').length,
+      done: state.receipts.filter((r) => r.status === 'done').length,
+      superseded: state.receipts.filter((r) => r.status === 'superseded').length,
+    },
+    merge: kindStats(state.receipts.filter((r) => r.state === 'MERGED'), nowMs),
+    conflict: kindStats(state.receipts.filter((r) => r.state === 'CONFLICTING'), nowMs),
+  }));
+}
