@@ -15,6 +15,9 @@ import { ownerThreadQuery } from '../leader-thread/owner-thread-queries.js';
 import { mirrorByChannel, mirrorHint } from './channel-bus-mirror.js';
 import { channelPresenceLine, deriveChannelPresence, leaderPassMs, presenceForChannel } from './channel-last-seen.js';
 import { channelsWaiting, deriveChannelReplyLag, replyLagForRow } from './channel-reply-lag.js';
+import { ChannelHealthStrip } from './ChannelHealthStrip.js';
+import { channelHealthQuery } from './channel-health-query.js';
+import { narrowChannelHealth } from './channel-health-model.js';
 import { ChannelReplyLag } from './ChannelReplyLag.js';
 import { ackByChannel, channelSetupHint, KNOWN_CHANNELS, rollupChannels } from './fleet-channels-model.js';
 import { fleetChannelsQuery } from './fleet-channels-queries.js';
@@ -44,6 +47,9 @@ export function FleetChannelsPane({ visible, host }: PaneProps) {
   const refreshBusStatus = useRefetch(agentBusStatusQuery);
   const refreshBusPage = useRefetch(busPageQuery);
   usePollWhileVisible(() => { refreshBusStatus(); if (busStatus.data?.source === 'available' && busStatus.data.retainedCount !== null) refreshBusPage(); }, 15_000, { enabled: visible });
+  const healthRead = useQuery(channelHealthQuery, { enabled: visible, freshMs: 0 });
+  const refetchHealth = useRefetch(channelHealthQuery);
+  usePollWhileVisible(() => { refetchHealth(); }, 15_000, { enabled: visible });
   const nowMs = Date.now();
   const data = rollupChannels(read.data, nowMs);
 
@@ -64,6 +70,7 @@ export function FleetChannelsPane({ visible, host }: PaneProps) {
   const replyLags = deriveChannelReplyLag(ownerLines, nowMs);
   const waitingCount = channelsWaiting(replyLags);
   return <section className={styles.root} aria-label="Channels overview">
+    <ChannelHealthStrip health={narrowChannelHealth(healthRead.data)} nowMs={nowMs} />
     <p className={styles.header}>{heard} of {KNOWN_CHANNELS.length} channels heard from · {last24hTotal} messages in 24 h</p>
     {waitingCount > 0 && <p className={styles.notice} role="status">{waitingCount} channel{waitingCount === 1 ? '' : 's'} waiting on the Leader</p>}
     {data.sourceState !== 'healthy' && <p className={styles.notice} role="status">Inbox data may be incomplete.</p>}

@@ -10,6 +10,7 @@ import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../s
 import { usageResetsQuery } from '../shell/usage-resets-query.js';
 import { DropQueueCard } from './DropQueueCard.js';
 import { StandbyCard } from './StandbyCard.js';
+import { RuntimeIdentityCard } from './RuntimeIdentityCard.js';
 import { AppsCard } from './AppsCard.js';
 import { DiskForecastCard } from './DiskForecastCard.js';
 import { MemoryGuardCard } from './MemoryGuardCard.js';
@@ -105,6 +106,7 @@ export function FleetHostPane({ visible }: Pick<PaneProps, 'visible'>) {
         <DiskRunwayCard visible={visible} />
         <AppsCard visible={visible} />
         <StandbyCard visible={visible} />
+        <RuntimeIdentityCard visible={visible} />
         <p className={styles.muted}>Orchestrator agents: {host.orchestratorAgents ?? '—'}</p>
       </>}
   </div>;
