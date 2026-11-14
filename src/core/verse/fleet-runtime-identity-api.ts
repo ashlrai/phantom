@@ -11,6 +11,7 @@ import {
   type RuntimeIdentity,
   type RuntimeIdentityDeps,
 } from '../fleet/runtime-identity.js';
+import { handleFleetHostReachApi } from './fleet-host-reach-api.js';
 
 export const VERSE_FLEET_RUNTIME_IDENTITY_PATH = '/api/verse/fleet/runtime-identity';
 
@@ -19,6 +20,8 @@ export interface FleetRuntimeIdentityApiDeps {
   identityDeps?: RuntimeIdentityDeps;
   /** Clock seam for tests; stamps generatedAt. */
   now?: () => Date;
+  /** Sub-path handler seam for tests. Default: the host-reach module. */
+  hostReach?: ApiModule;
 }
 
 /** Every field "unknown" plus a reason; never carries the thrown message. */
@@ -34,7 +37,10 @@ function unknownIdentity(asOf: string): RuntimeIdentity {
 
 export function createFleetRuntimeIdentityApi(deps: FleetRuntimeIdentityApiDeps = {}): ApiModule {
   const now = deps.now ?? (() => new Date());
-  return async (_ctx, _req, res, path, method) => {
+  const hostReach = deps.hostReach ?? handleFleetHostReachApi;
+  return async (ctx, req, res, path, method) => {
+    // Sub-paths (tailnet-peers, pool-reach) ride this family's existing prefix.
+    if (path.startsWith(`${VERSE_FLEET_RUNTIME_IDENTITY_PATH}/`)) return hostReach(ctx, req, res, path, method);
     if (path !== VERSE_FLEET_RUNTIME_IDENTITY_PATH) return false;
     if (method !== 'GET') {
       sendJson(res, 405, { error: 'method not allowed' });
