@@ -113,11 +113,12 @@ describe('cmdFleetWorkBoard', { timeout: 60_000 }, () => {
     const lines = log.mock.calls.map(call => String(call[0]));
     expect(lines).toHaveLength(4);
     expect(lines[0]).toBe(`bus-request-c RECEIVED as-of=${iso(now - 1_000)} source=receivedAt `
-      + 'owner-missing=yes channel=bus ref=none');
+      + 'owner-missing=yes owner=unknown claim=unknown channel=bus ref=none');
     expect(lines[1]).toBe(`slack-request-b RECEIVED as-of=${iso(now - 2_000)} source=receivedAt `
-      + `owner-missing=yes channel=slack ref=${REF_B}`);
+      + `owner-missing=yes owner=unknown claim=unknown channel=slack ref=${REF_B}`);
     expect(lines[2]).toBe(`slack-request-a RUNNING as-of=${asOf} `
-      + `source=bus-work-claims lease-until ${iso(now + 600_000)} owner-missing=no channel=slack ref=${REF_A}`);
+      + `source=bus-work-claims lease-until ${iso(now + 600_000)} owner-missing=no `
+      + `owner=fake-owner claim=bus-claim:slack-request-a:1:${now - 3_000} channel=slack ref=${REF_A}`);
     expect(lines[3]).toBe(`items=3 truncated=no inbox=ok as-of=${asOf}`);
     expect(await cmdFleetWorkBoard(['--root', root, '--json'])).toBe(0);
     const parsed = JSON.parse(String(log.mock.calls.at(-1)![0]));
