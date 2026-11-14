@@ -1,4 +1,4 @@
-import { createAppAdapters, DRIVE_TARGETS, loopbackAppRequest, type AppAction, type DriveTarget } from '../core/drive/apps.js';
+import { createAppAdapters, DRIVE_TARGETS, loopbackAppRequest, loopbackDeskCall, type AppAction, type DriveTarget } from '../core/drive/apps.js';
 import { scrubSecrets } from '../core/util/scrub.js';
 
 export async function cmdDriveApp(args: string[]): Promise<number> {
@@ -14,7 +14,10 @@ export async function cmdDriveApp(args: string[]): Promise<number> {
     }
     if (!options['--json']) throw new Error('--json required');
     const request = loopbackAppRequest(process.env['PHM_DRIVE_ORIGIN'] ?? 'http://127.0.0.1:7777', process.env['PHM_DRIVE_READ_TOKEN'] ?? '', process.env['PHM_DRIVE_MUTATION_TOKEN'] ?? '');
-    const result = await createAppAdapters({ request })[target as DriveTarget]({ target: target as DriveTarget, action: action as AppAction,
+    // DESK is wired only when a live chat-turn bearer is configured; the bearer is never printed.
+    const bearer = process.env['PHM_DRIVE_DESK_BEARER'];
+    const desk = bearer ? loopbackDeskCall(process.env['PHM_DRIVE_ORIGIN'] ?? 'http://127.0.0.1:7777', bearer) : undefined;
+    const result = await createAppAdapters({ request, desk })[target as DriveTarget]({ target: target as DriveTarget, action: action as AppAction,
       prompt: options['--prompt'], handle: options['--handle'], seat: options['--seat'], projectPath: options['--project'] ?? process.cwd() });
     console.log(scrubSecrets(JSON.stringify(result)));
     return (result as { ok?: boolean }).ok === false ? 1 : 0;
