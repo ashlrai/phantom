@@ -5,7 +5,7 @@
  * Method: percentile statistics (p25 / median / p75) over completed accounted-exposure history
  * (~/.ashlr/runs/, ~/.ashlr/swarms/), lightly weighted toward goals that share
  * keywords with the new goal. The upper bound is clamped to the requested
- * budget. Cloud cost uses the same reference pricing as forecast.ts; local
+ * budget. Cloud cost uses the canonical budget reference pricing; local
  * runs cost $0 (the would-be-cloud figure is reported for context).
  *
  * Contract: PURE READ-ONLY (never writes, never scans repos, never calls a
@@ -14,10 +14,7 @@
  */
 
 import type { AshlrConfig, RunEstimate } from '../types.js';
-
-/** Reference cloud pricing ($/M tokens) — mirrors forecast.ts. */
-const CLOUD_REF_PRICE_IN = 3.0;
-const CLOUD_REF_PRICE_OUT = 15.0;
+import { cloudReferenceCost } from '../run/budget.js';
 
 /** Minimum samples for medium/high confidence. */
 const MEDIUM_SAMPLES = 3;
@@ -56,13 +53,6 @@ function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return 0;
   const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor((p / 100) * sorted.length)));
   return sorted[idx] ?? 0;
-}
-
-function cloudCost(tokensIn: number, tokensOut: number): number {
-  return (
-    (Math.max(0, tokensIn) / 1_000_000) * CLOUD_REF_PRICE_IN +
-    (Math.max(0, tokensOut) / 1_000_000) * CLOUD_REF_PRICE_OUT
-  );
 }
 
 function buildEstimate(
@@ -137,7 +127,7 @@ function buildEstimate(
       median: percentile(costs, 50),
       p75: percentile(costs, 75),
     },
-    wouldBeCloudUsd: cloudCost(p50t * inShare, p50t * (1 - inShare)),
+    wouldBeCloudUsd: cloudReferenceCost(p50t * inShare, p50t * (1 - inShare)),
     durationMs: {
       p25: percentile(durations, 25),
       median: percentile(durations, 50),
