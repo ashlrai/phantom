@@ -1,4 +1,3 @@
-import { takeLeaderReplyBatch } from './leader-reply-queue.js';
 /** Production boundary for the CEO network. Only trusted channel receivers call
  * receiptLeaderChannel; bus sender labels never establish operator identity. */
 import { takeLeaderReplyBatch } from './leader-reply-queue.js';

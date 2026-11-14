@@ -1,5 +1,4 @@
 /** Trusted Socket Mode owner adapter for the existing Leader network. */
-import { takeLeaderReplyBatch } from './leader-reply-queue.js';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
