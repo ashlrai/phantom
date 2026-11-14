@@ -107,12 +107,26 @@ export function readRuntimeIdentity(deps: RuntimeIdentityDeps): RuntimeIdentity 
   try {
     // Stat the real path; only the reported copy is redacted.
     const mtimeMs = deps.statMtimeMs(deps.statePath());
-    if (!Number.isFinite(mtimeMs)) throw new Error('bad mtime');
-    const age = Math.max(0, Math.floor((now.getTime() - mtimeMs) / 1000));
-    fleetState.mtime = new Date(mtimeMs).toISOString();
-    fleetState.ageSeconds = age;
-    fleetState.stale = age > STALE_AFTER_SECONDS;
+    const mtime = Number.isFinite(mtimeMs) ? new Date(mtimeMs) : null;
+    // An out-of-range or nonfinite mtime yields an invalid Date; it cannot
+    // certify freshness, so it is reported unknown like a missing file.
+    if (mtime === null || Number.isNaN(mtime.getTime())) throw new Error('bad mtime');
+    fleetState.mtime = mtime.toISOString();
+    const nowMs = now.getTime();
+    if (!Number.isFinite(nowMs)) {
+      reasons.push('fleetState: clock unreadable; freshness unknown');
+    } else if (mtimeMs > nowMs) {
+      // A future mtime is an observation, not proof of a fresh read: clock
+      // skew could be on either side, so age and staleness stay unknown.
+      reasons.push('fleetState: state file mtime is in the future; clock skew suspected');
+    } else {
+      const age = Math.floor((nowMs - mtimeMs) / 1000);
+      fleetState.ageSeconds = age;
+      fleetState.stale = age > STALE_AFTER_SECONDS;
+    }
   } catch {
+    fleetState.ageSeconds = UNKNOWN;
+    fleetState.stale = UNKNOWN;
     reasons.push('fleetState: state file missing or unreadable');
   }
 
@@ -126,7 +140,7 @@ export function readRuntimeIdentity(deps: RuntimeIdentityDeps): RuntimeIdentity 
   }
 
   return {
-    host, platform: plat, asOf: now.toISOString(),
+    host, platform: plat, asOf: Number.isFinite(now.getTime()) ? now.toISOString() : UNKNOWN,
     installedVersion: installed, sourceVersion: source, versionDrift,
     fleetState, tailnetName, reasons,
   };

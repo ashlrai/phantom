@@ -369,7 +369,12 @@ export function snapshotAfterSend(
 /** Send each planned notice in the thread it came from: the sender is
  * chosen by the item's source channel, never another channel. A row is
  * appended to the ledger only after a 'sent' or 'duplicate' receipt, so
- * a failed send retries next pass and a delivered one never repeats. */
+ * a failed send retries next pass and a delivered one never repeats.
+ * 'sent'/'duplicate' is returned to the caller only when the sender
+ * supplied a nonblank receipt AND the durable ledger append succeeded:
+ * with no ledger sink, a blank receipt or a throwing append the result
+ * is 'unavailable' with a bounded reason, so the caller keeps the item
+ * pending and the deterministic sender id makes the retry once-only. */
 export async function sendNotifications(
   notices: readonly BoardNotice[],
   opts: {
@@ -389,19 +394,35 @@ export async function sendNotifications(
       results.push({ notice, status: 'no-sender', reason: `no sender for channel ${notice.sourceChannel}` });
       continue;
     }
+    if (!append) {
+      results.push({ notice, status: 'unavailable', reason: 'no-ledger-sink' });
+      continue;
+    }
     let receipt: BoardSendReceipt;
     try { receipt = await sender(notice); }
     catch { receipt = { status: 'unavailable', reason: 'sender threw' }; }
-    results.push({ notice, status: receipt.status, ...(receipt.reason ? { reason: receipt.reason } : {}) });
-    if (receipt.status !== 'sent' && receipt.status !== 'duplicate') continue;
+    if (receipt.status !== 'sent' && receipt.status !== 'duplicate') {
+      results.push({ notice, status: receipt.status, ...(receipt.reason ? { reason: receipt.reason } : {}) });
+      continue;
+    }
+    const senderReceipt = typeof receipt.receipt === 'string' ? receipt.receipt.trim().slice(0, 512) : '';
+    if (senderReceipt === '') {
+      results.push({ notice, status: 'unavailable', reason: 'missing-sender-receipt' });
+      continue;
+    }
     try {
-      append?.({
+      append({
         v: 1, at: new Date((opts.now ?? Date.now)()).toISOString(),
         itemId: notice.itemId, state: notice.state,
         channel: notice.sourceChannel, thread: notice.sourceThread,
-        receipt: receipt.receipt ?? null,
+        receipt: senderReceipt,
       });
-    } catch { try { opts.log?.(`board-notify ${notice.itemId}: ledger append failed`); } catch { /* keep going */ } }
+    } catch {
+      try { opts.log?.(`board-notify ${notice.itemId}: ledger append failed`); } catch { /* keep going */ }
+      results.push({ notice, status: 'unavailable', reason: 'ledger-append-failed' });
+      continue;
+    }
+    results.push({ notice, status: receipt.status });
   }
   return results;
 }
