@@ -34,6 +34,8 @@ Approval cards record consent and do not collect credentials.
 
 ## CLI
 
+- [Amplify](AMPLIFY.md): `phm amplify status|tick|goal --json` reads objective and fleet vitals; tick journals advisory actions without changing fleet state.
+
 - [Apps control](APPS-CONTROL.md): Manage allowlisted desktop apps (`~/.ashlr/apps-allow.json`, empty by default). Commands: `phm apps list|open|quit|focus|status [--json]`. Runs through the desktop adapter only, logs every action to the feed, sends a quit with unsaved work to needs-you.
 - [Desktop control](DESKTOPCTL.md): Drive Claude, Codex and Devin desktop apps as interchangeable resources through the `computer_*` tools (`~/.ashlr/desktopctl.json`, off by default). Commands: `phm desktopctl capabilities|status|run <resource> [--json]`. Reports TCC grant state per resource, never prompts for or changes grants; `browser` is read-only.
 - [Desktop operator](DESKTOP-OPERATOR.md): Read and drive Phantom, Devin, Codex, Claude, Grok and Cursor on this Mac. Commands: `phm desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]`. Writes post a bus intent first. `phm desktop doctor --json` reports Accessibility and Screen Recording for the `desktop-operator` binary.
@@ -60,6 +62,8 @@ Approval cards record consent and do not collect credentials.
 - [Plugins](PLUGINS.md): Extend Phantom without forking.
 
 ## Fleet
+
+- [Branch gardener](BRANCH-GARDENER.md): Dry-run-first org/fork branch hygiene, active-worktree and security guards, six-hour launchd template, per-ref SHA leases and stranded-work triage.
 
 - Parked dependency gates: `phm fleet parked --json` lists `PARKED-DEP` rows and `unmetDeps` (gate ids not yet `MERGED` in `jobs.jsonl`). Restock auto-unparks when every gate id is merged; unpark does not merge. See [Mac queue scripts](../contrib/mac/README.md).
 - [Channel guide](CHANNELS.md): Six inbound channels — `phm channels add <kind>` writes config only; `phm channels status --json` reads the rollup.
@@ -439,6 +443,7 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Codex 0.165 follow-ups](router/codex-0165.md): RQ-RADAR-CODEX-0165 fixed the unknown-model path: a modelnotfound / Unknown model failure now drops the model into probedbad, retries the job without --model, and reroutes a cod...
 - [Router eval harness](router/eval.md): phm eval router --dataset jobs.jsonl [--policy NAME] [--decisions] [--json] [--write report.json] [--check baseline.json] replays a router or prompt policy over a frozen set of...
 - [Prompt-variant A/B evaluation and promotion](router/prompt-ab.md): phm eval prompts --dataset jobs.jsonl [--spec experiment.json] [--promote] [--write registry.json] [--check registry.json] [--json] replays prompt variants per job class over a...
+- [Agent-native CI: verify in the loop, observe every merge](strategy/CI-RIGHTSIZING.md): Status: advisory proposal, RQ-CI-RIGHTSIZING-1. Security review is required before applying the workflow patch. This change activates no workflow, ruleset, publisher, observer o...
 - [Constraints and guardrails ledger](strategy/CONSTRAINTS.md): Status: docs-only proposal for RQ-RETHINK-CONSTRAINTS-1. Source baseline: 00b72c2ea60de124051bb687a80f94663378d3b5, inspected 2026-11-13.
 - [Dead code and stale artifact audit](strategy/DEADCODE-REPORT.md): Job: RQ-RETHINK-DEADCODE-1. Observed: 2026-11-13.
 - [Phantom end-state architecture](strategy/ENDSTATE.md): Status: proposed architecture, docs and spec only. Job: RQ-RETHINK-ENDSTATE-1.
