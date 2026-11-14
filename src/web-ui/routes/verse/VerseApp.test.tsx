@@ -20,7 +20,7 @@ import { resetResolvedForTest } from './shell/needs-you-actions.js';
 import { activity, approvalNeed, shellFetch, vetoNeed, type ShellFetch } from './shell/shell-fixtures.test-support.js';
 import { refreshActivity, resetActivityForTest } from './shell/useActivity.js';
 import { mockCompactViewport, mockViewport, type ViewportMock } from './shell/viewport.test-support.js';
-import { MissingSection, SECTION_MODULES, VerseApp } from './VerseApp.js';
+import { MissingSection, SECTION_MODULES, PhantomApp } from './VerseApp.js';
 import { getResourcesUi, reloadResourcesUiForTest, RESOURCES_STORAGE_KEY, setResourcesBar, setResourcesSummary } from './resources/resources-store.js';
 import { resetVerseStore } from './verse-store.js';
 import { getDockSnapshot, resetDockStore } from './dock/dock-store.js';
@@ -42,7 +42,7 @@ import {
 function mount() {
   // Shell interaction scenarios start from Chat; Home launch is covered by the store tests.
   if (getVerseUiState().section === 'live') setVerseSection('chat');
-  return render(<ToastProvider><VerseApp /></ToastProvider>);
+  return render(<ToastProvider><PhantomApp /></ToastProvider>);
 }
 
 /**
@@ -848,5 +848,12 @@ describe('announcements and the native bridge', () => {
     target.scrollIntoView = scrolled;
     act(() => { host.appendChild(target); });
     await waitFor(() => expect(scrolled).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe('legacy Verse component names', () => {
+  it('keeps VerseApp resolving to PhantomApp for external importers', async () => {
+    const mod = await import('./VerseApp.js');
+    expect(mod.VerseApp).toBe(mod.PhantomApp);
   });
 });

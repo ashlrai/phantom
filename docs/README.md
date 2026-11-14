@@ -87,6 +87,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Measure lane/model reliability across N clean-worktree trials and feed routing | [pass^k offline eval suite](https://github.com/ashlrai/phantom/blob/master/docs/EVAL-PASSK.md) |
 | Navigate source entry points, subsystems and contracts | [Code map (source guide)](https://github.com/ashlrai/phantom/blob/master/docs/CODEMAP.md) |
 | A/B test prompt variants per job class and promote only significant winners | [Prompt-variant A/B eval](https://github.com/ashlrai/phantom/blob/master/docs/router/prompt-ab.md) |
+| Use the one-ask scope preflight in code | [One-ask intake boundary — source guide](https://github.com/ashlrai/phantom/blob/master/docs/ONE-ASK-INTAKE.md) |
 | Understand the current components and their boundaries | [Architecture](ARCHITECTURE.md#current-runtime-map) |
 | Follow source responsibilities, flows and extension points | [Architecture knowledge map](https://github.com/ashlrai/phantom/blob/master/docs/ARCHITECTURE-KNOWLEDGE.md) |
 | Review documentation inventory and audit coverage | [Documentation audit](https://github.com/ashlrai/phantom/blob/master/docs/DOCUMENTATION-AUDIT.md) |
@@ -125,6 +126,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Understand supported Dots companion workflows and the plugin-event integration path | [Dots companion](DOTS-COMPANION.md) |
 | Compose scoped, dated evidence with the pure source memory kernel | [Memory foundation](MEMORY-FOUNDATION.md) |
 | Run bounded synthetic memory evaluations without model credentials | [Offline memory evaluation](MEMORY-EVALUATION.md) |
+| Save evidence-linked agent checkpoints and compare context retention offline | [Agent checkpoints (source)](https://github.com/ashlrai/phantom/blob/master/docs/CHECKPOINTS.md) |
 | Compare the sanctioned programmatic interfaces of Grok Bot, OpenAI dots and Meta Muse before building peer adapters | [Peer interfaces research](https://github.com/ashlrai/phantom/blob/master/docs/PEERS-INTERFACES.md) |
 | Apply durable sessions, steering, tool discovery and context ideas to the existing harness | [Agent harness evolution](AGENT-HARNESS-EVOLUTION.md) |
 | Review graph registry, addressed bus and routing child jobs with dispatch blockers | [Graph and bus implementation backlog](https://github.com/ashlrai/phantom/blob/master/workplans/2026-10-26-graphbus/README.md) |
@@ -162,6 +164,9 @@ The generated [CLI reference](https://github.com/ashlrai/phantom/blob/master/doc
 records the source checkout's overview and full command table.
 
 ## For coding agents
+
+Command scores and the remaining agent gaps are in
+[CLI agent readiness](CLI-AGENT-READINESS.md).
 
 Start with the selected command registry from the binary you intend to use:
 
@@ -240,6 +245,8 @@ documentation. Use focused local checks while iterating, then follow the
 canonical release guide for required hosted qualification and publication.
 
 - [Local model inventory](https://github.com/ashlrai/phantom/blob/master/docs/MODEL-INVENTORY.md): opt-in Mac benchmarks, admission and fleet schema.
+
+- [Routines](https://github.com/ashlrai/phantom/blob/master/docs/ROUTINES.md): UTC-cron YAML schedules with executor failover, learned local-first placement runs, and a portable provider placement registry.
 
 ## All documents
 
@@ -337,6 +344,9 @@ canonical release guide for required hosted qualification and publication.
 - [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references only.
 
 - [Verify a worktree change](https://github.com/ashlrai/phantom/blob/master/docs/VERIFY-CHANGE.md): local toolchain checks and safe verdicts.
+- [Done contract](DONE-CONTRACT.md): the layered `done-contract.v1` file schema — floor checks, frozen acceptance criteria, verify commands — and `phm verify done`, the one generic validator (backward compatible with freeform bridge notes).
+
+- [Tier-1 import diagnosis](TIER1-WHY.md) — shortest runtime chains and the fleet apps boundary.
 
 - [Agent checkpoints](AGENT-CHECKPOINT.md): explicit durable state and resume format.
 - [Stigmergic coordination](https://github.com/ashlrai/phantom/blob/master/docs/STIGMERGY.md): `phm trail` file markers, claim/lease, heartbeats, resumable checkpoints; agents pick up stalled work.
@@ -347,6 +357,7 @@ canonical release guide for required hosted qualification and publication.
 - [Rebase-wave status](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-REBASE-STATUS.md) — read-only conflict and queue coverage snapshot.
 - [Merge queue latency](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-LATENCY.md) — record observed queue transitions, inspect blocker and eligibility timing, and re-arm dropped auto-merges after transient queue failures.
 - [Merge-batch planner](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-BATCH.md) — read-only file-overlap batching of open PRs with a least-rebase-churn order.
+- [Merge-plan scoreboard](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-PLAN.md) — read-only merges/hour, failure causes, rebase candidates and superseded-duplicate close proposals from one PR snapshot, with before/after diffs.
 - [Rebase-plan](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-REBASE-PLAN.md) — read-only conflict-to-queue wiring: clusters conflicting bridge PRs by file overlap and emits ready.tsv-ready rebase-job specs.
 
 - [Empty job reasons](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-EMPTIES.md): group recorded empty outcomes and review filler suggestions.

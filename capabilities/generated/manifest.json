@@ -1,0 +1,431 @@
+{
+  "artifacts": [
+    {
+      "bytes": 919,
+      "format": "claude-code",
+      "path": "claude-code/claude-code.mcp.json",
+      "sha256": "b98e38561e5b231811ef32802420501e38ad9e3694c6e93bde4efb8d9025416b",
+      "surface": "claude-code"
+    },
+    {
+      "bytes": 78,
+      "format": "claude-code",
+      "path": "claude-code/claude-code.settings.json",
+      "sha256": "80f62f23fe47cd30a4dfd225a40c6d063423df1a4292b35c003c27c89b85ed0a",
+      "surface": "claude-code"
+    },
+    {
+      "bytes": 392,
+      "format": "claude-code",
+      "path": "claude-code/claude-desktop.mcp.json",
+      "sha256": "cfe71368759e4cab631119e2ff25a9b5ea602e7fec6eb2938161248db1be01b2",
+      "surface": "claude-desktop"
+    },
+    {
+      "bytes": 42,
+      "format": "claude-code",
+      "path": "claude-code/claude-desktop.settings.json",
+      "sha256": "7de6cd97fbb0a9676eb2640ec8a2d6e081f6defd7a94f72d2b9da4382561c918",
+      "surface": "claude-desktop"
+    },
+    {
+      "bytes": 676,
+      "format": "codex",
+      "path": "codex/codex-cli.config.toml",
+      "sha256": "c78767d816824b566f5f8952c730568b039e3dd99255853feddbb8134f1f00f7",
+      "surface": "codex-cli"
+    },
+    {
+      "bytes": 327,
+      "format": "codex",
+      "path": "codex/codex-desktop.config.toml",
+      "sha256": "eed7c92fdcccc999bf01a0e59ecccc81e191a3e0fd3b1857f12c9aea4e3b1f94",
+      "surface": "codex-desktop"
+    },
+    {
+      "bytes": 281,
+      "format": "copilot",
+      "path": "copilot/copilot-cli.mcp.json",
+      "sha256": "106297844ad9d3784368f222245a4cf05695005a90eefd8087f737e57901457c",
+      "surface": "copilot-cli"
+    },
+    {
+      "bytes": 238,
+      "format": "cursor",
+      "path": "cursor/cursor-agent.mcp.json",
+      "sha256": "04242abb5ee1ca9e1f740a76e20d377546a8414f0a5d0bae90beb376f1a023f4",
+      "surface": "cursor-agent"
+    },
+    {
+      "bytes": 23,
+      "format": "cursor",
+      "path": "cursor/cursor-cloud.mcp.json",
+      "sha256": "d8e397af03b5b032f21d0aa967086f0c78b33c87b76f2e9898ae0a144df7de02",
+      "surface": "cursor-cloud"
+    },
+    {
+      "bytes": 522,
+      "format": "cursor",
+      "path": "cursor/cursor-desktop.mcp.json",
+      "sha256": "fd6ada02baab9aa132af64ac695aac8ed7ff244e72236559ebc3f0a0a3e28a33",
+      "surface": "cursor-desktop"
+    },
+    {
+      "bytes": 4136,
+      "format": "devin",
+      "path": "devin/devin-cli.json",
+      "sha256": "173ee8849161e165c699d00b69e7a63d7e2e6c43413c77363eb10bd6961248b2",
+      "surface": "devin-cli"
+    },
+    {
+      "bytes": 4164,
+      "format": "devin",
+      "path": "devin/devin-desktop.json",
+      "sha256": "e4795ddbf38c76b26acaf51bd420a7c09a891f0d750b85afa7c7af0023416c4c",
+      "surface": "devin-desktop"
+    },
+    {
+      "bytes": 238,
+      "format": "gemini",
+      "path": "gemini/gemini-cli.settings.json",
+      "sha256": "04242abb5ee1ca9e1f740a76e20d377546a8414f0a5d0bae90beb376f1a023f4",
+      "surface": "gemini-cli"
+    },
+    {
+      "bytes": 180,
+      "format": "grok-build",
+      "path": "grok-build/grok-build.json",
+      "sha256": "44068ac97bc35b73683d426bf544b82f2fccf31bcf992445c7f570aa9505d6dd",
+      "surface": "grok-build"
+    },
+    {
+      "bytes": 190,
+      "format": "local-model",
+      "path": "local-model/local-omlx.json",
+      "sha256": "c96c0f7eb8d729eb7b355bc85bda07b7cca3167f8933e265de36969eb0539068",
+      "surface": "local-omlx"
+    },
+    {
+      "bytes": 392,
+      "format": "session",
+      "path": "sessions/weyv-lead.mcp.json",
+      "sha256": "cfe71368759e4cab631119e2ff25a9b5ea602e7fec6eb2938161248db1be01b2",
+      "surface": "claude-code"
+    },
+    {
+      "bytes": 109,
+      "format": "session",
+      "path": "sessions/weyv-lead.settings.json",
+      "sha256": "4d717a56e5a8eb35fdea14cf00fc21d9fbd04ea4edf0cc091b0f912d3131fbb6",
+      "surface": "claude-code"
+    },
+    {
+      "bytes": 1642,
+      "format": "checksums",
+      "path": "SHA256SUMS",
+      "sha256": "0671ff548ec6b914a5128939c925d59673e66c94081b945dc23e63c6a9285910",
+      "surface": null
+    }
+  ],
+  "bundleSha256": "0671ff548ec6b914a5128939c925d59673e66c94081b945dc23e63c6a9285910",
+  "gated": [
+    {
+      "capability": "devin-acu-topup",
+      "flags": [
+        "spend"
+      ],
+      "hardLimitGates": [
+        "money"
+      ],
+      "surfaces": [
+        "devin-desktop"
+      ]
+    },
+    {
+      "capability": "gh-repo-delete",
+      "flags": [
+        "delete"
+      ],
+      "hardLimitGates": [
+        "destroy-data"
+      ],
+      "surfaces": [
+        "claude-code"
+      ]
+    },
+    {
+      "capability": "mail-send",
+      "flags": [
+        "external_send"
+      ],
+      "hardLimitGates": [
+        "outside-send"
+      ],
+      "surfaces": [
+        "claude-code",
+        "claude-desktop"
+      ]
+    },
+    {
+      "capability": "messages-send",
+      "flags": [
+        "external_send"
+      ],
+      "hardLimitGates": [
+        "outside-send"
+      ],
+      "surfaces": [
+        "claude-code",
+        "claude-desktop"
+      ]
+    },
+    {
+      "capability": "slack-post",
+      "flags": [
+        "external_send"
+      ],
+      "hardLimitGates": [
+        "outside-send"
+      ],
+      "surfaces": [
+        "claude-code",
+        "codex-cli"
+      ]
+    }
+  ],
+  "generator": "phm caps generate",
+  "pinStage": {
+    "lib": "pin_stage_lib",
+    "libRev": "fe77a6a8",
+    "stagedDir": "~/.ashlr-runs/staged/caps/0671ff548ec6b914a5128939c925d59673e66c94081b945dc23e63c6a9285910",
+    "stagedRoot": "~/.ashlr-runs/staged/caps",
+    "tool": "SEC-PIN-STAGE-TOOL-2"
+  },
+  "registrySchema": "caps.registry.v1",
+  "registrySha256": "5405f88df6b4cb2535f45ddc678beb5c3af074f71414e38c2eb89fb37fcfcfd0",
+  "schema": "caps.adapters.v1",
+  "surfaces": {
+    "claude-code": {
+      "adapter": "claude-code",
+      "capabilities": {
+        "cli": [
+          "gh",
+          "gh-repo-delete"
+        ],
+        "connector": [
+          "mail-send",
+          "messages-send",
+          "slack-post"
+        ],
+        "mcp": [
+          "ashlr",
+          "lexicon",
+          "locus",
+          "phantom-gateway",
+          "phantom-secrets",
+          "stack"
+        ],
+        "plugin": [
+          "ashlr-plugin"
+        ],
+        "skill": [
+          "browser-verify"
+        ]
+      },
+      "hosts": []
+    },
+    "claude-desktop": {
+      "adapter": "claude-code",
+      "capabilities": {
+        "connector": [
+          "mail-send",
+          "messages-send",
+          "shortcuts-run"
+        ],
+        "mcp": [
+          "lexicon",
+          "locus",
+          "phantom-gateway"
+        ]
+      },
+      "hosts": []
+    },
+    "codex-cli": {
+      "adapter": "codex",
+      "capabilities": {
+        "cli": [
+          "gh"
+        ],
+        "connector": [
+          "slack-post"
+        ],
+        "mcp": [
+          "ashlr",
+          "lexicon",
+          "locus",
+          "phantom-gateway",
+          "phantom-secrets",
+          "stack"
+        ],
+        "skill": [
+          "browser-verify"
+        ]
+      },
+      "hosts": [
+        "devin-cli",
+        "devin-desktop"
+      ]
+    },
+    "codex-desktop": {
+      "adapter": "codex",
+      "capabilities": {
+        "mcp": [
+          "lexicon",
+          "locus",
+          "phantom-gateway"
+        ]
+      },
+      "hosts": []
+    },
+    "copilot-cli": {
+      "adapter": "copilot",
+      "capabilities": {
+        "cli": [
+          "gh"
+        ],
+        "mcp": [
+          "locus",
+          "phantom-gateway"
+        ]
+      },
+      "hosts": [
+        "devin-cli",
+        "devin-desktop"
+      ]
+    },
+    "cursor-agent": {
+      "adapter": "cursor",
+      "capabilities": {
+        "cli": [
+          "gh"
+        ],
+        "mcp": [
+          "locus",
+          "phantom-gateway"
+        ]
+      },
+      "hosts": [
+        "devin-cli",
+        "devin-desktop"
+      ]
+    },
+    "cursor-cloud": {
+      "adapter": "cursor",
+      "capabilities": {},
+      "hosts": []
+    },
+    "cursor-desktop": {
+      "adapter": "cursor",
+      "capabilities": {
+        "mcp": [
+          "lexicon",
+          "locus",
+          "phantom-gateway",
+          "phantom-secrets"
+        ]
+      },
+      "hosts": []
+    },
+    "devin-cli": {
+      "adapter": "devin",
+      "capabilities": {
+        "cli": [
+          "gh"
+        ],
+        "mcp": [
+          "ashlr",
+          "lexicon",
+          "locus",
+          "phantom-gateway",
+          "phantom-secrets",
+          "stack"
+        ]
+      },
+      "hosts": []
+    },
+    "devin-desktop": {
+      "adapter": "devin",
+      "capabilities": {
+        "connector": [
+          "devin-acu-topup"
+        ],
+        "mcp": [
+          "ashlr",
+          "lexicon",
+          "locus",
+          "phantom-gateway",
+          "phantom-secrets",
+          "stack"
+        ]
+      },
+      "hosts": []
+    },
+    "gemini-cli": {
+      "adapter": "gemini",
+      "capabilities": {
+        "cli": [
+          "gh"
+        ],
+        "mcp": [
+          "locus",
+          "phantom-gateway"
+        ]
+      },
+      "hosts": [
+        "devin-cli",
+        "devin-desktop"
+      ]
+    },
+    "glm-lite": {
+      "adapter": "none",
+      "capabilities": {},
+      "hosts": [
+        "devin-cli",
+        "devin-desktop"
+      ]
+    },
+    "grok-bot-desktop": {
+      "adapter": "none",
+      "capabilities": {},
+      "hosts": []
+    },
+    "grok-build": {
+      "adapter": "grok-build",
+      "capabilities": {
+        "cli": [
+          "gh"
+        ],
+        "mcp": [
+          "phantom-gateway"
+        ]
+      },
+      "hosts": [
+        "devin-cli",
+        "devin-desktop"
+      ]
+    },
+    "local-omlx": {
+      "adapter": "local-model",
+      "capabilities": {},
+      "hosts": []
+    },
+    "qwen-code": {
+      "adapter": "none",
+      "capabilities": {},
+      "hosts": [
+        "devin-cli",
+        "devin-desktop"
+      ]
+    }
+  }
+}

@@ -3,7 +3,7 @@
  * VERSE_ANCHOR_EVENT ("go to that card"); the reveal itself is
  * shell/reveal-anchor.ts.
  *
- * WHY SEPARATE: VerseApp installs this listener at first paint, but nothing
+ * WHY SEPARATE: PhantomApp installs this listener at first paint, but nothing
  * is revealed until an operator follows a link into a surface. The reveal
  * logic (and command/nav.ts with it) is preloaded instead of imported: its
  * download starts when this module evaluates, and once it is in a request
