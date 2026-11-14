@@ -1236,6 +1236,52 @@ def admission_gate():
     g["tripped"] = bool(g["reasons"])
     return g
 GATE = admission_gate()
+
+def observe_typed_route(gate, lane_slots, lane_running, ready_lines):
+    """One bounded advisory sample per tick. Output has no path into launch state."""
+    import tempfile
+    row = next((line.split("\t") for line in ready_lines
+                if len(line.split("\t")) >= 4 and line.split("\t")[3] in TIERS), None)
+    if row is None: return
+    request = {"task_class": "other", "repo": row[1], "tier_hint": row[3], "lane_candidates": LANES,
+               "quota_state": {lane: "exhausted" if lane_slots[lane].get("held") or lane in hold else "available" for lane in LANES},
+               "machine_state": {"admit": not (gate["tripped"] or pause), "running_by_lane": dict(lane_running)}}
+    record = {"schema": "route.explain.v1", "event": "route.explain", "ts": NOW, "advisory": True}
+    try:
+        # Existing CLI owns schema checks, loopback-only transport, Jev budget and fallback.
+        # No shell interpolation, prompt text, credentials, queue writes or target mutations.
+        with tempfile.TemporaryFile(mode="w+") as source:
+            json.dump(request, source); source.seek(0)
+            result = _run([H + "/.local/bin/phm", "route", "decide", "--input", "-", "--root", R, "--json"],
+                          0.9, stdin=source)
+        if result.returncode != 0 or len(result.stdout) > 8192: raise ValueError("unavailable")
+        decision = json.loads(result.stdout)
+        if not isinstance(decision, dict) or decision.get("schema") != "route.decision.v1" or decision.get("advisory") is not True:
+            raise ValueError("invalid decision")
+        # Allowlist the typed vocabulary before persisting anything from a subprocess.
+        safe_id = lambda v: v is None or isinstance(v, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", v)
+        reasons = {"local-fast", "jev", "local-strong", "schema-invalid", "schema-retry", "backend-unavailable", "deadline",
+                   "deterministic-fallback", "admission-blocked", "no-candidates", "single-candidate", "adequate-tier"}
+        if (not all(safe_id(decision.get(k)) for k in ("lane", "model"))
+                or decision.get("effort") not in (None, "low", "medium", "high", "xhigh", "max")
+                or decision.get("speed_tier") not in (None, "everyday", "workhorse", "premium")
+                or not isinstance(decision.get("reason_codes"), list) or not 1 <= len(decision["reason_codes"]) <= 16
+                or any(not isinstance(v, str) or v not in reasons for v in decision["reason_codes"])):
+            raise ValueError("invalid decision")
+        fields = [decision.get(k) for k in ("lane", "model", "effort", "speed_tier")]
+        if not (all(v is None for v in fields) or all(v is not None for v in fields)):
+            raise ValueError("incomplete decision")
+        record["decision"] = {k: decision[k] for k in ("lane", "model", "effort", "speed_tier", "reason_codes")}
+        for key in ("duration_ms", "attempts", "candidate_count"):
+            value = decision.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 1000000: record[key] = value
+        record["status"] = "observed"
+    except Exception:
+        record["status"] = "unavailable"
+    try:
+        with open(MD + "/route.explain.jsonl", "a") as audit: audit.write(json.dumps(record) + "\n")
+    except OSError: pass  # Observation can never hold admission or launching.
+
 # An explicit nonnegative override fixes the cap; malformed values fall back to the load-aware default.
 try: LOCAL_MID_CAP = max(0, int(os.environ["LOCAL_MID_CAP"])) if "LOCAL_MID_CAP" in os.environ else None
 except ValueError: LOCAL_MID_CAP = None
@@ -2261,5 +2307,6 @@ adm = {"schema": "dispatchd.admission.v2", "ts": st["last_tick"], "admit": not _
 adm.update({k: v for k, v in GATE.items() if k != "tripped"})
 adm["decision"] = "stop" if _block else "admit"
 jsave(Q + "/admission.json", adm); st["admission"] = adm
+observe_typed_route(GATE, slots, running, lines)
 jsave(Q + "/status.json", st)
 log("tick run=%s q=%d launched=%d reap=%d pause=%s wall=%.0fs" % (json.dumps(running), len(rest), len(launched), nreap, bool(pause), time.time() - NOW))
