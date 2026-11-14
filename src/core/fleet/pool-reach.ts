@@ -74,6 +74,9 @@ function reachForSlot(
   // they can never confirm an alias.
   const matches = peers.peers.filter(peer => peer.name !== UNKNOWN && aliasMatches(alias, peer.name));
   const isSelf = peers.self !== UNKNOWN && aliasMatches(alias, peers.self);
+  // tailnet-peers caps the peer list and records the truncation in reasons[];
+  // a truncated set cannot prove an alias names exactly one host.
+  const truncated = peers.reasons.some(reason => reason.startsWith('peers: truncated to '));
 
   const host: PoolReachHost = {
     slot,
@@ -85,21 +88,35 @@ function reachForSlot(
     isSelf,
   };
   let reason: string | null = null;
-  if (matches.length === 1) {
-    const peer = matches[0] as TailnetPeer;
-    host.matched = peer.name;
-    host.online = peer.online;
-    host.lastSeen = peer.lastSeen;
-    host.ageSeconds = peer.ageSeconds;
+  if (isSelf && matches.length > 0) {
+    // The alias names this computer but peers also claim it; which identity
+    // the alias reaches is uncertain, so online stays unknown.
+    reason = `${slot}: ${alias} matches this computer and ${matches.length} tailnet peers`;
   } else if (matches.length > 1) {
     // Two peers claim the alias; naming one would be a guess.
     reason = `${slot}: ${alias} matches ${matches.length} tailnet peers`;
+    if (truncated) reason += '; peer list truncated, more matches may be hidden';
+  } else if (matches.length === 1) {
+    if (truncated) {
+      // A retained match cannot prove uniqueness: peers past the cap may
+      // claim the same alias, so the identity stays unknown.
+      reason = `${slot}: ${alias} matches a tailnet peer but the peer list is truncated; identity not proven unique`;
+    } else {
+      const peer = matches[0] as TailnetPeer;
+      host.matched = peer.name;
+      host.online = peer.online;
+      host.lastSeen = peer.lastSeen;
+      host.ageSeconds = peer.ageSeconds;
+    }
   } else if (isSelf) {
     host.matched = peers.self;
   } else {
-    reason = `${slot}: no tailnet peer named ${alias}`;
+    reason = truncated
+      ? `${slot}: peer list truncated; cannot confirm ${alias}`
+      : `${slot}: no tailnet peer named ${alias}`;
   }
-  if (isSelf) host.online = true;
+  // Self is certain only when no peer competes for the alias.
+  if (isSelf && matches.length === 0) host.online = true;
   return { host, reason };
 }
 
