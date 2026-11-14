@@ -7,6 +7,8 @@
 export interface OrderStripHealth {
   /** true = live workers checked, false = unavailable (RUNNING never checked), null = older server. */
   liveChecked: boolean | null;
+  /** true = lane holds checked, false = unavailable (BLOCKED not checked), null/undefined = older server. */
+  lanesChecked?: boolean | null;
   degradedSources: string[];
   notice: string | null;
 }
@@ -18,6 +20,8 @@ export function orderStripHealth(body: unknown): OrderStripHealth {
   try {
     const b = body !== null && typeof body === 'object' && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
     const liveChecked = b.live === 'healthy' ? true : b.live === 'unavailable' ? false : null;
+    // undefined (not null) when unknown so older toEqual-shaped callers still match.
+    const lanesChecked = b.lanes === 'healthy' ? true : b.lanes === 'unavailable' ? false : undefined;
 
     let degraded: string[] = [];
     const s = b.sources;
@@ -29,12 +33,13 @@ export function orderStripHealth(body: unknown): OrderStripHealth {
 
     const parts: string[] = [];
     if (liveChecked === false) parts.push('Live workers unreadable · RUNNING not checked');
+    if (lanesChecked === false) parts.push('Lane holds unreadable · BLOCKED not checked');
     if (degradedSources.length > 0) {
       const shown = degradedSources.slice(0, MAX_LISTED).join(', ');
       const more = degradedSources.length - MAX_LISTED;
       parts.push(`Order sources degraded: ${shown}${more > 0 ? ` +${more} more` : ''}`);
     }
-    return { liveChecked, degradedSources, notice: parts.length > 0 ? parts.join(' · ') : null };
+    return { liveChecked, lanesChecked, degradedSources, notice: parts.length > 0 ? parts.join(' · ') : null };
   } catch {
     return { liveChecked: null, degradedSources: [], notice: null };
   }
