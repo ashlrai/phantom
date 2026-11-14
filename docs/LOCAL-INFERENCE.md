@@ -144,6 +144,14 @@ Every field is enforced:
 
 `mlx_lm.server` serves an OpenAI-like API on `localhost:8080`. Its own docs say it "is not recommended for production as it only implements basic security checks" ([SERVER.md](https://github.com/ml-explore/mlx-lm/blob/main/mlx_lm/SERVER.md)). Treat it as a dev tool, loopback only. To use it, point `OPENAI_COMPAT_BASE_URL` at `http://127.0.0.1:8080/v1`.
 
+## Tool calling on local endpoints
+
+Local endpoints get the same bounded tool loops as hosted engines (read/edit tools inside the sandbox; exec stays gated). `src/core/run/tool-calls.ts` is the single adapter every local dialect normalizes through, wired into `provider-client.ts` for both the OpenAI-compatible and Ollama paths, streaming and non-streaming:
+
+- Structured `tool_calls` (OpenAI chat.completions and Ollama `/api/chat`) always win over content markup.
+- When a model emits call markup as content — `<tool_call>` frames carrying JSON, Qwen3-Coder XML (`<function=…><parameter=…>`), or GLM `arg_key`/`arg_value` payloads, Mistral `[TOOL_CALLS]…[ARGS]` sections, or bare JSON — it is parsed only when tools were advertised on the wire and the call's name matches an advertised tool. Prose that merely looks like JSON is never executed.
+- Internal spec fields (`fn`, `safety`, the redundant top-level `name`) are projected off the wire; endpoints receive plain `{type:"function", function:{…}}` specs, which strict servers (pydantic-validated endpoints like oMLX) accept.
+
 ## Models for a 128 GB Apple Silicon Mac
 
 4-bit sizes as listed on the Ollama library tag pages (checked Oct 25, 2026). Sizes are the download size, not total memory in use; leave room for the KV cache and the rest of the system.

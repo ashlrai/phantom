@@ -19,6 +19,21 @@ const MAX_INBOXES = 8;
 const MAX_LABEL = 64;
 const COUNT_KEYS = ['scanned', 'updates', 'drafted', 'review', 'failed', 'unreadInSample', 'target', 'archiveCandidateCount'] as const;
 
+/** Count-only provenance for what the saved sample covered: which local export
+ * read produced the counts and whether the scan bound left files unexamined.
+ * Never a live unread total, and never paths or message content. Absent on
+ * records saved before scope was tracked; consumers must treat that as unknown,
+ * not as a complete export. */
+export interface GmailTriageScope {
+  source: 'local-eml-export';
+  /** Regular .eml files within the byte limit found in the export directory. */
+  files: number;
+  /** Scan bound applied to the read after clamping. */
+  limit: number;
+  /** True when the bound stopped the read before every file was examined. */
+  truncated: boolean;
+}
+
 export interface GmailTriageLatest {
   schema: typeof GMAIL_TRIAGE_LATEST_SCHEMA;
   at: string;
@@ -31,6 +46,7 @@ export interface GmailTriageLatest {
   unreadInSample: number;
   target: number;
   archiveCandidateCount: number;
+  scope?: GmailTriageScope;
 }
 
 export type GmailTriageLatestInput = Omit<GmailTriageLatest, 'schema' | 'at' | 'dir'> & { dir: string; now?: () => Date };
@@ -53,6 +69,21 @@ export function gmailTriageLatestPath(runsDir: string): string {
   return join(runsDir, 'comms', 'gmail-triage-latest.json');
 }
 
+/** Validates an optional scope projection, admitting only the known count
+ * fields and the fixed provenance label. Returns undefined for absent or
+ * malformed values so a stored record degrades to "scope unknown" instead of
+ * failing the whole report; extra keys (paths, content) are dropped. */
+function readScope(raw: unknown): GmailTriageScope | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const scope = raw as Record<string, unknown>;
+  if (scope.source !== 'local-eml-export') return undefined;
+  const { files, limit, truncated } = scope;
+  if (typeof files !== 'number' || !Number.isInteger(files) || files < 0) return undefined;
+  if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1) return undefined;
+  if (typeof truncated !== 'boolean') return undefined;
+  return { source: 'local-eml-export', files, limit, truncated };
+}
+
 function readRecord(raw: unknown): GmailTriageLatest | null {
   if (!raw || typeof raw !== 'object') return null;
   const record = raw as Record<string, unknown>;
@@ -63,7 +94,9 @@ function readRecord(raw: unknown): GmailTriageLatest | null {
     if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) return null;
   }
   const picked = Object.fromEntries(COUNT_KEYS.map(key => [key, record[key]]));
-  return { schema: GMAIL_TRIAGE_LATEST_SCHEMA, at: record.at, dir: record.dir.slice(0, MAX_LABEL), ...picked } as GmailTriageLatest;
+  const scope = readScope(record.scope);
+  return { schema: GMAIL_TRIAGE_LATEST_SCHEMA, at: record.at, dir: record.dir.slice(0, MAX_LABEL), ...picked,
+    ...(scope === undefined ? {} : { scope }) } as GmailTriageLatest;
 }
 
 /** Parses the store file: a v2 envelope, or a bare v1 record treated as both the
@@ -113,12 +146,15 @@ export function readGmailTriageInboxReports(runsDir: string): GmailTriageInboxRe
  * keeps the others (bounded), refreshes `latest`, and migrates a bare v1 file.
  * Lock or storage failures throw so callers can report the save as failed. */
 export function writeGmailTriageLatest(runsDir: string, input: GmailTriageLatestInput): void {
-  const { now, dir, ...counts } = input;
+  const { now, dir, scope, ...counts } = input;
+  const cleanScope = scope === undefined ? undefined : readScope(scope);
+  if (scope !== undefined && cleanScope === undefined) throw new Error('Gmail triage scope is invalid');
   const record: GmailTriageLatest = {
     schema: GMAIL_TRIAGE_LATEST_SCHEMA,
     at: (now?.() ?? new Date()).toISOString(),
     dir: basename(dir).slice(0, MAX_LABEL),
     ...counts,
+    ...(cleanScope === undefined ? {} : { scope: cleanScope }),
   };
   const path = gmailTriageLatestPath(runsDir);
   const storeDir = dirname(path);
