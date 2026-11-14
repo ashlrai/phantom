@@ -17,7 +17,7 @@ import { scrubSecrets } from '../util/scrub.js';
 import { classifyTeammateIntent as classifyInboxIntent, markTeammateTextsAnswered, readRows, readTeammateTexts } from './imessage-teammate-inbox.js';
 import { approvedTeammateHandle, reconcileTeammateMessage, sendApprovedTeammateMessage, type TeamMessageReceipt, type TeamTransportOptions } from './imessage-teammate-transport.js';
 
-interface Reply { rowid: number; senderId: string; state: 'claimed' | 'drafted' | 'sending' | 'sent' | 'suppressed'; at: number; claimUntil: number; text?: string; attemptedAt?: number; receipt?: TeamMessageReceipt }
+interface Reply { rowid: number; senderId: string; state: 'claimed' | 'drafted' | 'sending' | 'sent' | 'suppressed'; at: number; claimUntil: number; text?: string; attemptedAt?: number; sendAttempts?: number; receipt?: TeamMessageReceipt }
 interface QueuedWork { hash: string; id: string; repo: string; lane: string; at: number; state: 'prepared' | 'appending' | 'queued' }
 interface Store { v: 1; replies: Reply[]; jobs?: QueuedWork[]; scanAfter?: number; scanCeiling?: number }
 export interface TeammateWorkerOptions extends TeamTransportOptions {
@@ -121,6 +121,8 @@ function queueTeammateWork(text: string, runs: string, store: Store, save: () =>
   if (result.status !== 0) throw new Error('Teammate queue append unavailable');
   return job;
 }
+const SENDING_STALE_MS = 30 * 60 * 1000;
+const MAX_SEND_ATTEMPTS = 3;
 
 // Pure intent classifiers live in the leaf inbox module so read-only observers
 // (the unified comms inbox) never pull the responder's transport/model graph.
@@ -154,7 +156,7 @@ export async function generateLocalTeammateReply(text: string, context: string, 
   return result.trim();
 }
 
-/** One bounded, serialized pass. Sending state is never replayed: only reconciled. */
+/** One bounded, serialized pass. A sending row is reconciled, never replayed while its attempt could still land; a stale attempt with no chat.db record re-enters the send path a bounded number of times, then is suppressed. */
 export async function runTeammateResponder(cfg: AshlrConfig, options: TeammateWorkerOptions = {}) {
   const report = { schema: 'imessage.teammate-responder.v1', state: 'unavailable', examined: 0, sent: 0, suppressed: 0, pending: 0, leader: 0 };
   const runs = options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
@@ -168,7 +170,7 @@ export async function runTeammateResponder(cfg: AshlrConfig, options: TeammateWo
     const path = join(dir, 'teammate-replies.json');
     const raw = read(path, dir, MAX_BYTES);
     const store: Store = raw === null ? { v: 1, replies: [] } : JSON.parse(raw) as Store;
-    if (store.v !== 1 || !Array.isArray(store.replies) || store.replies.length > 256 || store.replies.some(row => !Number.isSafeInteger(row.rowid) || row.rowid < 1 || !/^imessage:[a-f0-9]{16}$/.test(row.senderId) || !['claimed', 'drafted', 'sending', 'sent', 'suppressed'].includes(row.state) || !Number.isFinite(row.at) || !Number.isFinite(row.claimUntil) || row.text !== undefined && (typeof row.text !== 'string' || row.text.length > 4000) || row.attemptedAt !== undefined && !Number.isFinite(row.attemptedAt)) || store.scanAfter !== undefined && (!Number.isSafeInteger(store.scanAfter) || store.scanAfter < 0) || store.scanCeiling !== undefined && (!Number.isSafeInteger(store.scanCeiling) || store.scanCeiling < 1)) return report;
+    if (store.v !== 1 || !Array.isArray(store.replies) || store.replies.length > 256 || store.replies.some(row => !Number.isSafeInteger(row.rowid) || row.rowid < 1 || !/^imessage:[a-f0-9]{16}$/.test(row.senderId) || !['claimed', 'drafted', 'sending', 'sent', 'suppressed'].includes(row.state) || !Number.isFinite(row.at) || !Number.isFinite(row.claimUntil) || row.text !== undefined && (typeof row.text !== 'string' || row.text.length > 4000) || row.attemptedAt !== undefined && !Number.isFinite(row.attemptedAt) || row.sendAttempts !== undefined && (!Number.isSafeInteger(row.sendAttempts) || row.sendAttempts < 0)) || store.scanAfter !== undefined && (!Number.isSafeInteger(store.scanAfter) || store.scanAfter < 0) || store.scanCeiling !== undefined && (!Number.isSafeInteger(store.scanCeiling) || store.scanCeiling < 1)) return report;
     if (store.jobs !== undefined && (!Array.isArray(store.jobs) || store.jobs.length > 512 || store.jobs.some(job =>
       !job || !/^[a-f0-9]{64}$/.test(job.hash) || !/^RQ-DOT-[a-z0-9-]+-\d+$/.test(job.id)
       || !REPOS.includes(job.repo) || !LANES.includes(job.lane) || !Number.isSafeInteger(job.at) || job.at < 0
@@ -185,7 +187,8 @@ export async function runTeammateResponder(cfg: AshlrConfig, options: TeammateWo
     // Only sent/suppressed rows whose rowid carries a durable answered marker
     // in teammates.jsonl are evictable, oldest first and only as many as needed;
     // claimed/drafted/sending rows keep their text and attempt evidence so an
-    // ambiguous send is reconciled later, never evicted or resent.
+    // ambiguous send is reconciled later — never evicted, and resent only
+    // inside the bounded stale-attempt escape.
     let answeredRowids: Set<number> | undefined;
     const answeredSet = (): Set<number> => {
       if (answeredRowids === undefined) {
@@ -236,9 +239,15 @@ export async function runTeammateResponder(cfg: AshlrConfig, options: TeammateWo
       if (row?.state === 'sending') {
         if (processed++ >= 3) { report.examined--; scanned = checkpoint; break; }
         const receipt = row.text && row.attemptedAt !== undefined ? await (options.reconcile ?? reconcileTeammateMessage)(row.text, row.senderId, row.attemptedAt, cfg, options) : null;
-        if (receipt?.sent && receipt.error === 0) { row.state = 'sent'; row.receipt = receipt; save(); markTeammateTextsAnswered([message.rowid], runs); report.sent++; }
-        else report.pending++;
-        continue;
+        if (receipt?.sent && receipt.error === 0) { row.state = 'sent'; row.receipt = receipt; save(); markTeammateTextsAnswered([message.rowid], runs); report.sent++; continue; }
+        // An attempt that left no chat.db record can never reconcile. Once it
+        // is provably stale the durable draft re-enters the normal send path
+        // below for a bounded retry; at the attempt cap the row is suppressed
+        // so wedged sends stop consuming the per-pass budget.
+        if (receipt || (row.attemptedAt !== undefined && now() - row.attemptedAt <= SENDING_STALE_MS)) { report.pending++; continue; }
+        row.sendAttempts = (row.sendAttempts ?? 0) + 1;
+        if (row.sendAttempts >= MAX_SEND_ATTEMPTS) { row.state = 'suppressed'; save(); markTeammateTextsAnswered([message.rowid], runs); report.suppressed++; continue; }
+        row.state = 'drafted'; row.attemptedAt = undefined; save();
       }
       const intent = classifyTeammateIntent(message.text);
       // Keep leader requests visible without allowing them to starve later replies.
