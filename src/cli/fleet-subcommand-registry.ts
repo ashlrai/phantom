@@ -412,6 +412,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'waste-risk': () => import('./fleet-waste-risk.js'),
   'window-plan': () => import('./fleet-window-plan.js'),
   'work-board': () => import('./fleet-work-board.js'),
+  'work-result': () => import('./fleet-work-result.js'),
   'work-state': () => import('./fleet-work-state.js'),
   'work-trace': () => import('./fleet-work-trace.js'),
   'workers': () => import('./fleet-workers.js'),
