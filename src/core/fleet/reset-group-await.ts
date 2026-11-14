@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { LANE_ID_RE } from './runs-lane-targets.js';
-import { abortableSleep, isAwaitMs } from './needs-mason-answer-await.js';
+import { abortableSleep, boundedAwait, isAwaitMs, wireAwaitCancel } from '../util/await-support.js';
 import { parseResetAwaitWatermarkMs, RESET_AWAIT_MAX_POLL_MS, RESET_AWAIT_MAX_TIMEOUT_MS,
   type ResetAwaitDeps, type ResetAwaitOutcome } from './reset-evidence-await.js';
 import { readUsageResets, type UsageResetsV1 } from './usage-reset-detect.js';
@@ -64,33 +64,14 @@ export async function awaitResetGroup(options: { lanes: string[]; timeoutMs: num
   }
   const deadline = now() + timeoutMs;
   const controller = new AbortController();
-  const cancel = (): void => controller.abort();
-  process.on('SIGINT', cancel); process.on('SIGTERM', cancel);
-  signal?.addEventListener('abort', cancel, { once: true });
-  if (signal?.aborted) cancel();
+  const detach = wireAwaitCancel(controller, signal);
   const found = new Map<string, ResetGroupLaneEvidence>();
   // Race each operation against cancellation and the overall deadline, so a stalled read cannot outlive the deadline.
-  const bounded = async <T>(operation: () => Promise<T>, limit: number): Promise<
-    { kind: 'value'; value: T } | { kind: 'deadline' | 'cancelled' | 'failed' }> => {
-    const timer = new AbortController();
-    let onAbort: () => void = () => {};
-    const cancelled = new Promise<{ kind: 'cancelled' }>(resolve => {
-      onAbort = () => resolve({ kind: 'cancelled' });
-      controller.signal.addEventListener('abort', onAbort, { once: true });
-      if (controller.signal.aborted) onAbort();
-    });
-    try {
-      return await Promise.race([
-        Promise.resolve().then(operation).then(value => ({ kind: 'value' as const, value }), () => ({ kind: 'failed' as const })),
-        sleep(limit, timer.signal).then(() => ({ kind: 'deadline' as const }), () => ({ kind: 'failed' as const })),
-        cancelled,
-      ]);
-    } finally { timer.abort(); controller.signal.removeEventListener('abort', onAbort); }
-  };
+  const bound = { cancel: controller.signal, deadlineMs: deadline, now, sleep };
   try {
     while (!controller.signal.aborted && now() < deadline) {
       // One shared read per poll: every lane is evaluated against the same snapshot.
-      const read = await bounded(() => (deps.read ?? readUsageResets)({ runsDir }), deadline - now());
+      const read = await boundedAwait(() => (deps.read ?? readUsageResets)({ runsDir }), bound);
       if (controller.signal.aborted) { result.outcome = 'cancelled'; break; }
       if (now() >= deadline || read.kind === 'deadline') break;
       if (read.kind !== 'value') { result.outcome = read.kind; break; }
@@ -103,16 +84,13 @@ export async function awaitResetGroup(options: { lanes: string[]; timeoutMs: num
       result.observed = lanes.flatMap(lane => found.get(lane) ?? []);
       result.pending = lanes.filter(lane => !found.has(lane));
       if (result.pending.length === 0) { result.outcome = 'observed'; break; }
-      const wait = await bounded(() => sleep(Math.min(pollMs, deadline - now()), controller.signal), deadline - now());
+      const wait = await boundedAwait(() => sleep(Math.min(pollMs, deadline - now()), controller.signal), bound);
       if (controller.signal.aborted) { result.outcome = 'cancelled'; break; }
       if (wait.kind === 'failed') { result.outcome = 'failed'; break; }
       if (wait.kind === 'deadline' || now() >= deadline) break;
     }
     if (controller.signal.aborted) result.outcome = 'cancelled';
   } catch { result.outcome = 'failed'; }
-  finally {
-    controller.abort(); process.off('SIGINT', cancel); process.off('SIGTERM', cancel);
-    signal?.removeEventListener('abort', cancel);
-  }
+  finally { detach(); }
   return result;
 }
