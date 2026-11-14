@@ -77,6 +77,10 @@ function reachForSlot(
   // tailnet-peers caps the peer list and records the truncation in reasons[];
   // a truncated set cannot prove an alias names exactly one host.
   const truncated = peers.reasons.some(reason => reason.startsWith('peers: truncated to '));
+  // The shared reader reports an explicitly non-running backend as a reason
+  // and drops retained online peers; self identity stays certain, but it must
+  // not be promoted to online on stale backend evidence.
+  const backendNotRunning = peers.reasons.some(reason => reason.startsWith('tailscale backend not running:'));
 
   const host: PoolReachHost = {
     slot,
@@ -110,13 +114,17 @@ function reachForSlot(
     }
   } else if (isSelf) {
     host.matched = peers.self;
+    if (backendNotRunning) {
+      reason = `${slot}: ${alias} names this computer but the tailscale backend is not running; connectivity unknown`;
+    }
   } else {
     reason = truncated
       ? `${slot}: peer list truncated; cannot confirm ${alias}`
       : `${slot}: no tailnet peer named ${alias}`;
   }
-  // Self is certain only when no peer competes for the alias.
-  if (isSelf && matches.length === 0) host.online = true;
+  // Self is certain only when no peer competes for the alias, and online is
+  // certain only while the backend does not report a non-running state.
+  if (isSelf && matches.length === 0 && !backendNotRunning) host.online = true;
   return { host, reason };
 }
 
