@@ -41,6 +41,22 @@ function replyVerifiedEvidence(row: BusInboxReceipt, id: string): WorkItemEviden
   return { pr, head, tests, artifact, source: `bus-reply:${row.envelope.id}`, at: new Date(row.receivedAt).toISOString() };
 }
 
+/** Blocker evidence from an in-reply bus reply whose body carries
+ * `{"blocked":{"dependency":"<what it waits on>"}}`. Only the trimmed
+ * dependency (<= 200 chars, not "unknown") is kept; reply text is untrusted. */
+function replyBlockedEvidence(row: BusInboxReceipt, id: string): WorkItemEvidence['blocker'] {
+  const body = row.envelope.body;
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return undefined;
+  if (body['inReplyTo'] !== id && body['in_reply_to'] !== id) return undefined;
+  const blocked = body['blocked'];
+  if (blocked === null || blocked === undefined || typeof blocked !== 'object' || Array.isArray(blocked)) return undefined;
+  const dep = blocked['dependency'];
+  if (!nonempty(dep)) return undefined;
+  const dependency = dep.trim();
+  if (dependency.length > 200 || dependency.toLowerCase() === 'unknown') return undefined;
+  return { dependency, source: `bus-reply:${row.envelope.id}`, at: new Date(row.receivedAt).toISOString() };
+}
+
 /** Evidence for the claim bound to this receipt. The receipt coordinates
  * (id, cursor, receivedAt) must all match, so a stale claim for a re-posted
  * id cannot pass as current. */
@@ -77,6 +93,10 @@ export function collectBusWorkItemEvidence(id: string, opts: { root: string; now
         if (row.envelope.id === id) request = row;
         const verified = replyVerifiedEvidence(row, id);
         if (verified) evidence.verified = verified;
+        // Newest blocked reply wins; a later reply without `blocked` does not
+        // clear it (no "unblocked" semantics yet).
+        const blocker = replyBlockedEvidence(row, id);
+        if (blocker) evidence.blocker = blocker;
       }
       if (result.nextCursor === after) { settled = true; break; }
       after = result.nextCursor;
@@ -89,6 +109,6 @@ export function collectBusWorkItemEvidence(id: string, opts: { root: string; now
     sources.claims = inspection.source;
     if (request) claimEvidence(evidence, inspection.claims, request, now);
   } catch { sources.claims = 'unavailable'; }
-  // No blocker store exists; evidence.blocker is never invented.
+  // Blockers come only from in-reply bus replies (replyBlockedEvidence), never invented.
   return { evidence, sources };
 }
