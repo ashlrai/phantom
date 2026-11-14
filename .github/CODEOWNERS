@@ -977,6 +977,7 @@
 /test/mcp-gateway-recovery-probe.test.ts @masonwyatt23
 /test/mcp-native-fleet-apps-changes-03-sonn1.test.ts @masonwyatt23
 /test/mcp-native-fleet-drop-job.test.ts @masonwyatt23
+/test/mcp-needs-agent-provenance-106.test.ts @masonwyatt23
 /test/memory-benchmark.test.ts @masonwyatt23
 /test/memory-embeddings.test.ts @masonwyatt23
 /test/memory-evaluation-cli.test.ts @masonwyatt23
