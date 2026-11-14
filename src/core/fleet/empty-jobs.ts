@@ -8,7 +8,31 @@ export const EMPTY_CLASSES = ['duplicate', 'already-done', 'too-broad', 'tests-t
 export type EmptyClass = typeof EMPTY_CLASSES[number];
 export interface EmptyJobResult { id: string; lane: string; class: EmptyClass; reason: string }
 export interface EmptyCause { class: EmptyClass; label: string; count: number; exampleJob: string }
-export interface EmptyJobsReport { schema: 'jobs.empty.v1'; hours: number; total: number; counts: Record<EmptyClass, number>; jobs: EmptyJobResult[]; topCauses: EmptyCause[] }
+export interface EmptyJobReason { id: string; lane: string; reason: FleetEmptyWhyReason }
+export interface EmptyJobsReasons { by_reason: Record<FleetEmptyWhyReason, number>; recent: EmptyJobReason[] }
+export interface EmptyJobsReport { schema: 'jobs.empty.v1'; hours: number; total: number; counts: Record<EmptyClass, number>; jobs: EmptyJobResult[]; topCauses: EmptyCause[]; reasons?: EmptyJobsReasons }
+
+export const FLEET_EMPTY_WHY_LOG_LINES = 60;
+export const FLEET_EMPTY_WHY_REASONS = ['lint-env', 'interrupted', 'blocked', 'limit', 'other'] as const;
+export type FleetEmptyWhyReason = (typeof FLEET_EMPTY_WHY_REASONS)[number];
+
+// Checked in order; the first match wins.
+const WHY_RULES: ReadonlyArray<readonly [FleetEmptyWhyReason, RegExp]> = [
+  ['lint-env', /eslint|lib\/cli/i],
+  ['interrupted', /\bexit(?:ed|\s+code|\s+status)?\b\D{0,12}130\b/i],
+  ['blocked', /\bblocked\b|not implemented|\bincomplete\b/i],
+  ['limit', /usage limit|rate[ -]?limit/i],
+];
+
+/** Pure: tag one log by its last lines. */
+export function classifyEmptyLog(log: string | null): FleetEmptyWhyReason {
+  if (log === null) return 'other';
+  const tail = log.split('\n').slice(-FLEET_EMPTY_WHY_LOG_LINES).join('\n');
+  return WHY_RULES.find(([, re]) => re.test(tail))?.[0] ?? 'other';
+}
+
+const REASON_LOG_LIMIT = 50;
+const REASON_RECENT_LIMIT = 20;
 
 const labels: Record<EmptyClass, string> = { duplicate: 'Duplicate of an earlier job', 'already-done': 'Work already done', 'too-broad': 'Scope too broad', 'tests-timeout': 'Tests slow or timed out', 'blocked-by-env': 'Tool or environment problem', 'missing-input': 'Missing input', 'scope-too-cautious': 'Scope or approval', other: 'Unknown reason' };
 
@@ -48,10 +72,12 @@ export async function readEmptyJobs(hours = 24, root = process.env.ASHLR_RUNS_DI
   try { ledger = await readFile(join(root, 'metrics/jobs.jsonl'), 'utf8'); } catch { return null; }
   const selected = emptyJobs(ledger, now, hours);
   const jobs: EmptyJobResult[] = [];
+  const logs = new Map<string, string | null>();
   for (let offset = 0; offset < selected.length; offset += 16) {
     const batch = selected.slice(offset, offset + 16);
     jobs.push(...await Promise.all(batch.map(async job => {
       const [notes, log] = await Promise.all([tail(join(worktrees, job.id, 'BRIDGE_NOTES.md'), 65536), tail(join(root, `${job.id}.log`), 65536)]);
+      logs.set(job.id, log);
       return { ...job, ...classifyEmpty(notes, log) };
     })));
   }
@@ -60,5 +86,10 @@ export async function readEmptyJobs(hours = 24, root = process.env.ASHLR_RUNS_DI
   const topCauses = EMPTY_CLASSES.filter(kind => counts[kind] > 0)
     .map(kind => ({ class: kind, label: labels[kind], count: counts[kind], exampleJob: jobs.find(job => job.class === kind)!.id }))
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)).slice(0, 5);
-  return { schema: 'jobs.empty.v1', hours, total: jobs.length, counts, jobs, topCauses };
+  // The ledger is chronological, so the newest jobs are last. A missing or unreadable log reads as null, which is `other`.
+  const by_reason = Object.fromEntries(FLEET_EMPTY_WHY_REASONS.map(r => [r, 0])) as Record<FleetEmptyWhyReason, number>;
+  const tagged = jobs.slice(-REASON_LOG_LIMIT).map(({ id, lane }) => ({ id, lane, reason: classifyEmptyLog(logs.get(id) ?? null) }));
+  for (const t of tagged) by_reason[t.reason]++;
+  const recent = tagged.slice(-REASON_RECENT_LIMIT).reverse();
+  return { schema: 'jobs.empty.v1', hours, total: jobs.length, counts, jobs, topCauses, reasons: { by_reason, recent } };
 }
