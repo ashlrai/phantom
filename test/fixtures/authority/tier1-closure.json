@@ -600,6 +600,7 @@
     "src/core/fleet/ideas.ts",
     "src/core/fleet/idle-lanes.ts",
     "src/core/fleet/inbox-ack.ts",
+    "src/core/fleet/inbox-attachment.ts",
     "src/core/fleet/inbox-channel-line.ts",
     "src/core/fleet/inbox-channel-slug.ts",
     "src/core/fleet/job-path-history.ts",
