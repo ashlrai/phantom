@@ -167,14 +167,16 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
   } catch {
     return { ...base, state: 'UNKNOWN', missing: [`${channel} receipt source unreadable`] };
   }
-  base.lastInboundAt = inbound.length ? isoOrNull(inbound[inbound.length - 1]!) : null;
-  base.lastReplyAt = replies.length ? isoOrNull(replies[replies.length - 1]!) : null;
   const nowMs = now.getTime();
+  const validInbound = inbound.filter((t) => t <= nowMs);
+  const validReplies = replies.filter((t) => t <= nowMs);
+  base.lastInboundAt = validInbound.length ? isoOrNull(validInbound[validInbound.length - 1]!) : null;
+  base.lastReplyAt = validReplies.length ? isoOrNull(validReplies[validReplies.length - 1]!) : null;
   // Timestamp order is activity evidence only: no current source binds a reply
   // receipt to the inbound it answers, so a later reply can never clear a
   // pending inbound. Future-dated observations are rejected as evidence.
-  const pending = inbound.filter((t) => t <= nowMs && nowMs - t <= INBOUND_WINDOW_MS);
-  const observedReplies = replies.filter((t) => t <= nowMs).length;
+  const pending = validInbound.filter((t) => nowMs - t <= INBOUND_WINDOW_MS);
+  const observedReplies = validReplies.length;
   const futureDated = inbound.filter((t) => t > nowMs).length + replies.filter((t) => t > nowMs).length;
   base.unansweredCount = pending.length;
   base.proof = { requestCoverage: pending.length ? 'unproven' : 'idle', futureDatedCount: futureDated };

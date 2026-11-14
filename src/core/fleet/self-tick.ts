@@ -1,6 +1,6 @@
 /**
  * self-tick.ts — one locked pass of Phantom's self-management, runnable by an
- * agent or a host timer with no desktop app open. Twelve one-shot stages run
+ * agent or a host timer with no desktop app open. Thirteen one-shot stages run
  * together, including same-channel inbox acknowledgements, the once-per-channel
  * leader-live notice, merged-order notices and the Needs-you triage.
  * runSelfTick is the single pass, each step injected as a seam in fixed order:
@@ -38,7 +38,7 @@ import {
 import { noticeOverdueTeammateTexts } from '../comms/teammate-overdue.js';
 import { writeSelfTickLast } from './self-tick-last.js';
 
-export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick' | 'inbox-acks' | 'owner-live' | 'order-notices' | 'needs-triage' | 'teammate-overdue' | 'landed-sweep' | 'stray-stop' | 'meter-incident' | 'waste-incident';
+export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick' | 'inbox-acks' | 'owner-live' | 'order-notices' | 'board-notify' | 'needs-triage' | 'teammate-overdue' | 'landed-sweep' | 'stray-stop' | 'meter-incident' | 'waste-incident';
 /** Fixed execution order — release first so the planner sees freed slots; landed-sweep last. */
 export const SELF_TICK_STEP_ORDER: readonly SelfTickStepName[] = [
   'reset-release',
@@ -49,6 +49,7 @@ export const SELF_TICK_STEP_ORDER: readonly SelfTickStepName[] = [
   'inbox-acks',
   'owner-live',
   'order-notices',
+  'board-notify',
   'needs-triage',
   'waste-incident',
   'teammate-overdue',
@@ -65,7 +66,7 @@ export interface SelfTickStepRun {
 }
 /** A step seam gets the shared argv (--json, maybe --apply, --runs-dir). */
 export type SelfTickStep = (args: string[]) => Promise<SelfTickStepRun>;
-export type SelfTickSteps = Record<Exclude<SelfTickStepName, 'teammate-overdue'>, SelfTickStep> & Partial<Record<'teammate-overdue', SelfTickStep>>;
+export type SelfTickSteps = Record<Exclude<SelfTickStepName, 'teammate-overdue' | 'board-notify'>, SelfTickStep> & Partial<Record<'teammate-overdue' | 'board-notify', SelfTickStep>>;
 
 export interface SelfTickStepResult {
   step: SelfTickStepName;
@@ -139,6 +140,10 @@ export async function runSelfTick(options: RunSelfTickOptions): Promise<SelfTick
           const result = await noticeOverdueTeammateTexts({ runsDir, now: options.now, apply: options.apply });
           return { exitCode: 0, output: JSON.stringify(result) };
         } : undefined);
+        if (!run && step === 'board-notify') {
+          report.steps.push({ step, state: 'ok', exitCode: 0, report: { reason: 'step-not-configured' } });
+          continue;
+        }
         if (!run) {
           report.steps.push({ step, state: 'failed', exitCode: 1, report: { reason: 'step-not-configured' } });
           continue;
