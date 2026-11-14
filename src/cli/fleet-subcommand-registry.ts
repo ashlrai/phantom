@@ -186,6 +186,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'intent-edit': () => import('./fleet-intent-edit.js'),
   'intent-evidence': () => import('./fleet-intent-evidence.js'),
   'intent-import': () => import('./fleet-intent-import.js'),
+  'intent-merge-batch': () => import('./fleet-intent-merge-batch.js'),
   'intent-read': () => import('./fleet-intent-read.js'),
   'intent-summary': () => import('./fleet-intent-summary.js'),
   'intent-sweep': () => import('./fleet-intent-sweep.js'),
