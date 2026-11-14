@@ -21,10 +21,15 @@
  *     `stuck` and never resent. A lost reply is better than a duplicate
  *     email.
  *     With `draftsRunsDir` set, a reply to a single address that is NOT on the
- *     allowlist is written as a pending draft (src/core/cos/drafts.ts) and its
- *     file moves to `dir/drafted/`: someone else's mail is never sent from
- *     here, it waits for the owner's Approve / Reject. Without it such a
- *     reply is `refused` and stays put, as before.
+ *     allowlist is an outside send: the agent send policy (checkSend on
+ *     `opts.profile`, default fail-closed) decides it — `deny` is `refused`
+ *     and left in the outbox, `draft` is written as a pending draft
+ *     (src/core/cos/drafts.ts) and the file moves to `dir/drafted/`: someone
+ *     else's mail is never sent from here, it waits for the owner's Approve /
+ *     Reject. Without `draftsRunsDir` such a reply is `refused` and stays
+ *     put, as before. The allowlist remains the trusted-recipient binding a
+ *     portable profile cannot prove: only allowlisted replies reach the
+ *     transport.
  *   macMailTransport(run)  — darwin-only Mail.app send through osascript.
  *     The script is a fixed literal and To/subject/body travel as argv items
  *     read by its `on run argv` handler — no value is ever interpolated into
@@ -39,6 +44,8 @@ import { execFile } from 'node:child_process';
 import { lstatSync, mkdirSync, readFileSync, readdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { createDraft } from '../cos/drafts.js';
+import { checkSend } from '../agents/send-policy.js';
+import type { AgentProfile } from '../agents/agent-profile.js';
 
 /** Replies larger than this are stuck, not sent — a reply is ack text, not a payload. */
 export const EMAIL_OUTBOX_MAX_BYTES = 64 * 1024;
@@ -86,9 +93,34 @@ export interface EmailOutboxSendOptions {
   transport: EmailTransport;
   /** Runs dir holding `drafts/`; when set, non-allowlisted single recipients become drafts. */
   draftsRunsDir?: string;
+  /**
+   * Agent send policy for outside (non-allowlisted) recipients. A portable
+   * profile can never prove a verified self identity, so checkSend returns at
+   * best `draft` — outside sends are held for owner approval and denied
+   * recipients are refused outright. Default: the outbox's own restrictive
+   * profile, which drafts every outside send.
+   */
+  profile?: AgentProfile;
   /** Clock seam for tests; stamps `at` on sent details. */
   now?: () => Date;
 }
+
+/**
+ * Fail-closed default: channels limited to email and limits left incomplete,
+ * so an outside send always maps to `draft` (never `allow`).
+ */
+const DEFAULT_OUTBOX_PROFILE: AgentProfile = {
+  id: 'email-outbox',
+  version: 1,
+  displayName: 'Email outbox',
+  doctrine: 'doctrine.md',
+  resourceClass: 'any',
+  channels: ['email'],
+  tools: [],
+  mcpServers: [],
+  skills: [],
+  policy: { send: 'drafts-only', perMessageApproval: true, recipients: { allow: [], deny: [] }, dailyCap: null, limitsTodo: true },
+};
 
 export interface EmailOutboxSendDetail {
   name: string;
@@ -247,6 +279,15 @@ export async function sendEmailOutbox(opts: EmailOutboxSendOptions): Promise<Ema
     if (entry.stuck) { record(entry.name, 'stuck', { reason: entry.stuck }); continue; }
     const reply = entry.reply!;
     if (reply.to !== null && !opts.allowedRecipients.has(reply.to) && opts.draftsRunsDir !== undefined) {
+      // RQ-AGENTPROFILE-1: outside sends answer to the agent send policy —
+      // a denied recipient is refused instead of drafted; a draft decision
+      // (the only other outcome a portable profile yields) waits on the
+      // owner's approval path below.
+      const policy = checkSend(opts.profile ?? DEFAULT_OUTBOX_PROFILE, 'email', reply.to, 0);
+      if (policy.decision !== 'draft') {
+        record(entry.name, 'refused', { to: reply.to, reason: policy.reason });
+        continue;
+      }
       try {
         const draft = await createDraft({ to: reply.to, subject: reply.subject, body: reply.body, source: entry.name }, opts.draftsRunsDir, now);
         try {

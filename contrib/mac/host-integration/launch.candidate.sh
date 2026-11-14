@@ -7,6 +7,7 @@ pinsha(){ /usr/bin/awk -F'\t' -v n="$1" '$1==n{print $2}' "$HOME/.ashlr-runs/bin
 unset NODE_OPTIONS NODE_PATH OPENSSL_CONF ELECTRON_RUN_AS_NODE; export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 set -o pipefail
 J=$1; REPO=$2; POOL=$3; TIER=${4:-${TIER:-work}}; R=~/.ashlr-runs; RP=~/Projects/ashlrai/$REPO; WT=~/Projects/ashlrai/wt/$J
+case "$TIER" in frontier|work|mid|fast) ;; *) echo "REFUSED: unknown scope tier" >&2; exit 3;; esac
 ~/.ashlr-runs/bin-locus-new/locus status >/dev/null 2>&1 || true   # rev1.4: WARN dropped (the pin lives in the locus-ashlr tmux session, not visible from launch; it was always false here)
 # RQ-CLOSE-NOWT (Masbot 18:55 Oct 27): CLOSE-* jobs only need gh, so their worktree is index-only: --no-checkout, then
 # read-tree + skip-worktree so git status/diff stay clean with no files on disk. No node_modules copy. No repo config change.
@@ -46,10 +47,25 @@ rmdir $L; fi
 if [ "$NOWT" = 1 ]; then [ -n "$(ls -A $WT | grep -vx .git)" ] || { git -C $WT read-tree HEAD && git -C $WT ls-files -z | xargs -0 git -C $WT update-index --skip-worktree; } || exit 1; else
 [ -d $RP/node_modules ] && [ ! -e $WT/node_modules ] && cp -cR $RP/node_modules $WT/node_modules 2>/dev/null; git -C $WT ls-files -v | grep "^S" | cut -c3- | xargs -I{} git -C $WT update-index --no-skip-worktree {} 2>/dev/null
 fi
-{ cat; cat <<'F'
+{ cat
+# BEGIN TIER SCOPE: keep budgets aligned with queue-tier.ts and restock.py.
+SCOPE_TIER=$TIER; [ "$POOL" = codex-local ] && SCOPE_TIER=fast
+case "$SCOPE_TIER" in
+ frontier) SCOPE_FILES=40; SCOPE_LINES=600;;
+ work) SCOPE_FILES=15; SCOPE_LINES=200;;
+ mid) SCOPE_FILES=8; SCOPE_LINES=120;;
+ fast) SCOPE_FILES=2; SCOPE_LINES=80;;
+ *) echo "REFUSED: unknown scope tier" >&2; exit 3;;
+esac
+printf '\nSCOPE: up to %s files, size<=%s changed lines. Explicit narrower task limits and named-file restrictions take precedence.\n' "$SCOPE_FILES" "$SCOPE_LINES"
+[ "$SCOPE_TIER" != frontier ] || printf '%s\n' 'Combine related concerns needed for the complete feature in one PR.'
+printf '%s\n' 'Finish the complete feature, not the minimum demo; add tests, run them, and update docs. Deliver one mergeable PR per job.'
+# END TIER SCOPE
+cat <<'F'
 
 RULES: You are working in a fresh git worktree of ashlrai/REPO_ at its default branch. Work autonomously to a complete, tested, shippable change; be ambitious and high-leverage, and delete dead code you find in the area you touch. Add or update tests and run the repo's typecheck, lint and the touched tests (use a temporary HOME for any test run, e.g. HOME=$(mktemp -d); for cargo keep RUSTUP_HOME/CARGO_HOME pointing at the real toolchain). Never weaken, skip or delete tests to go green, and never weaken security controls. Without a security pass, do not add widened workflow permissions or id-token, new secrets.* refs, pull_request_target or workflow_run triggers, or third-party actions not pinned to a 40-hex commit SHA; other .github/**, CODEOWNERS and release config edits are allowed. Never print secrets or tokens. Do NOT commit, push, tag or publish: leave every change uncommitted in the worktree. When done, write BRIDGE_NOTES.md at the worktree root with a summary, commands run, pass/fail counts and net LOC.
 If the full goal cannot be verified, ship the smallest correct, useful part with honest output (for example, age: unknown) and list the gap in BRIDGE_NOTES.md for the PR body. Use EMPTY only when already done or truly impossible.
+If you finish with no change, end your final message with the line EMPTY_REASON: <code> and put the same line first in BRIDGE_NOTES.md; code is duplicate-landed (name the PR or commit that already covers it), prompt-unclear (name the missing detail), blocked (tool, auth or environment) or no-change-needed.
 F
 [ "$NOWT" = 1 ] && echo "NOTE: this worktree is index-only (no files on disk, by design). Read files with git show HEAD:<path>. Do not change code; this job only decides and closes PRs."
 } | sed "s/REPO_/$REPO/" > $R/$J.prompt

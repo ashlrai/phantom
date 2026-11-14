@@ -160,6 +160,7 @@ import {
   VERSE_MEMORY_BODY_MAX_BYTES,
 } from './types.js';
 import { handleVerseEventsSse, VERSE_EVENTS_PATH_RE, VERSE_SESSION_ID_RE } from './verse-stream.js';
+import { handleUiAppearance, VERSE_UI_APPEARANCE_PATH } from './ui-appearance-api.js';
 import type { ApiModule } from './api-modules.js';
 import { REASONING_API_PREFIX } from '../reasoning/types.js';
 import { VERSE_FLEET_CONTROL_HOLDS_PATH } from '../fleet/runs-lane-hold.js';
@@ -252,8 +253,10 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   { id: 'fleet-memory', load: async () => (await import('./fleet-memory-api.js')).handleFleetMemoryApi },
   // Local desktop app status and bounded launch, focus and restart actions.
   { id: 'fleet-inbox-acks', load: async () => (await import('./fleet-inbox-acks-api.js')).handleFleetInboxAcksApi },
-  { id: 'fleet-apps', load: async () => (await import('./fleet-apps-api.js')).handleFleetAppsApi },
+  { id: 'fleet-apps', load: async () => (await import('./fleet-apps-recovery-api.js')).handleFleetAppsRecoveryApi },
   { id: 'fleet-standby' as MountedApiModuleId, load: async () => (await import('./fleet-standby-api.js')).handleFleetStandbyApi },
+  // Teammate iMessage reply age: GET /api/verse/comms/teammate-reply-age (core/verse/comms-teammate-reply-age-api.ts); read-only, times and flags only.
+  { id: 'comms-teammate-reply-age' as MountedApiModuleId, load: async () => (await import('./comms-teammate-reply-age-api.js')).handleCommsTeammateReplyAgeApi },
   // Self-tick last-run record: GET /api/verse/fleet/self-tick (core/verse/fleet-self-tick-api.ts); read-only, never takes the tick lock.
   { id: 'fleet-self-tick', load: async () => (await import('./fleet-self-tick-api.js')).handleFleetSelfTickApi },
   // Fleet graph registry: GET /api/verse/fleet/graph (core/verse/fleet-graph-api.ts); read-only.
@@ -479,6 +482,12 @@ const WORKBENCH_IMPORTS: Readonly<Record<WorkbenchRouteFamilyId, () => Promise<W
   'fleet-comms-status': async () => {
     try { return (await import('./fleet-comms-status-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-comms-status-api.js'); }
   },
+  'fleet-runtime-identity': async () => {
+    try { return (await import('./fleet-runtime-identity-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-runtime-identity-api.js'); }
+  },
+  'fleet-coordination-claims': async () => {
+    try { return (await import('./fleet-coordination-claims-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-coordination-claims-api.js'); }
+  },
   'fleet-library-files': async () => {
     try { return (await import('./fleet-library-files-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-library-files-api.js'); }
   },
@@ -547,6 +556,9 @@ const WORKBENCH_IMPORTS: Readonly<Record<WorkbenchRouteFamilyId, () => Promise<W
   },
   ops: async () => {
     try { return (await import('./ops-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'ops-api.js'); }
+  },
+  goals: async () => {
+    try { return (await import('./goals-create-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'goals-create-api.js'); }
   },
 };
 
@@ -2545,6 +2557,8 @@ export async function handleVerseApi(
       sendJson(res, 200, engine.renameSession(id, title.trim()));
       return true;
     }
+
+    if (path === VERSE_UI_APPEARANCE_PATH) return handleUiAppearance(ctx, req, res, method);
 
     // ── workbench families (V3.10 Tracks B + C) ─────────────────────────
     // After every V1 route, like the modules below. Prefix-routed: a path a

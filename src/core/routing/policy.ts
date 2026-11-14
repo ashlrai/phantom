@@ -33,12 +33,29 @@
  * server.
  */
 import {
+  COMPLEXITY_ROLES,
+  COMPLEXITY_TASK_KINDS,
+  LOCAL_CONTEXT_TOKEN_LIMIT,
+  LOCAL_INFERENCE_DEFAULT_HOST,
+  LOCAL_LOOP_TASK_KINDS,
+  REPEATED_VERIFY_FAILURES,
+  isLoopbackInferenceHost,
+  normalizeInferenceHost,
+  type InferenceTier,
+} from './tiers.js';
+import {
+  ARM_EFFORTS,
   BUDGET_MODES,
+  ROUTING_TASKS,
   type BudgetMode,
   type BudgetPolicy,
   type BudgetResponse,
   type BudgetUpdateRequest,
+  type RoutingTask,
   type SeatBudgetPolicy,
+  type TaskArm,
+  type TaskArmPace,
+  type TaskArmsPolicy,
 } from './types.js';
 
 /**
@@ -199,6 +216,105 @@ export function effectiveSeatPolicy(policy: BudgetPolicy, seatId: string, engine
   return defaultSeatPolicy(policy.mode, seatId, engine ?? engineOfSeatId(seatId));
 }
 
+// ---------------------------------------------------------------------------
+// Task-aware arms (flagged; sanitize + shared validators)
+// ---------------------------------------------------------------------------
+
+/** Bounds an arm's pacing window may span (1 ms .. 30 days). */
+export const TASK_ARM_PACE_MAX_WINDOW_MS = 30 * 24 * 60 * 60_000;
+/** Bound on an arm's per-window token budget. */
+export const TASK_ARM_PACE_MAX_TOKENS = 1e15;
+
+/** The key arm outcome evidence (`RouteOptions.armStats`) is joined on. */
+export function taskArmKey(arm: Pick<TaskArm, 'id' | 'engine' | 'model' | 'effort'>): string {
+  return arm.id ?? `${arm.engine}|${arm.model ?? ''}|${arm.effort}`;
+}
+
+/** The ids arm keys and models may use: the seat-id alphabet, so `|` can never collide with a derived key. */
+const TASK_ARM_NAME_RE = BUDGET_SEAT_ID_RE;
+
+/** Validity of an arm's optional pacing spec. A malformed pace drops the whole arm, never just the spec. */
+export function isTaskArmPace(raw: unknown): raw is TaskArmPace {
+  if (!isObject(raw)) return false;
+  if (!Number.isSafeInteger(raw['windowMs']) || (raw['windowMs'] as number) < 1
+      || (raw['windowMs'] as number) > TASK_ARM_PACE_MAX_WINDOW_MS) return false;
+  if (!Number.isSafeInteger(raw['budgetTokens']) || (raw['budgetTokens'] as number) < 1
+      || (raw['budgetTokens'] as number) > TASK_ARM_PACE_MAX_TOKENS) return false;
+  const lead = raw['leadFraction'];
+  return lead === undefined || (typeof lead === 'number' && Number.isFinite(lead) && lead >= 0 && lead <= 1);
+}
+
+/**
+ * Runtime validity of one arm: known engine (an unknown engine can never be
+ * selected), a model spelling the join grammar can carry, a known effort and
+ * a sound pacing spec. Shared by the sanitizer (drops the arm) and the router
+ * (skips it), so a hand-built policy and a stored file behave identically.
+ */
+export function isTaskArm(raw: unknown): raw is TaskArm {
+  if (!isObject(raw)) return false;
+  if (typeof raw['engine'] !== 'string' || !(BUDGET_ENGINES as readonly string[]).includes(raw['engine'])) return false;
+  const model = raw['model'];
+  if (model !== null && model !== undefined && (typeof model !== 'string' || !TASK_ARM_NAME_RE.test(model))) return false;
+  if (typeof raw['effort'] !== 'string' || !(ARM_EFFORTS as readonly string[]).includes(raw['effort'])) return false;
+  const id = raw['id'];
+  if (id !== undefined && (typeof id !== 'string' || !TASK_ARM_NAME_RE.test(id) || id.includes('|'))) return false;
+  if (raw['pace'] !== undefined && !isTaskArmPace(raw['pace'])) return false;
+  return true;
+}
+
+/** The valid arms for one class, normalized and deduplicated by key (first spelling wins). */
+export function taskArmsFor(taskArms: TaskArmsPolicy | undefined, task: RoutingTask): TaskArm[] {
+  const list = taskArms?.classes?.[task];
+  if (!Array.isArray(list)) return [];
+  const seen = new Set<string>();
+  const arms: TaskArm[] = [];
+  for (const raw of list) {
+    if (!isTaskArm(raw)) continue;
+    const arm: TaskArm = { engine: raw.engine, model: raw.model ?? null, effort: raw.effort };
+    if (raw.id !== undefined) arm.id = raw.id;
+    if (raw.pace !== undefined) {
+      const pace: TaskArmPace = { windowMs: raw.pace.windowMs, budgetTokens: raw.pace.budgetTokens };
+      if (raw.pace.leadFraction !== undefined) pace.leadFraction = raw.pace.leadFraction;
+      arm.pace = pace;
+    }
+    const key = taskArmKey(arm);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    arms.push(arm);
+  }
+  return arms;
+}
+
+/** A structural copy of the flag, so no caller mutates another's policy view. */
+export function cloneTaskArmsPolicy(taskArms: TaskArmsPolicy): TaskArmsPolicy {
+  const classes: TaskArmsPolicy['classes'] = {};
+  for (const task of Object.keys(taskArms.classes) as RoutingTask[]) {
+    classes[task] = (taskArms.classes[task] ?? []).map((arm) => ({
+      ...arm,
+      ...(arm.pace ? { pace: { ...arm.pace } } : {}),
+    }));
+  }
+  return { enabled: taskArms.enabled, classes };
+}
+
+/**
+ * Salvage the stored `taskArms` flag. `enabled` must be present and boolean;
+ * unknown class keys, malformed arms and duplicate arm keys are dropped, so
+ * what survives is exactly what the router can act on.
+ */
+export function sanitizeTaskArmsPolicy(raw: unknown): TaskArmsPolicy | null {
+  if (!isObject(raw) || typeof raw['enabled'] !== 'boolean') return null;
+  const classes: TaskArmsPolicy['classes'] = {};
+  const rawClasses = raw['classes'];
+  if (isObject(rawClasses)) {
+    for (const task of ROUTING_TASKS) {
+      const arms = taskArmsFor({ enabled: true, classes: { [task]: rawClasses[task] } }, task);
+      if (arms.length > 0) classes[task] = arms;
+    }
+  }
+  return { enabled: raw['enabled'], classes };
+}
+
 /** The policy a fresh install starts with: balanced, no per-seat deviations. */
 export function defaultBudgetPolicy(): BudgetPolicy {
   // Epoch, not "now": nothing was ever decided here, and a timestamp that
@@ -265,6 +381,10 @@ export function sanitizeBudgetPolicy(raw: unknown): BudgetPolicy {
   const updatedAt = raw['updatedAt'];
   if (typeof updatedAt === 'string' && Number.isFinite(Date.parse(updatedAt))) {
     out.updatedAt = new Date(Date.parse(updatedAt)).toISOString();
+  }
+  if ('taskArms' in raw) {
+    const taskArms = sanitizeTaskArmsPolicy(raw['taskArms']);
+    if (taskArms) out.taskArms = taskArms;
   }
   const seats = raw['seats'];
   if (isObject(seats)) {
@@ -411,7 +531,16 @@ export function applyModeSwitch(
     if (stored.dailyUsdCap !== undefined) next.dailyUsdCap = stored.dailyUsdCap;
     seats[seatId] = next;
   }
-  return { mode, seats, updatedAt: nowIso, ...(policy.resetSpending ? { resetSpending: { ...policy.resetSpending } } : {}) };
+  // Task arms are mode-independent: like `enabled` they are "whether", not
+  // "how much", so a mode switch carries them verbatim.
+  const taskArms = policy.taskArms === undefined ? {} : { taskArms: cloneTaskArmsPolicy(policy.taskArms) };
+  return {
+    mode,
+    seats,
+    updatedAt: nowIso,
+    ...(policy.resetSpending ? { resetSpending: { ...policy.resetSpending } } : {}),
+    ...taskArms,
+  };
 }
 
 /** Apply one validated per-seat patch on top of the seat's effective policy. */
@@ -454,4 +583,158 @@ export function applyBudgetUpdate(
   if (parsed.kind === 'reset-spending') return { ...policy, resetSpending: { enabled: parsed.enabled }, updatedAt: nowIso };
   if (parsed.kind === 'mode') return applyModeSwitch(policy, parsed.mode, nowIso, engineOf);
   return applySeatPatch(policy, parsed.seatId, parsed.patch, nowIso, engineOf?.(parsed.seatId));
+}
+
+// ---------------------------------------------------------------------------
+// Complexity escalation
+//
+// Local tier for edit, test, lint, and draft loops. Frontier for planning,
+// architecture, a Tier-1 path, a merge onto the default branch, a merge or
+// credential role, a repeated verify failure, context above the local limit,
+// or a local inference host that is not loopback. Seat choice stays in
+// router.ts. This function does not call a model and does not read files:
+// the caller supplies the Tier-1 check (see routing-eval/bind.ts).
+// ---------------------------------------------------------------------------
+
+/** Stable order for report counts. */
+export const COMPLEXITY_ESCALATION_REASONS = Object.freeze([
+  'unclassified',
+  'merge-role',
+  'credential-role',
+  'main-merge',
+  'tier1-path',
+  'planning',
+  'architecture',
+  'repeated-verify-failure',
+  'context-over-local-limit',
+  'non-loopback-inference',
+] as const);
+
+export type ComplexityEscalationReason = (typeof COMPLEXITY_ESCALATION_REASONS)[number];
+
+/** One task record the complexity policy can score. No file contents and no secrets. */
+export interface ComplexityRouteInput {
+  id: string;
+  taskKind: string;
+  /** Absent means the ordinary implement role. */
+  role?: string;
+  touchedPaths: readonly string[];
+  contextTokens: number;
+  priorVerifyFailures: number;
+  /** True when the task would merge to the default branch. */
+  mainMerge?: boolean;
+  /** Absent means the default loopback host. */
+  inferenceHost?: string;
+  /**
+   * Touched test paths whose content imports Tier-1 source. The caller
+   * supplies the list. This function does not read those files.
+   */
+  importsTier1?: readonly string[];
+}
+
+/**
+ * Model seam. Complexity routing decides the tier before any completion,
+ * so a caller passes a stub and this policy never invokes `complete`.
+ */
+export interface ComplexityModelClient {
+  complete(request: { taskId: string }): string;
+}
+
+export interface ComplexityLocalInference {
+  host: string;
+  loopback: true;
+}
+
+export interface ComplexityDecision {
+  id: string;
+  tier: InferenceTier;
+  reasons: ComplexityEscalationReason[];
+  /** Set only when the task stays local. The host is loopback. */
+  localInference: ComplexityLocalInference | null;
+}
+
+const MAX_ROUTE_ID = 80;
+const MAX_TOUCHED_PATHS = 64;
+const MAX_CONTEXT_TOKENS = 2_000_000;
+const MAX_VERIFY_FAILURES = 1_000;
+
+function routeError(message: string): Error {
+  return new Error(`complexity route: ${message}`);
+}
+
+function requireId(value: unknown): string {
+  if (typeof value !== 'string' || value.trim().length === 0 || value.length > MAX_ROUTE_ID) {
+    throw routeError(`id must be a string of 1 to ${MAX_ROUTE_ID} characters`);
+  }
+  return value;
+}
+
+function requireStringArray(value: unknown, label: string): readonly string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw routeError(`${label} must be an array of strings`);
+  }
+  if (value.length > MAX_TOUCHED_PATHS) throw routeError(`${label} has more than ${MAX_TOUCHED_PATHS} entries`);
+  return value;
+}
+
+function requireCount(value: unknown, label: string, max: number): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value > max) {
+    throw routeError(`${label} must be an integer from 0 to ${max}`);
+  }
+  return value;
+}
+
+function knownName(list: readonly string[], value: string): boolean {
+  return list.includes(value);
+}
+
+/**
+ * Decide local vs frontier for one task. Pure. `isTier1Path` is the caller's
+ * Tier-1 matcher (path strings only). A local result always names a loopback host.
+ */
+export function decideComplexityTier(
+  input: ComplexityRouteInput,
+  isTier1Path: (path: string) => boolean,
+): ComplexityDecision {
+  if (typeof isTier1Path !== 'function') throw routeError('isTier1Path must be a function');
+  const id = requireId(input.id);
+  if (typeof input.taskKind !== 'string') throw routeError('taskKind must be a string');
+  if (input.role !== undefined && typeof input.role !== 'string') throw routeError('role must be a string');
+  const touchedPaths = requireStringArray(input.touchedPaths, 'touchedPaths');
+  const contextTokens = requireCount(input.contextTokens, 'contextTokens', MAX_CONTEXT_TOKENS);
+  const priorVerifyFailures = requireCount(input.priorVerifyFailures, 'priorVerifyFailures', MAX_VERIFY_FAILURES);
+  if (input.mainMerge !== undefined && typeof input.mainMerge !== 'boolean') {
+    throw routeError('mainMerge must be a boolean');
+  }
+  if (input.inferenceHost !== undefined && (typeof input.inferenceHost !== 'string' || input.inferenceHost.trim().length === 0)) {
+    throw routeError('inferenceHost must be a non-empty string');
+  }
+  if (input.importsTier1 !== undefined) requireStringArray(input.importsTier1, 'importsTier1');
+
+  const role = input.role ?? 'implement';
+  const reasons: ComplexityEscalationReason[] = [];
+  if (!knownName(COMPLEXITY_TASK_KINDS, input.taskKind) || !knownName(COMPLEXITY_ROLES, role)) {
+    reasons.push('unclassified');
+  }
+  if (role === 'merge') reasons.push('merge-role');
+  if (role === 'credential') reasons.push('credential-role');
+  if (input.mainMerge === true) reasons.push('main-merge');
+  if (touchedPaths.some((path) => isTier1Path(path))) reasons.push('tier1-path');
+  if (input.taskKind === 'plan') reasons.push('planning');
+  if (input.taskKind === 'architecture') reasons.push('architecture');
+  if (priorVerifyFailures >= REPEATED_VERIFY_FAILURES) reasons.push('repeated-verify-failure');
+  if (contextTokens > LOCAL_CONTEXT_TOKEN_LIMIT) reasons.push('context-over-local-limit');
+
+  const host = normalizeInferenceHost(input.inferenceHost ?? LOCAL_INFERENCE_DEFAULT_HOST);
+  const loopback = isLoopbackInferenceHost(host);
+  if (!loopback) reasons.push('non-loopback-inference');
+
+  const localLoop = knownName(LOCAL_LOOP_TASK_KINDS, input.taskKind);
+  const tier: InferenceTier = reasons.length === 0 && localLoop ? 'local' : 'frontier';
+  return {
+    id,
+    tier,
+    reasons,
+    localInference: tier === 'local' ? { host, loopback: true } : null,
+  };
 }
