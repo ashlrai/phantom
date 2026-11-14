@@ -23,6 +23,12 @@ export interface WorkBoardItem {
   asOf: string;
   source: string;
   missing: string[];
+  /** Named claim owner bound to this exact receipt, or null when no claim
+   * row matches its id+cursor+receivedAt coordinates. */
+  owner: string | null;
+  /** `bus-claim:<id>:<cursor>:<receivedAt>` receipt of the matched claim, or
+   * null. Never a fencing token. */
+  claimReceipt: string | null;
 }
 
 export interface WorkBoardResult {
@@ -84,6 +90,8 @@ export function listWorkBoard(opts: { root: string; now: number; limit?: number;
         asOf: classified.asOf,
         source: classified.source,
         missing: classified.missing,
+        owner: evidence.owner ?? null,
+        claimReceipt: evidence.claimReceipt ?? null,
       };
     });
     return { items, inbox: 'ok', truncated: requests.length > kept.length };
