@@ -63,6 +63,8 @@ function printStatus(status: SlackBridgeStatus): void {
   console.log(`team identities: slack=${status.teamIdentities.slack} total=${status.teamIdentities.total}`);
   console.log(`comms confirmedByMason: ${cell(status.comms.confirmedByMason)}`);
   console.log(`journal: ${status.journal.state} ingested=${status.journal.ingested} ignored=${status.journal.ignored} last=${cell(status.journal.lastAt)}`);
+  const ignoredReasons = status.journal.ignoredReasons ?? [];
+  console.log(`ignored reasons: ${ignoredReasons.length === 0 ? 'none' : ignoredReasons.map((row) => `${row.reason}=${row.count}`).join(', ')}`);
   const r = status.replies;
   console.log(`replies: ${r.state} answered=${r.answered} unanswered=${r.unanswered} oldest=${cell(r.oldestUnansweredAt)} uncertain=${r.uncertainSends}`);
   console.log(`ready: ${cell(status.ready)}`);
