@@ -102,12 +102,18 @@ export function parseTailnetStatus(raw: string, now: Date, home: string): Tailne
   };
   result.self = clean(status.Self?.HostName, home) ?? UNKNOWN;
 
-  // Check if the backend is not in a running state
-  // Check if the backend is not in a running state
+  // Only an exact "Running" proves the backend live enough to trust peer
+  // Online flags. An explicit non-empty string keeps the sanitized state in
+  // the reason — the `tailscale backend not running:` convention pool-reach
+  // matches on. An absent, blank or non-string state is a fixed bounded
+  // "unknown": the raw value is never reported.
   const backendState = status.BackendState;
-  if (typeof backendState === 'string' && backendState !== 'Running') {
-    // Sanitize the backend state to prevent leaking sensitive information
-    reasons.push(`tailscale backend not running: ${sanitizeIdentityText(backendState, home)}`);
+  const backendRunning = backendState === 'Running';
+  const backendStateText = typeof backendState === 'string'
+    ? sanitizeIdentityText(backendState.trim(), home).slice(0, TEXT_CAP).trim()
+    : '';
+  if (!backendRunning) {
+    reasons.push(`tailscale backend not running: ${backendStateText === '' ? UNKNOWN : backendStateText}`);
   }
 
   const peerMap = status.Peer;
@@ -120,14 +126,13 @@ export function parseTailnetStatus(raw: string, now: Date, home: string): Tailne
   for (const value of Object.values(peerMap)) {
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
       const peer = toPeer(value as Record<string, unknown>, nowMs, home);
-      // When backend is not running, peers that were online should not be considered current reachability
-      if (typeof backendState === 'string' && backendState !== 'Running') {
-        // Filter out peers that were online but backend is not running
-        // This preserves the fact that the peer data was available but avoids false positive reachability
-        if (peer.online === true) {
-          // Keep reasons about the backend state but don't report online peers
-          continue;
-        }
+      // A retained Online=true claim is not current reachability without a
+      // proven Running backend: an explicit non-running state drops the claim
+      // (existing stopped behavior), while an absent, blank or malformed state
+      // keeps the identity/lastSeen evidence but reports connectivity unknown.
+      if (!backendRunning && peer.online === true) {
+        if (backendStateText === '') peer.online = UNKNOWN;
+        else continue;
       }
       peers.push(peer);
     }
