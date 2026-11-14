@@ -41,6 +41,8 @@ const MAX_CLAIM_ROWS = 4096;
 const GH_TIMEOUT_MS = 20_000;
 const GH_MAX_BYTES = 2 * 1024 * 1024;
 const CLAIMED_TSV_MAX_BYTES = 8 * 1024 * 1024;
+/** Default per-read deadline for asynchronous collection reads (ms). */
+const READ_TIMEOUT_MS = 15_000;
 
 export type ReviewPickSourceId = 'claimed-tsv' | 'bus-work-claims' | 'coordination' | 'live-workers';
 export type ReviewPickSourceState = 'read' | 'missing' | 'unavailable';
@@ -332,6 +334,8 @@ export interface ReviewPickReadOptions {
   readBoard?: () => FleetBoard;
   listWorkers?: () => Promise<LiveWorkersSnapshot>;
   now?: () => number;
+  /** Deadline for each asynchronous collection read, ms (default 15_000). */
+  readTimeoutMs?: number;
 }
 
 export type ReviewPickReport = ReviewPickResult;
@@ -355,6 +359,36 @@ async function guarded<T>(read: () => T | Promise<T>, fallback: () => T): Promis
   try { return await read(); } catch { return fallback(); }
 }
 
+/**
+ * Await `read` under a deadline. A throw or timeout resolves `fallback`; a
+ * late settlement is dropped, so it can never change the returned value or
+ * leak a timer. The deadline bounds the wait only — it cannot preempt a
+ * synchronous reader blocked in I/O, so it is applied to the asynchronous
+ * reads (claimed.tsv, live workers, gh) and not pretended for the rest.
+ */
+function boundedRead<T>(read: () => T | Promise<T>, fallback: () => T, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve(fallback());
+    }, timeoutMs);
+    timer.unref?.();
+    const finish = (value: T): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    try {
+      Promise.resolve(read()).then(finish, () => finish(fallback()));
+    } catch {
+      finish(fallback());
+    }
+  });
+}
+
 /** Collect the open-PR page and every ownership source, then pick. Never throws. */
 export async function readReviewPick(options: ReviewPickReadOptions): Promise<ReviewPickReport> {
   const now = options.now ?? Date.now;
@@ -364,24 +398,30 @@ export async function readReviewPick(options: ReviewPickReadOptions): Promise<Re
     ? Math.min(Math.max(options.limit as number, 1), MAX_LIMIT)
     : DEFAULT_LIMIT;
   const runsDir = options.runsDir ?? join(homedir(), '.ashlr-runs');
+  const readTimeoutMs = typeof options.readTimeoutMs === 'number'
+    && Number.isFinite(options.readTimeoutMs) && options.readTimeoutMs > 0
+    ? options.readTimeoutMs : READ_TIMEOUT_MS;
 
   const readClaimedTsv = options.readClaimedTsv
     ?? (() => readSource(join(runsDir, 'queue', 'claimed.tsv'), CLAIMED_TSV_MAX_BYTES, false));
   const [claimed, busWork, board, liveWorkers] = await Promise.all([
-    guarded(readClaimedTsv, () => ({ state: 'degraded' as const, text: '' })),
+    boundedRead(readClaimedTsv, () => ({ state: 'degraded' as const, text: '' }), readTimeoutMs),
     guarded(() => options.inspectBusWork ? options.inspectBusWork() : inspectBusWorkClaims(),
       () => ({ source: 'unavailable' as const, claims: [] })),
     guarded(() => options.readBoard ? options.readBoard() : readFleetBoard({ now: nowMs }),
       () => ({ schema: 'fleet.coordination.v1' as const, state: 'unknown' as const, claims: [], messages: [], proposals: [], expiredClaims: null })),
-    guarded(() => (options.listWorkers ?? listLiveWorkers)(),
-      () => ({ v: 1 as const, generatedAt: isoOf(nowMs), sourceState: 'unavailable' as const, workers: [], leaders: [], orchestratorAgents: 0 })),
+    boundedRead(() => (options.listWorkers ?? listLiveWorkers)(),
+      () => ({ v: 1 as const, generatedAt: isoOf(nowMs), sourceState: 'unavailable' as const, workers: [], leaders: [], orchestratorAgents: 0 }),
+      readTimeoutMs),
   ]);
   const claims: ReviewPickClaims = {
     claimedTsv: { state: claimed.state, claims: parseClaimedTsv(claimed.text) },
     busWork, board, liveWorkers,
   };
 
-  const prs = REPO_RE.test(repo) ? await guarded(() => listOpenReviewPrs(repo, limit, options.gh ?? defaultGh), () => null) : null;
+  const prs = REPO_RE.test(repo)
+    ? await boundedRead(() => listOpenReviewPrs(repo, limit, options.gh ?? defaultGh), () => null, readTimeoutMs)
+    : null;
   if (prs === null) {
     const probe = pickUnownedReview({ repo, prs: [], claims, now: nowMs });
     const ownershipDown = probe.source.unavailable.length > 0;
