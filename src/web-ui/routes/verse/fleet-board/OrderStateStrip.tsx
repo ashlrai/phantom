@@ -21,7 +21,11 @@ export function OrderStateStrip({ visible = true }: { visible?: boolean }) {
   else if (data === undefined || data.kind === 'unavailable') body = <p className={styles.orderNote}>Order states unavailable</p>;
   else if (data.rows.length === 0) body = <p className={styles.orderNote}>No orders in range</p>;
   else {
+    const note = data.health?.notice ?? null;
+    const unchecked = data.health?.liveChecked === false;
     body = (
+      <>
+      {note !== null ? <p className={styles.orderNote} role="status">{note}</p> : null}
       <ul className={styles.orderRows}>
         {data.rows.slice(0, MAX_ORDER_ROWS).map((row, i) => {
           const v = orderRowView(row);
@@ -30,6 +34,7 @@ export function OrderStateStrip({ visible = true }: { visible?: boolean }) {
               <span className={styles.mono}>{v.time}</span>
               <span>{v.source}</span>
               <span className={styles.orderState} data-state={v.state}>{v.state}</span>
+              {unchecked && v.state === 'ASSIGNED' ? <span className={styles.orderNote}> (unchecked)</span> : null}
               <span>{v.asOfText}</span>
               <span>missing: {v.missingText}</span>
               {v.prUrl ? <a href={v.prUrl} target="_blank" rel="noreferrer noopener">{v.prLabel}</a> : null}
@@ -37,6 +42,7 @@ export function OrderStateStrip({ visible = true }: { visible?: boolean }) {
           );
         })}
       </ul>
+      </>
     );
   }
   return (
