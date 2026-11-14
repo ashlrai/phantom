@@ -3,10 +3,15 @@
  * request is classified through the shared evidence + state rule used by
  * `fleet work-trace`. Read-only: takes no writer lock, writes nothing, makes
  * no network calls and never throws. Bus labels and claim owners grant no
- * authority, and no message body text ever leaves this module. */
-import { listBusInboxAfter, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ,
-  type BusInboxReceipt } from '../fleet/bus-inbox.js';
-import { collectBusWorkItemEvidence } from './work-item-bus-evidence.js';
+ * authority, and no message body text ever leaves this module.
+ *
+ * Every listed item is derived from the same settled inbox scan plus one
+ * claims inspection, so a board response is one internally consistent
+ * evidence projection even while the fleet churns; nothing is cached across
+ * calls. */
+import { inspectBusWorkClaims, type BusWorkClaimView } from '../fleet/bus-work-claims.js';
+import type { BusInboxReceipt } from '../fleet/bus-inbox.js';
+import { deriveBusWorkItemEvidence, readBusInboxEvidence } from './work-item-bus-evidence.js';
 import { classifyWorkItem, type WorkItemState } from './work-item-state.js';
 
 export const WORK_BOARD_DEFAULT_LIMIT = 20;
@@ -59,27 +64,25 @@ export function listWorkBoard(opts: { root: string; now: number; limit?: number;
   const empty: WorkBoardResult = { items: [], inbox: 'unavailable', truncated: false };
   const now = Number.isSafeInteger(opts.now) && opts.now >= 0 ? opts.now : 0;
   try {
+    // One settled bounded inbox read for the whole board; an unsettled or
+    // churning scan reports 'unavailable', never a partial listing.
+    const read = readBusInboxEvidence(opts.root);
+    if (read.status !== 'ok') return empty;
+    // One claims inspection for the whole board. A missing or unreadable
+    // table yields no claim rows — items still list, owners stay null.
+    let claims: BusWorkClaimView[] = [];
+    try { claims = inspectBusWorkClaims(opts.root).claims; } catch { /* unavailable: no claim rows */ }
     const requests: BusInboxReceipt[] = [];
-    let after = 0, settled = false;
-    // Same bounded scan as work-item-bus-evidence.ts and bus-work-claims.ts:
-    // a zero clock returns original TTL so retained-but-expired receipts list.
-    for (let page = 0; page <= Math.ceil(BUS_INBOX_MAX_MESSAGES / BUS_INBOX_MAX_READ); page++) {
-      const result = listBusInboxAfter(after, BUS_INBOX_MAX_READ, { root: opts.root, now: () => 0 });
-      if (result.status !== 'ok') break;
-      for (const row of result.messages) {
-        if (!isRequest(row)) continue;
-        if (opts.channelRef !== undefined && row.envelope.channel_ref !== opts.channelRef) continue;
-        requests.push(row);
-      }
-      if (result.nextCursor === after) { settled = true; break; }
-      after = result.nextCursor;
+    for (const row of read.receipts) {
+      if (!isRequest(row)) continue;
+      if (opts.channelRef !== undefined && row.envelope.channel_ref !== opts.channelRef) continue;
+      requests.push(row);
     }
-    if (!settled) return empty;
     requests.sort((a, b) => b.receivedAt - a.receivedAt || b.cursor - a.cursor);
     const kept = requests.slice(0, limit(opts));
     const asOf = new Date(now).toISOString();
     const items = kept.map(row => {
-      const { evidence } = collectBusWorkItemEvidence(row.envelope.id, { root: opts.root, now });
+      const { evidence } = deriveBusWorkItemEvidence(row.envelope.id, read.receipts, claims, now);
       const classified = classifyWorkItem(evidence, asOf);
       return {
         id: row.envelope.id,
