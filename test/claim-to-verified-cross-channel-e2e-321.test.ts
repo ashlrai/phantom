@@ -285,9 +285,12 @@ describe('claim-to-verified cross-channel trace (acceptance item 4)', () => {
     }
 
     const sentSet = readBoardNotifySent(ledgerPath);
-    expect(sentSet).toEqual(new Set([
-      boardNotifyLedgerKey(id, 'ASSIGNED'), boardNotifyLedgerKey(id, 'VERIFIED'),
-    ]));
+    // Each delivered row yields the (itemId, state) entry key plus its
+    // (itemId, state, delta) key.
+    expect(sentSet).toEqual(new Set(plan.notices.flatMap((n) => [
+      boardNotifyLedgerKey(n.itemId, n.state),
+      boardNotifyLedgerKey(n.itemId, n.state, n.delta),
+    ])));
     // A repeated pass — same transitions against the durable ledger — plans
     // nothing new, and an unchanged board diffs to nothing at all.
     const repeat = planNotifications(transitions, sentSet!);
