@@ -75,6 +75,16 @@ describe('estimateRun', () => {
     expect(est.tokens.median).toBeLessThanOrEqual(20_000);
   });
 
+  it.each([
+    [undefined, 66],
+    [1_000_000, 6.6],
+  ])('prices the historical token split with cap %s', async (maxTokens, expected) => {
+    // 70% input at $3/M plus 30% output at $15/M = $6.60/M.
+    seedRun('reference', 'reference pricing', 10_000_000);
+    const estimate = await estimateRun('reference pricing', { maxTokens }, makeCfg());
+    expect(estimate.wouldBeCloudUsd).toBeCloseTo(expected, 8);
+  });
+
   it('survives corrupt run files', async () => {
     const dir = join(fx.ashlrDir, 'runs');
     mkdirSync(dir, { recursive: true });
