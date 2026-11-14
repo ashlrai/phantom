@@ -7,7 +7,9 @@ import { ashlrHome } from '../cloud/store.js';
 import { listWorkBoard, type WorkBoardResult } from '../comms/work-board.js';
 import { summarizeWorkBoard, WORK_BOARD_UNKNOWN_LINE } from '../comms/work-board-summary.js';
 import { isRecheckAsk } from '../fleet/recheck-ask.js';
-import { readFleetRecheck } from '../fleet/fleet-recheck.js';
+import { readFleetRecheck, type FleetRecheck } from '../fleet/fleet-recheck.js';
+import { appendRecheckRecord } from '../fleet/recheck-record.js';
+import { homedir } from 'node:os';
 import { formatRecheckReply } from '../fleet/fleet-recheck-reply.js';
 
 /** The five-line digest from real state; the heading is swapped for the clock below. */
@@ -39,15 +41,30 @@ export interface OwnerStatusDeps {
   /** The paste-ready fleet recheck verdict for a short "recheck" ask; the
    * default reads the live verdict (readFleetRecheck + formatRecheckReply). */
   recheck?: (now: Date) => Promise<string>;
+  /** Retains one sanitized row per default recheck answer. Only the default
+   * recheck path calls it; a supplied `recheck` bypasses it. A throw is ignored. */
+  recordRecheck?: (recheck: FleetRecheck) => void;
 }
 
-const defaultRecheck = async (now: Date): Promise<string> => formatRecheckReply(await readFleetRecheck({ now: () => now }));
+const defaultRecordRecheck = (recheck: FleetRecheck): void => { appendRecheckRecord(ashlrHome(), recheck, homedir()); };
+
+/** Reads the verdict once, records it best-effort, and returns the reply text.
+ * A throwing or failing record never changes the reply or triggers the fallback. */
+export async function recheckReplyWithRecord(now: Date, read: (now: Date) => Promise<FleetRecheck>, record: (recheck: FleetRecheck) => void): Promise<string> {
+  const verdict = await read(now);
+  try { record(verdict); } catch { /* evidence is best-effort */ }
+  return formatRecheckReply(verdict);
+}
 
 /** Never throws, and never falls through to the status digest: a recheck ask
- * gets the recheck verdict or the fixed recheck fallback. Read-only; the
- * reply grants nothing. */
+ * gets the recheck verdict or the fixed recheck fallback. The default path
+ * appends one sanitized local evidence row (recheck-log.jsonl); the reply
+ * grants nothing. */
 export async function composeOwnerRecheckReply(now: Date, deps: OwnerStatusDeps = {}): Promise<string> {
-  try { return await (deps.recheck ?? defaultRecheck)(now); } catch { return OWNER_RECHECK_FALLBACK; }
+  try {
+    if (deps.recheck !== undefined) return await deps.recheck(now);
+    return await recheckReplyWithRecord(now, n => readFleetRecheck({ now: () => n }), deps.recordRecheck ?? defaultRecordRecheck);
+  } catch { return OWNER_RECHECK_FALLBACK; }
 }
 
 const defaultBoard = (now: Date): WorkBoardResult => listWorkBoard({ root: join(ashlrHome(), 'fleet'), now: now.getTime(), limit: 20 });
