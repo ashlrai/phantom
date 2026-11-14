@@ -1033,6 +1033,7 @@
 /test/orchestrator-bash-standing-310b.test.ts @masonwyatt23
 /test/order-merge-notice-02.test.ts @masonwyatt23
 /test/order-merge-notice-email-05.test.ts @masonwyatt23
+/test/order-trace-merge-truth-360s.test.ts @masonwyatt23
 /test/outcome-core.test.ts @masonwyatt23
 /test/outcome-daemon-loop.test.ts @masonwyatt23
 /test/outcome-dispatch.test.ts @masonwyatt23
