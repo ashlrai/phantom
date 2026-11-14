@@ -38,6 +38,22 @@ export function orderKey(entryAt: string): string | null {
   return `${match[1]} ${match[2]}`;
 }
 const cache = new Map<string, { mtime: number; keys: string[] }>();
+/** Explicit merge evidence in a metrics/jobs.jsonl row. Producers write a
+ * MERGED phase on `state`/`outcome`/`status` (metrics-outcomes reconciler,
+ * dispatchd outcome rows), `event` = 'merged', or a parseable
+ * `merged_at`/`mergedAt` timestamp. Substrings ('unmerged', 'not_merged',
+ * 'merge_failed', 'MERGED_PENDING') and unparseable timestamps are not
+ * evidence. */
+function hasMergeEvidence(row: Record<string, unknown>): boolean {
+  const phase = String(row.state ?? row.outcome ?? row.status ?? '').trim().toUpperCase();
+  if (phase === 'MERGED') return true;
+  if (String(row.event ?? '').trim().toLowerCase() === 'merged') return true;
+  for (const key of ['merged_at', 'mergedAt'] as const) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Date.parse(value))) return true;
+  }
+  return false;
+}
 function sourceError(error: unknown): 'missing' | 'degraded' {
   return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'degraded';
 }
@@ -88,10 +104,12 @@ export async function readOrderTrace(opts: { runsDir?: string; now?: () => numbe
       try {
         const row = JSON.parse(line) as Record<string, unknown>;
         const id = row.job ?? row.job_id ?? row.id;
-        const merged = typeof id === 'string' && id.startsWith('RQ-') &&
-          (/merged/i.test(String(row.state ?? '')) || /merged/i.test(String(row.outcome ?? '')) || typeof row.merged_at === 'string');
+        const merged = typeof id === 'string' && id.startsWith('RQ-') && hasMergeEvidence(row);
         if (merged) {
-          const url = typeof row.url === 'string' ? row.url : typeof row.pr_url === 'string' ? row.pr_url : null;
+          const url = typeof row.url === 'string' ? row.url
+            : typeof row.pr_url === 'string' ? row.pr_url
+            : typeof row.prUrl === 'string' ? row.prUrl
+            : typeof row.pr === 'string' ? row.pr : null;
           merges.set(id, url ?? merges.get(id) ?? null);
         }
         if (row.event !== 'publish' || typeof row.job !== 'string' || typeof row.url !== 'string' ||
