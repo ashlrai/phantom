@@ -29,7 +29,7 @@ Approval cards record consent and do not collect credentials.
 
 ## CLI
 
-- [Apps control](APPS-CONTROL.md): Manage allowlisted desktop apps (`~/.ashlr/apps-allow.json`, empty by default). Commands: `phm apps list|open|quit|focus|status [--json]`. Runs through the desktop adapter only, logs every action to the feed, sends a quit with unsaved work to needs-you.
+- [Apps control](APPS-CONTROL.md): Manage allowlisted desktop apps (`~/.ashlr/apps-allow.json`, empty by default). Commands: `phm apps list|open|quit|focus|status [--json]`, `phm apps request focus Cursor --json`. Per-app actions and request mode; shared Fleet Host Allowed apps card and typed `/api/verse/apps/control` API. Logged to the feed; unsaved quits and Phantom lifecycle requests go to needs-you without automatic execution.
 - [Desktop control](DESKTOPCTL.md): Drive Claude, Codex and Devin desktop apps as interchangeable resources through the `computer_*` tools (`~/.ashlr/desktopctl.json`, off by default). Commands: `phm desktopctl capabilities|status|run <resource> [--json]`. Reports TCC grant state per resource, never prompts for or changes grants; `browser` is read-only.
 - [Desktop operator](DESKTOP-OPERATOR.md): Read and drive Phantom, Devin, Codex, Claude, Grok and Cursor on this Mac. Commands: `phm desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]`. Writes post a bus intent first. `phm desktop doctor --json` reports Accessibility and Screen Recording for the `desktop-operator` binary.
 - [Drafts](DRAFTS.md): Outbound mail to anyone but you is written as a draft and surfaces as a needs-you item. Commands: `phm drafts list|show|approve|reject --json`. Example: `phm drafts list --status pending --json`. Approve records your decision and does not send.
