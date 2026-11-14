@@ -1,18 +1,142 @@
-# Phantom job queue
+# Shared capability-routed work market
 
-`phm queue` owns a dispatch-neutral `queue.v1` snapshot at
+Jobs describe required capabilities and desired impact. They enter one shared
+market. The dispatcher selects an available executor at claim time, using the
+job's requirements, provider availability and measured outcomes. A lane or pool
+on an older job is a preferred-lane hint. An absent or unknown hint leaves the
+job open to every eligible executor. An explicit local executor remains local.
+
+This is the source candidate in `contrib/mac/dispatchd.py`, supported by
+`contrib/mac/work_market.py`. Live adoption requires Security review and re-pin,
+then the sanctioned `contrib/mac/install.sh` path. Agents never install over
+`~/.ashlr-runs/bin`. Publication remains fork-only through `publish.sh`.
+
+## Job requirements
+
+The live producer input is `queue/router-queue.md`. For example:
+
+```text
+- READY RQ-MARKET (P0, repo=phantom, tier=frontier, needs=git|gh|node, min_tier=work, max_cost_class=included, exclusive=true, impact=90): Implement the shared work market. Acceptance: routing tests pass.
+- READY RQ-CLI (P1, repo=phantom, tier=work, preferred_lane=claude, needs=claude-cli|secrets:EXAMPLE_HANDLE): Complete the CLI integration.
+```
+
+`needs` is a list of capability names, including `git`, `gh`, `node`,
+`codex-cli`, `claude-cli`, `browser`, or `secrets:NAME`. A secret capability is
+only a host-advertised reference name. It never resolves credentials and grants
+no new access. Missing required capabilities exclude a lane. Explicit CLI needs
+stay binding even when the preferred executor is full. `min_tier` and `tier`
+use `fast`, `mid`, `work`, `frontier`; a requested execution tier below its
+minimum stays unrunnable. `max_cost_class` is `local`, `included`, or `metered`.
+The ordering is a budget constraint, not a dollar estimate or spending authority.
+`exclusive=true` keeps a job out of combined agent sessions. It does not stop
+unrelated workers. Priority (`P0` before `P1`, etc.) precedes descending numeric
+impact. Existing repair, repository, size and use-it-all preferences break ties;
+rebase work cannot jump ahead of a higher-priority runnable job.
+
+`pool=` and `lane=` remain accepted hints; `preferred_lane=` takes precedence.
+Restock retains legacy lane hints in the third TSV column for older readers and
+carries the original requirements in a sixth JSON column. It never replaces an
+unknown original hint with a hard executor constraint. Existing five-column
+rows work unchanged. The full wire shape is:
+
+```text
+job<TAB>repo<TAB>lane-hint-or-empty<TAB>tier<TAB>prompt-path<TAB>requirements-json
+```
+
+For example, the sixth column can be:
+
+```json
+{"preferred_lane":null,"needs":["git","gh","node"],"min_tier":"work","max_cost_class":"included","priority":"P0","impact":90,"exclusive":true}
+```
+
+Invalid requirement objects remain queued with `invalid_requirements`; they
+never fall back to unrestricted execution. Prompt paths, retired jobs,
+dependencies, prechecks, active worktrees, batch leases and the tick lock retain
+their existing checks. Producers count lane-neutral and unknown-hint rows toward
+the same global queue capacity, preventing over-admission.
+
+## Executor admission and selection
+
+Host-owned `queue/slots.json` supplies targets, bounds, holds, quota and optional
+`capabilities`, `tiers`, and `cost_class`. Existing executor contracts default to
+`git`, `gh`, `node` and their own CLI where supported. Browser and secret names
+must be advertised explicitly. Local models require explicit local selection,
+loopback health and the existing size and concurrency checks.
+
+Additional host-installed executors can join without another lane constant.
+Their slots entry must set `executor_ready:true`, advertise `capabilities`, and
+supply nonnegative integer `target`, `ceiling`, and `hard_cap` bounds. This is an
+advertisement of an already installed launcher, not an installation or auth flow.
+New executors also need explicit `tiers` and `cost_class`; unknown tier or cost
+evidence excludes them. Advertise only supported `tiers`. Targets and operator
+bounds remain enforced; no new fixed market concurrency limit is introduced.
+
+The market rejects capability, tier and cost mismatches, holds, auth failures,
+exhausted quota, provider backoff, unhealthy local endpoints and saturated lanes.
+It checks `models.json` tier availability, the fleet controller's budget quota
+projection, and the effective targets after load shedding. Capacity is checked
+again for every candidate so several jobs cannot reserve the same final slot.
+The existing admission gate remains the authority for host load, processes,
+worktrees, disk, adaptive global concurrency and the per-tick claim limit.
+
+Among eligible executors, preference comes first, followed by utilization,
+measured empty rate and yield, cost class, known remaining quota, measured model
+latency and stable executor order. Recent finish events supply empty-rate and
+`model_s` latency observations, with measured `wall_s` session duration as a
+fallback. Audit `latency_source` distinguishes a model phase from total session
+time; it never labels total time as model-only latency. An optional `queue/adaptive.json` projection may
+supply `{ts,lanes:{"lane-name":{empty_rate,yield_rate,model_latency_s,backoff}}}`;
+only observations at most 300 seconds old are used. Missing measurements stay
+null in audit data. Advisory observations cannot advertise capabilities, change
+a target, clear a hold or enable spending. Unknown model mappings do not invent
+a price. Cost classes come from host executor metadata.
+
+## Routing receipts and JSON audit
+
+Every evaluated decision appends a private JSON record to
+`metrics/work-market.jsonl`. Lifecycle events remain in `metrics/jobs.jsonl`.
+The decision shape is:
+
+```json
+{"schema":"work-market.v1","event":"route_decision","job":"RQ-MARKET","chosen_lane":"claude","rejected_lanes":[{"lane":"codex-personal","reason_codes":["saturated"]}],"reason_codes":["healthy_capacity","preferred_lane_fallback"],"ranking_inputs":{"claude":{"running":0,"target":2,"quota":null,"empty_rate":null,"yield_rate":null,"cost_class":"included","latency_s":null}}}
+```
+
+Other reason codes include `missing_capability`, `tier_unavailable`,
+`cost_class_exceeded`, `quota_exhausted`, `provider_backoff`, `held`,
+`no_runnable_lane`, `global_admission`, and `hysteresis_*`. An evaluated job with
+no eligible executor records `chosen_lane:null`. No task text or credentials
+appear in these records. This versioned event is also an input seam for the Jev
+typed-decision learner; it does not itself activate a learner.
+
+Actual assignments persist under `ready.lock` in `queue/route-state.json`.
+Enqueue hints have `assigned:false` until a runnable claim. Existing receipts
+without that field remain binding. Assigned routes keep the 60-minute residency
+and two moves per six hours. Only explicit auth failure or numeric zero quota
+permits early movement; congestion and manual holds do not. A recovered or new
+launch receipt fixes the pool permanently, including each batch member.
+Changing preferences cannot move a running job. See
+[route hysteresis](ROUTE-HYSTERESIS.md).
+
+```sh
+phm route explain --json
+phm pool admission --json
+```
+
+## Dispatch-neutral queue snapshot
+
+`phm queue` owns the separate `queue.v1` coordination snapshot at
 `~/.ashlr-runs/queue/queue.v1.json`. `--dir <directory>` selects an isolated store.
-This command does not start workers, change dispatchd, push code, access vendor
-authentication, call inference, or fetch credentials. dispatchd remains the
-fallback until a separate, explicit cutover. Do not dispatch the same imported
-jobs from both schedulers. Publication remains exclusively through publish.sh.
+The CLI accepts and round-trips the same requirements. Adding to this snapshot
+does not append to `ready.tsv` or start a worker. There is no second scheduler
+cutover here; live production remains the router Markdown and dispatcher path.
+Do not dispatch the same jobs through two schedulers.
 
 ## Commands
 
 ```sh
 phm queue import router-queue.md --json
 phm queue list --json
-phm queue add RQ-EXAMPLE --priority P0 --pool codex-personal --tier frontier \
+phm queue add RQ-EXAMPLE --priority P0 --tier frontier --needs git,gh,node \
   --repo phantom --scope 'Implement the feature' --acceptance 'Tests pass' \
   --deps RQ-PREREQUISITE --json
 phm queue claim RQ-EXAMPLE --owner worker-1 --json
@@ -41,7 +165,10 @@ The canonical TypeScript contract and runtime validator are in
 [`schema.ts`](../src/core/queue/schema.ts). A document contains `schema: "queue.v1"`
 and a `jobs` array. Each job has a unique `id`, status
 `READY|CLAIMED|PR-OPEN|BLOCKED|HOLD|PROPOSED|SPLIT-PARENT|FIXUP|LAND|DONE|RETIRED|DROPPED`,
-`priority`, `pool`, `tier`, `repo`, `deps`, `scope`, `acceptance`, and `claims`.
+`priority`, `tier`, `repo`, `deps`, `scope`, `acceptance`, and `claims`.
+The optional compatibility `pool` defaults to `any` when adding a job. Optional `preferred_lane`, `needs`,
+`min_tier`, `max_cost_class`, `exclusive`, and `impact` carry the market contract;
+JSON import, replay, and Markdown exports preserve them.
 Claims record `owner`, `claimedAt`, and optional `finishedAt`. Jobs optionally
 carry `prUrl` and `blockedReason`. Timestamps are ISO dates, PR URLs are
 credential-free HTTPS, and self-dependencies and duplicate dependency IDs are
@@ -68,8 +195,8 @@ bold. Job IDs use the `RQ-` prefix; the job id is the last `RQ-*` token in the
 header (everything before the first `:` that follows the first `RQ-*` token),
 excluding tokens claimed by a dependency or `children`/`parent` keyword. Field
 groups are balanced parentheses, so inner `(...)` pairs do not truncate them.
-Fields accept comma or semicolon separators. Routing fields (`priority`, `pool`,
-`tier`, `repo`, `deps`) come only from parenthesized groups; `pool` may also be
+Fields accept comma or semicolon separators. Routing fields (`priority`, `pool`, `preferred_lane`, `needs`,
+`min_tier`, `max_cost_class`, `exclusive`, `impact`, `tier`, `repo`, `deps`) come only from parenthesized groups; `pool` may also be
 inferred from a known pool name in the pre-id tokens. Dependencies use `|`, `+`,
 commas, or spaces within the field (CLI `--deps` uses commas), and are also
 collected from prose (`deps=`, `depends on`, `after`, `waits for`, `blocked by`,
