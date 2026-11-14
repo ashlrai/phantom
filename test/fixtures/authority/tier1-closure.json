@@ -296,6 +296,8 @@
     "src/core/agents/slack-status.ts",
     "src/core/agents/slack-transport.ts",
     "src/core/agents/work-visibility.ts",
+    "src/core/amplify/index.ts",
+    "src/core/amplify/snapshot.ts",
     "src/core/app-update-status.ts",
     "src/core/approvals/surface.ts",
     "src/core/authority/canonical-json.ts",

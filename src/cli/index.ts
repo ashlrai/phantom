@@ -3089,6 +3089,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'amplify': {
+        const { cmdAmplify } = await import('./amplify.js');
+        process.exitCode = await cmdAmplify(rest);
+        break;
+      }
+
       case 'leader': {
         // V3.10: the Leader (Visionary) — show / run / tick / veto (src/cli/leader.ts).
         const cmdLeader = await loadLeaderCmd();
