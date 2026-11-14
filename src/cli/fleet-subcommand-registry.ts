@@ -35,6 +35,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'bets': () => import('./fleet-bets.js'),
   'bin-diff': () => import('./fleet-bin-diff.js'),
   'board': () => import('./fleet-board.js'),
+  'board-notify': () => import('./fleet-board-notify.js'),
   'brains': () => import('./fleet-brains.js'),
   'bridge-install': () => import('./fleet-bridge-install.js'),
   'brief': () => import('./fleet-brief.js'),
