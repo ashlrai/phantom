@@ -37,6 +37,12 @@
  * leaves host, version and fleet-state fields reported as evidence while the
  * section says UNKNOWN with the exact freshness reason.
  *
+ * task.liveWorker is process-table execution evidence: the most relevant
+ * bridge worker from runs-live-workers (phantom repo first, then newest start,
+ * then job id), attached only when that read is healthy and never carrying a
+ * pid. It is not a claim receipt, grants no claim or dispatch, and never
+ * changes a state, the pick, unowned/unclaimed or missing[].
+ *
  * A VERIFIED work-board item is past execution and is never the pick; the
  * newest one with an owner and claim receipt rides along as task.lastVerified
  * evidence only and never changes a state, the pick or missing[].
@@ -56,6 +62,7 @@ import { listWorkBoard, type WorkBoardResult } from '../comms/work-board.js';
 import { readChannelHealth, type ChannelHealth, type ChannelHealthReport, type ChannelName } from './channel-health.js';
 import { readFleetBoard, type FleetBoard, type FleetClaim } from './coordination.js';
 import { listCoordination } from '../agents/claim-store.js';
+import { listLiveWorkers, type LiveWorkersSnapshot } from './runs-live-workers.js';
 import {
   bindPickToCoordination,
   type RecheckCoordinationClaim,
@@ -164,6 +171,12 @@ export interface FleetRecheckTask {
   lastVerified: {
     id: string; owner: string; claimReceipt: string; asOf: string; source: string;
   } | null;
+  /** Process-table execution evidence only: not a claim, grants no dispatch,
+   * never read by any state decision. Null when unreadable or not healthy. */
+  liveWorker?: {
+    job: string; repo: string; lane: string; tier: string;
+    ageSeconds: number | null; asOf: string; source: 'process-table';
+  } | null;
   missing: string[];
 }
 
@@ -190,6 +203,8 @@ export interface FleetRecheckDeps {
   listWorkBoard?: () => WorkBoardResult | Promise<WorkBoardResult>;
   /** Claim-store listing used to bind the task pick to its bus work claim. */
   listCoordination?: () => RecheckCoordinationListing | Promise<RecheckCoordinationListing>;
+  /** Process-table read of live bridge workers; evidence only. */
+  listLiveWorkers?: () => LiveWorkersSnapshot | Promise<LiveWorkersSnapshot>;
 }
 
 /** Live readers, wired exactly as the standalone fleet commands wire them. */
@@ -203,6 +218,7 @@ export function defaultFleetRecheckDeps(now: () => Date = () => new Date()): Req
     listWorkBoard: () => listWorkBoard({ root: join(ashlrHome(), 'fleet'), now: now().getTime() }),
     // Default root is the same ~/.ashlr/fleet directory listWorkBoard reads.
     listCoordination: () => listCoordination(undefined, now().getTime()),
+    listLiveWorkers: () => listLiveWorkers(),
   };
 }
 
@@ -421,16 +437,43 @@ function liveClaimFor(board: FleetBoard, owner: string, nowMs: number): FleetCla
   return best;
 }
 
+const HOME_SHAPE = /\/(?:Users|home)\/[^/\s;,)]+/g;
+
+/** Most relevant live worker as evidence: phantom repo first, then newest start
+ * (smallest non-null age, null last), then job id. Null unless healthy. pid is
+ * never copied. */
+function pickLiveWorker(
+  read: { ok: true; value: LiveWorkersSnapshot } | { ok: false },
+  home: string,
+): FleetRecheckTask['liveWorker'] {
+  if (!read.ok || read.value?.sourceState !== 'healthy' || !Array.isArray(read.value.workers)) return null;
+  const clean = (v: unknown): string => sanitizeIdentityText(String(v).replace(HOME_SHAPE, '~'), home);
+  const rank = (w: { ageSeconds: number | null }): number =>
+    typeof w.ageSeconds === 'number' && Number.isFinite(w.ageSeconds) ? w.ageSeconds : Number.POSITIVE_INFINITY;
+  const best = [...read.value.workers].sort((a, b) =>
+    Number(b.repo === 'phantom') - Number(a.repo === 'phantom')
+    || rank(a) - rank(b) // Infinity - Infinity is NaN, which sorts as equal
+    || (a.job < b.job ? -1 : a.job > b.job ? 1 : 0),
+  )[0];
+  if (best === undefined) return null;
+  return {
+    job: clean(best.job), repo: clean(best.repo), lane: clean(best.lane), tier: clean(best.tier),
+    ageSeconds: Number.isFinite(rank(best)) ? rank(best) : null,
+    asOf: clean(read.value.generatedAt), source: 'process-table',
+  };
+}
+
 function taskSection(
   read: { ok: true; value: WorkBoardResult } | { ok: false },
   asOf: string,
   ledger: { ok: true; value: FleetBoard } | { ok: false },
   nowMs: number,
   coordination: { ok: true; value: RecheckCoordinationListing } | { ok: false },
+  liveWorker: FleetRecheckTask['liveWorker'] = null,
 ): FleetRecheckTask {
   const section: FleetRecheckTask = {
     state: 'UNKNOWN', source: 'work-board', asOf,
-    task: null, unowned: 0, unclaimed: 0, lastVerified: null, missing: ['task: reader failed'],
+    task: null, unowned: 0, unclaimed: 0, lastVerified: null, liveWorker, missing: ['task: reader failed'],
   };
   if (!read.ok) return section;
   const board = read.value;
@@ -545,20 +588,21 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
   const home = (() => { try { return d.homeDir(); } catch { return ''; } })();
   const asOf = Number.isFinite(nowMs) ? now.toISOString() : UNKNOWN;
 
-  // All five readers run concurrently, each inside its own 5 s bound.
-  const [runtime, claims, bridge, board, coordination] = await Promise.all([
+  // All six readers run concurrently, each inside its own 5 s bound.
+  const [runtime, claims, bridge, board, coordination, live] = await Promise.all([
     attempt(d.readRuntimeIdentity),
     attempt(d.readFleetBoard),
     attempt(d.readChannelHealth),
     attempt(d.listWorkBoard),
     attempt(d.listCoordination),
+    attempt(d.listLiveWorkers),
   ]);
 
   const sections = {
     runtime: runtimeSection(runtime, asOf, nowMs),
     claims: claimsSection(claims, asOf, nowMs),
     bridge: bridgeSection(bridge, asOf, nowMs),
-    task: taskSection(board, asOf, claims, nowMs, coordination),
+    task: taskSection(board, asOf, claims, nowMs, coordination, pickLiveWorker(live, home)),
   };
   const states = Object.values(sections).map(section => section.state);
   const verified = states.every(state => state === 'VERIFIED');
