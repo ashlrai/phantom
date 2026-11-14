@@ -6,3 +6,10 @@
 .meta { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .meta span { color: var(--text-secondary); }
 .waitingChip { color: var(--status-danger-fg); background: var(--status-danger-bg); border-radius: var(--radius-sm); padding: 0 var(--space-1); }
+.healthStrip { display: flex; flex-direction: column; gap: var(--space-1); list-style: none; margin: 0; padding: 0; font-size: var(--text-xs-size); }
+.healthRow { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.healthBadge { border-radius: var(--radius-sm); padding: 0 var(--space-1); font-weight: 600; }
+.healthLive { color: var(--status-success-fg); background: var(--status-success-bg); }
+.healthDegraded { color: var(--status-warning-fg); background: var(--status-warning-bg); }
+.healthBlocked { color: var(--status-danger-fg); background: var(--status-danger-bg); }
+.healthUnknown { color: var(--status-unknown-fg); background: var(--status-unknown-bg); }
