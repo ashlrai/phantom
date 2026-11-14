@@ -34,6 +34,29 @@ export interface WorkBoardItem {
   /** `bus-claim:<id>:<cursor>:<receivedAt>` receipt of the matched claim, or
    * null. Never a fencing token. */
   claimReceipt: string | null;
+  /** The proof behind a VERIFIED chip or the dependency behind a BLOCKED one,
+   * taken from the validated evidence reader's reply fields (never message
+   * prose). Omitted for every other state. Strings are capped at 200 chars. */
+  result?: WorkBoardItemResult;
+}
+
+export type WorkBoardItemResult =
+  | { kind: 'verified'; pr: number | null; head: string | null; tests: string | null; artifact: string | null }
+  | { kind: 'blocked'; dependency: string };
+
+const RESULT_TEXT_MAX = 200;
+const cap = (v: string | undefined): string | null => (v === undefined ? null : v.slice(0, RESULT_TEXT_MAX));
+
+/** Result for the already-classified state; same evidence the classifier used. */
+function resultFor(state: WorkItemState, evidence: ReturnType<typeof deriveBusWorkItemEvidence>['evidence']): WorkBoardItemResult | undefined {
+  if (state === 'VERIFIED' && evidence.verified) {
+    const v = evidence.verified;
+    return { kind: 'verified', pr: v.pr ?? null, head: cap(v.head), tests: cap(v.tests), artifact: cap(v.artifact) };
+  }
+  if (state === 'BLOCKED' && evidence.blocker) {
+    return { kind: 'blocked', dependency: evidence.blocker.dependency.slice(0, RESULT_TEXT_MAX) };
+  }
+  return undefined;
 }
 
 export interface WorkBoardResult {
@@ -100,9 +123,10 @@ export function listWorkBoard(opts: { root: string; now: number; limit?: number;
     requests.sort((a, b) => b.receivedAt - a.receivedAt || b.cursor - a.cursor);
     const kept = requests.slice(0, limit(opts));
     const asOf = new Date(now).toISOString();
-    const items = kept.map(row => {
+    const items = kept.map((row): WorkBoardItem => {
       const { evidence } = deriveBusWorkItemEvidence(row.envelope.id, read.receipts, claims, now);
       const classified = classifyWorkItem(evidence, asOf);
+      const result = resultFor(classified.state, evidence);
       return {
         id: row.envelope.id,
         channel: row.envelope.channel ?? 'bus',
@@ -114,6 +138,7 @@ export function listWorkBoard(opts: { root: string; now: number; limit?: number;
         missing: classified.missing,
         owner: evidence.owner ?? null,
         claimReceipt: evidence.claimReceipt ?? null,
+        ...(result ? { result } : {}),
       };
     });
     return { items, inbox: 'ok', truncated: requests.length > kept.length, claims: claimsSource };
