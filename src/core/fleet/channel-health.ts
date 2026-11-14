@@ -9,8 +9,10 @@
 import { execFile } from 'node:child_process';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
-import { buildSlackBridgeStatus } from '../agents/slack-status.js';
+import { buildSlackBridgeStatus, slackInboundRequests } from '../agents/slack-status.js';
 import { readSlackJournal } from '../agents/slack-journal.js';
+import { bindSlackReplies } from '../agents/slack-reply-binding.js';
+import { readSlackSendReceipts } from '../agents/slack-send-receipts.js';
 import { ashlrHome } from '../cloud/store.js';
 import { loadConfigReadOnlyStrict } from '../config.js';
 import { readImessageAckEvidence } from '../comms/imessage-ack-evidence.js';
@@ -22,14 +24,22 @@ export type ChannelState = 'LIVE' | 'DEGRADED' | 'BLOCKED' | 'UNKNOWN';
 
 export interface ChannelProof {
   /**
-   * 'idle': no pending inbound inside the window -- a LIVE state then proves
-   *   process and configuration health only, never that a request was answered.
-   * 'unproven': pending inbound exists but no source binds a reply receipt to
-   *   the request it answers, so later outbound can never clear it.
-   * 'verified': reserved for sources that return per-request reply bindings;
-   *   no current source provides them.
+   * 'idle': no inbound inside the window -- a LIVE state then proves process
+   *   and configuration health only, never that a request was answered.
+   * 'unproven': inbound inside the window is not proven answered. Either the
+   *   source has no per-request reply binding (timestamp order alone can never
+   *   clear a request), its binding was unreadable, or at least one request
+   *   has no same-thread sent receipt yet.
+   * 'verified': the source returned a readable per-request reply binding
+   *   (`ChannelSource.replyBinding`), at least one in-window request is bound
+   *   to its own same-thread sent receipt, and none is left unanswered.
    */
   requestCoverage: 'idle' | 'unproven' | 'verified';
+  /**
+   * In-window requests bound one-to-one to a same-thread sent receipt. Present
+   * only when a readable reply binding was applied; absent means unknown.
+   */
+  answeredCount?: number;
   /** Receipt observations dated after `asOf`; excluded from evidence entirely. */
   futureDatedCount: number;
   /**
@@ -68,6 +78,21 @@ export interface InboundEvidence {
   store: 'ok' | 'missing' | 'unreadable';
 }
 
+/**
+ * Per-request reply binding, reduced to ISO inbound receive times. Ids, thread
+ * refs and text never cross this boundary. `answeredAt` and `unansweredAt`
+ * partition the source's inbound requests; requests the source cannot bind
+ * (e.g. rows lacking ids) belong in `unansweredAt`, never `answeredAt`.
+ * Only `store: 'ok'` is applied; anything else falls back to timestamp logic.
+ */
+export interface ReplyBindingEvidence {
+  store: 'ok' | 'missing' | 'unreadable';
+  answeredAt: string[];
+  unansweredAt: string[];
+  /** Future-dated requests/receipts the binder rejected (same observations readOne already counts). */
+  futureDated: number;
+}
+
 export interface ChannelHealth {
   channel: ChannelName;
   configured: boolean;
@@ -100,8 +125,15 @@ export interface ChannelSource {
    * durableIngress counts are invented for them.
    */
   inboundEvidence?(): Promise<InboundEvidence> | InboundEvidence;
-  /** Reply receipt times (ISO), any order. Activity observations only -- no source binds a reply to a specific inbound. */
+  /** Reply receipt times (ISO), any order. Activity observations only; binding comes from replyBinding(). */
   replies(): Promise<string[]> | string[];
+  /**
+   * Optional per-request reply binding at `now`. When present and readable it
+   * replaces timestamp-only pending logic: an answered request no longer
+   * counts as unanswered, and coverage can become 'verified'. Sources without
+   * it (iMessage) keep timestamp-only behavior and can never be 'verified'.
+   */
+  replyBinding?(now: Date): Promise<ReplyBindingEvidence> | ReplyBindingEvidence;
 }
 
 export interface ChannelHealthDeps {
@@ -152,6 +184,47 @@ function slackInboundEvidence(runsDir?: string): InboundEvidence {
   };
 }
 
+/**
+ * Binds Slack journal requests to same-thread sent receipts with the same
+ * construction `phm channels slack status` uses. Answered requests map back
+ * to their receive time; every other ingested row (unbound, malformed or
+ * id-less legacy) is reported unanswered so nothing is claimed answered
+ * without a receipt.
+ */
+function slackReplyBinding(runsDir: string | undefined, now: Date): ReplyBindingEvidence {
+  const empty = { answeredAt: [], unansweredAt: [], futureDated: 0 };
+  const journal = readSlackJournal({ ...(runsDir ? { runsDir } : {}), limit: 4096 });
+  if (journal.state === 'missing') return { store: 'missing', ...empty };
+  if (journal.state === 'degraded') return { store: 'unreadable', ...empty };
+  const sends = readSlackSendReceipts();
+  // A missing send store means nothing was sent (every request unanswered);
+  // a degraded one could hide receipts, so it never certifies coverage.
+  if (sends.state === 'degraded') return { store: 'unreadable', ...empty };
+  const requests = slackInboundRequests(journal.entries);
+  const binding = bindSlackReplies({ requests, receipts: sends.receipts, now });
+  const atByKey = new Map<string, string[]>();
+  for (const r of requests) {
+    const key = `${r.channelId}:${r.threadTs}:${r.messageTs}`;
+    atByKey.set(key, [...(atByKey.get(key) ?? []), r.at]);
+  }
+  // The binder visits duplicate keys in ascending `at` order.
+  for (const ats of atByKey.values()) ats.sort();
+  const answeredAt: string[] = [];
+  for (const a of binding.answered) {
+    const at = atByKey.get(`${a.channelId}:${a.threadTs}:${a.messageTs}`)?.shift();
+    if (at !== undefined) answeredAt.push(at);
+  }
+  const remaining = [...answeredAt];
+  const unansweredAt: string[] = [];
+  for (const e of journal.entries) {
+    if (e.decision !== 'ingested') continue;
+    const i = remaining.indexOf(e.at);
+    if (i >= 0) remaining.splice(i, 1);
+    else unansweredAt.push(e.at);
+  }
+  return { store: 'ok', answeredAt, unansweredAt, futureDated: binding.futureDated };
+}
+
 function defaultSources(runsDir?: string): Record<ChannelName, ChannelSource> {
   return {
     slack: {
@@ -175,6 +248,7 @@ function defaultSources(runsDir?: string): Record<ChannelName, ChannelSource> {
       },
       inboundEvidence: () => slackInboundEvidence(runsDir),
       replies: slackReplyTimes,
+      replyBinding: (now) => slackReplyBinding(runsDir, now),
     },
     imessage: {
       configMissing: () => (commsEnabled(loadConfigReadOnlyStrict()) ? [] : ['imessage comms configuration']),
@@ -227,19 +301,42 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
   } catch {
     return { ...base, state: 'UNKNOWN', missing: [`${channel} receipt source unreadable`] };
   }
+  // A binding failure is not a receipt-source failure: fall back to timestamp
+  // logic (never 'verified') and say so.
+  let binding: ReplyBindingEvidence | null = null;
+  let bindingUnreadable = false;
+  if (src.replyBinding) {
+    try {
+      const read = await src.replyBinding(now);
+      if (read.store === 'ok') binding = read;
+      else bindingUnreadable = true;
+    } catch { bindingUnreadable = true; }
+  }
   const nowMs = now.getTime();
   const validInbound = inbound.filter((t) => t <= nowMs);
   const validReplies = replies.filter((t) => t <= nowMs);
   base.lastInboundAt = validInbound.length ? isoOrNull(validInbound[validInbound.length - 1]!) : null;
   base.lastReplyAt = validReplies.length ? isoOrNull(validReplies[validReplies.length - 1]!) : null;
-  // Timestamp order is activity evidence only: no current source binds a reply
-  // receipt to the inbound it answers, so a later reply can never clear a
-  // pending inbound. Future-dated observations are rejected as evidence.
-  const pending = validInbound.filter((t) => nowMs - t <= INBOUND_WINDOW_MS);
+  // Without a readable per-request binding, timestamp order is activity
+  // evidence only: a later reply can never clear a pending inbound. With one,
+  // only requests lacking their own same-thread sent receipt stay pending.
+  // Future-dated observations are rejected as evidence either way.
+  const inWindow = (t: number): boolean => Number.isFinite(t) && t <= nowMs && nowMs - t <= INBOUND_WINDOW_MS;
+  const windowInbound = validInbound.filter(inWindow);
+  const pending = binding ? binding.unansweredAt.map(ms).filter(inWindow) : windowInbound;
+  const answeredCount = binding ? binding.answeredAt.map(ms).filter(inWindow).length : 0;
   const observedReplies = validReplies.length;
+  // binding.futureDated re-counts these same journal/receipt observations, so
+  // it is deliberately not added here.
   const futureDated = inbound.filter((t) => t > nowMs).length + replies.filter((t) => t > nowMs).length;
   base.unansweredCount = pending.length;
-  const proof: ChannelProof = { requestCoverage: pending.length ? 'unproven' : 'idle', futureDatedCount: futureDated };
+  const proof: ChannelProof = {
+    requestCoverage: pending.length ? 'unproven'
+      : binding && answeredCount > 0 ? 'verified'
+        : windowInbound.length ? 'unproven' : 'idle',
+    futureDatedCount: futureDated,
+    ...(binding ? { answeredCount } : {}),
+  };
   // Durable-admission tally over the same recent window that can block LIVE.
   // Rows without an outcome (legacy) are 'unverified': they neither prove a
   // successful durable enqueue nor convict one. A 'failed' row is positive
@@ -271,14 +368,17 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
     return { ...base, state: 'UNKNOWN', missing: [`${channel} bridge process liveness unverifiable`] };
   }
   const reasons: string[] = [];
-  if (pending.length && observedReplies) reasons.push(`${channel} reply correlation unavailable`);
+  if (!binding && pending.length && observedReplies) reasons.push(`${channel} reply correlation unavailable`);
   if (futureDated) reasons.push(`${channel} future-dated receipt ignored`);
   if (durableFailed) reasons.push(`${channel} durable ingress failed`);
+  // The binding-unreadable reason is reported but never changes the state the
+  // timestamp fallback would have produced on its own.
+  const reported = bindingUnreadable ? [...reasons, `${channel} reply binding unreadable`] : reasons;
   if (pending.some((t) => nowMs - t > REPLY_GRACE_MS) || durableFailed) {
-    return { ...base, state: 'DEGRADED', missing: reasons };
+    return { ...base, state: 'DEGRADED', missing: reported };
   }
-  if (reasons.length) return { ...base, state: 'UNKNOWN', missing: reasons };
-  return { ...base, state: 'LIVE' };
+  if (reasons.length) return { ...base, state: 'UNKNOWN', missing: reported };
+  return { ...base, state: 'LIVE', missing: reported };
 }
 
 export async function readChannelHealth(deps: ChannelHealthDeps = {}): Promise<ChannelHealthReport> {
