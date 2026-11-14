@@ -10,7 +10,14 @@ export async function cmdFleetPoolReach(args: string[], deps: PoolReachDeps = de
     if (arg === '--json') json = true;
     else { console.error(usage); return 2; }
   }
-  const status = readPoolReach(deps);
+  // readPoolReach copies a thrown config message into reasons[]; swap it for
+  // the fixed string the HTTP route uses so private diagnostics never print.
+  const status = readPoolReach({
+    ...deps,
+    readConfig: () => {
+      try { return deps.readConfig(); } catch { throw new Error('pool config unreadable'); }
+    },
+  });
   if (json) { console.log(JSON.stringify(status, null, 2)); return 0; }
   const lines = [
     `self ${status.self} role ${status.role} as of ${status.asOf}`,
