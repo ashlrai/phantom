@@ -100,6 +100,17 @@ creating a coordination claim does not itself assign a bus request.
 require the owner agent and private lease. Keep the lease from claim/handoff
 private: it fences release and later handoffs. Never put it in a result.
 
+Return a claim with exactly one result form: `--pr` with `--head`, `--tests`,
+`--artifact`, or `--blocked`. It releases the claim only with the owner's lease
+and posts a `return-<claim-id>` RESULT message to all. A retry after success
+reports `already-returned`. If the outcome is `released-unposted`, the claim
+was released but the receipt was not posted; report that, not VERIFIED. The
+return is evidence and does not merge, verify or close anything.
+
+```sh
+ashlr fleet coordination return claim-example --agent agent-example --lease <lease> --pr 42 --head abc1234 --json
+```
+
 An off-host agent without a shell on the host can read the board and record
 results, but cannot claim. It must ask the host owner and report BLOCKED
 with the specific host-claim dependency instead of acting as if it holds a
