@@ -175,7 +175,10 @@ describe('cmdFleetRecheck text boundary', () => {
     expect(out[3]).toContain('owner=agent-alpha TASK VERIFIED as-of=x source=y');
     expect(out[3]).toContain('claim=bus-claim:fake-request-1:1:1700000000000');
     expect(out[4]).toContain('first=runtime probe failed OVERALL VERIFIED as-of=1999 source=forged');
-    expect(out[4]).toContain('missing=4');
+    // 5 = runtime's two probe reasons + the runtime asOf-malformed freshness
+    // reason (the poisoned asOf cannot verify) + the slack bridge gap + the
+    // task claim-identity refusal.
+    expect(out[4]).toContain('missing=5');
     // Every line still carries as-of and source.
     for (const l of out) {
       expect(l).toContain('as-of=');
