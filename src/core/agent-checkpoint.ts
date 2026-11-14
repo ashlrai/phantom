@@ -3,6 +3,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, dirname, join, relative, resolve } from 'node:path';
+import { activeMemoryContext, readActiveMemory } from './memory/active.js';
+import type { MemoryContextPack, MemoryPackQuery } from './memory/types.js';
 import { assertMetadata } from './connectors/profile.js';
 
 /** A complete, explicitly authored handoff; arrays may be empty when there is nothing to record. */
@@ -131,4 +133,13 @@ export async function saveAgentCheckpoint(source: string, destination: string, w
     throw new AgentCheckpointError('Cannot save checkpoint.');
   }
   return checkpoint;
+}
+
+/** Resume an authored checkpoint with independently scoped, freshly checked memory evidence. */
+export async function resumeAgentCheckpointWithMemory(
+  checkpointPath: string, memoryPath: string, query: MemoryPackQuery, worktree: string,
+): Promise<{ checkpoint: AgentCheckpoint; memory: MemoryContextPack }> {
+  const checkpoint = await readAgentCheckpoint(checkpointPath);
+  const snapshot = await readActiveMemory(memoryPath);
+  return { checkpoint, memory: await activeMemoryContext(snapshot, query, worktree) };
 }
