@@ -467,18 +467,33 @@ export function writeBoardNotifySnapshot(stateDir: string, items: readonly Board
 
 /** What the next pass diffs against: delivered items advance; items whose
  * planned notice could not be sent keep their previous row (or stay
- * absent when new), so the transition re-fires and the send retries. */
+ * absent when new), so the transition re-fires and the send retries.
+ * `preserveUnseen` marks `next` as a bounded projection of the board
+ * (listWorkBoard `truncated`): absence from the page is not proof an
+ * item vanished, so prior rows for unseen ids are carried forward
+ * unchanged — pending baselines survive bounded reads and a later full
+ * page still diffs against the real prior state. Carried rows are kept
+ * within SNAPSHOT_MAX_ITEMS so the file stays readable; overflow drops
+ * the tail, degrading only those items to first-appearance diffs. */
 export function snapshotAfterSend(
   prev: readonly BoardSnapshotItem[],
   next: readonly BoardSnapshotItem[],
   pendingItemIds: ReadonlySet<string>,
+  opts?: { preserveUnseen?: boolean },
 ): BoardSnapshotItem[] {
   const before = new Map(prev.map(item => [item.id, item]));
+  const seen = new Set(next.map(item => item.id));
   const kept: BoardSnapshotItem[] = [];
   for (const item of next) {
     if (!pendingItemIds.has(item.id)) { kept.push(item); continue; }
     const prior = before.get(item.id);
     if (prior) kept.push(prior);
+  }
+  if (opts?.preserveUnseen === true) {
+    for (const item of prev) {
+      if (kept.length >= SNAPSHOT_MAX_ITEMS) break;
+      if (!seen.has(item.id)) kept.push(item);
+    }
   }
   return kept;
 }
