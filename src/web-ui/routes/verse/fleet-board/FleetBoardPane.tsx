@@ -18,6 +18,7 @@ import { CHART_NEUTRAL, seriesColor } from '../../../components/charts/colors.js
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import type { FleetBoardV1 } from '../../../data/api-types.js';
+import { WorkBoardSection } from './work-board-section.js';
 import styles from './fleet-board.module.css';
 
 function num(value: number | null): string {
@@ -209,6 +210,8 @@ export function FleetBoardPane({ visible }: PaneProps) {
       ) : (
         <BoardBody board={board} />
       )}
+
+      <WorkBoardSection visible={visible} />
     </div>
   );
 }
