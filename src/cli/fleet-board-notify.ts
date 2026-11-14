@@ -222,7 +222,10 @@ export async function cmdFleetBoardNotify(args: string[], deps: BoardNotifyDeps 
   const queued = count('slack-bus-note-enqueued');
   const busPosted = count('bus-reply-posted');
   const pending = new Set(results.filter(r => r.status !== 'sent' && r.status !== 'duplicate').map(r => r.notice.itemId));
-  writeBoardNotifySnapshot(dir, snapshotAfterSend(prev, next, pending));
+  // A truncated listing is a bounded projection, not the whole board:
+  // preserve prior rows for items outside the page so their baselines —
+  // including pending undelivered updates — are not silently discarded.
+  writeBoardNotifySnapshot(dir, snapshotAfterSend(prev, next, pending, { preserveUnseen: board.truncated }));
   return emit({
     status: 'completed', transitions: transitions.length, planned: plan.notices.length,
     // `sent` is the legacy count of durable sender receipts (incl. dedupes). It

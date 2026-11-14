@@ -5,7 +5,7 @@ import { narrowTailnetPeers, type TailnetPeersView } from './tailnet-peers-model
 export const tailnetPeersQuery: QueryDef<TailnetPeersView | null> = {
   key: 'verse-fleet-tailnet-peers',
   async fetch(signal) {
-    try { return narrowTailnetPeers(await apiGet<unknown>('/api/verse/fleet/tailnet-peers', signal)); }
+    try { return narrowTailnetPeers(await apiGet<unknown>('/api/verse/fleet/runtime-identity/tailnet-peers', signal)); }
     catch (error) {
       if (error instanceof ApiError && error.status === 404) return null;
       throw error;
