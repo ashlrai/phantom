@@ -26,7 +26,7 @@ function deps(): Required<FleetRecheckDeps> {
   const live = (channel: 'slack' | 'imessage'): ChannelHealth => ({ channel, configured: true, processAlive: true, runtimeHost: 'fake-host', lastInboundAt: null, lastReplyAt: null, unansweredCount: 0, proof: { requestCoverage: 'idle', futureDatedCount: 0 }, state: 'LIVE', missing: [], asOf: ISO });
   const health: ChannelHealthReport = { schemaVersion: 1, asOf: ISO, channels: [live('slack'), live('imessage')] };
   const work: WorkBoardResult = { inbox: 'ok', truncated: false, claims: 'available', items: [{ id: 'T-328', channel: 'bus', channelRef: null, receivedAt: ISO, state: 'RUNNING', asOf: ISO, source: 'work-board', missing: [], owner: 'fake-agent', claimReceipt: 'bus-claim:req-1:7:rcpt' }] };
-  return { now: () => new Date(NOW_MS), homeDir: () => '/Users/fakehome', readRuntimeIdentity: () => runtime, readChannelHealth: () => health, readFleetBoard: () => board, listWorkBoard: () => work };
+  return { now: () => new Date(NOW_MS), homeDir: () => '/Users/fakehome', readRuntimeIdentity: () => runtime, readChannelHealth: () => health, readFleetBoard: () => board, listWorkBoard: () => work, listCoordination: () => ({ source: 'unavailable' as const, claims: [] }), listLiveWorkers: () => { throw new Error('absent'); } };
 }
 
 const MISSING = ['slack: bridge down', 'imessage: bridge stale'];

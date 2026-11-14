@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { cmdFleetLibraryPins } from '../src/cli/fleet-library-pins.js';
 import { addPin, libraryPinsPath, listPins, LIBRARY_PINS_MAX } from '../src/core/fleet/library-pins.js';
 
