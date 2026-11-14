@@ -72,8 +72,8 @@ import type { AshlrConfig } from '../types.js';
 export interface IMessageStatusReply {
   /** Exact short owner asks only; anything else keeps the generic ack. */
   ask(text: string): boolean;
-  /** Compose the digest answer for a gated ask. */
-  compose(runsDir: string, now: Date): Promise<string>;
+  /** Compose the answer for a gated ask; `text` is the owner's ask body. */
+  compose(runsDir: string, now: Date, text?: string): Promise<string>;
   /** Sent when compose throws. */
   readonly fallback: string;
 }
@@ -216,7 +216,7 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
       let isAsk = false;
       try { isAsk = reply.ask(currentBody); } catch { return generic; }
       if (!isAsk) return generic;
-      try { return await reply.compose(runsDir, now()); }
+      try { return await reply.compose(runsDir, now(), currentBody); }
       catch { return reply.fallback; }
     };
     const receive = createChannelReceiver({
