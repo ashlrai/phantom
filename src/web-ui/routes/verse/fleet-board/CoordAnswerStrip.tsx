@@ -14,6 +14,7 @@ import { runtimeIdentityQuery } from '../fleet-host/runtime-identity-query.js';
 import type { RuntimeIdentityView } from '../fleet-host/runtime-identity-model.js';
 import { deriveCoordAnswer, type CoordBoardView } from './coord-answer-model.js';
 import { coordinationClaimsQuery, type CoordLedgerView } from './coordination-claims-query.js';
+import { deriveRecheckLine, recheckVerdictQuery } from './recheck-verdict-query.js';
 import { workBoardQuery } from './work-board-section.js';
 import styles from './fleet-board.module.css';
 
@@ -22,11 +23,13 @@ export function CoordAnswerStrip({ visible }: { visible: boolean }) {
   const channels = useQuery(channelHealthQuery, { enabled: visible, freshMs: 0 });
   const board = useQuery(workBoardQuery, { enabled: visible, freshMs: 0 });
   const ledger = useQuery(coordinationClaimsQuery, { enabled: visible, freshMs: 0 });
+  const recheck = useQuery(recheckVerdictQuery, { enabled: visible, freshMs: 0 });
   const refetchRuntime = useRefetch(runtimeIdentityQuery);
   const refetchChannels = useRefetch(channelHealthQuery);
   const refetchBoard = useRefetch(workBoardQuery);
   const refetchLedger = useRefetch(coordinationClaimsQuery);
-  usePollWhileVisible(() => { refetchRuntime(); refetchChannels(); refetchBoard(); refetchLedger(); }, 15_000, { enabled: visible });
+  const refetchRecheck = useRefetch(recheckVerdictQuery);
+  usePollWhileVisible(() => { refetchRuntime(); refetchChannels(); refetchBoard(); refetchLedger(); refetchRecheck(); }, 15_000, { enabled: visible });
 
   // undefined = the read has not settled; null/{available:false} = settled as
   // unavailable (missing route or failed read) — never conflated with loading.
@@ -45,6 +48,10 @@ export function CoordAnswerStrip({ visible }: { visible: boolean }) {
 
   const answer = deriveCoordAnswer({ runtime: runtimeView, channels: channelsView, board: boardView, ledger: ledgerView, now: Date.now() });
 
+  // Additional server evidence only; never feeds deriveCoordAnswer's verdict.
+  const recheckLine = deriveRecheckLine(
+    recheck.data === undefined && recheck.status === 'error' ? 'error' : recheck.data, Date.now());
+
   return (
     <section className={styles.coordAnswer} aria-labelledby="fb-coord-answer" data-verdict={answer.verdict}>
       <div className={styles.coordHead}>
@@ -58,6 +65,10 @@ export function CoordAnswerStrip({ visible }: { visible: boolean }) {
             <dd data-ok={String(row.ok)}>{row.value}</dd>
           </div>
         ))}
+        <div>
+          <dt>Server</dt>
+          <dd data-ok={String(recheckLine.ok)}>{recheckLine.text}</dd>
+        </div>
       </dl>
       {answer.missing.length > 0 ? (
         <ul className={styles.coordMissing}>
