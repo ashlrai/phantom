@@ -37,6 +37,7 @@ const PortfolioView = lazy(() => import('../routes/portfolio/PortfolioView.js').
 const WorklogView = lazy(() => import('../routes/work/worklog/WorklogView.js').then((module) => ({ default: module.WorklogView })));
 const RunsView = lazy(() => import('../routes/work/runs/RunsView.js').then((module) => ({ default: module.RunsView })));
 const RunDetailView = lazy(() => import('../routes/work/runs/RunDetailView.js').then((module) => ({ default: module.RunDetailView })));
+const SessionsView = lazy(() => import('../routes/work/sessions/SessionsView.js').then((module) => ({ default: module.SessionsView })));
 const SwarmsView = lazy(() => import('../routes/work/swarms/SwarmsView.js').then((module) => ({ default: module.SwarmsView })));
 const SwarmDetailView = lazy(() => import('../routes/work/swarms/SwarmDetailView.js').then((module) => ({ default: module.SwarmDetailView })));
 const DaemonView = lazy(() => import('../routes/control/daemon/DaemonView.js').then((module) => ({ default: module.DaemonView })));
@@ -44,6 +45,7 @@ const FleetView = lazy(() => import('../routes/control/fleet/FleetView.js').then
 const SecurityView = lazy(() => import('../routes/control/security/SecurityView.js').then((module) => ({ default: module.SecurityView })));
 const GoalsView = lazy(() => import('../routes/goals/GoalsView.js').then((module) => ({ default: module.GoalsView })));
 const InboxView = lazy(() => import('../routes/inbox/InboxView.js').then((module) => ({ default: module.InboxView })));
+const ApprovalsView = lazy(() => import('../routes/approvals/ApprovalsView.js').then((module) => ({ default: module.ApprovalsView })));
 const AgentOsView = lazy(() => import('../routes/agent-os/AgentOsView.js').then((module) => ({ default: module.AgentOsView })));
 const ConnectView = lazy(() => import('../routes/connect/ConnectView.js').then((module) => ({ default: module.ConnectView })));
 const UniverseView = lazy(() => import('../routes/universe/UniverseView.js').then((module) => ({ default: module.UniverseView })));
@@ -51,9 +53,12 @@ const ConnectorsSettings = lazy(() => import('../routes/settings/connectors/Conn
 
 const SecretsView = lazy(() => import('../routes/settings/secrets/SecretsView.js').then(module => ({ default: module.SecretsView })));
 
+const TeamInviteAccept = lazy(() => import('../routes/TeamInviteAccept.js').then((module) => ({ default: module.TeamInviteAccept })));
+
 export function AppRoutes() {
   return (
     <Routes>
+      <Route path="/teams/:team/accept" element={<TeamInviteAccept />} />
       <Route element={<Shell />}>
         <Route index element={<Navigate to="/overview" replace />} />
         {ALL_NAV_LEAVES.map((leaf) =>
@@ -69,6 +74,7 @@ export function AppRoutes() {
         <Route path="/settings/secrets" element={<SecretsView />} />
         <Route path="/settings/connectors" element={<ConnectorsSettings />} />
         <Route path="/overview" element={<FleetDashboardView />} />
+        <Route path="/approvals" element={<ApprovalsView />} />
         <Route path="/agent-os" element={<AgentOsView />} />
         <Route path="/universe" element={<UniverseView />} />
         <Route path="/show" element={<ShowView />} />
@@ -80,6 +86,7 @@ export function AppRoutes() {
         <Route path="/work/log" element={<WorklogView />} />
         <Route path="/work/runs" element={<RunsView />} />
         <Route path="/work/runs/:id" element={<RunDetailView />} />
+        <Route path="/work/sessions" element={<SessionsView />} />
         <Route path="/work/swarms" element={<SwarmsView />} />
         <Route path="/work/swarms/:id" element={<SwarmDetailView />} />
         <Route path="/control/daemon" element={<DaemonView />} />

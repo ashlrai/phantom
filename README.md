@@ -208,7 +208,7 @@ phm --version
 phm verse
 ```
 
-`phm verse` serves [http://127.0.0.1:7777/verse/](http://127.0.0.1:7777/verse/). The package exports `@ashlr/phantom`, `@ashlr/phantom/core`, `@ashlr/phantom/types`, `@ashlr/phantom/plugin`, and `@ashlr/phantom/universe`.
+`phm verse` serves [http://127.0.0.1:7777/verse/](http://127.0.0.1:7777/verse/). `phm console` is the same command under the Phantom name and opens `/app/`; `/app/` and `/app/m/` alias `/verse/` and `/verse/m/`, which keep working. The package exports `@ashlr/phantom`, `@ashlr/phantom/core`, `@ashlr/phantom/types`, `@ashlr/phantom/plugin`, and `@ashlr/phantom/universe`.
 
 Optional cloud handoff, off unless you launch it. Cloud launch spends Claude credits. The Devin API connection requires macOS and Devin sessions spend ACUs:
 
@@ -242,7 +242,7 @@ Every top-level `phm` command, grouped by what it is for. `ashlr` runs the same 
 | Knowledge | `graph`, `ask`, `knowledge`, `wiki`, `library` |
 | Autonomy | `route`, `metrics`, `trail`, `issues`, `select`, `pool`, `benchmark`, `enroll`, `backlog`, `inbox`, `daemon`, `drive`, `worker`, `prs`, `fleet`, `bus`, `recovery`, `manager`, `vision`, `goal`, `loop`, `conductor-permit`, `roadmap`, `reflect`, `health`, `goals`, `sweep`, `digest`, `release-articles`, `release`, `drafts`, `comms`, `comms-agent`, `imessage`, `connectors`, `channels`, `director`, `best-of-n`, `invent`, `universe`, `website`, `authority`, `org`, `leader`, `mirror`, `cloud`, `playbook`, `jev`, `devin`, `openai-agents`, `agents`, `automations` |
 | Observability | `feed`, `wb`, `worklog`, `chain`, `router`, `context`, `claim`, `router-calibration`, `jobs`, `lanes`, `queue`, `incident`, `daily-fix`, `pulse`, `pulse-export`, `pulse-test`, `telemetry`, `audit`, `repos`, `receipt`, `radar`, `observe`, `growth`, `world`, `resource`, `resources`, `capacity`, `estates`, `signals`, `friction`, `budget`, `ci-metrics`, `main`, `usage` |
-| Integrations | `autopilot`, `improve`, `steward`, `team`, `companions`, `mcp`, `checkpoint`, `sessions`, `gh`, `vercel`, `wire`, `notify`, `stack`, `ecosystem` |
+| Integrations | `autopilot`, `improve`, `steward`, `team`, `companions`, `caps`, `mcp`, `checkpoint`, `sessions`, `gh`, `vercel`, `wire`, `notify`, `stack`, `ecosystem` |
 | Safety | `worktrees`, `disk`, `disk-maint`, `node`, `sandbox`, `seams`, `test`, `check`, `constitution`, `verify`, `engineering-receipt`, `verify-safety`, `verify-pr`, `preflight`, `onboard`, `demo` |
 | Web | `top`, `tui`, `dash`, `dashboard`, `serve`, `verse` |
 | Scaffold | `new`, `ship` |
@@ -278,6 +278,7 @@ The [ecosystem map](https://github.com/ashlrai/phantom/blob/master/docs/ECOSYSTE
 
 | Doc | Use it for |
 | --- | --- |
+| [docs/VISION.md](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) | Product direction: a chat-first open-source assistant, four pillars, and the gap to today's code |
 | [docs/llms.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms.txt) | Short index for agents |
 | [docs/llms-full.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms-full.txt) | Copy-paste install, JSON commands, and MCP setup |
 | [docs/QUICKSTART.md](docs/QUICKSTART.md) | First local session |
