@@ -23,6 +23,9 @@ Approval cards record consent and do not collect credentials.
 - [Agent roster](AGENT-ROSTER.md): Unified live session roster. `phm agents roster --json` and MCP `phm_agent_roster`. Unknown sources stay unknown.
 - [Bus threads and task board](BUS-THREADS.md): `phm bus thread|task` shared local board; task claims are real fenced SharedStore queue claims with atomic pre-execution handoff. Cooperative routing labels only, no execution authority.
 - [Agent operations](AGENT-OPERATIONS.md): Cold-start checklist for building and operating Phantom from source.
+- [Tier-scaled session scope](QUEUE.md#tier-scaled-session-scope): Frontier 40 files / 600 lines; work 15 / 200; mid 8 / 120; fast 2 / 80. One mergeable PR per job, explicit narrower limits preserved. Offline lint JSON and restock dry-run examples.
+- [Lane tool parity audit](AGENT-TOOLCHAIN.md#lane-tool-parity-audit-rq-delegate-scope-1): MCP servers supplied by each launch path, unverified lane state and gaps to flag before assigning work.
+- [Org responsibility assignment](AGENT-NETWORK.md#assign-responsibilities-without-expanding-authority): Use org show, member opt-in and org plan within contributed limits; proposals and Mason-only actions.
 - [Automatic work](AUTOMATIC-OUTCOMES.md): Chat routing and fleet outcomes.
 - [Autonomy setup](AUTONOMY-SETUP.md): Dormant macOS autonomy. Status is not activation.
 - [Friction loop doctrine](doctrine/FRICTION-LOOP.md): How autonomy work is chosen — delegate everything, find where delegation stops for a human step, remove the step without removing the protection, and measure the signal after merge.
