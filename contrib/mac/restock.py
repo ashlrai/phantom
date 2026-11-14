@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+import work_market
 # restock.py — Mac-side deterministic restocker for the router queue (no LLM, no network of its own).
 # Installed to ~/.ashlr-runs/bin/restock.py via swap.sh and sha-pinned by selfrun.sh (G1-CODE-PIN); run as
 # `restock.py [--dry-run] [--per-lane N]`. RQ-QUEUEGEN-BOLD-30 + SPEC-AMEND Security #5 + RQ-DEVINROUTEDEFAULTQ7
@@ -17,6 +18,7 @@ PER = int(sys.argv[sys.argv.index("--per-lane") + 1]) if "--per-lane" in sys.arg
 TS = time.strftime("%F %T"); HM = time.strftime("%H:%M")
 CODEX = ["codex-cmp", "codex-personal", "devin", "codex-local", "omlx"]  # restockable lanes (devin unheld 2:25 PM per Mason; codex-local RQ-LOCAL-LANE)
 CODEX.append("claude-api")  # paced by claude-api.py via slots.json target (0 when no credit pool is open)
+CODEX.append("claude")  # shared work can be restocked when only the Claude executor has headroom
 GENERAL = [l for l in CODEX if l not in ("codex-local", "omlx")]  # rev1.1: local models are not a general fallback; only explicitly local pools go there
 # RQ-QUEUEGEN-BOLD-30 (SPEC-AMEND Security #5): GS_REPOS is the fleet allowlist — the core-fleet spine that is
 # checked out under ~/Projects/ashlrai (docs/ECOSYSTEM-MAP.md). measurably and ashlar-landing live there too but
@@ -71,12 +73,15 @@ park_state = {j: e for j, e in park_state.items() if isinstance(e, dict)
 st = json.loads(rd(Q + "/status.json", "{}") or "{}"); lanes = st.get("lanes", {})
 slots = json.loads(rd(Q + "/slots.json", "{}") or "{}")
 hold = set(rd(R + "/HOLD").split())
+for lane, entry in slots.items():
+    if lane not in CODEX and isinstance(entry, dict) and entry.get("executor_ready") is True and isinstance(entry.get("capabilities"), list):
+        CODEX.append(lane); GENERAL.append(lane)
 need = {}
 for l in CODEX:
-    s = lanes.get(l, {}); t = slots.get(l, {}).get("target", DEVIN_T if l == "devin" else 10)
+    s = lanes.get(l, {}); t = slots.get(l, {}).get("target", DEVIN_T if l == "devin" else 0 if l == "claude" else 10)
     if l == "devin" and isinstance(t, int): t = min(t, DEVIN_C)   # leverage ceiling 16 caps restock need
     if slots.get(l, {}).get("held") or l in hold: need[l] = 0; continue
-    if l in ("claude-api", "omlx") and not slots.get(l, {}).get("target"): need[l] = 0; continue   # disabled local pool or no credit pool open
+    if l in ("claude-api", "claude", "omlx") and not slots.get(l, {}).get("target"): need[l] = 0; continue   # disabled executor or no credit pool open
     free = max(t - s.get("running", 0), 0)
     want = PER if PER is not None else 3 * max(free, 4)
     need[l] = want
@@ -214,7 +219,6 @@ def parse_parked_dep(line):
         if not lane: return None
         return f[0], f[1], lane, f[3], f[4], line
     return None
-def prio(a): m = re.search(r"\bP(\d)\b", a); return int(m.group(1)) if m else 3
 def prompt_body(j, repo, l, tier, attrs, text, gate=None):
     gate_line = ("DEPENDENCY GATE: %s\n\n" % ", ".join(gate)) if gate else ""
     pin_line = ("\n%s\n" % PIN_MERGE) if PIN_MERGE in (attrs + " " + text) else ""
@@ -299,8 +303,13 @@ seclist = []
 for i, j, a2, t2, raw2 in recs:
     if SEC.search(NEGS.sub("", raw2)): seclist.append((i, j)); skip(j, "hold-security")
 parked = {i for i, j in seclist}
-# under the bold floor bold lines pick first, then P-level, then line order; at/above it the order is unchanged
-ordk = (lambda r: (not ISBOLD.search(r[2]), prio(r[2]), r[0])) if prefer_bold else (lambda r: (prio(r[2]), r[0]))
+# Impact and priority precede bold/repository preferences at both admission boundaries.
+def market_rank(record):
+    try: rank = work_market.priority(work_market.from_envelope(record[2]))
+    except (ValueError, TypeError): rank = (1000001, 0)
+    return (*rank, not bool(ISBOLD.search(record[2])) if prefer_bold else False,
+            bool(re.search(r"A\d{6,}Q8$", record[1])))
+ordk = lambda r: (*market_rank(r), r[0])
 def ranked_records(records):
     ordered = sorted(records, key=ordk)
     try:
@@ -344,9 +353,12 @@ def ranked_records(records):
     except (ValueError, KeyError, TypeError, AttributeError, ZeroDivisionError, OverflowError):
         return ordered
 
-for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re.search(r"A\d{6,}Q8$", r[1]))):
+picked_specs = {}
+for i, j, attrs, text, raw in sorted(ranked_records(recs), key=market_rank):
     if all(len(picks[l]) >= need[l] for l in CODEX): break
     if i in parked: continue
+    try: spec = work_market.from_envelope(attrs)
+    except (ValueError, TypeError): skip(j, "invalid-requirements"); continue
     if re.search(r"(?i)not bridge|owner-authored|\bowners?\b|RETIRED|folds into|reuse the kept worktree|repos=|standing|tier=local", attrs + " " + text[:200]): skip(j, "not-bridge/fold/kept-reuse"); continue
     if not re.match(r"^[A-Z]", j): skip(j, "bad-id"); continue
     if re.search(r"sub of " + re.escape(j) + r"\b", RQ_TXT): skip(j, "split-into-subs"); continue
@@ -362,6 +374,7 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re
     if rm and rm.group(1) not in GS_REPOS: skip(j, "non-fleet-repo"); continue
     if not rm or not os.path.isdir(H + "/Projects/ashlrai/" + rm.group(1)): skip(j, "no-repo"); continue
     pool = pm.group(1) if pm and pm.group(1) != "any" else "any"
+    if pool not in CODEX: pool = "any"   # unknown enqueue hints never strand shared work
     if pool == "any" and devin_default(tm, attrs): pool = "devin"   # frontier/long-horizon -> devin by default
     if pool == "any": pool = max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
     if pool not in CODEX: skip(j, "lane-" + pool); continue
@@ -432,6 +445,7 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re
     if pc:
         done.append((i, j, pc)); skip(j, "done-noop"); continue
     picks[lane].append((j, rm.group(1), lane, tier, attrs, text, i))
+    picked_specs[j] = spec
     if quality_group: quality_groups.add(quality_group)
     seen_pr |= prp
 out = []
@@ -440,7 +454,7 @@ for lane in CODEX:
         p = prompt_body(j, repo, l, tier, attrs, text)
         pf = f"{Q}/prompts/{j}.md"
         out.append((j, repo, l, tier, pf, p, i))
-out.sort(key=lambda row: bool(re.search(r"A\d{6,}Q8$", row[0])))
+out.sort(key=lambda row: (*work_market.priority(picked_specs[row[0]]), bool(re.search(r"A\d{6,}Q8$", row[0]))))
 out = out[:gate["allow"]]
 dep_out = []   # PARKED-DEP rows to append (job, repo, lane, tier, pf, prompt, i, deps)
 for j, repo, l, tier, attrs, text, i, deps in dep_parks:
@@ -459,6 +473,7 @@ for j, ids, _old, _new in ([] if "--json" in sys.argv else unparks): print(("DRY
 for j, repo, l, tier, pf, p, i, deps in ([] if "--json" in sys.argv else dep_out): print(("DRY " if DRY else "") + "PARKED-DEP\t%s\tdeps=%s" % (j, ",".join(deps)))
 if "--json" in sys.argv:
     print(json.dumps({"dry_run": DRY, "queued": len(out), "done_noop": [j for _, j, _ in done], "skips": skips,
+                      "jobs": [{"job": j, "repo": repo, "tier": tier, "requirements": picked_specs[j]} for j, repo, _l, tier, *_tail in out],
                       "queue_diagnostics": queue_diagnostics, "parked_diagnostics": parked_diagnostics,
                       "unpark": [{"job": j, "deps": ids} for j, ids, _, _ in unparks],
                       "parked_dep": [{"job": j, "deps": deps} for j, *_r, deps in dep_out]}))
@@ -573,7 +588,8 @@ if out or unparks or dep_out or rate_candidates:
             for x in snap:
                 x = repl.pop(x, x)
                 if x.strip(): f.write(x + "\n")
-            for j, repo, l, tier, pf, p, i in out: f.write("\t".join([j, repo, l, tier, pf]) + "\n")
+            for j, repo, l, tier, pf, p, i in out:
+                f.write("\t".join([j, repo, l, tier, pf, json.dumps(picked_specs[j], separators=(",", ":"))]) + "\n")
             for j, repo, l, tier, pf, p, i, deps in dep_out:
                 f.write("\t".join(["PARKED-DEP.%s" % l, j, l, tier, repo, pf]) + "\n")
         os.replace(Q + "/ready.tsv.tmp", Q + "/ready.tsv")
