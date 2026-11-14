@@ -42,6 +42,9 @@ const originalFacts: Partial<StatusDigestSources> = {
     { at: '2026-11-10 14:48', source: 'Slack', priority: 'P0', text: 'Phantom status' },
     { at: '2026-11-10 09:00', source: 'Slack', priority: 'P0', text: 'an older p0' },
   ] }),
+  // The claims line postdates the original contract: disabling the reader keeps
+  // this reply the original five facts byte-for-byte (covered by -claims-314).
+  workClaims: undefined,
 };
 
 /** Same construction as the production digestBrief: real gather + real build, readers injected. */
@@ -69,6 +72,7 @@ describe('composeOwnerStatusReply preserves the original PR #4885 contract', () 
       runsState: async () => { throw new Error('fake lane read'); },
       needs: () => { throw new Error('fake needs read'); },
       inbox: async () => { throw new Error('fake inbox read'); },
+      workClaims: undefined,
     };
     const reply = await composeOwnerStatusReply(RUNS_DIR, NOW, { brief: briefFrom(dead) });
     expect(reply).toBe([
