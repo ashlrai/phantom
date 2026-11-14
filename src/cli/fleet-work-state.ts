@@ -13,7 +13,7 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
 /** Returns an error message, or null when `v` is a well-typed WorkItemEvidence. */
 function invalid(v: unknown, at: string): string | null {
   if (!isObj(v)) return `${at}: expected an object`;
-  if (typeof v.id !== 'string' || v.id === '') return `${at}: id must be a non-empty string`;
+  if (typeof v.id !== 'string' || v.id.trim() === '') return `${at}: id must be a non-empty string`;
   for (const k of STRINGS) if (v[k] !== undefined && typeof v[k] !== 'string') return `${at}: ${k} must be a string`;
   for (const [k, fields] of Object.entries(NESTED)) {
     const o = v[k];
