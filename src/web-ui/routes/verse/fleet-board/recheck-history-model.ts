@@ -8,7 +8,7 @@ import { formatRelative } from '../autonomy/format.js';
  * field is validated in deriveRecheckHistory, never trusted.
  */
 export interface RecheckHistoryResp {
-  history?: { rows?: unknown; skipped?: unknown; missing?: unknown };
+  history?: { rows?: unknown; skipped?: unknown; missing?: unknown; outcome?: 'ok' | 'unreadable'; failure?: string };
 }
 
 /** `null` = the route (or its history) is absent (404) on this build. */
@@ -69,6 +69,7 @@ const clock = (ms: number): string => { const d = new Date(ms); return `${pad(d.
 export function deriveRecheckHistory(resp: RecheckHistoryResp | null | undefined, now: number): RecheckHistoryView {
   const hist = resp && typeof resp === 'object' ? resp.history : undefined;
   if (!hist || typeof hist !== 'object') return { held: 'Recheck history unreadable', changes: [], note: null };
+  if (hist.outcome === 'unreadable') return { held: 'Recheck history unreadable', changes: [], note: null };
 
   const rawRows = Array.isArray(hist.rows) ? hist.rows : [];
   const rows: Row[] = [];
@@ -79,7 +80,10 @@ export function deriveRecheckHistory(resp: RecheckHistoryResp | null | undefined
   const note = skipped > 0 ? `${skipped} unreadable rows skipped` : null;
 
   if (rows.length === 0) {
-    return { held: hist.missing === true && rawRows.length === 0 ? 'No recorded rechecks yet' : 'Recheck history unreadable', changes: [], note };
+    const empty = Array.isArray(hist.rows) && rawRows.length === 0 && hist.skipped === 0;
+    const held = hist.missing === true && rawRows.length === 0 ? 'No recorded rechecks yet'
+      : hist.outcome === 'ok' && hist.missing === false && empty ? 'Recheck history is empty' : 'Recheck history unreadable';
+    return { held, changes: [], note };
   }
 
   // Rows are newest-first; the run is the leading rows sharing rows[0].overall.
