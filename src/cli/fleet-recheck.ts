@@ -64,6 +64,10 @@ function textLines(recheck: FleetRecheck): string[] {
     line('TASK', task.state, task.asOf, task.source,
       `id=${pick?.id ?? 'none'} state=${pick?.state ?? 'none'} owner=${pick?.owner ?? 'none'} `
       + `claim=${pick?.claimReceipt ?? 'none'} missing=${task.missing[0] ?? 'none'}`),
+    ...(task.lastVerified === undefined || task.lastVerified === null ? [] : [
+      line('TASK', task.state, task.asOf, task.source,
+        `last verified: ${task.lastVerified.id} owner=${task.lastVerified.owner} at ${task.lastVerified.asOf}`),
+    ]),
     line('OVERALL', recheck.overall.state, recheck.asOf, 'fleet-recheck',
       `missing=${recheck.overall.missing.length} first=${recheck.overall.missing[0] ?? 'none'}`),
   ];
