@@ -30,6 +30,7 @@ not automatically the host's state.
 | --- | --- |
 | `fleet_work_board` | The same bus work board; optional `limit` and exact `thread` filter. |
 | `fleet_runtime_identity` | Sanitized host/platform, installed versus source version, drift, fleet-state freshness and reasons. |
+| `fleet_review_pick` | Read-only unowned review task route, also available as `ashlr fleet review-pick`: repository, PR/head and current owner; unavailable ownership evidence withholds the pick. Grants no claim. |
 | `fleet_order_state` | Inbox order classifications and missing evidence; optional `sinceHours` from 1–720. |
 | `fleet_tailnet_peers` | Sanitized peer names, OS, online/last-seen evidence, ages, reasons and `asOf`; no addresses or keys. |
 | `fleet_pool_reach` | Whether configured primary/backup SSH aliases match online tailnet peers, with role and reasons. |
@@ -98,6 +99,17 @@ creating a coordination claim does not itself assign a bus request.
 `ashlr fleet coordination release` and `ashlr fleet coordination handoff`
 require the owner agent and private lease. Keep the lease from claim/handoff
 private: it fences release and later handoffs. Never put it in a result.
+
+Return a claim with exactly one result form: `--pr` with `--head`, `--tests`,
+`--artifact`, or `--blocked`. It releases the claim only with the owner's lease
+and posts a `return-<claim-id>` RESULT message to all. A retry after success
+reports `already-returned`. If the outcome is `released-unposted`, the claim
+was released but the receipt was not posted; report that, not VERIFIED. The
+return is evidence and does not merge, verify or close anything.
+
+```sh
+ashlr fleet coordination return claim-example --agent agent-example --lease <lease> --pr 42 --head abc1234 --json
+```
 
 An off-host agent without a shell on the host can read the board and record
 results, but cannot claim. It must ask the host owner and report BLOCKED
