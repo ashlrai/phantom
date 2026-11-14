@@ -94,7 +94,7 @@ export const DECISION_KINDS: Readonly<Record<DecisionKind, DecisionKindSpec>> = 
     description: 'Already eligible task/account pairs → advisory tie choice; never admission or authority.',
     primary: 'resource_choice', labels: [], threshold: 0.8, timeoutMs: 8_000,
     safetyAdjacent: false,
-    callSites: ['src/core/decide/resource-choice.ts adviseResourceChoice'],
+    callSites: ['src/core/decide/resource-choice.ts adviseResourceChoice', 'src/core/routing/decision-backends.ts jevBackend'],
   }),
   'engine-error': spec({
     kind: 'engine-error',
