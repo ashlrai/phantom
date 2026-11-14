@@ -13,8 +13,11 @@ import { buildCommsCutoverReadiness, type CommsCutoverReport } from '../comms/cu
 import { readEmailOutbox } from '../comms/email-outbox.js';
 import { readTeammateLatency, type TeammateLatencySummary } from '../comms/teammate-reply-latency.js';
 import { readLocalSendPolicy } from '../agents/send-gate.js';
+import { readChannelHealth, type ChannelHealthReport } from '../fleet/channel-health.js';
+import { sanitizeIdentityText } from '../fleet/runtime-identity.js';
 
 export const VERSE_FLEET_COMMS_STATUS_PATH = '/api/verse/fleet/comms-status';
+const CHANNEL_HEALTH_TIMEOUT_MS = 5_000;
 
 export interface FleetCommsStatusApiDeps {
   /** Default: ASHLR_RUNS_DIR, then ~/.ashlr-runs. */
@@ -31,6 +34,8 @@ export interface FleetCommsStatusApiDeps {
   cutover?: (runsDir: string) => Promise<CommsCutoverReport>;
   /** Send-policy reader (read-only). Default: ~/.ashlr/comms.toml and agent-network.toml. */
   sendPolicy?: typeof readLocalSendPolicy;
+  /** Slack/iMessage bridge health reader. Default: readChannelHealth() on the request clock. */
+  channelHealth?: () => Promise<ChannelHealthReport>;
   /** Clock seam for tests; stamps generatedAt. */
   now?: () => Date;
 }
@@ -170,6 +175,32 @@ export function createFleetCommsStatusApi(deps: FleetCommsStatusApiDeps = {}): A
       sendPolicySource = 'degraded';
     }
 
+    // The bridge health report as returned, except runtimeHost redacted like
+    // runtime-identity output. A throw or a read past the timeout degrades the
+    // field to 'unavailable'; it never fails the route.
+    let channelHealth: ChannelHealthReport | { schemaVersion: 1; asOf: string; channels: never[]; error: 'unavailable' };
+    let healthTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const report = await Promise.race([
+        (deps.channelHealth ?? (() => readChannelHealth({ now: () => generatedAt })))(),
+        new Promise<never>((_resolve, reject) => {
+          healthTimer = setTimeout(() => reject(new Error('channel-health-timeout')), CHANNEL_HEALTH_TIMEOUT_MS);
+        }),
+      ]);
+      const home = homedir();
+      channelHealth = {
+        ...report,
+        channels: report.channels.map((channel) => ({
+          ...channel,
+          runtimeHost: channel.runtimeHost === null ? null : sanitizeIdentityText(channel.runtimeHost, home),
+        })),
+      };
+    } catch {
+      channelHealth = { schemaVersion: 1, asOf: generatedAt.toISOString(), channels: [], error: 'unavailable' };
+    } finally {
+      if (healthTimer !== undefined) clearTimeout(healthTimer);
+    }
+
     sendJson(res, 200, {
       version: 1,
       generatedAt: generatedAt.toISOString(),
@@ -181,6 +212,7 @@ export function createFleetCommsStatusApi(deps: FleetCommsStatusApiDeps = {}): A
       cutover,
       sendPolicy,
       sources: { drafts: draftsSource, emailOutbox: emailOutboxSource, imessage: imessageSource, teammate: teammateSource, cutover: cutoverSource, sendPolicy: sendPolicySource },
+      channelHealth,
     });
   }
 
