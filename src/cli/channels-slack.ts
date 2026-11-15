@@ -29,6 +29,7 @@ import { listBusInboxAfter } from '../core/fleet/bus-inbox.js';
 import { createSlackLeaderAdapter, flushSlackLeaderReplies, readSlackDeliveryPolicy } from '../core/agents/slack-leader.js';
 import { ownerStatusReply } from '../core/agents/owner-status-reply.js';
 import { defaultRuntimeLine } from '../core/agents/owner-status-runtime-line.js';
+import { createClaimNoticeTick } from './channels-slack-claim-tick.js';
 
 const SLACK_USAGE = `usage: phm channels slack status [--json]
        phm channels slack map [--topic <topic>] [--snapshot <file>] [--json]
@@ -191,6 +192,10 @@ async function cmdSlackTransport(args: string[], run: boolean): Promise<number> 
     const timer = setTimeout(done, 1000); controller.signal.addEventListener('abort', done, { once: true });
   });
   const counts = { sent: 0, duplicate: 0, uncertain: 0, refused: 0 };
+  // Run mode only: proactive ASSIGNED / RELEASED / BLOCKED / VERIFIED notices.
+  // The pass appends bus notes that the drain below delivers under its gates.
+  const claimNotices = { passes: 0, sent: 0, failed: 0, skipped: 0 };
+  const totals = (): Record<string, unknown> => (run ? { ...counts, claimNotices } : counts);
   try {
     await verifySlackIdentity(call, config);
     if (run) {
@@ -205,11 +210,17 @@ async function cmdSlackTransport(args: string[], run: boolean): Promise<number> 
       socket.addEventListener('close', () => { if (!stopped) { disconnected = true; stop(); } });
       socket.addEventListener('error', () => { if (!stopped) { disconnected = true; stop(); } });
       process.once('SIGTERM', stop); process.once('SIGINT', stop);
+      const claimTick = createClaimNoticeTick();
       let cursor = 0;
       while (!stopped && Date.now() < deadline) {
         const owners = await flushSlackLeaderReplies({ call, signal: controller.signal });
         if (owners.state !== 'completed') throw new Error('leader-slack-unavailable');
         counts.sent += owners.sent;
+        const tick = await claimTick.maybeRun(controller.signal);
+        if (tick.ran) {
+          claimNotices.passes++; claimNotices.sent += tick.sent;
+          claimNotices.failed += tick.failed; claimNotices.skipped += tick.deduped;
+        }
         // The existing bus owns body persistence and TTL. Do not mirror private
         // iMessage/email input: the planner accepts only authored local results.
         const page = listBusInboxAfter(cursor, 100);
@@ -233,14 +244,14 @@ async function cmdSlackTransport(args: string[], run: boolean): Promise<number> 
       if (disconnected) throw new Error('slack-socket-disconnected');
     }
     console.log(JSON.stringify({ ok: true, teamId: config.teamId, userId: config.ownUserId, botId: config.ownBotId,
-      mode: run ? 'socket-session' : 'authenticated-probe', ...counts, observedAt: new Date().toISOString() }));
+      mode: run ? 'socket-session' : 'authenticated-probe', ...totals(), observedAt: new Date().toISOString() }));
     return 0;
   } catch {
     if (run && controller.signal.aborted && !disconnected && (stopped || Date.now() >= deadline)) {
-      console.log(JSON.stringify({ ok: true, mode: 'socket-session', stopped: 'bounded-stop', ...counts, observedAt: new Date().toISOString() }));
+      console.log(JSON.stringify({ ok: true, mode: 'socket-session', stopped: 'bounded-stop', ...totals(), observedAt: new Date().toISOString() }));
       return 0;
     }
-    console.log(JSON.stringify({ ok: false, reason: 'transport-unavailable-or-identity-mismatch', ...counts, observedAt: new Date().toISOString() }));
+    console.log(JSON.stringify({ ok: false, reason: 'transport-unavailable-or-identity-mismatch', ...totals(), observedAt: new Date().toISOString() }));
     return 1;
   } finally {
     if (deadlineTimer) clearTimeout(deadlineTimer);

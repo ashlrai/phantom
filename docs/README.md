@@ -4,21 +4,17 @@
 
 # Phantom documentation
 
-Mac queue supervisor: [Drive and host bridge integration](https://github.com/ashlrai/phantom/blob/master/docs/DRIVE.md).
-Prepare queue driver operation, recovery and cutover (planned): [Driver runbook](https://github.com/ashlrai/phantom/blob/master/docs/DRIVER.md).
-Pick a second always-on machine for failover and the Safari agent browser (pending Mason's yes): [Second computer options](https://github.com/ashlrai/phantom/blob/master/docs/SECOND-COMPUTER-OPTIONS.md).
+Phantom is an open-source workbench for running coding agents, coordinating a fleet, and reviewing their work. Start with one local session, then add fleet operation and more computers as needed.
 
-Phantom by AshlrAI is the engineering workbench, formerly Ashlr Verse. Its local
-kernel includes the Universe experiment runtime and compatible command interfaces.
-The published canonical package is `@ashlr/phantom`; existing `@ashlr/hub` SDK
-imports belong to the compatibility releases. `phm`, compatible `ashlr` commands,
-`/verse/` routes and stored identities retain their supported meanings; see
-[the product naming guide](PHANTOM-BRAND.md).
-Historical Ashlrverse research and build contracts keep their original names.
-Use one canonical guide for each task. The North Star is a target, not a claim
-that every integration, provider or autonomous effect is active.
+| Start here | What you will do |
+| --- | --- |
+| [Quickstart](QUICKSTART.md#open-verse) | Install the CLI, open the console and check one resource. |
+| [First useful turn](QUICKSTART.md#make-your-first-useful-turn) | Ask an agent for a small change and review the diff. |
+| [Fleet guide](AUTOMATIC-OUTCOMES.md#work-for-me) | Save an outcome and understand resident setup. |
+| [Add a computer](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md) | Join a node with its own sign-in and owner scope. |
+| [Agent network](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-NETWORK.md) | Understand participants, coordination and channel boundaries. |
 
-Company notes: [Company context](https://github.com/ashlrai/phantom/blob/master/docs/COMPANY-CONTEXT.md).
+The canonical package is `@ashlr/phantom`; `phm` and compatible `ashlr` commands use the same runtime. Historical Ashlr Verse and Universe names remain in research and compatibility guides. See [product naming](PHANTOM-BRAND.md). The [North Star](NORTH-STAR.md) describes a target, not deployed capability.
 
 ## Agents, start here
 
@@ -41,6 +37,7 @@ A zero exit code is not a merge and not permission to spend. `phm docs --agent -
 | Install, open the console, and make a first turn | [Quickstart](QUICKSTART.md) |
 | Install, connect MCP, upgrade, and uninstall | [Self-hosting](SELF-HOSTING.md) |
 | Use the console | [Phantom user guide](VERSE.md) |
+| Work in a floating personal agent window | [Owner Assist](https://github.com/ashlrai/phantom/blob/master/docs/OWNER-ASSIST.md) |
 | See what each fleet lane runs on and is best at | [Fleet lanes](lanes.md) |
 | Choose chat or fleet work | [Automatic work](AUTOMATIC-OUTCOMES.md) |
 
@@ -48,15 +45,19 @@ Synthetic integration checks: [Chain verification](https://github.com/ashlrai/ph
 
 ## All tasks
 
+Host operation: [Drive and host bridge](https://github.com/ashlrai/phantom/blob/master/docs/DRIVE.md), [driver recovery and planned cutover](https://github.com/ashlrai/phantom/blob/master/docs/DRIVER.md), [second computer options](https://github.com/ashlrai/phantom/blob/master/docs/SECOND-COMPUTER-OPTIONS.md). Company notes: [Company context](https://github.com/ashlrai/phantom/blob/master/docs/COMPANY-CONTEXT.md).
+
 Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlrai/phantom/blob/master/docs/grokbot-lane.md).
 
 | Your task | Canonical guide |
 |-----------|-----------------|
 | Run tests for changed files | [Test changed files](https://github.com/ashlrai/phantom/blob/master/docs/TEST-CHANGED.md) |
+| Use organization, personal, Phantom hero, and social artwork | [Brand media kit](https://github.com/ashlrai/phantom/blob/master/docs/brand/README.md) |
 | Review the proposed risk-based CI path and savings model | [Frictionless merge path](https://github.com/ashlrai/phantom/blob/master/docs/ci/FRICTIONLESS-PATH.md) |
 | Replay CI test feedback and order failures first | [CI test feedback](https://github.com/ashlrai/phantom/blob/master/docs/CI-TEST-FEEDBACK.md) |
 | Inspect changed-file and test dependency relationships | [PR impact map](https://github.com/ashlrai/phantom/blob/master/docs/CI-IMPACT-MAP.md) |
 | Review agent-native CI, risk selection and post-merge metrics | [CI rightsizing proposal](https://github.com/ashlrai/phantom/blob/master/docs/strategy/CI-RIGHTSIZING.md) |
+| Measure fleet outcomes and review weekly policy suggestions | [Fleet outcome metrics](contracts/CONTRACT-FLEET-OUTCOME-METRICS.md) |
 | Explain empty jobs | [Empty jobs](https://github.com/ashlrai/phantom/blob/master/docs/EMPTY-JOBS.md) |
 | Check fleet health, starting with doctor | [Fleet health](https://github.com/ashlrai/phantom/blob/master/docs/fleet-health.md) |
 | Drive and watch the fleet from any agent or script | [Fleet API](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-API.md) |
@@ -79,6 +80,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Connect autonomy research to engineering acceptance | [Autonomy engineering brief](UNIVERSE-AUTONOMY-RESEARCH.md) |
 | Configure offline daily research queue restocking | [Research topics and restock contract](https://github.com/ashlrai/phantom/blob/master/docs/research/TOPICS.md) |
 | Turn research digests into scored, gated job proposals | [Research loop](https://github.com/ashlrai/phantom/blob/master/docs/RESEARCH-LOOP.md) |
+| Turn feedback into bounded fix jobs and read the morning review queue | [Feedback pipeline contract](contracts/CONTRACT-RQ-GROK-FEEDBACKLOOP-1.md) |
 | Evaluate swarm coordination and recursive self-improvement experiments | [Agent swarms and RSI research](https://github.com/ashlrai/phantom/blob/master/docs/research/agent-swarms-rsi.md) |
 | Compare Phantom with current agent platforms using measurable acceptance gates | [Competitive acceptance](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-COMPETITIVE-ACCEPTANCE.md) |
 | Connect a resource and make a first useful turn | [Quickstart](QUICKSTART.md) |
@@ -108,6 +110,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Review a pool's PR with another model on another pool, and decide auto-merge at the exact head SHA | [Cross-model review](https://github.com/ashlrai/phantom/blob/master/docs/CROSS-REVIEW.md) |
 | Install, join, verify, and leave a node | [Add a computer in 60 seconds](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md) |
 | Join computers as nodes with caps, owner-scoped jobs and fenced leases | [Node router](https://github.com/ashlrai/phantom/blob/master/docs/NODE-ROUTER.md) |
+| Route a bounded read-only slice to the 8 GB muse node | [Muse light routing](nodes/MUSE.md) |
 | Serve a measured local model on 8/16 GB Macs as `omlx` pool lanes | [oMLX on the small Macs](https://github.com/ashlrai/phantom/blob/master/docs/OMLX-SMALL-MACS.md) |
 | Explore the proposed path from personal nodes to shared compute | [Node scale path](https://github.com/ashlrai/phantom/blob/master/docs/architecture/scale-path.md) |
 | See the skills learned from merged PRs | [Learned skills](https://github.com/ashlrai/phantom/blob/master/docs/SKILLS.md) |
@@ -133,6 +136,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Save evidence-linked agent checkpoints and compare context retention offline | [Agent checkpoints (source)](https://github.com/ashlrai/phantom/blob/master/docs/CHECKPOINTS.md) |
 | Compare the sanctioned programmatic interfaces of Grok Bot, OpenAI dots and Meta Muse before building peer adapters | [Peer interfaces research](https://github.com/ashlrai/phantom/blob/master/docs/PEERS-INTERFACES.md) |
 | Apply durable sessions, steering, tool discovery and context ideas to the existing harness | [Agent harness evolution](AGENT-HARNESS-EVOLUTION.md) |
+| Send an operator message or prepare a node hand-off | [Steer the leaders](https://github.com/ashlrai/phantom/blob/master/docs/APP-STEER.md) |
 | Review graph registry, addressed bus and routing child jobs with dispatch blockers | [Graph and bus implementation backlog](https://github.com/ashlrai/phantom/blob/master/workplans/2026-10-26-graphbus/README.md) |
 | Choose goal and Leader preferences, inspect review evidence, and run or compare local benchmarks | [Operator preferences and evidence](AGENT-HARNESS-EVOLUTION.md#operator-goal-and-leader-preferences) |
 | Estimate lane idle capacity and identify long-running jobs | [Idle allowance](https://github.com/ashlrai/phantom/blob/master/docs/IDLE-ALLOWANCE.md) |
@@ -350,7 +354,7 @@ canonical release guide for required hosted qualification and publication.
 
 - [Dispatcher route hysteresis](https://github.com/ashlrai/phantom/blob/master/docs/ROUTE-HYSTERESIS.md): route residency, move caps, replay and Security pin handoff.
 
-- [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references only.
+- [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import|exec|config --json`; metadata and Phantom Secrets references, phantom-injected launch and token-free client configs.
 
 - [Verify a worktree change](https://github.com/ashlrai/phantom/blob/master/docs/VERIFY-CHANGE.md): local toolchain checks and safe verdicts.
 - [Done contract](https://github.com/ashlrai/phantom/blob/master/docs/DONE-CONTRACT.md): the layered `done-contract.v1` file schema, floor checks, frozen acceptance criteria, verify commands, and `phm verify done`, the one generic validator (backward compatible with freeform bridge notes).

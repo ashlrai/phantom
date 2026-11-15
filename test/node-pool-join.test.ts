@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const deps = vi.hoisted(() => ({ read: vi.fn(), configure: vi.fn(), call: vi.fn(), capacity: vi.fn() }));
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+const deps = vi.hoisted(() => ({ read: vi.fn(), configure: vi.fn(), call: vi.fn(), capacity: vi.fn(), worker: vi.fn() }));
 vi.mock('../src/core/drive/nodes/pool-host.js', () => ({ readPoolConfig: deps.read, configurePool: deps.configure, callPool: deps.call }));
-vi.mock('../src/core/drive/nodes/worker.js', () => ({ probeNodeLanes: () => ['codex'] }));
+vi.mock('../src/core/drive/nodes/worker.js', () => ({ probeNodeLanes: () => ['codex'], runNodeWorker: deps.worker }));
 vi.mock('../src/core/drive/nodes/capacity.js', () => ({ readNodeCapacity: deps.capacity }));
 import { cmdNode } from '../src/cli/node.js';
 import { cmdNodePool } from '../src/cli/node-pool.js';
@@ -14,6 +17,34 @@ beforeEach(() => {
   deps.call.mockImplementation((_config, verb) => ({ demoted: false, result: verb === 'join' ? { session: 3 } : { left: true } }));
 });
 describe('repeatable Mac enrollment', () => {
+  it('writes a private metrics snapshot beneath an existing shared metrics directory', async () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), 'muse-metrics-')));
+    vi.stubEnv('HOME', home);
+    try {
+      mkdirSync(join(home, '.ashlr-runs', 'metrics'), { recursive: true, mode: 0o755 });
+      deps.read.mockReturnValue({ ...config, owner: 'ashlr' });
+      deps.call.mockReturnValue({ demoted: false, result: { nodes: [], jobs: [] } });
+      expect(await cmdNode(['light', 'restock', '--apply', '--json'])).toBe(0);
+      const file = join(home, '.ashlr-runs', 'metrics', 'muse-light', 'status.json');
+      expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ schema: 'muse.light.v1', museCompleted: 0 });
+      if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600);
+    } finally { vi.unstubAllEnvs(); rmSync(home, { recursive: true, force: true }); }
+  });
+  it('passes the opt-in light profile to the host-owned worker', async () => {
+    deps.worker.mockResolvedValue({ slots: 2, attempts: [] });
+    expect(await cmdNodePool('worker', ['--runner', '/reviewed/light-runner', '--light', '--json'])).toBe(0);
+    expect(deps.worker).toHaveBeenCalledWith(config, '/reviewed/light-runner', true);
+  });
+  it('routes light previews through the configured pool without enqueue', async () => {
+    deps.read.mockReturnValue({ ...config, owner: 'ashlr' });
+    deps.call.mockReturnValue({ demoted: false, result: { nodes: [], jobs: [] } });
+    expect(await cmdNode(['light', 'restock', '--json'])).toBe(0);
+    expect(deps.call).toHaveBeenCalledWith(expect.objectContaining({ owner: 'ashlr' }), 'status', ['--owner', 'ashlr']);
+    expect(deps.call).toHaveBeenCalledTimes(1);
+    deps.call.mockClear();
+    expect(await cmdNode(['light', 'status', '--apply', '--json'])).toBe(1);
+    expect(deps.call).not.toHaveBeenCalled();
+  });
   it('routes zero-argument join through the pool and preserves stored identity', async () => {
     expect(await cmdNode(['join', '--json'])).toBe(0);
     expect(deps.configure).not.toHaveBeenCalled();
