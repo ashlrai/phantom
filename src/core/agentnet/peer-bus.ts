@@ -24,9 +24,10 @@ export const peerRequestSchema = z.object({
   refs: z.array(reference).max(32).default([]), threadId: reference.optional(), replyTo: idSchema.optional(),
 }).strict().refine(r => Boolean(r.toAgent) !== Boolean(r.channel));
 export type PeerRequest = z.input<typeof peerRequestSchema>;
-const rowSchema = z.object({ id: idSchema, fromAgent: callsignSchema, target: reference, origin: idSchema,
+export const rowSchema = z.object({ id: idSchema, fromAgent: callsignSchema, target: reference, origin: idSchema,
   digest: z.string().regex(/^[a-f0-9]{64}(?![\s\S])/), hopCount: z.number().int().min(1).max(8), threadId: reference, at: z.number().int().nonnegative() }).strict();
 type Row = z.infer<typeof rowSchema>;
+export type { Row as PeerLedgerRow };
 export interface PeerBusOptions {
   bindings?: string; busRoot?: string; runsDir?: string; now?: () => number;
   /** Trusted host broker seams; never selected by a message or a CLI flag. */
