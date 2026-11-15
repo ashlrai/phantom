@@ -1,5 +1,5 @@
 /** Named surface ownership evidence for the isolated read-only fleet MCP server. */
-import { readSurfaceOwner, SURFACES, type SurfaceOwnerDeps } from '../core/fleet/surface-owner.js';
+import { readSurfaceOwner, SURFACES, type SurfaceOwnerDeps, type SurfaceOwnerReport } from '../core/fleet/surface-owner.js';
 import { gitSurfaceLog } from '../core/fleet/surface-owner-git-log.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
@@ -12,7 +12,36 @@ export function parseFleetSurfaceOwnerArgs(args: Record<string, unknown>): { sur
     ? { surface: args.surface } : null;
 }
 
-export async function readFleetSurfaceOwner(surface: string, deps: SurfaceOwnerDeps = {}) {
-  const report = await readSurfaceOwner(surface, { ...deps, log: deps.log ?? gitSurfaceLog });
+export const SURFACE_OWNER_READ_DEADLINE_MS = 5_000;
+
+export async function readFleetSurfaceOwner(
+  surface: string, deps: SurfaceOwnerDeps = {}, deadlineMs = SURFACE_OWNER_READ_DEADLINE_MS,
+) {
+  if (!Object.hasOwn(SURFACES, surface)) return null;
+  const timeout = Symbol('read deadline');
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let report: SurfaceOwnerReport | null;
+  try {
+    // The race bounds waiting, not the host operation. Its rejection handler
+    // remains attached after timeout so late failures are consumed.
+    report = await Promise.race([
+      Promise.resolve().then(() => readSurfaceOwner(surface, { ...deps, log: deps.log ?? gitSurfaceLog })),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(timeout), deadlineMs);
+      }),
+    ]);
+  } catch (error) {
+    let asOf: string;
+    try { asOf = new Date((deps.now ?? Date.now)()).toISOString(); }
+    catch { asOf = new Date().toISOString(); }
+    report = {
+      schemaVersion: 1, authority: 'none', surface, asOf,
+      owner: 'UNKNOWN', ownerSource: 'none', liveClaims: [], lastLanded: null,
+      scannedPaths: [], reasons: [error === timeout
+        ? 'surface owner: read deadline exceeded' : 'surface owner: reader failed'],
+    };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
   return sanitizePublicJson(report === null ? null : { ...report, note: NOTE });
 }

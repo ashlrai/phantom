@@ -70,13 +70,15 @@ F
 [ "$NOWT" = 1 ] && echo "NOTE: this worktree is index-only (no files on disk, by design). Read files with git show HEAD:<path>. Do not change code; this job only decides and closes PRs."
 } | sed "s/REPO_/$REPO/" > $R/$J.prompt
 cd $WT
-case $POOL in codex-local) FAM=codex-local; DM=fast;; codex*) FAM=codex; DM=gpt-6.1-sol;; claude) FAM=claude; DM=opus;; claude-api) FAM=claude-api; DM=sonnet;; gemini) FAM=gemini; DM=gemini-2.5-pro;; zai) FAM=zai; DM=glm-5.3;; agy) FAM=agy; DM=gemini-3.8-flash-high;; grok) FAM=grok; DM=grok-4.7;; cursor) FAM=cursor; DM=auto;; *) FAM=$POOL; DM=swe-2-max;; esac
+case $POOL in codex-local) FAM=codex-local; DM=fast;; codex*) FAM=codex; DM=gpt-6.1-sol;; claude) FAM=claude; DM=opus;; claude-api) FAM=claude-api; DM=sonnet;; gemini) FAM=gemini; DM=gemini-2.5-pro;; zai) FAM=zai; DM=glm-5.3;; agy) FAM=agy; DM=gemini-3.8-flash-high;; grok) FAM=grok; DM=grok-4.7;; cursor) FAM=cursor; DM=auto;; devin-flash) FAM=devin-flash; DM=swe-2-flash-max;; *) FAM=$POOL; DM=swe-2-max;; esac
 M=$(python3 -I -c 'import json,sys;d=json.load(open(sys.argv[1]));p,f,t=sys.argv[2:5];print(next((str(d[k]) for k in (p+"."+t,p,f+"."+t,f) if d.get(k)),""))' "$R/models.json" "$POOL" "$FAM" "$TIER" 2>/dev/null); [[ "$M" =~ ^[A-Za-z0-9._-]+$ ]] || M=$DM; EF=$(python3 -I -c 'import json,sys;d=json.load(open(sys.argv[1]));p,f,t=sys.argv[2:5];print(d.get("effort."+p+"."+t) or d.get("effort."+f+"."+t) or "")' "$R/models.json" "$POOL" "$FAM" "$TIER" 2>/dev/null); [[ -z "$EF" || "$EF" =~ ^[a-z]+$ ]] || EF=
 # Paid Devin variants must never reach the launcher, even from models.json.
-if [[ "$POOL" == devin && "$M" == *-[lL][iI][gG][hH][tT][nN][iI][nN][gG] ]]; then
-  echo "PAID_MODEL_BLOCKED $J $M -> swe-2-max" >> "$R/$J.base.meta"
-  M=swe-2-max
+if [[ ( "$POOL" == devin || "$POOL" == devin-flash ) && "$M" == *-[lL][iI][gG][hH][tT][nN][iI][nN][gG] ]]; then
+  echo "PAID_MODEL_BLOCKED $J $M -> $DM" >> "$R/$J.base.meta"
+  M=$DM
 fi
+# Flash-max is the plan-free upgrade for every flash job, including stale tier hints.
+[ "$POOL" != devin-flash ] || M=swe-2-flash-max
 echo "MODEL $POOL $TIER $M ${EF:-default}" >> $R/$J.base.meta   # RQ-TERA-LANE: lane key ($POOL.$TIER, $POOL) before family key; args via argv
 # RQ-SEC-RUNLOG-SCRUB: env allowlist (real HOME kept so codex/devin find auth; CODEX_HOME passed only as the lane uses it) + scrubbed log
 E=(env -i HOME="$HOME" CARGO_BUILD_JOBS=4 CARGO_INCREMENTAL=0 PATH="$PATH" TERM=xterm-256color LANG=en_US.UTF-8 USER="$USER" LOGNAME="$USER" TMPDIR="$TMPDIR" ${PHANTOM_SESSION_KEYS:+PHANTOM_SESSION_KEYS="$PHANTOM_SESSION_KEYS"}); SCRUB="perl $R/bin/scrub.pl"
