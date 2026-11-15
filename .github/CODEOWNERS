@@ -457,6 +457,7 @@
 /test/fleet-self-loop-02soly1.test.ts @masonwyatt23
 /test/fleet-self-loop-await-live-02some2.test.ts @masonwyatt23
 /test/fleet-self-loop-await-record-02somd2.test.ts @masonwyatt23
+/test/fleet-self-loop-bus-progress-02solj1.test.ts @masonwyatt23
 /test/fleet-self-loop-busy-backoff-02soll2.test.ts @masonwyatt23
 /test/fleet-self-loop-failure-backoff-02solh2.test.ts @masonwyatt23
 /test/fleet-self-loop-max-ticks-02soly2.test.ts @masonwyatt23
