@@ -515,6 +515,9 @@ const WORKBENCH_IMPORTS: Readonly<Record<WorkbenchRouteFamilyId, () => Promise<W
   'comms-teammate-reply': async () => {
     try { return (await import('./comms-teammate-reply-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'comms-teammate-reply-api.js'); }
   },
+  'fleet-merge-latency': async () => {
+    try { return (await import('./merge-latency-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'merge-latency-api.js'); }
+  },
   'agent-roster': async () => {
     try { return (await import('./agent-roster-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'agent-roster-api.js'); }
   },
@@ -2120,6 +2123,9 @@ export async function handleVerseApi(
       // Read-only release notes; unknown children 404 here rather than evaluating the mounted modules.
       if (path !== `${VERSE_API_PREFIX}/whats-new`) { sendJson(res, 404, { error: 'Whats-new route not found.' }); return true; }
       return (await import('./whats-new-api.js')).handleWhatsNewApi(req, res, path, method);
+    }
+    if (path === '/api/verse/owner-assist' || path.startsWith('/api/verse/owner-assist/')) {
+      return (await import('./owner-assist-api.js')).handleOwnerAssistApi(ctx, req, res, path, method);
     }
     // ── GET /api/verse/bootstrap ─────────────────────────────────────────
     if (path === `${VERSE_API_PREFIX}/bootstrap` && method === 'GET') {

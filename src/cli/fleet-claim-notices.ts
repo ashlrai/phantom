@@ -96,6 +96,24 @@ export interface ClaimNoticeCliDeps extends Partial<ClaimNoticeSendDeps> {
   runsRoot?: string;
 }
 
+/** Real-send pass deps (live board, file-backed ledger, bus-note sender),
+ * each overridable; shared by this CLI and the `channels slack run` tick. */
+export function claimNoticePassDeps(deps: ClaimNoticeCliDeps = {}, dryRun = false): ClaimNoticeSendDeps {
+  const now = deps.now ?? Date.now;
+  const files = claimNoticeFileDeps(deps.runsRoot);
+  return {
+    readBoard: deps.readBoard ?? (() => readFleetBoard({ now: now() })),
+    readPrevSnapshot: deps.readPrevSnapshot ?? files.readPrevSnapshot,
+    writePrevSnapshot: deps.writePrevSnapshot ?? files.writePrevSnapshot,
+    readBindings: deps.readBindings ?? files.readBindings,
+    readSentLedger: deps.readSentLedger ?? files.readSentLedger,
+    appendSentLedger: deps.appendSentLedger ?? files.appendSentLedger,
+    send: deps.send ?? claimNoticeSlackSender(
+      deps.busRoot ?? join(ashlrHome(), 'fleet'), deps.readConfig ?? loadAgentNetworkConfig),
+    now, dryRun,
+  };
+}
+
 export async function cmdFleetClaimNotices(args: string[], deps: ClaimNoticeCliDeps = {}): Promise<number> {
   let dryRun = false;
   let json = false;
@@ -106,10 +124,6 @@ export async function cmdFleetClaimNotices(args: string[], deps: ClaimNoticeCliD
     console.error(usage);
     return 2;
   }
-  const now = deps.now ?? Date.now;
-  const files = claimNoticeFileDeps(deps.runsRoot);
-  const send = deps.send ?? claimNoticeSlackSender(
-    deps.busRoot ?? join(ashlrHome(), 'fleet'), deps.readConfig ?? loadAgentNetworkConfig);
   const emit = (report: Record<string, unknown>, code: number): number => {
     if (json) console.log(JSON.stringify(report));
     else for (const line of (report.lines as string[] | undefined) ?? []) console.log(line);
@@ -137,15 +151,7 @@ export async function cmdFleetClaimNotices(args: string[], deps: ClaimNoticeCliD
     return emit({ status: 'halted',
       lines: ['claim-notices: KILL is armed; sends halted, snapshot kept for the next pass'] }, 0);
   }
-  const result = await runClaimNoticePass({
-    readBoard: deps.readBoard ?? (() => readFleetBoard({ now: now() })),
-    readPrevSnapshot: deps.readPrevSnapshot ?? files.readPrevSnapshot,
-    writePrevSnapshot: deps.writePrevSnapshot ?? files.writePrevSnapshot,
-    readBindings: deps.readBindings ?? files.readBindings,
-    readSentLedger: deps.readSentLedger ?? files.readSentLedger,
-    appendSentLedger: deps.appendSentLedger ?? files.appendSentLedger,
-    send, now, dryRun,
-  });
+  const result = await runClaimNoticePass(claimNoticePassDeps(deps, dryRun));
   const report = reportOf(result);
   if (killed) report['killed'] = true;
   return emit(report,
