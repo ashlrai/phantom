@@ -459,3 +459,26 @@ apply uses existing drop admission, and digest reports twelve-hour observations.
 No merge, publish, send or scheduler authority is added. The full limits,
 dedupe, protected-scope and failure contract is in the
 [feedback pipeline contract](docs/contracts/CONTRACT-RQ-GROK-FEEDBACKLOOP-1.md).
+
+## Fleet chief-of-staff v1
+
+`src/core/fleet/chief-of-staff.ts` exports `FleetSnapshot`, `ChiefOfStaffPlan`,
+`CHIEF_OF_STAFF_SCHEMA = 'fleet.chief-of-staff.v1'`,
+`CHIEF_OF_STAFF_LIMITS: { lanes: 64; jobs: 200; outcomes: 1000; brief: 12000 }`,
+`parseFleetSnapshot(value: unknown): FleetSnapshot` and
+`planChiefOfStaff(snapshot: FleetSnapshot): ChiefOfStaffPlan`.
+`src/cli/fleet-chief-of-staff.ts` exports `FleetChiefOfStaffDeps` (optional
+`read(path): Promise<string>`, `runsDir`, `now(): Date`, `out(text)` and `err(text)`)
+and `cmdFleetChiefOfStaff(args: string[], deps?: FleetChiefOfStaffDeps): Promise<number>`.
+The [v1 schema contract](docs/contracts/CONTRACT-FLEET-CHIEF-OF-STAFF-V1.md)
+defines bounds, deterministic rules, read-only capture and literal advisory
+authority. Core has no I/O or ambient clock; the CLI never applies a plan.
+## Fleet proof artifacts
+
+`fleet.proof.v1` carries bounded claims, evidence provenance, command exits,
+diff statistics, risk classification and a reviewer checklist. The bridge
+publisher captures actual staged Git and runner artifacts before publication;
+`phm fleet proof verify <resultRef>` checks the local digest-bound bundle without
+executing commands. Agent assertions alone never establish proof. See
+[the fleet proof contract](docs/contracts/CONTRACT-FLEET-PROOF-V1.md) for schema,
+trust boundary, bounds, redaction and Security-pinned deployment requirements.
