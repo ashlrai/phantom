@@ -211,7 +211,7 @@ export function ProactiveAgents() {
         <Button size="sm" variant="danger" busy={busy} onClick={() => { if (!deleting) return; const saved = deleting;
           void mutate('Delete this proactive agent profile', () => deleteProactiveProfile(saved.id, saved.version), () => { setDeleting(null); setEditor(null); setNotice('Agent profile deleted.'); }); }}>Delete agent profile</Button></div>
     </Dialog>
-    <MutationTokenDialog {...gate.dialog} tokenLabel="Mutation token" tokenHelp="the mutation token phm verse printed" />
+    <MutationTokenDialog {...gate.dialog} tokenLabel="Mutation token" tokenHelp="the mutation token phm console printed" />
   </section>;
 }
 
@@ -344,7 +344,7 @@ function CoordinationBoard({ profiles, profilesAvailable }: { profiles: Proactiv
           <Button size="sm" type="submit" variant="primary" disabled={disabled || stale || !profilesAvailable || !valid}>Save local task</Button></div>
       </form>
     </Dialog>
-    <MutationTokenDialog {...gate.dialog} tokenLabel="Mutation token" tokenHelp="the mutation token phm verse printed" />
+    <MutationTokenDialog {...gate.dialog} tokenLabel="Mutation token" tokenHelp="the mutation token phm console printed" />
   </section>;
 }
 

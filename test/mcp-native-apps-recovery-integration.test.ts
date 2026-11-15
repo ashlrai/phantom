@@ -6,6 +6,9 @@ import * as config from '../src/core/config.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { waitAppsRecovery } from '../src/core/fleet/apps-recovery-wait.js';
 import { callNativeTool } from '../src/core/mcp-native.js';
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
+
+registerFleetNativeTools();
 
 const id = '12345678-1234-4123-8123-123456789abc';
 const roots: string[] = [];

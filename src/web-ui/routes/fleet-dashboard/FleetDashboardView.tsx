@@ -18,11 +18,14 @@ import { dashboardSnapshotQuery, controlSnapshotQuery } from '../../data/queries
 import { useQuery } from '../../data/hooks.js';
 import { RefreshIndicator } from '../../components/primitives/RefreshIndicator.js';
 import { StatGrid, StatGridSkeleton } from './StatGrid.js';
+import { FleetHealthStrip } from '../../components/fleet/FleetHealthStrip.js';
 import { RunsPanel, RunsPanelSkeleton } from './RunsPanel.js';
 import { SwarmsPanel } from './SwarmsPanel.js';
 import { DaemonPanel, DaemonPanelSkeleton } from './DaemonPanel.js';
+import { QueueStationGraph } from './QueueStationGraph.js';
 import styles from './FleetDashboardView.module.css';
 import { ResourcePanel } from './ResourcePanel.js';
+import { NodesPanel } from './NodesPanel.js';
 
 export function FleetDashboardView() {
   const snapshotQuery = useQuery(dashboardSnapshotQuery);
@@ -48,7 +51,13 @@ export function FleetDashboardView() {
         <StatGrid snapshot={snapshotQuery.data} />
       ) : null}
 
+      <FleetHealthStrip />
+
       <ResourcePanel />
+
+      <QueueStationGraph />
+
+      <NodesPanel />
 
       <div className={styles.panels}>
         {snapshotQuery.status === 'loading' ? (

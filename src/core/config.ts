@@ -59,6 +59,12 @@ function resolveConfigDir(): string {
   return join(realHome(), '.ashlr');
 }
 
+/** Read `config.json` from an explicit directory. Does not create files or follow `$HOME`. */
+export function loadConfigAt(configDir: string): AshlrConfig {
+  const configPath = join(configDir, 'config.json');
+  return existsSync(configPath) ? readConfigOrDefaults(configPath) : firstRunConfig();
+}
+
 function resolveConfigPath(): string {
   return join(resolveConfigDir(), 'config.json');
 }

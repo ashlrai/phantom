@@ -83,6 +83,7 @@ describe('notification refresh channel', () => {
       '/api/verse/release-pr': quietReleasePr(), '/api/verse/leader/resources': quietLedger(),
       '/api/verse/fleet/control/remote-pending': null,
       '/api/verse/leader/planner/plan': null, '/api/verse/leader/orders': null,
+      '/api/verse/leader/thread?limit=50': null, '/api/verse/comms/owner-thread?limit=100': null,
     };
     const fetch = vi.fn(async (path: string) => new Response(JSON.stringify(sources[path]), { status: 200 }));
     vi.stubGlobal('fetch', fetch);
@@ -90,8 +91,8 @@ describe('notification refresh channel', () => {
     await act(async () => { render(<Harness />); });
 
     expect(fetch.mock.calls.map(([path]) => path).sort()).toEqual(Object.keys(sources).sort());
-    // The fleet snapshots and other probes poll at 60 seconds; phone approvals poll at 30 seconds.
-    expect(intervals.mock.calls.map((call) => call[1])).toEqual([60_000, 60_000, 60_000, 60_000, 30_000, 60_000, 60_000]);
+    // The fleet snapshots and other probes poll at 60 seconds; phone approvals and the Leader thread reads poll at 30 seconds.
+    expect(intervals.mock.calls.map((call) => call[1])).toEqual([60_000, 60_000, 60_000, 60_000, 30_000, 60_000, 60_000, 30_000, 30_000]);
     expect(getNotificationSnapshot().items).toHaveLength(0);
   });
 
@@ -103,6 +104,7 @@ describe('notification refresh channel', () => {
       '/api/verse/release-pr': quietReleasePr(), '/api/verse/leader/resources': quietLedger(),
       '/api/verse/fleet/control/remote-pending': null,
       '/api/verse/leader/planner/plan': null, '/api/verse/leader/orders': null,
+      '/api/verse/leader/thread?limit=50': null, '/api/verse/comms/owner-thread?limit=100': null,
     };
     const fetch = vi.fn(async (path: string) => new Response(JSON.stringify(sources[path]), { status: 200 }));
     vi.stubGlobal('fetch', fetch);
@@ -129,7 +131,7 @@ describe('notification refresh channel', () => {
       // The fleet projection, self-update, release PR and resource-ledger probes
       // have no SSE event — they are fetched once at mount and not invalidated by
       // these events.
-      const expected = path === '/api/verse/fleet/control/lanes' || path === '/api/verse/fleet/runs' || path === '/api/verse/ops/self-update' || path === '/api/verse/release-pr' || path === '/api/verse/leader/resources' || path === '/api/verse/fleet/control/remote-pending' || path === '/api/verse/leader/planner/plan' || path === '/api/verse/leader/orders' ? 1 : 2;
+      const expected = path === '/api/verse/fleet/control/lanes' || path === '/api/verse/fleet/runs' || path === '/api/verse/ops/self-update' || path === '/api/verse/release-pr' || path === '/api/verse/leader/resources' || path === '/api/verse/fleet/control/remote-pending' || path === '/api/verse/leader/planner/plan' || path === '/api/verse/leader/orders' || path.startsWith('/api/verse/leader/thread') || path.startsWith('/api/verse/comms/owner-thread') ? 1 : 2;
       expect(fetch.mock.calls.filter(([called]) => called === path)).toHaveLength(expected);
     }
   });

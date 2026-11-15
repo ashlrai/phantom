@@ -8,7 +8,7 @@ import {execFileSync} from 'node:child_process';
 import * as fs from 'node:fs';
 import {join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {verifyArtifact, assertEffectiveManualProtection} from './hosted-build-artifact.mjs';
+import {verifyArtifact, assertEffectiveManualProtection, resolveReleaseSourceRef} from './hosted-build-artifact.mjs';
 import {requireProducerEnvironment, requireRepositoryMetadata, requireRepositoryReference} from '../.github/scripts/github-repository-binding.mjs';
 import {readBoundedJson, verifyNpmReleaseProvenance} from './verify-npm-release-provenance.mjs';
 import {verifyUpdateAudit} from './finalize-desktop-update.mjs';
@@ -29,7 +29,7 @@ export function publisherInput(env) {
   assert.match(env.VERSION ?? '', /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/);
   return {revision: env.CANDIDATE_SHA, version: env.VERSION,
     runId: integer(env.CI_RUN_ID), runAttempt: integer(env.CI_RUN_ATTEMPT),
-    attestorSha: env.GITHUB_SHA, attestorRun: integer(env.ATTESTOR_RUN_ID),
+    attestorSha: env.CANDIDATE_SHA, attestorRun: integer(env.ATTESTOR_RUN_ID),
     attestorAttempt: integer(env.ATTESTOR_RUN_ATTEMPT), artifactId: integer(env.ATTESTED_ARTIFACT_ID),
     auditRun: integer(env.AUDIT_RUN_ID), auditAttempt: integer(env.AUDIT_RUN_ATTEMPT)};
 }
@@ -42,6 +42,9 @@ export function bindAttestedArtifact(input, run, artifact) {
   // which permits schedule exclusively for the exact-source fast profile.
   assert.ok(['workflow_dispatch', 'schedule'].includes(run.event), 'unexpected attestor event');
   if (run.event === 'schedule') assert.equal(run.head_branch, 'master');
+  if (run.head_branch != null && run.head_branch !== 'master') {
+    assert.match(run.head_branch, /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/, 'attestor branch is not a stable release tag');
+  }
   assert.equal(run.path, '.github/workflows/attest-ci-build.yml');
   assert.equal(run.status, 'completed'); assert.equal(run.conclusion, 'success');
   assert.equal(artifact.id, input.artifactId); assert.equal(artifact.expired, false);
@@ -54,10 +57,12 @@ export function bindAttestedArtifact(input, run, artifact) {
 
 export function prepare(env = process.env, read = api) {
   const input = publisherInput(env);
-  assert.equal(git('rev-parse', 'HEAD'), input.attestorSha);
+  assert.equal(git('rev-parse', 'HEAD'), env.GITHUB_SHA);
   assert.equal(git('status', '--porcelain', '--untracked-files=normal'), '');
   requireRepositoryMetadata(REPO, read(`repos/${REPO}`));
-  assert.equal(assertEffectiveManualProtection(REPO, read(`repos/${REPO}/branches/master`), read(`repos/${REPO}/rules/branches/master`)), input.attestorSha);
+  const masterSha = assertEffectiveManualProtection(REPO, read(`repos/${REPO}/branches/master`), read(`repos/${REPO}/rules/branches/master`));
+  assert.equal(masterSha, env.GITHUB_SHA, 'npm workflow is not current master');
+  resolveReleaseSourceRef({ read, repository: REPO, masterSha, attestorSha: input.attestorSha, candidateSha: input.revision, version: input.version });
   bindAttestedArtifact(input, read(`repos/${REPO}/actions/runs/${input.attestorRun}/attempts/${input.attestorAttempt}`), read(`repos/${REPO}/actions/artifacts/${input.artifactId}`));
   const directory = fs.mkdtempSync(join(fs.realpathSync(env.RUNNER_TEMP), 'phantom-npm-')); fs.chmodSync(directory, 0o700);
   git('fetch', '--no-tags', 'origin', input.revision);

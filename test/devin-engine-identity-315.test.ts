@@ -87,7 +87,7 @@ describe('seat → engine → lane: Devin is Devin', () => {
 });
 
 describe('dispatch lanes: a Devin producer seat opens NO other lane', () => {
-  const lanesFor = (seats: EffectivePolicy['spend']['seats'], engines: EffectivePolicy['engines']) => planLanes({
+  const lanesFor = async (seats: EffectivePolicy['spend']['seats'], engines: EffectivePolicy['engines']) => await planLanes({
     policy: { engines, spend: { maxMode: 'balanced', meteredUsdPerDay: 0, seats } },
     directives: null,
     presence: { present: false, reason: 'away', evidenceAt: null },
@@ -98,16 +98,16 @@ describe('dispatch lanes: a Devin producer seat opens NO other lane', () => {
   const devin = { seatId: 'devin', enabled: true, reserveFloorPercent: 0, maxSessionWindowPercent: null, roles: ['producer'] as const };
   const claudeJudge = { seatId: 'claude-a', enabled: true, reserveFloorPercent: 40, maxSessionWindowPercent: 70, roles: ['judge', 'leader'] as const };
 
-  it('claude-cli stays closed when only Devin (and a judge-only Claude seat) produce', () => {
-    const plan = lanesFor({ devin: { ...devin, roles: [...devin.roles] }, 'claude-a': { ...claudeJudge, roles: [...claudeJudge.roles] } }, ['local', 'grok-cli', 'claude-cli', 'codex', 'devin']);
+  it('claude-cli stays closed when only Devin (and a judge-only Claude seat) produce', async () => {
+    const plan = await lanesFor({ devin: { ...devin, roles: [...devin.roles] }, 'claude-a': { ...claudeJudge, roles: [...claudeJudge.roles] } }, ['local', 'grok-cli', 'claude-cli', 'codex', 'devin']);
     expect(plan['claude-cli'].slots).toBe(0);
     expect(plan['claude-cli'].capReason).toMatch(/no producer role/);
     expect(plan.codex.slots).toBe(0);
     expect(plan['grok-cli'].slots).toBe(0);
   });
 
-  it('control: a real Claude producer seat still opens claude-cli (while Mason is away)', () => {
-    const plan = lanesFor({ 'claude-a': { ...claudeJudge, roles: ['producer', 'judge'] } }, ['local', 'grok-cli', 'claude-cli']);
+  it('control: a real Claude producer seat still opens claude-cli (while Mason is away)', async () => {
+    const plan = await lanesFor({ 'claude-a': { ...claudeJudge, roles: ['producer', 'judge'] } }, ['local', 'grok-cli', 'claude-cli']);
     expect(plan['claude-cli'].slots).toBe(1);
   });
 });

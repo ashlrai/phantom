@@ -1,0 +1,1 @@
+- READY RQ-OLD (P1, pool=codex-personal, tier=work, repo=phantom): Fix the first bug. Acceptance: Add a test.

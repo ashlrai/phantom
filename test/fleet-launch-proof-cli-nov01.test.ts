@@ -7,7 +7,7 @@ vi.mock('../src/core/fleet/runs-live-workers.js', async importOriginal => {
   const original = await importOriginal<typeof import('../src/core/fleet/runs-live-workers.js')>();
   return { ...original, listLiveWorkers: () => original.listLiveWorkers({ runPs: injected.runPs }) };
 });
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 
 const at = '2026-11-01T04:08:00.000Z';
 function snapshot(running = 1): FleetRunsDirState {

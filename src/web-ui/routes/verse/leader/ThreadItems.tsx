@@ -35,6 +35,7 @@ import { JobRefs } from '../fleet/JobRefs.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import commandStyles from '../command/command.module.css';
 import { expectedDeltaText, memoActions } from '../mind/leader-model.js';
+import { formatWait, type AnswerState } from './answer-state.js';
 import { LeaderComposer } from './LeaderComposer.js';
 import { CHANNEL_LABEL, clockTime, displayThreadText, previewText, type PendingMessage, type ThreadEntry, type ThreadRow } from './thread-model.js';
 import type { LeaderThreadChannel, LeaderThreadMessage } from './thread-types.js';
@@ -73,6 +74,8 @@ export interface ThreadContext {
   actions: SurfaceActions;
   /** question message id → its answer. */
   answered: ReadonlyMap<string, LeaderThreadMessage>;
+  /** Mason's message id → whether the Leader has answered it (answer-state.ts). */
+  answerStates?: ReadonlyMap<string, AnswerState>;
   /** Every known message by id (an answer names its question). */
   byId: ReadonlyMap<string, LeaderThreadMessage>;
   /** Question ids with an answer in flight. */
@@ -245,14 +248,32 @@ function ActionNote({ message, ctx }: { message: LeaderThreadMessage; ctx: Threa
   );
 }
 
+function AnswerLine({ state }: { state: AnswerState }) {
+  if (state.state === 'waiting') {
+    return <span className={styles.answerState} data-state="waiting" data-overdue={state.overdue ? 'true' : undefined}>Waiting for the Leader · {formatWait(state.waitingMs)}</span>;
+  }
+  const label = `Answered in ${formatWait(state.afterMs)}`;
+  const jump = () => {
+    const el = document.querySelector(`[data-message-id="${CSS.escape(state.answeredBy)}"]`);
+    if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  };
+  return (
+    <button type="button" className={`${styles.textButton} ${styles.answerState}`} data-state="answered" onClick={jump}>
+      {label}
+    </button>
+  );
+}
+
 function MasonBubble({ message, ctx }: { message: LeaderThreadMessage; ctx: ThreadContext }) {
   const question = message.kind === 'answer' || message.replyTo ? questionOf(message, ctx) : null;
+  const answerState = ctx.answerStates?.get(message.id);
   return (
     <div className={styles.masonItem}>
       {question ? <span className={styles.replyTo} title={question.text}>Re: {previewText(question.text, 90)}</span> : null}
       {/* Mason's words, possibly from Telegram: plain text, never HTML. */}
       <p className={styles.bubble}>{message.text}</p>
       <DeliveryNote message={message} />
+      {answerState ? <AnswerLine state={answerState} /> : null}
     </div>
   );
 }

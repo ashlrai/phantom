@@ -9,6 +9,7 @@
  * Pure: no I/O, fixed clock.
  */
 import { describe, expect, it } from 'vitest';
+import { ADAPTIVE_START_LEVEL, resetAdaptiveThroughput } from '../src/core/daemon/count-preferences.js';
 
 import {
   FLEET_LOCAL_SEAT_ID,
@@ -266,8 +267,8 @@ describe('Codex waits for its reset', () => {
     expect(route.backend).not.toBe('llama-server');
   });
 
-  it.each([null, true])('opens grant-authorized Codex lanes with directive %s', (codexEnabled) => {
-    const planned = planLanes({
+  it.each([null, true])('opens grant-authorized Codex lanes with directive %s', async (codexEnabled) => {
+    const planned = await planLanes({
       policy: policy(),
       directives: { v: 1, updatedAt: NOW_ISO, routerTuning: null, grokLanes: null, codexEnabled },
       presence: ABSENT,
@@ -277,42 +278,42 @@ describe('Codex waits for its reset', () => {
     expect(planned.codex).toEqual({ lane: 'codex', slots: 2, capReason: null });
   });
 
-  it('opens eligible Codex without a Leader directive, but preserves explicit Off', () => {
+  it('opens eligible Codex without a Leader directive, but preserves explicit Off', async () => {
     const input = {
       policy: policy(), directives: null,
       presence: ABSENT,
       localServingSlots: 4,
       engineUnavailable: {},
     };
-    const open = planLanes(input);
+    const open = await planLanes(input);
     expect(open.codex.slots).toBe(2);
     const capacity = [codex(20, IN_3H)];
     const work = item({ tags: ['difficulty:high', 'context:150000'] });
     expect(routeWorkItem(work, LEGACY_LOCAL, ctx(capacity, { lanes: open })).backend).toBe('codex');
-    const off = planLanes({ ...input, directives: { v: 1, updatedAt: NOW_ISO, routerTuning: null, grokLanes: null, codexEnabled: false } });
+    const off = await planLanes({ ...input, directives: { v: 1, updatedAt: NOW_ISO, routerTuning: null, grokLanes: null, codexEnabled: false } });
     expect(off.codex).toEqual({ lane: 'codex', slots: 0, capReason: 'The Leader has switched Codex lanes off.' });
     expect(routeWorkItem(work, LEGACY_LOCAL, ctx(capacity, { lanes: off })).hold?.kind).toBe('park');
   });
 
-  it.each(['off', 'stale', 'unknown', 'exhausted'] as const)('still denies Codex with %s account evidence despite an open lane', (state) => {
+  it.each(['off', 'stale', 'unknown', 'exhausted'] as const)('still denies Codex with %s account evidence despite an open lane', async (state) => {
     const reading = codex(state === 'exhausted' ? 100 : 20, IN_3H);
     if (state === 'stale') reading.observedAt = new Date(NOW - 60 * 60_000).toISOString();
     if (state === 'unknown') { reading.observedAt = null; reading.windows = []; }
     const budget = defaultBudgetPolicy();
     if (state === 'off') budget.seats[reading.seatId] = { seatId: reading.seatId, enabled: false, reservePercent: 0 };
-    const planned = planLanes({ policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {} });
+    const planned = await planLanes({ policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {} });
     const route = routeWorkItem(item({ tags: ['difficulty:high', 'context:150000'] }), LEGACY_LOCAL, ctx([reading], { budget, lanes: planned }));
     expect(planned.codex.slots).toBe(2);
     expect(route.hold?.kind).toBe('park');
     expect(route.backend).toBe('builtin');
   });
 
-  it('keeps Codex grant roles and unavailable-engine checks authoritative', () => {
+  it('keeps Codex grant roles and unavailable-engine checks authoritative', async () => {
     const input = { policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {} };
     const p = policy();
     p.spend.seats['codex-personal'] = seat('codex-personal', ['judge']);
-    expect(planLanes({ ...input, policy: p }).codex.slots).toBe(0);
-    expect(planLanes({ ...input, engineUnavailable: { codex: 'Account-bound native adapter unavailable.' } }).codex).toMatchObject({ slots: 0, capReason: 'Account-bound native adapter unavailable.' });
+    expect((await planLanes({ ...input, policy: p })).codex.slots).toBe(0);
+    expect((await planLanes({ ...input, engineUnavailable: { codex: 'Account-bound native adapter unavailable.' } })).codex).toMatchObject({ slots: 0, capReason: 'Account-bound native adapter unavailable.' });
   });
 
   it('routes to Codex once its window has headroom and its lane is open', () => {
@@ -383,76 +384,76 @@ describe('split items never go local', () => {
 });
 
 describe('lane cap reasons are plain sentences at the source', () => {
-  it('does not open the native Claude producer lane with an API-only seat', () => {
+  it('does not open the native Claude producer lane with an API-only seat', async () => {
     expect(laneOfSeat({ engine: 'claude-api' })).toBeNull();
     const p = policy();
     p.spend.seats = { 'claude-api': seat('claude-api', ['producer']) };
-    const planned = planLanes({ policy: p, directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {} });
+    const planned = await planLanes({ policy: p, directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {} });
     expect(planned['claude-cli'].slots).toBe(0);
   });
   // The Verse UI prints these as they arrive, so the router must never write
   // "slot(s)", an action class, or a lane id like "grok-cli" into them.
-  const plan = (over: Partial<Parameters<typeof planLanes>[0]>) => planLanes({
+  const plan = async (over: Partial<Parameters<typeof planLanes>[0]>) => await planLanes({
     policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {}, ...over,
   });
 
-  it('pluralises counts by the number', () => {
+  it('pluralises counts by the number', async () => {
     expect(countOf(0, 'slot')).toBe('0 slots');
     expect(countOf(1, 'local slot')).toBe('1 local slot');
     expect(countOf(2, 'local slot')).toBe('2 local slots');
-    expect(plan({ localServingSlots: 1 }).local.capReason).toBe('The local runtime serves 1 slot.');
-    expect(plan({ localServingSlots: 0 }).local.capReason).toBe('The local runtime serves 0 slots.');
-    expect(plan({ localServingSlots: 3 }).local.capReason).toBe('The local runtime serves 3 slots.');
+    expect((await plan({ localServingSlots: 1 })).local.capReason).toBe('The local runtime serves 1 slot.');
+    expect((await plan({ localServingSlots: 0 })).local.capReason).toBe('The local runtime serves 0 slots.');
+    expect((await plan({ localServingSlots: 3 })).local.capReason).toBe('The local runtime serves 3 slots.');
   });
 
-  it('names lanes as the operator does and keeps the machine-readable lane id', () => {
-    const one = plan({ directives: { v: 1, updatedAt: NOW_ISO, routerTuning: null, grokLanes: 1, codexEnabled: null } });
+  it('names lanes as the operator does and keeps the machine-readable lane id', async () => {
+    const one = await plan({ directives: { v: 1, updatedAt: NOW_ISO, routerTuning: null, grokLanes: 1, codexEnabled: null } });
     expect(one['grok-cli']).toEqual({ lane: 'grok-cli', slots: 1, capReason: 'The Leader set 1 Grok lane.' });
-    const three = plan({ directives: { v: 1, updatedAt: NOW_ISO, routerTuning: null, grokLanes: 3, codexEnabled: null } });
+    const three = await plan({ directives: { v: 1, updatedAt: NOW_ISO, routerTuning: null, grokLanes: 3, codexEnabled: null } });
     expect(three['grok-cli'].capReason).toBe('The Leader set 3 Grok lanes.');
-    for (const lane of Object.values(plan({}))) {
+    for (const lane of Object.values(await plan({}))) {
       expect(lane.capReason ?? '', lane.lane).not.toMatch(/\(s\)|class-[A-Z]|grok-cli|claude-cli|\bcodex\b/);
     }
   });
 });
 
 describe('presence caps', () => {
-  it.each([33, 64, 128, Number.MAX_SAFE_INTEGER])('uses %s measured local slots while absent', (slots) => {
-    const planned = planLanes({ policy: policy(), directives: null, presence: ABSENT, localServingSlots: slots, engineUnavailable: {} });
+  it.each([33, 64, 128, Number.MAX_SAFE_INTEGER])('uses %s measured local slots while absent', async (slots) => {
+    const planned = await planLanes({ policy: policy(), directives: null, presence: ABSENT, localServingSlots: slots, engineUnavailable: {} });
     expect(planned.local).toEqual({ lane: 'local', slots, capReason: `The local runtime serves ${slots} slots.` });
   });
 
-  it.each([null, NaN, Infinity, -1, 33.5, Number.MAX_SAFE_INTEGER + 1])('holds local dispatch with missing or invalid capacity %s', (slots) => {
-    const planned = planLanes({ policy: policy(), directives: null, presence: ABSENT, localServingSlots: slots, engineUnavailable: {} });
+  it.each([null, NaN, Infinity, -1, 33.5, Number.MAX_SAFE_INTEGER + 1])('holds local dispatch with missing or invalid capacity %s', async (slots) => {
+    const planned = await planLanes({ policy: policy(), directives: null, presence: ABSENT, localServingSlots: slots, engineUnavailable: {} });
     expect(planned.local).toMatchObject({ slots: 0, capReason: 'The local runtime has no usable serving-slot reading.' });
   });
 
-  it('still enforces presence, grant exclusion and unavailable engines on a wide runtime', () => {
+  it('still enforces presence, grant exclusion and unavailable engines on a wide runtime', async () => {
     const input = { policy: policy(), directives: null, presence: { present: true, reason: 'An active chat', evidenceAt: NOW_ISO }, localServingSlots: 64, engineUnavailable: {} };
-    expect(planLanes(input).local).toMatchObject({ slots: 2, capReason: expect.stringMatching(/You are active/) });
-    expect(planLanes({ ...input, presence: { present: null, reason: 'Unknown', evidenceAt: null } }).local).toMatchObject({ slots: 2, capReason: expect.stringMatching(/Presence is unknown/) });
-    expect(planLanes({ ...input, policy: policy({ engines: ['codex'] }) }).local.slots).toBe(0);
-    expect(planLanes({ ...input, engineUnavailable: { local: 'Runtime unavailable' } }).local).toMatchObject({ slots: 0, capReason: 'Runtime unavailable' });
+    expect((await planLanes(input)).local).toMatchObject({ slots: 2, capReason: expect.stringMatching(/You are active/) });
+    expect((await planLanes({ ...input, presence: { present: null, reason: 'Unknown', evidenceAt: null } })).local).toMatchObject({ slots: 2, capReason: expect.stringMatching(/Presence is unknown/) });
+    expect((await planLanes({ ...input, policy: policy({ engines: ['codex'] }) })).local.slots).toBe(0);
+    expect((await planLanes({ ...input, engineUnavailable: { local: 'Runtime unavailable' } })).local).toMatchObject({ slots: 0, capReason: 'Runtime unavailable' });
   });
 
-  it('protects the local runtime while keeping the Claude producer lane available when present', () => {
+  it('protects the local runtime while keeping the Claude producer lane available when present', async () => {
     const present: OperatorPresence = { present: true, reason: 'A Verse chat turn is running.', evidenceAt: NOW_ISO };
-    const planned = planLanes({ policy: policy(), directives: null, presence: present, localServingSlots: 4, engineUnavailable: {} });
+    const planned = await planLanes({ policy: policy(), directives: null, presence: present, localServingSlots: 4, engineUnavailable: {} });
     expect(planned.local.slots).toBe(2);
     expect(planned.local.capReason).toMatch(/You are active/);
     expect(planned['claude-cli'].slots).toBe(1);
   });
 
-  it('treats unknown presence as present', () => {
+  it('treats unknown presence as present', async () => {
     const unknown: OperatorPresence = { present: null, reason: 'Claude Code activity could not be read.', evidenceAt: null };
-    const planned = planLanes({ policy: policy(), directives: null, presence: unknown, localServingSlots: 4, engineUnavailable: {} });
+    const planned = await planLanes({ policy: policy(), directives: null, presence: unknown, localServingSlots: 4, engineUnavailable: {} });
     expect(planned.local.slots).toBe(2);
     expect(planned.local.capReason).toMatch(/Presence is unknown/);
     expect(planned['claude-cli'].slots).toBe(1);
   });
 
-  it.each([true, null])('routes eligible Claude work with presence %s using actual account limits', (present) => {
-    const planned = planLanes({ policy: policy(), directives: null, presence: { present, reason: 'Interactive state', evidenceAt: null }, localServingSlots: 4, engineUnavailable: {} });
+  it.each([true, null])('routes eligible Claude work with presence %s using actual account limits', async (present) => {
+    const planned = await planLanes({ policy: policy(), directives: null, presence: { present, reason: 'Interactive state', evidenceAt: null }, localServingSlots: 4, engineUnavailable: {} });
     const work = item({ tags: ['difficulty:high', 'context:150000'] });
     expect(routeWorkItem(work, LEGACY_LOCAL, ctx([claude(20, 20)], { lanes: planned })).backend).toBe('claude');
     for (const reading of [claude(75, 20), claude(20, 70)]) {
@@ -462,16 +463,16 @@ describe('presence caps', () => {
     }
   });
 
-  it('runs the full local width when absent, bounded by the runtime\'s serving slots', () => {
-    const full = planLanes({ policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {} });
+  it('runs the full local width when absent, bounded by the runtime\'s serving slots', async () => {
+    const full = await planLanes({ policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {} });
     expect(full.local.slots).toBe(4);
     expect(full.local.capReason).toBeNull();
-    const three = planLanes({ policy: policy(), directives: null, presence: ABSENT, localServingSlots: 3, engineUnavailable: {} });
+    const three = await planLanes({ policy: policy(), directives: null, presence: ABSENT, localServingSlots: 3, engineUnavailable: {} });
     expect(three.local.slots).toBe(3);
   });
 
-  it('uses the admitted Grok directive without an invented default maximum', () => {
-    const planned = planLanes({
+  it('uses the admitted Grok directive without an invented default maximum', async () => {
+    const planned = await planLanes({
       policy: policy(),
       directives: { v: 1, updatedAt: NOW_ISO, routerTuning: null, grokLanes: 9, codexEnabled: null },
       presence: ABSENT,
@@ -479,27 +480,27 @@ describe('presence caps', () => {
       engineUnavailable: {},
     });
     expect(planned['grok-cli'].slots).toBe(9);
-    const bounded = planLanes({
+    const bounded = await planLanes({
       policy: policy(), directives: { v: 1, updatedAt: NOW_ISO, routerTuning: null, grokLanes: 9, codexEnabled: null },
       presence: ABSENT, localServingSlots: 4, engineUnavailable: {}, admittedBatchCapacity: 6,
     });
     expect(bounded['grok-cli'].slots).toBe(6);
   });
 
-  it('closes every lane outside the grant\'s current stage', () => {
-    const planned = planLanes({ policy: policy({ engines: ['local'] }), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {} });
+  it('closes every lane outside the grant\'s current stage', async () => {
+    const planned = await planLanes({ policy: policy({ engines: ['local'] }), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {} });
     expect(planned['grok-cli'].slots).toBe(0);
     expect(planned['grok-cli'].capReason).toBe("The grant's current rollout stage does not include Grok.");
     expect(planned.local.slots).toBe(4);
   });
 
-  it('closes a lane whose engine is not installed or allowed', () => {
+  it('closes a lane whose engine is not installed or allowed', async () => {
     const engines = resolveLaneEngines({ allowedBackends: ['builtin', 'claude'], installed: () => true, localFleetEngine: null });
     expect(engines.engines['grok-cli']).toBeNull();
     expect(engines.unavailable['grok-cli']).toMatch(/not in foundry.allowedBackends/);
     expect(engines.engines.local).toBeNull();
     expect(engines.unavailable.local).toMatch(/No free local engine/);
-    const planned = planLanes({ policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: engines.unavailable });
+    const planned = await planLanes({ policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: engines.unavailable });
     expect(planned['grok-cli'].slots).toBe(0);
   });
 });
@@ -701,26 +702,26 @@ describe('best-of-N lane accounting (review c15)', () => {
 
 
 describe('operator Grok preference and finite dispatch capacity', () => {
-  const plan = (maxGrokLanes: number | null, desired: number | null, admittedBatchCapacity = 64) => planLanes({
+  const plan = async (maxGrokLanes: number | null, desired: number | null, admittedBatchCapacity = 64) => await planLanes({
     policy: policy(), presence: ABSENT, localServingSlots: 4, engineUnavailable: {},
     directives: { v: 1, updatedAt: NOW_ISO, routerTuning: null, grokLanes: desired, codexEnabled: null },
     leaderPreferences: resolveLeaderPreferences({ foundry: { leaderPreferences: { maxGrokLanes } } } as AshlrConfig),
     admittedBatchCapacity,
   });
-  it('admits more than4 without imposing one-session-per-account, and keeps null directive concrete2', () => {
-    expect(plan(20, 17)['grok-cli'].slots).toBe(17);
-    expect(plan(null, 17)['grok-cli'].slots).toBe(17);
-    expect(plan(null, null)['grok-cli'].slots).toBe(2);
-    expect(plan(5, 17)['grok-cli'].slots).toBe(5);
+  it('admits more than4 without imposing one-session-per-account, and keeps null directive concrete2', async () => {
+    expect((await plan(20, 17))['grok-cli'].slots).toBe(17);
+    expect((await plan(null, 17))['grok-cli'].slots).toBe(17);
+    expect((await plan(null, null))['grok-cli'].slots).toBe(2);
+    expect((await plan(5, 17))['grok-cli'].slots).toBe(5);
   });
-  it('bounds huge representable directives by the actual finite batch and holds unavailable policy', () => {
-    expect(plan(null, Number.MAX_SAFE_INTEGER, 12)['grok-cli'].slots).toBe(12);
+  it('bounds huge representable directives by the actual finite batch and holds unavailable policy', async () => {
+    expect((await plan(null, Number.MAX_SAFE_INTEGER, 12))['grok-cli'].slots).toBe(12);
     const input = { policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {},
       leaderPreferences: unavailableLeaderPreferences(), admittedBatchCapacity: 12 };
-    expect(planLanes(input)['grok-cli']).toMatchObject({ slots: 0, capReason: expect.stringMatching(/could not be checked/) });
-    expect(plan(null, 17, NaN)['grok-cli'].slots).toBe(0);
-    expect(plan(null, 17, 0)['grok-cli'].slots).toBe(0);
-    expect(planLanes({ ...input, leaderPreferences: resolveLeaderPreferences(), policy: policy({ engines: ['local'] }) })['grok-cli'].slots).toBe(0);
+    expect((await planLanes(input))['grok-cli']).toMatchObject({ slots: 0, capReason: expect.stringMatching(/could not be checked/) });
+    expect((await plan(null, 17, NaN))['grok-cli'].slots).toBe(0);
+    expect((await plan(null, 17, 0))['grok-cli'].slots).toBe(0);
+    expect((await planLanes({ ...input, leaderPreferences: resolveLeaderPreferences(), policy: policy({ engines: ['local'] }) }))['grok-cli'].slots).toBe(0);
   });
   it('uses existing configured pool/batch defaults and finite journal capacity without allocating workers', () => {
     expect(grokDispatchBatchCapacity({ daemon: { perTickItems: null, parallel: null } } as AshlrConfig)).toBe(64);
@@ -728,7 +729,9 @@ describe('operator Grok preference and finite dispatch capacity', () => {
     expect(grokDispatchBatchCapacity({ daemon: { mode: 'continuous', perTickItems: null, maxConcurrent: 5, concurrency: { cloud: null, total: null } } } as AshlrConfig)).toBe(5);
     expect(grokDispatchBatchCapacity({ daemon: { perTickItems: null, parallel: null, maxConcurrent: null, concurrency: { cloud: 1, total: null } } } as AshlrConfig)).toBe(1);
     expect(grokDispatchBatchCapacity({ daemon: { perTickItems: null, parallel: 2, maxConcurrent: null, concurrency: { cloud: null, total: null } } } as AshlrConfig)).toBe(2);
-    expect(grokDispatchBatchCapacity({} as AshlrConfig)).toBe(2);
+    resetAdaptiveThroughput();
+    // Unset daemon counts follow the adaptive first ramp step, not the lane default of 2.
+    expect(grokDispatchBatchCapacity({} as AshlrConfig)).toBe(ADAPTIVE_START_LEVEL);
     expect(grokDispatchBatchCapacity({ daemon: { perTickItems: 20, parallel: 17 } } as AshlrConfig)).toBe(17);
     expect(grokDispatchBatchCapacity({ daemon: { perTickItems: Number.MAX_SAFE_INTEGER, parallel: Number.MAX_SAFE_INTEGER } } as AshlrConfig)).toBe(64);
     expect(grokDispatchBatchCapacity({ daemon: { mode: 'continuous', perTickItems: 20, concurrency: { cloud: 17, total: 18 } } } as AshlrConfig)).toBe(17);
@@ -934,15 +937,15 @@ describe('land-first scheduling', () => {
       expect(ordered).toEqual(['land', 'fixup', 'normal', 'feature']);
     });
 
-    it('paces Codex down when included usage would run dry, and ignores an unknown burn', () => {
+    it('paces Codex down when included usage would run dry, and ignores an unknown burn', async () => {
       const resetAt = new Date(NOW + 10 * 3_600_000).toISOString();
-      const early = planLanes({
+      const early = await planLanes({
         policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {},
         nowMs: NOW,
         sensorPace: { codex: { remaining: 10, resetAt, burnPerHour: 40 } },
       });
       expect(early.codex.slots).toBe(0);
-      const unknown = planLanes({
+      const unknown = await planLanes({
         policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {},
         nowMs: NOW,
         sensorPace: { codex: { remaining: 80, resetAt, burnPerHour: null } },
@@ -950,21 +953,21 @@ describe('land-first scheduling', () => {
       expect(unknown.codex.slots).toBe(LANE_DEFAULT_SLOTS.codex);
     });
 
-    it('keeps a pay-per-use lane at 0 when the owner budget is 0', () => {
+    it('keeps a pay-per-use lane at 0 when the owner budget is 0', async () => {
       const resetAt = new Date(NOW + 10 * 3_600_000).toISOString();
-      const plan = planLanes({
+      const plan = await planLanes({
         policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {},
         nowMs: NOW,
         sensorPace: { codex: { remaining: 80, resetAt, burnPerHour: 1, payPerUse: true, balanceFresh: true, budgetUsd: 0, spentUsd: 0 } },
       });
       expect(plan.codex.slots).toBe(0);
-      const allowed = planLanes({
+      const invented = await planLanes({
         policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {},
         nowMs: NOW,
         sensorPace: { codex: { remaining: 80, resetAt, burnPerHour: 1, payPerUse: true, balanceFresh: true, budgetUsd: 100, spentUsd: 1 } },
       });
-      expect(allowed.codex.slots).toBeGreaterThan(0);
-      const killed = planLanes({
+      expect(invented.codex.slots).toBe(0);
+      const killed = await planLanes({
         policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {},
         nowMs: NOW, killed: true,
         sensorPace: { codex: { remaining: 80, resetAt, burnPerHour: 1, payPerUse: true, balanceFresh: true, budgetUsd: 100, spentUsd: 1 } },
@@ -972,8 +975,8 @@ describe('land-first scheduling', () => {
       expect(killed.codex.slots).toBe(0);
     });
 
-    it('zeroes every lane when KILL is on', () => {
-      const plan = planLanes({
+    it('zeroes every lane when KILL is on', async () => {
+      const plan = await planLanes({
         policy: policy(), directives: null, presence: ABSENT, localServingSlots: 4, engineUnavailable: {}, killed: true,
       });
       expect(Object.values(plan).every((lane) => lane.slots === 0)).toBe(true);

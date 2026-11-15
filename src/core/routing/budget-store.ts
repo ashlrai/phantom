@@ -153,6 +153,9 @@ export function readBudgetPolicyFileState(file: string = budgetPolicyPath()): Bu
   if ('resetSpending' in raw && (!isObject(raw['resetSpending']) || Object.keys(raw['resetSpending']).length !== 1 || typeof raw['resetSpending']['enabled'] !== 'boolean')) {
     return { state: 'unreadable', reason: 'has an unsupported reset-spending preference', fingerprint };
   }
+  if ('taskArms' in raw && !isObject(raw['taskArms'])) {
+    return { state: 'unreadable', reason: 'has a malformed task-arms policy', fingerprint };
+  }
   return { state: 'ok', policy: sanitizeBudgetPolicy(raw) };
 }
 

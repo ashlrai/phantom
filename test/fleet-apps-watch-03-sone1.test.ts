@@ -26,6 +26,7 @@ it('resolves the public verb through the registry', async () => {
 
 it('supervises two ordered apps, forwards the remaining budget, and reports recovery', async () => {
   let clock = 0, active = 0;
+  vi.spyOn(performance, 'now').mockImplementation(() => clock);
   const runner = vi.fn<AppsEnsureChildRunner>(async () => {
     expect(++active).toBe(1);
     await Promise.resolve();

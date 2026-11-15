@@ -1,0 +1,19 @@
+{
+  "servers": {
+    "locus": {
+      "args": [
+        "-y",
+        "@ashlrai/locus-mcp@0.7.0"
+      ],
+      "command": "npx",
+      "type": "stdio"
+    },
+    "phantom-gateway": {
+      "args": [
+        "mcp"
+      ],
+      "command": "phm",
+      "type": "stdio"
+    }
+  }
+}

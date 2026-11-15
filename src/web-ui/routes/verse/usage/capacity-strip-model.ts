@@ -38,7 +38,10 @@ import { SEAT_CAPACITY_WORD } from '../verse-model.js';
 
 export type { SeatCapacityClass };
 
-type BudgetRow = ReturnType<typeof buildBudgetRows>[number];
+type BudgetRow = ReturnType<typeof buildBudgetRows>[number] & {
+  /** true only when a per-seat policy was stored for this seat; a mode default is not a setting. */
+  explicitPolicy: boolean;
+};
 
 /** Rows show at most this many windows: the binding one and the next two. */
 export const CAPACITY_MAX_WINDOWS = 3;
@@ -207,7 +210,9 @@ function readableReasons(reasons: readonly string[], now: number): string[] {
 function reserveOf(budgetRow: BudgetRow | undefined): CapacityReserve | null {
   if (!budgetRow || budgetRow.free) return null;
   const { policy } = budgetRow;
-  const pct = Math.max(0, Math.min(100, Math.round(policy.reservePercent)));
+  // A reserve the router derived from a mode default is not something Mason
+  // set: it is neither drawn on the meter nor worded as "kept for you".
+  const pct = budgetRow.explicitPolicy ? Math.max(0, Math.min(100, Math.round(policy.reservePercent))) : 0;
   const label = !policy.enabled
     ? 'Autonomy off — all yours'
     : pct === 0
@@ -417,7 +422,8 @@ export function readBudgetRows(view: unknown): Map<string, BudgetRow> {
     : [];
   const safe = { ...(view as unknown as BudgetView), seatInfo, effective, headroom };
   try {
-    return new Map(buildBudgetRows(safe).map((r) => [r.seatId, r]));
+    const stored = isRecord(view['seats']) ? view['seats'] : {};
+    return new Map(buildBudgetRows(safe).map((r) => [r.seatId, { ...r, explicitPolicy: Object.prototype.hasOwnProperty.call(stored, r.seatId) }]));
   } catch {
     // Belt and braces: budget-model is pure and the input is now well-typed,
     // but a reserve line is never worth a blank strip.

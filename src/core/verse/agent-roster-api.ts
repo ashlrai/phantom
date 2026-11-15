@@ -2,8 +2,9 @@
 import { sendJson } from '../web/api.js';
 import type { ApiModule } from './api-modules.js';
 import { collectAgentRoster, ROSTER_SOURCES, type AgentRoster, type AgentRosterDeps } from '../fleet/agent-roster.js';
+import { VERSE_AGENT_ROSTER_PATH } from './agent-roster-path.js';
 
-export const VERSE_AGENT_ROSTER_PATH = '/api/verse/fleet/agent-roster';
+export { VERSE_AGENT_ROSTER_PATH };
 
 export interface AgentRosterApiDeps {
   collect?: (deps?: AgentRosterDeps) => Promise<AgentRoster>;

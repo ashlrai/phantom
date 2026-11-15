@@ -245,6 +245,7 @@ describe('§A dispatch-path inventory', () => {
     // Director is retired and the dialogue delegates to the Leader thread,
     // whose replies go through leader-seat.ts (gated per transport).
     'core/fleet/manager.ts',         // ollamaDirectComplete — the local judge, 3-min timeout
+    'core/radar/local-bench.ts',     // assertLoopbackBaseUrl (isLoopbackEndpoint) before fetch
     'core/genome/playbook.ts',       // LM Studio playbook synthesis (documented LOCAL-ONLY)
     'core/vision/strategist.ts',     // ollamaDirectComplete — mirrors manager.ts
     'core/visual/grounding.ts',      // completionsUrl() — the only one that can carry a token
@@ -316,8 +317,11 @@ describe('§A dispatch-path inventory', () => {
         src.includes("from '../policy/local-only.js'"),
         `${rel} does not import the local-only policy`,
       ).toBe(true);
+      const assertsBeforeFetch = rel === 'core/radar/local-bench.ts'
+        ? src.includes('assertLoopbackBaseUrl(') && src.indexOf('assertLoopbackBaseUrl(') < src.indexOf('/v1/chat/completions')
+        : /assertPermitted\(\s*endpointPermitted\(/.test(src);
       expect(
-        /assertPermitted\(\s*endpointPermitted\(/.test(src),
+        assertsBeforeFetch,
         `${rel} imports the policy but never asserts on it before fetching`,
       ).toBe(true);
     }

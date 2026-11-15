@@ -35,7 +35,7 @@ function FirstExperiment() {
   const command = useUniverseCommand();
   return (
     <section className={styles.empty} aria-labelledby="universe-start-title">
-      <h2 id="universe-start-title">Start your first universe</h2>
+      <h2 id="universe-start-title">Start your first experiment workspace</h2>
       <p>Run two measured generations on a disposable seed, then inspect which variants earned a place in the archive.</p>
       <pre className={styles.command}><code>{command('ashlr universe demo')}</code></pre>
       <p>The local demonstration needs no model credentials. Refresh this page after running it.</p>
@@ -214,7 +214,7 @@ function Campaigns({ campaigns, summary, onInspectRun }: {
         <div className={styles.campaignHeading}><h3>{definition.id}</h3><StatusBadge status={campaign.state} tone={campaign.state === 'ready' ? 'neutral' : undefined} /></div>
         {verified ? null : <div className={styles.notice} role="status"><strong>Campaign history is incomplete.</strong><p>{campaign.reasons.join('; ') || 'Recorded progress could not be verified.'}</p></div>}
         <p className={styles.reason}><strong>Reason: </strong>{campaign.reason ?? (campaign.state === 'ready' ? 'Registered; execution readiness has not been checked.' : 'No stop reason recorded.')}</p>
-        <p>Use the recovery check before resuming. It reads recorded controls and outcomes, not current worker readiness.{root === null ? ' Replace the example root with your exact Universe store.' : ''}</p>
+        <p>Use the recovery check before resuming. It reads recorded controls and outcomes, not current worker readiness.{root === null ? ' Replace the example root with your exact experiment store.' : ''}</p>
         <CampaignReadiness key={`${summary.manifest.id}:${definition.id}`} campaignId={definition.id} universeId={summary.manifest.id} />
         {campaign.state === 'pause-requested' || campaign.state === 'stop-requested' ? <p role="status">Control requested. The owner has not yet acknowledged that work has stopped.</p> : null}
         <dl className={styles.campaignFacts}>
@@ -269,7 +269,7 @@ function UniverseExperiment({ summary, campaigns, deliveryReport }: {
 
   return (
     <>
-      <section className={styles.objective} aria-label="Universe objective">
+      <section className={styles.objective} aria-label="Experiment objective">
         <h2>{summary.manifest.name}</h2>
         <p>{summary.manifest.objective}</p>
         <dl className={styles.objectiveFacts}>
@@ -352,7 +352,7 @@ function UniverseExperiment({ summary, campaigns, deliveryReport }: {
         </section>
       ) : (
         <section className={styles.empty}>
-          <h2>This universe is registered</h2>
+          <h2>This experiment workspace is registered</h2>
           <pre className={styles.command}><code>{command(`ashlr universe run ${summary.manifest.id}`)}</code></pre>
           <p>No generation has run yet. Verify the evaluator and required runtime before starting, then refresh to compare measurements.</p>
         </section>
@@ -403,7 +403,7 @@ export function UniverseView() {
         <div><h1>{PRODUCT_NAME}</h1><p>Run experiments. Compare futures. Keep what earns its place.</p></div>
         <div className={styles.actions}>
           {overview && overview.universes.length > 1 ? (
-            <label className={styles.selectLabel}>Universe<select value={universe?.manifest.id} onChange={(event) => setUniverseId(event.target.value)}>{overview.universes.map((item) => <option value={item.manifest.id} key={item.manifest.id}>{item.manifest.name}</option>)}</select></label>
+            <label className={styles.selectLabel}>Experiment workspace<select value={universe?.manifest.id} onChange={(event) => setUniverseId(event.target.value)}>{overview.universes.map((item) => <option value={item.manifest.id} key={item.manifest.id}>{item.manifest.name}</option>)}</select></label>
           ) : null}
           <button type="button" className={styles.refresh} onClick={refresh} disabled={query.status === 'loading' || query.status === 'refreshing'}>Refresh</button>
         </div>
@@ -414,8 +414,8 @@ export function UniverseView() {
         {overview ? <span>Local experiments</span> : null}
         <span>Refreshes every {isRunning ? '3' : '15'} seconds while visible</span>
       </div>
-      {query.status === 'loading' ? <section className={styles.empty} aria-label="Loading Universe experiments"><SkeletonLine width="60%" /><SkeletonLine width="90%" /><SkeletonLine width="80%" /></section> : null}
-      {query.status === 'error' ? <div className={styles.notice} role="alert"><h2>Universe records unavailable</h2><p>{query.error?.message ?? 'The experiment store could not be read.'}</p><p>Refresh to retry. Any records below are from the last successful read.</p></div> : null}
+      {query.status === 'loading' ? <section className={styles.empty} aria-label="Loading experiments"><SkeletonLine width="60%" /><SkeletonLine width="90%" /><SkeletonLine width="80%" /></section> : null}
+      {query.status === 'error' ? <div className={styles.notice} role="alert"><h2>Experiment records unavailable</h2><p>{query.error?.message ?? 'The experiment store could not be read.'}</p><p>Refresh to retry. Any records below are from the last successful read.</p></div> : null}
       {overview?.sourceState === 'degraded' ? <div className={styles.notice} role="status"><strong>Experiment history is incomplete.</strong><p>{overview.reasons.join('; ') || 'Some persisted records could not be verified.'}</p></div> : null}
       {universe ? <UniverseExperiment key={universe.manifest.id} summary={universe} campaigns={overview?.campaigns?.filter((item) => item.definition.universeId === universe.manifest.id) ?? []} deliveryReport={overview?.deliveryReports?.find((report) => report.universeId === universe.manifest.id)} /> : overview && overview.sourceState !== 'degraded' ? <FirstExperiment /> : null}
     </div>

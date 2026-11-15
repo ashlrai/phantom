@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { cmdFleetContextCheckedRun } from '../src/cli/fleet-context-checked-run.js';
 import { resolveFleetSubcommand } from '../src/cli/fleet-subcommand-resolve.js';
 import { CONTEXT_START, CONTEXT_END } from '../src/core/fleet/context-worker-run.js';

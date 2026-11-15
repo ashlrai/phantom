@@ -43,6 +43,42 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/channel-health-ingress-failure-322s.test.ts', // Real child-process fixtures.
+  'test/channel-health-slack-binding-338.test.ts', // Real child-process fixtures.
+  'test/comms-confirm-http-original-264s.test.ts', // Real child-process fixtures.
+  'test/email-outbox-crash-batch-103.test.ts', // Real child-process fixtures.
+  'test/fleet-channel-health-proof-320s.test.ts', // Real child-process fixtures.
+  'test/gmail-archive-plan-concurrent-104.test.ts', // Real child-process fixtures.
+  'test/handoff-api-response-contract-10ssl2.test.ts', // Real loopback server fixtures.
+  'test/imessage-teammate-dispatch.test.ts', // Real child-process fixtures.
+  'test/recut-desk-s0-c205.test.ts', // Real loopback server fixtures.
+  'test/recut-n1r4200s92.test.ts', // Real child-process fixtures.
+  'test/recut-top-a59.test.ts', // Real loopback server fixtures.
+  'test/repo-tracked-artifacts.test.ts', // Real child-process fixtures.
+  'test/ui-settings-recut-c196.test.ts', // Real loopback server fixtures.
+  'test/ui-settings-recut-c206.test.ts', // Real loopback server fixtures.
+  'test/ui-settings.test.ts', // Real loopback server fixtures.
+  'test/web-ui-redfix-5262.test.ts', // Real loopback server fixtures.
+  'test/work-trace-restart-proof-319s.test.ts', // Real child-process fixtures.
+  'test/real-home-authority.test.ts', // Native child without the fixture preload proves passwd authority ignores HOME.
+  'test/queue.test.ts', // Real Python dispatcher ticks in disposable homes for the shared work market.
+  'test/delegation-scope-prompts.test.ts', // real Python and shell prompt builders plus isolated restock fixture subprocesses
+  'test/routines.test.ts', // Real CLI adapter subprocesses and private ledger files.
+  'test/episodic-memory.test.ts', // Real Git revisions and persistent JSONL acceptance fixtures.
+  'test/agent-checkpoints.test.ts', // Restarts a real Node process and observes fresh Git state.
+  'test/bus-cli.test.ts', // Real CLI subprocesses and concurrent durable mailbox sends in disposable homes.
+  'test/agent-tools-registry.test.ts', // Spawns a real child to read the tool registry.
+  'test/constitution-recutnonphxold60.test.ts', // Spawns the CLI through tsx to prove `constitution` dispatches.
+  'test/phantom-discovery.test.ts', // Compiles the generated client with a real tsc child.
+  'test/fleet-coordination.test.ts', // Spawns tsx children that contend for the coordination lock.
+  'test/release-articles.test.ts', // Real temporary Git repositories driven through git children.
+  'test/real-home-child.test.ts', // Spawns a Node child to prove the test preload keeps KILL and enrollment inside HOME.
+  'test/release-train.test.ts', // Spawns node --experimental-strip-types against the release-train guard.
+  'test/main-blame.test.ts', // Spawns git bisect children against a real temporary repository.
+  'test/mcp/fleet-current-replay-preservation-09stm2.test.ts', // Spawns the fleet CLI child for replay preservation.
+  'test/mcp/fleet-path-cochanges-04-sqd1.test.ts', // Spawns the fleet CLI child for path co-change reads.
+  'test/measure-desktop-perf.test.ts', // Spawns a real child to measure desktop startup.
+  'test/worktrees-prune.test.ts', // Real Git worktree fixtures.
   'test/ecosystem-changelog-generator.test.ts', // Runs the generator in a real Node child process.
   'test/verse-standby-python-contract-02somp1.test.ts', // Runs the Python lease helper in a real child process.
   'test/company-context-store.test.ts', // concurrent context writer processes
@@ -56,6 +92,7 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-job-precheck-cli.test.ts', // Creates real git commits for precheck CLI coverage.
   'test/fleet-job-precheck-batch-nov04-spb1.test.ts', // Builds real git history for batch precheck coverage.
   'test/fleet-job-path-history-nov04-spb2.test.ts', // Creates and renames real git history for exact job lookup.
+  'test/fleet-deploy-plan.test.ts', // Compares committed scripts in real temporary Git repositories.
   'test/fleet-path-history-cli.test.ts', // Creates and reads real git history through the CLI.
   'test/fleet-path-history-literal-cli-04-spq1.test.ts', // Creates real temp git repos (git init/commit via execFileSync) for literal path-history CLI coverage.
   'test/fleet-path-history-preservation-06stl2.test.ts', // Creates a real temp git repo (git init via execFileSync) to prove path-history preservation.
@@ -253,6 +290,7 @@ export const REAL_IO_TEST_FILES = [
   'test/verse-local-dispatch.test.ts', // real loopback HTTP server standing in for Ollama's discovery endpoints
   'test/local-inference-probe.test.ts', // real loopback HTTP server standing in for a local /models endpoint (P3 probe)
   'test/radar-local-bench-redirect.test.ts', // two real loopback HTTP servers: a redirector and a second listener the body must never reach
+  'test/local-tool-calls.test.ts', // real loopback HTTP servers standing in for OMLX/Ollama-style tool-call endpoints
   'test/verse-accounts.test.ts', // real collector lease acquisition and private evidence files in a tmp root
   'test/verse-api.test.ts', // real web server bind + SSE tails against an in-memory fake engine
   'test/verse-api-context.test.ts', // real web server bind + real memory/preference files in a tmp HOME (V3.9 routes)
@@ -586,6 +624,7 @@ export const REAL_IO_TEST_FILES = [
   'test/m571.local-production-gate.test.ts', // validates the macOS sandbox with real loopback HTTP, Unix sockets, subprocesses, and filesystem writes
   'test/m2.doctor.test.ts', // runs real environment/tool probes against git, npm, and fs — 0.9s slowest test in the quiet baseline
   'test/m440.dependency-audit-ci.test.ts', // spawns bounded real shell fixtures to prove audit fallback fail-closed behavior
+  'test/m1214.secret-scan-ci.test.ts', // real temporary Git repository and bash scan fixture for the diff secret scan
   'test/m93.daemon-service-crash-recovery.test.ts', // real daemon process crash/recovery (24.5s file total) — 1.7s slowest test in the quiet baseline
 
   // --- Agent OS durable stores and runtime: real private filesystem layouts, fsync/link
@@ -771,10 +810,12 @@ export const REAL_IO_TEST_FILES = [
   'test/collision-free-edits.test.ts', // real temp git repos: init/commit/branch/merge fixtures for the concurrent-fragment merge cases
   'test/improve-reverted.test.ts', // real temp git repo fixture (init/commit/revert) for the revert-detection case
   'test/desktop-nightly-build.test.ts', // real `node <script> --check` and `tar` children plus an on-disk .app.tar.gz fixture
+  'test/build-outputs.test.ts', // real `git check-ignore` / `git ls-files` children per declared build output
   'test/fleet-bus-work-claims-01.test.ts', // spawnSync runs fleet-bus-work-claims as a real child
   'test/fleet-context-run-solu3.test.ts', // execFileSync runs fleet-context-run-solu3 example as a real child
   'test/fleet-dirty-union-preview-nov01.test.ts', // spawnSync drives a real git fixture (dirty union preview)
   'test/fleet-dirty-landed.test.ts', // execFileSync drives a real git fixture (dirty landed classification)
+  'test/prs-triage.test.ts', // execFileSync drives a real temp git repo for PR triage classification
   'test/remote-gateway-bus-read-session-nov01.test.ts', // binds a real loopback HTTP server (remote-gateway bus read session)
   'test/verify-changed-tsc-cache.test.ts', // spawnSync node scripts/verify-changed.mjs --tsc-cache as a real child
   'test/bus-loop-active-control-01sole2.test.ts', // spawn runs a real node --import tsx child for the bus-loop active-control case
@@ -782,5 +823,9 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-graph-process-tree-stop-nov01.test.ts', // spawns real node children to exercise process-tree stop
   'test/phx-graph-node-stream01.test.ts', // spawn and spawnSync run the real `fleet graph-run` CLI
   'test/planner-cycle-single-01solc5.test.ts', // spawnSync runs a real node child for the single-cycle planner fixture
+  'test/test-changed.test.ts', // real Git repositories and npm child processes for changed-test selection
   'test/verify-changed-dedupe.test.ts', // spawnSync node scripts/verify-changed.mjs and execFileSync git in real temp repos
+  'test/fleet-guardian-head-manifest-01.test.ts', // execFileSync builds real git repo fixtures; the module execFiles real git reads
+  'test/recut-n4r2000s79.test.ts', // execFileSync builds a real temp git repo for the recovered guardian-head module
+  'test/leader-relay-process-preservation-10srt1.test.ts', // spawnSync runs the real `leader replies sync` CLI child
 ];

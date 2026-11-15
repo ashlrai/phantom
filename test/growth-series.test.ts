@@ -1,7 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
 import { cmdGrowth } from '../src/cli/growth.js';
+import { GROWTH_METRICS_MAX_BYTES, readGrowthJsonl, readGrowthReport } from '../src/core/growth/read.js';
 import { handleGrowthApi } from '../src/core/verse/growth-api.js';
+import { readJsonFile } from '../src/core/observe/read.js';
 import { projectWorldModel } from '../src/core/world/project.js';
 import {
   growthSnapshot,
@@ -162,6 +167,118 @@ describe('phm growth', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe('engineering ops growth exports', () => {
+  const clock = '2026-11-09T11:50:00.000Z';
+  const pulls = JSON.stringify({
+    complete: true,
+    pulls: [{ repo: 'ashlrai/phantom', number: 9, state: 'open', createdAt: '2026-11-09T11:07:00.000Z' }],
+  });
+  const hourly = JSON.stringify({ hour: '2026-11-09T08:00:00.000Z', opened: 4, merged: 2 });
+  const releases = [
+    JSON.stringify({ publishedAt: '2026-11-09T11:07:00.000Z', kind: 'github' }),
+    JSON.stringify({ publishedAt: '2026-11-09T11:08:00.000Z', kind: 'npm' }),
+  ].join('\n');
+  const cost = [
+    JSON.stringify({ t: '2026-11-09T11:07:00.000Z', costPerMergedPrUsd: 3.5 }),
+    JSON.stringify({ t: '2026-11-09T11:00:00.000Z', costPerMergedPrUsd: null }),
+  ].join('\n');
+
+  async function withDir(files: Record<string, string>, run: (dir: string) => Promise<void>): Promise<void> {
+    const dir = await mkdtemp(join(tmpdir(), 'growth-exports-'));
+    try {
+      for (const [name, body] of Object.entries(files)) await writeFile(join(dir, name), body);
+      await run(dir);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+
+  it('reads releases, metered hourly cost, and the 1d pull export', async () => {
+    await withDir({
+      'growth-pulls-1d.json': pulls,
+      'growth-pulls-hourly.jsonl': hourly,
+      'growth-releases.jsonl': releases,
+      'growth-cost-hourly.jsonl': cost,
+      'growth-exports-status.json': JSON.stringify({ generatedAt: clock }),
+    }, async (dir) => {
+      const day = await readGrowthReport({
+        range: '1D', metricsDir: dir, nowMs: NOW, jobsText: '', usageText: null,
+        scorecard7d: { sourceState: 'healthy', points: [{ ts: clock, costPerMergedChangeUsd: 99 }] },
+        scorecard30d: null,
+      });
+      expect(day).not.toBeNull();
+      const opened = series(day!, 'pullsOpened');
+      expect(opened.source).toBe('metrics/growth-pulls-1d.json');
+      expect(opened.points.find((point) => point.t === '2026-11-09T11:00:00.000Z')?.y).toBe(1);
+      expect(opened.freshness).toBe('fresh');
+      const week = await readGrowthReport({
+        range: '1W', metricsDir: dir, nowMs: NOW, jobsText: '', usageText: null, scorecard7d: null, scorecard30d: null,
+      });
+      const weekOpened = series(week!, 'pullsOpened');
+      expect(weekOpened.source).toBe('metrics/growth-pulls-hourly.jsonl');
+      expect(weekOpened.points.some((point) => point.y === 4)).toBe(true);
+      const released = series(day!, 'releases');
+      expect(released.points.find((point) => point.t === '2026-11-09T11:00:00.000Z')?.y).toBe(2);
+      expect(released.points.find((point) => point.t === '2026-11-09T10:00:00.000Z')?.y).toBe(0);
+      const priced = series(day!, 'costPerMergedPr');
+      expect(priced.label).toBe('Cost · metered lanes');
+      expect(priced.caveat).toContain('Metered lanes');
+      expect(priced.points.find((point) => point.t === '2026-11-09T11:00:00.000Z')?.y).toBe(3.5);
+      expect(priced.points.find((point) => point.t === '2026-11-09T10:00:00.000Z')?.y ?? null).toBeNull();
+      expect(day!.blindSpots.some((spot) => spot.path === 'growth.pullsOpened')).toBe(false);
+      expect(day!.blindSpots.some((spot) => spot.path === 'growth.releases')).toBe(false);
+    });
+  });
+
+  it('marks an export older than 30 minutes stale and still draws it', async () => {
+    await withDir({
+      'growth-releases.jsonl': releases,
+      'growth-exports-status.json': JSON.stringify({ generatedAt: '2026-11-09T11:00:00.000Z' }),
+    }, async (dir) => {
+      const report = await readGrowthReport({
+        range: '1H', metricsDir: dir, nowMs: NOW, jobsText: null, usageText: null, scorecard7d: null, scorecard30d: null,
+      });
+      const released = series(report!, 'releases');
+      expect(released.status).toBe('ready');
+      expect(released.freshness).toBe('stale');
+      expect(released.caveat).toContain('30 minutes');
+      expect(released.points.some((point) => point.y === 2)).toBe(true);
+      expect(report!.blindSpots.find((spot) => spot.path === 'growth.releases')).toMatchObject({ freshness: 'stale' });
+      const model = projectWorldModel({
+        nowMs: NOW, sensors: null, roster: null, claims: null, busReadable: null, queue: null, ci: null,
+        updatePhase: null, bottlenecks: null, bottlenecksObservedAt: null, stepsRemaining: null, stepsObservedAt: null,
+        outcomes: null, growth: growthSnapshot({
+          nowMs: NOW, jobsText: null, usageText: null, pulls: null, pullsComplete: false,
+          releases: [{ at: Date.parse('2026-11-09T11:07:00.000Z') }],
+          exportClock: { pulls: null, releases: '2026-11-09T11:00:00.000Z', cost: null },
+          scorecard7d: null, scorecard30d: null,
+        }),
+      });
+      expect(model.growth.releases).toMatchObject({ value: null, freshness: 'stale' });
+    });
+  });
+
+  it('reads a pull export larger than the 256 KiB observe cap', async () => {
+    expect(GROWTH_METRICS_MAX_BYTES).toBeGreaterThan(1.24 * 1024 * 1024);
+    await withDir({}, async (dir) => {
+      const path = join(dir, 'wide.json');
+      const body = `${pulls}${' '.repeat(300 * 1024)}`;
+      await writeFile(path, body);
+      expect(await readJsonFile(path)).toBeNull();
+      const report = await readGrowthReport({
+        range: '1D', pullsFile: path, metricsDir: dir, nowMs: NOW, jobsText: null, usageText: null,
+        scorecard7d: null, scorecard30d: null,
+        exportClock: { pulls: clock, releases: null, cost: null },
+      });
+      expect(series(report!, 'pullsOpened').status).toBe('ready');
+      const tiny = join(dir, 'tiny.jsonl');
+      await writeFile(tiny, '{"publishedAt":"2026-11-09T11:07:00.000Z"}\n{"publishedAt":"2026-11-09T11:08:00.000Z"}\n');
+      expect(await readGrowthJsonl(tiny, 20)).toBeNull();
+      expect((await readGrowthJsonl(tiny))?.length).toBe(2);
+    });
   });
 });
 

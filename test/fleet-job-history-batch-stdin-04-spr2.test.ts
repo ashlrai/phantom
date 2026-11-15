@@ -118,7 +118,7 @@ it('rejects invalid UTF-8 with usage 2 and no git call', async () => {
   expect(reader.jobHistoryBatch).not.toHaveBeenCalled();
 });
 
-it('never echoes raw stdin content in errors', async () => {
+it('history batch never echoes raw stdin content in errors', async () => {
   expect(await cmdFleetJobHistoryBatch(['--stdin'], pipe('["RQ-AAA-1", "SECRET-PROBE-771"]'))).toBe(2);
   expect(await cmdFleetJobHistoryBatch(['--stdin'], pipe('SECRET-PROBE-772 not json'))).toBe(2);
   const printed = [...error.mock.calls, ...log.mock.calls].map(call => String(call[0])).join('\n');
@@ -136,7 +136,7 @@ it('stops reading an oversized stream as soon as it passes the 64 KiB bound', as
   expect(reader.jobHistoryBatch).not.toHaveBeenCalled();
 });
 
-it('accepts input of exactly 64 KiB and rejects one byte more', async () => {
+it('accepts a history batch of exactly 64 KiB and rejects one byte more', async () => {
   const body = JSON.stringify(['RQ-AAA-1']);
   const padded = (size: number) => body.slice(0, -1) + ' '.repeat(size - body.length) + ']';
   expect(await cmdFleetJobHistoryBatch(['--stdin'], pipe(padded(JOB_STDIN_MAX_BYTES)))).toBe(0);
@@ -158,7 +158,7 @@ it('returns a concise nonzero result on a stream error, never empty evidence', a
   expect(log).not.toHaveBeenCalled();
 });
 
-it('--help and -h print usage without consuming stdin', async () => {
+it('history batch --help and -h print usage without consuming stdin', async () => {
   for (const args of [['--help'], ['-h']]) {
     const state = { pulled: 0, closed: false };
     expect(await cmdFleetJobHistoryBatch(args, endless(state))).toBe(0);

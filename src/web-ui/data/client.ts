@@ -32,6 +32,8 @@ export class ApiError extends Error {
      * caller branch on WHAT was refused without parsing the sentence.
      */
     public readonly code: string | null = null,
+    /** The parsed JSON refusal body, when it had one; null otherwise. For callers that branch on a field `detail` and `code` drop. */
+    public readonly body: unknown = null,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -123,14 +125,20 @@ export function apiPost<T>(path: string, body: unknown, mutationToken: string, s
   return mutateJson<T>('POST', path, body, mutationToken, signal);
 }
 
+/** PUT: same gates as POST. Local-only — the phone gateway has no PUT surface. */
+export function apiPut<T>(path: string, body: unknown, mutationToken: string, signal?: AbortSignal): Promise<T> {
+  if (isRemoteMobileMode()) return Promise.reject(new ApiError('Not available on the phone gateway.', 405, path));
+  return mutateJson<T>('PUT', path, body, mutationToken, signal);
+}
+
 /** DELETE retains its empty-body/text-response contract. */
 export function apiDelete<T>(path: string, mutationToken: string, signal?: AbortSignal): Promise<T> {
   return mutateJson<T>('DELETE', path, {}, mutationToken, signal);
 }
 
-async function mutateJson<T>(method: 'POST' | 'DELETE', path: string, body: unknown, token: string, signal?: AbortSignal): Promise<T> {
-  if (isRemoteMobileMode()) return (await loadRemote()).remoteMutate<T>(method, path, body);
-  const post = method === 'POST';
+async function mutateJson<T>(method: 'POST' | 'PUT' | 'DELETE', path: string, body: unknown, token: string, signal?: AbortSignal): Promise<T> {
+  if (isRemoteMobileMode() && method !== 'PUT') return (await loadRemote()).remoteMutate<T>(method, path, body);
+  const post = method !== 'DELETE';
   const res = await fetch(path, {
     method, credentials: 'same-origin',
     headers: post ? { 'Content-Type': 'application/json', 'x-ashlr-token': token } : { 'x-ashlr-token': token },
@@ -138,10 +146,10 @@ async function mutateJson<T>(method: 'POST' | 'DELETE', path: string, body: unkn
   });
   if (res.status === 401) throw new ApiError('Mutation token was rejected.', 401, path);
   if (!res.ok) {
-    const { detail, code } = await readRefusal(res);
+    const { detail, code, body: refusal } = await readRefusal(res);
     // A codeless 404 is the dispatch gate; coded route refusals stay ApiError.
     if (res.status === 404 && code === null) throw new DispatchDisabledError(path);
-    throw new ApiError(`${method} ${path} failed (HTTP ${res.status})${detail ? `: ${detail}` : ''}.`, res.status, path, detail || null, code);
+    throw new ApiError(`${method} ${path} failed (HTTP ${res.status})${detail ? `: ${detail}` : ''}.`, res.status, path, detail || null, code, refusal);
   }
   if (res.status === 204) return undefined as T;
   if (post) return (await res.json()) as T;
@@ -150,15 +158,15 @@ async function mutateJson<T>(method: 'POST' | 'DELETE', path: string, body: unkn
 }
 
 /** A route's own refusal sentence and code, including daemon `note` bodies. */
-async function readRefusal(res: Response): Promise<{ detail: string; code: string | null }> {
+async function readRefusal(res: Response): Promise<{ detail: string; code: string | null; body: unknown }> {
   try {
     const j = (await res.json()) as { error?: unknown; note?: unknown; message?: unknown; reason?: unknown; code?: unknown };
     const detail = typeof j.error === 'string' && j.error ? j.error
       : typeof j.note === 'string' && j.note ? j.note
         : typeof j.message === 'string' ? j.message : typeof j.reason === 'string' ? j.reason : '';
-    return { detail, code: typeof j.code === 'string' && j.code ? j.code : null };
+    return { detail, code: typeof j.code === 'string' && j.code ? j.code : null, body: j };
   } catch {
-    return { detail: '', code: null };
+    return { detail: '', code: null, body: null };
   }
 }
 

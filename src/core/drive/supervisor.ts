@@ -287,7 +287,9 @@ export async function driveTick(deps: DriveDependencies, options: { dryRun?: boo
     report.ready = state.jobs.filter(job => job.state === 'READY').length;
     report.skipped = skippedJobs(state, nowMs());
     report.held = state.paused ? 'paused' : state.admission !== 'open' ? `admission-${state.admission}` : null;
-    if (report.held === null && report.skipped.length === report.ready) {
+    // A launch that filled the cap leaves the leftover READY lines skipped.
+    // That is capacity, not a hold: held stays null once this tick launched.
+    if (report.held === null && report.launched.length === 0 && report.skipped.length === report.ready) {
       report.held = report.ready === 0 ? 'no-ready-jobs' : report.skipped[0]?.reason ?? 'no-eligible-jobs';
     }
     return state;

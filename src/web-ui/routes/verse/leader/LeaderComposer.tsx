@@ -1,18 +1,22 @@
 /**
  * routes/verse/leader/LeaderComposer.tsx — the Leader conversation's input:
  * a growing text box and one Send button. Deliberately NOT the chat
- * composer (no seats, models, attachments or slash commands — the Leader
- * reads words).
+ * composer (no seats, models or slash commands, and one screenshot at most —
+ * the Leader reads words).
  *
  *   Enter sends · Shift+Enter is a new line · an IME composition is never
  *   sent mid-word · an empty or whitespace box never sends.
  *
+ * A screenshot pasted or dropped on the thread box uploads to local disk and
+ * shows as a chip; Send adds its `[screenshot: <path>]` line (composer-attachment.ts).
+ *
  * Also the inline answer box under a Leader question (`variant="answer"`):
  * the same keys, one line to start.
  */
-import { forwardRef, lazy, Suspense, useCallback, useEffect, useImperativeHandle, useRef, type KeyboardEvent } from 'react';
+import { forwardRef, lazy, Suspense, useCallback, useEffect, useImperativeHandle, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import { IconSend, IconX } from '../../../components/primitives/icons.js';
 import { LEADER_MESSAGE_MAX } from './thread-model.js';
+import { appendAttachmentRef, checkImage, formatBytes, pickImage, uploadAttachment } from './composer-attachment.js';
 import { insertDictation } from '../voice/insert-text.js';
 import styles from './leader.module.css';
 
@@ -74,14 +78,69 @@ export const LeaderComposer = forwardRef<LeaderComposerHandle, LeaderComposerPro
     requestAnimationFrame(() => boxRef.current?.setSelectionRange(next.caret, next.caret));
   }, []);
 
+  // One screenshot: uploading → chip (thumbnail from an object URL, revoked on remove/unmount).
+  const [shot, setShot] = useState<{ url: string; bytes: number; path: string | null } | null>(null);
+  const [shotError, setShotError] = useState<string | null>(null);
+  const uploadRef = useRef<AbortController | null>(null);
+  const dropShot = useCallback(() => {
+    uploadRef.current?.abort();
+    uploadRef.current = null;
+    setShot((cur) => { if (cur) URL.revokeObjectURL(cur.url); return null; });
+  }, []);
+  useEffect(() => dropShot, [dropShot]);
+  const attaching = shot !== null && shot.path === null;
+
+  const attach = useCallback((file: File) => {
+    const problem = checkImage(file);
+    if (problem) { setShotError(problem); return; }
+    dropShot();
+    setShotError(null);
+    const url = URL.createObjectURL(file);
+    const abort = new AbortController();
+    uploadRef.current = abort;
+    setShot({ url, bytes: file.size, path: null });
+    uploadAttachment(file, abort.signal).then(
+      (done) => { if (!abort.signal.aborted) setShot({ url, bytes: file.size, path: done.path }); },
+      (err: unknown) => {
+        if (abort.signal.aborted) return;
+        URL.revokeObjectURL(url);
+        setShot(null);
+        setShotError(err instanceof Error ? err.message : 'The screenshot could not be attached.');
+      },
+    );
+  }, [dropShot]);
+
+  const imageEnabled = variant === 'thread' && disabledReason === null;
+  function onPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const file = imageEnabled ? pickImage(event.clipboardData) : null;
+    if (!file) return; // plain text paste: the browser's default
+    event.preventDefault();
+    attach(file);
+  }
+  function onDrop(event: DragEvent<HTMLTextAreaElement>) {
+    const file = imageEnabled ? pickImage(event.dataTransfer) : null;
+    if (!file) return;
+    event.preventDefault();
+    attach(file);
+  }
+
   const trimmed = value.trim();
   const over = value.length > LEADER_MESSAGE_MAX;
-  const canSend = trimmed.length > 0 && !over && disabledReason === null;
+  const sendReason = disabledReason ?? (attaching ? 'Attaching screenshot…' : null);
+  const canSend = (trimmed.length > 0 || shot?.path != null) && !over && sendReason === null;
 
   const send = useCallback(() => {
     if (!canSend) return;
+    if (shot?.path) {
+      const next = appendAttachmentRef(trimmed, shot.path);
+      if (next.error !== undefined) { setShotError(next.error); return; }
+      dropShot();
+      setShotError(null);
+      onSend(next.text);
+      return;
+    }
     onSend(trimmed);
-  }, [canSend, onSend, trimmed]);
+  }, [canSend, dropShot, onSend, shot, trimmed]);
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key !== 'Enter' || event.shiftKey || event.altKey) return;
@@ -117,15 +176,27 @@ export const LeaderComposer = forwardRef<LeaderComposerHandle, LeaderComposerPro
           autoFocus={autoFocus}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={onKeyDown}
+          onPaste={onPaste}
+          onDrop={onDrop}
           aria-invalid={over || undefined}
         />
         <Suspense fallback={null}>
           <VoiceInput surface="leader" targetRef={boxRef} disabled={disabledReason !== null} onInsert={insertDictated} />
         </Suspense>
-        <button type="button" className={styles.send} aria-label={variant === 'answer' ? 'Send answer' : 'Send to the Leader'} disabled={!canSend} onClick={send}>
+        <button type="button" className={styles.send} aria-label={variant === 'answer' ? 'Send answer' : 'Send to the Leader'} disabled={!canSend} title={sendReason ?? undefined} onClick={send}>
           <IconSend />
         </button>
       </div>
+      {shot ? (
+        <div className={styles.composerChip}>
+          <img className={styles.composerChipThumb} src={shot.url} alt="Attached screenshot" />
+          <span>{attaching ? 'Attaching screenshot…' : `Screenshot · ${formatBytes(shot.bytes)}`}</span>
+          <button type="button" className={styles.iconButton} aria-label="Remove screenshot" onClick={dropShot}>
+            <IconX />
+          </button>
+        </div>
+      ) : null}
+      {shotError ? <p className={styles.composerHint} role="alert">{shotError}</p> : null}
       {variant === 'thread' ? (
         <p className={styles.composerHint}>
           {near ? (

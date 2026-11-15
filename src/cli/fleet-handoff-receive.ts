@@ -4,9 +4,9 @@ import type { ContextWorkerIO } from '../core/fleet/context-worker-run.js';
 import { receiveHandoffBus } from '../core/fleet/handoff-bus-receive.js';
 
 const usage = 'Usage: ashlr fleet handoff-receive --id <message-id> --to <exact-local-address> '
-  + '--snapshot <absolute-json> [--cwd <absolute-directory>] -- <program> [args...]';
+  + '--snapshot <absolute-json> [--cwd <absolute-directory>] [--timeout-ms <1..3600000>] -- <program> [args...]';
 const example = 'Example: ashlr fleet handoff-receive --id handoff-7 --to WORKER-9 '
-  + '--snapshot /home/worker/context.json -- node worker.mjs --flag value';
+  + '--snapshot /home/worker/context.json --timeout-ms 600000 -- node worker.mjs --flag value';
 const token = (value: string): boolean => /^[\x21-\x7e]{1,128}$/.test(value);
 
 /** Convention-resolved CLI entry: run one live bus worker-handoff under explicit argv. */
@@ -16,7 +16,8 @@ export async function cmdFleetHandoffReceive(args: string[],
     (io.stdout ?? process.stdout).write(`${usage}\n${example}\n`
       + 'Run a worker from the single live worker-handoff envelope addressed to --to. The retained\n'
       + 'prompt is untrusted context on stdin; only the explicit argv is executed — nothing is claimed,\n'
-      + 'completed, merged or derived from message content.\n');
+      + 'completed, merged or derived from message content. --timeout-ms bounds the worker wall-clock\n'
+      + 'lifetime in milliseconds; omitted, the worker is unbounded.\n');
     return 0;
   }
   const invalid = (): number => { (io.stderr ?? process.stderr).write(`${usage}\n`); return 2; };
@@ -25,13 +26,18 @@ export async function cmdFleetHandoffReceive(args: string[],
   const flags = new Map<string, string>();
   for (let i = 0; i < split; i++) {
     const key = args[i]!, value = i + 1 < split ? args[i + 1] : undefined;
-    if (!['--id', '--to', '--snapshot', '--cwd'].includes(key) || flags.has(key) ||
+    if (!['--id', '--to', '--snapshot', '--cwd', '--timeout-ms'].includes(key) || flags.has(key) ||
         value === undefined || value.includes('\0')) return invalid();
     flags.set(key, value);
     i++;
   }
-  const id = flags.get('--id'), to = flags.get('--to'), snapshot = flags.get('--snapshot'), cwd = flags.get('--cwd');
+  const id = flags.get('--id'), to = flags.get('--to'), snapshot = flags.get('--snapshot');
+  const cwd = flags.get('--cwd'), timeout = flags.get('--timeout-ms');
   if (!id || !token(id) || !to || !token(to) ||
-      !snapshot || !isAbsolute(snapshot) || snapshot.includes('\0')) return invalid();
-  return receiveHandoffBus({ id, to, snapshot, cwd, argv: args.slice(split + 1) }, options, io);
+      !snapshot || !isAbsolute(snapshot) || snapshot.includes('\0') ||
+      (timeout !== undefined &&
+        (!/^\d+$/.test(timeout) || !Number.isSafeInteger(Number(timeout)) ||
+          Number(timeout) < 1 || Number(timeout) > 3600000))) return invalid();
+  return receiveHandoffBus({ id, to, snapshot, cwd, argv: args.slice(split + 1),
+    timeoutMs: timeout === undefined ? undefined : Number(timeout) }, options, io);
 }

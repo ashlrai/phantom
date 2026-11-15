@@ -1,0 +1,210 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://phm.dev/schemas/done-contract.v1.schema.json",
+  "title": "done-contract.v1",
+  "description": "Structural preview only; validation does not establish command safety or completion. The parser also checks unique command and floor-check IDs, unique acceptance IDs, command references, and date parseability; JSON Schema draft-07 cannot express these cross-field and runtime rules.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "done-contract.v1"
+    },
+    "job": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "frozenAt": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d\\d-\\d\\dT",
+      "description": "ISO-like timestamp prefix; the parser additionally requires a parseable date."
+    },
+    "floor": {
+      "type": "object",
+      "properties": {
+        "checks": {
+          "minItems": 1,
+          "maxItems": 4,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "typecheck",
+              "unit",
+              "lint",
+              "secrets"
+            ]
+          }
+        },
+        "commands": {
+          "minItems": 1,
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+              },
+              "cmd": {
+                "minItems": 1,
+                "maxItems": 64,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "pattern": "^[\\x20-\\x7E]+$"
+                },
+                "description": "Printable argv elements; no shell interpretation is implied or safety established."
+              },
+              "cwd": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[\\x20-\\x5B\\x5D-\\x7E]+$"
+              },
+              "timeoutMs": {
+                "type": "integer",
+                "minimum": 1000,
+                "maximum": 3600000
+              },
+              "required": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "cmd"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "checks"
+          ]
+        },
+        {
+          "required": [
+            "commands"
+          ]
+        }
+      ]
+    },
+    "acceptance": {
+      "minItems": 1,
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[\\x20-\\x7E]+$"
+          },
+          "evidence": {
+            "type": "string",
+            "pattern": "^(notes|manual|command:[a-z0-9][a-z0-9._-]{0,63}|file:(?!\\.\\.(?:/|$))(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[\\x20-\\x5B\\x5D-\\x7E]+)$"
+          },
+          "required": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "verify": {
+      "minItems": 1,
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+          },
+          "cmd": {
+            "minItems": 1,
+            "maxItems": 64,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[\\x20-\\x7E]+$"
+            },
+            "description": "Printable argv elements; no shell interpretation is implied or safety established."
+          },
+          "cwd": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[\\x20-\\x5B\\x5D-\\x7E]+$"
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 3600000
+          },
+          "required": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "cmd"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "notesFile": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^(?![A-Za-z]:)(?!\\.\\.$)[\\x20-\\x2E\\x30-\\x5B\\x5D-\\x7E]+$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "schema"
+  ],
+  "additionalProperties": false,
+  "anyOf": [
+    {
+      "required": [
+        "floor"
+      ]
+    },
+    {
+      "required": [
+        "acceptance"
+      ]
+    },
+    {
+      "required": [
+        "verify"
+      ]
+    }
+  ]
+}

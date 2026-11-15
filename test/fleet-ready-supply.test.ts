@@ -27,7 +27,7 @@ describe('fleet ready-supply', () => {
     expect(await cmdFleetReadySupply([], { read: async () => ({ ...sample, sourceState: 'missing' }) })).toBe(0);
   });
 
-  it.each([['--bogus'], ['--help', '--bogus'], ['--runs-dir'], ['--runs-dir', 'relative'], ['--json', '--json'], ['--runs-dir', '/tmp', '--runs-dir', '/tmp']])('rejects invalid arguments %j', async (...args) => {
+  it.each([['--bogus'], ['--help', '--bogus'], ['--runs-dir'], ['--runs-dir', 'relative'], ['--json', '--json'], ['--runs-dir', '/tmp', '--runs-dir', '/tmp']])('rejects invalid arguments %j (#%#)', async (...args) => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const read = vi.fn();
     expect(await cmdFleetReadySupply(args, { read })).toBe(2);

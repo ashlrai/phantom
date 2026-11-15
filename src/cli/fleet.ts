@@ -53,7 +53,6 @@ import type { ResourceStrategyReport } from '../core/autonomy/resource-strategy.
 import { makeColors, isTty } from './ui.js';
 import { rejectUnknownOptions, type AllowedOptions } from './args.js';
 import { resolveFleetSubcommand, isModuleNotFound } from './fleet-subcommand-resolve.js';
-import { FLEET_SUBCOMMAND_LOADERS } from './fleet-subcommand-registry.js';
 
 const { bold, dim, green, red, yellow, cyan } = makeColors(isTty());
 
@@ -1999,7 +1998,7 @@ export async function cmdFleetWatch(jsonMode: boolean): Promise<number> {
   // 2. Recent audit actions (last 8).
   let recentActions: AuditEntry[] = [];
   try {
-    const { readAudit } = await import('../core/sandbox/audit.js' as unknown as string) as {
+    const { readAudit } = await import('../core/sandbox/audit.js') as {
       readAudit: (limit?: number) => AuditEntry[];
     };
     recentActions = readAudit(8);
@@ -2533,11 +2532,8 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
   backlog:        { allowed: { flags: ['--json'], values: ['--repo', '--limit', '--pr', '--exclude-pr', '--merges', '--recuts', '--recut-job'] }, usage: 'ashlr fleet backlog [--repo <owner/name>] [--limit <n>] [--pr <n>]... (up to 20 distinct) [--exclude-pr <n>]... [--merges <n>] [--recuts <n>] [--json] [--recut-job <n>]' },
 };
 
-export async function cmdFleet(args: string[]): Promise<number> {
-  if (args[0] === 'act') {
-    const { cmdFleetAct } = await import('./fleet-act.js');
-    return cmdFleetAct(args.slice(1));
-  }
+/** Core dispatcher; executable callers use fleet-entry.ts to supply convention loaders. */
+export async function cmdFleet(args: string[], loaders: Readonly<Record<string, () => Promise<Record<string, unknown>>>> = {}): Promise<number> {
   if (args[0] === 'merge-throughput') {
     const { cmdMergeThroughput } = await import('./telemetry.js');
     return cmdMergeThroughput(args.slice(1));
@@ -2569,7 +2565,7 @@ export async function cmdFleet(args: string[]): Promise<number> {
     // src/cli/fleet-<name>.ts exporting
     // cmdFleet<PascalName>(args: string[]): Promise<number>.
     const resolved = resolveFleetSubcommand(sub);
-    const loader = resolved ? FLEET_SUBCOMMAND_LOADERS[sub] : undefined;
+    const loader = resolved ? loaders[sub] : undefined;
     if (resolved && loader) {
       let loaded: Record<string, unknown> | undefined;
       try {
@@ -2746,6 +2742,8 @@ function printFleetHelp(): void {
   console.log(`    phm fleet wait-jobs --job ID --timeout-ms N [--interval-ms N] --json`);
   console.log(`    phm fleet job <id> [--json] [--changes] ${cyan('# host worker evidence')}`);
   console.log(`    phm fleet journal [--json]    ${cyan('# leader journal and ingest decisions')}`);
+  console.log(`    phm fleet deploy-plan --since <sha> [--json]  ${cyan('# find fleet scripts awaiting deployment; read-only')}`);
+  console.log(`    phm fleet supply --lane <lane> --n <N> [--json]  ${cyan('# suggest queue work from open sources')}`);
   console.log(`    phm fleet parked [--json]     ${cyan('# ready/parked host work; unmetDeps lists PARKED-DEP gates')}`);
   console.log(`    ashlr fleet direction [--json] ${cyan('# read-only autonomous direction report')}`);
   console.log(`    ashlr fleet init [--write]    ${cyan('# print/merge a starter cfg.foundry')}`);

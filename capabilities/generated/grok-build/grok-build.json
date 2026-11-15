@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "phantom-gateway": {
+      "args": [
+        "mcp"
+      ],
+      "command": "phm"
+    }
+  },
+  "models": [
+    "grok-4.7",
+    "grok-4.7-build-fast"
+  ]
+}

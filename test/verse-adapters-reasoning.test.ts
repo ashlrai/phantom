@@ -36,9 +36,11 @@ import {
   classifyVerseCliError,
   createAnthropicStreamParser,
   grokConversationState,
+  nearestResetWindowMs,
   readNativeProfileFacts,
   thinkingDisplayEnabled,
 } from '../src/core/verse/adapters/claude.js';
+import { CLAUDE_RETRY_WATCHDOG_MIN_VERSION } from '../src/core/resources/pool-cli-versions.js';
 import { codexResumes, createCodexParser } from '../src/core/verse/adapters/codex.js';
 import type { VerseSeatLaunch } from '../src/core/verse/session-engine.js';
 import {
@@ -657,6 +659,73 @@ describe('claude launch — --thinking-display summarized', () => {
     const p = makeProfile(root, 'odd', { provider: 'codex', executable: '/Users/u/.local/share/claude/versions/2.1.280' });
     expect(readNativeProfileFacts(['/usr/local/bin/node', p.launcher], 'claude')).toBeNull();
     expect(claudeThinkingDisplayArgs(session(), launch({ launcher: ['/usr/local/bin/node', p.launcher] }))).toEqual([]);
+  });
+});
+
+describe('claude launch — unattended retry-watchdog env', () => {
+  let root = '';
+  beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'verse-a4-profiles-')); });
+  afterEach(() => { rmSync(root, { recursive: true, force: true }); });
+
+  let profileIndex = 0;
+  function claudeProfile(executable: string | null): string[] {
+    const p = makeProfile(root, `claude-${profileIndex++}`, { provider: 'claude', ...(executable ? { executable } : {}) });
+    return ['/usr/local/bin/node', p.launcher];
+  }
+  const seatWith = (resetsAt: (string | null)[], cliVersion?: string): VerseSeat => ({
+    ...CLAUDE_SEAT, ...(cliVersion === undefined ? {} : { cliVersion }),
+    health: { state: 'ready', summary: null, observedAt: null,
+      windows: resetsAt.map((r, i) => ({ id: `window-${i}`, usedPercent: 50, resetsAt: r })) },
+  });
+  const watchdogKeys = (env: Record<string, string>) =>
+    Object.keys(env).filter((key) => key.startsWith('CLAUDE_CODE_RETRY_WATCHDOG'));
+
+  it('pins the env to the seat\'s nearest reset horizon only on a 2.1.311+ build', () => {
+    const soon = new Date(Date.now() + 60_000).toISOString();
+    const later = new Date(Date.now() + 300_000).toISOString();
+    const l = launch({ launcher: claudeProfile('/Users/u/.local/share/claude/versions/2.1.311'),
+      seat: seatWith([later, soon, null]) });
+    const env = adapterFor('claude').buildLaunch(session(), 'hi', l).env;
+    const wait = Number(env.CLAUDE_CODE_RETRY_WATCHDOG_MAX_USAGE_LIMIT_WAIT_MS);
+    expect(Number.isSafeInteger(wait) && wait > 0 && wait <= 60_000).toBe(true);
+    const recheck = Number(env.CLAUDE_CODE_RETRY_WATCHDOG_USAGE_LIMIT_RECHECK_MS);
+    expect(recheck).toBe(Math.min(Math.max(1, Math.floor(wait / 10)), 3_600_000));
+    expect(watchdogKeys(env).sort()).toEqual([
+      'CLAUDE_CODE_RETRY_WATCHDOG_MAX_USAGE_LIMIT_WAIT_MS', 'CLAUDE_CODE_RETRY_WATCHDOG_USAGE_LIMIT_RECHECK_MS']);
+  });
+
+  it.each(['2.1.309', '2.1.310'])('sets nothing on an admitted build below the floor: %s', (version) => {
+    const l = launch({ launcher: claudeProfile(`/Users/u/.local/share/claude/versions/${version}`),
+      seat: seatWith([new Date(Date.now() + 60_000).toISOString()]) });
+    expect(watchdogKeys(adapterFor('claude').buildLaunch(session(), 'hi', l).env)).toEqual([]);
+  });
+
+  it('sets nothing when the build is unverifiable or the seat reports no live reset horizon', () => {
+    const soon = new Date(Date.now() + 60_000).toISOString();
+    const noBinary = launch({ launcher: claudeProfile(null), seat: seatWith([soon]) });
+    const noVersion = launch({ launcher: null, seat: seatWith([soon]) });
+    const noWindows = launch({ launcher: claudeProfile('/Users/u/.local/share/claude/versions/2.1.311'),
+      seat: seatWith([null, new Date(Date.now() - 1_000).toISOString(), 'garbage']) });
+    for (const l of [noBinary, noVersion, noWindows]) {
+      expect(watchdogKeys(adapterFor('claude').buildLaunch(session(), 'hi', l).env)).toEqual([]);
+    }
+    expect(CLAUDE_RETRY_WATCHDOG_MIN_VERSION).toBe('2.1.311');
+  });
+
+  it('honours the snapshot cliVersion when the profile names no binary', () => {
+    const l = launch({ launcher: claudeProfile(null),
+      seat: seatWith([new Date(Date.now() + 120_000).toISOString()], '2.1.312') });
+    expect(watchdogKeys(adapterFor('claude').buildLaunch(session(), 'hi', l).env)).toHaveLength(2);
+  });
+
+  it('nearestResetWindowMs returns the soonest future reset only', () => {
+    const now = Date.parse('2026-10-27T12:00:00.000Z');
+    const at = (delta: number) => new Date(now + delta).toISOString();
+    expect(nearestResetWindowMs([], now)).toBeNull();
+    expect(nearestResetWindowMs([{ resetsAt: null }], now)).toBeNull();
+    expect(nearestResetWindowMs([{ resetsAt: at(0) }, { resetsAt: at(-1) }], now)).toBeNull();
+    expect(nearestResetWindowMs([{ resetsAt: 'garbage' }], now)).toBeNull();
+    expect(nearestResetWindowMs([{ resetsAt: at(90_000) }, { resetsAt: at(30_000) }, { resetsAt: null }], now)).toBe(30_000);
   });
 });
 

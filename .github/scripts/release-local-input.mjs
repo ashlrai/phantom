@@ -31,12 +31,18 @@ function readOwned(path, cap) {
   } finally { closeSync(fd); }
 }
 const positiveText = value => typeof value === 'string' && /^[1-9][0-9]*$/.test(value) && Number.isSafeInteger(Number(value));
+// Master, or the stable tag whose commit is the candidate. The smoke job if already allows both.
+const RELEASE_REF = /^refs\/(?:heads\/master|tags\/v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/;
 export function producerRef(env) {
   const { repository } = requireProducerEnvironment(env);
   assert.ok(positiveText(env.GITHUB_RUN_ID) && positiveText(env.GITHUB_RUN_ATTEMPT));
   assert.match(env.GITHUB_SHA ?? '', /^[a-f0-9]{40}$/);
-  assert.equal(env.GITHUB_REF, 'refs/heads/master');
+  assert.match(env.GITHUB_REF ?? '', RELEASE_REF);
   return { repository, run: env.GITHUB_RUN_ID, attempt: env.GITHUB_RUN_ATTEMPT, revision: env.GITHUB_SHA };
+}
+function releaseBranch(ref) {
+  const tag = /^refs\/tags\/(v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/.exec(ref ?? '');
+  return tag ? tag[1] : 'master';
 }
 const preparedPath = env => join(realpathSync(env.RUNNER_TEMP), 'release-prepared');
 const witnessPath = env => join(realpathSync(env.RUNNER_TEMP), 'release-input-witness.json');
@@ -55,10 +61,7 @@ export function snapshotInput(prepared) {
 }
 
 export function captureInput(env = process.env, root = process.cwd()) {
-  const record = { schemaVersion: 1, producer: producerRef(env), sourceSha256: sha(JSON.stringify(sourceBinding(root, env.GITHUB_SHA))),
-    snapshot: snapshotInput(preparedPath(env)) };
-  writeFileSync(witnessPath(env), `${JSON.stringify(record)}\n`, { flag: 'wx', mode: 0o400 });
-  return record;
+  return captureWithReasons(env, root);
 }
 
 export function validateUploadedInput(record, env, artifact, run) {
@@ -74,7 +77,7 @@ export function validateUploadedInput(record, env, artifact, run) {
   assert.equal(artifact.workflow_run?.head_sha, producer.revision);
   requireRepositoryReference(producer.repository, run.repository);
   assert.equal(run.id, Number(producer.run)); assert.equal(run.run_attempt, Number(producer.attempt));
-  assert.equal(run.head_sha, producer.revision); assert.equal(run.head_branch, 'master');
+  assert.equal(run.head_sha, producer.revision); assert.equal(run.head_branch, releaseBranch(env.GITHUB_REF));
   assert.equal(run.path, '.github/workflows/ci.yml');
   assert.ok(['workflow_dispatch', 'schedule'].includes(run.event));
   assert.equal(run.status, 'in_progress');
@@ -133,11 +136,29 @@ export function retainFreshDist({ root, prepared, backup }) {
   for (const key of Object.keys(before).filter(key => key !== 'ctimeNs')) assert.equal(after[key], before[key]);
 }
 
+// Only fixed codes reach the Actions log; underlying errors may contain paths.
+function custodyStep(code, action) {
+  try { return action(); } catch (error) {
+    const failure = new Error('release input refused', { cause: error });
+    failure.custodyCode = code;
+    throw failure;
+  }
+}
+
+export function captureWithReasons(env = process.env, root = process.cwd()) {
+  const producer = custodyStep('wrong_runner', () => producerRef(env));
+  const binding = custodyStep('stale_checkout', () => sourceBinding(root, env.GITHUB_SHA));
+  const snapshot = custodyStep('invalid_input', () => snapshotInput(preparedPath(env)));
+  const record = { schemaVersion: 1, producer, sourceSha256: sha(JSON.stringify(binding)), snapshot };
+  custodyStep('witness_unavailable', () => writeFileSync(witnessPath(env), `${JSON.stringify(record)}\n`, { flag: 'wx', mode: 0o400 }));
+  return record;
+}
+
 async function main() {
   const [verb, ...extra] = process.argv.slice(2); assert.equal(extra.length, 0);
-  if (verb === 'capture') return captureInput();
+  if (verb === 'capture') return captureWithReasons();
   assert.equal(verb, 'verify'); return verifyLocalInput();
 }
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
-  main().catch(() => { console.error('same-runner release input refused'); process.exitCode = 1; });
+  main().catch(error => { console.error(`same-runner release input refused: ${error.custodyCode ?? 'verification_failed'}`); process.exitCode = 1; });
 }

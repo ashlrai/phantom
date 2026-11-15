@@ -8,6 +8,22 @@ import { requireRepositoryMetadata, requireRepositoryReference } from './github-
 
 const SHA = /^[a-f0-9]{40}$/;
 const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+
+/** Follow an annotated tag to its commit. A lightweight tag is already a commit. */
+export async function peeledCommit(read, base, object) {
+  let current = object;
+  const seen = new Set();
+  for (let depth = 0; current?.type === 'tag'; depth += 1) {
+    assert.ok(depth < 4 && SHA.test(current.sha) && !seen.has(current.sha), 'invalid tag annotation');
+    seen.add(current.sha);
+    const tag = await read(`${base}/git/tags/${current.sha}`);
+    assert.equal(tag?.sha, current.sha, 'tag annotation sha mismatches');
+    current = tag.object;
+  }
+  assert.equal(current?.type, 'commit', 'release tag does not peel to a commit');
+  assert.match(current.sha ?? '', SHA);
+  return current.sha;
+}
 export function nextPatch(version) {
   assert.match(version ?? '', VERSION, 'invalid source version');
   const parts = version.split('.').map(Number);
@@ -44,13 +60,12 @@ export async function planReleaseCadence({ repository, revision, minutes = 30, n
   const tag = await read(`${base}/git/ref/tags/v${pkg.version}`);
   if (tag === null) return { due: false, reason: 'current-version-awaits-tag' };
   assert.equal(tag.ref, `refs/tags/v${pkg.version}`);
-  assert.equal(tag.object?.type, 'commit');
-  assert.match(tag.object.sha ?? '', SHA);
-  if (tag.object.sha === revision) return { due: false, reason: 'no-new-commits' };
-  const compare = await read(`${base}/compare/${tag.object.sha}...${revision}`);
+  const tagSha = await peeledCommit(read, base, tag.object);
+  if (tagSha === revision) return { due: false, reason: 'no-new-commits' };
+  const compare = await read(`${base}/compare/${tagSha}...${revision}`);
   assert.equal(compare.status, 'ahead', 'current version tag is not an ancestor of master');
   assert.ok(Number.isSafeInteger(compare.ahead_by) && compare.ahead_by > 0);
-  const tagged = await read(`${base}/commits/${tag.object.sha}`);
+  const tagged = await read(`${base}/commits/${tagSha}`);
   const taggedAt = Date.parse(tagged.commit?.committer?.date);
   assert.ok(Number.isFinite(taggedAt) && taggedAt <= now, 'invalid tagged commit timestamp');
   if (now - taggedAt < minutes * 60_000) return { due: false, reason: 'cadence-not-due' };
@@ -153,7 +168,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   try {
     assert.equal(process.env.GITHUB_REF, 'refs/heads/master');
     const plan = await planReleaseCadenceWhenAvailable({ repository: process.env.GITHUB_REPOSITORY, revision: process.env.GITHUB_SHA,
-      minutes: Math.max(60, cadenceMinutes(process.env.RELEASE_CADENCE_MINUTES || '60')), read: createPublicMetadataReader() });
+      minutes: cadenceMinutes(process.env.RELEASE_CADENCE_MINUTES || '5'), read: createPublicMetadataReader() });
     assert.ok(process.env.GITHUB_OUTPUT);
     appendFileSync(process.env.GITHUB_OUTPUT, `due=${plan.due}\nversion=${plan.version ?? ''}\n`);
     console.log(JSON.stringify(plan));

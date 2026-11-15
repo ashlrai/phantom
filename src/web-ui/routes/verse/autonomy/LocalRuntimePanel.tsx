@@ -324,7 +324,7 @@ export function LocalRuntimePanel({
 
           {!supervised ? (
             <p className={styles.actionNote} role="status">
-              Managed outside the hub (a login item or terminal owns it) — start and stop it there.
+              Managed outside Phantom (a login item or terminal owns it) — start and stop it there.
             </p>
           ) : null}
 

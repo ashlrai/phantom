@@ -51,7 +51,6 @@ import { SkeletonLine } from '../../../components/primitives/Skeleton.js';
 import { ActionMenu, anchorBelow, type ActionMenuItem, type MenuAnchor } from '../chat/ActionMenu.js';
 import { commandChord, formatChord } from '../shell/command-keys.js';
 import { DOCK_LAYOUT, clampDockHeight, clampDockWidth, type DockPaneId, type DockPresentation } from '../shell/dock-catalog.js';
-import { DOCK_PANES, REGISTERED_DOCK_PANE_GROUPS, type DockPaneCatalogEntry } from '../shell/dock-pane-catalog.js';
 import { getPane, isPaneAvailable, paneChordLabel, panesFor, preloadPanes, usePanes, type PaneContext, type PaneProps, type RegisteredPane } from '../panes/index.js';
 import {
   closeDock,
@@ -132,10 +131,7 @@ function DockAddMenu({ panes, anchor, returnFocus, onClose }: {
   closeRef.current = onClose;
   const [query, setQuery] = useState('');
   const [position, setPosition] = useState({ left: anchor.x, top: anchor.y });
-  const entries = panes.map((pane) => {
-    const catalog: DockPaneCatalogEntry | undefined = DOCK_PANES.find((entry) => entry.id === pane.id);
-    return { id: pane.id, label: pane.title, group: catalog?.group ?? REGISTERED_DOCK_PANE_GROUPS[pane.id] ?? 'agent', pane };
-  });
+  const entries = panes.map((pane) => ({ id: pane.id, label: pane.title, pane }));
   const groups = groupDockPanes(entries, query);
 
   useLayoutEffect(() => {

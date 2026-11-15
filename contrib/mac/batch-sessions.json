@@ -1,0 +1,19 @@
+{
+ "schema": "ashlr.batch-sessions.v1",
+ "max_lines": 10,
+ "min_lines": 2,
+ "lanes": ["claude", "codex-personal", "codex-cmp", "devin"],
+ "models": {
+  "claude": {"workhorse": "sonnet", "hard": "opus"},
+  "codex": {"default": "gpt-6.1-terra"},
+  "devin": {"default": "swe-2-flash"}
+ },
+ "hard_markers": ["architecture", "architectural", "redesign", "migration", "concurrency", "race condition",
+                  "security", "threat model", "protocol", "cross-cutting", "invariant"],
+ "devin": {
+  "route": true,
+  "eligible_repos": ["phantom"],
+  "sm_max_lines": 100,
+  "fallback_lanes": ["claude", "codex-personal", "codex-cmp"]
+ }
+}

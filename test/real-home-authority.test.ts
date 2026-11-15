@@ -10,9 +10,10 @@
  * The outside transports (iMessage, Telegram, Mail.app) are also proved to
  * check KILL and comms pause themselves, refusing without spawning.
  */
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
+import { tmpdir, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -22,6 +23,7 @@ vi.mock('node:child_process', async (importOriginal) => {
   return { ...actual, execFile: childProcess.execFile, default: { ...actual, execFile: childProcess.execFile } };
 });
 
+import { realHome as nullableRealHome } from '../src/core/real-home.js';
 import {
   __restoreRealHomeForTests, __setRealHomeForTests, realHome, type RealHomeTestOverride,
 } from '../src/core/util/real-home.js';
@@ -44,8 +46,8 @@ import { enroll } from '../src/core/sandbox/policy.js';
 import { outsideSendBlock } from '../src/core/comms/transport-gate.js';
 import type { AshlrConfig } from '../src/core/types.js';
 
-// The native os module: the passwd account home, never a vitest mock.
-const nativeOs = createRequire(import.meta.url)('node:os') as typeof import('node:os');
+// The harness supplies a stable passwd home, separate from the relocated HOME.
+// Use the same os boundary as the resolver so these tests never touch the account.
 
 const OWNER = '+15550000001';
 const OUTSIDER = '+15559999999';
@@ -266,12 +268,14 @@ describe('phm demo isolated authority home', () => {
     expect(() => makeDemoContext()).toThrow(/kill switch is on/);
     expect(process.env.HOME).toBe(envHome);
     expect(realHome()).toBe(accountHome);
+    expect(nullableRealHome()).toBe(accountHome);
   });
 
   it('keeps demo enrollment out of the account home and blocks outside sends while scoped', () => {
     const ctx = makeDemoContext();
     try {
       expect(realHome()).toBe(ctx.home);
+      expect(nullableRealHome()).toBe(ctx.home);
       enroll(ctx.repoDir);
       expect(existsSync(join(ctx.home, '.ashlr', 'enrollment.json'))).toBe(true);
       expect(existsSync(join(accountHome, '.ashlr', 'enrollment.json'))).toBe(false);
@@ -280,16 +284,31 @@ describe('phm demo isolated authority home', () => {
       ctx.dispose();
     }
     expect(realHome()).toBe(accountHome);
+    expect(nullableRealHome()).toBe(accountHome);
     expect(process.env.HOME).toBe(envHome);
     expect(outsideSendBlock()).toBeNull();
   });
 });
 
 describe('realHome()', () => {
+  it('uses the native account home in a child without the test preload', () => {
+    const moduleUrl = pathToFileURL(resolve('src/core/util/real-home.ts')).href;
+    const source = `import { realHome } from ${JSON.stringify(moduleUrl)};
+      import { userInfo } from 'node:os';
+      process.stdout.write(String(realHome() === userInfo().homedir));`;
+    const child = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval', source], {
+      env: { ...process.env, HOME: envHome, USERPROFILE: envHome, VITEST: '', NODE_OPTIONS: '' },
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    expect(child.status, child.stderr).toBe(0);
+    expect(child.stdout).toBe('true');
+  });
+
   it.skipIf(process.platform === 'win32')('is the passwd home and ignores HOME, USERPROFILE and ASHLR_HOME', () => {
     const pinned = __setRealHomeForTests(null);
     try {
-      const account = nativeOs.userInfo().homedir;
+      const account = userInfo().homedir;
       expect(realHome()).toBe(account);
       process.env.HOME = envHome;
       process.env.USERPROFILE = envHome;
@@ -303,12 +322,13 @@ describe('realHome()', () => {
   it.skipIf(process.platform === 'win32')('ignores a leftover override and refuses the seam when VITEST is unset', () => {
     vi.stubEnv('VITEST', '');
     try {
-      expect(realHome()).toBe(nativeOs.userInfo().homedir);
+      expect(realHome()).toBe(userInfo().homedir);
       expect(() => __setRealHomeForTests(envHome)).toThrow(/only available under Vitest/);
     } finally {
       vi.unstubAllEnvs();
     }
     expect(realHome()).toBe(accountHome);
+    expect(nullableRealHome()).toBe(accountHome);
   });
 
   it('refuses a relative seam path', () => {

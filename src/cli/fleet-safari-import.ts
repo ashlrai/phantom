@@ -1,30 +1,42 @@
-import { closeSync, constants, fstatSync, mkdirSync, openSync, readSync, writeSync } from 'node:fs';
+import { appendNeedsMasonLine } from '../core/fleet/needs-mason-append.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
   applySafariImport, markSafariImportDone, planSafariImport, readSafariImportState, SafariImportStateError,
 } from '../core/fleet/safari-import-ask.js';
+import {
+  runSafariImportHelper, SAFARI_IMPORT_HELPER_USAGE, type SafariImportHelperDeps,
+} from '../core/fleet/safari-import-helper.js';
 
-const usage = 'Usage: ashlr fleet safari-import [--json] [--apply | --done] [--runs-dir <dir>]';
+const usage = `Usage: ashlr fleet safari-import [--json] [--apply | --done] [--runs-dir <dir>]
+       ${SAFARI_IMPORT_HELPER_USAGE}
+Without a mode, plans or records the NEEDS-MASON ask to import Chrome data into Safari.
+status and begin-import drive scripts/mac-bridge/safari_import.py (python3 -I, never a
+shell) to check or open Safari's File > Import From > Google Chrome dialog. --root names
+the runs root under which supervisor/NEEDS-MASON.md receives any block line (default
+~/.ashlr-runs); the helper is killed --timeout + 15s after launch. With --json the
+helper's JSON prints unchanged and its exit code propagates: 2 means blocked on a human
+step, a normal result. Safari, Keychain and the import itself stay with the operator.`;
 
-/** Appends one open `- [ ]` item to NEEDS-MASON.md, the same file the glance and resolve paths read. */
-export function appendNeedsMasonLine(runsDir: string, text: string): void {
-  mkdirSync(runsDir, { recursive: true });
-  const fd = openSync(join(runsDir, 'NEEDS-MASON.md'), constants.O_RDWR | constants.O_CREAT | constants.O_APPEND | constants.O_NOFOLLOW, 0o600);
-  try {
-    const size = fstatSync(fd).size;
-    let lead = '';
-    if (size > 0) {
-      const last = Buffer.alloc(1);
-      readSync(fd, last, 0, 1, size - 1);
-      if (last[0] !== 0x0a) lead = '\n';
-    }
-    writeSync(fd, `${lead}- [ ] ${text}\n`);
-  } finally { closeSync(fd); }
+/** Flags whose next argument is a value, not a mode word. */
+const VALUE_FLAGS = new Set(['--runs-dir', '--root', '--timeout']);
+
+/** True when argv names a bare word (a mode), so the helper path owns parsing and validation. */
+function hasModeWord(args: readonly string[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    if (VALUE_FLAGS.has(args[i]!)) i++;
+    else if (!args[i]!.startsWith('-')) return true;
+  }
+  return false;
 }
 
-export async function cmdFleetSafariImport(args: string[], opts: { runsDir?: string; now?: () => Date } = {}): Promise<number> {
-  if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { console.log(usage); return 0; }
+export { appendNeedsMasonLine } from '../core/fleet/needs-mason-append.js';
+
+export async function cmdFleetSafariImport(
+  args: string[], opts: { runsDir?: string; now?: () => Date } & SafariImportHelperDeps = {},
+): Promise<number> {
+  if (args.includes('--help') || args.includes('-h')) { console.log(usage); return 0; }
+  if (hasModeWord(args)) return runSafariImportHelper(args, { exec: opts.exec, locateScript: opts.locateScript });
   let json = false, apply = false, done = false;
   let runsDirArg: string | undefined;
   for (let i = 0; i < args.length; i++) {

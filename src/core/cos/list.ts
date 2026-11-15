@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { QueueStore } from '../queue/store.js';
 import type { QueueStatus } from '../queue/schema.js';
 import { scrubSecrets } from '../util/scrub.js';
-import { cosStatus } from './intake.js';
+import { cosStatus, type CosDelivery } from './intake.js';
 
 export interface CosTaskSummary {
   id: string;
@@ -11,7 +11,7 @@ export interface CosTaskSummary {
   /** Draft origin channel when a draft exists, else the intake channel. */
   channel: string;
   needsYou: boolean;
-  delivery: 'sending' | 'sent' | 'uncertain' | null;
+  delivery: CosDelivery | null;
   hasDraft: boolean;
   /** Scope collapsed to one line, scrubbed, at most 140 characters. */
   request: string;

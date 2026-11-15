@@ -81,6 +81,29 @@ it('honours topRepos and never counts non-READY statuses', () => {
   expect(lane.topRepos.every(repo => repo.ready === 2)).toBe(true);
 });
 
+it('ages each lane by its oldest READY row; missing, bad or future times are untimed, never guessed', () => {
+  const now = Date.parse('2026-11-09T12:00:00Z');
+  const at = (time?: string, pool = 'devin', status = 'READY'): FleetLaneQueueRow => ({ id: null, status, pool, at: time });
+  const report = queueShape(
+    [
+      at('2026-11-09T09:00:00Z'), at('2026-11-09T11:30:00Z'), at(), at('not a date'), at('2026-11-09T13:00:00Z'),
+      at('2026-11-01T00:00:00Z', 'devin', 'CLAIMED'),
+      at('2026-11-01T00:00:00Z', 'codex', 'RUNNING'),
+    ],
+    [target('devin', 10), target('quiet', 3)],
+    { now },
+  );
+  expect(report.lanes.find(lane => lane.lane === 'devin')).toMatchObject({
+    ready: 5, oldestReadyAgeSeconds: 10800, untimedReady: 3,
+  });
+  expect(report.lanes.find(lane => lane.lane === 'quiet')).toMatchObject({
+    ready: 0, oldestReadyAgeSeconds: null, untimedReady: 0,
+  });
+  // Without a clock no age can be measured; every READY row is untimed.
+  const clockless = queueShape([at('2026-11-09T09:00:00Z')], [target('devin', 10)]);
+  expect(clockless.lanes[0]).toMatchObject({ oldestReadyAgeSeconds: null, untimedReady: 1 });
+});
+
 it('includes target-only lanes at ready 0 and drops malformed rows', () => {
   const report = queueShape(
     [row('devin'), { id: null, status: 'READY', pool: '' }, { id: null, status: 'READY', pool: undefined as unknown as string }],

@@ -1,6 +1,6 @@
 /** Fail-closed gates for local probes and outbound agent sends. Never delivers. */
 import { join } from 'node:path';
-import { realHome } from '../util/real-home.js';
+import { realHome } from '../real-home.js';
 import { outsideSendBlock } from '../comms/transport-gate.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -16,8 +16,9 @@ export function localWriteGate(): DeliverResult | null {
 
 /** Team identities and the owner confirmation, read from the account home. Unreadable grants nothing. */
 export function readLocalSendPolicy(): { teamIdentities: TeamIdentity[]; confirmedByMason: boolean } {
-  let directory: string;
-  try { directory = join(realHome(), '.ashlr'); } catch { return { teamIdentities: [], confirmedByMason: false }; }
+  const home = realHome();
+  if (!home) return { teamIdentities: [], confirmedByMason: false };
+  const directory = join(home, '.ashlr');
   const read = (name: string): string => {
     const result = readStableRegularFile(join(directory, name), {
       anchorPath: directory, maxFileBytes: 64 * 1024, remainingBytes: 64 * 1024,

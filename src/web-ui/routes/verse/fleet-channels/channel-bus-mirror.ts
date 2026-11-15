@@ -47,6 +47,6 @@ export function mirrorByChannel(inboxEntries: readonly unknown[], receipts: read
 export function mirrorHint(tone: MirrorTone, busState: BusState): string | null {
   if (busState === 'unavailable') return 'Bus unavailable, cannot verify';
   return tone === 'warn' && busState === 'available'
-    ? 'Messages reach the inbox but not the bus: the hub needs --allow-dispatch and a writable bus store'
+    ? 'Messages reach the inbox but not the bus: Phantom needs --allow-dispatch and a writable bus store'
     : null;
 }

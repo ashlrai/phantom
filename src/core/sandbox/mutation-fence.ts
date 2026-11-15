@@ -1,12 +1,12 @@
 import { chmodSync, lstatSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { canonicalRealHome } from '../util/real-home.js';
 import {
   acquireLocalStoreLock,
   ownsLocalStoreLock,
   releaseLocalStoreLock,
   type LocalStoreLock,
 } from '../fleet/local-store-lock.js';
+import { realHome } from '../real-home.js';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
 
 /**
@@ -58,7 +58,7 @@ function isAcquiredFence(
 }
 
 export function outwardMutationFencePath(): string {
-  const home = canonicalRealHome();
+  const home = realHome();
   if (!home) throw new Error('invalid home directory for outward mutation authority');
   return join(home, '.ashlr', 'authority', 'outward-mutation.lock');
 }
@@ -135,7 +135,7 @@ function preparePrivateDirectory(
 }
 
 function prepareOutwardAuthorityRoot(): boolean {
-  const home = canonicalRealHome();
+  const home = realHome();
   if (!home) return false;
   const rootPath = join(home, '.ashlr');
   const authorityPath = join(rootPath, 'authority');

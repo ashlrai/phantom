@@ -86,7 +86,7 @@ export interface PaletteWorker {
 }
 
 export interface PaletteInput {
-  panes?: ReadonlyArray<{ id: string; title: string; keywords?: readonly string[] }>;
+  panes?: ReadonlyArray<{ id: string; title: string; description?: string | null; keywords?: readonly string[] }>;
   workers?: readonly PaletteWorker[];
   lanes?: readonly PaletteLane[];
   backlog?: readonly PaletteBacklogItem[];
@@ -286,7 +286,7 @@ export function buildPaletteItems(input: PaletteInput): PaletteItem[] {
       key: `pane:${pane.id}`, kind: 'pane', group: 'panes',
       title: `Open pane: ${pane.title}`, subtitle: null, shortcut: null,
       monogram: null, engine: null,
-      keywords: [pane.title, ...pane.id.split('-'), ...(pane.keywords ?? [])],
+      keywords: [pane.title, ...pane.id.split('-'), ...(pane.description ? [pane.description] : []), ...(pane.id === 'goals' ? ['metrics', 'vision'] : []), ...(pane.keywords ?? [])],
       argument: null, tone: 'neutral', payload: { kind: 'pane', paneId: pane.id },
     });
   }

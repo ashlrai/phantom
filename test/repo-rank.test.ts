@@ -49,7 +49,9 @@ describe('repository ranking', () => {
 
 test('restock rank consumer preserves fallback and apportions available work', () => {
   const source = readFileSync(new URL('../contrib/mac/restock.py', import.meta.url), 'utf8');
-  const helper = source.slice(source.indexOf('def ranked_records('), source.indexOf('for i, j, attrs, text, raw in ranked_records(recs):'));
+  const end = source.indexOf('for i, j, attrs, text, raw in sorted(ranked_records(recs)');
+  expect(end).toBeGreaterThan(0);
+  const helper = source.slice(source.indexOf('def ranked_records('), end);
   const script = `import json, re, math
 from datetime import datetime
 H = '/unused'

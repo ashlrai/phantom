@@ -7,6 +7,7 @@ import { inviteMember, memberIdForGithubUser } from '../teams/membership.js';
 import { validId, type TeamActor } from '../teams/protocol.js';
 import { teamState, type TeamState } from '../teams/state.js';
 import { DEFAULT_TEAM } from '../teams/tools.js';
+import { describeAccessAction } from '../teams/workspace.js';
 
 export const VERSE_TEAM_PATH = '/api/verse/team';
 export const VERSE_TEAM_INVITE_PATH = '/api/verse/team/invite';
@@ -76,7 +77,7 @@ export function createTeamApi(deps: TeamApiDeps = {}): ApiModule {
         .map((h) => ({ id: h.id, title: wireText(h.title), state: h.state, from: h.from, assignee: h.assignee ?? h.to ?? '' })),
       pendingApprovals: state.approvals
         .filter((a) => a.state === 'pending')
-        .map((a) => ({ id: a.id, action: a.action, requestedBy: a.requestedBy })),
+        .map((a) => ({ id: a.id, action: a.action ?? (a.access ? `access ${describeAccessAction(a.access)}` : ''), requestedBy: a.requestedBy })),
       messages: state.messages.slice(-5).map((m) => ({ from: m.from, channel: wireText(m.channel), ts: m.ts, text: wireText(m.text) })),
       next: state.members.length === 0
         ? `Confirm this is the intended local log with the team owner, then join from a human terminal: phm team join --team ${team}`

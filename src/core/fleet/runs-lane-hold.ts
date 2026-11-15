@@ -41,13 +41,26 @@ const REASON_RE = /^[\x20-\x7E]{0,120}$/;
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const integer = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0;
 const owned = (stat: Stats): boolean => typeof process.getuid !== 'function' || stat.uid === process.getuid();
-export function parseLaneHoldAction(body: unknown): { lane: string; action: 'release'; reason?: string } | null {
+const MAX_HOLD_MINUTES = 24 * 60;
+export type LaneHoldAction =
+  | { lane: string; action: 'release'; reason?: string }
+  | { lane: string; action: 'hold'; minutes: number; reason: string };
+export function parseLaneHoldAction(body: unknown): LaneHoldAction | null {
   if (!object(body)) return null;
   const keys = Object.keys(body);
-  if (keys.length < 2 || keys.length > 3 || keys.some((key) => key !== 'lane' && key !== 'action' && key !== 'reason')) return null;
-  if (typeof body.lane !== 'string' || !LANE_ID_RE.test(body.lane) || body.action !== 'release') return null;
+  if (keys.length < 2 || keys.length > 4 || keys.some((key) => key !== 'lane' && key !== 'action' && key !== 'reason' && key !== 'minutes')) return null;
+  if (typeof body.lane !== 'string' || !LANE_ID_RE.test(body.lane)) return null;
   if ('reason' in body && (typeof body.reason !== 'string' || !REASON_RE.test(body.reason))) return null;
-  return 'reason' in body ? { lane: body.lane, action: 'release', reason: body.reason as string } : { lane: body.lane, action: 'release' };
+  const reason = 'reason' in body ? (body.reason as string).trim() : undefined;
+  if (body.action === 'release') {
+    if ('minutes' in body) return null;
+    return reason === undefined ? { lane: body.lane, action: 'release' } : { lane: body.lane, action: 'release', reason };
+  }
+  if (body.action === 'hold') {
+    if (!Number.isSafeInteger(body.minutes) || (body.minutes as number) < 1 || (body.minutes as number) > MAX_HOLD_MINUTES) return null;
+    return { lane: body.lane, action: 'hold', minutes: body.minutes as number, reason: reason || 'held from desktop' };
+  }
+  return null;
 }
 async function directory(path: string): Promise<void> {
   const stat = await lstat(path);

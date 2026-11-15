@@ -32,7 +32,31 @@ import { enableCompileCache } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { vi } from 'vitest';
+import { beforeEach, vi } from 'vitest';
+import { useProcessHomeForTest } from '../../src/core/real-home.js';
+
+function childHomePreloadPath(): string {
+  const here = import.meta.url;
+  if (typeof here === 'string' && here.startsWith('file:')) {
+    return fileURLToPath(new URL('./child-process-home.cjs', here));
+  }
+  return join(process.cwd(), 'test', 'setup', 'child-process-home.cjs');
+}
+
+const CHILD_HOME_PRELOAD = childHomePreloadPath();
+
+/** Node children inherit this. The preload opts them into process home. */
+function retainChildHomePreload(): void {
+  const flag = `--require=${CHILD_HOME_PRELOAD}`;
+  const current = process.env.NODE_OPTIONS ?? '';
+  if (current.includes('child-process-home.cjs')) return;
+  process.env.NODE_OPTIONS = current.length === 0 ? flag : `${current} ${flag}`;
+}
+
+retainChildHomePreload();
+// beforeAll runs before setup beforeEach. Opt in at load so a fixture that
+// relocates HOME before the first test still keeps KILL and enrollment there.
+useProcessHomeForTest();
 
 const workerHomeKey = 'ASHLR_VITEST_WORKER_HOME';
 const workerPidKey = 'ASHLR_VITEST_WORKER_PID';
@@ -131,24 +155,6 @@ process.env.USERPROFILE = workerHome;
 process.env.ASHLR_HOME = join(workerHome, '.ashlr');
 // Hermetic: fleet-truth never shells out to the real `gh` from a test (tests inject a runner).
 process.env.ASHLR_FLEET_TRUTH_GH = 'off';
-// Authority (KILL, pause, send policy, config.json) resolves from the ACCOUNT
-// home (src/core/util/real-home.ts), which HOME cannot move. Point it back at
-// os.homedir() (the guarded HOME above, or a suite's own node:os mock) so every
-// suite stays hermetic. Set on the global the module reads, not through an
-// import, so a test file's own vi.mock('node:os') still reaches the module.
-// test/real-home-authority.test.ts pins a separate account home to prove HOME
-// is ignored.
-(globalThis as Record<symbol, unknown>)[Symbol.for('ashlr.realHome.testOverride')] = { kind: 'homedir' };
-// Node children (tsx CLI fixtures, `node -e` probes) get the same seam through
-// a test-only preload. Children spawned with a scrubbed env do not, and then
-// resolve the real account home; those must not touch authority state.
-// --require, not --import: any --import sends the child's main entry through
-// the ESM loader, which rejects extensionless fixture binaries with a dot in
-// their name (engine fakes such as grok-0.2.118-macos-aarch64).
-const realHomeChildPreload = `--require=${JSON.stringify(fileURLToPath(new URL('./real-home-child.cjs', import.meta.url)))}`;
-if (!(process.env['NODE_OPTIONS'] ?? '').includes(realHomeChildPreload)) {
-  process.env['NODE_OPTIONS'] = [process.env['NODE_OPTIONS'], realHomeChildPreload].filter(Boolean).join(' ');
-}
 // Reassert per module like HOME: a child that inherits this env gets the
 // worker-private compile cache; an explicit NODE_DISABLE_COMPILE_CACHE in a
 // child's own env still wins (Node gives the disable flag priority).
@@ -214,11 +220,32 @@ function guardedHomedir(): string {
   return raw;
 }
 
+function accountHomedir(): string {
+  // The passwd home is stable for this worker. It does not follow a later
+  // HOME change, matching os.userInfo().homedir outside the test harness.
+  return workerHome as string;
+}
+
 vi.mock('node:os', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:os')>();
+  const userInfo = ((options?: { encoding?: 'utf8' | 'buffer' }) => {
+    const info = actual.userInfo(options as { encoding: 'buffer' });
+    const home = accountHomedir();
+    return { ...info, homedir: options?.encoding === 'buffer' ? Buffer.from(home) : home };
+  }) as typeof actual.userInfo;
   return {
     ...actual,
     homedir: guardedHomedir,
-    default: { ...actual.default, homedir: guardedHomedir },
+    userInfo,
+    default: { ...actual.default, homedir: guardedHomedir, userInfo },
   };
+});
+
+beforeEach(() => {
+  // Fixtures relocate HOME and expect KILL, enrollment and pause to follow.
+  // Production realHome() stays on the passwd entry; a test that must prove
+  // that calls useAccountHomeForTest(). Spawned Node children inherit the
+  // preload above; a test that cleared NODE_OPTIONS must not drop it.
+  retainChildHomePreload();
+  useProcessHomeForTest();
 });

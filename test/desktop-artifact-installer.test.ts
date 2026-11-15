@@ -306,7 +306,10 @@ describe.skipIf(process.platform==='win32')('manual original paired artifact ins
   it('real isolated census holds a live lease and reaps it only after its owner exits',async()=> {
     const f=fixture();vi.stubEnv('HOME',f.home);vi.stubEnv('USERPROFILE',f.home);
     const moduleUrl=(path:string)=>pathToFileURL(resolve(import.meta.dirname,'../src/core/sandbox',path)).href;
-    const child=await startTsxChild(`import { acquireOutwardMutationFence, releaseOutwardMutationFence } from ${JSON.stringify(moduleUrl('mutation-fence.ts'))};
+    const realHomeUrl=pathToFileURL(resolve(import.meta.dirname,'../src/core/real-home.ts')).href;
+    const child=await startTsxChild(`import { useProcessHomeForTest } from ${JSON.stringify(realHomeUrl)};
+      useProcessHomeForTest();
+      import { acquireOutwardMutationFence, releaseOutwardMutationFence } from ${JSON.stringify(moduleUrl('mutation-fence.ts'))};
       import { registerExecutionLease } from ${JSON.stringify(moduleUrl('execution-leases.ts'))};
       const fence=acquireOutwardMutationFence(5000); const reg=registerExecutionLease(fence,{runId:'child',repoKey:'/fixture/repo',engine:'fixture'});
       releaseOutwardMutationFence(fence); if(!reg.ok)process.exit(3); console.log('LEASE-READY'); setInterval(()=>{},1000);`,f.home,'LEASE-READY');

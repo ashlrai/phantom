@@ -6,6 +6,7 @@ import type { LeaderInboxAppender } from '../src/core/agents/leader-inbox-writer
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSlackLeaderAdapter, deliverSlackLeaderMessage, flushSlackLeaderReplies, ingestSlackLeaderEnvelope, readSlackDeliveryPolicy } from '../src/core/agents/slack-leader.js';
+import * as leaderNetwork from '../src/core/agents/leader-network.js';
 import { readLeaderInbox, tickLeaderNetwork } from '../src/core/agents/leader-network-runtime.js';
 import { createSlackApi, openSlackSocket, type SlackCall } from '../src/core/agents/slack-transport.js';
 import { listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
@@ -76,6 +77,23 @@ describe('authenticated Slack Leader integration', () => {
     await receive(call); await flushSlackLeaderReplies({ ...options, call });
     expect(vi.mocked(call).mock.calls.filter(row => row[0] === 'chat.postMessage')).toHaveLength(1);
     expect(generate).toHaveBeenCalledOnce();
+  });
+  it('drains beyond five offline drafts on the next pass without generating replies', async () => {
+    const pending = Array.from({ length: 6 }, (_, index) => ({ requestId: `synthetic-${index}`, envelope: reply, replyText: 'Synthetic retained reply.' }));
+    // Requests awaiting generation must not consume transport slots.
+    const waiting = Array.from({ length: 5 }, (_, index) => ({ requestId: `waiting-${index}`, envelope: reply }));
+    let online = false;
+    const deliver = vi.fn(async (_id: string, _text: string) => ({ status: online ? 'sent' as const : 'drafted' as const }));
+    const network = leaderNetwork.createLeaderNetwork({ ...options, configSource: configText, commsSource: 'confirmedByMason=true' });
+    const factory = vi.spyOn(leaderNetwork, 'createLeaderNetwork').mockReturnValue({ ...network,
+      pending: async () => [...waiting, ...pending], reply: deliver });
+    try {
+      expect(await flushSlackLeaderReplies(options)).toMatchObject({ sent: 0 });
+      expect(deliver.mock.calls).toHaveLength(5);
+      online = true;
+      expect(await flushSlackLeaderReplies(options)).toMatchObject({ sent: 5 });
+      expect(deliver.mock.calls[5]).toEqual(['synthetic-5', 'Synthetic retained reply.']);
+    } finally { factory.mockRestore(); }
   });
   it('does not promote bot peers to Mason even if a mistaken owner entry lists their bot ID', async () => {
     writeFileSync(join(options.configDir, 'agent-network.toml'), configText.replace('id="U0OWNER"}]\n[team]', 'id="B0PEER"}]\n[team]'));

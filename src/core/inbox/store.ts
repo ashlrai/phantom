@@ -35,7 +35,7 @@ import {
   writeSync,
 } from 'node:fs';
 import type { Stats } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import type {
@@ -225,6 +225,44 @@ function scrubProposalText(text: string): string {
   } catch {
     return text;
   }
+}
+
+/**
+ * Persisted-proposal reads re-ran the full secret scrub (a dozen regexes over
+ * every diff) for every file on every list: measured 24 s of a 69 s dashboard
+ * snapshot on a 720-proposal inbox, repeated on each poll. The scrub is a pure
+ * function of the stored bytes, so it is memoized by a digest of the exact
+ * file text. Structural validation (which canonicalises repo paths against
+ * the filesystem) still runs on every read; only the scrub is reused. Each
+ * caller receives its own copy, so the memo can never be mutated through a
+ * returned proposal. Bounded LRU; oversized files are never retained.
+ */
+const STORED_PROPOSAL_SCRUB_MEMO_MAX_ENTRIES = 2_048;
+const STORED_PROPOSAL_SCRUB_MEMO_MAX_TEXT_BYTES = 1024 * 1024;
+const storedProposalScrubMemo = new Map<string, Proposal>();
+
+function sanitizeStoredProposal(text: string, parsed: Proposal): Proposal {
+  if (text.length > STORED_PROPOSAL_SCRUB_MEMO_MAX_TEXT_BYTES) return sanitizeProposalForStore(parsed);
+  // Home-path redaction reads HOME/USERPROFILE/homedir(): a scrub done under
+  // one home is never reused under another.
+  const homes = `${homedir()}\0${process.env.HOME ?? ''}\0${process.env.USERPROFILE ?? ''}\0`;
+  const key = createHash('sha256').update(homes).update(text).digest('base64');
+  let sanitized = storedProposalScrubMemo.get(key);
+  if (sanitized) {
+    storedProposalScrubMemo.delete(key);
+  } else {
+    sanitized = sanitizeProposalForStore(parsed);
+    while (storedProposalScrubMemo.size >= STORED_PROPOSAL_SCRUB_MEMO_MAX_ENTRIES) {
+      storedProposalScrubMemo.delete(storedProposalScrubMemo.keys().next().value as string);
+    }
+  }
+  storedProposalScrubMemo.set(key, sanitized);
+  return structuredClone(sanitized);
+}
+
+/** Test seam: entries currently memoized (never their content). */
+export function _storedProposalScrubMemoSizeForTest(): number {
+  return storedProposalScrubMemo.size;
 }
 
 /**
@@ -1306,7 +1344,7 @@ export function listProposals(filter?: { status?: ProposalStatus }): Proposal[] 
         if (!loaded.ok) continue;
         const parsed: unknown = JSON.parse(loaded.text);
         if (isValidProposal(parsed) && validProposalId(parsed.id) && file === `${parsed.id}.json`) {
-          proposals.push(sanitizeProposalForStore(parsed));
+          proposals.push(sanitizeStoredProposal(loaded.text, parsed));
         }
       } catch {
         // Unreadable or malformed — skip silently.
@@ -1439,7 +1477,7 @@ export function listProposalsDetailed(
           pushProposalStopReason(result.stopReasons, 'invalid-file');
           continue;
         }
-        const proposal = sanitizeProposalForStore(parsed);
+        const proposal = sanitizeStoredProposal(loaded.text, parsed);
         if (opts.status === undefined || proposal.status === opts.status) {
           result.proposals.push(proposal);
         }
@@ -1519,7 +1557,7 @@ export function loadProposal(id: string): Proposal | null {
     const directoryAfter = lstatSync(dir);
     if (!safeProposalDirectory(directoryAfter) || !sameProposalSource(directoryBefore, directoryAfter)) return null;
     const parsed: unknown = JSON.parse(loaded.text);
-    if (isValidProposal(parsed) && parsed.id === id) return sanitizeProposalForStore(parsed);
+    if (isValidProposal(parsed) && parsed.id === id) return sanitizeStoredProposal(loaded.text, parsed);
     return null;
   } catch {
     return null;

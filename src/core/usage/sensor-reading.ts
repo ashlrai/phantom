@@ -51,6 +51,7 @@ export const USAGE_SENSOR_SOURCES = [
   'claude-rate-limit-event',
   'claude-api-balance',
   'cursor-status',
+  'browser-visible',
   'grok-status',
   'local-throughput',
   'unmeasured',
@@ -84,6 +85,7 @@ export interface UsageSensorLaneView {
   ageMs: number | null;
   stale: boolean;
   status: 'fresh' | 'unknown';
+  reason?: string | null;
   used: number | null;
   limit: number | null;
   unit: UsageSensorUnit | null;
@@ -195,6 +197,8 @@ function viewLane(samples: readonly UsageSensorReading[], nowMs: number): UsageS
     ageMs: Number.isFinite(observedMs) && observedMs <= nowMs ? nowMs - observedMs : null,
     stale: Number.isFinite(deadline) && nowMs >= deadline,
     status: measured || (fresh && throughput && latest.used !== null) ? 'fresh' : 'unknown',
+    reason: measured || (fresh && throughput && latest.used !== null) ? null
+      : latest.source === 'unmeasured' ? 'No usage source available' : !fresh ? 'Usage reading is stale' : 'Usage reading is incomplete',
     used: latest.used,
     limit: latest.limit,
     unit: latest.unit,

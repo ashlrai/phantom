@@ -1,0 +1,13 @@
+// Fixture for test/readme-command-table.test.ts. Two real commands plus one
+// that the README Command table does not name. Not compiled; read as text.
+switch (cmd) {
+  case 'index': {
+    break;
+  }
+  case 'go': {
+    break;
+  }
+  case 'phantom-extra': {
+    break;
+  }
+  } catch (err) {

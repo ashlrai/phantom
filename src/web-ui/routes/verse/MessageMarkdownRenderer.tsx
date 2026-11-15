@@ -9,10 +9,8 @@
  * Markdown never reaches the DOM unsanitized, links open in a new tab with
  * rel=noopener, and no script/style/handler attributes survive.
  *
- * TERMINAL LINKS (3.15). The one app scheme a message may link is
- * `verse://terminal/<tabId>[/<blockId>]` (shell/deep-link.ts
- * parseTerminalLink): a click opens that terminal tab in the app (the shell's
- * terminal handler, shell/open-terminal-request.ts) instead of navigating.
+ * APP LINKS. Terminal and pane links open their target in the app instead of
+ * navigating. Their accepted shapes are defined in shell/deep-link.ts.
  * Any other `verse:` href loses its href.
  *
  * STREAMING (V3.10). The old bubble re-ran marked + DOMPurify over the WHOLE
@@ -35,7 +33,8 @@ import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import { useEffect, useMemo, useRef, type MouseEvent } from 'react';
 import { appendInlineText, codeLanguage, splitStreamingBlocks } from './markdown-stream.js';
-import { parseTerminalLink } from './shell/deep-link.js';
+import { openDockPane } from './dock/dock-store.js';
+import { parsePaneLink, parseTerminalLink } from './shell/deep-link.js';
 import { requestOpenTerminal } from './shell/open-terminal-request.js';
 import styles from './Transcript.module.css';
 
@@ -47,9 +46,10 @@ function ensureHooks(): void {
     if (node.tagName === 'A') {
       const href = node.getAttribute('href');
       if (href !== null && /^\s*verse:/i.test(href)) {
-        // An in-app terminal link stays in the app; any other verse: href
+        // An in-app link stays in the app; any other verse: href
         // (the URI allow-list is case-insensitive) is not a link at all.
         if (parseTerminalLink(href)) node.setAttribute('data-verse-terminal', '');
+        else if (parsePaneLink(href)) node.setAttribute('data-verse-pane', '');
         else node.removeAttribute('href');
         node.removeAttribute('target');
         return;
@@ -61,11 +61,10 @@ function ensureHooks(): void {
 }
 
 /**
- * DOMPurify's default URI allow-list (3.x IS_ALLOWED_URI) plus exactly one app
- * link shape: `verse://terminal/<tabId>[/<blockId>]`.
+ * DOMPurify's default URI allow-list (3.x IS_ALLOWED_URI) plus app link shapes.
  */
 const ALLOWED_URI =
-  /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|matrix):|verse:\/\/terminal\/t-[a-z0-9]{1,32}(?:\/b-\d{1,9})?\/?$|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i;
+  /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|matrix):|verse:\/\/terminal\/t-[a-z0-9]{1,32}(?:\/b-\d{1,9})?\/?$|verse:\/\/pane\/[a-z][a-z0-9-]{0,39}\/?$|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i;
 
 const SANITIZE: Parameters<typeof DOMPurify.sanitize>[1] = {
   USE_PROFILES: { html: true },
@@ -110,11 +109,17 @@ function decorateCodeBlocks(node: HTMLElement): void {
   }
 }
 
-/** A click on a `verse://terminal/…` link opens the tab in the app; never navigates. True when handled. */
-function onTerminalLinkClick(event: MouseEvent<HTMLDivElement>): boolean {
+/** Open an app link without navigating. True when handled. */
+function onAppLinkClick(event: MouseEvent<HTMLDivElement>): boolean {
   const target = event.target as HTMLElement | null;
   const anchor = target?.closest?.<HTMLAnchorElement>('a[href]');
   if (!anchor) return false;
+  const pane = parsePaneLink(anchor.getAttribute('href') ?? '');
+  if (pane) {
+    event.preventDefault();
+    openDockPane(pane);
+    return true;
+  }
   const link = parseTerminalLink(anchor.getAttribute('href') ?? '');
   if (!link) return false;
   event.preventDefault();
@@ -123,7 +128,7 @@ function onTerminalLinkClick(event: MouseEvent<HTMLDivElement>): boolean {
 }
 
 function onMarkdownClick(event: MouseEvent<HTMLDivElement>): void {
-  if (onTerminalLinkClick(event)) return;
+  if (onAppLinkClick(event)) return;
   onCopyClick(event);
 }
 

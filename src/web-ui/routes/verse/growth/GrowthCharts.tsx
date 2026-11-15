@@ -100,7 +100,7 @@ export function GrowthChartView({ report, loading, refreshing, failed, range, fo
         description={failed
           ? 'growth series did not answer.'
           : active?.status === 'ready'
-            ? `${RANGE_LABEL[range]} · ${active.source ?? 'measured'}`
+            ? `${RANGE_LABEL[range]} · ${active.source ?? 'measured'}${active.freshness === 'stale' ? ' · stale' : ''}`
             : active?.need ?? 'no data source'}
         caveat={active?.caveat ?? undefined}
         status={chartStatus}
@@ -124,7 +124,7 @@ export function GrowthChartView({ report, loading, refreshing, failed, range, fo
               >
                 <span className={styles.label}>{series.label}</span>
                 {series.status === 'ready' ? (
-                  <span className={styles.value}>{value === null ? '—' : formatUnit(series.unit, value)}</span>
+                  <span className={styles.value}>{value === null ? '—' : formatUnit(series.unit, value)}{series.freshness === 'stale' ? ' stale' : ''}</span>
                 ) : (
                   <span className={styles.missing}>no data source</span>
                 )}

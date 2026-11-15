@@ -1,3 +1,4 @@
+import { readOutboxEntries, replyTextHash, replyTime } from '../fleet/mason-outbox.js';
 /**
  * The Leader thread (3.14) — ONE conversation between Mason and the Leader,
  * whatever the surface: Verse, Telegram, the CLI. This module is the server
@@ -214,6 +215,7 @@ interface InputReceipt {
 }
 
 interface ThreadIndexV1 {
+  planReplies?: Record<string, 'pending' | 'posted'>;
   /** Channel/event hashes; retained across log rotation, never silently evicted. */
   inputs?: Record<string, InputReceipt>;
   v: 1;
@@ -260,6 +262,7 @@ function readIndex(): ThreadIndexV1 {
   if (read.truncated) throw new LeaderThreadError(409, 'Leader thread index is oversized');
   try {
     const parsed = JSON.parse(read.text) as Partial<ThreadIndexV1>;
+    if (parsed.planReplies !== undefined && (!isRecord(parsed.planReplies) || Object.entries(parsed.planReplies).some(([k, v]) => !/^[a-f0-9]{64}$/.test(k) || !['pending', 'posted'].includes(v)))) throw new Error('invalid reply receipts');
     if (parsed.v !== 1 || (parsed.inputs !== undefined && !isRecord(parsed.inputs))) throw new Error('invalid index');
     for (const [key, receipt] of Object.entries(parsed.inputs ?? {})) {
       const result = receipt?.result;
@@ -272,6 +275,7 @@ function readIndex(): ThreadIndexV1 {
     return {
       v: 1,
       inputs: parsed.inputs,
+      planReplies: parsed.planReplies,
       updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date(0).toISOString(),
       delivery: isRecord(parsed.delivery) ? parsed.delivery as ThreadIndexV1['delivery'] : {},
       memosPosted: Array.isArray(parsed.memosPosted) ? parsed.memosPosted.filter((m): m is string => typeof m === 'string') : [],
@@ -472,7 +476,22 @@ function replyDelivery(channel: LeaderThreadChannel): LeaderThreadMessage['deliv
  * before `before` (a message id, or an ISO time) when given. Memos written
  * since the last read are synced in first.
  */
-export function listThread(opts: { limit?: number; before?: string } = {}): LeaderThreadMessage[] {
+export interface LeaderThreadQuery {
+  limit?: number;
+  before?: string;
+  q?: string;
+  channel?: LeaderThreadChannel;
+  from?: 'mason' | 'leader';
+}
+
+function matchesThreadQuery(message: LeaderThreadMessage, opts: LeaderThreadQuery): boolean {
+  const terms = (opts.q ?? '').slice(0, 200).toLowerCase().split(/\s+/).filter(Boolean);
+  return (!opts.channel || message.channel === opts.channel)
+    && (!opts.from || message.from === opts.from)
+    && terms.every(term => message.text.toLowerCase().includes(term));
+}
+
+export function listThread(opts: LeaderThreadQuery = {}): LeaderThreadMessage[] {
   const limit = Math.max(1, Math.min(THREAD_LIMITS.listMax, Math.floor(opts.limit ?? THREAD_LIMITS.listDefault)));
   try { syncLeaderMemosToThread(); } catch { /* the thread still reads */ }
   const index = readIndex();
@@ -487,14 +506,39 @@ export function listThread(opts: { limit?: number; before?: string } = {}): Lead
       log = log.filter((m) => Date.parse(m.at) < ms);
     }
   }
-  return log.slice(-limit).map((m) => withDelivery(m, index));
+  return log.filter(m => matchesThreadQuery(m, opts)).slice(-limit).map((m) => withDelivery(m, index));
 }
 
-/** One message by id (with its delivery state), or null. */
-export function findThreadMessage(id: string): LeaderThreadMessage | null {
-  if (!LEADER_THREAD_ID_RE.test(id)) return null;
-  const found = readLog().find((m) => m.id === id);
-  return found ? withDelivery(found, readIndex()) : null;
+/** File replies are projected only: reading never copies them into the thread log. */
+export async function listLeaderThread(opts: LeaderThreadQuery = {}): Promise<LeaderThreadMessage[]> {
+  const limit = Math.max(1, Math.min(THREAD_LIMITS.listMax, Math.floor(opts.limit ?? THREAD_LIMITS.listDefault)));
+  // Search the complete live log before limiting; retain the usual tail for
+  // unfiltered reads and preserve cursor lookup against the unfiltered log.
+  let posts: LeaderThreadMessage[];
+  if (opts.q !== undefined || opts.channel !== undefined || opts.from !== undefined) {
+    try { syncLeaderMemosToThread(); } catch { /* the thread still reads */ }
+    const index = readIndex();
+    posts = readLog().map(message => withDelivery(message, index));
+  } else {
+    posts = listThread({ limit: THREAD_LIMITS.listMax });
+  }
+  const { entries } = await readOutboxEntries({ limit: THREAD_LIMITS.listMax });
+  const seen = new Set(posts.filter(post => post.from === 'leader').map(post => replyTextHash(post.text)));
+  const files: LeaderThreadMessage[] = entries.filter(entry => !seen.has(replyTextHash(entry.text))).map(entry => ({
+    id: `leader-file-${replyTextHash(entry.text).slice(0, 48)}`, at: Number.isFinite(replyTime(entry.at)) ? new Date(replyTime(entry.at)).toISOString() : '', text: entry.text,
+    from: 'leader', channel: 'system', kind: 'answer',
+  }));
+  let messages = [...posts, ...files].sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
+  if (opts.before !== undefined) {
+    const index = messages.findIndex(message => message.id === opts.before);
+    if (index >= 0) messages = messages.slice(0, index);
+    else if (LEADER_THREAD_ID_RE.test(opts.before) || /^leader-file-[a-f0-9]{48}$/.test(opts.before)) messages = [];
+    else {
+      if (!Number.isFinite(Date.parse(opts.before))) throw new LeaderThreadError(400, 'before must be a message id or an ISO time');
+      messages = messages.filter(message => Date.parse(message.at) < Date.parse(opts.before!));
+    }
+  }
+  return messages.filter(message => matchesThreadQuery(message, opts)).slice(-limit);
 }
 
 // ---------------------------------------------------------------------------
@@ -1176,3 +1220,39 @@ export async function approveLeaderAction(
 // ---------------------------------------------------------------------------
 
 export { OPERATOR_DIRECTIVE_KINDS };
+
+/** Typed API shared by the CLI. Receipts survive rotation; uncertain writes never replay. */
+export async function syncLeaderReplies(): Promise<{ sourceState: 'healthy' | 'missing' | 'unknown'; posted: string[]; skipped: string[]; unknown: string[] }> {
+  const { readPlanLogReplies, replyTextHash } = await import('../fleet/mason-outbox.js');
+  const source = await readPlanLogReplies();
+  const result = { sourceState: source.sourceState, posted: [] as string[], skipped: [] as string[], unknown: [] as string[] };
+  withThreadLock(() => {
+    const index = readIndex();
+    index.planReplies ??= {};
+    for (const entry of source.entries) {
+      const id = replyTextHash(entry.heading!);
+      if (index.planReplies[id]) {
+        result.skipped.push(id);
+        if (index.planReplies[id] === 'pending') result.unknown.push(id);
+        continue;
+      }
+      const now = deps().now();
+      rotateIfNeeded(index);
+      // Reserve first: a crash after append must never post a duplicate.
+      index.planReplies[id] = 'pending';
+      writeIndex(index, now);
+      try {
+        const message = leaderMessage(now, { channel: 'system', kind: 'answer', text: entry.text, delivery: { telegram: 'pending' } });
+        appendLines([JSON.stringify(message)]);
+        index.delivery[message.id] = { telegram: 'pending', attempts: 0 };
+        index.planReplies[id] = 'posted';
+        writeIndex(index, now);
+        result.posted.push(id);
+      } catch {
+        result.unknown.push(id);
+        break;
+      }
+    }
+  });
+  return result;
+}

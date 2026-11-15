@@ -14,6 +14,7 @@ import importlib.machinery
 import importlib.util
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -414,6 +415,7 @@ class RestockTriggerTests(unittest.TestCase):
         # Restock records every enqueue in this durable history before the
         # supervisor can park it; those records are not active dispatches.
         (q / 'claimed.tsv').write_text(''.join(f'RQ-PROBE-{n}\tdevin\twork\t12:00\t1\n' for n in range(22)))
+        (q / 'admission.json').write_text(json.dumps({'cap': 1000}))
         (home / '.ashlr-runs/phantom-open-prs').write_text(f'{time.time()} 150\n')
         precheck = home / '.ashlr-runs/bin/precheck.sh'
         precheck.write_text('#!/bin/sh\necho checked >> "$HOME/prechecked"\nexit 13\n')
@@ -425,7 +427,7 @@ class RestockTriggerTests(unittest.TestCase):
                                   capture_output=True, text=True, timeout=60)
         r = recover()
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual((q / 'ready.tsv').read_text().count('PARKED-MERGERATE.'), 21)
+        self.assertEqual((q / 'ready.tsv').read_text().count('PARKED-MERGERATE.'), 21, (r.stdout, r.stderr))
         r = tick(home)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue((home / 'prechecked').exists(), (r.stdout, r.stderr, events(home), ready_lines(home)))
@@ -582,7 +584,7 @@ class AuthBackoffTests(unittest.TestCase):
         self.assertEqual(slots_of(home)['devin']['held_by'], 'operator')
         self.assertNotIn('LANE_HOLD devin autobackoff', events(home))
 
-    def test_held_lane_waits_while_healthy_lanes_dispatch(self):
+    def test_held_lane_stays_held_while_its_preferred_work_uses_a_healthy_lane(self):
         home, env = self._home({'devin': lane_slot(), 'codex-cmp': lane_slot()})
         dead(home, 'RQ-A1', 'devin', [AUTH_401])
         dead(home, 'RQ-A2', 'devin', [AUTH_401])
@@ -591,10 +593,13 @@ class AuthBackoffTests(unittest.TestCase):
         r = tick(home, env)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue(slots_of(home)['devin'].get('held'))
-        # Eligible work still reaches the healthy lane; the held lane's job stays queued.
+        # Both jobs use the healthy executor, and the auth-held executor stays held.
         self.assertTrue(dispatched(home, 'RQ-C-RUN'))
-        self.assertFalse(dispatched(home, 'RQ-D-WAIT'))
-        self.assertEqual([l.split('\t')[0] for l in ready_lines(home)], ['RQ-D-WAIT'])
+        self.assertTrue(dispatched(home, 'RQ-D-WAIT'))
+        self.assertEqual(ready_lines(home), [])
+        claim = json.loads((home / '.ashlr-runs/queue/run/RQ-D-WAIT.line').read_text().split('\t')[5])
+        self.assertEqual(claim['preferred_lane'], 'devin')
+        self.assertEqual((home / '.ashlr-runs/queue/run/RQ-D-WAIT.line').read_text().split('\t')[2], 'codex-cmp')
         self.assertIn('LAUNCH RQ-C-RUN', events(home))
 
     def test_expired_auth_hold_recovers_and_launches(self):
@@ -686,9 +691,8 @@ class QueueWaitTests(unittest.TestCase):
     def test_claim_limit_preserves_priority_across_ticks_and_skips_blocked_head(self):
         lanes = ['codex-cmp', 'codex-personal', 'claude', 'devin']
         home, env = self.fixture(lanes)
-        # Soft load limits claims to two. Priority persists across ticks even
-        # when several lanes remain backlogged; the blocked first path waits.
-        env['LOADGATE_LOADAVG'] = '60'
+        # MAX_LAUNCH_PER_TICK limits claims to eight. Priority holds even when
+        # several lanes remain backlogged; the blocked first path waits.
         queue_job(home, 'RQ-BLOCKED', 'codex-cmp')
         (home / 'Projects/ashlrai/wt/RQ-BLOCKED').mkdir()
         jobs = []
@@ -697,13 +701,11 @@ class QueueWaitTests(unittest.TestCase):
                 job = 'RQ-%s-%d' % (lane, n)
                 jobs.append(job)
                 queue_job(home, job, lane)
-        claimed = []
-        for _ in range(2):
-            r = tick(home, env)
-            self.assertEqual(r.returncode, 0, r.stderr)
-            claimed = [r for r in self.metrics(home) if r['event'] == 'claim']
-        self.assertEqual([r['job'] for r in claimed], sorted(jobs)[:4])
-        self.assertEqual(len(claimed), 4)
+        r = tick(home, env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        claimed = [r for r in self.metrics(home) if r['event'] == 'claim']
+        self.assertEqual([r['job'] for r in claimed], sorted(jobs)[:8])
+        self.assertEqual(len(claimed), 8)
         self.assertNotIn('RQ-BLOCKED', [r['job'] for r in claimed])
         self.assertIn('RQ-BLOCKED', [line.split('\t')[0] for line in ready_lines(home)])
 
@@ -745,9 +747,13 @@ class DispatchPriorityTests(unittest.TestCase):
                 ('RQ-FIX-MAIN-A', 'devin')]
         for job, lane in jobs:
             queue_job(home, job, lane)
+        # MAX_LAUNCH_PER_TICK is 8; pad the lowest bucket so the cap still binds.
+        for n in range(4):
+            queue_job(home, 'RQ-TAIL-%d' % n, 'codex-cmp')
         self.run_tick(home, env)
-        self.assertEqual(self.claims(home), ['RQ-FIX-MAIN-A', 'RQ-REL-A', 'RQ-DESK-A', 'LAND-A'])
-        self.assertEqual([line.split('\t')[0] for line in ready_lines(home)], ['RQ-OTHER'])
+        self.assertEqual(self.claims(home), ['RQ-FIX-MAIN-A', 'RQ-REL-A', 'RQ-DESK-A', 'LAND-A',
+                                              'RQ-OTHER', 'RQ-TAIL-0', 'RQ-TAIL-1', 'RQ-TAIL-2'])
+        self.assertEqual([line.split('\t')[0] for line in ready_lines(home)], ['RQ-TAIL-3'])
 
     def test_land_fixup_and_recut_share_a_bucket_before_other_jobs(self):
         home, env = self.fixture()
@@ -1195,6 +1201,31 @@ class DispatchPriorityTests(unittest.TestCase):
         self.assertNotIn('REAP ', result.stdout)
 
 
+class EmptyGateIntegrationTests(unittest.TestCase):
+    fixture = QueueWaitTests.fixture
+    metrics = QueueWaitTests.metrics
+    def test_same_base_empty_is_dropped_without_model_launch(self):
+        home, env = self.fixture(['codex-cmp'])
+        repo = home / 'Projects/ashlrai/phantom'
+        for args in (['init'], ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                                'commit', '--allow-empty', '-m', 'base'],
+                     ['update-ref', 'refs/remotes/origin/main', 'HEAD'],
+                     ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']):
+            subprocess.run(['git', '-C', str(repo)] + args, check=True, capture_output=True)
+        job = 'RQ-UPKEEP-REL-TEST'
+        queue_job(home, job, 'codex-cmp')
+        sha = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
+        ledger = home / '.ashlr-runs/metrics/jobs.jsonl'
+        ledger.write_text(json.dumps(dict(event='claim', job=job, repo='phantom', base_sha=sha)) + '\n' +
+                          json.dumps(dict(event='finish', job=job, empty=True, exit_code=0)) + '\n')
+        result = tick(home, env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(ready_lines(home), [])
+        rows = self.metrics(home)
+        self.assertEqual(sum(r['event'] == 'skipped_empty' for r in rows), 1)
+        self.assertFalse(any(r['event'] == 'launch' for r in rows))
+
+
 if __name__ == '__main__':
     unittest.main()
 
@@ -1234,6 +1265,116 @@ class DiffMetricsTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         rows = [json.loads(line) for line in (r / 'metrics/jobs.jsonl').read_text().splitlines()]
         return next(row for row in rows if row.get('event') == 'finish' and row.get('job') == job)
+
+    def write_sessions_db(self, home, sessions):
+        """A minimal devin-cli sessions.db: the columns dispatchd reads, nothing more."""
+        d = home / '.local/share/devin/cli'; d.mkdir(parents=True, exist_ok=True)
+        con = sqlite3.connect(str(d / 'sessions.db'))
+        con.execute('CREATE TABLE sessions (id TEXT PRIMARY KEY, working_directory TEXT NOT NULL, metadata TEXT)')
+        con.execute('CREATE TABLE message_nodes (node_id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, chat_message TEXT NOT NULL)')
+        for s in sessions:
+            con.execute('INSERT INTO sessions (id, working_directory, metadata) VALUES (?,?,?)',
+                        (s['id'], s['wd'], json.dumps(s.get('meta', {}))))
+            for msg in s['messages']:
+                con.execute('INSERT INTO message_nodes (session_id, chat_message) VALUES (?,?)',
+                            (s['id'], json.dumps(msg)))
+        con.commit(); con.close()
+
+    def test_claude_result_usage_is_recorded_once(self):
+        transcript = '\n'.join(json.dumps(row) for row in [
+            {'type': 'assistant', 'message': {'usage': {'input_tokens': 999}}},
+            {'type': 'result', 'usage': {'input_tokens': 10, 'output_tokens': 5,
+             'cache_read_input_tokens': 20, 'cache_creation_input_tokens': 3}},
+        ])
+        row = self.measure(lambda wt, git: None, lane='claude', log=transcript)
+        self.assertEqual([row[k] for k in ('tokens_in', 'tokens_out', 'tokens_cache_read', 'tokens_cache_write', 'tokens_total')],
+                         [33, 5, 20, 3, 38])
+        self.assertEqual(row['usage_source'], 'claude-result-json')
+        self.assertIsNone(row['usage_missing'])
+        self.assertIsNone(row['acus'])
+
+    def test_claude_missing_and_invalid_usage_remains_unknown(self):
+        row = self.measure(lambda wt, git: None, lane='claude', log='plain output')
+        self.assertIsNone(row['tokens_total'])
+        self.assertEqual(row['usage_missing'], 'claude-result-not-in-log')
+        row = self.measure(lambda wt, git: None, lane='claude', log=json.dumps({'type': 'result', 'usage': {
+                'input_tokens': 0, 'output_tokens': 0, 'cache_read_input_tokens': -1}}))
+        self.assertIsNone(row['tokens_total'])
+        self.assertIsNone(row['tokens_in'])
+        self.assertIsNone(row['tokens_cache_read'])
+        self.assertEqual(row['tokens_out'], 0)
+        self.assertEqual(row['usage_missing'], 'claude-usage-incomplete')
+
+    def test_devin_session_usage_records_tokens_and_acus(self):
+        def scenario(wt, git):
+            wd = os.path.realpath(str(wt))   # the CLI stores the resolved worktree path
+            self.write_sessions_db(wt.parents[3], [
+                {'id': 'devin-s1', 'wd': wd, 'meta': {'total_acu_cost': 0.75, 'total_credit_cost': 0}, 'messages': [
+                    {'role': 'user', 'metadata': {'is_user_input': True}},
+                    # the CLI stores every response twice; request_id dedupes
+                    {'role': 'assistant', 'metadata': {'request_id': 'req-1', 'metrics': {
+                        'input_tokens': 12910, 'output_tokens': 27, 'cache_read_tokens': 2368, 'cache_creation_tokens': None}}},
+                    {'role': 'assistant', 'metadata': {'request_id': 'req-1', 'metrics': {
+                        'input_tokens': 12910, 'output_tokens': 27, 'cache_read_tokens': 2368, 'cache_creation_tokens': None}}},
+                ]},
+                {'id': 'devin-s2', 'wd': wd, 'meta': {'total_acu_cost': 1.5}, 'messages': [
+                    {'role': 'assistant', 'metadata': {'request_id': 'req-2', 'metrics': {
+                        'input_tokens': 50, 'output_tokens': 5, 'cache_read_tokens': 10}}},
+                ]},
+                {'id': 'devin-foreign', 'wd': '/elsewhere', 'meta': {'total_acu_cost': 99}, 'messages': [
+                    {'role': 'assistant', 'metadata': {'request_id': 'req-9', 'metrics': {'input_tokens': 1, 'output_tokens': 1}}},
+                ]},
+            ])
+        row = self.measure(scenario, lane='devin')
+        self.assertEqual([row[k] for k in ('tokens_in', 'tokens_out', 'tokens_cache_read', 'tokens_cache_write', 'tokens_total')],
+                         [15338, 32, 2378, 0, 15370])
+        self.assertEqual(row['acus'], 2.25)
+        self.assertEqual(row['usage_source'], 'devin-sessions-db')
+        self.assertIsNone(row['usage_missing'])
+
+    def test_devin_missing_usage_stays_null_with_reason(self):
+        # No sessions.db on the host at all.
+        row = self.measure(lambda wt, git: None, lane='devin')
+        self.assertIsNone(row['tokens_total']); self.assertIsNone(row['acus'])
+        self.assertEqual(row['usage_missing'], 'devin-session-db-missing')
+
+        # A database that knows other worktrees but not this job's.
+        row = self.measure(lambda wt, git: self.write_sessions_db(wt.parents[3], [
+            {'id': 'devin-foreign', 'wd': '/elsewhere', 'meta': {'total_acu_cost': 1}, 'messages': []}]), lane='devin')
+        self.assertIsNone(row['tokens_total']); self.assertIsNone(row['acus'])
+        self.assertEqual(row['usage_missing'], 'devin-no-session-for-worktree')
+
+        # A session that ended before any served response: ACUs still settle.
+        def no_response(wt, git):
+            self.write_sessions_db(wt.parents[3], [
+                {'id': 'devin-s1', 'wd': os.path.realpath(str(wt)), 'meta': {'total_acu_cost': 0.5}, 'messages': [
+                    {'role': 'user', 'metadata': {'is_user_input': True}}]}])
+        row = self.measure(no_response, lane='devin')
+        self.assertIsNone(row['tokens_total'])
+        self.assertEqual(row['acus'], 0.5)
+        self.assertEqual(row['usage_missing'], 'devin-usage-not-reported')
+
+        # A served response without metrics: the token total is unknowable, not zero.
+        def unmeasured(wt, git):
+            self.write_sessions_db(wt.parents[3], [
+                {'id': 'devin-s1', 'wd': os.path.realpath(str(wt)), 'meta': {'total_acu_cost': 0.5}, 'messages': [
+                    {'role': 'assistant', 'metadata': {'request_id': 'req-1', 'metrics': None}}]}])
+        row = self.measure(unmeasured, lane='devin')
+        self.assertIsNone(row['tokens_total']); self.assertIsNone(row['tokens_in'])
+        self.assertEqual(row['acus'], 0.5)
+        self.assertEqual(row['usage_missing'], 'devin-usage-incomplete')
+
+        # Other lanes keep the 'tokens used' line; its absence is named too.
+        row = self.measure(lambda wt, git: None, lane='codex-cmp')
+        self.assertIsNone(row['tokens_total'])
+        self.assertEqual(row['usage_missing'], 'tokens-line-not-in-log')
+
+    def test_devin_tokens_line_fallback(self):
+        # sessions.db absent but the log still carries a 'tokens used' line.
+        row = self.measure(lambda wt, git: None, lane='devin', log='output\ntokens used\n 12,345\n')
+        self.assertEqual(row['tokens_total'], 12345)
+        self.assertEqual(row['usage_source'], 'tokens-line')
+        self.assertIsNone(row['usage_missing'])
 
     def test_committed_job_diff_excludes_prior_repository_work(self):
         def scenario(wt, git):

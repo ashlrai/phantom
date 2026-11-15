@@ -10,7 +10,7 @@ phm world --refresh --json
 
 Schema: `ashlr.world-model/v1`. Every signal has `value`, `source`, `observedAt`, and `freshness` (`fresh`, `stale`, or `unknown`). A missing file, a stale sensor, or a probe that did not run has `value: null`. A real measured zero is only returned when the source was read and the count was zero.
 
-`growth` holds the latest reading of each Growth chart series (`mergesPerHour`, `pullsOpened`, `pullsMerged`, `releases`, `laneUtilization`, `costPerMergedPr`, `bottleneckTrends`). A series with no ledger is unknown here and is listed in `blindSpots`. It is not stored as 0. See [Growth charts](GROWTH.md).
+`growth` holds the latest reading of each Growth chart series (`mergesPerHour`, `pullsOpened`, `pullsMerged`, `releases`, `laneUtilization`, `costPerMergedPr`, `bottleneckTrends`). Pulls, releases, and metered cost come from `~/.ashlr-runs/metrics/growth-*.jsonl` when Engineering Ops has published them. A series with no ledger is unknown. An export older than 30 minutes is stale. Neither is stored as 0. See [Growth charts](GROWTH.md).
 
 `blindSpots` lists each unknown or stale field by path, with a stable id (`sensors.lanes.claude-max.pacePerHour` is `sensors-lanes-claude-max-pacePerHour`). The same rows are copied onto `views.observe.coverage.unknownFields`, beside the live and unknown counts. `claims.live` reads `coordinationSummary` from the claim store. A missing store is unknown, not zero. Sensor `burnRate`, `remaining`, and `idleIncludedWastedPerWeek` come from `usage.sensors.v1`. Optional `pacePerHour`, `requiredPacePerHour`, and `runwayHours` are read when a sensor row already carries them. Absent keys stay unknown. The strict sensor schema is unchanged.
 

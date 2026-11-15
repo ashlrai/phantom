@@ -79,8 +79,8 @@ describe('readOutboxEntries', () => {
   it('reads a written file as healthy', async () => {
     await write('# Answers\n\n## 2026-11-04 09:00\nfirst\n\n## 2026-11-04T10:00:00Z\nsecond\n');
     await expect(readOutboxEntries({ runsDir })).resolves.toEqual({ sourceState: 'healthy', entries: [
-      { at: '2026-11-04 09:00', text: 'first' },
       { at: '2026-11-04T10:00:00Z', text: 'second' },
+      { at: '2026-11-04 09:00', text: 'first' },
     ] });
   });
 

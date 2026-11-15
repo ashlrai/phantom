@@ -17,8 +17,10 @@ The policy is code, not prompt text. A prompt cannot approve a recipient.
 
 - A send requires an owner standing approval for that exact transport and
   recipient. The file is `~/.ashlr/comms-agent/standing-approvals.json`.
-  `--dir` and `ASHLR_RUNS_DIR` do not select it. The file must be a regular
-  file owned by the current user, mode 0600, and not a symlink.
+  `--dir`, `ASHLR_RUNS_DIR` and `$HOME` do not select it. The path uses the
+  account home from the passwd entry. The file must be a regular file owned
+  by the current user, mode 0600, and not a symlink. The mode and owner are
+  read from the file handle opened with no-follow.
 - Everyone else, including a novel recipient, becomes a draft for the owner.
   Email drafts are also copied into `phm drafts` so the desktop drafts card
   can show them. Every draft is recorded on the local owner thread.
@@ -39,8 +41,7 @@ The policy is code, not prompt text. A prompt cannot approve a recipient.
   `ASHLR_RUNS_DIR` do not move it, so a child started with a relocated `HOME`
   still sees KILL, the pause and the real recipient lists. When `HOME`
   differs, Phantom logs one line saying authority was read from the account
-  home. Follow-up: on Windows the account home still falls back to
-  `os.homedir()`, which honors `USERPROFILE` and has the same relocation risk.
+  home. An unavailable account home fails closed.
 - Every completed send is appended to the send log. The log stores a Phantom
   Secrets handle (`phm_…`) when one was named, never a credential value.
 - A raw credential is refused.

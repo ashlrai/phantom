@@ -1,3 +1,4 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as awaitModule from '../src/cli/fleet-apps-await.js';
 import { callNativeTool, listNativeTools, nativeToolSafety } from '../src/core/mcp-native.js';
@@ -264,3 +265,5 @@ describe('MCP tool through callNativeTool', () => {
     expect(nativeToolSafety(name)).toBe('read');
   });
 });
+
+registerFleetNativeTools();

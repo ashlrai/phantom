@@ -197,6 +197,8 @@ describe('stigmergic trail', () => {
       expect(await cmdTrail(['claim', 'bad key', '--owner', 'x'])).toBe(2);
       expect(await cmdTrail(['bogus'])).toBe(2);
       expect(await cmdTrail(['--help'])).toBe(0);
+      expect(await cmdTrail(['show', '--help'])).toBe(0);
+      expect(await cmdTrail(['resume', '-h'])).toBe(0);
     } finally {
       log.mockRestore(); err.mockRestore();
     }

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { appendBusInbox, listBusInboxAfter, type BusInboxPage } from '../src/core/fleet/bus-inbox.js';
 import { followBusStream, type BusFollowRecord } from '../src/core/fleet/bus-follow-stream.js';
 import { cmdFleetBusFollow } from '../src/cli/fleet-bus-follow.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { resolveFleetSubcommand } from '../src/cli/fleet-subcommand-resolve.js';
 
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 60_000 });

@@ -28,6 +28,22 @@ it('reports unknown, future, invalid and ambiguous evidence without estimating a
   expect(mergeAge({ prs: [], queue: [] }, now).entries).toEqual([]);
 });
 
+it('classifies stale branches and stamps every cause with its evidence time', () => {
+  const report = mergeAge({ prs: [
+      { ...pr(1), mergeStateStatus: 'BEHIND', updatedAt: '2026-11-03T10:00:00Z' },
+      { ...pr(2), mergeStateStatus: 'DIRTY', updatedAt: '2099-01-01' }],
+    queue: [entry(1), { ...entry(2, '2026-11-03T07:00:00Z'),
+      requiredChecks: [{ name: 'Gate', status: 'pending', at: '2026-11-03T11:30:00Z' }] }] }, now);
+  expect(report.entries[1]!.causes).toEqual([
+    { code: 'stale', since: '2026-11-03T10:00:00Z', action: expect.any(String) }]);
+  expect(report.entries[0]!.causes).toEqual([
+    { code: 'conflicts', since: null, action: expect.any(String) },
+    { code: 'check_pending', since: '2026-11-03T11:30:00Z', action: expect.any(String) }]);
+  // A check without its own timestamp falls back to the queue-entry time.
+  const noCheckAt = mergeAge({ prs: [pr(1)], queue: [{ ...entry(1), requiredChecks: [{ name: 'Gate', status: 'pending' }] }] }, now);
+  expect(noCheckAt.entries[0]!.causes[0]).toMatchObject({ code: 'check_pending', since: '2026-11-03T11:00:00Z' });
+});
+
 it('preserves every required check and proposes fixes through the queue without mutating evidence', () => {
   const input: MergeAgeInput = { prs: [{ ...pr(1), reviewDecision: 'CHANGES_REQUESTED' }], queue: [{ ...entry(1),
     requiredChecks: ['failure', 'pending', 'missing', 'success'].map(status => ({ name: `gate-${status}`, status: status as 'failure' })) }] };

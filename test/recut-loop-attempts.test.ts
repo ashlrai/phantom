@@ -58,6 +58,7 @@ const deps = (items: MergeBacklogReadItem[], over: Partial<RecutLoopDeps> = {}):
   readBacklog: async () => backlog(items),
   readMerged: async () => [],
   readHeadSha: async () => HEAD_SHA,
+  readLanded: async () => null,
   readUnionSafe: async () => false,
   now: () => NOW,
   ...over,

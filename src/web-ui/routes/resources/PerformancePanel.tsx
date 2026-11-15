@@ -29,11 +29,13 @@ export function PerformancePanel({ report, onSelect }: { report: ResourcePerform
             const duration = row.durations.find((value) => value.status === status);
             return <tr key={row.workerId}>
               <th scope="row"><button type="button" className={styles.performanceWorker} onClick={() => onSelect(row.workerId)}>{row.workerId}</button>
-                <small>{row.model}</small><small>{row.counts.completed} completed / {row.counts.total} attempts</small></th>
+                <small>{row.model}</small><small>{row.counts.completed} completed / {row.counts.total} attempts</small>
+                {row.stops.oneMContextCredits > 0 ? <small>{row.stops.oneMContextCredits} long-context credit {row.stops.oneMContextCredits === 1 ? 'stop' : 'stops'}</small> : null}</th>
               <td>{duration?.samples ?? 0} / {duration?.attempts ?? 0}<small>Timing coverage: {duration?.attempts ? `${Math.round(duration.samples / duration.attempts * 100)}%` : 'No attempts'}</small>
                 <small>{duration?.unknownAttempts ?? 0} unmeasured</small>
                 {!duration?.samples ? <small>No timing observations for this outcome.</small>
                   : duration.samples < 20 ? <small>Small sample: fewer than 20 timing observations; percentiles may be unstable.</small> : null}</td>
+
               <td>{executionTime(duration?.p50Ms)}</td><td>{executionTime(duration?.p95Ms)}</td>
               <td>{resourceNumber(row.usage.reportedInputTokens)} in / {resourceNumber(row.usage.reportedOutputTokens)} out
                 <small>{row.usage.reportedAttempts} reported / {row.usage.unknownAttempts} unknown</small>

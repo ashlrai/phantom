@@ -91,12 +91,12 @@ Imports: `node:os`, `node:fs`, `node:path`, `./types.js`, `./util/real-home.js`.
 Responsibility: the one resolver for operator authority paths (KILL, outward fence,
 execution leases, comms pause, send policy, owner and team identity, standing approvals,
 outbox recipients). No environment variable moves it (HOME, USERPROFILE, ASHLR_HOME,
-ASHLR_RUNS_DIR). win32 falls back to `os.homedir()` (documented follow-up).
+ASHLR_RUNS_DIR). An unavailable account home fails closed.
 
 ```ts
 export function realHome(): string;                   // os.userInfo().homedir; throws if not absolute
 export function canonicalRealHome(): string | null;   // resolve(realHome()) or null; callers fail closed
-/** @internal */ export function __setRealHomeForTests(home: string | 'homedir' | null): RealHomeTestOverride | null; // throws unless VITEST
+/** @internal */ export function __setRealHomeForTests(home: string | 'homedir' | null): RealHomeTestOverride | null; // throws unless VITEST=true
 /** @internal */ export function __restoreRealHomeForTests(previous: RealHomeTestOverride | null): void;
 export function enterIsolatedAuthorityHome(home: string): () => void; // in-process scope for `phm demo` only
 export function isolatedAuthorityHomeActive(): boolean;

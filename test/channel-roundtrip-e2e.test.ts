@@ -141,7 +141,7 @@ describe('channel round trip: telegram + email carrying one instruction', () => 
     expect(markdown).not.toContain(MASON_MAIL);
 
     // b) a bus event exists for the entry — one interjection mirror, not two.
-    const page = listBusInboxAfter(0, 50);
+    const page = listBusInboxAfter(0, 50, { now: () => T0 });
     expect(page.status).toBe('ok');
     const interjections = page.status === 'ok'
       ? page.messages.filter((row) => (row.envelope.body as { kind?: string }).kind === 'interjection')
@@ -178,7 +178,7 @@ describe('channel round trip: telegram + email carrying one instruction', () => 
     expect(parseInbox(inboxText())).toHaveLength(1);
     expect(send).toHaveBeenCalledTimes(2); // second Telegram ack, still Telegram-only
     expect(replyFiles()).toHaveLength(1); // same Message-ID stem, rewritten in place
-    const after = listBusInboxAfter(0, 50);
+    const after = listBusInboxAfter(0, 50, { now: () => T0 });
     const afterInterjections = after.status === 'ok'
       ? after.messages.filter((row) => (row.envelope.body as { kind?: string }).kind === 'interjection')
       : [];

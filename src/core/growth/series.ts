@@ -42,11 +42,11 @@ const BUCKET_MS: Record<GrowthRange, number> = {
 
 export const GROWTH_FIELD_NEEDS: Record<string, string> = {
   'growth.mergesPerHour': 'metrics/jobs.jsonl rows with event outcome, state MERGED, job, and ts. A missing or oversized file stays unknown.',
-  'growth.pullsOpened': 'A complete pull export (--prs) with createdAt. Fleet proposals are not opened pull requests.',
-  'growth.pullsMerged': 'A complete pull export with mergedAt, or metrics/jobs.jsonl MERGED rows whose url is a GitHub pull request.',
-  'growth.releases': 'A local release series of publishedAt timestamps. gh is not called. releases.updateCheck is a phase, not a series.',
+  'growth.pullsOpened': 'metrics/growth-pulls-1d.json, or metrics/growth-pulls-hourly.jsonl for 1W and 1M. A complete pull export with createdAt. Fleet proposals are not opened pull requests.',
+  'growth.pullsMerged': 'That same pull export, or metrics/jobs.jsonl MERGED rows whose url is a GitHub pull request.',
+  'growth.releases': 'metrics/growth-releases.jsonl rows with publishedAt. gh is not called. releases.updateCheck is a phase, not a series.',
   'growth.laneUtilization': 'usage-readings.log rows with pool, pctUsed, and observedAt. A sensor snapshot is not a trend.',
-  'growth.costPerMergedPr': 'scorecard-history points with costPerMergedChangeUsd. Those snapshots are daily and cannot fill 1H or 1D.',
+  'growth.costPerMergedPr': 'metrics/growth-cost-hourly.jsonl costPerMergedPrUsd for metered lanes. Hours without a reading stay gaps. scorecard-history is only the daily fallback.',
   'growth.bottleneckTrends': 'bottlenecks.v1 items need a points series of timestamps and values. before/after is not a time series.',
 };
 
@@ -63,14 +63,50 @@ export interface GrowthScorecard {
   points: { ts: string; costPerMergedChangeUsd: number | null }[];
 }
 
+export const GROWTH_EXPORT_STALE_MS = 30 * 60 * 1000;
+
+export interface GrowthHourCount {
+  at: number;
+  opened: number | null;
+  merged: number | null;
+}
+
+export interface GrowthCostPoint {
+  at: number;
+  /** Null is a measured gap, not zero. */
+  usd: number | null;
+}
+
+/** ISO times from growth-exports-status.json, else each file's mtime. */
+export interface GrowthExportClock {
+  pulls: string | null;
+  releases: string | null;
+  cost: string | null;
+}
+
+export type GrowthFreshness = 'fresh' | 'stale' | 'unknown';
+
 export interface GrowthFacts {
   nowMs: number;
   /** null when metrics/jobs.jsonl is missing, unreadable, or over the size cap. */
   jobsText: string | null;
   /** null when no usage-readings.log could be read. */
   usageText: string | null;
+  /** Complete pull export, usually growth-pulls-1d.json. */
   pulls: readonly GrowthPull[] | null;
   pullsComplete: boolean;
+  /** Set when the daily rows came from the metrics export. */
+  pullsSource?: string;
+  /** Pull rows from growth-pulls-hourly.jsonl. Null when that file is not a pull list. */
+  hourlyPulls?: readonly GrowthPull[] | null;
+  hourlyPullsComplete?: boolean;
+  /** Hourly opened/merged counts from growth-pulls-hourly.jsonl. */
+  hourlyPullCounts?: readonly GrowthHourCount[] | null;
+  /** publishedAt instants from growth-releases.jsonl. Null when the file was not read. */
+  releases?: readonly { at: number }[] | null;
+  /** Hourly metered cost. Null when growth-cost-hourly.jsonl was not read. */
+  costHourly?: readonly GrowthCostPoint[] | null;
+  exportClock?: GrowthExportClock | null;
   scorecard7d: GrowthScorecard | null;
   scorecard30d: GrowthScorecard | null;
 }
@@ -87,6 +123,8 @@ export interface GrowthSeries {
   unit: GrowthUnit;
   source: string | null;
   status: 'ready' | 'no-data-source';
+  /** Fresh when the export clock is within 30 minutes. Stale data is still drawn. */
+  freshness: GrowthFreshness;
   /** `no data source` when this range cannot be drawn. Null when ready. */
   reason: 'no data source' | null;
   /** What would make a missing series visible. */
@@ -98,7 +136,7 @@ export interface GrowthSeries {
 export interface GrowthBlindSpot {
   id: string;
   path: string;
-  freshness: 'unknown';
+  freshness: 'unknown' | 'stale';
   need: string;
 }
 
@@ -122,6 +160,7 @@ export interface GrowthSnapshot {
   costPerMergedPr: number | null;
   bottleneckTrends: number | null;
   observedAt: string;
+  freshness: Record<GrowthSeriesId, GrowthFreshness>;
 }
 
 interface Bucket { start: number; end: number }
@@ -153,11 +192,11 @@ function pointsFrom(buckets: Bucket[], value: (bucket: Bucket) => number | null)
 }
 
 function unavailable(id: GrowthSeriesId, label: string, unit: GrowthUnit, source: string | null, need: string): GrowthSeries {
-  return { id, label, unit, source, status: 'no-data-source', reason: 'no data source', need, caveat: null, points: [] };
+  return { id, label, unit, source, status: 'no-data-source', freshness: 'unknown', reason: 'no data source', need, caveat: null, points: [] };
 }
 
 function ready(id: GrowthSeriesId, label: string, unit: GrowthUnit, source: string, points: GrowthPoint[], caveat: string | null = null): GrowthSeries {
-  return { id, label, unit, source, status: 'ready', reason: null, need: null, caveat, points };
+  return { id, label, unit, source, status: 'ready', freshness: 'fresh', reason: null, need: null, caveat, points };
 }
 
 interface MergeEvent { at: number; pr: boolean }
@@ -214,29 +253,82 @@ function mergesPerHour(facts: GrowthFacts, range: GrowthRange): GrowthSeries {
   }), caveat);
 }
 
+type PullKind = 'hourly-counts' | 'hourly-pulls' | 'daily' | 'none';
+
+function longRange(range: GrowthRange): boolean {
+  return range === '1W' || range === '1M';
+}
+
+function pullKind(facts: GrowthFacts, range: GrowthRange): PullKind {
+  const hourlyCounts = facts.hourlyPullCounts ?? null;
+  const hourlyPulls = facts.hourlyPullsComplete ? facts.hourlyPulls ?? null : null;
+  if (longRange(range) && hourlyCounts) return 'hourly-counts';
+  if (longRange(range) && hourlyPulls) return 'hourly-pulls';
+  if (facts.pulls && facts.pullsComplete) return 'daily';
+  if (hourlyCounts) return 'hourly-counts';
+  if (hourlyPulls) return 'hourly-pulls';
+  return 'none';
+}
+
+function pullRows(facts: GrowthFacts, kind: PullKind): readonly GrowthPull[] {
+  if (kind === 'hourly-pulls') return facts.hourlyPulls ?? [];
+  if (kind === 'daily') return facts.pulls ?? [];
+  return [];
+}
+
 function pullsOpened(facts: GrowthFacts, range: GrowthRange): GrowthSeries {
   const id = 'pullsOpened';
   const label = 'PRs opened';
-  if (!facts.pulls || !facts.pullsComplete) return unavailable(id, label, 'count', null, GROWTH_FIELD_NEEDS['growth.pullsOpened']!);
-  const times = facts.pulls.flatMap((pull) => {
+  const kind = pullKind(facts, range);
+  const buckets = bucketsFor(facts.nowMs, range);
+  if (kind === 'hourly-counts') {
+    const rows = facts.hourlyPullCounts ?? [];
+    return ready(id, label, 'count', 'metrics/growth-pulls-hourly.jsonl', pointsFrom(buckets, (bucket) => {
+      let total = 0;
+      let seen = false;
+      for (const row of rows) {
+        if (row.opened === null || !contains(row.at, bucket, facts.nowMs)) continue;
+        seen = true;
+        total += row.opened;
+      }
+      return seen ? total : null;
+    }));
+  }
+  if (kind === 'none') return unavailable(id, label, 'count', null, GROWTH_FIELD_NEEDS['growth.pullsOpened']!);
+  const source = kind === 'hourly-pulls' ? 'metrics/growth-pulls-hourly.jsonl' : (facts.pullsSource ?? 'pull-export');
+  const times = pullRows(facts, kind).flatMap((pull) => {
     const at = Date.parse(pull.createdAt);
     return Number.isFinite(at) && at <= facts.nowMs ? [at] : [];
   });
-  const buckets = bucketsFor(facts.nowMs, range);
-  return ready(id, label, 'count', 'pull-export', pointsFrom(buckets, (bucket) => times.filter((at) => contains(at, bucket, facts.nowMs)).length));
+  return ready(id, label, 'count', source, pointsFrom(buckets, (bucket) => times.filter((at) => contains(at, bucket, facts.nowMs)).length));
 }
 
 function pullsMerged(facts: GrowthFacts, range: GrowthRange): GrowthSeries {
   const id = 'pullsMerged';
   const label = 'PRs merged';
+  const kind = pullKind(facts, range);
   const buckets = bucketsFor(facts.nowMs, range);
-  if (facts.pulls && facts.pullsComplete) {
-    const times = facts.pulls.flatMap((pull) => {
+  if (kind === 'hourly-counts') {
+    const rows = facts.hourlyPullCounts ?? [];
+    return ready(id, label, 'count', 'metrics/growth-pulls-hourly.jsonl', pointsFrom(buckets, (bucket) => {
+      let total = 0;
+      let seen = false;
+      for (const row of rows) {
+        if (row.merged === null || !contains(row.at, bucket, facts.nowMs)) continue;
+        seen = true;
+        total += row.merged;
+      }
+      return seen ? total : null;
+    }));
+  }
+  if (kind === 'hourly-pulls' || kind === 'daily') {
+    const source = kind === 'hourly-pulls' ? 'metrics/growth-pulls-hourly.jsonl' : (facts.pullsSource ?? 'pull-export');
+    const times = pullRows(facts, kind).flatMap((pull) => {
       if (pull.state !== 'merged' || !pull.mergedAt) return [];
       const at = Date.parse(pull.mergedAt);
       return Number.isFinite(at) && at <= facts.nowMs ? [at] : [];
     });
-    return ready(id, label, 'count', 'pull-export', pointsFrom(buckets, (bucket) => times.filter((at) => contains(at, bucket, facts.nowMs)).length));
+    return ready(id, label, 'count', source, pointsFrom(buckets, (bucket) => times.filter((at) => contains(at, bucket, facts.nowMs)).length));
   }
   if (facts.jobsText === null) return unavailable(id, label, 'count', null, GROWTH_FIELD_NEEDS['growth.pullsMerged']!);
   const { events, dropped } = mergeEvents(facts.jobsText, facts.nowMs);
@@ -244,8 +336,13 @@ function pullsMerged(facts: GrowthFacts, range: GrowthRange): GrowthSeries {
   return ready(id, label, 'count', 'metrics/jobs.jsonl', pointsFrom(buckets, (bucket) => events.filter((event) => event.pr && contains(event.at, bucket, facts.nowMs)).length), caveat);
 }
 
-function releases(): GrowthSeries {
-  return unavailable('releases', 'Releases', 'count', null, GROWTH_FIELD_NEEDS['growth.releases']!);
+function releases(facts: GrowthFacts, range: GrowthRange): GrowthSeries {
+  const id = 'releases';
+  const label = 'Releases';
+  const events = facts.releases;
+  if (!events) return unavailable(id, label, 'count', null, GROWTH_FIELD_NEEDS['growth.releases']!);
+  const buckets = bucketsFor(facts.nowMs, range);
+  return ready(id, label, 'count', 'metrics/growth-releases.jsonl', pointsFrom(buckets, (bucket) => events.filter((event) => contains(event.at, bucket, facts.nowMs)).length));
 }
 
 function laneUtilization(facts: GrowthFacts, range: GrowthRange): GrowthSeries {
@@ -272,6 +369,22 @@ function costCard(facts: GrowthFacts, range: GrowthRange): GrowthScorecard | nul
 
 function costPerMergedPr(facts: GrowthFacts, range: GrowthRange): GrowthSeries {
   const id = 'costPerMergedPr';
+  const hourly = facts.costHourly;
+  if (hourly) {
+    const buckets = bucketsFor(facts.nowMs, range);
+    const points = pointsFrom(buckets, (bucket) => {
+      let latest: { at: number; usd: number } | null = null;
+      for (const point of hourly) {
+        if (point.usd === null || !contains(point.at, bucket, facts.nowMs)) continue;
+        if (!latest || point.at >= latest.at) latest = { at: point.at, usd: point.usd };
+      }
+      return latest ? latest.usd : null;
+    });
+    if (points.every((point) => point.y === null)) {
+      return unavailable(id, 'Cost · metered lanes', 'usd', 'metrics/growth-cost-hourly.jsonl', GROWTH_FIELD_NEEDS['growth.costPerMergedPr']!);
+    }
+    return ready(id, 'Cost · metered lanes', 'usd', 'metrics/growth-cost-hourly.jsonl', points, 'Metered lanes. Hours without a reading stay gaps.');
+  }
   const label = 'Cost per merged PR';
   const have = facts.scorecard7d ?? facts.scorecard30d;
   if (range === '1H' || range === '1D') {
@@ -303,11 +416,41 @@ function seriesFor(facts: GrowthFacts, range: GrowthRange): GrowthSeries[] {
     mergesPerHour(facts, range),
     pullsOpened(facts, range),
     pullsMerged(facts, range),
-    releases(),
+    releases(facts, range),
     laneUtilization(facts, range),
     costPerMergedPr(facts, range),
     bottleneckTrends(),
   ];
+}
+
+const EXPORT_CLOCK: Partial<Record<GrowthSeriesId, keyof GrowthExportClock>> = {
+  pullsOpened: 'pulls',
+  pullsMerged: 'pulls',
+  releases: 'releases',
+  costPerMergedPr: 'cost',
+};
+
+export function exportFreshness(observedAt: string | null, nowMs: number): GrowthFreshness {
+  if (!observedAt) return 'unknown';
+  const at = Date.parse(observedAt);
+  if (!Number.isFinite(at)) return 'unknown';
+  const age = nowMs - at;
+  if (age < -5 * 60 * 1000) return 'unknown';
+  return age > GROWTH_EXPORT_STALE_MS ? 'stale' : 'fresh';
+}
+
+function stampFreshness(series: GrowthSeries, facts: GrowthFacts): GrowthSeries {
+  if (series.status !== 'ready') return series;
+  const clockKey = EXPORT_CLOCK[series.id];
+  if (!clockKey || series.source === 'scorecard-history' || series.source === 'metrics/jobs.jsonl') return series;
+  const freshness = exportFreshness(facts.exportClock?.[clockKey] ?? null, facts.nowMs);
+  if (freshness !== 'stale') return { ...series, freshness };
+  const caveat = [series.caveat, 'Export is more than 30 minutes old.'].filter(Boolean).join(' ');
+  return { ...series, freshness, caveat };
+}
+
+function stampedSeries(facts: GrowthFacts, range: GrowthRange): GrowthSeries[] {
+  return seriesFor(facts, range).map((series) => stampFreshness(series, facts));
 }
 
 function latestReady(series: GrowthSeries): number | null {
@@ -320,25 +463,33 @@ function latestReady(series: GrowthSeries): number | null {
 }
 
 export function growthSnapshot(facts: GrowthFacts): GrowthSnapshot {
-  const reports = (['1M', '1W', '1D'] as const).map((range) => seriesFor(facts, range));
-  const latest = (id: GrowthSeriesId): number | null => {
+  const reports = (['1M', '1W', '1D'] as const).map((range) => stampedSeries(facts, range));
+  const latest = (id: GrowthSeriesId): { value: number | null; freshness: GrowthFreshness } => {
     for (const series of reports) {
       const row = series.find((item) => item.id === id);
       if (!row) continue;
       const value = latestReady(row);
-      if (value !== null) return value;
+      if (value !== null) return { value, freshness: row.freshness };
     }
-    return null;
+    return { value: null, freshness: 'unknown' };
   };
+  const freshness = {} as Record<GrowthSeriesId, GrowthFreshness>;
+  const values = {} as Record<GrowthSeriesId, number | null>;
+  for (const id of GROWTH_SERIES_IDS) {
+    const reading = latest(id);
+    values[id] = reading.freshness === 'fresh' ? reading.value : null;
+    freshness[id] = reading.value === null ? 'unknown' : reading.freshness;
+  }
   return {
-    mergesPerHour: latest('mergesPerHour'),
-    pullsOpened: latest('pullsOpened'),
-    pullsMerged: latest('pullsMerged'),
-    releases: latest('releases'),
-    laneUtilization: latest('laneUtilization'),
-    costPerMergedPr: latest('costPerMergedPr'),
-    bottleneckTrends: latest('bottleneckTrends'),
+    mergesPerHour: values.mergesPerHour,
+    pullsOpened: values.pullsOpened,
+    pullsMerged: values.pullsMerged,
+    releases: values.releases,
+    laneUtilization: values.laneUtilization,
+    costPerMergedPr: values.costPerMergedPr,
+    bottleneckTrends: values.bottleneckTrends,
     observedAt: new Date(facts.nowMs).toISOString(),
+    freshness,
   };
 }
 
@@ -346,16 +497,22 @@ export function growthBlindSpots(facts: GrowthFacts): GrowthBlindSpot[] {
   const snap = growthSnapshot(facts);
   const spots: GrowthBlindSpot[] = [];
   for (const id of GROWTH_SERIES_IDS) {
-    if (snap[id] !== null) continue;
+    const freshness = snap.freshness[id];
+    if (freshness === 'fresh' && snap[id] !== null) continue;
     const path = `growth.${id}`;
-    spots.push({ id: stableFieldId(path), path, freshness: 'unknown', need: GROWTH_FIELD_NEEDS[path] ?? `A fresh reading for ${path}.` });
+    spots.push({
+      id: stableFieldId(path),
+      path,
+      freshness: freshness === 'stale' ? 'stale' : 'unknown',
+      need: GROWTH_FIELD_NEEDS[path] ?? `A fresh reading for ${path}.`,
+    });
   }
   spots.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   return spots;
 }
 
 export function projectGrowthSeries(facts: GrowthFacts, range: GrowthRange): GrowthReport {
-  const series = seriesFor(facts, range);
+  const series = stampedSeries(facts, range);
   const primary = series.find((item) => item.status === 'ready')?.id ?? 'mergesPerHour';
   return {
     schema: GROWTH_SCHEMA,

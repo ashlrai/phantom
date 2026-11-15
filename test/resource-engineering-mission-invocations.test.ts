@@ -116,7 +116,13 @@ describe('mission invocation observations', () => {
     const f = fixture(), invocation = beginEngineeringMissionInvocation(f.config, f.host);
     const actual = immutable.writeImmutablePrivateRecord;
     vi.spyOn(immutable, 'writeImmutablePrivateRecord').mockImplementation((config, row, options) => {
-      f.alter('started', value => value);
+      // Replace the file so its inode changes. A same-length overwrite on
+      // this host's tmpfs can keep mtime, ctime and inode, which would hide
+      // the swap from the publication identity check.
+      const path = f.file('started');
+      const bytes = readFileSync(path);
+      rmSync(path);
+      writeFileSync(path, bytes, { mode: 0o600 });
       return actual(config, row, options);
     });
     expect(() => invocation.finish(completed)).toThrow(); expect(readEngineeringMissionInvocations(f.config).unfinishedCount).toBe(1);

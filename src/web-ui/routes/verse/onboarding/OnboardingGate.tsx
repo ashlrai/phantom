@@ -2,7 +2,7 @@
  * routes/verse/onboarding/OnboardingGate.tsx — whether the first-run tour is
  * on screen, and its chunk while it is.
  *
- * The shell mounts this lazily (VerseApp), so neither the tour's store nor
+ * The shell mounts this lazily (PhantomApp), so neither the tour's store nor
  * the tour itself is chat first-paint critical JS: the chip is a docked
  * corner affordance that asks for nothing, drawn a beat after the shell
  * (exactly as before, when the flow's own chunk already arrived after first

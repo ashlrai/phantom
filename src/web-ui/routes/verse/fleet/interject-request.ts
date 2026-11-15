@@ -5,8 +5,20 @@ export const INTERJECT_SOURCE = 'Phantom desktop';
 
 export type InboxAck = 'acked' | 'skipped' | 'pending' | 'unknown';
 
-export function buildInterjectBody(text: string): { text: string; source: string } {
-  return { text, source: INTERJECT_SOURCE };
+/** One id per composed message; a retry reposts the same id so the Hub replays
+ * the first write instead of appending twice. The grammar matches the route's
+ * `CHANNEL_REQUEST_ID_PATTERN` — a malformed id is rejected, never rewritten. */
+export function mintInterjectRequestId(): string {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  return `req-${uuid ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`}`;
+}
+
+/** `requestId` rides along when the caller already minted one for this composed
+ * message — retries pass the same value so a repeat lands only once. */
+export function buildInterjectBody(text: string, requestId?: string): { text: string; source: string; requestId?: string } {
+  return requestId === undefined
+    ? { text, source: INTERJECT_SOURCE }
+    : { text, source: INTERJECT_SOURCE, requestId };
 }
 
 /** GET inbox answers `{ entries: [{ id, ack }] }`; the legacy `inbox` key is still read, and missing id/ack reads as unknown. */

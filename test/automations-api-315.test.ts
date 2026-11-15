@@ -94,7 +94,7 @@ describe('/api/verse/automations', () => {
     expect(res.status).toBe(200);
     const view = (await res.json()) as AutomationsOverviewResponse;
     expect(view.automations).toEqual([]);
-    expect(view.templates.map((t) => t.id)).toEqual(['watch-pr', 'fix-labeled-issues', 'nightly-flaky-tests', 'weekly-dependency-bumps', 'fix-red-main', 'nightly-drain', 'morning-summary', 'weekly-review']);
+    expect(view.templates.map((t) => t.id)).toEqual(['watch-pr', 'fix-labeled-issues', 'nightly-flaky-tests', 'weekly-dependency-bumps', 'fix-red-main', 'nightly-drain', 'morning-summary', 'weekly-review', 'radar-docs-sweep']);
     expect(view.templates.find((template) => template.id === 'watch-pr')).toMatchObject({
       input: { enabled: false, lane: 'leader-review', spendCapUsd: 0,
         trigger: { kind: 'watch', repeat: false, command: ['gh', 'pr', 'view', '123', '--repo', 'ashlrai/phantom', '--json', 'state'] } },

@@ -54,8 +54,11 @@ import { proactiveProfilesQuery } from '../proactive/proactive-queries.js';
 import { setVerseSection } from '../verse-ui-store.js';
 import styles from './ResourcesBar.module.css';
 import type { ProviderResourceDescriptor } from '../../../../core/resources/provider-aggregation-types.js';
+import { readingAge } from './reading-age.js';
 import { projectResourceDisplay, type ResourceDisplayView } from './resource-display-model.js';
 import { LazyProviderResourceGroups } from './useResourceDisplayClock.js';
+import { firstReadSession, markFirstReadAttempted, shouldAutoCheck } from './first-read.js';
+import { refreshAccountReading } from '../useSeatsRefresh.js';
 
 type Level = 'ok' | 'low' | 'out' | 'idle' | 'unknown';
 
@@ -93,6 +96,31 @@ const LEVEL_OF_STATUS: Readonly<Record<AccountStatus['kind'], Level>> = {
   checking: 'unknown',
   'not-checked': 'unknown',
 };
+
+/**
+ * The app session's first-read queue: each never-read seat gets one bounded
+ * usage check, fired one at a time with no retries. Module scope, like the
+ * attempted set itself — a remounted bar joins the same sequence instead of
+ * starting a second one beside it.
+ */
+const firstReadQueue: { ids: string[]; running: boolean } = { ids: [], running: false };
+
+async function drainFirstReadQueue(): Promise<void> {
+  if (firstReadQueue.running) return;
+  firstReadQueue.running = true;
+  try {
+    for (let id = firstReadQueue.ids.shift(); id !== undefined; id = firstReadQueue.ids.shift()) {
+      try {
+        // The same bounded request "Check again" sends. A thrown check — no
+        // mutation token held, a refused or interrupted read — leaves the row
+        // showing its own reason; nothing here retries in a loop.
+        await refreshAccountReading(id);
+      } catch { /* one bounded attempt per seat per session */ }
+    }
+  } finally {
+    firstReadQueue.running = false;
+  }
+}
 
 /** Pure: capacity rows → bar rows (exported for tests). */
 export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolean; now: number; maxAgeMs?: number; localReadFailed?: boolean; pendingSeatIds?: readonly string[]; devinConsumption?: unknown }): BarRow[] {
@@ -138,7 +166,10 @@ export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolea
       priorLabel = codexCreditsAvailable(priorCredit.reading)
         ? `Credits ${priorValue === null ? units : `≈${priorValue}`} · last` : 'No credits reported · last';
     }
-    const creditLabel = row.engine !== 'codex' ? undefined : priorLabel !== null ? priorLabel : !currentCredits ? 'Credits unconfirmed'
+    const unknownCreditReason = !display.credit.observedAt ? 'Credits: no reading yet'
+      : row.creditState === 'unknown' ? 'Credits: not reported by this plan'
+      : `Credits: last ${readingAge(display.credit.observedAt, opts.now)}`;
+    const creditLabel = row.engine !== 'codex' ? undefined : priorLabel !== null ? priorLabel : !currentCredits ? unknownCreditReason
       : row.credits !== null ? creditValue === null ? row.credits : `Credits ≈${creditValue}`
       : row.creditState === 'none' ? 'No credits reported' : 'Credits not reported';
     const creditHeld = row.engine === 'codex' && currentCredits && row.creditSpendControlReached === true;
@@ -147,6 +178,7 @@ export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolea
     const exactCreditBalance = formatNativeCreditUnits(exactBalance) === null ? undefined : exactBalance ?? undefined;
     const creditDetail: string[] = priorCredit ? [`Credits recorded ${new Date(priorCredit.observedAt).toLocaleString()}`,
       'Prior credit reading; current balance and availability are unconfirmed.'] : [];
+    if (row.engine === 'codex' && !currentCredits && !priorCredit) creditDetail.push(`${unknownCreditReason}. Current credit balance is unknown.`);
     if (row.credits !== null && currentCredits) creditDetail.push(row.credits, 'Credit units are independent of subscription usage; autonomous credit spending is not admitted.');
     if (row.engine === 'codex' && currentCredits && row.creditState === 'none') creditDetail.push('Native provider reports no available credits.');
     if (priorValue !== null) creditDetail.push(`Prior estimated credit value ${priorValue} · personal-plan $0.04/credit reference; not attributed spend.`);
@@ -324,9 +356,25 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
     expiresAt: personalSessionExpiresAt(personal, data.budget?.readingMaxAgeMs),
     windows: [{ resetsAt: personal?.resetsAt }],
   }]);
+  const capacityRows = useMemo(
+    () => (data.loading ? [] : buildCapacityRows(data.seats, { health: data.health, budget: data.budget, local: 'collapse', now })),
+    [data.loading, data.seats, data.health, data.budget, now],
+  );
+  // First open after install or upgrade: start one bounded usage check per
+  // never-read resource so the rows fill with real readings instead of
+  // "No current usage reading · Check now". Attempted seats are remembered in
+  // session memory, so each resource is checked once, never in a retry loop.
+  useEffect(() => {
+    if (data.loading || !documentVisible) return;
+    const ids = shouldAutoCheck(capacityRows, firstReadSession());
+    for (const id of ids) markFirstReadAttempted(id);
+    if (ids.length === 0) return;
+    firstReadQueue.ids.push(...ids);
+    void drainFirstReadQueue();
+  }, [capacityRows, data.loading, documentVisible]);
   const rows = useMemo(
-    () => (data.loading ? [] : applySensorHeadroom(barRows(buildCapacityRows(data.seats, { health: data.health, budget: data.budget, local: 'collapse', now }), { healthRead: data.health !== null, now, maxAgeMs: data.budget?.readingMaxAgeMs, localReadFailed: data.localReadFailed, pendingSeatIds: data.pendingSeatIds, devinConsumption: devin?.consumption }), observeRead.data?.usage.windows ?? null)),
-    [data.loading, data.seats, data.health, data.budget, data.localReadFailed, data.pendingSeatIds, now, devin?.consumption, observeRead.data],
+    () => applySensorHeadroom(barRows(capacityRows, { healthRead: data.health !== null, now, maxAgeMs: data.budget?.readingMaxAgeMs, localReadFailed: data.localReadFailed, pendingSeatIds: data.pendingSeatIds, devinConsumption: devin?.consumption }), observeRead.data?.usage.windows ?? null),
+    [capacityRows, data.health, data.budget, data.localReadFailed, data.pendingSeatIds, now, devin?.consumption, observeRead.data],
   );
   const cloud = cloudRead.data?.credits ?? null;
   const cloudLeft = cloud && cloud.totalUsd > 0 ? (cloud.remainingUsd / cloud.totalUsd) * 100 : null;
@@ -373,9 +421,9 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
                   <span className={styles.value}>{row.value}</span>
                 </span>
                 {row.display ? <span id={`usage-stamp-${row.key}`} className={styles.usageStamp}>{row.display.usage.label}
-                  {row.display.usage.observedAt ? <> · <time dateTime={row.display.usage.observedAt} title={row.display.usage.observedAt}>{new Date(row.display.usage.observedAt).toLocaleString()}</time></> : null}</span> : null}
+                  {row.display.usage.observedAt ? <> · <time dateTime={row.display.usage.observedAt} title={row.display.usage.observedAt}>{readingAge(row.display.usage.observedAt)}</time></> : <> · {readingAge(null)}</>}</span> : null}
                 {row.creditLabel ? <span className={styles.credits}>
-                  <span>{row.creditLabel}</span>
+                  <span title={row.creditLabel.startsWith('Credits:') ? `${row.creditLabel}. Current credit balance is unknown.` : row.creditLabel}>{row.creditLabel}</span>
                   {row.creditHeld ? <span className={styles.creditHold}>Held</span> : null}
                 </span> : null}
               </>
@@ -628,10 +676,10 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
     >
       {entry.content}
       <span className={styles.moveControls}>
-        <button type="button" aria-label={`Move ${entry.name} up`} title={`Move ${entry.name} up`}
-          disabled={index === 0} onClick={() => move(entry.key, ids[index - 1]!)}><span aria-hidden="true">↑</span></button>
-        <button type="button" aria-label={`Move ${entry.name} down`} title={`Move ${entry.name} down`}
-          disabled={index === ids.length - 1} onClick={() => move(entry.key, ids[index + 1]!)}><span aria-hidden="true">↓</span></button>
+        <Tooltip label={`Move ${entry.name} up`}><button type="button" aria-label={`Move ${entry.name} up`}
+          disabled={index === 0} onClick={() => move(entry.key, ids[index - 1]!)}><span aria-hidden="true">↑</span></button></Tooltip>
+        <Tooltip label={`Move ${entry.name} down`}><button type="button" aria-label={`Move ${entry.name} down`}
+          disabled={index === ids.length - 1} onClick={() => move(entry.key, ids[index + 1]!)}><span aria-hidden="true">↓</span></button></Tooltip>
       </span>
     </div>
   ); });
@@ -639,12 +687,11 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   if (ordered.length === 0) return null;
   return (
     <div className={styles.bar} data-expanded={expanded || undefined} data-compact={expanded && resources.compact || undefined} role="group" aria-label="Resources at a glance" aria-busy={data.refreshing || undefined}>
-      {expanded ? <button type="button" className={styles.densityToggle}
+      {expanded ? <Tooltip label={resources.compact ? 'Expand resource details' : 'Compact resources; hover or focus for details'} placement="bottom"><button type="button" className={styles.densityToggle}
         aria-label="Compact resources" aria-pressed={resources.compact}
-        title={resources.compact ? 'Expand resource details' : 'Compact resources; hover or focus for details'}
         onClick={() => setResourcesCompact(!resources.compact)}>
         <span>Resources</span>{resources.compact ? <IconChevronDown /> : <IconChevronUp />}
-      </button> : null}
+      </button></Tooltip> : null}
       {expanded ? <button type="button" className={styles.densityToggle} aria-pressed={providerView !== 0} onClick={() => setProviderView(value => value ? 0 : 1)}>
         {providerView ? 'Show account view' : 'Group by provider'}
       </button> : null}

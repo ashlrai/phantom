@@ -11,9 +11,6 @@
  * There is deliberately no environment override (HOME, USERPROFILE, ASHLR_HOME,
  * ASHLR_RUNS_DIR or any new variable). Tests use {@link __setRealHomeForTests}.
  *
- * win32: `os.userInfo().homedir` is not a passwd lookup there, so this falls
- * back to `os.homedir()`, which honors USERPROFILE. That carries the same
- * relocation risk and is a documented follow-up (docs/COMMS-AGENT.md).
  */
 import * as os from 'node:os';
 import { isAbsolute, resolve } from 'node:path';
@@ -23,14 +20,14 @@ export type RealHomeTestOverride = { kind: 'path'; path: string } | { kind: 'hom
 
 // A global symbol so the override set by test/setup reaches every module
 // instance (vitest module isolation, and the child preload in
-// test/setup/real-home-child.mjs, which cannot import TypeScript). Only
-// honored while VITEST is set; production code never writes it.
+// test/setup/child-process-home.cjs, which cannot import TypeScript). Only
+// honored while VITEST=true; production code never writes it.
 const OVERRIDE_KEY = Symbol.for('ashlr.realHome.testOverride');
 
 type OverrideHost = { [OVERRIDE_KEY]?: RealHomeTestOverride };
 
 function activeOverride(): RealHomeTestOverride | undefined {
-  if (!process.env.VITEST) return undefined;
+  if (process.env.VITEST !== 'true') return undefined;
   return (globalThis as OverrideHost)[OVERRIDE_KEY];
 }
 
@@ -41,7 +38,7 @@ function accountHome(): string {
   if (isolatedHome !== null) return isolatedHome;
   const override = activeOverride();
   if (override?.kind === 'path') return override.path;
-  if (override?.kind === 'homedir' || process.platform === 'win32') return os.homedir();
+  if (override?.kind === 'homedir') return os.homedir();
   return os.userInfo().homedir;
 }
 
@@ -93,10 +90,10 @@ export function canonicalRealHome(): string | null {
 /**
  * @internal Test seam. Pass an absolute path to pin the account home, `'homedir'`
  * to follow `os.homedir()`, or null to clear. Returns the previous override so
- * a test can restore it. Throws unless VITEST is set.
+ * a test can restore it. Throws unless VITEST=true.
  */
 export function __setRealHomeForTests(home: string | 'homedir' | null): RealHomeTestOverride | null {
-  if (!process.env.VITEST) throw new Error('__setRealHomeForTests is only available under Vitest');
+  if (process.env.VITEST !== 'true') throw new Error('__setRealHomeForTests is only available under Vitest');
   const host = globalThis as OverrideHost;
   const previous = host[OVERRIDE_KEY] ?? null;
   if (home === null) delete host[OVERRIDE_KEY];

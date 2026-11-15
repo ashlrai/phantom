@@ -2,11 +2,12 @@
  * Pace a lane so included usage is spent as the window resets.
  * target = remaining * (1 - margin) / hoursLeft / burnPerJob.
  * Missing inputs stay unknown. They are not zero and they are not idle room.
- * Pay-per-use stays at 0 unless measured spend is below the owner budget and a fresh balance exists. The default budget is 0.
+ * Pay-per-use stays at 0 unless measured spend is below the owner budget from readSpendBudget and a fresh balance exists. A caller-supplied budget is not that figure. The read fails closed to 0.
  * KILL and the caller's ceiling always win.
  */
 import type { FleetEngine } from '../fleet/fleet-types.js';
-import { spendAllowsPayPerUse } from '../spend/budget-policy.js';
+import { budgetFor, spendAllowsPayPerUse } from '../spend/budget-policy.js';
+import { readSpendBudget } from '../spend/budget-store.js';
 import type { UsageSensorLaneView, UsageSensorReport } from './sensor-reading.js';
 
 export const PACE_SAFETY_MARGIN = 0.15;
@@ -26,7 +27,10 @@ export interface PaceInput {
   margin?: number;
   payPerUse?: boolean;
   balanceFresh?: boolean;
-  /** Owner budget for this provider and period. Missing means 0. */
+  /**
+   * Ignored for a pay-per-use lane. That budget comes from readSpendBudget,
+   * which fails closed to 0.
+   */
   budgetUsd?: number;
   /** Measured spend in that period. Null is unknown and is not under the budget. */
   spentUsd?: number | null;
@@ -47,7 +51,7 @@ function clamp(value: number, floor: number, ceiling: number): number {
 }
 
 /** Integer concurrency for one lane. Null means the scheduler must not invent a pace. */
-export function paceLane(input: PaceInput): PaceDecision {
+export async function paceLane(input: PaceInput): Promise<PaceDecision> {
   const lane = input.lane;
   if (input.killed || !Number.isFinite(input.ceiling) || input.ceiling < 0) {
     return { lane, target: input.killed ? 0 : null, reason: input.killed ? 'kill' : 'unknown' };
@@ -55,9 +59,10 @@ export function paceLane(input: PaceInput): PaceDecision {
   const ceiling = Math.floor(input.ceiling);
   const floor = Number.isFinite(input.floor) && input.floor > 0 ? Math.floor(input.floor) : 0;
   if (input.payPerUse === true) {
+    const owner = await readSpendBudget();
     const gate = spendAllowsPayPerUse({
       killed: false,
-      budgetUsd: input.budgetUsd ?? 0,
+      budgetUsd: budgetFor(owner.policy, lane),
       spentUsd: input.spentUsd === undefined ? null : input.spentUsd,
       balanceFresh: input.balanceFresh === true,
     });
@@ -140,11 +145,11 @@ export function paceReason(reason: PaceReason, target: number): string {
 }
 
 /** Divide a lane burn by the slots already allowed, then pace under that ceiling. */
-export function paceAgainstCeiling(advice: SchedulerPaceAdvice, ceiling: number, nowMs: number, killed: boolean): PaceDecision {
+export async function paceAgainstCeiling(advice: SchedulerPaceAdvice, ceiling: number, nowMs: number, killed: boolean, provider = 'claude-api'): Promise<PaceDecision> {
   const jobs = Math.max(1, Math.floor(ceiling));
   const burnPerJob = advice.burnPerHour === null ? null : advice.burnPerHour / jobs;
   return paceLane({
-    lane: 'lane',
+    lane: advice.payPerUse === true ? provider : 'lane',
     remaining: advice.remaining,
     resetAt: advice.resetAt,
     burnPerJob,
@@ -154,7 +159,6 @@ export function paceAgainstCeiling(advice: SchedulerPaceAdvice, ceiling: number,
     nowMs,
     payPerUse: advice.payPerUse,
     balanceFresh: advice.balanceFresh,
-    budgetUsd: advice.budgetUsd,
     spentUsd: advice.spentUsd,
     uncapped: advice.uncapped,
   });

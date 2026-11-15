@@ -5,13 +5,14 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {parse} from 'yaml';
 import {publisherInput, bindAttestedArtifact, acceptPackageIdentity, verifyHandoff, assertRegistryPackage, assertLatestPromotion, verifyCanonicalProvenance, reconcileRegistry, reconcileLatest, installPublishedPackage, installPublishedArgs, INSTALL_ETARGET_ATTEMPTS, INSTALL_ETARGET_DELAY_MS} from '../scripts/canonical-npm-publisher.mjs';
+import {resolveReleaseSourceRef} from '../scripts/hosted-build-artifact.mjs';
 const hash = (b: Buffer) => createHash('sha256').update(b).digest('hex');
 const env = {GITHUB_REPOSITORY: 'ashlrai/phantom', GITHUB_REPOSITORY_ID: '1263526319', GITHUB_REPOSITORY_OWNER_ID: '258113726',
   GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/master', GITHUB_SHA: '1'.repeat(40), CANDIDATE_SHA: '2'.repeat(40),
   VERSION: '3.27.0', CI_RUN_ID: '4', CI_RUN_ATTEMPT: '1', ATTESTOR_RUN_ID: '5', ATTESTOR_RUN_ATTEMPT: '1', ATTESTED_ARTIFACT_ID: '6', AUDIT_RUN_ID: '7', AUDIT_RUN_ATTEMPT: '1'};
 const repo = {id: 1263526319, node_id: 'R_kgDOS0_hrw', full_name: 'ashlrai/phantom', owner: {id: 258113726, login: 'ashlrai'}};
-const run = {repository: repo, id: 5, run_attempt: 1, head_sha: env.GITHUB_SHA, event: 'workflow_dispatch', path: '.github/workflows/attest-ci-build.yml', status: 'completed', conclusion: 'success'};
-const artifact = {id: 6, expired: false, name: 'ashlr-attested-4-1-5-1', digest: `sha256:${'3'.repeat(64)}`, workflow_run: {id: 5, head_sha: env.GITHUB_SHA}};
+const run = {repository: repo, id: 5, run_attempt: 1, head_sha: env.CANDIDATE_SHA, event: 'workflow_dispatch', path: '.github/workflows/attest-ci-build.yml', status: 'completed', conclusion: 'success'};
+const artifact = {id: 6, expired: false, name: 'ashlr-attested-4-1-5-1', digest: `sha256:${'3'.repeat(64)}`, workflow_run: {id: 5, head_sha: env.CANDIDATE_SHA}};
 const bytes = Buffer.from('original archive fixture');
 const input = publisherInput(env);
 const pkg = {name: '@ashlr/phantom', version: '3.27.0', repository: {url: 'git+https://github.com/ashlrai/phantom.git'}};
@@ -19,8 +20,43 @@ const receipt = {source: {revision: input.revision}, packageSha256: hash(bytes),
 
 describe('canonical npm publication admission', () => {
   it('binds exact source, numeric repository and original package identity', () => {
+    expect(input.attestorSha).toBe(env.CANDIDATE_SHA);
     expect(bindAttestedArtifact(input, run, artifact)).toEqual(artifact);
     expect(acceptPackageIdentity(input, pkg, receipt, bytes).sha256).toBe(hash(bytes));
+  });
+  it('accepts an ancestor release tag with green CI and refuses a bad tag or sha', () => {
+    const master = 'a'.repeat(40), candidate = env.CANDIDATE_SHA;
+    const green = {
+      [`repos/ashlrai/phantom/git/ref/tags/v${env.VERSION}`]: {ref: `refs/tags/v${env.VERSION}`, object: {type: 'commit', sha: candidate}},
+      [`repos/ashlrai/phantom/compare/${candidate}...${master}`]: {status: 'ahead'},
+      'repos/ashlrai/phantom/rules/branches/master': [{type: 'required_status_checks', parameters: {required_status_checks: [{context: 'Merge Gate'}]}}],
+      'repos/ashlrai/phantom/branches/master': {protection: {required_status_checks: {contexts: []}}},
+      [`repos/ashlrai/phantom/commits/${candidate}/check-runs?filter=latest&app_id=15368&per_page=100&page=1`]: {total_count: 1, check_runs: [{name: 'Merge Gate', status: 'completed', conclusion: 'success', app: {id: 15368}}]},
+    };
+    const read = (endpoint: string) => {
+      if (!(endpoint in green)) throw new Error(`unexpected ${endpoint}`);
+      return green[endpoint as keyof typeof green];
+    };
+    expect(resolveReleaseSourceRef({read, repository: 'ashlrai/phantom', masterSha: master, attestorSha: candidate, candidateSha: candidate, version: env.VERSION}).ref).toBe(`refs/tags/v${env.VERSION}`);
+    expect(resolveReleaseSourceRef({read, repository: 'ashlrai/phantom', masterSha: candidate, attestorSha: candidate, candidateSha: candidate, version: env.VERSION}).ref).toBe('refs/heads/master');
+    const mismatch = {...green, [`repos/ashlrai/phantom/git/ref/tags/v${env.VERSION}`]: {ref: `refs/tags/v${env.VERSION}`, object: {type: 'commit', sha: master}}};
+    expect(() => resolveReleaseSourceRef({read: (endpoint: string) => mismatch[endpoint as keyof typeof mismatch], repository: 'ashlrai/phantom', masterSha: master, attestorSha: candidate, candidateSha: candidate, version: env.VERSION})).toThrow(/tag sha mismatches/);
+    expect(() => resolveReleaseSourceRef({read, repository: 'ashlrai/phantom', masterSha: master, attestorSha: candidate, candidateSha: candidate, version: '3.27.0-rc.1'})).toThrow();
+    const red = {...green, [`repos/ashlrai/phantom/commits/${candidate}/check-runs?filter=latest&app_id=15368&per_page=100&page=1`]: {total_count: 1, check_runs: [{name: 'Merge Gate', status: 'completed', conclusion: 'failure', app: {id: 15368}}]}};
+    const annotation = 'd'.repeat(40);
+    const annotated = {...green,
+      [`repos/ashlrai/phantom/git/ref/tags/v${env.VERSION}`]: {ref: `refs/tags/v${env.VERSION}`, object: {type: 'tag', sha: annotation}},
+      [`repos/ashlrai/phantom/git/tags/${annotation}`]: {sha: annotation, object: {type: 'commit', sha: candidate}},
+    };
+    expect(resolveReleaseSourceRef({read: (endpoint: string) => annotated[endpoint as keyof typeof annotated], repository: 'ashlrai/phantom', masterSha: master, attestorSha: candidate, candidateSha: candidate, version: env.VERSION}).ref).toBe(`refs/tags/v${env.VERSION}`);
+    const peeledWrong = {...annotated, [`repos/ashlrai/phantom/git/tags/${annotation}`]: {sha: annotation, object: {type: 'commit', sha: master}}};
+    expect(() => resolveReleaseSourceRef({read: (endpoint: string) => peeledWrong[endpoint as keyof typeof peeledWrong], repository: 'ashlrai/phantom', masterSha: master, attestorSha: candidate, candidateSha: candidate, version: env.VERSION})).toThrow(/tag sha mismatches/);
+    expect(() => resolveReleaseSourceRef({read: (endpoint: string) => red[endpoint as keyof typeof red], repository: 'ashlrai/phantom', masterSha: master, attestorSha: candidate, candidateSha: candidate, version: env.VERSION})).toThrow(/required CI is not green/);
+  });
+  it('refuses a non-release attestor branch', () => {
+    expect(() => bindAttestedArtifact(input, {...run, head_branch: 'feature'}, artifact)).toThrow(/stable release tag/);
+    expect(() => bindAttestedArtifact(input, {...run, head_branch: 'v1'}, artifact)).toThrow(/stable release tag/);
+    expect(bindAttestedArtifact(input, {...run, head_branch: 'v3.27.0'}, artifact)).toEqual(artifact);
   });
   it('transports scheduled master attestations without enabling scheduled publishing', () => {
     expect(bindAttestedArtifact(input, {...run, event: 'schedule', head_branch: 'master'}, artifact)).toEqual(artifact);
@@ -116,7 +152,7 @@ describe('canonical publication recovery', () => {
         internalParameters: {github: {event_name: 'workflow_dispatch'}}, resolvedDependencies: [{uri: `git+${repository}@refs/heads/master`, digest: {gitCommit: env.GITHUB_SHA}}]},
       runDetails: {builder: {id: 'https://github.com/actions/runner/github-hosted'}, metadata: {invocationId: `${repository}/actions/runs/9/attempts/1`}}}};
     const audit = {invalid: [], missing: [], verified: [{name: accepted.name, version: accepted.version, location: 'node_modules/@ashlr/phantom', attestationBundles: [{predicateType: statement.predicateType, bundle: {dsseEnvelope: {payloadType: 'application/vnd.in-toto+json', payload: Buffer.from(JSON.stringify(statement)).toString('base64')}}}]}]};
-    const read = (endpoint: string) => endpoint.endsWith('/jobs?per_page=100') ? {total_count: 1, jobs: [{name: 'admit', conclusion: 'success', head_sha: env.GITHUB_SHA}]} : endpoint.endsWith('/attempts/1') ? {...run, id: 9, path: '.github/workflows/publish-canonical-npm.yml', head_branch: 'master', conclusion: 'failure'} : {...repo, default_branch: 'master', private: false, visibility: 'public'};
+    const read = (endpoint: string) => endpoint.endsWith('/jobs?per_page=100') ? {total_count: 1, jobs: [{name: 'admit', conclusion: 'success', head_sha: env.GITHUB_SHA}]} : endpoint.endsWith('/attempts/1') ? {...run, id: 9, head_sha: env.GITHUB_SHA, path: '.github/workflows/publish-canonical-npm.yml', head_branch: 'master', conclusion: 'failure'} : {...repo, default_branch: 'master', private: false, visibility: 'public'};
     expect(verifyCanonicalProvenance(accepted, audit, env.GITHUB_SHA, '9', '2', read)).toEqual({runId: '9', runAttempt: '1'});
     expect(() => verifyCanonicalProvenance(accepted, audit, '3'.repeat(40), '9', '2', read)).toThrow();
     const failedAdmission = (endpoint: string) => endpoint.endsWith('/jobs?per_page=100') ? {total_count: 1, jobs: [{name: 'admit', conclusion: 'failure', head_sha: env.GITHUB_SHA}]} : read(endpoint);

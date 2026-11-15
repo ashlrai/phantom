@@ -31,6 +31,7 @@ The stale field was the Resources last reading (about 47 hours old) shown in the
 | `phm agents roster --json` (`collectAgentRoster` in `agent-roster.ts`) | a probe reports `availability: known` | the probe times out, is missing, or has no documented shape |
 | `desktopSessions()` | a visible Devin Desktop, Cursor, or Grok window is listed | the desktop operator is not readable. Those three rows stay unknown |
 | `phm usage sensors --json` (`presentUsageSensors`) | a lane is fresh and headroom is a number | stale, unmeasured, or no snapshot file. Headroom null is unknown |
+| `phm usage pace --json` | a fresh dispatch status and a known, fresh pool forecast | stale or missing evidence; the Resources panel shows unknown |
 | `inspectBusWorkClaims` | the claim table is missing or valid | the table cannot be read |
 | `~/.ashlr-runs/export/human-steps.json` | schema `ashlr.human-steps/v1` | file missing or invalid |
 | `~/.ashlr-runs/export/bottlenecks.json` | schema `bottlenecks.v1` | file missing or no measured rows |

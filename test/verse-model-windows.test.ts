@@ -76,18 +76,20 @@ describe('Claude model table', () => {
       'claude-opus-4-5',
       'claude-sonnet-5',
       'claude-haiku-4-5-20251001',
+      'claude-fable-5-2',
     ]);
     for (const id of ['claude-fable-5-1', 'claude-opus-5-5', 'claude-fable-5', 'claude-opus-5', 'claude-opus-4-8', 'claude-sonnet-5']) {
       expect(byId[id]!.contextWindow, id).toBe(1_000_000);
       expect(byId[id]!.native1m, id).toBe(true);
     }
-    for (const id of ['claude-opus-4-5', 'claude-haiku-4-5-20251001']) {
+    for (const id of ['claude-opus-4-5', 'claude-haiku-4-5-20251001', 'claude-fable-5-2']) {
       expect(byId[id]!.contextWindow, id).toBe(200_000);
       expect(byId[id]!.native1m, id).toBe(false);
     }
     // Catalog `max_output_tokens.default` from the 2.1.280 binary.
     expect(byId['claude-opus-5-5']!.maxOutputTokens).toBe(128_000);
     expect(byId['claude-fable-5-1']!.maxOutputTokens).toBe(64_000);
+    expect(byId['claude-fable-5-2']!.maxOutputTokens).toBeNull();
     expect(byId['claude-haiku-4-5-20251001']!.maxOutputTokens).toBe(32_000);
     // Only Opus 5.5 is gated: 2.1.257 does not contain the id at all.
     expect(VERSE_CLAUDE_MODEL_SPECS.filter((s) => s.minCliVersion !== null).map((s) => [s.id, s.minCliVersion]))

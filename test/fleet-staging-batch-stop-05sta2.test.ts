@@ -103,7 +103,16 @@ describe('staging batch graceful stop', () => {
       child.stdin.end(envelope);
       const [code, signal] = await exited;
       expect([code, signal, stderr]).toEqual([130, null, '']);
-      expect(stdout.trim().split('\n').map(line => JSON.parse(line))).toMatchObject([{ interrupted: true, signal: 'SIGINT', attempted: 0, remaining: 2 }]);
+      const lines = stdout.trim().split('\n').map(line => JSON.parse(line)) as Array<Record<string, unknown>>;
+      const summary = lines.at(-1);
+      expect(summary).toMatchObject({
+        interrupted: true,
+        signal: 'SIGINT',
+        complete: false,
+        schema: 'fleet.staging-inventory-batch-summary.v1',
+      });
+      expect(Number(summary?.attempted) + Number(summary?.remaining)).toBe(summary?.requested);
+      expect(Number(summary?.attempted)).toBeLessThan(Number(summary?.requested));
     } finally {
       clearTimeout(readinessTimer);
       if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');

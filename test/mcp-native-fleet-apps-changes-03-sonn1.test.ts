@@ -1,3 +1,4 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { describe, expect, it, vi } from 'vitest';
 import { FLEET_APPS } from '../src/core/verse/fleet-apps-api.js';
 import { callNativeTool, listNativeTools, nativeToolSafety } from '../src/core/mcp-native.js';
@@ -27,13 +28,14 @@ describe('native fleet app changes', () => {
   it('shares selected transitions with the native call and never writes or mutates', async () => {
     let time = 0, i = 0;
     const runChild = vi.fn(async (args: string[]) => {
-      expect(args).toEqual(['fleet', 'apps-status', '--json']);
+      expect(args).toEqual(['fleet', 'apps-status', '--json', '--app', FLEET_APPS[0]]);
       return { code: 0, stdout: snapshot([true, false, true][Math.min(i++, 2)]!) };
     });
     const deps = { runChild, now: () => time, sleep: async (ms: number) => { time += ms; } };
     mock.observer.mockImplementation((options) => actual.observeFleetAppsChanges(options, deps));
     const write = vi.spyOn(process.stdout, 'write');
     const result = await callNativeTool(name, { durationMs: 300, intervalMs: 100, apps: [FLEET_APPS[0]] });
+    expect(mock.observer).toHaveBeenCalled();
     const payload = JSON.parse(result.content[0]!.text);
     expect(payload.events.map((e: { state: string }) => e.state)).toEqual(['running', 'stopped', 'running']);
     expect(payload).toMatchObject({ v: 1, outcome: 'complete', samples: 3, transitions: 2, truncated: false });
@@ -58,3 +60,5 @@ describe('native fleet app changes', () => {
     expect(JSON.parse(result.content[0]!.text)).toEqual({ error: 'Fleet observation unavailable' });
   });
 });
+
+registerFleetNativeTools();

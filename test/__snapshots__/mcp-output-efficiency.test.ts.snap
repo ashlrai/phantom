@@ -9,6 +9,14 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
   ],
   "native": [
     {
+      "name": "intent_link",
+      "safety": "append",
+    },
+    {
+      "name": "intent_ship",
+      "safety": "append",
+    },
+    {
       "name": "phantom_agent_bus_read",
       "safety": "read",
     },
@@ -33,43 +41,19 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "safety": "append",
     },
     {
-      "name": "phantom_fleet_apps_history",
-      "safety": "read",
-    },
-    {
-      "name": "phantom_fleet_apps_follow",
-      "safety": "read",
-    },
-    {
-      "name": "phantom_fleet_apps_recovery_wait",
-      "safety": "read",
-    },
-    {
-      "name": "phantom_fleet_apps_recovery_check",
-      "safety": "read",
-    },
-    {
-      "name": "phantom_fleet_apps_recovery_batch",
-      "safety": "read",
-    },
-    {
-      "name": "phantom_fleet_apps_ensure",
-      "safety": "append",
-    },
-    {
-      "name": "phantom_fleet_apps_changes",
-      "safety": "read",
-    },
-    {
-      "name": "phantom_fleet_apps_status",
-      "safety": "read",
-    },
-    {
       "name": "phantom_fleet_doctor",
       "safety": "read",
     },
     {
-      "name": "phantom_fleet_apps_await",
+      "name": "phantom_fleet_needs",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_fleet_needs_resolve",
+      "safety": "append",
+    },
+    {
+      "name": "phantom_fleet_needs_wait",
       "safety": "read",
     },
     {
@@ -98,6 +82,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
     },
     {
       "name": "phantom_fleet_session",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_fleet_verbs",
       "safety": "read",
     },
     {
@@ -174,6 +162,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
     },
     {
       "name": "phm_team_handoff",
+      "safety": "append",
+    },
+    {
+      "name": "phm_team_access_request",
       "safety": "append",
     },
     {
@@ -273,6 +265,14 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "safety": "read",
     },
     {
+      "name": "ashlr_comms_thread",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_comms_send_owner",
+      "safety": "append",
+    },
+    {
       "name": "ashlr_desktop_open",
       "safety": "proposal",
     },
@@ -312,6 +312,58 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "name": "desktop_click",
       "safety": "append",
     },
+    {
+      "name": "ashlr_comms_agent_status",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_comms_agent_drafts",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_comms_agent_run",
+      "safety": "append",
+    },
+    {
+      "name": "phantom_fleet_apps_history",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_fleet_apps_follow",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_fleet_apps_recovery_wait",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_fleet_apps_recovery_check",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_fleet_apps_recovery_batch",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_fleet_apps_ensure",
+      "safety": "append",
+    },
+    {
+      "name": "phantom_fleet_apps_changes",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_fleet_apps_status",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_fleet_apps_await",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_fleet_apps_watch",
+      "safety": "append",
+    },
   ],
   "registryFields": [
     "tools",
@@ -329,6 +381,87 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
 
 exports[`native MCP tool inventory > preserves the complete input schema contract for every listed tool 1`] = `
 [
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "maxLength": 35,
+          "type": "string",
+        },
+        "branch": {
+          "maxLength": 300,
+          "minLength": 1,
+          "type": "string",
+        },
+        "number": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "repo": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string",
+        },
+        "title": {
+          "maxLength": 300,
+          "minLength": 1,
+          "type": "string",
+        },
+        "url": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "repo",
+        "number",
+        "title",
+      ],
+      "type": "object",
+    },
+    "name": "intent_link",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "maxLength": 35,
+          "type": "string",
+        },
+        "notes": {
+          "maxLength": 10000,
+          "minLength": 1,
+          "type": "string",
+        },
+        "release": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string",
+        },
+        "rq": {
+          "items": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string",
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "type": "array",
+        },
+      },
+      "required": [
+        "release",
+      ],
+      "type": "object",
+    },
+    "name": "intent_ship",
+  },
   {
     "inputSchema": {
       "additionalProperties": false,
@@ -517,249 +650,6 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
   {
     "inputSchema": {
       "additionalProperties": false,
-      "properties": {
-        "after": {
-          "default": 0,
-          "maximum": 9007199254740991,
-          "minimum": 0,
-          "type": "integer",
-        },
-        "invocationId": {
-          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
-          "type": "string",
-        },
-        "limit": {
-          "default": 25,
-          "maximum": 100,
-          "minimum": 1,
-          "type": "integer",
-        },
-      },
-      "type": "object",
-    },
-    "name": "phantom_fleet_apps_history",
-  },
-  {
-    "inputSchema": {
-      "additionalProperties": false,
-      "properties": {
-        "after": {
-          "maximum": 9007199254740991,
-          "minimum": 0,
-          "type": "integer",
-        },
-        "durationMs": {
-          "maximum": 30000,
-          "minimum": 1,
-          "type": "integer",
-        },
-        "intervalMs": {
-          "maximum": 60000,
-          "minimum": 100,
-          "type": "integer",
-        },
-        "invocationId": {
-          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
-          "type": "string",
-        },
-        "maxEvents": {
-          "maximum": 100,
-          "minimum": 1,
-          "type": "integer",
-        },
-        "untilSummary": {
-          "type": "boolean",
-        },
-      },
-      "required": [
-        "durationMs",
-      ],
-      "type": "object",
-    },
-    "name": "phantom_fleet_apps_follow",
-  },
-  {
-    "inputSchema": {
-      "additionalProperties": false,
-      "properties": {
-        "intervalMs": {
-          "maximum": 60000,
-          "minimum": 100,
-          "type": "integer",
-        },
-        "invocationId": {
-          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
-          "type": "string",
-        },
-        "maxAgeMs": {
-          "maximum": 9007199254740991,
-          "minimum": 1,
-          "type": "integer",
-        },
-        "timeoutMs": {
-          "maximum": 30000,
-          "minimum": 1,
-          "type": "integer",
-        },
-      },
-      "required": [
-        "invocationId",
-        "maxAgeMs",
-        "timeoutMs",
-      ],
-      "type": "object",
-    },
-    "name": "phantom_fleet_apps_recovery_wait",
-  },
-  {
-    "inputSchema": {
-      "additionalProperties": false,
-      "properties": {
-        "invocationId": {
-          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
-          "type": "string",
-        },
-        "maxAgeMs": {
-          "maximum": 9007199254740991,
-          "minimum": 1,
-          "type": "integer",
-        },
-      },
-      "required": [
-        "invocationId",
-        "maxAgeMs",
-      ],
-      "type": "object",
-    },
-    "name": "phantom_fleet_apps_recovery_check",
-  },
-  {
-    "inputSchema": {
-      "additionalProperties": false,
-      "properties": {
-        "durationMs": {
-          "maximum": 300000,
-          "minimum": 1,
-          "type": "integer",
-        },
-        "intervalMs": {
-          "maximum": 60000,
-          "minimum": 100,
-          "type": "integer",
-        },
-        "invocationIds": {
-          "items": {
-            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
-            "type": "string",
-          },
-          "maxItems": 20,
-          "minItems": 1,
-          "type": "array",
-          "uniqueItems": true,
-        },
-        "maxAgeMs": {
-          "maximum": 9007199254740991,
-          "minimum": 1,
-          "type": "integer",
-        },
-      },
-      "required": [
-        "invocationIds",
-        "maxAgeMs",
-        "durationMs",
-      ],
-      "type": "object",
-    },
-    "name": "phantom_fleet_apps_recovery_batch",
-  },
-  {
-    "inputSchema": {
-      "additionalProperties": false,
-      "properties": {
-        "apps": {
-          "items": {
-            "enum": [
-              "Phantom",
-              "Codex",
-              "Claude",
-              "Grok Bot",
-              "ChatGPT",
-              "Cursor",
-              "Safari",
-              "Google Chrome",
-            ],
-            "type": "string",
-          },
-          "maxItems": 8,
-          "minItems": 1,
-          "type": "array",
-          "uniqueItems": true,
-        },
-        "timeoutMs": {
-          "maximum": 30000,
-          "minimum": 1,
-          "type": "integer",
-        },
-      },
-      "required": [
-        "apps",
-      ],
-      "type": "object",
-    },
-    "name": "phantom_fleet_apps_ensure",
-  },
-  {
-    "inputSchema": {
-      "additionalProperties": false,
-      "properties": {
-        "apps": {
-          "items": {
-            "enum": [
-              "Phantom",
-              "Codex",
-              "Claude",
-              "Grok Bot",
-              "ChatGPT",
-              "Cursor",
-              "Safari",
-              "Google Chrome",
-            ],
-            "type": "string",
-          },
-          "maxItems": 8,
-          "minItems": 1,
-          "type": "array",
-          "uniqueItems": true,
-        },
-        "durationMs": {
-          "maximum": 10000,
-          "minimum": 1,
-          "type": "integer",
-        },
-        "intervalMs": {
-          "maximum": 10000,
-          "minimum": 100,
-          "type": "integer",
-        },
-      },
-      "required": [
-        "durationMs",
-      ],
-      "type": "object",
-    },
-    "name": "phantom_fleet_apps_changes",
-  },
-  {
-    "inputSchema": {
-      "additionalProperties": false,
-      "properties": {},
-      "type": "object",
-    },
-    "name": "phantom_fleet_apps_status",
-  },
-  {
-    "inputSchema": {
-      "additionalProperties": false,
       "properties": {},
       "type": "object",
     },
@@ -769,36 +659,52 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
-        "apps": {
-          "items": {
-            "enum": [
-              "Phantom",
-              "Codex",
-              "Claude",
-              "Grok Bot",
-              "ChatGPT",
-              "Cursor",
-              "Safari",
-              "Google Chrome",
-            ],
-            "type": "string",
-          },
-          "maxItems": 8,
-          "minItems": 1,
-          "type": "array",
-          "uniqueItems": true,
-        },
-        "intervalMs": {
-          "maximum": 60000,
-          "minimum": 100,
+        "limit": {
+          "default": 20,
+          "maximum": 50,
+          "minimum": 1,
           "type": "integer",
         },
-        "target": {
-          "enum": [
-            "running",
-            "stopped",
-          ],
+      },
+      "type": "object",
+    },
+    "name": "phantom_fleet_needs",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "itemId": {
+          "description": "<description>",
+          "pattern": "^nm-[0-9a-f]{12}$",
           "type": "string",
+        },
+        "reply": {
+          "description": "<description>",
+          "maxLength": 500,
+          "type": "string",
+        },
+      },
+      "required": [
+        "itemId",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_fleet_needs_resolve",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "itemId": {
+          "pattern": "^nm-[0-9a-f]{12}$",
+          "type": "string",
+        },
+        "pollMs": {
+          "default": 1000,
+          "maximum": 30000,
+          "minimum": 100,
+          "type": "integer",
         },
         "timeoutMs": {
           "maximum": 30000,
@@ -807,11 +713,12 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
         },
       },
       "required": [
-        "apps",
+        "itemId",
+        "timeoutMs",
       ],
       "type": "object",
     },
-    "name": "phantom_fleet_apps_await",
+    "name": "phantom_fleet_needs_wait",
   },
   {
     "inputSchema": {
@@ -891,6 +798,19 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "phantom_fleet_session",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "grep": {
+          "maxLength": 64,
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "phantom_fleet_verbs",
   },
   {
     "inputSchema": {
@@ -1752,6 +1672,62 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
           "description": "<description>",
           "type": "string",
         },
+        "memberId": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "note": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "onBehalfOf": {
+          "type": "string",
+        },
+        "op": {
+          "description": "<description>",
+          "enum": [
+            "invite-member",
+            "link-repo",
+            "change-role",
+          ],
+          "type": "string",
+        },
+        "provider": {
+          "type": "string",
+        },
+        "repo": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "role": {
+          "description": "<description>",
+          "enum": [
+            "admin",
+            "member",
+          ],
+          "type": "string",
+        },
+        "team": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "required": [
+        "agentId",
+        "op",
+      ],
+      "type": "object",
+    },
+    "name": "phm_team_access_request",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "agentId": {
+          "description": "<description>",
+          "type": "string",
+        },
         "importance": {
           "description": "<description>",
           "type": "number",
@@ -2190,6 +2166,37 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
   {
     "inputSchema": {
       "properties": {
+        "limit": {
+          "type": "number",
+        },
+      },
+      "type": "object",
+    },
+    "name": "ashlr_comms_thread",
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+        },
+        "replyTo": {
+          "type": "string",
+        },
+        "text": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "text",
+      ],
+      "type": "object",
+    },
+    "name": "ashlr_comms_send_owner",
+  },
+  {
+    "inputSchema": {
+      "properties": {
         "action_type": {
           "description": "<description>",
           "enum": [
@@ -2398,6 +2405,372 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "desktop_click",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "ashlr_comms_agent_status",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "ashlr_comms_agent_drafts",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "lanes": {
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "ashlr_comms_agent_run",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "default": 0,
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer",
+        },
+        "invocationId": {
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string",
+        },
+        "limit": {
+          "default": 25,
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer",
+        },
+      },
+      "type": "object",
+    },
+    "name": "phantom_fleet_apps_history",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer",
+        },
+        "durationMs": {
+          "maximum": 30000,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "intervalMs": {
+          "maximum": 60000,
+          "minimum": 100,
+          "type": "integer",
+        },
+        "invocationId": {
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string",
+        },
+        "maxEvents": {
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "untilSummary": {
+          "type": "boolean",
+        },
+      },
+      "required": [
+        "durationMs",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_fleet_apps_follow",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "intervalMs": {
+          "maximum": 60000,
+          "minimum": 100,
+          "type": "integer",
+        },
+        "invocationId": {
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string",
+        },
+        "maxAgeMs": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "timeoutMs": {
+          "maximum": 30000,
+          "minimum": 1,
+          "type": "integer",
+        },
+      },
+      "required": [
+        "invocationId",
+        "maxAgeMs",
+        "timeoutMs",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_fleet_apps_recovery_wait",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "invocationId": {
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string",
+        },
+        "maxAgeMs": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer",
+        },
+      },
+      "required": [
+        "invocationId",
+        "maxAgeMs",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_fleet_apps_recovery_check",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "durationMs": {
+          "maximum": 300000,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "intervalMs": {
+          "maximum": 60000,
+          "minimum": 100,
+          "type": "integer",
+        },
+        "invocationIds": {
+          "items": {
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "type": "string",
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true,
+        },
+        "maxAgeMs": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer",
+        },
+      },
+      "required": [
+        "invocationIds",
+        "maxAgeMs",
+        "durationMs",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_fleet_apps_recovery_batch",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "apps": {
+          "items": {
+            "enum": [
+              "Phantom",
+              "Codex",
+              "Claude",
+              "Grok Bot",
+              "ChatGPT",
+              "Cursor",
+              "Safari",
+              "Google Chrome",
+            ],
+            "type": "string",
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true,
+        },
+        "timeoutMs": {
+          "maximum": 30000,
+          "minimum": 1,
+          "type": "integer",
+        },
+      },
+      "required": [
+        "apps",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_fleet_apps_ensure",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "apps": {
+          "items": {
+            "enum": [
+              "Phantom",
+              "Codex",
+              "Claude",
+              "Grok Bot",
+              "ChatGPT",
+              "Cursor",
+              "Safari",
+              "Google Chrome",
+            ],
+            "type": "string",
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true,
+        },
+        "durationMs": {
+          "maximum": 10000,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "intervalMs": {
+          "maximum": 10000,
+          "minimum": 100,
+          "type": "integer",
+        },
+      },
+      "required": [
+        "durationMs",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_fleet_apps_changes",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "phantom_fleet_apps_status",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "apps": {
+          "items": {
+            "enum": [
+              "Phantom",
+              "Codex",
+              "Claude",
+              "Grok Bot",
+              "ChatGPT",
+              "Cursor",
+              "Safari",
+              "Google Chrome",
+            ],
+            "type": "string",
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true,
+        },
+        "intervalMs": {
+          "maximum": 60000,
+          "minimum": 100,
+          "type": "integer",
+        },
+        "target": {
+          "enum": [
+            "running",
+            "stopped",
+          ],
+          "type": "string",
+        },
+        "timeoutMs": {
+          "maximum": 30000,
+          "minimum": 1,
+          "type": "integer",
+        },
+      },
+      "required": [
+        "apps",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_fleet_apps_await",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "apps": {
+          "items": {
+            "enum": [
+              "Phantom",
+              "Codex",
+              "Claude",
+              "Grok Bot",
+              "ChatGPT",
+              "Cursor",
+              "Safari",
+              "Google Chrome",
+            ],
+            "type": "string",
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true,
+        },
+        "durationMs": {
+          "maximum": 10000,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "intervalMs": {
+          "maximum": 10000,
+          "minimum": 100,
+          "type": "integer",
+        },
+        "maxConsecutiveFailures": {
+          "maximum": 10,
+          "minimum": 1,
+          "type": "integer",
+        },
+      },
+      "required": [
+        "apps",
+        "durationMs",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_fleet_apps_watch",
   },
 ]
 `;

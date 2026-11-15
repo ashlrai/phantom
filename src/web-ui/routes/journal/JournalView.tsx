@@ -17,7 +17,7 @@ import { useQuery, useRefetch } from '../../data/hooks.js';
 import { controlLogsObservationQuery, fleetActivityQuery, runsQuery, inboxQuery } from '../../data/queries.js';
 import { RefreshIndicator } from '../../components/primitives/RefreshIndicator.js';
 import { SkeletonRow } from '../../components/primitives/Skeleton.js';
-import { LiveNowStrip } from './LiveNowStrip.js';
+import { LiveSessionCards } from '../../components/stream/LiveSessionCards.js';
 import { JournalFilters, ALL_JOURNAL_SOURCES } from './JournalFilters.js';
 import { JournalTimeline } from './JournalTimeline.js';
 import { JournalEntryRow } from './JournalEntryRow.js';
@@ -133,7 +133,7 @@ export function JournalView() {
         </div>
       ) : null}
 
-      <LiveNowStrip />
+      <LiveSessionCards />
 
       {anyLoading ? (
         <div className={styles.panel}>

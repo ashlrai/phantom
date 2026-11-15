@@ -43,7 +43,7 @@ function refusal(reason: string): number {
 }
 
 export async function cmdTrail(args: string[]): Promise<number> {
-  if (args.length === 0 || (args.length === 1 && ['help', '--help', '-h'].includes(args[0]!))) {
+  if (args.length === 0 || (args.length === 1 && args[0] === 'help') || args.includes('--help') || args.includes('-h')) {
     console.log(USAGE);
     return args.length === 0 ? 2 : 0;
   }

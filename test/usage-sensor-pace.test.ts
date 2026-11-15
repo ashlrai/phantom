@@ -36,47 +36,47 @@ describe('lane pace', () => {
     resetAt: new Date(NOW + 10 * HOUR).toISOString(),
   };
 
-  it('lowers concurrency when the allowance would run dry early', () => {
-    const decision = paceLane({ ...base, remaining: 100, burnPerJob: 20 });
+  it('lowers concurrency when the allowance would run dry early', async () => {
+    const decision = await paceLane({ ...base, remaining: 100, burnPerJob: 20 });
     expect(decision).toEqual({ lane: 'codex-personal', target: 0, reason: 'paced' });
   });
 
-  it('raises concurrency toward the ceiling when usage would be left idle', () => {
-    const decision = paceLane({ ...base, remaining: 100, burnPerJob: 1, ceiling: 4 });
+  it('raises concurrency toward the ceiling when usage would be left idle', async () => {
+    const decision = await paceLane({ ...base, remaining: 100, burnPerJob: 1, ceiling: 4 });
     expect(decision).toEqual({ lane: 'codex-personal', target: 4, reason: 'paced' });
   });
 
-  it('returns unknown instead of zero when the burn or the reset is missing', () => {
-    expect(paceLane({ ...base, remaining: 100, burnPerJob: null }).target).toBeNull();
-    expect(paceLane({ ...base, remaining: null, burnPerJob: 1 })).toMatchObject({ target: null, reason: 'unknown' });
-    expect(paceLane({ ...base, remaining: 100, burnPerJob: 1, resetAt: null }).reason).toBe('unknown');
+  it('returns unknown instead of zero when the burn or the reset is missing', async () => {
+    expect((await paceLane({ ...base, remaining: 100, burnPerJob: null })).target).toBeNull();
+    expect(await paceLane({ ...base, remaining: null, burnPerJob: 1 })).toMatchObject({ target: null, reason: 'unknown' });
+    expect((await paceLane({ ...base, remaining: 100, burnPerJob: 1, resetAt: null })).reason).toBe('unknown');
   });
 
-  it('keeps a 0 budget at 0, and allows pay-per-use only under a fresh balance and a higher budget', () => {
-    expect(paceLane({ ...base, lane: 'claude-api', remaining: 40, burnPerJob: 1, payPerUse: true }).target).toBe(0);
-    expect(paceLane({
+  it('keeps pay-per-use at 0 when the caller supplies a budget', async () => {
+    expect((await paceLane({ ...base, lane: 'claude-api', remaining: 40, burnPerJob: 1, payPerUse: true })).target).toBe(0);
+    expect((await paceLane({
       ...base, lane: 'claude-api', remaining: 50, burnPerJob: 1, payPerUse: true,
       balanceFresh: true, budgetUsd: 0, spentUsd: 0, ceiling: 3,
-    }).target).toBe(0);
-    expect(paceLane({
+    })).target).toBe(0);
+    expect((await paceLane({
+      ...base, lane: 'claude-api', remaining: 50, burnPerJob: 1, payPerUse: true,
+      balanceFresh: true, budgetUsd: 50, spentUsd: 0, ceiling: 3,
+    })).target).toBe(0);
+    expect((await paceLane({
       ...base, lane: 'claude-api', remaining: 50, burnPerJob: 1, payPerUse: true,
       balanceFresh: true, budgetUsd: 100, spentUsd: 1, ceiling: 3,
-    }).target).toBe(3);
-    expect(paceLane({
-      ...base, lane: 'claude-api', remaining: 50, burnPerJob: 1, payPerUse: true,
-      balanceFresh: true, budgetUsd: 100, spentUsd: 100,
-    }).target).toBe(0);
-    expect(paceLane({
+    })).target).toBe(0);
+    expect((await paceLane({
       ...base, lane: 'claude-api', remaining: 50, burnPerJob: 1, payPerUse: true,
       balanceFresh: false, budgetUsd: 100, spentUsd: 1,
-    }).target).toBe(0);
-    expect(paceLane({
+    })).target).toBe(0);
+    expect(await paceLane({
       ...base, remaining: 100, burnPerJob: 1, killed: true, payPerUse: true, balanceFresh: true, budgetUsd: 100, spentUsd: 1,
     })).toEqual({ lane: 'codex-personal', target: 0, reason: 'kill' });
   });
 
-  it('reports local throughput without an allowance', () => {
-    expect(paceLane({ ...base, lane: 'local', remaining: null, burnPerJob: null, uncapped: true, ceiling: 4 }).target).toBe(4);
+  it('reports local throughput without an allowance', async () => {
+    expect((await paceLane({ ...base, lane: 'local', remaining: null, burnPerJob: null, uncapped: true, ceiling: 4 })).target).toBe(4);
   });
 });
 
@@ -97,7 +97,12 @@ describe('included waste forecast', () => {
     const unusedAfter = 100 - (20.2 + pacedJobs * 0.1 * 168);
     expect(unusedAfter).toBeCloseTo(12.6, 5);
     expect(includedWastePerWeek(presentUsageSensors([], NOW))).toBeNull();
-    const journal = readFileSync(new URL('../usage-readings.log', import.meta.url), 'utf8');
+    // RQ-ROOT-ARTIFACTS-1 removed the repo-root journal. These two unknown
+    // readings were that file; they must still not count as zero waste.
+    const journal = [
+      '{"observedAt":"2026-10-26T20:54:04Z","pool":"codex-personal","source":"codex-reader","status":"unknown","resetAt":null,"reason":"reader-and-personal-home-unavailable"}',
+      '{"observedAt":"2026-10-26T20:54:04Z","pool":"terra@personal","source":"codex-reader","status":"unknown","resetAt":null,"reason":"reader-and-personal-home-unavailable"}',
+    ].join('\n');
     const fleet = readFileSync(new URL('./fixtures/fleet-lanes/queue/usage-readings.log', import.meta.url), 'utf8');
     const historical = [...journal.split('\n'), ...fleet.split('\n')].flatMap((line) => {
       if (!line.trim()) return [];

@@ -1,3 +1,4 @@
+import { readFableAdmission } from '../routing/fable-admission.js';
 /**
  * Build and cache ashlr.world-model/v1. A warm cache hit does not re-probe
  * the roster, the desktop operator, or gh.
@@ -25,7 +26,8 @@ import type { AgentRoster } from '../fleet/agent-roster.js';
 import { writeWorldExport } from './export.js';
 import { loadGrowthFacts } from '../growth/read.js';
 import { growthSnapshot } from '../growth/series.js';
-import { projectWorldModel } from './project.js';
+import { projectWorldModel, type IntentWorldReading } from './project.js';
+import { defaultAppUpdateStatusDeps, readAppUpdateStatus, type AppUpdateStatus } from '../app-update-status.js';
 import { WORLD_CACHE_TTL_MS, type WorldModel } from './types.js';
 import type { ObserveSnapshot } from '../observe/types.js';
 
@@ -60,10 +62,22 @@ async function readDisk(nowMs: number): Promise<CachedWorld | null> {
     if (ageMs < 0 || ageMs >= WORLD_CACHE_TTL_MS) return null;
     const parsed = JSON.parse(await readFile(path, 'utf8')) as CachedWorld;
     if (parsed?.schema !== 'ashlr.world-model/v1' || !parsed.views?.observe || !parsed.growth?.mergesPerHour) return null;
+    // Snapshots written before intents joined the model are incomplete; rebuild.
+    if (!hasIntentFields(parsed)) return null;
     return stamp(parsed, true, ageMs);
   } catch {
     return null;
   }
+}
+
+function hasIntentFields(model: CachedWorld): boolean {
+  const intents = model.intents as unknown as Record<string, unknown> | undefined;
+  if (!intents || typeof intents !== 'object') return false;
+  return ['items', 'tracked', 'merged', 'shipped', 'verified', 'stale', 'partial'].every((key) => {
+    const field = intents[key] as { freshness?: unknown } | null | undefined;
+    return !!field && typeof field === 'object' && 'value' in field
+      && (field.freshness === 'fresh' || field.freshness === 'stale' || field.freshness === 'unknown');
+  });
 }
 
 async function writeDisk(model: CachedWorld): Promise<void> {
@@ -115,6 +129,23 @@ async function readCi(nowMs: number): Promise<{ repos: number; medianDailyTtgSec
   }
 }
 
+/**
+ * Reuses intentSummary; its quality flags decide observed vs unknown. A throw is
+ * unknown, never zero. Titles are dropped here so none reach the world model.
+ * The intent ledger lives outside the Tier-1 closure, so the specifier is lazy.
+ */
+async function readIntents(nowMs: number): Promise<IntentWorldReading | null> {
+  try {
+    const { intentSummary } = await import('../intent/summary.js' as string) as {
+      intentSummary: (opts?: { root?: string; nowMs?: number }) => Promise<IntentWorldReading>;
+    };
+    const summary = await intentSummary({ nowMs });
+    return { ...summary, staleItems: summary.staleItems.map((item) => ({ id: item.id })) };
+  } catch {
+    return null;
+  }
+}
+
 function readClaimStore(nowMs: number): { source: 'available' | 'missing' | 'unavailable'; live: number | null } {
   try {
     const summary = coordinationSummary(undefined, nowMs);
@@ -133,7 +164,23 @@ function busReadable(): boolean | null {
   }
 }
 
-export async function buildWorldModel(options: ReadObserveOptions = {}): Promise<CachedWorld> {
+export function updatePhaseFromStatus(status: AppUpdateStatus): 'ok' | 'unknown' {
+  return typeof status.current === 'string' ? 'ok' : 'unknown';
+}
+
+export function readUpdatePhase(
+  read: () => AppUpdateStatus = () => readAppUpdateStatus(defaultAppUpdateStatusDeps()),
+): 'ok' | 'unknown' {
+  try {
+    return updatePhaseFromStatus(read());
+  } catch {
+    return 'unknown';
+  }
+}
+
+type WorldReadOptions = ReadObserveOptions & { readUpdatePhase?: () => 'ok' | 'unknown' | 'failed' };
+
+export async function buildWorldModel(options: WorldReadOptions = {}): Promise<CachedWorld> {
   const nowMs = options.nowMs ?? Date.now();
   const [humanSteps, bottlenecks, pullFile, roster, sensors, queue, ci] = await Promise.all([
     readJsonFile(options.humanStepsFile ?? humanStepsPath()),
@@ -150,6 +197,7 @@ export async function buildWorldModel(options: ReadObserveOptions = {}): Promise
   const steps = humanSteps === null ? null : parseHumanSteps(humanSteps);
   const blocks = bottlenecks === null ? null : parseBottlenecks(bottlenecks);
   const outcomes = parsedPulls ? headlinesFor(parsedPulls.pulls, nowMs, options.windowDays ?? 7, parsedPulls.complete) : null;
+  const updatePhase = options.updatePhase ?? (options.readUpdatePhase ?? readUpdatePhase)();
   const observeInput: ObserveInput = {
     nowMs,
     windowMs: options.windowMs,
@@ -162,10 +210,11 @@ export async function buildWorldModel(options: ReadObserveOptions = {}): Promise
     pulls: parsedPulls?.pulls,
     pullsComplete: parsedPulls?.complete,
     pullsReason: parsedPulls ? null : 'No pull export was provided',
-    updatePhase: options.updatePhase,
+    updatePhase,
   };
   const observe = assembleObserve(observeInput);
   const model = projectWorldModel({
+    fablePlan: readFableAdmission({ role: 'leader' }, nowMs),
     nowMs,
     sensors: isSensorReport(sensors) ? sensors : null,
     sensorRows: isSensorReport(sensors) ? sensors.lanes : [],
@@ -175,7 +224,7 @@ export async function buildWorldModel(options: ReadObserveOptions = {}): Promise
     busReadable: busReadable(),
     queue,
     ci,
-    updatePhase: options.updatePhase ?? null,
+    updatePhase,
     bottlenecks: blocks && blocks.top.length > 0 ? blocks.top.length : null,
     bottlenecksObservedAt: blocks?.top.length ? new Date(nowMs).toISOString() : null,
     stepsRemaining: steps?.stepsRemaining ?? null,
@@ -183,9 +232,9 @@ export async function buildWorldModel(options: ReadObserveOptions = {}): Promise
     outcomes,
     growth: growthSnapshot(await loadGrowthFacts({
       nowMs,
-      pulls: parsedPulls?.pulls ?? null,
-      pullsComplete: parsedPulls?.complete === true,
+      ...(parsedPulls ? { pulls: parsedPulls.pulls, pullsComplete: parsedPulls.complete === true } : {}),
     })),
+    intents: await readIntents(nowMs),
   });
   observe.coverage = {
     ...observe.coverage,
@@ -204,13 +253,14 @@ function isRoster(value: unknown): value is AgentRoster {
   return value !== null && typeof value === 'object' && Array.isArray((value as AgentRoster).sources);
 }
 
-function cacheable(options: ReadObserveOptions): boolean {
+function cacheable(options: WorldReadOptions): boolean {
   return options.force !== true && options.humanStepsFile === undefined && options.bottlenecksFile === undefined
     && options.pullsFile === undefined && options.pulls === undefined && options.loadRoster === undefined
-    && options.loadSensors === undefined && options.readClaims === undefined && options.updatePhase === undefined;
+    && options.loadSensors === undefined && options.readClaims === undefined && options.updatePhase === undefined
+    && options.readUpdatePhase === undefined;
 }
 
-export async function readWorldModel(options: ReadObserveOptions & { force?: boolean } = {}): Promise<CachedWorld> {
+export async function readWorldModel(options: WorldReadOptions & { force?: boolean } = {}): Promise<CachedWorld> {
   const nowMs = options.nowMs ?? Date.now();
   if (cacheable(options) && memory && nowMs - memory.at >= 0 && nowMs - memory.at < WORLD_CACHE_TTL_MS) {
     return stamp(memory.model, true, nowMs - memory.at);

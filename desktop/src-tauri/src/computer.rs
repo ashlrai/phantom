@@ -3398,13 +3398,7 @@ mod mac {
             .arg(kind.url())
             .spawn()
         {
-            Ok(mut child) => {
-                let _ = thread::Builder::new()
-                    .name("ashlr-computer-open".into())
-                    .spawn(move || {
-                        let _ = child.wait();
-                    });
-            }
+            Ok(child) => drop(ashlr_desktop::child_reaper::ReapOnDrop::new(child)),
             Err(e) => eprintln!("[ashlr-desktop] could not open System Settings: {e}"),
         }
     }

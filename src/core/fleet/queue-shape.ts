@@ -24,6 +24,10 @@ export interface QueueShapeLane {
   overDeep: boolean;
   held: boolean;
   topRepos: QueueShapeRepo[];
+  /** Age in seconds of the oldest READY row with a usable `at`; null when none has one. */
+  oldestReadyAgeSeconds: number | null;
+  /** READY rows with no usable `at` (missing, unparseable or in the future); counted in `ready`, not in the age. */
+  untimedReady: number;
 }
 
 export interface QueueShapeReport {
@@ -40,6 +44,8 @@ export interface QueueShapeOptions {
   overDeepFactor?: number;
   /** Repos listed per lane. Default 3. */
   topRepos?: number;
+  /** Epoch ms that ages are measured from. Without it every lane reports a null age. */
+  now?: number;
 }
 
 const DEFAULT_FACTOR = 3;
@@ -59,6 +65,7 @@ export function queueShape(
   const factor = typeof opts.overDeepFactor === 'number' && Number.isFinite(opts.overDeepFactor) && opts.overDeepFactor > 0
     ? opts.overDeepFactor : DEFAULT_FACTOR;
   const topN = Number.isSafeInteger(opts.topRepos) && opts.topRepos! >= 0 ? opts.topRepos! : DEFAULT_TOP_REPOS;
+  const now = typeof opts.now === 'number' && Number.isFinite(opts.now) ? opts.now : null;
 
   const readyRows = new Map<string, FleetLaneQueueRow[]>();
   for (const row of rows) {
@@ -86,7 +93,18 @@ export function queueShape(
       .map(([repo, count]) => ({ repo, ready: count, share: ready === 0 ? 0 : count / ready }))
       .sort((a, b) => b.ready - a.ready || a.repo.localeCompare(b.repo))
       .slice(0, topN);
-    lanes.push({ lane, ready, target: target?.target ?? null, ratio, overDeep, held: target?.held ?? false, topRepos });
+    // Oldest = smallest `at`. A row whose time cannot be trusted is counted as untimed, never guessed.
+    let oldestAt: number | null = null, untimedReady = 0;
+    for (const row of queue) {
+      const at = Date.parse(row.at ?? '');
+      if (now === null || !Number.isFinite(at) || at > now) untimedReady++;
+      else oldestAt = oldestAt === null ? at : Math.min(oldestAt, at);
+    }
+    const oldestReadyAgeSeconds = oldestAt === null || now === null ? null : Math.floor((now - oldestAt) / 1000);
+    lanes.push({
+      lane, ready, target: target?.target ?? null, ratio, overDeep, held: target?.held ?? false, topRepos,
+      oldestReadyAgeSeconds, untimedReady,
+    });
   }
   lanes.sort((a, b) => Number(b.overDeep) - Number(a.overDeep) || b.ready - a.ready || a.lane.localeCompare(b.lane));
   return {

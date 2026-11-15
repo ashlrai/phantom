@@ -3,8 +3,10 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { readAppsRecoveryInvocations } from '../fleet/apps-recovery-invocations.js';
-import { appsRecoveryVerdict } from '../fleet/apps-recovery-verdict.js';
+import type { readAppsRecoveryInvocations } from '../fleet/apps-recovery-invocations.js';
+import type { appsRecoveryVerdict } from '../fleet/apps-recovery-verdict.js';
+import type { readAppsRecoveryHistory } from '../fleet/apps-recovery-history.js';
+import { fleetAppsRecoveryProviders } from '../fleet/app-recovery-providers.js';
 import { awaitAppState, FLEET_APPS, type AppAwaitTarget } from '../fleet/app-await.js';
 import { findAppControlScript, findInstalledAppControlScript, type FleetAppExec } from '../../cli/fleet-app.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
@@ -23,6 +25,8 @@ export interface FleetAppsApiDeps {
   now?: () => number;
   runsDir?: string;
   readRecoveryInvocations?: typeof readAppsRecoveryInvocations;
+  recoveryVerdict?: typeof appsRecoveryVerdict;
+  readRecoveryHistory?: typeof readAppsRecoveryHistory;
 }
 interface AppsView {
   v: 1;
@@ -195,8 +199,9 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
           (id !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))) {
           sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid history query' }); return true;
         }
-        const { readAppsRecoveryHistory } = await import('../fleet/apps-recovery-history.js');
-        const page = readAppsRecoveryHistory(root, Number(after), Number(limit), id ?? undefined);
+        const readHistory = deps.readRecoveryHistory ?? fleetAppsRecoveryProviders()?.readHistory;
+        if (!readHistory) { sendJson(res, 503, { error: 'fleet apps history unavailable' }); return true; }
+        const page = readHistory(root, Number(after), Number(limit), id ?? undefined);
         if (page.availability === 'unavailable') sendJson(res, 503, { error: 'fleet apps history unavailable' });
         else sendJson(res, page.availability === 'invalid-cursor' ? 400 : 200, page);
       } catch { sendJson(res, 503, { error: 'fleet apps history unavailable' }); }
@@ -230,9 +235,13 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
         sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid recovery check' }); return true;
       }
       try {
-        const projection = (deps.readRecoveryInvocations ?? readAppsRecoveryInvocations)(root);
+        const providers = fleetAppsRecoveryProviders();
+        const readInvocations = deps.readRecoveryInvocations ?? providers?.readInvocations;
+        const verdict = deps.recoveryVerdict ?? providers?.verdict;
+        if (!readInvocations || !verdict) throw new Error('unavailable');
+        const projection = readInvocations(root);
         if (!projection || projection.availability !== 'available') throw new Error('unavailable');
-        sendJson(res, 200, appsRecoveryVerdict(projection, invocation, maxAgeMs, now()));
+        sendJson(res, 200, verdict(projection, invocation, maxAgeMs, now()));
       } catch { sendJson(res, 503, { error: 'recovery evidence unavailable' }); }
       return true;
     }

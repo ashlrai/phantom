@@ -77,3 +77,64 @@ export async function readFleetHealthAge(opts: { runsDir?: string; now?: () => n
   report.status = ageMs < 0 ? 'future timestamp' : ageMs > MAIN_HEALTH_STALE_MS ? 'stale' : 'fresh';
   return report;
 }
+
+/** Counts timestamped error lines in the bounded log tail without exposing log contents. */
+export async function readGuardianLogHealth(opts: { runsDir?: string; now?: () => number } = {}): Promise<{
+  source: 'healthy' | 'missing' | 'degraded'; windowSeconds: number; recentErrors: number | null; unparseableErrors: number | null;
+}> {
+  const source = await readSource(join(opts.runsDir ?? join(homedir(), '.ashlr-runs'), 'guardian', 'guardian.log'), 256 * 1024, true);
+  const result = { source: source.state, windowSeconds: 86400, recentErrors: null as number | null, unparseableErrors: null as number | null };
+  if (source.state !== 'healthy') return result;
+  result.recentErrors = 0;
+  result.unparseableErrors = 0;
+  const now = (opts.now ?? Date.now)();
+  for (const line of source.text.split('\n')) {
+    if (!/\b(?:error|failed|failure|exception)\b/i.test(line)) continue;
+    const match = /^(?:\[)?(\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)?)/.exec(line);
+    const raw = match?.[1];
+    const time = raw && /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(raw) ? localTimestamp(raw).ms : raw ? Date.parse(raw) : NaN;
+    if (!Number.isFinite(time) || time > now) result.unparseableErrors++;
+    else if (time >= now - result.windowSeconds * 1000) result.recentErrors++;
+  }
+  return result;
+}
+
+export type GuardianLogHealth = Awaited<ReturnType<typeof readGuardianLogHealth>>;
+
+export interface GuardianProblem { kind: 'status' | 'service' | 'log'; problem: string; repair: string }
+export interface GuardianDiagnosis { healthy: boolean; problems: GuardianProblem[] }
+
+/**
+ * Pure verdict over the three read-only checks. Repairs are instructions for a
+ * human or agent; nothing here starts, stops or enqueues anything, so it never
+ * duplicates the guardian's own FIXUP-MAIN repairs. Absent evidence is a problem.
+ */
+export function diagnoseGuardianHealth(input: {
+  age: FleetHealthAge; service: GuardianServiceHealth | null; log: GuardianLogHealth | null;
+}): GuardianDiagnosis {
+  const problems: GuardianProblem[] = [];
+  const { age, service, log } = input;
+  if (age.status !== 'fresh') {
+    problems.push({ kind: 'status', problem: `Status is ${age.status}.`, repair: age.status === 'future timestamp'
+      ? 'Check the system clock, then re-run this check.'
+      : 'Confirm the guardian service is loaded and running; its next pass rewrites supervisor/status-main-guardian.md.' });
+  }
+  if (service && service.state !== 'loaded') {
+    problems.push({ kind: 'service', problem: service.state === 'not-loaded' ? 'Service is not loaded.' : 'Service state is unknown.',
+      repair: service.state === 'not-loaded'
+        ? 'Reinstall or bootstrap the ai.ashlr.main-guardian LaunchAgent from your macOS user session.'
+        : service.diagnostic });
+  } else if (service && service.lastExitCode !== 0) {
+    problems.push({ kind: 'service', problem: service.lastExitCode === null ? 'Last exit code was not reported.'
+      : `Last exit code was ${service.lastExitCode}.`, repair: 'Read the tail of guardian/guardian.log for the failure; run `phm fleet health-age --log`.' });
+  }
+  if (log) {
+    if (log.source !== 'healthy') problems.push({ kind: 'log', problem: `Guardian log is ${log.source}.`,
+      repair: 'Check that guardian/guardian.log exists under the runs directory and is readable.' });
+    else if (log.recentErrors) problems.push({ kind: 'log', problem: `${log.recentErrors} error lines in the last 24 hours.`,
+      repair: 'Open guardian/guardian.log and fix the newest error; `phm fleet main-repair-time` shows whether repairs are slow.' });
+    if (log.source === 'healthy' && log.unparseableErrors) problems.push({ kind: 'log', problem: `${log.unparseableErrors} error lines have no usable timestamp.`,
+      repair: 'Inspect those lines in guardian/guardian.log; undated errors cannot be ruled out.' });
+  }
+  return { healthy: problems.length === 0, problems };
+}

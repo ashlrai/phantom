@@ -6,7 +6,6 @@ import os
 import re
 import sys
 
-LANES = {"codex-cmp", "codex-personal", "claude", "devin", "claude-api", "codex-local"}
 TIERS = {"frontier", "work", "mid", "fast"}
 ID = re.compile(r"[A-Za-z0-9._-]+")
 
@@ -23,7 +22,7 @@ def allowance(cap, rows, retired):
         f = row.split("\t")
         if f[0].startswith("PARKED-") or (len(f) > 2 and f[2].startswith("PARKED-")):
             continue
-        if len(f) < 5 or not ID.fullmatch(f[0]) or f[2] not in LANES or f[3] not in TIERS or not f[1] or not f[4]:
+        if len(f) < 5 or not ID.fullmatch(f[0]) or f[3] not in TIERS or not f[1] or not f[4]:
             continue
         if f[0] not in retired:
             seen.add(f[0])

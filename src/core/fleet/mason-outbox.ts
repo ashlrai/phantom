@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -6,6 +7,7 @@ import { FLEET_RUNS_INBOX_MAX_CHARS } from '../verse/fleet-runs-types.js';
 
 export interface OutboxEntry {
   at: string;
+  heading?: string;
   text: string;
 }
 
@@ -61,18 +63,57 @@ export function parseOutbox(markdown: string, limit = 30): OutboxEntry[] {
 }
 
 /** Extract only explicit leader replies, retaining their section's wall-clock time. */
-function parsePlanLog(markdown: string, limit = 20): OutboxEntry[] {
-  if (!Number.isFinite(limit) || limit <= 0) return [];
+export function parsePlanLog(markdown: string): OutboxEntry[] {
   const entries: OutboxEntry[] = [];
   let at = '';
+  let heading = '';
+  let body: string[] | null = null;
+  let entryIndex = -1;
+  const finish = (): void => {
+    const text = body?.join('\n').trim();
+    if (text) {
+      const reply = { at, heading, text: cap(text) };
+      if (entryIndex >= 0) entries[entryIndex] = reply;
+      else { entryIndex = entries.length; entries.push(reply); }
+    }
+    body = null;
+  };
   for (const line of markdown.replace(/\r\n/g, '\n').split('\n')) {
-    if (line.startsWith('## ')) {
-      at = /^## (\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2})?) ET(?:\s|$)/.exec(line)?.[1] ?? '';
-    } else if (line.startsWith('- MASON-OUTBOX') || line.includes('Reply for Mason, to copy there:')) {
-      entries.push({ at, text: cap(line) });
+    const marker = /^(?:[-*]\s+|#{1,6}\s+)?(?:\*\*)?(?:Reply for Mason(?:, to copy there)?|MASON-OUTBOX)(?:\*\*)?\s*:?(?:\*\*)?\s*(.*)$/i.exec(line);
+    if (marker) {
+      finish();
+      body = [marker[1]!];
+    } else if (/^#{1,6} /.test(line)) {
+      finish();
+      if (line.startsWith('## ')) {
+        entryIndex = -1;
+        heading = line.slice(3).trim();
+        at = HEADING_TIME.exec(line)?.[0] ?? /^## (\d{4}-\d{2}-\d{2}) ET/.exec(line)?.[1] ?? '';
+      }
+    } else if (body !== null) {
+      body.push(line);
     }
   }
-  return entries.sort((a, b) => a.at.localeCompare(b.at)).slice(-Math.min(20, Math.floor(limit)));
+  finish();
+  return entries;
+}
+
+/** Interpret journal wall times in Eastern time, independent of the server timezone. */
+export function replyTime(at: string): number {
+  if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(at)) return Date.parse(at);
+  const wall = Date.parse(at.replace(' ', 'T') + ':00Z');
+  const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  let instant = wall;
+  for (let i = 0; i < 2; i++) {
+    const parts = formatter.formatToParts(instant);
+    const n = (type: Intl.DateTimeFormatPartTypes): number => Number(parts.find(p => p.type === type)?.value);
+    instant += wall - Date.UTC(n('year'), n('month') - 1, n('day'), n('hour'), n('minute'));
+  }
+  return instant;
+}
+
+export function replyTextHash(text: string): string {
+  return createHash('sha256').update(text.trim()).digest('hex');
 }
 
 /** Bounded, read-only tail; never expose a partial first line. */
@@ -99,21 +140,56 @@ async function readTail(path: string): Promise<string> {
   }
 }
 
-/** Prefer the outbox; an empty or missing outbox falls back to explicit PLAN-LOG replies. */
+/** Read both journals without modifying them; dedupe before taking the newest replies. */
 export async function readOutboxEntries(opts: { runsDir?: string; limit?: number } = {}): Promise<{ sourceState: 'healthy' | 'missing' | 'degraded'; entries: OutboxEntry[] }> {
   const runsDir = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
-  let sourceState: 'healthy' | 'missing' | 'degraded' = 'healthy';
-  try {
-    const entries = parseOutbox(await readTail(join(runsDir, 'leader', 'MASON-OUTBOX.md')), opts.limit);
-    if (entries.length) return { sourceState, entries };
-  } catch (error) {
-    sourceState = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'degraded';
+  let sourceState: 'healthy' | 'missing' | 'degraded' = 'missing';
+  const entries: OutboxEntry[] = [];
+  for (const name of ['MASON-OUTBOX.md', 'PLAN-LOG.md']) {
+    try {
+      const markdown = await readTail(join(runsDir, 'leader', name));
+      entries.push(...(name === 'PLAN-LOG.md' ? parsePlanLog(markdown).map(({ at, text }) => ({ at, text })) : parseOutbox(markdown, Number.MAX_SAFE_INTEGER)));
+      if (sourceState !== 'degraded') sourceState = 'healthy';
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') sourceState = 'degraded';
+    }
   }
+  // Sort first so a duplicate keeps its newest timestamp across both journals.
+  entries.sort((a, b) => (replyTime(b.at) || 0) - (replyTime(a.at) || 0));
+  const seen = new Set<string>();
+  const unique = entries.filter(entry => {
+    const hash = `${entry.at.slice(0, 10)}:${replyTextHash(entry.text)}`;
+    if (seen.has(hash)) return false;
+    seen.add(hash);
+    return true;
+  }).sort((a, b) => (replyTime(a.at) || 0) - (replyTime(b.at) || 0));
+  const limit = opts.limit ?? 30;
+  return { sourceState, entries: Number.isFinite(limit) && limit > 0 ? unique.slice(-Math.floor(limit)) : [] };
+}
+
+/** Where the PLAN-LOG lives: explicit path, then PHANTOM_PLAN_LOG, then the runs dir. */
+export function planLogPath(file?: string): string {
+  return file || process.env.PHANTOM_PLAN_LOG || join(process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'leader', 'PLAN-LOG.md');
+}
+
+/** Only explicit dated PLAN-LOG replies, keeping the newest copy of each text per date. */
+export async function readPlanLogReplies(opts: { limit?: number; file?: string } = {}): Promise<{ sourceState: 'healthy' | 'missing' | 'unknown'; entries: OutboxEntry[]; reason?: string }> {
+  const path = planLogPath(opts.file);
   try {
-    const entries = parsePlanLog(await readTail(join(runsDir, 'leader', 'PLAN-LOG.md')), opts.limit);
-    return { sourceState: entries.length ? 'healthy' : sourceState, entries };
+    const limit = opts.limit ?? 30;
+    const seen = new Set<string>();
+    const entries = parsePlanLog(await readTail(path))
+      .filter(e => e.at && e.heading && Number.isFinite(replyTime(e.at)))
+      .sort((a, b) => replyTime(b.at) - replyTime(a.at))
+      .filter(e => {
+        const hash = `${e.at.slice(0, 10)}:${replyTextHash(e.text)}`;
+        if (seen.has(hash)) return false;
+        seen.add(hash);
+        return true;
+      }).reverse();
+    return { sourceState: 'healthy', entries: Number.isFinite(limit) && limit > 0 ? entries.slice(-Math.floor(limit)) : [] };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') sourceState = 'degraded';
-    return { sourceState, entries: [] };
+    const missing = (error as NodeJS.ErrnoException).code === 'ENOENT';
+    return { sourceState: missing ? 'missing' : 'unknown', entries: [], reason: missing ? `No PLAN-LOG file at ${path}, so there are no replies yet.` : `Could not read the PLAN-LOG at ${path}.` };
   }
 }

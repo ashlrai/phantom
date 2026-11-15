@@ -97,7 +97,7 @@ function rawBridge(win: unknown): RawBridge | null {
 
 /**
  * True when this window runs in a shell that implements computer use and can
- * do it on this platform. Cheap and import-free on purpose: VerseApp inlines
+ * do it on this platform. Cheap and import-free on purpose: PhantomApp inlines
  * the same test to decide whether to load this feature's chunk at all.
  */
 export function hasNativeComputer(win: unknown = typeof window === 'undefined' ? undefined : window): boolean {

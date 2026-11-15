@@ -14,6 +14,7 @@
  * uncaught render exceptions, not just query-status `'error'`).
  */
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { desktopSurfaceForRoute, reportDesktopError } from '../../lib/report-desktop-error.js';
 import styles from './RouteErrorBoundary.module.css';
 
 interface Props {
@@ -35,6 +36,7 @@ export class RouteErrorBoundary extends Component<Props, State> {
 
   override componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('[ashlr] view crashed while rendering', error, info.componentStack);
+    reportDesktopError(desktopSurfaceForRoute(this.props.resetKey), error, info.componentStack);
   }
 
   override componentDidUpdate(prevProps: Props) {

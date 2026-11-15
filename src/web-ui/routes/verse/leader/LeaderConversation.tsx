@@ -28,8 +28,9 @@
  * "Leader is thinking…" shows while a send is in flight and, when the server
  * said it will reply later (reply: null), until the Leader's next message —
  * for at most AWAIT_REPLY_MS. Meanwhile the thread polls every 3 s instead
- * of 10 s. There is no Leader event stream to subscribe to (/api/events has
- * no leader topic), so polling while visible is the honest refresh.
+ * of 10 s. While the shared event stream is open the server pushes a
+ * `leader-thread` event on every write (use-leader-thread-push), so polling
+ * relaxes to a 30 s backstop; with the stream down it is the only refresh.
  */
 import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { LeaderStateV1 } from '../../../../core/vision/leader-types.js';
@@ -43,6 +44,8 @@ import type { SurfaceActions } from '../command/actions.js';
 import type { OptionalRead } from '../command/surface-data.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { DirectivesStrip } from './DirectivesStrip.js';
+import { LeaderBriefCard } from './LeaderBriefCard.js';
+import { useLeaderThreadPush } from './use-leader-thread-push.js';
 import { getLeaderFocus, isLeaderFocusLive, subscribeLeaderFocus, takeLeaderFocus } from './leader-focus.js';
 import { LeaderComposer, type LeaderComposerHandle } from './LeaderComposer.js';
 import { answerLeaderQuestion, fetchOlderThread, leaderDirectivesQuery, leaderThreadQuery, sendLeaderMessage, THREAD_PAGE_SIZE } from './thread-data.js';
@@ -55,6 +58,8 @@ import {
   previewText,
   type PendingMessage,
 } from './thread-model.js';
+import { answerStates } from './answer-state.js';
+import { loadDraft, saveDraft } from '../chat/composer-memory.js';
 import { ThreadRows, type ThreadContext } from './ThreadItems.js';
 import type { QuestionFormStore } from './LeaderQuestionForm.js';
 const TypedQuestionForm = lazy(() => import('./LeaderQuestionForm.js'));
@@ -64,7 +69,15 @@ import styles from './leader.module.css';
 
 export const THREAD_POLL_MS = 10_000;
 export const THREAD_POLL_THINKING_MS = 3_000;
+export const THREAD_POLL_PUSHED_MS = 30_000;
 export const DIRECTIVES_POLL_MS = 30_000;
+
+/**
+ * Drafts live in the chat composer's memory (bounded, localStorage-backed,
+ * wiped on logout). The `leader:` prefix cannot collide with a chat session id.
+ */
+const LEADER_DRAFT_ID = 'leader:main';
+const answerDraftId = (questionMessageId: string) => `leader:answer:${questionMessageId}`;
 
 const SEND_TOKEN_REASON = 'Messaging the Leader requires the dispatch token.';
 
@@ -126,7 +139,11 @@ export function LeaderConversation({ leader, actions, dormant }: LeaderConversat
   const [received, setReceived] = useState<LeaderThreadMessage[]>([]);
   const [pending, setPending] = useState<PendingMessage[]>([]);
   const [awaiting, setAwaiting] = useState<ReadonlySet<string>>(() => new Set());
-  const [draft, setDraft] = useState('');
+  const [draft, setDraftState] = useState(() => loadDraft(LEADER_DRAFT_ID));
+  const setDraft = useCallback((text: string) => {
+    setDraftState(text);
+    saveDraft(LEADER_DRAFT_ID, text);
+  }, []);
   /** A Needs-you question the thread has no message for: answered as a quoted message. */
   const [quote, setQuote] = useState<string | null>(null);
   const [answerDrafts, setAnswerDrafts] = useState<Record<string, string>>({});
@@ -150,10 +167,12 @@ export function LeaderConversation({ leader, actions, dormant }: LeaderConversat
   const messages = useMemo(() => entries.flatMap((e) => (e.type === 'message' ? [e.message] : [])), [entries]);
   const byId = useMemo(() => new Map(messages.map((m) => [m.id, m])), [messages]);
   const answered = useMemo(() => answeredQuestions(messages), [messages]);
+  const states = useMemo(() => answerStates(messages, now), [messages, now]);
   const rows = useMemo(() => groupThread(entries, now), [entries, now]);
   const thinking = awaitingReply(entries, awaiting, now);
 
-  usePollWhileVisible(refetchThread, thinking ? THREAD_POLL_THINKING_MS : THREAD_POLL_MS);
+  const push = useLeaderThreadPush(refetchThread);
+  usePollWhileVisible(refetchThread, push.live ? THREAD_POLL_PUSHED_MS : thinking ? THREAD_POLL_THINKING_MS : THREAD_POLL_MS);
   usePollWhileVisible(refetchDirectives, DIRECTIVES_POLL_MS);
 
   // A send's echo is dropped once a server read carries it.
@@ -230,8 +249,14 @@ export function LeaderConversation({ leader, actions, dormant }: LeaderConversat
         },
       });
     },
-    [quote, submit],
+    [quote, submit, setDraft],
   );
+
+  // React state is the render source; storage seeds it the first time an id is read.
+  const setAnswerDraft = useCallback((id: string, text: string) => {
+    setAnswerDrafts((d) => ({ ...d, [id]: text }));
+    saveDraft(answerDraftId(id), text);
+  }, []);
 
   const onAnswer = useCallback(
     (question: LeaderThreadMessage, text: string) => {
@@ -239,10 +264,10 @@ export function LeaderConversation({ leader, actions, dormant }: LeaderConversat
         kind: 'answer',
         replyTo: question.id,
         questionId: question.questionId ?? question.id,
-        onStart: () => setAnswerDrafts((d) => ({ ...d, [question.id]: '' })),
+        onStart: () => setAnswerDraft(question.id, ''),
       });
     },
-    [submit],
+    [submit, setAnswerDraft],
   );
 
   const onRetry = useCallback(
@@ -381,11 +406,12 @@ export function LeaderConversation({ leader, actions, dormant }: LeaderConversat
     leader: leader?.value ?? null,
     actions,
     answered,
+    answerStates: states,
     byId,
     answering,
     focusQuestionId,
-    answerDraft: (id) => answerDrafts[id] ?? '',
-    setAnswerDraft: (id, text) => setAnswerDrafts((d) => ({ ...d, [id]: text })),
+    answerDraft: (id) => (id in answerDrafts ? answerDrafts[id]! : loadDraft(answerDraftId(id))),
+    setAnswerDraft,
     onAnswer,
     onRetry,
     onDiscard,
@@ -425,6 +451,8 @@ export function LeaderConversation({ leader, actions, dormant }: LeaderConversat
           </span>
         ) : null}
       </header>
+
+      <LeaderBriefCard />
 
       <DirectivesStrip read={directives.data} actions={actions} adding={addingDirective} onAddingChange={setAddingDirective} />
 
