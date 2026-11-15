@@ -24,6 +24,7 @@ function record(asOf: string): RecheckRecord {
       bridge: { state: 'VERIFIED', missingBridge: null, asOf },
       task: { state: 'VERIFIED', id: null, owner: null, claimReceipt: null, asOf, lastVerified: null },
       missing: null,
+      tailnet: null,
     },
   };
 }

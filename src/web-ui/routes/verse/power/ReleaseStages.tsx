@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiGet } from '../../../data/client.js';
-import { readReleaseStages, releaseStageRows, type ReleaseStagesView } from './release-stages-model.js';
+import { readReleaseStages, releaseNotesUrl, releaseStageRows, type ReleaseStagesView } from './release-stages-model.js';
 
 export const RELEASE_STAGES_PATH = '/api/verse/release/stages';
 
@@ -29,9 +29,13 @@ export function ReleaseStages({ installedVersion, refreshKey = 0, onView }: {
   useEffect(() => { onView?.(view); }, [view, onView]);
   if (load.phase === 'loading') return <p>Checking the newest release…</p>;
   if (!view) return <p>The newest release could not be read.</p>;
-  return <ul role="list" aria-label="Newest release">
-    {releaseStageRows(view, installedVersion).map(row => <li key={row.label} data-state={row.state}>
-      <strong>{row.label}</strong>: {row.text}
-    </li>)}
-  </ul>;
+  const notes = releaseNotesUrl(view.tag);
+  return <>
+    <ul role="list" aria-label="Newest release">
+      {releaseStageRows(view, installedVersion).map(row => <li key={row.label} data-state={row.state}>
+        <strong>{row.label}</strong>: {row.text}
+      </li>)}
+    </ul>
+    {notes && <p><a href={notes} target="_blank" rel="noopener noreferrer">What shipped in {view.tag} ↗</a></p>}
+  </>;
 }

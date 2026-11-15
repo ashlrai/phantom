@@ -377,3 +377,108 @@ last tick; `generatedAt` is the read time. Recent outcomes are the producer's
 (null at the underlying 50-record cap). No free text, environment,
 credentials, paths, or job contents are returned. Partial source health must be
 checked before interpreting observations as complete.
+
+## Fleet merge-batch action compiler v1
+
+`src/core/fleet/merge-batch-runner.ts` exports these pure signatures and types:
+
+```ts
+const MERGE_BATCH_RUN_SCHEMA: 'fleet.merge-batch-run.v1';
+type MergeBatchRiskTier = 'low' | 'standard' | 'protected' | 'unknown';
+type MergeBatchActionKind = 'enqueue-merge' | 'rebase' | 'close-review' | 'wait';
+function classifyMergeBatchRisk(pr: MergeBatchPr, testsImportingTier1?: ReadonlySet<string>): MergeBatchRiskTier;
+function runMergeBatch(input: MergeBatchRunInput): MergeBatchRun;
+```
+
+`MergeBatchRunInput` requires `plan: MergeBatchPlan` (`fleet.merge-batch.v1`)
+and `prs: readonly MergeBatchPr[]` from the same snapshot. Optional inputs are
+`snapshotComplete: boolean`, `hold: ReadonlySet<string>` (short/full repo or
+`*#number`), `existing: readonly RebasePlanExistingJob[]`, and
+`testsImportingTier1: ReadonlySet<string>`. At most 5,000 PRs and existing jobs
+are accepted; mismatched membership or readiness evidence throws. No clock or
+I/O is used. `generatedAt` comes from the input plan. Snapshot parsing now adds
+`MergeBatchPr.filesComplete?: boolean`; false preserves absent, capped or invalid
+wire file evidence that normalization would otherwise erase.
+`MergeBatchPr.supersededBy?: number` retains explicit merged-replacement evidence
+from hygiene reports for close-review, including reports without file data.
+
+`MergeBatchRun` contains `schema`, `v: 1`, `repo`, `generatedAt`, counts keyed by
+`MergeBatchActionKind`, and `actions` in planned order. Every `MergeBatchAction`
+contains `number`, `batch`, `headSha`, `kind`, `reason`, `ready`, `afterMerged`,
+`riskTier`, `ci: 'targeted' | 'full'`, and `job: MergeBatchRebaseJob | null`.
+Only merge/rebase actions may be ready. Complete file evidence and an exact
+40-hex head are required; merges additionally require non-draft MERGEABLE/CLEAN.
+Dirty, conflicting and behind heads rebase. Known holds and active jobs wait.
+Explicit recut/rebase replacements flag close-review; overlap or title equality
+alone never justifies closure. Existing one-attempt rebase refusals remain.
+
+`MergeBatchRebaseJob` contains `id` (the existing `RQ-REBASE-<short>-<pr>-<head7>`
+convention), full `repo`, `number`, `headRef`, `headSha`, `pool: 'any'`,
+`tier: 'work'`, `status: 'READY' | 'WAITING'`, `afterMerged: number[]`, and
+`securityPinRequired: boolean`. This is structured dispatch input, not an
+already-written queue row. Dependencies name PRs that must **merge**, not jobs
+that merely finish rebasing. Refresh the snapshot and replan after each merge
+or rebase; never dispatch WAITING jobs against the old base. Disjoint file sets
+can act concurrently; each shared file carries its last predecessor, bounding
+the dependency list to fewer than 300 entries per action.
+
+Risk classification checks protected paths (including Tier-1 tests) and pinned
+machinery before docs/test-only detection. `low` recommends targeted CI;
+standard/protected/unknown recommend full CI. This path-only hook grants no
+check bypass: required checks, secret scans, diff-level test-tamper checks,
+Security pins and the scheduled full suite remain governed by existing policy.
+Consumers must revalidate repository/head/base, holds and current coverage
+before execution. Close-review always requires content/evidence review.
+
+`src/cli/fleet-merge-batch-run.ts` exports
+`cmdFleetMergeBatchRun(args: string[], deps?: FleetMergeBatchRunDeps): Promise<number>`.
+Its dependencies extend `FleetMergeBatchDeps` with optional `existing` and `hold`
+injections. `phm fleet merge-batch-run --input open-prs.json --repo ashlrai/phantom --json`
+reads the same bounded snapshots as `fleet merge-batch`; JSON is the default.
+Use a gh open-PR snapshot with `headRefOid`, `mergeable`, `mergeStateStatus`,
+`isDraft`, and `files` for executable recommendations. Reports without those
+fields produce waits. Piped stdin and `<root>/fleet/open-prs.json` also work.
+The CLI reads `<root>/queue/{router-queue.md,ready.tsv,hold-list.txt}` and reports
+queue/hold source health; missing evidence is disclosed, never execution authority.
+It shares the existing read-only queue parser through
+`readRebaseCoverage(queueDir: string, readText: (path: string) => Promise<string>): Promise<CoverageRead>`
+in `src/cli/fleet-rebase-plan.ts`; `CoverageRead` has `state: 'ok' | 'missing' | 'degraded'`
+and `jobs: RebasePlanExistingJob[]`. Exit 0 emits actions, 1 emits an empty error
+report for unusable/incomplete input, and 2 indicates invalid arguments.
+Nothing invokes gh, merges, closes, dispatches jobs or changes CI configuration.
+
+## Feedback-to-fix pipeline — RQ-GROK-FEEDBACKLOOP-1
+
+`src/core/fleet/feedback-triage.ts` exports pure `triageFeedback(signal, existing)`:
+`FeedbackSignal {source, text, refs}` becomes an ignored reason or a classified
+`TriageResult {kind, priority, suggestedLane, suggestedTier, dedupeKey, promptSeed}`.
+`feedback-ingest.ts` exports bounded dependency-injected `ingestFeedback`.
+`feedback-cycle.ts` exports `runFeedback` and pure `feedbackDigest`.
+`src/cli/fleet-feedback.ts` exports `cmdFleetFeedback`; scan previews by default,
+apply uses existing drop admission, and digest reports twelve-hour observations.
+No merge, publish, send or scheduler authority is added. The full limits,
+dedupe, protected-scope and failure contract is in the
+[feedback pipeline contract](docs/contracts/CONTRACT-RQ-GROK-FEEDBACKLOOP-1.md).
+
+## Fleet chief-of-staff v1
+
+`src/core/fleet/chief-of-staff.ts` exports `FleetSnapshot`, `ChiefOfStaffPlan`,
+`CHIEF_OF_STAFF_SCHEMA = 'fleet.chief-of-staff.v1'`,
+`CHIEF_OF_STAFF_LIMITS: { lanes: 64; jobs: 200; outcomes: 1000; brief: 12000 }`,
+`parseFleetSnapshot(value: unknown): FleetSnapshot` and
+`planChiefOfStaff(snapshot: FleetSnapshot): ChiefOfStaffPlan`.
+`src/cli/fleet-chief-of-staff.ts` exports `FleetChiefOfStaffDeps` (optional
+`read(path): Promise<string>`, `runsDir`, `now(): Date`, `out(text)` and `err(text)`)
+and `cmdFleetChiefOfStaff(args: string[], deps?: FleetChiefOfStaffDeps): Promise<number>`.
+The [v1 schema contract](docs/contracts/CONTRACT-FLEET-CHIEF-OF-STAFF-V1.md)
+defines bounds, deterministic rules, read-only capture and literal advisory
+authority. Core has no I/O or ambient clock; the CLI never applies a plan.
+## Fleet proof artifacts
+
+`fleet.proof.v1` carries bounded claims, evidence provenance, command exits,
+diff statistics, risk classification and a reviewer checklist. The bridge
+publisher captures actual staged Git and runner artifacts before publication;
+`phm fleet proof verify <resultRef>` checks the local digest-bound bundle without
+executing commands. Agent assertions alone never establish proof. See
+[the fleet proof contract](docs/contracts/CONTRACT-FLEET-PROOF-V1.md) for schema,
+trust boundary, bounds, redaction and Security-pinned deployment requirements.

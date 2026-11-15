@@ -22,7 +22,7 @@ it('shows the recorded verdict and refetches history and verdict once each', asy
   await waitFor(() => expect(screen.getByText(/^Recorded VERIFIED as of /)).toBeInTheDocument());
   expect(apiPost).toHaveBeenCalledTimes(1);
   expect(apiPost.mock.calls[0]!.slice(0, 2)).toEqual(['/api/verse/fleet/recheck/record', {}]);
-  expect(refetch).toHaveBeenCalledTimes(2); // history + verdict (useRefetch is mocked to one shared fn)
+  expect(refetch).toHaveBeenCalledTimes(3); // history + verdict + thread reply (useRefetch is mocked to one shared fn)
 });
 
 it('shows the already-running line on 409 without refetching', async () => {

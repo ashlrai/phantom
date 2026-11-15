@@ -43,23 +43,8 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
-  'test/channel-health-ingress-failure-322s.test.ts', // Spawns real bridge-shaped sleep processes for ingress observations.
-  'test/channel-health-slack-binding-338.test.ts', // Spawns real Slack bridge-shaped sleep processes.
-  'test/comms-confirm-http-original-264s.test.ts', // Runs real git grep to inspect source call sites.
-  'test/email-outbox-crash-batch-103.test.ts', // Spawns real Node children to exercise durable outbox crash recovery.
-  'test/fleet-channel-health-proof-320s.test.ts', // Spawns real bridge-shaped sleep processes for health evidence.
-  'test/gmail-archive-plan-concurrent-104.test.ts', // Spawns concurrent real Node writers against a private inbox.
-  'test/handoff-api-response-contract-10ssl2.test.ts', // Binds a real loopback HTTP server for handoff responses.
-  'test/imessage-teammate-dispatch.test.ts', // Runs a real Python child holding the queue lock.
-  'test/recut-desk-s0-c205.test.ts', // Binds a real loopback server for desktop API recovery.
-  'test/recut-n1r4200s92.test.ts', // Runs the changelog extractor in a real Node child.
-  'test/recut-top-a59.test.ts', // Binds a real loopback server for desktop adapter checks.
-  'test/repo-tracked-artifacts.test.ts', // Runs real git probes and tracked-file enumeration.
-  'test/ui-settings-recut-c196.test.ts', // Binds a real loopback server for settings recovery.
-  'test/ui-settings-recut-c206.test.ts', // Binds a real loopback server for settings recovery.
-  'test/ui-settings.test.ts', // Binds real loopback servers for settings routes.
-  'test/web-ui-redfix-5262.test.ts', // Binds a real loopback server for desktop read routes.
-  'test/work-trace-restart-proof-319s.test.ts', // Runs a real Node child to verify restart persistence.
+  'test/owner-assist.test.ts', // private state, real runtime fixture and queue integration
+  'test/fleet-proof-envelope.test.ts', // Real Git trees, artifact files and the publisher capture CLI hook.
   'test/queue.test.ts', // Real Python dispatcher ticks in disposable homes for the shared work market.
   'test/delegation-scope-prompts.test.ts', // real Python and shell prompt builders plus isolated restock fixture subprocesses
   'test/routines.test.ts', // Real CLI adapter subprocesses and private ledger files.
@@ -121,9 +106,29 @@ export const REAL_IO_TEST_FILES = [
   'test/mcp/fleet-path-history-snapshot-04-spt2.test.ts', // Creates real git history and moves refs during MCP reads.
   'test/mcp/fleet-job-patch-04-sqb1.test.ts', // Creates real git history for MCP job patch reads.
   'test/mcp/fleet-path-history-pinned-04-sps2.test.ts', // Creates real git history and moves refs during pinned MCP path history reads.
+  'test/mcp/fleet-job-current-snapshot-04-sqc1.test.ts', // Creates real git history for the MCP current-job snapshot.
   'test/verify-change.test.ts',
   'test/remote-reassign-e2e.test.ts', // Binds a real loopback HTTP server for remote reassignment.
   'test/connector-profile.test.ts', // Runs the pinned Perl secret-shape gate against generated profile TOML.
+  'test/connector-exec.test.ts', // Spawns connector children, a fake phantom and the CLI entry; runs the Perl secret-shape gate.
+  'test/channel-health-ingress-failure-322s.test.ts', // Spawns real child processes.
+  'test/channel-health-slack-binding-338.test.ts', // Spawns real Slack bridge-shaped sleep processes.
+  'test/comms-confirm-http-original-264s.test.ts', // Spawns real child processes.
+  'test/email-outbox-crash-batch-103.test.ts', // Spawns real child processes.
+  'test/fleet-channel-health-proof-320s.test.ts', // Spawns real child processes.
+  'test/gmail-archive-plan-concurrent-104.test.ts', // Spawns real child processes.
+  'test/handoff-api-response-contract-10ssl2.test.ts', // Binds a real local network server.
+  'test/imessage-teammate-dispatch.test.ts', // Spawns real child processes.
+  'test/recut-desk-s0-c205.test.ts', // Binds a real local network server.
+  'test/recut-n1r4200s92.test.ts', // Spawns real child processes.
+  'test/recut-top-a59.test.ts', // Binds a real local network server.
+  'test/repo-tracked-artifacts.test.ts', // Spawns real child processes.
+  'test/no-stray-source-artifacts-373.test.ts', // Runs real git ls-files probes against the tracked tree.
+  'test/ui-settings-recut-c196.test.ts', // Binds a real local network server.
+  'test/ui-settings-recut-c206.test.ts', // Binds a real local network server.
+  'test/ui-settings.test.ts', // Binds a real local network server.
+  'test/web-ui-redfix-5262.test.ts', // Binds a real local network server.
+  'test/work-trace-restart-proof-319s.test.ts', // Spawns real child processes.
   'test/docs-fleet-health.test.ts', // Executes documented health commands through the real CLI.
   'test/changelog-current-version-01.test.ts', // Runs the changelog extractor in a real child process.
   'test/docs-agent-parity.test.ts', // Runs docs build and link checks in real child processes.
