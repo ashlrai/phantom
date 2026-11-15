@@ -17,6 +17,12 @@ export type { ChannelPublishState } from './channel-bus-publish.js';
 
 export const INBOUND_CHANNELS = ['email', 'telegram', 'imessage', 'mobile', 'desktop', 'page', 'cli'] as const;
 export type InboundChannel = typeof INBOUND_CHANNELS[number];
+/** Surfaces the shared receiver also accepts although they keep their own
+ * ingress and stay out of `phm channels add` — Slack arrives via its bridge. */
+export const RELAY_CHANNELS = ['slack'] as const;
+/** Every channel value a receiver message may carry. */
+export const RECEIVER_CHANNELS = [...INBOUND_CHANNELS, ...RELAY_CHANNELS] as const;
+export type ReceiverChannel = typeof RECEIVER_CHANNELS[number];
 /** Client-minted request-id grammar, shared with the verse inbox route. */
 export const CHANNEL_REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 export const CHANNEL_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
@@ -36,7 +42,7 @@ export interface ChannelMessage {
    * the same message collapses onto its first receipt, while distinct ids
    * land as distinct entries even when their text is identical. */
   requestId?: string;
-  channel: InboundChannel;
+  channel: ReceiverChannel;
   /** Authenticated channel identity supplied by the trusted adapter. No credentials. */
   verifiedSenderId: string;
   /** Optional adapter-mapped canonical person id. When present it — not
@@ -50,7 +56,7 @@ export interface ChannelEnvelope extends ChannelMessage {
   dedupeKey: string;
 }
 export interface ChannelAck {
-  channel: InboundChannel;
+  channel: ReceiverChannel;
   dedupeKey: string;
   status: 'accepted' | 'duplicate';
   /** Set when this duplicate joined an existing inbox entry from another channel (that entry's id). */
@@ -184,7 +190,7 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
     if (typeof input?.verifiedSenderId !== 'string' || !allowed.has(input.verifiedSenderId)) {
       return { ok: false, reason: 'sender-not-allowed' };
     }
-    if (!INBOUND_CHANNELS.includes(input.channel) || typeof input.body !== 'string' ||
+    if (!(RECEIVER_CHANNELS as readonly string[]).includes(input.channel) || typeof input.body !== 'string' ||
         !input.verifiedSenderId.trim() || input.verifiedSenderId.length > 128 ||
         scrubSecrets(input.verifiedSenderId) !== input.verifiedSenderId) return { ok: false, reason: 'invalid' };
     if (input.threadId !== undefined && (typeof input.threadId !== 'string' ||

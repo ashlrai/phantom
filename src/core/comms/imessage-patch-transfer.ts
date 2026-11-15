@@ -44,16 +44,13 @@ import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../flee
 import { ensurePrivateDirectory } from '../verse/preferences.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { scrubSecrets } from '../util/scrub.js';
-import { senderIdFor } from './imessage-teammate-inbox.js';
+import { isPatchFrameText, PATCH_FRAME_MARKERS, senderIdFor } from './imessage-teammate-inbox.js';
 
-/** Frame markers; defined here because the leaf inbox module does not export them on master. */
-export const PATCH_FRAME_MARKERS = ['PATCH-BEGIN', 'PATCH-PART', 'PATCH-END'] as const;
-
-/** Cheap marker test: true when the text's first token is a PATCH frame marker. */
-export function isPatchFrameText(text: string): boolean {
-  if (typeof text !== 'string') return false;
-  return PATCH_FRAME_MARKERS.some((m) => text === m || text.startsWith(`${m} `));
-}
+// The marker list and test live in the leaf inbox module so read-only
+// observers (the intent classifier there) never pull this module's fs/lock
+// graph — importing it here would also close an import cycle. Re-exported to
+// keep one surface.
+export { isPatchFrameText, PATCH_FRAME_MARKERS };
 
 // ---------------------------------------------------------------------------
 // Protocol bounds

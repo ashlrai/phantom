@@ -66,18 +66,18 @@ describe('phantom_fleet_needs_resolve', () => {
     const body = JSON.parse(text) as Record<string, unknown>;
     expect(body).toMatchObject({ v: 1, status: 'resolved', itemId: item!.id, duplicate: false, inbox: 'appended' });
     expect(typeof body['cursor']).toBe('number');
-    // The actual durable bus resolution, source 'cli' like the existing CLI surface.
+    // The actual durable bus resolution, attributed to the agent surface, never 'cli'.
     expect(busBodies()).toEqual([expect.objectContaining({
-      kind: 'needs_mason.resolved', itemId: item!.id, source: 'cli',
+      kind: 'needs_mason.resolved', itemId: item!.id, source: 'leader',
       item: 'Approve the fake deploy', reply: 'Ship the fake deploy Friday',
     })]);
     // The marker line so the item stops listing.
     expect(readFileSync(needsPath(), 'utf8')).toContain(`- [x] resolved ${item!.id}`);
     expect((await listedItems()).map(entry => entry.text)).toEqual(['Pick a fake vendor']);
-    // The planner inbox received Mason's answer on the cli channel.
+    // The planner inbox entry is labeled as an unverified agent relay, not Mason's CLI.
     const inbox = parseInbox(readFileSync(inboxPath(), 'utf8'));
     expect(inbox).toHaveLength(1);
-    expect(inbox[0]).toMatchObject({ channel: 'cli' });
+    expect(inbox[0]).toMatchObject({ channel: 'agent-via-mcp-unverified' });
     expect(inbox[0]!.text).toBe(`Re needs-you ${item!.id} ("Approve the fake deploy"): Ship the fake deploy Friday`);
   });
 

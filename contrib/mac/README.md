@@ -8,8 +8,14 @@ its exact input hash before adoption. Current-host changes under
 permission to overwrite the whole controller with an older copy. Changes land
 by PR review and the adoption owner verifies immutable source hashes before any
 live install. The queue scripts are deterministic and do not create tokens.
-The candidate launcher denies Devin model IDs ending in `-lightning`, logs
-`PAID_MODEL_BLOCKED`, and uses `swe-2-max` instead; host adoption needs a Security pin.
+The candidate model selector denies Devin model IDs ending in `-lightning`, logs
+`PAID_MODEL_BLOCKED`, and falls back to `swe-2-max` for `devin` or
+`swe-2-flash-max` for `devin-flash`. All flash jobs select `swe-2-flash-max`
+regardless of tier or model hints: it is the plan-free upgrade from flash-medium.
+Devin retains tier-specific hints and defaults to `swe-2-max` at every tier.
+Adopt this selector surgically into the current host launcher, preserving its
+flash lane dispatch and paid/overage guards; this older candidate has no flash
+dispatch branch. Host adoption needs a Security pin.
 
 `restock.py` claims eligible `READY` lines from `router-queue.md` into lane
 prompts (`ready.tsv`/`claimed.tsv`) for the fleet allowlist repos only, keeping
@@ -944,20 +950,28 @@ overlap: worktree totals include their `node_modules` and `target` directories.
 ### Read merge latency
 
 Run `python3 contrib/mac/merge-latency.py --jobs jobs.jsonl` for JSON evidence
-(`merge-latency.v1`). Optional `--now <ISO timestamp>` makes replays repeatable;
-`--stale-hours 24` sets the inactivity threshold. This offline CLI reads only the
-supplied ledger; it never requests merges or bypasses required checks.
+(`merge-latency.v1`). `--jobs` defaults to `~/.ashlr-runs/metrics/jobs.jsonl`.
+Optional `--now <ISO timestamp>` makes replays repeatable; `--stale-hours 24`
+sets the inactivity threshold; `--since-hours N` keeps only jobs whose earliest
+queue or publish boundary falls in the last N hours. This offline CLI reads only
+the supplied ledger; it never requests merges or bypasses required checks.
 
 Queue-to-merge seconds use nearest-rank p50/p90/p95/p99 for jobs with exactly one
-queued and one merged observation. Exact duplicate rows count once. Missing,
-reversed, future, repeated-attempt or conflicting boundaries remain unmeasured;
-empty percentiles are null. Use attempt-specific job IDs. Blocking seconds sum
-explicit HELD/BLOCKED reason intervals until the next timestamped observation
-(or now for unresolved jobs); unobserved time is not inferred. Candidates flag
-PRs with stale observations, conflicting outcomes/PR identities or a latest
-CONFLICTING mergeability observation. These are investigation candidates, not
-merge eligibility decisions. Inputs support job/jobId/job_id, ts/timestamp/at,
-state/outcome/status and prUrl/url/pr; reconciled mergedAt/closedAt take priority.
+queued and one merged observation; `publishedToMergeSeconds` applies the same
+boundary rules to the publish-to-merge span. Exact duplicate rows count once.
+Missing, reversed, future, repeated-attempt or conflicting boundaries remain
+unmeasured; empty percentiles are null. Use attempt-specific job IDs. `byPool`
+repeats the measured queue-to-merge percentiles per `pool` label (`unknown`
+when a job's rows carry none). `queued` counts jobs with a queue or publish
+boundary and no terminal outcome, plus the oldest one's age; `closed` counts
+jobs closed without a merge. `generatedAt` echoes the report instant. Blocking
+seconds sum explicit HELD/BLOCKED reason intervals until the next timestamped
+observation (or now for unresolved jobs); unobserved time is not inferred.
+Candidates flag PRs with stale observations, conflicting outcomes/PR identities
+or a latest CONFLICTING mergeability observation. These are investigation
+candidates, not merge eligibility decisions. Inputs support job/jobId/job_id,
+ts/timestamp/at, state/outcome/status and prUrl/url/pr; reconciled
+mergedAt/closedAt take priority.
 
 ### Empty launch suppression
 
@@ -1007,3 +1021,20 @@ minutes, while preserving MERGED throughput.
 shed, cross-pool rebalance and a JSONL ledger at `metrics/fleet-controller.jsonl`. Shadow by default
 (`FLEET_CTL_MODE=enforce` applies it). Design, bands and ledger schema: [FLEET-CONTROLLER.md](FLEET-CONTROLLER.md).
 Tests: `HOME=$(mktemp -d) python3 -B -m unittest contrib/mac/tests/test_fleet_controller.py contrib/mac/tests/test_fleet_controller_tick.py -v`.
+
+## oMLX dispatcher lane
+
+`omlx` is a first-class local pool. `phm lanes --json` reads its dispatcher
+health; `OMLX_URL` defaults to `http://127.0.0.1:8000/v1`. Only literal
+`127.0.0.1` HTTP endpoints are accepted; proxies and redirects are refused.
+Run oMLX with `--host 127.0.0.1`. Slots reserve half of host memory at 16 GiB
+per worker, capped at six; unknown memory disables admission. Stored slot
+settings cannot exceed this memory cap. Claims use the bounded local supervisor
+and completions use the shared reaper. Security must review the combined RETUNE
+and omlx dispatcher pin before installation; never edit the live dispatcher.
+
+# Remote branch hygiene
+
+See [Branch gardener](../../docs/BRANCH-GARDENER.md) for org/fork classification,
+protected and active branch guards, dry-run configuration and the six-hour launchd
+template. This is independent of worktree/disk pruning and does not install itself.

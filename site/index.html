@@ -12,13 +12,13 @@
 <meta property="og:title" content="Phantom — the engineering agent workbench">
 <meta property="og:site_name" content="Phantom">
 <meta property="og:description" content="One coding-agent workbench for individual engineers and engineering teams. Use your accounts and local models, review changes, and add signed fleet work when ready.">
-<meta property="og:image" content="https://verse.ashlr.ai/assets/work-with-me-3.24.3-demo.jpg">
-<meta property="og:image:alt" content="Phantom 3.24.3 compiled browser Demo chat with labeled sample accounts; no provider ran">
+<meta property="og:image" content="https://verse.ashlr.ai/assets/phantom-fleet-demo.png">
+<meta property="og:image:alt" content="Phantom fleet map with labeled synthetic demo data; no provider or fleet ran">
 <meta name="twitter:title" content="Phantom — the engineering agent workbench">
 <meta name="twitter:description" content="One coding-agent workbench for individual engineers and engineering teams. Use your accounts and local models, review changes, and add signed fleet work when ready.">
-<meta name="twitter:image:alt" content="Phantom 3.24.3 compiled browser Demo chat with labeled sample accounts; no provider ran">
+<meta name="twitter:image:alt" content="Phantom fleet map with labeled synthetic demo data; no provider or fleet ran">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:image" content="https://verse.ashlr.ai/assets/work-with-me-3.24.3-demo.jpg">
+<meta name="twitter:image" content="https://verse.ashlr.ai/assets/phantom-fleet-demo.png">
 <!-- fresh:begin jsonld -->
 <script type="application/ld+json">
 {
@@ -38,8 +38,8 @@
       "description": "One coding-agent workbench for individual engineers and engineering teams. Use your accounts and local models, review changes, and add signed fleet work when ready.",
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "macOS, Linux, Windows",
-      "softwareVersion": "3.30.32",
-      "dateModified": "2026-11-10",
+      "softwareVersion": "3.30.33",
+      "dateModified": "2026-11-13",
       "license": "https://github.com/ashlrai/phantom/blob/master/LICENSE",
       "isAccessibleForFree": true,
       "sameAs": "https://github.com/ashlrai/phantom",
@@ -414,10 +414,10 @@
         <p class="eyebrow">Phantom &middot; by <a href="https://ashlr.ai">AshlrAI</a></p>
         <h1>Your coding agents.<br>One workbench.</h1>
         <p class="lede">
-          For individual engineers and engineering teams. Work with your agents in a chat,
-          or give eligible fleet work a clear outcome. Bring your own accounts, local models and projects.
+          An open-source workbench for running coding agents, coordinating a fleet,
+          and reviewing their work. Bring your own accounts, local models and projects.
         </p>
-        <p class="lede-tail">Connect supported CLI accounts, API providers and local models. Guide a conversation or delegate an outcome; keep the work, changes and evidence together.</p>
+        <p class="lede-tail">Follow workers and lane capacity, inspect agent messages, and add computers with their own provider sign-in. <a href="https://github.com/ashlrai/phantom/blob/master/docs/AUTOMATIC-OUTCOMES.md">Fleet guide</a> · <a href="https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md">Add a computer</a>.</p>
         <div class="cta-row">
           <a class="btn btn-primary" href="#start-individual">Start on your own</a>
           <a class="btn btn-primary" href="#start-team">Start with your team</a>
@@ -452,6 +452,12 @@
         <p class="journey-foot">Illustration · select a mode, then inspect its stages. No agents are launched.</p>
       </div>
     </div>
+
+      <figure class="shot">
+        <img src="assets/phantom-fleet-demo.png" width="1440" height="1000" loading="lazy" decoding="async"
+             alt="Current Phantom fleet map with sample jobs grouped by provider and agent-message connections. Synthetic demo data." />
+        <figcaption>Fleet: current source UI at 2× resolution, with synthetic sample jobs and agent messages. No provider or fleet ran.</figcaption>
+      </figure>
 
     <nav id="mobile-index" class="mobile-index" aria-label="Explore page sections">
       <span class="label">Explore Phantom</span>
@@ -496,33 +502,6 @@
     </div>
   </div>
 
-
-<!-- Phantom ecosystem stats (scripts/ecosystem-stats.mjs, refreshed daily by .github/workflows/ecosystem-stats.yml) -->
-<style>
-  .eco-stats{max-width:var(--max);margin:40px auto 8px;padding:0 var(--gutter)}
-  .eco-card{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:18px;background:var(--surface);padding:26px 28px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) auto;gap:20px;align-items:end}
-  .eco-card::before{content:"";position:absolute;inset:0 0 auto 0;height:3px;background:linear-gradient(90deg,var(--accent),var(--live))}
-  .eco-k{font:500 11px var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
-  .eco-v{display:block;font:700 clamp(30px,4.4vw,46px)/1.05 var(--f-display);color:var(--ink);font-variant-numeric:tabular-nums;margin-top:6px}
-  .eco-meta{font:500 12px var(--f-mono);color:var(--faint);text-align:right}
-  .eco-meta a{color:var(--accent)}
-  .eco-list{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
-  .eco-chip{display:inline-flex;gap:8px;align-items:center;font:500 12px var(--f-mono);color:var(--ink);text-decoration:none;border:1px solid var(--line-soft);border-radius:999px;padding:5px 11px;background:var(--bg)}
-  .eco-chip span{color:var(--muted)}
-  .eco-chip:hover{border-color:var(--accent)}
-  .eco-stats[data-state="unavailable"] .eco-v{color:var(--muted)}
-  @media (max-width:720px){.eco-card{grid-template-columns:1fr 1fr}.eco-meta{grid-column:1/-1;text-align:left}}
-</style>
-<section id="eco-stats" class="eco-stats" aria-label="Phantom ecosystem on GitHub" data-state="loading">
-  <div class="eco-card">
-    <div><span class="eco-k">Ecosystem stars</span><strong class="eco-v" data-eco="stars">—</strong></div>
-    <div><span class="eco-k">Commits shipped</span><strong class="eco-v" data-eco="commits">—</strong></div>
-    <div><span class="eco-k">Open-source repos</span><strong class="eco-v" data-eco="repos">—</strong></div>
-    <div class="eco-meta">GitHub, updated <time data-eco="asof">daily</time><br><a href="/ecosystem">Explore the ecosystem →</a></div>
-    <div class="eco-list" data-eco="list"></div>
-  </div>
-</section>
-<script defer src="/assets/ecosystem-stats.js"></script>
 
   <!-- Illustrative scene; resource selection never connects or dispatches an account. -->
 <section id="phantom-world" class="phantom-world" aria-labelledby="pw-title" data-stage="0">
@@ -770,15 +749,11 @@
         </p>
       </div>
 
+
       <figure class="shot">
-        <img src="assets/work-with-me-3.24.3-demo.jpg" width="1440" height="900" loading="lazy" decoding="async"
-             alt="Phantom 3.24.3 Work with me: read-only Demo chat with labeled sample accounts and provider-inactive conversation." />
-        <figcaption>Work with me: actual compiled 3.24.3 browser UI with labeled Demo accounts and a sample conversation. No provider ran and no fleet was active.</figcaption>
-      </figure>
-      <figure class="shot">
-        <img src="assets/work-for-me-3.24.3-demo.jpg" width="1440" height="900" loading="lazy" decoding="async"
-             alt="Phantom 3.24.3 Work for me: read-only Command overview with labeled Demo accounts and an illustrative Leader memo." />
-        <figcaption>Work for me: actual compiled Phantom 3.24.3 Command overview with labeled Demo accounts and an illustrative Leader memo. No provider ran and no fleet was active.</figcaption>
+        <img src="assets/phantom-bus-demo.png" width="1440" height="1000" loading="lazy" decoding="async"
+             alt="Current Phantom bus pane with sample coordination messages, priorities and thread controls. Synthetic demo data." />
+        <figcaption>Bus: inspect coordination alongside your work. Browser captures, not native app windows. <a href="https://github.com/ashlrai/phantom/blob/master/docs/images/CAPTURES.md">Capture provenance</a>.</figcaption>
       </figure>
 
       <div class="seats">
@@ -1426,7 +1401,7 @@ phm verse</pre>
             <!-- fresh:end -->
             <button class="copy-command" type="button" data-copy="install-command">Copy commands</button><span class="copy-status" role="status" aria-live="polite"></span>
             <!-- fresh:begin release-line -->
-<p>Latest dated changelog release: <a href="https://github.com/ashlrai/phantom/blob/master/CHANGELOG.md">3.30.32</a> (2026-11-10).</p>
+<p>Latest dated changelog release: <a href="https://github.com/ashlrai/phantom/blob/master/CHANGELOG.md">3.30.33</a> (2026-11-13).</p>
             <!-- fresh:end -->
           </div></div>
           <div class="step"><span class="n"></span><div>

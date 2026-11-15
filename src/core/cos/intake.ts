@@ -3,12 +3,12 @@ import { createHash } from 'node:crypto';
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { ChannelEnvelope, InboundChannel } from '../fleet/channel-envelope.js';
+import type { ChannelEnvelope, ReceiverChannel } from '../fleet/channel-envelope.js';
 import { readNeedsMason, resolveNeedsMason } from '../fleet/needs-mason-resolve.js';
 import { QueueStore } from '../queue/store.js';
 import { scrubSecrets } from '../util/scrub.js';
 
-export interface CosOrigin { channel: InboundChannel; senderId: string; threadId?: string }
+export interface CosOrigin { channel: ReceiverChannel; senderId: string; threadId?: string }
 export interface CosRoute { kind: 'cos-intake'; origin: CosOrigin }
 const root = (runsDir?: string): string => runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
 const store = (runsDir?: string): QueueStore => new QueueStore(join(root(runsDir), 'queue'), 250);

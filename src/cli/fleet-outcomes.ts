@@ -3,6 +3,7 @@ import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
+  censorFromConfig,
   formatOutcomeLearning,
   learnOutcomes,
   offersFromLearning,
@@ -154,7 +155,8 @@ export async function cmdFleetOutcomes(args: string[]): Promise<number> {
     else process.stderr.write('error: event log unavailable\n');
     return 1;
   }
-  const learning = learnOutcomes(text);
+  const { loadConfigReadOnly } = await import('../core/config.js');
+  const learning = learnOutcomes(text, censorFromConfig(loadConfigReadOnly().router, Date.now()));
   const view = outcomeLearningView(learning);
   let route: LearnedRoute | null = null;
   if (parsed.mode === 'route') {

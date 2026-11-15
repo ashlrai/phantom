@@ -15,7 +15,9 @@ import type {
   DashboardSnapshot,
   DecisionEntry,
   FleetActivitySnapshot,
+  FleetBoardResponse,
   FleetLaneSnapshot,
+  FleetSessionsV1,
   FleetStatus,
   VerifiedCompletionReport,
   ApprovalRequest,
@@ -31,6 +33,7 @@ import type {
   ModelStatsReadResult,
 } from './api-types.js';
 import type { ApprovalsProjection, SourceQuality } from './api-types.js';
+import { parseQueueStats, type QueueStatsView } from './queue-stats/model.js';
 
 export interface QueryDef<T> {
   key: string;
@@ -126,9 +129,40 @@ export const fleetStatusQuery: QueryDef<FleetStatus> = {
   fetch: (signal) => apiGet<FleetStatus>('/api/fleet', signal),
 };
 
+/**
+ * GET /api/queue/stats?window=<seconds> — same estimateQueueStats payload
+ * `phm queue stats --json` prints (schemaVersion 1, per-station/pool windows;
+ * core/web/api.ts). Fails closed: a malformed payload throws, landing the
+ * query in 'error' — the graph never renders unvalidated numbers. Has no SSE
+ * event of its own; the graph polls it (see QueueStationGraph).
+ */
+export function queueStatsQuery(windowSec = 3600): QueryDef<QueueStatsView> {
+  return {
+    key: `queue-stats-${windowSec}`,
+    fetch: async (signal) => {
+      const parsed = parseQueueStats(await apiGet<unknown>(`/api/queue/stats?window=${windowSec}`, signal), windowSec * 1000);
+      if (!parsed.ok) throw new Error(`queue stats rejected: ${parsed.error}`);
+      return parsed.value;
+    },
+  };
+}
+
 export const fleetActivityQuery: QueryDef<FleetActivitySnapshot> = {
   key: 'fleet-activity',
   fetch: (signal) => apiGet<FleetActivitySnapshot>('/api/fleet-activity', signal),
+};
+
+/**
+ * RQ-SWE3-BOARDUI-1: the Leader-as-CEO board (GET /api/fleet/board →
+ * core/web/api.ts over core/fleet/leader-journal.ts) — lanes, READY depth
+ * by tier, merges in the last hour, conflicting-PR trend and needs-Mason
+ * items, read from the same coordination/leader-board.json `phm fleet board`
+ * prints. `status` carries 'ok'|'missing'|'unavailable'; a 200 with
+ * board:null means no tick has recorded one yet — not an error, and not zero.
+ */
+export const fleetBoardQuery: QueryDef<FleetBoardResponse> = {
+  key: 'fleet-board',
+  fetch: (signal) => apiGet<FleetBoardResponse>('/api/fleet/board', signal),
 };
 
 /**
@@ -139,6 +173,17 @@ export const fleetActivityQuery: QueryDef<FleetActivitySnapshot> = {
 export const fleetLanesQuery: QueryDef<FleetLaneSnapshot> = {
   key: 'fleet-lanes',
   fetch: (signal) => apiGet<FleetLaneSnapshot>('/api/fleet/lanes', signal),
+};
+
+/**
+ * fleet.sessions.v1 — unified dispatchd agent-session list: queued/parked/
+ * launching/running/publishing/exited/stale sessions plus a bounded finished
+ * tail, read-only from the runs dir (GET /api/fleet/sessions →
+ * getFleetSessions()). Value-blind: no prompt paths, env or secrets.
+ */
+export const fleetSessionsQuery: QueryDef<FleetSessionsV1> = {
+  key: 'fleet-sessions',
+  fetch: (signal) => apiGet<FleetSessionsV1>('/api/fleet/sessions', signal),
 };
 
 /**

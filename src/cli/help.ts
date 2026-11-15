@@ -38,6 +38,16 @@ export interface AgentCommandDoc {
  * actual effects and command-specific result/exit semantics.
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
+  { usage: 'phm fleet feedback scan [--apply] [--days 1..30] [--runs-dir <absolute>] [--json]', description: 'Collect and triage feedback; preview by default. Apply stages at most five deduplicated jobs through existing drop admission. Never merges. Exit 1 for incomplete evidence or failure, 2 for usage.', safety: 'append', jsonShape: 'fleet.feedback.v1 {sources,candidates,queued,deferred,errors}' },
+  { usage: 'phm fleet feedback digest [--json]', description: 'Read the trailing twelve hours of merged PRs, jobs needing review, failures and last recorded launches. No sends or writes.', safety: 'read', jsonShape: 'fleet.feedback.v1 {sources,digest}' },
+  { usage: 'phm amplify status|goal [--json] [--limit 1..100 (goal only)]', description: 'Offline objective snapshot and recent leader decisions. Missing or stale measurements are unknown. Exit 0 report, 1 IO failure, 2 usage.', safety: 'read', jsonShape: 'amplify.status.v1 | amplify.goal.v1' },
+  { usage: 'phm amplify tick [--json]', description: 'One advisory iteration: appends ADVISORY actions to metrics/amplify.jsonl; never changes fleet state. Exit 0 recorded, 1 IO failure, 2 usage.', safety: 'append', jsonShape: 'amplify.status.v1; journal amplify.tick.v1' },
+  {
+    usage: 'phm onboard --ecosystem [--json] | phm onboard --ecosystem --grant --plan <planId> --select <id,id> [--json]',
+    description: 'Detect existing capabilities, then grant one reviewed integration bundle. Names/state only; imports and locked-vault access stay in a trusted terminal. --yes never grants. Exit 0 preview/complete, 1 incomplete wiring, 2 refusal.',
+    safety: 'append',
+    jsonShape: 'EcosystemPlan {schemaVersion:1,phase:"preview",planId,capabilities[]} | EcosystemReceipt {schemaVersion:1,phase,grantId,planId,results[]} | {ok:false,error}',
+  },
   {
     usage: 'phm bus send --from <label> --to <label> --body <json> [--id <id>] [--priority P0|P1|P2|P3] [--ttl <ms>] --json',
     description: 'Append one local durable mailbox message. Same ID and identical envelope deduplicate without renewing TTL. Labels grant no identity or authority; no remote dispatch or engine execution. Exit 0 accepted/replayed, 1 operational refusal, 2 usage.',
@@ -77,6 +87,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{ok, connector? , removed?} | {imported, skipped} | {ok:false,error}',
   },
   {
+    usage: 'phm connectors config --client claude|cursor|codex --lane <lane> [--project <dir>] [--json]',
+    description: 'Print client MCP entries whose servers launch through phm connectors exec (credentials come from phantom exec as session tokens, never in the entry). Every entry passes the secret-shape gate; writes nothing. Exit 0, 1 skipped entries, 2 invalid.',
+    safety: 'read',
+    jsonShape: '{client, lane, format, servers, skipped, config} | {ok:false,error}',
+  },
+  {
     usage: 'phm capacity publish [--json]',
     description: 'Publish local subscription usage metadata once using this node’s local auth. Exit 0 fresh/published, 1 unavailable, 2 bad usage/configuration. No model execution.',
     safety: 'append',
@@ -94,6 +110,7 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
   { usage: 'phm fleet drive [--once] [--root <directory>] [--json]', description: 'Refresh the local Masbot relay status from driver snapshots and the fleet digest. No model calls or message delivery. Exit 1 if inputs cannot be read.', safety: 'append', jsonShape: 'DriveReport plus fleet digest; schemaVersion 1' },
   { usage: 'phm fleet drive jobs --bin <absolute-phm-path> [--root <absolute-directory>]', description: 'Print restockable Mac launchd job definitions. Does not install or activate them.', safety: 'read', jsonShape: '[{label,plist}]' },
   { usage: 'phm route explain [--json]', description: 'Read persisted dispatcher pools and accepted route moves in the trailing hour.', safety: 'read', jsonShape: '{available, route-moves-per-hour: number|null, lines}' },
+  { usage: 'phm route decide --input <file|-> [--root <directory>] --json', description: 'Advisory typed route from local snapshots; bounded local model first, existing Jev on invalid output, deterministic fallback. No launch changes.', safety: 'read', jsonShape: 'RouteReport {schema:route.decision.v1,advisory:true,lane,model,effort,speed_tier,reason_codes,path,duration_ms,attempts,candidate_count}' },
   { usage: 'ashlr router rank --tier <local|mid|frontier> [--routes FILE] [--slots pool=count ...] [--json]', description: 'Rank eligible lanes by forecast exhaustion, then nearest reset; missing slots or budgets exclude a lane. No dispatch or state writes.', safety: 'read', jsonShape: '{ schema: fleet.lane-rank.v1, tier, lanes: RankedLane[] }' },
   { usage: 'phm router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]', description: 'Compare recorded router predictions with matched outcomes and usage offline.', safety: 'read', jsonShape: 'CalibrationReport (schemaVersion 1)' },
   {
@@ -195,7 +212,7 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'schemaVersion 1; dryRun=true, executable=false, registry.status=stub, steps',
   },
   {
-    usage: 'phm node join|beat|enqueue|plan|pull|renew|complete|list|status|leave|pool|watch|worker|rpc [flags] [--json]',
+    usage: 'phm node join|beat|enqueue|plan|pull|renew|complete|list|status|leave|pool|watch|worker|rpc|light [flags] [--json]',
     description: 'Node router: nodes advertise caps and live usage, jobs carry an owner scope and a fenced lease so no job runs twice. A node only sees and pulls jobs of its own owner scopes; auth stays local to each node. Exit 0 ok, 1 lease/session lost or store unavailable, 2 bad usage; errors include a Fix.',
     safety: 'append',
     jsonShape: '{schemaVersion:1, command, ...result} | {schemaVersion:1, command, error:{code,message,fix}}',
@@ -217,6 +234,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     description: 'Execute trusted repository checks. JSON on stdout, ten-line handoff on stderr; child output withheld. Exit 0 pass, 1 failed, 2 usage.',
     safety: 'append',
     jsonShape: '{pass,checks:[{name,ok,secs,first_error}],changed_files}',
+  },
+  {
+    usage: 'phm verify done --worktree <path> [--contract <path>] [--plan]',
+    description: 'Evaluate a worktree\'s done-contract.v1 (DONE_CONTRACT.json or a BRIDGE_NOTES.md embed): floor checks, verify commands and attested acceptance items. No contract falls back to the notes-file expectation. JSON verdict on stdout, handoff on stderr; child output withheld. Exit 0 pass, 1 failed, 2 usage.',
+    safety: 'append',
+    jsonShape: '{pass,mode,job,source,notes_file,notes_present,checks:[{id,source,required,ok,secs,first_error}],acceptance:[{id,text,status,detail}],error}',
   },
   {
     usage: 'phm engineering-receipt --events <file.jsonl> [--claims <file>] [--task <text>] [--json]',
@@ -464,6 +487,11 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     safety: 'append',
     jsonShape: 'ChannelAddResult {ok, kind, changed, credential, next}',
   },
+  { usage: 'phm agentnet peers read [--after <cursor>] [--json]', description: 'Read the authenticated session inbox; ignores raw bus envelopes without private admission evidence.', safety: 'read', jsonShape: '{status, messages, nextCursor}' },
+  { usage: 'phm agentnet peers list [--json]', description: 'List host-enrolled callsigns and Slack identities; never prints session credentials.', safety: 'read', jsonShape: '{peers:[]}' },
+  { usage: 'phm agentnet peers send <to|#channel-id> <kind> <text> [--reply-to <id>] [--thread <id>] [--json]', description: 'Authenticated team peer message; bounded hops and pair rate, approval-gated Slack broker. Exit 1 refused, 2 usage.', safety: 'append', jsonShape: 'PeerResult {status, reason?, id?, origin?, hopCount?, slack?}' },
+  { usage: 'phm agentnet channels propose <name> [--apply] [--json]', description: 'Preview a private collaboration channel draft; --apply records it locally. Never creates a Slack channel.', safety: 'proposal', jsonShape: '{status, action, name, dryRun}' },
+  { usage: 'phm agentnet identity register <callsign> [--json]', description: 'Record a stable callsign profile draft; never provisions credentials or grants a session binding.', safety: 'proposal', jsonShape: '{status, action, name, dryRun}' },
   {
     usage: 'phm channels slack status [--json]',
     description: 'Offline Slack-bridge rollup: agent-network.toml parse state, bridge and workspace ids, phm_ reference names (never values), journal counts and the next step. No socket, API call or credential IO. Exit 0 report, 2 bad usage.',
@@ -629,9 +657,11 @@ export function agentDocsText(): string {
   lines.push('phantom_agent_bus_post, phantom_fleet_drop_job, phantom_fleet_job_reassign,');
   lines.push('phantom_fleet_planner_run, phantom_fleet_apps_ensure, phantom_fleet_apps_changes,');
   lines.push('phantom_fleet_apps_status, phantom_fleet_apps_await, phantom_fleet_needs,');
-  lines.push('phantom_fleet_needs_resolve, phantom_fleet_orders, phantom_fleet_graph,');
-  lines.push('phantom_fleet_session, phantom_fleet_doctor.');
-  lines.push('Tool discovery is not authorization. phantom_fleet_doctor only reads fleet health.');
+  lines.push('phantom_fleet_needs_resolve, phantom_fleet_needs_wait, phantom_fleet_orders,');
+  lines.push('phantom_fleet_graph,');
+  lines.push('phantom_fleet_session, phantom_fleet_doctor, phantom_fleet_verbs.');
+  lines.push('Tool discovery is not authorization. phantom_fleet_doctor only reads fleet health;');
+  lines.push('phantom_fleet_verbs lists fleet verbs and never runs one.');
   lines.push('Read-only observation tools: world_model, phantom_observe, phantom_observe_session,');
   lines.push('phantom_spend_budget, phm_context_brief, phm_claim_acquire, phm_claim_release,');
   lines.push('phantom_leader_status, phantom_leader_org, phantom_leader_inbox, phantom_leader_ask,');
@@ -762,6 +792,7 @@ const TOPIC_LABELS: Record<HelpTopic, string> = {
 
 /** The full command table (the former inline cmdHelp list), topic-tagged. */
 export const HELP_ENTRIES: HelpEntry[] = [
+  { cmd: 'caps list|validate|generate [--registry <path>] [--out <dir>] [--pin-stage] [--check] [--json]', desc: 'Capability registry: surfaces, models, hosting edges, account references and capabilities; validate it and generate pinned per-agent adapters to staging (never into live agent config dirs). See docs/CAPABILITY-REGISTRY.md.', topic: 'core' },
   { cmd: 'constitution check [--root <repo>] [--json] [paths...]', desc: 'Check constitution rule definitions and references in prompts and templates (read-only).', topic: 'core' },
   { cmd: 'tune <prepare|evaluate>', desc: 'Prepare scrub-gated local model datasets or evaluate paired evidence.', topic: 'core' },
   { cmd: 'jobs empty [--since 24h] [--json]', desc: 'Explain empty jobs from local notes and logs.', topic: 'observability' },
@@ -789,11 +820,12 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'config effective [--json]',     desc: 'Read-only effective autonomy/daemon/foundry/backend settings.', topic: 'core' },
   { cmd: 'config set <k> --json <v>',    desc: 'Set a structured (array/object) config value as JSON.', topic: 'core' },
   { cmd: 'config path',                  desc: 'Print the path to config.json.', topic: 'core' },
+  { cmd: 'doctor merge-path --repo owner/name', desc: 'Read-only required-check sentinel for recent PR heads.', topic: 'core' },
   { cmd: 'doctor',                       desc: 'One-glance health check: config, phantom, providers, ecosystem.', topic: 'core' },
   { cmd: 'init [--yes]',                 desc: 'Idempotent onboarding: ensure config, detect phantom + models, set editor.', topic: 'core' },
   { cmd: 'desktop install [--apply]', desc: 'Inspect original signed app/CLI artifacts; explicitly install only on an empty macOS arm64 installation after Stop/drain. Does not resume authority.', topic: 'core' },
   { cmd: 'desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]', desc: 'Operate macOS desktop apps through the desktop-operator helper. Reads are free. focus, scroll, type and click post a bus intent first. KILL and comms pause block writes.', topic: 'core' },
-  { cmd: 'apps list|open|quit|focus|status [<app>] [--json]', desc: 'Manage desktop apps named in ~/.ashlr/apps-allow.json (empty by default). Logged to the feed; quit with unsaved work goes to needs-you.', topic: 'core' },
+  { cmd: 'apps list|open|quit|focus|status [<app>] [--json] | apps request open|quit|focus <app> [--json]', desc: 'Manage desktop apps named in ~/.ashlr/apps-allow.json (empty by default). Per-app action policy; logged to the feed. Requests and unsafe quits go to needs-you.', topic: 'core' },
   { cmd: 'desktopctl capabilities|status|run <resource> [--json]', desc: 'Drive Claude, Codex, Devin and a browser as interchangeable desktop resources. Flag-gated by ~/.ashlr/desktopctl.json; reports missing TCC grants, never prompts. Logged to the feed.', topic: 'core' },
   { cmd: 'desktop-update inspect|apply --stage <32hex> --json', desc: 'Verify signed paired updates; apply after native exit, Stop/drain and unchanged active grant. Never resumes the resident.', topic: 'core' },
   { cmd: 'app update status [--json]', desc: 'Inspect local desktop update status without downloading or installing. Read-only: reports current stage, available version, deferred reason, running job counts. Exit 0 success, 2 bad usage.', topic: 'core' },
@@ -869,6 +901,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'inbox submit <id> --yes',      desc: 'Records non-interactive caller intent, not an authenticated human receipt; all verification and remote gates remain.', topic: 'autonomy' },
   { cmd: 'inbox reject <id>',            desc: 'Discard a pending proposal; applies nothing.', topic: 'autonomy' },
   { cmd: 'inbox --json',                 desc: 'Emit JSON for inbox list, show, approve, submit, or automerge results.', topic: 'autonomy' },
+  { cmd: 'ideas [--json]',               desc: 'List READY fleet ideas (RQ id, repo, lane, goal) from the vision and queue docs.', topic: 'autonomy' },
   { cmd: 'drive [--once --dry-run] [--tick <seconds>]', desc: 'Supervise the Mac queue through an installed host bridge; dry-run plans only. See docs/DRIVE.md.', topic: 'autonomy' },
   { cmd: 'daemon start --once',          desc: 'Currently refuses before effects because compiled daemon trust roots are empty; use owner-invoked run/swarm or the dry-run form.', topic: 'autonomy' },
   { cmd: 'daemon start --once --dry-run', desc: 'Plan only: which backlog items WOULD be worked (no swarm/proposal).', topic: 'autonomy' },
@@ -933,11 +966,13 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'agents roster [--json]', desc: 'Unified live session roster. One probe per source, about 5s each, unknown on timeout or an unverified command. Read-only.', topic: 'autonomy' },
   { cmd: 'bus thread|task <verb> [--peer <id>] [--json]', desc: 'Shared task board: local threads plus task claim, handoff, renew and release tied to fenced fleet queue claims. Cooperative labels only; no execution authority.', topic: 'autonomy' },
   { cmd: 'bus send|inbox|ack [--json]', desc: 'Durable local message mailbox: send JSON, read a recipient inbox and acknowledge messages; separate from the task board. `phm bus send --help` for options.', topic: 'autonomy' },
+  { cmd: 'metrics merges', desc: 'Show hourly merges and median open-to-merge time by lane for the last 24 hours.', topic: 'autonomy' },
   { cmd: 'metrics ingest --jobs <file> --status <file>', desc: 'Read local lane and tier merge metrics and advisory routing priors; always JSON.', topic: 'autonomy' },
   { cmd: 'metrics levers [--window <7d|30d>] [--json]', desc: 'Rank three opportunity proxies from local activity and fleet rollups.', topic: 'autonomy' },
   { cmd: 'benchmark run|--compare-reports', desc: 'Explicit local-agent benchmark trials, or offline matched-receipt comparison; real checkers and private traces.', topic: 'autonomy' },
   { cmd: 'devin connect [--org org-…]',   desc: 'Connect Devin (Cognition): paste the API key at a hidden prompt; it is verified and stored in the macOS Keychain, never in a file.', topic: 'autonomy' },
   { cmd: 'devin launch "<task>" [--repo o/n] [--base b]', desc: 'Start a Devin session that delivers a PR on ashlr-devin/<id> through the standing gates (spends ACUs, hard-capped per session; never merges).', topic: 'autonomy' },
+  { cmd: 'routines list|status|run <id>|tick|migrate|launchd|run <file.json>|explain <id>|export|import|rebalance', desc: 'Routines: UTC-cron YAML schedules with executor failover; learned local-first placement runs; portable provider placement registry. See docs/ROUTINES.md.', topic: 'autonomy' },
   { cmd: 'automations list|templates|add|enable|disable|remove', desc: 'Automations: labelled issues, a red default branch, RRULE schedules, a local webhook or Telegram /task become tasks for the fleet, cloud, Devin or review — with queue, per-day, concurrency and spend limits.', topic: 'autonomy' },
   { cmd: 'automations fire <id> [--dry-run]', desc: 'Check one automation\'s trigger now and dispatch what it finds through the lane\'s own gates (grant, KILL, budgets); --dry-run shows what would happen and writes nothing.', topic: 'autonomy' },
   { cmd: 'jev status [--json]',          desc: 'Jev (TypeSafe) typed decisions today: on/keyed, decisions by kind, avg confidence, fallback rate, est. cost, latency. Reads the local ledger only.', topic: 'autonomy' },
@@ -950,11 +985,13 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'best-of-n [--repo --title -n]', desc: 'Generate N candidate diffs (multi-model), critic-select, file the winner as a proposal (M142/M333).', topic: 'autonomy' },
   { cmd: 'context read | write [--json]', desc: 'Read current company context or save a sourced note.', topic: 'run' },
   { cmd: 'comms <status|thread|send-owner|cycle|digest>',  desc: 'Operator comms. status --json, thread and send-owner are the one owner thread; replies go only to the configured owner. KILL halts adapters.', topic: 'autonomy' },
-  { cmd: 'connectors add|list|remove|show|import [--json]', desc: 'Manage credential-free connector profiles and import safe client metadata; vault references only.', topic: 'autonomy' },
+  { cmd: 'connectors add|list|remove|show|import|exec|config [--json]', desc: 'Manage credential-free connector profiles, launch connectors with phantom-injected credentials, and print client configs that hold no token.', topic: 'autonomy' },
+  { cmd: 'agentnet peers list|read|send | channels propose | identity register [--json]', desc: 'Session-bound team peer messages, verified inbox and Slack provisioning drafts.', topic: 'autonomy' },
   { cmd: 'channels add <kind> | status [--json] | slack status|map [--json]', desc: 'Bring a channel up (config only, credentials stay in custody), read the per-channel rollup, or inspect the Slack bridge mapping offline.', topic: 'autonomy' },
   { cmd: 'imessage doctor|poll [--apply] [--json]', desc: 'iMessage intake: doctor checks permissions and config; poll counts waiting messages (dry run), --apply receipts them. Never prints message text.', topic: 'autonomy' },
   { cmd: 'director',                     desc: 'Retired — the Leader handles this (see `ashlr leader`). Still prints the read-only fleet god-view; sends nothing.', topic: 'autonomy' },
   { cmd: 'invent',                       desc: 'Generative backlog invention — propose novel high-value work items.', topic: 'autonomy' },
+  { cmd: 'ideas [--json]', desc: 'List recorded fleet ideas; read-only, no execution or dispatch.', topic: 'autonomy' },
   { cmd: 'universe <demo|init|run|status|archive>', desc: 'Local experiment evolution: run competing code variants, measure them, and reuse winning artifacts.', topic: 'autonomy' },
   { cmd: 'universe console --root <absolute> [--port N] [--json]', desc: 'Foreground read-only Universe console on loopback; explicit root, ephemeral port by default, no service activation.', topic: 'autonomy' },
   { cmd: 'universe graph <id> [--node <node-id>]', desc: 'Read-only experiment evidence graph: trace selected parents, feedback, campaigns, and local branch receipts.', topic: 'autonomy' },
@@ -1002,6 +1039,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'friction [--json]', desc: 'Mine the runs dir for recurring dispatch→merge friction; ledger keeps before/after metrics.', topic: 'observability' },
   { cmd: 'memory add|list|search|forget [--json]', desc: 'Durable markdown memory under ~/.phantom/memory; secret-shaped text refused.', topic: 'memory' },
   { cmd: 'app update status [--json]', desc: 'Read the local signed desktop-update stage and deferral counts; never downloads or installs.', topic: 'core' },
+  { cmd: 'app steer --text <msg> [--json]', desc: 'Send one message to the leader agents through the shared inbox receiver.', topic: 'core' },
   { cmd: 'pulse [--window 1d|7d|30d]',   desc: 'Local observability dashboard: tokens, cost, sessions, commits.', topic: 'observability' },
   { cmd: 'pulse --json',                 desc: 'Machine-readable ActivityRollup (+ additive .forecast field; Raycast Pulse view).', topic: 'observability' },
   { cmd: 'pulse --project <name>',       desc: 'Restrict pulse rollup to a single project.', topic: 'observability' },
@@ -1015,6 +1053,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'ci-metrics [--json]', desc: 'Per-repo daily turn-time (red to green) metrics; writes ~/.ashlr/ci-metrics.json.', topic: 'observability' },
   { cmd: 'daily-fix validate|filter|dispatch|parse-fixup [--json]', desc: 'Daily CI re-run helper: validate dispatch inputs against the allowlist, preview the job/test filter, emit the gh workflow command, or aggregate fixup-queue lines.', topic: 'observability' },
   { cmd: 'wb <secrets|steer|reprioritize|stop> [--apply] [--json]', desc: 'Workbench actions from the terminal: read secret custody, append a steer note, re-prioritize an unclaimed queue line, or stop a job. Mutating verbs are a dry run unless --apply.', topic: 'observability' },
+  { cmd: 'amplify <status|tick|goal> [--json]', desc: 'Objective, expiring capacity, vitals and leader decisions; tick journals advisory actions only.', topic: 'observability' },
   { cmd: 'budget <show|add> [--json]', desc: 'Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.', topic: 'observability' },
   { cmd: 'budget get [--json]', desc: 'Read the owner spend budget in USD. A missing provider is 0 for the month. This does not change the budget.', topic: 'observability' },
   { cmd: 'budget set --provider <id> --period day|week|month --usd <n> [--json]', desc: 'Owner-only spend budget change from an interactive terminal, with one audit line. An amount above 0 stays ineffective until a Security pin-chain or owner signature root exists. Agents and non-TTY calls are refused. The committed default stays 0.', topic: 'observability' },
@@ -1022,6 +1061,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'usage live [--json] [--watch] [--browser [--headed]] [--interval <seconds>]', desc: 'Live usage, resets and alerts. Official readouts first; --browser reads each provider usage page in a dedicated profile. Alerts at 80 and 95 percent and for allowance projected to expire unspent.', topic: 'observability' },
   { cmd: 'usage sensors [--json] [--refresh] [--file <snapshot>]', desc: 'Per-lane usage readings with age and stale status. A reading at or after staleAfter is unknown and is not headroom. Refresh uses official APIs and CLIs only.', topic: 'observability' },
   { cmd: 'route explain [--json]', desc: 'Read dispatcher pools and route-moves-per-hour.', topic: 'autonomy' },
+  { cmd: 'route decide --input <file|-> [--root <directory>] --json', desc: 'Suggest a schema-validated route without changing launch behavior.', topic: 'autonomy' },
   { cmd: 'pool admission [--json]', desc: 'Read-only load gate: loadavg, ncpu, running cap, install-lock holder and admit true/false with the reason.', topic: 'autonomy' },
   { cmd: 'queue dedupe [--file <router-queue.md>] [--apply] [--json]', desc: 'Find repeated READY jobs; preview by default, or mark repeats superseded with --apply.', topic: 'autonomy' },
   { cmd: 'queue stats [--json] [--window <seconds>]', desc: 'Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.', topic: 'observability' },
@@ -1041,11 +1081,13 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'mcp list',                     desc: 'List native ashlr tools + discovered MCP servers with per-server tool counts.', topic: 'integrations' },
   { cmd: 'mcp doctor',                   desc: 'Per-server MCP health: does it start? how many tools?', topic: 'integrations' },
   { cmd: 'autopilot <pr> [--apply] [--watch]', desc: 'Drive one of Phantom\'s own PRs to green: fix red CI and review feedback with an agent, merge a conflicting or behind base, re-run infra failures once, re-verify; stops and says why when a failure is not the PR\'s. Plan only unless --apply; never force-pushes or merges the PR.', topic: 'integrations' },
+  { cmd: 'land auto [--repo <o/n>] [--apply] [--json]', desc: 'Merge autopilot over the fleet\'s open PRs: classifies each as green-ready/behind/conflicting/red-required; --apply (needs PHANTOM_MERGE_AUTOPILOT=1) updates behind branches (merge only), enqueues DRAIN for conflicts and FIXUP for a failing required check. Holds honored, 3 actions/PR/24h.', topic: 'integrations' },
   { cmd: 'metrics <summary|dashboard|record|recommend|ingest|levers>', desc: 'Local telemetry: value-weighted PRs shipped per token/second/$, leaderboards, UCB1 allocation, HTML dashboard, router-metrics ingest and opportunity proxies.', topic: 'integrations' },
   { cmd: 'improve propose [--open-pr --repo <dir>]', desc: 'Self-improvement loop: evidence-backed proposals ranked by realized leverage; --open-pr opens DRAFT PRs from an isolated worktree.', topic: 'integrations' },
   { cmd: 'improve register|measure|outcomes|promote|sync-backlog|discover|observe|lessons', desc: 'Record a proposal\'s deterministic metric, measure it at the PR\'s exact merge base and head, record merges and the reverts that cancel their credit, compare proposers against the deterministic baseline, register cloud backlog PRs that declare a metric, add backlog items from member issues, a red default branch and proposals, compare cloud runs served lessons against the holdout run without them, and queue auto-merge only when checks are green and the metric improved.', topic: 'integrations' },
   { cmd: 'steward disk [--apply] [--json]', desc: 'Measure Codex/Claude/Phantom log roots against retention + quota; dry run unless --apply (deletes oldest eligible files only).', topic: 'integrations' },
   { cmd: 'lanes fit --lane <lane> [--json]', desc: 'Show job kinds to send or avoid from measured PR rates.', topic: 'observability' },
+  { cmd: 'lanes --json', desc: 'Read dispatcher pools, slot caps and local endpoint health.', topic: 'observability' },
   { cmd: 'lanes health [--json]', desc: 'Per-lane calls, error rate, p50 latency and deployed commit over 12 h; flags runs stuck past their phase timeout.', topic: 'observability' },
   { cmd: 'approvals [--team <id>] [--json]', desc: 'What needs a human: pending team approvals, the Security pin queue (read-only) and explicit holds; same projection as the desktop Approvals panel.', topic: 'integrations' },
   { cmd: 'team <view|join|invite|role|link|approve|claim|release|say>', desc: 'Local-first team bus: presence, repo/branch/path claims, handoffs and human approval of consequential agent actions.', topic: 'integrations' },
@@ -1075,12 +1117,14 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'seams status',                 desc: 'Same as `seams`: list seams + active impl; proves local-first + cloud gated on Mason.', topic: 'safety' },
   { cmd: 'test --changed [--base <ref>] [--json]', desc: 'Run tests related to changed files, or the full suite when unknown.', topic: 'safety' },
   { cmd: 'verify change --worktree <path> [--checks typecheck,unit,lint,secrets]', desc: 'Run trusted worktree checks; JSON verdict and ten-line handoff.', topic: 'safety' },
+  { cmd: 'verify done --worktree <path> [--contract <path>] [--plan]', desc: 'Evaluate a worktree\'s done-contract (floor + verify commands + attested acceptance); notes-file expectation when no contract exists.', topic: 'safety' },
   { cmd: 'engineering-receipt --events <file.jsonl> [--claims <file>] [--task <text>] [--json]', desc: 'Engineering receipt from tool events (Evidence) vs model statements (Claims); needs PHANTOM_RECEIPTS=1.', topic: 'safety' },
   { cmd: 'verify-safety',                desc: 'Read-only self-check of the hard safety invariants (enrollment/kill-switch/daemon/scrub/cloud-gate); mutates nothing.', topic: 'safety' },
   { cmd: 'verify-pr',                    desc: 'Verify an explicitly reviewed maintainer PR through the host-owned App check; no merge or deploy.', topic: 'safety' },
   { cmd: 'preflight [--json]',           desc: 'Read-only first-activation readiness check: ready=true|false + blockers/warnings (model/enrollment/kill/daemon/writeable/sandbox/git/phantom/locus); mutates nothing.', topic: 'safety' },
   { cmd: 'onboard [--locus-firm]',       desc: 'Guided first safe activation: preflight → enroll ONE repo → optional Locus firm soft-offer → dry-run PLAN → point at `ashlr inbox`. TTY-aware; --yes/non-TTY prints steps (firm only with --locus-firm or ASHLR_LOCUS_FIRM=1). NEVER auto-applies.', topic: 'safety' },
   { cmd: 'onboard --rollback <repo>',    desc: 'One-command undo of a first activation: unenroll + sweep orphan sandboxes + optional --kill. Inward cleanup only; H6-audited.', topic: 'safety' },
+  { cmd: 'onboard --ecosystem [--json]', desc: 'Detect existing tools, key binding names and loopback endpoints; select toggles and grant one integration bundle. See docs/ECOSYSTEM-ONBOARDING.md.', topic: 'core' },
   { cmd: 'demo [--no-cleanup] [--json]', desc: 'Watch the FULL autonomous chain run on a DISPOSABLE tmp repo (isolated tmp ~/.ashlr; proposal-only; auto-cleans). NEVER touches your portfolio or applies anything.', topic: 'safety' },
 
   { cmd: 'goals [--json]', desc: 'Show dispatcher throughput, empty rates and resource resets.', topic: 'observability' },

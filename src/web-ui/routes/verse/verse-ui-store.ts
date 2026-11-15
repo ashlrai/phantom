@@ -565,6 +565,10 @@ export function setVerseSidebarWidth(width: number): void {
   patch({ sidebarWidth: clampWidth(width, VERSE_SIDEBAR) });
 }
 
+export function setVerseResourcesWidth(width: number): void {
+  patch({ resourcesWidth: clampWidth(width, VERSE_RESOURCES) });
+}
+
 export function setVerseSidebarCollapsed(collapsed: boolean): void {
   patch({ sidebarCollapsed: collapsed });
 }

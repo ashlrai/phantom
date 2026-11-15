@@ -33,6 +33,7 @@ import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import leaderStyles from '../leader/leader.module.css';
 import styles from './leader-thread.module.css';
+import { DotReplyAge } from './DotReplyAge.js';
 import { busRepliesToMason, mergeByTime, type BusReply } from './thread-bus-replies.js';
 import { appendLaneLog, laneEventItems, laneTransitions, loadLaneLog, type LaneEvent } from './thread-lane-events.js';
 import { fleetInbox, fleetOutbox, lineChannel, lineSourceLabel, mergeThread } from './thread-merge-model.js';
@@ -43,6 +44,7 @@ import { splitScreenshotMarkers } from './thread-screenshots.js';
 import { ThreadScreenshot } from './ThreadScreenshot.js';
 import { leaderCeoSummary } from './leader-ceo-model.js';
 import { LeaderOfficeStrip } from './LeaderOfficeStrip.js';
+import { DeliveryReceipt } from './DeliveryReceipt.js';
 import { OwnerChannelsStrip } from './OwnerChannelsStrip.js';
 import { leaderOfficeQuery } from './leader-office-data.js';
 import { mergeOwnerLines, ownerThreadLines, type LabeledLine } from './owner-thread-lines.js';
@@ -102,6 +104,7 @@ function LineView({ line, match, current }: { line: LabeledLine; match?: boolean
           {leader
             ? <div className={leaderStyles.leaderText}>
               <div className={leaderStyles.prose}><MessageMarkdown text={line.text} /></div>
+              {line.receipt ? <DeliveryReceipt items={line.receipt} /> : null}
               {refs.length ? <div className={styles.refs} aria-label="Mentioned">Mentioned: {refs.map((ref, index) => <span key={ref}>
                 {index ? ' ' : null}<JobRefs text={ref.replace(/([^#])#/, '$1 #')} onOpenJob={job => { requestWorkerLogJob(job); openDockPane('worker-log'); }} />
               </span>)}</div> : null}
@@ -256,7 +259,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const merged = useMemo(() => mergeThread(messages, inbox, now, runs.data, outbox, laneItems), [messages, inbox, outbox, laneItems, now, runs.data]);
   const busRows = useMemo(() => busRepliesToMason(busPage.data?.messages ?? [], now, outbox), [busPage.data, now, outbox]);
   const ownerRead = owner.data ?? NO_OWNER_THREAD;
-  const ownerLines = useMemo(() => ownerRead.paused ? [] : ownerThreadLines(ownerRead.lines, merged.lines), [ownerRead, merged.lines]);
+  const ownerLines = useMemo(() => ownerRead.paused ? [] : ownerThreadLines(ownerRead.lines, merged.lines, ownerRead.receipts ?? {}), [ownerRead, merged.lines]);
   const trace = useMemo(() => (orders.error ? null : narrowOrderTrace(orders.data)), [orders.data, orders.error]);
   const merges = useMemo(() => readMerges(runs.data), [runs.data]);
   const liveByJob = useMemo(() => new Map((narrowWorkers(runs.data)?.workers ?? []).map(worker => [worker.job, worker.ageSeconds] as const)), [runs.data]);
@@ -459,7 +462,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       </details>
     </section>
     <DirectivesStrip read={directives.data} actions={actions} adding={addingDirective} onAddingChange={setAddingDirective} />
-    <header><button type="button" disabled={checkingStatus} onClick={() => void checkStatus()}>{checkingStatus ? 'Checking…' : 'Status now'}</button> <button type="button" aria-pressed={needsYouOnly} onClick={() => setNeedsYouOnly(value => !value)}>Needs you only</button> <button type="button" onClick={() => setFindOpen(true)}>Find</button></header>
+    <header><DotReplyAge visible={visible} /> <button type="button" disabled={checkingStatus} onClick={() => void checkStatus()}>{checkingStatus ? 'Checking…' : 'Status now'}</button> <button type="button" aria-pressed={needsYouOnly} onClick={() => setNeedsYouOnly(value => !value)}>Needs you only</button> <button type="button" onClick={() => setFindOpen(true)}>Find</button></header>
     {findOpen ? <div onKeyDown={event => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeFind(); }
     }}>
@@ -474,7 +477,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     {statusNow !== null ? <section aria-label="Status now" role="status"><p style={{ whiteSpace: 'pre-wrap' }}>{statusNow}</p><button type="button" onClick={() => setStatusNow(null)}>Dismiss</button></section> : null}
     <p className={styles.note}>{busRows.length} bus replies</p>
     {busUnavailable ? <p className={styles.note} role="status">Durable bus unavailable</p> : null}
-    <OwnerChannelsStrip channels={ownerRead.channels} paused={ownerRead.paused} />
+    <OwnerChannelsStrip channels={ownerRead.channels} paused={ownerRead.paused} replyGap={ownerRead.replyGap} />
     <div ref={logRef} className={leaderStyles.log} role="log" aria-label="Conversation with the Leader" aria-live="polite" aria-relevant="additions" tabIndex={0}
       onScroll={() => {
         const el = logRef.current;

@@ -415,6 +415,7 @@ class RestockTriggerTests(unittest.TestCase):
         # Restock records every enqueue in this durable history before the
         # supervisor can park it; those records are not active dispatches.
         (q / 'claimed.tsv').write_text(''.join(f'RQ-PROBE-{n}\tdevin\twork\t12:00\t1\n' for n in range(22)))
+        (q / 'admission.json').write_text(json.dumps({'cap': 1000}))
         (home / '.ashlr-runs/phantom-open-prs').write_text(f'{time.time()} 150\n')
         precheck = home / '.ashlr-runs/bin/precheck.sh'
         precheck.write_text('#!/bin/sh\necho checked >> "$HOME/prechecked"\nexit 13\n')
@@ -426,7 +427,7 @@ class RestockTriggerTests(unittest.TestCase):
                                   capture_output=True, text=True, timeout=60)
         r = recover()
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual((q / 'ready.tsv').read_text().count('PARKED-MERGERATE.'), 21)
+        self.assertEqual((q / 'ready.tsv').read_text().count('PARKED-MERGERATE.'), 21, (r.stdout, r.stderr))
         r = tick(home)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue((home / 'prechecked').exists(), (r.stdout, r.stderr, events(home), ready_lines(home)))
@@ -583,7 +584,7 @@ class AuthBackoffTests(unittest.TestCase):
         self.assertEqual(slots_of(home)['devin']['held_by'], 'operator')
         self.assertNotIn('LANE_HOLD devin autobackoff', events(home))
 
-    def test_held_lane_waits_while_healthy_lanes_dispatch(self):
+    def test_held_lane_stays_held_while_its_preferred_work_uses_a_healthy_lane(self):
         home, env = self._home({'devin': lane_slot(), 'codex-cmp': lane_slot()})
         dead(home, 'RQ-A1', 'devin', [AUTH_401])
         dead(home, 'RQ-A2', 'devin', [AUTH_401])
@@ -592,10 +593,13 @@ class AuthBackoffTests(unittest.TestCase):
         r = tick(home, env)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue(slots_of(home)['devin'].get('held'))
-        # Eligible work still reaches the healthy lane; the held lane's job stays queued.
+        # Both jobs use the healthy executor, and the auth-held executor stays held.
         self.assertTrue(dispatched(home, 'RQ-C-RUN'))
-        self.assertFalse(dispatched(home, 'RQ-D-WAIT'))
-        self.assertEqual([l.split('\t')[0] for l in ready_lines(home)], ['RQ-D-WAIT'])
+        self.assertTrue(dispatched(home, 'RQ-D-WAIT'))
+        self.assertEqual(ready_lines(home), [])
+        claim = json.loads((home / '.ashlr-runs/queue/run/RQ-D-WAIT.line').read_text().split('\t')[5])
+        self.assertEqual(claim['preferred_lane'], 'devin')
+        self.assertEqual((home / '.ashlr-runs/queue/run/RQ-D-WAIT.line').read_text().split('\t')[2], 'codex-cmp')
         self.assertIn('LAUNCH RQ-C-RUN', events(home))
 
     def test_expired_auth_hold_recovers_and_launches(self):
@@ -687,7 +691,7 @@ class QueueWaitTests(unittest.TestCase):
     def test_claim_limit_preserves_priority_across_ticks_and_skips_blocked_head(self):
         lanes = ['codex-cmp', 'codex-personal', 'claude', 'devin']
         home, env = self.fixture(lanes)
-        # MAX_LAUNCH_PER_TICK limits claims to four. Priority holds even when
+        # MAX_LAUNCH_PER_TICK limits claims to eight. Priority holds even when
         # several lanes remain backlogged; the blocked first path waits.
         queue_job(home, 'RQ-BLOCKED', 'codex-cmp')
         (home / 'Projects/ashlrai/wt/RQ-BLOCKED').mkdir()
@@ -700,8 +704,8 @@ class QueueWaitTests(unittest.TestCase):
         r = tick(home, env)
         self.assertEqual(r.returncode, 0, r.stderr)
         claimed = [r for r in self.metrics(home) if r['event'] == 'claim']
-        self.assertEqual([r['job'] for r in claimed], sorted(jobs)[:4])
-        self.assertEqual(len(claimed), 4)
+        self.assertEqual([r['job'] for r in claimed], sorted(jobs)[:8])
+        self.assertEqual(len(claimed), 8)
         self.assertNotIn('RQ-BLOCKED', [r['job'] for r in claimed])
         self.assertIn('RQ-BLOCKED', [line.split('\t')[0] for line in ready_lines(home)])
 
@@ -743,9 +747,13 @@ class DispatchPriorityTests(unittest.TestCase):
                 ('RQ-FIX-MAIN-A', 'devin')]
         for job, lane in jobs:
             queue_job(home, job, lane)
+        # MAX_LAUNCH_PER_TICK is 8; pad the lowest bucket so the cap still binds.
+        for n in range(4):
+            queue_job(home, 'RQ-TAIL-%d' % n, 'codex-cmp')
         self.run_tick(home, env)
-        self.assertEqual(self.claims(home), ['RQ-FIX-MAIN-A', 'RQ-REL-A', 'RQ-DESK-A', 'LAND-A'])
-        self.assertEqual([line.split('\t')[0] for line in ready_lines(home)], ['RQ-OTHER'])
+        self.assertEqual(self.claims(home), ['RQ-FIX-MAIN-A', 'RQ-REL-A', 'RQ-DESK-A', 'LAND-A',
+                                              'RQ-OTHER', 'RQ-TAIL-0', 'RQ-TAIL-1', 'RQ-TAIL-2'])
+        self.assertEqual([line.split('\t')[0] for line in ready_lines(home)], ['RQ-TAIL-3'])
 
     def test_land_fixup_and_recut_share_a_bucket_before_other_jobs(self):
         home, env = self.fixture()

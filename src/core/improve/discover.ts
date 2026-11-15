@@ -127,6 +127,15 @@ export async function autoDiscover(deps: AutoDiscoverDeps = {}): Promise<{ ran: 
     if (!due) return { ran: false, added: 0, errors: [] };
     lastAutoDiscoverAt = now;
     const res = await discoverBacklog(budget.repo, { ...deps, issueLabels: [AUTO_DISCOVER_ISSUE_LABEL] });
+    // The file path is an explicit opt-in; the cloud self-improvement budget and
+    // delivery gates still control whether any discovered item is launched.
+    const logPath = process.env['PHM_HOT_PATCH_LOG'];
+    if (logPath) {
+      try {
+        const { hotPatchItems, readHotPatchLog } = await import('./hot-patch.js');
+        res.items.push(...hotPatchItems(readHotPatchLog(logPath), budget.repo));
+      } catch { res.errors.push('Could not read the hot-patch log.'); }
+    }
     const added = backlog.appendUserBacklogItems(res.items.filter((i) => backlog.validBacklogItem(i) !== null));
     return { ran: true, added, errors: res.errors };
   } catch (err) {

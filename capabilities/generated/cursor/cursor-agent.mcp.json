@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "locus": {
+      "args": [
+        "-y",
+        "@ashlrai/locus-mcp@0.7.0"
+      ],
+      "command": "npx"
+    },
+    "phantom-gateway": {
+      "args": [
+        "mcp"
+      ],
+      "command": "phm"
+    }
+  }
+}

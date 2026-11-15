@@ -16,6 +16,8 @@
  *     severity, a fleet merge or lane release, or a reply to Mason, in an
  *     unmuted category while permission is granted — never once per poll.
  */
+import { hardLimitLabel } from '../../routes/verse/shell/needs-you-hard-limit.js';
+import { isWithinQuietHours, loadQuietHours, summarizeHeld } from './quiet-hours.js';
 import type { AppNotification, NotificationCategory } from './types.js';
 import { sortNotifications } from './deriveNotifications.js';
 import { attachNotificationClick, notificationClickTarget } from './desktop-notification-click.js';
@@ -71,6 +73,29 @@ let allItems: AppNotification[] = [];
 let panelOpen = false;
 let desktopEnabled = loadDesktopPref();
 const everSeenIds = new Set<string>();
+let heldCount = 0;
+let quietTimer: ReturnType<typeof setTimeout> | undefined;
+
+function flushHeld(): void {
+  if (!heldCount) return;
+  if (isWithinQuietHours(new Date(), loadQuietHours())) {
+    scheduleQuietCheck();
+    return;
+  }
+  const count = heldCount;
+  heldCount = 0;
+  if (desktopEnabled && currentDesktopPermission() === 'granted') {
+    try { new Notification(summarizeHeld(count), { tag: 'quiet-hours-summary' }); } catch { /* best-effort */ }
+  }
+}
+
+function scheduleQuietCheck(): void {
+  if (quietTimer !== undefined) clearTimeout(quietTimer);
+  // Check at the next minute boundary; local time and DST changes are respected.
+  quietTimer = setTimeout(() => { quietTimer = undefined; flushHeld(); }, 60_000 - Date.now() % 60_000);
+}
+
+if (typeof window !== 'undefined') window.addEventListener('quiet-hours-change', flushHeld);
 
 let state: NotificationStoreState = {
   items: [],
@@ -122,12 +147,21 @@ export function reconcileNotifications(derived: AppNotification[]): void {
   const previousIds = new Set(allItems.map((n) => n.id));
   allItems = derived;
 
+  flushHeld();
   if (desktopEnabled && currentDesktopPermission() === 'granted') {
     for (const n of derived) {
       if (mutedCategories.has(n.category)) continue;
       if (!wantsDesktopNotification(n)) continue;
       if (previousIds.has(n.id) || everSeenIds.has(n.id)) continue;
       everSeenIds.add(n.id);
+      const limit = hardLimitLabel(`${n.title} ${n.detail}`);
+      const hardAsk = n.category === 'action-required' && limit.kind === 'only-you'
+        && ['secrets', 'money', 'outside-send', 'destroy-data'].includes(limit.limit);
+      if (!hardAsk && isWithinQuietHours(new Date(), loadQuietHours())) {
+        heldCount++;
+        scheduleQuietCheck();
+        continue;
+      }
       try {
         const notification = new Notification(n.title, { body: n.detail, tag: n.id });
         attachNotificationClick(notification, notificationClickTarget(n, window.location.origin), {
@@ -206,5 +240,8 @@ export function __resetNotificationStoreForTests(): void {
   desktopEnabled = false;
   mutedCategories.clear();
   everSeenIds.clear();
+  heldCount = 0;
+  if (quietTimer !== undefined) clearTimeout(quietTimer);
+  quietTimer = undefined;
   recompute();
 }

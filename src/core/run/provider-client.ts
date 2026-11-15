@@ -2,6 +2,9 @@ import { SelectedOutcomeAdmissionRefusal } from './outcome-admission.js';
 // Explicit guarded API entrypoint; getActiveClient never falls back to it.
 export { buildAnthropicMessagesClient } from './anthropic-client.js';
 export type { ClaudeApiExecutionBinding } from './anthropic-client.js';
+// The M118 content-fallback entry points keep their provider-client home;
+// the implementation moved to ./tool-calls.js with the rest of the adapter.
+export { parseContentToolCalls, toolNamesFromSpecs } from './tool-calls.js';
 /**
  * provider-client.ts — thin chat client over the ACTIVE local provider.
  *
@@ -49,6 +52,17 @@ import {
   providerPermitted,
   resolveLocalOnlyMode,
 } from '../policy/local-only.js';
+import {
+  coerceToolCallArgumentsToObject,
+  normalizeAssistantMessage,
+  normalizeChatCompletionMessage,
+  normalizeOllamaMessage,
+  normalizeStreamedToolCallFragments,
+  parseOllamaToolCalls,
+  serializeToolCallArgumentsForOpenAI,
+  toOpenAIToolSpecs,
+} from './tool-calls.js';
+import type { ToolCallFragment } from './tool-calls.js';
 
 // ---------------------------------------------------------------------------
 // Known cloud provider identifiers
@@ -419,33 +433,11 @@ async function readWithIdleTimeout(
 // ---------------------------------------------------------------------------
 
 /**
- * Parse tool calls from an Ollama response message.
- * Ollama returns tool_calls as an array on the message object.
- */
-function parseOllamaToolCalls(
-  message: Record<string, unknown>,
-): { id: string; name: string; arguments: unknown }[] | undefined {
-  const rawCalls = message['tool_calls'];
-  if (!Array.isArray(rawCalls) || rawCalls.length === 0) return undefined;
-
-  const parsed: { id: string; name: string; arguments: unknown }[] = [];
-  for (const tc of rawCalls) {
-    if (typeof tc !== 'object' || tc === null) continue;
-    const call = tc as Record<string, unknown>;
-    const fn = call['function'] as Record<string, unknown> | undefined;
-    if (!fn) continue;
-    const name = typeof fn['name'] === 'string' ? fn['name'] : 'unknown';
-    const args = fn['arguments'] ?? {};
-    // Generate a stable id from index (Ollama doesn't assign ids)
-    const id = `call_${parsed.length}`;
-    parsed.push({ id, name, arguments: args });
-  }
-  return parsed.length > 0 ? parsed : undefined;
-}
-
-/**
  * Build Ollama messages array from ChatMessage[].
  * Reused by both chat() and chatStream().
+ * Ollama replays tool calls with `arguments` as a structured object, so a
+ * string payload is JSON-parsed (unparseable degrades to {}) rather than
+ * sent verbatim and rejected.
  */
 function toOllamaMessages(
   messages: ChatMessage[],
@@ -461,7 +453,7 @@ function toOllamaMessages(
     }
     return { role: m.role, content: m.content,
       ...(m.role === 'assistant' && m.toolCalls?.length ? { tool_calls: m.toolCalls.map(call => ({
-        id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments },
+        id: call.id, type: 'function', function: { name: call.name, arguments: coerceToolCallArgumentsToObject(call.arguments) },
       })) } : {}) };
   });
 }
@@ -495,6 +487,10 @@ export function buildOllamaClient(
       // Map ChatMessage roles to Ollama format
       // Ollama uses role: 'system'|'user'|'assistant'|'tool'
       const ollamaMessages = toOllamaMessages(messages);
+      // Tools actually advertised on the wire — the embedded-call fallback is
+      // gated on this, not merely on the tools argument.
+      const advertisedTools =
+        supportsTools && tools && tools.length > 0 ? tools : undefined;
 
       const body: Record<string, unknown> = {
         model,
@@ -507,9 +503,10 @@ export function buildOllamaClient(
         ...(maxOutputTokens !== undefined ? { num_predict: maxOutputTokens } : {}),
       };
 
-      // Only send tools if supported and tools are provided
-      if (supportsTools && tools && tools.length > 0) {
-        body['tools'] = tools;
+      // Only send tools if supported and tools are provided. Internal spec
+      // fields (fn/safety/top-level name) are projected off the wire.
+      if (advertisedTools) {
+        body['tools'] = toOpenAIToolSpecs(advertisedTools);
       }
 
       let response: Response;
@@ -567,11 +564,13 @@ export function buildOllamaClient(
           : estimateTokens(messages.map((m) => m.content).join(' '));
       const tokensOut = evalCount !== undefined ? evalCount : estimateTokens(content);
 
-      const toolCalls = parseOllamaToolCalls(message);
+      // Structured tool_calls win; the embedded-content fallback fires only
+      // when the endpoint returned none AND tools were advertised (tool-calls.ts).
+      const normalized = normalizeOllamaMessage(message, advertisedTools);
 
       return {
-        content,
-        toolCalls,
+        content: normalized.content,
+        toolCalls: normalized.toolCalls,
         usage: { tokensIn, tokensOut },
         usageKnown,
         ...(promptEval === undefined && evalCount === undefined ? { usageEstimated: true } : {}),
@@ -587,6 +586,8 @@ export function buildOllamaClient(
     ): Promise<ChatResult> {
       const requestSignal = callSignal ?? signal;
       const maxOutputTokens = hardOutputTokenLimit(limits);
+      const advertisedTools =
+        supportsTools && tools && tools.length > 0 ? tools : undefined;
       // Attempt streaming; fall back to chat() on any error.
       let cleanupStream = () => {};
       try {
@@ -603,8 +604,8 @@ export function buildOllamaClient(
           ...(maxOutputTokens !== undefined ? { num_predict: maxOutputTokens } : {}),
         };
 
-        if (supportsTools && tools && tools.length > 0) {
-          body['tools'] = tools;
+        if (advertisedTools) {
+          body['tools'] = toOpenAIToolSpecs(advertisedTools);
         }
 
         let response: Response;
@@ -710,11 +711,17 @@ export function buildOllamaClient(
           ?? estimateTokens(messages.map((m) => m.content).join(' '));
         const tokensOut = exactTokensOut ?? estimateTokens(accContent);
 
-        const toolCalls = parseOllamaToolCalls(finalMessage);
+        // Structured tool_calls on the final chunk win; otherwise the
+        // accumulated content gets the same embedded-markup fallback as chat().
+        const normalized = normalizeAssistantMessage({
+          content: accContent,
+          toolCalls: parseOllamaToolCalls(finalMessage),
+          advertisedTools,
+        });
 
         return {
-          content: accContent,
-          toolCalls,
+          content: normalized.content,
+          toolCalls: normalized.toolCalls,
           usage: { tokensIn, tokensOut },
           usageKnown,
           ...(exactTokensIn === undefined && exactTokensOut === undefined ? { usageEstimated: true } : {}),
@@ -740,184 +747,10 @@ export function buildOllamaClient(
 // LM Studio / OpenAI-compat client
 // ---------------------------------------------------------------------------
 
-/**
- * Parse tool calls from an OpenAI-compat response choice message.
- */
-function parseOpenAIToolCalls(
-  message: Record<string, unknown>,
-): { id: string; name: string; arguments: unknown }[] | undefined {
-  const rawCalls = message['tool_calls'];
-  if (!Array.isArray(rawCalls) || rawCalls.length === 0) return undefined;
-
-  const parsed: { id: string; name: string; arguments: unknown }[] = [];
-  for (const tc of rawCalls) {
-    if (typeof tc !== 'object' || tc === null) continue;
-    const call = tc as Record<string, unknown>;
-    const id = typeof call['id'] === 'string' ? call['id'] : `call_${parsed.length}`;
-    const fn = call['function'] as Record<string, unknown> | undefined;
-    if (!fn) continue;
-    const name = typeof fn['name'] === 'string' ? fn['name'] : 'unknown';
-
-    let args: unknown = fn['arguments'] ?? {};
-    // Arguments may be a JSON string — parse it
-    if (typeof args === 'string') {
-      try {
-        args = JSON.parse(args) as unknown;
-      } catch {
-        // Keep as string if parse fails
-      }
-    }
-    parsed.push({ id, name, arguments: args });
-  }
-  return parsed.length > 0 ? parsed : undefined;
-}
-
-// ---------------------------------------------------------------------------
-// Content-embedded tool-call parser (M118)
-// ---------------------------------------------------------------------------
-// Some local coder models (qwen2.5-coder:32b, deepseek-coder, etc.) emit tool
-// calls as JSON inside message.content rather than in the structured tool_calls
-// field.  Ollama's chat-template for these models doesn't map the output to
-// tool_calls, so finish_reason is 'stop' (not 'tool_calls') and the agent-loop
-// (which reads result.toolCalls) never executes them.
-//
-// This parser is a FALLBACK — invoked ONLY when:
-//   a) the parsed response has NO structured tool_calls (native path wins), AND
-//   b) tools were provided in the request (toolNames set non-empty), AND
-//   c) message.content is non-empty.
-//
-// Accepted content shapes (name MUST match a known tool — prose != tool call):
-//   1. Bare JSON object:         {"name":"read_file","arguments":{...}}
-//   2. String-encoded arguments: {"name":"...","arguments":"{...}"}
-//   3. Array of the above:       [{...},{...}]
-//   4. JSON fenced block:        ```json\n{...}\n``` or ```\n{...}\n```
-//   5. Prose + any of the above  (leading/trailing text tolerated)
-//
-// When it fires, it returns the cleaned content (JSON stripped) so the
-// caller can suppress raw JSON from user-visible text output.
-//
-// NATIVE-PATH SAFETY: only reached when parseOpenAIToolCalls returned undefined
-// (i.e., message.tool_calls was absent or empty). Models that already return
-// structured tool_calls are completely unaffected.
-
-interface ParsedContentCall {
-  id: string;
-  name: string;
-  arguments: unknown;
-}
-
-interface ContentParseResult {
-  toolCalls: ParsedContentCall[];
-  /** Content with matched JSON stripped; empty string when fully consumed. */
-  cleanedContent: string;
-}
-
-export function parseContentToolCalls(
-  content: string,
-  toolNames: Set<string>,
-): ContentParseResult | undefined {
-  if (!content || toolNames.size === 0) return undefined;
-
-  const text = content.trim();
-
-  // Build candidate JSON strings in priority order:
-  //   1. Contents of a ```json ... ``` or ``` ... ``` fence.
-  //   2. Full trimmed content (bare JSON).
-  //   3. First balanced {...} or [...] block extracted from the text.
-  const candidates: Array<{ json: string; fenced: boolean }> = [];
-
-  const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-  if (fenceMatch?.[1]) candidates.push({ json: fenceMatch[1].trim(), fenced: true });
-
-  candidates.push({ json: text, fenced: false });
-
-  const firstBracket = text.search(/[{[]/);
-  if (firstBracket !== -1) {
-    const opener = text[firstBracket];
-    const closer = opener === '{' ? '}' : ']';
-    let depth = 0;
-    let end = -1;
-    for (let i = firstBracket; i < text.length; i++) {
-      if (text[i] === opener) depth++;
-      else if (text[i] === closer) {
-        depth--;
-        if (depth === 0) { end = i; break; }
-      }
-    }
-    if (end !== -1) {
-      const extracted = text.slice(firstBracket, end + 1);
-      if (!candidates.some((c) => c.json === extracted)) {
-        candidates.push({ json: extracted, fenced: false });
-      }
-    }
-  }
-
-  for (const { json: candidate, fenced } of candidates) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(candidate);
-    } catch {
-      continue;
-    }
-
-    // Normalise to array.
-    const items: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
-
-    const calls: ParsedContentCall[] = [];
-    let allMatched = true;
-    for (const item of items) {
-      if (typeof item !== 'object' || item === null) { allMatched = false; break; }
-      const obj = item as Record<string, unknown>;
-      const name = typeof obj['name'] === 'string' ? obj['name'] : undefined;
-      // Reject if name missing or not in the provided tool set — prevents plain
-      // prose JSON from being misread as a tool call.
-      if (!name || !toolNames.has(name)) { allMatched = false; break; }
-
-      // arguments may be an object OR a JSON string.
-      let args: unknown = obj['arguments'] ?? obj['parameters'] ?? {};
-      if (typeof args === 'string') {
-        try { args = JSON.parse(args) as unknown; } catch { /* keep as string */ }
-      }
-
-      calls.push({
-        id: `call_content_${calls.length}_${name.slice(0, 8)}`,
-        name,
-        arguments: args,
-      });
-    }
-
-    if (!allMatched || calls.length === 0) continue;
-
-    // Strip the matched JSON from content so it doesn't appear as final text.
-    let cleanedContent: string;
-    if (fenced && fenceMatch) {
-      cleanedContent = text.replace(/```(?:json)?\s*\n?[\s\S]*?\n?```/, '').trim();
-    } else {
-      cleanedContent = text.replace(candidate, '').trim();
-    }
-    return { toolCalls: calls, cleanedContent };
-  }
-
-  return undefined;
-}
-
-/**
- * Build a Set of known tool names from an OpenAI-format or ToolSpec tools array.
- * Used by parseContentToolCalls to reject false positives.
- *   OpenAI format: [{type:'function', function:{name:'...'}}]
- *   ToolSpec format: [{name:'...'}]
- */
-export function toolNamesFromSpecs(tools: unknown[]): Set<string> {
-  const names = new Set<string>();
-  for (const t of tools) {
-    if (typeof t !== 'object' || t === null) continue;
-    const spec = t as Record<string, unknown>;
-    const fn = spec['function'] as Record<string, unknown> | undefined;
-    if (fn && typeof fn['name'] === 'string') { names.add(fn['name']); continue; }
-    if (typeof spec['name'] === 'string') names.add(spec['name']);
-  }
-  return names;
-}
+// Tool-call parsing/normalization lives in ./tool-calls.js — the single
+// adapter every local endpoint dialect normalizes through (structured
+// OpenAI/Ollama shapes, `<tool_call>`/Mistral markup, and the M118 bare-JSON
+// content fallback). Re-exported at the top of this file for existing callers.
 
 /**
  * Build OpenAI-compat messages array from ChatMessage[].
@@ -937,7 +770,9 @@ function toOpenAIMessages(
     }
     return { role: m.role, content: m.content,
       ...(m.role === 'assistant' && m.toolCalls?.length ? { tool_calls: m.toolCalls.map(call => ({
-        id: call.id, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.arguments) },
+        // OpenAI replays `arguments` as a JSON-encoded STRING field; a string
+        // payload is already that encoding and must not be double-quoted.
+        id: call.id, type: 'function', function: { name: call.name, arguments: serializeToolCallArgumentsForOpenAI(call.arguments) },
       })) } : {}) };
   });
 }
@@ -1195,6 +1030,8 @@ export function buildOpenAICompatibleClient(
     assertPermitted(verdict);
   }
   const chatUrl = baseUrl.replace(/\/+$/, '') + '/chat/completions';
+  // Local inference must not escape loopback through a server redirect.
+  const localRedirect = isLoopbackEndpoint(baseUrl) ? { redirect: 'error' as const } : {};
 
   function buildHeaders(): Record<string, string> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -1219,6 +1056,10 @@ export function buildOpenAICompatibleClient(
       const requestSignal = callSignal ?? signal;
       const maxOutputTokens = hardOutputTokenLimit(limits, transport?.maxOutputTokens);
       const openaiMessages = toOpenAIMessages(messages);
+      // Tools actually advertised on the wire — the embedded-call fallback is
+      // gated on this, not merely on the tools argument.
+      const advertisedTools =
+        supportsTools && tools && tools.length > 0 ? tools : undefined;
 
       const body: Record<string, unknown> = {
         model,
@@ -1232,8 +1073,9 @@ export function buildOpenAICompatibleClient(
       if (transport?.promptCacheRetention !== undefined) body['prompt_cache_retention'] = transport.promptCacheRetention;
       if (maxOutputTokens !== undefined) body['max_tokens'] = maxOutputTokens;
 
-      if (supportsTools && tools && tools.length > 0) {
-        body['tools'] = tools;
+      if (advertisedTools) {
+        // Internal spec fields (fn/safety/top-level name) never reach the wire.
+        body['tools'] = toOpenAIToolSpecs(advertisedTools);
         body['tool_choice'] = 'auto';
       }
 
@@ -1252,6 +1094,7 @@ export function buildOpenAICompatibleClient(
           headers: buildHeaders(),
           body: requestBody,
           ...(transport?.redirect ? { redirect: transport.redirect } : {}),
+          ...localRedirect,
         }, transport?.timeoutMs ?? FETCH_TIMEOUT_MS, requestSignal, transport?.fetchImpl);
         response = opened.response;
         cleanupResponse = opened.cleanup;
@@ -1346,20 +1189,14 @@ export function buildOpenAICompatibleClient(
       const tokensOut =
         completionTokens !== undefined ? completionTokens : estimateTokens(content);
 
-      // M118: content-embedded fallback — only fires when no structured tool_calls.
-      let toolCalls = parseOpenAIToolCalls(message);
-      let finalContent = content;
-      if (!toolCalls && tools && tools.length > 0 && content) {
-        const contentResult = parseContentToolCalls(content, toolNamesFromSpecs(tools));
-        if (contentResult) {
-          toolCalls = contentResult.toolCalls;
-          finalContent = contentResult.cleanedContent;
-        }
-      }
+      // Structured tool_calls win; the embedded-content fallback (M118 JSON +
+      // local-model markup dialects) fires only when the endpoint returned
+      // none AND tools were advertised — see ./tool-calls.js.
+      const normalized = normalizeChatCompletionMessage(message, advertisedTools);
 
       return {
-        content: finalContent,
-        toolCalls,
+        content: normalized.content,
+        toolCalls: normalized.toolCalls,
         usage: { tokensIn, tokensOut },
         usageKnown,
       };
@@ -1374,6 +1211,8 @@ export function buildOpenAICompatibleClient(
     ): Promise<ChatResult> {
       const requestSignal = callSignal ?? signal;
       const maxOutputTokens = hardOutputTokenLimit(limits, transport?.maxOutputTokens);
+      const advertisedTools =
+        supportsTools && tools && tools.length > 0 ? tools : undefined;
       if (transport?.strictStreaming) {
         if (apiKey || !isLoopbackEndpoint(baseUrl) || transport.redirect !== 'error' || tools?.length ||
           !maxOutputTokens || !Number.isSafeInteger(transport.timeoutMs) || Number(transport.timeoutMs) <= 0 ||
@@ -1416,8 +1255,8 @@ export function buildOpenAICompatibleClient(
           body['stream_options'] = { include_usage: true };
         }
 
-        if (supportsTools && tools && tools.length > 0) {
-          body['tools'] = tools;
+        if (advertisedTools) {
+          body['tools'] = toOpenAIToolSpecs(advertisedTools);
           body['tool_choice'] = 'auto';
         }
 
@@ -1430,6 +1269,7 @@ export function buildOpenAICompatibleClient(
               method: 'POST',
               headers: buildHeaders(),
               body: JSON.stringify(body),
+              ...localRedirect,
             },
             STREAM_TIMEOUT_MS,
             requestSignal,
@@ -1462,10 +1302,10 @@ export function buildOpenAICompatibleClient(
         }
 
         let accContent = '';
-        const toolCallFragments: Record<
-          number,
-          { id: string; name: string; argsStr: string }
-        > = {};
+        // Keyed by `index` when the endpoint sends one, else by `id` — some
+        // local servers omit index, and keying everything to 0 would merge
+        // distinct parallel calls into one corrupt fragment.
+        const toolCallFragments = new Map<string, ToolCallFragment>();
         let exactTokensIn: number | undefined;
         let exactTokensOut: number | undefined;
 
@@ -1526,15 +1366,35 @@ export function buildOpenAICompatibleClient(
                 for (const tc of delta['tool_calls'] as unknown[]) {
                   if (typeof tc !== 'object' || tc === null) continue;
                   const t = tc as Record<string, unknown>;
-                  const idx = typeof t['index'] === 'number' ? t['index'] : 0;
-                  if (!toolCallFragments[idx]) {
-                    toolCallFragments[idx] = { id: '', name: '', argsStr: '' };
+                  const fragKey =
+                    typeof t['index'] === 'number'
+                      ? `i${t['index']}`
+                      : typeof t['id'] === 'string' && t['id']
+                        ? `id:${t['id']}`
+                        : 'i0';
+                  let frag = toolCallFragments.get(fragKey);
+                  if (!frag) {
+                    frag = { id: '', name: '', argsStr: '' };
+                    toolCallFragments.set(fragKey, frag);
                   }
-                  if (typeof t['id'] === 'string') toolCallFragments[idx].id = t['id'];
+                  if (typeof t['id'] === 'string') frag.id = t['id'];
                   const fn = t['function'] as Record<string, unknown> | undefined;
                   if (fn) {
-                    if (typeof fn['name'] === 'string') toolCallFragments[idx].name += fn['name'];
-                    if (typeof fn['arguments'] === 'string') toolCallFragments[idx].argsStr += fn['arguments'];
+                    // Name arrives complete in the first delta on OpenAI, but
+                    // some local servers repeat it (or send cumulative
+                    // snapshots) in every delta — blind += corrupts it into
+                    // 'read_fileread_file'. Keep the longest consistent value.
+                    const fnName = fn['name'];
+                    if (typeof fnName === 'string' && fnName &&
+                        (!frag.name || fnName.startsWith(frag.name))) {
+                      frag.name = fnName;
+                    }
+                    const fargs = fn['arguments'];
+                    if (typeof fargs === 'string') frag.argsStr += fargs;
+                    // Some endpoints stream arguments as an object, not a string.
+                    else if (fargs !== undefined && fargs !== null) {
+                      frag.argsStr += JSON.stringify(fargs);
+                    }
                   }
                 }
               }
@@ -1549,35 +1409,18 @@ export function buildOpenAICompatibleClient(
           ?? estimateTokens(messages.map((m) => m.content).join(' '));
         const tokensOut = exactTokensOut ?? estimateTokens(accContent);
 
-        let toolCalls =
-          Object.keys(toolCallFragments).length > 0
-            ? Object.entries(toolCallFragments).map(([, frag]) => {
-                let args: unknown = frag.argsStr;
-                if (frag.argsStr) {
-                  try { args = JSON.parse(frag.argsStr) as unknown; } catch { /* keep string */ }
-                }
-                return {
-                  id: frag.id || `call_${Math.random().toString(36).slice(2)}`,
-                  name: frag.name,
-                  arguments: args,
-                };
-              })
-            : undefined;
-
-        // M118: content-embedded fallback for streaming — only fires when no
-        // structured tool_calls fragments were accumulated from the stream.
-        let streamContent = accContent;
-        if (!toolCalls && tools && tools.length > 0 && accContent) {
-          const contentResult = parseContentToolCalls(accContent, toolNamesFromSpecs(tools));
-          if (contentResult) {
-            toolCalls = contentResult.toolCalls;
-            streamContent = contentResult.cleanedContent;
-          }
-        }
+        // Structured fragments win; the accumulated content then gets the same
+        // embedded-markup fallback as the non-streaming path (M118 JSON +
+        // local-model dialects), gated on tools actually advertised.
+        const normalized = normalizeAssistantMessage({
+          content: accContent,
+          toolCalls: normalizeStreamedToolCallFragments(toolCallFragments.values()),
+          advertisedTools,
+        });
 
         return {
-          content: streamContent,
-          toolCalls,
+          content: normalized.content,
+          toolCalls: normalized.toolCalls,
           usage: { tokensIn, tokensOut },
           usageKnown,
         };

@@ -4,12 +4,15 @@
  * reader that throws or reports itself unavailable becomes an "unknown" fact.
  */
 import { readInstalledBundleVersion, versionNewer } from '../app-update-status.js';
+import { readPeerLedger, type PeerLedgerReport } from '../agentnet/peer-ledger.js';
 import { gatherBriefFacts, type BriefFacts } from '../comms/leader-brief.js';
+import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import { readNeedsMason } from '../fleet/needs-mason-resolve.js';
 import { readFleetRunsDirState, type FleetRunsDirState } from '../fleet/runs-dir-state.js';
 import { readInboxEntries, type InboxEntry } from '../fleet/mason-inbox.js';
 import { defaultReleasePublicReader, verifyLatestWorkbenchRelease } from '../release-public-facts.js';
-import type { Fact, StatusDigestInput } from './status-digest.js';
+import { readNodeResults, type NodeResultsSummary } from '../drive/nodes/results-read.js';
+import type { Fact, StatusDigestInput, StatusDigestPeers, StatusDigestWorkClaims } from './status-digest.js';
 
 export interface StatusDigestSources {
   installedVersion: () => string | null;
@@ -19,6 +22,12 @@ export interface StatusDigestSources {
   runsState: (runsDir: string, nowMs: number) => Promise<Pick<FleetRunsDirState, 'lanes' | 'sources' | 'runsDirPresent'>>;
   needs: (runsDir: string) => { status: string; items: Array<{ text: string }> };
   inbox: (runsDir: string) => Promise<{ sourceState: string; entries: InboxEntry[] }>;
+  /** Read-only bus claims table snapshot; gather counts it against nowMs. Override with undefined to drop the claims line. */
+  workClaims?: (nowMs: number) => BusWorkClaimsInspection;
+  /** Read-only peer bus ledger; a throw becomes an unknown Peers line. */
+  peers?: (nowMs: number) => PeerLedgerReport;
+  /** Read-only node runner results on this computer; a throw becomes an unknown Node runs line. */
+  nodeRuns?: (nowMs: number) => NodeResultsSummary;
 }
 
 const HOUR = 3_600_000;
@@ -38,7 +47,52 @@ const defaults: StatusDigestSources = {
   runsState: (runsDir, nowMs) => readFleetRunsDirState({ runsDir, now: () => nowMs }),
   needs: runsDir => readNeedsMason({ runsDir }),
   inbox: runsDir => readInboxEntries({ runsDir, limit: 200 }),
+  workClaims: () => inspectBusWorkClaims(),
+  peers: nowMs => readPeerLedger({ now: () => nowMs }),
+  nodeRuns: nowMs => readNodeResults({ nowMs }),
 };
+
+function gatherNodeRuns(read: ((nowMs: number) => NodeResultsSummary) | undefined, nowMs: number): NodeResultsSummary | undefined {
+  if (read === undefined) return undefined;
+  try { return read(nowMs); } catch {
+    return { v: 1, authority: 'none', status: 'unavailable', asOf: new Date(nowMs).toISOString(), windowMs: 0, inWindow: 0, newest: null, unreadable: 0, truncated: false, reason: 'reader-failed' };
+  }
+}
+
+/** Maps the peer ledger to the digest shape; tightest is the first pair with no budget left (the ledger sorts by remaining). */
+export function summarizePeerLedger(report: PeerLedgerReport): StatusDigestPeers {
+  const limited = report.pairs.filter(pair => pair.remaining === 0);
+  const first = limited[0];
+  return {
+    status: report.status,
+    rateLimited: limited.length,
+    tightest: first ? `${first.fromAgent} → ${first.target}` : null,
+    nearCap: report.origins.filter(origin => origin.nearCap).length,
+    ...(report.reason ? { reason: report.reason } : {}),
+  };
+}
+
+function gatherPeers(read: ((nowMs: number) => PeerLedgerReport) | undefined, nowMs: number): StatusDigestPeers | undefined {
+  if (read === undefined) return undefined;
+  try { return summarizePeerLedger(read(nowMs)); } catch {
+    return { status: 'unavailable', reason: 'peer ledger reader failed', rateLimited: 0, tightest: null, nearCap: 0 };
+  }
+}
+
+/** Counts the snapshot at nowMs: 'missing' → null, 'unavailable' → throw (the caller's fact() keeps the reason). */
+function countWorkClaims(inspection: BusWorkClaimsInspection, nowMs: number): StatusDigestWorkClaims | null {
+  if (inspection.source === 'unavailable') throw new Error('unavailable');
+  if (inspection.source === 'missing') return null;
+  const live = inspection.claims.filter(claim => claim.completedAt === null && claim.leaseUntil > nowMs);
+  const expired = inspection.claims.filter(claim => claim.completedAt === null && claim.leaseUntil <= nowMs).length;
+  return {
+    live: live.length,
+    completed: inspection.claims.length - live.length - expired,
+    expired,
+    owners: new Set(live.map(claim => claim.owner)).size,
+    asOfMs: nowMs,
+  };
+}
 
 const ET = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 /** Inbox headings carry "YYYY-MM-DD HH:MM" Eastern wall time. */
@@ -59,18 +113,20 @@ async function fact<T>(read: () => Promise<T> | T, reason: string): Promise<Fact
 export async function gatherStatusDigestInput(runsDir: string, now: Date, overrides: Partial<StatusDigestSources> = {}): Promise<StatusDigestInput> {
   const src = { ...defaults, ...overrides };
   const nowMs = now.getTime();
+  const readClaims = src.workClaims;
   const merged = (hours: number): Promise<Fact<number>> => fact(async () => {
     const facts = await src.mergeFacts(nowMs - hours * HOUR, nowMs);
     if (facts.mergeCountUnavailable) throw new Error('unavailable');
     return facts.shipped.filter(item => /^ashlrai\/phantom#\d+/.test(item.text)).length;
   }, 'GitHub merge count unavailable or incomplete');
 
-  const [installed, published, hour, day, runs, inbox] = await Promise.all([
+  const [installed, published, hour, day, runs, inbox, workClaims] = await Promise.all([
     fact(() => { const v = src.installedVersion(); if (!v) throw new Error('none'); return v; }, 'installed app version not readable'),
     fact(() => src.publishedVersion(nowMs), 'published release not readable'),
     merged(1), merged(24),
     fact(() => src.runsState(runsDir, nowMs), 'lane state not readable'),
     fact(() => src.inbox(runsDir), 'MASON-INBOX.md not readable'),
+    readClaims === undefined ? Promise.resolve(undefined) : fact(() => countWorkClaims(readClaims(nowMs), nowMs), 'bus claims table could not be read'),
   ]);
 
   const lanes: Fact<StatusDigestInput['lanes'] extends Fact<infer L> ? L : never> = !runs.ok ? runs
@@ -94,5 +150,5 @@ export async function gatherStatusDigestInput(runsDir: string, now: Date, overri
   }
 
   const updatePending = installed.ok && published.ok ? versionNewer(published.value, installed.value) : null;
-  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, lanes, needsMason: needsFact, topP0 };
+  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs) };
 }

@@ -4,6 +4,7 @@
  * message bodies are private, so it answers only the local dispatch session.
  * Also exports the best-effort mirror of a desktop inbox post onto the thread. */
 import { join } from 'node:path';
+import { readReceipts } from '../leader/delivery-receipts.js';
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings, type OwnerThreadSettings } from '../comms/owner-channel.js';
@@ -102,6 +103,7 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
       const { adapters, kill, paused } = readOwnerCommsStatus(options);
       sendJson(res, 200, {
         ...thread,
+        receipts: readReceipts(options.runsDir, thread.messages.filter(m => m.direction === 'outbound').map(m => m.id)),
         status: {
           kill,
           paused,

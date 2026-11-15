@@ -1,8 +1,9 @@
 import { AgentCheckpointError, assessAgentCheckpointFreshness, readAgentCheckpoint, saveAgentCheckpoint } from '../core/agent-checkpoint.js';
 
-const USAGE = 'Usage: phm checkpoint resume <file> [worktree] [--json] | save <source> <destination> <worktree> [--json]';
+const USAGE = 'Usage: phm checkpoint resume <file> [worktree] [--json] | save <source> <destination> <worktree> [--json] | handoff --help';
 
 export async function cmdCheckpoint(args: string[]): Promise<number> {
+  if (args[0] === 'handoff') return (await import('./session-handoff.js')).cmdSessionHandoff(args.slice(1));
   if ((args.length === 1 && args[0] === 'help') || args.includes('--help') || args.includes('-h')) { console.log(USAGE); return 0; }
   const json = args.includes('--json');
   const rest = args.filter(arg => arg !== '--json');

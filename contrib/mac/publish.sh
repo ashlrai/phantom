@@ -199,6 +199,13 @@ TR="no test command"; if [ -n "$TC" ]; then
   HOME=$TH npm_config_cache=$NPMC CARGO_HOME=$CARGO_HOME RUSTUP_HOME=$RUSTUP_HOME PATH=$PWD/node_modules/.bin:$CARGO_HOME/bin:$PATH perl -e 'alarm shift; exec @ARGV' 1500 $TC 2>&1 | $SCRUB > $R/$J.test.log; rc=$?
   TR="\`$TC\` (temp HOME) exit $rc; tail: $(tail -5 $R/$J.test.log | tr '\n' ' ' | cut -c1-400)"; fi
 echo "TEST $TR"
+# Source candidate: Security review/re-pin required before any live install.
+# The installed trusted CLI captures the exact staged tree and the publisher's
+# actual runner exit/output. Never infer tool proof from BRIDGE_NOTES.
+PROOF_GITDIR=$(git rev-parse --absolute-git-dir) && PROOF_TREE=$(git write-tree) || { echo "RESULT ABORT proof-git"; exit 1; }
+PROOF_ARGS=(fleet proof capture --repo "$WT" --git-dir "$PROOF_GITDIR" --base "$BASE" --output "$R/$J.proof.$$.json")
+if [ -n "$TC" ]; then PROOF_ARGS+=(--test-command "$TC" --test-exit "$rc" --test-log "$R/$J.test.log"); fi
+phm "${PROOF_ARGS[@]}" || { echo "RESULT ABORT proof-capture"; exit 1; }
 if [ "$IM" = 0 ]; then
   git -c core.hooksPath=/dev/null ${GUN:+-c "user.name=$GUN"} ${GUE:+-c "user.email=$GUE"} commit -q --no-verify -m "bridge($J): $(echo "$NOTES" | grep -m1 -v '^\s*$' | sed 's/^#* *//' | cut -c1-60)" || { echo "RESULT ABORT commit"; exit 1; }
   SHA=$(git rev-parse HEAD); [ "$(git rev-list --parents -n1 $SHA | awk '{print NF-1, $2}')" = "1 $BASE" ] || { echo "RESULT ABORT parent"; exit 1; }
@@ -206,6 +213,7 @@ else
   SHA=$(git rev-parse HEAD)
   [ "$SHA" = "$IMSHA" ] || { echo "RESULT ABORT integrated-head-changed"; exit 1; }
 fi
+[ "$(git rev-parse HEAD^{tree})" = "$PROOF_TREE" ] || { echo "RESULT ABORT proof-tree-changed"; exit 1; }
 [ -n "$G1T" ] && { [ "$(git rev-parse HEAD^{tree})" = "$G1T" ] && [ "$(git rev-parse HEAD^)" = "$G1P" ] && [ "$(git rev-list --count "$G1P..HEAD")" = 1 ] || { git reset -q --soft "$BASE"; echo "RESULT ABORT g1-tree-mismatch"; exit 1; }; }
 # Integrated mode has already proved the original fork exists; never bootstrap one.
 if [ "$IM" = 0 ]; then
