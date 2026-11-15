@@ -150,6 +150,7 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Fable 5.2 orchestration](FABLE-ORCHESTRATOR.md): RQ-FABLE-ORCH-REG-2 implements the repository portion of EO RQ-FABLE-ORCHESTRATOR-1, following registration #4506.
 - [Frequently Asked Questions](FAQ.md): Phantom is an open-source engineering agent workbench by AshlrAI. Connect coding agents, API resources, or local models into one workbench. See README.md.
 - [Run and inspect signed firm graphs](FIRM-DEMO.md): This source-build demo exercises the new graph kernel without contacting a model, running candidate code, switching accounts, changing HOME or activating a daemon.
+- [Runtime-dynamic fleet config](FLEET-CONFIG.md): Change fleet limits without restarting dispatchd or any reader. Source: dynconfig.ts, CLI phm fleet config.
 - [Empty job reasons](FLEET-EMPTIES.md): Run phm fleet empties --since 24h --json to group recorded empty outcomes by lane, repository and reason. The report also ranks the five most frequent reasons and suggests a fil...
 - [Standing lane freshness](FLEET-LANE-FRESHNESS.md): Run one command to inspect the same lane slots shown by the Fleet screen:
 - [Merge-batch planner](FLEET-MERGE-BATCH.md): Run phm fleet merge-batch --json. The command plans open-PR merge batches from a snapshot of the pull-request list — it never calls gh itself, never rebases, and never merges. I...
