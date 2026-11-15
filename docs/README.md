@@ -144,6 +144,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Read tokens per merged PR and merged PRs per dollar from local hop events | [Hop efficiency insights — source guide](https://github.com/ashlrai/phantom/blob/master/docs/observability/README.md) |
 | Distinguish reported run tokens from estimates, reservations and unknown totals | [Run token totals — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RUN-TOKEN-PROVENANCE.md) |
 | Roll up coding pool tokens and cost by task class and merged PR | [Router cost feed — source guide](https://github.com/ashlrai/phantom/blob/master/docs/router/README.md) |
+| Compare fleet supervision, shared provider quotas, evidence handoffs and outcome learning | [Fleet architecture research — source study](https://github.com/ashlrai/phantom/blob/master/docs/strategy/RESEARCH-FLEET.md) |
 | Evaluate speculative reads, bounded parallelism and evidence-backed memory | [Research and offline experiment protocol](https://github.com/ashlrai/phantom/blob/master/docs/research/speculative-parallel-memory.md) |
 | Decide whether to give one agent the whole context window or four a quarter each | [Plan deep, execute wide](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-CONTEXT-STRATEGY.md) |
 | Finalize and publish original qualified release artifacts locally | [Releasing locally](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING-LOCALLY.md) |
@@ -366,4 +367,4 @@ canonical release guide for required hosted qualification and publication.
 
 [Fable 5.2 orchestration and host handoff](https://github.com/ashlrai/phantom/blob/master/docs/FABLE-ORCHESTRATOR.md)
 
-- [Typed routing decisions](ROUTING.md): local-first typed route advice, bounded schema retry and dispatcher audit records.
+- [Typed routing decisions](https://github.com/ashlrai/phantom/blob/master/docs/ROUTING.md): local-first typed route advice, bounded schema retry and dispatcher audit records.
