@@ -253,6 +253,25 @@ describe('changelog parsing', () => {
     expect(() => parseEcosystemChangelog('fixture/zeta', '## [1.0.0]\n- One\n## [1.0.0]\n- Two')).toThrow();
   });
 
+  it('keeps distinct same-version headings as separate entries in document order', () => {
+    const markdown = [
+      '## [Unreleased] - M30: Capstone', '- One',
+      '## [Unreleased] - M25: Portfolio', '- Two',
+      '## [Unreleased] - M30: Capstone', '- One',
+    ].join('\n');
+    const entries = parseEcosystemChangelog('fixture/zeta', markdown);
+    expect(entries.map((entry) => entry.id)).toEqual([
+      'fixture/zeta:changelog:Unreleased', 'fixture/zeta:changelog:Unreleased~2',
+    ]);
+    expect(entries.every((entry) => entry.unreleased && entry.version === 'Unreleased')).toBe(true);
+    expect(entries[1].body).toBe('- Two');
+  });
+
+  it('still fails when one version keeps one heading but the bodies conflict', () => {
+    const markdown = '## [1.0.0] - 2026-10-24\n- One\n## [1.0.0] - 2026-10-24\n- Two';
+    expect(() => parseEcosystemChangelog('fixture/zeta', markdown)).toThrow();
+  });
+
   it('recognizes versioned unreleased headings used by Phantom', () => {
     const entries = parseEcosystemChangelog('fixture/zeta', '## [3.29.15] \u2014 Unreleased\n- Pending\n## [3.29.14] - Unreleased\n- Earlier pending');
     expect(entries).toHaveLength(2);
