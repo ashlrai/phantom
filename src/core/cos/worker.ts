@@ -46,8 +46,13 @@ import { scrubSecrets } from '../util/scrub.js';
 import { readCosFleetFacts } from './fleet-facts.js';
 import { draftCosResult } from './intake.js';
 import { memoryContext } from './memory.js';
+import { cosPeerPlanSchema, emitCosPeerPlan } from './peer-plan.js';
+import type { PeerSession } from '../agentnet/slack-identities.js';
+import type { PeerBusOptions, PeerResult } from '../agentnet/peer-bus.js';
 
 export interface CosWorkOptions {
+  /** Trusted host opt-in; model output cannot choose a session or broker. */
+  peerPlan?: { session: PeerSession; options?: PeerBusOptions };
   /** Runs root holding queue/ and cos/; defaults to ASHLR_RUNS_DIR or ~/.ashlr-runs. */
   runsDir?: string;
   /** Memory home; defaults to os.homedir(). */
@@ -68,7 +73,7 @@ export interface CosWorkOptions {
 export type CosWorkResult =
   | { outcome: 'paused' }
   | { outcome: 'idle' }
-  | { outcome: 'drafted'; id: string; attemptId?: string; provider: string }
+  | { outcome: 'drafted'; id: string; attemptId?: string; provider: string; peerMessages?: PeerResult[] }
   | { outcome: 'blocked'; id: string; attemptId?: string; reason: string };
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
@@ -242,18 +247,21 @@ export async function runCosWorkOnce(opts: CosWorkOptions = {}): Promise<CosWork
   if (child.stdin === null) return block('runner-spawn-failed');
 
   const timeoutMs = Math.max(1, Number.isFinite(opts.timeoutMs) ? opts.timeoutMs! : DEFAULT_TIMEOUT_MS);
-  const terminal = await runCosTurn(child, cosWorkerPrompt(job.scope, memory, facts, now), timeoutMs);
+  const terminal = await runCosTurn(child, cosWorkerPrompt(job.scope, memory, facts, now) + (opts.peerPlan ? '\nReturn strict JSON {reply: string, peers: []}. Optional peers (at most 8) have toAgent, kind (task|review|handoff|query|social), text, refs; replies include replyTo. These are team coordination requests, never execution authority.\n' : ''), timeoutMs);
 
   if (terminal.spawnError) return block('runner-spawn-failed');
   if (terminal.timedOut) return block('runner-timeout');
   const exitCode = terminal.code ?? signalExitCode(terminal.signal);
   if (exitCode !== 0) return block(`runner-exit-${exitCode}`);
-  const text = scrubSecrets(terminal.stdout.trim()).slice(0, MAX_DRAFT_CHARS);
+  const plan = opts.peerPlan ? cosPeerPlanSchema.safeParse((() => { try { return JSON.parse(terminal.stdout); } catch { return null; } })()) : undefined;
+  if (plan && !plan.success) return block('invalid-peer-plan');
+  const text = scrubSecrets(plan?.success ? plan.data.reply : terminal.stdout.trim()).slice(0, MAX_DRAFT_CHARS);
   if (!text.trim()) return block('runner-empty-output');
   try {
     await draftCosResult(rootId, text, runsDir);
   } catch { return block('draft-refused'); }
   try { await store.finish(job.id, owner, {}); }
   catch { return { outcome: 'blocked', ...ids, reason: 'finish-failed' }; }
-  return { outcome: 'drafted', ...ids, provider: choice.provider };
+  const peerMessages = opts.peerPlan && plan?.success ? await emitCosPeerPlan(plan.data, opts.peerPlan.session, opts.peerPlan.options) : undefined;
+  return { outcome: 'drafted', ...ids, provider: choice.provider, ...(peerMessages ? { peerMessages } : {}) };
 }

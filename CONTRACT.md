@@ -496,3 +496,9 @@ measurements. `suggestOutcomePolicy` returns bounded, evidence-backed
 read the jobs ledger only. Weekly defaults to 168 hours. The
 [full contract](docs/contracts/CONTRACT-FLEET-OUTCOME-METRICS.md) defines
 cohorts, observation coverage, unknowns, thresholds and exit codes.
+
+## Agent peer mesh
+
+[CONTRACT-AGENTNET-PEERBUS](docs/contracts/CONTRACT-AGENTNET-PEERBUS.md) pins
+session-bound callsigns, team-only peer messages, Slack provisioning drafts,
+the approval-gated broker and bounded chief-of-staff delegation.
