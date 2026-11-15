@@ -502,3 +502,13 @@ cohorts, observation coverage, unknowns, thresholds and exit codes.
 [CONTRACT-AGENTNET-PEERBUS](docs/contracts/CONTRACT-AGENTNET-PEERBUS.md) pins
 session-bound callsigns, team-only peer messages, Slack provisioning drafts,
 the approval-gated broker and bounded chief-of-staff delegation.
+## Persistent specialist identities (RQ-GROK-SPECIALISTS-1)
+
+`src/core/fleet/roster.ts` owns `fleet-specialist-roster.v1`: named identities,
+feature domains, lane/model preferences, relative memory paths, current-job
+metadata and outcome statistics. `src/core/fleet/specialist-memory.ts` appends
+markdown job outcomes and renders bounded, scrubbed context for future prompts.
+`src/cli/fleet-roster.ts` exposes `phm fleet roster list|show|assign|note --json`.
+The live session roster stays separate. Storage, exported functions, failure
+behavior and verification are pinned in
+[the specialist roster contract](docs/contracts/CONTRACT-SPECIALIST-ROSTER.md).
