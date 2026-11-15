@@ -1,15 +1,18 @@
 import { isAbsolute } from 'node:path';
+import { cmdAgents } from './agents.js';
 import { busV2ContractSummary } from '../core/agents/bus-v2-schema.js';
 import { listChannelRegistry, probeRegisteredChannel } from '../core/agents/channel-registry.js';
 import { CHANNEL_IDS, type ChannelId } from '../core/agents/channel-policy.js';
 import { readFleetEdges } from '../core/fleet/fleet-edges.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const HELP = `ashlr agents edges [--json]
+const HELP = `ashlr agents list|show <id>|validate <id>|versions <id> [--json]
+ashlr agents edges [--json]
 ashlr agents bus contract [--json]
 ashlr agents bus channels list [--json]
 ashlr agents bus channels test <id> [--root <abs>] [--json]
 
+Profile verbs read ~/.phantom/agents (docs/AGENT-PROFILES.md).
 Print the Agent Bus v2 contract version, providers, body kinds, work statuses and
 claim key forms. The contract command is read-only. channels list reports which
 adapters are registered. channels test bus and channels test handoff record one
@@ -23,6 +26,7 @@ export async function runAgentsCli(
   err: (text: string) => void = console.error,
 ): Promise<number> {
   if (!args.length || ['help', '--help', '-h'].includes(args[0]!)) { out(HELP); return 0; }
+  if (['list', 'show', 'validate', 'versions'].includes(args[0]!)) return cmdAgents(args, out, err);
   const json = args.includes('--json');
   if (args.filter(arg => arg === '--json').length > 1) {
     err(json ? JSON.stringify({ error: 'invalid-argument' }) : HELP);

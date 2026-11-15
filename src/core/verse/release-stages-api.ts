@@ -1,9 +1,11 @@
 /** Desktop read of the newest release's stages (published, update feed). Read-only: it
  * never publishes, uploads, edits or retags. Answers only the local dispatch session. */
+import { updateWhy } from '../desktop/update-why.js';
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { fetchLatestRelease, observeMilestones, type MilestoneReader, type ReleaseRunner } from '../fleet/release-live-notice.js';
 
+export const VERSE_UPDATE_WHY_PATH = '/api/verse/update/why';
 export const VERSE_RELEASE_STAGES_PATH = '/api/verse/release/stages';
 export const RELEASE_STAGES_SCHEMA = 'verse.release-stages.v1';
 const REPO = 'ashlrai/phantom';
@@ -43,6 +45,12 @@ export function createReleaseStagesApi(deps: ReleaseStagesApiDeps = {}): ApiModu
   }
 
   return async (ctx, _req, res, path, method) => {
+    if (path === VERSE_UPDATE_WHY_PATH) {
+      if (method !== 'GET') sendJson(res, 405, { error: 'method not allowed' });
+      else if (!ctx.allowDispatch) sendJson(res, 404, { error: 'not found' });
+      else sendJson(res, 200, await updateWhy());
+      return true;
+    }
     if (path !== VERSE_RELEASE_STAGES_PATH) return false;
     if (method !== 'GET') {
       sendJson(res, 405, { error: 'Release stages are read only here.' });

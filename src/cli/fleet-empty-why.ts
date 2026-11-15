@@ -2,13 +2,12 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { emptyJobs, type EmptyJob } from '../core/fleet/empty-job-ledger.js';
+import { classifyEmptyLog, FLEET_EMPTY_WHY_LOG_LINES, FLEET_EMPTY_WHY_REASONS, type FleetEmptyWhyReason } from '../core/fleet/empty-why-classify.js';
+export { classifyEmptyLog, FLEET_EMPTY_WHY_LOG_LINES, FLEET_EMPTY_WHY_REASONS, type FleetEmptyWhyReason } from '../core/fleet/empty-why-classify.js';
 export { emptyJobs, type EmptyJob } from '../core/fleet/empty-job-ledger.js';
 
 export const FLEET_EMPTY_WHY_SCHEMA = 'fleet.empty-why.v1';
-export const FLEET_EMPTY_WHY_LOG_LINES = 60;
 export const FLEET_EMPTY_WHY_DEFAULT_HOURS = 24;
-export const FLEET_EMPTY_WHY_REASONS = ['lint-env', 'interrupted', 'blocked', 'limit', 'other'] as const;
-export type FleetEmptyWhyReason = (typeof FLEET_EMPTY_WHY_REASONS)[number];
 
 export interface FleetEmptyWhyReport {
   schema: typeof FLEET_EMPTY_WHY_SCHEMA;
@@ -25,21 +24,6 @@ export interface FleetEmptyWhyReport {
 const USAGE = `Usage: ashlr fleet empty-why [--hours N] [--json]
 Tag each job that finished empty in the last N hours (default ${FLEET_EMPTY_WHY_DEFAULT_HOURS}) with one reason from the last ${FLEET_EMPTY_WHY_LOG_LINES} lines of its log: lint-env, interrupted, blocked, limit or other.
 Prints counts per reason and lane, plus the job ids. Reads jobs.jsonl and <id>.log under ~/.ashlr-runs (ASHLR_RUNS_DIR overrides). Read-only.`;
-
-// Checked in order; the first match wins.
-const RULES: ReadonlyArray<readonly [FleetEmptyWhyReason, RegExp]> = [
-  ['lint-env', /eslint|lib\/cli/i],
-  ['interrupted', /\bexit(?:ed|\s+code|\s+status)?\b\D{0,12}130\b/i],
-  ['blocked', /\bblocked\b|not implemented|\bincomplete\b/i],
-  ['limit', /usage limit|rate[ -]?limit/i],
-];
-
-/** Pure: tag one log by its last lines. */
-export function classifyEmptyLog(log: string | null): FleetEmptyWhyReason {
-  if (log === null) return 'other';
-  const tail = log.split('\n').slice(-FLEET_EMPTY_WHY_LOG_LINES).join('\n');
-  return RULES.find(([, re]) => re.test(tail))?.[0] ?? 'other';
-}
 
 const zero = (): Record<FleetEmptyWhyReason, number> => ({ 'lint-env': 0, interrupted: 0, blocked: 0, limit: 0, other: 0 });
 

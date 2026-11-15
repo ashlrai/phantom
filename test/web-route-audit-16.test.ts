@@ -22,8 +22,6 @@ const REPO = fileURLToPath(new URL('..', import.meta.url));
  * serves one can land before or after the job that drops it from here.
  */
 const KNOWN_UNSERVED: readonly string[] = Object.freeze([
-  // Resources > Lane usage (LaneUsagePanel): fleet-usage-source.ts ships the fixture loader until this exists.
-  '/api/app/fleet-usage',
   // RepoRankPanel.tsx: the component is imported nowhere, so nothing renders it.
   '/api/repos/rank',
   // Leader thread, Feed and phone owner-channel lines (owner-thread-queries.ts). RQ-PHX-OWNERTHREADSERVE16 serves it.

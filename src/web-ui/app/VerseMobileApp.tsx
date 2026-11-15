@@ -1,6 +1,6 @@
 /**
  * app/VerseMobileApp.tsx — isolated bootstrap for /verse/m, Verse on a phone
- * (pattern: VerseConsoleApp). No workbench, no global dashboard shell, no
+ * (pattern: PhantomConsoleApp). No workbench, no global dashboard shell, no
  * Hub observer stream: the read session is probed against
  * /api/verse/bootstrap, and the phone shell (routes/verse/mobile/) takes over
  * once authenticated.
@@ -84,7 +84,7 @@ const CONNECTING = (
   </>
 );
 
-export function VerseMobileApp() {
+export function PhantomMobileApp() {
   useEffect(() => {
     canonicalizeMobilePath();
     void import('../routes/verse/mobile/pwa.js')
@@ -98,10 +98,13 @@ export function VerseMobileApp() {
   // Decide before mounting the local token gate or starting its read probe.
   return isRemoteMobileMode()
     ? <Suspense fallback={<Boot>{CONNECTING}</Boot>}><RemoteMobileApp shell={<MobileShell />} Button={Button} ui={ui} /></Suspense>
-    : <LocalVerseMobileApp />;
+    : <LocalPhantomMobileApp />;
 }
 
-function LocalVerseMobileApp() {
+/** @deprecated Legacy name for {@link PhantomMobileApp}; kept so external imports keep resolving. */
+export const VerseMobileApp = PhantomMobileApp;
+
+function LocalPhantomMobileApp() {
   const phase = useAuthPhase();
   const [unreachable, setUnreachable] = useState(false);
   const [attempt, setAttempt] = useState(0);

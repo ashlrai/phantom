@@ -7,7 +7,7 @@ import { scrubSecrets } from '../util/scrub.js';
 import { GLOBAL_SLOT_KEYS, LANE_ID_RE } from './runs-lane-targets.js';
 
 export interface FleetRunsLane {
-  lane: string; running: number; target: number; floor: number|null; ceiling: number|null;
+  healthy?: boolean; lane: string; running: number; target: number; floor: number|null; ceiling: number|null;
   queued: number; held: boolean; heldReason: string|null; tokensLastHour: number|null;
   merged24h: number|null; mergeRate24h: number|null;
 }
@@ -148,6 +148,7 @@ export async function readFleetRunsDirState(opts: ReadFleetRunsDirOptions = {}):
         }
         const rollup = object(object(object(s.rollup_24h).by_lane)[lane]);
         state.lanes.push({ lane, running: l.running as number, target: l.target as number, queued: l.queued as number,
+          ...(typeof l.healthy === 'boolean' ? { healthy: l.healthy } : {}),
           floor: number(l.floor), ceiling: number(l.ceiling), held: l.held,
           heldReason: typeof l.held_reason === 'string' ? clean(l.held_reason, 200) : null,
           tokensLastHour: null, merged24h: number(rollup.merged), mergeRate24h: number(rollup.merge_rate) });

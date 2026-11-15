@@ -82,7 +82,7 @@ import { DEVIN_CHAT_TURN_FLAG } from '../core/devin/chat-turn-invocation.js';
 import { VERSE_MCP_STDIO_COMMAND } from '../core/verse/verse-mcp-stdio-invocation.js';
 import { planTidy, applyTidy } from '../core/tidy.js';
 import { openInEditor } from './open.js';
-import { pick } from './picker.js';
+import { pick, selectionFailure } from './picker.js';
 import { classifyRepos } from './status.js';
 import { pad, makeColors } from './ui.js';
 import { authoritySetupPlatformRefusal } from './first-run-guidance.js';
@@ -1196,7 +1196,13 @@ async function cmdGo(args: string[]): Promise<void> {
   }
 
   if (!chosen) {
-    die('Nothing selected.', 1);
+    const pool = candidates.length > 0 ? candidates : idx.items;
+    const failure = selectionFailure('go', {
+      headless: process.stdin.isTTY !== true || process.stdout.isTTY !== true,
+      query,
+      itemCount: pool.length,
+    });
+    die(failure.message, failure.code);
   }
 
   if (openFlag) {
@@ -1667,15 +1673,16 @@ async function cmdOpen(args: string[]): Promise<void> {
   }
 
   if (!chosen) {
-    die('Nothing selected.', 1);
+    const failure = selectionFailure('open', {
+      headless: process.stdin.isTTY !== true || process.stdout.isTTY !== true,
+      query,
+      itemCount: idx.items.length,
+    });
+    die(failure.message, failure.code);
   }
 
   openInEditor(chosen.path, cfg);
   console.log(green('opened: ') + chosen.path);
-  const { planMarkdownOpen, ashlrMdInstallHint } = await import('./open.js');
-  const md = planMarkdownOpen(chosen.path, cfg);
-  if (md.kind === 'ashlr-md') console.log(dim('  via Ashlr MD'));
-  else if (md.reason === 'not-installed') console.log(dim(`  ${ashlrMdInstallHint()}`));
 }
 
 // ─── Command: tidy ────────────────────────────────────────────────────────────
@@ -2189,6 +2196,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'land': {
+        const { cmdLand } = await import('./land.js');
+        process.exitCode = await cmdLand(rest);
+        break;
+      }
+
       case 'metrics': {
         if (wantsHelp(rest)) {
           printCoreUsage('metrics', 'Local metrics reports.', [
@@ -2452,6 +2465,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'caps': {
+        const { cmdCaps } = await import('./caps.js');
+        process.exitCode = await cmdCaps(rest);
+        break;
+      }
+
       case 'constitution': {
         const { cmdConstitution } = await import('./constitution.js');
         process.exitCode = await cmdConstitution(rest);
@@ -2600,6 +2619,12 @@ async function main(): Promise<void> {
       case 'enroll': {
         const cmdEnroll = await loadEnrollCmd();
         process.exitCode = await cmdEnroll(rest);
+        break;
+      }
+
+      case 'ideas': {
+        const { cmdIdeas } = await import('./ideas.js');
+        process.exitCode = await cmdIdeas(rest);
         break;
       }
 
@@ -3140,6 +3165,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'routines': {
+        const { runRoutinesCli } = await import('./routines.js');
+        process.exitCode = await runRoutinesCli(rest);
+        break;
+      }
+
       case 'resource': {
         const { cmdResource } = await import('./resource.js');
         process.exitCode = await cmdResource(rest);
@@ -3204,6 +3235,7 @@ async function main(): Promise<void> {
       case 'usage': {
         if (wantsHelp(rest)) {
           printCoreUsage('usage', 'Usage readings.', [
+            ['phm usage spend [--json]', 'See measured usage and projected unused capacity'],
             ['phm usage validate', 'Validate a usage reading'],
           ]);
           process.exitCode = 0;

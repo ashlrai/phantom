@@ -107,7 +107,7 @@ class SelfSupplyTests(unittest.TestCase):
             self.assertFalse(applied['dryRun'])
             self.assertEqual(applied['added'], 2)
             text = queue_text(home)
-            self.assertIn('- READY RQ-FSCODEXPERSONAL-01 (P0, tier=work, repo=phantom, pool=codex-personal)', text)
+            self.assertRegex(text, r'- READY RQ-FSCODEXPERSONAL-01 \(P0, tier=work, repo=phantom, pool=codex-personal, enq=\d+\)')
             self.assertIn('SELF_SUPPLY codex-personal free=2 added=2', events(home))
             self.assertEqual(report(home, '--apply')['added'], 0)   # every id now present
 

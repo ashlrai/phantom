@@ -31,6 +31,8 @@ import { outcomeProposalStillCurrent } from '../daemon/outcome-proposal-admissio
 import { assertSelectedOutcomeAdmission } from '../run/outcome-admission.js';
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
+import { readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { loadConfigReadOnlyStrict } from '../config.js';
 import { clampBudgetPolicy } from '../authority/effective-config.js';
@@ -66,6 +68,16 @@ import { isSelfTargetProposal } from './self.js';
 import { fleetMirrorsRoot as u6FleetMirrorsRoot, mirrorNameForPath, mirrorSiblingPins, readMirrorState, type MirrorSiblingPinsRead } from './mirrors.js';
 import { listRepoHolds } from './quarantine.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { scoreDiffRisk } from '../../fleet/risk.js';
+import {
+  formatMergeConfidenceLine,
+  historyFromEvalReport,
+  leaderReviewReason,
+  scoreMergeConfidence,
+  type MergeConfidence,
+} from '../../fleet/merge-confidence.js';
+import { buildFleetEvalReport, type FleetEvalReport } from './eval-report.js';
+import { readPostMergeObservations } from './post-merge-observations.js';
 import type { AshlrConfig, DecisionEntry, Proposal } from '../types.js';
 import type { AutoMergePassResult } from './automerge-pass.js';
 import { readDecisions } from './decisions-ledger.js';
@@ -284,6 +296,11 @@ export interface StandingPassDeps {
    * and before merging.
    */
   siblingPins?: (repoPath: string) => MirrorSiblingPinsRead;
+  /**
+   * Fleet-IQ durability report feeding the merge-confidence gate. Optional;
+   * null/absent means no history evidence (the gate then scores the diff alone).
+   */
+  evalReport?: () => FleetEvalReport | null;
 }
 
 /**
@@ -542,6 +559,27 @@ async function defaultBlastChecks(proposal: Proposal, cfg: AshlrConfig): Promise
   return checks;
 }
 
+const EVAL_JOBS_MAX_BYTES = 32 * 1024 * 1024;
+
+/** Fleet IQ over the last 30 days from the jobs ledger and signed observations; null when unreadable. */
+function defaultEvalReport(): FleetEvalReport | null {
+  try {
+    const path = join(homedir(), '.ashlr-runs', 'metrics', 'jobs.jsonl');
+    if (statSync(path).size > EVAL_JOBS_MAX_BYTES) return null;
+    const observations = readPostMergeObservations();
+    return buildFleetEvalReport({
+      jobsText: readFileSync(path, 'utf8'),
+      observations: { sourceState: observations.sourceState, rows: observations.observations.map((o) => ({
+        outcome: o.outcome, mergeCommit: o.mergeCommit, confidence: o.confidence,
+      })) },
+      nowMs: Date.now(),
+      windowDays: 30,
+    });
+  } catch {
+    return null;
+  }
+}
+
 export function defaultStandingPassDeps(): StandingPassDeps {
   return {
     host: defaultHostMergeDeps(),
@@ -586,6 +624,7 @@ export function defaultStandingPassDeps(): StandingPassDeps {
     blastChecks: (proposal, cfg) => defaultBlastChecks(proposal, cfg),
     redTeam: (proposal, cfg, lanes) => defaultRedTeam(proposal, cfg, lanes),
     ensureCapacityPublisher: (cfg) => ensureDaemonCapacityPublisher(cfg),
+    evalReport: () => defaultEvalReport(),
     openScratch: (mirror) => openGitScratch(mirror),
     mirrorBranchHead: (repoPath, branch) => {
       if (!/^[A-Za-z0-9._/-]{1,200}$/.test(branch)) return null;
@@ -659,6 +698,8 @@ interface PassContext {
   requiredChecks: Map<string, Awaited<ReturnType<typeof readRequiredChecks>>>;
   /** This pass's fleet merge times per repo (lowercase) — read once, then extended by this pass's own landings. */
   mergeTimes: Map<string, string[] | null>;
+  /** Fleet-IQ report, read once per pass (undefined = not read yet). */
+  evalReport?: FleetEvalReport | null;
 }
 
 function positiveIntConfig(value: unknown, fallback: number): number {
@@ -1239,8 +1280,18 @@ async function evaluateProposal(proposal: Proposal, ctx: PassContext): Promise<v
     state.judgeIds = g6.judgeIds ?? (g6.judgeId ? [g6.judgeId] : []);
     state.judgeWaitSince = null;
 
+    // ── Merge confidence — diff risk + fleet-IQ history; CI is gated at G7 ─
+    // Below threshold the PR is still opened, but as owner lane: leader review
+    // instead of auto-merge.
+    const confidence = scoreMergeConfidence({
+      diff: scoreDiffRisk(diff, { selfRepo, testsImportingTier1: testsImporting }),
+      history: historyFromEvalReport(evalReportOf(ctx), repo),
+    });
+    const toLeader = confidence.decision === 'leader-review';
+    if (toLeader) note(ctx, `${repo}: ${proposal.id} routed to leader review (${leaderReviewReason(confidence)})`);
+
     // ── G7 — publish the verified tree and open the App PR ───────────────
-    await openChangePr(ctx, state, proposal, scratch, false, null);
+    await openChangePr(ctx, state, proposal, scratch, toLeader, toLeader ? leaderReviewReason(confidence) : null, confidence);
   } catch (error) {
     note(ctx, `${repo}: ${proposal.id} failed closed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
@@ -1449,7 +1500,18 @@ function eliteLabel(proposal: Proposal): string | null {
   return matchEliteModel(proposal.engineModel)?.entry.label ?? null;
 }
 
-function prBody(state: FleetMergeStateV1, proposal: Proposal, ownerLaneReason: string | null): string {
+function evalReportOf(ctx: PassContext): FleetEvalReport | null {
+  if (ctx.evalReport === undefined) {
+    try {
+      ctx.evalReport = ctx.deps.evalReport?.() ?? null;
+    } catch {
+      ctx.evalReport = null;
+    }
+  }
+  return ctx.evalReport;
+}
+
+function prBody(state: FleetMergeStateV1, proposal: Proposal, ownerLaneReason: string | null, confidence: MergeConfidence | null): string {
   const gateLine = (['G0', 'G1', 'G1b', 'G2', 'G3', 'G4', 'G5', 'G6'] as GateId[])
     .map((gate) => `${gate} ${state.gates[gate]?.code ?? '—'}`)
     .join(' · ');
@@ -1460,6 +1522,7 @@ function prBody(state: FleetMergeStateV1, proposal: Proposal, ownerLaneReason: s
     `**ashlr fleet** · proposal \`${proposal.id}\` · producer \`${proposal.engineModel ?? 'unknown'}\` · ` +
       `${state.files ?? '?'} file(s), +${state.linesAdded ?? '?'}/−${state.linesDeleted ?? '?'}`,
     `Gates: ${gateLine}`,
+    ...(confidence ? [formatMergeConfidenceLine(confidence)] : []),
     ...(state.gates['G6']?.code === ELITE_DIRECT_G6_CODE
       ? [`Elite self-land: elite model ${eliteLabel(proposal) ?? 'unknown'} — tests, not a judge (G3 verified the exact tree; G7 needs \`ashlr/verify\` and every required check green).`]
       : (state.judgeIds?.length ?? 0) > 1
@@ -1478,6 +1541,7 @@ async function openChangePr(
   scratch: FleetGitScratch,
   ownerLane: boolean,
   ownerLaneReason: string | null,
+  confidence: MergeConfidence | null = null,
 ): Promise<void> {
   const { deps } = ctx;
   if (!state.baseSha || !state.treeSha || !state.baseBranch) {
@@ -1542,7 +1606,7 @@ async function openChangePr(
     baseSha: state.baseSha,
     treeSha: state.treeSha,
     title: `ashlr fleet: ${untrustedText(proposal.title, 100, true)}`,
-    body: prBody(state, proposal, ownerLaneReason),
+    body: prBody(state, proposal, ownerLaneReason, confidence),
     ownerLane,
     ownerLaneReason,
   }, deps.host);

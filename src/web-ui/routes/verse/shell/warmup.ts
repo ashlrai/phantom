@@ -4,7 +4,7 @@
  *
  *   1. the overlay chunks, one at a time, so the first ⌘K / ⌘J / ⌘/ never
  *      waits on the network;
- *   2. each rail surface not yet open, in rail order — its chunk (VerseApp's
+ *   2. each rail surface not yet open, in rail order — its chunk (PhantomApp's
  *      one-per-tab load, so the first visit mounts it directly), the lazy
  *      panels it mounts with, and then the reads it opens with
  *      (shell/surface-prefetch.ts, one read at a time).
@@ -18,7 +18,7 @@
  * of the chat's first actions: a click or ⌘N restarts the quiet period, and
  * the reads it causes are waited out before the next warm-up read starts.
  *
- * LAZY ONLY. VerseApp loads this module with import() from a mount effect,
+ * LAZY ONLY. PhantomApp loads this module with import() from a mount effect,
  * so neither the scheduler nor the surface table costs chat first-paint
  * bytes; the surface table is a further import() from here, at the first
  * surface step (VerseApp.first-paint.test.ts pins both).
@@ -29,13 +29,13 @@ import { runIdleSteps, type IdleGate, type IdleStep, type IdleStepsOptions } fro
 export type WarmupOptions = IdleStepsOptions;
 
 export interface WarmupDeps {
-  /** VerseApp's one load per section (its lazy component shares it). */
+  /** PhantomApp's one load per section (its lazy component shares it). */
   loadSection: (id: VerseSectionId) => Promise<unknown>;
   /** The overlay chunks, in the order they are worth having. */
   overlays: ReadonlyArray<() => Promise<unknown>>;
   /**
    * True while any read is running or queued in the query cache's gate
-   * (VerseApp reads `queryGateStats`). Injected rather than imported: a
+   * (PhantomApp reads `queryGateStats`). Injected rather than imported: a
    * static data/cache.ts import from this chunk made the bundler split the
    * cache out of its shared first-paint chunk (+1.2 KB of chat critical JS,
    * more than moving the scheduler out saved).
@@ -45,7 +45,7 @@ export interface WarmupDeps {
 
 const importSurfacePrefetch = () => import('./surface-prefetch.js');
 
-/** Start the warm-up. Returns a cancel (VerseApp calls it on unmount). */
+/** Start the warm-up. Returns a cancel (PhantomApp calls it on unmount). */
 export function warmUpAfterFirstPaint(deps: WarmupDeps, options: WarmupOptions = {}): () => void {
   const overlay = (load: () => Promise<unknown>): IdleStep => async () => {
     await load();

@@ -308,6 +308,9 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   if (path === '/api/verse/fleet/control/disk-runway') {
     return (await import('./fleet-disk-runway-api.js')).handleFleetDiskRunwayApi(ctx, req, res, path, method);
   }
+  if (path === '/api/verse/fleet/control/merge-graph') {
+    return (await import('./fleet-merge-graph-api.js')).handleFleetMergeGraphApi(ctx, req, res, path, method);
+  }
   const isRoot = path === VERSE_FLEET_CONTROL_PATH;
   const isQueue = path === VERSE_FLEET_CONTROL_QUEUE_PATH;
   const isRunLog = path.startsWith(VERSE_FLEET_CONTROL_RUNS_PREFIX) && path.endsWith('/log');

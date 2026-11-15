@@ -77,6 +77,12 @@ export const NAV_GROUPS: NavGroup[] = [
         implemented: true,
       },
       {
+        path: '/work/sessions',
+        label: 'Sessions',
+        description: 'Live dispatchd agent sessions — queued, running, publishing and recently finished.',
+        implemented: true,
+      },
+      {
         path: '/work/swarms',
         label: 'Swarms',
         description: 'Multi-task DAG runs with live burndown.',

@@ -1,0 +1,123 @@
+/* QueueStationGraph — station graph chrome. Node fills ride the shared
+   --status-*-solid tokens so the bands track the active theme. */
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs-size);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.notice {
+  color: var(--status-danger-fg);
+  font-size: var(--text-sm-size);
+  margin: 0 0 var(--space-3);
+}
+
+.empty {
+  color: var(--text-tertiary);
+  font-size: var(--text-sm-size);
+  margin: 0;
+}
+
+.summary {
+  font-size: var(--text-sm-size);
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-3);
+}
+
+.driftNote {
+  color: var(--status-warning-fg);
+}
+
+.scroll {
+  overflow-x: auto;
+  padding-bottom: var(--space-2);
+}
+
+.svg {
+  display: block;
+  max-width: none;
+}
+
+.edge {
+  stroke: var(--border-subtle);
+  stroke-width: 2;
+}
+
+.node {
+  fill: var(--status-neutral-solid);
+  stroke: var(--text-primary);
+}
+
+.node[data-band='green'] { fill: var(--status-success-solid); }
+.node[data-band='amber'] { fill: var(--status-warning-solid); }
+.node[data-band='red'] { fill: var(--status-danger-solid); }
+.node[data-band='unknown'] { fill: var(--status-unknown-solid); }
+.node[data-band='idle'] { fill: var(--status-neutral-solid); }
+
+.nodeTitle {
+  fill: var(--text-on-accent);
+  font-size: var(--text-xs-size);
+  font-weight: var(--font-weight-semibold);
+}
+
+.nodeMetric {
+  fill: var(--text-on-accent);
+  font-size: var(--text-2xs-size);
+  font-variant-numeric: tabular-nums;
+}
+
+.bottleneckTag {
+  fill: var(--status-danger-fg);
+  font-size: var(--text-2xs-size);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  font-size: var(--text-xs-size);
+  color: var(--text-tertiary);
+}
+
+.legend li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+  background: var(--status-neutral-solid);
+}
+
+.swatch[data-band='green'] { background: var(--status-success-solid); }
+.swatch[data-band='amber'] { background: var(--status-warning-solid); }
+.swatch[data-band='red'] { background: var(--status-danger-solid); }
+.swatch[data-band='unknown'] { background: var(--status-unknown-solid); }
+.swatch[data-band='idle'] { background: var(--status-neutral-solid); }
+
+.pools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) 0 0;
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--text-xs-size);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}

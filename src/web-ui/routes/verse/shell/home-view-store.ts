@@ -1,32 +1,33 @@
 /**
  * routes/verse/shell/home-view-store.ts — the operator's explicit home choice
- * (Leader or Feed) and the window layout, bound for the shell.
+ * (Leader, Feed, Ideas, Goals or Library) and the window layout, bound for the shell.
  *
  * Same shape as data/appearance-store.ts: a module-level value + listener set,
  * best-effort localStorage (Safari private mode throws), nothing stored until
  * the operator actually chooses, so a fresh profile follows the default.
  */
 import { useMemo, useSyncExternalStore } from 'react';
-import { HOME_COMPACT_BELOW, resolveHomeView, type HomeLayout, type HomeView } from './home-view.js';
+import { getPane, subscribePanes } from '../panes/pane-registry.js';
+import { HOME_COMPACT_BELOW, HOME_PANE_IDS, isHomeChoice, resolveHomeView, type HomeChoice, type HomeLayout, type HomeView } from './home-view.js';
 
 export const HOME_VIEW_STORAGE_KEY = 'ashlr.verse.home.v1';
 
-let choice: 'leader' | 'feed' | null | undefined;
+let choice: HomeChoice | null | undefined;
 const listeners = new Set<() => void>();
 
-function readChoice(): 'leader' | 'feed' | null {
+function readChoice(): HomeChoice | null {
   if (choice !== undefined) return choice;
   try {
     const raw = localStorage.getItem(HOME_VIEW_STORAGE_KEY);
-    choice = raw === 'leader' || raw === 'feed' ? raw : null;
+    choice = isHomeChoice(raw) ? raw : null;
   } catch {
     choice = null;
   }
   return choice;
 }
 
-/** Remember an explicit pick of Leader or Feed. */
-export function setHomeChoice(next: 'leader' | 'feed'): void {
+/** Remember an explicit home pick. */
+export function setHomeChoice(next: HomeChoice): void {
   choice = next;
   try {
     localStorage.setItem(HOME_VIEW_STORAGE_KEY, next);
@@ -70,9 +71,10 @@ function subscribeChoice(listener: () => void): () => void {
 export function useHomeView(): { view: HomeView; layout: HomeLayout } {
   const persisted = useSyncExternalStore(subscribeChoice, readChoice, () => null);
   const narrow = useSyncExternalStore(subscribeNarrow, currentNarrow, () => false);
+  const pickedRegistered = useSyncExternalStore(subscribePanes,
+    () => persisted ? getPane(HOME_PANE_IDS[persisted]) !== null : false, () => false);
   return useMemo(
-    // The Leader pane is a builtin, and the pane registry stays out of first paint, so it is not asked here.
-    () => resolveHomeView({ persisted, width: narrow ? HOME_COMPACT_BELOW - 1 : HOME_COMPACT_BELOW, hasLeaderThread: true }),
-    [persisted, narrow],
+    () => resolveHomeView({ persisted, width: narrow ? HOME_COMPACT_BELOW - 1 : HOME_COMPACT_BELOW, hasLeaderThread: true, registered: () => pickedRegistered }),
+    [persisted, narrow, pickedRegistered],
   );
 }

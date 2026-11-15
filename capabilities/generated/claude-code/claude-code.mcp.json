@@ -1,0 +1,55 @@
+{
+  "mcpServers": {
+    "ashlr": {
+      "args": [
+        "-y",
+        "-p",
+        "ashlr-plugin@1.36.4",
+        "ashlr-mcp"
+      ],
+      "command": "npx"
+    },
+    "lexicon": {
+      "args": [
+        "-y",
+        "-p",
+        "@ashlr/lexicon@0.5.9",
+        "lexicon-mcp"
+      ],
+      "command": "npx"
+    },
+    "locus": {
+      "args": [
+        "-y",
+        "@ashlrai/locus-mcp@0.7.0"
+      ],
+      "command": "npx"
+    },
+    "phantom-gateway": {
+      "args": [
+        "mcp"
+      ],
+      "command": "phm"
+    },
+    "phantom-secrets": {
+      "args": [
+        "-y",
+        "phantom-secrets-mcp@0.7.9"
+      ],
+      "command": "npx"
+    },
+    "stack": {
+      "args": [
+        "-y",
+        "-p",
+        "@ashlr/stack@0.3.6",
+        "-p",
+        "ashlr-stack-mcp@0.3.6",
+        "-p",
+        "phantom-secrets@0.7.9",
+        "ashlr-stack-mcp"
+      ],
+      "command": "npx"
+    }
+  }
+}

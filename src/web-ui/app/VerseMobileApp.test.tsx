@@ -13,7 +13,7 @@ import { activityResponse, stubFetch } from '../routes/verse/mobile/mobile.test-
 import { resetActivityForTest } from '../routes/verse/shell/useActivity.js';
 import { ApiError } from '../data/client.js';
 import { clearRemoteSessionForTest } from '../data/remote-session.js';
-import { canonicalizeMobilePath, coverViewport, probeOutcome, VerseMobileApp } from './VerseMobileApp.js';
+import { canonicalizeMobilePath, coverViewport, probeOutcome, PhantomMobileApp } from './VerseMobileApp.js';
 
 beforeEach(() => {
   evictAll();
@@ -60,14 +60,14 @@ describe('the session probe', () => {
   });
 });
 
-describe('VerseMobileApp', () => {
+describe('PhantomMobileApp', () => {
   it('uses the gateway session before any local token gate when its HTML marker is present', async () => {
     window.history.replaceState(null, '', '/verse/m/');
     document.head.innerHTML = '<meta name="ashlr-remote-gateway" content="v1">';
     const fetch = vi.fn(async (_path: string, _init?: RequestInit) => Response.json({ authenticated: false, csrfToken: 'c'.repeat(40), capabilities: { writes: false, pairing: false } }));
     vi.stubGlobal('fetch', fetch);
     act(() => markCheckComplete(false));
-    render(<VerseMobileApp />);
+    render(<PhantomMobileApp />);
     expect(await screen.findByText('Phone pairing is not enabled on this Mac yet. Open Phantom on your Mac to finish gateway setup.')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Connect to your Mac' })).not.toBeInTheDocument();
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -85,7 +85,7 @@ describe('VerseMobileApp', () => {
       : Response.json({ error: 'Pairing unavailable' }, { status: 404 }));
     vi.stubGlobal('fetch', fetch);
     act(() => markCheckComplete(false));
-    render(<VerseMobileApp />);
+    render(<PhantomMobileApp />);
     await userEvent.click(await screen.findByRole('button', { name: 'Check approval' }));
     expect(await screen.findByText('This pairing expired. Start over with a new code from your Mac.')).toBeInTheDocument();
     expect(sessionStorage.getItem('ashlr.remotePairPending.v1')).toBeNull();
@@ -101,7 +101,7 @@ describe('VerseMobileApp', () => {
       throw new TypeError('Network unreachable');
     }));
     act(() => markCheckComplete(false));
-    render(<VerseMobileApp />);
+    render(<PhantomMobileApp />);
     await userEvent.click(await screen.findByRole('button', { name: 'Check approval' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('could not complete this step');
     expect(screen.getByRole('button', { name: 'Check approval' })).toBeEnabled();
@@ -112,7 +112,7 @@ describe('VerseMobileApp', () => {
     const fetch = vi.fn(async () => new Response(null, { status: 401 }));
     vi.stubGlobal('fetch', fetch);
     act(() => markCheckComplete(false));
-    render(<VerseMobileApp />);
+    render(<PhantomMobileApp />);
     expect(await screen.findByRole('heading', { name: 'Connect to your Mac' })).toBeInTheDocument();
     expect(screen.getByText('phm console', { selector: 'pre' })).toBeInTheDocument();
     expect(screen.getByText(/Phantom only ever talks to the Phantom server/)).toBeInTheDocument();
@@ -135,7 +135,7 @@ describe('VerseMobileApp', () => {
       'GET /api/verse/control': { spend: { todayUsd: 0, todayDate: null, dailyBudgetUsd: 0 } },
     });
     act(() => markCheckComplete(true));
-    render(<VerseMobileApp />);
+    render(<PhantomMobileApp />);
     expect(await screen.findByRole('navigation', { name: 'Phantom' })).toBeInTheDocument();
     await waitFor(() => expect(document.head.querySelector('link[rel="manifest"]')).not.toBeNull());
     expect(document.head.querySelector('meta[name="apple-mobile-web-app-capable"]')?.getAttribute('content')).toBe('yes');
@@ -145,7 +145,7 @@ describe('VerseMobileApp', () => {
     window.history.replaceState(null, '', '/verse/m/');
     stubFetch({ 'GET /api/verse/bootstrap': bootstrap(), 'GET /api/verse/activity': activityResponse() });
     act(() => markCheckComplete(true));
-    render(<VerseMobileApp />);
+    render(<PhantomMobileApp />);
     await screen.findByRole('navigation', { name: 'Phantom' });
     for (const store of [localStorage, sessionStorage]) {
       for (let i = 0; i < store.length; i += 1) {
@@ -154,5 +154,12 @@ describe('VerseMobileApp', () => {
         expect(['ashlr.readClientProof.v1', 'ashlr.verse.layout.v1', 'ashlr.theme.v1', 'ashlr.verse.appearance.v1']).toContain(key);
       }
     }
+  });
+});
+
+describe('legacy Verse component names', () => {
+  it('keeps VerseMobileApp resolving to PhantomMobileApp for external importers', async () => {
+    const mod = await import('./VerseMobileApp.js');
+    expect(mod.VerseMobileApp).toBe(mod.PhantomMobileApp);
   });
 });

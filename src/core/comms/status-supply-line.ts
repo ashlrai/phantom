@@ -18,7 +18,10 @@ export interface StatusSupply {
   };
 }
 
-const LANES = ['codex-cmp', 'codex-personal', 'claude', 'devin', 'claude-api', 'codex-local'] as const;
+const LANES = [
+  'codex-cmp', 'codex-personal', 'claude', 'devin', 'claude-api', 'codex-local',
+  'devin-flash', 'gemini', 'zai', 'agy', 'grok', 'cursor',
+] as const;
 const FAIL_REASONS = ['usage-limit', 'auth-rejected', 'executor-fail'] as const;
 const UNKNOWN_REASONS = ['missing-events-log', 'unreadable-events-log', 'no-leader-rows', 'unavailable'] as const;
 const unknownPlanner: StatusSupply['planner'] = { status: 'unknown', lastGoodPassAt: null, reason: 'unavailable' };

@@ -19,7 +19,7 @@ export function isVerseConsolePath(pathname = window.location.pathname): boolean
  * Verse on a phone (src/web-ui/routes/verse/mobile). The trailing slash is
  * canonical: the service worker's scope is `/verse/m/`, and a scope only
  * covers paths that START with it, so `/verse/m` is moved to `/verse/m/` on
- * load (VerseMobileApp) to be controlled offline.
+ * load (PhantomMobileApp) to be controlled offline.
  */
 export const VERSE_MOBILE_PATH = '/verse/m/';
 /** The Phantom-named alias of VERSE_MOBILE_PATH. Not a service-worker scope. */

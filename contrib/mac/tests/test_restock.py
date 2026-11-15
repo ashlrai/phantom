@@ -91,9 +91,9 @@ def line(job, text='routine fix', **attrs):
 
 
 class BoldFloorTests(unittest.TestCase):
-    def test_under_floor_prefers_bold_and_reports_share(self):
+    def test_under_floor_reports_bold_share_but_preserves_higher_priority_work(self):
         # 2 of 8 READY lines are bet=bold (25% < 30% floor): preference lifts the
-        # picked share to >=30% even though both bolds sit at P3 behind P1 safes.
+        # bold preference only breaks ties; it cannot move P3 ahead of P1.
         rows = ['# fixture queue', '']
         rows += [line(f'RQ-T1-SAFE-{k}', P=1, pool='devin', tier='mid', repo='phantom',
                       text=f'routine safe fix {k}') for k in range(1, 7)]
@@ -107,10 +107,17 @@ class BoldFloorTests(unittest.TestCase):
         self.assertEqual((s['ready_bold'], s['ready_n']), (2, 8))
         self.assertAlmostEqual(s['ready_frac'], 0.25)
         self.assertIn('prefer=bold', r.stdout)
-        self.assertGreaterEqual(s['pick_frac'], 0.30, r.stdout)
+        self.assertEqual(s['pick_frac'], 0.0, r.stdout)
         picks = dry_ids(r.stdout)
-        self.assertIn('RQ-T1-BOLD-1', picks)
-        self.assertIn('RQ-T1-BOLD-2', picks)
+        self.assertEqual(picks, [f'RQ-T1-SAFE-{k}' for k in range(1, 5)])
+
+    def test_impact_precedes_file_order_within_priority(self):
+        rows = [line('RQ-LOW-IMPACT', P=0, pool='devin', tier='mid', repo='phantom', impact=1),
+                line('RQ-HIGH-IMPACT', P=0, pool='devin', tier='mid', repo='phantom', impact=90)]
+        tmp = build('\n'.join(rows) + '\n'); self.addCleanup(tmp.cleanup)
+        result = restock(Path(tmp.name), '--dry-run', '--per-lane', '1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(dry_ids(result.stdout), ['RQ-HIGH-IMPACT'])
 
     def test_at_floor_no_preference(self):
         # 4 of 9 READY lines bold (~44% >= 30%): normal priority order, no prefer flag.

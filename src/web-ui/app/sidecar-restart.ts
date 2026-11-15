@@ -1,6 +1,6 @@
 /**
  * app/sidecar-restart.ts — re-adopt the desktop shell's tokens when its
- * sidecar restarts (V3.10; see VerseConsoleApp's header). Its own chunk since
+ * sidecar restarts (V3.10; see PhantomConsoleApp's header). Its own chunk since
  * 3.29.16: the event only ever fires long after first paint, so the listener
  * is installed a moment after the shell mounts instead of costing the chat's
  * first-paint critical JS.

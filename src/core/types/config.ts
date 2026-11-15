@@ -20,8 +20,6 @@ export interface AshlrConfig {
   roots: string[];
   /** Preferred editor for deep links. */
   editor: 'cursor' | 'vscode';
-  /** Markdown opener. Default `ashlr-md` (when installed, else editor); `editor` opts out. */
-  markdownOpener?: 'ashlr-md' | 'editor';
   /** Days without modification before an item is considered stale/inactive. */
   staleDays: number;
   /** Map of category name -> absolute folder path (e.g. "dev-tools" -> ".../github/dev-tools"). */
@@ -1347,5 +1345,14 @@ export interface AshlrConfig {
   router?: {
     /** Enable the contextual Thompson sampler in routeTask. Default false. */
     bandit?: boolean;
+    /**
+     * Censored reward for the dispatch-log learner (outcome-learning.ts). Off
+     * unless exactly true. When on, an assignment with no outcome that is older
+     * than the horizon counts as a failed attempt instead of missing data.
+     * See docs/router/censored-reward.md.
+     */
+    censorUnmerged?: boolean;
+    /** Horizon in hours. Default: twice the p95 time to merge in the log, at least 24. */
+    censorHorizonHours?: number;
   };
 }

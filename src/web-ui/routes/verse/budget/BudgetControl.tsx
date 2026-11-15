@@ -39,6 +39,7 @@ import { describeContextError, useTokenGate } from '../context/use-token-gate.js
 import { percentText, tidyProse } from '../autonomy/format.js';
 import { readBudgetRows } from '../usage/capacity-strip-model.js';
 import {
+  automaticReserveSeats,
   BUDGET_MODE_OPTIONS,
   budgetSummary,
   clampPercent,
@@ -248,11 +249,13 @@ export interface BudgetControlViewProps {
    * = no grant ceiling applies (every mode selectable).
    */
   maxMode?: BudgetMode | null;
+  onRemoveReserves?: () => void;
+  progress?: string | null;
   onMode: (mode: BudgetMode) => void;
   onSeat: (seatId: string, patch: BudgetSeatPatchWire) => void;
 }
 
-export function BudgetControlView({ view, preview, nowMs, pending, error, readError = null, readOnly = false, maxMode = null, onMode, onSeat }: BudgetControlViewProps) {
+export function BudgetControlView({ view, preview, nowMs, pending, error, readError = null, readOnly = false, maxMode = null, onRemoveReserves, progress = null, onMode, onSeat }: BudgetControlViewProps) {
   const titleId = useId();
   // The wire view is read defensively (the capacity strip's own guard): this
   // panel is opened from Apps, the composer's seat chip and the autonomy bar,
@@ -261,6 +264,7 @@ export function BudgetControlView({ view, preview, nowMs, pending, error, readEr
   // malformed is dropped, not shown as "off" — see readBudgetRows.
   const rows = [...readBudgetRows(view).values()];
   const summary = budgetSummary(rows);
+  const reserves = automaticReserveSeats(view);
   const knownMode = BUDGET_MODE_OPTIONS.find((o) => o.value === view.mode) ?? null;
   const mode = knownMode ?? BUDGET_MODE_OPTIONS[1]!;
   const maxAgeMs = typeof view.readingMaxAgeMs === 'number' && Number.isFinite(view.readingMaxAgeMs) ? view.readingMaxAgeMs : null;
@@ -314,12 +318,20 @@ export function BudgetControlView({ view, preview, nowMs, pending, error, readEr
       {error ? <p className={styles.error} role="alert">{error}</p> : null}
       {readError ? <p className={styles.error} role="status" data-read-error="">{readError}</p> : null}
 
+      {reserves.length > 0 ? (
+        <p className={styles.modeText}>
+          {reserves.length} {reserves.length === 1 ? 'seat keeps' : 'seats keep'} usage back for you ({reserves.map((seat) => `${rows.find((row) => row.seatId === seat.seatId)?.label ?? seat.seatId} ${seat.reservePercent}%`).join(', ')}). Mason's policy is no automatic reserve.{' '}
+          <button type="button" disabled={readOnly || pending !== null} onClick={onRemoveReserves}>Use 100%</button>
+        </p>
+      ) : null}
+      {progress ? <p role="status">{progress}</p> : null}
+
       {rows.length === 0 ? (
         <p className={styles.empty}>No seats yet — connect an account or start Ollama, and they appear here.</p>
       ) : (
         <ul className={styles.seats}>
           {rows.map((row) => (
-            <SeatRow key={row.seatId} row={row} saving={pending === row.seatId || pending === 'mode'} readOnly={readOnly} onSeat={onSeat} />
+            <SeatRow key={row.seatId} row={row} saving={pending === row.seatId || pending === 'mode' || pending === 'reserves'} readOnly={readOnly} onSeat={onSeat} />
           ))}
         </ul>
       )}
@@ -345,6 +357,7 @@ export function BudgetControl({ maxMode = null }: { maxMode?: BudgetMode | null 
   const [latest, setLatest] = useState<BudgetView | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   // Poll while visible; read immediately on return (useSeatsRefresh's pattern).
@@ -383,6 +396,31 @@ export function BudgetControl({ maxMode = null }: { maxMode?: BudgetMode | null 
     }
   }, [gate]);
 
+  const removeReserves = useCallback(async () => {
+    if (!view) return;
+    const seats = automaticReserveSeats(view);
+    setPending('reserves');
+    setError(null);
+    try {
+      await gate.run('Remove usage reserves from these seats', async () => {
+        for (const [index, seat] of seats.entries()) {
+          setProgress(`Removing reserves (${index + 1} of ${seats.length})`);
+          try {
+            const next = await updateBudget({ seatId: seat.seatId, policy: { reservePercent: 0, maxSessionWindowPercent: null } });
+            setLatest(next);
+          } catch (err) {
+            setError(`Could not clear ${seat.seatId}: ${readFailureReason(err)}`);
+            break;
+          }
+        }
+      });
+    } finally {
+      setProgress(null);
+      setPending(null);
+      setNowMs(Date.now());
+    }
+  }, [gate, view]);
+
   // The server's reason (budget-api.ts answers `{ code, error }` for a read it
   // could not make), never the bare "GET … failed (HTTP 503)" wrapper.
   const budgetFailure = budget.status === 'error' ? readFailureReason(budget.error) : null;
@@ -412,6 +450,8 @@ export function BudgetControl({ maxMode = null }: { maxMode?: BudgetMode | null 
           ? `Showing the last readings. ${budgetFailure}`
           : previewFailure ? `Next-task preview unavailable. ${previewFailure}` : null}
         maxMode={maxMode}
+        progress={progress}
+        onRemoveReserves={() => void removeReserves()}
         onMode={(mode) => void apply('mode', `Switch the budget to ${mode}`, { mode })}
         onSeat={(seatId, patch) => void apply(seatId, `Change the budget for ${seatId}`, { seatId, policy: patch })}
       />

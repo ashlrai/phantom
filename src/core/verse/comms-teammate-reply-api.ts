@@ -7,6 +7,7 @@
  * The reply text is never logged and never echoed: responses carry status and
  * rowid only. Same dispatch + mutation gate as the agent-bus POST. */
 import type { ApiModule } from './api-modules.js';
+import { handleCommsTeammateReplyAgeApi } from './comms-teammate-reply-age-api.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { fixedOwnerRunsDir } from '../comms/owner-channel.js';
 import { markTeammateTextsAnswered, readTeammateTexts, type TeammateText } from '../comms/imessage-teammate-inbox.js';
@@ -70,4 +71,10 @@ export function createCommsTeammateReplyApi(deps: CommsTeammateReplyApiDeps = {}
   };
 }
 
-export const handleCommsTeammateReplyApi: ApiModule = createCommsTeammateReplyApi();
+const teammateReplyApi = createCommsTeammateReplyApi();
+
+/** The family owns GET /api/verse/comms/teammate-reply-age too (a read-only
+ * times-and-flags projection, comms-teammate-reply-age-api.ts): it answers
+ * first by exact path; everything else stays the reply POST. */
+export const handleCommsTeammateReplyApi: ApiModule = async (ctx, req, res, path, method) =>
+  (await handleCommsTeammateReplyAgeApi(ctx, req, res, path, method)) || teammateReplyApi(ctx, req, res, path, method);

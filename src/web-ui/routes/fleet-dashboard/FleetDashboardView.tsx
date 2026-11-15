@@ -25,6 +25,7 @@ import { DaemonPanel, DaemonPanelSkeleton } from './DaemonPanel.js';
 import { QueueStationGraph } from './QueueStationGraph.js';
 import styles from './FleetDashboardView.module.css';
 import { ResourcePanel } from './ResourcePanel.js';
+import { NodesPanel } from './NodesPanel.js';
 
 export function FleetDashboardView() {
   const snapshotQuery = useQuery(dashboardSnapshotQuery);
@@ -55,6 +56,8 @@ export function FleetDashboardView() {
       <ResourcePanel />
 
       <QueueStationGraph />
+
+      <NodesPanel />
 
       <div className={styles.panels}>
         {snapshotQuery.status === 'loading' ? (

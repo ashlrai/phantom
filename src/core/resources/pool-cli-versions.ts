@@ -1,9 +1,10 @@
-/** One security floor for pool CLI admission and doctor. */
+/** One security floor for pool CLI admission and doctor, plus gated CLI feature env. */
 import type { VerifySubprocessOptions } from '../run/verify-commands.js';
 import { compareCliVersions } from '../verse/model-windows.js';
 
 export const POOL_CLI_MIN_VERSIONS = Object.freeze({
-  claude: Object.freeze({ label: 'Claude Code', minimum: '2.1.309' }),
+  // Claude Code 2.1.311 bundles Agent SDK 0.3.311 — the Agent SDK floor.
+  claude: Object.freeze({ label: 'Claude Code', minimum: '2.1.311' }),
   codex: Object.freeze({ label: 'Codex', minimum: '0.164.0' }),
 });
 export type PoolCliProvider = keyof typeof POOL_CLI_MIN_VERSIONS;
@@ -54,4 +55,37 @@ export async function probePoolCliVersion(provider: PoolCliProvider, command: re
     }
     return assessPoolCliVersion(provider, result.stdout);
   } catch { return { version: null, status: 'unknown' }; }
+}
+
+/**
+ * The oldest Claude Code build that defines the bounded usage-limit watchdog
+ * controls: its changelog documents `CLAUDE_CODE_RETRY_WATCHDOG_MAX_USAGE_LIMIT_WAIT_MS`
+ * (stop waiting when a limit reset is too far away) and
+ * `CLAUDE_CODE_RETRY_WATCHDOG_USAGE_LIMIT_RECHECK_MS` (notice a lifted limit
+ * before reset), and fixes an unattended watchdog verdict that could hold a
+ * turn open indefinitely. Older builds expose only the master switch, so the
+ * tuning vars would be inert on them — and the unbounded wait they bound is
+ * the exact failure mode the floor exists to prevent. A build whose version
+ * cannot be established gets none of the env.
+ */
+export const CLAUDE_RETRY_WATCHDOG_MIN_VERSION = '2.1.311';
+/** Loosest cadence the recheck interval may take; a wait may be shorter. */
+export const CLAUDE_WATCHDOG_RECHECK_MAX_MS = 3_600_000;
+
+/**
+ * The watchdog env for one spawned claude CLI, or none.
+ * `usageLimitWaitMs` is the caller's own bound on waiting at a usage limit —
+ * a seat's nearest reset horizon in Verse, a pool task's remaining deadline in
+ * the pool worker — so a far-off refusal ends the request instead of parking
+ * the slot. The recheck cadence is a tenth of that wait, capped; polls stay
+ * proportional to the horizon rather than fixed regardless of budget.
+ */
+export function claudeRetryWatchdogEnv(cliVersion: string | null, usageLimitWaitMs: number): Record<string, string> {
+  if (cliVersion === null || compareCliVersions(cliVersion, CLAUDE_RETRY_WATCHDOG_MIN_VERSION) < 0 ||
+    !Number.isSafeInteger(usageLimitWaitMs) || usageLimitWaitMs < 1) return {};
+  return {
+    CLAUDE_CODE_RETRY_WATCHDOG_MAX_USAGE_LIMIT_WAIT_MS: String(usageLimitWaitMs),
+    CLAUDE_CODE_RETRY_WATCHDOG_USAGE_LIMIT_RECHECK_MS:
+      String(Math.min(Math.max(1, Math.floor(usageLimitWaitMs / 10)), CLAUDE_WATCHDOG_RECHECK_MAX_MS)),
+  };
 }

@@ -88,6 +88,7 @@ import {
   appendMasonMessage,
   approveLeaderAction,
   listLeaderThread,
+  postLeaderMessage,
   readLeaderQuestion,
   submitLeaderQuestion,
   syncLeaderMemosToThread,
@@ -636,6 +637,18 @@ async function handleThreadRoutes(ctx: VerseApiContext, req: IncomingMessage, re
       const replyTo = body['replyTo'];
       if (replyTo !== undefined && typeof replyTo !== 'string') {
         sendInvalid(res, 'replyTo must be a message id');
+        return true;
+      }
+      // Exact short status and recheck asks are answered in the same thread
+      // with the read-only digest or fleet recheck verdict; anything else
+      // stays with the Leader.
+      const { ownerStatusReply } = await import('../agents/owner-status-reply.js');
+      const statusReply = ownerStatusReply();
+      if (statusReply.ask(body['text'] as string)) {
+        const { message } = await appendMasonMessage(body['text'] as string, { channel: 'verse', cfg: ctx.cfg, recordOnly: true, ...(replyTo ? { replyTo } : {}) });
+        const text = await statusReply.compose(hooks.plannerRunsRoot?.() ?? join(homedir(), '.ashlr-runs'), new Date(), body['text'] as string);
+        const reply = postLeaderMessage({ channel: 'verse', kind: 'message', text, replyTo: message.id, delivery: {} });
+        sendJson(res, 200, { message, reply });
         return true;
       }
       const result = await appendMasonMessage(body['text'] as string, { channel: 'verse', cfg: ctx.cfg, ...(replyTo ? { replyTo } : {}) });

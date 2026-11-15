@@ -138,3 +138,64 @@ export function orderByTier<T>(items: readonly T[], tierOfItem: (item: T) => Res
     .sort((a, b) => a.rank - b.rank || a.index - b.index)
     .map((x) => x.item);
 }
+
+// ---------------------------------------------------------------------------
+// Complexity escalation: local loop vs frontier
+// Display ResourceTier above is a separate axis. These constants are the
+// limits decideComplexityTier in policy.ts reads. They are policy, not a
+// measured window and not a bill.
+// ---------------------------------------------------------------------------
+
+/** Where complexity escalation sends a task. */
+export type InferenceTier = 'local' | 'frontier';
+
+/** Kinds a local loop may keep when nothing else forces frontier. */
+export const LOCAL_LOOP_TASK_KINDS = Object.freeze(['edit', 'test', 'lint', 'draft'] as const);
+
+/** Kinds the complexity policy understands. Any other kind fails closed to frontier. */
+export const COMPLEXITY_TASK_KINDS = Object.freeze(['edit', 'test', 'lint', 'draft', 'plan', 'architecture'] as const);
+
+export type ComplexityTaskKind = (typeof COMPLEXITY_TASK_KINDS)[number];
+
+/** Roles the complexity policy understands. Unknown roles fail closed to frontier. */
+export const COMPLEXITY_ROLES = Object.freeze(['implement', 'review', 'draft', 'merge', 'credential'] as const);
+
+export type ComplexityRole = (typeof COMPLEXITY_ROLES)[number];
+
+/** Local models never receive these roles. */
+export const FRONTIER_ONLY_ROLES = Object.freeze(['merge', 'credential'] as const);
+
+/**
+ * Context tokens a local loop may hold. A record above this escalates.
+ * Policy constant, not a live model window.
+ */
+export const LOCAL_CONTEXT_TOKEN_LIMIT = 32_768;
+
+/**
+ * Two failed verify attempts is the repeat. The second failure escalates.
+ * A single failure stays on the local loop when nothing else forces frontier.
+ */
+export const REPEATED_VERIFY_FAILURES = 2;
+
+/** Default bind for local inference. Same host llama-server uses unless an operator opts out there. */
+export const LOCAL_INFERENCE_DEFAULT_HOST = '127.0.0.1';
+
+/**
+ * Loopback hosts, spelled the way the llama bind gate compares them
+ * (`isLoopbackHost` in local-runtime/llama/config.ts). Bracketed `[::1]`
+ * becomes `::1`. Anything else is returned trimmed, unchanged in case.
+ */
+export function normalizeInferenceHost(host: string): string {
+  const normalised = host.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  if (normalised === 'localhost' || normalised === '127.0.0.1' || normalised === '::1') return normalised;
+  return host.trim();
+}
+
+/**
+ * True only for localhost, 127.0.0.1, and ::1.
+ * 0.0.0.0, other 127.x addresses, and every other name are not loopback here.
+ */
+export function isLoopbackInferenceHost(host: string): boolean {
+  const normalised = normalizeInferenceHost(host);
+  return normalised === 'localhost' || normalised === '127.0.0.1' || normalised === '::1';
+}

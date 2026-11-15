@@ -121,6 +121,35 @@ export type { FleetLaneCreditView } from '../../core/fleet/lane-console.js';
 /** `slotTarget` is optional here so a response from an older server still type-checks. */
 export type FleetLaneView = Omit<CoreFleetLaneView, 'slotTarget'> & { slotTarget?: number | null };
 export type FleetLaneSnapshot = Omit<CoreFleetLaneSnapshot, 'lanes'> & { lanes: FleetLaneView[] };
+/** fleet.sessions.v1 — unified dispatchd session list behind GET /api/fleet/sessions. */
+export type {
+  FleetSessionsV1,
+  FleetSessionV1,
+  FleetSessionStatus,
+  FleetSessionSourceState,
+  FleetSessionLive,
+  FleetSessionOutcome,
+  FleetSessionsDispatcherV1,
+} from '../../core/fleet/runs-sessions.js';
+
+/**
+ * RQ-SWE3-BOARDUI-1: the Leader-as-CEO board behind GET /api/fleet/board.
+ * `FleetBoardResponse` is the exact envelope `phm fleet board --json` prints;
+ * `FleetBoardV1` is the `fleet.leader-board.v1` state-file contract — both
+ * declared once in core/fleet/leader-journal.ts and re-exported type-only.
+ */
+export type {
+  FleetBoardConflictSample,
+  FleetBoardConflictTrend,
+  FleetBoardLane,
+  FleetBoardNeedsMasonItem,
+  FleetBoardNeedsMasonStatus,
+  FleetBoardRead,
+  FleetBoardResponse,
+  FleetBoardSourceState,
+  FleetBoardStatus,
+  FleetBoardV1,
+} from '../../core/fleet/leader-journal.js';
 
 /**
  * Structural shape shared by every "we might not actually know this"

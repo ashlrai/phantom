@@ -174,7 +174,7 @@ describe('fleet cos verbs', () => {
   it('fleet cos-work --json prints one JSON line and exits 0 on idle', async () => {
     vi.stubEnv('ASHLR_RUNS_DIR', runsDir);
     const output = vi.spyOn(console, 'log').mockImplementation(() => {});
-    expect(await cmdFleetCosWork(['--json'])).toBe(0);
+    expect(await cmdFleetCosWork(['--apply', '--json'])).toBe(0);
     expect(JSON.parse(output.mock.calls.at(-1)![0] as string)).toEqual({ outcome: 'idle' });
   });
 

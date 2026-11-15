@@ -36,22 +36,55 @@ export function senderIdFor(handle: string): string {
   return `imessage:${createHash('sha256').update(handle.trim().toLowerCase()).digest('hex').slice(0, 16)}`;
 }
 
+/**
+ * Chunked patch-transfer frame markers (imessage-patch-transfer.ts). The
+ * marker list lives in this leaf module so the intent classifier and the
+ * transfer's own parser share one definition without an import cycle.
+ */
+export const PATCH_FRAME_MARKERS = ['PATCH-BEGIN', 'PATCH-PART', 'PATCH-END'] as const;
+
+/** True for any text that opens with a protocol marker (even a malformed one). */
+export function isPatchFrameText(text: string): boolean {
+  return typeof text === 'string' && PATCH_FRAME_MARKERS.some((m) => text === m || text.startsWith(`${m} `));
+}
+
 export type TeammateSourceState = 'healthy' | 'missing' | 'degraded';
+
+/** Only direct requests naming a work product qualify for fleet dispatch. */
+function isActionableRequest(text: string): boolean {
+  const request = text.trim().replace(/^(?:(?:can|could|would) you\s+(?:please\s+)?|please\s+|(?:i )?need you to\s+)/i, '');
+  const match = /^(?:review\s+|draft\s+(?:(?:a|the)\s+)?(?:spec(?:ification)?|report|test analysis)\s+(?:for|on|about)\s+|run\s+(?:(?:an?|the)\s+)?analysis\s+(?:on|of|for)\s+|queue\s+(?:(?:a|the)\s+)?job\s+(?:for|to)\s+|research\s+)(.+)/i.exec(request);
+  if (!match) return false;
+  const target = match[1].replace(/[?.!]+$/, '').trim();
+  return /[\p{L}\p{N}]/u.test(target)
+    && !/^(?:it|this|that|something|anything|things|status|the status)(?:\s+please)?$/i.test(target)
+    && !/^(?:can|could|would|should|whether|if|what|how|why|when|is|was|are|were|complete|completed|ready|done)\b/i.test(target)
+    && !/\b(?:is|was|looks?)\s+(?:ready|done|complete|good)\b/i.test(target);
+}
 
 /** Pure acknowledgements cannot cause agent-to-agent acknowledgement loops. */
 export function teammateNeedsReply(text: string): boolean {
   // Code chunks often contain question marks/requests as source literals. They are
   // artifacts to retain, never conversation requests to answer once per chunk.
+  // PATCH-BEGIN/PART/END frames are transfer protocol, never conversation.
+  if (isPatchFrameText(text)) return false;
   if (/^.{0,80}\b(?:patch|artifact|chunk)\s+\d+\/\d+\b/i.test(text) || /^(?:diff --git |--- [ab/] |```)/.test(text)) return false;
   return !/^\s*(ack(?:nowledged)?|thanks|thank you|received|noted|got it|ok(?:ay)?|👍)[.!\s]*$/i.test(text)
-    && /\?|\b(?:please|can you|could you|request(?:ing)?|need you|probe)\b/i.test(text);
+    && (/\?|\b(?:please|can you|could you|request(?:ing)?|need you|probe)\b/i.test(text) || isActionableRequest(text));
 }
 
-/** Keep requests for a decision or action in the local inbox for leader review. */
-export function classifyTeammateIntent(text: string): 'ignore' | 'reply' | 'leader' {
+/** Dispatch explicit artifact work; keep privileged requests for leader review. */
+export function classifyTeammateIntent(text: string, dispatchWork: true): 'ignore' | 'reply' | 'leader' | 'actionable';
+export function classifyTeammateIntent(text: string, dispatchWork?: false): 'ignore' | 'reply' | 'leader';
+export function classifyTeammateIntent(text: string, dispatchWork = false): 'ignore' | 'reply' | 'leader' | 'actionable' {
   if (!teammateNeedsReply(text)) return 'ignore';
   if (/\b(?:approve|approval|authorize|authorise|permission|decision|decide|escalat\w*|leader|mason)\b/i.test(text)
-      || /\b(?:please|can you|could you|need you to)\s+(?:deploy|release|ship|merge|delete|remove|change|create|pay|buy|run|execute)\b/i.test(text)) return 'leader';
+      || /\b(?:deploy|ship|merge|delete|pay|buy|execute)\b/i.test(text)
+      || /\b(?:to|then|and)\s+(?:release|remove|change)\b/i.test(text)) return 'leader';
+  // Read-only observers retain their existing intent projection. Only the
+  // approved worker opts into dispatch, without widening those API schemas.
+  if (dispatchWork && isActionableRequest(text)) return 'actionable';
+  if (/\b(?:please|can you|could you|need you to)\s+(?:release|remove|change|create|run)\b/i.test(text)) return 'leader';
   return 'reply';
 }
 
@@ -86,19 +119,24 @@ export function readRows(runsDir?: string): { rows: TeammateRow[]; state: Teamma
   const read = readPrivateFileTailCapped(file(runsDir), STORE_READ_BYTES);
   if (read === null) return { rows: [], state: 'missing' };
   let raw = read.text;
+  let degraded = false;
   if (read.truncated) {
     // Torn first line is dropped; the newest rows (the only ones rowid
     // dedupe and unanswered-text reads ever need) live at the tail.
     const firstBreak = raw.indexOf('\n');
+    if (firstBreak < 0) degraded = true;
     raw = firstBreak < 0 ? '' : raw.slice(firstBreak + 1);
   }
   const rows: TeammateRow[] = [];
-  let degraded = read.truncated;
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
     try {
       const row = JSON.parse(line) as unknown;
-      if (row && typeof row === 'object') rows.push(row as TeammateRow); else degraded = true;
+      if (row && typeof row === 'object' && !Array.isArray(row)) {
+        const entry = row as TeammateRow;
+        if (isTextRow(entry) || validRowid(entry.answered)) rows.push(entry);
+        else degraded = true;
+      } else degraded = true;
     } catch {
       degraded = true;
     }

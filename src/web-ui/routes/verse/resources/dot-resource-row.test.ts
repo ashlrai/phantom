@@ -9,6 +9,7 @@ function status(over: { lastAckAt?: string | null; teammate?: CommsStatus['teamm
   const lastAckAt = over.lastAckAt === undefined ? minutesAgo(12) : over.lastAckAt;
   return {
     generatedAt: minutesAgo(0),
+    sendPolicy: { confirmed: true, teamIdentities: 1, channels: ['slack'] },
     imessage: { configuration: { state: 'configured', reason: '' }, chatDb: { state: 'readable', reason: '' }, cursor: { state: 'present', reason: '' },
       ackSource: 'healthy', lastAckAt, acks24h: 3, nextStep: null },
     teammate: over.teammate === undefined

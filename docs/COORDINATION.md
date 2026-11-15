@@ -134,8 +134,12 @@ before choosing to act.
    particular list, so use it only when the work is actually fleet bridge work.
 4. Record the repository, branch, intended paths and status on the durable
    local bus using `phm comms bus post --file <envelope.json>`, then read it
-   with `phm comms bus read`. `src/cli/comms-bus.ts` documents the envelope
-   and filters; `docs/CHANNELS.md` describes the channel feed. The bus is
+   with `phm comms bus read`. Typed work uses protocol kind `task` with a
+   `fleet.*` or `repo.*` topic (see
+   [CONTRACT-BUS-PROTOCOL-V1](contracts/CONTRACT-BUS-PROTOCOL-V1.md));
+   take it with `phm comms bus next --to <topic> --owner <label> --lease-ms <ms>`
+   so only one agent claims each task. `src/cli/comms-bus.ts` documents the
+   envelope and filters; `docs/CHANNELS.md` describes the channel feed. The bus is
    local JSON transport with no delivery handlers or authenticated identities:
    posting is a coordination notice, not a lock or proof anyone saw it.
 5. Recheck before opening a PR and after the base moves. If the work overlaps,

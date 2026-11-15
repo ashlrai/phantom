@@ -3,7 +3,7 @@ import { appendFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { appendBusInbox, type BusInboxOptions } from '../core/fleet/bus-inbox.js';
-import { learnOutcomes } from '../core/routing/outcome-learning.js';
+import { censorFromConfig, learnOutcomes } from '../core/routing/outcome-learning.js';
 import {
   DEFAULT_FUND_COUNT, fundedIds, parseCandidates, pickRecords, rankCandidates, readyLine, type SelectorResult,
 } from '../core/routing/selector.js';
@@ -105,10 +105,12 @@ export async function cmdSelect(args: string[], deps: SelectDeps = {}): Promise<
   const events = await readCapped(parsed.events ?? join(root, 'queue', 'dispatch-events.log')) ?? '';
 
   const { candidates, rejected } = parseCandidates(candidateText);
-  const result: SelectorResult = rankCandidates(candidates, learnOutcomes(events), {
+  const now = (deps.now ?? (() => new Date()))();
+  const { loadConfigReadOnly } = await import('../core/config.js');
+  const learning = learnOutcomes(events, censorFromConfig(loadConfigReadOnly().router, now.getTime()));
+  const result: SelectorResult = rankCandidates(candidates, learning, {
     count: parsed.top, rejected, exclude: fundedIds(await readCapped(picksPath) ?? ''),
   });
-  const now = (deps.now ?? (() => new Date()))();
   let bus = 'skipped';
   if (!parsed.dryRun && result.picks.length > 0) {
     await mkdir(dir, { recursive: true, mode: 0o700 });

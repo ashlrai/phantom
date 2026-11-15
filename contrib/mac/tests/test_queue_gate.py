@@ -14,6 +14,9 @@ def rows(count):
 
 
 class QueueGateTests(unittest.TestCase):
+    def test_shared_and_unknown_preferences_consume_the_same_capacity(self):
+        data = rows(1) + 'RQ-OPEN\tphantom\t\tmid\t/prompt\nRQ-HINT\tphantom\told-lane\twork\t/prompt\n'
+        self.assertEqual(queue_gate.allowance(18, data, set()), {'depth': 3, 'target': 45, 'allow': 42})
     def test_depths(self):
         for count, expected in [(0, 45), (10, 35), (45, 0), (100, 0)]:
             with self.subTest(count=count):

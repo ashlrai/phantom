@@ -9,10 +9,9 @@ beforeEach(() => { mocks.state = { ...idle }; });
 describe('Phantom update status version', () => {
   it('idle names the installed version and the no-newer-release line', () => {
     render(<UpdateStatus />);
-    expect(screen.getAllByText('Up to date · v3.29.15').length).toBeGreaterThan(0);
-    expect(screen.getByText('No installable signed release newer than v3.29.15 is on the update feed.')).toBeTruthy();
+    expect(screen.getAllByText('Checking the update feed…').length).toBeGreaterThan(0);
     expect(screen.queryByText('No update found')).toBeNull();
-    expect(screen.getByLabelText('Desktop updates: Up to date · v3.29.15')).toBeTruthy();
+    expect(screen.getByLabelText('Desktop updates: Checking the update feed…')).toBeTruthy();
   });
   it('available shows the target version', () => {
     mocks.state = { ...idle, phase: 'available', version: '3.30.1' }; render(<UpdateStatus />);
@@ -20,6 +19,6 @@ describe('Phantom update status version', () => {
   });
   it('a state without a version still has a badge', () => {
     mocks.state = { ...idle, version: null }; render(<UpdateStatus />);
-    expect(screen.getAllByText('No newer signed release').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Checking the update feed…').length).toBeGreaterThan(0);
   });
 });

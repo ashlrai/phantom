@@ -187,18 +187,109 @@ export interface NativeToolImpl extends NativeToolDef {
 
 let plannerRunStartedAt: string | null = null;
 
-import { EVIDENCE_SCHEMAS, recordEvidence, validEvidenceArgs } from './intent/mcp-evidence.js';
-
 const TOOLS: NativeToolImpl[] = [
   {
-    name: 'intent_link', description: 'Record caller-supplied merged pull evidence on matching directives.',
-    inputSchema: EVIDENCE_SCHEMAS.intent_link, safety: 'append',
-    handler: async args => recordEvidence('intent_link', args),
+    name: 'intent_add',
+    description: 'Record a local directive. Tracking does not authorize action.',
+    inputSchema: { type: 'object', properties: {
+      title: { type: 'string' }, source: { type: 'string' }, owner: { type: 'string' },
+      rq: { type: 'array', items: { type: 'string' } }, status: { type: 'string' },
+      verbatim: { type: 'boolean' }, partial: { type: 'boolean' }, staleAfterMs: { type: 'integer', minimum: 60000, maximum: 31536000000 },
+    }, required: ['title', 'source'], additionalProperties: false },
+    safety: 'append', handler: async args => (await import('./intent/native-edit.js' as string) as typeof import('./intent/native-edit.js')).nativeEdit('intent_add', args),
   },
   {
-    name: 'intent_ship', description: 'Record caller-supplied release evidence on matching directives.',
-    inputSchema: EVIDENCE_SCHEMAS.intent_ship, safety: 'append',
-    handler: async args => recordEvidence('intent_ship', args),
+    name: 'intent_update',
+    description: 'Revise a local directive and record caller-reported verification evidence. Tracking does not authorize action.',
+    inputSchema: { type: 'object', properties: {
+      id: { type: 'string' }, title: { type: 'string' }, source: { type: 'string' }, owner: { type: 'string' },
+      rq: { type: 'array', items: { type: 'string' } }, status: { type: 'string' }, evidence: { type: 'string' }, partial: { type: 'boolean' },
+    }, required: ['id'], additionalProperties: false },
+    safety: 'append', handler: async args => (await import('./intent/native-edit.js' as string) as typeof import('./intent/native-edit.js')).nativeEdit('intent_update', args),
+  },
+  {
+    name: 'intent_list',
+    description: 'List local owner directives and their provenance, optionally filtered by status.',
+    inputSchema: { type: 'object', properties: { status: { type: 'string', enum: ['proposed', 'queued', 'in-progress', 'merged', 'shipped', 'verified', 'superseded', 'closed', 'unknown'] } }, additionalProperties: false },
+    safety: 'read',
+    handler: async (args) => {
+      const { listIntents } = await import('./intent/ledger.js');
+      const { isIntentStatus } = await import('./intent/schema.js');
+      const status = typeof args['status'] === 'string' && isIntentStatus(args['status']) ? args['status'] : undefined;
+      const listed = await listIntents({ status });
+      return { ok: true, ...listed.summary, records: listed.items };
+    },
+  },
+  {
+    name: 'intent_get',
+    description: 'Read one intent by id from the local ledger.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,80}$' } }, required: ['id'], additionalProperties: false },
+    safety: 'read',
+    handler: async (args) => {
+      const { getIntent } = await import('./intent/ledger.js');
+      const item = await getIntent(args['id'] as string);
+      return item ? { ok: true, item } : { ok: false, error: 'Intent not found.' };
+    },
+  },
+  {
+    name: 'intent_link', description: 'Record caller-supplied merged pull evidence on matching directives. Supplied claims are not verified.',
+    inputSchema: { type: 'object', properties: {
+      repo: { type: 'string', minLength: 1, maxLength: 200 },
+      number: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+      title: { type: 'string', minLength: 1, maxLength: 300 },
+      branch: { type: 'string', minLength: 1, maxLength: 300 },
+      url: { type: 'string', minLength: 1, maxLength: 2048 },
+      at: { type: 'string', maxLength: 35, format: 'date-time' },
+    }, required: ['repo', 'number', 'title'], additionalProperties: false },
+    safety: 'append',
+    handler: async args => (await import('./intent/mcp-evidence.js' as string) as typeof import('./intent/mcp-evidence.js')).recordEvidence('intent_link', args),
+  },
+  {
+    name: 'intent_ship', description: 'Record caller-supplied release evidence on matching directives. Supplied claims are not verified.',
+    inputSchema: { type: 'object', properties: {
+      release: { type: 'string', minLength: 1, maxLength: 200 },
+      notes: { type: 'string', minLength: 1, maxLength: 10000 },
+      rq: { type: 'array', minItems: 1, maxItems: 16, items: { type: 'string', minLength: 1, maxLength: 200 } },
+      at: { type: 'string', maxLength: 35, format: 'date-time' },
+    }, required: ['release'], additionalProperties: false },
+    safety: 'append',
+    handler: async args => (await import('./intent/mcp-evidence.js' as string) as typeof import('./intent/mcp-evidence.js')).recordEvidence('intent_ship', args),
+  },
+  {
+    name: 'intent_stale', description: 'List stale directives in the local intent ledger. apply true refreshes local tracking only (live directives re-queue, others keep their status with a sweep evidence row); recommendations never close work, dispatch jobs, verify remotely or claim completion.',
+    inputSchema: { type: 'object', properties: { apply: { type: 'boolean' } }, additionalProperties: false },
+    safety: 'append',
+    handler: async args => (await import('./intent/native-stale.js' as string) as typeof import('./intent/native-stale.js')).nativeIntentStale(args),
+  },
+  {
+    name: 'intent_import',
+    description: 'Import local JSONL files or an ashlr.intent-ledger/v1 document, deduplicating directives and retaining provenance.',
+    inputSchema: { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' }, minItems: 1 } }, required: ['paths'], additionalProperties: false },
+    safety: 'append',
+    handler: async (args) => {
+      const paths = args['paths'];
+      if (Object.keys(args).some((key) => key !== 'paths') || !Array.isArray(paths) || paths.length === 0 ||
+        !paths.every((path): path is string => typeof path === 'string' && path.trim().length > 0)) {
+        throw new Error('Expected a nonempty paths array of nonblank strings, with no other arguments.');
+      }
+      const { importIntentFiles } = await import('./intent/import.js');
+      return { ok: true, schema: 'ashlr.intent-ledger/v1', ...(await importIntentFiles(paths)) };
+    },
+  },
+  {
+    name: 'intent_import',
+    description: 'Import local JSONL files or an ashlr.intent-ledger/v1 document, deduplicating directives and retaining provenance.',
+    inputSchema: { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' }, minItems: 1 } }, required: ['paths'], additionalProperties: false },
+    safety: 'append',
+    handler: async (args) => {
+      const paths = args['paths'];
+      if (Object.keys(args).some((key) => key !== 'paths') || !Array.isArray(paths) || paths.length === 0 ||
+        !paths.every((path): path is string => typeof path === 'string' && path.trim().length > 0)) {
+        throw new Error('Expected a nonempty paths array of nonblank strings, with no other arguments.');
+      }
+      const { importIntentFiles } = await import('./intent/import.js');
+      return { ok: true, schema: 'ashlr.intent-ledger/v1', ...(await importIntentFiles(paths)) };
+    },
   },
   {
     name: 'phantom_agent_bus_read',
@@ -353,9 +444,27 @@ const TOOLS: NativeToolImpl[] = [
       const { resolveNeedsMasonWithInbox } = await import('./fleet/needs-mason-relay.js');
       const result = await resolveNeedsMasonWithInbox(
         { itemId: args.itemId as string, ...(typeof args.reply === 'string' ? { reply: args.reply } : {}) },
-        { runsDir: process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), source: 'cli' });
+        // MCP callers are agents, not Mason: record the agent surface, never 'cli'.
+        { runsDir: process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), source: 'leader' });
       if (!result.ok) return { error: result.error, status: result.code, itemId: args.itemId, inbox: result.inbox };
       return { v: 1, status: 'resolved', itemId: result.itemId, duplicate: result.duplicate, cursor: result.cursor, inbox: result.inbox };
+    },
+  },
+  {
+    name: 'phantom_fleet_needs_wait',
+    description: 'Wait within a bounded deadline for an existing needs-you item to be resolved.',
+    inputSchema: { type: 'object', properties: {
+      itemId: { type: 'string', pattern: '^nm-[0-9a-f]{12}$' },
+      timeoutMs: { type: 'integer', minimum: 1, maximum: 30000 },
+      pollMs: { type: 'integer', minimum: 100, maximum: 30000, default: 1000 },
+    }, required: ['itemId', 'timeoutMs'], additionalProperties: false },
+    safety: 'read',
+    handler: async args => {
+      const itemId = args.itemId as string;
+      const { waitNeedsMason } = await import('./fleet/needs-mason-wait.js');
+      const status = await waitNeedsMason({ id: itemId, timeoutMs: args.timeoutMs as number,
+        pollMs: (args.pollMs as number | undefined) ?? 1000 });
+      return { itemId, status };
     },
   },
   {
@@ -429,6 +538,16 @@ const TOOLS: NativeToolImpl[] = [
     handler: async () => {
       const { collectCodexSessionUsages, buildCodexResourceReport } = await import('./fleet/codex-session-usage.js');
       return buildCodexResourceReport(collectCodexSessionUsages(), [], Date.now());
+    },
+  },
+  {
+    name: 'phantom_fleet_verbs',
+    description: 'List fleet verbs, usage and summaries; optional grep. Read-only.',
+    inputSchema: { type: 'object', properties: { grep: { type: 'string', maxLength: 64 } }, additionalProperties: false },
+    safety: 'read',
+    handler: async args => {
+      const catalog = await import('./fleet/fleet-verbs-tool.js' as string) as typeof import('./fleet/fleet-verbs-tool.js');
+      return catalog.fleetVerbsCatalog(args.grep as string | undefined);
     },
   },
   {
@@ -1628,8 +1747,20 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
   // The general validator intentionally tolerates unknown fields and only checks
   // primitive types. Bus calls need the exact wire contract before any append.
   let invalid: string | null;
-  if (name === 'intent_link' || name === 'intent_ship') {
-    invalid = validEvidenceArgs(name, rawArgs) ? null : 'invalid intent evidence arguments';
+  if (name === 'intent_add' || name === 'intent_update') {
+    invalid = ((await import('./intent/native-edit.js' as string)) as typeof import('./intent/native-edit.js')).validNativeEdit(name, rawArgs) ? null : 'invalid intent arguments';
+  } else if (name === 'intent_link' || name === 'intent_ship') {
+    invalid = ((await import('./intent/mcp-evidence.js' as string)) as typeof import('./intent/mcp-evidence.js')).validEvidenceArgs(name, rawArgs) ? null : 'invalid intent evidence arguments';
+  } else if (name === 'intent_stale') {
+    invalid = (await import('./intent/native-stale.js' as string) as typeof import('./intent/native-stale.js')).validStaleArgs(rawArgs) ? null : 'invalid intent stale arguments';
+  } else if (name === 'intent_list' || name === 'intent_get') {
+    const { isIntentStatus, validIntentId } = await import('./intent/schema.js');
+    const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
+    const key = name === 'intent_list' ? 'status' : 'id';
+    const value = args[key];
+    invalid = !object || Object.keys(args).some(k => k !== key) ||
+      (name === 'intent_list' ? value !== undefined && (typeof value !== 'string' || !isIntentStatus(value)) :
+        typeof value !== 'string' || !validIntentId(value)) ? 'invalid intent arguments' : null;
   } else if (name === 'phantom_agent_bus_post') {
     try {
       invalid = (await import('./fleet/bus-envelope.js')).validateBusEnvelope(rawArgs).ok ? null : 'invalid bus envelope';
@@ -1709,6 +1840,23 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       ('timeoutMs' in args && (!Number.isInteger(args.timeoutMs) || (args.timeoutMs as number) < 1 || (args.timeoutMs as number) > 30000)) ||
       ('intervalMs' in args && (!Number.isInteger(args.intervalMs) || (args.intervalMs as number) < 100 || (args.intervalMs as number) > 60000))
       ? 'invalid fleet apps await arguments' : null;
+  } else if (name === 'phantom_fleet_apps_watch') {
+    const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
+    const apps = args.apps;
+    invalid = !object || Object.keys(args).some(key => !['apps', 'durationMs', 'intervalMs', 'maxConsecutiveFailures'].includes(key)) ||
+      !Array.isArray(apps) || apps.length < 1 || apps.length > 8 || new Set(apps).size !== apps.length ||
+      apps.some(app => typeof app !== 'string' || !FLEET_APPS.some(allowed => allowed === app)) ||
+      !Number.isInteger(args.durationMs) || (args.durationMs as number) < 1 || (args.durationMs as number) > 10000 ||
+      ('intervalMs' in args && (!Number.isInteger(args.intervalMs) || (args.intervalMs as number) < 100 || (args.intervalMs as number) > 10000)) ||
+      ('maxConsecutiveFailures' in args && (!Number.isInteger(args.maxConsecutiveFailures) || (args.maxConsecutiveFailures as number) < 1 || (args.maxConsecutiveFailures as number) > 10))
+      ? 'invalid fleet apps watch arguments' : null;
+  } else if (name === 'phantom_fleet_needs_wait') {
+    const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
+    invalid = !object || Object.keys(args).some(key => !['itemId', 'timeoutMs', 'pollMs'].includes(key)) ||
+      typeof args.itemId !== 'string' || !/^nm-[0-9a-f]{12}$/.test(args.itemId) ||
+      !Number.isInteger(args.timeoutMs) || (args.timeoutMs as number) < 1 || (args.timeoutMs as number) > 30000 ||
+      ('pollMs' in args && (!Number.isInteger(args.pollMs) || (args.pollMs as number) < 100 || (args.pollMs as number) > 30000))
+      ? 'invalid fleet needs wait arguments' : null;
   } else if (name === 'phantom_fleet_drop_job') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
     invalid = !object || Object.keys(args).some(key => !['id', 'lane', 'tier', 'body'].includes(key)) ||
@@ -1764,6 +1912,11 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
   } else if (name === 'phm_agent_roster') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
     invalid = !object || Object.keys(args).length > 0 ? 'invalid roster arguments' : null;
+  } else if (name === 'phantom_fleet_verbs') {
+    const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
+    invalid = !object || Object.keys(args).some(key => key !== 'grep') ||
+      ('grep' in args && (typeof args.grep !== 'string' || [...args.grep].length > 64))
+      ? 'invalid fleet verbs arguments' : null;
   } else if (name === 'phantom_agent_bus_read' || name === 'phantom_agent_bus_status') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
     const keys = Object.keys(args);
@@ -1795,7 +1948,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
     cfg = loadConfig();
   } catch (err) {
     auditNativeCall(`${tool.name} keys=${argKeys} — config load failed`, 'error');
-    if (fleetObservation || ['intent_link', 'intent_ship', 'phantom_fleet_apps_ensure', 'phantom_fleet_apps_await', 'phantom_fleet_apps_follow', 'phantom_fleet_apps_recovery_check', 'phantom_fleet_apps_recovery_batch'].includes(name)) return textResult({ error: 'Fleet configuration unavailable' }, true);
+    if (fleetObservation || ['intent_stale', 'intent_add', 'intent_update', 'intent_link', 'intent_ship', 'phantom_fleet_apps_ensure', 'phantom_fleet_apps_await', 'phantom_fleet_apps_watch', 'phantom_fleet_apps_follow', 'phantom_fleet_apps_recovery_check', 'phantom_fleet_apps_recovery_batch'].includes(name)) return textResult({ error: 'Fleet configuration unavailable' }, true);
     return textResult(
       `${tool.name} failed: could not load ~/.ashlr/config.json (${err instanceof Error ? err.message : String(err)})`,
       true,
@@ -1860,6 +2013,10 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
     if (name === 'phantom_fleet_apps_await') {
       auditNativeCall(`${tool.name} keys=${argKeys} — await unavailable`, 'error');
       return textResult({ error: 'Fleet app await unavailable' }, true);
+    }
+    if (name === 'phantom_fleet_apps_watch') {
+      auditNativeCall(`${tool.name} keys=${argKeys} — watch unavailable`, 'error');
+      return textResult({ error: 'Fleet app watch unavailable' }, true);
     }
     if (fleetObservation) {
       auditNativeCall(`${tool.name} keys=${argKeys} — observation unavailable`, 'error');

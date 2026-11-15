@@ -1,6 +1,6 @@
 /**
  * app/verse-first-paint.ts — how long the signed-in Phantom shell waits before
- * it mounts (VerseConsoleApp). Its own chunk, loaded alongside first paint.
+ * it mounts (PhantomConsoleApp). Its own chunk, loaded alongside first paint.
  *
  * WHY: React holds every Suspense reveal for 300 ms after a fallback
  * commits. Mounting the shell while its section or the chat's columns were

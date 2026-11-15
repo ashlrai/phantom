@@ -1,0 +1,218 @@
+{
+  "hosted": [
+    {
+      "lane": "codex",
+      "mcpServers": {
+        "ashlr": {
+          "args": [
+            "-y",
+            "-p",
+            "ashlr-plugin@1.36.4",
+            "ashlr-mcp"
+          ],
+          "command": "npx"
+        },
+        "lexicon": {
+          "args": [
+            "-y",
+            "-p",
+            "@ashlr/lexicon@0.5.9",
+            "lexicon-mcp"
+          ],
+          "command": "npx"
+        },
+        "locus": {
+          "args": [
+            "-y",
+            "@ashlrai/locus-mcp@0.7.0"
+          ],
+          "command": "npx"
+        },
+        "phantom-gateway": {
+          "args": [
+            "mcp"
+          ],
+          "command": "phm"
+        },
+        "phantom-secrets": {
+          "args": [
+            "-y",
+            "phantom-secrets-mcp@0.7.9"
+          ],
+          "command": "npx"
+        },
+        "stack": {
+          "args": [
+            "-y",
+            "-p",
+            "@ashlr/stack@0.3.6",
+            "-p",
+            "ashlr-stack-mcp@0.3.6",
+            "-p",
+            "phantom-secrets@0.7.9",
+            "ashlr-stack-mcp"
+          ],
+          "command": "npx"
+        }
+      },
+      "models": [
+        "gpt-6.1-sol",
+        "gpt-6.1-terra"
+      ],
+      "surface": "codex-cli",
+      "via": "devin-hosted-agent"
+    },
+    {
+      "lane": "copilot",
+      "mcpServers": {
+        "locus": {
+          "args": [
+            "-y",
+            "@ashlrai/locus-mcp@0.7.0"
+          ],
+          "command": "npx"
+        },
+        "phantom-gateway": {
+          "args": [
+            "mcp"
+          ],
+          "command": "phm"
+        }
+      },
+      "models": [],
+      "surface": "copilot-cli",
+      "via": "devin-hosted-agent"
+    },
+    {
+      "lane": "cursor",
+      "mcpServers": {
+        "locus": {
+          "args": [
+            "-y",
+            "@ashlrai/locus-mcp@0.7.0"
+          ],
+          "command": "npx"
+        },
+        "phantom-gateway": {
+          "args": [
+            "mcp"
+          ],
+          "command": "phm"
+        }
+      },
+      "models": [],
+      "surface": "cursor-agent",
+      "via": "devin-hosted-agent"
+    },
+    {
+      "lane": "gemini",
+      "mcpServers": {
+        "locus": {
+          "args": [
+            "-y",
+            "@ashlrai/locus-mcp@0.7.0"
+          ],
+          "command": "npx"
+        },
+        "phantom-gateway": {
+          "args": [
+            "mcp"
+          ],
+          "command": "phm"
+        }
+      },
+      "models": [],
+      "surface": "gemini-cli",
+      "via": "devin-hosted-agent"
+    },
+    {
+      "lane": "zai",
+      "mcpServers": {},
+      "models": [
+        "glm-5.3"
+      ],
+      "surface": "glm-lite",
+      "via": "devin-hosted-agent"
+    },
+    {
+      "lane": "grok",
+      "mcpServers": {
+        "phantom-gateway": {
+          "args": [
+            "mcp"
+          ],
+          "command": "phm"
+        }
+      },
+      "models": [
+        "grok-4.7",
+        "grok-4.7-build-fast"
+      ],
+      "surface": "grok-build",
+      "via": "devin-hosted-agent"
+    },
+    {
+      "lane": "qwen",
+      "mcpServers": {},
+      "models": [],
+      "surface": "qwen-code",
+      "via": "devin-hosted-agent"
+    }
+  ],
+  "mcpServers": {
+    "ashlr": {
+      "args": [
+        "-y",
+        "-p",
+        "ashlr-plugin@1.36.4",
+        "ashlr-mcp"
+      ],
+      "command": "npx"
+    },
+    "lexicon": {
+      "args": [
+        "-y",
+        "-p",
+        "@ashlr/lexicon@0.5.9",
+        "lexicon-mcp"
+      ],
+      "command": "npx"
+    },
+    "locus": {
+      "args": [
+        "-y",
+        "@ashlrai/locus-mcp@0.7.0"
+      ],
+      "command": "npx"
+    },
+    "phantom-gateway": {
+      "args": [
+        "mcp"
+      ],
+      "command": "phm"
+    },
+    "phantom-secrets": {
+      "args": [
+        "-y",
+        "phantom-secrets-mcp@0.7.9"
+      ],
+      "command": "npx"
+    },
+    "stack": {
+      "args": [
+        "-y",
+        "-p",
+        "@ashlr/stack@0.3.6",
+        "-p",
+        "ashlr-stack-mcp@0.3.6",
+        "-p",
+        "phantom-secrets@0.7.9",
+        "ashlr-stack-mcp"
+      ],
+      "command": "npx"
+    }
+  },
+  "models": [
+    "swe-2-high"
+  ]
+}
