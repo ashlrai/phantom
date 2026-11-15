@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { FleetSessionMap } from '../../../../core/fleet/sessions-view.js';
 import type { ComputeNode, FleetCompute } from '../../../../core/fleet/compute-view.js';
 import { apiGet } from '../../../data/client.js';
-import { fleetLanesQuery, fleetSessionsQuery, type QueryDef } from '../../../data/queries.js';
+import { fleetLanesQuery, type QueryDef } from '../../../data/queries.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
@@ -10,7 +11,7 @@ import { JobActivity } from '../fleet-job-log/JobActivity.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { openDockPane } from '../dock/dock-store.js';
 import { agentBusPageQuery } from '../fleet-bus/agent-bus-queries.js';
-import { advanceCores, family, isFleetCompute, placeSession, type CoreHistory, type MapSession } from './compute-model.js';
+import { advanceCores, isFleetCompute, isFleetSessionMap, type CoreHistory, type MapSession } from './compute-model.js';
 import { recordedAt, shown } from './company-model.js';
 import styles from './compute.module.css';
 
@@ -18,6 +19,13 @@ export const computeQuery: QueryDef<FleetCompute> = {
   key: 'fleet-compute', fetch: async signal => {
     const value = await apiGet<unknown>('/api/verse/fleet/control/compute', signal);
     if (!isFleetCompute(value)) throw new Error('Unsupported compute observation');
+    return value;
+  },
+};
+export const sessionsMapQuery: QueryDef<FleetSessionMap> = {
+  key: 'fleet-sessions-map', fetch: async signal => {
+    const value = await apiGet<unknown>('/api/verse/fleet/control/sessions', signal);
+    if (!isFleetSessionMap(value)) throw new Error('Unsupported session observation');
     return value;
   },
 };
@@ -41,25 +49,20 @@ function CoreSparks({ history, current }: { history?: CoreHistory; current: bool
     })}</div></details>;
 }
 
-function Token({ session, enabled, selected, choose }: { session: MapSession; enabled: boolean; selected: boolean; choose: () => void }) {
-  const query = useMemo(() => jobDetailQuery(session.job), [session.job]);
-  const active = enabled && session.status === 'running';
-  const detail = useQuery(query, { enabled: active });
-  const refetch = useRefetch(query);
-  usePollWhileVisible(refetch, 15_000, { enabled: active });
-  const lastLine = detail.data?.log?.tail?.filter(line => line.trim()).at(-1);
-  return <button type="button" className={styles.token} data-state={session.status} aria-pressed={selected} onClick={choose}>
+function Token({ session, selected, choose }: { session: MapSession; selected: boolean; choose: () => void }) {
+  return <button type="button" className={styles.token} data-state={session.mapState} aria-pressed={selected} onClick={choose}>
     <strong>{session.job}</strong><span>{session.lane ?? 'lane unknown'} · {session.model ?? 'model unknown'}</span>
     <span>{session.status} · {session.elapsedSeconds === null ? 'age unknown' : `${Math.floor(session.elapsedSeconds / 60)}m elapsed`}</span>
-    <small>{detail.status === 'error' ? 'Activity unavailable · last excerpt may be stale' : lastLine ? `Last log excerpt (time unknown): ${lastLine.slice(0, 160)}` : 'Activity unknown'}</small>
+    <small>{session.activity ? `Last log excerpt (time unknown): ${session.activity}` : 'Activity unknown'}</small>
   </button>;
 }
 
 function AgentDetail({ session, node, enabled, openLog }: { session: MapSession; node?: ComputeNode; enabled: boolean; openLog: () => void }) {
   const query = useMemo(() => jobDetailQuery(session.job), [session.job]);
-  const detail = useQuery(query, { enabled, freshMs: 0 });
+  const localDetail = enabled && session.placement !== 'conflict' && (session.placement !== 'claim' || node?.local === true) && !['unknown', 'queued', 'parked'].includes(session.status);
+  const detail = useQuery(query, { enabled: localDetail, freshMs: 0 });
   const refresh = useRefetch(query);
-  usePollWhileVisible(refresh, 5_000, { enabled });
+  usePollWhileVisible(refresh, 5_000, { enabled: localDetail });
   const bus = useQuery(coordinationQuery, { enabled });
   const refreshBus = useRefetch(coordinationQuery);
   usePollWhileVisible(refreshBus, 5_000, { enabled });
@@ -67,22 +70,23 @@ function AgentDetail({ session, node, enabled, openLog }: { session: MapSession;
     const body = row.envelope.body as { jobId?: unknown } | null;
     return body?.jobId === session.job || row.envelope.from === session.job || row.envelope.to === session.job;
   }) ?? [];
-  const data = detail.data;
+  const data = localDetail ? detail.data : undefined;
   return <section className={styles.detail} aria-label="Agent detail">
     <h3>{session.job}</h3><p>{session.lane ?? 'lane unknown'} · {session.model ?? 'model unknown'} · {session.status}</p>
     <p>Node: {node?.id ?? 'unassigned / placement unknown'} · Owner: {node?.jobs.find(j => j.job === session.job)?.owner ?? 'unknown'}</p>
-    <p>Branch: {data?.branch ?? 'unknown'} · Worktree: {data?.branch ? 'recorded; changed files below' : 'unknown'}</p>
+    <p>Branch: {session.branch ?? data?.branch ?? 'unknown'} · Worktree: {session.worktree === 'recorded' ? 'recorded; current presence unknown' : 'unknown'}</p>
+    <p>Placement evidence: {session.placement} · Elapsed: {session.elapsedSeconds === null ? 'unknown' : `${session.elapsedSeconds}s`} · Activity: {session.activity ?? 'unknown'}</p>
     <p>Outcome: {session.outcome ?? 'unknown'} · Merge state: {data?.publish?.autoMerge === true ? 'auto-merge enabled' : 'unknown'}</p>
     {(data?.publish?.prUrl ?? session.prUrl) && <a href={data?.publish?.prUrl ?? session.prUrl!} target="_blank" rel="noreferrer">Open recorded PR</a>}
     {detail.status === 'error' && <p role="alert">Job detail unavailable; retained details may be stale.</p>}
-    <button type="button" onClick={openLog}>Open full job log</button>
+    <button type="button" disabled={!localDetail} onClick={openLog}>Open full job log</button>
     <h4>Claims & handoffs</h4><p>Matching records in the first 100 retained bus messages; this is a partial coordination window.</p>
     {bus.status === 'error' && <p role="alert">Coordination refresh failed; retained records may be stale.</p>}
     {messages.length ? <ul>{messages.map(row => {
       const kind = (row.envelope.body as { kind?: unknown } | null)?.kind;
       return <li key={row.envelope.id}>{row.envelope.from} → {row.envelope.to} · {typeof kind === 'string' ? kind.slice(0, 64) : 'message'} · {new Date(row.receivedAt).toISOString()}</li>;
     })}</ul> : <p>{bus.data ? 'No matching records in this window.' : 'Coordination unknown.'}</p>}
-    <JobActivity job={session.job} enabled={enabled} pollMs={5_000} />
+    {localDetail ? <JobActivity job={session.job} enabled={localDetail} pollMs={5_000} /> : <p>Activity detail unavailable for this placement.</p>}
   </section>;
 }
 
@@ -91,9 +95,9 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
   const sectionVisible = useSectionVisible(), documentVisible = useDocumentVisible();
   const enabled = visible && sectionVisible && documentVisible;
   const compute = useQuery(computeQuery, { enabled, freshMs: 0 });
-  const sessions = useQuery(fleetSessionsQuery, { enabled, freshMs: 0 });
+  const sessions = useQuery(sessionsMapQuery, { enabled, freshMs: 0 });
   const lanes = useQuery(fleetLanesQuery, { enabled, freshMs: 0 });
-  const refreshCompute = useRefetch(computeQuery), refreshSessions = useRefetch(fleetSessionsQuery), refreshLanes = useRefetch(fleetLanesQuery);
+  const refreshCompute = useRefetch(computeQuery), refreshSessions = useRefetch(sessionsMapQuery), refreshLanes = useRefetch(fleetLanesQuery);
   usePollWhileVisible(refreshCompute, 5_000, { enabled });
   usePollWhileVisible(refreshSessions, 5_000, { enabled });
   usePollWhileVisible(refreshLanes, 15_000, { enabled });
@@ -109,19 +113,19 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
   }, [data]);
   const now = Date.now();
   const nodes = data?.nodes ?? [];
-  const observed = sessions.data?.sessions ?? [];
-  const jobs: MapSession[] = [...observed];
-  for (const node of nodes) for (const claim of node.jobs) if (!jobs.some(j => j.job === claim.job)) jobs.push({ job: claim.job, lane: null, model: null, status: 'running', elapsedSeconds: null, prUrl: null, outcome: null, live: 'unknown' });
-  const placements = new Map(jobs.map(job => [job.job, placeSession(job, nodes, data?.localNodeId ?? '')]));
-  const location = (job: MapSession) => placements.get(job.job) ?? null;
-  const selected = jobs.find(j => j.job === selection) ?? sessions.data?.recent.find(j => j.job === selection);
+  const jobs = sessions.data?.mapSessions ?? [];
+  const location = (job: MapSession) => job.nodeId;
+  const selected = jobs.find(j => j.job === selection) ?? sessions.data?.mapRecent.find(j => j.job === selection);
   const maxCores = Math.max(1, ...nodes.map(n => n.stats?.cores.length ?? 0));
   function tokens(rows: MapSession[]) {
     const groups = group ? [...new Set(rows.map(s => s.lane ?? 'Lane unknown'))] : ['All lanes'];
     return groups.map(lane => {
       const members = group ? rows.filter(s => (s.lane ?? 'Lane unknown') === lane) : rows;
-      return <section key={lane} className={styles.lane}><h4>{lane}</h4>{[...new Set(members.map(s => family(s.job)))].map(name => <div key={name}><small>{name}</small>
-        {members.filter(s => family(s.job) === name).map(s => <Token key={s.job} session={s} enabled={enabled} selected={s.job === selection} choose={() => select(s.job)} />)}</div>)}</section>;
+      return <section key={lane} className={styles.lane} aria-label={lane}><h4>{lane}</h4>{(['running', 'idle', 'held', 'queued', 'unknown'] as const).map(state => {
+        const rows = members.filter(s => s.mapState === state);
+        return rows.length ? <div key={state} role="group" aria-label={`${lane} ${state}`}><small>{state}</small>
+          {rows.map(s => <Token key={s.job} session={s} selected={s.job === selection} choose={() => select(s.job)} />)}</div> : null;
+      })}</section>;
     });
   }
   return <section className={styles.root} aria-label="Fleet compute map">
@@ -172,8 +176,9 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
       </div>
     </div>
     {!nodes.length && <p>No nodes observed.</p>}
-    <section aria-label="Unassigned agents"><h3>Queued / placement unknown</h3>{tokens(jobs.filter(j => location(j) === null))}</section>
+    <section aria-label="Unassigned agents"><h3>Queued / placement unknown</h3>{tokens(jobs.filter(j => location(j) === null || !nodes.some(n => n.id === location(j))))}</section>
     {!jobs.length && <p>{sessions.data?.sourceState === 'healthy' ? 'No active sessions recorded.' : 'Session inventory unknown.'}</p>}
+    {sessions.data && <p>Session placement uses compute observation {sessions.data.computeAt}.</p>}
     <p>Sessions: {sessions.data?.sourceState ?? 'unknown'}{sessions.data?.truncated ? ' · partial snapshot' : ''} · {recordedAt(sessions.data?.generatedAt, now)}. Dispatcher: {recordedAt(data?.dispatcherAt, now)}. {data && Object.entries(data.sources).map(([k, v]) => `${k}: ${v}`).join(' · ')}</p>
     {selected && <AgentDetail key={selected.job} session={selected} node={nodes.find(n => n.id === location(selected))} enabled={enabled} openLog={() => { requestWorkerLogJob(selected.job); if (host) host.openPane('worker-log'); else openDockPane('worker-log'); }} />}
     {selection && !selected && <p role="status">Selected session left the active snapshot. See the job log for its outcome.</p>}
