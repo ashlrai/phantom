@@ -410,6 +410,7 @@
 /test/fleet-ci-scheduled-sweep.test.ts @masonwyatt23
 /test/fleet-ci-step-cost.test.ts @masonwyatt23
 /test/fleet-ci-trigger-facts-01.test.ts @masonwyatt23
+/test/fleet-claim-loop-e2e.test.ts @masonwyatt23
 /test/fleet-comms-policy-owner-unconfirmed-287.test.ts @masonwyatt23
 /test/fleet-comms-policy-roundtrip-original-260.test.ts @masonwyatt23
 /test/fleet-comms-status-policy-18.test.ts @masonwyatt23
