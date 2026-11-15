@@ -42,6 +42,7 @@ export function OrderStateStrip({ visible = true }: { visible?: boolean }) {
               <span>owner: {v.ownerText}</span>
               {unchecked && v.state === 'ASSIGNED' ? <span className={styles.orderNote}> (unchecked)</span> : null}
               <span>{v.asOfText}</span>
+              {v.replyText !== '' ? <span>{v.replyText}</span> : null}
               <span>missing: {v.missingText}</span>
               {followUp !== null ? <Button size="sm" variant="subtle" aria-label={`Follow up on your ${v.time} order`} onClick={() => openInterjectDialog({ prefill: followUp })}>Follow up</Button> : null}
               {v.prUrl ? <a href={v.prUrl} target="_blank" rel="noreferrer noopener">{v.prLabel}</a> : null}
