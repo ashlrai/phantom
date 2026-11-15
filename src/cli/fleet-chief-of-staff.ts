@@ -107,15 +107,7 @@ async function autoSnapshot(read: (path: string) => Promise<string>, root: strin
   }) });
 }
 
-export async function cmdFleetChiefOfStaff(args: string[], deps: FleetChiefOfStaffDeps = {}): Promise<number> {
-  const out = deps.out ?? console.log, err = deps.err ?? console.error;
-  if (args.length === 1 && ['--help', '-h'].includes(args[0])) { out(usage); return 0; }
-  let path = 'auto', seen = false, mode: string | undefined;
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--snapshot' && !seen && args[i + 1] && !args[i + 1].startsWith('-')) { path = args[++i]; seen = true; }
-    else if (['--json', '--brief'].includes(args[i]) && !mode) mode = args[i];
-    else { err(usage); return 2; }
-  }
+export async function readChiefOfStaffSnapshot(path = 'auto', deps: FleetChiefOfStaffDeps = {}) {
   const sources: Sources = {};
   const read = async (file: string): Promise<string> => {
     const text = deps.read ? await deps.read(file) : await (async () => {
@@ -126,10 +118,23 @@ export async function cmdFleetChiefOfStaff(args: string[], deps: FleetChiefOfSta
     if (Buffer.byteLength(text) > MAX_BYTES) throw new Error('Oversized source');
     return text;
   };
-  try {
-    const snapshot = path === 'auto'
+  const snapshot = path === 'auto'
       ? await autoSnapshot(read, deps.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), (deps.now ?? (() => new Date()))().toISOString(), sources)
       : parseFleetSnapshot(JSON.parse(await read(path)));
+  return { snapshot, sources };
+}
+
+export async function cmdFleetChiefOfStaff(args: string[], deps: FleetChiefOfStaffDeps = {}): Promise<number> {
+  const out = deps.out ?? console.log, err = deps.err ?? console.error;
+  if (args.length === 1 && ['--help', '-h'].includes(args[0])) { out(usage); return 0; }
+  let path = 'auto', seen = false, mode: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--snapshot' && !seen && args[i + 1] && !args[i + 1].startsWith('-')) { path = args[++i]; seen = true; }
+    else if (['--json', '--brief'].includes(args[i]) && !mode) mode = args[i];
+    else { err(usage); return 2; }
+  }
+  try {
+    const { snapshot, sources } = await readChiefOfStaffSnapshot(path, deps);
     const plan = planChiefOfStaff(snapshot);
     if (mode === '--brief') out(plan.brief.text + (path === 'auto' ? '\n\nSources: ' + Object.entries(sources).map(([name, state]) => `${name}: ${state}`).join('; ') : ''));
     else out(JSON.stringify({ ...plan, sources }));
