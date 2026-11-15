@@ -398,6 +398,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'superseded': () => import('./fleet-superseded.js'),
   'superseded-close': () => import('./fleet-superseded-close.js'),
   'supply': () => import('./fleet-supply.js'),
+  'surface-owner': () => import('./fleet-surface-owner.js'),
   'tailnet-peers': () => import('./fleet-tailnet-peers.js'),
   'task-check': () => import('./fleet-task-check.js'),
   'teammate-latency': () => import('./fleet-teammate-latency.js'),
