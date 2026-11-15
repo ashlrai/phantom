@@ -16,7 +16,7 @@ import { firstPendingFolder, withFolderIo } from '../verse/folder-io.js';
 import { killSwitchEngagedAsync } from '../verse/terminal.js';
 import { verseTurnHooks } from '../verse/verse-api.js';
 import { pendingConfirmations, setAgentToolsGrant } from '../verse/verse-mcp-grants.js';
-import type { OwnerAssistHandoff, OwnerAssistPreferences, OwnerAssistSnapshot, OwnerAssistTurn } from './types.js';
+import type { OwnerAssistHandoff, OwnerAssistPreferences, OwnerAssistRouting, OwnerAssistSnapshot, OwnerAssistTurn, OwnerAssistTurnResponse } from './types.js';
 
 const clean = (max: number) => z.string().trim().min(1).max(max).refine(s => !s.includes('\0') && scrubSecrets(s) === s, 'Remove credentials and NUL bytes.');
 const preferencesSchema = z.object({ callsign: clean(60), preference: z.enum(['auto', 'local', 'api']), omlxPort: z.number().int().min(1).max(65535).optional() }).strict();
@@ -28,10 +28,25 @@ const turnSchema = z.object({
 const handoffSchema = z.object({ id: z.string().startsWith('RQ-OWNER-').refine(s => z.string().uuid().safeParse(s.slice('RQ-OWNER-'.length)).success),
   repo: z.string().regex(/^[A-Za-z0-9_-][A-Za-z0-9_.-]*\/[A-Za-z0-9_-][A-Za-z0-9_.-]*$/).max(200),
   scope: clean(8000), acceptance: clean(2000), tier: z.enum(['fast', 'mid', 'work', 'frontier']),
+  sessionId: z.string().uuid().optional(),
 }).strict();
+const routingSchema = z.object({
+  preference: z.enum(['auto', 'local', 'api']), tier: z.enum(['fast', 'work', 'frontier']),
+  class: z.enum(['local', 'api']), seatId: clean(200), seatLabel: clean(200), model: clean(200),
+  fellBack: z.boolean(), reason: clean(300), at: z.string().max(40).refine(s => Number.isFinite(Date.parse(s))),
+}).strict();
+const stateSchema = z.object({ v: z.literal(1), lastSessionId: z.string().uuid().optional(),
+  routing: z.record(z.string().uuid(), routingSchema).optional() }).strict();
+type OwnerAssistState = z.infer<typeof stateSchema>;
 const invalid = (message: string): never => { throw new VerseError('VERSE_INVALID', message); };
 
-/** Pure routing; explicit choices never silently fall back to a paid seat. */
+/**
+ * Pure routing. The owner's auto policy: the best available frontier (API)
+ * seat answers non-trivial work; local seats answer trivial tasks. `auto` falls
+ * back across classes honestly — the returned `fellBack`/`reason` record says
+ * so. Explicit seat, local-only and API-only choices never fall back; they are
+ * refused instead.
+ */
 export function routeOwnerTurn(discovery: VerseSeatDiscovery, request: OwnerAssistTurn, preferences: OwnerAssistPreferences) {
   const pref = request.preference ?? preferences.preference;
   const candidates = discovery.seats.filter(s => s.engine !== 'devin' && s.engine !== 'grok'
@@ -40,12 +55,22 @@ export function routeOwnerTurn(discovery: VerseSeatDiscovery, request: OwnerAssi
   const local = candidates.filter(s => s.engine === 'local');
   const api = candidates.filter(s => s.engine !== 'local');
   const seat = request.seatId ? candidates.find(s => s.id === request.seatId)
-    : pref === 'local' ? local[0] : pref === 'api' || request.tier === 'frontier' ? api[0]
-      : local[0] ?? api[0];
+    : pref === 'local' ? local[0] : pref === 'api' ? api[0]
+      : request.tier === 'fast' ? local[0] ?? api[0] : api[0] ?? local[0];
   if (!seat) return invalid('No available seat matches this choice. Configure a tool-capable model in Apps & Accounts.');
   const model = request.model ? seat.models.find(m => m.id === request.model && !m.unavailableReason) : seat.models.find(m => !m.unavailableReason);
   if (!model) return invalid('The selected model is unavailable on this seat.');
-  return { launch: discovery.launches.get(seat.id)!, model };
+  const cls = seat.engine === 'local' ? 'local' : 'api';
+  const fellBack = !request.seatId && pref === 'auto' && (request.tier === 'fast' ? cls === 'api' : cls === 'local');
+  const reason = request.seatId ? `You chose ${seat.label}.`
+    : pref === 'local' ? 'Local-only choice.'
+    : pref === 'api' ? 'API/subscription choice.'
+    : request.tier === 'fast'
+      ? cls === 'local' ? 'Quick task on a local seat.' : 'Quick task on an API seat; no local seat was available.'
+      : cls === 'api' ? 'Non-trivial task on the best available API seat.' : 'Non-trivial task on a local seat; no API seat was available.';
+  return { launch: discovery.launches.get(seat.id)!, model,
+    routing: { preference: pref, tier: request.tier, class: cls, seatId: seat.id, seatLabel: seat.label,
+      model: model.id, fellBack, reason, at: new Date().toISOString() } satisfies OwnerAssistRouting };
 }
 
 /** Private bounded files; malformed state is never replaced with defaults. */
@@ -91,6 +116,18 @@ export class OwnerAssistService {
     const text = await readPrivate(join(this.root, 'owner-assist.json'), 4096);
     return text === null ? { callsign: 'Phantom', preference: 'auto' } : preferencesSchema.parse(JSON.parse(text));
   }
+  /** Continuity + routing records; malformed state surfaces rather than resetting. */
+  private async state(): Promise<OwnerAssistState> {
+    const text = await readPrivate(join(this.root, 'owner-assist.state.json'), 65536);
+    return text === null ? { v: 1 } : stateSchema.parse(JSON.parse(text));
+  }
+  private async recordUse(sessionId: string, routing: OwnerAssistRouting) {
+    const state = await this.state();
+    const entries = Object.entries({ ...(state.routing ?? {}), [sessionId]: routing })
+      .sort((a, b) => b[1].at.localeCompare(a[1].at)).slice(0, 50);
+    await writePrivate(join(this.root, 'owner-assist.state.json'),
+      JSON.stringify({ v: 1, lastSessionId: sessionId, routing: Object.fromEntries(entries) }));
+  }
   private async prepare() {
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     const dir = join(this.root, 'owner-assist.memory');
@@ -101,10 +138,13 @@ export class OwnerAssistService {
   }
   async snapshot(cfg: AshlrConfig): Promise<OwnerAssistSnapshot> {
     const preferences = await this.preferences();
-    const [discovery, memory] = await Promise.all([this.deps.discover?.(cfg) ?? discoverOwnerSeats(cfg, preferences.omlxPort),
-      readPrivate(join(this.root, 'owner-assist.memory', 'memory.md'), 32000)]);
-    return { scope: 'owner', concurrency: 1, preferences, seats: discovery.seats.filter(s => s.engine !== 'devin' && s.engine !== 'grok'),
-      sessions: this.engine().listSessions(), memory: scrubSecrets(memory ?? ''), memorySanitized: sanitizePublicJson(memory ?? '') !== (memory ?? '') };
+    const [discovery, memory, state] = await Promise.all([this.deps.discover?.(cfg) ?? discoverOwnerSeats(cfg, preferences.omlxPort),
+      readPrivate(join(this.root, 'owner-assist.memory', 'memory.md'), 32000), this.state()]);
+    const sessions = this.engine().listSessions();
+    const resume = state.lastSessionId && sessions.some(s => s.id === state.lastSessionId) ? state.lastSessionId : undefined;
+    return { scope: 'owner', concurrency: 1, preferences, ...(resume ? { resumeSessionId: resume } : {}), routing: state.routing ?? {},
+      seats: discovery.seats.filter(s => s.engine !== 'devin' && s.engine !== 'grok'),
+      sessions, memory: scrubSecrets(memory ?? ''), memorySanitized: sanitizePublicJson(memory ?? '') !== (memory ?? '') };
   }
   async configure(input: unknown) {
     const parsed = preferencesSchema.parse(input);
@@ -146,7 +186,7 @@ export class OwnerAssistService {
       }
       const prefs = await this.preferences();
       const discovery = await (this.deps.discover?.(cfg) ?? discoverOwnerSeats(cfg, prefs.omlxPort));
-      const { launch, model } = routeOwnerTurn(discovery, request, prefs);
+      const { launch, model, routing } = routeOwnerTurn(discovery, request, prefs);
       const previous = request.sessionId ? this.detail(request.sessionId).session : null;
       let session = previous;
       let text = request.text;
@@ -165,13 +205,19 @@ export class OwnerAssistService {
       }
       if (session.engine === 'local') this.engine().refreshLocalWindow(session.id, model);
       setAgentToolsGrant(session.id, { terminal: 'agent' }, origin);
-      return this.engine().sendTurn(session.id, text);
+      const response: OwnerAssistTurnResponse = { ...this.engine().sendTurn(session.id, text), routing };
+      // Continuity state must never fail an already-dispatched turn; a corrupt
+      // or unwritable file stays untouched and still surfaces on snapshot reads.
+      await this.recordUse(session.id, routing).catch(() => undefined);
+      return response;
     } finally { this.admitting = false; }
   }
   async handoff(input: unknown) {
     const request: OwnerAssistHandoff = handoffSchema.parse(input);
     if (await (this.deps.killed ?? killSwitchEngagedAsync)()) return invalid('The KILL switch is engaged.');
-    return this.handoffService().submit(request);
+    const source = request.sessionId === undefined ? undefined
+      : { sessionId: request.sessionId, title: this.detail(request.sessionId).session.title };
+    return this.handoffService().submit(request, source);
   }
   private handoffService() { return this.handoffStore ??= new OwnerAssistHandoffs(this.root, this.deps.runsRoot); }
   async handoffs() { return this.handoffService().list(); }

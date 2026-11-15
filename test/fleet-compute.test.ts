@@ -84,3 +84,19 @@ it('does not turn old or future pressure telemetry into a current memory/memguar
   machine.sampledAtMs = now + 1; await save();
   expect((await readFleetCompute(f.options)).nodes.find(n => n.local)?.memguardPaused).toBeNull();
 });
+it('projects admission and publishing evidence without inventing counts or exposing unselected fields', async () => {
+  const f = await fixture();
+  expect((await readFleetCompute(f.options)).operations).toEqual({ publishes24h: null,
+    admission: { admit: null, gateReason: null, warnings: null, observedAt: null } });
+  const ts = new Date(now).toISOString();
+  await writeFile(join(f.root, 'queue', 'status.json'), JSON.stringify({ publishes_24h: 17,
+    admission: { ts, admit: false, gate_reason: 'worktrees', warnings: ['daemon-stale', 5], privateField: 'must stay private' } }));
+  const view = await readFleetCompute(f.options);
+  expect(view.operations).toEqual({ publishes24h: 17,
+    admission: { admit: false, gateReason: 'worktrees', warnings: ['daemon-stale'], observedAt: ts } });
+  expect(JSON.stringify(view)).not.toContain('must stay private');
+  await writeFile(join(f.root, 'queue', 'status.json'), JSON.stringify({ publishes_24h: -1,
+    admission: { ts: 'invalid', admit: 'yes', gate_reason: 5, warnings: null } }));
+  expect((await readFleetCompute(f.options)).operations).toEqual({ publishes24h: null,
+    admission: { admit: null, gateReason: null, warnings: null, observedAt: null } });
+});

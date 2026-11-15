@@ -192,3 +192,6 @@
   cursor: pointer;
   font-weight: var(--font-weight-medium);
 }
+
+:global([data-console-layout='compact']) .metaGrid { grid-template-columns: 1fr; }
+:global([data-console-layout='wide']) .view { max-width: 1600px; width: 100%; margin-inline: auto; }
