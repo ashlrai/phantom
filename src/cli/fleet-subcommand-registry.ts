@@ -268,6 +268,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'merge-retry': () => import('./fleet-merge-retry.js'),
   'meter-drop': () => import('./fleet-meter-drop.js'),
   'meter-incident': () => import('./fleet-meter-incident.js'),
+  'metrics': () => import('./fleet-metrics.js'),
   'mission': () => import('./fleet-mission.js'),
   'model-verify': () => import('./fleet-model-verify.js'),
   'needs': () => import('./fleet-needs.js'),
