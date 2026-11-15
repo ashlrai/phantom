@@ -1,233 +1,94 @@
 # Phantom
 
-**Phantom runs all engineering and manages resources.**
+**Phantom is an open-source workbench for running coding agents, coordinating a fleet, and reviewing their work.**
 
-Phantom is the open-source engineering agent workbench from [AshlrAI](https://ashlr.ai). An agent installs one command, calls the CLI with `--json`, or connects the MCP gateway. A person uses the same tools to chat with a signed-in coding agent, or to hand the fleet a result and review the record.
-
-Agents start here. Humans can use the same commands.
-
-[Agent index](https://github.com/ashlrai/phantom/blob/master/docs/llms.txt) ·
-[Full agent reference](https://github.com/ashlrai/phantom/blob/master/docs/llms-full.txt) ·
-[Onboarding](https://phm.dev/connect) ·
-[User guide](docs/VERSE.md) ·
-[Repository tools](https://github.com/ashlrai/phantom/blob/master/tools/README.md) ·
-[GitHub](https://github.com/ashlrai/phantom)
+Bring your signed-in coding CLIs and local models into one console. Follow each job from assignment to recorded results, connect agents through a shared bus, and add computers as your fleet grows.
 
 [![CI](https://github.com/ashlrai/phantom/actions/workflows/ci.yml/badge.svg)](https://github.com/ashlrai/phantom/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/%40ashlr%2Fphantom)](https://www.npmjs.com/package/@ashlr/phantom)
+[![License: MIT](https://img.shields.io/github/license/ashlrai/phantom)](LICENSE)
 
-![Diagram of the agent path: one install, one MCP gateway, and a JSON result beside a diff. No session is running.](https://github.com/ashlrai/phantom/blob/master/docs/images/phantom-hero.svg)
+[Quickstart](#quickstart) · [Documentation](docs/README.md) · [For agents](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-MCP-CLI.md) · [Desktop](#the-desktop-app-macos) · [Guided onboarding](https://phm.dev/connect)
+
+![Phantom fleet console showing sample worker assignments and lane capacity; labeled demo data, no live execution.](https://github.com/ashlrai/phantom/blob/master/docs/images/phantom-fleet-demo.png)
+
+*Current source UI with synthetic demo data, captured at 2× resolution. No provider or fleet ran. [Capture details](https://github.com/ashlrai/phantom/blob/master/docs/images/CAPTURES.md).*
+
+## What you can do
+
+| Surface | What it gives you |
+| --- | --- |
+| **Fleet** | Inspect running jobs, lane capacity, queued work and recorded results. [Operate the fleet](docs/AUTOMATIC-OUTCOMES.md). |
+| **Agent bus** | Follow durable messages, threads and coordination events between agents. [Bus contract](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-BUS.md). |
+| **Multi-node** | Register computers and coordinate owner-scoped jobs with heartbeats and fenced leases. Each machine keeps its own provider sign-in. [Add a computer](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md). |
+| **Comms** | Read one owner thread across configured channels. Adapters require setup; send policies still apply. [Owner thread](https://github.com/ashlrai/phantom/blob/master/docs/OWNER-THREAD.md). |
+| **Secrets** | Connect the separately installed Phantom Secrets companion through MCP; use secret references in agent work. [Companion setup](docs/COMPANIONS.md). |
+| **Release train** | Inspect release status, qualification and publication evidence. Releases use the repository's sanctioned workflow. [Release guide](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING.md). |
+
+**Work with me** is interactive agent work. **Work for me** is the fleet. Resident autonomy ships **dormant**, requires a signed grant and is macOS-only. Saving an outcome does not activate it. [Set up autonomy](docs/AUTONOMY-SETUP.md).
 
 ## Quickstart
 
-One install. Node.js 22.15.0 or newer. `phm` and `ashlr` are the same program.
+Open the console in a few minutes with **Node.js 22.15+** and **Git** already installed. `phm` and `ashlr` are the same program.
 
 ```sh
 node --version
 npm install -g @ashlr/phantom
 phm --version
-phm docs --agent --json
-```
-
-This source tree targets version 3.30.33; check canonical release availability and exact matching assets before installation.
-
-Patch release PRs are evaluated every 30 minutes when master has new green CI.
-`RELEASE_CADENCE_MINUTES` configures the minimum interval; the release PR keeps
-this version, desktop metadata and release notes together. Tags still require
-the exact commit's required checks, and publication requires signed artifacts.
-Install the promoted npm `latest` release, or pin a published version from
-[GitHub releases](https://github.com/ashlrai/phantom/releases/latest).
-The source tree is not proof that npm has that version yet.
-
-Open the console when a person wants the app. It listens on `127.0.0.1` only and prints a read token and a mutation token. Neither token is written to disk.
-
-```sh
 phm verse --no-open --json
 ```
 
-The page is [http://127.0.0.1:7777/verse/](http://127.0.0.1:7777/verse/). Paste the read token once. The page asks for the mutation token the first time you change something. Do not paste either token into a PR, issue, or chat log.
+Open [http://127.0.0.1:7777/verse/](http://127.0.0.1:7777/verse/) and paste the printed read token. The console asks for the mutation token when needed. Keep both tokens private.
 
-Adding a node? Follow [Add a computer in 60 seconds](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md).
+1. Open **Resources** and check an account's chat readiness. Sign in through its vendor CLI or connect a tool-capable local model.
+2. Choose **Work with me** → **New chat**, then select a project you can edit.
+3. Try: “Fix one typo in README.md. Show the diff and checks. Leave changes uncommitted.” Review the result in the console.
 
-New here? [phm.dev/connect](https://phm.dev/connect) is the guided onboarding path. The [first-run guide](docs/QUICKSTART.md#open-verse) covers the same ground in this repository.
+Provider installation and sign-in may take longer. [Full first-session guide](docs/QUICKSTART.md#make-your-first-useful-turn) · [Troubleshooting](docs/QUICKSTART.md#troubleshoot-account-setup-and-return-to-the-tour).
 
-`connect` is not a Phantom command in this checkout. For a new Phantom Secrets
-name, use `phantom add NAME` in a trusted terminal. Keep credentials out of
-chat and agent transcripts. Approval cards record decisions; they do not
-collect credentials.
+This source tree targets version 3.30.33; check canonical release availability and exact matching assets before installation.
+The npm badge reads the registry; source version and published release can differ. [Qualified releases](https://github.com/ashlrai/phantom/releases/latest).
 
-### Commands that print JSON
-
-Run these after install. They read local state. They do not start a fleet or spend credits.
+### Connect your coding agent
 
 ```sh
 phm docs --agent --json
 phm mcp list --json
-phm mcp doctor --json
-phm wire status --json
-phm authority status --json
-```
-
-`phm docs --agent --json` is the command list for the binary you installed. Prefer it over a copied example when the two differ. `phm mcp doctor` exits 1 when a required server is down. That is a health result. `phm authority status --json` reports the grant. Autonomy ships dormant. A status command does not turn it on.
-
-### MCP gateway
-
-The gateway server key is `ashlr-hub`. The process is `ashlr` with args `mcp`. `phm wire` backs up the editor file, then writes that entry. It is safe to run again.
-
-```sh
-phm wire claude --json
-phm wire cursor --json
-phm wire codex --json
 phm wire status --json
 ```
 
-Claude Code reads `~/.claude.json`. Cursor reads `~/.cursor/mcp.json`. Paste this under `mcpServers` if you would rather not run `phm wire`. Claude's entry also sets `type` and `env`. Cursor's entry is the two fields below.
+The installed command registry is the reference for your version. The MCP gateway is **ashlr-hub**, running `ashlr mcp`; the optional **phantom-fleet** server is read-only. Follow the [Claude, Cursor and Codex setup guide](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-MCP-CLI.md). Registration alone does not establish authorization or readiness.
 
-```json
-{
-  "mcpServers": {
-    "ashlr-hub": {
-      "command": "ashlr",
-      "args": ["mcp"]
-    }
-  }
-}
-```
+## See the work
 
-Codex stores servers in `~/.codex/config.toml`. Do not hand-edit that file. `phm wire codex` runs `codex mcp add ashlr-hub -- ashlr mcp` after a backup. The `codex` program must be on `PATH`.
+![Phantom agent bus with sample coordination messages and thread controls; demo data.](https://github.com/ashlrai/phantom/blob/master/docs/images/phantom-bus-demo.png)
 
-Restart the editor after the file changes. Registration does not prove the server started. Check with `phm wire status --json` and `phm mcp doctor --json`.
-
-The read-only fleet server is a second entry. It does not launch work or merge.
-
-```json
-{
-  "mcpServers": {
-    "phantom-fleet": {
-      "command": "phm",
-      "args": ["mcp", "fleet"]
-    }
-  }
-}
-```
-
-Details: [self-hosting](docs/SELF-HOSTING.md#connect-claude-code-and-codex-over-mcp) and [fleet MCP](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MCP-ONRAMP.md).
-
-![Phantom 3.24.3 compiled browser Demo chat with labeled sample accounts. No provider ran.](https://github.com/ashlrai/phantom/blob/master/docs/images/verse-work-with-me-3.24.3-demo.jpg)
-
-*Historical 3.24.3 browser demo with labeled sample accounts. The current interface may differ. No provider ran and no fleet was active; this is not the native app window.*
-
-## Features
-
-| | |
-| --- | --- |
-| ![CLI JSON](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-cli.svg) | **CLI for agents.** `phm docs --agent --json` lists commands. Add `--json` on commands that offer it. |
-| ![MCP gateway](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-mcp.svg) | **One MCP gateway.** Claude, Cursor, and Codex use `ashlr-hub`. |
-| ![MCP gateway](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-mcp.svg) | **Companion inventory.** `phm companions --json` checks separately installed Secrets, Locus, and Lexicon CLI identities. It does not establish runtime readiness. |
-| ![Accounts and local models](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-local.svg) | **Your accounts.** Claude Code, Codex, Grok, Devin, API credits, and tool-capable local models. Vendor CLIs manage their own sign-in; the optional Devin API connection stores its key in the macOS Keychain. |
-| ![Review](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-review.svg) | **A record you can review.** Chats, diffs, checkpoints, and fleet runs stay in the console. Fleet telemetry and Show Mode display recent recorded activity. A finished run is not proof the outcome shipped. |
-| ![Review](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-review.svg) | **Fleet inspection.** Read-only reports cover [worktrees](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-VERBS.md), [merge batches](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-BATCH.md), and post-merge outcomes. The [unified inbox](https://github.com/ashlrai/phantom/blob/master/docs/CHANNELS.md#unified-inbox) collects pending local items without acting on them. |
-| ![Review](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-review.svg) | **One owner thread.** The [Leader](docs/LEADER.md) routes work, and [one owner thread](https://github.com/ashlrai/phantom/blob/master/docs/OWNER-THREAD.md) joins desktop, Telegram, email, iMessage, and Slack. The [Comms agent](https://github.com/ashlrai/phantom/blob/master/docs/COMMS-AGENT.md) triages mail under an enforced send policy. [Growth charts](https://github.com/ashlrai/phantom/blob/master/docs/GROWTH.md) and a [phone watch view](docs/REMOTE-PHONE.md) read the same local records. |
-
-**Work with me** is the chat. **Work for me** is the fleet. Saving a fleet outcome does not start work and does not widen permission. The fleet runs only in enrolled repositories under a signed grant. Autonomy ships **dormant** and is macOS-only.
-
-## Compare
-
-No scores. This is what the install changes.
-
-| | Phantom | Each coding CLI on its own |
-| --- | --- | --- |
-| Install for an agent | `npm install -g @ashlr/phantom` | That vendor's installer |
-| Machine output | `phm <command> --json` where the command offers it | That CLI's own flags |
-| MCP | `ashlr-hub` via `phm wire claude`, `phm wire cursor`, or `phm wire codex` | You register each server yourself |
-| Whose account | The account that CLI already uses | The same account |
-| Local models | A running Ollama exposes tool-capable tags as seats | You point each tool at the server |
-| Unattended fleet | Off until you sign a macOS grant and start the resident daemon | Not this product |
-| Review | Console diffs, checkpoints, and recorded runs | That CLI's own session |
-
-A connected account is not permission to spend credits. Check readiness before you delegate. [Resource evidence](docs/RESOURCE-EVIDENCE.md) says what each reading means.
-
-## How work moves
+*The bus makes coordination inspectable. Messages and claims do not grant execution authority.*
 
 ```mermaid
 flowchart LR
-  Agent[Agent or engineer] --> CLI[phm --json or MCP ashlr-hub]
-  CLI --> Chat[Work with me]
-  CLI --> Fleet[Work for me]
-  Chat --> Accounts[Signed-in CLIs and local models]
-  Fleet --> Grant[Signed macOS grant]
-  Grant --> Accounts
-  Accounts --> Evidence[Diffs, JSON, and recorded runs]
-  Evidence --> Review[Human review or an admitted merge check]
+  Request[Your task] --> Workbench[Phantom console / CLI / MCP]
+  Workbench --> Agents[Coding agents + local models]
+  Workbench --> Fleet[Enrolled fleet under signed scope]
+  Fleet --> Nodes[Computers with local sign-in]
+  Agents --> Evidence[Diffs, checks and recorded results]
+  Nodes --> Evidence
 ```
 
-Independent ready tasks can use more than one admitted resource. Slots, quotas, budget reserves, and the signed grant limit how much runs at once. Open **Resources** in the console to see chat readiness and fleet readiness separately. Unknown stays unknown.
-
-## FAQ
-
-**Does Phantom store my API keys?**
-Vendor CLIs manage their own sign-in. The optional `phm devin connect` command asks for a Devin API key at a hidden prompt and stores it in the macOS Keychain, not in a file. See [Devin](docs/DEVIN.md) for the connection and custody details.
-
-**What Node version do I need?**
-22.15.0 or newer. `node --version` must print that before `npm install -g @ashlr/phantom`.
-
-**What is the difference between `phm` and `ashlr`?**
-They are the same program. `phm` is the primary name. Scripts that call `ashlr` keep working. The separate Phantom Secrets command is `phantom`.
-
-**Is autonomy already running?**
-No. It ships dormant and is macOS-only. It starts after you install the custody helper, sign a Touch ID grant, and start the resident daemon. `phm authority status --json` reads the state. It does not turn autonomy on.
-
-**Does a zero exit code mean the task shipped?**
-No. Read the JSON. A health command can exit 0 when work is held. A recorded run is not a merge, a release, or proof the outcome was delivered.
-
-**Where is the long agent page?**
-[docs/llms.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms.txt) is the short index. [docs/llms-full.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms-full.txt) is the copy-paste reference.
-
-## Star Phantom
-
-If this workbench is useful, star [ashlrai/phantom](https://github.com/ashlrai/phantom). A star helps the next engineer or agent find it. This page does not print a star count. GitHub has the live number.
+A completed run, a merged PR and a published release are separate evidence. Phantom keeps unknown readings visible instead of treating them as success.
 
 ## The desktop app (macOS)
 
-The desktop app is a native window around the same console. It bundles the CLI, so the app itself does not need a separate Node.js install.
+![Phantom workbench in a desktop-sized browser viewport with sample data; this is not native app chrome.](https://github.com/ashlrai/phantom/blob/master/docs/images/phantom-workbench-demo.png)
 
-Download the signed arm64 archive and paired update manifest from [GitHub releases](https://github.com/ashlrai/phantom/releases/latest). Match the archive to the installed CLI version. The app is locally signed, not Apple notarized, so macOS may ask for **Open Anyway** on first launch. Steps: [desktop installation guide](https://github.com/ashlrai/phantom/blob/master/desktop/README.md#install).
+The macOS desktop app wraps the same console and bundles the CLI. Download from [GitHub releases](https://github.com/ashlrai/phantom/releases/latest). See the [desktop installation guide](https://github.com/ashlrai/phantom/blob/master/desktop/README.md#install) for signed Apple silicon archives, matching manifests and platform limitations. The screenshots here show the browser console, not an installed native window.
 
-```sh
-phm verse
-```
+The CLI and browser console also run on Linux and Windows; resident autonomy remains macOS-only.
 
-Closing the window hides it. **Quit** stops the server. Building from source is in [Releasing locally](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING-LOCALLY.md).
+## CLI reference
 
-## The CLI
-
-The console also runs from the CLI on macOS, Linux, and Windows. You need Node.js 22.15 or newer and Git.
-
-```sh
-npm install -g @ashlr/phantom
-phm --version
-phm verse
-```
-
-`phm verse` serves [http://127.0.0.1:7777/verse/](http://127.0.0.1:7777/verse/). `phm console` is the same command under the Phantom name and opens `/app/`; `/app/` and `/app/m/` alias `/verse/` and `/verse/m/`, which keep working. The package exports `@ashlr/phantom`, `@ashlr/phantom/core`, `@ashlr/phantom/types`, `@ashlr/phantom/plugin`, and `@ashlr/phantom/universe`.
-
-Optional cloud handoff, off unless you launch it. Cloud launch spends Claude credits. The Devin API connection requires macOS and Devin sessions spend ACUs:
-
-```sh
-phm cloud launch "<task>" --repo owner/name
-phm devin connect
-phm devin launch "<task>"
-```
-
-Cloud lanes do not merge by themselves. See [Cloud](docs/CLOUD.md) and [Devin](docs/DEVIN.md).
-
-Inspect autonomy without turning it on:
-
-```sh
-phm authority setup --dry-run --json
-phm authority status --json
-```
-
-Commissioning steps: [Autonomy setup](docs/AUTONOMY-SETUP.md).
+<details>
+<summary>Command inventory and common tasks</summary>
 
 ### Command table
 
@@ -235,16 +96,16 @@ Every top-level `phm` command, grouped by what it is for. `ashlr` runs the same 
 
 | Group | Commands |
 | --- | --- |
-| Core | `index`, `go`, `status`, `ls`, `open`, `tidy`, `config`, `doctor`, `tune`, `init`, `setup`, `app`, `desktop`, `apps`, `desktopctl`, `desktop-update`, `self-swap`, `update`, `upgrade`, `orient`, `docs`, `completions`, `plugins`, `x`, `runtime`, `version`, `help` |
+| Core | `index`, `go`, `status`, `ls`, `open`, `tidy`, `config`, `doctor`, `tune`, `init`, `setup`, `app`, `desktop`, `apps`, `desktopctl`, `desktop-update`, `self-swap`, `update`, `upgrade`, `orient`, `docs`, `completions`, `plugins`, `x`, `runtime`, `version`, `help`, `land`, `approvals` |
 | Run | `run`, `runs`, `eval`, `skills`, `models`, `local-runtime` |
 | Swarm | `spec`, `swarm`, `swarms` |
 | Memory | `recall`, `learn`, `genome`, `memory` |
 | Knowledge | `graph`, `ask`, `knowledge`, `wiki`, `library` |
-| Autonomy | `route`, `metrics`, `trail`, `issues`, `select`, `pool`, `benchmark`, `enroll`, `backlog`, `inbox`, `daemon`, `drive`, `worker`, `prs`, `fleet`, `bus`, `recovery`, `manager`, `vision`, `goal`, `loop`, `conductor-permit`, `roadmap`, `reflect`, `health`, `goals`, `sweep`, `digest`, `release-articles`, `release`, `drafts`, `comms`, `comms-agent`, `imessage`, `connectors`, `channels`, `director`, `best-of-n`, `invent`, `universe`, `website`, `authority`, `org`, `leader`, `mirror`, `cloud`, `playbook`, `jev`, `devin`, `openai-agents`, `agents`, `automations` |
+| Autonomy | `route`, `metrics`, `trail`, `issues`, `select`, `pool`, `benchmark`, `enroll`, `backlog`, `inbox`, `daemon`, `drive`, `worker`, `prs`, `fleet`, `bus`, `recovery`, `manager`, `vision`, `goal`, `loop`, `conductor-permit`, `roadmap`, `reflect`, `health`, `goals`, `sweep`, `digest`, `release-articles`, `release`, `drafts`, `comms`, `comms-agent`, `imessage`, `connectors`, `channels`, `director`, `best-of-n`, `invent`, `universe`, `website`, `authority`, `org`, `leader`, `mirror`, `cloud`, `playbook`, `jev`, `devin`, `openai-agents`, `agents`, `automations`, `ideas`, `amplify`, `routines` |
 | Observability | `feed`, `wb`, `worklog`, `chain`, `router`, `context`, `claim`, `router-calibration`, `jobs`, `lanes`, `queue`, `incident`, `daily-fix`, `pulse`, `pulse-export`, `pulse-test`, `telemetry`, `audit`, `repos`, `receipt`, `radar`, `observe`, `growth`, `world`, `resource`, `resources`, `capacity`, `estates`, `signals`, `friction`, `budget`, `ci-metrics`, `main`, `usage` |
 | Integrations | `autopilot`, `improve`, `steward`, `team`, `companions`, `caps`, `mcp`, `checkpoint`, `sessions`, `gh`, `vercel`, `wire`, `notify`, `stack`, `ecosystem` |
 | Safety | `worktrees`, `disk`, `disk-maint`, `node`, `sandbox`, `seams`, `test`, `check`, `constitution`, `verify`, `engineering-receipt`, `verify-safety`, `verify-pr`, `preflight`, `onboard`, `demo` |
-| Web | `top`, `tui`, `dash`, `dashboard`, `serve`, `verse` |
+| Web | `top`, `tui`, `dash`, `dashboard`, `serve`, `verse`, `console` |
 | Scaffold | `new`, `ship` |
 
 ### Common CLI tasks
@@ -259,43 +120,10 @@ Every top-level `phm` command, grouped by what it is for. `ashlr` runs the same 
 
 See the [CLI reference](https://github.com/ashlrai/phantom/blob/master/docs/cli.md) for all commands.
 
-## The Phantom ecosystem
+</details>
 
-Phantom is the workbench. These projects stay useful on their own. The [ecosystem page](https://verse.ashlr.ai/ecosystem) charts a dated GitHub star history for six repositories. The chart adds the six totals. It is not a count of unique people. Each repo has its own install and its own live star count.
-
-| Project | What it helps with |
-| --- | --- |
-| **[Phantom](https://github.com/ashlrai/phantom)** | Coordinate coding agents, accounts, local models, and guarded fleet work. |
-| **[Phantom Secrets](https://github.com/ashlrai/phantom-secrets)** | Manage credentials. A proxy path can keep a raw key out of agent context. Some API adapters still reveal a key in-process for a call. |
-| **[Locus](https://github.com/ashlrai/locus)** | Check configured account and session identity. Off, warn, enforce, and firm do different things. |
-| **[Lexicon](https://github.com/ashlrai/lexicon)** | Correct names and technical terms from speech-to-text before they reach an agent. |
-| **[AshlrCode](https://github.com/ashlrai/ashlrcode)** | Run a multi-provider coding agent in the terminal. |
-| **[Morphkit](https://github.com/ashlrai/morphkit)** | Turn a TypeScript/React app into a SwiftUI project. |
-
-The [ecosystem map](https://github.com/ashlrai/phantom/blob/master/docs/ECOSYSTEM-MAP.md) is a planning snapshot, not a claim that every integration is live.
-
-## Documentation
-
-| Doc | Use it for |
-| --- | --- |
-| [docs/VISION.md](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) | Product direction: a chat-first open-source assistant, four pillars, and the gap to today's code |
-| [docs/llms.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms.txt) | Short index for agents |
-| [docs/llms-full.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms-full.txt) | Copy-paste install, JSON commands, and MCP setup |
-| [docs/QUICKSTART.md](docs/QUICKSTART.md) | First local session |
-| [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md) | Install, MCP, upgrade, uninstall |
-| [docs/VERSE.md](docs/VERSE.md) | Console guide |
-| [docs/lanes.md](docs/lanes.md) | What each fleet lane runs on and is best at |
-| [docs/README.md](docs/README.md) | Full doc map |
-| [docs/HUB-REFERENCE.md](https://github.com/ashlrai/phantom/blob/master/docs/HUB-REFERENCE.md) | Kernel reference: Universe, resource pools, and the legacy fleet |
-| [CHANGELOG.md](CHANGELOG.md) | Release history |
-
-## Working on this repository
-
-Agents that change this repo follow [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md). Humans follow [CONTRIBUTING.md](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md).
-
-For agents working in this checkout, `.mcp.json` declares `phantom-secrets`, `locus`, `lexicon`, `stack`, `ashlr`. These companion servers are separate from Phantom's aggregation gateway (`phm mcp`). Registration and discovery do not establish authorization or live readiness. See the [agent toolchain](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-TOOLCHAIN.md).
-
-## Optional Stacksync export
+<details>
+<summary>Optional Stacksync export</summary>
 
 Stacksync is off by default. Set `PHANTOM_STACKSYNC=on` and
 `PHANTOM_STACKSYNC_FILE=/absolute/path/fleet.jsonl` to append plain JSON lines
@@ -313,6 +141,29 @@ Set `PHANTOM_STACKSYNC=off` to disable all adapter I/O immediately. Missing
 configuration and file errors leave queue completion unchanged. Export is best
 effort with no retries or historical backfill; an unavailable consumer has no
 effect on Phantom. Rows exclude task content, owner, and credentials.
+
+</details>
+
+## The Phantom ecosystem
+
+Companions install separately. Each has its own capabilities and authorization boundaries.
+
+| Project | Purpose |
+| --- | --- |
+| [Phantom Secrets](https://github.com/ashlrai/phantom-secrets) | Local vault, placeholders and a proxy for supported API credential use. |
+| [Locus](https://github.com/ashlrai/locus) | Account and tenant bindings for agent tools. |
+| [Ashlr Plugin](https://github.com/ashlrai/ashlr-plugin) | Compact tool results and a local usage ledger. |
+| [Lexicon](https://github.com/ashlrai/lexicon) | Correct recurring speech-to-text errors before agents read them. |
+| [Ashlr MD](https://github.com/ashlrai/ashlr-md) | Markdown editing with CLI and MCP interfaces. |
+| [Ashlr Stack](https://github.com/ashlrai/ashlr-stack) | Configure supported development services through CLI and MCP. |
+
+## Documentation and contributing
+
+[Documentation map](docs/README.md) · [User guide](docs/VERSE.md) · [Fleet lanes](docs/lanes.md) · [Self-hosting](docs/SELF-HOSTING.md) · [Agent index](https://github.com/ashlrai/phantom/blob/master/docs/llms.txt) · [Kernel reference](https://github.com/ashlrai/phantom/blob/master/docs/HUB-REFERENCE.md) · [Changelog](CHANGELOG.md).
+
+Contributors: start with [CONTRIBUTING.md](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md). Coding agents also follow [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md) and the [agent toolchain](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-TOOLCHAIN.md).
+
+If Phantom helps you coordinate your agents, [star the repository](https://github.com/ashlrai/phantom) so others can find it.
 
 ## License
 
