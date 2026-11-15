@@ -683,6 +683,7 @@
     "src/core/fleet/merge-gates.ts",
     "src/core/fleet/merge-pace.ts",
     "src/core/fleet/meter-incident.ts",
+    "src/core/fleet/metrics-feed.ts",
     "src/core/fleet/mirrors.ts",
     "src/core/fleet/model-racing.ts",
     "src/core/fleet/model-stats.ts",
