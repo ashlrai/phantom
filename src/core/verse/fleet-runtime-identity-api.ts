@@ -11,6 +11,7 @@ import {
   type RuntimeIdentity,
   type RuntimeIdentityDeps,
 } from '../fleet/runtime-identity.js';
+import { handleFleetBridgeCheckApi, VERSE_FLEET_BRIDGE_CHECK_PATH } from './fleet-bridge-check-api.js';
 import { handleFleetClaimExecutionApi, VERSE_FLEET_CLAIM_EXECUTION_PATH } from './fleet-claim-execution-api.js';
 import { handleFleetHostReachApi } from './fleet-host-reach-api.js';
 import { handleFleetRuntimeSnapshotApi, VERSE_FLEET_RUNTIME_SNAPSHOT_PATH } from './fleet-runtime-snapshot-api.js';
@@ -31,6 +32,8 @@ export interface FleetRuntimeIdentityApiDeps {
   surfaceOwner?: ApiModule;
   /** Claim-execution sub-path handler seam for tests. */
   claimExecution?: ApiModule;
+  /** Bridge-check sub-path handler seam for tests. */
+  bridgeCheck?: ApiModule;
 }
 
 /** Every field "unknown" plus a reason; never carries the thrown message. */
@@ -50,10 +53,12 @@ export function createFleetRuntimeIdentityApi(deps: FleetRuntimeIdentityApiDeps 
   const snapshot = deps.snapshot ?? handleFleetRuntimeSnapshotApi;
   const surfaceOwner = deps.surfaceOwner ?? handleFleetSurfaceOwnerApi;
   const claimExecution = deps.claimExecution ?? handleFleetClaimExecutionApi;
+  const bridgeCheck = deps.bridgeCheck ?? handleFleetBridgeCheckApi;
   return async (ctx, req, res, path, method) => {
     if (path === VERSE_FLEET_RUNTIME_SNAPSHOT_PATH) return snapshot(ctx, req, res, path, method);
     if (path === VERSE_FLEET_SURFACE_OWNER_PATH) return surfaceOwner(ctx, req, res, path, method);
     if (path === VERSE_FLEET_CLAIM_EXECUTION_PATH) return claimExecution(ctx, req, res, path, method);
+    if (path === VERSE_FLEET_BRIDGE_CHECK_PATH) return bridgeCheck(ctx, req, res, path, method);
     // Sub-paths (tailnet-peers, pool-reach) ride this family's existing prefix.
     if (path.startsWith(`${VERSE_FLEET_RUNTIME_IDENTITY_PATH}/`)) return hostReach(ctx, req, res, path, method);
     if (path !== VERSE_FLEET_RUNTIME_IDENTITY_PATH) return false;
