@@ -1434,6 +1434,7 @@
     "src/core/verse/fleet-inbox-acks-api.ts",
     "src/core/verse/fleet-main-red-age-api.ts",
     "src/core/verse/fleet-memory-api.ts",
+    "src/core/verse/fleet-peer-ledger-api.ts",
     "src/core/verse/fleet-runs-types.ts",
     "src/core/verse/fleet-self-tick-api.ts",
     "src/core/verse/fleet-standby-api.ts",
