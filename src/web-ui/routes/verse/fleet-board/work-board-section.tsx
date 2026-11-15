@@ -10,9 +10,11 @@
  */
 import { apiGet } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
+import { Fragment, useState } from 'react';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import styles from './fleet-board.module.css';
+import { WorkResultForm } from './WorkResultForm.js';
 
 type WorkState = 'RECEIVED' | 'ASSIGNED' | 'RUNNING' | 'BLOCKED' | 'VERIFIED';
 
@@ -47,6 +49,8 @@ export const workBoardQuery: QueryDef<WorkBoardResponse> = {
   fetch: (signal) => apiGet<WorkBoardResponse>(`/api/verse/fleet/work-board?limit=${LIMIT}`, signal),
 };
 
+/** States where a result can still be recorded from the desktop. */
+const RECORDABLE_STATES: readonly WorkState[] = ['ASSIGNED', 'RUNNING', 'BLOCKED'];
 const OWNED_STATES: readonly WorkState[] = ['ASSIGNED', 'RUNNING', 'VERIFIED'];
 const RECEIPT_SHORT = 24;
 
@@ -101,6 +105,7 @@ export function WorkBoardSection({ visible }: { visible: boolean }) {
   const query = useQuery(workBoardQuery, { enabled: visible, freshMs: 0 });
   const refetch = useRefetch(workBoardQuery);
   usePollWhileVisible(refetch, 15_000, { enabled: visible });
+  const [recordingId, setRecordingId] = useState<string | null>(null);
 
   const data = query.data;
   let body;
@@ -134,7 +139,7 @@ export function WorkBoardSection({ visible }: { visible: boolean }) {
               <tr>
                 <th scope="col">State</th><th scope="col">Result</th><th scope="col">Id</th>
                 <th scope="col">Owner</th><th scope="col">Claim</th><th scope="col">Channel</th>
-                <th scope="col">Ref</th><th scope="col">Age</th><th scope="col">Missing</th>
+                <th scope="col">Ref</th><th scope="col">Age</th><th scope="col">Missing</th><th scope="col">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -142,7 +147,8 @@ export function WorkBoardSection({ visible }: { visible: boolean }) {
                 const receipt = textOrNull(item.claimReceipt);
                 const result = resultView(item.result);
                 return (
-                <tr key={item.id}>
+                <Fragment key={item.id}>
+                <tr>
                   <td><span className={styles.workChip} data-state={item.state}>{item.state}</span></td>
                   <td className={styles.mono} title={result?.title}>{result?.text ?? ''}</td>
                   <td className={styles.mono} title={item.id}>{item.id.slice(0, 12)}</td>
@@ -152,7 +158,18 @@ export function WorkBoardSection({ visible }: { visible: boolean }) {
                   <td className={styles.mono}>{item.channelRef ?? 'none'}</td>
                   <td className={styles.numeric}>{formatItemAge(item.receivedAt, now)}</td>
                   <td>{item.state === 'VERIFIED' ? '' : item.missing.join(', ')}</td>
+                  <td>
+                    {RECORDABLE_STATES.includes(item.state) ? (
+                      <button type="button" onClick={() => setRecordingId(recordingId === item.id ? null : item.id)}>Record result</button>
+                    ) : null}
+                  </td>
                 </tr>
+                {recordingId === item.id && RECORDABLE_STATES.includes(item.state) ? (
+                  <tr><td colSpan={10}>
+                    <WorkResultForm requestId={item.id} onDone={refetch} onCancel={() => setRecordingId(null)} />
+                  </td></tr>
+                ) : null}
+                </Fragment>
                 );
               })}
             </tbody>

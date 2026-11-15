@@ -1,6 +1,6 @@
 import type { NodesSnapshot } from '../../../core/nodes/view.js';
 import { formatAge } from '../../../core/nodes/age.js';
-import { StatusBadge } from '../../components/primitives/StatusBadge.js';
+import { StatusBadge, type Tone } from '../../components/primitives/StatusBadge.js';
 import { apiGet } from '../../data/client.js';
 import { useQuery, useRefetch } from '../../data/hooks.js';
 import type { QueryDef } from '../../data/queries.js';
@@ -11,6 +11,9 @@ import styles from './NodesPanel.module.css';
 export const nodesQuery: QueryDef<NodesSnapshot> = {
   key: 'nodes', fetch: (signal) => apiGet<NodesSnapshot>('/api/nodes', signal),
 };
+
+// Node health includes down, which the shared run-status palette does not map.
+const NODE_TONE: Record<string, Tone> = { ready: 'success', stale: 'warning', down: 'danger', unknown: 'unknown' };
 
 /** Nodes that joined this fleet. Same projection as `phm fleet nodes --json`; no credentials are ever in it. */
 export function NodesPanel() {
@@ -31,7 +34,7 @@ export function NodesPanel() {
           <p role="status">Loading nodes...</p>
         ) : snap.nodes.length === 0 ? (
           <p className={panel.emptyState}>
-            {snap.error ?? 'No nodes have joined this fleet.'}
+            {snap.error ? <span role="alert">Node inventory: {snap.error}. Run <code>phm fleet nodes</code> to inspect the inventory.</span> : <>No nodes have joined. Run <code>phm node join</code> on a machine to add it.</>}
           </p>
         ) : (
           <>
@@ -50,7 +53,7 @@ export function NodesPanel() {
                       <th scope="row">{n.id}{n.leader ? <span className={styles.leader} title="Holds the fleet lease"> ★ leader</span> : null}
                         {n.owners.length ? <small>{n.owners.join(', ')}</small> : null}</th>
                       <td>{n.role}</td>
-                      <td><StatusBadge status={n.status} /></td>
+                      <td><StatusBadge status={n.status} tone={NODE_TONE[n.status]} /></td>
                       <td>{n.heartbeatAgeMs === null ? 'no heartbeat' : `${formatAge(n.heartbeatAgeMs)} ago`}</td>
                       <td>{n.liveJobs.length}</td>
                       <td>{n.ghAuth}</td>

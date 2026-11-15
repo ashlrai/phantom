@@ -1,0 +1,17 @@
+.box { display: flex; flex-direction: column; gap: var(--space-2); padding-block: var(--space-2); }
+.strategy { margin: 0; font-size: var(--text-sm-size); color: var(--text-secondary); }
+.label { font-size: var(--text-sm-size); font-weight: 600; color: var(--text-primary); }
+.textarea {
+  width: 100%; resize: vertical; font: inherit; font-size: var(--text-sm-size);
+  color: var(--text-primary); background: var(--bg-base);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-md);
+  padding: var(--space-2);
+}
+.textarea:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+.row { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.row > :last-child { margin-left: auto; }
+.meta { font-size: var(--text-xs-size); color: var(--text-tertiary); }
+.note { font-size: var(--text-xs-size); color: var(--text-secondary); }
+.ack { font-size: var(--text-xs-size); color: var(--text-secondary); }
+.ack[data-state="delivered"] { color: var(--status-success-text); }
+.ack[data-state="requeued"] { color: var(--status-warning-text); }

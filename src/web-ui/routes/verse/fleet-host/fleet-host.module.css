@@ -23,3 +23,10 @@
 .identity dt { color: var(--text-tertiary); }
 .identity dd { margin: 0; overflow-wrap: anywhere; }
 .badge[data-tone='warn'] { background: var(--status-warning-bg); color: var(--status-warning-fg); }
+.peerList { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+.peerRow { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); min-width: 0; overflow-wrap: anywhere; }
+.peerName { font-weight: 600; }
+.peerState { color: var(--text-tertiary); }
+.peerDot { display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--status-unknown-fg); }
+.peerDot[data-state='online'] { background: var(--status-success-solid); }
+.peerDot[data-state='offline'] { background: var(--status-danger-solid); }
