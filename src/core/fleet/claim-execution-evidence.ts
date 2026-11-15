@@ -7,9 +7,9 @@
  *
  * A claim names a job when its id (checked first) or its task text carries
  * an `RQ-…` token. A worker matches a named job when `worker.job` equals the
- * token exactly (case-sensitive) and, when both repos are non-empty, the
- * worker repo's last path segment equals the claim repo's last segment —
- * launch.sh passes a bare repo name while claims carry `owner/repo`. Only a
+ * token exactly (case-sensitive) and both repos have valid identities. Bare
+ * launcher names match the repo part of `owner/repo`; two qualified names
+ * must match in full. Only a
  * record satisfying the process reader's contract — a positive safe-integer
  * pid, string job/repo/lane/tier and a null-or-non-negative-safe-integer
  * ageSeconds — is usable live-worker evidence: malformed matching records
@@ -146,9 +146,12 @@ const label = (value: unknown, allowSlash = false): string => {
   return (allowSlash ? REPO_LABEL_RE : LABEL_RE).test(v) && scrubSecrets(v) === v ? v : UNKNOWN;
 };
 
-const lastSegment = (repo: string): string => {
-  const parts = repo.split('/').filter(part => part.length > 0);
-  return parts.length === 0 ? '' : parts[parts.length - 1]!;
+/** Accept a bare repository or one owner/repository pair, without unsafe labels. */
+const repository = (value: unknown): string[] | null => {
+  const v = text(value);
+  const parts = v.split('/');
+  return v.length <= 128 && parts.length <= 2 && parts.every(part => LABEL_RE.test(part)) &&
+    scrubSecrets(v) === v ? parts : null;
 };
 
 /** Loose claim shape so an injected or future-schema row can never throw here. */
@@ -200,6 +203,7 @@ interface WorkerMatch {
   best: LiveWorker | null;
   /** True when at least one nominally matching record was malformed. */
   malformedMatch: boolean;
+  invalidRepository: boolean;
 }
 
 /**
@@ -208,22 +212,28 @@ interface WorkerMatch {
  * can answer UNKNOWN instead of claiming a healthy absence.
  */
 function workerFor(jobId: string, claimRepo: string, workers: unknown[]): WorkerMatch {
-  const claimSegment = lastSegment(claimRepo);
+  const claimIdentity = repository(claimRepo);
   let best: LiveWorker | null = null;
   let malformedMatch = false;
+  let invalidRepository = false;
   for (const candidate of workers) {
     if (candidate === null || typeof candidate !== 'object') continue;
     const worker = candidate as LiveWorker;
     if (worker.job !== jobId) continue;
-    const workerSegment = lastSegment(text(worker.repo));
-    if (claimSegment !== '' && workerSegment !== '' && workerSegment !== claimSegment) continue;
+    const workerIdentity = repository(worker.repo);
+    if (claimIdentity === null || workerIdentity === null) {
+      invalidRepository = true;
+      continue;
+    }
+    if (claimIdentity[claimIdentity.length - 1] !== workerIdentity[workerIdentity.length - 1] ||
+        (claimIdentity.length === 2 && workerIdentity.length === 2 && claimIdentity[0] !== workerIdentity[0])) continue;
     if (!usableWorkerEvidence(worker)) {
       malformedMatch = true;
       continue;
     }
     if (best === null || ageOf(worker) < ageOf(best)) best = worker;
   }
-  return { best, malformedMatch };
+  return { best, malformedMatch, invalidRepository };
 }
 
 /**
@@ -261,7 +271,7 @@ export function joinClaimExecution(board: FleetBoard | null, workers: LiveWorker
       const expiresAt = finite(claim.expiresAt) ? claim.expiresAt : nowMs;
       const jobId = jobIdOf(claim);
       const row: ClaimExecutionRow = {
-        claimId: label(claim.id), agent: label(claim.agent), repo: label(claim.repo, true),
+        claimId: label(claim.id), agent: label(claim.agent), repo: repository(claim.repo) === null ? UNKNOWN : label(claim.repo, true),
         jobId: jobId === null ? null : label(jobId), state: 'UNKNOWN', worker: null,
         expiresInSeconds: Math.floor((expiresAt - nowMs) / 1000),
       };
@@ -271,8 +281,10 @@ export function joinClaimExecution(board: FleetBoard | null, workers: LiveWorker
         reasons.add('process table: malformed worker list');
       } else if (jobId === null) {
         reasons.add('claim names no job id');
+      } else if (repository(claim.repo) === null) {
+        reasons.add('repository identity invalid');
       } else {
-        const { best: match, malformedMatch } = workerFor(jobId, text(claim.repo), workerList);
+        const { best: match, malformedMatch, invalidRepository } = workerFor(jobId, text(claim.repo), workerList);
         if (match !== null) {
           row.state = 'RUNNING';
           row.worker = {
@@ -280,6 +292,8 @@ export function joinClaimExecution(board: FleetBoard | null, workers: LiveWorker
             lane: label(match.lane), tier: label(match.tier),
             ageSeconds: finite(match.ageSeconds) ? match.ageSeconds : null,
           };
+        } else if (invalidRepository) {
+          reasons.add('repository identity invalid');
         } else if (malformedMatch) {
           reasons.add('matching worker evidence malformed');
         } else {
