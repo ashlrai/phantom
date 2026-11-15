@@ -148,3 +148,24 @@ Final verification notes: full lint has 13 untouched-file errors; archived HEAD 
 Map interaction coverage was split into focused telemetry and navigation cases, preserving assertions and keeping the 5s timeout. All five map cases passed. Final combined serial batch follows a parallel timeout in the existing Company overview case.
 
 Final result: 49 focused backend + 14 serial pool + 107 serial UI tests pass. Backend/web typecheck, changed-file ESLint, docs and web build pass. Full gate remains unqualified due to baseline failures; all changes left uncommitted.
+
+
+## RQ-VIZ-SESSIONS-1
+
+# Task Plan: Fleet session map
+
+## Goal
+Deliver fleet.sessions.v1 and an interactive, null-honest map using existing compute conventions; leave changes uncommitted.
+
+## Phases
+- [x] Setup and inspect compute implementation
+- [x] Trace existing session evidence and define projection
+- [x] Implement projection, API, map and fixture tests
+- [x] Run required verification and write BRIDGE_NOTES.md
+
+## Errors Encountered
+- Global npm installation refused with EPERM; existing phm 3.30.31 available.
+- Gateway configuration unavailable; no auth/config changes requested.
+
+## Status
+Implementation and focused verification complete: 22 backend + 7 UI tests pass; typechecks, changed lint, docs and authority drift pass. Gate exits 1 on existing guards/budgets and unresolved broader UI failures; backend discovery stopped after eight minutes without test results. BRIDGE_NOTES.md records commands, counts and limits. Initial TSV fixture and removed-export test failures were corrected without weakening coverage.

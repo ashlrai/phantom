@@ -522,3 +522,34 @@ measurements are null and source failures are explicit. No parameters or writes
 are accepted. Node beats may carry the closed numeric `HostStats` schema defined
 in `src/core/drive/nodes/state.ts`; legacy beats remain valid. This telemetry
 never changes routing authority. See [machine telemetry](docs/MACHINE-TELEMETRY.md#unified-fleet-compute-map).
+
+## Fleet session map (`fleet.sessions.v1`)
+
+`GET /api/verse/fleet/control/sessions` composes the existing
+`GET /api/fleet/sessions` dispatch inventory with `fleet.compute.v1` through
+`src/core/fleet/sessions-view.ts`. It accepts no query parameters or mutations.
+The existing sessions endpoint and its schema remain compatible.
+
+The map projection preserves inventory source states, counts, sessions and
+recent rows unchanged, and adds `computeAt`, `mapSessions` and `mapRecent`. Map
+rows contain `nodeId`, `placement`, `mapState`,
+`branch`, `worktree`, `activity` and `detailSources`, alongside job/lane/model,
+status, elapsed and outcome fields. Counts describe the local
+dispatch inventory; claim-only remote rows are additional observations, with
+unknown lane/model/status and null elapsed time. Placement uses a unique fenced
+node claim or a confirmed local worker process. Conflicting claims or a remote
+claim conflicting with a local process yield null placement. Queue membership
+alone never establishes a node. Map states group launching/running/publishing
+as running, exited as idle (awaiting reap), parked as held, queued as queued,
+and stale/unknown/finished as unknown. No absence establishes idle capacity.
+
+Only local inventory rows receive bounded, scrubbed job details (at most 100,
+eight concurrent readers); omitted evidence stays null and limits set
+`truncated`. Worktree `recorded` means branch metadata exists in the base
+receipt, not that the directory still exists or is clean. Paths are withheld;
+no worktree traversal, provider calls or raw prompt reads occur. Activity is
+the last retained scrubbed log excerpt, capped at 160 characters, with unknown
+activity time; it is not a semantic completion claim. Remote claims never read
+local artifacts with matching job names. Missing sources and telemetry remain
+explicit; the map renders unknown placement and empty inventories without
+seeded sessions. All reads use the existing bounded regular-file readers.

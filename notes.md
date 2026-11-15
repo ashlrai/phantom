@@ -74,3 +74,23 @@ RQ-FLEET-VIZ-1 verification findings:
 - Untouched HEAD web build reproduced the exact first-paint budget failures: chat 435.1 KiB/354, phone 253.4 KiB/250. The new pane remains lazy.
 - Loopback HTTP walkthrough refused by host EPERM; stopped browser verification. DOM interaction walkthrough is the available evidence.
 - Serial pool rerun: 14/14 passed; parallel timeout did not reproduce.
+
+
+## RQ-VIZ-SESSIONS-1
+
+# Fleet session map findings
+
+- Existing compute endpoint and ComputeMap shipped in current checkout.
+- Reuse compute styling, query handling and null-honest conventions.
+- Never read live credentials or raw activity bodies; tests use fixture roots.
+
+- Reuse existing fleet.sessions.v1 inventory rather than introduce a conflicting schema.
+- New compute sessions endpoint adds placement and bounded details; no local log reads for remote claims.
+- Worktree evidence is a base receipt only; directory presence remains unknown.
+
+- Final focused verification: 22 backend checks and 7 UI tests pass.
+- Backend and web typechecks, changed ESLint, docs and authority drift pass.
+- Broader tests: existing HTTP loopback EPERM plus two untouched apps-boundary failures.
+- Final duplicate-name guard: 208 existing cross-file collisions, no map test files.
+
+- Full gate exit 1: build/typechecks pass, existing lint/name/real-I/O/budget failures, broad UI 2847 pass / 64 fail / 1 todo / 17 errors. Map still 7/7. Backend discovery stopped after eight minutes without results.
