@@ -12,6 +12,14 @@ function scrub(text: string): string {
     .replace(/\p{Cc}/gu, ' ').replace(/\/(?:Users|home)\/[^/\s;,)]+/g, '~'), '').trim();
 }
 
+// A blocked pair may carry a projected throttle-release instant; anything that is
+// not a finite parseable timestamp is reported as unknown, never invented.
+function retrySuffix(pair: PeerLedgerReport['pairs'][number]): string {
+  if (pair.remaining !== 0) return '';
+  const at = typeof pair.retryAt === 'string' ? Date.parse(pair.retryAt) : Number.NaN;
+  return Number.isFinite(at) ? ` · projected retry ${new Date(at).toISOString()}` : ' · projected retry unknown';
+}
+
 export function formatPeerLedgerReply(report: PeerLedgerReport): string {
   const lines: string[] = [];
   let truncated = false;
@@ -24,7 +32,7 @@ export function formatPeerLedgerReply(report: PeerLedgerReport): string {
     const pairs = [...report.pairs].sort((a, b) => a.remaining - b.remaining
       || a.fromAgent.localeCompare(b.fromAgent) || a.target.localeCompare(b.target));
     for (const pair of pairs.slice(0, 5)) {
-      lines.push(`${scrub(pair.fromAgent)} → ${scrub(pair.target)}: ${pair.inWindow}/${report.pairLimit} in window, ${pair.remaining} left${pair.remaining === 0 ? ' RATE-LIMITED' : ''}`);
+      lines.push(`${scrub(pair.fromAgent)} → ${scrub(pair.target)}: ${pair.inWindow}/${report.pairLimit} in window, ${pair.remaining} left${pair.remaining === 0 ? ' RATE-LIMITED' : ''}${retrySuffix(pair)}`);
     }
     for (const origin of report.origins.filter(o => o.nearCap)) {
       lines.push(`Near hop cap: ${scrub(origin.origin)} at hop ${origin.maxHop}/${report.maxHops}`);
