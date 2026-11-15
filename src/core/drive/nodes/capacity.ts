@@ -1,6 +1,8 @@
 import { statfsSync } from 'node:fs';
-import { homedir, platform, totalmem } from 'node:os';
+import { cpus, freemem, homedir, loadavg, platform, totalmem, uptime } from 'node:os';
 import { assessHostHeadroom, readMacHostHeadroom, type HostHeadroom } from '../../run/host-headroom.js';
+
+import type { HostStats } from './state.js';
 
 const GIB = 1024 ** 3;
 export interface NodeCapacity {
@@ -51,4 +53,14 @@ export function readNodeCapacity(light = false): NodeCapacity {
   let freeDisk: number | null = null;
   try { const disk = statfsSync(homedir()); freeDisk = disk.bavail * disk.bsize; } catch { /* unknown holds */ }
   return assessNodeCapacity(totalmem(), platform() === 'darwin' ? readMacHostHeadroom() : null, freeDisk, light);
+}
+
+/** No shell, network, provider queries or writes. Deltas are calculated by the viewer. */
+export function sampleHostStats(): HostStats {
+  let diskFree: number | null = null;
+  try { const disk = statfsSync(homedir()); diskFree = disk.bavail * disk.bsize; } catch { /* unknown */ }
+  const ramTotal = totalmem();
+  return { sampledAtMs: Date.now(), uptimeSeconds: uptime(), load: platform() === 'win32' ? [null, null, null] : loadavg(), ramTotal,
+    ramUsed: Math.max(0, ramTotal - freemem()), diskFree,
+    cores: cpus().map(c => ({ total: Object.values(c.times).reduce((n, t) => n + t, 0), idle: c.times.idle })) };
 }
