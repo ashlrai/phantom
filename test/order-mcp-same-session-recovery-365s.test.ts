@@ -122,7 +122,7 @@ describe('fleet_order_state same-session recovery', () => {
     rig.setLive(async () => liveSnap([JOB], iso(nowMs)));
     const r1 = await callOrder(client);
     expect(r1.isError).toBe(false);
-    expect(r1.body).toEqual({ v: 1, asOf: iso(nowMs), sources: 'unavailable', live: 'unavailable', orders: [] });
+    expect(r1.body).toEqual({ v: 1, asOf: iso(nowMs), sources: 'unavailable', live: 'unavailable', lanes: 'unavailable', orders: [] });
     expect(rig.calls).toEqual({ trace: 1, live: 0 });
 
     // 2. Trace healthy with a launched job, live read throws: ASSIGNED, live unavailable.
@@ -206,7 +206,7 @@ describe('fleet_order_state same-session recovery', () => {
     const timedOut = await pending;
     const timedOutBody = JSON.parse((timedOut.content as Array<{ text: string }>)[0]!.text) as OrderBody;
     expect(timedOut.isError).toBeFalsy();
-    expect(timedOutBody).toEqual({ v: 1, asOf: iso(nowMs), sources: 'unavailable', live: 'unavailable', orders: [] });
+    expect(timedOutBody).toEqual({ v: 1, asOf: iso(nowMs), sources: 'unavailable', live: 'unavailable', lanes: 'unavailable', orders: [] });
     expect(rig.calls).toEqual({ trace: 1, live: 0 });
 
     // Readers heal; a fresh call on the SAME connection answers RUNNING while
