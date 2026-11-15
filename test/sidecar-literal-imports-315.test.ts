@@ -24,6 +24,11 @@ const ROOT = join(__dirname, '..');
 const ALLOWED: Record<string, string> = {
   // A user-installed plugin lives on disk outside the binary by definition.
   'src/core/plugins/registry.ts': 'loads operator-installed plugin entry points from disk',
+  // Playwright is not a Phantom dependency (absent from package.json) and is only used by the
+  // operator-run `usage-live` command. A literal import would make `bun build --compile` fail on an
+  // unresolvable module; a computed one is the intended optional load. In the compiled binary it
+  // misses and the command reports no browser pass, which is its documented absent-driver path.
+  'src/core/usage/live/browser.ts': 'loads the optional, non-dependency Playwright driver at runtime',
 };
 
 // This consumer deliberately runs the current installed Node package's helper,
