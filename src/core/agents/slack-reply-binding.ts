@@ -79,7 +79,7 @@ export function bindSlackReplies(input: {
       validRequests.push({ channelId: row.channelId, threadTs: row.threadTs, messageTs: row.messageTs, at: row.at });
     }
   }
-  const threads = new Map<string, { replies: string[]; next: number }>();
+  const threads = new Map<string, { replies: string[] }>();
   for (const row of receipts) {
     // Attempted receipts legitimately have no ts, but malformed evidence is still rejected.
     if (!record(row) || (row.state !== 'attempted' && row.state !== 'sent') || !isSlackChannelId(row.channel) ||
@@ -94,7 +94,7 @@ export function bindSlackReplies(input: {
       result.futureDated++;
     } else if (row.thread !== undefined) {
       const key = `${row.channel}:${row.thread}`;
-      const thread = threads.get(key) ?? { replies: [], next: 0 };
+      const thread = threads.get(key) ?? { replies: [] };
       thread.replies.push(row.ts);
       threads.set(key, thread);
     }
@@ -112,11 +112,16 @@ export function bindSlackReplies(input: {
   }
   for (const request of validRequests.sort(compareRequests)) {
     const thread = threads.get(`${request.channelId}:${request.threadTs}`);
-    while (thread && thread.next < thread.replies.length &&
-           compareTs(thread.replies[thread.next], request.messageTs) <= 0) thread.next++;
-    if (thread && thread.next < thread.replies.length) {
+    const receivedMs = Date.parse(request.at);
+    // Slack timestamps are nonnegative; dates before the epoch impose no lower bound.
+    const received = receivedMs < 0 ? '0.0' :
+      `${Math.floor(receivedMs / 1_000)}.${String(receivedMs % 1_000).padStart(3, '0')}`;
+    const index = thread?.replies.findIndex((ts) =>
+      compareTs(ts, request.messageTs) > 0 && compareTs(ts, received) >= 0) ?? -1;
+    if (thread && index >= 0) {
+      const [replyTs] = thread.replies.splice(index, 1);
       result.answered.push({ channelId: request.channelId, threadTs: request.threadTs,
-        messageTs: request.messageTs, replyTs: thread.replies[thread.next++] });
+        messageTs: request.messageTs, replyTs });
     } else {
       result.unanswered.push(request);
     }
