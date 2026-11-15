@@ -6,11 +6,12 @@ import { checkDriveExecutable } from '../script-bridge.js';
 import type { JobClaim } from './index.js';
 import { probeLocalModelCaps, type LocalLaneProbeDeps } from './local-model-caps.js';
 import { callPool, type PoolConfig } from './pool-host.js';
-import { validId } from './state.js';
+import { isHostStats, validId } from './state.js';
 import { readNodeCapacity } from './capacity.js';
 import { lightRecipe, restockLight } from './light.js';
 import { probeLocalAuth } from './auth-probe.js';
 import type { JobView } from './index.js';
+import { sampleHostStats } from './capacity.js';
 
 /** Native sign-in checks plus the local oMLX lane plan. No auth-file reads, API tokens or output retention. */
 export function probeNodeLanes(run: typeof spawnSync = spawnSync, localDeps: LocalLaneProbeDeps = {}): string[] {
@@ -51,12 +52,19 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
   const session = joined.result['session'];
   if (!Number.isSafeInteger(session)) return { held: 'node-already-live' };
   const identity = ['--node', config.node, '--session', String(session)];
+  // Optional observation must never become a new heartbeat/admission gate.
+  const telemetry = (): string[] => {
+    try {
+      const sample = sampleHostStats(), json = JSON.stringify(sample);
+      return isHostStats(sample) && json.length <= 64 * 1024 ? ['--host-stats', json] : [];
+    } catch { return []; }
+  };
   let active = 0;
   const usage = () => String(Math.min(1000, Math.round(active / capacity.slots * 1000)));
   const attempt = async (): Promise<Record<string, unknown>> => {
     const admission = capacityNow();
     if (admission.held) return { held: admission.held };
-    callPool(config, 'beat', [...identity, '--usage', usage(), '--slots', String(admission.slots), ...(auth ? ['--auth', auth] : [])]);
+    callPool(config, 'beat', [...identity, ...telemetry(), '--usage', usage(), '--slots', String(admission.slots), ...(auth ? ['--auth', auth] : [])]);
     const pulled = callPool(config, 'pull', identity);
     if (pulled.demoted || !pulled.result['pulled']) return { pulled: false };
     const claim = pulled.result['claim'] as JobClaim;
@@ -91,7 +99,7 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
       const timer = setInterval(() => {
         try {
           if (nodeStopped() || capacityNow().held) return stop();
-          callPool(config, 'beat', [...identity, '--usage', usage(), '--slots', String(capacityNow().slots)]);
+          callPool(config, 'beat', [...identity, ...telemetry(), '--usage', usage(), '--slots', String(capacityNow().slots)]);
           const current = callPool(config, 'renew', lease);
           if (current.demoted || !current.result['expiresAt']) stop();
         } catch { stop(); }
