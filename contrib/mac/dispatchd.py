@@ -401,9 +401,11 @@ AB_RX = {"codex": [("codex_usage_limit", re.compile(r"(?im)" + _CX + r"you" + _Q
                    ("codex_rate_limit_429", re.compile(r"(?im)" + _CX + r"(?:unexpected status |stream error: )?429\b.{0,200}\brate_limit.*$"))],
          "anthropic": [("claude_usage_limit", re.compile(r"(?im)^Claude AI usage limit reached(?:\|\d{10})?\s*$")),
                        ("claude_rate_limit_error", re.compile(r"(?im)^API Error: 429\b.{0,200}\"type\":\s*\"rate_limit_error\".*$")),
-                       ("claude_credit_balance", re.compile(r"(?im)^(?:API Error: \d{3} .{0,200})?Credit balance is too low\b.*$"))],
+                       ("claude_credit_balance", re.compile(r"(?im)^(?:API Error: \d{3} .{0,200})?Credit balance is too low\b.*$")),
+                       ("claude_oauth_expired", re.compile(r"(?im)^Failed to authenticate: OAuth session expired and could not be refreshed\s*$"))],
          "devin": [("devin_acu_exhausted", re.compile(r"(?im)^(?:ERROR|Error): (?:ACU (?:limit|quota) (?:reached|exceeded)|ACUs? (?:are |have been )?(?:exhausted|depleted)|out of ACUs)\b.*$")),
-                   ("devin_usage_limit", re.compile(r"(?im)^weekly usage quota has been exhausted\s*$"))]}
+                   ("devin_usage_limit", re.compile(r"(?im)^weekly usage quota has been exhausted\s*$")),
+                   ("devin_weekly_quota", re.compile(r"(?im)^Error: Agent error: Your weekly usage quota has been exhausted\s*$"))]}
 AB_PROV = {"codex-cmp": "codex", "codex-personal": "codex", "claude": "anthropic", "claude-api": "anthropic", "devin": "devin"}
 _MON = {m: i + 1 for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"])}
 def _et():
@@ -546,8 +548,9 @@ AB_AUTH_RX = {
     "codex": [("codex_auth_failure", re.compile(r"(?im)" + _CX + r"[^\n]*(?:" + _A_TOK + r")[^\n]*$"))],
     "devin": [("devin_auth_failure", re.compile(r"(?im)^(?:\[[0-9T:.\-]+Z?\]\s*)?(?:ERROR|Error): [^\n]*(?:" + _A_TOK + r")[^\n]*$"))],
     "anthropic": [("claude_auth_401", re.compile(r"(?im)^API Error: 401\b[^\n]*$")),
+                  ("claude_not_logged_in", re.compile(r"(?im)^Not logged in(?: [·-] [^\n]*)?\s*$")),   # the CLI's own line, not any line containing the words
                   ("claude_auth_error", re.compile(r"(?im)^[^\n]*(?:authentication_error|invalid (?:x-)?api[-_ ]?key|"
-                                                  r"oauth token (?:has )?expired|not logged in|please (?:re-?)?log ?in)[^\n]*$"))],
+                                                  r"oauth token (?:has )?expired|please (?:re-?)?log ?in)[^\n]*$"))],
 }
 def ab_auth_scan(lane, alive_):
     s_ = slots[lane]; pats = AB_AUTH_RX.get(AB_PROV.get(lane, ""))
@@ -1616,6 +1619,34 @@ tick_phase("launch", 30)
 # ---- (b) fill
 launched = []; rest = []; bad = 0; batches = []
 GCAP = global_cap()
+
+# Weekly quota pacing (RQ-PACE-TO-RESET): routine claims defer when a lane's
+# weekly_used_pct is ahead of its reset window; P0/critical router lines may
+# spend into the 95% critical reserve. Unknown usage or an unusable reset
+# falls back to the 60% routine ceiling; missing readings never block.
+def usage_verdict(row, now, critical=False):
+    import datetime
+    import math
+    used = row.get("weekly_used_pct") if isinstance(row, dict) else None
+    if isinstance(used, bool) or not isinstance(used, (int, float)) or not math.isfinite(used) or not 0 <= used <= 100:
+        return {"admit": True, "reason": "usage unknown", "used_fraction": None, "elapsed_fraction": None, "limit": None}
+    elapsed = None
+    try:
+        reset = row.get("reset_at")
+        reset = float(reset) if isinstance(reset, (int, float)) else datetime.datetime.fromisoformat(str(reset).replace("Z", "+00:00")).timestamp()
+        # weekly_used_pct describes a seven-day window; expired readings await refresh.
+        if math.isfinite(reset) and now < reset <= now + 7 * 86400:
+            elapsed = max(0, 1 - (reset - now) / (7 * 86400))
+    except (TypeError, ValueError, OverflowError): pass
+    limit = 0.95 if critical else (min(1, elapsed + 0.10) if elapsed is not None else 0.60)
+    admit = used / 100 <= limit
+    return {"admit": admit, "reason": ("critical reserve" if critical else "reset pacing" if elapsed is not None else "reset unknown: 60% fallback") + (": admit" if admit else ": defer"),
+            "used_fraction": used / 100, "elapsed_fraction": elapsed, "limit": limit}
+
+usage_rows = jload(Q + "/budget-overrides.json", {})
+if not isinstance(usage_rows, dict): usage_rows = {}
+lane_admission = {lane: {"routine": usage_verdict(usage_rows.get(lane, {}), NOW),
+                         "critical": usage_verdict(usage_rows.get(lane, {}), NOW, True)} for lane in LANES}
 _prev = jload(Q + "/admission.json", {}).get("gate_reason"); _now_reason = "; ".join(GATE["reasons"]) if GATE["tripped"] else None
 if _now_reason and _prev != _now_reason: ev("LOADGATE tripped: " + _now_reason)
 elif not _now_reason and _prev: ev("LOADGATE clear")
@@ -1686,6 +1717,13 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                 ev("SKIPPED_EMPTY %s %s" % (j, reason))
             empty_gate_cache[key] = reason
         return empty_gate_cache[key]
+    # RQ-PACE-TO-RESET: P0/critical READY lines spend into the lane's critical
+    # reserve; every other READY line paces against the routine limit.
+    urgent_jobs = set()
+    if rq:
+        for r in rq.splitlines():
+            m = re.match(r"^- READY ([A-Za-z0-9][A-Za-z0-9._-]*)", r)
+            if m and re.search(r"(?i)\b(?:P0|critical)\b", r): urgent_jobs.add(m.group(1))
     def member_ok(f, lead=False):   # every check the loop below would apply to the job on its own, plus batch limits
         m = f[0]
         return (not market_specs[m].get("needs") and not market_specs[m].get("exclusive")
@@ -1773,6 +1811,10 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                 or running[lane] >= tgt(lane) or sum(running.values()) >= GCAP or j in alive or j in reaping or j in publishing):
             rest.append(line); seen.add(j); continue
         if lane == "omlx" and not OMLX_OK: rest.append(line); seen.add(j); continue
+        # Weekly quota pacing: defer routine work ahead of its lane's reset
+        # window; P0/critical lines may use the 95% critical reserve.
+        if not lane_admission[lane]["critical" if j in urgent_jobs else "routine"]["admit"]:
+            rest.append(line); seen.add(j); continue
         if lane == "codex-local":
             if _size_hint(j, pf) > 60:
                 rest.append(line); seen.add(j); continue
@@ -2303,7 +2345,8 @@ _block = [x for x in (_now_reason, "paused" if pause else None, _at_cap) if x]  
 adm = {"schema": "dispatchd.admission.v2", "ts": st["last_tick"], "admit": not _block, "gate_reason": _now_reason, "warnings": GATE["warnings"], "reason": "; ".join(_block) or None,
        "disabled": GATE["disabled"], "load1": GATE["load1"], "ncpu": GATE["ncpu"], "load_max": GATE["load_max"], "procs": GATE["procs"], "worktrees": GATE["worktrees"],
        "daemon_tick_age_s": GATE["daemon_tick_age_s"], "local_mid_cap": LOCAL_MID_CAP, "cap": GCAP, "running": sum(running.values()), "hard_cap": slots.get("hard_cap"), "install_lock_holder": _install_holder(),
-       "concurrency_cap": CONC["cap"], "concurrency_floor": CONC_FLOOR, "concurrency_ceiling": CONC_CEILING, "concurrency_zones": CONC.get("zones")}
+       "concurrency_cap": CONC["cap"], "concurrency_floor": CONC_FLOOR, "concurrency_ceiling": CONC_CEILING, "concurrency_zones": CONC.get("zones"),
+       "lanes": lane_admission}
 adm.update({k: v for k, v in GATE.items() if k != "tripped"})
 adm["decision"] = "stop" if _block else "admit"
 jsave(Q + "/admission.json", adm); st["admission"] = adm
