@@ -236,12 +236,13 @@ export function defaultFleetRecheckDeps(now: () => Date): Required<FleetRecheckD
 export type FleetRecheckDeps = {
   now?: () => Date;
   homeDir?: () => string;
-  readRuntimeIdentity?: () => Promise<FleetRecheckRuntime | null>;
-  readFleetBoard?: () => Promise<FleetBoard>;
-  readChannelHealth?: () => Promise<ChannelHealthReport>;
-  listWorkBoard?: () => Promise<WorkBoardResult>;
-  listCoordination?: () => Promise<RecheckCoordinationListing>;
-  listLiveWorkers?: () => Promise<LiveWorkersSnapshot>;
+  // attempt() bounds both synchronous readers and promise-returning adapters.
+  readRuntimeIdentity?: () => Promise<FleetRecheckRuntime | null> | FleetRecheckRuntime | null;
+  readFleetBoard?: () => Promise<FleetBoard> | FleetBoard;
+  readChannelHealth?: () => Promise<ChannelHealthReport> | ChannelHealthReport;
+  listWorkBoard?: () => Promise<WorkBoardResult> | WorkBoardResult;
+  listCoordination?: () => Promise<RecheckCoordinationListing> | RecheckCoordinationListing;
+  listLiveWorkers?: () => Promise<LiveWorkersSnapshot> | LiveWorkersSnapshot;
 };
 
 type ReaderResult<T> = { ok: true; value: T } | { ok: false };

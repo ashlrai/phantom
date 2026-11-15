@@ -132,6 +132,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Apply durable sessions, steering, tool discovery and context ideas to the existing harness | [Agent harness evolution](AGENT-HARNESS-EVOLUTION.md) |
 | Review graph registry, addressed bus and routing child jobs with dispatch blockers | [Graph and bus implementation backlog](https://github.com/ashlrai/phantom/blob/master/workplans/2026-10-26-graphbus/README.md) |
 | Choose goal and Leader preferences, inspect review evidence, and run or compare local benchmarks | [Operator preferences and evidence](AGENT-HARNESS-EVOLUTION.md#operator-goal-and-leader-preferences) |
+| Track bridge PR merge, release and public package publication share by repository and lane | [Bridge production metrics - source guide](https://github.com/ashlrai/phantom/blob/master/docs/PRODUCTION-METRICS.md) |
 | Estimate lane idle capacity and identify long-running jobs | [Idle allowance](https://github.com/ashlrai/phantom/blob/master/docs/IDLE-ALLOWANCE.md) |
 | Inspect recorded producer outcomes and their deterministic learning path | [Execution feedback](EXECUTION-FEEDBACK.md) |
 | Review the fleet queueing-network model and its proposed child-job backlog | [Queueing-network plan](https://github.com/ashlrai/phantom/blob/master/workplans/2026-10-26-queue-network/README.md) |
