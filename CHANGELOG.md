@@ -32,12 +32,18 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Add resumable agent sessions with an append-only event log to `phm sessions` ([#4289](https://github.com/ashlrai/phantom/pull/4289)). See `docs/SESSIONS.md`.
 - Add `phm fleet done-plan` (read-only preview) and `phm fleet done-evaluate` (runs the checks, needs `--trust-worktree`) for a job's frozen done-contract, with `schema/done-contract.v1.schema.json` ([#4308](https://github.com/ashlrai/phantom/pull/4308), [#4317](https://github.com/ashlrai/phantom/pull/4317), [#4329](https://github.com/ashlrai/phantom/pull/4329)).
 - Add `npm run perf:desktop` to measure desktop startup and render cost ([#4294](https://github.com/ashlrai/phantom/pull/4294)).
+- Add `phm fleet recheck` (one read-only verdict over runtime, claims, bridge and task, with `--json` and a paste-ready `--reply`) and `phm fleet recheck-record` to log and page recheck results ([#5482](https://github.com/ashlrai/phantom/pull/5482)).
+- Add `phm fleet work-board`, `work-state` and `work-trace` to read the state of work requests from durable stores, and `phm fleet work-result` to post one verified or blocked result as a bus reply. A result receipt is evidence, not authority ([#5519](https://github.com/ashlrai/phantom/pull/5519)).
+- Add `phm fleet channel-health`, `runtime-identity` and `slack-trace` to show Slack and iMessage bridge health, which host and build is answering, and each Slack request from journal receipt to reply outcome ([#5539](https://github.com/ashlrai/phantom/pull/5539), [#5440](https://github.com/ashlrai/phantom/pull/5440), [#5548](https://github.com/ashlrai/phantom/pull/5548)). See `docs/FLEET-VERBS.md`.
 
 ### Fixes
 
 - Make leader office writes, scrubbing and escalation fail closed ([#4240](https://github.com/ashlrai/phantom/pull/4240)).
 - Keep Comms owner files under the account home ([#4269](https://github.com/ashlrai/phantom/pull/4269)) and count the three Comms MCP tools in the output budget ([#4252](https://github.com/ashlrai/phantom/pull/4252)).
 - Regenerate the fleet subcommand registry so `fleet done-plan` and `fleet done-evaluate` dispatch.
+- Run the dependency audit on every master push so release signing is not blocked, and bump `hono` and `@hono/node-server` to clear it ([#5535](https://github.com/ashlrai/phantom/pull/5535), [#5532](https://github.com/ashlrai/phantom/pull/5532)).
+- Include `docs/CLI-AGENT-READINESS.md` in the published package files and raise the Node heap for hosted desktop builds ([#5552](https://github.com/ashlrai/phantom/pull/5552), [#5543](https://github.com/ashlrai/phantom/pull/5543)).
+- Offer `request` as a completion verb for `phm apps`, matching `phm apps request open|quit|focus <app>`.
 
 ## [3.30.33] - 2026-11-13
 
