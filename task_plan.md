@@ -148,3 +148,20 @@ Final verification notes: full lint has 13 untouched-file errors; archived HEAD 
 Map interaction coverage was split into focused telemetry and navigation cases, preserving assertions and keeping the 5s timeout. All five map cases passed. Final combined serial batch follows a parallel timeout in the existing Company overview case.
 
 Final result: 49 focused backend + 14 serial pool + 107 serial UI tests pass. Backend/web typecheck, changed-file ESLint, docs and web build pass. Full gate remains unqualified due to baseline failures; all changes left uncommitted.
+
+---
+
+# RQ-ORCH-LOOP-1
+
+Goal: compose the existing company stack into a bounded, repeatable orchestration cycle; leave all changes uncommitted.
+
+- [x] Inspect existing chief-of-staff, roster/memory, peer bus, metrics and owner-thread boundaries.
+- [x] Implement the thin cycle and CLI, preserving advisory authority and existing transport gates.
+- [x] Prove repeated cycles and refusal paths with hermetic fixtures; document CONTRACT.md.
+- [x] Run affected tests, verify-changed, docs, typecheck/lint and gate; write BRIDGE_NOTES.md with counts and net LOC.
+
+Decisions: preview by default; apply coordinates named peers and records an owner notice, never launches jobs or edits dispatcher policy. Existing dispatch owns execution.
+
+Errors: global npm install failed EPERM; temporary-prefix install passed. Initial typecheck lacked tsgo; npm run install:worktree repaired it. MCP wiring reports host config access denied. Two exploratory rg globs had no matches; use explicit paths.
+
+Status: implementation and verification finished. All 84 focused tests, final typecheck, changed-file lint, docs and authority checks pass. Full gate failed on existing lint/test/UI issues and host loopback EPERM; full counts and limitations are in BRIDGE_NOTES.md. Changes remain uncommitted.
