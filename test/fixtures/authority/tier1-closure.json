@@ -591,6 +591,7 @@
     "src/core/fleet/channel-envelope.ts",
     "src/core/fleet/channel-health.ts",
     "src/core/fleet/ci-run-facts.ts",
+    "src/core/fleet/claim-lease-reap.ts",
     "src/core/fleet/claude-quota-reading.ts",
     "src/core/fleet/claude-quota-refresh.ts",
     "src/core/fleet/cloud-intake.ts",
