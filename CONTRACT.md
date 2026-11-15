@@ -473,3 +473,12 @@ and `cmdFleetChiefOfStaff(args: string[], deps?: FleetChiefOfStaffDeps): Promise
 The [v1 schema contract](docs/contracts/CONTRACT-FLEET-CHIEF-OF-STAFF-V1.md)
 defines bounds, deterministic rules, read-only capture and literal advisory
 authority. Core has no I/O or ambient clock; the CLI never applies a plan.
+## Fleet proof artifacts
+
+`fleet.proof.v1` carries bounded claims, evidence provenance, command exits,
+diff statistics, risk classification and a reviewer checklist. The bridge
+publisher captures actual staged Git and runner artifacts before publication;
+`phm fleet proof verify <resultRef>` checks the local digest-bound bundle without
+executing commands. Agent assertions alone never establish proof. See
+[the fleet proof contract](docs/contracts/CONTRACT-FLEET-PROOF-V1.md) for schema,
+trust boundary, bounds, redaction and Security-pinned deployment requirements.
