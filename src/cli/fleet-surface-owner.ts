@@ -12,8 +12,9 @@ import { gitSurfaceLog } from '../core/fleet/surface-owner-git-log.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const usage = `Usage: ashlr fleet surface-owner (${Object.keys(SURFACES).join('|')}) [--json]`;
+const HISTORY_BUDGET_MS = 5_000;
 
-export async function cmdFleetSurfaceOwner(args: string[], deps: SurfaceOwnerDeps = {}): Promise<number> {
+export async function cmdFleetSurfaceOwner(args: string[], deps: SurfaceOwnerDeps & { historyBudgetMs?: number } = {}): Promise<number> {
   let surface: string | undefined;
   let json = false;
   const seen = new Set<string>();
@@ -25,10 +26,26 @@ export async function cmdFleetSurfaceOwner(args: string[], deps: SurfaceOwnerDep
     return 2;
   }
   if (surface === undefined || !Object.hasOwn(SURFACES, surface)) { console.error(usage); return 2; }
+  const budget = deps.historyBudgetMs;
+  const deadline = performance.now() + (budget !== undefined && Number.isFinite(budget) && budget >= 0 ? budget : HISTORY_BUDGET_MS);
+  const log = deps.log ?? gitSurfaceLog;
+  const boundedLog: NonNullable<SurfaceOwnerDeps['log']> = async (...params) => {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) throw new Error('history deadline exceeded');
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        Promise.resolve().then(() => log!(...params)),
+        new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error('history deadline exceeded')), remaining); }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   const report = await readSurfaceOwner(surface, {
     now: deps.now,
     board: deps.board ?? readFleetBoard,
-    log: deps.log ?? gitSurfaceLog,
+    log: boundedLog,
   });
   const safe = sanitizePublicJson(report) as NonNullable<typeof report>;
   if (json) {

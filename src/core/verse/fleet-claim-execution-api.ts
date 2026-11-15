@@ -2,12 +2,15 @@
  * which live claims a worker is actually RUNNING right now (named
  * owner/claim plus actual execution evidence). Never writes; a thrown or
  * stalled reader degrades to an UNKNOWN report with a fixed reason and never
- * leaks the error text. */
+ * leaks the error text, and a reader-supplied report whose asOf is missing,
+ * invalid, future or over-age at response time degrades the same way rather
+ * than advertising retained RUNNING evidence. */
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { sanitizePublicJson } from '../util/public-json.js';
 import {
   CLAIM_EXECUTION_SCHEMA,
+  PROCESS_SNAPSHOT_MAX_AGE_MS,
   readClaimExecution,
   type ClaimExecutionReport,
 } from '../fleet/claim-execution-evidence.js';
@@ -20,6 +23,9 @@ export const VERSE_FLEET_CLAIM_EXECUTION_PATH = '/api/verse/fleet/runtime-identi
 export const FLEET_CLAIM_EXECUTION_READ_DEADLINE_MS = 5_000;
 const READER_FAILED_REASON = 'claim execution: reader failed';
 const READ_DEADLINE_REASON = 'claim execution: read deadline exceeded';
+const STALE_AS_OF_REASON = 'claim execution report: missing or invalid asOf';
+const FUTURE_AS_OF_REASON = 'claim execution report: asOf ahead of response clock';
+const OLD_AS_OF_REASON = 'claim execution report: asOf older than freshness bound';
 
 export interface FleetClaimExecutionResponse {
   v: 1;
@@ -47,6 +53,25 @@ function unknownReport(reason: string, asOf: string): ClaimExecutionReport {
   };
 }
 
+/**
+ * Response-time freshness verdict for a reader-supplied report, applying the
+ * same bounded policy the join uses for process snapshots: `asOf` must parse
+ * to a finite instant at or before the response observation clock and within
+ * PROCESS_SNAPSHOT_MAX_AGE_MS of it. A retained report — missing, invalid,
+ * future or over-age — is not fresh host evidence, so the response degrades
+ * to bounded UNKNOWN rather than advertising retained RUNNING rows under a
+ * new response timestamp. Raw stamp text never leaves here.
+ */
+function reportAsOfReason(report: ClaimExecutionReport, observedMs: number): string | null {
+  const asOf: unknown =
+    report !== null && typeof report === 'object' ? (report as { asOf?: unknown }).asOf : undefined;
+  const asOfMs = typeof asOf === 'string' ? Date.parse(asOf) : Number.NaN;
+  if (!Number.isFinite(asOfMs) || !Number.isFinite(observedMs)) return STALE_AS_OF_REASON;
+  if (asOfMs > observedMs) return FUTURE_AS_OF_REASON;
+  if (observedMs - asOfMs > PROCESS_SNAPSHOT_MAX_AGE_MS) return OLD_AS_OF_REASON;
+  return null;
+}
+
 type ClaimExecutionReadOutcome =
   | { kind: 'report'; report: ClaimExecutionReport }
   | { kind: 'rejected' }
@@ -69,7 +94,6 @@ export function createFleetClaimExecutionApi(deps: FleetClaimExecutionApiDeps = 
       sendJson(res, 400, { v: 1, authority: 'none', error: 'no query accepted' });
       return true;
     }
-    const generatedAt = now().toISOString();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let outcome: ClaimExecutionReadOutcome;
     try {
@@ -88,9 +112,18 @@ export function createFleetClaimExecutionApi(deps: FleetClaimExecutionApiDeps = 
     } finally {
       if (timer !== undefined) clearTimeout(timer);
     }
-    const report = outcome.kind === 'report'
-      ? outcome.report
-      : unknownReport(outcome.kind === 'timeout' ? READ_DEADLINE_REASON : READER_FAILED_REASON, generatedAt);
+    // The observation clock is sampled only after the read settles: a fresh
+    // report's asOf is stamped while its reader runs, so a clock taken before
+    // the read would see that stamp as future-dated and fail closed.
+    const observedAt = now();
+    const generatedAt = observedAt.toISOString();
+    let report: ClaimExecutionReport;
+    if (outcome.kind === 'report') {
+      const asOfReason = reportAsOfReason(outcome.report, observedAt.getTime());
+      report = asOfReason === null ? outcome.report : unknownReport(asOfReason, generatedAt);
+    } else {
+      report = unknownReport(outcome.kind === 'timeout' ? READ_DEADLINE_REASON : READER_FAILED_REASON, generatedAt);
+    }
     const response: FleetClaimExecutionResponse = { v: 1, authority: 'none', generatedAt, report };
     sendJson(res, 200, sanitizePublicJson(response));
     return true;

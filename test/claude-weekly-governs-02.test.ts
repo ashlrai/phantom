@@ -59,10 +59,10 @@ describe('Claude weekly window governs over five_hour', () => {
     expect(state).toMatchObject({ usedPct: 46, capWindow: '7d' });
   });
 
-  it('still throttles when the weekly reading crosses protectPct', async () => {
+  it('reports near when weekly usage is high without a configured reserve', async () => {
     respond({ five_hour: window(0.10), seven_day: window(0.91) });
     const state = await sense();
-    expect(state).toMatchObject({ availability: 'throttled', usedPct: 91, capWindow: '7d' });
+    expect(state).toMatchObject({ availability: 'near', usedPct: 91, capWindow: '7d' });
   });
 
   it('reports exhausted under the weekly window when both readings are saturated', async () => {
