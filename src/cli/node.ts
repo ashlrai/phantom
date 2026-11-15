@@ -27,6 +27,9 @@ export function nodeBootstrapPlan() {
 const USAGE = 'Usage: phm node bootstrap --dry-run [--json]';
 
 export async function cmdNode(args: string[]): Promise<number> {
+  if (args[0] === 'light' && !args.includes('--help') && !args.includes('-h')) {
+    return (await import('./node-light.js')).cmdNodeLight(args.slice(1));
+  }
   if (!args.includes('--help') && !args.includes('-h') &&
       (['pool', 'rpc', 'watch', 'worker'].includes(args[0] ?? '') || (args[0] === 'join' && (args.includes('--primary') || args.slice(1).every(a => a === '--json'))))) {
     return (await import('./node-pool.js')).cmdNodePool(args[0]!, args.slice(1));
@@ -58,7 +61,10 @@ phm node pool --role primary|backup --node <id> --owner <scope> --primary <alias
 phm node join [--node <id>] --owner <scope> --primary <alias> --backup <alias> --json
 phm node join --json (repeat on an already configured Mac)
 phm node watch [--once] --json
-phm node worker --runner /absolute/host-owned-runner --json
+phm node worker --runner /absolute/host-owned-runner [--light] --json
+phm node light restock [--apply] --json (bounded muse slice; preview by default)
+phm node light status --json (observed completions)
+phm node light run (fixed recipe runner stdin protocol)
 phm node rpc --json (SSH stdin endpoint)
 phm node lanes [--json] (local oMLX lane plan: model pick, caps, backoff)`);
     return 0;

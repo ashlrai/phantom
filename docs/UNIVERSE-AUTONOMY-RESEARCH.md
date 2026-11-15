@@ -137,3 +137,7 @@ The end state is not a system with no boundaries. It is a system whose routine w
 [^7]: Anthropic. [Demystifying evals for AI agents](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents). January 9, 2026. Outcome measurement, grading, and repeated reliability.
 [^8]: Anthropic. [How we built our multi-agent research system](https://www.anthropic.com/engineering/multi-agent-research-system). June 13, 2025. Internal research results, token costs, and delegation experience.
 [^9]: Joel Becker et al., METR. [We are Changing our Developer Productivity Experiment Design](https://metr.org/blog/2026-02-24-uplift-update/). February 24, 2026. Productivity measurement limitations and concurrent-agent attribution.
+
+## Historical product context
+
+The [original four-pillar vision](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) is preserved as a dated artifact. Current product direction remains the [North Star](NORTH-STAR.md).

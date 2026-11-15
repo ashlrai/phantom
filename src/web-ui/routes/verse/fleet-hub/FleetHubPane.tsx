@@ -76,6 +76,7 @@ export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
     ? read.data.runsDir : '~/.ashlr-runs';
 
   return <section className={styles.pane} aria-label="Fleet">
+    <button type="button" className={styles.primary} onClick={() => openDockPane('company')}>Company overview</button>
     <button type="button" className={styles.primary} disabled={workspaceIds.length === 0} onClick={() => openFleetWorkspace(workspaceIds)}>Open fleet workspace</button>
     <button type="button" className={styles.secondary} disabled={presentIds.length === 0} onClick={() => openFleetWorkspace(presentIds)}>Open all fleet panes</button>
     {read.status === 'error' ? <p role="status">Fleet counts are unavailable. Showing the last reading.</p> : null}
