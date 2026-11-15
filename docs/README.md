@@ -41,6 +41,7 @@ A zero exit code is not a merge and not permission to spend. `phm docs --agent -
 | Install, open the console, and make a first turn | [Quickstart](QUICKSTART.md) |
 | Install, connect MCP, upgrade, and uninstall | [Self-hosting](SELF-HOSTING.md) |
 | Use the console | [Phantom user guide](VERSE.md) |
+| Work in a floating personal agent window | [Owner Assist](https://github.com/ashlrai/phantom/blob/master/docs/OWNER-ASSIST.md) |
 | See what each fleet lane runs on and is best at | [Fleet lanes](lanes.md) |
 | Choose chat or fleet work | [Automatic work](AUTOMATIC-OUTCOMES.md) |
 
