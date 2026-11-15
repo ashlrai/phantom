@@ -1,23 +1,16 @@
 /**
  * devin-model-evidence-preserve-192s.test.ts — RQ-PHX-DEVINMODELEVIDENCEPORT192S.
  *
- * Preservation port of the regression coverage PR #4786 (source head
- * 46f19a08d576f42bad523656755a7f7e88fcbab1, underlying #4768) added as
- * test/devin-fleet-model-preservation-10ssf3.test.ts and
- * test/devin-overview-fleet-model.test.ts (plus the DevinResource fleetmodel
- * UI narrowing). That PR's `fleetModel` evidence surface —
- * devinOverview().fleetModel {configured, source, promo, laneModels} and the
- * devinFleetModelEvidence helper — is NOT on master b3a171f4e7: the contract
- * moved to the native-evidence guard (cli-admission / nativeFreeModelVerified)
- * and the CLI model-catalog summary. Every original scenario is kept below
- * against the current equivalent APIs. The test asserts observed eligibility
- * only; it never claims any model is currently free.
+ * Preservation port of PR #4786 (source head
+ * 46f19a08d576f42bad523656755a7f7e88fcbab1, underlying #4768).
+ * The overview now reports configured model, source, pricing and lane keys.
+ * Pricing is 'unknown' or 'not-free'; this reporting never proves a free
+ * route or replaces the native-evidence admission guard. Retain the legacy
+ * boundary, model-resolution, lane-attribution and catalog scenarios.
  *
  * Scenario → current-API mapping:
- *  - overview.fleetModel.promo 'free' | 'not-free' | 'unknown'
- *      → isDevinCliFreeModel(model, nowMs): true | false | false. The promo
- *        tri-state collapsed to a boolean — 'unknown' and 'not-free' are both
- *        "not observed free", and neither is ever a free claim.
+ *  - legacy promo hints → isDevinCliFreeModel(model, nowMs), separate from
+ *        the overview's pricing and insufficient for native admission.
  *  - overview.fleetModel.configured / .source
  *      → resolveDevinCliFleetModel(section, override): config value, else the
  *        compiled default; a paid -lightning id resolves to swe-2-flash-max.
@@ -25,15 +18,12 @@
  *      → getLaneModelSnapshot({runsDir}).lanes[].tiers[] attribution over a
  *        synthetic models.json; `paid` → isDevinCliFreeModel(model, clock)
  *        is false (paid ids are simply never on the free list).
- *  - DevinServiceDeps.laneModels injection → removed; the lane read is the
+ *  - overview lane metadata is injected empty; attribution separately uses
  *        real getLaneModelSnapshot over a temp runs dir.
- *  - devinCliFleetModelPromo(model, Date) → isDevinCliFreeModel(model, ms).
- *  - devinFleetModelEvidence(raw) → devinModelsLines(models): the UI's
- *        current model-evidence narrowing in the same devin-model.ts module
- *        (absent/malformed → null, never a guessed claim).
- *  - devinOverview().fleetModel → removed. devinOverview still runs for real
- *        and must not fabricate model evidence: `models` appears only when
- *        the CLI probe observed a catalog.
+ *  - catalog evidence → devinModelsLines(models): absent/malformed returns
+ *        null independently of the optional fleet-model display.
+ *  - configured fleet reporting remains separate from `models`, which only
+ *        appears when the CLI probe observed an installed CLI.
  *
  * Hermetic: temp runs dir only; cliProbe/modelCatalog are injected; no Devin
  * API call, no network. HOME is isolated by test/setup/home.ts.
@@ -68,6 +58,7 @@ function deps(fleetModel: string | undefined, now: Date, extra: Partial<DevinSer
   return {
     config: () => devin,
     cliProbe: async () => ({ state: 'missing' }),
+    laneModels: async () => ({ lanes: [] }),
     now: () => now,
     ...extra,
   };
@@ -82,10 +73,13 @@ describe('#4786 fleet-model evidence preservation (ported to current APIs)', () 
       for (const paid of ['swe-2-max-lightning', 'swe-2-flash-max']) {
         expect(isDevinCliFreeModel(paid, now.getTime())).toBe(false);
       }
-      // The real overview runs at the fixed clock and fabricates no model evidence.
+      // Reporting names the resolved model without claiming a free route.
       const overview = await devinOverview(deps('swe-2-max-lightning', now));
       expect(overview.generatedAt).toBe(now.toISOString());
-      expect(overview).not.toHaveProperty('fleetModel');
+      expect(overview.fleetModel).toEqual({
+        configured: 'swe-2-flash-max', source: 'config',
+        pricing: now === BEFORE ? 'unknown' : 'not-free', laneModels: [],
+      });
       expect(overview.models).toBeUndefined(); // probe missing → no catalog claim
       // Lane attribution from the synthetic models.json (the old laneModels field).
       const snap = await getLaneModelSnapshot({ runsDir: dir, now: () => now });
@@ -113,10 +107,12 @@ describe('#4786 fleet-model evidence preservation (ported to current APIs)', () 
       expect(isDevinCliFreeModel(unlisted, AFTER_MS)).toBe(false);
     }
     expect(isDevinCliFreeModel('swe-2-high', Number.NaN)).toBe(false); // NaN clock → unknown → not free
-    // Missing evidence never becomes free: an unlisted configured id still
-    // shows no model claim, and the lane verdict holds without native proof.
+    // An unlisted configured id has unknown pricing, and the lane verdict
+    // still holds without native proof.
     const unlisted = await devinOverview(deps('swe-2-custom', BEFORE));
-    expect(unlisted).not.toHaveProperty('fleetModel');
+    expect(unlisted.fleetModel).toEqual({
+      configured: 'swe-2-custom', source: 'config', pricing: 'unknown', laneModels: [],
+    });
     expect(unlisted.models).toBeUndefined();
     const held = devinCliLaneVerdict({
       section: { enabled: true, fleet: true },
@@ -167,12 +163,13 @@ describe('#4786 fleet-model evidence preservation (ported to current APIs)', () 
     expect((await getLaneModelSnapshot({ runsDir: dir, now: () => AFTER })).sources.models.state).toBe('degraded');
   });
 
-  it('the overview displays only observed catalog evidence; absent or malformed UI evidence narrows to null', async () => {
+  it('the overview includes catalog evidence after a CLI observation; absent or malformed catalog evidence narrows to null', async () => {
     // Real overview with an injected catalog: `models` appears only because the
     // probe observed the CLI — never from config or models.json alone.
     const observed = await devinOverview({
       config: () => ({ enabled: true }),
       cliProbe: async () => ({ state: 'ready', cliPath: null }),
+      laneModels: async () => ({ lanes: [] }),
       modelCatalog: async () => fallbackDevinModelCatalog(),
       now: () => AFTER,
     });
@@ -183,7 +180,7 @@ describe('#4786 fleet-model evidence preservation (ported to current APIs)', () 
       stale: true,
     });
 
-    // Absent or malformed evidence → null (the old devinFleetModelEvidence contract).
+    // Absent or malformed catalog evidence → null.
     for (const bad of [
       undefined, null, {},
       { freeFamilies: 'SWE-2', paidFamilyCount: 0, defaultModel: { label: 'x' } },
