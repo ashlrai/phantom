@@ -27,6 +27,9 @@ export function nodeBootstrapPlan() {
 const USAGE = 'Usage: phm node bootstrap --dry-run [--json]';
 
 export async function cmdNode(args: string[]): Promise<number> {
+  if (args[0] === 'run-once' && !args.includes('--help') && !args.includes('-h')) {
+    return (await import('./node-run-once.js')).cmdNodeRunOnce(args.slice(1));
+  }
   if (args[0] === 'light' && !args.includes('--help') && !args.includes('-h')) {
     return (await import('./node-light.js')).cmdNodeLight(args.slice(1));
   }
@@ -62,6 +65,7 @@ phm node join [--node <id>] --owner <scope> --primary <alias> --backup <alias> -
 phm node join --json (repeat on an already configured Mac)
 phm node watch [--once] --json
 phm node worker --runner /absolute/host-owned-runner [--light] --json
+phm node run-once [--json] < request.json (reviewed runner stdin endpoint)
 phm node light restock [--apply] --json (bounded muse slice; preview by default)
 phm node light status --json (observed completions)
 phm node light run (fixed recipe runner stdin protocol)
