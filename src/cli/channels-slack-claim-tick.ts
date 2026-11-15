@@ -1,6 +1,6 @@
 /** Proactive claim notices for `phm channels slack run` (Nov12/13 Slack
  * coordination orders): each loop iteration may run one claim-notice pass,
- * at most once per interval. The pass only appends `kind: 'note'` bus
+ * at most once per interval, with no overlapping passes. The pass only appends `kind: 'note'` bus
  * envelopes; the run loop's own `listBusInboxAfter` drain delivers them
  * through `deliverSlackEnvelope`, so audience, confirmedByMason and policy
  * gates stay exactly where they were. KILL halts the pass like every other
@@ -17,7 +17,7 @@ export type ClaimNoticeTickOutcome =
   | { ran: true; sent: number; deduped: number; failed: number;
       status: 'board-unavailable' | 'ledger-unavailable'; reason: string }
   | { ran: true; sent: number; deduped: number; failed: number; status: 'dry-run' }
-  | { ran: false; reason: 'interval' | 'kill-switch' | 'pass-error' | 'aborted' };
+  | { ran: false; reason: 'interval' | 'in-flight' | 'kill-switch' | 'pass-error' | 'aborted' };
 
 export interface ClaimNoticeTick {
   /** Runs a pass when the interval has elapsed. An aborted `signal` resolves
@@ -36,9 +36,11 @@ export function createClaimNoticeTick(opts: {
   const pass = opts.pass ?? (() => runClaimNoticePass(claimNoticePassDeps()));
   const killed = opts.killed ?? killSwitchOn;
   let lastAt: number | undefined;
+  let inFlight = false;
   return {
     async maybeRun(signal) {
       if (signal?.aborted) return { ran: false, reason: 'aborted' };
+      if (inFlight) return { ran: false, reason: 'in-flight' };
       const at = now();
       if (lastAt !== undefined && at - lastAt < intervalMs) return { ran: false, reason: 'interval' };
       // The attempt (not its success) starts the interval, so a failing or
@@ -46,10 +48,14 @@ export function createClaimNoticeTick(opts: {
       lastAt = at;
       try {
         if (killed()) return { ran: false, reason: 'kill-switch' };
-        const running = pass();
+        // The underlying pass owns this guard, even if its caller aborts.
+        // Defer invocation so synchronous throws also release the guard.
+        inFlight = true;
+        const running = Promise.resolve().then(pass).finally(() => { inFlight = false; });
         const result = signal === undefined ? await running : await new Promise<ClaimNoticePassResult | null>((resolve, reject) => {
           const onAbort = (): void => resolve(null);
           signal.addEventListener('abort', onAbort, { once: true });
+          if (signal.aborted) onAbort();
           running.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
         });
         if (result === null) return { ran: false, reason: 'aborted' };
