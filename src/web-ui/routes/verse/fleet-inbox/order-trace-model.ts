@@ -49,7 +49,7 @@ export function githubUrl(job: OrderTraceJob): string | null {
 
 export function stateWord(job: OrderTraceJob): string {
   if (job.state === 'queued') return 'queued';
-  if (job.state === 'launched') return 'running';
+  if (job.state === 'launched') return 'launched';
   const url = githubUrl(job);
   const number = url && /^\/[^/]+\/[^/]+\/pull\/(\d+)\/?$/.exec(new URL(url).pathname)?.[1];
   if (job.state === 'merged') return number ? `merged #${number}` : 'merged';
