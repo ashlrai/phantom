@@ -17,7 +17,7 @@ const ISO = NOW.toISOString();
 const HOME = '/home/fakeuser';
 const LEASE_MS = NOW_MS + 600_000;
 const ASSOCIATION_MISSING =
-  'task: no coordination-claim field associates a claim with board item fake-request-1; owner match is not task identity';
+  'task: no live claim by agent-alpha carries [board:fake-request-1]; owner match is not task identity';
 
 const healthyRuntime: RuntimeIdentity = {
   host: 'fake-host', platform: 'fakeos', asOf: ISO,
@@ -100,6 +100,31 @@ describe('fleet recheck task ↔ claim-store binding', () => {
     expect(recheck.sections.task.state).toBe('VERIFIED');
     expect(recheck.sections.claims.state).toBe('UNKNOWN');
     expect(recheck.overall.state).toBe('UNKNOWN');
+  });
+
+  it('preserves claim-store evidence when the ledger token is ambiguous', async () => {
+    const recheck = await readFleetRecheck(deps({
+      readFleetBoard: () => ({ ...healthyBoard, claims: [fakeClaim({
+        task: '[board:fake-request-1] [board:other-item]',
+      })] }),
+    }));
+    expect(recheck.sections.task.state).toBe('VERIFIED');
+    expect(recheck.sections.task.task?.ledgerClaim).toBeNull();
+    expect(recheck.sections.task.task?.coordinationClaim?.key).toBe('queue:fake-request-1');
+    expect(recheck.sections.task.missing).toEqual([]);
+  });
+
+  it('accepts a bound ledger token when the claim store contains only unrelated work', async () => {
+    const recheck = await readFleetRecheck(deps({
+      readFleetBoard: () => ({ ...healthyBoard, claims: [fakeClaim({ task: '[board:fake-request-1]' })] }),
+      listCoordination: () => ({ source: 'available', claims: [coordRow({
+        key: 'queue:other-item', sourceId: 'other-item:3:1700000000000',
+      })] }),
+    }));
+    expect(recheck.sections.task.state).toBe('VERIFIED');
+    expect(recheck.sections.task.task?.ledgerClaim?.id).toBe('fake-claim-1');
+    expect(recheck.sections.task.task).not.toHaveProperty('coordinationClaim');
+    expect(recheck.sections.task.missing).toEqual([]);
   });
 
   it('keeps today\'s exact UNKNOWN text when listCoordination throws', async () => {
