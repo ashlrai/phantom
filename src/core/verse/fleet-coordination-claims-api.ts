@@ -9,6 +9,7 @@ import { readFleetBoard, type FleetBoard } from '../fleet/coordination.js';
 import {
   VERSE_FLEET_COORDINATION_CLAIM_PATH, VERSE_FLEET_COORDINATION_RETURN_PATH, handleFleetCoordinationMutateApi,
 } from './fleet-coordination-mutate-api.js';
+import { VERSE_FLEET_COORDINATION_RETURNS_PATH, handleFleetCoordinationReturnsApi } from './fleet-coordination-returns-api.js';
 
 export const VERSE_FLEET_COORDINATION_CLAIMS_PATH = '/api/verse/fleet/coordination-claims';
 
@@ -22,6 +23,8 @@ export interface FleetCoordinationClaimsApiDeps {
   now?: () => Date;
   /** Sub-path module for /claim and /return. Default: handleFleetCoordinationMutateApi. */
   mutate?: ApiModule;
+  /** Module for the /returns sub-path. Default: handleFleetCoordinationReturnsApi. */
+  returns?: ApiModule;
 }
 
 export interface FleetClaimView {
@@ -37,10 +40,12 @@ export function createFleetCoordinationClaimsApi(deps: FleetCoordinationClaimsAp
   const read = deps.read ?? (() => readFleetBoard());
   const now = deps.now ?? (() => new Date());
   const mutate = deps.mutate ?? handleFleetCoordinationMutateApi;
+  const returns = deps.returns ?? handleFleetCoordinationReturnsApi;
   return async (ctx, req, res, path, method) => {
     if (path === VERSE_FLEET_COORDINATION_CLAIM_PATH || path === VERSE_FLEET_COORDINATION_RETURN_PATH) {
       return mutate(ctx, req, res, path, method);
     }
+    if (path === VERSE_FLEET_COORDINATION_RETURNS_PATH) return returns(ctx, req, res, path, method);
     if (path !== VERSE_FLEET_COORDINATION_CLAIMS_PATH) return false;
     if (method !== 'GET') {
       sendJson(res, 405, { error: 'method not allowed' });
