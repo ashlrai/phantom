@@ -194,6 +194,9 @@ const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
   'fleet-comms-status': 'handleFleetCommsStatusApi',
   'agent-roster': 'handleAgentRosterApi',
   'fleet-cos': 'handleFleetCosApi',
+  // The desktop command center's own reads: runs, chief-of-staff intake, the
+  // staged self-update status line and memory.
+  'app-update': 'handleAppUpdateApi',
   'cos-memory': 'handleCosMemoryApi',
   team: 'handleTeamApi',
   // 3.16: run many agents — the board, agent workspaces, Checks, Plan first, spend caps.

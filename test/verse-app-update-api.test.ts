@@ -74,6 +74,15 @@ describe('app update status api', () => {
       wire: { v: 1, available: null, deferredReason: 'native-status-unavailable', runningJobCount: null, unknownJobs: null } });
   });
 
+  it('awaits an asynchronous status read and handles a rejected read as unavailable', async () => {
+    const ready = make({ readStatus: async () => staged({ available: '3.30.2', runningJobCount: 0 }) });
+    expect(await call(ready)).toEqual({ handled: true, status: 200,
+      wire: { v: 1, available: '3.30.2', deferredReason: null, runningJobCount: 0, unknownJobs: null } });
+    const rejected = make({ readStatus: async () => { throw new Error('private inspection failure'); } });
+    expect(await call(rejected)).toEqual({ handled: true, status: 200,
+      wire: { v: 1, available: null, deferredReason: 'native-status-unavailable', runningJobCount: null, unknownJobs: null } });
+  });
+
   it('is a read route: GET answers without dispatch, other methods are 405', async () => {
     const api = make({ readStatus: () => staged({ available: '3.30.2' }) });
     expect((await call(api, { allowDispatch: false })).status).toBe(200);

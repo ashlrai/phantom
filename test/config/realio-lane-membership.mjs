@@ -43,6 +43,23 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/channel-health-ingress-failure-322s.test.ts', // Spawns real bridge process fixtures.
+  'test/channel-health-slack-binding-338.test.ts', // Spawns real bridge process fixtures.
+  'test/comms-confirm-http-original-264s.test.ts', // Runs git to inspect the production caller inventory.
+  'test/email-outbox-crash-batch-103.test.ts', // Kills real outbox writer processes to exercise crash recovery.
+  'test/fleet-channel-health-proof-320s.test.ts', // Spawns real bridge process fixtures.
+  'test/gmail-archive-plan-concurrent-104.test.ts', // Runs concurrent archive writer processes.
+  'test/handoff-api-response-contract-10ssl2.test.ts', // Binds a real loopback HTTP server.
+  'test/imessage-teammate-dispatch.test.ts', // Spawns a Python process to hold the dispatcher lock.
+  'test/recut-desk-s0-c205.test.ts', // Binds a real loopback HTTP server.
+  'test/recut-n1r4200s92.test.ts', // Runs the changelog extractor in a real Node child.
+  'test/recut-top-a59.test.ts', // Binds a real loopback HTTP server.
+  'test/repo-tracked-artifacts.test.ts', // Runs git to inspect tracked repository artifacts.
+  'test/ui-settings-recut-c196.test.ts', // Binds a real loopback HTTP server.
+  'test/ui-settings-recut-c206.test.ts', // Binds a real loopback HTTP server.
+  'test/ui-settings.test.ts', // Binds real loopback HTTP servers for API coverage.
+  'test/web-ui-redfix-5262.test.ts', // Binds a real loopback HTTP server.
+  'test/work-trace-restart-proof-319s.test.ts', // Restarts real Node processes against a private trace store.
   'test/queue.test.ts', // Real Python dispatcher ticks in disposable homes for the shared work market.
   'test/delegation-scope-prompts.test.ts', // real Python and shell prompt builders plus isolated restock fixture subprocesses
   'test/routines.test.ts', // Real CLI adapter subprocesses and private ledger files.
@@ -103,6 +120,7 @@ export const REAL_IO_TEST_FILES = [
   'test/mcp/fleet-path-history-04-spm1.test.ts', // Creates real git history for MCP path lookup.
   'test/mcp/fleet-path-history-snapshot-04-spt2.test.ts', // Creates real git history and moves refs during MCP reads.
   'test/mcp/fleet-job-patch-04-sqb1.test.ts', // Creates real git history for MCP job patch reads.
+  'test/mcp/fleet-job-current-snapshot-04-sqc1.test.ts', // Creates real git history and replays a pinned snapshot for MCP current-job reads.
   'test/mcp/fleet-path-history-pinned-04-sps2.test.ts', // Creates real git history and moves refs during pinned MCP path history reads.
   'test/verify-change.test.ts',
   'test/remote-reassign-e2e.test.ts', // Binds a real loopback HTTP server for remote reassignment.

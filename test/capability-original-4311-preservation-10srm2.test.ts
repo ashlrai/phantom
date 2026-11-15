@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { buildCapabilityAudit, type CapabilityAuditReport } from '../src/core/fleet/capability-audit.js';
 
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });

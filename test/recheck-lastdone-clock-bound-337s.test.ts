@@ -44,13 +44,14 @@ function deps(items: WorkBoardItem[], over: Partial<FleetRecheckDeps> = {}): Fle
     readRuntimeIdentity: () => runtime, readFleetBoard: () => ledger, readChannelHealth: () => channels,
     listWorkBoard: (): WorkBoardResult => ({ items, inbox: 'ok', truncated: false }),
     listCoordination: () => ({ source: 'unavailable', claims: [] }),
+    listLiveWorkers: () => { throw new Error('absent'); },
     ...over,
   };
 }
 
+
 describe('fleet recheck task.lastVerified clock bound', () => {
   it('accepts only finite asOf at or before nowMs', async () => {
-    const now = new Date('2026-11-13T13:13:00.000Z');
     const laterAsOf = new Date('2026-11-13T13:15:00.000Z');
     const itemWithFutureAsOf = item({ asOf: laterAsOf.toISOString() });
     
@@ -100,10 +101,19 @@ describe('fleet recheck task.lastVerified clock bound', () => {
       state: 'RUNNING',
       asOf: '2026-11-13T13:10:00.000Z',
       owner: 'agent-bravo',
-      claimReceipt: 'bus-claim:fake-run-1:1:1700000000000',
+      claimReceipt: 'bus-claim:running-item:1:1700000000000',
     });
     
-    const result = await readFleetRecheck(deps([verifiedItem, runningItem]));
+    const result = await readFleetRecheck(deps([verifiedItem, runningItem], {
+      listCoordination: () => ({
+        source: 'available',
+        claims: [{
+          origin: 'message', key: 'queue:running-item', owner: 'agent-bravo',
+          leaseUntil: NOW.getTime() + 3_600_000, sourceId: 'running-item:1:1700000000000',
+          live: true, repo: null, branch: null, path: null, started: null,
+        }],
+      }),
+    }));
     
     // Verify task state and pick is unaffected by clock bound violations
     expect(result.sections.task.state).toBe('VERIFIED');
