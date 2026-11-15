@@ -15,19 +15,20 @@ export function nodeRamSlots(bytes: number): number {
   return Math.max(0, Math.min(64, Math.floor((bytes - Math.max(4 * GIB, bytes * 0.3)) / (4 * GIB))));
 }
 
-export function assessNodeCapacity(ramBytes: number, memory: HostHeadroom | null, freeDiskBytes: number | null): NodeCapacity {
+export function assessNodeCapacity(ramBytes: number, memory: HostHeadroom | null, freeDiskBytes: number | null, light = false): NodeCapacity {
   let held: NodeCapacity['held'] = null;
   const headroom = assessHostHeadroom(memory);
   if (!headroom.reading) held = 'memory-unmeasured';
   else if (!nodeRamSlots(ramBytes) || !headroom.allowed) held = 'memory-pressure';
   else if (freeDiskBytes === null || !Number.isFinite(freeDiskBytes) || freeDiskBytes < 0) held = 'disk-unmeasured';
   else if (freeDiskBytes < 20_000_000_000) held = 'disk-pressure';
-  return { ramBytes, slots: held ? 0 : nodeRamSlots(ramBytes), held };
+  // Only the fixed light recipe runner uses this profile; all pressure/disk floors still apply.
+  return { ramBytes, slots: held ? 0 : light ? Math.min(2, nodeRamSlots(ramBytes) * 2) : nodeRamSlots(ramBytes), held };
 }
 
 /** Additive to DISKGUARD: never substitutes for the runner's existing disk checks. */
-export function readNodeCapacity(): NodeCapacity {
+export function readNodeCapacity(light = false): NodeCapacity {
   let freeDisk: number | null = null;
   try { const disk = statfsSync(homedir()); freeDisk = disk.bavail * disk.bsize; } catch { /* unknown holds */ }
-  return assessNodeCapacity(totalmem(), platform() === 'darwin' ? readMacHostHeadroom() : null, freeDisk);
+  return assessNodeCapacity(totalmem(), platform() === 'darwin' ? readMacHostHeadroom() : null, freeDisk, light);
 }
