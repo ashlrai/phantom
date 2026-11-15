@@ -170,6 +170,9 @@ async function readCoverage(queueDir: string, readText: (path: string) => Promis
   return { state: missing > 0 ? 'degraded' : 'ok', jobs };
 }
 
+/** Shared read-only queue evidence for merge-batch-run; no dispatch side effects. */
+export const readRebaseCoverage = readCoverage;
+
 function failedPlan(repo: string | null, now: Date, input: Record<string, unknown>, error: string): RebasePlan & { input: Record<string, unknown>; error: string } {
   return {
     schema: REBASE_PLAN_SCHEMA, v: 1, repo, generatedAt: now.toISOString(),

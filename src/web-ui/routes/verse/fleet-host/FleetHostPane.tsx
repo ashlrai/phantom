@@ -11,6 +11,7 @@ import { usageResetsQuery } from '../shell/usage-resets-query.js';
 import { DropQueueCard } from './DropQueueCard.js';
 import { StandbyCard } from './StandbyCard.js';
 import { RuntimeIdentityCard } from './RuntimeIdentityCard.js';
+import { TailnetPeersCard } from './TailnetPeersCard.js';
 import { AppsCard } from './AppsCard.js';
 import { DiskForecastCard } from './DiskForecastCard.js';
 import { AllowedAppsCard } from './AllowedAppsCard.js';
@@ -109,6 +110,7 @@ export function FleetHostPane({ visible }: Pick<PaneProps, 'visible'>) {
         <AppsCard visible={visible} />
         <StandbyCard visible={visible} />
         <RuntimeIdentityCard visible={visible} />
+        <TailnetPeersCard visible={visible} />
         <p className={styles.muted}>Orchestrator agents: {host.orchestratorAgents ?? '—'}</p>
       </>}
   </div>;
