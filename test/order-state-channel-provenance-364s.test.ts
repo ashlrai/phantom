@@ -93,17 +93,17 @@ describe('fleet order-state with channel attribution', () => {
     expect(order1.asOf).toBe('2026-11-13T12:00:00.000Z');
   });
 
-  it('includes alsoChannels field when present in trace orders', async () => {
+  it.each([{ channels: ['slack', 'telegram'] }, { channels: [] }])('includes alsoChannels field when present in trace orders: $channels', async ({ channels }) => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     
-    const testTrace = trace({}, ['slack', 'telegram']);
+    const testTrace = trace({}, channels);
     expect(await cmdFleetOrderState(['--json'], { read: async () => testTrace, now, live: async () => noLive })).toBe(0);
     
     const parsed = JSON.parse(log.mock.calls[0]![0]);
     const orderWithChannels = parsed.orders.find((o: any) => o.key === '11-05 09:15');
     
     // Verify that alsoChannels field is included when present in the trace
-    expect(orderWithChannels.alsoChannels).toEqual(['slack', 'telegram']);
+    expect(orderWithChannels.alsoChannels).toEqual(channels);
     
     // Verify other fields remain intact
     expect(orderWithChannels.at).toBe('2026-11-05 09:15');
