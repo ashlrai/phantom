@@ -1,11 +1,10 @@
 /** One bounded coordination cycle. Execution and proof acceptance remain with dispatch. */
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
-import { z } from 'zod';
 import { sendPeerMessage, type PeerBusOptions, type PeerRequest, type PeerResult } from '../agentnet/peer-bus.js';
 import { callsignSchema, type PeerSession } from '../agentnet/slack-identities.js';
 import { localWriteGate } from '../agents/send-gate.js';
 import { postOwnerNotice, type OwnerThreadOptions } from '../comms/owner-thread.js';
+import { journalSchema, orchestrationJournalPath, receiptSchema } from './orchestration-journal.js';
 import { writePrivateFileAtomic } from '../verse/preferences.js';
 import { parseFleetSnapshot, planChiefOfStaff, type FleetSnapshot } from './chief-of-staff.js';
 import { buildOutcomeMetrics } from './outcome-metrics.js';
@@ -15,13 +14,6 @@ import { loadSpecialistPreamble } from './specialist-memory.js';
 import { loadSpecialistRoster, readSpecialistFile, saveSpecialistRoster, setSpecialistCurrentJob,
   specialistRosterDirectory, withSpecialistRosterLock } from './roster.js';
 
-const receiptSchema = z.object({
-  key: z.string().regex(/^[a-f0-9]{64}$/), job: z.string().max(64), lane: z.string().max(64),
-  specialist: z.string().max(64), assignedAt: z.string().datetime(),
-  status: z.enum(['reserved', 'admitted', 'complete']),
-  delivery: z.string().max(64).optional(), slack: z.string().max(64).optional(),
-}).strict();
-const journalSchema = z.object({ version: z.literal(1), receipts: z.array(receiptSchema).max(2000) }).strict();
 const digest = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export interface OrchestrationInput {
   snapshot: FleetSnapshot;
@@ -55,7 +47,7 @@ export async function orchestrateFleet(input: OrchestrationInput, options: Orche
   const run = async () => {
     if (apply && localWriteGate()) throw new Error('Orchestration writes halted');
     let roster = await loadSpecialistRoster(directory);
-    const path = join(directory, 'orchestration.json');
+    const path = orchestrationJournalPath(directory);
     const raw = await readSpecialistFile(path);
     const journal = journalSchema.parse(raw === null ? { version: 1, receipts: [] } : JSON.parse(raw));
     const persist = () => {
