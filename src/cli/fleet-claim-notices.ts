@@ -29,11 +29,13 @@ const usage = 'Usage: ashlr fleet claim-notices [--dry-run] [--json]\n'
   + 'dedupe key once-only; a failed send leaves the snapshot unchanged so the next pass\n'
   + 'retries. --dry-run prints the plan without sending or writing.';
 
-interface SlackThread { teamId: string; channelId: string; threadTs: string }
+export interface SlackThread { teamId: string; channelId: string; threadTs: string }
 
 /** Both thread-ref grammars on master: `slack:<team>:<channel>:<rootTs>`
- * (slack-network) and `<team>/<channel>/<threadTs>` (slack-bus-ingress). */
-function parseNoticeThreadRef(ref: string): SlackThread | null {
+ * (slack-network) and `<team>/<channel>/<threadTs>` (slack-bus-ingress).
+ * Exported for the read-only claim-notice delivery view, which must parse a
+ * bound threadKey exactly the way the real sender does. */
+export function parseNoticeThreadRef(ref: string): SlackThread | null {
   const parsed = parseSlackThreadRef(ref);
   if (parsed) return { teamId: parsed.teamId, channelId: parsed.channelId, threadTs: parsed.rootTs };
   const parts = ref.split('/');
