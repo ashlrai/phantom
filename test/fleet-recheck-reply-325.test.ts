@@ -11,6 +11,8 @@ import type { ChannelHealth, ChannelHealthReport } from '../src/core/fleet/chann
 import type { FleetBoard } from '../src/core/fleet/coordination.js';
 import type { RuntimeIdentity } from '../src/core/fleet/runtime-identity.js';
 import type { WorkBoardItem, WorkBoardResult } from '../src/core/comms/work-board.js';
+import type { CoordinationView } from '../src/core/agents/claim-store.js';
+import type { LiveWorkersSnapshot } from '../src/core/fleet/runs-live-workers.js';
 
 const NOW = new Date('2026-11-13T12:00:00.000Z');
 const NOW_MS = NOW.getTime();
@@ -58,6 +60,16 @@ function fakeItem(over: Partial<WorkBoardItem> = {}): WorkBoardItem {
 
 const healthyWork: WorkBoardResult = { items: [fakeItem()], inbox: 'ok', truncated: false };
 
+const coordRow: CoordinationView = {
+  origin: 'message', key: 'queue:fake-request-1', owner: 'fake-owner-agent',
+  leaseUntil: NOW_MS + 3_600_000, sourceId: 'fake-request-1:1:1700000000000',
+  live: true, repo: null, branch: null, path: null, started: null,
+};
+
+const emptyWorkers: LiveWorkersSnapshot = {
+  v: 1, generatedAt: ISO, sourceState: 'healthy', workers: [], leaders: [], orchestratorAgents: 0,
+};
+
 function deps(over: Partial<FleetRecheckDeps> = {}): FleetRecheckDeps {
   return {
     now: () => NOW,
@@ -66,6 +78,8 @@ function deps(over: Partial<FleetRecheckDeps> = {}): FleetRecheckDeps {
     readFleetBoard: () => healthyBoard,
     readChannelHealth: () => healthyChannels,
     listWorkBoard: () => healthyWork,
+    listCoordination: () => ({ source: 'available', claims: [coordRow] }),
+    listLiveWorkers: async () => emptyWorkers,
     ...over,
   };
 }
@@ -116,13 +130,15 @@ describe('formatRecheckReply', () => {
   it('names the owner and claim and ends with the evidence-only line when all sections verify', async () => {
     const reply = formatRecheckReply(await readFleetRecheck(deps()));
     const lines = reply.split('\n');
-    expect(lines).toHaveLength(6);
+    expect(lines).toHaveLength(8);
     expect(lines[0]).toBe(`Phantom recheck VERIFIED · as of ${ISO} · source fleet-recheck`);
     expect(lines[1]).toBe('Runtime: fake-host · 1.2.3 · fleet state 60s (VERIFIED)');
-    expect(lines[2]).toBe('Claims: 1 live, top: fake-lane-agent/ashlrai/phantom (VERIFIED)');
-    expect(lines[3]).toBe('Bridge: slack LIVE, imessage LIVE (VERIFIED)');
-    expect(lines[4]).toBe('Task: fake-request-1 RUNNING · owner fake-owner-agent · claim bus-claim:fake-request-1:1:1700000000000 (VERIFIED)');
-    expect(lines[5]).toBe('Evidence only; this reply grants no dispatch.');
+    expect(lines[2]).toMatch(/^Computers: /);
+    expect(lines[3]).toMatch(/^Pool: /);
+    expect(lines[4]).toBe('Claims: 1 live, top: fake-lane-agent/ashlrai/phantom (VERIFIED)');
+    expect(lines[5]).toBe('Bridge: slack LIVE, imessage LIVE (VERIFIED)');
+    expect(lines[6]).toBe('Task: fake-request-1 RUNNING · owner fake-owner-agent · claim bus-claim:fake-request-1:1:1700000000000 (VERIFIED)');
+    expect(lines[7]).toBe('Evidence only; this reply grants no dispatch.');
   });
 
   it('names the exact missing bridge and ends with BLOCKED on: when slack is down', async () => {
@@ -135,7 +151,7 @@ describe('formatRecheckReply', () => {
     };
     const reply = formatRecheckReply(await readFleetRecheck(deps({ readChannelHealth: () => channels })));
     const lines = reply.split('\n');
-    expect(lines[3]).toBe('Bridge: slack BLOCKED, imessage LIVE · missing: slack bridge process not running (BLOCKED)');
+    expect(lines[5]).toBe('Bridge: slack BLOCKED, imessage LIVE · missing: slack bridge process not running (BLOCKED)');
     expect(lines.at(-1)).toMatch(/^BLOCKED on: /);
     expect(lines.at(-1)).toContain('slack bridge process not running');
   });
@@ -143,7 +159,7 @@ describe('formatRecheckReply', () => {
   it('prints Claims: unknown when the ledger is unreadable', async () => {
     const unreadable: FleetBoard = { ...healthyBoard, state: 'unknown', claims: [], expiredClaims: null };
     const reply = formatRecheckReply(await readFleetRecheck(deps({ readFleetBoard: () => unreadable })));
-    expect(reply.split('\n')[2]).toBe('Claims: unknown live, top: none (UNKNOWN)');
+    expect(reply.split('\n')[4]).toBe('Claims: unknown live, top: none (UNKNOWN)');
     expect(reply.split('\n').at(-1)).toMatch(/^UNKNOWN: /);
   });
 

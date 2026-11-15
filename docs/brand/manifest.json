@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "name": "Ashlr.AI brand media kit",
+  "rawBase": "https://raw.githubusercontent.com/ashlrai/phantom/master/docs/brand/",
+  "palette": {
+    "navy": "#1A2B3C",
+    "canvas": "#0D1520",
+    "blue": "#2563EB",
+    "blueLight": "#60A5FA",
+    "slate": "#A3B3C3",
+    "surface": "#F9FAFB",
+    "phantom": "#6366F1",
+    "phantomLight": "#818CF8"
+  },
+  "assets": [
+    {
+      "file": "org-banner.svg",
+      "width": 1500,
+      "height": 500,
+      "theme": "dark",
+      "target": "ashlrai/.github/profile/README.md",
+      "alt": "Ashlr.AI — Forward-deployed software and AI engineering"
+    },
+    {
+      "file": "org-banner-light.svg",
+      "width": 1500,
+      "height": 500,
+      "theme": "light",
+      "target": "ashlrai/.github/profile/README.md",
+      "alt": "Ashlr.AI — Forward-deployed software and AI engineering"
+    },
+    {
+      "file": "personal-banner.svg",
+      "width": 1500,
+      "height": 500,
+      "theme": "dark",
+      "target": "masonwyatt23/masonwyatt23/README.md",
+      "alt": "Mason Wyatt — Co-founder and CEO at Ashlr.AI; building Phantom"
+    },
+    {
+      "file": "phantom-hero-v2.svg",
+      "width": 1500,
+      "height": 800,
+      "theme": "dark",
+      "target": "ashlrai/phantom/README.md",
+      "alt": "Phantom — One workbench. Your whole engineering fleet. Illustrated queue, agent lanes, and node map."
+    },
+    {
+      "file": "og-card.svg",
+      "width": 1200,
+      "height": 630,
+      "theme": "dark",
+      "target": "phm.dev Open Graph / GitHub repository social preview",
+      "alt": "Phantom by Ashlr.AI — Your engineering fleet. One workbench.",
+      "raster": "og-card.png",
+      "rasterSourceSha256": "0cf8d371e60c4c5f4ffb07a3f9abe467b51a4feddcfcbeb0ccf8b1f21f486bdb"
+    }
+  ]
+}

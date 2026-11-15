@@ -3012,6 +3012,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'agentnet': {
+        const { cmdAgentnet } = await import('./agentnet.js');
+        process.exitCode = await cmdAgentnet(rest);
+        break;
+      }
+
       case 'channels': {
         const cmdChannels = await loadChannelsCmd();
         process.exitCode = await cmdChannels(rest);
@@ -3086,6 +3092,12 @@ async function main(): Promise<void> {
       case 'feed': {
         const { cmdFeed } = await import('./feed.js');
         process.exitCode = await cmdFeed(rest);
+        break;
+      }
+
+      case 'amplify': {
+        const { cmdAmplify } = await import('./amplify.js');
+        process.exitCode = await cmdAmplify(rest);
         break;
       }
 

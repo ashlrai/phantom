@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">Phantom by Ashlr.AI — Your engineering fleet. One workbench.</title>
+  <desc id="desc">Phantom, the open-source engineering agent workbench. A shared route connects three agent lanes. Explore at phm.dev.</desc>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 16px; letter-spacing: 1.5px; }
+  </style>
+  <rect width="1200" height="630" fill="#0D1520"/>
+  <path d="M64 126H1136M64 526H1136" fill="none" stroke="#476787" stroke-opacity=".5"/>
+  <path d="M64 126H128" stroke="#2563EB" stroke-width="3"/>
+  <g transform="translate(64 55) scale(.055)">
+    <path fill="#FFFFFF" d="M367.9 0.6L345.4 1.8L0 594.2L3.4 606.2L97.3 764L300.3 763.9L409.2 579.7L309.3 286.2L478.4 285.6L478.4 5.5Z"/>
+    <path fill="#FFFFFF" d="M521.6 5.5L521.6 285.6L690.7 286.2L590.8 579.7L699.7 763.9L902.7 764L996.6 606.2L1000 594.2L654.6 1.8L632.1 0.6Z"/>
+    <path fill="#2563EB" d="M370.1 329L629.9 329L554.3 560L445.8 560Z"/>
+  </g>
+  <text x="138" y="89" font-size="29" font-weight="700" letter-spacing="-1" fill="#FFFFFF">Ashlr.AI</text>
+  <text x="1136" y="85" text-anchor="end" class="mono" fill="#A3B3C3">OPEN SOURCE</text>
+  <text x="58" y="288" font-size="136" font-weight="700" letter-spacing="-7" fill="#FFFFFF">Phantom</text>
+  <text x="64" y="366" font-size="40" letter-spacing="-1" fill="#FFFFFF">Your engineering fleet.</text>
+  <text x="64" y="419" font-size="40" letter-spacing="-1" fill="#A3B3C3">One workbench.</text>
+  <g fill="none" stroke="#476787" stroke-width="2">
+    <path d="M820 324H880V236H944M880 324H944M880 324V412H944"/>
+    <path d="M1080 236H1116V412H1080M1080 324H1136"/>
+  </g>
+  <path d="M820 324H944" stroke="#818CF8" stroke-width="3"/>
+  <g fill="#152330" stroke="#476787"><rect x="944" y="208" width="136" height="56" rx="8"/><rect x="944" y="296" width="136" height="56" rx="8"/><rect x="944" y="384" width="136" height="56" rx="8"/></g>
+  <rect x="944" y="296" width="136" height="56" rx="8" fill="#6366F1"/>
+  <path d="M964 230H994M964 242H1044M964 406H994M964 418H1044" stroke="#758DA5" stroke-width="2"/>
+  <path d="M964 318H994M964 330H1044" stroke="#FFFFFF" stroke-width="2"/>
+  <circle cx="820" cy="324" r="6" fill="#818CF8"/><circle cx="1136" cy="324" r="6" fill="#818CF8"/>
+  <text x="64" y="576" class="mono" fill="#A3B3C3">THE ENGINEERING AGENT WORKBENCH</text>
+  <text x="1136" y="579" text-anchor="end" font-size="26" font-weight="500" fill="#FFFFFF">phm.dev ↗</text>
+</svg>
