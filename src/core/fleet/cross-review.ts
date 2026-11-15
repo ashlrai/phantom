@@ -648,6 +648,10 @@ export interface CrossReviewDecision {
   contentFlags: ContentFlag[];
   /** Set only for enable-auto-merge: pass to `gh pr merge --auto --match-head-commit`. */
   matchHeadCommit: string | null;
+  /** Pending checks wait; failed or missing evidence holds. Neither may arm auto-merge. */
+  checkStatus?: 'ready' | 'wait' | 'hold';
+  /** Bounded, scrubbed check names and required/non-required attribution. */
+  checkDetail?: string;
 }
 
 /**
@@ -666,7 +670,12 @@ export function decideCrossReview(input: {
   scan: SensitiveScan;
   killSwitch: boolean;
   paused: boolean;
-  checks?: { headSha: string; code: 'checks-unreadable' | 'checks-missing' | 'checks-not-successful' | 'checks-stale' | null };
+  checks?: {
+    headSha: string;
+    code: 'checks-unreadable' | 'checks-missing' | 'checks-not-successful' | 'checks-stale' | null;
+    status?: 'ready' | 'wait' | 'hold';
+    detail?: string;
+  };
   now?: Date;
 }): CrossReviewDecision {
   const { request, review, scan } = input;
@@ -684,6 +693,8 @@ export function decideCrossReview(input: {
     protectedRules: scan.protectedRules,
     contentFlags: scan.contentFlags,
     matchHeadCommit: action === 'enable-auto-merge' ? input.currentHeadSha : null,
+    ...(input.checks?.status ? { checkStatus: input.checks.status } : {}),
+    ...(input.checks?.detail ? { checkDetail: input.checks.detail } : {}),
   });
 
   if (input.killSwitch) return decision('hold', ['kill-switch']);
@@ -707,5 +718,6 @@ export function decideCrossReview(input: {
   if (!input.checks) return decision('hold', ['checks-unreadable']);
   if (input.checks.headSha !== input.currentHeadSha) return decision('hold', ['checks-stale']);
   if (input.checks.code) return decision('hold', [input.checks.code]);
+  if (input.checks.status && input.checks.status !== 'ready') return decision('hold', ['checks-not-successful']);
   return decision('enable-auto-merge', ['verdict-approve']);
 }

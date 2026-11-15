@@ -43,7 +43,7 @@ it('composes existing GETs, observed channel identities, quota and muse; drills 
   fireEvent.click(screen.getByRole('button', { name: 'PRs' }));
   expect(openPane).toHaveBeenCalledWith('fleet-merges');
   expect(fetch.mock.calls.filter(([url]) => url === '/api/fleet/sessions')).toHaveLength(1);
-  expect(fetch.mock.calls).toHaveLength(9);
+  expect(fetch.mock.calls).toHaveLength(11);
   for (const call of fetch.mock.calls) expect((call as unknown as [unknown, RequestInit])[1].method).toBe('GET');
   expect(getPane('company')?.needsSession).toBe(false);
 });
@@ -89,12 +89,12 @@ it('does no reads while hidden and stops polling when a visible pane is hidden',
   expect(fetch).not.toHaveBeenCalled();
   view.rerender(<CompanyPane {...props} />);
   await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-  expect(fetch).toHaveBeenCalledTimes(9);
+  expect(fetch).toHaveBeenCalledTimes(11);
   await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
-  expect(fetch).toHaveBeenCalledTimes(18);
+  expect(fetch).toHaveBeenCalledTimes(22);
   view.rerender(<CompanyPane {...props} visible={false} />);
   await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
-  expect(fetch).toHaveBeenCalledTimes(18);
+  expect(fetch).toHaveBeenCalledTimes(22);
 });
 
 it('bounds the last-hour window and labels truncation; missing and reset-pending evidence stays unknown', () => {
@@ -113,9 +113,9 @@ it('bounds the last-hour window and labels truncation; missing and reset-pending
 it('provides a retry for every failed source without suppressing the company shell', async () => {
   serve({});
   render(<CompanyPane {...props} />);
-  await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(9));
+  await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(11));
   expect(screen.getByRole('heading', { name: 'One company. Shared progress.' })).toBeInTheDocument();
-  expect(screen.getAllByRole('button', { name: /^Refresh / })).toHaveLength(9);
+  expect(screen.getAllByRole('button', { name: /^Refresh / })).toHaveLength(10);
 });
 
 it('marks bounded totals and keeps unsupported snapshots isolated', async () => {
