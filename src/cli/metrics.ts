@@ -1,8 +1,6 @@
 import { readTaskCheckJobs } from './fleet-task-check.js';
 import { mergeGraph } from '../core/fleet/merge-graph.js';
 import { readLeverageMix } from '../core/metrics/leverage-mix.js';
-import { readTaskCheckJobs } from './fleet-task-check.js';
-import { mergeGraph } from '../core/fleet/merge-graph.js';
 import { cmdMetricsIdle } from './metrics-idle.js';
 /** `phm metrics [summary|dashboard|record|recommend|ingest]` — local telemetry + value metrics. */
 import { join } from 'node:path';
