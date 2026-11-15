@@ -38,6 +38,8 @@ export interface AgentCommandDoc {
  * actual effects and command-specific result/exit semantics.
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
+  { usage: 'phm fleet feedback scan [--apply] [--days 1..30] [--runs-dir <absolute>] [--json]', description: 'Collect and triage feedback; preview by default. Apply stages at most five deduplicated jobs through existing drop admission. Never merges. Exit 1 for incomplete evidence or failure, 2 for usage.', safety: 'append', jsonShape: 'fleet.feedback.v1 {sources,candidates,queued,deferred,errors}' },
+  { usage: 'phm fleet feedback digest [--json]', description: 'Read the trailing twelve hours of merged PRs, jobs needing review, failures and last recorded launches. No sends or writes.', safety: 'read', jsonShape: 'fleet.feedback.v1 {sources,digest}' },
   { usage: 'phm amplify status|goal [--json] [--limit 1..100 (goal only)]', description: 'Offline objective snapshot and recent leader decisions. Missing or stale measurements are unknown. Exit 0 report, 1 IO failure, 2 usage.', safety: 'read', jsonShape: 'amplify.status.v1 | amplify.goal.v1' },
   { usage: 'phm amplify tick [--json]', description: 'One advisory iteration: appends ADVISORY actions to metrics/amplify.jsonl; never changes fleet state. Exit 0 recorded, 1 IO failure, 2 usage.', safety: 'append', jsonShape: 'amplify.status.v1; journal amplify.tick.v1' },
   {
