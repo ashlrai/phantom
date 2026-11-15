@@ -40,7 +40,7 @@ DEFAULT = {"omlx": {"target": OMLX_CAP, "floor": 0, "ceiling": OMLX_CAP, "hard_c
            "devin": {"target": 6, "floor": 3, "ceiling": 10, "hard_cap": 10},   # DEVIN-LEVERAGE-20261026
            "claude-api": {"target": 4, "floor": 0, "ceiling": 8, "hard_cap": 8},   # target is re-paced every tick by claude-api.py
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
-import concurrency, batcher, batch_sessions, work_market
+import concurrency, batcher, batch_sessions, work_market, rebase_order
 import fleet_controller as fc
 # ---- fleet controller (RQ-FLEET-LOADBALANCER-1). Phase A (one readings bus, one writer for lane targets and holds, one
 # ledger line per tick) always runs and decides nothing new. FLEET_CTL_MODE=enforce applies phase B (graduated shed) and
@@ -1706,6 +1706,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     def form_batch(f):   # -> (members, lane, size target) or None to launch f on its own
         if not (BATCHING and member_ok(f, lead=True)) or waste_risk(UIA.get(f[2]), f[2]): return None
         pool = [task_info(c) for c in cand if c[1] == f[1] and c[2] == f[2] and c[0] != f[0] and member_ok(c) and not waste_risk(UIA.get(c[2]), c[2])]
+        rebase_order.assign_areas([task_info(f)] + pool)
         size = min(batcher.size_for(batch_tuning, f[2]), BS_CFG["max_lines"])
         picked = batcher.pick_members(task_info(f), pool, size, BS_CFG["min_lines"])
         if not picked: return None

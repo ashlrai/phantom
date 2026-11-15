@@ -179,6 +179,11 @@ phm fleet parked --json
 `unmetDeps` lists parked rows whose gate ids are still unmet. Restock.py changes
 need a Security re-pin before live `bin/` install; do not install yourself.
 
+Rebase batch ordering (RQ-SWE3-REBASEORDER-1): queuegen stamps REBASE lines
+with `cluster=clu-<PR>` (`src/core/fleet/rebase-order.ts`); dispatchd batches
+each file-overlap cluster via `contrib/mac/rebase_order.py` (eligible siblings batch within configured limits,
+disjoint PRs spread). See [rebase ordering](docs/REBASE-ORDERING.md).
+
 Durable memory: `phm memory add|list|search|forget --json` stores Mason's
 preferences, doctrine and facts as markdown under `~/.phantom/memory/`; see
 [memory](docs/MEMORY.md). Secret-shaped text is refused, never store values.
