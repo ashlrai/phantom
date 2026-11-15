@@ -248,6 +248,7 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Phantom Secrets for enrolled repositories](SECRETS-FOR-ENROLLED-REPOS.md): How to give every repository Phantom works on a value-blind secrets layer, and where the current boundary sits for autonomous deploys and key rotation.
 - [Versioned self-swap](SELF-SWAP.md): phm self-swap defaults to a read-only JSON plan. This is an opt-in POSIX source-install handoff for an existing supervisor configured to restart through current. It does not ins...
 - [Self-Update](SELF-UPDATE.md): Phantom's source-checkout self-update keeps your local Hub up to date with origin/master when you run as a checked-out repo. The Ops API (GET /api/verse/ops/self-update) reports...
+- [Session continuity and quota failover](SESSION-HANDOFF.md): session-handoff.v1 preserves authored task state across lanes and models. This release is advisory: the repository dispatcher emits packet references, and an explicit harness ca...
 - [Repository signals](SIGNALS.md): Run phm signals --json in a repository checkout. Output order is stable for identical sources. Reads only; no model, billing, Brex, or credential inspection.
 - [Learned skills](SKILLS.md): When a PR merges and its verification stays green through the post-merge observation window, Phantom writes one reusable skill card from the outcome (learnFromApplied in src/cor...
 - [Slack peer/group bus ingress](SLACK-BUS-INGRESS.md): src/core/comms/slack-bus-ingress.ts provides an opt-in Slack Events API ingress into the existing local Agent Bus. It is not registered with a listener, daemon, CLI or MCP tool....
@@ -463,6 +464,9 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Fleet strategy: the next 30 days](strategy/FLEET-30D.md): Date: 2026-11-14. Horizon: November 14 through December 13, 2026.
 - [Phantom module map](strategy/MODULE-MAP.md): Snapshot of the source tree at 00b72c2ea60de124051bb687a80f94663378d3b5 on 2026-11-13, with file-level dependencies, test references, history and host-script evidence.
 - [AshlrAI repository leverage map](strategy/ORG-REPO-MAP.md): Survey: 2026-11-14, public GitHub observations at approximately 09:42–09:44 UTC.
+- [Fleet architecture research: spend capacity on durable outcomes](strategy/RESEARCH-FLEET.md): Research date: 2026-11-14. Job: RQ-RESEARCH-FLEET-1.
+- [Session economics: batching, sub-agents and swarm sizing](strategy/SESSION-ECON.md): RQ-SESSION-ECON-1 · checked 2026-11-14 · source baseline 96a5a9be22a.
+- [StackSync EOS fleet capacity plan](strategy/STACKSYNC.md): Status: inventory and proposal only, 2026-11-14; RQ-STACKSYNC-WIRE-1.
 - [Strategy: the Spawn fleet model vs Phantom's architecture](strategy/spawn-fleet-model.md): Job: RQ-SWE5-RESEARCH-LOOP (pool claude, tier frontier, repo phantom).
 - [Changed-files verification (scripts/verify-changed.mjs)](verify-changed.md): Run the local pre-merge check from the repository root:
 <!-- docs-index:end -->
