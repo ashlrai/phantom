@@ -69,6 +69,8 @@ export async function rejectProposal(id: string): Promise<void> {
 export async function decideApprovalRequest(id: string, revision: string, decision: 'approve' | 'deny'): Promise<void> {
   await post(`/api/inbox/${encodeURIComponent(id)}/decision`, { revision, decision });
   invalidateProposalViews(id);
+  // The decided proposal leaves the pending-approvals section too.
+  invalidate('approvals');
 }
 
 /** The click is the approval: the server derives the human identity locally and never reads one from here. */

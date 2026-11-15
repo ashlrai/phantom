@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as cli from '../src/cli/fleet-empty-why.js';
 import * as why from '../src/core/fleet/empty-why-classify.js';
-import { classifyEmpty, classifyEmptyLog, readEmptyJobs } from '../src/core/fleet/empty-jobs.js';
+import { classifyEmptyLog } from '../src/core/fleet/empty-why-classify.js';
+import { classifyEmpty, readEmptyJobs } from '../src/core/fleet/empty-jobs.js';
 
 let dir: string; let runs: string; let wt: string;
 const NOW = Date.parse('2026-11-12T00:00:00Z');
@@ -81,14 +82,15 @@ describe('readEmptyJobs reasons (original PR #4386 recovery)', () => {
 
   it('keeps reasons entries to id, lane and reason only', async () => {
     await seed(['S']);
-    await log('S', 'usage limit reached; token=sk-live-abc123 at /Users/someone/private/log.txt');
+    const privateDetail = 'private log detail';
+    await log('S', `usage limit reached; ${privateDetail} at /Users/someone/private/log.txt`);
     const r = await readEmptyJobs(24, runs, wt, NOW);
     const entry = r?.reasons?.recent[0];
     expect(Object.keys(entry!).sort()).toEqual(['id', 'lane', 'reason']);
     const serialized = JSON.stringify(r?.reasons);
-    expect(serialized).not.toContain('sk-live-abc123');
+    expect(serialized).not.toContain(privateDetail);
     expect(serialized).not.toContain('/Users/someone');
-    expect(serialized).not.toContain('token=');
+    expect(serialized).not.toContain('usage limit reached');
   });
 
   it('leaves the EmptyClass counts and topCauses untouched', async () => {
