@@ -1,4 +1,4 @@
-interface ClaimExecutionRow {
+export interface ClaimExecutionRow {
   claimId: string;
   jobId: string | null;
   agent: string;
