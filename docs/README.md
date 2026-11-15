@@ -69,6 +69,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Triage mail and hold sends for the owner | [Comms agent](https://github.com/ashlrai/phantom/blob/master/docs/COMMS-AGENT.md) (`phm comms-agent status --json`) |
 | Read one owner thread across desktop, Telegram, email, iMessage and Slack | [Owner thread](https://github.com/ashlrai/phantom/blob/master/docs/OWNER-THREAD.md) (`phm comms thread --json`) |
 | Resume a multi-turn agent session | [Agent sessions](https://github.com/ashlrai/phantom/blob/master/docs/SESSIONS.md) (`phm sessions`) |
+| Model session batching, sub-agent fan-out, warm retention and swarm work generation | [Session economics — advisory design](https://github.com/ashlrai/phantom/blob/master/docs/strategy/SESSION-ECON.md) |
 | Quarantine a flaky test only with a tracked, expiring ledger row | [Quarantine ledger](https://github.com/ashlrai/phantom/blob/master/docs/QUARANTINE-LEDGER.md) |
 | See real candidates, rejection and parent-linked improvement without model credentials | [Executable demo](DEMO.md) |
 | Understand the objective and how progress is measured | [Phantom North Star](NORTH-STAR.md) |
@@ -106,6 +107,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Review the default-off Mac memory pressure policy | [Memguard rules](https://github.com/ashlrai/phantom/blob/master/docs/MEMGUARD-RULES.md) |
 | Plan a persistent Linux node with local capacity limits and cloud cost estimates | [Node VM design](https://github.com/ashlrai/phantom/blob/master/docs/NODES-SANDBOX-VM.md) |
 | Configure native/local workers, quotas, the foreground queue and fleet map | [Resource Pools](RESOURCE-POOLS.md) |
+| Review EOS partner-credit inventory, costs and proposed fleet wiring | [StackSync EOS capacity plan](https://github.com/ashlrai/phantom/blob/master/docs/strategy/STACKSYNC.md) |
 | Sample local machine resources | [Machine telemetry](MACHINE-TELEMETRY.md) |
 | Review a pool's PR with another model on another pool, and decide auto-merge at the exact head SHA | [Cross-model review](https://github.com/ashlrai/phantom/blob/master/docs/CROSS-REVIEW.md) |
 | Install, join, verify, and leave a node | [Add a computer in 60 seconds](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md) |
@@ -151,6 +153,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Read tokens per merged PR and merged PRs per dollar from local hop events | [Hop efficiency insights — source guide](https://github.com/ashlrai/phantom/blob/master/docs/observability/README.md) |
 | Distinguish reported run tokens from estimates, reservations and unknown totals | [Run token totals — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RUN-TOKEN-PROVENANCE.md) |
 | Roll up coding pool tokens and cost by task class and merged PR | [Router cost feed — source guide](https://github.com/ashlrai/phantom/blob/master/docs/router/README.md) |
+| Compare fleet supervision, shared provider quotas, evidence handoffs and outcome learning | [Fleet architecture research — source study](https://github.com/ashlrai/phantom/blob/master/docs/strategy/RESEARCH-FLEET.md) |
 | Evaluate speculative reads, bounded parallelism and evidence-backed memory | [Research and offline experiment protocol](https://github.com/ashlrai/phantom/blob/master/docs/research/speculative-parallel-memory.md) |
 | Decide whether to give one agent the whole context window or four a quarter each | [Plan deep, execute wide](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-CONTEXT-STRATEGY.md) |
 | Finalize and publish original qualified release artifacts locally | [Releasing locally](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING-LOCALLY.md) |
@@ -362,6 +365,7 @@ canonical release guide for required hosted qualification and publication.
 - [Tier-1 import diagnosis](https://github.com/ashlrai/phantom/blob/master/docs/TIER1-WHY.md): shortest runtime chains and the fleet apps boundary.
 
 - [Agent checkpoints](AGENT-CHECKPOINT.md): explicit durable state and resume format.
+- [Session handoff](SESSION-HANDOFF.md): model-independent checkpoints, claim-coordinated resume and advisory quota failover.
 - [Stigmergic coordination](https://github.com/ashlrai/phantom/blob/master/docs/STIGMERGY.md): `phm trail` file markers, claim/lease, heartbeats, resumable checkpoints; agents pick up stalled work.
 - [Engineering receipt](https://github.com/ashlrai/phantom/blob/master/docs/ENGINEERING-RECEIPT.md): evidence from tool events vs model claims; `PHANTOM_RECEIPTS=1`.
 
