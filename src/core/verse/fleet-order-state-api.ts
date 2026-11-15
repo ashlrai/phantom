@@ -113,7 +113,7 @@ export function createFleetOrderStateApi(deps: FleetOrderStateApiDeps = {}): Api
     try {
       trace = await bounded(() => read({ now: () => nowMs }), timeoutMs);
     } catch {
-      sendJson(res, 200, { v: 1, asOf: nowIso, sources: 'unavailable', orders: [] });
+      sendJson(res, 200, { v: 1, asOf: nowIso, sources: 'unavailable', live: 'unavailable', orders: [] });
       return true;
     }
     let live: LiveJobIds | undefined;
