@@ -698,6 +698,8 @@ export interface VerseApiContext {
   readSession?: { id: string; expiresAt: number };
   /** Fixed read-only worker shared by this server; never a caller-selected module. */
   readProjections?: import('../web/read-projections.js').ReadProjectionReader;
+  /** Trusted seam for the peer-ledger route; defaults to its Verse module. */
+  fleetPeerLedgerApi?: ApiModule;
 }
 
 // ---------------------------------------------------------------------------
@@ -2093,6 +2095,17 @@ export async function handleVerseApi(
     if (path === `${VERSE_API_PREFIX}/version` && method === 'GET') {
       sendJson(res, 200, readBuildIdentity());
       return true;
+    }
+    if (path === `${VERSE_API_PREFIX}/fleet/peer-ledger`) {
+      if (method !== 'GET') {
+        if (!ctx.allowDispatch) {
+          sendJson(res, 404, { error: `not found: ${method} ${path}` });
+          return true;
+        }
+        if (!passesMutationGate(req, res, ctx.token)) return true;
+      }
+      const api = ctx.fleetPeerLedgerApi ?? (await import('./fleet-peer-ledger-api.js')).handleFleetPeerLedgerApi;
+      return api(ctx, req, res, path, method);
     }
     if (path === `${VERSE_API_PREFIX}/fleet/grok-ultra` || path.startsWith(`${VERSE_API_PREFIX}/fleet/grok-ultra/`)) {
       if (path !== `${VERSE_API_PREFIX}/fleet/grok-ultra`) { sendJson(res, 404, { error: 'Grok usage route not found.' }); return true; }
