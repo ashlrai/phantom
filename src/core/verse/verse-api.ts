@@ -2121,6 +2121,9 @@ export async function handleVerseApi(
       if (path !== `${VERSE_API_PREFIX}/whats-new`) { sendJson(res, 404, { error: 'Whats-new route not found.' }); return true; }
       return (await import('./whats-new-api.js')).handleWhatsNewApi(req, res, path, method);
     }
+    if (path === '/api/verse/owner-assist' || path.startsWith('/api/verse/owner-assist/')) {
+      return (await import('./owner-assist-api.js')).handleOwnerAssistApi(ctx, req, res, path, method);
+    }
     // ── GET /api/verse/bootstrap ─────────────────────────────────────────
     if (path === `${VERSE_API_PREFIX}/bootstrap` && method === 'GET') {
       const engine = await getVerseEngine();

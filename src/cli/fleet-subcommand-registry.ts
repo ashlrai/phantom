@@ -134,6 +134,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'empty-merges': () => import('./fleet-empty-merges.js'),
   'empty-why': () => import('./fleet-empty-why.js'),
   'eval-report': () => import('./fleet-eval-report.js'),
+  'feedback': () => import('./fleet-feedback.js'),
   'filler': () => import('./fleet-filler.js'),
   'filler-yield': () => import('./fleet-filler-yield.js'),
   'gate-run': () => import('./fleet-gate-run.js'),
