@@ -116,6 +116,43 @@ export function recordSlackObservation(
   }
 }
 
+/**
+ * Structural validation of one persisted row against the metadata contract
+ * `sanitize` writes. Required `at`/`decision` must be present and well-formed;
+ * optional fields that ARE present must satisfy their own rules (bounded
+ * string, `isSlackTs`, or a known bus outcome). Absent optionals -- including
+ * `bus` on legacy ingested rows and `messageTs`/`threadTs`/`reason` on rows
+ * dropped before channel validation -- stay legitimately absent. Returns null
+ * for a corrupted row so the caller can mark the read degraded and skip it
+ * rather than let damaged evidence masquerade as a clean ignored event.
+ */
+function projectObservation(row: Record<string, unknown>): SlackObservation | null {
+  const at = row['at'];
+  const decision = row['decision'];
+  if (!boundedField(at) || !Number.isFinite(Date.parse(at))) return null;
+  if (decision !== 'ingested' && decision !== 'ignored') return null;
+  for (const key of ['envelopeId', 'eventId', 'channelId', 'authorId', 'reason'] as const) {
+    const value = row[key];
+    if (value !== undefined && !boundedField(value)) return null;
+  }
+  for (const key of ['messageTs', 'threadTs'] as const) {
+    const value = row[key];
+    if (value !== undefined && !isSlackTs(value)) return null;
+  }
+  const bus = row['bus'];
+  if (bus !== undefined && bus !== 'posted' && bus !== 'duplicate' && bus !== 'failed') return null;
+  const out: SlackObservation = { at, decision };
+  if (typeof row['envelopeId'] === 'string') out.envelopeId = row['envelopeId'];
+  if (typeof row['eventId'] === 'string') out.eventId = row['eventId'];
+  if (typeof row['channelId'] === 'string') out.channelId = row['channelId'];
+  if (typeof row['authorId'] === 'string') out.authorId = row['authorId'];
+  if (isSlackTs(row['messageTs'])) out.messageTs = row['messageTs'];
+  if (isSlackTs(row['threadTs'])) out.threadTs = row['threadTs'];
+  if (typeof row['reason'] === 'string') out.reason = row['reason'];
+  if (bus === 'posted' || bus === 'duplicate' || bus === 'failed') out.bus = bus;
+  return out;
+}
+
 /** Newest-first bounded read for status surfaces. `degraded` on unreadable or malformed lines. */
 export function readSlackJournal(
   options: { runsDir?: string; limit?: number } = {},
@@ -134,19 +171,12 @@ export function readSlackJournal(
         degraded = true;
         continue;
       }
-      const row = parsed as Record<string, unknown>;
-      entries.push({
-        at: typeof row['at'] === 'string' ? row['at'] : '',
-        ...(typeof row['envelopeId'] === 'string' ? { envelopeId: row['envelopeId'] } : {}),
-        ...(typeof row['eventId'] === 'string' ? { eventId: row['eventId'] } : {}),
-        ...(typeof row['channelId'] === 'string' ? { channelId: row['channelId'] } : {}),
-        ...(typeof row['authorId'] === 'string' ? { authorId: row['authorId'] } : {}),
-        ...(isSlackTs(row['messageTs']) ? { messageTs: row['messageTs'] } : {}),
-        ...(isSlackTs(row['threadTs']) ? { threadTs: row['threadTs'] } : {}),
-        decision: row['decision'] === 'ingested' ? 'ingested' : 'ignored',
-        ...(typeof row['reason'] === 'string' ? { reason: row['reason'] } : {}),
-        ...(row['bus'] === 'posted' || row['bus'] === 'duplicate' || row['bus'] === 'failed' ? { bus: row['bus'] } : {}),
-      });
+      const obs = projectObservation(parsed as Record<string, unknown>);
+      if (obs === null) {
+        degraded = true;
+        continue;
+      }
+      entries.push(obs);
     } catch {
       degraded = true;
     }
