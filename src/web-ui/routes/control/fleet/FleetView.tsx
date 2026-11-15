@@ -1,5 +1,6 @@
 import { MachineCard } from './MachineCard.js';
 import { LiveFleetBoard } from './LiveFleetBoard.js';
+import { FleetMap } from './FleetMap.js';
 /**
  * routes/control/fleet/FleetView.tsx — queue depth, lease health, and the
  * kill switch (GET /api/fleet, GET /api/fleet-activity; POST
@@ -123,6 +124,8 @@ export function FleetView({ now = Date.now }: { now?: () => number } = {}) {
           {fleetQuery.status === 'refreshing' || activityQuery.status === 'refreshing' ? <RefreshIndicator /> : null}
         </div>
       </header>
+
+      <FleetMap />
 
       {fleetQuery.status === 'loading' ? (
         <SkeletonLine width="60%" />
