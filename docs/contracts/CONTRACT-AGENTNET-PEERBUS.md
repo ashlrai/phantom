@@ -55,4 +55,12 @@ CoS opts in through host-supplied `CosWorkOptions.peerPlan`. Strict model JSON
 `{reply, peers}` carries at most eight requests through the same authenticated path.
 The owner reply remains approval-bound; `peerMessages` and a bus plan receipt record
 outcomes. Without opt-in the existing plain-text worker is unchanged.
+`emitCosPeerPlanOnce(plan, rootId, ctx)` is the bounded path the worker and
+`phm fleet cos-loop --peer-plan` use: dry-run unless `apply`; `halted` under KILL/pause;
+`no-identities` without live bindings; direct requests to live same-team peers only
+(channels and unregistered callsigns are dropped); optional `deadline` must be future
+and within 7 days; one `orchestration.json` receipt (`lane: cos`, `peerMessages` ids)
+per work item, reserved before sending, so a repeat is `duplicate`. `peerMessages` on
+receipts is optional, so older journals still validate. Schemas live in
+`fleet/orchestration-journal.ts`.
 Hermetic proof: `test/agentnet-peer-bus.test.ts`, Slack transport and CoS worker suites.
