@@ -68,7 +68,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'disk-maint',
   // Changed-file tests and the fleet event feed.
   'test', 'check', 'feed',
-  'worklog', 'library',
+  'worklog', 'library', 'ideas',
   // Dispatched by index.ts but missing here (caught by cli-registry-drift).
   'constitution', 'wb', 'caps',
 ];
@@ -130,13 +130,15 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'recover-state', 'resolve-state', 'install', 'uninstall', 'service-status',
     'pause', 'resume', 'doctor',
   ],
-  worker: ['setup', 'status'],
+  worker: ['setup', 'status', 'plan', 'drain'],
+  router: ['rank', 'regret', 'help'],
   prs: ['triage'],
   fleet: [
     'status', 'session', 'watch', 'events', 'lanes', 'lane-slots', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
     'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue', 'outcomes', 'backlog', 'lane-slots',
     'shed-plan', 'deploy-plan', 'job-latency', 'supply', 'eval-report', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'pr-hygiene', 'merge-batch', 'rebase-plan', 'merge-plan', 'bus', 'usage', 'research-digest', 'drive',
+    'claim', 'release', 'handoff', 'board', 'post', 'inbox', 'assign',
   ],
   bus: ['thread', 'task', 'send', 'inbox', 'ack', '--from', '--to', '--body', '--id', '--priority', '--ttl', '--limit', '--peer', '--root', '--queue-root', '--json', '--help'],
   estates: ['--repo', '--json', '--help'],

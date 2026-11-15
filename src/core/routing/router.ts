@@ -41,6 +41,15 @@ export interface RouteOptions {
   /** Actual selected-task opportunity; eligibility/quality remain mandatory. */
   scheduling?: Readonly<Record<string,AccountSchedulingView>>;
   advisorySeatId?: string | null;
+  /** In-flight runs per seat. Lower count wins a headroom tie. Absent leaves ranking unchanged. */
+  inFlight?: Readonly<Record<string, number>>;
+  /** Exclude metered billing unless that seat set `meteredOptIn`. Absent leaves admission unchanged. */
+  enforceMeteredOptIn?: boolean;
+  /**
+   * Among equal headroom, prefer a seat whose qualified reset is sooner.
+   * A headroom gap still wins. Absent leaves the historical scheduling reorder.
+   */
+  spendDown?: boolean;
   /**
    * Posterior penalty from outcome learning, added to the seat score (lower
    * still wins). Absent leaves ranking byte-identical. Non-finite values are
@@ -298,10 +307,18 @@ function rank(verdicts: Verdict[], rankOrder: RankOrder, w: RouterWeights, optio
   const ranked = [...verdicts].sort((a, b) => {
     const diff = score.get(a)! - score.get(b)!;
     if (Math.abs(diff) > SCORE_EPSILON) return diff;
+    if (options?.spendDown) {
+      const tie = spendDownTie(a, b, options);
+      if (tie !== 0) return tie;
+    }
+    if (options?.inFlight) {
+      const load = (options.inFlight[a.capacity.seatId] ?? 0) - (options.inFlight[b.capacity.seatId] ?? 0);
+      if (load !== 0) return load;
+    }
     if (a.index !== b.index) return a.index - b.index;
     return compareIds(a.capacity.seatId, b.capacity.seatId);
   });
-  if (!options?.scheduling) return ranked;
+  if (!options?.scheduling || options.spendDown) return ranked;
   // Preserve explicitly preferred groups. Within a group, reset opportunities
   // may reorder only already admitted resources, as before.
   const baselineIndex = new Map(ranked.map((v,i)=>[v,i]));
@@ -459,6 +476,21 @@ function orderByArmReward(ranked: Verdict[]): void {
   });
 }
 
+function spendDownTie(a: Verdict, b: Verdict, options: RouteOptions): number {
+  const av = options.scheduling?.[a.capacity.seatId];
+  const bv = options.scheduling?.[b.capacity.seatId];
+  const ap = av ? opportunityPriority(av, options.nowMs) : 0;
+  const bp = bv ? opportunityPriority(bv, options.nowMs) : 0;
+  if (ap !== bp) return bp - ap;
+  if (ap > 0 && av?.reset.at && bv?.reset.at) return Date.parse(av.reset.at) - Date.parse(bv.reset.at);
+  return 0;
+}
+
+function meteredBilling(capacity: SeatCapacity): boolean {
+  if (capacity.billingClass) return capacity.billingClass === 'metered';
+  return capacity.costBasis === 'per-token' || capacity.costBasis === 'credits';
+}
+
 function formatWeight(n: number): string {
   return String(Math.round(n * 100) / 100);
 }
@@ -492,6 +524,14 @@ function routeVerdicts(req: RoutingRequest, capacity: readonly SeatCapacity[], p
       )),
     index,
   }));
+
+  if (opts.enforceMeteredOptIn) {
+    for (const v of verdicts) {
+      if (!v.eligible || !meteredBilling(v.capacity) || v.capacity.meteredOptIn === true) continue;
+      v.eligible = false;
+      v.details.push({ kind: 'switched-off', text: 'Metered API billing is off until it is explicitly enabled.' });
+    }
+  }
 
   if (req.autonomous && opts.scheduling) {
     for (const v of verdicts) {

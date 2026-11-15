@@ -113,3 +113,6 @@ export { extractJudgeRubric, extractRedTeamSeverity, extractTasteScore } from '.
 export type { ExtractedJudgeRubric, ExtractedTasteScore } from './verdict.js';
 
 export { adviseResourceChoice } from './resource-choice.js';
+
+export { classifyJob, jobShapeHeuristic } from './job-shape.js';
+export type { JobShape, JobShapeAsk } from './job-shape.js';

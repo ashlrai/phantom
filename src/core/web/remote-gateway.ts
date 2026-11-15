@@ -12,6 +12,7 @@ import { TextDecoder } from 'node:util';
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createRemoteAccessVerifier, parseRemoteAccessConfig, verifyRemoteAccessHeader, type RemoteAccessConfig, type RemoteAccessIdentity } from './remote-access.js';
 import { checkRemoteEnvelope, classifyRemoteRoute, validateRemoteMutation, type RemoteRouteDecision } from './remote-gateway-policy.js';
 import type { RemoteDeviceStore } from './remote-device-store.js';
@@ -42,6 +43,8 @@ export interface RemoteReadGatewayOptions {
   /** Explicit asset override for isolated fixtures. Production reads the running Hub build. */
   assetsDir?: string;
   mobileAssetsEnabled?: boolean;
+  /** Host-selected snapshot only; never taken from a request parameter. */
+  fleetSnapshotPath?: string;
   port?: number;
   /** Test-only pinned local JWKS verifier. Production derives it from access. */
   verifier?: AccessVerifier;
@@ -285,6 +288,31 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
       const envelope = checkRemoteEnvelope(req, config.publicOrigin, session?.csrf ?? preauth?.session.csrf);
       if (!envelope.ok) { json(res, 403, { code: 'REMOTE_ENVELOPE_DENIED', error: 'Remote request denied' }); return; }
       const target = req.url ?? '';
+      // Fleet is a local, read-only surface under the same Access + live
+      // passkey session checks as other remote reads. No general file route.
+      if (req.method === 'GET' && ['/api/fleet', '/fleet', '/fleet/', '/fleet/fleet.js', '/fleet/fleet.css'].includes(target)) {
+        if (!session) { json(res, 401, { code: 'DEVICE_SESSION_REQUIRED', error: 'Device authentication required' }); return; }
+        if (target === '/api/fleet') {
+          const { readCodingFleetSnapshot } = await import('../fleet/coding-snapshot.js');
+          const snapshot = readCodingFleetSnapshot(options.fleetSnapshotPath, { nowMs: now(), knownSecrets: hubSecrets });
+          if (!snapshot) { json(res, 503, { code: 'FLEET_UNAVAILABLE', error: 'Refresh the fleet snapshot on the host' }); return; }
+          // Defense in depth, including credentials supplied by the host at startup.
+          const encoded = JSON.stringify(snapshot);
+          if (hubSecrets.some((secret) => encoded.includes(secret))) {
+            json(res, 503, { code: 'FLEET_UNAVAILABLE', error: 'Fleet snapshot rejected' }); return;
+          }
+          json(res, 200, snapshot); return;
+        }
+        const asset = target.endsWith('.js') ? 'fleet.js' : target.endsWith('.css') ? 'fleet.css' : 'index.html';
+        // Exact filenames only. serveStatic retains its existing traversal and
+        // regular-file checks; the request URL is restored before returning.
+        const original = req.url;
+        req.url = `/fleet/${asset}`;
+        const served = serveStatic(req, res, options.assetsDir ?? fileURLToPath(new URL('./public/', import.meta.url)));
+        req.url = original;
+        if (!served) json(res, 503, { code: 'FLEET_ASSETS_UNAVAILABLE', error: 'Fleet assets unavailable' });
+        return;
+      }
       if (req.method === 'GET' && target === '/remote/session') {
         if (!session) {
           if (!options.pairing) { json(res, 200, { authenticated: false, capabilities: capabilities() }); return; }

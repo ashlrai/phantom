@@ -1333,6 +1333,8 @@ export interface TaskResult {
   judgeVerdict?: 'ok' | 'noise' | 'harmful' | 'uncertain';
   /** Whether the diff/patch applied cleanly (null = not checked). */
   applySucceeded: boolean | null;
+  /** Lint or typecheck (null or absent = not run). A failure escalates. */
+  lintPassed?: boolean | null;
 }
 
 /**
@@ -1344,6 +1346,7 @@ export interface TaskResult {
  *  - Empty diff:    hasDiff === false
  *  - Apply failed:  applySucceeded === false
  *  - Judge noise/harmful: judgeVerdict === 'noise' | 'harmful'
+ *  - Lint failed:   lintPassed === false
  *
  * Escalation is CAPPED at frontier (max 2 hops: local→mid→frontier).
  * A task already at frontier is never escalated further.
@@ -1424,6 +1427,9 @@ export function shouldEscalate(
   }
   if (result.judgeVerdict === 'noise' || result.judgeVerdict === 'harmful') {
     failures.push(`judge-${result.judgeVerdict}`);
+  }
+  if (result.lintPassed === false) {
+    failures.push('lint-failed');
   }
 
   if (failures.length === 0) {

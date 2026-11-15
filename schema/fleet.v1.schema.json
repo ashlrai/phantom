@@ -1,0 +1,1084 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://phm.dev/schema/fleet.v1.schema.json",
+  "title": "Phantom coding fleet v1",
+  "description": "Read-only snapshot. Null means unknown. Cursor shares Grok Ultra capacity. Money is not inferred from pool units.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "generated_at",
+    "readings",
+    "windows",
+    "pools",
+    "router",
+    "agents",
+    "repos",
+    "coordination",
+    "sources"
+  ],
+  "properties": {
+    "schema": {
+      "const": "fleet.v1"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "readings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pool",
+          "used_pct",
+          "at",
+          "source",
+          "age_seconds"
+        ],
+        "properties": {
+          "pool": {
+            "enum": [
+              "grok-ultra-weekly",
+              "codex-cmp",
+              "codex-personal",
+              "claude-max",
+              "devin",
+              "grok-build",
+              "cursor",
+              "omlx"
+            ]
+          },
+          "used_pct": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "source": {
+            "const": "manual"
+          },
+          "age_seconds": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      },
+      "maxItems": 1000
+    },
+    "windows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pool",
+          "start",
+          "reset",
+          "reset_every_days",
+          "timezone"
+        ],
+        "properties": {
+          "pool": {
+            "enum": [
+              "grok-ultra-weekly",
+              "codex-cmp",
+              "codex-personal",
+              "claude-max",
+              "devin",
+              "grok-build",
+              "cursor",
+              "omlx"
+            ]
+          },
+          "start": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "reset": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "reset_every_days": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "maxItems": 1000
+    },
+    "pools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "shared_with",
+          "source",
+          "used_pct",
+          "remaining_pct",
+          "reading_at",
+          "age_seconds",
+          "reset_at",
+          "window_start",
+          "burn_pct_per_hour",
+          "runway_hours",
+          "ideal_pct",
+          "projected_pct",
+          "uncertainty",
+          "actual",
+          "ideal",
+          "planner"
+        ],
+        "properties": {
+          "id": {
+            "enum": [
+              "grok-ultra-weekly",
+              "codex-cmp",
+              "codex-personal",
+              "claude-max",
+              "devin",
+              "grok-build",
+              "cursor",
+              "omlx"
+            ]
+          },
+          "shared_with": {
+            "anyOf": [
+              {
+                "enum": [
+                  "grok-ultra-weekly",
+                  "codex-cmp",
+                  "codex-personal",
+                  "claude-max",
+                  "devin",
+                  "grok-build",
+                  "cursor",
+                  "omlx"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "enum": [
+              "manual",
+              "estimate",
+              "unknown"
+            ]
+          },
+          "used_pct": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "remaining_pct": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reading_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "age_seconds": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reset_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "window_start": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "burn_pct_per_hour": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runway_hours": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ideal_pct": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projected_pct": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "uncertainty": {
+            "enum": [
+              "linear estimate; future usage unknown",
+              "unknown"
+            ]
+          },
+          "actual": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "at",
+                "used_pct"
+              ],
+              "properties": {
+                "at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "used_pct": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              }
+            },
+            "maxItems": 1000
+          },
+          "ideal": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "at",
+                "used_pct"
+              ],
+              "properties": {
+                "at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "used_pct": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              }
+            },
+            "maxItems": 1000
+          },
+          "planner": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "at",
+                "used_pct"
+              ],
+              "properties": {
+                "at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "used_pct": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              }
+            },
+            "maxItems": 1000
+          }
+        }
+      },
+      "maxItems": 8,
+      "minItems": 8
+    },
+    "router": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "decisions",
+        "regret"
+      ],
+      "properties": {
+        "source": {
+          "enum": [
+            "known",
+            "partial",
+            "unknown"
+          ]
+        },
+        "decisions": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "ts",
+                  "jobId",
+                  "jobType",
+                  "poolId",
+                  "consumer",
+                  "policyId",
+                  "canary",
+                  "propensity",
+                  "solver",
+                  "fallback",
+                  "grantsMergeAuthority",
+                  "netValue"
+                ],
+                "properties": {
+                  "ts": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "jobId": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "jobType": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "poolId": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "consumer": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "policyId": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "canary": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "propensity": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "solver": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "fallback": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "grantsMergeAuthority": {
+                    "const": false
+                  },
+                  "netValue": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  }
+                }
+              },
+              "maxItems": 1000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "regret": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "jobId",
+                  "jobType",
+                  "chosenPool",
+                  "chosenConsumer",
+                  "betterPool",
+                  "betterConsumer",
+                  "chosenValue",
+                  "betterValue",
+                  "regret"
+                ],
+                "properties": {
+                  "jobId": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "jobType": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "chosenPool": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "chosenConsumer": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "betterPool": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "betterConsumer": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "chosenValue": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "betterValue": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "regret": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  }
+                }
+              },
+              "maxItems": 1000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "agents": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "agent",
+              "repo",
+              "task",
+              "claim_id",
+              "expires_at"
+            ],
+            "properties": {
+              "agent": {
+                "type": "string"
+              },
+              "repo": {
+                "type": "string"
+              },
+              "task": {
+                "type": "string"
+              },
+              "claim_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expires_at": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "maxItems": 1000
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "repos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "repo",
+          "source",
+          "open",
+          "merged",
+          "complete"
+        ],
+        "properties": {
+          "repo": {
+            "enum": [
+              "ashlrai/phantom",
+              "ashlrai/phantom-secrets",
+              "ashlrai/locus",
+              "ashlrai/lexicon",
+              "ashlrai/ashlr-md",
+              "ashlrai/ashlr-stack",
+              "ashlrai/ashlr-plugin"
+            ]
+          },
+          "source": {
+            "enum": [
+              "known",
+              "partial",
+              "unknown"
+            ]
+          },
+          "open": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "number",
+                    "state",
+                    "title",
+                    "url",
+                    "ci",
+                    "cost"
+                  ],
+                  "properties": {
+                    "number": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "state": {
+                      "enum": [
+                        "open",
+                        "merged"
+                      ]
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string",
+                      "pattern": "^https://github.com/ashlrai/[A-Za-z0-9._-]+/pull/[1-9][0-9]*$"
+                    },
+                    "ci": {
+                      "enum": [
+                        "passed",
+                        "failed",
+                        "pending",
+                        "unknown"
+                      ]
+                    },
+                    "cost": {
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "pool",
+                              "value",
+                              "unit"
+                            ],
+                            "properties": {
+                              "pool": {
+                                "enum": [
+                                  "grok-ultra-weekly",
+                                  "codex-cmp",
+                                  "codex-personal",
+                                  "claude-max",
+                                  "devin",
+                                  "grok-build",
+                                  "cursor",
+                                  "omlx"
+                                ]
+                              },
+                              "value": {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              "unit": {
+                                "const": "pool-unit"
+                              }
+                            }
+                          },
+                          "maxItems": 1000
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "maxItems": 1000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "merged": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "number",
+                    "state",
+                    "title",
+                    "url",
+                    "ci",
+                    "cost"
+                  ],
+                  "properties": {
+                    "number": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "state": {
+                      "enum": [
+                        "open",
+                        "merged"
+                      ]
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string",
+                      "pattern": "^https://github.com/ashlrai/[A-Za-z0-9._-]+/pull/[1-9][0-9]*$"
+                    },
+                    "ci": {
+                      "enum": [
+                        "passed",
+                        "failed",
+                        "pending",
+                        "unknown"
+                      ]
+                    },
+                    "cost": {
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "pool",
+                              "value",
+                              "unit"
+                            ],
+                            "properties": {
+                              "pool": {
+                                "enum": [
+                                  "grok-ultra-weekly",
+                                  "codex-cmp",
+                                  "codex-personal",
+                                  "claude-max",
+                                  "devin",
+                                  "grok-build",
+                                  "cursor",
+                                  "omlx"
+                                ]
+                              },
+                              "value": {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              "unit": {
+                                "const": "pool-unit"
+                              }
+                            }
+                          },
+                          "maxItems": 1000
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "maxItems": 1000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "complete": {
+            "type": "boolean"
+          }
+        }
+      },
+      "maxItems": 7,
+      "minItems": 7
+    },
+    "coordination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "claims",
+        "messages",
+        "proposals",
+        "expiredClaims"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "known",
+            "partial",
+            "unknown"
+          ]
+        },
+        "claims": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "repo",
+              "task",
+              "agent",
+              "claimedAt",
+              "expiresAt"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "repo": {
+                "type": "string"
+              },
+              "task": {
+                "type": "string"
+              },
+              "agent": {
+                "type": "string"
+              },
+              "claimedAt": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "type": "string"
+              }
+            }
+          },
+          "maxItems": 1000
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "from",
+              "to",
+              "body",
+              "at",
+              "expiresAt"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "body": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "type": "string"
+              }
+            }
+          },
+          "maxItems": 1000
+        },
+        "proposals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "repo",
+              "task",
+              "to",
+              "at",
+              "expiresAt"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "repo": {
+                "type": "string"
+              },
+              "task": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "type": "string"
+              }
+            }
+          },
+          "maxItems": 1000
+        },
+        "expiredClaims": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "sources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "shared",
+        "github",
+        "spend",
+        "router",
+        "planner"
+      ],
+      "properties": {
+        "shared": {
+          "enum": [
+            "known",
+            "partial",
+            "unknown"
+          ]
+        },
+        "github": {
+          "enum": [
+            "known",
+            "partial",
+            "unknown"
+          ]
+        },
+        "spend": {
+          "enum": [
+            "known",
+            "partial",
+            "unknown"
+          ]
+        },
+        "router": {
+          "enum": [
+            "known",
+            "partial",
+            "unknown"
+          ]
+        },
+        "planner": {
+          "enum": [
+            "known",
+            "partial",
+            "unknown"
+          ]
+        }
+      }
+    }
+  }
+}

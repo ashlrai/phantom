@@ -130,6 +130,7 @@ import type {
   ProtectedRemoteRepositoryExpectation,
 } from '../types.js';
 import { loadProposal, recordRealizedMerge, setStatus, updateProposalField } from './store.js';
+import { billingBlocksMerge } from '../routing/backend-roles.js';
 import { canonicalModelTag } from '../run/model-catalog.js';
 import { assertMayMutate, killSwitchOn } from '../sandbox/policy.js';
 import { audit } from '../sandbox/audit.js';
@@ -810,6 +811,8 @@ export function evaluateMergeAuthority(
   proposal: Proposal,
   cfg: AshlrConfig,
 ): MergeAuthorityVerdict {
+  const billingRefusal = billingBlocksMerge(proposal.billingClass);
+  if (billingRefusal) return { authorized: false, reason: billingRefusal };
   if (proposal.engineTier !== 'frontier') {
     // M51 tri-tier: authority never leaks upward. 'mid' (strong open models) is
     // branch-eligible but NEVER merge-authority for main; 'local' is
@@ -1027,6 +1030,8 @@ export function evaluateAutoMergeReadinessPreflight(
     }
 
     const advisories: string[] = [];
+    const billingRefusal = billingBlocksMerge(proposal.billingClass);
+    if (billingRefusal) return block(billingRefusal, advisories);
     if ((trustBasis === 'verification' || trustBasis === 'evidence') && proposal.verifyResult === undefined) {
       advisories.push('verification result absent; autoMergeProposal may run verify before the full gate');
     }
@@ -3729,6 +3734,8 @@ export async function autoMergeProposal(
     //
     // M54 never-weaken + allowSelfMerge guard unchanged in both modes.
     const trustBasis = configuredTrustBasis(cfg);
+    const billingRefusal = billingBlocksMerge(proposal.billingClass);
+    if (billingRefusal) return refuse(billingRefusal, repo);
     const expectedProposalStatus = proposal.status;
     const expectedProposalDiffHash = currentProposalDiffHash(proposal);
     const currentProposalConflict = (): string | null => {

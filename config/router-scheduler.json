@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "source": "Mason, Oct 25 2026 11:26 PM ET",
+  "sourceDate": "2026-10-26T03:26:00.000Z",
+  "note": "Defaults are estimates an operator can override. They are not live API readings. cursor-cloud and grokbot are not pools; both consumers share grok-ultra-weekly.",
+  "diskFloorGb": 20,
+  "batteryFloorPercent": 30,
+  "canaryPercent": 10,
+  "solverBudgetMs": 100,
+  "paceTickMs": 86400000,
+  "loseItWeight": 0.5,
+  "latencyWeight": 0.1,
+  "latencyReferenceMs": 600000,
+  "tokenWeight": 0.05,
+  "tokenReference": 100000,
+  "promotionMinRows": 20,
+  "postIssues": false,
+  "posthog": {
+    "enabled": false
+  },
+  "grokUltraWeekly": {
+    "id": "grok-ultra-weekly",
+    "plan": "Grok Ultra",
+    "sharedBy": ["grok-bot", "cursor"],
+    "separateCursorCloudPool": false,
+    "usedFraction": 0.36,
+    "usedFractionAsOf": "2026-10-26T03:26:00.000Z",
+    "usedFractionAsOfLocal": "2026-10-25T23:26:00-04:00",
+    "quotaReadableFromApi": false,
+    "estimate": true,
+    "extraUsageCredits": false,
+    "resetAt": "2026-11-02T01:21:00.000Z",
+    "resetAtLocal": "2026-11-01T20:21:00-05:00",
+    "resetTimezone": "America/New_York",
+    "resetEveryDays": 7,
+    "orchestrationReserveFraction": 0.15,
+    "cloudShadowPrice": 0.75,
+    "jobFraction": 0.01,
+    "label": "estimate from Mason, Oct 25 2026 11:26 PM ET; not an API reading"
+  },
+  "pools": {
+    "codex-primary": {
+      "billing": "subscription",
+      "tier": "frontier",
+      "host": "mac",
+      "concurrency": 1,
+      "preferencePenalty": 0,
+      "monetaryCost": 0,
+      "command": "codex exec",
+      "note": "Work account. Spend first."
+    },
+    "codex-secondary": {
+      "billing": "subscription",
+      "tier": "frontier",
+      "host": "mac",
+      "concurrency": 1,
+      "preferencePenalty": 0.02,
+      "monetaryCost": 0,
+      "command": "codex exec"
+    },
+    "claude": {
+      "billing": "subscription",
+      "tier": "frontier",
+      "host": "mac",
+      "concurrency": 1,
+      "preferencePenalty": 0.04,
+      "monetaryCost": 0,
+      "command": "claude -p",
+      "live": true,
+      "source": "Mason, Oct 25 2026 11:26 PM ET",
+      "note": "The claude -p pool is live. Quota stays unknown until a reading arrives."
+    },
+    "devin": {
+      "billing": "metered",
+      "tier": "frontier",
+      "host": "remote",
+      "concurrency": 1,
+      "preferencePenalty": 0.06,
+      "monetaryCost": 0,
+      "requiresDevinGate": true,
+      "note": "Devin v3 ACUs. Off unless the existing cog_ key gate passes."
+    },
+    "grok-build": {
+      "billing": "metered",
+      "tier": "workhorse",
+      "host": "mac",
+      "concurrency": 1,
+      "preferencePenalty": 0.08,
+      "monetaryCost": 0,
+      "requiresMeteredOptIn": true,
+      "command": "grok",
+      "note": "Grok Build. The catalog still classifies grok as XAI_API_KEY billing, so the metered opt-in stays in force."
+    },
+    "local": {
+      "billing": "loopback",
+      "tier": "cheap",
+      "host": "mac",
+      "concurrency": 1,
+      "preferencePenalty": 0.1,
+      "monetaryCost": 0,
+      "unlimited": true,
+      "command": "oMLX loopback",
+      "note": "oMLX on loopback. Disk floor 20 GB and battery floor 30% apply."
+    },
+    "grok-ultra-weekly": {
+      "billing": "metered",
+      "tier": "frontier",
+      "host": "remote",
+      "concurrency": 1,
+      "preferencePenalty": 0,
+      "monetaryCost": 0,
+      "note": "One weekly Grok Ultra limit shared by the orchestrator and Cursor cloud agents. Cloud-agent jobs pay cloudShadowPrice and rank after the Mac pools and local."
+    },
+    "metered": {
+      "billing": "metered",
+      "tier": "frontier",
+      "host": "remote",
+      "concurrency": 1,
+      "preferencePenalty": 0.2,
+      "monetaryCost": 1,
+      "requiresMeteredOptIn": true,
+      "note": "Metered APIs. Off until --enable-metered."
+    }
+  }
+}
