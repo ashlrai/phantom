@@ -1,6 +1,5 @@
 /**
- * Library pins API, an api-modules.ts route family (recovered from PR #4366,
- * RQ-PHX-LIBRARYPINS13):
+ * Library pins API, mounted by verse-api.ts (id `library-pins`):
  *
  *   GET    /api/verse/library/pins       → { v: 1, pins }
  *   POST   /api/verse/library/pins       → {kind, ref, title} pins, or {remove: id} unpins → { v: 1, pin | removed, pins }
@@ -13,11 +12,6 @@
  * safe when invoked directly). The desktop unpins with POST because the
  * shared web client sends DELETE without a JSON content type, which that
  * gate refuses.
- *
- * Registration note (RQ-PHX-LIBRARYPINSAPIRECOVER249S): mounting this in
- * verse-api.ts's DEFAULT_API_MODULES is owner-lane — the exact module-id
- * list is pinned by test/verse-api-mount-310.test.ts and the mount grows the
- * Tier-1 closure snapshot. See BRIDGE_NOTES.md for the landing steps.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 

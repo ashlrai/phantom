@@ -1,8 +1,8 @@
 /**
  * routes/verse/library/LibraryPane.tsx: one read-only place to see what
  * Phantom remembers: per-project shared memory, past chats and the way in to
- * the agent conversation. It reuses the context queries and adds no route;
- * nothing here writes. Every string from the server renders as plain text.
+ * the agent conversation. It reuses the context queries; the only write is a
+ * pin (LibraryPins.tsx). Every string from the server renders as plain text.
  */
 import { useEffect, useMemo, useState } from 'react';
 import type { VerseSearchResponse } from '../../../../core/verse/types.js';
@@ -21,6 +21,7 @@ import { HandoffsSection } from './HandoffsSection.js';
 import { narrowHandoffs, type HandoffsResponse } from './library-handoffs-model.js';
 import { leaderFileRows, narrowLeaderFiles, type LeaderFilesResponse } from './library-leader-files-model.js';
 import { libraryBusLines, withReceiptTtl } from './library-bus-model.js';
+import { PinnedGroup, PinToggle } from './LibraryPins.js';
 import { memorySummary, recentProjects, searchQueryValid, type RecentProject } from './library-model.js';
 import styles from './library.module.css';
 
@@ -61,6 +62,7 @@ function MemoryCard({ project, visible }: { project: RecentProject; visible: boo
           </pre> : null}
         </>
       )}
+      <div><PinToggle kind="memory" pinRef={project.path} title={`${project.name} memory`} visible={visible} /></div>
     </Card>
   );
 }
@@ -156,6 +158,7 @@ function AgentConversation({ visible }: { visible: boolean }) {
               </span>
               <span className={styles.busText}>{line.text}</span>
               <span className={styles.meta}>{line.age}</span>
+              <PinToggle kind="bus" pinRef={line.id} title={`${line.from} → ${line.to}: ${line.text}`} visible={visible} />
             </li>
           ))}
         </ul>
@@ -231,6 +234,7 @@ export function LibraryPane({ visible = true }: { visible?: boolean }) {
   const projects = useMemo(() => recentProjects(sessions.data ?? []), [sessions.data]);
   return (
     <div className={styles.root}>
+      <PinnedGroup visible={visible} />
       <CosMemorySection visible={visible} />
       <section className={styles.section} aria-label="Memory">
         <h2>Memory</h2>
