@@ -637,17 +637,30 @@ def _claude_report():
         return json.loads(subprocess.run(["/usr/bin/python3", R + "/bin/claude-api.py", "report", "--json"],
                                          capture_output=True, text=True, timeout=20).stdout)
     except Exception: return {}
+def _eval_report():
+    # Read-only, no model or GitHub calls. A missing CLI/ledger is unknown quality.
+    try:
+        cmd = ["phm", "fleet", "eval-report", "--jobs", R + "/metrics/jobs.jsonl", "--days", "30", "--json"]
+        # Optional host-supplied gh-shaped observation evidence.
+        # Never refresh the apparent age of a stale export by rebuilding its report.
+        prs = R + "/metrics/eval-prs.json"
+        if os.path.exists(prs) and 0 <= time.time() - os.stat(prs).st_mtime <= 900:
+            cmd += ["--prs", prs]
+        result = _run(cmd, timeout=8)
+        return json.loads(result.stdout) if result.returncode == 0 else None
+    except Exception: return None
 from process_snapshot import capture as capture_process_snapshot
 # RQ-SWE5-LOOP-BENCH: these are independent read-only subprocesses; run in
 # sequence they cost ~0.5-1.5 s of every tick. Start all of them now and collect
 # each result at its original decision point. Probe behavior is unchanged.
-_PROBES = ThreadPoolExecutor(max_workers=6)
+_PROBES = ThreadPoolExecutor(max_workers=7)
 AP_F = _PROBES.submit(_autopilot)
 MEM_F = _PROBES.submit(mem)
 PS_F = _PROBES.submit(capture_process_snapshot, timeout=5)
 TICK_AGE_F = _PROBES.submit(_daemon_tick_age)
 PACE_F = _PROBES.submit(api_pace)
 REPORT_F = _PROBES.submit(_claude_report)
+EVAL_F = _PROBES.submit(_eval_report)
 tick_phase("budget_read", 25)
 AP = AP_F.result()
 # The separately scheduled disk sampler never blocks a dispatcher tick.
@@ -1583,11 +1596,19 @@ except Exception as e: log("autopilot disk-level write failed %s" % type(e).__na
 tick_phase("controller", 10)
 # ---- fleet controller plan: effective targets from the adapt result, the shed level and the lane quality weight. Any
 # error freezes to floors (fail closed). Applied only in enforce mode; shadow applies the unshed plan and ledgers the rest.
-FC_VIEW = {l: {"desired": slots[l]["target"], "floor": slots[l]["floor"], "bound": min(slots[l]["hard_cap"], W.pins[l]),
+FC_VIEW = {l: {"desired": slots[l]["target"], "floor": slots[l]["floor"], "bound": min(slots[l]["ceiling"], slots[l]["hard_cap"], W.pins[l]),
                "held": bool(slots[l].get("held") or l in hold), "held_by": slots[l].get("held_by")} for l in LANES}
 try:
     FC_QUALITY = fc.lane_quality(BUS["merge"]) if BUS["merge"] else {}
-    PLAN_WOULD = fc.plan(BUS, FC_VIEW, FC_WOULD_LEVEL, FC_QUALITY, FC_WHY)
+    try: _eval = EVAL_F.result(timeout=0.25)
+    except TimeoutError: _eval = None   # optional evidence cannot consume the controller phase
+    _outcomes, FC_STATE["outcome_quality"], _receipts = fc.outcome_quality(
+        _eval, FC_STATE.get("outcome_quality"), time.time(), LANES)
+    PLAN_WOULD = fc.plan(BUS, FC_VIEW, FC_WOULD_LEVEL, FC_QUALITY, FC_WHY, _outcomes)
+    _baseline = fc.plan(BUS, FC_VIEW, FC_WOULD_LEVEL, FC_QUALITY, FC_WHY)
+    BUS["quality_receipts"] = [dict(r, mode="enforce" if FC_SHED_ON else "shadow",
+        target_from=_baseline["lanes"][r["lane"]]["target"], target_to=PLAN_WOULD["lanes"][r["lane"]]["target"]) for r in _receipts]
+    FC_STATE["quality_receipts"] = BUS["quality_receipts"]
     PLAN = PLAN_WOULD if FC_SHED_ON else fc.plan(BUS, FC_VIEW, 0, {}, ["shadow"] if FC_WOULD_LEVEL else [])
 except Exception as e:
     log("fleet controller plan failed %s; freezing to floors" % type(e).__name__)
