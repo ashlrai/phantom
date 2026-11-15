@@ -8,8 +8,10 @@
  * this module redacts again so a hand-built report cannot smuggle a path.
  * formatRuntimeLine is pure; defaultRuntimeLine is the live-read seam the
  * Slack socket wiring passes in. */
+import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { readChannelHealth, type ChannelHealth, type ChannelHealthReport, type ChannelName } from '../fleet/channel-health.js';
+import { defaultTailnetPeersDeps, readTailnetPeers, type TailnetPeers } from '../fleet/tailnet-peers.js';
 import { defaultRuntimeIdentityDeps, readRuntimeIdentity, sanitizeIdentityText, STALE_AFTER_SECONDS, type RuntimeIdentity } from '../fleet/runtime-identity.js';
 
 export const RUNTIME_LINE_MAX_CHARS = 240;
@@ -60,8 +62,19 @@ function channelSegment(channel: ChannelHealth | undefined, label: string, home:
   return `${label} ${redact(channel.state, home)}${missing.length > 0 ? ` (missing: ${missing.join(', ')})` : ''}`;
 }
 
-/** Every unreadable piece prints "unknown". */
-export function formatRuntimeLine(identity: RuntimeIdentity | null, health: ChannelHealthReport | null, now: Date): string {
+/** Counts only — a peer name never reaches the line. Empty peers with a reason
+ * means the read failed; empty peers with no reason is an empty tailnet (0/0). */
+function computersSegment(peers: TailnetPeers, home: string): string {
+  const list = peers.peers;
+  if (list.length === 0 && peers.reasons.length > 0) return redact(' · computers unknown', home);
+  const online = list.filter(p => p.online === true).length;
+  const unknown = list.filter(p => p.online === 'unknown').length;
+  return redact(` · computers ${online}/${list.length} online${unknown > 0 ? ` (${unknown} unknown)` : ''}`, home);
+}
+
+/** Every unreadable piece prints "unknown". A non-null `peers` adds the
+ * tailnet computers segment ahead of the channels so the cap trims channels first. */
+export function formatRuntimeLine(identity: RuntimeIdentity | null, health: ChannelHealthReport | null, now: Date, peers: TailnetPeers | null = null): string {
   const home = (() => { try { return homedir(); } catch { return ''; } })();
   const host = redact(identity?.host ?? 'unknown', home);
   const installed = redact(identity?.installedVersion ?? 'unknown', home);
@@ -75,12 +88,12 @@ export function formatRuntimeLine(identity: RuntimeIdentity | null, health: Chan
   const byName = new Map<ChannelName, ChannelHealth>(health?.channels.map(c => [c.channel, c]) ?? []);
   const channels = CHANNEL_LABELS.map(([name, label]) => channelSegment(byName.get(name), label, home)).join(' · ');
 
-  const line = `Runtime: ${host} (${installed}, source ${source}${drift}), ${fleet} · ${channels}`;
+  const line = `Runtime: ${host} (${installed}, source ${source}${drift}), ${fleet}${peers ? computersSegment(peers, home) : ''} · ${channels}`;
   return line.length > RUNTIME_LINE_MAX_CHARS ? `${line.slice(0, RUNTIME_LINE_MAX_CHARS - 1)}…` : line;
 }
 
 /** The live seam: identity is sync and health is awaited under a 3 s cap, and
- * either may fail to null so the line degrades to "unknown" pieces rather
+ * any may fail to null so the line degrades to "unknown" pieces rather
  * than disappearing. */
 export async function defaultRuntimeLine(now: Date): Promise<string> {
   let identity: RuntimeIdentity | null = null;
@@ -94,5 +107,15 @@ export async function defaultRuntimeLine(now: Date): Promise<string> {
       new Promise<null>((resolve) => { setTimeout(() => resolve(null), RUNTIME_HEALTH_TIMEOUT_MS).unref(); }),
     ]);
   } catch { health = null; }
-  return formatRuntimeLine(identity, health, now);
+  let peers: TailnetPeers | null = null;
+  try {
+    peers = readTailnetPeers({
+      ...defaultTailnetPeersDeps(),
+      now: () => now,
+      exec: (cmd, args) => execFileSync(cmd, [...args], {
+        encoding: 'utf8', timeout: 2_000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
+      }),
+    });
+  } catch { peers = null; }
+  return formatRuntimeLine(identity, health, now, peers);
 }

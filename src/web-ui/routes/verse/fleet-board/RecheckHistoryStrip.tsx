@@ -7,6 +7,7 @@ import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { SkeletonLine } from '../../../components/primitives/Skeleton.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { RecheckNowButton } from './RecheckNowButton.js';
+import { RecheckReplyPreview } from './RecheckReplyPreview.js';
 import { deriveRecheckHistory, recheckHistoryQuery } from './recheck-history-model.js';
 import styles from './fleet-board.module.css';
 
@@ -30,6 +31,7 @@ export function RecheckHistoryStrip({ visible = true }: { visible?: boolean }) {
       ) : null}
       {view.note ? <p className={styles.recheckNote}>{view.note}</p> : null}
       <RecheckNowButton />
+      <RecheckReplyPreview visible={visible} />
     </section>
   );
 }

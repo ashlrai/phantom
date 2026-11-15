@@ -49,7 +49,9 @@ phm agents versions helper --json
 
 These verbs are registered under `phm agents`. Versions lists current and archived revisions. Changed writes retain the previous
 revision in a private `<id>.versions/` directory. `pinAgentProfile` resolves an exact
-revision and refuses missing versions. Session/job integration is not implemented. `checkSend` is a pure fail-closed
+revision and refuses missing versions. [Agent sessions](SESSIONS.md) record a
+profile id and version alongside queue turns, but do not load or validate the
+profile. `checkSend` is a pure fail-closed
 decision function: while `limitsTodo` is true (the default) it returns `draft`, and denied
 recipients or unlisted channels return `deny`. The email outbox consults it for
 outside sends (`sendEmailOutbox` `profile` option): a `deny` refuses the reply
