@@ -14,6 +14,7 @@ import { defaultPoolReachDeps, readPoolReach } from '../core/fleet/pool-reach.js
 import { readFleetBoard, type FleetBoard } from '../core/fleet/coordination.js';
 import { projectCoordinationClaims } from '../core/fleet/coordination-claims-view.js';
 import { projectCoordinationReturns } from '../core/fleet/coordination-returns-view.js';
+import { readClaimNoticeView } from '../core/fleet/claim-notice-view.js';
 import { readChannelHealth } from '../core/fleet/channel-health.js';
 import { defaultRuntimeIdentityDeps, readRuntimeIdentity, sanitizeIdentityText } from '../core/fleet/runtime-identity.js';
 import { scrubPrivateText } from '../core/util/scrub.js';
@@ -240,6 +241,26 @@ async function readFleetSlackReplies(
   }
 }
 
+/** Read the desktop claim-notice evidence without exposing reader failures. */
+async function readFleetClaimNotices(
+  read: () => Promise<unknown> = () => readClaimNoticeView(),
+): Promise<unknown> {
+  const timeout = Symbol('claim-notices-timeout');
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      read(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(timeout), 5_000);
+      }),
+    ]);
+  } catch (error) {
+    return { status: 'unknown', reason: error === timeout ? 'claim-notices-timeout' : 'claim-notices-unavailable' };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export interface FleetReaders {
   stagingScanner?: StagingScanner;
   stagingInventory?: (input: FleetStagingInventoryArgs) => Promise<unknown>;
@@ -261,6 +282,7 @@ export interface FleetReaders {
   reviewPick?: (args: FleetReviewPickArgs) => Promise<unknown>;
   orderState?: (args: FleetOrderStateArgs) => Promise<unknown>;
   slackReplies?: () => Promise<unknown>;
+  claimNotices?: () => Promise<unknown>;
   lanes?: () => Promise<unknown>;
   selfTickLast?: () => Promise<unknown>;
   usageResets?: () => Promise<unknown>;
@@ -476,6 +498,12 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       name: 'fleet_order_state',
       description: 'Read Mason\'s inbox order states: each order classified RECEIVED / ASSIGNED / RUNNING / BLOCKED / VERIFIED with at, source, key, asOf, evidenceSource, missing evidence, pr, owner and blocker, plus live and lanes source health — the same readOrderTrace plus one listLiveWorkers snapshot and one readLaneTargets read as `ashlr fleet order-state`. A BLOCKED row\'s blocker names the held lane dependency (lane and held-until only, never hold reasons or attribution); blocker is null when no healthy lane evidence supports BLOCKED. Evidence only; it grants no claim, dispatch or merge authority, and a queued line names an owner but is not a claim. Each read is bounded to 8 seconds: a trace read that throws or times out returns sources "unavailable" with no orders, an unavailable live read leaves RUNNING unproven, and an unavailable lanes read leaves BLOCKED unproven — never an invented state. `sinceHours` is an optional integer 1-720 windowing the orders; anything else returns { status: "invalid" }. No order text bodies, file paths, command lines or pids are returned; no caller root, path or cwd is accepted, and the tool never writes anything.',
       inputSchema: { type: 'object', properties: { sinceHours: { type: 'integer', minimum: 1, maximum: 720 } }, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_claim_notices',
+      description: 'Read the same Slack claim-notice evidence as the desktop view: bound threads, sent notices and pending ASSIGNED / RELEASED / BLOCKED / VERIFIED notices. A `sent` row means a durable bus note was written, not that Slack delivered it; pending rows are a dry-run plan. Authority none: never sends, ledgers or writes. The read is bounded to 5 seconds; a throw or timeout returns { status: "unknown", reason } without thrown text. Takes no arguments; any argument is refused.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations,
     },
     {
@@ -964,7 +992,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_session_handoff' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_slack_replies' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_orchestration_read' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history' && name !== 'fleet_bridge_check') {
+    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_session_handoff' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_claim_notices' && name !== 'fleet_slack_replies' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_orchestration_read' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history' && name !== 'fleet_bridge_check') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -1095,6 +1123,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_pool_reach' ? await readFleetPoolReach(readers.poolReach)
         : name === 'fleet_review_pick' ? await (readers.reviewPick ?? readFleetReviewPick)(reviewPick as FleetReviewPickArgs)
         : name === 'fleet_order_state' ? await (readers.orderState ?? readFleetOrderState)(orderState as FleetOrderStateArgs)
+        : name === 'fleet_claim_notices' ? await readFleetClaimNotices(readers.claimNotices)
         : name === 'fleet_slack_replies' ? await readFleetSlackReplies(readers.slackReplies)
         : name === 'fleet_lanes' ? await (readers.lanes ?? readFleetLanes)()
         : name === 'fleet_self_tick_last' ? await (readers.selfTickLast ?? (() => readFleetSelfTickLast()))()

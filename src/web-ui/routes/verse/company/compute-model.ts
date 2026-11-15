@@ -42,3 +42,11 @@ export function isFleetSessionMap(value: unknown): value is FleetSessionMap {
   return v.schema === 'fleet.sessions.v1' && typeof v.generatedAt === 'string' && typeof v.computeAt === 'string' &&
     ['healthy', 'missing', 'degraded'].includes(v.sourceState) && rows(v.mapSessions) && rows(v.mapRecent);
 }
+
+export const fresh = (at: number | null | undefined, now: number) => at != null && at <= now && now - at <= 90_000;
+/** 1-minute load over the advisory 2 × CPU ceiling. Null (never zero) when no fresh reading exists. */
+export function loadRatio(node: { stats: HostStats | null }, now: number): number | null {
+  const s = node.stats;
+  if (!s || !fresh(s.sampledAtMs, now) || !s.cores.length || s.load[0] == null) return null;
+  return s.load[0] / (2 * s.cores.length);
+}

@@ -180,9 +180,15 @@ are the v2 layer above it.
 ### 4. Work feed
 
 Every job is `{id, owner, provider, repo, claimKeys[], status, updatedAt}`
-and the planned feed is `{v:2, jobs:[...]}`. Jobs would derive from
-`work.post` and `work.status` messages; no feed projection is implemented yet.
-The authenticated peer consumer below consumes `work.post` cursor pages directly.
+and the feed is `{v:2, jobs:[...]}`. `projectBusWorkFeed` in
+`src/core/agents/bus-work-feed.ts` projects a retained receipt snapshot without
+I/O. Posts start queued; `owner` is the sender label. Provider comes from the
+post or explicit participant metadata; absent provider refuses the projection.
+Statuses from that owner update retained jobs in cursor order with receipt time
+as `updatedAt`; orphan statuses are ignored. Duplicate posts and malformed work
+bodies are refused. Legacy and unrelated bodies stay opaque. This projection is
+neither a historical ledger nor an identity check; labels grant no authority.
+HTTP work-feed endpoints remain unimplemented.
 
 ### Bounded peer dispatch
 
