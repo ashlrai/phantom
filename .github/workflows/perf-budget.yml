@@ -13,6 +13,11 @@ on:
   pull_request:
     branches: ["**"]
     types: [opened, synchronize, reopened]
+    # Advisory CLI-latency check: docs-only and site-only PRs cannot move it.
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "site/**"
   # Daily read on the default branch keeps baseline drift visible without
   # waiting for an unrelated PR to trip the budget.
   schedule:
@@ -49,7 +54,7 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq hyperfine
 
       - name: Install and build
-        run: npm ci && npm run build
+        run: npm ci --no-audit --no-fund && npm run build
 
       # Every phm target requires dist/cli/index.js, so a missing build is an
       # environment error (exit 2), never a fast pass. The phantom wrapper
