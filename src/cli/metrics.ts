@@ -1,6 +1,8 @@
 import { readTaskCheckJobs } from './fleet-task-check.js';
 import { mergeGraph } from '../core/fleet/merge-graph.js';
 import { readLeverageMix } from '../core/metrics/leverage-mix.js';
+import { readTaskCheckJobs } from './fleet-task-check.js';
+import { mergeGraph } from '../core/fleet/merge-graph.js';
 import { cmdMetricsIdle } from './metrics-idle.js';
 /** `phm metrics [summary|dashboard|record|recommend|ingest]` — local telemetry + value metrics. */
 import { join } from 'node:path';
@@ -72,6 +74,14 @@ export function cmdMetrics(argv: string[], io?: CliIo): number | Promise<number>
     const report = readLeverageMix(rest[1]);
     io.out(json ? JSON.stringify(report, null, 2) : `Product or fleet improvements: ${report.improvedShare === null ? 'unknown' : `${(report.improvedShare * 100).toFixed(1)}%`} of merges in the last 24 hours (known classifications; unknowns included in total).`);
     return 0;
+  }
+  if (sub === 'merges') {
+    if (rest.length) { io.err(USAGE); return 2; }
+    return readTaskCheckJobs().then(raw => {
+      const report = mergeGraph(raw);
+      io.out(json ? JSON.stringify(report, null, 2) : !report.known ? 'Merge metrics: unknown' : report.lanes!.length ? report.lanes!.map(lane => `${lane.lane}: ${lane.buckets.reduce((sum, bucket) => sum + bucket.merges, 0)} merges`).join('\n') : 'No merges in the last 24 hours');
+      return 0;
+    });
   }
   if (rejectUnknownOptions(rest, sub === 'dashboard' ? { values: ['--out', '--prs'] } : {})) { io.err(USAGE); return 2; }
   try {
