@@ -15,8 +15,8 @@ export async function cmdFleetPeerLedger(args: string[], deps: { read?: () => Pe
   if (args.includes('--json')) process.stdout.write(JSON.stringify(report, null, 2) + '\n');
   else {
     const lines = [`peer ledger: ${report.status}${report.reason ? ` (${report.reason})` : ''}`,
-      `live rows: ${report.liveRows} of ${report.capacity}`];
-    for (const p of report.pairs) lines.push(`${p.fromAgent} -> ${p.target}  ${p.inWindow}/${report.pairLimit}  remaining ${p.remaining}`);
+      `as of: ${report.asOf}`, `live rows: ${report.liveRows} of ${report.capacity}`];
+    for (const p of report.pairs) lines.push(`${p.fromAgent} -> ${p.target}  ${p.inWindow}/${report.pairLimit}  remaining ${p.remaining}${p.remaining === 0 ? `  blocked; retry at: ${p.retryAt ?? 'unknown'}` : ''}`);
     if (report.truncated.pairs) lines.push('(pairs truncated)');
     for (const o of report.origins.filter(o => o.nearCap)) lines.push(`near hop cap: ${o.origin} at hop ${o.maxHop} of ${report.maxHops}`);
     process.stdout.write(lines.join('\n') + '\n');
