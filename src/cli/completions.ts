@@ -43,7 +43,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'devin',
   'openai-agents',
   'agents',
-  'benchmark', 'queue', 'issues', 'incident', 'chain', 'select', 'pool',
+  'benchmark', 'queue', 'issues', 'incident', 'chain', 'select', 'job', 'pool',
   // 3.15 automations.
   'automations', 'routines',
   // 3.15 Jev decision layer.
@@ -105,6 +105,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
   queue: ['stats', 'report', 'add', 'claim', 'done', 'block', 'list', 'import', 'export', '--help'],
   land: ['auto', '--repo', '--apply', '--json', '--help'],
+  job: ['cost', '--help'],
   benchmark: ['run', '--compare-reports', 'help'],
   metrics: ['summary', 'dashboard', 'record', 'recommend', 'ingest', 'levers', 'leverage-mix', 'idle', 'help'],
   config: ['get', 'set', 'path', 'effective'],
