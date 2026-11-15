@@ -27,8 +27,9 @@
 .token { display: grid; gap: 4px; text-align: left; margin: 8px 0; width: 100%; overflow-wrap: anywhere; transform: translateZ(8px); }
 .token span, .token small { font-size: var(--text-2xs-size); }
 .token[data-state='running'] { border-left: 3px solid var(--status-success-solid); animation: working 3s ease-in-out infinite; }
-.token[data-state='parked'], .token[data-state='stale'] { border-left: 3px solid var(--status-warning-solid); }
+.token[data-state='held'], .token[data-state='unknown'] { border-left: 3px solid var(--status-warning-solid); }
 .token[data-state='queued'] { border-left: 3px dashed var(--status-unknown-solid); }
+.token[data-state='idle'] { border-left: 3px solid var(--status-unknown-solid); }
 .detail { margin-top: 24px; padding: var(--space-5); border: 1px solid var(--border-strong); border-radius: var(--radius-xl); }
 @keyframes working { 50% { box-shadow: 0 0 0 2px var(--status-success-bg); } }
 @media (prefers-reduced-motion: reduce) { .token[data-state='running'] { animation: none; } }
