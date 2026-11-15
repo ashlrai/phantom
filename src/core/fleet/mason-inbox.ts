@@ -7,7 +7,7 @@ import { scrubSecrets } from '../util/scrub.js';
 import { INBOX_CHANNEL_LINE } from './inbox-channel-line.js';
 import type { RecentInboxEntry } from './cross-channel-dedupe.js';
 import { inboxChannelSlug } from './inbox-channel-slug.js';
-import { INBOX_ATTACH_MAX_CHARS, summariseForInbox, writeInboxAttachment } from './inbox-attachment.js';
+import { INBOX_ATTACH_MAX_CHARS, INBOX_ATTACH_SUMMARY_CHARS, inboxAttachmentRelPath, parseInboxAttachmentPointer, summariseForInbox, writeInboxAttachment } from './inbox-attachment.js';
 
 export interface InboxEntry {
   id?: string;
@@ -76,10 +76,10 @@ export function escapeInboxContinuation(line: string): string {
  * (so inbox-ack can reply on that channel); later lines escape entry delimiters and
  * reach the planner as one raw entry.
  */
-function formatChannelEntry(text: string, source: string, when: Date): { entry: string; id: string } {
+function formatChannelEntry(text: string, source: string, when: Date, idText = text): { entry: string; id: string } {
   const iso = when.toISOString();
   const channel = inboxChannelSlug(source);
-  const id = `${channel === 'desktop' ? 'desk' : channel}-${createHash('sha256').update(iso + text).digest('hex').slice(0, 16)}`;
+  const id = `${channel === 'desktop' ? 'desk' : channel}-${createHash('sha256').update(iso + idText).digest('hex').slice(0, 16)}`;
   const [first = '', ...rest] = text.split('\n');
   return { entry: `\n${[`${iso} [src:${channel} id:${id}] ${first}`, ...rest.map(escapeInboxContinuation)].join('\n')}\n`, id };
 }
@@ -91,9 +91,9 @@ export function parseInbox(markdown: string, limit = 20): InboxEntry[] {
   let body: string[] = [];
   let channelEntry: Omit<InboxEntry, 'text'> | undefined;
   const finish = (): void => {
-    const text = body.join('\n').trim().slice(0, INBOX_MAX_CHARS);
-    const attachment = /\[full text: (leader\/inbox-attachments\/[A-Za-z0-9._:-]{1,64}\.md), \d+ chars\]/.exec(text)?.[1];
     if (channelEntry) {
+      const text = body.join('\n').trim().slice(0, INBOX_MAX_CHARS);
+      const attachment = parseInboxAttachmentPointer(text, channelEntry.id);
       entries.push({ ...channelEntry, text, ...(attachment ? { attachment } : {}) });
       return;
     }
@@ -106,8 +106,7 @@ export function parseInbox(markdown: string, limit = 20): InboxEntry[] {
       at: match?.[1] ?? dated?.[1] ?? heading,
       source: match?.[2] ?? (source || 'unknown'),
       priority: match?.[3] ?? priority ?? null,
-      text,
-      ...(attachment ? { attachment } : {}),
+      text: body.join('\n').trim().slice(0, INBOX_MAX_CHARS),
     });
   };
   for (const line of markdown.replace(/\r\n/g, '\n').split('\n')) {
@@ -145,8 +144,11 @@ export function parseInbox(markdown: string, limit = 20): InboxEntry[] {
 export async function appendInboxEntry(text: string, opts: InboxAppendOptions = {}): Promise<InboxAppendResult> {
   const clean = normaliseText(text);
   if (isFlagOnlyInboxText(clean)) return { ok: false, reason: 'flag-only' };
-  if (clean.length > INBOX_ATTACH_MAX_CHARS) return { ok: false, reason: 'too-long' };
-  if ((clean.length > INBOX_MAX_CHARS && scrubSecrets(text) !== text) || scrubSecrets(clean) !== clean) return { ok: false, reason: 'secret-shaped' };
+  // Long messages become attachments, but only within a bound on what is stored.
+  if (clean.length > INBOX_ATTACH_MAX_CHARS || text.length > INBOX_ATTACH_MAX_CHARS) return { ok: false, reason: 'too-long' };
+  const long = clean.length > INBOX_MAX_CHARS;
+  // The attachment holds the raw text, so the raw form is screened as well.
+  if (scrubSecrets(clean) !== clean || (long && scrubSecrets(text) !== text)) return { ok: false, reason: 'secret-shaped' };
 
   try {
     const runsDir = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
@@ -154,14 +156,13 @@ export async function appendInboxEntry(text: string, opts: InboxAppendOptions = 
     const now = (opts.now ?? (() => new Date()))();
     const at = localTimestamp(now);
     const eventTimestamp = now.toISOString().slice(0, 19).replace('T', ' ');
+    // The id is derived from the complete text so dedupe and ack see the same id as for an inline entry.
     const { id } = formatChannelEntry(clean, source, now);
-    const attachment = clean.length > INBOX_MAX_CHARS ? `leader/inbox-attachments/${id}.md` : undefined;
-    const body = attachment ? summariseForInbox(clean, 1500, id, text.length) : clean;
-    // Keep the id derived from the original text, not the shortened body.
-    const formatted = formatChannelEntry(body, source, now);
-    const entry = attachment ? formatted.entry.replace(`id:${formatted.id}]`, `id:${id}]`) : formatted.entry;
+    const attachment = long ? inboxAttachmentRelPath(id) : undefined;
+    const { entry } = formatChannelEntry(long ? summariseForInbox(clean, INBOX_ATTACH_SUMMARY_CHARS, id, text.length) : clean, source, now, clean);
     const result = { ok: true as const, at, id, bytes: Buffer.byteLength(entry, 'utf8'), ...(attachment ? { attachment } : {}) };
     if (opts.dryRun === true) return result;
+    // Exclusive create first: a collision fails the append rather than overwriting or pointing at foreign content.
     if (attachment) await writeInboxAttachment(runsDir, id, text);
     await mkdir(join(runsDir, 'leader'), { recursive: true });
     await appendFile(join(runsDir, 'leader', 'MASON-INBOX.md'), entry, { encoding: 'utf8', flag: 'a' });
