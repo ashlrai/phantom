@@ -61,3 +61,16 @@ before push; a mismatch aborts publication. `contrib/mac/publish.sh` is Security
 re-pin its source change before sanctioned installation. No live script is
 installed by this change. EMPTY/denied/aborted attempts that exit before artifact
 capture carry no proof and must not be counted as proven job results.
+
+## Outcome join: `fleet.proof-outcomes.v1`
+
+`phm fleet proof outcomes [--results-dir <dir>] [--json]` (plus the
+`phm fleet eval-report` input flags) is a read-only, derived projection. It takes
+each merged PR in the `fleet.eval-report.v1` cohort, follows `jobId` to
+`<results-dir>/<jobId>.publish`, validates the single `PROOF` marker digest and
+envelope, and reports a `proofState`: `verified`, `needs-review`, `unreadable`
+(missing/mismatched marker or envelope, or an unknown envelope schema version),
+`absent` or `unattributed`. `proofId` is the marker digest (`sha256:<hex>`) for
+citation by other consumers. Rollups give durability by proof state with Wilson
+intervals, `verifiedLift`, and how often the proof verdict matched the outcome.
+Missing evidence stays null; proof files and outcomes are never written.

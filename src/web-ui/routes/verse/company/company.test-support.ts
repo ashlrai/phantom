@@ -23,6 +23,8 @@ export const lane: FleetLaneView = {
 };
 export function payloads(): Record<string, unknown> {
   return {
+    '/api/verse/fleet/control/org': { schema: 'company.org.v1', generatedAt: at(), sources: { org: 'available', joins: 'available' }, members: 3, contributingMembers: 2, contributingLanes: 1 },
+    '/api/verse/fleet/live': { v: 1, generatedAt: at(), runs: [], repos: [], lanes: [], summary: { mergedToday: 13 } },
     '/api/fleet/sessions': sessions,
     '/api/fleet/lanes': { schema: 'fleet.lanes.v1', generatedAt: at(), lanes: [lane] },
     '/api/nodes': { schema: 'phantom.nodes.v1', generatedAt: at(), error: null, nodes: [

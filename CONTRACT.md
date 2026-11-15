@@ -612,3 +612,24 @@ line in `queue/live-config-audit.jsonl` (`fleet.config.audit.v1`) records
 who/when/why. Restart-required keys (security pins, paid-model blocks, credential
 paths, GATES files) are refused by the writer and ignored by the resolver. See
 [docs/FLEET-CONFIG.md](docs/FLEET-CONFIG.md).
+
+## Agent Bus v2 foundation
+
+`src/core/agents/bus-v2-schema.ts` owns the `agent-bus.v2` body, participant,
+claim and work-feed schemas described in [Agent Bus v2](docs/AGENT-BUS.md#v2).
+Routing labels, repo slugs and claim tokens reject trailing newlines; claim keys
+reject ASCII controls including DEL. Claims grant no execution authority.
+
+`projectBusWorkFeed(receipts: readonly unknown[], participants?: readonly Participant[])`
+in `src/core/agents/bus-work-feed.ts` returns `WorkFeedResult`: either
+`{status:'ok', feed:{v:2,jobs:WorkJob[]}}` or `{status:'refused',reason}`.
+It validates at most 1024 retained receipts in strictly increasing cursor order;
+legacy and unrelated bodies stay opaque. Posts start queued with `owner=from`;
+provider comes from the post or explicit participant metadata (missing is refused).
+Statuses update only retained jobs from the same routing owner; orphan statuses
+are ignored. Duplicate job posts and malformed work bodies refuse the projection.
+Latest cursor wins; `updatedAt` is its receipt time. Jobs retain post order.
+This is a pure retained-snapshot projection, not a historical ledger or identity
+check. It performs no I/O, transport, claim mutation or execution. Existing v1
+journals/readers remain unchanged; feed output is explicitly versioned `v:2`.
+No HTTP feed endpoint is provided by this foundation.
