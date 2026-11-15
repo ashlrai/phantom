@@ -53,8 +53,13 @@ export function authenticatePeer(peers: PeerBinding[], session: PeerSession, now
   return peer;
 }
 export function listPeers(path?: string) {
-  return readPeerBindings(path).map(p => ({ callsign: p.callsign, lane: p.lane, displayName: p.callsign,
-    userId: p.userId, botId: p.botId, active: p.expiresAt > Date.now() }));
+  const bindings = path ?? agentnetPaths().bindings;
+  try { lstatSync(bindings); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { status: 'not-enrolled', peers: [] };
+    throw error;
+  }
+  return { status: 'ok', peers: readPeerBindings(bindings).map(p => ({ callsign: p.callsign, lane: p.lane, displayName: p.callsign,
+    userId: p.userId, botId: p.botId, active: p.expiresAt > Date.now() })) };
 }
 /** Draft metadata is never eligible for the Slack drain. Approval does not provision an app. */
 export function proposeSlackAction(action: 'identity.register' | 'channel.create', name: string, apply = false,
