@@ -346,8 +346,17 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   if (path === '/api/verse/fleet/control/claim-notices') {
     return (await import('./fleet-claim-notices-api.js')).handleFleetClaimNoticesApi(ctx, req, res, path, method);
   }
+  if (path === '/api/verse/fleet/control/orchestration') {
+    return (await import('./fleet-orchestration-api.js')).handleFleetOrchestrationApi(ctx, req, res, path, method);
+  }
+  if (path === '/api/verse/fleet/control/slack-trace') {
+    return (await import('./fleet-slack-trace-api.js')).handleFleetSlackTraceApi(ctx, req, res, path, method);
+  }
   if (path === '/api/verse/fleet/control/compute') {
     return (await import('./fleet-compute-api.js')).handleFleetComputeApi(ctx, req, res, path, method);
+  }
+  if (path === '/api/verse/fleet/control/org') {
+    return (await import('./company-org-api.js')).handleCompanyOrgApi(ctx, req, res, path, method);
   }
   // Per-session operator guidance (RQ-PHX-RECUTDESKOLDC203, recut of #5253).
   //   GET  /api/verse/fleet/control/guidance        → aggregate ack state

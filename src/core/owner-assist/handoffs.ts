@@ -1,11 +1,15 @@
 import { join } from 'node:path';
 import { QueueStore } from '../queue/store.js';
+import type { QueueJob } from '../queue/schema.js';
 import { VerseError } from '../verse/session-engine.js';
 import { countQueuedDropJobPrompts, DROP_JOB_QUEUE_LIMIT, dropJobExists, DropJobExistsError,
   resolveDropJobRoot, validateDropJob, writeDropJob } from '../fleet/drop-job-writer.js';
 import { readDropJobFates } from '../fleet/drop-job-fate.js';
 import { mergedJobsFromJsonl, readSource } from '../fleet/runs-parked-queue.js';
 import type { OwnerAssistHandoff, OwnerAssistHandoffReceipt } from './types.js';
+
+/** Private receipt metadata carried on the stored queue row; never dispatched on it. */
+type StoredReceipt = QueueJob & { sessionId?: string; sourceTitle?: string; submittedAt?: string };
 
 const fleetId = (id: string) => `RQ-PHX-OWNER${id.slice('RQ-OWNER-'.length).replaceAll('-', '').toUpperCase()}`;
 const invalid = (message: string): never => { throw new VerseError('VERSE_INVALID', message); };
@@ -21,7 +25,7 @@ export class OwnerAssistHandoffs {
     this.receipts = new QueueStore(join(root, 'owner-assist.handoffs'));
     this.runs = resolveDropJobRoot(runsRoot);
   }
-  async submit(request: OwnerAssistHandoff): Promise<OwnerAssistHandoffReceipt> {
+  async submit(request: OwnerAssistHandoff, source?: { sessionId: string; title: string }): Promise<OwnerAssistHandoffReceipt> {
     if (this.submitting) return invalid('Another handoff is being submitted. Retry shortly.');
     this.submitting = true;
     try {
@@ -32,18 +36,21 @@ export class OwnerAssistHandoffs {
         body: `# Owner Assist handoff\n\n${request.scope}\n\nAcceptance criteria:\n${request.acceptance}` };
       const valid = validateDropJob(input);
       if (!valid.ok) return invalid(`Fleet intake refused this task: ${valid.reasons.join(', ')}.`);
-      const previous = (await this.receipts.read()).jobs.find(j => j.id === request.id);
-      if (previous && (['repo', 'scope', 'acceptance', 'tier'] as const).some(k => previous[k] !== request[k])) return invalid('Handoff id already belongs to a different task.');
+      const previous = (await this.receipts.read()).jobs.find(j => j.id === request.id) as StoredReceipt | undefined;
+      if (previous && (['repo', 'scope', 'acceptance', 'tier', 'sessionId'] as const).some(k => previous[k] !== request[k])) return invalid('Handoff id already belongs to a different task.');
       const observed = (await this.list()).find(j => j.id === request.id);
       if (observed) return observed;
       if (previous) return invalid('This earlier handoff has no recent evidence. Review its fleet job before submitting a new task.');
       if (await dropJobExists(this.runs, input.id)) return invalid('This fleet job id is already in use.');
       if (await countQueuedDropJobPrompts(this.runs) >= DROP_JOB_QUEUE_LIMIT) return invalid('Fleet intake is full. Retry later.');
-      if (!previous) await this.receipts.add({ ...request, status: 'PROPOSED', priority: 'P1', min_tier: request.tier,
-        max_cost_class: 'included', needs: ['code'], deps: [], claims: [] });
+      const submittedAt = new Date().toISOString();
+      const record: StoredReceipt = { ...request, status: 'PROPOSED', priority: 'P1', min_tier: request.tier,
+        max_cost_class: 'included', needs: ['code'], deps: [], claims: [], submittedAt,
+        ...(source ? { sessionId: source.sessionId, sourceTitle: source.title.slice(0, 200) } : {}) };
+      await this.receipts.add(record);
       try { await writeDropJob(this.runs, input); }
       catch (e) { if (!(e instanceof DropJobExistsError)) throw e; }
-      return { ...request, fleetJobId: id, status: 'SUBMITTED' };
+      return { ...request, fleetJobId: id, status: 'SUBMITTED', submittedAt, ...(source ? { sourceTitle: source.title.slice(0, 200) } : {}) };
     } finally { this.submitting = false; }
   }
   async list(): Promise<OwnerAssistHandoffReceipt[]> {
@@ -67,6 +74,7 @@ export class OwnerAssistHandoffs {
       } catch { /* malformed or truncated evidence never invents success */ }
     }
     return Promise.all(jobs.map(async job => {
+      const stored = job as StoredReceipt;
       const id = fleetId(job.id);
       const fate = fates.fates.find(f => f.id === id.slice('RQ-PHX-'.length));
       const publish = await readSource(join(this.runs, `${id}.publish`), 65536, false);
@@ -75,7 +83,10 @@ export class OwnerAssistHandoffs {
         ?? (fate?.fate === 'rejected' ? 'REJECTED' : fate?.fate === 'ingested' ? 'QUEUED'
           : await dropJobExists(this.runs, id.slice('RQ-PHX-'.length)) ? 'SUBMITTED' : 'UNOBSERVED');
       return { id: job.id, fleetJobId: id, repo: job.repo, scope: job.scope, acceptance: job.acceptance,
-        tier: job.tier as OwnerAssistHandoff['tier'], status, ...(url ? { prUrl: url } : {}) };
+        tier: job.tier as OwnerAssistHandoff['tier'], status, ...(url ? { prUrl: url } : {}),
+        ...(typeof stored.sessionId === 'string' ? { sessionId: stored.sessionId } : {}),
+        ...(typeof stored.sourceTitle === 'string' ? { sourceTitle: stored.sourceTitle.slice(0, 200) } : {}),
+        ...(typeof stored.submittedAt === 'string' ? { submittedAt: stored.submittedAt } : {}) };
     }));
   }
 }
