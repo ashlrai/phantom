@@ -150,6 +150,7 @@ or control apps.
 | --- | --- |
 | `intent_add` | Record a local directive. Tracking does not authorize action. |
 | `intent_get` | Read one intent by id from the local ledger. |
+| `intent_import` | Import local JSONL files or an ashlr.intent-ledger/v1 document, deduplicating directives and retaining provenance. |
 | `intent_link` | Record caller-supplied merged pull evidence on matching directives. Supplied claims are not verified. |
 | `intent_list` | List local owner directives and their provenance, optionally filtered by status. |
 | `intent_ship` | Record caller-supplied release evidence on matching directives. Supplied claims are not verified. |

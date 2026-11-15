@@ -20,6 +20,7 @@ const effects = vi.hoisted(() => ({
   probeServer: vi.fn(async () => ({ name: 'x', ok: true, toolCount: 0, tools: [] })),
   getToolsRegistry: vi.fn(() => ({ tools: [], installedCount: 0 })),
   nativeToolDefs: vi.fn((): unknown[] => []),
+  registerNativeTools: vi.fn(),
   companionExecutableCandidates: vi.fn((): string[] => []),
   companionExecutableKind: vi.fn(() => 'native' as const),
   runGoal: vi.fn(),
@@ -42,6 +43,7 @@ vi.mock('../src/core/tools-registry.js', () => ({
 }));
 vi.mock('../src/core/mcp-native.js', () => ({
   nativeToolDefs: effects.nativeToolDefs,
+  registerNativeTools: effects.registerNativeTools,
 }));
 vi.mock('../src/core/companion-inventory.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/core/companion-inventory.js')>()),

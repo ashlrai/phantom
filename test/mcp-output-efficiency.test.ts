@@ -44,8 +44,14 @@ const OLD_NATIVE_NAMES = [
 ] as const;
 
 const ADDED_NATIVE_NAMES = [
+  'intent_add',
+  'intent_update',
+  'intent_list',
+  'intent_get',
   'intent_link',
   'intent_ship',
+  'intent_stale',
+  'intent_import',
   'phantom_agent_bus_read',
   'phantom_agent_bus_status',
   'phantom_agent_bus_post',
@@ -136,7 +142,7 @@ describe('native MCP tool inventory', () => {
     const tools = listNativeTools();
     const names = tools.map(tool => tool.name);
     const classified = classifyNativeNames(names);
-    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(89);
+    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(95);
     expect(new Set(names).size).toBe(names.length);
     expect(classified.old).toEqual([...OLD_NATIVE_NAMES]);
     expect(classified.added).toEqual([...ADDED_NATIVE_NAMES]);
@@ -197,10 +203,10 @@ describe('native MCP tool inventory', () => {
     const verbs = addedTools.find(tool => tool.name === 'phantom_fleet_verbs')!;
     const verbsBytes = Buffer.byteLength(JSON.stringify(verbs)) + 1;
     expect(verbsBytes).toBeLessThanOrEqual(228);
-    // intent_link + intent_ship measured 1,119 bytes with their commas; no headroom.
-    const intentTools = addedTools.filter(tool => tool.name === 'intent_link' || tool.name === 'intent_ship');
+    // intent_* tools measured 3,211 bytes with their commas; no headroom.
+    const intentTools = addedTools.filter(tool => tool.name.startsWith('intent_'));
     const intentBytes = intentTools.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
-    expect(intentBytes).toBeLessThanOrEqual(1119);
+    expect(intentBytes).toBeLessThanOrEqual(3211);
     const addedBytes = addedTools.filter(tool => tool !== verbs && tool !== doctor && tool !== roster && tool !== spend && tool !== needs && tool !== needsWait && tool !== accessRequest && tool !== watch && !intentTools.includes(tool) && !visibility.includes(tool) && !leaderTools.includes(tool) && !desktop.includes(tool) && !observeTools.includes(tool) && !ownerComms.includes(tool) && !agentComms.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(addedBytes).toBeLessThanOrEqual(9884);
     // 24,205 + 9,884 preserves the historical headroom. Later tool groups are

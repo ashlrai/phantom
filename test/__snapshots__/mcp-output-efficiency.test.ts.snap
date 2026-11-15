@@ -9,11 +9,35 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
   ],
   "native": [
     {
+      "name": "intent_add",
+      "safety": "append",
+    },
+    {
+      "name": "intent_update",
+      "safety": "append",
+    },
+    {
+      "name": "intent_list",
+      "safety": "read",
+    },
+    {
+      "name": "intent_get",
+      "safety": "read",
+    },
+    {
       "name": "intent_link",
       "safety": "append",
     },
     {
       "name": "intent_ship",
+      "safety": "append",
+    },
+    {
+      "name": "intent_stale",
+      "safety": "append",
+    },
+    {
+      "name": "intent_import",
       "safety": "append",
     },
     {
@@ -385,6 +409,126 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "owner": {
+          "type": "string",
+        },
+        "partial": {
+          "type": "boolean",
+        },
+        "rq": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "source": {
+          "type": "string",
+        },
+        "staleAfterMs": {
+          "maximum": 31536000000,
+          "minimum": 60000,
+          "type": "integer",
+        },
+        "status": {
+          "type": "string",
+        },
+        "title": {
+          "type": "string",
+        },
+        "verbatim": {
+          "type": "boolean",
+        },
+      },
+      "required": [
+        "title",
+        "source",
+      ],
+      "type": "object",
+    },
+    "name": "intent_add",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "type": "string",
+        },
+        "id": {
+          "type": "string",
+        },
+        "owner": {
+          "type": "string",
+        },
+        "partial": {
+          "type": "boolean",
+        },
+        "rq": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "source": {
+          "type": "string",
+        },
+        "status": {
+          "type": "string",
+        },
+        "title": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "id",
+      ],
+      "type": "object",
+    },
+    "name": "intent_update",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "proposed",
+            "queued",
+            "in-progress",
+            "merged",
+            "shipped",
+            "verified",
+            "superseded",
+            "closed",
+            "unknown",
+          ],
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "intent_list",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,80}$",
+          "type": "string",
+        },
+      },
+      "required": [
+        "id",
+      ],
+      "type": "object",
+    },
+    "name": "intent_get",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
         "at": {
           "format": "date-time",
           "maxLength": 35,
@@ -461,6 +605,37 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "intent_ship",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "apply": {
+          "type": "boolean",
+        },
+      },
+      "type": "object",
+    },
+    "name": "intent_stale",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "paths": {
+          "items": {
+            "type": "string",
+          },
+          "minItems": 1,
+          "type": "array",
+        },
+      },
+      "required": [
+        "paths",
+      ],
+      "type": "object",
+    },
+    "name": "intent_import",
   },
   {
     "inputSchema": {
