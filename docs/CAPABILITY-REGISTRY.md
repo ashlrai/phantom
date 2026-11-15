@@ -10,7 +10,7 @@ surfaces load, and for the surfaces and models the router pairs them with
 - Schema and validation: [`src/core/caps/schema.ts`](../src/core/caps/schema.ts),
   [`src/core/caps/registry.ts`](../src/core/caps/registry.ts).
 - Adapter generator: [`src/core/caps/generate.ts`](../src/core/caps/generate.ts).
-- Generated adapters (pinned, committed): [`capabilities/generated/`](../capabilities/generated/).
+- Generated adapters (pinned, committed): [`capabilities/generated/`](https://github.com/ashlrai/phantom/tree/master/capabilities/generated).
 - CLI: `phm caps list`, `phm caps validate`, `phm caps generate`.
 
 The registry is data only. Loading it starts no process, resolves no
