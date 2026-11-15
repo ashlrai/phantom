@@ -4,6 +4,7 @@
  * fact or the word "unknown" with its reason; an unreadable source is never
  * rendered as 0 or "none".
  */
+import type { NodeResultsSummary } from '../drive/nodes/results-read.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 export type Fact<T> = { ok: true; value: T } | { ok: false; reason: string };
@@ -32,6 +33,8 @@ export interface StatusDigestInput {
   workClaims?: Fact<StatusDigestWorkClaims | null>;
   /** Peer bus health; null/undefined, empty and ok-with-headroom render nothing. */
   peers?: StatusDigestPeers | null;
+  /** Node runner results on this computer; undefined keeps the existing lines, a throw is `{ status: 'unavailable' }`. */
+  nodeRuns?: NodeResultsSummary | null;
 }
 
 export const TOP_P0_MAX_CHARS = 120;
@@ -87,5 +90,19 @@ export function buildStatusDigest(input: StatusDigestInput): string[] {
       lines.push(`Peers: ${parts.join(' · ')}`);
     }
   }
+  const runs = input.nodeRuns;
+  if (runs) lines.push(nodeRunsLine(runs));
   return lines;
+}
+
+const utcClock = (iso: string): string => `${iso.slice(11, 16)}Z`;
+
+/** Node runs line: source (this computer), window and as-of are always stated; artifacts are not completion proof. */
+function nodeRunsLine(runs: NodeResultsSummary): string {
+  if (runs.status === 'unavailable') return `Node runs unknown: ${(runs.reason ?? 'reader failed').replace(/\s+/g, ' ').trim()}`;
+  if (runs.status === 'none') return 'Node runs: none recorded on this computer';
+  const hours = Math.max(1, Math.round(runs.windowMs / 3_600_000));
+  const extra = `${runs.unreadable > 0 ? `, ${runs.unreadable} unreadable` : ''}${runs.truncated ? ', newest 200 examined' : ''}`;
+  const newest = runs.newest ? `, newest ${runs.newest.jobId} at ${utcClock(runs.newest.at)}` : '';
+  return `Node runs (this computer, ${hours}h, as of ${utcClock(runs.asOf)}): ${runs.inWindow} result${runs.inWindow === 1 ? '' : 's'}${newest}${extra}; artifacts are not completion proof`;
 }
