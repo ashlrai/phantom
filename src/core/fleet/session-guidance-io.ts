@@ -191,10 +191,14 @@ export async function appendSessionGuidance(
     truncated: capped.truncated,
   };
   const path = guidanceFilePath(runsDir, job);
+  const dirPath = join(runsDir, GUIDANCE_DIR);
   try {
     const info = await lstat(path).catch(() => null);
     if (info !== null && !info.isFile()) return { ok: false, code: 'unsafe-file' };
-    await mkdir(join(runsDir, GUIDANCE_DIR), { recursive: true, mode: 0o700 });
+    await mkdir(dirPath, { recursive: true, mode: 0o700 });
+    // Preserve master's refusal to append through a redirected guidance directory.
+    const dirInfo = await lstat(dirPath);
+    if (!dirInfo.isDirectory() || !owned(dirInfo)) return { ok: false, code: 'unsafe-file' };
     await appendLine(path, `${scrubSecrets(JSON.stringify(record))}\n`);
   } catch {
     return { ok: false, code: 'write-failed' };

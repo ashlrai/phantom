@@ -201,6 +201,16 @@ describe('appendSessionGuidance', () => {
     expect(result).toEqual({ ok: false, code: 'unsafe-file' });
     expect((await readFile(target, 'utf8'))).toBe('');
   });
+
+  it('refuses to append through a symlinked guidance directory', async () => {
+    const target = join(dir, 'elsewhere');
+    await mkdir(target);
+    await mkdir(join(dir, 'queue'));
+    await symlink(target, join(dir, GUIDANCE_DIR));
+    const result = await appendSessionGuidance(JOB, 'note', { runsDir: dir });
+    expect(result).toEqual({ ok: false, code: 'unsafe-file' });
+    expect(await readdir(target)).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
