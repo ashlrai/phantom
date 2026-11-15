@@ -360,6 +360,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'run-events': () => import('./fleet-run-events.js'),
   'running': () => import('./fleet-running.js'),
   'runs-read': () => import('./fleet-runs-read.js'),
+  'runtime': () => import('./fleet-runtime.js'),
   'runtime-identity': () => import('./fleet-runtime-identity.js'),
   'safari-import': () => import('./fleet-safari-import.js'),
   'self-loop': () => import('./fleet-self-loop.js'),
