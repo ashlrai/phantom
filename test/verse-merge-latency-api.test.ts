@@ -6,6 +6,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { expect, it, vi } from 'vitest';
 import { createMergeLatencyApi, VERSE_MERGE_LATENCY_PATH as PATH } from '../src/core/verse/merge-latency-api.js';
 import type { VerseApiContext } from '../src/core/verse/verse-api.js';
+import { WORKBENCH_ROUTE_FAMILIES } from '../src/core/verse/workbench-types.js';
 import type { ApiModule } from '../src/core/verse/api-modules.js';
 
 const NOW = Date.parse('2026-01-02T12:00:00Z');
@@ -64,8 +65,9 @@ it('a request cannot choose the ledger path', async () => {
   expect(reader).toHaveBeenCalledWith('/fixed/merge-events.jsonl');
 });
 
-it('ignores other paths', async () => {
+it('ignores other paths and is mounted', async () => {
   const api = createMergeLatencyApi();
   const req = Object.assign(new PassThrough(), { url: '/x', method: 'GET' }) as IncomingMessage;
   expect(await api({ cfg: {} } as VerseApiContext, req, {} as ServerResponse, '/api/verse/fleet/other', 'GET')).toBe(false);
+  expect(WORKBENCH_ROUTE_FAMILIES.some(f => f.id === 'fleet-merge-latency' && f.handler === 'handleMergeLatencyApi')).toBe(true);
 });

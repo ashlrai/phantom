@@ -13,6 +13,8 @@ import { scrubSecrets } from '../util/scrub.js';
 
 const UNKNOWN = 'UNKNOWN';
 const identity = defaultRuntimeIdentityDeps();
+const defaultExecution = (snapshot?: { board: typeof readFleetBoard; now: () => number }): Promise<ClaimExecutionReport> =>
+  readClaimExecution(snapshot ?? { board: defaults.board, now: defaults.now });
 export const defaults = {
   now: Date.now, home: homedir, host: hostname, platform, arch,
   pid: () => process.pid, uptime: () => process.uptime(),
@@ -22,7 +24,7 @@ export const defaults = {
   sourceVersion: () => treeVersionFromPackageJson(identity.readSourcePackageJson()),
   tailnet: () => readTailnetPeers(defaultTailnetPeersDeps()).self,
   board: readFleetBoard,
-  execution: (): Promise<ClaimExecutionReport> => readClaimExecution({ board: defaults.board, now: defaults.now }),
+  execution: defaultExecution,
 };
 export type FleetRuntimeDeps = Omit<typeof defaults, 'execution'> & { execution?: typeof defaults.execution };
 
@@ -104,8 +106,9 @@ export async function readRuntimeSnapshot(deps: FleetRuntimeDeps): Promise<Runti
   const coordination: { state: string; activeClaims: number | string; newestReturnAgeSeconds: number | string; reason?: string } = {
     state: UNKNOWN, activeClaims: UNKNOWN, newestReturnAgeSeconds: UNKNOWN,
   };
+  let board: ReturnType<typeof readFleetBoard> | null = null;
   try {
-    const board = deps.board({ now });
+    board = deps.board({ now });
     if (board.state !== 'known') throw new Error('unreadable ledger');
     const returns = projectCoordinationReturns(board, now);
     coordination.state = 'known';
@@ -123,7 +126,19 @@ export async function readRuntimeSnapshot(deps: FleetRuntimeDeps): Promise<Runti
       timer = setTimeout(() => resolve(null), 2_000);
     });
     // The race retains a rejection handler even if the reader settles late.
-    const evidence = await Promise.race([(deps.execution ?? defaults.execution)(), deadline]);
+    // The defaults object (also spread by production callers) carries its
+    // execution reader. Keep explicitly injected readers independent, including
+    // defaults.execution paired with a different board, a supported legacy seam.
+    const useCapturedBoard = deps.execution === undefined ||
+      (deps.execution === defaultExecution && deps.board === defaults.board);
+    const readExecution = useCapturedBoard ? () => defaults.execution({
+      board: () => {
+        if (board === null) throw new Error('unavailable captured board');
+        return board;
+      },
+      now: () => now,
+    }) : deps.execution!;
+    const evidence = await Promise.race([readExecution(), deadline]);
     if (evidence === null) execution.reason = 'execution: read deadline exceeded';
     else {
       const reason = evidence.ledger !== 'known' ? 'execution: ledger unavailable'
