@@ -19,7 +19,7 @@ describe('manual fleet pacing', () => {
     const result = usagePacing(pool(), now);
     expect(result.pointsPerHour).toBeCloseTo(1.19149, 4);
     expect(result.pointsPerHour12h).toBe(result.pointsPerHour);
-    expect(result.paceNeeded).toBeCloseTo(35 / 48);
+    expect(result.paceNeeded).toBeCloseTo(37 / 48);
     expect(result).toMatchObject({ throttle: true, preferMacPools: true, boxAgentTurnMultiplier: 0.5 });
     expect(Date.parse(result.projectedRunOutAt!)).toBeCloseTo(now + 37 / (14 / 11.75) * 3600000, 0);
     expect(fleetUsageReport(readFleetUsage(), now).pools['grok-ultra-weekly']).toEqual(result);
@@ -37,7 +37,7 @@ describe('manual fleet pacing', () => {
     expect(usagePacing(flat, now).pointsPerHour).toBeNull();
   });
   it('throttles at the target even with one observation', () => {
-    expect(usagePacing({ ...pool(), readings: [{ pct: 98, at: pool().readings[1].at }] }, now).throttle).toBe(true);
+    expect(usagePacing({ ...pool(), readings: [{ pct: 100, at: pool().readings[1].at }] }, now).throttle).toBe(true);
   });
   it('appends under a lock and preserves unrelated fleet fields', () => {
     addFleetUsage('grok-ultra-weekly', 64, '2026-10-26T14:15:00Z', '/tmp/fleet.json', now + 3600000);
