@@ -1,9 +1,16 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { isQueueVisit, type QueueVisit } from './stats.js';
 
-export const queueJournalPath = () => join(homedir(), '.ashlr', 'queue', 'visits.jsonl');
+/** `$ASHLR_HOME/queue/visits.jsonl` (default `~/.ashlr/...`), resolved per call so a test HOME is honoured. */
+export const queueJournalPath = (): string => {
+  const configured = process.env['ASHLR_HOME'];
+  const root = typeof configured === 'string' && configured.trim() !== '' && isAbsolute(configured)
+    ? configured
+    : join(homedir(), '.ashlr');
+  return join(root, 'queue', 'visits.jsonl');
+};
 
 /** Record metadata only: reuse the visit id at each transition; retries need a new id. */
 export async function recordQueueVisit(visit: QueueVisit, path = queueJournalPath()): Promise<void> {
