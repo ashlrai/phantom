@@ -130,7 +130,13 @@ export function buildReceipt(events: readonly ReceiptEvent[], opts: { task?: str
   // Only runs after the last edit count; earlier runs (e.g. a failure since fixed) are history.
   const fresh = (list: SuiteCounts[]) => list.filter((s) => s.afterLastEdit);
   const allOk = (list: SuiteCounts[]) => fresh(list).length > 0 && fresh(list).every((s) => s.exitCode === 0 && s.failed === 0);
-  const checkedFresh = (kind: CheckKind) => events.some((e, i) => e.type === 'command' && i > lastEdit && classifyCommand(e.command) === kind && e.exitCode === 0);
+  const checkedFresh = (kind: CheckKind) => {
+    for (let i = events.length - 1; i > lastEdit; i--) {
+      const event = events[i];
+      if (event?.type === 'command' && classifyCommand(event.command) === kind) return event.exitCode === 0;
+    }
+    return false;
+  };
 
   const claims = (opts.claims ?? []).map((text): Claim => {
     const kind = claimKind(text);

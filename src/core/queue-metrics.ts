@@ -26,10 +26,17 @@ export interface QueueReport {
 }
 
 function timestamp(value: unknown, field: string): number {
-  if (typeof value !== 'string' || !/^\d{4}-\d\d-\d\dT.*(?:Z|[+-]\d\d:\d\d)$/.test(value) || !Number.isFinite(Date.parse(value))) {
+  const date = typeof value === 'string' ? /^(\d{4})-(\d\d)-(\d\d)T.*(?:Z|[+-]\d\d:\d\d)$/.exec(value) : null;
+  const year = Number(date?.[1]);
+  const month = Number(date?.[2]);
+  const day = Number(date?.[3]);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const parsed = typeof value === 'string' ? Date.parse(value) : NaN;
+  if (!date || month < 1 || month > 12 || day < 1 || day > days[month - 1]! || !Number.isFinite(parsed)) {
     throw new Error(`${field}: expected an ISO timestamp with timezone`);
   }
-  return Date.parse(value);
+  return parsed;
 }
 
 /** Accept a JSON array, JSONL visits, or {start,end,events} for an explicit
