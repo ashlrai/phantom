@@ -11,7 +11,8 @@ import { JobActivity } from '../fleet-job-log/JobActivity.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { openDockPane } from '../dock/dock-store.js';
 import { agentBusPageQuery } from '../fleet-bus/agent-bus-queries.js';
-import { advanceCores, isFleetCompute, isFleetSessionMap, type CoreHistory, type MapSession } from './compute-model.js';
+import { advanceCores, fresh, isFleetCompute, isFleetSessionMap, loadRatio, type CoreHistory, type MapSession } from './compute-model.js';
+import { ComputeScene3D } from './ComputeScene3D.js';
 import { recordedAt, shown } from './company-model.js';
 import styles from './compute.module.css';
 
@@ -31,7 +32,6 @@ export const sessionsMapQuery: QueryDef<FleetSessionMap> = {
 };
 const coordinationQuery = agentBusPageQuery(0, 100);
 const gib = (v: number | null | undefined) => v == null ? 'unknown' : `${(v / 1024 ** 3).toFixed(1)} GiB`;
-const fresh = (at: number | null | undefined, now: number) => at != null && at <= now && now - at <= 90_000;
 
 function CoreSparks({ history, current }: { history?: CoreHistory; current: boolean }) {
   if (!history || !current) return <p>Per-core utilization unknown</p>;
@@ -112,6 +112,8 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
     setHistory(old => Object.fromEntries(data.nodes.filter(n => n.stats).map(n => [n.id, advanceCores(old[n.id], n.stats!, Date.parse(data.generatedAt))])));
   }, [data]);
   const now = Date.now();
+  // Scene geometry is rebuilt only when observations change, not on every slider move.
+  const now3d = useMemo(() => Date.now(), [data, sessions.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const nodes = data?.nodes ?? [];
   const jobs = sessions.data?.mapSessions ?? [];
   const location = (job: MapSession) => job.nodeId;
@@ -153,13 +155,16 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
       <span>{l.hold?.held ? `HELD · ${l.hold.by ?? 'unknown'} · ${l.hold.reason ?? 'reason unknown'} · until ${l.hold.until ?? 'unknown'}` : l.hold ? 'No recorded hold' : 'Hold unknown'}</span>
       <small>Reset {l.credit.resetAt ?? 'unknown'} · {recordedAt(l.credit.observedAt, now)}</small>
     </article>) ?? <p>Lane quota: no data</p>}</div>
-    <div className={styles.viewport} data-mode={mode}>
-      <div className={styles.scene} style={mode === '3D' ? { transform: `scale(${zoom}) rotateX(${tilt}deg) rotateY(${yaw}deg)` } : undefined}>
-        {nodes.map((n, i) => {
+    {mode === '3D' && <ComputeScene3D nodes={nodes} jobs={jobs} now={now3d} heat={heat} yaw={yaw} tilt={tilt} zoom={zoom}
+      selection={selection} onSelect={select} onOrbit={(y, t) => { setYaw(y); setTilt(t); }} />}
+    <details className={styles.viewport} open={mode === '2D' || undefined}>
+      <summary>{mode === '2D' ? 'Machines' : 'Machine details (text)'}</summary>
+      <div className={styles.scene}>
+        {nodes.map(n => {
           const s = n.stats, current = fresh(s?.sampledAtMs, now), ceiling = s?.cores.length ? 2 * s.cores.length : null;
-          const ratio = current && ceiling !== null && s?.load[0] != null ? s.load[0] / ceiling : null;
+          const ratio = loadRatio(n, now);
           return <article className={styles.machine} key={n.id} data-heat={heat && ratio !== null ? ratio >= 1 ? 'hot' : ratio >= 0.7 ? 'warm' : 'cool' : 'unknown'}
-            style={{ flexGrow: s ? 1 + s.cores.length / maxCores : 1, transform: mode === '3D' ? `translateZ(${i % 2 * 70}px)` : undefined }}>
+            style={{ flexGrow: s ? 1 + s.cores.length / maxCores : 1 }}>
             <h3>{n.id}{n.local ? ' · this host' : ''}</h3><p>{n.state} · Heartbeat {n.heartbeatAt === null ? 'unknown' : recordedAt(n.heartbeatAt, now)}</p>
             <small>Metrics {s ? recordedAt(s.sampledAtMs, now) : 'unknown · no host-stats beat'}</small>
             <p>{s?.cores.length || 'unknown'} CPUs · Load 1/5/15: {s ? s.load.map(v => v === null ? 'unknown' : v.toFixed(1)).join(' / ') : 'unknown'}</p>
@@ -174,7 +179,7 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
           </article>;
         })}
       </div>
-    </div>
+    </details>
     {!nodes.length && <p>No nodes observed.</p>}
     <section aria-label="Unassigned agents"><h3>Queued / placement unknown</h3>{tokens(jobs.filter(j => location(j) === null || !nodes.some(n => n.id === location(j))))}</section>
     {!jobs.length && <p>{sessions.data?.sourceState === 'healthy' ? 'No active sessions recorded.' : 'Session inventory unknown.'}</p>}
