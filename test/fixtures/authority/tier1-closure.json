@@ -293,6 +293,8 @@
     "src/core/agents/slack-journal.ts",
     "src/core/agents/slack-leader.ts",
     "src/core/agents/slack-network.ts",
+    "src/core/agents/slack-reply-binding.ts",
+    "src/core/agents/slack-send-receipts.ts",
     "src/core/agents/slack-status.ts",
     "src/core/agents/slack-transport.ts",
     "src/core/agents/work-visibility.ts",
