@@ -49,6 +49,7 @@ import { listProposals } from './inbox/store.js';
 import { FLEET_APPS } from './fleet/app-await.js';
 import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
 import { desktopOperatorTools } from './desktop/operator-mcp.js';
+import { EVIDENCE_SCHEMAS, validEvidenceArgs } from './intent/schema.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, type OwnerThreadSettings } from './comms/owner-channel.js';
 
 // Handler-only dependencies are imported lazily inside each handler so
@@ -233,25 +234,13 @@ const TOOLS: NativeToolImpl[] = [
   },
   {
     name: 'intent_link', description: 'Record caller-supplied merged pull evidence on matching directives. Supplied claims are not verified.',
-    inputSchema: { type: 'object', properties: {
-      repo: { type: 'string', minLength: 1, maxLength: 200 },
-      number: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
-      title: { type: 'string', minLength: 1, maxLength: 300 },
-      branch: { type: 'string', minLength: 1, maxLength: 300 },
-      url: { type: 'string', minLength: 1, maxLength: 2048 },
-      at: { type: 'string', maxLength: 35, format: 'date-time' },
-    }, required: ['repo', 'number', 'title'], additionalProperties: false },
+    inputSchema: EVIDENCE_SCHEMAS.intent_link,
     safety: 'append',
     handler: async args => (await import('./intent/mcp-evidence.js' as string) as typeof import('./intent/mcp-evidence.js')).recordEvidence('intent_link', args),
   },
   {
     name: 'intent_ship', description: 'Record caller-supplied release evidence on matching directives. Supplied claims are not verified.',
-    inputSchema: { type: 'object', properties: {
-      release: { type: 'string', minLength: 1, maxLength: 200 },
-      notes: { type: 'string', minLength: 1, maxLength: 10000 },
-      rq: { type: 'array', minItems: 1, maxItems: 16, items: { type: 'string', minLength: 1, maxLength: 200 } },
-      at: { type: 'string', maxLength: 35, format: 'date-time' },
-    }, required: ['release'], additionalProperties: false },
+    inputSchema: EVIDENCE_SCHEMAS.intent_ship,
     safety: 'append',
     handler: async args => (await import('./intent/mcp-evidence.js' as string) as typeof import('./intent/mcp-evidence.js')).recordEvidence('intent_ship', args),
   },
@@ -1727,7 +1716,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
   if (name === 'intent_add' || name === 'intent_update') {
     invalid = ((await import('./intent/native-edit.js' as string)) as typeof import('./intent/native-edit.js')).validNativeEdit(name, rawArgs) ? null : 'invalid intent arguments';
   } else if (name === 'intent_link' || name === 'intent_ship') {
-    invalid = ((await import('./intent/mcp-evidence.js' as string)) as typeof import('./intent/mcp-evidence.js')).validEvidenceArgs(name, rawArgs) ? null : 'invalid intent evidence arguments';
+    invalid = validEvidenceArgs(name, rawArgs) ? null : 'invalid intent evidence arguments';
   } else if (name === 'intent_list' || name === 'intent_get') {
     const { isIntentStatus, validIntentId } = await import('./intent/schema.js');
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
