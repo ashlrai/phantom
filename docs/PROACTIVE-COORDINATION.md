@@ -203,3 +203,7 @@ proactive event ingestion, real cancellation/results, qualified cached funding
 observations, live router evaluation, bounded goal execution and commissioned release targets.
 OAuth, persistent account access, paid calls and cross-client sharing require
 separate authorization. The installed app and live fleet remain unchanged.
+
+## Historical product context
+
+The [original four-pillar vision](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) is preserved as a dated artifact. Current product direction remains the [North Star](NORTH-STAR.md).
