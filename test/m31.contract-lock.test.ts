@@ -173,6 +173,7 @@ describe('native MCP tool surface lock', () => {
       'phm_proactive_agents_delete:append',
       'phm_proactive_agents_list:read',
       'phm_proactive_agents_update:append',
+      'phm_router_plan:read',
       'phm_task_context:read',
       'phm_team_access_request:append',
       'phm_team_claim:append',

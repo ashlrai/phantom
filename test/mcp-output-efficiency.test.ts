@@ -44,8 +44,13 @@ const OLD_NATIVE_NAMES = [
 ] as const;
 
 const ADDED_NATIVE_NAMES = [
+  'intent_add',
+  'intent_update',
+  'intent_list',
+  'intent_get',
   'intent_link',
   'intent_ship',
+  'intent_stale',
   'phantom_agent_bus_read',
   'phantom_agent_bus_status',
   'phantom_agent_bus_post',
@@ -74,6 +79,7 @@ const ADDED_NATIVE_NAMES = [
   'phantom_leader_ask',
   'phantom_leader_assign',
   'phm_team_access_request',
+  'phm_router_plan',
   'ashlr_comms_thread',
   'ashlr_comms_send_owner',
   'desktop_list_apps',
@@ -136,7 +142,7 @@ describe('native MCP tool inventory', () => {
     const tools = listNativeTools();
     const names = tools.map(tool => tool.name);
     const classified = classifyNativeNames(names);
-    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(89);
+    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(95);
     expect(new Set(names).size).toBe(names.length);
     expect(classified.old).toEqual([...OLD_NATIVE_NAMES]);
     expect(classified.added).toEqual([...ADDED_NATIVE_NAMES]);
@@ -173,6 +179,14 @@ describe('native MCP tool inventory', () => {
     const observeTools = addedTools.filter(tool => tool.name === 'world_model' || tool.name === 'phantom_observe' || tool.name === 'phantom_observe_session' || tool.name === 'phantom_spend_budget');
     const observeBytes = observeTools.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(observeBytes).toBeLessThanOrEqual(2500);
+    // phm_router_plan measured 474 bytes including its comma.
+    const router = addedTools.find(tool => tool.name === 'phm_router_plan')!;
+    const routerBytes = Buffer.byteLength(JSON.stringify(router)) + 1;
+    expect(routerBytes).toBeLessThanOrEqual(500);
+    const intentCatalog = addedTools.filter(tool => ['intent_add', 'intent_update', 'intent_list', 'intent_get', 'intent_stale'].includes(tool.name));
+    const intentCatalogBytes = intentCatalog.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
+    // Existing catalog tools measured 1,775 bytes including their commas.
+    expect(intentCatalogBytes).toBeLessThanOrEqual(1775);
     const ownerComms = addedTools.filter(tool => tool.name === 'ashlr_comms_thread' || tool.name === 'ashlr_comms_send_owner');
     const ownerCommsBytes = ownerComms.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(ownerCommsBytes).toBeLessThanOrEqual(1600);
@@ -201,11 +215,11 @@ describe('native MCP tool inventory', () => {
     const intentTools = addedTools.filter(tool => tool.name === 'intent_link' || tool.name === 'intent_ship');
     const intentBytes = intentTools.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(intentBytes).toBeLessThanOrEqual(1119);
-    const addedBytes = addedTools.filter(tool => tool !== verbs && tool !== doctor && tool !== roster && tool !== spend && tool !== needs && tool !== needsWait && tool !== accessRequest && tool !== watch && !intentTools.includes(tool) && !visibility.includes(tool) && !leaderTools.includes(tool) && !desktop.includes(tool) && !observeTools.includes(tool) && !ownerComms.includes(tool) && !agentComms.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
+    const addedBytes = addedTools.filter(tool => tool !== router && !intentCatalog.includes(tool) && tool !== verbs && tool !== doctor && tool !== roster && tool !== spend && tool !== needs && tool !== needsWait && tool !== accessRequest && tool !== watch && !intentTools.includes(tool) && !visibility.includes(tool) && !leaderTools.includes(tool) && !desktop.includes(tool) && !observeTools.includes(tool) && !ownerComms.includes(tool) && !agentComms.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(addedBytes).toBeLessThanOrEqual(9884);
     // 24,205 + 9,884 preserves the historical headroom. Later tool groups are
     // measured on their own caps above.
-    expect(responseBytes(tools)).toBeLessThan(33400 + 689 + doctorBytes + rosterBytes + visibilityBytes + spendBytes + leaderBytes + desktopBytes + observeBytes + ownerCommsBytes + agentCommsBytes + needsBytes + needsWaitBytes + accessRequestBytes + watchBytes + verbsBytes + intentBytes);
+    expect(responseBytes(tools)).toBeLessThan(33400 + 689 + doctorBytes + rosterBytes + visibilityBytes + spendBytes + leaderBytes + desktopBytes + observeBytes + ownerCommsBytes + agentCommsBytes + needsBytes + needsWaitBytes + accessRequestBytes + watchBytes + verbsBytes + intentBytes + routerBytes + intentCatalogBytes);
   });
 });
 

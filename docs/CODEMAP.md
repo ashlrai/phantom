@@ -75,6 +75,7 @@ imports, individual files, semantics or contract coverage.
 
 <!-- codemap:core:start -->
 - `src/core/agents/`
+- `src/core/approvals/`
 - `src/core/ask/`
 - `src/core/ask-flow/`
 - `src/core/authority/`
@@ -106,6 +107,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/fabric/`
 - `src/core/fleet/`
 - `src/core/foundry/`
+- `src/core/ft/`
 - `src/core/generative/`
 - `src/core/genome/`
 - `src/core/github/`
@@ -133,6 +135,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/observability/`
 - `src/core/observe/`
 - `src/core/onboard/`
+- `src/core/one-ask/`
 - `src/core/openai-agents/`
 - `src/core/org/`
 - `src/core/playbooks/`
@@ -140,6 +143,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/policy/`
 - `src/core/portfolio/`
 - `src/core/proactive/`
+- `src/core/prs/`
 - `src/core/quality/`
 - `src/core/queue/`
 - `src/core/radar/`
@@ -148,7 +152,10 @@ imports, individual files, semantics or contract coverage.
 - `src/core/release/`
 - `src/core/research/`
 - `src/core/resources/`
+- `src/core/router-gateway/`
+- `src/core/routines/`
 - `src/core/routing/`
+- `src/core/routing-eval/`
 - `src/core/run/`
 - `src/core/sandbox/`
 - `src/core/seams/`

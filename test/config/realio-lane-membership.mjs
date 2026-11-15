@@ -43,6 +43,24 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/router-gateway.test.ts', // Real loopback HTTP endpoints and sample-agent subprocess.
+  'test/channel-health-ingress-failure-322s.test.ts', // Real background shell process for ingress health evidence.
+  'test/channel-health-slack-binding-338.test.ts', // Real background shell process for Slack binding evidence.
+  'test/comms-confirm-http-original-264s.test.ts', // Real git grep subprocess for confirmation wiring.
+  'test/email-outbox-crash-batch-103.test.ts', // Real Node subprocess for crash recovery.
+  'test/fleet-channel-health-proof-320s.test.ts', // Real background shell process for channel health evidence.
+  'test/gmail-archive-plan-concurrent-104.test.ts', // Real concurrent Node subprocesses for archive planning.
+  'test/handoff-api-response-contract-10ssl2.test.ts', // Real loopback HTTP server for handoff responses.
+  'test/imessage-teammate-dispatch.test.ts', // Real Python process holding the queue lock.
+  'test/recut-desk-s0-c205.test.ts', // Real loopback HTTP server for desktop API recovery.
+  'test/recut-n1r4200s92.test.ts', // Real changelog extraction subprocess.
+  'test/recut-top-a59.test.ts', // Real loopback HTTP server for recovered routes.
+  'test/repo-tracked-artifacts.test.ts', // Real git subprocesses inspect tracked artifacts.
+  'test/ui-settings-recut-c196.test.ts', // Real loopback HTTP server for recovered settings routes.
+  'test/ui-settings-recut-c206.test.ts', // Real loopback HTTP server for recovered settings routes.
+  'test/ui-settings.test.ts', // Real loopback HTTP servers for settings routes.
+  'test/web-ui-redfix-5262.test.ts', // Real loopback HTTP server for web UI regression checks.
+  'test/work-trace-restart-proof-319s.test.ts', // Real Node subprocess for persisted restart evidence.
   'test/queue.test.ts', // Real Python dispatcher ticks in disposable homes for the shared work market.
   'test/delegation-scope-prompts.test.ts', // real Python and shell prompt builders plus isolated restock fixture subprocesses
   'test/routines.test.ts', // Real CLI adapter subprocesses and private ledger files.

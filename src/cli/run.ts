@@ -510,12 +510,28 @@ function wantsRunHelp(args: readonly string[]): boolean {
   return false;
 }
 
+/** The `--model` value when it names a routed lane (`auto`, `codex-personal:gpt-5.5`) rather than a local tag. */
+async function routedModelFlag(args: readonly string[]): Promise<boolean> {
+  const at = args.indexOf('--model');
+  const value = at === -1 ? undefined : args[at + 1];
+  if (value === undefined) return false;
+  const { isRouterModelFlag } = await import('../core/router-gateway/config.js');
+  return isRouterModelFlag(value);
+}
+
 export async function cmdRun(args: string[]): Promise<number> {
   // Help shortcircuit, anywhere outside a flag value: `run --json -h` used to
   // start a run whose goal was "-h".
   if (args[0] === 'help' || wantsRunHelp(args)) {
     printRunHelp();
     return 0;
+  }
+
+  // `--model auto` or `--model <lane>:<model>` is one routed completion through
+  // the router gateway's code path, not an autonomous goal run.
+  if (await routedModelFlag(args)) {
+    const { cmdRunRouted } = await import('./router-gateway.js');
+    return cmdRunRouted(args);
   }
 
   let engineConfig: AshlrConfig | undefined;
@@ -867,6 +883,7 @@ function printRunHelp(): void {
     ['--engine <e>',            `Registered engine id (default: builtin); additional providers must be enabled in foundry.allowedBackends.`],
     ['--sandbox-engine',        `Run a registered CLI or API engine in a sandbox; its diff → inbox, never the live tree.`],
     ['--model <name>',          `Local model to use (default: smallest/fastest; or set ASHLR_MODEL).`],
+    ['--model auto|<lane:model>', `One routed completion through the router gateway instead of a goal run (see phm router --help).`],
     ['--allow-cloud',           `Allow cloud provider if no local is available (requires API key).`],
     ['--no-tools',              `Disable MCP tool loading (faster; for simple goals).`],
     ['--no-memory',             `Skip genome recall injection into sub-agent prompts.`],

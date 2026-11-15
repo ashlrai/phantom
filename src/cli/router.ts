@@ -10,8 +10,10 @@ const USAGE = 'Usage: ashlr router rank --tier local|mid|frontier [--routes FILE
   'FILE maps pools to routeBackend decisions. Omitted routes are unknown. Reads budgets; prioritizes lanes without imminent forecast exhaustion. Never reserves or dispatches.';
 
 export async function cmdRouter(args: string[]): Promise<number> {
+  const gateway = await import('./router-gateway.js');
+  if ((gateway.ROUTER_GATEWAY_VERBS as readonly string[]).includes(args[0] ?? '')) return gateway.cmdRouterGateway(args);
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!) || args.join(' ') === 'rank --help') {
-    console.log(USAGE); return 0;
+    console.log(`${USAGE}\n\n${gateway.ROUTER_GATEWAY_USAGE}`); return 0;
   }
   let tier: EngineTier | undefined; let json = false; let routesFile: string | undefined;
   const slots: LaneSlots = {};
