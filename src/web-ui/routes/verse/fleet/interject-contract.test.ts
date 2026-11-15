@@ -43,7 +43,7 @@ it('launched with a null lane is RECEIVED missing the owner', () => {
 it('launched and published with a lane are ASSIGNED, never RUNNING', () => {
   expect(contract(trace(job('launched'))).state).toBe('ASSIGNED');
   expect(contract(trace(job('published'))).state).toBe('ASSIGNED');
-  expect(interjectOutcome(AT, false, trace(job('launched')), NOW).text).toBe('job RQ-PHX-FAKE01 running');
+  expect(interjectOutcome(AT, false, trace(job('launched')), NOW).text).toBe('job RQ-PHX-FAKE01 launched');
 });
 
 it('picks the most advanced job', () => {
