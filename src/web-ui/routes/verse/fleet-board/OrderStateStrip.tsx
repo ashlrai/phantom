@@ -8,6 +8,7 @@ import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { Button, SkeletonLine } from '../../../components/primitives/index.js';
 import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { orderClaimExecutionQuery, orderExecutionText } from './order-execution-join.js';
 import { orderFollowUpEligible, orderFollowUpPrefill } from './order-follow-up.js';
 import { MAX_ORDER_ROWS, orderRowView } from './order-state-model.js';
 import { orderStateQuery } from './order-state-query.js';
@@ -15,8 +16,11 @@ import styles from './fleet-board.module.css';
 
 export function OrderStateStrip({ visible = true }: { visible?: boolean }) {
   const orders = useQuery(orderStateQuery, { enabled: visible, freshMs: 0 });
+  const execution = useQuery(orderClaimExecutionQuery, { enabled: visible, freshMs: 0 });
   const refetch = useRefetch(orderStateQuery);
+  const refetchExecution = useRefetch(orderClaimExecutionQuery);
   usePollWhileVisible(() => { refetch(); }, 15_000, { enabled: visible });
+  usePollWhileVisible(() => { refetchExecution(); }, 30_000, { enabled: visible });
 
   const data = orders.data;
   let body;
@@ -32,6 +36,7 @@ export function OrderStateStrip({ visible = true }: { visible?: boolean }) {
       <ul className={styles.orderRows}>
         {data.rows.slice(0, MAX_ORDER_ROWS).map((row, i) => {
           const v = orderRowView(row);
+          const exec = orderExecutionText(row.owner?.job, execution.data);
           const followUp = orderFollowUpEligible(row) ? orderFollowUpPrefill(row) : null;
           return (
             <li key={`${v.key}|${i}`} className={styles.orderRow}>
@@ -39,7 +44,7 @@ export function OrderStateStrip({ visible = true }: { visible?: boolean }) {
               <span>{v.source}</span>
               <span className={styles.orderState} data-state={v.state}>{v.state}</span>
               {v.blockerText !== null ? <span className={styles.orderNote}>{v.blockerText}</span> : null}
-              <span>owner: {v.ownerText}</span>
+              <span>owner: {v.ownerText}{exec !== null ? ` · ${exec}` : ''}</span>
               {unchecked && v.state === 'ASSIGNED' ? <span className={styles.orderNote}> (unchecked)</span> : null}
               <span>{v.asOfText}</span>
               {v.replyText !== '' ? <span>{v.replyText}</span> : null}

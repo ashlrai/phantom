@@ -80,6 +80,38 @@ describe('lane plan and caps probe', () => {
 });
 
 describe('probeNodeLanes merges provider sign-ins with local model caps', () => {
+  it('muse advertises its pinned one-slot 8 GB lane without any provider login', () => {
+    writeFileSync(configPath, JSON.stringify({ ...enable, model: 'qwen3-4b-instruct-2507-4bit', maxSlots: 1 }));
+    const run = vi.fn((command: string) => command === 'codex'
+      ? { status: null, error: Object.assign(new Error('missing'), { code: 'ENOENT' }) }
+      : { status: 1 }) as unknown as typeof spawnSync;
+    const local = deps({ totalBytes: () => 8 * GiB, headroom: headroom() });
+    expect(localLanePlan(local).plan).toMatchObject({
+      slots: 1, caps: ['omlx'], backoff: null,
+      model: { id: 'qwen3-4b-instruct-2507-4bit', servedContext: 16384, tiers: [] },
+    });
+    expect(probeNodeLanes(run, local)).toEqual(['omlx']);
+  });
+
+  it.each([2, 4, null] as const)('muse withdraws its cap at pressure %s and recovers on a fresh probe', (pressureLevel) => {
+    writeFileSync(configPath, JSON.stringify({ ...enable, model: 'qwen3-4b-instruct-2507-4bit', maxSlots: 1 }));
+    const run = vi.fn(() => ({ status: 1 })) as unknown as typeof spawnSync;
+    const sample = vi.fn().mockReturnValue(pressureLevel === null ? null
+      : { freePercent: 60, swapGb: 0, pressureLevel });
+    const local = deps({ totalBytes: () => 8 * GiB, headroom: sample });
+    expect(probeNodeLanes(run, local)).toEqual([]);
+    expect(localLanePlan(local).plan.backoff).toBe(pressureLevel === null ? 'telemetry-unavailable' : 'memory-pressure');
+    sample.mockReturnValue({ freePercent: 26, swapGb: 5.8, pressureLevel: 1 });
+    expect(probeNodeLanes(run, local)).toEqual(['omlx']);
+  });
+
+  it('a failed memory reader holds muse closed even with valid config', () => {
+    writeFileSync(configPath, JSON.stringify({ ...enable, model: 'qwen3-4b-instruct-2507-4bit', maxSlots: 1 }));
+    const run = vi.fn(() => ({ status: 1 })) as unknown as typeof spawnSync;
+    expect(probeNodeLanes(run, deps({ totalBytes: () => 8 * GiB,
+      headroom: () => { throw new Error('sysctl unavailable'); } }))).toEqual([]);
+  });
+
   it('appends omlx caps after provider lanes', () => {
     writeFileSync(configPath, JSON.stringify(enable));
     const run = vi.fn((command: string) => ({ status: command === 'codex' ? 0 : 1 })) as unknown as typeof spawnSync;
