@@ -26,6 +26,17 @@
  * always carries the worker's real pid — a malformed pid is never emitted.
  * When the board is missing or unreadable the report carries no rows at all.
  *
+ * Process snapshot freshness: `sourceState: 'healthy'` alone is not proof of
+ * a current observation — a retained snapshot keeps that state forever. At
+ * the join clock a healthy snapshot is usable evidence only when its
+ * `generatedAt` parses to a finite instant that is not ahead of `nowMs` and
+ * no older than PROCESS_SNAPSHOT_MAX_AGE_MS. A missing/invalid stamp, a
+ * future stamp, or a stale one marks the process table unavailable for this
+ * join: every row is UNKNOWN (never RUNNING or CLAIMED_NO_WORKER) with a
+ * fixed sanitized reason, while ledger evidence, row cap, counts, schema
+ * and authority=none are unchanged. The check is stateless — a later fresh
+ * healthy observation recovers on the very next read.
+ *
  * Identity labels (claimId, agent, repo, jobId, lane, tier) pass the
  * surface-owner safe-token rule plus a scrubSecrets equality check; a label
  * that fails is reported as 'UNKNOWN'. Claim task text never leaves this
@@ -38,6 +49,14 @@ import { listLiveWorkers, type LiveWorker, type LiveWorkersSnapshot } from './ru
 import { scrubSecrets } from '../util/scrub.js';
 
 export const CLAIM_EXECUTION_SCHEMA = 'fleet.claim-execution.v1';
+/**
+ * Bounded freshness policy for the process snapshot at the join clock.
+ * `listLiveWorkers` stamps `generatedAt` before its bounded `ps` read (5 s
+ * timeout), so a legitimate fresh snapshot is at most a few seconds old when
+ * the join runs; 60 s is generous headroom for slow reads and clock jitter
+ * while still rejecting a retained snapshot as stale process evidence.
+ */
+export const PROCESS_SNAPSHOT_MAX_AGE_MS = 60_000;
 const UNKNOWN = 'UNKNOWN';
 const MAX_ROWS = 50;
 const JOB_ID_RE = /\bRQ-[A-Z0-9][A-Z0-9-]{2,80}\b/;
@@ -119,6 +138,25 @@ const usableWorkerEvidence = (worker: LiveWorker): boolean =>
   typeof worker.repo === 'string' && typeof worker.lane === 'string' && typeof worker.tier === 'string' &&
   (worker.ageSeconds === null || (Number.isSafeInteger(worker.ageSeconds) && worker.ageSeconds >= 0));
 
+const STALE_GENERATED_AT = 'process snapshot: missing or invalid generatedAt';
+const FUTURE_GENERATED_AT = 'process snapshot: generatedAt ahead of observation clock';
+const OLD_GENERATED_AT = 'process snapshot: older than freshness bound';
+
+/**
+ * Freshness verdict for a nominally healthy snapshot at the join clock.
+ * Returns the fixed sanitized reason the process table is unusable, or null
+ * when `generatedAt` is a parseable instant at or before `nowMs` and within
+ * PROCESS_SNAPSHOT_MAX_AGE_MS of it. Raw stamp text never leaves here.
+ */
+function processSnapshotReason(snapshot: LiveWorkersSnapshot, nowMs: number): string | null {
+  const generatedAt: unknown = snapshot.generatedAt;
+  const generatedMs = typeof generatedAt === 'string' ? Date.parse(generatedAt) : Number.NaN;
+  if (!Number.isFinite(generatedMs) || !finite(nowMs)) return STALE_GENERATED_AT;
+  if (generatedMs > nowMs) return FUTURE_GENERATED_AT;
+  if (nowMs - generatedMs > PROCESS_SNAPSHOT_MAX_AGE_MS) return OLD_GENERATED_AT;
+  return null;
+}
+
 interface WorkerMatch {
   /** Youngest usable matching worker; null when none is usable. */
   best: LiveWorker | null;
@@ -153,14 +191,18 @@ function workerFor(jobId: string, claimRepo: string, workers: unknown[]): Worker
 /**
  * Pure join of a board snapshot with a process snapshot. Either input may be
  * null (its reader failed); a null or non-'known' board yields an empty
- * ledger and a null or non-'healthy' snapshot marks every row UNKNOWN.
+ * ledger and a null, non-'healthy' or stale/future-stamped snapshot marks
+ * every row UNKNOWN.
  */
 export function joinClaimExecution(board: FleetBoard | null, workers: LiveWorkersSnapshot | null, nowMs: number): ClaimExecutionReport {
   const reasons = new Set<string>();
   const counts = { running: 0, claimedNoWorker: 0, unknown: 0 };
   const rows: ClaimExecutionRow[] = [];
+  const healthySnapshot = workers !== null && workers.sourceState === 'healthy' ? workers : null;
+  const freshnessReason = healthySnapshot === null ? null : processSnapshotReason(healthySnapshot, nowMs);
   const processes: ClaimExecutionReport['processes'] =
-    workers !== null && workers.sourceState === 'healthy' ? 'healthy' : 'unavailable';
+    healthySnapshot !== null && freshnessReason === null ? 'healthy' : 'unavailable';
+  const processReason = freshnessReason ?? 'process table: unavailable';
   const ledgerKnown = board !== null && board.state === 'known';
   if (!ledgerKnown) reasons.add('coordination ledger: missing or unreadable');
   if (ledgerKnown) {
@@ -180,7 +222,7 @@ export function joinClaimExecution(board: FleetBoard | null, workers: LiveWorker
         expiresInSeconds: Math.floor((expiresAt - nowMs) / 1000),
       };
       if (processes !== 'healthy') {
-        reasons.add('process table: unavailable');
+        reasons.add(processReason);
       } else if (workerList === null) {
         reasons.add('process table: malformed worker list');
       } else if (jobId === null) {
@@ -218,6 +260,13 @@ export function joinClaimExecution(board: FleetBoard | null, workers: LiveWorker
  * throws and never carries exception text.
  */
 export async function readClaimExecution(deps: ClaimExecutionDeps = {}): Promise<ClaimExecutionReport> {
+  // The process snapshot stamps generatedAt while its reader runs, so the
+  // observation clock is sampled only after that read settles — a clock taken
+  // before it would see the stamp as future-dated and fail closed.
+  let workers: LiveWorkersSnapshot | null = null;
+  try {
+    workers = (await (deps.workers ?? listLiveWorkers)()) ?? null;
+  } catch { /* a throwing reader degrades only its own source */ }
   let now: number;
   try {
     now = (deps.now ?? Date.now)();
@@ -229,9 +278,5 @@ export async function readClaimExecution(deps: ClaimExecutionDeps = {}): Promise
   try {
     board = (deps.board ?? readFleetBoard)({ now }) ?? null;
   } catch { /* an unreadable ledger is reported, never thrown */ }
-  let workers: LiveWorkersSnapshot | null = null;
-  try {
-    workers = (await (deps.workers ?? listLiveWorkers)()) ?? null;
-  } catch { /* same: a throwing reader degrades only its own source */ }
   return joinClaimExecution(board, workers, now);
 }

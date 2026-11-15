@@ -84,3 +84,34 @@ Route a bounded, explicitly light fleet slice through owner-scoped node leases, 
 
 ## Status
 Implementation and runbook complete; 86 backend tests, 51 Python tests and 10 authority tests pass. Full typecheck, docs, changed-file lint and final verify-changed gate pass. Full-repository lint was interrupted after roughly 15 minutes without output; live muse completions remain unobserved. Changes are uncommitted; no live adoption performed.
+
+# Chief-of-staff planner — complete
+
+- [x] Inspect Phantom tools, state producers and fleet contracts.
+- [x] Implement bounded advisory core, injected CLI and schema documentation.
+- [x] Pass 26 new tests, CLI integration, typechecks and changed-file gate.
+- [x] Record full lint and existing boundary failures in BRIDGE_NOTES.md.
+- Global install and initial worktree install failed; isolated install and dependency retry succeeded.
+- Host queue/config access denied; no bypass. No commit, push or publication.
+# Task plan: fleet outcome metrics
+
+## Goal
+Ship pure outcome rollups, bounded advisory policy suggestions, CLI reports and a weekly brief, with contracts and hermetic coverage. Leave changes uncommitted.
+
+## Phases
+- [x] Read repository workflow and inspect task overlap.
+- [x] Inspect lifecycle writers, existing metrics and CLI routing.
+- [x] Implement measurement, suggestions, weekly markdown and CLI.
+- [x] Verify affected tests, static checks and docs; write BRIDGE_NOTES.md.
+
+## Errors encountered
+- Global Phantom update: EPERM; existing installed CLI remains usable.
+- Wire status: inaccessible editor configs, exit 1; no config changes attempted.
+- Work claim service: unavailable; supplied roster has no overlap.
+
+## Status
+Complete: 54 distinct tests and 3 CLI smoke checks passed; typecheck, changed-file ESLint, docs and authority checks passed. Full lint has 15 baseline errors/271 warnings in unchanged files; documented in BRIDGE_NOTES.md.
+
+Verification findings: initial 11 hermetic tests passed. Dependencies repaired via npm run install:worktree; full checks restarted. verify-changed initially failed due shallow history. Upstream fetch refused a shared shallow.lock held by another process; no lock removed.
+
+A final merge-time enrichment edit introduced one extra parenthesis; fixture tests and CLI smoke caught the parse error. Corrected and rerunning checks.

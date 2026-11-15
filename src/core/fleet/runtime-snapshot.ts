@@ -1,6 +1,7 @@
 import { lstat, readdir } from 'node:fs/promises';
 import { arch, homedir, hostname, platform } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
+import { readClaimExecution, type ClaimExecutionReport } from './claim-execution-evidence.js';
 import { readFleetBoard } from './coordination.js';
 import { projectCoordinationReturns } from './coordination-returns-view.js';
 import { defaultStatePath } from './main-red-age.js';
@@ -12,6 +13,8 @@ import { scrubSecrets } from '../util/scrub.js';
 
 const UNKNOWN = 'UNKNOWN';
 const identity = defaultRuntimeIdentityDeps();
+const defaultExecution = (snapshot?: { board: typeof readFleetBoard; now: () => number }): Promise<ClaimExecutionReport> =>
+  readClaimExecution(snapshot ?? { board: defaults.board, now: defaults.now });
 export const defaults = {
   now: Date.now, home: homedir, host: hostname, platform, arch,
   pid: () => process.pid, uptime: () => process.uptime(),
@@ -21,8 +24,9 @@ export const defaults = {
   sourceVersion: () => treeVersionFromPackageJson(identity.readSourcePackageJson()),
   tailnet: () => readTailnetPeers(defaultTailnetPeersDeps()).self,
   board: readFleetBoard,
+  execution: defaultExecution,
 };
-export type FleetRuntimeDeps = typeof defaults;
+export type FleetRuntimeDeps = Omit<typeof defaults, 'execution'> & { execution?: typeof defaults.execution };
 
 /** Metadata only, bounded, and never follows symlinks or reads file contents. */
 async function newestMtime(root: string): Promise<number> {
@@ -56,6 +60,7 @@ export interface RuntimeSnapshot {
   stateRoot: string;
   lastFleetStateRead: { mtime: string; ageSeconds: number | string };
   coordination: { state: string; activeClaims: number | string; newestReturnAgeSeconds: number | string; reason?: string };
+  execution?: { state: 'known' | 'UNKNOWN'; running: number; claimedNoWorker: number; unknown: number; reason?: string };
   asOf: string;
   reasons: string[];
 }
@@ -101,8 +106,9 @@ export async function readRuntimeSnapshot(deps: FleetRuntimeDeps): Promise<Runti
   const coordination: { state: string; activeClaims: number | string; newestReturnAgeSeconds: number | string; reason?: string } = {
     state: UNKNOWN, activeClaims: UNKNOWN, newestReturnAgeSeconds: UNKNOWN,
   };
+  let board: ReturnType<typeof readFleetBoard> | null = null;
   try {
-    const board = deps.board({ now });
+    board = deps.board({ now });
     if (board.state !== 'known') throw new Error('unreadable ledger');
     const returns = projectCoordinationReturns(board, now);
     coordination.state = 'known';
@@ -111,13 +117,44 @@ export async function readRuntimeSnapshot(deps: FleetRuntimeDeps): Promise<Runti
     if (newest) coordination.newestReturnAgeSeconds = age(Date.parse(newest.at));
     if (coordination.newestReturnAgeSeconds === UNKNOWN) coordination.reason = 'no readable retained return at or before asOf';
   } catch { coordination.reason = 'coordination ledger: missing or unreadable'; }
+  let execution: NonNullable<RuntimeSnapshot['execution']> = {
+    state: 'UNKNOWN', running: 0, claimedNoWorker: 0, unknown: 0,
+  };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const deadline = new Promise<null>(resolve => {
+      timer = setTimeout(() => resolve(null), 2_000);
+    });
+    // The race retains a rejection handler even if the reader settles late.
+    // The defaults object (also spread by production callers) carries its
+    // execution reader. Keep explicitly injected readers independent, including
+    // defaults.execution paired with a different board, a supported legacy seam.
+    const useCapturedBoard = deps.execution === undefined ||
+      (deps.execution === defaultExecution && deps.board === defaults.board);
+    const readExecution = useCapturedBoard ? () => defaults.execution({
+      board: () => {
+        if (board === null) throw new Error('unavailable captured board');
+        return board;
+      },
+      now: () => now,
+    }) : deps.execution!;
+    const evidence = await Promise.race([readExecution(), deadline]);
+    if (evidence === null) execution.reason = 'execution: read deadline exceeded';
+    else {
+      const reason = evidence.ledger !== 'known' ? 'execution: ledger unavailable'
+        : evidence.processes !== 'healthy' ? 'execution: process table unavailable' : undefined;
+      execution = { state: reason === undefined ? 'known' : 'UNKNOWN', ...evidence.counts,
+        ...(reason === undefined ? {} : { reason }) };
+    }
+  } catch { execution.reason = 'execution: read failed'; }
+  finally { if (timer !== undefined) clearTimeout(timer); }
   const installedVersion = readLabel('installedVersion', deps.installedVersion);
   const sourceVersion = readLabel('sourceVersion', deps.sourceVersion);
   const report = {
     host: readLabel('host', deps.host), tailnetName: readLabel('tailnetName', deps.tailnet),
     installedVersion, ...(sourceVersion !== installedVersion ? { sourceVersion } : {}),
     pid: deps.pid(), uptimeSeconds: deps.uptime(), platform: readLabel('platform', deps.platform), arch: readLabel('arch', deps.arch),
-    stateRoot, lastFleetStateRead, coordination, asOf: new Date(now).toISOString(), reasons,
+    stateRoot, lastFleetStateRead, coordination, execution, asOf: new Date(now).toISOString(), reasons,
   };
   return report;
 }

@@ -1,17 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { assessNodeCapacity, nodeRamSlots } from '../src/core/drive/nodes/capacity.js';
+import { assessNodeCapacity, nodeRamSlots, packRamBytes } from '../src/core/drive/nodes/capacity.js';
 import { readMacHostHeadroom, type HostHeadroom } from '../src/core/run/host-headroom.js';
 const GIB = 1024 ** 3;
 const normal: HostHeadroom = { freePercent: 26, swapGb: 5.8, pressureLevel: 1 };
 describe('conservative node RAM and disk admission', () => {
   it('budgets the 8GB Pro and 16GB Air independently', () => {
-    expect(nodeRamSlots(8 * GIB)).toBe(1);
-    expect(nodeRamSlots(16 * GIB)).toBe(2);
+    expect(nodeRamSlots(8 * GIB)).toBe(4);
+    expect(nodeRamSlots(16 * GIB)).toBe(11);
     for (const invalid of [NaN, Infinity, -1, 0, 3 * GIB]) expect(nodeRamSlots(invalid)).toBe(0);
     expect(nodeRamSlots(1024 * GIB)).toBe(64);
   });
+  it('budgets RAM per pack; unknown packs keep the legacy 4 GiB divisor', () => {
+    expect(packRamBytes('codex-file')).toBe(GIB);
+    expect(packRamBytes('some-local-model-pack')).toBe(4 * GIB);
+    expect(packRamBytes('toString')).toBe(4 * GIB);
+    // before (flat 4 GiB) vs after, 8 GiB and 128 GiB hosts
+    expect([8, 128].map(g => nodeRamSlots(g * GIB, 'unknown'))).toEqual([1, 22]);
+    expect([8, 128].map(g => nodeRamSlots(g * GIB, 'codex-file'))).toEqual([4, 64]);
+    expect(nodeRamSlots(8 * GIB, 'shell-check')).toBe(10);
+    expect(nodeRamSlots(3 * GIB, 'shell-check')).toBe(0);
+  });
   it('admits normal pressure despite low raw free memory and historical swap', () => {
-    expect(assessNodeCapacity(16 * GIB, normal, 20e9)).toEqual({ ramBytes: 16 * GIB, slots: 2, held: null });
+    expect(assessNodeCapacity(16 * GIB, normal, 20e9)).toEqual({ ramBytes: 16 * GIB, slots: 11, held: null });
     expect(assessNodeCapacity(3 * GIB, normal, 20e9).held).toBe('memory-pressure');
   });
   it.each([2, 4] as const)('holds pressure level %s regardless of free memory', (pressureLevel) => {
@@ -22,7 +32,7 @@ describe('conservative node RAM and disk admission', () => {
   it('retains the 20GB disk floor and fails closed for unknown disk', () => {
     for (const disk of [null, NaN, Infinity, -1]) expect(assessNodeCapacity(8 * GIB, normal, disk).held).toBe('disk-unmeasured');
     expect(assessNodeCapacity(8 * GIB, normal, 20e9 - 1).held).toBe('disk-pressure');
-    expect(assessNodeCapacity(8 * GIB, normal, 20e9).slots).toBe(1);
+    expect(assessNodeCapacity(8 * GIB, normal, 20e9).slots).toBe(4);
   });
   it('fails closed for missing, malformed, or failed memory telemetry', () => {
     expect(assessNodeCapacity(8 * GIB, null, 100e9).held).toBe('memory-unmeasured');
