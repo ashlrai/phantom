@@ -1069,6 +1069,7 @@
 /test/planning-client-discovery-revive.test.ts @masonwyatt23
 /test/planning-clients-revive.test.ts @masonwyatt23
 /test/playbooks-315.test.ts @masonwyatt23
+/test/pool-budget-claude-observed-391.test.ts @masonwyatt23
 /test/pool-budget-store.test.ts @masonwyatt23
 /test/pool-budget.test.ts @masonwyatt23
 /test/post-merge-credit-import-cycle.test.ts @masonwyatt23
@@ -1098,6 +1099,7 @@
 /test/red-type-fix-c175.test.ts @masonwyatt23
 /test/redact-known.test.ts @masonwyatt23
 /test/redfix-test-c205.test.ts @masonwyatt23
+/test/redtestfix-c398.test.ts @masonwyatt23
 /test/refix-loop.test.ts @masonwyatt23
 /test/release-articles.test.ts @masonwyatt23
 /test/release-path-policy-v2.test.ts @masonwyatt23
@@ -1156,6 +1158,7 @@
 /test/resource-spark-enrollment.test.ts @masonwyatt23
 /test/resource-volume-polling.test.ts @masonwyatt23
 /test/resource-worker-kill.test.ts @masonwyatt23
+/test/returns-pr-check-396.test.ts @masonwyatt23
 /test/review-pick-api-live-ownership-recovery-375s.test.ts @masonwyatt23
 /test/review-take-head-recheck-377s.test.ts @masonwyatt23
 /test/reward-signal.test.ts @masonwyatt23
@@ -1171,6 +1174,7 @@
 /test/router-queue-conflict-preservation-211s.test.ts @masonwyatt23
 /test/router-queue-conflict-recovery-198s.test.ts @masonwyatt23
 /test/router-queue-events.test.ts @masonwyatt23
+/test/router-queue-recut.test.ts @masonwyatt23
 /test/router-queue-utf8-input-31k7.test.ts @masonwyatt23
 /test/router-queue.test.ts @masonwyatt23
 /test/router-task-arms.test.ts @masonwyatt23
