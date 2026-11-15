@@ -27,12 +27,12 @@ export async function cmdAgentnet(args: string[], options: PeerBusOptions = {}, 
       result = await sendPeerMessage({ ...(name!.startsWith('#') ? { channel: name!.slice(1) } : { toAgent: name }), kind, text,
         ...(replyTo ? { replyTo } : {}), ...(threadId ? { threadId } : {}) }, session, options);
     } else if (replyTo || threadId) return 2;
-    else if (group === 'peers' && verb === 'list' && positional.length === 2 && !apply) result = { peers: listPeers(options.bindings) };
+    else if (group === 'peers' && verb === 'list' && positional.length === 2 && !apply) result = listPeers(options.bindings);
     else if (group === 'channels' && verb === 'propose' && positional.length === 3) result = proposeSlackAction('channel.create', name!, apply);
     else if (group === 'identity' && verb === 'register' && positional.length === 3 && !apply) result = proposeSlackAction('identity.register', name!, true);
     else { console.error(usage); return 2; }
     console.log(JSON.stringify(result));
     const report = result as { status?: string; slack?: string };
-    return (report.status && !['posted', 'drafted', 'escalated', 'ok'].includes(report.status)) || ['refused', 'uncertain'].includes(report.slack ?? '') ? 1 : 0;
+    return (report.status && !['posted', 'drafted', 'escalated', 'ok', 'not-enrolled'].includes(report.status)) || ['refused', 'uncertain'].includes(report.slack ?? '') ? 1 : 0;
   } catch { console.log(JSON.stringify({ status: 'refused', reason: 'agentnet-unavailable' })); return 1; }
 }
