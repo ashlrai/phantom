@@ -12,6 +12,25 @@ import { treeVersionFromPackageJson } from '../verse/release-version-guard.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 const UNKNOWN = 'UNKNOWN';
+/** Largest epoch-millisecond instant `Date` can represent (±8.64e15 ms). */
+const MAX_EPOCH_MS = 8_640_000_000_000_000;
+/** An epoch-millisecond timestamp the coordination ledger itself writes. */
+const epochMs = (n: unknown): n is number =>
+  typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 && n <= MAX_EPOCH_MS;
+/**
+ * Live-claim qualification for the summary count, mirroring the temporal
+ * contract of `temporallyQualified` in claim-execution-evidence.ts: both
+ * timestamps must be valid epoch milliseconds, `expiresAt` must fall
+ * strictly after `claimedAt`, and `claimedAt` must sit at or before the
+ * observation instant. A future-dated, reversed or out-of-range claim is
+ * dropped by the execution join, so it must not inflate `activeClaims`.
+ */
+const isLiveClaimAt = (claim: unknown, nowMs: number): boolean => {
+  if (claim === null || typeof claim !== 'object') return false;
+  const { claimedAt, expiresAt } = claim as { claimedAt?: unknown; expiresAt?: unknown };
+  return epochMs(claimedAt) && epochMs(expiresAt) && expiresAt > claimedAt &&
+    claimedAt <= nowMs && expiresAt > nowMs;
+};
 const identity = defaultRuntimeIdentityDeps();
 const defaultExecution = (snapshot?: { board: typeof readFleetBoard; now: () => number }): Promise<ClaimExecutionReport> =>
   readClaimExecution(snapshot ?? { board: defaults.board, now: defaults.now });
@@ -165,7 +184,7 @@ export async function readRuntimeSnapshot(deps: FleetRuntimeDeps): Promise<Runti
   // claim expiring mid-read is dead at the advertised instant — never RUNNING.
   if (board !== null && board.state === 'known') {
     coordination.state = 'known';
-    coordination.activeClaims = board.claims.filter(claim => claim.expiresAt > asOfMs).length;
+    coordination.activeClaims = board.claims.filter(claim => isLiveClaimAt(claim, asOfMs)).length;
     const newest = projectCoordinationReturns(board, asOfMs).returns[0];
     if (newest) coordination.newestReturnAgeSeconds = age(Date.parse(newest.at));
     if (coordination.newestReturnAgeSeconds === UNKNOWN) coordination.reason = 'no readable retained return at or before asOf';
