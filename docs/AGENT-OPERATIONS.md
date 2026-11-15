@@ -325,6 +325,14 @@ Credential-shaped payloads refuse; use Phantom Secrets `phm_<name>` references.
 `--json` emits one object on stdout, including errors. Exit codes are 0 success,
 1 operational refusal and 2 bad usage. `phm bus send --help` performs no work.
 
+### Owner Assist
+
+The desktop menu bar's **Owner Assist** opens the personal floating chat. It uses
+the existing Verse runtime with its own store and one concurrent turn, outside
+fleet job admission. Project editing, configured local/API models, shared memory,
+inline terminal approval and explicit Phantom fleet handoff are described in
+[Owner Assist](https://github.com/ashlrai/phantom/blob/master/docs/OWNER-ASSIST.md).
+
 ### MCP server
 
 `phm mcp` runs the MCP aggregation gateway on stdio. Its subcommands are `list`,

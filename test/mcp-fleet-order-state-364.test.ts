@@ -97,7 +97,7 @@ describe('readFleetOrderState', () => {
       read: async () => { throw new Error('boom /Users/example/secret'); },
       live,
     });
-    expect(body).toEqual({ v: 1, asOf: NOW.toISOString(), sources: 'unavailable', live: 'unavailable', orders: [] });
+    expect(body).toEqual({ v: 1, asOf: NOW.toISOString(), sources: 'unavailable', live: 'unavailable', lanes: 'unavailable', orders: [] });
     const serialized = JSON.stringify(body);
     expect(serialized).not.toContain('/Users/example/secret');
     expect(serialized).not.toContain('boom');
