@@ -17,6 +17,10 @@ import { readOrderTrace } from '../fleet/order-trace.js';
 import { isReviewAsk } from '../fleet/review-ask.js';
 import { readReviewPick } from '../fleet/review-pick.js';
 import { formatReviewPickReply } from '../fleet/review-pick-reply.js';
+import { isOwnersAsk } from '../fleet/owners-ask.js';
+import { formatSurfaceOwnersReply } from '../fleet/surface-owners-reply.js';
+import { SURFACES, readSurfaceOwner, type SurfaceOwnerReport } from '../fleet/surface-owner.js';
+import { gitSurfaceLog } from '../fleet/surface-owner-git-log.js';
 import { listLiveWorkers, type LiveWorkersSnapshot } from '../fleet/runs-live-workers.js';
 import { readLaneTargets, type LaneTargetsV1 } from '../fleet/runs-lane-targets.js';
 import type { LiveJobIds } from '../fleet/order-work-state.js';
@@ -31,6 +35,7 @@ export const OWNER_STATUS_FALLBACK = "Phantom status: the status read failed; yo
 export const OWNER_RECHECK_FALLBACK = "Phantom recheck: the recheck read failed; your message is in the Leader's inbox.";
 export const OWNER_ORDERS_FALLBACK = "Phantom orders: the orders read failed; your message is in the Leader's inbox.";
 export const OWNER_REVIEW_FALLBACK = "Phantom review pick: the read failed; your message is in the Leader's inbox.";
+export const OWNER_OWNERS_FALLBACK = "Phantom owners: the ownership read failed; your message is in the Leader's inbox.";
 
 /** Exact short asks only; "status of the release pr #12" is a request for the Leader. */
 export function isOwnerStatusRequest(text: string): boolean {
@@ -65,6 +70,9 @@ export interface OwnerStatusDeps {
   /** The unowned-review answer for a short "review" ask; the default reads
    * the live review pick for ashlrai/phantom and formats the reply. */
   review?: (now: Date) => Promise<string>;
+  /** The surface-ownership answer for a short "owners" ask; the default reads
+   * every SURFACES key (ledger + git history) and formats it. */
+  owners?: (now: Date) => Promise<string>;
 }
 
 const defaultRecordRecheck = (recheck: FleetRecheck): void => { appendRecheckRecord(ashlrHome(), recheck, homedir()); };
@@ -160,6 +168,33 @@ export async function composeOwnerReviewReply(now: Date, deps: OwnerStatusDeps =
   } catch { return OWNER_REVIEW_FALLBACK; }
 }
 
+/** Reader seam for the default owners answer. */
+export interface DefaultOwnersReaders {
+  read?: (surface: string) => Promise<SurfaceOwnerReport | null>;
+}
+
+/** Reads every SURFACES key; a null or throwing read becomes an UNKNOWN row
+ * for that surface only, never a failure of the whole reply. */
+export async function defaultOwnersReply(now: Date, readers: DefaultOwnersReaders = {}): Promise<string> {
+  const read = readers.read ?? ((s: string) => readSurfaceOwner(s, { log: gitSurfaceLog, now: () => now.getTime() }));
+  const asOf = now.toISOString();
+  const reports = await Promise.all(Object.keys(SURFACES).map(async (surface): Promise<SurfaceOwnerReport> => {
+    let report: SurfaceOwnerReport | null = null;
+    try { report = await read(surface); } catch { /* UNKNOWN row below */ }
+    return report ? { ...report, surface } : { schemaVersion: 1, authority: 'none', surface, asOf, owner: 'UNKNOWN', ownerSource: 'none',
+      liveClaims: [], lastLanded: null, scannedPaths: [], reasons: ['coordination ledger: missing or unreadable'] };
+  }));
+  return formatSurfaceOwnersReply(reports, asOf);
+}
+
+/** Never throws and never falls through to another branch: an owners ask gets
+ * the ownership evidence or the fixed owners fallback. Assigns nothing. */
+export async function composeOwnerOwnersReply(now: Date, deps: OwnerStatusDeps = {}): Promise<string> {
+  try {
+    return await (deps.owners ?? defaultOwnersReply)(now);
+  } catch { return OWNER_OWNERS_FALLBACK; }
+}
+
 const defaultBoard = (now: Date): WorkBoardResult => listWorkBoard({ root: join(ashlrHome(), 'fleet'), now: now.getTime(), limit: 20 });
 
 /** A failed board read never touches the digest: it only becomes the "unknown" line. */
@@ -219,14 +254,16 @@ async function composeSlackStatusReply(runsDir: string, now: Date, deps: OwnerSt
  * every other gated ask with the status digest. */
 export function ownerStatusReply(deps: OwnerStatusDeps = {}): { ask: (text: string) => boolean; compose: (runsDir: string, now: Date, text?: string) => Promise<string>; readonly fallback: string } {
   return {
-    ask: text => isOwnerStatusRequest(text) || isRecheckAsk(text) || isOrdersAsk(text) || isReviewAsk(text),
+    ask: text => isOwnerStatusRequest(text) || isRecheckAsk(text) || isOrdersAsk(text) || isReviewAsk(text) || isOwnersAsk(text),
     compose: (runsDir, now, text) => text !== undefined && isRecheckAsk(text)
       ? composeOwnerRecheckReply(now, deps)
       : text !== undefined && isOrdersAsk(text)
         ? composeOwnerOrdersReply(now, deps)
         : text !== undefined && isReviewAsk(text)
           ? composeOwnerReviewReply(now, deps)
-          : composeSlackStatusReply(runsDir, now, deps),
+          : text !== undefined && isOwnersAsk(text)
+            ? composeOwnerOwnersReply(now, deps)
+            : composeSlackStatusReply(runsDir, now, deps),
     fallback: OWNER_STATUS_FALLBACK,
   };
 }
