@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'restock.py'
 LANES = ['codex-cmp', 'codex-personal', 'devin', 'codex-local', 'claude-api']
@@ -88,6 +89,30 @@ def line(job, text='routine fix', **attrs):
     p = attrs.pop('P', None)
     toks = ([f'P{p}'] if p is not None else []) + [f'{k}={v}' for k, v in attrs.items()]
     return f'- READY {job} ({", ".join(toks)}): {text}'
+
+
+class MuseLightTests(unittest.TestCase):
+    def test_light_slice_is_opt_in_independent_of_lane_gate_and_dry_run_safe(self):
+        tmp = build('')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs' / 'queue'
+        (q / 'admission.json').write_text(json.dumps({'cap': 0}))
+        tools = home / 'bin'
+        tools.mkdir()
+        phm = tools / 'phm'
+        phm.write_text('#!/bin/sh\nprintf "%s\\n" "$*" > "$HOME/node-light-called"\n')
+        phm.chmod(0o700)
+        receipt = home / 'node-light-called'
+        with patch.dict(os.environ, {'PATH': str(tools) + ':' + os.environ['PATH']}):
+            self.assertEqual(restock(home).returncode, 0)
+            self.assertFalse(receipt.exists())
+            (q / 'muse-light.enabled').touch()
+            self.assertEqual(restock(home, '--dry-run').returncode, 0)
+            self.assertFalse(receipt.exists())
+            self.assertEqual(restock(home).returncode, 0)
+            self.assertEqual(receipt.read_text().strip(), 'node light restock --apply --json')
+            self.assertEqual((q / 'ready.tsv').read_text(), '')
 
 
 class BoldFloorTests(unittest.TestCase):
