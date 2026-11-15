@@ -14,7 +14,7 @@ const serverBody = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 const stub = (body: unknown, status = 200) => {
-  const fetch = vi.fn(async () => new Response(JSON.stringify(body), { status }));
+  const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(JSON.stringify(body), { status }));
   vi.stubGlobal('fetch', fetch);
   return fetch;
 };
