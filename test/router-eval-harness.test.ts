@@ -33,6 +33,10 @@ function evaluate(policy: string) {
 }
 
 describe('frozen router-eval dataset', () => {
+  it.each(['null', '[]', '42', '"text"', 'true'])('rejects non-object JSON %s with its source location', (value) => {
+    expect(() => parseRouterEvalDataset(`# comment\n${value}`, 'fixture.jsonl')).toThrow('fixture.jsonl:2: line must be an object');
+  });
+
   it('parses the committed day: 1 meta line, 45 validated job lines', () => {
     const ds = parseRouterEvalDataset(JOBS);
     expect(ds.jobs).toHaveLength(45);

@@ -21,6 +21,7 @@ export const KNOWN_FAST_SPAWN_FILES = [
   'test/resources-local-omlx-probe-undefined-req-31.test.ts', // Bounded loopback fixture; single sub-second case.
   'test/cycle-emit.test.ts', // Three offline Node children, each bounded to 1s and isolated HOME.
   'test/changelog-sync.test.ts', // 1.22s slowest test, 2026-10-26 JSON fixture run; local Node/git only, no network
+  'test/docs-sync.test.ts', // 2.2s slowest test, 2026-11-07 fixture run; bounded node changelog-sync/git children, no network
   'test/grokbot-lane.test.ts', // 0.37s max on 2026-10-26; bounded loopback webhook, mocked Secrets child
   'test/m81.engine-readiness.test.ts', // 0.04s on 2026-10-10; one bounded loopback fixture and system curl probe
   'test/m396.automerge-canary-classifier.test.ts', // 2.8s

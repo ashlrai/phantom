@@ -39,6 +39,7 @@ const steps: SelfTickSteps = {
   'waste-incident': stub('waste-incident'),
   'teammate-overdue': stub('teammate-overdue'),
   'landed-sweep': stub('landed-sweep'),
+  'cos-work': stub('cos-work'),
 };
 
 const run = async (args: string[]) => {

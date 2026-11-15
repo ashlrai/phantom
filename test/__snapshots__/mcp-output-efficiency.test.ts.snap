@@ -9,11 +9,35 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
   ],
   "native": [
     {
+      "name": "intent_add",
+      "safety": "append",
+    },
+    {
+      "name": "intent_update",
+      "safety": "append",
+    },
+    {
+      "name": "intent_list",
+      "safety": "read",
+    },
+    {
+      "name": "intent_get",
+      "safety": "read",
+    },
+    {
       "name": "intent_link",
       "safety": "append",
     },
     {
       "name": "intent_ship",
+      "safety": "append",
+    },
+    {
+      "name": "intent_stale",
+      "safety": "append",
+    },
+    {
+      "name": "intent_import",
       "safety": "append",
     },
     {
@@ -26,6 +50,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
     },
     {
       "name": "phantom_agent_bus_post",
+      "safety": "append",
+    },
+    {
+      "name": "phantom_forum",
       "safety": "append",
     },
     {
@@ -385,6 +413,126 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "owner": {
+          "type": "string",
+        },
+        "partial": {
+          "type": "boolean",
+        },
+        "rq": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "source": {
+          "type": "string",
+        },
+        "staleAfterMs": {
+          "maximum": 31536000000,
+          "minimum": 60000,
+          "type": "integer",
+        },
+        "status": {
+          "type": "string",
+        },
+        "title": {
+          "type": "string",
+        },
+        "verbatim": {
+          "type": "boolean",
+        },
+      },
+      "required": [
+        "title",
+        "source",
+      ],
+      "type": "object",
+    },
+    "name": "intent_add",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "type": "string",
+        },
+        "id": {
+          "type": "string",
+        },
+        "owner": {
+          "type": "string",
+        },
+        "partial": {
+          "type": "boolean",
+        },
+        "rq": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "source": {
+          "type": "string",
+        },
+        "status": {
+          "type": "string",
+        },
+        "title": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "id",
+      ],
+      "type": "object",
+    },
+    "name": "intent_update",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "proposed",
+            "queued",
+            "in-progress",
+            "merged",
+            "shipped",
+            "verified",
+            "superseded",
+            "closed",
+            "unknown",
+          ],
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "intent_list",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,80}$",
+          "type": "string",
+        },
+      },
+      "required": [
+        "id",
+      ],
+      "type": "object",
+    },
+    "name": "intent_get",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
         "at": {
           "format": "date-time",
           "maxLength": 35,
@@ -466,6 +614,37 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "apply": {
+          "type": "boolean",
+        },
+      },
+      "type": "object",
+    },
+    "name": "intent_stale",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "paths": {
+          "items": {
+            "type": "string",
+          },
+          "minItems": 1,
+          "type": "array",
+        },
+      },
+      "required": [
+        "paths",
+      ],
+      "type": "object",
+    },
+    "name": "intent_import",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
         "after": {
           "maximum": 9007199254740991,
           "minimum": 0,
@@ -538,6 +717,75 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "phantom_agent_bus_post",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "type": "string",
+        },
+        "author": {
+          "type": "string",
+        },
+        "body": {
+          "type": "string",
+        },
+        "channel": {
+          "type": "string",
+        },
+        "clientId": {
+          "type": "string",
+        },
+        "id": {
+          "type": "string",
+        },
+        "kind": {
+          "type": "string",
+        },
+        "limit": {
+          "type": "number",
+        },
+        "member": {
+          "type": "string",
+        },
+        "op": {
+          "enum": [
+            "channels",
+            "read",
+            "post",
+            "reply",
+            "commitments",
+            "sweep",
+            "standup",
+            "invite",
+            "bridge",
+            "tick",
+          ],
+          "type": "string",
+        },
+        "parent": {
+          "type": "string",
+        },
+        "runsDir": {
+          "type": "string",
+        },
+        "signature": {
+          "type": "string",
+        },
+        "thread": {
+          "type": "string",
+        },
+        "title": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "op",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_forum",
   },
   {
     "inputSchema": {

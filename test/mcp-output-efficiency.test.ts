@@ -44,11 +44,18 @@ const OLD_NATIVE_NAMES = [
 ] as const;
 
 const ADDED_NATIVE_NAMES = [
+  'intent_add',
+  'intent_update',
+  'intent_list',
+  'intent_get',
   'intent_link',
   'intent_ship',
+  'intent_stale',
+  'intent_import',
   'phantom_agent_bus_read',
   'phantom_agent_bus_status',
   'phantom_agent_bus_post',
+  'phantom_forum',
   'phantom_fleet_drop_job',
   'phantom_fleet_job_reassign',
   'phantom_fleet_planner_run',
@@ -136,7 +143,7 @@ describe('native MCP tool inventory', () => {
     const tools = listNativeTools();
     const names = tools.map(tool => tool.name);
     const classified = classifyNativeNames(names);
-    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(89);
+    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(96);
     expect(new Set(names).size).toBe(names.length);
     expect(classified.old).toEqual([...OLD_NATIVE_NAMES]);
     expect(classified.added).toEqual([...ADDED_NATIVE_NAMES]);
@@ -197,15 +204,18 @@ describe('native MCP tool inventory', () => {
     const verbs = addedTools.find(tool => tool.name === 'phantom_fleet_verbs')!;
     const verbsBytes = Buffer.byteLength(JSON.stringify(verbs)) + 1;
     expect(verbsBytes).toBeLessThanOrEqual(228);
-    // intent_link + intent_ship measured 1,119 bytes with their commas; no headroom.
-    const intentTools = addedTools.filter(tool => tool.name === 'intent_link' || tool.name === 'intent_ship');
+    const forum = addedTools.find(tool => tool.name === 'phantom_forum')!;
+    const forumBytes = Buffer.byteLength(JSON.stringify(forum)) + 1;
+    expect(forumBytes).toBeLessThanOrEqual(1500);
+    // The eight intent_* tools measured 3,383 bytes with their commas; no headroom.
+    const intentTools = addedTools.filter(tool => tool.name.startsWith('intent_'));
     const intentBytes = intentTools.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
-    expect(intentBytes).toBeLessThanOrEqual(1119);
-    const addedBytes = addedTools.filter(tool => tool !== verbs && tool !== doctor && tool !== roster && tool !== spend && tool !== needs && tool !== needsWait && tool !== accessRequest && tool !== watch && !intentTools.includes(tool) && !visibility.includes(tool) && !leaderTools.includes(tool) && !desktop.includes(tool) && !observeTools.includes(tool) && !ownerComms.includes(tool) && !agentComms.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
+    expect(intentBytes).toBeLessThanOrEqual(3383);
+    const addedBytes = addedTools.filter(tool => tool !== verbs && tool !== doctor && tool !== roster && tool !== spend && tool !== needs && tool !== needsWait && tool !== accessRequest && tool !== watch && tool !== forum && !intentTools.includes(tool) && !visibility.includes(tool) && !leaderTools.includes(tool) && !desktop.includes(tool) && !observeTools.includes(tool) && !ownerComms.includes(tool) && !agentComms.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(addedBytes).toBeLessThanOrEqual(9884);
     // 24,205 + 9,884 preserves the historical headroom. Later tool groups are
     // measured on their own caps above.
-    expect(responseBytes(tools)).toBeLessThan(33400 + 689 + doctorBytes + rosterBytes + visibilityBytes + spendBytes + leaderBytes + desktopBytes + observeBytes + ownerCommsBytes + agentCommsBytes + needsBytes + needsWaitBytes + accessRequestBytes + watchBytes + verbsBytes + intentBytes);
+    expect(responseBytes(tools)).toBeLessThan(33400 + 689 + doctorBytes + rosterBytes + visibilityBytes + spendBytes + leaderBytes + desktopBytes + observeBytes + ownerCommsBytes + agentCommsBytes + needsBytes + needsWaitBytes + accessRequestBytes + watchBytes + verbsBytes + intentBytes + forumBytes);
   });
 });
 

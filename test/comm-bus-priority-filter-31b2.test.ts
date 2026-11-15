@@ -97,5 +97,5 @@ it('documents the filter, scan limit, and routing-only meaning of priority', asy
   expect(help).toContain('--priority <P0|P1|P2|P3>');
   expect(help).toContain('counts scanned live records');
   expect(help).toContain('Expired records advance the cursor but do not count toward the limit');
-  expect(help).toContain('Priority is a routing attribute; it does not establish identity or authority.');
+  expect(help).toContain('Priority is a routing attribute, not authority; it does not establish identity.');
 });

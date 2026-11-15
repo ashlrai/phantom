@@ -1,30 +1,8 @@
 import { apiGet, ApiError } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
 
-export type MissionHealth = 'clear' | 'watch' | 'attention' | 'unknown';
-export interface MissionAttention { id: string; text: string }
-export interface MissionJob { resource: string; label: string; model: string | null; running: number; queued: number }
-export interface MissionDecision { at: string; resource: string | null; label: string | null; model: string | null; job: string | null; why: string }
-export interface MissionResource { id: string; label: string; leftPct: number | null; creditsLeft: number | null; resetAt: string | null }
-export interface MissionPull { repo: string; number: number; url: string }
-export interface MissionMerges { repo: string; perHour: number; pulls: MissionPull[] }
-export interface MissionMain { repo: string; health: 'green' | 'red' | 'unknown'; fixJobs: string[]; note: string | null }
-export interface MissionIncident { id: string; title: string; status: 'open' | 'fixed' | 'unknown'; what: string; applied: string | null }
-export interface MissionMemory { freePct: number | null; pressure: 'calm' | 'tight' | 'holding' | 'unknown'; stale: boolean | null; stopped: number | null; note: string }
-export interface MissionPlan { title: string | null; points: string[] }
-export interface MissionControl {
-  schema: 'fleet.mission.v1';
-  generatedAt: string;
-  overview: { health: MissionHealth; headline: string; shipped: string; attention: string | null; items: MissionAttention[] };
-  jobs: MissionJob[];
-  decisions: MissionDecision[];
-  resources: MissionResource[];
-  merges: MissionMerges[];
-  mains: MissionMain[];
-  incidents: MissionIncident[];
-  memory: MissionMemory;
-  plan: MissionPlan;
-}
+export type { MissionDecision, MissionHealth, MissionJob, MissionMain, MissionResource } from '../../../../core/fleet/mission-control-types.js';
+export type MissionControl = import('../../../../core/fleet/mission-control-types.js').MissionControlV1;
 
 const str = (value: unknown): value is string => typeof value === 'string';
 const num = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
@@ -34,6 +12,9 @@ const obj = (value: unknown): value is Record<string, unknown> => value !== null
 
 function isMissionControl(value: unknown): value is MissionControl {
   if (!obj(value) || value.schema !== 'fleet.mission.v1' || !obj(value.overview)) return false;
+  if (value.timeline !== undefined && !list((row) => obj(row) && str(row.pr) && str(row.at))(value.timeline)) return false;
+  if (value.activity !== undefined && !list((row) => obj(row) && str(row.job) && str(row.lane) && str(row.at))(value.activity)) return false;
+  if (value.costPerMergedPrUsd !== undefined && !nil(num)(value.costPerMergedPrUsd)) return false;
   const overview = value.overview;
   const health = overview.health;
   if (health !== 'clear' && health !== 'watch' && health !== 'attention' && health !== 'unknown') return false;

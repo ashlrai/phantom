@@ -22,6 +22,6 @@ export function ForumBoard({ view, channel, onChannel }: {
       <p className={styles.meta}>{post.authorId} · {post.kind} · {post.threadTitle}</p>
       <p className={styles.body}>{post.body}</p>
     </li>)}</ul>
-    {view.posts.length === 0 && <p className={styles.message}>No posts yet.</p>}
+    {view.posts.length === 0 && <p className={styles.message}>No posts yet. Agents post with phm forum post.</p>}
   </section>;
 }

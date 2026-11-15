@@ -1,4 +1,5 @@
 /** Scheduling policy is independent of DRIVER-1 storage and the host semaphore. */
+import { abortableSleep } from '../util/await-support.js';
 import { laneBreakers, type LaneBreaker } from './lane-breaker.js';
 import { claudeApiHealth, type LaneHealth } from './lane-health.js';
 import { drivePoolAllowed, isPoolDayShare, pacedShareRemaining, type PoolDayShare } from './pool-routing.js';
@@ -382,11 +383,7 @@ export async function driveLoop(deps: DriveDependencies, options: {
 } = {}): Promise<void> {
   const tickMs = options.tickMs ?? 30_000;
   if (!Number.isSafeInteger(tickMs) || tickMs < 1_000 || tickMs > 86_400_000) throw new Error('Drive tick must be between 1 and 86400 seconds');
-  const sleep = options.sleep ?? ((ms: number, signal?: AbortSignal) => new Promise<void>(resolve => {
-    const done = (): void => { clearTimeout(timer); signal?.removeEventListener('abort', done); resolve(); };
-    const timer = setTimeout(done, ms);
-    if (signal?.aborted) done(); else signal?.addEventListener('abort', done, { once: true });
-  }));
+  const sleep = options.sleep ?? abortableSleep;
   do {
     if (options.signal?.aborted) break;
     try {

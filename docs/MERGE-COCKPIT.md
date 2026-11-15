@@ -1,0 +1,7 @@
+# Merge cockpit
+
+Run `phm pr cockpit --repo ashlrai/phantom --repo ashlrai/phantom-secrets` to inspect selected repositories. Add `--json` for a machine-readable report, `--refresh` to bypass the five-minute cache, or `--offline` to use only saved observations. The command only reads GitHub; it cannot merge, close, or change auto-merge. It uses the existing `gh` authentication and requires access to each repository.
+
+Counts cover open pull requests. Green means GitHub's latest-head status check rollup is SUCCESS, not that all merge requirements are met. Missing rollups and unknown mergeability are counted separately. Rework edges are references of the form `reworks #N` in the title or body, not verified claims of equivalence. The owner hold list is marked on open PRs and referenced originals; it is a display of the holds in AGENTS.md, not an enforcement mechanism. This command has no mutation path.
+
+Snapshots contain PR titles and bodies and are stored locally in `~/.phantom/merge-cockpit.json` with private file permissions. Up to 100 snapshots per repository provide an observed open-count history, not a complete event ledger. Failed refreshes show the last snapshot as stale; missing snapshots are unavailable and cause exit 1. A cache write failure leaves the live report usable but does not persist it. Pagination is bounded to 2,000 PRs per repository and incomplete results are discarded. GitHub rate limits and access failures therefore never become zero counts.
