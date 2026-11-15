@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'restock.py'
 LANES = ['codex-cmp', 'codex-personal', 'devin', 'codex-local', 'claude-api']
@@ -90,6 +91,30 @@ def line(job, text='routine fix', **attrs):
     return f'- READY {job} ({", ".join(toks)}): {text}'
 
 
+class MuseLightTests(unittest.TestCase):
+    def test_light_slice_is_opt_in_independent_of_lane_gate_and_dry_run_safe(self):
+        tmp = build('')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs' / 'queue'
+        (q / 'admission.json').write_text(json.dumps({'cap': 0}))
+        tools = home / 'bin'
+        tools.mkdir()
+        phm = tools / 'phm'
+        phm.write_text('#!/bin/sh\nprintf "%s\\n" "$*" > "$HOME/node-light-called"\n')
+        phm.chmod(0o700)
+        receipt = home / 'node-light-called'
+        with patch.dict(os.environ, {'PATH': str(tools) + ':' + os.environ['PATH']}):
+            self.assertEqual(restock(home).returncode, 0)
+            self.assertFalse(receipt.exists())
+            (q / 'muse-light.enabled').touch()
+            self.assertEqual(restock(home, '--dry-run').returncode, 0)
+            self.assertFalse(receipt.exists())
+            self.assertEqual(restock(home).returncode, 0)
+            self.assertEqual(receipt.read_text().strip(), 'node light restock --apply --json')
+            self.assertEqual((q / 'ready.tsv').read_text(), '')
+
+
 class BoldFloorTests(unittest.TestCase):
     def test_under_floor_reports_bold_share_but_preserves_higher_priority_work(self):
         # 2 of 8 READY lines are bet=bold (25% < 30% floor): preference lifts the
@@ -147,15 +172,15 @@ class BoldFloorTests(unittest.TestCase):
 
 class ExclusionTests(unittest.TestCase):
     def test_non_fleet_repos_never_selected(self):
-        # measurably and ashlar-landing exist as local dirs but sit outside GS_REPOS.
+        # measurably and ashlr-landing exist as local dirs but sit outside GS_REPOS.
         rows = [
             line('RQ-NF-MEAS', P=1, pool='devin', tier='mid', repo='measurably', text='measurably fix'),
-            line('RQ-NF-LAND', P=1, pool='devin', tier='mid', repo='ashlar-landing', text='landing fix'),
+            line('RQ-NF-LAND', P=1, pool='devin', tier='mid', repo='ashlr-landing', text='landing fix'),
             line('RQ-NF-GHOST', P=1, pool='devin', tier='mid', repo='ghost-repo', text='missing dir'),
             line('RQ-NF-NONE', P=1, pool='devin', tier='mid', text='no repo attr'),
             line('RQ-NF-FLEET', P=2, pool='devin', tier='mid', repo='phantom', text='fleet fix'),
         ]
-        tmp = build('\n'.join(rows) + '\n', repos=('phantom', 'measurably', 'ashlar-landing'))
+        tmp = build('\n'.join(rows) + '\n', repos=('phantom', 'measurably', 'ashlr-landing'))
         self.addCleanup(tmp.cleanup)
         r = restock(Path(tmp.name), '--dry-run', '--per-lane', '4')
         self.assertEqual(r.returncode, 0, r.stderr)

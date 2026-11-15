@@ -83,22 +83,26 @@ export function telegramHtmlToPlain(html: string): string {
 }
 
 /**
- * Hard-split one plain line so each piece's ESCAPED length is ≤ max. Never
+ * Escape and split one plain line so each piece's wire length is ≤ max. Never
  * cuts a UTF-16 surrogate pair (emoji) in half.
  */
-function hardSplitPlain(line: string, max: number): string[] {
+function splitPlainLine(line: string, max: number): string[] {
+  const escaped = escapeTelegramHtml(line);
+  if (escaped.length <= max) return [escaped];
+
   const out: string[] = [];
   let cur = '';
   let curLen = 0;
   for (const ch of line) {
     // for…of iterates code points, so surrogate pairs stay together.
-    const len = escapeTelegramHtml(ch).length;
+    const escapedChar = escapeTelegramHtml(ch);
+    const len = escapedChar.length;
     if (curLen + len > max && cur) {
       out.push(cur);
       cur = '';
       curLen = 0;
     }
-    cur += ch;
+    cur += escapedChar;
     curLen += len;
   }
   if (cur) out.push(cur);
@@ -107,14 +111,14 @@ function hardSplitPlain(line: string, max: number): string[] {
 
 /**
  * Greedy line packer: joins lines with '\n' while the measured length stays
- * ≤ max. `measure` returns the on-the-wire length of a line.
+ * ≤ max. Lines are already escaped, so their length is the wire length.
  */
-function packLines(lines: string[], max: number, measure: (s: string) => number): string[] {
+function packLines(lines: string[], max: number): string[] {
   const chunks: string[] = [];
   let cur: string[] = [];
   let curLen = 0;
   for (const line of lines) {
-    const len = measure(line);
+    const len = line.length;
     const add = cur.length === 0 ? len : len + 1; // +1 for the joining '\n'
     if (cur.length > 0 && curLen + add > max) {
       chunks.push(cur.join('\n'));
@@ -139,6 +143,7 @@ function packLines(lines: string[], max: number, measure: (s: string) => number)
  *   single line that is itself too long is degraded to escaped plain text
  *   (tags dropped) rather than risk an unbalanced tag.
  *
+ * Custom limits are floored and clamped to 16–4096; NaN uses the default.
  * Always returns at least one chunk; an empty input yields [''] (callers
  * should not send an empty message).
  */
@@ -146,28 +151,16 @@ export function splitTelegramText(
   text: string,
   opts: { html?: boolean; max?: number } = {},
 ): string[] {
-  const max = Math.max(16, Math.min(opts.max ?? TELEGRAM_MAX_MESSAGE, TELEGRAM_MAX_MESSAGE));
-  const src = String(text ?? '');
-  const lines = src.split('\n');
-
-  if (opts.html) {
-    const safeLines: string[] = [];
-    for (const line of lines) {
-      if (line.length <= max) {
-        safeLines.push(line);
-      } else {
-        for (const piece of hardSplitPlain(telegramHtmlToPlain(line), max)) {
-          safeLines.push(escapeTelegramHtml(piece));
-        }
-      }
-    }
-    return packLines(safeLines, max, (s) => s.length);
-  }
-
-  const plainLines: string[] = [];
-  for (const line of lines) {
-    if (escapeTelegramHtml(line).length <= max) plainLines.push(line);
-    else plainLines.push(...hardSplitPlain(line, max));
-  }
-  return packLines(plainLines, max, (s) => escapeTelegramHtml(s).length).map(escapeTelegramHtml);
+  const requestedMax = opts.max ?? TELEGRAM_MAX_MESSAGE;
+  const max = Number.isNaN(requestedMax)
+    ? TELEGRAM_MAX_MESSAGE
+    : Math.max(16, Math.min(Math.floor(requestedMax), TELEGRAM_MAX_MESSAGE));
+  const lines = String(text ?? '').split('\n');
+  const wireLines = lines.flatMap((line) => {
+    if (!opts.html) return splitPlainLine(line, max);
+    // Keep short caller-built markup intact. Oversized lines lose formatting
+    // before using the same escaping and code-point splitting as plain text.
+    return line.length <= max ? [line] : splitPlainLine(telegramHtmlToPlain(line), max);
+  });
+  return packLines(wireLines, max);
 }

@@ -95,7 +95,8 @@ const defaultDeps: VerseMcpTerminalDeps = {
   manager: () => { throw new Error('terminal manager not loaded'); },
   sessionRoots: async (sessionId) => {
     const [{ getVerseEngine }, { sessionRoots }] = await Promise.all([import('./verse-api.js'), import('./preview.js')]);
-    const session = (await getVerseEngine()).getSession(sessionId);
+    const session = (await getVerseEngine()).getSession(sessionId)
+      ?? (await import('../owner-assist/service.js')).findOwnerAssistSession(sessionId);
     return session ? sessionRoots(session) : null;
   },
   physicalPath: async (path) => {

@@ -731,3 +731,7 @@ Resolution: env → `locus.enforce` → `locus.firm === true` → off. See
 warn): [`docs/LOCUS-FIRM-FLEET.md`](https://github.com/ashlrai/phantom/blob/master/docs/LOCUS-FIRM-FLEET.md). When repos are
 enrolled, Locus is on PATH, and `locus.firm` is still false, `ashlr doctor` /
 preflight soft-warns *consider locus.firm for production* (non-blocking).
+
+## Historical product context
+
+The [original four-pillar vision](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) is preserved as a dated artifact. Current product direction remains the [North Star](NORTH-STAR.md).

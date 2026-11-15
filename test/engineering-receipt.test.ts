@@ -34,6 +34,25 @@ describe('engineering receipt', () => {
     expect(renderReceipt(r)).toContain('FLAG no-check-after-edit');
   });
 
+  it.each([
+    ['typecheck', 'npm run typecheck', 'Typecheck is clean'],
+    ['build', 'npm run build', 'Build is clean'],
+  ] as const)('uses the latest fresh %s result to assess claims', (kind, command, claim) => {
+    const edit: ReceiptEvent = { type: 'edit', path: 'a.ts' };
+    const receipt = (events: ReceiptEvent[]) => buildReceipt(events, { claims: [claim] });
+
+    const failed = receipt([edit, cmd(command), cmd(command, 1)]);
+    expect(failed.evidence[kind]).toBe('fail');
+    expect(failed.claims[0]?.status).toBe('UNVERIFIED');
+
+    const recovered = receipt([edit, cmd(command, 1), cmd(command)]);
+    expect(recovered.evidence[kind]).toBe('pass');
+    expect(recovered.claims[0]?.status).toBe('supported');
+
+    expect(receipt([cmd(command), edit]).claims[0]?.status).toBe('UNVERIFIED');
+    expect(receipt([edit, cmd(command), { type: 'command', command, exitCode: null }]).claims[0]?.status).toBe('UNVERIFIED');
+  });
+
   it('reports deploy as not attempted when absent, and records target when present', () => {
     expect(renderReceipt(buildReceipt(fixture))).toContain('Deploy: not attempted');
     const r = buildReceipt([cmd('vercel deploy --prod'), cmd('curl https://x.example/health')], { claims: ['deployed to prod'] });

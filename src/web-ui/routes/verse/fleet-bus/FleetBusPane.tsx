@@ -16,6 +16,7 @@ import { BusPostBox, type BusPostPrefill } from './BusPostBox.js';
 import { ObserveSlice } from '../fleet-observe/ObserveFacts.js';
 import { recentSenders } from './bus-post-model.js';
 import { replyCounts, threadHeadline, threadOf } from './bus-thread-model.js';
+import { PeerLedgerCard } from './PeerLedgerCard.js';
 import styles from './fleet-bus.module.css';
 
 // Include an occurrence number so identical log lines remain separate events.
@@ -161,6 +162,7 @@ function DurableBus({ visible, query, setQuery, tell }: { visible: boolean; quer
     [row.from, row.to, row.priority, row.kind, row.channel ?? '', row.excerpt].some(value => value.toLowerCase().includes(query.toLowerCase())));
   return <section className={styles.root} aria-label="Durable bus">
     {status.data && <p className={styles.header}>{busStatusLine(status.data)}</p>}
+    <PeerLedgerCard visible={visible} />
     {errorText && <p className={styles.notice} role="status">{errorText}</p>}
     {!errorText && (status.data === null || page.data === null) && <p className={styles.notice}>Durable bus is unavailable.</p>}
     <input className={styles.search} type="search" aria-label="Filter bus events" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') setQuery(''); }} />
