@@ -290,14 +290,6 @@ export async function startVerseBackgroundServices(
     const mod = await (deps.loadRetroSweep ?? (() => import('../core/learn/retro/sweep-timer.js')))();
     return mod.scheduleRetroSweep(cfg);
   });
-  // The iMessage ack's owner status reply is registered with a literal import so the
-  // compiled sidecar bundles it; the Leader tick and the teammate worker share this process.
-  if (cfg.comms?.enabled === true) await attempt('imessage-status-reply', async () => {
-    const [bridge, reply] = await Promise.all([
-      import('../core/comms/imessage-inbox-bridge.js'), import('../core/agents/owner-status-reply.js')]);
-    bridge.setIMessageStatusReply(reply.ownerStatusReply());
-    return null;
-  });
   // Native iMessage permissions follow the desktop's sidecar responsibility.
   // Keep its worker in this existing live process; a launchd copy may lack FDA.
   if (accountServices && cfg.comms?.enabled === true) await attempt('teammate-comms', async () => {

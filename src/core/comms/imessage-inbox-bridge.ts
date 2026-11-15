@@ -139,14 +139,21 @@ export interface PatchIngestReport extends PatchSweepReport {
 export { senderIdFor };
 
 // The status composer's digest readers must not join the Tier-1 import
-// closure, so this module never imports them. A non-literal import() is not an
-// option either: the compiled sidecar resolves a computed specifier against its
+// closure, so this module never imports them, and a computed import() is not an
+// option: the compiled sidecar resolves a computed specifier against its
 // virtual FS and always misses (test/sidecar-literal-imports-315.test.ts).
-// Entry points outside the closure (src/cli/imessage.ts, src/cli/verse.ts) load
-// the composer with a literal import and register it here. With nothing
-// registered, the ack degrades to the generic receipt text, as before.
-let registeredStatusReply: IMessageStatusReply | null = null;
-export function setIMessageStatusReply(reply: IMessageStatusReply | null): void { registeredStatusReply = reply; }
+// The CLI entry (src/cli/index.ts, outside the closure and the entry of every
+// host: CLI, daemon tick, Leader tick, teammate worker, sidecar) publishes a
+// loader built from a literal import under this well-known key. The loader runs
+// on the first ack, so it costs nothing at startup. With no loader the ack
+// degrades to the generic receipt.
+export const IMESSAGE_STATUS_REPLY_LOADER = Symbol.for('ashlr.imessage.statusReplyLoader');
+const loadStatusReply = async (): Promise<IMessageStatusReply | null> => {
+  try {
+    const loader = (globalThis as Record<symbol, unknown>)[IMESSAGE_STATUS_REPLY_LOADER];
+    return typeof loader === 'function' ? await (loader as () => Promise<IMessageStatusReply | null>)() : null;
+  } catch { return null; }
+};
 
 /** Map one allowlisted chat.db row to a canonical channel message. */
 export function imessageChannelMessage(msg: IntakeMsg): ChannelMessage | null {
@@ -210,7 +217,7 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
     // resolves a status reply for any other handle.
     const ackText = async (ack: ChannelAck): Promise<string> => {
       const generic = formatChannelAck(ack);
-      const reply = deps.statusReply ?? registeredStatusReply;
+      const reply = deps.statusReply ?? await loadStatusReply();
       if (!reply) return generic;
       let isAsk = false;
       try { isAsk = reply.ask(currentBody); } catch { return generic; }

@@ -5,7 +5,7 @@
 import { parseArgs } from 'node:util';
 import { loadConfigReadOnlyStrict } from '../core/config.js';
 import { buildDoctorReport, pollInboundSince, readCursor } from '../core/integrations/imessage.js';
-import { ingestIMessages, setIMessageStatusReply } from '../core/comms/imessage-inbox-bridge.js';
+import { ingestIMessages } from '../core/comms/imessage-inbox-bridge.js';
 import { sendLeaderReplies } from '../core/comms/imessage-leader-replies.js';
 import { tickTeammateMessages } from '../core/comms/imessage-teammate-worker.js';
 import type { AshlrConfig } from '../core/types.js';
@@ -29,8 +29,6 @@ export async function cmdIMessage(args: string[]): Promise<number> {
       return values.help ? 0 : 1;
     }
     const cfg = loadCfg();
-    // Literal import (bundleable); the bridge itself stays out of the Tier-1 closure.
-    setIMessageStatusReply((await import('../core/agents/owner-status-reply.js')).ownerStatusReply());
 
     if (command === 'respond') {
       if (!values.apply || !cfg) throw new Error('respond requires --apply and readable config');
