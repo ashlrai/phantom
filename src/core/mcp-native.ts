@@ -47,6 +47,7 @@ import { DROP_JOB_LANES, DROP_JOB_TIERS, DropJobExistsError, DropJobValidationEr
 import { STRAY_ID_PATTERN } from './fleet/stray-slots.js';
 import { listProposals } from './inbox/store.js';
 import { FLEET_APPS } from './fleet/app-await.js';
+import { EVIDENCE_SCHEMAS, recordEvidence, validEvidenceArgs } from './intent/mcp-evidence.js';
 import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
 import { desktopOperatorTools } from './desktop/operator-mcp.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, type OwnerThreadSettings } from './comms/owner-channel.js';
@@ -232,49 +233,24 @@ const TOOLS: NativeToolImpl[] = [
     },
   },
   {
-    name: 'intent_link', description: 'Record caller-supplied merged pull evidence on matching directives. Supplied claims are not verified.',
-    inputSchema: { type: 'object', properties: {
-      repo: { type: 'string', minLength: 1, maxLength: 200 },
-      number: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
-      title: { type: 'string', minLength: 1, maxLength: 300 },
-      branch: { type: 'string', minLength: 1, maxLength: 300 },
-      url: { type: 'string', minLength: 1, maxLength: 2048 },
-      at: { type: 'string', maxLength: 35, format: 'date-time' },
-    }, required: ['repo', 'number', 'title'], additionalProperties: false },
-    safety: 'append',
-    handler: async args => (await import('./intent/mcp-evidence.js' as string) as typeof import('./intent/mcp-evidence.js')).recordEvidence('intent_link', args),
+    // Evidence only: a merged pull never verifies a directive or closes it.
+    name: 'intent_link',
+    description: 'Record caller-supplied merged pull evidence. Moves open directives to merged; never verifies or closes.',
+    inputSchema: EVIDENCE_SCHEMAS.intent_link, safety: 'append',
+    handler: async args => recordEvidence('intent_link', args),
   },
   {
-    name: 'intent_ship', description: 'Record caller-supplied release evidence on matching directives. Supplied claims are not verified.',
-    inputSchema: { type: 'object', properties: {
-      release: { type: 'string', minLength: 1, maxLength: 200 },
-      notes: { type: 'string', minLength: 1, maxLength: 10000 },
-      rq: { type: 'array', minItems: 1, maxItems: 16, items: { type: 'string', minLength: 1, maxLength: 200 } },
-      at: { type: 'string', maxLength: 35, format: 'date-time' },
-    }, required: ['release'], additionalProperties: false },
-    safety: 'append',
-    handler: async args => (await import('./intent/mcp-evidence.js' as string) as typeof import('./intent/mcp-evidence.js')).recordEvidence('intent_ship', args),
+    // Evidence only: a release note never proves publication or verification.
+    name: 'intent_ship',
+    description: 'Record caller-supplied release evidence. Moves named directives to shipped; never verifies.',
+    inputSchema: EVIDENCE_SCHEMAS.intent_ship, safety: 'append',
+    handler: async args => recordEvidence('intent_ship', args),
   },
   {
     name: 'intent_stale', description: 'List stale directives in the local intent ledger. apply true refreshes local tracking only (live directives re-queue, others keep their status with a sweep evidence row); recommendations never close work, dispatch jobs, verify remotely or claim completion.',
     inputSchema: { type: 'object', properties: { apply: { type: 'boolean' } }, additionalProperties: false },
     safety: 'append',
     handler: async args => (await import('./intent/native-stale.js' as string) as typeof import('./intent/native-stale.js')).nativeIntentStale(args),
-  },
-  {
-    name: 'intent_import',
-    description: 'Import local JSONL files or an ashlr.intent-ledger/v1 document, deduplicating directives and retaining provenance.',
-    inputSchema: { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' }, minItems: 1 } }, required: ['paths'], additionalProperties: false },
-    safety: 'append',
-    handler: async (args) => {
-      const paths = args['paths'];
-      if (Object.keys(args).some((key) => key !== 'paths') || !Array.isArray(paths) || paths.length === 0 ||
-        !paths.every((path): path is string => typeof path === 'string' && path.trim().length > 0)) {
-        throw new Error('Expected a nonempty paths array of nonblank strings, with no other arguments.');
-      }
-      const { importIntentFiles } = await import('./intent/import.js');
-      return { ok: true, schema: 'ashlr.intent-ledger/v1', ...(await importIntentFiles(paths)) };
-    },
   },
   {
     name: 'intent_import',
@@ -1750,7 +1726,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
   if (name === 'intent_add' || name === 'intent_update') {
     invalid = ((await import('./intent/native-edit.js' as string)) as typeof import('./intent/native-edit.js')).validNativeEdit(name, rawArgs) ? null : 'invalid intent arguments';
   } else if (name === 'intent_link' || name === 'intent_ship') {
-    invalid = ((await import('./intent/mcp-evidence.js' as string)) as typeof import('./intent/mcp-evidence.js')).validEvidenceArgs(name, rawArgs) ? null : 'invalid intent evidence arguments';
+    invalid = validEvidenceArgs(name, rawArgs) ? null : 'invalid intent evidence arguments';
   } else if (name === 'intent_stale') {
     invalid = (await import('./intent/native-stale.js' as string) as typeof import('./intent/native-stale.js')).validStaleArgs(rawArgs) ? null : 'invalid intent stale arguments';
   } else if (name === 'intent_list' || name === 'intent_get') {
