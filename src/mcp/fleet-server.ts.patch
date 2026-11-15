@@ -1,0 +1,24 @@
+/** Pool reachability join, sanitized error messages (reader never throws; deps are fixed, no caller input). */
+const readFleetPoolReach = (
+  read: () => Promise<unknown> = async () => {
+    const deps = defaultPoolReachDeps();
+    const home = (() => { try { return deps.peers.homeDir(); } catch { return ''; } })();
+    let peers: TailnetPeers;
+    try {
+      peers = readTailnetPeers(deps.peers);
+    } catch {
+      peers = { asOf: UNKNOWN, self: UNKNOWN, peers: [], reasons: ['tailscale unavailable or status unreadable'] };
+    }
+    let config: PoolConfig | null = null;
+    let configError: string | null = null;
+    try {
+      config = deps.readConfig();
+    } catch (error) {
+      configError = error instanceof Error ? error.message : String(error);
+    }
+    // Ensure any config error that might contain private information is scrubbed before return
+    return joinPoolReach(config, configError, peers, home);
+  },
+  timeoutMs?: number,
+) =>
+  readBounded(read, 'pool-reach', timeoutMs);

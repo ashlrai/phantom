@@ -1,4 +1,3 @@
-/** Isolated MCP adapter: no gateway discovery, forwarding, or mutation tools. */
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -24,9 +23,7 @@ import { MAX_FLEET_RECHECK_HISTORY, DEFAULT_FLEET_RECHECK_HISTORY, parseFleetRec
   readFleetRecheckTool, readFleetRecheckHistoryTool, type FleetRecheckHistoryArgs } from './fleet-recheck.js';
 import { readFleetUsageResets } from './fleet-usage-resets.js';
 import {
-  MAX_FLEET_RESET_HISTORY, parseFleetResetHistoryArgs, readFleetResetHistory, type FleetResetHistoryArgs,
-} from './fleet-reset-history.js';
-
+  MAX_FLEET_RESET_HISTORY, parseFleetResetHistoryArgs, readFleetResetHistory, type FleetResetHistoryArgs } from './fleet-reset-history.js';
 import { parseFleetResetGroupAwaitArgs, readFleetResetGroupAwait, type FleetResetGroupAwaitArgs } from './fleet-reset-group-await.js';
 import { RESET_GROUP_AWAIT_MAX_LANES } from '../core/fleet/reset-group-await.js';
 import { LANE_ID_RE } from '../core/fleet/runs-lane-targets.js';
@@ -62,131 +59,53 @@ import { readFleetKeptTool } from './fleet-kept.js';
 import { readFleetTrimTool } from './fleet-trim.js';
 import { MAX_FLEET_EMAIL_OUTBOX_ENTRIES, parseFleetEmailOutboxArgs, readFleetEmailOutbox,
   type FleetEmailOutboxArgs } from './fleet-email-outbox.js';
-import { MAX_FLEET_EMAIL_OUTBOX_AWAIT_MS, MIN_FLEET_EMAIL_OUTBOX_AWAIT_POLL_MS, MAX_FLEET_EMAIL_OUTBOX_AWAIT_POLL_MS,
-  DEFAULT_FLEET_EMAIL_OUTBOX_AWAIT_POLL_MS, parseFleetEmailOutboxAwaitArgs, readFleetEmailOutboxAwait,
-  type FleetEmailOutboxAwaitArgs } from './fleet-email-outbox-await.js';
-import { MAX_FLEET_EMAIL_OUTBOX_BATCH_AWAIT_NAMES, parseFleetEmailOutboxBatchAwaitArgs,
-  readFleetEmailOutboxBatchAwait, type FleetEmailOutboxBatchAwaitArgs } from './fleet-email-outbox-batch-await.js';
-import { parseFleetEmailDiagnosisArgs, readFleetEmailDiagnosis } from './fleet-email-diagnosis.js';
-import { parseFleetDiskForecastArgs, readFleetDiskForecast } from './fleet-disk-forecast.js';
-import { parseFleetGmailArchivePlanLatestArgs, readFleetGmailArchivePlanLatest, type FleetGmailArchivePlanLatestArgs } from './fleet-gmail-archive-plan-latest.js';
-import { parseFleetGmailTriageLatestArgs, readFleetGmailTriageLatest } from './fleet-gmail-triage-latest.js';
-import { parseFleetCommsInboxArgs, readFleetCommsInbox, type FleetCommsInboxArgs } from './fleet-comms-inbox.js';
-import { parseFleetCommsReadinessArgs, readFleetCommsReadiness } from '../core/mcp/fleet-comms-readiness.js';
-import { MAX_FLEET_IMESSAGE_ACKS, parseFleetImessageAcksArgs, parseFleetImessagePathArgs,
-  readFleetImessageAcks, readFleetImessagePath, type FleetImessageAcksArgs } from './fleet-imessage-evidence.js';
-
-import { FLEET_BATCH_LABEL_PATTERN, parseFleetJobPrecheckBatchArgs, readFleetJobPrecheckBatch, type FleetJobPrecheckBatchArgs } from './fleet-job-precheck-batch.js';
-import { JOB_PRECHECK_BATCH_MAX } from '../core/fleet/job-precheck-batch.js';
-import { parseFleetCiResumeInputsArgs, readFleetCiResumeInputs, type FleetCiResumeInputsArgs } from './fleet-ci-resume-inputs.js';
-import { parseFleetCiReceiptAwaitArgs, readFleetCiReceiptAwait, type FleetCiReceiptAwaitArgs } from './fleet-ci-receipt-await.js';
-import { parseFleetCiReceiptAwaitBatchArgs, readFleetCiReceiptAwaitBatch,
-  type FleetCiReceiptAwaitBatchArgs } from './fleet-ci-receipt-await-batch.js';
-import { CI_RECEIPT_AWAIT_DEFAULT_POLL_MS, CI_RECEIPT_AWAIT_DEFAULT_TIMEOUT_MS,
-  CI_RECEIPT_AWAIT_MAX_POLL_MS, CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS,
-  CI_RECEIPT_AWAIT_MIN_POLL_MS } from '../core/fleet/ci-receipt-await.js';
-import { CI_RECEIPT_AWAIT_BATCH_MAX_TARGETS } from '../core/fleet/ci-receipt-await-batch.js';
-
-import { retryStagingInventory } from './fleet-staging-inventory-retry.js';
-import { parseStagingBatchArgs, readStagingBatch, type StagingScanner } from './fleet-staging-inventory-batch.js';
-import { parseFleetStagingInventoryArgs, readFleetStagingInventory, type FleetStagingInventoryArgs } from './fleet-staging-inventory.js';
-import { FLEET_RELEASE_CANDIDATE_REPO_PATTERN, FLEET_RELEASE_CANDIDATE_TAG_PATTERN,
-  parseFleetReleaseCandidateArgs, readFleetReleaseCandidate,
-  type FleetReleaseCandidateArgs } from './fleet-release-candidate.js';
-
-export const MAX_FLEET_OUTPUT_BYTES = 64 * 1024;
-
-export interface FleetWorkBoardArgs {
-  /** Cap on returned board items, applied newest-first after filtering. */
-  limit: number;
-  /** Exact channel_ref filter; omitted keeps every channel. */
-  thread?: string;
-}
-
-const WORK_BOARD_ARG_KEYS = new Set(['limit', 'thread']);
-
-/** Runtime argument validation: low-level SDK servers never check the
- * tools/list schema, so unknown keys — including any caller `root` —,
- * out-of-range limits and oversized or non-string threads are rejected
- * before the store is touched. The board always reads the server-owned
- * default fleet root. */
-function parseFleetWorkBoardArgs(args: Record<string, unknown>): FleetWorkBoardArgs | null {
-  const limit = args['limit'] ?? WORK_BOARD_DEFAULT_LIMIT, thread = args['thread'];
-  if (Object.keys(args).some(key => !WORK_BOARD_ARG_KEYS.has(key)) ||
-    args['limit'] === null || args['thread'] === null ||
-    typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > WORK_BOARD_MAX_LIMIT ||
-    thread !== undefined && (typeof thread !== 'string' || thread.length > 512)) return null;
-  return { limit, thread: thread as string | undefined };
-}
-
-/** One bounded board read through the canonical listWorkBoard listing — the
- * same classifier as `ashlr fleet work-board`, never a second one — with the
- * invocation clock stamped as `asOf`. */
-async function readFleetWorkBoard(input: FleetWorkBoardArgs) {
-  const now = Date.now();
-  const board = listWorkBoard({ root: join(ashlrHome(), 'fleet'), now, limit: input.limit, channelRef: input.thread });
-  return { ...board, asOf: new Date(now).toISOString() };
-}
-
-/** Same bound as the verse comms-status API uses for the bridge health read. */
-const CHANNEL_HEALTH_TIMEOUT_MS = 5_000;
-const SLACK_REPLIES_TIMEOUT_MS = 5_000;
-
-/** Runtime identity: host, installed version and fleet-state freshness, sanitized by the reader. */
-async function readFleetRuntimeIdentity() {
-  return readRuntimeIdentity(defaultRuntimeIdentityDeps());
-}
-
-/** The bridge report with runtimeHost redacted like runtime-identity output (as the verse API does). */
-async function readSanitizedChannelHealth() {
-  const report = await readChannelHealth();
-  const home = homedir();
-  return {
-    ...report,
-    channels: report.channels.map(channel => ({
-      ...channel,
-      runtimeHost: channel.runtimeHost === null ? null : sanitizeIdentityText(channel.runtimeHost, home),
-    })),
-  };
-}
-
-/** Bounded read. A throw or timeout is reported as status 'unknown' with a
- * short code — never an invented report. */
-async function readBounded(
-  read: () => Promise<unknown>,
-  code: string,
-  timeoutMs = CHANNEL_HEALTH_TIMEOUT_MS,
-): Promise<unknown> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      read(),
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
-      }),
-    ]);
-  } catch (error) {
-    return { status: 'unknown', reason: error instanceof Error && error.message === 'timeout' ? `${code}-timeout` : `${code}-unavailable` };
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-}
-
-const readFleetChannelHealth = (read: () => Promise<unknown> = readSanitizedChannelHealth, timeoutMs?: number) =>
-  readBounded(read, 'channel-health', timeoutMs);
+import { readFleetCommsReadiness } from './fleet-comms-readiness.js';
+import { readFleetEmailDiagnosis } from './fleet-email-diagnosis.js';
+import { readFleetGmailTriageLatest } from './fleet-gmail-triage-latest.js';
+import { readFleetDiskForecast } from './fleet-disk-forecast.js';
+import { readFleetGmailArchivePlanLatest } from './fleet-gmail-archive-plan-latest.js';
+import { readFleetCommsInbox } from './fleet-comms-inbox.js';
+import { readFleetImessagePath } from './fleet-imessage-path.js';
+import { readFleetImessageAcks } from './fleet-imessage-acks.js';
+import { readFleetCiResumeInputs } from './fleet-ci-resume-inputs.js';
+import { readFleetCiReceiptAwait } from './fleet-ci-receipt-await.js';
+import { readFleetCiReceiptAwaitBatch } from './fleet-ci-receipt-await-batch.js';
+import { readFleetReleaseCandidate } from './fleet-release-candidate.js';
+import { readFleetWorkBoard } from './fleet-work-board.js';
+import { readFleetJobPrecheckBatch } from './fleet-job-precheck-batch.js';
+import { readBounded } from '../core/mcp/bounded.js';
 
 /** Sanitized tailnet peers (reader never throws; deps are fixed, no caller input). */
 const readFleetTailnetPeers = (read: () => Promise<unknown> = async () => readTailnetPeers(defaultTailnetPeersDeps()), timeoutMs?: number) =>
   readBounded(read, 'tailnet-peers', timeoutMs);
 
-/** Pool reachability join (reader never throws; deps are fixed, no caller input). */
-const readFleetPoolReach = (read: () => Promise<unknown> = async () => readPoolReach(defaultPoolReachDeps()), timeoutMs?: number) =>
+/** Pool reachability join, sanitized error messages (reader never throws; deps are fixed, no caller input). */
+const readFleetPoolReach = (
+  read: () => Promise<unknown> = async () => {
+    const deps = defaultPoolReachDeps();
+    const home = (() => { try { return deps.peers.homeDir(); } catch { return ''; } })();
+    let peers: TailnetPeers;
+    try {
+      peers = readTailnetPeers(deps.peers);
+    } catch {
+      peers = { asOf: UNKNOWN, self: UNKNOWN, peers: [], reasons: ['tailscale unavailable or status unreadable'] };
+    }
+    let config: PoolConfig | null = null;
+    let configError: string | null = null;
+    try {
+      config = deps.readConfig();
+    } catch (error) {
+      configError = error instanceof Error ? error.message : String(error);
+    }
+    // Ensure any config error that might contain private information is scrubbed before return
+    return joinPoolReach(config, configError, peers, home);
+  },
+  timeoutMs?: number,
+) =>
   readBounded(read, 'pool-reach', timeoutMs);
 
-/** Slack reply binding: the `replies` section of the offline bridge status plus its `at`. */
-async function readSlackRepliesEvidence() {
-  const status = buildSlackBridgeStatus();
-  const { state, answered, unanswered, oldestUnansweredAt, uncertainSends, rejected, futureDated, unansweredSample } = status.replies;
+const readFleetSlackReplies = (read: () => Promise<unknown> = readSlackRepliesEvidence, timeoutMs?: number) =>
+  readBounded(read, 'slack-replies', timeoutMs);
   return { asOf: status.at, state, answered, unanswered, oldestUnansweredAt, uncertainSends, rejected, futureDated, unansweredSample };
 }
 
@@ -998,25 +917,3 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_intent_read' ? await (readers.intentRead ?? readFleetIntent)(intentRead as FleetIntentReadArgs)
         : name === 'fleet_release_candidate' ? await (readers.releaseCandidate ?? readFleetReleaseCandidate)(releaseCandidate as FleetReleaseCandidateArgs)
         : name === 'fleet_work_board' ? await (readers.workBoard ?? readFleetWorkBoard)(workBoard as FleetWorkBoardArgs)
-        : await (readers.busInbox ?? readFleetBusInbox)(inbox as FleetBusInboxArgs);
-      // Scrub values before serialization: redaction regexes operate on prose
-      // and may consume JSON quotes if applied to already serialized bytes.
-      const text = JSON.stringify(value, (_key, item: unknown) =>
-        typeof item === 'string' ? scrubPrivateText(item, { emails: true }) : item,
-      );
-      // Never slice JSON: oversized observations fail explicitly and remain valid MCP.
-      if (Buffer.byteLength(text, 'utf8') > MAX_FLEET_OUTPUT_BYTES) {
-        return { isError: true, content: [{ type: 'text', text: 'Fleet observation exceeds the output limit; request a smaller limit.' }] };
-      }
-      return { content: [{ type: 'text', text }] };
-    } catch {
-      // Source exceptions may contain config values, tokens, or machine paths.
-      return { isError: true, content: [{ type: 'text', text: 'Fleet observation unavailable; inspect local configuration and fleet stores.' }] };
-    }
-  });
-  return server;
-}
-
-export async function startFleetServer(): Promise<void> {
-  await createFleetServer().connect(new StdioServerTransport());
-}
