@@ -223,6 +223,8 @@ const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
   'fleet-recheck': 'handleFleetRecheckApi',
   'fleet-coordination-claims': 'handleFleetCoordinationClaimsApi',
   'fleet-work-board': 'handleFleetWorkBoardApi',
+  // Merges pane: where PRs wait (read-only merge-latency report).
+  'fleet-merge-latency': 'handleMergeLatencyApi',
 };
 
 const allPrefixes = WORKBENCH_ROUTE_FAMILIES.flatMap((family) => family.prefixes.map((prefix) => ({ family: family.id, prefix })));
