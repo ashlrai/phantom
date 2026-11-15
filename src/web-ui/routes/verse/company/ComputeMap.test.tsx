@@ -3,8 +3,9 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { evictAll } from '../../../data/cache.js';
 import type { FleetCompute } from '../../../../core/fleet/compute-view.js';
 import { ComputeMap } from './ComputeMap.js';
-import { advanceCores, isFleetCompute, placeSession } from './compute-model.js';
-import { at, lane, NOW, session, sessions } from './company.test-support.js';
+import { advanceCores, isFleetCompute, isFleetSessionMap } from './compute-model.js';
+import { at, lane, NOW, sessions } from './company.test-support.js';
+import type { MapSession } from '../../../../core/fleet/sessions-view.js';
 import { getPane } from '../panes/pane-registry.js';
 import './compute.pane.js';
 import FleetWorld from '../fleet/FleetWorld.js';
@@ -14,11 +15,16 @@ const compute: FleetCompute = { schema: 'fleet.compute.v1', generatedAt: at(), l
   { id: 'local', local: true, owners: ['team'], heartbeatAt: null, state: 'unknown', stats, jobs: [], slots: 2, ramSlots: 1, pressure: null, memguardPaused: null },
   { id: 'muse', local: false, owners: ['team'], heartbeatAt: NOW - 400_000, state: 'offline', stats: null, jobs: [], slots: null, ramSlots: null, pressure: null, memguardPaused: null },
 ] };
+const mapped = (over: Partial<MapSession> = {}): MapSession => ({
+  job: 'RQ-A', lane: 'codex-personal', model: 'test-model', status: 'running', elapsedSeconds: 60,
+  outcome: null, prUrl: null, nodeId: 'local', placement: 'process', mapState: 'running',
+  branch: 'work/fleet', worktree: 'recorded', activity: 'running typecheck', detailSources: null, ...over,
+});
 function serve() {
   const payloads: Record<string, unknown> = {
     '/api/verse/fleet/control/compute': compute,
     '/api/verse/agent-bus?after=0&limit=100': { v: 1, status: 'ok', nextCursor: 1, messages: [{ cursor: 1, receivedAt: NOW, envelope: { id: 'bus-1', from: 'helper', to: 'worker', priority: 'P2', ttl: 60000, body: { kind: 'work.claim', jobId: 'RQ-A' } } }] },
-    '/api/fleet/sessions': { ...sessions, sessions: [session(), session({ job: 'RQ-WAIT', status: 'queued', live: 'no' })] },
+    '/api/verse/fleet/control/sessions': { ...sessions, computeAt: at(), mapRecent: [], mapSessions: [mapped(), mapped({ job: 'RQ-WAIT', status: 'queued', nodeId: null, placement: 'unknown', mapState: 'queued' })] },
     '/api/fleet/lanes': { schema: 'fleet.lanes.v1', generatedAt: at(), lanes: [{ ...lane, slotTarget: 2, hold: { held: true, by: 'autobackoff', reason: 'quota reset', until: at(-100) } }] },
     '/api/fleet/job?id=RQ-A': { schema: 'fleet.job.v1', branch: 'work/fleet', log: { tail: ['running typecheck'] }, publish: { prUrl: 'https://github.com/ashlrai/phantom/pull/1', autoMerge: true } },
     '/api/fleet/job/activity?id=RQ-A': { schema: 'fleet.job.activity.v1', job: 'RQ-A', generatedAt: at(), state: 'running', lane: 'codex-personal', tier: 'work', model: null, sources: { events: 'healthy', commands: 'healthy', files: 'healthy', reports: 'missing' }, entries: [{ kind: 'command', text: 'npm run typecheck', line: 1 }], counts: { event: 0, command: 1, files: 0, report: 0 }, truncated: false },
@@ -86,8 +92,35 @@ it('never infers utilization from a first sample, stale/reordered counters, rebo
   expect(advanceCores(first, { ...next, sampledAtMs: NOW - 1 }, NOW).samples).toEqual([[null]]);
   expect(advanceCores(first, next, NOW).samples).toEqual([[null]]);
   expect(advanceCores(first, next, NOW + 100_000).samples).toEqual([[null]]);
-  expect(placeSession(session({ status: 'queued', live: 'no' }), compute.nodes, 'local')).toBeNull();
-  expect(placeSession(session(), compute.nodes, 'local')).toBe('local');
-  const claim = { job: 'RQ-A', owner: 'team' };
-  expect(placeSession(session(), compute.nodes.map(n => ({ ...n, jobs: [claim] })), 'local')).toBeNull();
+  expect(isFleetSessionMap({ schema: 'fleet.sessions.v1', sessions: [] })).toBe(false);
+});
+
+it('groups session states and keeps placement absent from the current node snapshot visible', async () => {
+  const { fetch, payloads } = serve();
+  payloads['/api/verse/fleet/control/sessions'] = { ...sessions, computeAt: at(), mapRecent: [], mapSessions: [
+    mapped({ job: 'RQ-IDLE', status: 'exited', mapState: 'idle' }),
+    mapped({ job: 'RQ-HELD', status: 'parked', mapState: 'held', nodeId: null, placement: 'unknown' }),
+    mapped({ job: 'RQ-REMOTE', status: 'unknown', mapState: 'unknown', nodeId: 'missing-node', placement: 'claim' }),
+  ] };
+  render(<ComputeMap visible />);
+  expect(await screen.findByRole('group', { name: 'codex-personal idle' })).toHaveTextContent('RQ-IDLE');
+  const unassigned = within(screen.getByRole('region', { name: 'Unassigned agents' }));
+  expect(unassigned.getByRole('group', { name: 'codex-personal held' })).toHaveTextContent('RQ-HELD');
+  expect(unassigned.getByText('RQ-REMOTE')).toBeInTheDocument();
+  fireEvent.click(unassigned.getByText('RQ-REMOTE').closest('button')!);
+  expect(screen.getByText('Activity detail unavailable for this placement.')).toBeInTheDocument();
+  expect(screen.getByText('Open full job log')).toBeDisabled();
+  expect(fetch.mock.calls.some(([url]) => String(url).includes('/api/fleet/job'))).toBe(false);
+});
+
+it('renders empty and malformed session telemetry without inventing agents', async () => {
+  const { payloads } = serve();
+  payloads['/api/verse/fleet/control/sessions'] = { ...sessions, computeAt: at(), sourceState: 'missing', mapSessions: [], mapRecent: [] };
+  const view = render(<ComputeMap visible />);
+  expect(await screen.findByText('Session inventory unknown.')).toBeInTheDocument();
+  expect(screen.queryByText('RQ-A')).not.toBeInTheDocument();
+  view.unmount(); evictAll();
+  payloads['/api/verse/fleet/control/sessions'] = { ...sessions, computeAt: at(), mapRecent: [], mapSessions: [{ ...mapped(), mapState: 'invented' }] };
+  render(<ComputeMap visible />);
+  expect(await screen.findByText('Sessions refresh failed. No data available.')).toBeInTheDocument();
 });
