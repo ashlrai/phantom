@@ -104,3 +104,47 @@ valid latest fleet state after probes, preserves unrelated fields, writes an
 exclusive temporary and atomically replaces the file only after its race check.
 Malformed, symlinked, hardlinked, unowned or group/world-writable state is not
 replaced. This cannot serialize a legacy writer that ignores the shared lock.
+
+## Unified fleet compute map
+
+In Verse or desktop, choose **Fleet world → Compute & agents**, **Company → Fleet map**,
+or **Add pane → Fleet → Fleet compute**.
+The same agent selection and detail pane work in 2D and 3D. Orbit, tilt and zoom
+use CSS perspective; no rendering dependency or fixture graph is loaded.
+
+`GET /api/verse/fleet/control/compute` returns `fleet.compute.v1` from
+`src/core/fleet/compute-view.ts`. It is read-only and accepts no query parameters.
+Each source reports `loaded`, `invalid` or `unavailable`. Reads are regular-file,
+no-follow and capped at 2 MiB. Node inventory comes from `$ASHLR_HOME/nodes/nodes.json`
+and the node pool's `primary-mirror.json` / `nodes.json` witness; the freshest
+heartbeat wins per node (ties use the state observation time). Inventories are
+capped at 512 nodes per source and 512 claims per node, with `truncated` reported.
+An explicit node-pool config binds the local machine to an enrolled node. Otherwise
+it is labelled as an independent local host, without guessing a primary/Muse alias.
+
+Worker beats now include optional `--host-stats <JSON>`: a closed numeric schema
+of sample time, uptime, CPU counters, load averages, RAM and free disk. Older nodes
+stay visible with unknown host metrics. These observations never influence admission.
+The local host uses Node OS counters and statfs, with no shell or network probes.
+RAM used here means physical total minus OS free, rather than working-set attribution.
+Pressure and memguard state are available only from a fresh existing machine sample.
+
+Per-core sparklines retain up to 32 observations in the view. The first sample,
+reboots, reordered counters and gaps over 90 seconds cannot establish utilization.
+Stale/future readings never drive the heat overlay. Load heat is relative to the
+2 × CPU loadgate policy; measured node slots are shown separately. These are
+independent bounds, not a combined promise of launch headroom.
+
+Sessions and lane quota reuse `/api/fleet/sessions` and `/api/fleet/lanes`.
+Claims establish remote placement; process-confirmed local workers establish local
+placement. Ambiguous claims and queued/parked jobs remain unassigned. Selecting an
+agent reuses the scrubbed job detail/activity readers for branch, PR, files, commands
+and outcome. Missing quota_ok, pressure, owner and merge evidence stays unknown.
+Polling stops when the pane or document is hidden; failed reads label retained data.
+
+Upgrade the primary/reader CLI before workers: an older primary rejects the new
+beat flag. Unsupported load averages (including Windows) are null, never the
+platform's synthetic zero values. Remote pressure remains unknown until a source
+publishes it; the new beat deliberately carries only inexpensive OS counters.
+If telemetry collection fails or exceeds its payload budget, the worker omits it
+and continues its ordinary fenced heartbeat; observations never add an execution gate.
