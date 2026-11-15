@@ -42,7 +42,7 @@ import {
 } from '../core/cos/loop.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const usage = `Usage: ashlr fleet cos-loop --duration-ms <ms> [--interval-ms <ms>] [--max-passes <n>] [--runs-dir <abs>] [--json | --stream]
+const usage = `Usage: ashlr fleet cos-loop --duration-ms <ms> [--interval-ms <ms>] [--max-passes <n>] [--runs-dir <abs>] [--peer-plan [--peer-apply]] [--json | --stream]
 Repeat the chief-of-staff worker pass (fleet cos-work) for a bounded window:
 first pass immediately; after a 'drafted' pass the next pass runs with no
 wait to drain the backlog, and after 'idle', 'paused', 'blocked' or an
@@ -61,12 +61,21 @@ line. --stream instead prints sanitized NDJSON live: one
 {"v":1,"record":"summary",...} line. --stream and --json are mutually
 exclusive and rejected before any pass runs. Exit 0 when the loop ended on
 the deadline, the count cap or a signal with no errored pass, 1 on
-'blocked-streak' or any errored pass, 2 on usage.`;
+'blocked-streak' or any errored pass, 2 on usage.
+--peer-plan lets a drafted answer also carry a bounded peer plan (at most 8
+coordination requests to registered peers; claims only, never execution
+authority). It is a dry run by default: --peer-apply sends through the peer
+bus and records the plan in orchestration.json. KILL, pause, missing peer
+identities or an unregistered recipient suppress the send. The peer session
+comes from ASHLR_COS_PEER_LANE, ASHLR_COS_PEER_SESSION and ASHLR_COS_PEER_TOKEN
+(never argv).`;
 
 interface Dependencies {
   now?: () => number;
   output?: (text: string) => void;
   error?: (text: string) => void;
+  /** Environment seam for the peer session; defaults to process.env. */
+  env?: Record<string, string | undefined>;
   /** Full pass override; without it each pass is the real runCosWorkOnce. */
   work?: CosLoopWork;
   /** Sleep seam; rejects on abort. Defaults to the core real-time sleep. */
@@ -80,7 +89,7 @@ export async function cmdFleetCosLoop(args: string[], deps: Dependencies = {}): 
   const error = deps.error ?? ((text: string) => console.error(text));
   const invalid = (): number => { error(`Invalid arguments. ${usage.split('\n')[0]}`); return 2; };
   if (args.includes('--help') || args.includes('-h')) { output(usage); return 0; }
-  let json = false, stream = false;
+  let json = false, stream = false, peerPlan = false, peerApply = false;
   let durationMs: number | undefined, intervalMs: number | undefined, runsDir: string | undefined;
   let maxPasses: number | undefined;
   const parseMs = (value: string | undefined): number | undefined => {
@@ -97,6 +106,8 @@ export async function cmdFleetCosLoop(args: string[], deps: Dependencies = {}): 
     const arg = args[i]!;
     if (arg === '--json' && !json) json = true;
     else if (arg === '--stream' && !stream) stream = true;
+    else if (arg === '--peer-plan' && !peerPlan) peerPlan = true;
+    else if (arg === '--peer-apply' && !peerApply) peerApply = true;
     else if (arg === '--duration-ms' && durationMs === undefined) {
       durationMs = parseMs(args[++i]);
       if (durationMs === undefined || durationMs < 1_000 || durationMs > COS_LOOP_MAX_DURATION_MS) return invalid();
@@ -116,7 +127,17 @@ export async function cmdFleetCosLoop(args: string[], deps: Dependencies = {}): 
   // Compatibility is explicit: --stream IS the machine-readable mode, so
   // combining it with --json is a usage error, refused before any pass runs.
   if (stream && json) return invalid();
-  if (durationMs === undefined) return invalid();
+  if (durationMs === undefined || (peerApply && !peerPlan)) return invalid();
+  let peerOption: RunCosLoopOptions['peerPlan'];
+  if (peerPlan) {
+    const env = deps.env ?? process.env;
+    const lane = env['ASHLR_COS_PEER_LANE'], sessionId = env['ASHLR_COS_PEER_SESSION'], token = env['ASHLR_COS_PEER_TOKEN'];
+    if (!lane || !sessionId || !token) {
+      error('--peer-plan needs ASHLR_COS_PEER_LANE, ASHLR_COS_PEER_SESSION and ASHLR_COS_PEER_TOKEN in the environment.');
+      return 2;
+    }
+    peerOption = { session: { lane, sessionId, token }, apply: peerApply };
+  }
   // One root for every pass, resolved here once — same fallbacks as
   // cos-work, so nothing can drift between passes.
   const root = resolve(runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'));
@@ -138,6 +159,7 @@ export async function cmdFleetCosLoop(args: string[], deps: Dependencies = {}): 
       output(JSON.stringify(sanitizePublicJson({
         v: 1, record: 'pass', pass: event.pass, outcome: event.outcome,
         ...(event.id === undefined ? {} : { id: event.id }),
+        ...(event.peerPlan === undefined ? {} : { peerPlan: event.peerPlan }),
       })));
     }
     : undefined;
@@ -149,6 +171,7 @@ export async function cmdFleetCosLoop(args: string[], deps: Dependencies = {}): 
       ...(maxPasses === undefined ? {} : { maxPasses }),
       intervalMs: intervalMs ?? COS_LOOP_DEFAULT_INTERVAL_MS,
       runsDir: root,
+      ...(peerOption === undefined ? {} : { peerPlan: peerOption }),
       signal: controller.signal,
       ...(onPass === undefined ? {} : { onPass }),
       ...(deps.work === undefined ? {} : { work: deps.work }),

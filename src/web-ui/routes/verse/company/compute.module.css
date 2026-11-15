@@ -11,10 +11,13 @@
 .root button:focus-visible, .root input:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 3px; }
 .quota { display: flex; gap: 12px; overflow-x: auto; padding: 8px 0 16px; }
 .quota article { display: grid; gap: 5px; min-width: 240px; border-left: 3px solid var(--status-unknown-solid); padding: 10px 14px; font-size: var(--text-xs-size); background: var(--bg-surface); }
-.viewport { perspective: 1400px; overflow: auto; padding: 36px 12px; }
-.viewport[data-mode='3D'] { min-height: 600px; padding: 90px 60px; }
-.scene { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 22px; transform-style: preserve-3d; transform-origin: center; }
-.machine { flex-basis: 320px; min-width: 240px; max-width: 680px; padding: var(--space-5); border: 1px solid var(--border-strong); border-radius: var(--radius-xl); background: var(--bg-surface); box-shadow: var(--shadow-dialog); transform-style: preserve-3d; }
+.viewport { padding: 12px; }
+.viewport > summary { cursor: pointer; margin-bottom: 12px; }
+.scene { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 22px; }
+.scene3d { margin: 0 0 16px; border: 1px solid var(--border-subtle); border-radius: var(--radius-xl); background: var(--bg-surface); overflow: hidden; }
+.scene3d canvas { display: block; width: 100%; touch-action: none; cursor: grab; }
+.scene3d figcaption { padding: 8px 12px; font-size: var(--text-2xs-size); color: var(--text-secondary); }
+.machine { flex-basis: 320px; min-width: 240px; max-width: 680px; padding: var(--space-5); border: 1px solid var(--border-strong); border-radius: var(--radius-xl); background: var(--bg-surface); box-shadow: var(--shadow-dialog); }
 .machine[data-heat='cool'] { border-top: 4px solid var(--status-success-solid); }
 .machine[data-heat='warm'] { border-top: 4px solid var(--status-warning-solid); }
 .machine[data-heat='hot'] { border-top: 4px solid var(--status-danger-solid); }
@@ -24,7 +27,7 @@
 .capacity { display: grid; gap: 5px; font-size: var(--text-xs-size); padding: 12px 0; border-block: 1px solid var(--border-subtle); }
 .capacity meter { width: 100%; }
 .lane h4 { font-size: var(--text-xs-size); letter-spacing: .05em; margin: 14px 0 8px; }
-.token { display: grid; gap: 4px; text-align: left; margin: 8px 0; width: 100%; overflow-wrap: anywhere; transform: translateZ(8px); }
+.token { display: grid; gap: 4px; text-align: left; margin: 8px 0; width: 100%; overflow-wrap: anywhere; }
 .token span, .token small { font-size: var(--text-2xs-size); }
 .token[data-state='running'] { border-left: 3px solid var(--status-success-solid); animation: working 3s ease-in-out infinite; }
 .token[data-state='held'], .token[data-state='unknown'] { border-left: 3px solid var(--status-warning-solid); }
