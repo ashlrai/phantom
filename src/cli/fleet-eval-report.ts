@@ -17,6 +17,7 @@ import {
   MAX_EVAL_DAYS,
   type FleetEvalReport,
 } from '../core/fleet/eval-report.js';
+import { buildProofOutcomeReport, formatProofOutcomeReport } from '../core/fleet/proof-outcome-join.js';
 import { readPostMergeObservations, type PostMergeObservationReadResult } from '../core/fleet/post-merge-observations.js';
 
 const usage = `Usage: phm fleet eval-report [--jobs <file>] [--prs <file>]... [--days <n>] [--until <iso>] [--no-observations] [--json]
@@ -73,9 +74,10 @@ interface Parsed {
   days: number;
   until?: number;
   observations: boolean;
+  resultsDir?: string;
 }
 
-function parseArgs(args: string[]): Parsed | null {
+function parseArgs(args: string[], allowResultsDir = false): Parsed | null {
   const parsed: Parsed = { json: false, prs: [], days: DEFAULT_EVAL_DAYS, observations: true };
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
@@ -88,7 +90,11 @@ function parseArgs(args: string[]): Parsed | null {
     };
     if (arg === '--json' && !parsed.json) parsed.json = true;
     else if (arg === '--no-observations' && parsed.observations) parsed.observations = false;
-    else if (arg === '--jobs' && parsed.jobs === undefined) {
+    else if (allowResultsDir && arg === '--results-dir' && parsed.resultsDir === undefined) {
+      const value = take('--results-dir');
+      if (value === null) return null;
+      parsed.resultsDir = value;
+    } else if (arg === '--jobs' && parsed.jobs === undefined) {
       const value = take('--jobs');
       if (value === null) return null;
       parsed.jobs = value;
@@ -123,6 +129,40 @@ export async function cmdFleetEvalReport(args: string[], deps: FleetEvalReportDe
     process.stderr.write(`${usage}\n`);
     return 2;
   }
+  return runEvalReport(parsed, deps, (report) =>
+    parsed.json ? `${JSON.stringify(report)}\n` : `${formatFleetEvalReport(report)}\n`);
+}
+
+/** `phm fleet proof outcomes`: eval-report inputs plus --results-dir, joined to proof artifacts. */
+export async function cmdFleetProofOutcomes(args: string[], deps: FleetEvalReportDeps = {}): Promise<number> {
+  const parsed = parseArgs(args, true);
+  if (!parsed) {
+    process.stderr.write(`${PROOF_OUTCOMES_USAGE}\n`);
+    return 2;
+  }
+  const resultsDir = parsed.resultsDir ?? join(homedir(), '.ashlr-runs');
+  return runEvalReport(parsed, deps, (report) => {
+    const joined = buildProofOutcomeReport(report, resultsDir);
+    return parsed.json ? `${JSON.stringify(joined)}\n` : `${formatProofOutcomeReport(joined)}\n`;
+  });
+}
+
+export const PROOF_OUTCOMES_USAGE = `Usage: phm fleet proof outcomes [--results-dir <dir>] [--jobs <file>] [--prs <file>]... [--days <n>] [--until <iso>] [--no-observations] [--json]
+
+Read-only join of publisher proof artifacts to post-merge outcomes: did a
+verified proof predict a durable merge? Each merged PR is attributed to its
+job, the job's <id>.publish proof marker is verified (never executing recorded
+commands), and durability is rolled up by proof state with Wilson intervals.
+Missing or unreadable proof is reported as such, never guessed.
+
+  --results-dir <dir>  Directory holding <job>.publish and proof files. Default: ~/.ashlr-runs
+  Other flags match \`phm fleet eval-report\`. Emits fleet.proof-outcomes.v1.`;
+
+async function runEvalReport(
+  parsed: Parsed,
+  deps: FleetEvalReportDeps,
+  render: (report: FleetEvalReport) => string,
+): Promise<number> {
   const read = deps.read ?? readText;
   const jobsPath = parsed.jobs ?? join(homedir(), '.ashlr-runs', 'metrics', 'jobs.jsonl');
   const jobsText = await read(jobsPath);
@@ -160,6 +200,6 @@ export async function cmdFleetEvalReport(args: string[], deps: FleetEvalReportDe
   if (prsUnreadable > 0) {
     process.stderr.write(`warning: ${prsUnreadable} --prs file(s) unreadable\n`);
   }
-  process.stdout.write(parsed.json ? `${JSON.stringify(report)}\n` : `${formatFleetEvalReport(report)}\n`);
+  process.stdout.write(render(report));
   return 0;
 }
