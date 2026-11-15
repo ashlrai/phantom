@@ -45,6 +45,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
 export const REAL_IO_TEST_FILES = [
   'test/owner-assist.test.ts', // private state, real runtime fixture and queue integration
   'test/fleet-proof-envelope.test.ts', // Real Git trees, artifact files and the publisher capture CLI hook.
+  'test/agentnet-peer-bus.test.ts', // Real private ledgers and OS lock/ACL probes across 8 hops; measured 21s under fleet load.
   'test/queue.test.ts', // Real Python dispatcher ticks in disposable homes for the shared work market.
   'test/delegation-scope-prompts.test.ts', // real Python and shell prompt builders plus isolated restock fixture subprocesses
   'test/routines.test.ts', // Real CLI adapter subprocesses and private ledger files.
