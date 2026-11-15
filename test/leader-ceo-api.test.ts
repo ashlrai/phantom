@@ -29,9 +29,9 @@ identities = ${options.owner === false ? '[]' : '[{channel="bus",id="local-owner
   writeFileSync(join(root, '.ashlr', 'comms.toml'), `confirmedByMason = ${options.approved !== false}\n`, { mode: 0o600 });
 }
 
-async function request(method: string, body?: unknown, options: { authorized?: boolean; dispatch?: boolean; readSession?: boolean } = {}) {
+async function request(method: string, body?: unknown, options: { authorized?: boolean; dispatch?: boolean; readSession?: boolean; path?: string } = {}) {
   const req = Object.assign(Readable.from(body === undefined ? [] : [JSON.stringify(body)]), {
-    method, url: path,
+    method, url: options.path ?? path,
     headers: { 'content-type': 'application/json', ...(options.authorized === false ? {} : { 'x-ashlr-token': token }) },
   }) as IncomingMessage;
   let status = 0;
@@ -42,11 +42,20 @@ async function request(method: string, body?: unknown, options: { authorized?: b
   } as unknown as ServerResponse;
   const ctx = { allowDispatch: options.dispatch !== false, token,
     ...(options.readSession ? { readSession: { expiresAt: Date.now() + 60_000 } } : {}) } as VerseApiContext;
-  await handleLeaderApi(ctx, req, res, path, method);
+  await handleLeaderApi(ctx, req, res, options.path ?? path, method);
   return { status, body: result };
 }
 
 describe('Leader durable inbox API', () => {
+  it('serves the org board only with a read session and fails closed on corrupt data', async () => {
+    const options = { path: '/api/verse/leader/org', readSession: true };
+    expect((await request('GET', undefined, { ...options, readSession: false })).status).toBe(401);
+    expect((await request('POST', {}, options)).status).toBe(405);
+    expect((await request('GET', undefined, options)).body).toMatchObject({ schema: 'org.board.v1', board: 'Mason', grantsExecutionAuthority: false });
+    mkdirSync(join(root, 'runs', 'org'), { recursive: true });
+    writeFileSync(join(root, 'runs', 'org', 'agents.json'), '{broken');
+    expect((await request('GET', undefined, options)).status).toBe(503);
+  });
   it('requires dispatch authority and mutation token before accepting a desktop message', async () => {
     configuration();
     expect((await request('POST', { text: 'Synthetic fixture message' }, { dispatch: false })).status).toBe(404);

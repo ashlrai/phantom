@@ -29,7 +29,8 @@ describe('participants', () => {
 });
 
 describe('claim keys and overlap', () => {
-  it('parses the four forms and rejects junk', () => {
+  it('parses the five forms and rejects junk', () => {
+    expect(parseClaimKey('org:worker')).toEqual({ kind: 'org', role: 'worker' });
     expect(parseClaimKey('repo:AshlrAI/Phantom')).toEqual({ kind: 'repo', repo: 'ashlrai/phantom' });
     expect(parseClaimKey('path:a/b:src/**')).toEqual({ kind: 'path', repo: 'a/b', glob: 'src/**' });
     expect(parseClaimKey('queue:q-1')).toEqual({ kind: 'queue', queue: 'q-1' });
@@ -62,6 +63,8 @@ describe('claim keys and overlap', () => {
     ['pr:a/b#1', 'pr:a/b#2', false],
     ['queue:q1', 'repo:a/b', false],
     ['bogus', 'repo:a/b', false],
+    ['org:worker', 'org:worker', true],
+    ['org:worker', 'org:other', false],
   ])('%s vs %s -> %s (symmetric)', (a, b, want) => {
     expect(claimKeysOverlap(a, b)).toBe(want);
     expect(claimKeysOverlap(b, a)).toBe(want);
@@ -104,6 +107,7 @@ describe('body kinds and work feed', () => {
     { kind: 'work.status', jobId: 'j1', status: 'rescheduled' },
     { kind: 'work.release', claimKey: 'queue:q', token: TOKEN, outcome: 'completed' },
     { kind: 'wake', target: 'dot-main', reason: 'new work' },
+    { kind: 'org.membership', roleId: 'worker', revision: 1, tier: 'WORKER_SESSION', reportsTo: 'engineering', status: 'active', needs: ['git'], claimKey: 'org:worker', grantsExecutionAuthority: false },
   ];
   it('covers every declared kind', () => {
     expect(new Set(valid.map((v) => v.kind))).toEqual(new Set(BODY_KINDS));
@@ -118,6 +122,8 @@ describe('body kinds and work feed', () => {
     { kind: 'work.release', claimKey: 'queue:q', token: TOKEN, outcome: 'stolen' },
     { kind: 'work.post', jobId: 'j', title: 't', repo: 'nope', claimKeys: [] },
     { kind: 'unknown', text: 'x' },
+    { kind: 'org.membership', roleId: 'worker', revision: 1, tier: 'WORKER_SESSION', reportsTo: 'engineering', status: 'active', needs: [], claimKey: 'org:other', grantsExecutionAuthority: false },
+    { kind: 'org.membership', roleId: 'worker', revision: 1, tier: 'WORKER_SESSION', reportsTo: 'engineering', status: 'active', needs: [], claimKey: 'org:worker', grantsExecutionAuthority: true },
   ])('rejects %j', (body) => {
     expect(busBodySchema.safeParse(body).success).toBe(false);
   });

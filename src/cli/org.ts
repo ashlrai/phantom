@@ -1,8 +1,14 @@
 /** `phm org` - declarative co-founder org model. Thin: logic lives in src/core/org/org.ts. */
 import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { joinOrg, joinsDir, loadOrg, orgFile, parseQueue, planOrg, readJoins, OrgError } from '../core/org/org.js';
+import { orgBoardView, orgRunsRoot, proposeAgent, readAgentPlane, syncAgentPlane } from '../core/org/agent-plane.js';
+import { sizeWorkerSession } from '../core/org/session-economics.js';
 
-export const ORG_USAGE = `Usage: phm org <show|join|plan> [--file <org.toml>] [--json]
+export const ORG_USAGE = `Usage: phm org <show|join|plan|agents|propose|sync> [--json]
+  agents [id] [--runs <dir>] [--vitals <json>]  Board view or one role; optional measured session sizing
+  propose --input <json> [--apply] [--runs <dir>]  Ledger a proposal; apply edits org metadata only
+  sync [--runs <dir>]            Retry pending local org membership events
   show                          The org: members, agents, machines, lanes, shares and reporting lines
   join --member <id> --machine <id> [--lane <lane>[=<share>]]...
                                 Run on your own machine. Opts in only the lanes you name (share can only be lowered).
@@ -22,6 +28,25 @@ export async function cmdOrg(argv: string[]): Promise<number> {
   const json = args.includes('--json'); if (json) args.splice(args.indexOf('--json'), 1);
   const print = (v: unknown, text: string) => { console.log(json ? JSON.stringify(v, null, 2) : text); return 0; };
   try {
+    if (['agents', 'propose', 'sync'].includes(args[0] ?? '')) {
+      const sub = args.shift();
+      const one = (flag: string) => { const values = take(args, flag); if (values.length > 1 || values[0]?.startsWith('--')) throw new OrgError(`Invalid ${flag}.`); return values[0]; };
+      const scratch = one('--runs'), root = resolve(scratch ?? orgRunsRoot());
+      const busRoot = scratch ? join(root, 'bus') : undefined;
+      const input = one('--input'), vitals = one('--vitals');
+      const apply = args.includes('--apply'); if (apply) args.splice(args.indexOf('--apply'), 1);
+      if ((sub !== 'agents' && args.length) || (sub === 'agents' && (args.length > 1 || args[0]?.startsWith('-'))) ||
+          (sub !== 'propose' && (input || apply)) || (sub !== 'agents' && vitals)) throw new OrgError('Invalid org plane arguments.');
+      if (sub === 'propose' && !input) throw new OrgError('propose needs --input.');
+      const readJson = (file: string): unknown => {
+        try { return JSON.parse(readFileSync(file, 'utf8')); } catch { throw new OrgError('Cannot read JSON input.'); }
+      };
+      const plane = sub === 'propose' ? proposeAgent(readJson(input!), apply, root, busRoot) : sub === 'sync' ? syncAgentPlane(root, busRoot) : readAgentPlane(root);
+      const agent = args[0] ? plane.agents.find(role => role.id === args[0]) : undefined;
+      if (args[0] && !agent) throw new OrgError('Unknown agent.');
+      const value = { ...orgBoardView(plane), ...(agent ? { agents: [agent] } : {}), ...(vitals ? { sessionAdvice: sizeWorkerSession(readJson(vitals)) } : {}) };
+      return print(value, JSON.stringify(value, null, 2));
+    }
     const file = take(args, '--file')[0] ?? orgFile();
     const [sub, ...rest] = args;
     if (sub !== 'show' && sub !== 'join' && sub !== 'plan') { console.error(ORG_USAGE); return 2; }

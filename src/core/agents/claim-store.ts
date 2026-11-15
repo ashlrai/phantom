@@ -126,7 +126,7 @@ function pathsOverlap(teamPath: string, glob: string): boolean {
 
 function teamHitsKey(target: ClaimTarget, key: string): boolean {
   const parsed = parseClaimKey(key);
-  if (!parsed || parsed.kind === 'queue') return false;
+  if (!parsed || parsed.kind === 'queue' || parsed.kind === 'org') return false;
   if (parsed.repo !== target.repo.toLowerCase()) return false;
   if (!target.path) return parsed.kind === 'repo' || parsed.kind === 'path' || parsed.kind === 'pr';
   if (parsed.kind === 'repo') return true;

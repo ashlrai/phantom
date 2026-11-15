@@ -20,7 +20,7 @@ export const WORK_STATUSES = [
   'queued', 'running', 'idle', 'rescheduled', 'blocked', 'done', 'failed', 'terminated',
 ] as const;
 export const BODY_KINDS = [
-  'note', 'context', 'work.post', 'work.claim', 'work.status', 'work.release', 'wake',
+  'note', 'context', 'work.post', 'work.claim', 'work.status', 'work.release', 'wake', 'org.membership',
 ] as const;
 
 /** Same shape as v1 routing labels: printable ASCII, 1-128 chars. */
@@ -53,6 +53,7 @@ export type ParsedClaimKey =
   | { kind: 'repo'; repo: string }
   | { kind: 'path'; repo: string; glob: string }
   | { kind: 'queue'; queue: string }
+  | { kind: 'org'; role: string }
   | { kind: 'pr'; repo: string; number: number };
 
 const REPO = '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+';
@@ -66,6 +67,8 @@ function hasControl(s: string): boolean {
 
 /** Parse a resource claim key; undefined when malformed. Repo names compare case-insensitively. */
 export function parseClaimKey(key: string): ParsedClaimKey | undefined {
+  const org = /^org:([a-z][a-z0-9-]{0,63})(?![\s\S])/.exec(key);
+  if (org) return { kind: 'org', role: org[1]! };
   let m = new RegExp(`^repo:(${REPO})$`).exec(key);
   if (m) return { kind: 'repo', repo: m[1]!.toLowerCase() };
   m = new RegExp(`^path:(${REPO}):([^\\0]{1,256})$`).exec(key);
@@ -115,6 +118,7 @@ function pathGlobsOverlap(a: string, b: string): boolean {
 export function claimKeysOverlap(a: string, b: string): boolean {
   const x = parseClaimKey(a), y = parseClaimKey(b);
   if (!x || !y) return false;
+  if (x.kind === 'org' || y.kind === 'org') return x.kind === 'org' && y.kind === 'org' && x.role === y.role;
   if (x.kind === 'repo') return (y.kind === 'repo' || y.kind === 'path') && y.repo === x.repo;
   if (y.kind === 'repo') return x.kind === 'path' && x.repo === y.repo;
   if (x.kind === 'path' && y.kind === 'path') return x.repo === y.repo && pathGlobsOverlap(x.glob, y.glob);
@@ -197,10 +201,18 @@ export const wakeBodySchema = z.object({
   kind: z.literal('wake'), target: label, reason: text.max(512), jobId: jobId.optional(),
 }).strict();
 
+export const orgMembershipBodySchema = z.object({
+  kind: z.literal('org.membership'), roleId: z.string().regex(/^[a-z][a-z0-9-]{0,63}(?![\s\S])/),
+  revision: z.number().int().positive().safe(), tier: z.enum(['LEADER', 'ORCHESTRATOR', 'WORKER_SESSION']),
+  reportsTo: z.string().regex(/^[a-z][a-z0-9-]{0,63}(?![\s\S])/).nullable(), status: z.enum(['active', 'retired']),
+  needs: z.array(z.string().regex(/^[a-z][a-z0-9._-]{0,63}(?![\s\S])/)).max(32),
+  claimKey: z.string().regex(/^org:[a-z][a-z0-9-]{0,63}(?![\s\S])/), grantsExecutionAuthority: z.literal(false),
+}).strict().refine(body => body.claimKey === `org:${body.roleId}`, 'org claim must identify the role');
+
 /** Validates `envelope.body` for v2 messages. v1 bodies without a v2 kind stay valid v1 bodies. */
 export const busBodySchema = z.union([
   noteBodySchema, contextBodySchema, workPostBodySchema, workClaimBodySchema,
-  workStatusBodySchema, workReleaseBodySchema, wakeBodySchema,
+  workStatusBodySchema, workReleaseBodySchema, wakeBodySchema, orgMembershipBodySchema,
 ]);
 export type BusBody = z.infer<typeof busBodySchema>;
 
@@ -231,7 +243,7 @@ export function busV2ContractSummary() {
     wakeKinds: [...WAKE_KINDS],
     bodyKinds: [...BODY_KINDS],
     workStatuses: [...WORK_STATUSES],
-    claimKeyForms: ['repo:<owner/name>', 'path:<owner/name>:<glob>', 'queue:<queue id>', 'pr:<owner/name>#<n>'],
+    claimKeyForms: ['repo:<owner/name>', 'path:<owner/name>:<glob>', 'queue:<queue id>', 'pr:<owner/name>#<n>', 'org:<role id>'],
     claimLeaseMs: { min: CLAIM_MIN_LEASE_MS, max: CLAIM_MAX_LEASE_MS },
     claimsGrantExecutionAuthority: false,
   } as const;

@@ -137,6 +137,7 @@ Print it: `ashlr agents bus contract --json` (read-only, no bus access).
 | `work.claim` | `op: acquire` with `claimKey`, `owner`, `leaseMs`; or `op: renew` with `claimKey`, `token`, `leaseMs` |
 | `work.status` | `jobId`, `status`, optional `detail` |
 | `work.release` | `claimKey`, `token`, `outcome: released\|completed` |
+| `org.membership` | `roleId`, `revision`, `tier`, `reportsTo`, `status`, `needs`, matching `claimKey: org:<roleId>`, `grantsExecutionAuthority: false`; see [Org plane](ORG-PLANE.md) |
 | `wake` | `target`, `reason`, optional `jobId` |
 
 `work.status` values: `queued`, `running`, `idle`, `rescheduled`, `blocked`,
@@ -151,6 +152,7 @@ A claim key names one resource:
 - `path:<owner/name>:<glob>` (relative glob, no `..`, no leading `/`)
 - `queue:<queue id>`
 - `pr:<owner/name>#<n>`
+- `org:<role id>` (same role only; no overlap with repo/path/queue/PR claims)
 
 A claim is `{claimKey, owner, leaseMs, token, leaseUntil}`: `owner` is a
 `participantId`, `leaseMs` is 1 to 3600000, `token` is 64 lowercase hex chars

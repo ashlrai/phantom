@@ -105,7 +105,7 @@ function prNumber(key: string): number | null {
 function repoOf(key: string, row: CoordinationView): string | null {
   if (row.repo) return row.repo;
   const parsed = parseClaimKey(key);
-  return parsed && parsed.kind !== 'queue' ? parsed.repo : null;
+  return parsed && parsed.kind !== 'queue' && parsed.kind !== 'org' ? parsed.repo : null;
 }
 
 function holderFromClaim(row: CoordinationView): WorkHolder {

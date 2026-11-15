@@ -38,6 +38,8 @@ export interface AgentCommandDoc {
  * actual effects and command-specific result/exit semantics.
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
+  { usage: 'phm org agents [id] [--vitals <json>] [--runs <dir>] --json', description: 'Read the CEO org chart and board projection; optionally compare measured session economics. Exit 1 for invalid or unavailable input.', safety: 'read', jsonShape: 'org.board.v1; agents, pendingProposals, recentEdits, pendingBusEvents, sessionAdvice?' },
+  { usage: 'phm org propose --input <json> [--apply] [--runs <dir>] --json | phm org sync [--runs <dir>] --json', description: 'Ledger or apply revocable org metadata; sync retries local membership events. No launches, grants, spending or external sends. Exit 1 for stale revision, paused writes or invalid input.', safety: 'append', jsonShape: 'org.board.v1' },
   {
     usage: 'phm onboard --ecosystem [--json] | phm onboard --ecosystem --grant --plan <planId> --select <id,id> [--json]',
     description: 'Detect existing capabilities, then grant one reviewed integration bundle. Names/state only; imports and locked-vault access stay in a trusted terminal. --yes never grants. Exit 0 preview/complete, 1 incomplete wiring, 2 refusal.',
@@ -937,6 +939,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'feed [--json] [--limit N]', desc: 'Read recent fleet events, newest first; unavailable sources remain unknown.', topic: 'autonomy' },
   { cmd: 'leader show|run|tick|veto',     desc: 'The Leader (Visionary): show the latest memo and actions, run it now, apply due class-B actions (tick), veto an action or a whole memo (--memo).', topic: 'autonomy' },
   { cmd: 'org show|join|plan [--file <org.toml>] [--json]', desc: 'Declarative co-founder org model: show members and lanes, opt your own machine into lanes with join, or propose queue assignments with plan. Nothing is sent on join.', topic: 'autonomy' },
+  { cmd: 'org agents [id]|propose --input <json> [--apply]|sync [--runs <dir>] [--json]', desc: 'CEO org chart and board view; ledgered, revocable metadata proposals. agents --vitals <json> compares measured warm/fresh session economics. No execution authority.', topic: 'autonomy' },
   { cmd: 'leader status|ask|org|assign [--json]', desc: 'Digital co-founder: world-backed status, owner ask, declarative org chart, and RQ assignment. Escalates only for secrets, money, outside sends, and owner-data destruction. KILL stops it. No new model spend.', topic: 'autonomy' },
   { cmd: 'leader seat|inbox [--json]', desc: 'Inspect admitted model tiers and failover seats, or the durable CEO inbox/outbox; inbox --text records a policy-checked message.', topic: 'autonomy' },
   { cmd: 'leader say|thread|answer|approve|directives', desc: 'Talk to the Leader in the one thread Phantom and Telegram share: say something, read the thread, answer a memo question, approve a pending action (applied only if the grant allows), add or retire standing directives.', topic: 'autonomy' },
