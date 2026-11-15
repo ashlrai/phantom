@@ -30,6 +30,18 @@ const noLive: LiveWorkersSnapshot = { v: 1, generatedAt: '2026-11-13T12:00:00.00
 describe('fleet order-state with channel attribution', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it('preserves an explicitly empty alsoChannels array in JSON output', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdFleetOrderState(['--json'], {
+      read: async () => trace({}, []), now, live: async () => noLive,
+    })).toBe(0);
+
+    const parsed = JSON.parse(log.mock.calls[0]![0]);
+    const order = parsed.orders.find((o: { key: string }) => o.key === '11-05 09:15');
+    expect(order).toHaveProperty('alsoChannels', []);
+    expect(order.source).toBe('Slack');
+  });
+
   it('preserves alsoChannels in JSON output when present', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     
