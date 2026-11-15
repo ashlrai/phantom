@@ -24,6 +24,8 @@ const wire = (pace: () => Promise<unknown>) => get.mockImplementation(async (pat
   if (path === '/api/verse/fleet/landed-closes') return { v: 1, known: true, closed: 0, skipped: 0, failed: 0, rows: [] };
   if (path === '/api/verse/fleet/slow-prs') return { known: true, repos: [] };
   if (path === '/api/verse/fleet/doctor') return { v: 1, generatedAt: '2026-11-02T00:00:00Z', level: 'ok', checks: [] };
+  if (path === '/api/verse/fleet/merge-cockpit') return { schema: 'fleet.merge-cockpit.v1', known: true, hours: 24, repos: [],
+    totals: { conflictsOpen: 0, rebase: { ready: 0, running: 0, parked: 0 }, merges: { count: 0 } } };
   return pace();
 });
 vi.mock('../../../../core/fleet/live-status.js', () => ({

@@ -53,3 +53,18 @@ no credential values in reports or receipts; no implicit enrollment or spending.
 
 Errors: initial exploratory searches included missing paths and overly broad output;
 subsequent reads use exact paths. No source changes made during discovery.
+
+---
+
+# PR #4122 update
+
+Goal: reconcile the existing PR with current master, validate, and hand off uncommitted unless the user resolves the no-push instruction.
+
+- [x] Inspect PR state and repository instructions.
+- [x] Reconcile PR changes onto current master without committing.
+- [x] Run required local verification and affected tests; failures and incomplete full lint recorded.
+- [x] Write BRIDGE_NOTES.md with results and limitations.
+
+Errors: global npm install denied (EPERM); gh configuration inaccessible; checkout is shallow and PR has no local merge base.
+
+Status: local reconciliation and handoff complete. Remote update/enqueue remains blocked by final no-push RULES, inaccessible gh config, and unresolved authority qualification.
