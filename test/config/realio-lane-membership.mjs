@@ -57,6 +57,7 @@ export const REAL_IO_TEST_FILES = [
   'test/constitution-recutnonphxold60.test.ts', // Spawns the CLI through tsx to prove `constitution` dispatches.
   'test/phantom-discovery.test.ts', // Compiles the generated client with a real tsc child.
   'test/fleet-coordination.test.ts', // Spawns tsx children that contend for the coordination lock.
+  'test/coordination-return-durable-retry-378s.test.ts', // Spawns a tsx child racing a concurrent owner return on the coordination lock.
   'test/release-articles.test.ts', // Real temporary Git repositories driven through git children.
   'test/real-home-child.test.ts', // Spawns a Node child to prove the test preload keeps KILL and enrollment inside HOME.
   'test/release-train.test.ts', // Spawns node --experimental-strip-types against the release-train guard.

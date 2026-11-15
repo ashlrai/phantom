@@ -6,7 +6,42 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { planReplay, type ReplayOptions } from './replay.js';
 import { exportMarkdown } from './markdown.js';
 import { exportStacksyncCompletion } from './stacksync.js';
+import { parseSpawn, planSpawn, SPAWN_LIMITS, type SpawnResult } from './decompose.js';
+import { mergedJobsFromJsonl, readSource } from '../fleet/runs-parked-queue.js';
 import { validateQueue, type QueueDocument, type QueueJob } from './schema.js';
+
+/** One bounded spawn proposal; metadata only — never scope, acceptance or dep text. */
+interface SpawnJournalEntry {
+  v: 1;
+  at: string;
+  parent: string;
+  owner: string;
+  proposed: number;
+  applied: number;
+  duplicates: number;
+}
+
+const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+function isSpawnJournalEntry(value: unknown): value is SpawnJournalEntry {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return row['v'] === 1 && typeof row['at'] === 'string' && Number.isFinite(Date.parse(row['at'])) &&
+    typeof row['parent'] === 'string' && JOB_ID.test(row['parent']) &&
+    typeof row['owner'] === 'string' && row['owner'].length <= 128 &&
+    ['proposed', 'applied', 'duplicates'].every(key =>
+      Number.isSafeInteger(row[key]) && (row[key] as number) >= 0 && (row[key] as number) <= 100_000);
+}
+
+/**
+ * MERGED-outcome ids from the runs ledger, for spawn dedup against landed
+ * work. Best-effort: a missing or degraded ledger yields an empty set; the
+ * queue document itself is always consulted.
+ */
+export async function loadMergedJobIds(runsDir: string): Promise<Set<string>> {
+  const source = await readSource(join(runsDir, 'metrics', 'jobs.jsonl'), 2 * 1024 * 1024, true);
+  return mergedJobsFromJsonl(source.text);
+}
 
 const missing = (error: unknown): boolean => (error as NodeJS.ErrnoException).code === 'ENOENT';
 /** Atomic replacement: readers see a complete old or new snapshot, never a partial write. */
@@ -98,6 +133,15 @@ export class QueueStore {
       return job;
     });
   }
+  /** Operator promotion of a proposed job (spawn.v1 children land PROPOSED). */
+  async promote(id: string): Promise<QueueJob> {
+    return this.mutate(doc => {
+      const job = this.find(doc, id);
+      if (job.status !== 'PROPOSED') throw new Error(`Job is not PROPOSED: ${id}`);
+      job.status = 'READY';
+      return job;
+    });
+  }
   async finish(id: string, owner: string, options: { prUrl?: string; reason?: string } = {}): Promise<QueueJob> {
     const result = await this.mutate(doc => {
       const job = this.find(doc, id);
@@ -140,6 +184,49 @@ export class QueueStore {
       return from;
     };
     return dryRun ? change(await this.read()) : this.mutate(change);
+  }
+  /**
+   * RQ-SWE5-AGENT-SWARM: apply a spawn.v1 self-decomposition proposal under
+   * the queue lock. Children land as PROPOSED — never dispatch authority.
+   * The per-parent rate limit rides a bounded journal of proposal metadata;
+   * a corrupt journal fails closed rather than silently unlocking the cap.
+   */
+  async propose(proposal: unknown, options: { now?: number; mergedIds?: ReadonlySet<string> } = {}): Promise<SpawnResult> {
+    const parsed = parseSpawn(proposal);
+    const now = options.now ?? Date.now();
+    return this.locked(async () => {
+      const doc = await this.read();
+      const fresh = (await this.readSpawnJournal()).filter(e => Date.parse(e.at) > now - SPAWN_LIMITS.windowMs);
+      const plan = planSpawn(doc, parsed, {
+        proposalsInWindow: fresh.filter(e => e.parent === parsed.parent).length,
+        mergedIds: options.mergedIds,
+      });
+      const entry: SpawnJournalEntry = { v: 1, at: new Date(now).toISOString(), parent: plan.parent,
+        owner: parsed.owner, proposed: parsed.jobs.length, applied: plan.jobs.length, duplicates: plan.duplicates.length };
+      const kept = [...fresh, entry].slice(-SPAWN_LIMITS.journalEntries);
+      // Journal before the snapshot: a crash must over-count the rate cap, not under-count it.
+      await atomicWrite(this.spawnJournalPath, kept.map(e => JSON.stringify(e)).join('\n') + '\n');
+      doc.jobs.push(...plan.jobs.map(job => structuredClone(job)));
+      validateQueue(doc);
+      await atomicWrite(this.path, JSON.stringify(doc, null, 2) + '\n');
+      return { schema: 'spawn-result.v1', parent: plan.parent, applied: plan.jobs.map(job => job.id), duplicates: plan.duplicates };
+    });
+  }
+  get spawnJournalPath(): string { return join(this.directory, 'spawn-proposals.jsonl'); }
+  private async readSpawnJournal(): Promise<SpawnJournalEntry[]> {
+    let text: string;
+    try {
+      const info = await lstat(this.spawnJournalPath);
+      if (!info.isFile() || info.isSymbolicLink()) throw new Error('Spawn journal must be a regular file');
+      text = await readFile(this.spawnJournalPath, 'utf8');
+    } catch (error) { if (missing(error)) return []; throw error; }
+    if (Buffer.byteLength(text) > 4 * 1024 * 1024) throw new Error('Spawn journal is too large');
+    return text.split('\n').filter(line => line.trim()).map((line, index) => {
+      let value: unknown;
+      try { value = JSON.parse(line); } catch { throw new Error(`Invalid spawn journal line ${index + 1}`); }
+      if (!isSpawnJournalEntry(value)) throw new Error(`Invalid spawn journal line ${index + 1}`);
+      return value;
+    });
   }
   async mirror(): Promise<string> {
     return this.locked(async () => {
