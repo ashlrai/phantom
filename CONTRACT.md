@@ -446,3 +446,16 @@ in `src/cli/fleet-rebase-plan.ts`; `CoverageRead` has `state: 'ok' | 'missing' |
 and `jobs: RebasePlanExistingJob[]`. Exit 0 emits actions, 1 emits an empty error
 report for unusable/incomplete input, and 2 indicates invalid arguments.
 Nothing invokes gh, merges, closes, dispatches jobs or changes CI configuration.
+
+## Feedback-to-fix pipeline — RQ-GROK-FEEDBACKLOOP-1
+
+`src/core/fleet/feedback-triage.ts` exports pure `triageFeedback(signal, existing)`:
+`FeedbackSignal {source, text, refs}` becomes an ignored reason or a classified
+`TriageResult {kind, priority, suggestedLane, suggestedTier, dedupeKey, promptSeed}`.
+`feedback-ingest.ts` exports bounded dependency-injected `ingestFeedback`.
+`feedback-cycle.ts` exports `runFeedback` and pure `feedbackDigest`.
+`src/cli/fleet-feedback.ts` exports `cmdFleetFeedback`; scan previews by default,
+apply uses existing drop admission, and digest reports twelve-hour observations.
+No merge, publish, send or scheduler authority is added. The full limits,
+dedupe, protected-scope and failure contract is in the
+[feedback pipeline contract](docs/contracts/CONTRACT-RQ-GROK-FEEDBACKLOOP-1.md).

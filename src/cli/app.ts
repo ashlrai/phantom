@@ -13,7 +13,7 @@ export async function cmdApp(args: string[], dependencies?: AppUpdateStatusDepen
     let json = false;
     for (let i = 1; i < args.length; i++) {
       if (args[i] === '--json' && !json) json = true;
-      else if (args[i] === '--text' && text === undefined && args[i + 1] !== undefined) text = args[++i];
+      else if (args[i] === '--text' && text === undefined && args[i + 1] !== undefined && !args[i + 1]!.startsWith('--')) text = args[++i];
       else {console.error(USAGE); return 2;}
     }
     if (!text?.trim()) {console.error(USAGE); return 2;}
