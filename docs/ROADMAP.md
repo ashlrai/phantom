@@ -1,4 +1,4 @@
-# ashlr-hub roadmap
+# Phantom roadmap
 
 The forward-looking companion to [CHANGELOG.md](../CHANGELOG.md) (what shipped)
 and [docs/contracts/](./contracts/) (the binding per-milestone specs). This
@@ -81,29 +81,15 @@ before citing a milestone number as evidence of what shipped.
   regression gate (exit 3 on a newly-broken task or resolve-rate drop —
   wire into CI/cron).
 
-## Historical near-term list (stale — kept for reference only)
+<a id="historical-near-term-list-stale--kept-for-reference-only"></a>
 
-> **This section is ~9 minor versions stale.** It was written when the repo
-> was pre-first-release and targeted "v2.3"; the package is now at
-> **3.2.0** (`package.json`) with v3 through v6.x shipped (see "Shipped"
-> above) and npm publication already the baseline for the 3.0.x line (see
-> README "Version history"). None of the five bullets below have been
-> re-verified against current `src/`; treat every one as a historical
-> artifact, not a current backlog. For what's actually next, check open
-> GitHub issues and `docs/MILESTONE-INDEX.md` for gaps. This section is kept
-> only so old links into it don't 404 — do not plan against it.
+## Removed near-term list
 
-- **First public release.** Tag `v2.2.0` → npm publish via the release
-  pipeline; gather real-world install feedback (docs/RELEASING.md).
-- **Plugin ecosystem seeding.** A handful of reference plugins (e.g. a Jira
-  backlog scanner, an org-template pack) exercising each capability kind, plus
-  authoring docs hardening from real usage.
-- **Estimator learning loop.** Feed `reflect` outcomes back into `--estimate`
-  (per-goal-class priors instead of keyword similarity alone).
-- **Web command center depth.** Run/swarm detail drill-downs, goal/milestone
-  views, and a first-run tour mirroring `ashlr onboard`.
-- **Agent contract v2.** Versioned `--json` schemas surfaced in
-  `docs --agent --json`; conformance tests that fail when a shape drifts.
+The obsolete pre-release v2.3 backlog has been removed. For current product
+direction, read the [North Star](NORTH-STAR.md); for milestone status, check
+[MILESTONE-INDEX.md](MILESTONE-INDEX.md) and the live GitHub issues.
+The original four-pillar assistant vision is preserved as a
+[historical artifact](VISION.md), with its dated capability audit.
 
 ## v3 — Team Command Center (gate opened 2026-06-12, NOT YET BUILT)
 

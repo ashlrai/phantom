@@ -69,6 +69,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Quarantine a flaky test only with a tracked, expiring ledger row | [Quarantine ledger](https://github.com/ashlrai/phantom/blob/master/docs/QUARANTINE-LEDGER.md) |
 | See real candidates, rejection and parent-linked improvement without model credentials | [Executable demo](DEMO.md) |
 | Understand the objective and how progress is measured | [Phantom North Star](NORTH-STAR.md) |
+| Read the historical four-pillar assistant vision | [Original Phantom vision](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) |
 | Route future work toward the optimized organization architecture | [Phantom end-state architecture](https://github.com/ashlrai/phantom/blob/master/docs/strategy/ENDSTATE.md) |
 | Plan the chat-first assistant delivery sequence | [Chat-first child jobs](https://github.com/ashlrai/phantom/blob/master/docs/plans/CHAT-FIRST-NORTH-STAR.md) |
 | Separate tested firm machinery from remaining activation and integration work | [Autonomy gap map](AUTONOMY-GAP.md) |
@@ -366,4 +367,4 @@ canonical release guide for required hosted qualification and publication.
 
 [Fable 5.2 orchestration and host handoff](https://github.com/ashlrai/phantom/blob/master/docs/FABLE-ORCHESTRATOR.md)
 
-- [Typed routing decisions](ROUTING.md): local-first typed route advice, bounded schema retry and dispatcher audit records.
+- [Typed routing decisions](https://github.com/ashlrai/phantom/blob/master/docs/ROUTING.md): local-first typed route advice, bounded schema retry and dispatcher audit records.
