@@ -17,7 +17,7 @@ let errors: string[];
 let deps: SurfaceOwnerDeps;
 
 const claim = (task: string, agent: string, expiresAt = NOW + 60_000) => ({
-  id: `fake-claim-${agent}`, repo: 'fake/repo', task, agent,
+  id: `fake-claim-${agent}`, repo: 'ashlrai/phantom', task, agent,
   claimedAt: NOW - 60_000, expiresAt, leaseHash: 'a'.repeat(64),
 });
 const claimEvent = (c: ReturnType<typeof claim>) => ({ version: 1, kind: 'claim' as const, at: c.claimedAt, claim: c });
@@ -75,7 +75,7 @@ describe('fleet surface-owner', () => {
   it('reports UNKNOWN with the no-live-claim reason when the only match expired, and still shows lastLanded', async () => {
     deps.board = () => ({
       schema: 'fleet.coordination.v1', state: 'known',
-      claims: [{ id: 'old-claim', repo: 'fake/repo', task: TASK_TEXT, agent: 'gone-agent', claimedAt: NOW - 120_000, expiresAt: NOW - 60_000 }],
+      claims: [{ id: 'old-claim', repo: 'ashlrai/phantom', task: TASK_TEXT, agent: 'gone-agent', claimedAt: NOW - 120_000, expiresAt: NOW - 60_000 }],
       messages: [], proposals: [], expiredClaims: 1,
     });
     expect(await cmdFleetSurfaceOwner(['slack-bridge', '--json'], deps)).toBe(0);

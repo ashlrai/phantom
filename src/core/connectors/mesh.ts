@@ -35,7 +35,7 @@ export async function buildToolMesh(home?: string, path = process.env.PATH ?? ''
     availability: c.command ? await executableAvailability(c.command, path) : 'unknown' as Availability,
     availabilityMeaning: c.command ? 'executable presence only' : 'endpoint not probed',
     permissions: { scopes: c.scopes, agents: c.tools, lanes: c.lanes, credentialBindings: c.credentials.map(binding => binding.binding) },
-    route: c.kind === 'cli' ? 'phm connectors run (currently denied pending Security review)' : c.kind === 'plugin' ? 'plugin host; invocation not provided by connector profile' : 'configure in an MCP client or gateway; profile alone does not register it',
+    route: c.kind === 'cli' ? 'phm connectors exec (listed tool and lane; credentials via phantom exec)' : c.kind === 'plugin' ? 'plugin host; invocation not provided by connector profile' : 'phm connectors config prints the client entry; profile alone does not register it',
   })));
   const native = nativeToolDefs();
   return {
