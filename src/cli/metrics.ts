@@ -1,4 +1,5 @@
 import { readLeverageMix } from '../core/metrics/leverage-mix.js';
+export { runMetricsCli } from './metrics-impact.js';
 import { cmdMetricsIdle } from './metrics-idle.js';
 /** `phm metrics [summary|dashboard|record|recommend|ingest]` — local telemetry + value metrics. */
 import { join } from 'node:path';
@@ -11,7 +12,7 @@ import { ensurePrivateDirectory, writePrivateFileAtomic } from '../core/verse/pr
 import { defaultStewardPolicy, runSteward } from '../core/steward/disk.js';
 import { ingestMetrics, MetricsInputError } from '../core/fleet/metrics-ingest.js';
 
-const USAGE = `Usage: phm metrics <summary|dashboard [--out file] [--prs file]|record <json>|recommend <taskType> <arm...>|idle --status <snapshot.json> --jobs <jobs.jsonl>|ingest --jobs <jobs.jsonl> --status <status.json>|levers [--window <7d|30d>]|leverage-mix [--prs <file>]> [--json]
+const USAGE = `Usage: phm metrics <impact [--jobs file] [--queue file] [--overrides file]|summary|dashboard [--out file] [--prs file]|record <json>|recommend <taskType> <arm...>|idle --status <snapshot.json> --jobs <jobs.jsonl>|ingest --jobs <jobs.jsonl> --status <status.json>|levers [--window <7d|30d>]|leverage-mix [--prs <file>]> [--json]
 phm metrics ingest reads two explicit local files and prints deterministic lane and tier metrics as JSON.
 phm metrics levers ranks opportunity proxies from local activity and fleet rollups.
 phm metrics leverage-mix reports the 24-hour fleet merge mix; --prs enriches it with GitHub PR file paths.
@@ -45,6 +46,7 @@ function cmdIngest(args: string[], io: CliIo): number {
 }
 
 export function cmdMetrics(argv: string[], io?: CliIo): number | Promise<number> {
+  if (argv[0] === 'impact') return import('./metrics-impact.js').then(({ runMetricsCli }) => runMetricsCli(argv, io));
   if (argv[0] === 'idle') return cmdMetricsIdle(argv);
   if (argv[0] === 'levers' || (argv[0] === '--json' && argv[1] === 'levers')) {
     const args = argv[0] === 'levers' ? argv : ['levers', '--json', ...argv.slice(2)];

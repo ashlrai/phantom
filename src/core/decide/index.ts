@@ -113,3 +113,5 @@ export { extractJudgeRubric, extractRedTeamSeverity, extractTasteScore } from '.
 export type { ExtractedJudgeRubric, ExtractedTasteScore } from './verdict.js';
 
 export { adviseResourceChoice } from './resource-choice.js';
+
+export { rankJevImpact } from './impact.js';
