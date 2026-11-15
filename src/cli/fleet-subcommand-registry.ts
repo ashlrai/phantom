@@ -59,6 +59,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'capability-audit': () => import('./fleet-capability-audit.js'),
   'channel-health': () => import('./fleet-channel-health.js'),
   'checks-red': () => import('./fleet-checks-red.js'),
+  'chief-of-staff': () => import('./fleet-chief-of-staff.js'),
   'ci-annotations': () => import('./fleet-ci-annotations.js'),
   'ci-duplicate-runs': () => import('./fleet-ci-duplicate-runs.js'),
   'ci-evidence': () => import('./fleet-ci-evidence.js'),
