@@ -49,6 +49,24 @@ export const REAL_IO_TEST_FILES = [
   'test/episodic-memory.test.ts', // Real Git revisions and persistent JSONL acceptance fixtures.
   'test/agent-checkpoints.test.ts', // Restarts a real Node process and observes fresh Git state.
   'test/bus-cli.test.ts', // Real CLI subprocesses and concurrent durable mailbox sends in disposable homes.
+  'test/bus-board.test.ts', // Real filesystem queue locks and leases; four cases exceeded the unit deadline under load.
+  'test/recut-busgraph-61.test.ts', // Real mailbox and task-board CLI dispatch in disposable homes.
+  'test/channel-health-ingress-failure-322s.test.ts', // Real sleeping child processes for ingress evidence.
+  'test/comms-confirm-http-original-264s.test.ts', // Real Git source inventory probe.
+  'test/email-outbox-crash-batch-103.test.ts', // Real outbox writer child processes.
+  'test/fleet-channel-health-proof-320s.test.ts', // Real sleeping child processes for channel evidence.
+  'test/gmail-archive-plan-concurrent-104.test.ts', // Concurrent archive planner child processes.
+  'test/handoff-api-response-contract-10ssl2.test.ts', // Real loopback HTTP response fixtures.
+  'test/imessage-teammate-dispatch.test.ts', // Real Python process holding the queue lock.
+  'test/recut-desk-s0-c205.test.ts', // Real loopback settings API server.
+  'test/recut-n1r4200s92.test.ts', // Real changelog extraction child process.
+  'test/recut-top-a59.test.ts', // Real loopback top API server.
+  'test/repo-tracked-artifacts.test.ts', // Real Git tracked-path inventory.
+  'test/ui-settings-recut-c196.test.ts', // Real loopback settings API server.
+  'test/ui-settings-recut-c206.test.ts', // Real loopback settings API server.
+  'test/ui-settings.test.ts', // Real loopback settings API servers.
+  'test/web-ui-redfix-5262.test.ts', // Real loopback web settings server.
+  'test/work-trace-restart-proof-319s.test.ts', // Real restarted work-trace child process.
   'test/agent-tools-registry.test.ts', // Spawns a real child to read the tool registry.
   'test/constitution-recutnonphxold60.test.ts', // Spawns the CLI through tsx to prove `constitution` dispatches.
   'test/phantom-discovery.test.ts', // Compiles the generated client with a real tsc child.
