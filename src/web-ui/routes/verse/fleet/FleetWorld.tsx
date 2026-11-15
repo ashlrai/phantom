@@ -1,5 +1,5 @@
 /** Optional, read-only lens over the same Fleet snapshot. No synthetic runs or edges. */
-import { useId, useState } from 'react';
+import { lazy, Suspense, useId, useState } from 'react';
 import type { FleetLiveSnapshotV1 } from '../../../../core/fleet/fleet-types.js';
 import type { OptionalRead } from '../command/surface-data.js';
 import { VerseMark } from '../rail-icons.js';
@@ -11,6 +11,7 @@ import { workspaceGraph } from './workspace-graph.js';
 import { Segmented } from '../../../components/primitives/Segmented.js';
 import { AgentEdges } from './AgentEdges.js';
 import { RunsGraph } from './RunsGraph.js';
+const ComputeMap = lazy(() => import('../company/ComputeMap.js').then(m => ({ default: m.ComputeMap })));
 
 export default function FleetWorld({ read, refreshing = false, readFailed = false, agentWorkspace = false }: {
   read: OptionalRead<FleetLiveSnapshotV1> | undefined;
@@ -18,14 +19,15 @@ export default function FleetWorld({ read, refreshing = false, readFailed = fals
   readFailed?: boolean;
   agentWorkspace?: boolean;
 }) {
-  const [lens, setLens] = useState<'workspaces' | 'runs'>('workspaces');
+  const [lens, setLens] = useState<'workspaces' | 'runs' | 'compute'>('workspaces');
   const lensSwitch = <Segmented aria-label="World lens" value={lens} onChange={setLens}
-    options={[{ value: 'workspaces', label: 'Workspaces' }, { value: 'runs', label: 'Runs graph' }]} />;
+    options={[{ value: 'workspaces', label: 'Workspaces' }, { value: 'runs', label: 'Runs graph' }, { value: 'compute', label: 'Compute & agents' }]} />;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const filterId = useId();
   const inspectorId = useId();
   const live = read?.value;
+  if (lens === 'compute') return <section aria-label="Fleet world">{lensSwitch}<Suspense fallback={<p>Loading compute map…</p>}><ComputeMap visible /></Suspense></section>;
   if (lens === 'runs') return <section aria-label="Fleet world">{lensSwitch}<RunsGraph /></section>;
   if (!read) return <section aria-label="Fleet world">{lensSwitch}{readFailed ? <p role="status">Fleet data could not be read. Try refreshing Fleet.</p> : <p aria-busy="true">Loading the fleet world…</p>}</section>;
   if (!live) return <section aria-label="Fleet world">{lensSwitch}<p role="status">{read.reason ?? 'Fleet data is unavailable.'}</p></section>;
