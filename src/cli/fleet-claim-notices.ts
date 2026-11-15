@@ -75,13 +75,14 @@ export function claimNoticeSlackSender(
     });
     if (!checked.ok) return { ok: false, reason: 'invalid-envelope' };
     const post = appendBusInbox(checked.value, { root: busRoot });
+    // Only 'posted' or an identical 'duplicate' proves this notice was
+    // durably enqueued. 'conflict' means a DIFFERENT envelope already holds
+    // the deterministic id: the bus cannot prove destination, thread, body
+    // or provenance equivalence, so it is an honest failure the pass keeps
+    // pending and retries rather than a receipt the ledger may claim.
     if (post.status === 'posted' || post.status === 'duplicate') {
       return { ok: true, receipt: `bus-note:${post.id}` };
     }
-    // 'conflict' can only mean an earlier pass already posted this dedupeKey
-    // (the id is a pure function of it) with the previous as-of text — the
-    // logical notice was durably enqueued, so the ledger may catch up.
-    if (post.status === 'conflict') return { ok: true, receipt: `bus-note:${noticeEnvelopeId(dedupeKey)}` };
     return { ok: false, reason: `bus-${post.status}` };
   };
 }
