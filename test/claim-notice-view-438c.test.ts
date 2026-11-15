@@ -39,9 +39,9 @@ describe('readClaimNoticeView', () => {
     expect(view).toMatchObject({ v: 1, source: 'ok', bindings: 1, slackConfigured: true });
     expect(view.sent.total).toBe(4);
     expect(view.sent.recent).toEqual([
-      { state: 'BLOCKED', claimId: 'claim-three', at: now - 2000 },
-      { state: 'RELEASED', claimId: 'claim-two', at: now - 3000 },
-      { state: 'VERIFIED', claimId: 'claim-old', at: now - 5000 },
+      { state: 'BLOCKED', claimId: 'claim-three', at: now - 2000, delivery: 'unknown' },
+      { state: 'RELEASED', claimId: 'claim-two', at: now - 3000, delivery: 'unknown' },
+      { state: 'VERIFIED', claimId: 'claim-old', at: now - 5000, delivery: 'unknown' },
     ]);
     expect(view.pending).toHaveLength(1);
     expect(view.pending[0]).toMatchObject({ state: 'ASSIGNED', threadKey });
@@ -75,7 +75,7 @@ describe('readClaimNoticeView', () => {
 
   it('parses dedupe keys only by known shapes', () => {
     expect(parseClaimNoticeKey('["ASSIGNED","c1","t"]')).toEqual({ state: 'ASSIGNED', claimId: 'c1' });
-    expect(parseClaimNoticeKey('["ASSIGNED","r","c1","t"]')).toEqual({ state: 'ASSIGNED', claimId: 'c1' });
+    expect(parseClaimNoticeKey('["ASSIGNED","r","c1","t"]')).toEqual({ state: 'ASSIGNED', claimId: 'c1', repo: 'r' });
     expect(parseClaimNoticeKey('["ASSIGNED","c1"]')).toBeNull();
     expect(parseClaimNoticeKey('{"a":1}')).toBeNull();
     expect(parseClaimNoticeKey('nope')).toBeNull();
