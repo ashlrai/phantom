@@ -24,7 +24,7 @@ import {
 import { parseFleetRuntimeArgs, readFleetRuntime } from './fleet-runtime.js';
 import { SURFACES } from '../core/fleet/surface-owner.js';
 import { NOTE as SESSION_HANDOFF_NOTE, parseFleetSessionHandoffArgs, readFleetSessionHandoff } from './fleet-session-handoff.js';
-import { NOTE as PEER_LEDGER_NOTE, parseFleetPeerLedgerArgs, readFleetPeerLedger } from './fleet-peer-ledger.js';
+import { NOTE as PEER_LEDGER_NOTE, parseFleetPeerLedgerArgs, readFleetPeerLedger, type FleetPeerLedgerArgs } from './fleet-peer-ledger.js';
 import { parseFleetSurfaceOwnerArgs, readFleetSurfaceOwner } from './fleet-surface-owner.js';
 import { parseFleetClaimExecutionArgs, readFleetClaimExecution } from './fleet-claim-execution.js';
 import { readFleetLanes } from './fleet-lanes.js';
@@ -248,7 +248,7 @@ export interface FleetReaders {
   busInbox?: (input: FleetBusInboxArgs) => Promise<unknown>;
   workBoard?: (input: FleetWorkBoardArgs) => Promise<unknown>;
   runtime?: () => Promise<unknown>;
-  peerLedger?: () => unknown;
+  peerLedger?: (input: FleetPeerLedgerArgs) => unknown;
   sessionHandoff?: (input: { job: string }) => unknown;
   surfaceOwner?: (surface: string) => Promise<unknown>;
   claimExecution?: () => Promise<unknown>;
@@ -426,7 +426,10 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     {
       name: 'fleet_peer_ledger',
       description: PEER_LEDGER_NOTE,
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      inputSchema: { type: 'object', properties: {
+        fromAgent: { type: 'string', pattern: '^[a-z][a-z0-9-]{0,31}$' },
+        target: { type: 'string', pattern: '^[a-zA-Z0-9_.:/#-]{1,128}$' },
+      }, additionalProperties: false },
       annotations,
     },
     {
@@ -988,6 +991,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const intentRead = name === 'fleet_intent_read' ? parseFleetIntentReadArgs(args) : null;
     const selfTickLastArgs = name === 'fleet_self_tick_last' ? parseFleetSelfTickLastArgs(args) : null;
     const sessionHandoffArgs = name === 'fleet_session_handoff' ? parseFleetSessionHandoffArgs(args) : null;
+    const peerLedgerArgs = name === 'fleet_peer_ledger' ? parseFleetPeerLedgerArgs(args) : null;
     const recheckArgs = name === 'fleet_recheck' ? parseFleetRecheckArgs(args) : null;
     const recheckHistory = name === 'fleet_recheck_history' ? parseFleetRecheckHistoryArgs(args) : null;
     const releaseCandidate = name === 'fleet_release_candidate' ? parseFleetReleaseCandidateArgs(args) : null;
@@ -997,7 +1001,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_intent_read' ? intentRead === null :
         name === 'fleet_self_tick_last' ? selfTickLastArgs === null :
         name === 'fleet_runtime' ? parseFleetRuntimeArgs(args) === null :
-        name === 'fleet_peer_ledger' ? parseFleetPeerLedgerArgs(args) === null :
+        name === 'fleet_peer_ledger' ? peerLedgerArgs === null :
         name === 'fleet_session_handoff' ? sessionHandoffArgs === null :
         name === 'fleet_surface_owner' ? surfaceOwner === null :
         name === 'fleet_claim_execution' ? claimExecution === null :
@@ -1054,7 +1058,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_coordination_claims' ? readFleetCoordinationClaims()
         : name === 'fleet_coordination_returns' ? readFleetCoordinationReturns()
         : name === 'fleet_runtime' ? await (readers.runtime ?? readFleetRuntime)()
-        : name === 'fleet_peer_ledger' ? (readers.peerLedger ?? readFleetPeerLedger)()
+        : name === 'fleet_peer_ledger' ? (readers.peerLedger ?? readFleetPeerLedger)(peerLedgerArgs as FleetPeerLedgerArgs)
         : name === 'fleet_session_handoff' ? (readers.sessionHandoff ?? readFleetSessionHandoff)(sessionHandoffArgs!)
         : name === 'fleet_surface_owner' ? await (readers.surfaceOwner ?? readFleetSurfaceOwner)(surfaceOwner!.surface)
         : name === 'fleet_claim_execution' ? await (readers.claimExecution ?? readFleetClaimExecution)()
