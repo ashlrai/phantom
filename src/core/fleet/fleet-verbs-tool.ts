@@ -7,10 +7,24 @@
  */
 import { readFileSync } from 'node:fs';
 import { buildFleetVerbCatalog, type FleetVerbEntry } from './fleet-verb-catalog.js';
-import { FLEET_SUBCOMMAND_LOADERS } from '../../cli/fleet-subcommand-registry.js';
 
 /** Hard cap on the optional grep word (enforced as a wire contract). */
 export const FLEET_VERBS_MAX_GREP_CHARS = 64;
+
+/**
+ * The verb list is read from the generated registry source as text, never
+ * imported: a static edge to fleet-subcommand-registry.js would pull every
+ * fleet verb module into the Tier-1 authority import closure.
+ */
+function registryVerbs(): string[] {
+  for (const ext of ['js', 'ts']) {
+    try {
+      const text = readFileSync(new URL(`../../cli/fleet-subcommand-registry.${ext}`, import.meta.url), 'utf8');
+      return [...text.matchAll(/^\s*'([^']+)':\s*\(\)\s*=>/gm)].map(match => match[1]!);
+    } catch { /* Try the source file next. */ }
+  }
+  return [];
+}
 
 export interface FleetVerbsCatalog {
   schema: 'fleet.verbs.v1';
@@ -36,7 +50,7 @@ export function fleetVerbsCatalog(
   if (word !== undefined && [...word].length > FLEET_VERBS_MAX_GREP_CHARS) {
     return { error: `grep exceeds ${FLEET_VERBS_MAX_GREP_CHARS} characters` };
   }
-  const verbs = buildFleetVerbCatalog(deps.verbs ?? Object.keys(FLEET_SUBCOMMAND_LOADERS), deps.readSource ?? readVerbSource)
+  const verbs = buildFleetVerbCatalog(deps.verbs ?? registryVerbs(), deps.readSource ?? readVerbSource)
     .filter(entry => word === undefined || word === '' ||
       [entry.verb, entry.usage, entry.summary].some(value => value?.toLowerCase().includes(word)));
   return { schema: 'fleet.verbs.v1', count: verbs.length, verbs };
