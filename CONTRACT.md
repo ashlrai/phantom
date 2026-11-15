@@ -482,6 +482,19 @@ publisher captures actual staged Git and runner artifacts before publication;
 executing commands. Agent assertions alone never establish proof. See
 [the fleet proof contract](docs/contracts/CONTRACT-FLEET-PROOF-V1.md) for schema,
 trust boundary, bounds, redaction and Security-pinned deployment requirements.
+## Bridge publisher diff scope (`contrib/mac/publish.sh`)
+
+The publisher stages only the job's change set, never ambient worktree state.
+Change set = paths whose worktree content differs from the job's fork point
+(`git merge-base BASE HEAD`) plus untracked, non-ignored files that are not
+scratch-shaped (`*.backup *.bak *.orig *.rej *.patch *.diff *.swp *~ .DS_Store`).
+An optional manifest `~/.ashlr-runs/<job>.files` (one repo-relative path per
+line, written ops-side from the work claim) is authoritative: only listed paths
+are staged; a malformed manifest aborts (`scope-manifest-invalid`). The index is
+reset to BASE before staging, so a stale fork point cannot re-revert main.
+Excluded paths are reported as `NOTE SCOPE_EXCLUDED`. The integrated-merge
+profile is unchanged. Secret-shape, G1 and protected-path gates are unchanged.
+Live install needs a Security re-pin.
 ## Fleet outcome measurement and advisory policy v1
 
 `buildOutcomeMetrics` in `src/core/fleet/outcome-metrics.ts` folds injected job
@@ -599,3 +612,24 @@ line in `queue/live-config-audit.jsonl` (`fleet.config.audit.v1`) records
 who/when/why. Restart-required keys (security pins, paid-model blocks, credential
 paths, GATES files) are refused by the writer and ignored by the resolver. See
 [docs/FLEET-CONFIG.md](docs/FLEET-CONFIG.md).
+
+## Agent Bus v2 foundation
+
+`src/core/agents/bus-v2-schema.ts` owns the `agent-bus.v2` body, participant,
+claim and work-feed schemas described in [Agent Bus v2](docs/AGENT-BUS.md#v2).
+Routing labels, repo slugs and claim tokens reject trailing newlines; claim keys
+reject ASCII controls including DEL. Claims grant no execution authority.
+
+`projectBusWorkFeed(receipts: readonly unknown[], participants?: readonly Participant[])`
+in `src/core/agents/bus-work-feed.ts` returns `WorkFeedResult`: either
+`{status:'ok', feed:{v:2,jobs:WorkJob[]}}` or `{status:'refused',reason}`.
+It validates at most 1024 retained receipts in strictly increasing cursor order;
+legacy and unrelated bodies stay opaque. Posts start queued with `owner=from`;
+provider comes from the post or explicit participant metadata (missing is refused).
+Statuses update only retained jobs from the same routing owner; orphan statuses
+are ignored. Duplicate job posts and malformed work bodies refuse the projection.
+Latest cursor wins; `updatedAt` is its receipt time. Jobs retain post order.
+This is a pure retained-snapshot projection, not a historical ledger or identity
+check. It performs no I/O, transport, claim mutation or execution. Existing v1
+journals/readers remain unchanged; feed output is explicitly versioned `v:2`.
+No HTTP feed endpoint is provided by this foundation.

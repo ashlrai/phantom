@@ -1,7 +1,8 @@
 import { capturePublishProof } from '../core/fleet/proof-capture.js';
+import { cmdFleetProofOutcomes, PROOF_OUTCOMES_USAGE } from './fleet-eval-report.js';
 import { verifyProofResult } from '../core/fleet/proof-envelope.js';
 
-const usage = 'Usage: phm fleet proof verify <resultRef> [--json]\nPublisher capture: phm fleet proof capture --repo <path> --git-dir <trusted-path> [--layout linked|repo] --base <sha40> --output <file> [--test-log <file> --test-command <cmd> --test-exit <0..255>]';
+const usage = 'Usage: phm fleet proof verify <resultRef> [--json]\nJoin to outcomes: phm fleet proof outcomes [--results-dir <dir>] [--json] (see `phm fleet proof outcomes --help`)\nPublisher capture: phm fleet proof capture --repo <path> --git-dir <trusted-path> [--layout linked|repo] --base <sha40> --output <file> [--test-log <file> --test-command <cmd> --test-exit <0..255>]';
 export async function cmdFleetProof(args: string[]): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(usage); return 0; }
   if (args[0] === 'verify' && args[1] && !args[1].startsWith('-') &&
@@ -12,6 +13,10 @@ export async function cmdFleetProof(args: string[]): Promise<number> {
       ...review.checklist.map(item => `[ ] ${item}`), ...review.flags.map(flag => `FLAG: ${flag}`),
     ].join('\n'));
     return review.ok ? 0 : 1;
+  }
+  if (args[0] === 'outcomes') {
+    if (args.length === 2 && ['--help', '-h'].includes(args[1]!)) { console.log(PROOF_OUTCOMES_USAGE); return 0; }
+    return cmdFleetProofOutcomes(args.slice(1));
   }
   if (args[0] === 'capture') {
     const options = new Map<string, string>();

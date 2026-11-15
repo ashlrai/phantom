@@ -42,6 +42,7 @@ DEFAULT = {"omlx": {"target": OMLX_CAP, "floor": 0, "ceiling": OMLX_CAP, "hard_c
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
 import concurrency, batcher, batch_sessions, work_market
 from session_handoff import handoff_advice
+from launch_precheck import classify_empty
 import fleet_controller as fc
 # ---- fleet controller (RQ-FLEET-LOADBALANCER-1). Phase A (one readings bus, one writer for lane targets and holds, one
 # ledger line per tick) always runs and decides nothing new. FLEET_CTL_MODE=enforce applies phase B (graduated shed) and
@@ -637,17 +638,30 @@ def _claude_report():
         return json.loads(subprocess.run(["/usr/bin/python3", R + "/bin/claude-api.py", "report", "--json"],
                                          capture_output=True, text=True, timeout=20).stdout)
     except Exception: return {}
+def _eval_report():
+    # Read-only, no model or GitHub calls. A missing CLI/ledger is unknown quality.
+    try:
+        cmd = ["phm", "fleet", "eval-report", "--jobs", R + "/metrics/jobs.jsonl", "--days", "30", "--json"]
+        # Optional host-supplied gh-shaped observation evidence.
+        # Never refresh the apparent age of a stale export by rebuilding its report.
+        prs = R + "/metrics/eval-prs.json"
+        if os.path.exists(prs) and 0 <= time.time() - os.stat(prs).st_mtime <= 900:
+            cmd += ["--prs", prs]
+        result = _run(cmd, timeout=8)
+        return json.loads(result.stdout) if result.returncode == 0 else None
+    except Exception: return None
 from process_snapshot import capture as capture_process_snapshot
 # RQ-SWE5-LOOP-BENCH: these are independent read-only subprocesses; run in
 # sequence they cost ~0.5-1.5 s of every tick. Start all of them now and collect
 # each result at its original decision point. Probe behavior is unchanged.
-_PROBES = ThreadPoolExecutor(max_workers=6)
+_PROBES = ThreadPoolExecutor(max_workers=7)
 AP_F = _PROBES.submit(_autopilot)
 MEM_F = _PROBES.submit(mem)
 PS_F = _PROBES.submit(capture_process_snapshot, timeout=5)
 TICK_AGE_F = _PROBES.submit(_daemon_tick_age)
 PACE_F = _PROBES.submit(api_pace)
 REPORT_F = _PROBES.submit(_claude_report)
+EVAL_F = _PROBES.submit(_eval_report)
 tick_phase("budget_read", 25)
 AP = AP_F.result()
 # The separately scheduled disk sampler never blocks a dispatcher tick.
@@ -1173,12 +1187,14 @@ def reap_worktrees():
             nf, diff_lines, empty = job_diff_metrics(wt, b[0])
             wall_s = int(os.path.getmtime(lp) - os.path.getmtime(bp)) if os.path.exists(lp) else None
             if not attempt.get("finished") and not os.path.exists(RUN + "/" + j + ".timeout"):
+                perr = next((c for c, rx in CLS if any(rx.search(t) for t in errlines(tl.splitlines()[-30:]))), None)
                 metric({"event": "finish", "job": j, "lane": pool, "wall_s": wall_s,
                     "bundle": rd(RUN + "/" + j + ".bundled-in").strip() or None,
                     "exit_code": _rc(j), **usage, "cost": None,
                     "diff_files": nf, "diff_lines": diff_lines, "empty": empty,
+                    "empty_class": classify_empty(empty, _rc(j), perr),
                     "failure_class": devin_failure(_rc(j), empty, tl) if pool == "devin" else None,
-                    "pool_error": next((c for c, rx in CLS if any(rx.search(t) for t in errlines(tl.splitlines()[-30:]))), None)})
+                    "pool_error": perr})
         except Exception as e: log("metric finish err %s %s" % (j, type(e).__name__))
         os.mkdir(RUN + "/" + j + ".reaping"); nreap += 1; publish_busy = True
         spawn(["/bin/bash", R + "/bin/reap-one.sh", j], stdin=subprocess.DEVNULL,
@@ -1583,11 +1599,19 @@ except Exception as e: log("autopilot disk-level write failed %s" % type(e).__na
 tick_phase("controller", 10)
 # ---- fleet controller plan: effective targets from the adapt result, the shed level and the lane quality weight. Any
 # error freezes to floors (fail closed). Applied only in enforce mode; shadow applies the unshed plan and ledgers the rest.
-FC_VIEW = {l: {"desired": slots[l]["target"], "floor": slots[l]["floor"], "bound": min(slots[l]["hard_cap"], W.pins[l]),
+FC_VIEW = {l: {"desired": slots[l]["target"], "floor": slots[l]["floor"], "bound": min(slots[l]["ceiling"], slots[l]["hard_cap"], W.pins[l]),
                "held": bool(slots[l].get("held") or l in hold), "held_by": slots[l].get("held_by")} for l in LANES}
 try:
     FC_QUALITY = fc.lane_quality(BUS["merge"]) if BUS["merge"] else {}
-    PLAN_WOULD = fc.plan(BUS, FC_VIEW, FC_WOULD_LEVEL, FC_QUALITY, FC_WHY)
+    try: _eval = EVAL_F.result(timeout=0.25)
+    except TimeoutError: _eval = None   # optional evidence cannot consume the controller phase
+    _outcomes, FC_STATE["outcome_quality"], _receipts = fc.outcome_quality(
+        _eval, FC_STATE.get("outcome_quality"), time.time(), LANES)
+    PLAN_WOULD = fc.plan(BUS, FC_VIEW, FC_WOULD_LEVEL, FC_QUALITY, FC_WHY, _outcomes)
+    _baseline = fc.plan(BUS, FC_VIEW, FC_WOULD_LEVEL, FC_QUALITY, FC_WHY)
+    BUS["quality_receipts"] = [dict(r, mode="enforce" if FC_SHED_ON else "shadow",
+        target_from=_baseline["lanes"][r["lane"]]["target"], target_to=PLAN_WOULD["lanes"][r["lane"]]["target"]) for r in _receipts]
+    FC_STATE["quality_receipts"] = BUS["quality_receipts"]
     PLAN = PLAN_WOULD if FC_SHED_ON else fc.plan(BUS, FC_VIEW, 0, {}, ["shadow"] if FC_WOULD_LEVEL else [])
 except Exception as e:
     log("fleet controller plan failed %s; freezing to floors" % type(e).__name__)
@@ -2329,9 +2353,14 @@ fin = {m["job"]: m for m in mets if m.get("event") == "finish"}
 def roll(key):
     g = {}
     for m in L24:
-        k = m.get(key); r = g.setdefault(k, {"jobs": 0, "finished": 0, "empty": 0, "merged": 0, "tokens_merged": 0, "ttm": []})
+        k = m.get(key); r = g.setdefault(k, {"jobs": 0, "finished": 0, "empty": 0, "empty_no_diff": 0, "empty_error": 0, "empty_unknown": 0,
+                                           "merged": 0, "tokens_merged": 0, "ttm": []})
         r["jobs"] += 1; f = fin.get(m["job"])
-        if f: r["finished"] += 1; r["empty"] += 1 if f.get("empty") else 0
+        if f:
+            r["finished"] += 1; r["empty"] += 1 if f.get("empty") else 0
+            # rows written before empty_class existed are classified from their own exit_code/pool_error
+            ec = f.get("empty_class") or classify_empty(f.get("empty") is True or None, f.get("exit_code"), f.get("pool_error"))
+            if ec: r["empty_" + ec] += 1
         o = out.get(pubj.get(m["job"]))
         if o and o.get("state") == "MERGED":
             r["merged"] += 1; r["tokens_merged"] += (f or {}).get("tokens_total") or 0
@@ -2341,6 +2370,8 @@ def roll(key):
         r["merge_rate"] = round(r["merged"] / r["finished"], 3) if r["finished"] else None
         tm = r.pop("tokens_merged"); r["tokens_per_merged_pr"] = int(tm / r["merged"]) if r["merged"] else None
         r["empty_rate"] = round(r["empty"] / r["finished"], 3) if r["finished"] else None
+        # the lane-penalizing share: only empties that carry an infra failure; no_diff empties are healthy runs
+        r["empty_error_rate"] = round(r["empty_error"] / r["finished"], 3) if r["finished"] else None
     return g
 st["rollup_24h"] = {"by_lane": roll("lane"), "by_tier": roll("tier")}
 st["verified_completion"] = verified_completion(mets, NOW, missing=not os.path.exists(MD + "/jobs.jsonl"))
