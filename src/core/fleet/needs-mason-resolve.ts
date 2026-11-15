@@ -25,7 +25,8 @@ const ID = /^nm-[0-9a-f]{12}$/;
 export interface NeedsMasonItem { id: string; text: string }
 export interface NeedsMasonOptions {
   runsDir?: string; bus?: BusInboxOptions; now?: () => number;
-  /** Which surface resolved the item; recorded in the envelope body. Defaults to 'desktop'. */
+  /** Which surface resolved the item; recorded in the envelope body. Defaults to 'desktop'.
+   *  'leader' (an agent relay) also sends the envelope as 'leader', never 'mason'. */
   source?: 'desktop' | 'telegram' | 'cli' | 'phone' | 'email' | 'leader';
 }
 export type NeedsMasonResolveResult =
@@ -135,8 +136,11 @@ export function resolveNeedsMason(input: unknown, options: NeedsMasonOptions = {
   // Control characters (newlines included) collapse to spaces; the reply stays a single line of text.
   // eslint-disable-next-line no-control-regex
   const note = typeof reply === 'string' ? reply.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim() : '';
+  // The sender label is 'mason' only for Mason's own surfaces; an agent relay
+  // ('leader') resolves as 'leader' so the durable record never claims Mason.
   const posted = appendBusInbox({
-    id: `needs-mason-resolved-${id}`, from: 'mason', to: 'leaders', priority: 'P1', ttl: 7 * 24 * 60 * 60 * 1000,
+    id: `needs-mason-resolved-${id}`, from: options.source === 'leader' ? 'leader' : 'mason',
+    to: 'leaders', priority: 'P1', ttl: 7 * 24 * 60 * 60 * 1000,
     body: {
       kind: NEEDS_MASON_RESOLVED_KIND, itemId: id, source: options.source ?? 'desktop', item: item.text,
       ...(note ? { reply: note } : {}), resolvedAt: new Date(now()).toISOString(),
