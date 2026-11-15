@@ -468,6 +468,7 @@
 /test/fleet-superseded-read.test.ts @masonwyatt23
 /test/fleet-write-budget-cli.test.ts @masonwyatt23
 /test/fleet/merge-confidence.test.ts @masonwyatt23
+/test/friction-planner.test.ts @masonwyatt23
 /test/ft-promotion-policy.test.ts @masonwyatt23
 /test/gate.test.ts @masonwyatt23
 /test/gateway-anthropic-client.test.ts @masonwyatt23
