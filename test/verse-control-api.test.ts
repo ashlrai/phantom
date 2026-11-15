@@ -92,6 +92,7 @@ let tmpRepoRoot: string;
 let repo: string;
 let prevHome: string | undefined;
 let prevUserProfile: string | undefined;
+let prevAshlrHome: string | undefined;
 let cfg: AshlrConfig;
 let handles: Array<{ close(): Promise<void> }> = [];
 /** Records every daemon launch the routes attempted, instead of spawning one. */
@@ -102,8 +103,10 @@ beforeEach(() => {
   tmpRepoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ashlr-verse-control-repos-'));
   prevHome = process.env.HOME;
   prevUserProfile = process.env.USERPROFILE;
+  prevAshlrHome = process.env.ASHLR_HOME;
   process.env.HOME = tmpHome;
   process.env.USERPROFILE = tmpHome;
+  process.env.ASHLR_HOME = path.join(tmpHome, '.ashlr');
   repo = fs.mkdtempSync(path.join(tmpRepoRoot, 'repo-'));
 
   cfg = makeConfig();
@@ -123,6 +126,8 @@ afterEach(async () => {
   else process.env.HOME = prevHome;
   if (prevUserProfile === undefined) delete process.env.USERPROFILE;
   else process.env.USERPROFILE = prevUserProfile;
+  if (prevAshlrHome === undefined) delete process.env.ASHLR_HOME;
+  else process.env.ASHLR_HOME = prevAshlrHome;
   fs.rmSync(tmpHome, { recursive: true, force: true });
   fs.rmSync(tmpRepoRoot, { recursive: true, force: true });
 });
@@ -313,11 +318,12 @@ describe('/api/verse/caps', () => {
     expect(after.perTickItems).toBe(5);
     expect(after.subscriptionMaxPercent).toBe(70);
     // Untouched caps stay on their defaults, still flagged as such.
-    expect(after.parallel).toBe(2);
+    expect(after.parallel).toBe(1);
     expect(after.defaulted).toContain('parallel');
     expect(after.defaulted).not.toContain('dailyBudgetUsd');
 
     // The write landed in the isolated HOME, not the real ~/.ashlr.
+    expect(process.env.ASHLR_HOME).toBe(path.join(tmpHome, '.ashlr'));
     expect(fs.existsSync(path.join(tmpHome, '.ashlr', 'config.json'))).toBe(true);
   });
 

@@ -337,6 +337,16 @@ describe('buildSeatHealthReports', () => {
     expect(report.reasons[0]).toContain('not signed in');
   });
 
+  it('names an expired Claude sign-in only when a credential entry was seen', () => {
+    const out = { loggedIn: false, probeReason: 'status-not-logged-in', checkedAt: new Date(NOW - 1000).toISOString() };
+    const expired = reportOf([seat('claude-a', 'claude')], snapshot([facts('claude-a', 'claude', {
+      ...out, credential: { expiresAt: null, lastRefreshAt: new Date(NOW - 86_400_000).toISOString(), refreshable: null } })]), 'claude-a');
+    expect(expired).toMatchObject({ connection: 'signed-out', fix: { kind: 'reauth' } });
+    expect(expired.reasons[0]).toContain('Claude auth expired: needs re-sign-in');
+    const missing = reportOf([seat('claude-a', 'claude')], snapshot([facts('claude-a', 'claude', out)]), 'claude-a');
+    expect(missing.reasons[0]).not.toContain('expired');
+  });
+
   it('lets the NEWER witness win when the sweep and the live collector disagree', () => {
     // Collector saw signed-out 5 min ago; the sweep saw signed-in 30 s ago → connected.
     const liveOut = seat('claude', 'claude', {

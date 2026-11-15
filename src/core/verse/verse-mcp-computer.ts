@@ -481,6 +481,102 @@ function annotations(title: string, kind: 'read' | 'act' | 'nav'): VerseMcpToolA
 }
 
 // ---------------------------------------------------------------------------
+// TCC permission preflight (RQ-SWE2-DESKTOPCTL-1)
+//
+// The native `permissions` op answers CGPreflightScreenCaptureAccess,
+// AXIsProcessTrusted and CGPreflightPostEventAccess — reads only, never a
+// prompt (request-permission is the operator's op and is not relayable for
+// agents). The tool reports each grant and what it unlocks so an agent can
+// degrade gracefully instead of discovering missing grants by failing.
+// ---------------------------------------------------------------------------
+
+export type ComputerPermissionState = 'granted' | 'missing' | 'unknown';
+
+export interface ComputerPermissionReport {
+  /** false when the desktop is not macOS; null when the answer did not say. */
+  supported: boolean | null;
+  macos: string | null;
+  screen: ComputerPermissionState;
+  accessibility: ComputerPermissionState;
+  postEvents: ComputerPermissionState;
+}
+
+function permissionState(value: unknown): ComputerPermissionState {
+  if (value === true || value === 'granted' || value === 'authorized' || value === 'allowed') return 'granted';
+  if (value === false || value === 'denied' || value === 'missing' || value === 'not-determined' || value === 'notDetermined' || value === 'restricted') return 'missing';
+  return 'unknown';
+}
+
+/** The stable, machine-readable line inside computer_permissions' answer. */
+export const COMPUTER_PERMISSIONS_LINE_PREFIX = 'desktop-permissions:';
+
+/**
+ * Read the `permissions` op's answer. The contract leaves the shape open, so
+ * this accepts booleans or status strings, flat or under `permissions`, with
+ * camel / kebab / snake spellings. Anything else is "unknown", never
+ * "granted".
+ */
+export function parseComputerPermissions(data: unknown): ComputerPermissionReport {
+  const source = isRecord(data) ? (isRecord(data['permissions']) ? data['permissions'] : data) : {};
+  const supported = source['supported'];
+  const macos = source['macos'];
+  return {
+    supported: typeof supported === 'boolean' ? supported : null,
+    macos: typeof macos === 'string' && /^[0-9]+(\.[0-9]+){0,3}$/.test(macos) ? macos : null,
+    screen: permissionState(source['screen'] ?? source['screenRecording'] ?? source['screen-recording']),
+    accessibility: permissionState(source['accessibility']),
+    postEvents: permissionState(source['postEvents'] ?? source['post-events'] ?? source['post_events']),
+  };
+}
+
+const PERMISSION_EFFECT = {
+  screen: {
+    name: 'Screen Recording',
+    granted: 'granted — screenshots and zoom work.',
+    missing: 'missing — computer_screenshot and computer_zoom will fail.',
+    unknown: 'unknown — screenshots may fail.',
+  },
+  accessibility: {
+    name: 'Accessibility',
+    granted: 'granted — the accessibility tree, probes and presses work.',
+    missing: 'missing — the accessibility tree and every acting call will fail until the operator grants it.',
+    unknown: 'unknown — reads may fail.',
+  },
+  postEvents: {
+    name: 'Input events (posting clicks, keys and scrolls)',
+    granted: 'granted — clicks, typing, scrolls and drags work.',
+    missing: 'missing — clicks, typing, scrolls and drags will fail (reading still works).',
+    unknown: 'unknown — acting may fail.',
+  },
+} as const;
+
+/** Human lines plus the canonical `desktop-permissions:` machine line. */
+export function formatComputerPermissionReport(report: ComputerPermissionReport): string[] {
+  const machine = [
+    COMPUTER_PERMISSIONS_LINE_PREFIX,
+    ` supported=${report.supported === null ? 'unknown' : String(report.supported)}`,
+    ` macos=${report.macos ?? '-'}`,
+    ` screen=${report.screen} accessibility=${report.accessibility} postEvents=${report.postEvents}`,
+  ].join('');
+  if (report.supported === false) {
+    return ['This Phantom desktop does not support computer use (it is not macOS).', machine];
+  }
+  const lines = [
+    'Desktop permissions on this Mac (preflight only — nothing was prompted or granted):',
+    `- ${PERMISSION_EFFECT.screen.name}: ${PERMISSION_EFFECT.screen[report.screen]}`,
+    `- ${PERMISSION_EFFECT.accessibility.name}: ${PERMISSION_EFFECT.accessibility[report.accessibility]}`,
+    `- ${PERMISSION_EFFECT.postEvents.name}: ${PERMISSION_EFFECT.postEvents[report.postEvents]}`,
+    machine,
+  ];
+  if (report.screen === 'granted' && report.accessibility === 'granted' && report.postEvents === 'granted') {
+    lines.push('Everything computer use needs is granted.');
+  } else {
+    lines.push('A missing or unknown grant is the operator\'s alone to give in Phantom\'s computer-use setup (System Settings → Privacy & Security). Ask the operator, then run this check again; agents must never try to grant them.');
+  }
+  return lines;
+}
+
+// ---------------------------------------------------------------------------
 // Tools
 // ---------------------------------------------------------------------------
 
@@ -492,6 +588,23 @@ export function createComputerTools(deps: ComputerToolDeps = DEFAULT_COMPUTER_TO
   const scope = 'computer' as const;
   const desktopOnly = true;
   return [
+    {
+      name: 'computer_permissions',
+      scope,
+      desktopOnly,
+      description: 'Check which macOS desktop permissions Phantom holds (Screen Recording, Accessibility, posting input events) and what each unlocks. Read-only preflight: it never shows a prompt and cannot grant anything — missing grants are the operator\'s alone to give in Phantom\'s computer-use setup. Call before computer_request_access, and again when calls start failing no-permission.',
+      annotations: annotations('Desktop permissions', 'read'),
+      inputSchema: NO_ARGS,
+      handler: async (args, ctx) => {
+        const extra = unknownKey(args, []);
+        if (extra) return fail(`unknown argument: ${extra.slice(0, 40)}`);
+        const call = bind(deps, ctx);
+        const outcome = await call.run({ kind: 'native', op: { op: 'permissions' } });
+        if (!outcome.ok) return fail(computerOutcomeMessage(outcome));
+        return ok(text(formatComputerPermissionReport(parseComputerPermissions(outcome.data)).join('\n')));
+      },
+    },
+
     {
       name: 'computer_list_apps',
       scope,

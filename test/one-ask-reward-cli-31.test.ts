@@ -78,6 +78,61 @@ describe('fleet lane-reward', () => {
       meanReward: 0.0025, outcomes: { published: 0, stable: 1, reverted: 0 } });
   });
 
+  it('accounts cost per verified result: measured tokens ÷ stable merges, unknown when unmeasured', async () => {
+    const proposal = { id: 'RQ-FAKE-C1', repo: '/fake/repo', status: 'applied' } as Proposal;
+    const report = await readLaneReward({
+      deps: deps({
+        jobsText: read(rows(
+          // lane-a: one verified merge (2000 tok) + one failed attempt (500 tok) → all spend counts.
+          { event: 'finish', job: 'RQ-FAKE-C1', lane: 'lane-a', tokens_total: 2000 },
+          { event: 'outcome', job: 'RQ-FAKE-C1', lane: 'lane-a', state: 'MERGED', ts: '2026-10-31T04:00:00Z' },
+          { event: 'finish', job: 'RQ-FAKE-C2', lane: 'lane-a', tokens_total: 500 },
+          { event: 'outcome', job: 'RQ-FAKE-C2', lane: 'lane-a', state: 'CLOSED', ts: '2026-10-31T05:00:00Z' },
+          // lane-b: measured spend, no verified result → cost unknown, not zero.
+          { event: 'finish', job: 'RQ-FAKE-C3', lane: 'lane-b', tokens_total: 300 },
+          // lane-c: a merge with no measured tokens is unscored (invalid-usage)
+          // — no verified result and no measured spend.
+          { event: 'finish', job: 'RQ-FAKE-C4', lane: 'lane-c' },
+          { event: 'outcome', job: 'RQ-FAKE-C4', lane: 'lane-c', state: 'MERGED', ts: '2026-10-31T06:00:00Z' },
+        )),
+        proposal: id => (id === 'RQ-FAKE-C1' ? proposal : null),
+        score: input => input.outcome.kind === 'merged'
+          ? { state: 'scored', outcome: 'stable', rewardPerToken: 0.001 }
+          : { state: 'scored', outcome: 'published', rewardPerToken: 0 },
+      }),
+    });
+    expect(report).toMatchObject({ tokensMeasured: 2800, verifiedResults: 1, tokensPerVerifiedResult: 2800 });
+    const laneA = report.lanes.find(lane => lane.lane === 'lane-a')!;
+    expect(laneA).toMatchObject({ measured: 2, tokensMeasured: 2500, verifiedResults: 1,
+      tokensPerVerifiedResult: 2500 });
+    expect(report.lanes.find(lane => lane.lane === 'lane-b'))
+      .toMatchObject({ measured: 1, tokensMeasured: 300, verifiedResults: 0, tokensPerVerifiedResult: null });
+    expect(report.lanes.find(lane => lane.lane === 'lane-c'))
+      .toMatchObject({ measured: 0, tokensMeasured: 0, verifiedResults: 0, tokensPerVerifiedResult: null,
+        reasons: { 'invalid-usage': 1 } });
+  });
+
+  it('prints cost per verified result on each lane line and the header', async () => {
+    home = mkdtempSync(join(tmpdir(), 'lane-reward-cost-'));
+    const file = join(home, 'jobs.jsonl');
+    writeFileSync(file, rows(
+      { event: 'finish', job: 'RQ-FAKE-K1', lane: 'lane-a', tokens_total: 4000 },
+    ));
+    const proposal = { id: 'RQ-FAKE-K1', repo: '/fake/repo', status: 'applied' } as Proposal;
+    const human = await run(['--jobs', file], {
+      proposal: id => (id === 'RQ-FAKE-K1' ? proposal : null),
+      score: input => input.outcome.kind === 'merged'
+        ? { state: 'scored', outcome: 'stable', rewardPerToken: 0.001 }
+        : { state: 'scored', outcome: 'published', rewardPerToken: 0 },
+    });
+    // No outcome row: measured spend, nothing verified — cost unknown, never zero.
+    expect(human.out).toContain('cost/verified unknown');
+    expect(human.out).toContain('lane-a: 1 attempts, 0 scored, 1 unscored, mean reward n/a, 4000 tok measured, 0 verified');
+    const json = await run(['--jobs', file, '--json']);
+    expect(JSON.parse(json.out)).toMatchObject({ tokensMeasured: 4000, verifiedResults: 0,
+      tokensPerVerifiedResult: null });
+  });
+
   it('joins url-keyed outcome rows, folds closed as published and lets the latest outcome win', () => {
     const fold = foldLaneRewardAttempts(rows(
       { event: 'finish', job: 'RQ-FAKE-U1', lane: 'lane-a', tokens_total: 100 },

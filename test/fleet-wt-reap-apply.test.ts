@@ -2,6 +2,8 @@ import { afterEach, expect, it } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm, readdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { cmdFleetWtReap, type WtReapDeps } from '../src/cli/fleet-wt-reap.js';
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -55,13 +57,115 @@ it('refuses a reapable symlink pointing outside the root', async () => {
     { event: 'finish', job: 'merged', ts: '2026-11-02T10:00:00Z' },
   ].map(row => JSON.stringify(row)).join('\n') };
   expect(await cmdFleetWtReap(['--json', '--apply'], deps)).toBe(1);
-  expect(JSON.parse(logs.pop()!).removals).toEqual([{ id: 'merged', status: 'refused' }]);
+  expect(JSON.parse(logs.pop()!).removals).toEqual([{ id: 'merged', status: 'refused', reason: 'unsafe-path' }]);
   expect(calls).toEqual([]);
 });
 it('reports Git failures without exposing process output', async () => {
   const { deps, logs } = await fixture();
   deps.runner = async () => { throw Error('private output'); };
   expect(await cmdFleetWtReap(['--apply'], deps)).toBe(1);
-  expect(logs.join('\n')).toContain('merged: failed.');
+  expect(logs.join('\n')).toContain('merged: failed (git-remove-failed).');
   expect(logs.join('\n')).not.toContain('private output');
+});
+it('reports partial cleanup and retries only the remaining job until listings converge', async () => {
+  const { root, deps, logs } = await fixture();
+  const remove = deps.runner!;
+  deps.runner = async (file, args) => {
+    if (args.at(-1)!.endsWith('/merged')) return; // Git reported success but left the directory.
+    await remove(file, args);
+  };
+  expect(await cmdFleetWtReap(['--apply', '--json'], deps)).toBe(1);
+  expect(JSON.parse(logs.pop()!).removals).toEqual([
+    { id: 'empty', status: 'removed' }, { id: 'merged', status: 'failed', reason: 'worktree-remains' },
+  ]);
+  expect(await readdir(join(root, 'wt'))).toContain('merged');
+  deps.runner = remove;
+  expect(await cmdFleetWtReap(['--apply', '--json'], deps)).toBe(0);
+  expect(JSON.parse(logs.pop()!).removals).toEqual([{ id: 'merged', status: 'removed' }]);
+  for (let i = 0; i < 2; i++) {
+    expect(await cmdFleetWtReap(['--apply', '--json'], deps)).toBe(0);
+    const report = JSON.parse(logs.pop()!);
+    expect(report.removals).toEqual([]);
+    expect(report.worktrees.map((w: { id: string }) => w.id)).toEqual(['open', 'recent', 'unknown']);
+  }
+});
+it('accepts a concurrent removal even when Git fails', async () => {
+  const { deps, logs } = await fixture();
+  deps.runner = async (_file, args) => {
+    await rm(args.at(-1)!, { recursive: true });
+    throw new Error('concurrent removal');
+  };
+  expect(await cmdFleetWtReap(['--apply', '--json'], deps)).toBe(0);
+  expect(JSON.parse(logs.pop()!).removals).toEqual([
+    { id: 'empty', status: 'already-removed' }, { id: 'merged', status: 'already-removed' },
+  ]);
+  expect(await cmdFleetWtReap(['--json'], deps)).toBe(0);
+  expect(JSON.parse(logs.pop()!).worktrees.map((w: { id: string }) => w.id)).toEqual(['open', 'recent', 'unknown']);
+});
+it('reports a dirty worktree and retries successfully without leaking Git output', async () => {
+  const { deps, logs, calls } = await fixture();
+  const remove = deps.runner!;
+  deps.runner = async (file, args) => {
+    if (args.at(-1)!.endsWith('/merged')) throw { stderr: 'fatal: contains modified or untracked files: private-name' };
+    await remove(file, args);
+  };
+  expect(await cmdFleetWtReap(['--apply', '--json'], deps)).toBe(1);
+  expect(JSON.parse(logs.pop()!).removals).toContainEqual({ id: 'merged', status: 'failed', reason: 'uncommitted-files' });
+  deps.runner = remove;
+  expect(await cmdFleetWtReap(['--apply', '--json'], deps)).toBe(0);
+  expect(JSON.parse(logs.pop()!).removals).toEqual([{ id: 'merged', status: 'removed' }]);
+  expect(await cmdFleetWtReap(['--apply', '--json'], deps)).toBe(0);
+  expect(JSON.parse(logs.pop()!).removals).toEqual([]);
+  expect(calls).toHaveLength(2);
+});
+it('uses Git to retain dirty work and converges after it is cleaned', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'reap-git-'));
+  roots.push(root);
+  const repo = join(root, 'repo');
+  const wt = join(root, 'wt', 'merged');
+  await mkdir(repo);
+  await mkdir(join(root, 'metrics'));
+  const git = (...args: string[]) => promisify(execFile)('git', ['-C', repo, ...args]);
+  await git('init');
+  await git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-m', 'initial');
+  await git('worktree', 'add', '--detach', wt);
+  await writeFile(join(wt, 'unfinished'), 'preserve');
+  await writeFile(join(root, 'metrics', 'jobs.jsonl'), [
+    { event: 'finish', job: 'merged', ts: '2026-11-02T10:00:00Z' },
+    { event: 'outcome', job: 'merged', state: 'MERGED' },
+  ].map(row => JSON.stringify(row)).join('\n'));
+  const logs: string[] = [];
+  const deps: WtReapDeps = { runsRoot: root, now: Date.parse('2026-11-02T12:00:00Z'), output: { log: s => logs.push(s), error: s => logs.push(s) } };
+  expect(await cmdFleetWtReap(['--apply', '--json'], deps)).toBe(1);
+  expect(JSON.parse(logs.pop()!).removals).toEqual([{ id: 'merged', status: 'failed', reason: 'uncommitted-files' }]);
+  expect(await readdir(wt)).toContain('unfinished');
+  await rm(join(wt, 'unfinished'));
+  expect(await cmdFleetWtReap(['--apply', '--json'], deps)).toBe(0);
+  expect(await cmdFleetWtReap(['--apply', '--json'], deps)).toBe(0);
+  expect(JSON.parse(logs.pop()!).removals).toEqual([]);
+});
+it('converges when another cleanup removes a merged worktree after the scan', async () => {
+  const { root, deps, logs, calls } = await fixture();
+  const readJobs = () => import('node:fs/promises').then(fs => fs.readFile(join(root, 'metrics', 'jobs.jsonl'), 'utf8'));
+  deps.readers = { listDirs: async () => { await rm(join(root, 'wt', 'merged'), { recursive: true }); return ['merged']; }, readJobs };
+  expect(await cmdFleetWtReap(['--apply', '--json'], deps)).toBe(0);
+  expect(JSON.parse(logs.pop()!).removals).toEqual([{ id: 'merged', status: 'already-removed' }]);
+  expect(calls).toEqual([]);
+});
+it('treats a missing worktree root as an empty inventory on repeated cleanup', async () => {
+  const { root, deps, logs, calls } = await fixture();
+  await rm(join(root, 'wt'), { recursive: true });
+  for (let i = 0; i < 2; i++) {
+    expect(await cmdFleetWtReap(['--apply', '--json'], deps)).toBe(0);
+    expect(JSON.parse(logs.pop()!).removals).toEqual([]);
+  }
+  expect(calls).toEqual([]);
+});
+it('keeps cleanup disabled when the job ledger is missing', async () => {
+  const { root, deps, logs, calls } = await fixture();
+  await rm(join(root, 'metrics', 'jobs.jsonl'));
+  expect(await cmdFleetWtReap(['--apply', '--json'], deps)).toBe(1);
+  expect(JSON.parse(logs.pop()!).sources.jobs).toBe(false);
+  expect(await readdir(join(root, 'wt'))).toContain('merged');
+  expect(calls).toEqual([]);
 });

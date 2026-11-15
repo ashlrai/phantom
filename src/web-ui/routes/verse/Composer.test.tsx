@@ -192,7 +192,7 @@ describe('Composer — depth for a long day', () => {
     const user = userEvent.setup();
     const p = props({ sessionId: 'vs_1', running: true });
     render(<Composer {...p} />);
-    // Stands in for VerseApp's global handler: bubble phase, skips taken keys.
+    // Stands in for PhantomApp's global handler: bubble phase, skips taken keys.
     const shell = vi.fn();
     const onShellKey = (event: KeyboardEvent) => { if (!event.defaultPrevented && event.key === '.') shell(); };
     document.addEventListener('keydown', onShellKey);

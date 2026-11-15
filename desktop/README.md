@@ -87,11 +87,13 @@ For routine drift detection, `node scripts/sync-candidate-version.mjs --check`
 uses the root package version as the expected value; writing still requires an
 explicit version.
 
-This source tree targets version 3.30.24; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.33; check canonical release availability and exact matching assets before installation.
 
 Canonical releases use `ashlrai/phantom` and `@ashlr/phantom`.
 Its fixed discovery endpoint is
 `https://github.com/ashlrai/phantom/releases/latest/download/latest.json`.
+[The update channel](../docs/DESKTOP-UPDATE-CHANNEL.md) describes the feed,
+asset set, publication boundary and post-publication verification.
 The commissioned public key, `ai.ashlr.desktop` bundle identifier, signer,
 sidecar and saved-data identities stay unchanged. The signed legacy and
 canonical profiles remain distinct; transport redirects do not choose a profile.
@@ -660,6 +662,21 @@ loaded at run time); older macOS answers `unsupported`.
 **Shipping.** Rust binary change: `npm run ship:local -- --native`.
 
 ---
+
+## Measuring startup and render cost
+
+`npm run perf:desktop` (after `npm run build`) starts `phm verse` on a scratch
+HOME, opens `/verse/` in a fresh headless Chrome profile with the tokens
+injected the way the shell does (`window.__ASHLR_TOKENS__`), and reports, as
+medians over cold runs: time to the first meaningful render of a section,
+the long tasks, requests and JS files before it, the post-render warm-up burst
+(`shell/warmup.ts`), and steady-state frame interval, long tasks and main-thread
+busy time. `--section command` picks the surface, `--runs N` and `--steady-ms N`
+size the sample, `--json --out FILE` keeps the result, and `--profile` adds CPU
+hotspots per phase plus `.cpuprofile` files DevTools can load. Chromium stands
+in for the system webview, so compare before and after on one machine; the
+numbers move with machine load, so use several runs and the medians. Add
+`--chrome-no-sandbox` only where Chrome's own sandbox cannot start.
 
 ## Window behaviour
 

@@ -53,6 +53,16 @@ describe('worker performance presentation', () => {
     expect(within(row).getByText('Timing coverage: 100%')).toBeVisible();
     expect(within(row).queryByText(/Small sample/)).not.toBeInTheDocument();
   });
+  it('shows recorded long-context credit stops per worker', () => {
+    const { snapshot } = resourceFixture();
+    const pool = { schemaVersion: 1 as const, ...snapshot.pool, workers: snapshot.pool.workers.map(({ capacityKey: _key, ...worker }) => worker) };
+    const attempts = [...snapshot.activeAttempts, ...snapshot.recentAttempts,
+      { ...snapshot.recentAttempts[0]!, id: 'stop-a', workerId: 'codex-a', status: 'failed' as const, reason: 'worker-1m-context-credits-stop' }];
+    render(<PerformancePanel report={buildResourcePerformance(pool, attempts)} onSelect={() => {}} />);
+    const row = screen.getByRole('button', { name: 'codex-a' }).closest('tr')!;
+    expect(within(row).getByText('1 long-context credit stop')).toBeVisible();
+    expect(within(screen.getByRole('button', { name: 'local-a' }).closest('tr')!).queryByText(/credit stop/)).not.toBeInTheDocument();
+  });
   it('keeps genuine zero duration distinct from missing and clarifies Claude scope', () => {
     expect(executionTime(0)).toBe('0 ms'); expect(executionTime(null)).toBe('Not measured');
     expect(usageScopeLabel('claude-main-loop')).toContain('excludes subagents'); expect(usageScopeLabel(null)).toBe('Scope not recorded');

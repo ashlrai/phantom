@@ -368,6 +368,12 @@ const SELF_REPO_RULES: readonly ProtectedPathRule[] = [
     ],
     why: 'test setup and build config decide which tests run and whether HOME is isolated',
   },
+  {
+    id: 'comms-agent',
+    scope: 'self-repo',
+    patterns: ['src/core/comms-agent/'],
+    why: 'Comms send policy decides what may leave the machine',
+  },
 ];
 
 /** Every rule, first match wins (all-repo rules first: their reasons are the more specific ones). */

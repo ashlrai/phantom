@@ -41,7 +41,7 @@ permissions:
 # PR runs cancel superseded revisions. merge_group, schedule, dispatch and
 # workflow_call runs each get their own group (keyed by run_id) and never cancel.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.release_gate && format('phantom-release-{0}', github.ref_name) || format('ci-{0}', github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id)) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -87,13 +87,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Select MCP output contract test
+        id: mcp_selection
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          ASHLR_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          ASHLR_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          node --test .github/tests/ci-mcp-selection.test.mjs
+          node .github/scripts/ci-mcp-selection.mjs
       - name: Set up Node.js 22
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22.22.3'
           cache: npm
+      # Read-only dirty diff on every PR, merge_group, and master push. Runs
+      # the tracked-file generator and fails if any path changes, including
+      # docs/llms.txt. No auto-commit and no path exemptions.
+      - name: Check generated files
+        run: |
+          set -euo pipefail
+          node scripts/generate-docs-llms.mjs
+          status="$(git status --porcelain --untracked-files=normal)"
+          if [ -n "$status" ]; then
+            printf 'generated files are stale; commit the regenerated tree:\n%s\n' "$status" >&2
+            exit 1
+          fi
       # Source-identical fast path (pull_request and merge_group only): the
       # exact whole tracked tree of the checked-out candidate is compared with
       # the authenticated current canonical base. The proof code is fetched
@@ -134,7 +156,7 @@ jobs:
           if [ "$verdict" = equal ]; then echo "equal=true" >> "$GITHUB_OUTPUT"; else echo "equal=false" >> "$GITHUB_OUTPUT"; fi
           exit 0
       - name: Install dependencies
-        if: steps.history.outputs.equal != 'true'
+        if: steps.history.outputs.equal != 'true' || steps.mcp_selection.outputs.mcp_output == 'true'
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Restore protected-branch compiler state
         # Read the protected base's incremental graph; tsc still validates the
@@ -142,18 +164,28 @@ jobs:
         if: steps.history.outputs.equal != 'true'
         uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
-          path: node_modules/.cache/phantom-backend.tsbuildinfo
-          key: master-typecheck-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json') }}-${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
-          restore-keys: master-typecheck-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json') }}-
+          path: |
+            node_modules/.cache/phantom-backend.tsbuildinfo
+            node_modules/.cache/phantom-web.tsbuildinfo
+          key: master-typecheck-v2-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json', 'src/web-ui/tsconfig.json') }}-${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          restore-keys: master-typecheck-v2-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json', 'src/web-ui/tsconfig.json') }}-
       - name: Core no-emit type check
         if: steps.history.outputs.equal != 'true'
-        run: npx tsc --noEmit -p tsconfig.json
+        # Both projects enable incremental/no-emit checking in their tsconfig.
+        # Keep this step name stable for release evidence consumers.
+        run: |
+          started=$SECONDS
+          npm run typecheck
+          elapsed=$((SECONDS - started))
+          echo "Incremental backend + web typecheck: ${elapsed}s" >> "$GITHUB_STEP_SUMMARY"
       - name: Save protected-branch compiler state
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/master'
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
-          path: node_modules/.cache/phantom-backend.tsbuildinfo
-          key: master-typecheck-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json') }}-${{ github.sha }}
+          path: |
+            node_modules/.cache/phantom-backend.tsbuildinfo
+            node_modules/.cache/phantom-web.tsbuildinfo
+          key: master-typecheck-v2-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json', 'src/web-ui/tsconfig.json') }}-${{ github.sha }}
       # Full authority shards are deferred; drift must still fail the required gate.
       - name: Check authority drift (hermetic)
         if: steps.history.outputs.equal != 'true'
@@ -161,6 +193,9 @@ jobs:
           HOME=$(mktemp -d) npm run test:ci -- --maxWorkers=1 --fileParallelism=false
           test/authority-codeowners-310b.test.ts
           test/authority-tier1-closure-310b.test.ts
+      - name: Test MCP output contract
+        if: steps.mcp_selection.outputs.mcp_output == 'true'
+        run: HOME=$(mktemp -d) npm run test:ci -- test/mcp-output-efficiency.test.ts
 
   classify:
     name: Classify PR site lane
@@ -1053,6 +1088,54 @@ jobs:
           test/m93.windows-file-authority.test.ts
           test/m93.daemon-service-windows-integration.test.ts
 
+  secret-scan:
+    # Security floor 2026-10-26: diff-only secret scan on every event. No path
+    # filter and no if-condition; Merge Gate fails unless this job succeeds.
+    name: Secret scan (diff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Install pinned Gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.0
+          GITLEAKS_SHA256: 79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/gitleaks.tar.gz"
+          curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error --retry 3 \
+            --output "$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  ${archive}" | sha256sum --check --strict -
+          mkdir -p "$RUNNER_TEMP/gitleaks-bin"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/gitleaks-bin" gitleaks
+          "$RUNNER_TEMP/gitleaks-bin/gitleaks" version
+      - name: Scan the commits this event adds
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          MG_BASE: ${{ github.event.merge_group.base_sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            pull_request) base="$(git merge-base "$PR_BASE" "$HEAD_SHA")" ;;
+            merge_group) base="$MG_BASE" ;;
+            push) base="$PUSH_BEFORE" ;;
+            *) base="" ;;
+          esac
+          if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then base="${HEAD_SHA}~1"; fi
+          # A PR must not allowlist its own leak: ignore any repo-supplied config.
+          rm -f .gitleaks.toml .gitleaksignore
+          echo "scanning ${base}..${HEAD_SHA}"
+          "$RUNNER_TEMP/gitleaks-bin/gitleaks" git . --log-opts="${base}..${HEAD_SHA}" --redact --no-banner --max-target-megabytes 5 --timeout 120
+
   merge-gate:
     # One stable required check. PR and merge_group: Secret-shape scan, Classify
     # and Quick typecheck must pass, and every full lane must
@@ -1061,7 +1144,7 @@ jobs:
     # missing that should have run is a failure.
     name: Merge Gate
     # macOS lanes are not needed: they never run on PR or merge_group (waiver).
-    needs: [secret-shape, classify, quick, site, docs, ci, windows-service-authority, release-build]
+    needs: [secret-shape, secret-scan, classify, quick, site, docs, ci, windows-service-authority, release-build]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1075,13 +1158,15 @@ jobs:
           node <<'NODE'
           const jobs = JSON.parse(process.env.GATE_NEEDS || 'null');
           const full = ['ci', 'windows-service-authority'];
-          const expected = ['secret-shape', 'classify', 'quick', 'site', 'docs', ...full, 'release-build'];
+          const expected = ['secret-shape', 'secret-scan', 'classify', 'quick', 'site', 'docs', ...full, 'release-build'];
           if (!jobs || typeof jobs !== 'object' || Array.isArray(jobs) ||
               expected.some((name) => !Object.hasOwn(jobs, name)) || Object.keys(jobs).length !== expected.length) {
             throw new Error('CI dependency inventory is incomplete');
           }
           const outcome = (name) => jobs[name]?.result;
           if (outcome('secret-shape') !== 'success') throw new Error(`Secret-shape scan concluded ${outcome('secret-shape') ?? 'missing'}`);
+          // Security floor: a skipped, cancelled or failed secret scan fails the gate.
+          if (outcome('secret-scan') !== 'success') throw new Error(`Secret scan (diff) concluded ${outcome('secret-scan') ?? 'missing'}`);
           if (outcome('classify') !== 'success') throw new Error('CI classification did not pass');
           const lane = jobs.classify.outputs?.lane;
           if (lane !== 'site' && lane !== 'docs' && lane !== 'full') throw new Error('CI lane is missing or unknown');
@@ -1091,18 +1176,34 @@ jobs:
           const masterPush = process.env.EVENT_NAME === 'push' && process.env.REF === 'refs/heads/master';
           const fast = process.env.EVENT_NAME === 'pull_request' || process.env.EVENT_NAME === 'merge_group' || masterPush;
           const release = jobs.classify.outputs?.release_gate === 'true';
-          if (release && (!['schedule', 'workflow_dispatch'].includes(process.env.EVENT_NAME) || process.env.REF !== 'refs/heads/master')) throw new Error('Invalid release event');
+          const masterRef = process.env.REF === 'refs/heads/master';
+          const taggedRef = /^refs\/tags\/v\d+\.\d+\.\d+$/.test(process.env.REF ?? '');
+          // A tag dispatch builds that exact commit. The half-hour schedule stays
+          // on master. A reusable tag push is not a release build.
+          if (release && !(
+            (process.env.EVENT_NAME === 'schedule' && masterRef) ||
+            (process.env.EVENT_NAME === 'workflow_dispatch' && (masterRef || taggedRef))
+          )) throw new Error('Invalid release event');
           const lanes = ['site', 'docs', ...full, 'release-build'];
           const selected = lane === 'full' ? full : [lane];
           // PR and merge queue: the independent quick check runs for every lane.
-          const chosen = release ? ['release-build'] : fast ? ['quick'] : selected;
-          const excluded = ['quick', ...lanes].filter((name) => !chosen.includes(name));
+          // Mason directive 2026-11-13: quick typecheck is advisory on fast events —
+          // it still runs and reports, but a failure (e.g. CODEOWNERS drift on a
+          // stale branch) does not block the merge. The daily full lane and
+          // main-guardian remain the correctness floor. Secret-shape, secret-scan
+          // and classify stay hard requirements.
+          const chosen = release ? ['release-build'] : fast ? [] : selected;
+          const advisory = fast && !release ? ['quick'] : [];
+          const excluded = ['quick', ...lanes].filter((name) => !chosen.includes(name) && !advisory.includes(name));
           // A reusable workflow_call runs under the caller's push event: the Windows
           // service lane is deferred there, so it must be skipped, never failed.
           const deferred = process.env.EVENT_NAME === 'push' ? ['windows-service-authority'] : [];
           for (const name of chosen) {
             if (deferred.includes(name) && outcome(name) === 'skipped') { console.log(`${name} deferred to the daily run`); continue; }
             if (outcome(name) !== 'success') throw new Error(`${lane} CI required job ${name} concluded ${outcome(name) ?? 'missing'}`);
+          }
+          for (const name of advisory) {
+            if (outcome(name) !== 'skipped' && outcome(name) !== 'success') console.log(`ADVISORY ${name} concluded ${outcome(name) ?? 'missing'} — not blocking (fast lane)`);
           }
           for (const name of excluded) {
             if (outcome(name) !== 'skipped') throw new Error(`${lane} CI excluded job ${name} concluded ${outcome(name) ?? 'missing'}`);
@@ -1116,7 +1217,7 @@ jobs:
     # logs, env or API reads, default read-only token, output passed through the
     # pinned scrub.pl. Retention 7 days.
     name: Daily fixup queue
-    needs: [secret-shape, classify, site, docs, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority, merge-gate, release-build]
+    needs: [secret-shape, secret-scan, classify, site, docs, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority, merge-gate, release-build]
     if: ${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1166,7 +1267,7 @@ jobs:
   release-build:
     needs: [secret-shape, classify]
     name: Desktop release smoke
-    if: github.ref == 'refs/heads/master' && needs.classify.outputs.release_gate == 'true'
+    if: needs.classify.outputs.release_gate == 'true'
     permissions:
       contents: read
       actions: read
@@ -1175,7 +1276,19 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 90
     steps:
-      - name: Checkout exact master
+      - name: Require master or a stable release tag
+        env:
+          RELEASE_REF: ${{ github.ref }}
+        run: |
+          node <<'NODE'
+          const ref = process.env.RELEASE_REF ?? '';
+          const releaseTag = /^refs\/tags\/v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+          if (ref !== 'refs/heads/master' && !releaseTag.test(ref)) {
+            console.error('release ref refused');
+            process.exit(1);
+          }
+          NODE
+      - name: Checkout exact release candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
@@ -1196,6 +1309,14 @@ jobs:
         with:
           node-version: '22.23.2'
           cache: npm
+      # Build, pack and smoke run only in a fresh detached worktree of the one
+      # pinned commit, never in this job checkout. The fixed path under the
+      # ephemeral runner temp keeps the native cache location stable; creation
+      # refuses an existing non-empty path and proves the new tree pristine.
+      - name: Create isolated release tree
+        if: steps.eligible.outputs.ready == 'true'
+        id: tree
+        run: node scripts/release-isolated-tree.mjs create "$RUNNER_TEMP/phantom-release-tree"
       - name: Download existing immutable build
         if: steps.existing.outputs.ready == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1207,6 +1328,14 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ steps.existing.outputs.run }}
           digest-mismatch: error
+      # Independent setup overlaps: the pinned npm/Tauri CLI install runs in the
+      # background while Bun, Rust and the native cache restore. Its exit code is
+      # collected before the build; build-desktop-nightly.mjs re-probes every pin.
+      - name: Start pinned build tool install
+        if: steps.eligible.outputs.ready == 'true' && steps.existing.outputs.ready != 'true'
+        run: |
+          ( set +e; npm install --global npm@10.9.8 @tauri-apps/cli@2.11.4 > "$RUNNER_TEMP/build-tools.log" 2>&1
+            echo "$?" > "$RUNNER_TEMP/build-tools.status" ) &
       - name: Set up Bun
         if: steps.eligible.outputs.ready == 'true' && steps.existing.outputs.ready != 'true'
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -1217,6 +1346,9 @@ jobs:
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: '1.97.1'
+      # Lockfile-keyed, never commit-keyed: an exact hit restores and skips the
+      # post-job save, so runs stop re-uploading and evicting each other's
+      # entries. A Cargo.lock change falls back to the toolchain prefix.
       - name: Cache native compiler inputs
         if: steps.eligible.outputs.ready == 'true' && steps.existing.outputs.ready != 'true'
         uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -1224,23 +1356,31 @@ jobs:
           path: |
             ~/.cargo/registry/
             ~/.cargo/git/db/
-            desktop/src-tauri/target/
-          key: release-native-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}-${{ github.sha }}
-          restore-keys: release-native-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}-
+            ${{ steps.tree.outputs.root }}/desktop/src-tauri/target/
+          key: release-native-v2-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+          restore-keys: release-native-v2-${{ runner.os }}-${{ runner.arch }}-1.97.1-
       - name: Install pinned build tools
         if: steps.eligible.outputs.ready == 'true' && steps.existing.outputs.ready != 'true'
+        timeout-minutes: 5
         run: |
-          npm install --global npm@10.9.8 @tauri-apps/cli@2.11.4
+          until [ -s "$RUNNER_TEMP/build-tools.status" ]; do sleep 1; done
+          status="$(cat "$RUNNER_TEMP/build-tools.status")"
+          if [ "$status" != 0 ]; then cat "$RUNNER_TEMP/build-tools.log"; exit 1; fi
       - name: Build unsigned desktop and original package once
         if: steps.eligible.outputs.ready == 'true' && steps.existing.outputs.ready != 'true'
         id: build
+        timeout-minutes: 45
+        working-directory: ${{ steps.tree.outputs.root }}
         env:
           PHANTOM_RELEASE_REVISION: ${{ github.sha }}
         run: |
           npm run build:desktop:nightly -- --existing-icons
+          node scripts/release-isolated-tree.mjs verify .
           node .github/scripts/release-fast-smoke.mjs prepare
+          node scripts/release-isolated-tree.mjs verify .
       - name: Capture original immutable input custody
         if: steps.eligible.outputs.ready == 'true'
+        working-directory: ${{ steps.tree.outputs.root }}
         run: node .github/scripts/release-local-input.mjs capture
       - name: Upload immutable release input
         id: artifact
@@ -1268,6 +1408,9 @@ jobs:
       - name: Smoke desktop release artifact
         if: steps.eligible.outputs.ready == 'true'
         id: smoke
+        # Phase deadline is 5m plus a 5s kill grace; fail fast past that.
+        timeout-minutes: 6
+        working-directory: ${{ steps.tree.outputs.root }}
         env:
           GH_TOKEN: ${{ github.token }}
           PUSH_CI_RUN: ${{ steps.push.outputs.run }}

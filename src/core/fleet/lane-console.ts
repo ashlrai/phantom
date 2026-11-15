@@ -57,6 +57,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
+import { readingIsFresh } from '../usage/sensor-reading.js';
 import { readPoolBudgets, poolBudgetDirectory } from './pool-budget-store.js';
 import type { PoolBudgetSnapshot, PoolBudgetView } from './pool-budget.js';
 import { readLaneTargets } from './runs-lane-targets.js';
@@ -165,7 +166,7 @@ const LANE_ID = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/;
 const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9_.:/@-]{0,127}$/;
 
 /** Statuses that make the first bare cell of a positional row a status column. */
-const KNOWN_STATUSES = new Set([
+export const KNOWN_STATUSES = new Set([
   'READY', 'CLAIMED', 'PR-OPEN', 'BLOCKED', 'HOLD', 'DONE', 'PROPOSED', 'LAND',
   'LANDED', 'MERGED', 'RUNNING', 'STARTING', 'QUEUED', 'WAITING', 'FAILED',
   'CANCELLED', 'SPLIT-PARENT', 'HELD', 'PUBLISHING', 'PUBLISHED', 'FINISHED',
@@ -177,6 +178,11 @@ const LIVE_STATUSES = new Set([
   'CLAIMED', 'PR-OPEN', 'RUNNING', 'STARTING', 'DISPATCHED', 'IN-PROGRESS',
   'WORKING', 'PUBLISHING', 'PUBLISH_UNKNOWN',
 ]);
+
+/** True when a normalized (uppercased) queue status names an in-flight job. */
+export function isLiveQueueStatus(status: string): boolean {
+  return LIVE_STATUSES.has(status.toUpperCase());
+}
 
 /** Terminal merge evidence. DONE alone is not a merge — it must name a land. */
 const MERGE_WORDS = new Set([
@@ -336,6 +342,19 @@ export function parseReadyTsv(text: string): ParsedTsv {
 // queue.v1.json — light structural read of the DRIVER-1 document.
 // ---------------------------------------------------------------------------
 
+/** One validated queue.v1 job row — the fields a read projection may serve. */
+export interface QueueV1JobRow {
+  id: string;
+  /** Normalized uppercase status. */
+  status: string;
+  pool: string;
+  repo?: string;
+  tier?: string;
+  priority?: string;
+  /** Bounded single-line preview of `title` (or `task`'s first line), when the job carries one. */
+  summary?: string;
+}
+
 interface QueueV1Read {
   /** Per-pool in-flight counts (live statuses). */
   live: Map<string, number>;
@@ -344,6 +363,23 @@ interface QueueV1Read {
   /** job id → pool for ledger rows that do not repeat the pool. */
   jobPool: Map<string, string>;
   jobs: number;
+  /** Validated job rows in document order (same strictness as the counts). */
+  rows: QueueV1JobRow[];
+}
+
+/** Optional free-text job fields that may ride a queue.v1 row. */
+const QUEUE_V1_TEXT_FIELDS = ['repo', 'tier', 'priority'] as const;
+const SUMMARY_MAX_CHARS = 240;
+
+function jobSummary(job: Record<string, unknown>): string | undefined {
+  const title = job['title'];
+  if (typeof title === 'string' && title.trim()) return cleanCell(title).slice(0, SUMMARY_MAX_CHARS);
+  const task = job['task'];
+  if (typeof task === 'string' && task.trim()) {
+    const firstLine = task.split('\n', 1)[0]!;
+    return cleanCell(firstLine).slice(0, SUMMARY_MAX_CHARS);
+  }
+  return undefined;
 }
 
 export function parseQueueV1Document(text: string): QueueV1Read {
@@ -354,6 +390,7 @@ export function parseQueueV1Document(text: string): QueueV1Read {
   const live = new Map<string, number>();
   const ready = new Map<string, number>();
   const jobPool = new Map<string, string>();
+  const rows: QueueV1JobRow[] = [];
   for (const job of value.jobs) {
     const j = record(job);
     if (!j || typeof j.id !== 'string' || !JOB_ID.test(j.id) ||
@@ -362,11 +399,19 @@ export function parseQueueV1Document(text: string): QueueV1Read {
       throw new Error('invalid queue.v1 job');
     }
     const status = j.status.toUpperCase();
+    const row: QueueV1JobRow = { id: j.id, status, pool: j.pool };
+    for (const field of QUEUE_V1_TEXT_FIELDS) {
+      const v = j[field];
+      if (typeof v === 'string' && v.trim()) row[field] = cleanCell(v);
+    }
+    const summary = jobSummary(j);
+    if (summary) row.summary = summary;
+    rows.push(row);
     jobPool.set(j.id, j.pool);
     if (LIVE_STATUSES.has(status)) live.set(j.pool, (live.get(j.pool) ?? 0) + 1);
     else if (status === 'READY') ready.set(j.pool, (ready.get(j.pool) ?? 0) + 1);
   }
-  return { live, ready, jobPool, jobs: value.jobs.length };
+  return { live, ready, jobPool, jobs: value.jobs.length, rows };
 }
 
 // ---------------------------------------------------------------------------
@@ -437,6 +482,7 @@ interface UsageJournalRow {
   burnPerHour: number | null;
   projectedExhaustionAt: string | null;
   observedAt: string;
+  staleAfter: string | null;
 }
 
 /**
@@ -465,9 +511,10 @@ export function parseUsageJournals(texts: readonly string[]): { latest: Map<stri
       const burn = typeof row.burnRatePctPerHour === 'number' && Number.isFinite(row.burnRatePctPerHour) && row.burnRatePctPerHour >= 0
         ? row.burnRatePctPerHour : null;
       const projected = typeof row.projected100At === 'string' && validTimestamp(row.projected100At) ? row.projected100At : null;
+      const staleAfter = typeof row.staleAfter === 'string' && validTimestamp(row.staleAfter) ? row.staleAfter : null;
       const next: UsageJournalRow = {
         pool: row.pool, pctUsed, resetAt, burnPerHour: burn,
-        projectedExhaustionAt: projected, observedAt: observed,
+        projectedExhaustionAt: projected, observedAt: observed, staleAfter,
       };
       const prior = latest.get(row.pool);
       if (!prior || freshness(next) >= freshness(prior)) latest.set(row.pool, next);
@@ -510,19 +557,21 @@ function budgetCredit(view: PoolBudgetView): FleetLaneCreditView {
   };
 }
 
-function usageCredit(row: UsageJournalRow): FleetLaneCreditView {
-  const observed = row.pctUsed !== null;
+function usageCredit(row: UsageJournalRow, nowMs: number): FleetLaneCreditView {
+  const fresh = row.pctUsed !== null && readingIsFresh({
+    observedAt: row.observedAt, staleAfter: row.staleAfter, nowMs,
+  });
   return {
-    state: observed ? 'observed' : 'unknown',
-    label: observed ? `${100 - row.pctUsed!}% window` : 'unknown',
-    remainingPct: observed ? 100 - row.pctUsed! : null,
+    state: fresh ? 'observed' : 'unknown',
+    label: fresh ? `${100 - row.pctUsed!}% window` : 'unknown',
+    remainingPct: fresh ? 100 - row.pctUsed! : null,
     remainingCredits: null,
     creditsUnit: null,
     resetAt: row.resetAt,
     burnPerHour: row.burnPerHour,
     projectedExhaustionAt: row.projectedExhaustionAt,
     observedAt: row.observedAt,
-    source: observed ? 'usage-journal' : null,
+    source: fresh ? 'usage-journal' : null,
   };
 }
 
@@ -536,11 +585,12 @@ function creditFor(
   lane: string,
   budgets: PoolBudgetSnapshot,
   usage: Map<string, UsageJournalRow>,
+  nowMs: number,
 ): FleetLaneCreditView {
   const budgetView = (budgets.pools as Record<string, PoolBudgetView | undefined>)[lane];
   const budget = budgetView ? budgetCredit(budgetView) : null;
   const usageRow = usage.get(lane);
-  const usageView = usageRow ? usageCredit(usageRow) : null;
+  const usageView = usageRow ? usageCredit(usageRow, nowMs) : null;
   if (budget?.state === 'observed') return budget;
   if (usageView?.state === 'observed') return usageView;
   if (budget && budget.state !== 'unknown') return budget;
@@ -730,7 +780,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
       by: !row.held ? null : row.heldReason?.startsWith('autobackoff') ? 'autobackoff' : 'manual',
       since: row.lastChange,
     } : null;
-    return { lane, queueDepth, liveJobs, mergesPerHour, credit: creditFor(lane, budgets, usage.latest), slotTarget: row?.target ?? null, hold };
+    return { lane, queueDepth, liveJobs, mergesPerHour, credit: creditFor(lane, budgets, usage.latest, now.getTime()), slotTarget: row?.target ?? null, hold };
   });
 
   // Lanes doing something sort first; alphabetical inside each tier.

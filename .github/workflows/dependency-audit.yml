@@ -3,6 +3,8 @@ name: Dependency Audit
 on:
   push:
     branches: [master]
+  pull_request:
+    branches: ["**"]
     paths:
       - "package.json"
       - "package-lock.json"
@@ -18,10 +20,8 @@ on:
       - "docs/DEPENDENCY-SECURITY.md"
       - ".github/dependabot.yml"
       - ".github/workflows/dependency-audit.yml"
-  pull_request:
-    branches: ["**"]
   schedule:
-    - cron: "17 9 * * 1"
+    - cron: "17 9 * * *"
   workflow_dispatch:
 
 permissions:

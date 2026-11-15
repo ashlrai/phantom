@@ -1,0 +1,5762 @@
+{
+ "53205e52bd8238a13f183bb0f9fd561655633450": {
+  "n": 3914,
+  "pool": "codex-personal",
+  "runs": [
+   [
+    "2026-11-07T08:34:52Z",
+    "2026-11-07T08:35:49Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T08:34:40Z",
+    "2026-11-07T08:34:39Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T08:34:36Z",
+    "2026-11-07T08:34:39Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T08:34:33Z",
+    "2026-11-07T08:34:32Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T08:34:33Z",
+    "2026-11-07T08:34:32Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T08:34:33Z",
+    "2026-11-07T08:34:32Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T08:34:32Z",
+    "2026-11-07T08:34:32Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T08:34:32Z",
+    "2026-11-07T08:34:32Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T08:34:32Z",
+    "2026-11-07T08:34:32Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T08:34:32Z",
+    "2026-11-07T08:34:32Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T08:34:32Z",
+    "2026-11-07T08:34:32Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T08:34:32Z",
+    "2026-11-07T08:34:32Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T08:34:16Z",
+    "2026-11-07T08:34:34Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T08:34:16Z",
+    "2026-11-07T08:34:32Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T08:34:16Z",
+    "2026-11-07T08:34:27Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T08:34:16Z",
+    "2026-11-07T08:34:46Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "4d173c9aa7b8116f8df797835f2602e10391ffa0": {
+  "n": 4022,
+  "pool": "codex-personal",
+  "runs": [
+   [
+    "2026-11-07T22:24:14Z",
+    "2026-11-07T22:24:14Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:24:10Z",
+    "2026-11-07T22:24:13Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T22:23:41Z",
+    "2026-11-07T22:23:41Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:23:41Z",
+    "2026-11-07T22:23:41Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:23:41Z",
+    "2026-11-07T22:23:41Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:23:41Z",
+    "2026-11-07T22:23:41Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:23:41Z",
+    "2026-11-07T22:23:41Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:23:41Z",
+    "2026-11-07T22:23:41Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:23:41Z",
+    "2026-11-07T22:23:41Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:23:41Z",
+    "2026-11-07T22:23:41Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:23:41Z",
+    "2026-11-07T22:23:41Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:23:29Z",
+    "2026-11-07T22:23:29Z",
+    "CodeRabbit",
+    "neutral"
+   ],
+   [
+    "2026-11-07T22:23:25Z",
+    "2026-11-07T22:24:08Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T22:23:24Z",
+    "2026-11-07T22:23:36Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T22:23:25Z",
+    "2026-11-07T22:23:41Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T22:23:24Z",
+    "2026-11-07T22:23:52Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "c3858c49b013811e2cc0721bc5a14ae4831762bb": {
+  "n": 4019,
+  "pool": "codex-personal",
+  "runs": [
+   [
+    "2026-11-07T22:21:46Z",
+    "2026-11-07T22:21:46Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:21:43Z",
+    "2026-11-07T22:21:46Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T22:21:20Z",
+    "2026-11-07T22:25:34Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T22:21:08Z",
+    "2026-11-07T22:21:08Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:21:08Z",
+    "2026-11-07T22:21:08Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:21:08Z",
+    "2026-11-07T22:21:08Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:21:08Z",
+    "2026-11-07T22:21:08Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:21:08Z",
+    "2026-11-07T22:21:08Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:21:08Z",
+    "2026-11-07T22:21:08Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:21:08Z",
+    "2026-11-07T22:21:08Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:21:08Z",
+    "2026-11-07T22:21:08Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:21:08Z",
+    "2026-11-07T22:21:08Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:20:54Z",
+    "2026-11-07T22:21:07Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T22:20:54Z",
+    "2026-11-07T22:21:41Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T22:20:54Z",
+    "2026-11-07T22:21:08Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T22:20:54Z",
+    "2026-11-07T22:21:23Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "0324707a4a0168f40cfa44eaef1f0af2592b2c26": {
+  "n": 3892,
+  "pool": "codex-personal",
+  "runs": [
+   [
+    "2026-11-07T07:57:58Z",
+    "2026-11-07T07:57:57Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T07:57:53Z",
+    "2026-11-07T07:57:57Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T07:57:02Z",
+    "2026-11-07T07:57:02Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T07:57:02Z",
+    "2026-11-07T07:57:02Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T07:57:02Z",
+    "2026-11-07T07:57:02Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T07:57:02Z",
+    "2026-11-07T07:57:02Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T07:57:02Z",
+    "2026-11-07T07:57:02Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T07:57:02Z",
+    "2026-11-07T07:57:02Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T07:57:02Z",
+    "2026-11-07T07:57:02Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T07:57:02Z",
+    "2026-11-07T07:57:02Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T07:57:02Z",
+    "2026-11-07T07:57:02Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T07:56:50Z",
+    "2026-11-07T07:56:50Z",
+    "CodeRabbit",
+    "neutral"
+   ],
+   [
+    "2026-11-07T07:56:47Z",
+    "2026-11-07T07:57:02Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T07:56:47Z",
+    "2026-11-07T07:56:58Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T07:56:47Z",
+    "2026-11-07T07:57:50Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T07:56:47Z",
+    "2026-11-07T07:57:14Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "e4ba1037e4ce0d48838058f3faf6ee015a1cb909": {
+  "n": 4093,
+  "pool": "codex-personal",
+  "runs": [
+   [
+    "2026-11-08T10:33:31Z",
+    "2026-11-08T10:33:30Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-08T10:33:28Z",
+    "2026-11-08T10:33:30Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-08T10:33:00Z",
+    "2026-11-08T10:40:26Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-08T10:32:43Z",
+    "2026-11-08T10:32:42Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T10:32:43Z",
+    "2026-11-08T10:32:42Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-08T10:32:43Z",
+    "2026-11-08T10:32:42Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-08T10:32:43Z",
+    "2026-11-08T10:32:42Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T10:32:43Z",
+    "2026-11-08T10:32:42Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-08T10:32:43Z",
+    "2026-11-08T10:32:42Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T10:32:43Z",
+    "2026-11-08T10:32:42Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T10:32:43Z",
+    "2026-11-08T10:32:42Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T10:32:43Z",
+    "2026-11-08T10:32:42Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T10:32:29Z",
+    "2026-11-08T10:32:40Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-08T10:32:29Z",
+    "2026-11-08T10:33:26Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-08T10:32:29Z",
+    "2026-11-08T10:32:42Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-08T10:32:29Z",
+    "2026-11-08T10:33:01Z",
+    "Dependency audit (root + Raycast)",
+    "failure"
+   ]
+  ]
+ },
+ "3c93b2e7e14613223889a11dd96069198ff79326": {
+  "n": 1164,
+  "pool": "codex-personal",
+  "runs": [
+   [
+    "2026-11-06T21:15:05Z",
+    "2026-11-06T21:15:05Z",
+    "CodeRabbit",
+    "success"
+   ],
+   [
+    "2026-11-06T20:53:07Z",
+    "2026-11-06T20:53:06Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:53:03Z",
+    "2026-11-06T20:53:06Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-06T20:52:58Z",
+    "2026-11-06T20:52:58Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:52:58Z",
+    "2026-11-06T20:52:58Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:52:58Z",
+    "2026-11-06T20:52:58Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:52:58Z",
+    "2026-11-06T20:52:58Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:52:58Z",
+    "2026-11-06T20:52:58Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:52:58Z",
+    "2026-11-06T20:52:58Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:52:58Z",
+    "2026-11-06T20:52:58Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:52:58Z",
+    "2026-11-06T20:52:58Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:52:58Z",
+    "2026-11-06T20:52:58Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:52:58Z",
+    "2026-11-06T20:52:58Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:52:43Z",
+    "2026-11-06T20:52:56Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-06T20:52:43Z",
+    "2026-11-06T20:53:01Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-06T20:52:43Z",
+    "2026-11-06T20:52:57Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-06T20:52:43Z",
+    "2026-11-06T20:53:07Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "8dedd8a92a15cfcfa1a651564296ed3cc58126e7": {
+  "n": 4061,
+  "pool": "devin",
+  "runs": [
+   [
+    "2026-11-08T02:24:14Z",
+    "2026-11-08T02:26:06Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-08T02:23:08Z",
+    "2026-11-08T02:23:08Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-08T02:23:04Z",
+    "2026-11-08T02:23:07Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-08T02:22:46Z",
+    "2026-11-08T02:22:46Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T02:22:46Z",
+    "2026-11-08T02:22:46Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T02:22:46Z",
+    "2026-11-08T02:22:46Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T02:22:46Z",
+    "2026-11-08T02:22:46Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T02:22:46Z",
+    "2026-11-08T02:22:46Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T02:22:46Z",
+    "2026-11-08T02:22:46Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-08T02:22:46Z",
+    "2026-11-08T02:22:46Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-08T02:22:46Z",
+    "2026-11-08T02:22:46Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-08T02:22:46Z",
+    "2026-11-08T02:22:46Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T02:22:33Z",
+    "2026-11-08T02:22:46Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-08T02:22:33Z",
+    "2026-11-08T02:22:44Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-08T02:22:33Z",
+    "2026-11-08T02:23:02Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-08T02:22:33Z",
+    "2026-11-08T02:23:02Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "da0d7b0e5005ac3bc013bbe32304b60b8e3ed327": {
+  "n": 4067,
+  "pool": "devin",
+  "runs": [
+   [
+    "2026-11-08T02:41:45Z",
+    "2026-11-08T02:41:45Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-08T02:41:42Z",
+    "2026-11-08T02:41:44Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-08T02:41:36Z",
+    "2026-11-08T02:46:32Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-08T02:41:20Z",
+    "2026-11-08T02:41:20Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T02:41:20Z",
+    "2026-11-08T02:41:20Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-08T02:41:20Z",
+    "2026-11-08T02:41:20Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-08T02:41:20Z",
+    "2026-11-08T02:41:20Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-08T02:41:20Z",
+    "2026-11-08T02:41:20Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T02:41:20Z",
+    "2026-11-08T02:41:20Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T02:41:20Z",
+    "2026-11-08T02:41:20Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T02:41:20Z",
+    "2026-11-08T02:41:20Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T02:41:20Z",
+    "2026-11-08T02:41:20Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T02:41:07Z",
+    "2026-11-08T02:41:20Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-08T02:41:07Z",
+    "2026-11-08T02:41:40Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-08T02:41:07Z",
+    "2026-11-08T02:41:19Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-08T02:41:07Z",
+    "2026-11-08T02:41:41Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "3da7d363d7563f418ae7b4f917ee29adce5802ac": {
+  "n": 4074,
+  "pool": "devin",
+  "runs": [
+   [
+    "2026-11-08T03:14:41Z",
+    "2026-11-08T03:14:40Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-08T03:14:37Z",
+    "2026-11-08T03:14:40Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-08T03:14:24Z",
+    "2026-11-08T03:20:33Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-08T03:14:05Z",
+    "2026-11-08T03:14:04Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-08T03:14:05Z",
+    "2026-11-08T03:14:04Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-08T03:14:05Z",
+    "2026-11-08T03:14:04Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T03:14:05Z",
+    "2026-11-08T03:14:04Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T03:14:05Z",
+    "2026-11-08T03:14:04Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-08T03:14:05Z",
+    "2026-11-08T03:14:04Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T03:14:05Z",
+    "2026-11-08T03:14:04Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T03:14:05Z",
+    "2026-11-08T03:14:04Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T03:14:05Z",
+    "2026-11-08T03:14:04Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-08T03:13:50Z",
+    "2026-11-08T03:14:04Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-08T03:13:50Z",
+    "2026-11-08T03:14:35Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-08T03:13:50Z",
+    "2026-11-08T03:14:04Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-08T03:13:50Z",
+    "2026-11-08T03:14:17Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "fe2e83ae7ecec239025c1b34ab4e6d3e94e67ef9": {
+  "n": 4012,
+  "pool": "devin",
+  "runs": [
+   [
+    "2026-11-07T21:53:10Z",
+    "2026-11-07T21:53:09Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T21:53:06Z",
+    "2026-11-07T21:53:09Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T21:52:48Z",
+    "2026-11-07T21:55:45Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T21:52:27Z",
+    "2026-11-07T21:52:27Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T21:52:27Z",
+    "2026-11-07T21:52:27Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T21:52:27Z",
+    "2026-11-07T21:52:27Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T21:52:27Z",
+    "2026-11-07T21:52:27Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T21:52:27Z",
+    "2026-11-07T21:52:27Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T21:52:27Z",
+    "2026-11-07T21:52:27Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T21:52:27Z",
+    "2026-11-07T21:52:27Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T21:52:27Z",
+    "2026-11-07T21:52:27Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T21:52:27Z",
+    "2026-11-07T21:52:27Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T21:52:14Z",
+    "2026-11-07T21:52:24Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T21:52:14Z",
+    "2026-11-07T21:52:27Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T21:52:14Z",
+    "2026-11-07T21:53:04Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T21:52:14Z",
+    "2026-11-07T21:52:41Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "b69b794f3d8fbde13c3ba29c78eb932e4067e0e3": {
+  "n": 4013,
+  "pool": "devin",
+  "runs": [
+   [
+    "2026-11-07T22:12:16Z",
+    "2026-11-07T22:12:16Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:12:12Z",
+    "2026-11-07T22:12:15Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T22:11:37Z",
+    "2026-11-07T22:15:26Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T22:11:21Z",
+    "2026-11-07T22:11:20Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:11:21Z",
+    "2026-11-07T22:11:20Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:11:21Z",
+    "2026-11-07T22:11:20Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:11:21Z",
+    "2026-11-07T22:11:20Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:11:20Z",
+    "2026-11-07T22:11:20Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:11:20Z",
+    "2026-11-07T22:11:20Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:11:20Z",
+    "2026-11-07T22:11:20Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:11:20Z",
+    "2026-11-07T22:11:20Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:11:20Z",
+    "2026-11-07T22:11:20Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:10:59Z",
+    "2026-11-07T22:11:20Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T22:11:00Z",
+    "2026-11-07T22:12:05Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T22:10:59Z",
+    "2026-11-07T22:11:10Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T22:10:59Z",
+    "2026-11-07T22:11:22Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "37dffd0f50ef5ea996890508d3e23a03b6ce9d45": {
+  "n": 3720,
+  "pool": "devin",
+  "runs": [
+   [
+    "2026-11-06T04:27:27Z",
+    "2026-11-06T04:27:27Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-06T04:27:24Z",
+    "2026-11-06T04:27:27Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-06T04:26:31Z",
+    "2026-11-06T04:33:52Z",
+    "CodeRabbit",
+    "success"
+   ],
+   [
+    "2026-11-06T04:26:27Z",
+    "2026-11-06T04:26:27Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-06T04:26:27Z",
+    "2026-11-06T04:26:27Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T04:26:27Z",
+    "2026-11-06T04:26:27Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T04:26:27Z",
+    "2026-11-06T04:26:27Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T04:26:27Z",
+    "2026-11-06T04:26:27Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T04:26:27Z",
+    "2026-11-06T04:26:27Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T04:26:27Z",
+    "2026-11-06T04:26:27Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T04:26:27Z",
+    "2026-11-06T04:26:27Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-06T04:26:27Z",
+    "2026-11-06T04:26:27Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T04:26:27Z",
+    "2026-11-06T04:26:27Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T04:26:10Z",
+    "2026-11-06T04:26:22Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-06T04:26:11Z",
+    "2026-11-06T04:26:27Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-06T04:26:10Z",
+    "2026-11-06T04:27:23Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-06T04:26:10Z",
+    "2026-11-06T04:26:41Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "c8fc94e99b87b3bd7123b77f1c4227aa51caf47b": {
+  "n": 4056,
+  "pool": "codex-local",
+  "runs": [
+   [
+    "2026-11-07T23:55:19Z",
+    "2026-11-07T23:59:08Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T23:54:39Z",
+    "2026-11-07T23:54:38Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T23:54:35Z",
+    "2026-11-07T23:54:38Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T23:54:27Z",
+    "2026-11-07T23:54:26Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T23:54:27Z",
+    "2026-11-07T23:54:26Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T23:54:27Z",
+    "2026-11-07T23:54:26Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T23:54:27Z",
+    "2026-11-07T23:54:26Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T23:54:27Z",
+    "2026-11-07T23:54:26Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T23:54:27Z",
+    "2026-11-07T23:54:26Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T23:54:27Z",
+    "2026-11-07T23:54:26Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T23:54:27Z",
+    "2026-11-07T23:54:26Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T23:54:27Z",
+    "2026-11-07T23:54:26Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T23:54:12Z",
+    "2026-11-07T23:54:22Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T23:54:12Z",
+    "2026-11-07T23:54:26Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T23:54:13Z",
+    "2026-11-07T23:54:33Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T23:54:13Z",
+    "2026-11-07T23:54:44Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "3a2e0b5c369982d3f719075123144b129c9ed4eb": {
+  "n": 3849,
+  "pool": "codex-local",
+  "runs": [
+   [
+    "2026-11-07T02:41:33Z",
+    "2026-11-07T02:41:33Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:41:29Z",
+    "2026-11-07T02:41:33Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T02:41:22Z",
+    "2026-11-07T02:48:01Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T02:41:04Z",
+    "2026-11-07T02:41:04Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:41:04Z",
+    "2026-11-07T02:41:04Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:41:03Z",
+    "2026-11-07T02:41:03Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:41:03Z",
+    "2026-11-07T02:41:03Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:41:03Z",
+    "2026-11-07T02:41:03Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:41:03Z",
+    "2026-11-07T02:41:03Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:41:03Z",
+    "2026-11-07T02:41:03Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:41:03Z",
+    "2026-11-07T02:41:03Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:41:03Z",
+    "2026-11-07T02:41:03Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:41:03Z",
+    "2026-11-07T02:41:03Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:40:50Z",
+    "2026-11-07T02:41:27Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T02:40:50Z",
+    "2026-11-07T02:41:03Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T02:40:50Z",
+    "2026-11-07T02:41:04Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T02:40:49Z",
+    "2026-11-07T02:41:17Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "d88eba9544abdfdb9d6d152044de00373ac12dc4": {
+  "n": 3832,
+  "pool": "codex-local",
+  "runs": [
+   [
+    "2026-11-07T01:41:53Z",
+    "2026-11-07T01:41:53Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:41:50Z",
+    "2026-11-07T01:41:53Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T01:41:25Z",
+    "2026-11-07T01:41:25Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:41:25Z",
+    "2026-11-07T01:41:24Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:41:25Z",
+    "2026-11-07T01:41:24Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:41:25Z",
+    "2026-11-07T01:41:24Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:41:25Z",
+    "2026-11-07T01:41:24Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:41:25Z",
+    "2026-11-07T01:41:24Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:41:25Z",
+    "2026-11-07T01:41:24Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:41:25Z",
+    "2026-11-07T01:41:24Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:41:25Z",
+    "2026-11-07T01:41:24Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:41:25Z",
+    "2026-11-07T01:41:24Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:41:12Z",
+    "2026-11-07T01:41:12Z",
+    "CodeRabbit",
+    "neutral"
+   ],
+   [
+    "2026-11-07T01:41:11Z",
+    "2026-11-07T01:41:48Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T01:41:10Z",
+    "2026-11-07T01:41:24Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T01:41:10Z",
+    "2026-11-07T01:41:21Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T01:41:10Z",
+    "2026-11-07T01:41:45Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "7b7de59ab88fab7425fb09697303b7a15f3e6d3a": {
+  "n": 3848,
+  "pool": "codex-local",
+  "runs": [
+   [
+    "2026-11-07T02:41:25Z",
+    "2026-11-07T02:41:25Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:41:22Z",
+    "2026-11-07T02:41:25Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T02:40:51Z",
+    "2026-11-07T02:48:13Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T02:40:39Z",
+    "2026-11-07T02:40:38Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:40:39Z",
+    "2026-11-07T02:40:38Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:40:39Z",
+    "2026-11-07T02:40:38Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:40:38Z",
+    "2026-11-07T02:40:38Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:40:38Z",
+    "2026-11-07T02:40:38Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:40:38Z",
+    "2026-11-07T02:40:38Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:40:38Z",
+    "2026-11-07T02:40:38Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:40:38Z",
+    "2026-11-07T02:40:38Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:40:38Z",
+    "2026-11-07T02:40:38Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:40:38Z",
+    "2026-11-07T02:40:38Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:40:18Z",
+    "2026-11-07T02:40:28Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T02:40:18Z",
+    "2026-11-07T02:41:20Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T02:40:18Z",
+    "2026-11-07T02:40:46Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ],
+   [
+    "2026-11-07T02:40:18Z",
+    "2026-11-07T02:40:38Z",
+    "Classify PR site lane",
+    "success"
+   ]
+  ]
+ },
+ "623544f8ca0b7938d8bc9e8bf9322b28e2b8c8bf": {
+  "n": 3830,
+  "pool": "codex-local",
+  "runs": [
+   [
+    "2026-11-07T01:29:36Z",
+    "2026-11-07T01:29:36Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:29:32Z",
+    "2026-11-07T01:29:36Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T01:28:38Z",
+    "2026-11-07T01:28:38Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:28:38Z",
+    "2026-11-07T01:28:38Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:28:38Z",
+    "2026-11-07T01:28:38Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:28:38Z",
+    "2026-11-07T01:28:38Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:28:38Z",
+    "2026-11-07T01:28:38Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:28:38Z",
+    "2026-11-07T01:28:38Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:28:38Z",
+    "2026-11-07T01:28:38Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:28:38Z",
+    "2026-11-07T01:28:38Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:28:38Z",
+    "2026-11-07T01:28:38Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:28:38Z",
+    "2026-11-07T01:28:38Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:28:23Z",
+    "2026-11-07T01:28:23Z",
+    "CodeRabbit",
+    "neutral"
+   ],
+   [
+    "2026-11-07T01:28:21Z",
+    "2026-11-07T01:28:38Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T01:28:21Z",
+    "2026-11-07T01:28:32Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T01:28:21Z",
+    "2026-11-07T01:29:30Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T01:28:21Z",
+    "2026-11-07T01:28:50Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "e7622a08218eb604bc2bbd10254dac8f576434cb": {
+  "n": 3710,
+  "pool": "codex-local",
+  "runs": [
+   [
+    "2026-11-06T03:47:31Z",
+    "2026-11-06T03:47:31Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-06T03:47:26Z",
+    "2026-11-06T03:47:30Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-06T03:46:29Z",
+    "2026-11-06T03:46:29Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-06T03:46:29Z",
+    "2026-11-06T03:46:29Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T03:46:29Z",
+    "2026-11-06T03:46:29Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-06T03:46:29Z",
+    "2026-11-06T03:46:29Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T03:46:29Z",
+    "2026-11-06T03:46:29Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T03:46:29Z",
+    "2026-11-06T03:46:29Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T03:46:29Z",
+    "2026-11-06T03:46:29Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T03:46:29Z",
+    "2026-11-06T03:46:29Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T03:46:29Z",
+    "2026-11-06T03:46:29Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T03:46:29Z",
+    "2026-11-06T03:46:29Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T03:46:29Z",
+    "2026-11-06T03:53:07Z",
+    "CodeRabbit",
+    "success"
+   ],
+   [
+    "2026-11-06T03:46:13Z",
+    "2026-11-06T03:46:29Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-06T03:46:13Z",
+    "2026-11-06T03:47:24Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-06T03:46:13Z",
+    "2026-11-06T03:46:26Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-06T03:46:13Z",
+    "2026-11-06T03:46:42Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "546185763707fbf330f9821eaf854640ae9b117c": {
+  "n": 3967,
+  "pool": "claude-api",
+  "runs": [
+   [
+    "2026-11-07T19:52:52Z",
+    "2026-11-07T19:52:52Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T19:52:48Z",
+    "2026-11-07T19:52:52Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T19:52:44Z",
+    "2026-11-07T19:54:27Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T19:52:25Z",
+    "2026-11-07T19:52:24Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T19:52:22Z",
+    "2026-11-07T19:52:21Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T19:52:22Z",
+    "2026-11-07T19:52:21Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T19:52:22Z",
+    "2026-11-07T19:52:21Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T19:52:22Z",
+    "2026-11-07T19:52:21Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T19:52:22Z",
+    "2026-11-07T19:52:21Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T19:52:22Z",
+    "2026-11-07T19:52:21Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T19:52:22Z",
+    "2026-11-07T19:52:21Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T19:52:22Z",
+    "2026-11-07T19:52:21Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T19:52:07Z",
+    "2026-11-07T19:52:24Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T19:52:07Z",
+    "2026-11-07T19:52:46Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T19:52:07Z",
+    "2026-11-07T19:52:21Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T19:52:07Z",
+    "2026-11-07T19:52:39Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "13a98b6488764c95580dcdea910ea34added6d8f": {
+  "n": 3839,
+  "pool": "claude-api",
+  "runs": [
+   [
+    "2026-11-07T02:11:41Z",
+    "2026-11-07T02:11:41Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:11:39Z",
+    "2026-11-07T02:11:41Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T02:11:30Z",
+    "2026-11-07T02:13:27Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T02:11:13Z",
+    "2026-11-07T02:11:13Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:11:13Z",
+    "2026-11-07T02:11:13Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:11:10Z",
+    "2026-11-07T02:11:10Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:11:10Z",
+    "2026-11-07T02:11:10Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:11:10Z",
+    "2026-11-07T02:11:10Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:11:10Z",
+    "2026-11-07T02:11:10Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:11:10Z",
+    "2026-11-07T02:11:10Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:11:10Z",
+    "2026-11-07T02:11:10Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:11:10Z",
+    "2026-11-07T02:11:10Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:11:10Z",
+    "2026-11-07T02:11:10Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:10:58Z",
+    "2026-11-07T02:11:10Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T02:10:59Z",
+    "2026-11-07T02:11:12Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T02:10:58Z",
+    "2026-11-07T02:11:37Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T02:10:58Z",
+    "2026-11-07T02:11:21Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "30ed421fb6caab41482911367971d6d91de1cdc5": {
+  "n": 4026,
+  "pool": "claude-api",
+  "runs": [
+   [
+    "2026-11-07T22:30:00Z",
+    "2026-11-07T22:29:59Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:29:55Z",
+    "2026-11-07T22:29:59Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T22:29:44Z",
+    "2026-11-07T22:31:54Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T22:29:24Z",
+    "2026-11-07T22:29:23Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:29:24Z",
+    "2026-11-07T22:29:23Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:29:24Z",
+    "2026-11-07T22:29:23Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:29:24Z",
+    "2026-11-07T22:29:23Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:29:24Z",
+    "2026-11-07T22:29:23Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:29:24Z",
+    "2026-11-07T22:29:23Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:29:24Z",
+    "2026-11-07T22:29:23Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:29:24Z",
+    "2026-11-07T22:29:23Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:29:24Z",
+    "2026-11-07T22:29:23Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T22:29:08Z",
+    "2026-11-07T22:29:53Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T22:29:08Z",
+    "2026-11-07T22:29:20Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T22:29:07Z",
+    "2026-11-07T22:29:31Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ],
+   [
+    "2026-11-07T22:29:07Z",
+    "2026-11-07T22:29:23Z",
+    "Classify PR site lane",
+    "success"
+   ]
+  ]
+ },
+ "33ed1b54d95842cc8bc87bd9a97631a1edd23661": {
+  "n": 3801,
+  "pool": "claude-api",
+  "runs": [
+   [
+    "2026-11-06T23:58:59Z",
+    "2026-11-06T23:58:58Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-06T23:58:55Z",
+    "2026-11-06T23:58:58Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-06T23:58:17Z",
+    "2026-11-07T00:08:18Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-06T23:58:01Z",
+    "2026-11-06T23:58:00Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T23:58:01Z",
+    "2026-11-06T23:58:01Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-06T23:58:01Z",
+    "2026-11-06T23:58:00Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T23:58:01Z",
+    "2026-11-06T23:58:00Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T23:58:01Z",
+    "2026-11-06T23:58:00Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T23:58:01Z",
+    "2026-11-06T23:58:00Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T23:58:01Z",
+    "2026-11-06T23:58:00Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-06T23:58:01Z",
+    "2026-11-06T23:58:00Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T23:58:01Z",
+    "2026-11-06T23:58:00Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T23:58:01Z",
+    "2026-11-06T23:58:00Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T23:57:47Z",
+    "2026-11-06T23:58:00Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-06T23:57:47Z",
+    "2026-11-06T23:58:53Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-06T23:57:47Z",
+    "2026-11-06T23:58:00Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-06T23:57:47Z",
+    "2026-11-06T23:58:14Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "b050ae0506e6ff0e84031a779f23ead9e6eb5f04": {
+  "n": 3784,
+  "pool": "claude-api",
+  "runs": [
+   [
+    "2026-11-06T16:15:19Z",
+    "2026-11-06T16:15:18Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-06T16:15:14Z",
+    "2026-11-06T16:15:18Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-06T16:14:40Z",
+    "2026-11-06T16:18:55Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-06T16:14:31Z",
+    "2026-11-06T16:14:31Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T16:14:31Z",
+    "2026-11-06T16:14:31Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-06T16:14:31Z",
+    "2026-11-06T16:14:31Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-06T16:14:31Z",
+    "2026-11-06T16:14:31Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T16:14:31Z",
+    "2026-11-06T16:14:31Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T16:14:31Z",
+    "2026-11-06T16:14:31Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T16:14:31Z",
+    "2026-11-06T16:14:31Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T16:14:31Z",
+    "2026-11-06T16:14:31Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T16:14:31Z",
+    "2026-11-06T16:14:31Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T16:14:31Z",
+    "2026-11-06T16:14:31Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T16:14:14Z",
+    "2026-11-06T16:14:30Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-06T16:14:13Z",
+    "2026-11-06T16:15:12Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-06T16:14:13Z",
+    "2026-11-06T16:14:22Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-06T16:14:14Z",
+    "2026-11-06T16:14:40Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "c1c918c38bc8add17c21f8331ad25d42afe7a9d3": {
+  "n": 3815,
+  "pool": "claude-api",
+  "runs": [
+   [
+    "2026-11-07T01:01:00Z",
+    "2026-11-07T01:01:00Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:00:56Z",
+    "2026-11-07T01:01:00Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T01:00:36Z",
+    "2026-11-07T01:00:36Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:00:36Z",
+    "2026-11-07T01:00:36Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:00:36Z",
+    "2026-11-07T01:00:36Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:00:36Z",
+    "2026-11-07T01:00:36Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:00:36Z",
+    "2026-11-07T01:00:36Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:00:36Z",
+    "2026-11-07T01:00:36Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:00:36Z",
+    "2026-11-07T01:00:36Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:00:36Z",
+    "2026-11-07T01:00:36Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:00:36Z",
+    "2026-11-07T01:00:36Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:00:36Z",
+    "2026-11-07T01:00:36Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:00:24Z",
+    "2026-11-07T01:00:24Z",
+    "CodeRabbit",
+    "neutral"
+   ],
+   [
+    "2026-11-07T01:00:22Z",
+    "2026-11-07T01:00:33Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T01:00:23Z",
+    "2026-11-07T01:00:53Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T01:00:22Z",
+    "2026-11-07T01:00:35Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T01:00:22Z",
+    "2026-11-07T01:00:49Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "a5d23b679b29a7cfbd795da3f74e87e6467bdf1c": {
+  "n": 3861,
+  "pool": "release-please",
+  "runs": [
+   [
+    "2026-11-07T03:43:31Z",
+    "2026-11-07T03:45:31Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T03:42:19Z",
+    "2026-11-07T03:42:18Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:42:16Z",
+    "2026-11-07T03:42:18Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T03:41:07Z",
+    "2026-11-07T03:41:07Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:41:06Z",
+    "2026-11-07T03:41:06Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:41:06Z",
+    "2026-11-07T03:41:06Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:41:06Z",
+    "2026-11-07T03:41:06Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:41:06Z",
+    "2026-11-07T03:41:06Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:41:06Z",
+    "2026-11-07T03:41:06Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:41:06Z",
+    "2026-11-07T03:41:06Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:41:06Z",
+    "2026-11-07T03:41:06Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:41:06Z",
+    "2026-11-07T03:41:06Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:40:58Z",
+    "2026-11-07T03:40:58Z",
+    "Vercel Preview Comments",
+    "success"
+   ],
+   [
+    "2026-11-07T03:40:54Z",
+    "2026-11-07T03:41:06Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T03:40:54Z",
+    "2026-11-07T03:41:06Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T03:40:54Z",
+    "2026-11-07T03:42:14Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T03:40:54Z",
+    "2026-11-07T03:41:26Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "586b4b207fdfdd513d39963ec044fb4aa3cf343a": {
+  "n": 3790,
+  "pool": "release-please",
+  "runs": [
+   [
+    "2026-11-06T19:14:35Z",
+    "2026-11-06T19:16:58Z",
+    "CodeRabbit",
+    "success"
+   ],
+   [
+    "2026-11-06T19:13:27Z",
+    "2026-11-06T19:13:27Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-06T19:13:23Z",
+    "2026-11-06T19:13:27Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-06T19:12:12Z",
+    "2026-11-06T19:12:12Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-06T19:12:12Z",
+    "2026-11-06T19:12:12Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-06T19:12:12Z",
+    "2026-11-06T19:12:12Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T19:12:12Z",
+    "2026-11-06T19:12:12Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T19:12:12Z",
+    "2026-11-06T19:12:12Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T19:12:12Z",
+    "2026-11-06T19:12:12Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T19:12:12Z",
+    "2026-11-06T19:12:12Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T19:12:12Z",
+    "2026-11-06T19:12:12Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T19:12:12Z",
+    "2026-11-06T19:12:12Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T19:12:12Z",
+    "2026-11-06T19:12:12Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T19:12:06Z",
+    "2026-11-06T19:12:06Z",
+    "Vercel Preview Comments",
+    "success"
+   ],
+   [
+    "2026-11-06T19:12:02Z",
+    "2026-11-06T19:12:30Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ],
+   [
+    "2026-11-06T19:12:01Z",
+    "2026-11-06T19:12:12Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-06T19:12:00Z",
+    "2026-11-06T19:12:11Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-06T19:12:01Z",
+    "2026-11-06T19:13:21Z",
+    "Quick typecheck",
+    "success"
+   ]
+  ]
+ },
+ "f08f266e80f7ac7bdc628472676c020d83afbf16": {
+  "n": 3783,
+  "pool": "release-please",
+  "runs": [
+   [
+    "2026-11-06T15:37:07Z",
+    "2026-11-06T15:40:44Z",
+    "CodeRabbit",
+    "success"
+   ],
+   [
+    "2026-11-06T15:35:49Z",
+    "2026-11-06T15:35:49Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-06T15:35:45Z",
+    "2026-11-06T15:35:48Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-06T15:34:49Z",
+    "2026-11-06T15:34:48Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-06T15:34:49Z",
+    "2026-11-06T15:34:48Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T15:34:49Z",
+    "2026-11-06T15:34:48Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T15:34:49Z",
+    "2026-11-06T15:34:48Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T15:34:49Z",
+    "2026-11-06T15:34:48Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-06T15:34:49Z",
+    "2026-11-06T15:34:48Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T15:34:49Z",
+    "2026-11-06T15:34:48Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T15:34:49Z",
+    "2026-11-06T15:34:48Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T15:34:49Z",
+    "2026-11-06T15:34:48Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T15:34:49Z",
+    "2026-11-06T15:34:48Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T15:34:38Z",
+    "2026-11-06T15:34:38Z",
+    "Vercel Preview Comments",
+    "success"
+   ],
+   [
+    "2026-11-06T15:34:36Z",
+    "2026-11-06T15:34:47Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-06T15:34:36Z",
+    "2026-11-06T15:34:48Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-06T15:34:36Z",
+    "2026-11-06T15:35:43Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-06T15:34:36Z",
+    "2026-11-06T15:35:02Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "c1647bf03e0c166df9fb9f9b0645f015e80b87eb": {
+  "n": 3788,
+  "pool": "release-please",
+  "runs": [
+   [
+    "2026-11-06T17:23:01Z",
+    "2026-11-06T17:25:26Z",
+    "CodeRabbit",
+    "success"
+   ],
+   [
+    "2026-11-06T17:22:15Z",
+    "2026-11-06T17:22:15Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-06T17:22:12Z",
+    "2026-11-06T17:22:15Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-06T17:21:18Z",
+    "2026-11-06T17:21:17Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-06T17:21:18Z",
+    "2026-11-06T17:21:17Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T17:21:18Z",
+    "2026-11-06T17:21:17Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T17:21:18Z",
+    "2026-11-06T17:21:17Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T17:21:18Z",
+    "2026-11-06T17:21:17Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T17:21:18Z",
+    "2026-11-06T17:21:17Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T17:21:18Z",
+    "2026-11-06T17:21:17Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T17:21:18Z",
+    "2026-11-06T17:21:17Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T17:21:18Z",
+    "2026-11-06T17:21:17Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T17:21:18Z",
+    "2026-11-06T17:21:17Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-06T17:21:05Z",
+    "2026-11-06T17:21:05Z",
+    "Vercel Preview Comments",
+    "success"
+   ],
+   [
+    "2026-11-06T17:21:03Z",
+    "2026-11-06T17:22:10Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-06T17:21:03Z",
+    "2026-11-06T17:21:17Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-06T17:21:03Z",
+    "2026-11-06T17:21:16Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-06T17:21:02Z",
+    "2026-11-06T17:21:29Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "fe1cad60276f62e196413724da6847685fcba27c": {
+  "n": 3793,
+  "pool": "release-please",
+  "runs": [
+   [
+    "2026-11-06T20:43:55Z",
+    "2026-11-06T20:48:44Z",
+    "CodeRabbit",
+    "success"
+   ],
+   [
+    "2026-11-06T20:42:45Z",
+    "2026-11-06T20:42:44Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:42:41Z",
+    "2026-11-06T20:42:44Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-06T20:41:50Z",
+    "2026-11-06T20:41:50Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:41:50Z",
+    "2026-11-06T20:41:50Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:41:50Z",
+    "2026-11-06T20:41:50Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:41:50Z",
+    "2026-11-06T20:41:50Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:41:50Z",
+    "2026-11-06T20:41:50Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:41:50Z",
+    "2026-11-06T20:41:50Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:41:50Z",
+    "2026-11-06T20:41:50Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:41:50Z",
+    "2026-11-06T20:41:50Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:41:50Z",
+    "2026-11-06T20:41:50Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:41:50Z",
+    "2026-11-06T20:41:50Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:41:44Z",
+    "2026-11-06T20:41:44Z",
+    "Vercel Preview Comments",
+    "success"
+   ],
+   [
+    "2026-11-06T20:41:36Z",
+    "2026-11-06T20:42:10Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ],
+   [
+    "2026-11-06T20:41:36Z",
+    "2026-11-06T20:42:39Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-06T20:41:36Z",
+    "2026-11-06T20:41:50Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-06T20:41:36Z",
+    "2026-11-06T20:41:46Z",
+    "Secret-shape scan",
+    "success"
+   ]
+  ]
+ },
+ "07a34c161e6a98fd04ea5f97f02133458a55b38f": {
+  "n": 3798,
+  "pool": "release-please",
+  "runs": [
+   [
+    "2026-11-06T22:58:34Z",
+    "2026-11-06T22:58:33Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:58:30Z",
+    "2026-11-06T22:58:33Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-06T22:57:37Z",
+    "2026-11-06T23:00:59Z",
+    "CodeRabbit",
+    "success"
+   ],
+   [
+    "2026-11-06T22:57:27Z",
+    "2026-11-06T22:57:27Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:57:27Z",
+    "2026-11-06T22:57:27Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:57:27Z",
+    "2026-11-06T22:57:27Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:57:27Z",
+    "2026-11-06T22:57:27Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:57:27Z",
+    "2026-11-06T22:57:27Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:57:27Z",
+    "2026-11-06T22:57:27Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:57:27Z",
+    "2026-11-06T22:57:27Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:57:27Z",
+    "2026-11-06T22:57:27Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:57:27Z",
+    "2026-11-06T22:57:27Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:57:27Z",
+    "2026-11-06T22:57:27Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:57:16Z",
+    "2026-11-06T22:57:16Z",
+    "Vercel Preview Comments",
+    "success"
+   ],
+   [
+    "2026-11-06T22:57:13Z",
+    "2026-11-06T22:57:35Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ],
+   [
+    "2026-11-06T22:57:13Z",
+    "2026-11-06T22:57:26Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-06T22:57:13Z",
+    "2026-11-06T22:57:26Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-06T22:57:13Z",
+    "2026-11-06T22:58:27Z",
+    "Quick typecheck",
+    "success"
+   ]
+  ]
+ },
+ "2583887d69217e9bb2ad66aaa794b37355b42ae0": {
+  "n": 3805,
+  "pool": "human",
+  "runs": [
+   [
+    "2026-11-07T00:35:23Z",
+    "2026-11-07T00:35:23Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T00:24:26Z",
+    "2026-11-07T00:24:26Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:24:23Z",
+    "2026-11-07T00:24:26Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T00:24:04Z",
+    "2026-11-07T00:24:03Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:24:04Z",
+    "2026-11-07T00:24:03Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:24:04Z",
+    "2026-11-07T00:24:03Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:24:04Z",
+    "2026-11-07T00:24:03Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:24:04Z",
+    "2026-11-07T00:24:03Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:24:04Z",
+    "2026-11-07T00:24:03Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:24:04Z",
+    "2026-11-07T00:24:03Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:24:04Z",
+    "2026-11-07T00:24:03Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:24:04Z",
+    "2026-11-07T00:24:03Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:24:04Z",
+    "2026-11-07T00:24:03Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:23:51Z",
+    "2026-11-07T00:24:16Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ],
+   [
+    "2026-11-07T00:23:51Z",
+    "2026-11-07T00:24:03Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T00:23:51Z",
+    "2026-11-07T00:24:21Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T00:23:51Z",
+    "2026-11-07T00:24:00Z",
+    "Secret-shape scan",
+    "success"
+   ]
+  ]
+ },
+ "c3b23df3a9792493d54c1188147c2dd524d93db2": {
+  "n": 3804,
+  "pool": "human",
+  "runs": [
+   [
+    "2026-11-07T00:15:40Z",
+    "2026-11-07T00:15:39Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:15:36Z",
+    "2026-11-07T00:15:39Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T00:15:11Z",
+    "2026-11-07T00:22:28Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T00:15:03Z",
+    "2026-11-07T00:15:02Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:15:02Z",
+    "2026-11-07T00:15:02Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:15:00Z",
+    "2026-11-07T00:14:59Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:15:00Z",
+    "2026-11-07T00:14:59Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:15:00Z",
+    "2026-11-07T00:14:59Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:15:00Z",
+    "2026-11-07T00:14:59Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:15:00Z",
+    "2026-11-07T00:14:59Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:15:00Z",
+    "2026-11-07T00:14:59Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:15:00Z",
+    "2026-11-07T00:14:59Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:15:00Z",
+    "2026-11-07T00:14:59Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:14:44Z",
+    "2026-11-07T00:15:34Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T00:14:44Z",
+    "2026-11-07T00:14:59Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T00:14:49Z",
+    "2026-11-07T00:15:02Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T00:14:44Z",
+    "2026-11-07T00:15:09Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "189d2ac398b32b7474fc8f3e0efc7948b9159edc": {
+  "n": 3792,
+  "pool": "human",
+  "runs": [
+   [
+    "2026-11-06T20:10:47Z",
+    "2026-11-06T20:10:47Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:10:44Z",
+    "2026-11-06T20:10:47Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-06T20:09:58Z",
+    "2026-11-06T20:15:48Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-06T20:09:46Z",
+    "2026-11-06T20:09:45Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:09:46Z",
+    "2026-11-06T20:09:45Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:09:46Z",
+    "2026-11-06T20:09:45Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:09:46Z",
+    "2026-11-06T20:09:45Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:09:46Z",
+    "2026-11-06T20:09:45Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:09:46Z",
+    "2026-11-06T20:09:45Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:09:46Z",
+    "2026-11-06T20:09:45Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:09:46Z",
+    "2026-11-06T20:09:45Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:09:46Z",
+    "2026-11-06T20:09:45Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:09:46Z",
+    "2026-11-06T20:09:45Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:09:29Z",
+    "2026-11-06T20:09:56Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ],
+   [
+    "2026-11-06T20:09:29Z",
+    "2026-11-06T20:09:45Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-06T20:09:29Z",
+    "2026-11-06T20:10:43Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-06T20:09:29Z",
+    "2026-11-06T20:09:40Z",
+    "Secret-shape scan",
+    "success"
+   ]
+  ]
+ },
+ "8ec88d13675668419874ae790232b20ce19b8cce": {
+  "n": 3866,
+  "pool": "human",
+  "runs": [
+   [
+    "2026-11-07T04:55:00Z",
+    "2026-11-07T04:54:59Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T04:54:56Z",
+    "2026-11-07T04:54:59Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T04:54:41Z",
+    "2026-11-07T05:10:37Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T04:54:26Z",
+    "2026-11-07T04:54:26Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T04:54:26Z",
+    "2026-11-07T04:54:26Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T04:54:26Z",
+    "2026-11-07T04:54:26Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T04:54:26Z",
+    "2026-11-07T04:54:26Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T04:54:26Z",
+    "2026-11-07T04:54:26Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T04:54:26Z",
+    "2026-11-07T04:54:26Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T04:54:26Z",
+    "2026-11-07T04:54:26Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T04:54:26Z",
+    "2026-11-07T04:54:26Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T04:54:26Z",
+    "2026-11-07T04:54:26Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T04:54:11Z",
+    "2026-11-07T04:54:26Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T04:54:11Z",
+    "2026-11-07T04:54:26Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T04:54:11Z",
+    "2026-11-07T04:54:54Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T04:54:10Z",
+    "2026-11-07T04:54:33Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "eaef4ff348101a7a073955a59bef3a51ead2b057": {
+  "n": 3787,
+  "pool": "human",
+  "runs": [
+   [
+    "2026-11-06T17:14:35Z",
+    "2026-11-06T17:16:01Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-06T17:12:28Z",
+    "2026-11-06T17:12:27Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-06T17:12:22Z",
+    "2026-11-06T17:12:27Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-06T17:11:29Z",
+    "2026-11-06T17:11:29Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T17:11:29Z",
+    "2026-11-06T17:11:29Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T17:11:29Z",
+    "2026-11-06T17:11:29Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-06T17:11:29Z",
+    "2026-11-06T17:11:29Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T17:11:29Z",
+    "2026-11-06T17:11:29Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T17:11:29Z",
+    "2026-11-06T17:11:29Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T17:11:29Z",
+    "2026-11-06T17:11:29Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T17:11:29Z",
+    "2026-11-06T17:11:29Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-06T17:11:29Z",
+    "2026-11-06T17:11:29Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T17:11:29Z",
+    "2026-11-06T17:11:29Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T17:11:12Z",
+    "2026-11-06T17:11:29Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-06T17:11:11Z",
+    "2026-11-06T17:12:20Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-06T17:11:12Z",
+    "2026-11-06T17:11:24Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-06T17:11:11Z",
+    "2026-11-06T17:11:42Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "bd8d28e8d24fd80ea23e849a4f74c0ab03b61fa8": {
+  "n": 1152,
+  "pool": "human",
+  "runs": [
+   [
+    "2026-11-06T23:34:21Z",
+    "2026-11-06T23:36:20Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-06T23:09:23Z",
+    "2026-11-06T23:09:23Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-06T23:09:20Z",
+    "2026-11-06T23:09:23Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-06T23:08:30Z",
+    "2026-11-06T23:08:30Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T23:08:30Z",
+    "2026-11-06T23:08:30Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T23:08:30Z",
+    "2026-11-06T23:08:30Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-06T23:08:30Z",
+    "2026-11-06T23:08:30Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T23:08:30Z",
+    "2026-11-06T23:08:30Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T23:08:30Z",
+    "2026-11-06T23:08:30Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-06T23:08:30Z",
+    "2026-11-06T23:08:30Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T23:08:30Z",
+    "2026-11-06T23:08:30Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T23:08:30Z",
+    "2026-11-06T23:08:30Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T23:08:30Z",
+    "2026-11-06T23:08:30Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T23:08:16Z",
+    "2026-11-06T23:08:27Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-06T23:08:16Z",
+    "2026-11-06T23:08:30Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-06T23:08:16Z",
+    "2026-11-06T23:09:18Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-06T23:08:11Z",
+    "2026-11-06T23:08:37Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "43c268d0432c19aeba165c094377d61fe08e251c": {
+  "n": 3862,
+  "pool": "codex-cmp",
+  "runs": [
+   [
+    "2026-11-07T04:10:09Z",
+    "2026-11-07T04:10:09Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T04:10:07Z",
+    "2026-11-07T04:10:09Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T04:09:54Z",
+    "2026-11-07T04:11:38Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T04:09:38Z",
+    "2026-11-07T04:09:38Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T04:09:36Z",
+    "2026-11-07T04:09:36Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T04:09:36Z",
+    "2026-11-07T04:09:36Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T04:09:36Z",
+    "2026-11-07T04:09:36Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T04:09:36Z",
+    "2026-11-07T04:09:36Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T04:09:36Z",
+    "2026-11-07T04:09:36Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T04:09:36Z",
+    "2026-11-07T04:09:36Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T04:09:36Z",
+    "2026-11-07T04:09:36Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T04:09:36Z",
+    "2026-11-07T04:09:36Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T04:09:24Z",
+    "2026-11-07T04:10:05Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T04:09:24Z",
+    "2026-11-07T04:09:38Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T04:09:23Z",
+    "2026-11-07T04:09:36Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T04:09:23Z",
+    "2026-11-07T04:09:53Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "04edda4a4af5dcf4a82e0d757385acd70dd7524f": {
+  "n": 3838,
+  "pool": "codex-cmp",
+  "runs": [
+   [
+    "2026-11-07T02:11:40Z",
+    "2026-11-07T02:11:39Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:11:37Z",
+    "2026-11-07T02:11:39Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T02:11:28Z",
+    "2026-11-07T02:13:31Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T02:11:11Z",
+    "2026-11-07T02:11:11Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:11:11Z",
+    "2026-11-07T02:11:11Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:11:11Z",
+    "2026-11-07T02:11:11Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:11:11Z",
+    "2026-11-07T02:11:11Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:11:11Z",
+    "2026-11-07T02:11:11Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:11:11Z",
+    "2026-11-07T02:11:11Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:11:11Z",
+    "2026-11-07T02:11:11Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:11:11Z",
+    "2026-11-07T02:11:11Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:11:11Z",
+    "2026-11-07T02:11:11Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:11:11Z",
+    "2026-11-07T02:11:11Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:10:56Z",
+    "2026-11-07T02:11:11Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T02:10:56Z",
+    "2026-11-07T02:11:35Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T02:10:56Z",
+    "2026-11-07T02:11:25Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ],
+   [
+    "2026-11-07T02:10:56Z",
+    "2026-11-07T02:11:09Z",
+    "Secret-shape scan",
+    "success"
+   ]
+  ]
+ },
+ "9f6d839c00651b27f5238428e1f7cde68cc70720": {
+  "n": 3860,
+  "pool": "codex-cmp",
+  "runs": [
+   [
+    "2026-11-07T03:30:39Z",
+    "2026-11-07T03:30:38Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:30:36Z",
+    "2026-11-07T03:30:38Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T03:30:34Z",
+    "2026-11-07T03:38:59Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T03:30:20Z",
+    "2026-11-07T03:30:20Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:30:20Z",
+    "2026-11-07T03:30:20Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:30:20Z",
+    "2026-11-07T03:30:20Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:30:20Z",
+    "2026-11-07T03:30:20Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:30:20Z",
+    "2026-11-07T03:30:20Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:30:20Z",
+    "2026-11-07T03:30:20Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:30:20Z",
+    "2026-11-07T03:30:20Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:30:20Z",
+    "2026-11-07T03:30:20Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:30:20Z",
+    "2026-11-07T03:30:20Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:30:05Z",
+    "2026-11-07T03:30:17Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T03:30:05Z",
+    "2026-11-07T03:30:34Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T03:30:05Z",
+    "2026-11-07T03:30:20Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T03:30:05Z",
+    "2026-11-07T03:30:32Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "25ab80417deaac3765d1a5b3248e3f9f6e9f3d27": {
+  "n": 3852,
+  "pool": "codex-cmp",
+  "runs": [
+   [
+    "2026-11-07T03:11:17Z",
+    "2026-11-07T03:11:17Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:11:16Z",
+    "2026-11-07T03:21:29Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T03:11:13Z",
+    "2026-11-07T03:11:17Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T03:10:52Z",
+    "2026-11-07T03:10:51Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:10:51Z",
+    "2026-11-07T03:10:50Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:10:51Z",
+    "2026-11-07T03:10:50Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:10:51Z",
+    "2026-11-07T03:10:50Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:10:51Z",
+    "2026-11-07T03:10:50Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:10:51Z",
+    "2026-11-07T03:10:50Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:10:51Z",
+    "2026-11-07T03:10:50Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:10:50Z",
+    "2026-11-07T03:10:50Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:10:50Z",
+    "2026-11-07T03:10:50Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T03:10:38Z",
+    "2026-11-07T03:10:51Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T03:10:38Z",
+    "2026-11-07T03:10:50Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T03:10:38Z",
+    "2026-11-07T03:11:11Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T03:10:38Z",
+    "2026-11-07T03:11:02Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "529f4b2144565558fb9be287d20bdd89f3ec66ef": {
+  "n": 3816,
+  "pool": "codex-cmp",
+  "runs": [
+   [
+    "2026-11-07T01:02:19Z",
+    "2026-11-07T01:02:19Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:02:16Z",
+    "2026-11-07T01:02:18Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T01:01:51Z",
+    "2026-11-07T01:01:50Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:01:51Z",
+    "2026-11-07T01:01:50Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:01:51Z",
+    "2026-11-07T01:01:50Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:01:51Z",
+    "2026-11-07T01:01:50Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:01:51Z",
+    "2026-11-07T01:01:50Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:01:51Z",
+    "2026-11-07T01:01:50Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:01:50Z",
+    "2026-11-07T01:01:50Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:01:50Z",
+    "2026-11-07T01:01:50Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:01:50Z",
+    "2026-11-07T01:01:50Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:01:50Z",
+    "2026-11-07T01:01:50Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:01:38Z",
+    "2026-11-07T01:01:38Z",
+    "CodeRabbit",
+    "neutral"
+   ],
+   [
+    "2026-11-07T01:01:36Z",
+    "2026-11-07T01:02:14Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T01:01:36Z",
+    "2026-11-07T01:01:50Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T01:01:36Z",
+    "2026-11-07T01:01:49Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T01:01:37Z",
+    "2026-11-07T01:02:08Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "02a0d374baa50f889eb5ba066c85986929df66eb": {
+  "n": 3725,
+  "pool": "codex-cmp",
+  "runs": [
+   [
+    "2026-11-06T05:09:36Z",
+    "2026-11-06T05:09:36Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-06T05:09:32Z",
+    "2026-11-06T05:09:36Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-06T05:08:32Z",
+    "2026-11-06T05:08:32Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T05:08:32Z",
+    "2026-11-06T05:08:32Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T05:08:32Z",
+    "2026-11-06T05:08:32Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T05:08:32Z",
+    "2026-11-06T05:08:32Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T05:08:32Z",
+    "2026-11-06T05:08:32Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T05:08:32Z",
+    "2026-11-06T05:08:32Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-06T05:08:32Z",
+    "2026-11-06T05:08:32Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T05:08:32Z",
+    "2026-11-06T05:08:32Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T05:08:32Z",
+    "2026-11-06T05:08:32Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T05:08:32Z",
+    "2026-11-06T05:08:32Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-06T05:08:22Z",
+    "2026-11-06T05:08:22Z",
+    "CodeRabbit",
+    "skipped"
+   ],
+   [
+    "2026-11-06T05:08:19Z",
+    "2026-11-06T05:09:30Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-06T05:08:19Z",
+    "2026-11-06T05:08:30Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-06T05:08:19Z",
+    "2026-11-06T05:08:46Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ],
+   [
+    "2026-11-06T05:08:19Z",
+    "2026-11-06T05:08:32Z",
+    "Classify PR site lane",
+    "success"
+   ]
+  ]
+ },
+ "59662237da6a88766d995539a17404909b6886e7": {
+  "n": 3845,
+  "pool": "operator",
+  "runs": [
+   [
+    "2026-11-07T02:19:44Z",
+    "2026-11-07T02:19:44Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:19:41Z",
+    "2026-11-07T02:19:43Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T02:19:31Z",
+    "2026-11-07T02:24:30Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T02:19:17Z",
+    "2026-11-07T02:19:17Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:19:17Z",
+    "2026-11-07T02:19:17Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:19:17Z",
+    "2026-11-07T02:19:17Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:19:17Z",
+    "2026-11-07T02:19:17Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:19:17Z",
+    "2026-11-07T02:19:17Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:19:17Z",
+    "2026-11-07T02:19:17Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:19:17Z",
+    "2026-11-07T02:19:17Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:19:17Z",
+    "2026-11-07T02:19:17Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:19:17Z",
+    "2026-11-07T02:19:17Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:19:17Z",
+    "2026-11-07T02:19:17Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:19:00Z",
+    "2026-11-07T02:19:39Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T02:19:01Z",
+    "2026-11-07T02:19:14Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T02:19:00Z",
+    "2026-11-07T02:19:17Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T02:19:00Z",
+    "2026-11-07T02:19:27Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "2c486dc9b0af51350dc67e5ac2c31d5c29ddd86e": {
+  "n": 3835,
+  "pool": "operator",
+  "runs": [
+   [
+    "2026-11-07T02:05:30Z",
+    "2026-11-07T02:05:30Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:05:26Z",
+    "2026-11-07T02:05:30Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T02:05:18Z",
+    "2026-11-07T02:11:05Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T02:04:58Z",
+    "2026-11-07T02:04:57Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:04:58Z",
+    "2026-11-07T02:04:57Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:04:58Z",
+    "2026-11-07T02:04:57Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:04:58Z",
+    "2026-11-07T02:04:57Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:04:58Z",
+    "2026-11-07T02:04:57Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:04:58Z",
+    "2026-11-07T02:04:57Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:04:58Z",
+    "2026-11-07T02:04:57Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:04:58Z",
+    "2026-11-07T02:04:57Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:04:58Z",
+    "2026-11-07T02:04:57Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:04:58Z",
+    "2026-11-07T02:04:57Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:04:45Z",
+    "2026-11-07T02:04:57Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T02:04:45Z",
+    "2026-11-07T02:04:57Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T02:04:45Z",
+    "2026-11-07T02:05:25Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T02:04:45Z",
+    "2026-11-07T02:05:14Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "09cc0cb1da62e67738dabd4eb2cd0b4a11276a37": {
+  "n": 3850,
+  "pool": "operator",
+  "runs": [
+   [
+    "2026-11-07T02:48:53Z",
+    "2026-11-07T02:48:53Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:48:49Z",
+    "2026-11-07T02:48:53Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T02:48:11Z",
+    "2026-11-07T02:56:38Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T02:47:55Z",
+    "2026-11-07T02:47:54Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:47:55Z",
+    "2026-11-07T02:47:54Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:47:55Z",
+    "2026-11-07T02:47:54Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:47:54Z",
+    "2026-11-07T02:47:54Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:47:54Z",
+    "2026-11-07T02:47:54Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:47:54Z",
+    "2026-11-07T02:47:54Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:47:54Z",
+    "2026-11-07T02:47:54Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:47:54Z",
+    "2026-11-07T02:47:54Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:47:54Z",
+    "2026-11-07T02:47:54Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:47:54Z",
+    "2026-11-07T02:47:54Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:47:43Z",
+    "2026-11-07T02:48:47Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T02:47:43Z",
+    "2026-11-07T02:47:54Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T02:47:43Z",
+    "2026-11-07T02:47:54Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T02:47:43Z",
+    "2026-11-07T02:48:12Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "94bb594e3fc04cd504f18308913e06d7d76cf4ce": {
+  "n": 3800,
+  "pool": "operator",
+  "runs": [
+   [
+    "2026-11-06T22:52:05Z",
+    "2026-11-06T22:52:04Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:52:01Z",
+    "2026-11-06T22:52:04Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-06T22:51:37Z",
+    "2026-11-06T23:00:12Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-06T22:51:16Z",
+    "2026-11-06T22:51:15Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:51:16Z",
+    "2026-11-06T22:51:15Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:51:15Z",
+    "2026-11-06T22:51:14Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:51:15Z",
+    "2026-11-06T22:51:14Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:51:15Z",
+    "2026-11-06T22:51:14Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:51:15Z",
+    "2026-11-06T22:51:14Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:51:15Z",
+    "2026-11-06T22:51:14Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:51:15Z",
+    "2026-11-06T22:51:14Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:51:15Z",
+    "2026-11-06T22:51:14Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:51:15Z",
+    "2026-11-06T22:51:14Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:50:58Z",
+    "2026-11-06T22:51:15Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-06T22:50:58Z",
+    "2026-11-06T22:51:59Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-06T22:50:58Z",
+    "2026-11-06T22:51:14Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-06T22:50:58Z",
+    "2026-11-06T22:51:20Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "612206cbcc3a6b7b8995ff1b819799d84b930a80": {
+  "n": 3807,
+  "pool": "operator",
+  "runs": [
+   [
+    "2026-11-07T00:50:06Z",
+    "2026-11-07T00:50:06Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:50:03Z",
+    "2026-11-07T00:50:06Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T00:49:37Z",
+    "2026-11-07T00:52:32Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T00:49:15Z",
+    "2026-11-07T00:49:15Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:49:15Z",
+    "2026-11-07T00:49:15Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:49:15Z",
+    "2026-11-07T00:49:15Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:49:15Z",
+    "2026-11-07T00:49:15Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:49:15Z",
+    "2026-11-07T00:49:15Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:49:15Z",
+    "2026-11-07T00:49:15Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:49:15Z",
+    "2026-11-07T00:49:15Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:49:15Z",
+    "2026-11-07T00:49:15Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:49:15Z",
+    "2026-11-07T00:49:15Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:49:15Z",
+    "2026-11-07T00:49:15Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T00:48:53Z",
+    "2026-11-07T00:49:15Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T00:48:53Z",
+    "2026-11-07T00:49:04Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T00:48:53Z",
+    "2026-11-07T00:49:23Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ],
+   [
+    "2026-11-07T00:48:53Z",
+    "2026-11-07T00:50:00Z",
+    "Quick typecheck",
+    "success"
+   ]
+  ]
+ },
+ "dddab59488978234eb07cfbe8f55aa60db16311f": {
+  "n": 3846,
+  "pool": "bridge-unknown",
+  "runs": [
+   [
+    "2026-11-07T02:33:03Z",
+    "2026-11-07T02:33:02Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:32:57Z",
+    "2026-11-07T02:34:28Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T02:32:58Z",
+    "2026-11-07T02:33:02Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T02:32:44Z",
+    "2026-11-07T02:32:43Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:32:44Z",
+    "2026-11-07T02:32:43Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:32:44Z",
+    "2026-11-07T02:32:43Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:32:43Z",
+    "2026-11-07T02:32:43Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:32:43Z",
+    "2026-11-07T02:32:43Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:32:43Z",
+    "2026-11-07T02:32:43Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:32:43Z",
+    "2026-11-07T02:32:43Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:32:43Z",
+    "2026-11-07T02:32:43Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:32:43Z",
+    "2026-11-07T02:32:43Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:32:43Z",
+    "2026-11-07T02:32:43Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:32:26Z",
+    "2026-11-07T02:32:38Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T02:32:26Z",
+    "2026-11-07T02:32:43Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T02:32:26Z",
+    "2026-11-07T02:32:56Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T02:32:26Z",
+    "2026-11-07T02:32:55Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "6c817a29b18e27c5cd7c11e00e029677a285f030": {
+  "n": 3834,
+  "pool": "bridge-unknown",
+  "runs": [
+   [
+    "2026-11-07T02:00:06Z",
+    "2026-11-07T02:05:55Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T02:00:02Z",
+    "2026-11-07T02:00:02Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:00:00Z",
+    "2026-11-07T02:00:02Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T01:59:45Z",
+    "2026-11-07T01:59:44Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:59:45Z",
+    "2026-11-07T01:59:44Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:59:45Z",
+    "2026-11-07T01:59:44Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:59:45Z",
+    "2026-11-07T01:59:44Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:59:45Z",
+    "2026-11-07T01:59:44Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:59:45Z",
+    "2026-11-07T01:59:44Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:59:45Z",
+    "2026-11-07T01:59:44Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:59:45Z",
+    "2026-11-07T01:59:44Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:59:44Z",
+    "2026-11-07T01:59:44Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:59:44Z",
+    "2026-11-07T01:59:44Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T01:59:28Z",
+    "2026-11-07T01:59:42Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T01:59:28Z",
+    "2026-11-07T01:59:58Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T01:59:29Z",
+    "2026-11-07T01:59:44Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T01:59:28Z",
+    "2026-11-07T01:59:55Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "8957e367d5f4c050a993a18859a0022e510efe33": {
+  "n": 3795,
+  "pool": "bridge-unknown",
+  "runs": [
+   [
+    "2026-11-06T20:22:12Z",
+    "2026-11-06T20:22:12Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:22:09Z",
+    "2026-11-06T20:22:12Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-06T20:21:29Z",
+    "2026-11-06T20:27:05Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-06T20:21:28Z",
+    "2026-11-06T20:21:27Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:21:28Z",
+    "2026-11-06T20:21:27Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:21:28Z",
+    "2026-11-06T20:21:27Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:21:28Z",
+    "2026-11-06T20:21:27Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:21:28Z",
+    "2026-11-06T20:21:27Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:21:28Z",
+    "2026-11-06T20:21:27Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:21:28Z",
+    "2026-11-06T20:21:27Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:21:28Z",
+    "2026-11-06T20:21:27Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:21:28Z",
+    "2026-11-06T20:21:27Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:21:28Z",
+    "2026-11-06T20:21:27Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:21:07Z",
+    "2026-11-06T20:21:27Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-06T20:21:06Z",
+    "2026-11-06T20:22:07Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-06T20:21:06Z",
+    "2026-11-06T20:21:17Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-06T20:21:06Z",
+    "2026-11-06T20:21:35Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "451cebd5b412daa2eeca46e6b31a1b21c1322f7d": {
+  "n": 3808,
+  "pool": "bridge-unknown",
+  "runs": [
+   [
+    "2026-11-07T02:44:21Z",
+    "2026-11-07T02:44:21Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-07T02:36:32Z",
+    "2026-11-07T02:36:31Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:36:29Z",
+    "2026-11-07T02:36:31Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-07T02:36:03Z",
+    "2026-11-07T02:36:03Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:36:03Z",
+    "2026-11-07T02:36:03Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:36:03Z",
+    "2026-11-07T02:36:03Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:36:03Z",
+    "2026-11-07T02:36:03Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:36:03Z",
+    "2026-11-07T02:36:03Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:36:03Z",
+    "2026-11-07T02:36:03Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:36:03Z",
+    "2026-11-07T02:36:03Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:36:03Z",
+    "2026-11-07T02:36:03Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:36:03Z",
+    "2026-11-07T02:36:03Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:36:03Z",
+    "2026-11-07T02:36:03Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-07T02:35:49Z",
+    "2026-11-07T02:36:03Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-07T02:35:49Z",
+    "2026-11-07T02:36:01Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-07T02:35:49Z",
+    "2026-11-07T02:36:27Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-07T02:35:48Z",
+    "2026-11-07T02:36:12Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "2b26d613a19ead768d7b26761effab2fccadc99f": {
+  "n": 3276,
+  "pool": "bridge-unknown",
+  "runs": [
+   [
+    "2026-11-06T20:37:26Z",
+    "2026-11-06T20:39:06Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-06T20:35:06Z",
+    "2026-11-06T20:35:06Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:35:02Z",
+    "2026-11-06T20:35:06Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-06T20:34:14Z",
+    "2026-11-06T20:34:13Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:34:14Z",
+    "2026-11-06T20:34:13Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:34:14Z",
+    "2026-11-06T20:34:13Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:34:14Z",
+    "2026-11-06T20:34:13Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:34:14Z",
+    "2026-11-06T20:34:13Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:34:14Z",
+    "2026-11-06T20:34:13Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:34:14Z",
+    "2026-11-06T20:34:13Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:34:14Z",
+    "2026-11-06T20:34:13Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:34:14Z",
+    "2026-11-06T20:34:13Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:34:13Z",
+    "2026-11-06T20:34:13Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:33:59Z",
+    "2026-11-06T20:34:10Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-06T20:33:59Z",
+    "2026-11-06T20:34:13Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-06T20:33:59Z",
+    "2026-11-06T20:34:59Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-06T20:33:59Z",
+    "2026-11-06T20:34:27Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "2c2fef5077946c8976c69b01621ca4c4c72ec607": {
+  "n": 3280,
+  "pool": "bridge-unknown",
+  "runs": [
+   [
+    "2026-11-06T23:34:13Z",
+    "2026-11-06T23:36:06Z",
+    "CodeRabbit",
+    "cancelled"
+   ],
+   [
+    "2026-11-06T22:58:07Z",
+    "2026-11-06T22:58:07Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:58:05Z",
+    "2026-11-06T22:58:07Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-06T22:57:27Z",
+    "2026-11-06T22:57:27Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:57:27Z",
+    "2026-11-06T22:57:27Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:57:27Z",
+    "2026-11-06T22:57:27Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:57:27Z",
+    "2026-11-06T22:57:27Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:57:27Z",
+    "2026-11-06T22:57:27Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:57:27Z",
+    "2026-11-06T22:57:27Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:57:27Z",
+    "2026-11-06T22:57:27Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:57:27Z",
+    "2026-11-06T22:57:27Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:57:27Z",
+    "2026-11-06T22:57:27Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:57:27Z",
+    "2026-11-06T22:57:27Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T22:57:12Z",
+    "2026-11-06T22:57:26Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-06T22:57:13Z",
+    "2026-11-06T22:58:03Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-06T22:57:13Z",
+    "2026-11-06T22:57:26Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-06T22:57:12Z",
+    "2026-11-06T22:57:36Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ },
+ "a8b119fb4596723331f5b07b13e0f2dc2ce198b7": {
+  "n": 2826,
+  "pool": "claude",
+  "runs": [
+   [
+    "2026-11-06T21:15:07Z",
+    "2026-11-06T21:15:07Z",
+    "CodeRabbit",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:54:50Z",
+    "2026-11-06T20:54:50Z",
+    "Daily fixup queue",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:54:46Z",
+    "2026-11-06T20:54:50Z",
+    "Merge Gate",
+    "success"
+   ],
+   [
+    "2026-11-06T20:54:37Z",
+    "2026-11-06T20:54:37Z",
+    "Desktop release smoke",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:54:37Z",
+    "2026-11-06T20:54:37Z",
+    "Docs PR (docs-only)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:54:37Z",
+    "2026-11-06T20:54:37Z",
+    "Site PR (ecosystem)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:54:37Z",
+    "2026-11-06T20:54:37Z",
+    "Native macOS broker foundation (Rust 1.97.1)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:54:37Z",
+    "2026-11-06T20:54:37Z",
+    "Prepare unsigned desktop release",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:54:37Z",
+    "2026-11-06T20:54:37Z",
+    "Mac exhaustive (isolated)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:54:37Z",
+    "2026-11-06T20:54:37Z",
+    "Mac exhaustive (${{ matrix.shard }}/4)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:54:37Z",
+    "2026-11-06T20:54:37Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:54:37Z",
+    "2026-11-06T20:54:37Z",
+    "CI (Node 22, ${{ matrix.label }})",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:54:37Z",
+    "2026-11-06T20:54:37Z",
+    "Windows service authority (Server 2022)",
+    "skipped"
+   ],
+   [
+    "2026-11-06T20:54:22Z",
+    "2026-11-06T20:54:36Z",
+    "Classify PR site lane",
+    "success"
+   ],
+   [
+    "2026-11-06T20:54:22Z",
+    "2026-11-06T20:54:32Z",
+    "Secret-shape scan",
+    "success"
+   ],
+   [
+    "2026-11-06T20:54:23Z",
+    "2026-11-06T20:54:44Z",
+    "Quick typecheck",
+    "success"
+   ],
+   [
+    "2026-11-06T20:54:22Z",
+    "2026-11-06T20:54:51Z",
+    "Dependency audit (root + Raycast)",
+    "success"
+   ]
+  ]
+ }
+}

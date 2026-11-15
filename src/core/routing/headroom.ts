@@ -93,6 +93,11 @@ export interface SeatCapacity {
   contextWindow: number | null;
   /** When the windows were read; null when never. */
   observedAt: string | null;
+  /**
+   * When this reading stops being evidence. A clock at or after this instant
+   * is unknown, even if observedAt is still inside the default age bound.
+   */
+  staleAfter?: string | null;
   /** Opaque native before/after account proof; absent old snapshots remain unqualified. */
   accountHint?: string | null;
   /** Provider billing boundary, independently qualified by the current account source. */
@@ -376,7 +381,9 @@ export function assessSeat(capacity: SeatCapacity, policy: SeatBudgetPolicy, opt
   // Evidence quality.
   const observedMs = capacity.observedAt ? Date.parse(capacity.observedAt) : NaN;
   const ageMs = Number.isFinite(observedMs) ? nowMs - observedMs : null;
-  const stale = ageMs === null || ageMs > maxAge;
+  const staleDeadline = typeof capacity.staleAfter === 'string' ? Date.parse(capacity.staleAfter) : NaN;
+  const pastStaleAfter = typeof capacity.staleAfter === 'string' && (!Number.isFinite(staleDeadline) || nowMs >= staleDeadline);
+  const stale = ageMs === null || ageMs > maxAge || pastStaleAfter;
   const hasReading = sessionUsed !== null || weeklyUsed !== null;
   const nullWindow = account.find((row) => row.window.usedPercent === null && !row.window.limitReached);
 
@@ -509,7 +516,7 @@ export function assessSeat(capacity: SeatCapacity, policy: SeatBudgetPolicy, opt
       sessionUsedPercent: sessionUsed,
       weeklyUsedPercent: weeklyUsed,
       bindingWindow,
-      autonomyHeadroomPercent: room === null ? null : Math.max(0, Math.round(room)),
+      autonomyHeadroomPercent: unknownUsage || room === null ? null : Math.max(0, Math.round(room)),
       resetAt: bindingRow?.window.resetsAt ?? null,
       eligibleForAutonomy: eligible,
       reasons: reasonSentences(details),

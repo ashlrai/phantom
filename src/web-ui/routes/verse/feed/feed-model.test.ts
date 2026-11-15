@@ -73,3 +73,8 @@ describe('buildFeed', () => {
     expect(filterFeed(feed, 'all')).toHaveLength(feed.length);
   });
 });
+
+it('includes the shared API stream in chronological order', () => {
+  const items = buildFeed({ shared: { schema: 'phantom.feed.v1', sources: { merges: 'available', releases: 'unknown', incidents: 'unknown', leaderReplies: 'available' }, items: [{ kind: 'merge', at: '2026-01-01T00:00:00Z', text: 'Merged in phantom' }, { kind: 'leader-reply', at: '2026-01-02T00:00:00Z', text: 'Done' }] } });
+  expect(items.map(item => item.title)).toEqual(['Done', 'Merged in phantom']);
+});

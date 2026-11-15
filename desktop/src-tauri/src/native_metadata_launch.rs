@@ -343,7 +343,10 @@ fn metadata(bin: &str, args: &[String]) -> Result<String> {
     .map_err(|_| ())?;
     let deadline = Instant::now() + Duration::from_secs(1);
     loop {
-        match child.try_wait().map_err(|_| ())? {
+        match child.try_wait().map_err(|_| {
+            let _ = child.kill();
+            let _ = child.wait();
+        })? {
             Some(status) => {
                 need(status.success())?;
                 break;

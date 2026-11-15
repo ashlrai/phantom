@@ -46,7 +46,7 @@ dup_pr() { # $1 = open|merged -> prints matching PR number; rc 0 hit / 1 none / 
   case "$1" in open|merged) ;; *) return 2 ;; esac
   tsv=$(gh pr list -R "$org/$repo" --state "$1" --search "$id in:title,body" \
           --json number,title,body,headRefName -q \
-          '.[] | [.number, (.headRefName // ""), ((.title // "") + "\n" + (.body // "") | gsub("[\n\t]"; " "))] | @tsv' \
+          'if type != "array" then error("invalid response") else .[] | if (.number | type) != "number" or (.title | type) != "string" or (.headRefName | type) != "string" or ((.body | type) != "string" and .body != null) then error("invalid PR") else [.number, .headRefName, (.title + "\n" + (.body // "") | gsub("[\n\t]"; " "))] | @tsv end end' \
           2>/dev/null) || return 2
   while IFS=$'\t' read -r num head text; do
     case "$num" in
@@ -61,7 +61,7 @@ dup_pr() { # $1 = open|merged -> prints matching PR number; rc 0 hit / 1 none / 
 $tsv
 PRECHECK_TSV
   # the search index never sees headRefName: probe it exactly on its own
-  h=$(gh pr list -R "$org/$repo" --state "$1" --head "codex-bridge/$id" --json number -q '.[0].number // empty' 2>/dev/null) || return 2
+  h=$(gh pr list -R "$org/$repo" --state "$1" --head "codex-bridge/$id" --json number -q 'if type != "array" then error("invalid response") elif length == 0 then empty elif (.[0].number | type) != "number" then error("invalid PR") else .[0].number end' 2>/dev/null) || return 2
   case "$h" in
     '') ;;
     *[!0-9]*) return 2 ;;
@@ -75,8 +75,8 @@ if [ -n "$id" ] && [ -n "$repo" ]; then
   [ "$mrc" -eq 2 ] && skip 75 "PRECHECK_UNSURE_merged"
   [ -n "$m" ] && skip 10 "id_merged_pr_$m"
   orc=0; o=$(dup_pr open) || orc=$?
+  [ "$orc" -eq 2 ] && skip 75 "PRECHECK_UNSURE_open"
   if [ -z "$pr" ]; then
-    [ "$orc" -eq 2 ] && skip 75 "PRECHECK_UNSURE_open"
     [ -n "$o" ] && skip 12 "id_open_pr_$o"
   fi
 fi

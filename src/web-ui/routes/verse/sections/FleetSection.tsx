@@ -36,10 +36,12 @@ import { budgetPreviewQuery, budgetQuery } from '../budget/budget-queries.js';
 import { ActionStatus, useSurfaceActions } from '../command/actions.js';
 import { paletteBlock, useGrantFlow } from '../command/AutonomyBar.js';
 import { anchorId } from '../command/nav.js';
+import { OrgMap } from '../fleet/OrgMap.js';
 import { RunsLanesCard } from '../fleet/RunsLanesCard.js';
 import { WorkersCard } from '../fleet/WorkersCard.js';
 import { InterjectBox } from '../fleet/InterjectBox.js';
 import { CosTaskList } from '../fleet/CosTaskList.js';
+import { EmptyJobsPanel } from '../growth/EmptyJobsPanel.js';
 import { FleetControl } from '../fleet/FleetControl.js';
 import { SteerPanel } from '../fleet/SteerPanel.js';
 import { Cell, Surface, lazyPanel } from '../command/Surface.js';
@@ -149,6 +151,7 @@ export function FleetSection() {
           {/* The one-time setup checklist (the only step list left); every other
               off state is FleetControl's single blocker + button. */}
           {off && off.kind === 'setup' ? <AutonomyOffState state={off} here="fleet" /> : null}
+          <OrgMap live={live} />
           <LanesStrip live={live} />
           {/* Per-repo main state from the guardian's state.json — one row each,
               unknown never green. Owns its own read + poll. */}
@@ -188,6 +191,7 @@ export function FleetSection() {
             onReviewGrant={() => grantFlow.open('re-approve', 'Review subscription reserve floors and producer roles before allowance reserve shrinking.')} />
         </Suspense>
         <FleetScheduling budget={budget.data ?? null} now={now} />
+        <EmptyJobsPanel />
         <ExecutionFeedback />
       </Cell>
       {collapse ? null : (

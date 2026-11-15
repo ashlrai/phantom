@@ -51,11 +51,16 @@ async function importRegistry() {
 
 async function importGateway() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mod = await (import('../core/mcp-gateway.js' as string) as Promise<any>);
+  const mod = await (import('../core/mcp-gateway.js') as Promise<any>);
   return mod as {
     startGateway: (registry: import('../core/types.js').McpRegistry) => Promise<void>;
     probeServer: (spec: McpServerSpec, timeoutMs?: number) => Promise<McpServerHealth>;
   };
+}
+
+async function registerFleetTools(): Promise<void> {
+  const { registerFleetNativeTools } = await import('../core/mcp-native-fleet.js');
+  registerFleetNativeTools();
 }
 
 async function importToolsRegistry() {
@@ -117,6 +122,7 @@ function discoverRegistryForMcpHost(discoverMcpServers: () => McpRegistry): McpR
 // ---------------------------------------------------------------------------
 
 async function cmdMcpRun(): Promise<number> {
+  await registerFleetTools();
   // Pure stdio — log only to stderr, never stdout
   try {
     const { discoverMcpServers } = await importRegistry();
@@ -139,6 +145,7 @@ async function cmdMcpRun(): Promise<number> {
 // ---------------------------------------------------------------------------
 
 async function cmdMcpList(args: string[]): Promise<number> {
+  await registerFleetTools();
   const jsonMode = args.includes('--json');
 
   const { discoverMcpServers } = await importRegistry();
@@ -262,6 +269,7 @@ async function cmdMcpList(args: string[]): Promise<number> {
 const REQUIRED_SERVERS = new Set(['ashlr', 'phantom-secrets', 'locus']);
 
 async function cmdMcpDoctor(args: string[]): Promise<number> {
+  await registerFleetTools();
   const jsonMode  = args.includes('--json');
   const timeoutMs = 8000;
 

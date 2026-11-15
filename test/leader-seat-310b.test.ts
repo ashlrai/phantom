@@ -1,3 +1,5 @@
+import * as fableAdmission from '../src/core/routing/fable-admission.js';
+import { planFable } from '../src/core/routing/fable-orchestrator.js';
 /** Provider-neutral Leader routing: actual role/allowance/context gates remain,
  * while model quality and router rank replace brand and cadence bans. */
 import { describe, expect, it, vi } from 'vitest';
@@ -234,5 +236,24 @@ describe('the Strategist fallback model', () => {
     expect(resolveLocalLeaderModel(cfg)).toBe(DEFAULT_LOCAL_MODEL_TAG);
     expect(resolveLocalLeaderModel({ foundry: { leader: { localModel: 'qwen3.8:27b-q8_0' } } } as unknown as AshlrConfig)).toBe('qwen3.8:27b-q8_0');
     expect(resolveLocalLeaderModel({ foundry: { leader: { localModel: '$(rm -rf)' } } } as unknown as AshlrConfig)).toBe(DEFAULT_LOCAL_MODEL_TAG);
+  });
+});
+
+
+describe('Fable Leader orchestration routing', () => {
+  it('prefers admitted Fable for Leader work and falls back when pacing holds it', async () => {
+    const fable: LeaderSeatCandidate = { ...CLAUDE, seat: { ...CLAUDE.seat,
+      models: [{ id: 'claude-fable-5-2', label: 'Fable', contextWindow: 200_000 }, ...CLAUDE.seat.models] } };
+    const spy = vi.spyOn(fableAdmission, 'readFableAdmission');
+    try {
+      spy.mockReturnValue(planFable({ role: 'leader' }, { observedAtMs: NOW, resetAtMs: NOW + 3 * 3600_000,
+        claudeWeeklyUsedPercent: 60, fableOverallWeeklyUsedPercent: 40, codingBurnPercentPerHour: 2, nextPlanPercent: 1 }, 50, false, NOW));
+      const source = deps({ candidates: [LOCAL, fable], snapshot: [claudeAt(10, 10)], native: true });
+      const selected = await resolveLeaderSeat(source, { deep: true, promptChars: 1000 });
+      expect(selected.ok && selected.choice.model).toBe('claude-fable-5-2');
+      spy.mockReturnValue(planFable({ role: 'leader' }, null, 50, false, NOW));
+      const held = await resolveLeaderSeat(source, { deep: true, promptChars: 1000 });
+      expect(held.ok && held.choice.model).not.toBe('claude-fable-5-2');
+    } finally { spy.mockRestore(); }
   });
 });

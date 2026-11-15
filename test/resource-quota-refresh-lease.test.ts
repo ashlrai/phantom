@@ -62,6 +62,30 @@ describe.skipIf(process.platform === 'win32')('shared quota refresh lease', () =
     expect(existsSync(lockPath())).toBe(false); expect(readFileSync(pendingPath(), 'utf8')).toBe(before);
   });
 
+  it('verifies its own custody identity from the process start clock without a native probe', async () => {
+    const lease = await acquire(); lease.markPending();
+    const owner = lease.identity();
+    expect(owner.lock.pid).toBe(process.pid); expect(owner.lock.startRefSource).toBe('self-clock-epoch-second');
+    expect(owner.pending.recordDigest).toMatch(/^[a-f0-9]{64}$/);
+    lease.close();
+  });
+
+  it.each([2, 3, 4, 5] as const)('fails closed on custody-bound pending work when the host has no boot identity (v%s)', async (schemaVersion) => {
+    // Hosts without a durable boot identity (non-darwin) can never prove same-
+    // boot custody, so a custody-bound marker must refuse reconciliation and
+    // keep the prior owner's evidence instead of discarding it.
+    mkdirSync(root, { mode: 0o700 });
+    const marker = { schemaVersion, scope: 'codex-native-metadata', state: 'pending',
+      startedAt: new Date().toISOString(),
+      bootIdentity: { machineDigest: 'a'.repeat(64), bootId: '11111111-2222-4333-8444-555555555555' },
+      ownerToken: '66666666-7777-4888-8999-aaaaaaaaaaaa', ...(schemaVersion === 2 ? {} : { ownerPid: process.pid }) };
+    const record = JSON.stringify(marker) + '\n';
+    writeFileSync(pendingPath(), record, { mode: 0o600 });
+    await expect(acquire()).rejects.toMatchObject({ code: 'reconciliation-required',
+      recovery: { reasonCode: 'boot-identity-unavailable', markerVersion: schemaVersion } });
+    expect(existsSync(lockPath())).toBe(false); expect(readFileSync(pendingPath(), 'utf8')).toBe(record);
+  });
+
   it('refuses a concurrent owner without changing the first lease or marker', async () => {
     const first = await acquire(); first.markPending();
     const before = readFileSync(lockPath(), 'utf8'); const pending = readFileSync(pendingPath(), 'utf8');

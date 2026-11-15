@@ -21,6 +21,7 @@ export function createTelegramFleetNotifier(opts: {
   return async (kind, detail) => {
     try {
       if (!opts.cfg.comms?.telegram?.chatId?.trim()) return;
+      if (kind === 'leader-reply') return;
       const text = significantNotice(kind, sanitizePushDetail(detail?.detail ?? ''));
       if (!text) return;
       const at = now();

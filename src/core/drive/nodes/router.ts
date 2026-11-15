@@ -3,6 +3,12 @@ import type { QueueJobV1 } from './queue-v1.js';
 
 /** Load added per claim a node already holds or is planned to receive (permille). */
 export const CLAIM_LOAD = 100;
+export const NODE_OFFLINE_MS = 300_000;
+
+/** Missing or old heartbeat evidence never admits new work. */
+export function nodeCanAcceptWork(node: NodeRecord, now: number): boolean {
+  return node.expiresAt > now && node.heartbeatAt > 0 && node.heartbeatAt <= now && now - node.heartbeatAt < NODE_OFFLINE_MS;
+}
 
 export interface RouteAssignment {
   jobId: string;
@@ -20,7 +26,7 @@ export function routable(job: QueueJobV1, now: number): boolean {
 }
 
 export function liveNodes(state: NodesState, now: number): NodeRecord[] {
-  return state.nodes.filter(n => n.expiresAt > now);
+  return state.nodes.filter(n => nodeCanAcceptWork(n, now));
 }
 
 function activeClaims(state: NodesState, nodeId: string, now: number): number {

@@ -3,18 +3,22 @@ import { readLaneReward, type LaneRewardDeps, type LaneRewardV1 } from '../core/
 
 const usage = `Usage: phm fleet lane-reward [--jobs <jobs.jsonl>] [--json]
   --jobs <path>  Metrics jobs ledger to read (default ~/.ashlr-runs/metrics/jobs.jsonl).
-Prints one line per lane: attempts scored, unscored and mean rewardPerToken.
+Prints one line per lane: attempts scored, unscored, mean rewardPerToken, and
+cost-per-verified-result (measured tokens ÷ stable merges).
 Observation only: never writes, never routes, never touches merge authority.`;
 
 const reward = (value: number | null): string => (value === null ? 'n/a' : value.toFixed(6));
+const cost = (value: number | null): string => (value === null ? 'unknown' : `${Math.round(value)} tok/verified`);
 
 function formatLanes(report: LaneRewardV1): string {
   const header = `fleet lane-reward: ${report.attempts} attempts, ${report.scored} scored, ` +
-    `${report.unscored} unscored, mean reward ${reward(report.meanReward)}` +
+    `${report.unscored} unscored, mean reward ${reward(report.meanReward)}, ` +
+    `cost/verified ${cost(report.tokensPerVerifiedResult)}` +
     (report.source === 'healthy' ? '' : ` (source ${report.source})`);
   return [header, ...report.lanes.map(lane =>
     `${lane.lane}: ${lane.attempts} attempts, ${lane.scored} scored, ${lane.unscored} unscored, ` +
-    `mean reward ${reward(lane.meanReward)}`)].join('\n');
+    `mean reward ${reward(lane.meanReward)}, ${lane.tokensMeasured} tok measured, ` +
+    `${lane.verifiedResults} verified, cost/verified ${cost(lane.tokensPerVerifiedResult)}`)].join('\n');
 }
 
 export async function cmdFleetLaneReward(args: string[], deps?: Partial<LaneRewardDeps>): Promise<number> {

@@ -13,6 +13,7 @@ import { agentBusMissing, agentBusPageQuery, agentBusStatusQuery, type AgentBusR
 import { busStatusLine, envelopeRows, isMasonInterjection } from './agent-bus-model.js';
 import { takeBusPostRequest, useBusPostRequest } from './bus-post-request.js';
 import { BusPostBox, type BusPostPrefill } from './BusPostBox.js';
+import { ObserveSlice } from '../fleet-observe/ObserveFacts.js';
 import { recentSenders } from './bus-post-model.js';
 import { replyCounts, threadHeadline, threadOf } from './bus-thread-model.js';
 import styles from './fleet-bus.module.css';
@@ -45,6 +46,7 @@ export function FleetBusPane(props: PaneProps) {
     if (pending) { setView('durable'); setTell({ to: pending.to, replyTo: '', quote: pending.quote }); }
   }, [props.visible, request]);
   return <section aria-label="Bus views">
+    <ObserveSlice visible={props.visible} part="bus" />
     <div className={styles.viewToggle} aria-label="Bus view">
       <Button size="sm" aria-pressed={view === 'dispatch'} onClick={() => setView('dispatch')}>Dispatch feed</Button>
       <Button size="sm" aria-pressed={view === 'durable'} onClick={() => setView('durable')}>Durable bus</Button>
@@ -107,7 +109,7 @@ const channelLabels = { telegram: 'Telegram', email: 'email', mobile: 'phone', d
 function durableError(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 401) return 'Read session expired. Reopen the console.';
-    if (error.status === 404) return 'This hub has no durable bus route yet (update the hub).';
+    if (error.status === 404) return 'This Phantom has no durable bus route yet (update Phantom).';
     if (error.status === 503) return 'Durable bus storage unavailable.';
   }
   return 'Durable bus is unavailable.';
@@ -150,7 +152,7 @@ function DurableBus({ visible, query, setQuery, tell }: { visible: boolean; quer
     finally { setLoadingOlder(false); }
   };
   const error = status.error ?? page.error ?? olderError;
-  const errorText = agentBusMissing() ? 'This hub has no durable bus route yet (update the hub).' : error ? durableError(error) : null;
+  const errorText = agentBusMissing() ? 'This Phantom has no durable bus route yet (update Phantom).' : error ? durableError(error) : null;
   const allRows = envelopeRows(messages, Date.now());
   const selected = thread === null ? null : threadOf(messages, thread);
   const counts = replyCounts(messages);

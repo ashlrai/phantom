@@ -1,0 +1,22 @@
+{
+  "repo_notes": [
+    {
+      "content": "Phantom (@ashlr/phantom) is a TypeScript (Node >=22.15, ESM) engineering agent workbench. The CLI ships as `phm` with `ashlr` as a compatible alias. Layout: src/cli/ holds thin command dispatchers, src/core/ holds all logic, src/web-ui/ is the console, test/ holds hermetic backend suites, docs/ holds guides indexed by docs/README.md. Prefer diagrams for data flow between the daemon, fleet queue, lanes and the web console. Link claims to source files."
+    },
+    {
+      "content": "Agent authority is defined in AGENTS.md and CONSTITUTION.md; describe what agents may do versus what is reserved for the owner. Never document secret values, tokens or real home-directory paths; secrets are referenced by name only."
+    }
+  ],
+  "pages": [
+    { "title": "Overview", "purpose": "What Phantom is, who uses it, and the main moving parts with an architecture diagram" },
+    { "title": "CLI and command dispatch", "purpose": "How phm/ashlr parse argv in src/cli/ and delegate to src/core/", "parent": "Overview" },
+    { "title": "Daemon and tick loop", "purpose": "The resident daemon, its phased bounded ticks, deadlines and status records", "parent": "Overview" },
+    { "title": "Fleet, queue and lanes", "purpose": "Job queue, lanes (Codex, Claude, Devin, local), routing tiers, leases and merge flow", "parent": "Overview" },
+    { "title": "Devin integration", "purpose": "How Phantom launches, tracks and consumes Devin sessions", "parent": "Fleet, queue and lanes" },
+    { "title": "Memory, knowledge and context", "purpose": "Checkpoints, memory, wiki and context packs given to agents", "parent": "Overview" },
+    { "title": "MCP gateway and companion tools", "purpose": "The Phantom MCP gateway versus the companion servers declared in .mcp.json", "parent": "Overview" },
+    { "title": "Web console", "purpose": "src/web-ui structure, the Verse surface and its API routes", "parent": "Overview" },
+    { "title": "Testing and verification", "purpose": "Hermetic test setup, HOME isolation, lanes, gate and verify-changed", "parent": "Overview" },
+    { "title": "Governance and agent constitution", "purpose": "AGENTS.md, CONSTITUTION.md, contracts and the contract-first rule", "parent": "Overview" }
+  ]
+}

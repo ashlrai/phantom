@@ -13,6 +13,7 @@ const fixture: FleetRuns = {
 it('computes live counts and availability without requiring registrations', () => {
   const tiles = hubTiles({ ...fixture, events: [{ at: 'fake', kind: 'tick', text: 'fake' }], inbox: [{ at: 'fake', source: 'fake', text: 'fake' }] }, [{ id: 'fleet-lanes', title: 'Lanes' }, { id: 'fleet-events', title: 'Fleet events' }]);
   expect(tiles.map(({ id, count }) => [id, count])).toEqual([
+    ['fleet-mission', 'Needs a look'],
     ['fleet-lanes', '1/2 · 1 held'], ['fleet-events', '1'], ['fleet-inbox', '1'], ['fleet-bus', '—'],
     ['fleet-merges', '2/h'], ['fleet-usage', '—'], ['fleet-supply', '13'], ['fleet-host', '—'], ['fleet-timeline', '1 events'],
   ]);
@@ -28,6 +29,7 @@ it('shows merge speed and median duration on the Merges tile', () => {
 it('preserves unknown readings and sums all lanes', () => {
   expect(hubTiles(null, []).every((tile) => tile.count === '—' && !tile.present)).toBe(true);
   const tiles = hubTiles({ ...fixture, lanes: [...fixture.lanes, ...fixture.lanes], mergesLastHour: { count: null, items: [] } }, []);
-  expect(tiles[0]?.count).toBe('2/4 · 2 held');
+  expect(tiles[0]?.count).toBe('Needs a look');
+  expect(tiles[1]?.count).toBe('2/4 · 2 held');
   expect(tiles.find((tile) => tile.id === 'fleet-merges')?.count).toBe('—');
 });

@@ -2,7 +2,7 @@
  * data/appearance-store.ts — the operator's appearance preferences: the
  * "Linux for agentic engineering" part of the design language
  * (docs/VERSE-DESIGN-V2.md §3). Theme, accent, density, display face,
- * radius, and motion, applied live by writing custom properties and
+ * radius, layout, and motion, applied live by writing custom properties and
  * data-attributes on <html>.
  *
  * Same shape as ./theme-store.ts on purpose — module-level state + a
@@ -20,6 +20,7 @@
  * first render. This full store loads with Settings and then applies its
  * normalized snapshot again, keeping the control panel in sync.
  */
+import { isLayoutPreference, LAYOUT_PREF_ATTR, type LayoutPreference } from '../routes/verse/layout-mode.js';
 import {
   getTheme,
   setTheme,
@@ -27,7 +28,7 @@ import {
   type ThemePreference,
 } from './theme-store.js';
 
-export type { ThemePreference };
+export type { ThemePreference, LayoutPreference };
 
 export type Density = 'comfortable' | 'compact';
 
@@ -79,6 +80,8 @@ export interface Appearance {
   uiScale: UiScale;
   displayFont: DisplayFont;
   radius: RadiusScale;
+  /** 'auto' goes narrow below 960px; wide/narrow pin it. Applied as `data-layout-pref` on <html>. */
+  layout: LayoutPreference;
   /** The stored choice: 'system' follows `prefers-reduced-motion`. */
   motion: MotionPreference;
   /**
@@ -130,6 +133,7 @@ export function defaultAppearance(): Appearance {
     uiScale: 'default',
     displayFont: 'grotesk',
     radius: 'default',
+    layout: 'auto',
     motion: 'system',
     reduceMotion: prefersReducedMotion(),
   };
@@ -185,6 +189,8 @@ function normalize(base: Appearance, patch: Partial<Appearance> | Partial<Stored
     uiScale: isUiScale(merged.uiScale) ? merged.uiScale : 'default',
     displayFont: isDisplayFont(merged.displayFont) ? merged.displayFont : 'grotesk',
     radius: isRadius(merged.radius) ? merged.radius : 'default',
+    // Blobs stored before this field existed have none: 'auto'.
+    layout: isLayoutPreference(merged.layout) ? merged.layout : 'auto',
     motion,
     reduceMotion: resolveReduceMotion(motion),
   };
@@ -253,6 +259,7 @@ export function applyAppearance(value: Appearance): void {
   // put half the design system in a TypeScript file.
   root.setAttribute('data-ui-scale', value.uiScale);
   root.setAttribute('data-radius', value.radius);
+  root.setAttribute(LAYOUT_PREF_ATTR, value.layout);
   // 'system' removes the attribute so the `prefers-reduced-motion` media
   // queries decide on their own. "full" is meaningful, not a no-op: it opts an
   // operator explicitly OUT of the OS preference (tokens.css and the four

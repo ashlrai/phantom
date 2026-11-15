@@ -1,6 +1,6 @@
 /**
  * routes/verse/voice/VoiceHud.tsx — the floating dictation pill, one for the
- * whole app (mounted lazily by VerseApp).
+ * whole app (mounted lazily by PhantomApp).
  *
  *   listening   waveform · "Listening · local Parakeet" · how to finish ·
  *               Stop / Cancel, and the partial transcript DIMMED underneath

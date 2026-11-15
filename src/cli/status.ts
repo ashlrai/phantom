@@ -59,8 +59,10 @@ export function classifyRepos(idx: AshlrIndex, staleDays: number): RepoBuckets {
 
 /** Optional module loaders owned by index.ts (lazy, may be null). */
 export interface StatusLoaders {
-  getToolsRegistry: () => Promise<(() => ToolsRegistry) | null>;
-  discoverMcpServers: () => Promise<(() => McpRegistry) | null>;
+  // The loaded invoker may return the value or a promise of it; `await`
+  // unwraps either so injected sync loaders keep working.
+  getToolsRegistry: () => Promise<(() => Promise<ToolsRegistry> | ToolsRegistry) | null>;
+  discoverMcpServers: () => Promise<(() => Promise<McpRegistry> | McpRegistry) | null>;
   buildRollup: () => Promise<((window: '7d', cfg: AshlrConfig) => ActivityRollup) | null>;
   githubStatus: () => Promise<((cwd: string) => GithubStatus) | null>;
   vercelStatus: () => Promise<((cwd: string) => VercelStatus) | null>;
@@ -148,90 +150,96 @@ export async function gatherStatus(
 ): Promise<StatusJson> {
   const b = classifyRepos(idx, cfg.staleDays);
 
-  const tools = await attempt(async () => {
-    const fn = await loaders.getToolsRegistry();
-    if (!fn) return null;
-    const reg = fn();
-    return {
-      installed: reg.installedCount,
-      total: reg.tools.length,
-      installedIds: reg.tools.filter(t => t.installed).map(t => t.id),
-    };
-  });
+  // Launch every section at once so module loads, probes and spawned
+  // children overlap; each failure resolves to null via attempt().
+  const [tools, mcpServers, activity7d, memory, github, vercel, identity,
+    custody, localInference, phantomPreflight, resources] = await Promise.all([
 
-  const mcpServers = await attempt(async () => {
-    const fn = await loaders.discoverMcpServers();
-    return fn ? { discovered: fn().servers.length } : null;
-  });
+    attempt(async () => {
+      const fn = await loaders.getToolsRegistry();
+      if (!fn) return null;
+      const reg = await fn();
+      return {
+        installed: reg.installedCount,
+        total: reg.tools.length,
+        installedIds: reg.tools.filter(t => t.installed).map(t => t.id),
+      };
+    }),
 
-  const activity7d = await attempt(async () => {
-    const fn = await loaders.buildRollup();
-    if (!fn) return null;
-    const rollup = fn('7d', cfg);
-    const t = rollup.totals;
-    return {
-      sessions: t.sessions,
-      tokensIn: t.tokensIn,
-      tokensOut: t.tokensOut,
-      estCostUsd: t.estCostUsd,
-      commits: t.commits,
-      budgetLevel: rollup.budget.level,
-    };
-  });
+    attempt(async () => {
+      const fn = await loaders.discoverMcpServers();
+      return fn ? { discovered: (await fn()).servers.length } : null;
+    }),
 
-  const memory = await attempt(async () => {
-    const genomeMod = await import('../core/genome/store.js' as unknown as string) as {
-      genomeHealth: (cfg: AshlrConfig) => GenomeHealth;
-    };
-    const h = genomeMod.genomeHealth(cfg);
-    return { genomeEntries: h.totalEntries, projects: h.projects, embeddingsAvailable: h.embeddingsAvailable };
-  });
+    attempt(async () => {
+      const fn = await loaders.buildRollup();
+      if (!fn) return null;
+      const rollup = fn('7d', cfg);
+      const t = rollup.totals;
+      return {
+        sessions: t.sessions,
+        tokensIn: t.tokensIn,
+        tokensOut: t.tokensOut,
+        estCostUsd: t.estCostUsd,
+        commits: t.commits,
+        budgetLevel: rollup.budget.level,
+      };
+    }),
 
-  const github = await attempt(async () => {
-    const fn = await loaders.githubStatus();
-    if (!fn) return null;
-    const gs = fn(cwd);
-    return gs.isRepo ? { repo: gs.repo, openPrs: gs.openPrs, openIssues: gs.openIssues, ci: gs.ci,
-      mergeEtas: gs.repo ? collectMergeEtas(cwd, gs.repo) : [] } : null;
-  });
+    attempt(async () => {
+      const genomeMod = await import('../core/genome/store.js' as unknown as string) as {
+        genomeHealth: (cfg: AshlrConfig) => GenomeHealth;
+      };
+      const h = genomeMod.genomeHealth(cfg);
+      return { genomeEntries: h.totalEntries, projects: h.projects, embeddingsAvailable: h.embeddingsAvailable };
+    }),
 
-  const vercel = await attempt(async () => {
-    const fn = await loaders.vercelStatus();
-    if (!fn) return null;
-    const vs = fn(cwd);
-    return vs.linked ? { latestState: vs.latestState, url: vs.url } : null;
-  });
+    attempt(async () => {
+      const fn = await loaders.githubStatus();
+      if (!fn) return null;
+      const gs = fn(cwd);
+      return gs.isRepo ? { repo: gs.repo, openPrs: gs.openPrs, openIssues: gs.openIssues, ci: gs.ci,
+        mergeEtas: gs.repo ? collectMergeEtas(cwd, gs.repo) : [] } : null;
+    }),
 
-  const identity = await attempt(async () => {
-    const fn = await loaders.getIdentity();
-    if (!fn) return null;
-    const id = fn();
-    return id.loggedIn && id.user ? { user: id.user, tier: id.tier, team: id.team } : null;
-  });
+    attempt(async () => {
+      const fn = await loaders.vercelStatus();
+      if (!fn) return null;
+      const vs = fn(cwd);
+      return vs.linked ? { latestState: vs.latestState, url: vs.url } : null;
+    }),
 
-  const custody = await attempt(async () => {
-    const { gatherCustodyStatus } = await import('./status-custody.js');
-    return gatherCustodyStatus();
-  });
+    attempt(async () => {
+      const fn = await loaders.getIdentity();
+      if (!fn) return null;
+      const id = fn();
+      return id.loggedIn && id.user ? { user: id.user, tier: id.tier, team: id.team } : null;
+    }),
 
-  const localInference = await attempt(async () => {
-    const { probeLocalInference } = await import('../core/run/local-inference-probe.js');
-    const p = await probeLocalInference((cfg as unknown as Record<string, unknown>)['localInference']);
-    return p.status === 'not-configured' ? null : p;
-  });
+    attempt(async () => {
+      const { gatherCustodyStatus } = await import('./status-custody.js');
+      return gatherCustodyStatus();
+    }),
 
-  const phantomPreflight = await attempt(async () => {
-    const { gatherPreflightStatus } = await import('./status-preflight.js');
-    return gatherPreflightStatus({ cwd });
-  });
+    attempt(async () => {
+      const { probeLocalInference } = await import('../core/run/local-inference-probe.js');
+      const p = await probeLocalInference((cfg as unknown as Record<string, unknown>)['localInference']);
+      return p.status === 'not-configured' ? null : p;
+    }),
 
-  const resources = await attempt(async () => {
-    const { getResourceSnapshot } = await import('../core/fabric/resource-monitor.js');
-    const snap = await getResourceSnapshot(cfg);
-    return snap.backends
-      .filter(r => r.backend !== 'builtin')
-      .map(r => ({ backend: r.backend, availability: r.availability, usedPct: r.usedPct }));
-  });
+    attempt(async () => {
+      const { gatherPreflightStatus } = await import('./status-preflight.js');
+      return gatherPreflightStatus({ cwd });
+    }),
+
+    attempt(async () => {
+      const { getResourceSnapshot } = await import('../core/fabric/resource-monitor.js');
+      const snap = await getResourceSnapshot(cfg);
+      return snap.backends
+        .filter(r => r.backend !== 'builtin')
+        .map(r => ({ backend: r.backend, availability: r.availability, usedPct: r.usedPct }));
+    }),
+  ]);
 
   return {
     schemaVersion: 1,

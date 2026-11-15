@@ -459,6 +459,17 @@ ashlr pulse memory --samples memory.json  # sampled RSS and memguard benchmark
 ashlr audit                # append-only confinement + action audit log
 ```
 
+`fleet dispatch-events` reads the dispatcher's text log,
+`~/.ashlr-runs/queue/dispatch-events.log` (else `~/.ashlr-runs/dispatch-events.log`),
+or `--file <path>`. A row is a timestamp, an uppercase kind (`LAUNCH`,
+`LANE_HOLD`, `DISKGUARD`, ...) and free-text payload. The timestamp is either
+the dispatcher's local `YYYY-MM-DD HH:MM:SS` or an ISO instant with a timezone,
+optionally in square brackets. `--since` takes an ISO instant with a timezone
+and is inclusive. `--json` returns `{ events, truncated, malformedLines,
+emptyLines, source, path }`; each event has `timestamp`, `at` (UTC ISO), `kind`
+and the uninterpreted `message`. At most the newest 5000 matches are kept.
+A missing file reports `source: "missing"`. The command only reads.
+
 `fleet status --json` emits the additive `schema: "fleet.v1"` contract.
 Its `memory` block reads only local files under `~/.ashlr-runs`:
 
@@ -561,6 +572,7 @@ next actions point at work the daemon can select now instead of phantom backlog.
 | `ashlr eval` | Local agent eval harness (adaptive-prompts A/B) |
 | `ashlr eval attention` | Metadata-only fleet attention report (context, retrieval, yield, routing, traces) |
 | `ashlr eval router` | Offline router/prompt-policy replay over frozen lines; merge rate, cost per merged PR, wall time with CIs |
+| `ashlr eval prompts` | Per-class prompt-variant A/B replay and promotion gate; before/after numbers feed the pulse dashboard |
 | `ashlr verify-safety` | Run the safety invariant suite |
 | `ashlr doctor` | One-glance health check |
 | `ashlr models` | List + manage model backends |

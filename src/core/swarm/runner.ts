@@ -68,6 +68,7 @@ import { runGoal } from '../run/orchestrator.js';
 import { scrubSecrets } from '../knowledge/index.js';
 import { scrubSecrets as scrubSensitiveText } from '../util/scrub.js';
 import { mergeDelegationScope, summarizeDelegationScope } from '../run/delegation-scope.js';
+import { delegationStageForSwarmPhase } from '../routing/stage-delegation.js';
 import { assertSafeExecutionIdentity } from '../fleet/attempt-identity.js';
 import { runEventSummary } from '../learning/causal.js';
 import { isGoalConductorQuotaRefusal } from '../goals/conductor-quota.js';
@@ -724,6 +725,7 @@ async function executeTask(
     swarmId: run.id,
     taskId,
     objective: goal,
+    stage: delegationStageForSwarmPhase(phase),
     budget: taskBudget,
     resultContract: { kind: 'text' },
   });

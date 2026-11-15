@@ -60,7 +60,6 @@ export const TOOL_DISCIPLINE: LayerVariants = {
     '- After each tool result, decide the next step; when the task is done, stop and give a final answer.',
   rich:
     'Tool-use discipline:\n' +
-    '- Scale effort to the task: simple tasks act in 1–2 tool calls; only complex tasks warrant deeper exploration.\n' +
     '- Always read/inspect the relevant file or state BEFORE you modify it.\n' +
     "- Never call a tool to obtain something you can already answer from context — and never guess a tool's output; call it.\n" +
     '- Make each call purposeful and check its result before the next; do not repeat a failing call unchanged.\n' +

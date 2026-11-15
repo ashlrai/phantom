@@ -16,7 +16,10 @@ import { makeFixture, makeCfg, type H1Fixture } from './helpers/h1-fixture.js';
 import { buildOrientation } from '../src/core/orient.js';
 import { estimateRun } from '../src/core/observability/estimate.js';
 import { nativeToolDefs, callNativeTool } from '../src/core/mcp-native.js';
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { AGENT_COMMANDS } from '../src/cli/help.js';
+
+registerFleetNativeTools();
 
 let fx: H1Fixture;
 
@@ -90,6 +93,11 @@ describe('native MCP tool surface lock', () => {
       'ashlr_backlog:read',
       'ashlr_browser_task:proposal',
       'ashlr_comms:read',
+      'ashlr_comms_agent_drafts:read',
+      'ashlr_comms_agent_run:append',
+      'ashlr_comms_agent_status:read',
+      'ashlr_comms_send_owner:append',
+      'ashlr_comms_thread:read',
       'ashlr_desktop_open:proposal',
       'ashlr_fleet_status:read',
       'ashlr_health:read',
@@ -109,6 +117,22 @@ describe('native MCP tool surface lock', () => {
       'ashlr_status:read',
       'ashlr_website_publish:append',
       'ashlr_website_status:read',
+      'desktop_click:append',
+      'desktop_doctor:read',
+      'desktop_focus:append',
+      'desktop_list_apps:read',
+      'desktop_read:read',
+      'desktop_screenshot:read',
+      'desktop_scroll:append',
+      'desktop_type:append',
+      'desktop_windows:read',
+      'intent_add:append',
+      'intent_get:read',
+      'intent_link:append',
+      'intent_list:read',
+      'intent_ship:append',
+      'intent_stale:append',
+      'intent_update:append',
       'phantom_agent_bus_post:append',
       'phantom_agent_bus_read:read',
       'phantom_agent_bus_status:read',
@@ -121,17 +145,36 @@ describe('native MCP tool surface lock', () => {
       'phantom_fleet_apps_recovery_check:read',
       'phantom_fleet_apps_recovery_wait:read',
       'phantom_fleet_apps_status:read',
+      'phantom_fleet_apps_watch:append',
+      'phantom_fleet_doctor:read',
       'phantom_fleet_drop_job:append',
       'phantom_fleet_graph:read',
       'phantom_fleet_job_reassign:append',
+      'phantom_fleet_needs:read',
+      'phantom_fleet_needs_resolve:append',
+      'phantom_fleet_needs_wait:read',
       'phantom_fleet_orders:read',
       'phantom_fleet_planner_run:append',
       'phantom_fleet_session:read',
+      'phantom_fleet_verbs:read',
+      'phantom_leader_ask:append',
+      'phantom_leader_assign:append',
+      'phantom_leader_inbox:read',
+      'phantom_leader_org:read',
+      'phantom_leader_status:read',
+      'phantom_observe:read',
+      'phantom_observe_session:read',
+      'phantom_spend_budget:read',
+      'phm_agent_roster:read',
+      'phm_claim_acquire:append',
+      'phm_claim_release:append',
+      'phm_context_brief:read',
       'phm_proactive_agents_create:append',
       'phm_proactive_agents_delete:append',
       'phm_proactive_agents_list:read',
       'phm_proactive_agents_update:append',
       'phm_task_context:read',
+      'phm_team_access_request:append',
       'phm_team_claim:append',
       'phm_team_context_add:append',
       'phm_team_context_get:read',
@@ -139,6 +182,7 @@ describe('native MCP tool surface lock', () => {
       'phm_team_publish:append',
       'phm_team_register:append',
       'phm_team_view:read',
+      'world_model:read',
     ]);
   });
 

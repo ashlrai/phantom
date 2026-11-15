@@ -4,14 +4,14 @@
  * Validates:
  *   1. resolveModelProfile maps our actual local models to the right bands.
  *   2. CODER profile carries the tuned knobs (stepCap 32, contextTokens 32768,
- *      roleHint present, temperature 0.2).
+ *      anti-stub roleHint, temperature 0.2) and no scope lock.
  *   3. GENERAL profile carries the tuned knobs (stepCap 24, contextTokens 32768,
- *      roleHint present).
+ *      anti-stub roleHint) and no scope lock.
  *   4. SMALL profile is unchanged (no roleHint required).
  *   5. When adaptivePrompts ON, agent-loop applies:
  *        - profile.stepCap (not TASK_STEP_CAP=20)
  *        - adaptive system prompt (not legacy two-sentence prompt)
- *        - roleHint block appended to system content
+ *        - the anti-stub roleHint, without a "smallest change" ceiling
  *   6. When adaptivePrompts OFF, agent-loop is byte-identical to legacy behavior
  *      (legacy two-sentence prompt + stepCap=20).
  *   7. roleHint is NOT appended when it would push the system prompt over
@@ -152,19 +152,12 @@ describe('M134 CODER profile tuned for qwen2.5-coder:32b', () => {
     expect(p.contextTokens).toBeGreaterThanOrEqual(32768);
   });
 
-  it('roleHint is present and mentions complete changes', () => {
+  it('roleHint is the anti-stub line and does not lock scope', () => {
     expect(p.roleHint).toBeDefined();
     expect(p.roleHint!.length).toBeGreaterThan(50);
-    // Must push completeness — not truncated stubs
     expect(p.roleHint!.toLowerCase()).toMatch(/complete/);
-  });
-
-  it('roleHint mentions read-before-edit discipline', () => {
-    expect(p.roleHint!.toLowerCase()).toMatch(/read/);
-  });
-
-  it('roleHint mentions verification / verify', () => {
-    expect(p.roleHint!.toLowerCase()).toMatch(/verif/);
+    expect(p.roleHint!.toLowerCase()).toMatch(/placeholder|existing code/);
+    expect(p.roleHint).not.toMatch(/unrelated|smallest|SCOPED|atomic writes/);
   });
 });
 
@@ -185,9 +178,10 @@ describe('M134 GENERAL profile tuned for qwen2.5:72b', () => {
     expect(p.contextTokens).toBeGreaterThanOrEqual(32768);
   });
 
-  it('roleHint is present and mentions completeness', () => {
+  it('roleHint is the anti-stub line and does not lock scope', () => {
     expect(p.roleHint).toBeDefined();
     expect(p.roleHint!.toLowerCase()).toMatch(/complete/);
+    expect(p.roleHint).not.toMatch(/unrelated|smallest|Scope edits/);
   });
 });
 
@@ -231,27 +225,27 @@ describe('M134 agent-loop: adaptivePrompts ON', () => {
     expect(sys.role).toBe('system');
     // Adaptive path: system prompt is NOT the legacy two-sentence prompt
     expect(sys.content).not.toContain('You are an Ashlr sub-agent. Be concise and focused.');
-    // Must contain EXECUTOR_ROLE rich content (from assembleSystemPrompt)
-    // and the CODER roleHint block (diff-quality contract)
     expect(sys.content).toContain('complete');
+    expect(sys.content).not.toMatch(/smallest change|no adjacent changes|1–2 tool calls/);
   });
 
-  it('injects roleHint block into system prompt for CODER model', async () => {
+  it('injects the anti-stub roleHint for a CODER model', async () => {
     const { client, capturedMessages } = makeMockClient('qwen2.5-coder:32b');
     await runTask(makeTask(), client, makeCtx(true));
 
     const sys = capturedMessages()[0]!;
-    // The roleHint should appear in the system content (may be truncated to cap)
-    // We check for a distinctive substring from the coder roleHint
-    expect(sys.content).toContain('READ');
+    expect(sys.content).toContain('placeholder');
+    expect(sys.content).toContain('TITRR');
+    expect(sys.content).not.toContain('Prefer small, atomic writes');
   });
 
-  it('injects roleHint block into system prompt for GENERAL model', async () => {
+  it('injects the anti-stub roleHint for a GENERAL model', async () => {
     const { client, capturedMessages } = makeMockClient('llama3.1:8b');
     await runTask(makeTask(), client, makeCtx(true));
 
     const sys = capturedMessages()[0]!;
-    expect(sys.content).toContain('Read the file before editing');
+    expect(sys.content).toContain('rest unchanged');
+    expect(sys.content).not.toContain('do not touch unrelated code');
   });
 
   it('task.status=done after single-shot final answer', async () => {

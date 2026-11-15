@@ -7,6 +7,7 @@ pinsha(){ /usr/bin/awk -F'\t' -v n="$1" '$1==n{print $2}' "$HOME/.ashlr-runs/bin
 unset NODE_OPTIONS NODE_PATH OPENSSL_CONF ELECTRON_RUN_AS_NODE; export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 set -o pipefail
 J=$1; REPO=$2; POOL=$3; TIER=${4:-${TIER:-work}}; R=~/.ashlr-runs; RP=~/Projects/ashlrai/$REPO; WT=~/Projects/ashlrai/wt/$J
+case "$TIER" in frontier|work|mid|fast) ;; *) echo "REFUSED: unknown scope tier" >&2; exit 3;; esac
 ~/.ashlr-runs/bin-locus-new/locus status >/dev/null 2>&1 || true   # rev1.4: WARN dropped (the pin lives in the locus-ashlr tmux session, not visible from launch; it was always false here)
 # RQ-CLOSE-NOWT (Masbot 18:55 Oct 27): CLOSE-* jobs only need gh, so their worktree is index-only: --no-checkout, then
 # read-tree + skip-worktree so git status/diff stay clean with no files on disk. No node_modules copy. No repo config change.
@@ -46,15 +47,37 @@ rmdir $L; fi
 if [ "$NOWT" = 1 ]; then [ -n "$(ls -A $WT | grep -vx .git)" ] || { git -C $WT read-tree HEAD && git -C $WT ls-files -z | xargs -0 git -C $WT update-index --skip-worktree; } || exit 1; else
 [ -d $RP/node_modules ] && [ ! -e $WT/node_modules ] && cp -cR $RP/node_modules $WT/node_modules 2>/dev/null; git -C $WT ls-files -v | grep "^S" | cut -c3- | xargs -I{} git -C $WT update-index --no-skip-worktree {} 2>/dev/null
 fi
-{ cat; cat <<'F'
+{ cat
+# BEGIN TIER SCOPE: keep budgets aligned with queue-tier.ts and restock.py.
+SCOPE_TIER=$TIER; [ "$POOL" = codex-local ] && SCOPE_TIER=fast
+case "$SCOPE_TIER" in
+ frontier) SCOPE_FILES=40; SCOPE_LINES=600;;
+ work) SCOPE_FILES=15; SCOPE_LINES=200;;
+ mid) SCOPE_FILES=8; SCOPE_LINES=120;;
+ fast) SCOPE_FILES=2; SCOPE_LINES=80;;
+ *) echo "REFUSED: unknown scope tier" >&2; exit 3;;
+esac
+printf '\nSCOPE: up to %s files, size<=%s changed lines. Explicit narrower task limits and named-file restrictions take precedence.\n' "$SCOPE_FILES" "$SCOPE_LINES"
+[ "$SCOPE_TIER" != frontier ] || printf '%s\n' 'Combine related concerns needed for the complete feature in one PR.'
+printf '%s\n' 'Finish the complete feature, not the minimum demo; add tests, run them, and update docs. Deliver one mergeable PR per job.'
+# END TIER SCOPE
+cat <<'F'
 
 RULES: You are working in a fresh git worktree of ashlrai/REPO_ at its default branch. Work autonomously to a complete, tested, shippable change; be ambitious and high-leverage, and delete dead code you find in the area you touch. Add or update tests and run the repo's typecheck, lint and the touched tests (use a temporary HOME for any test run, e.g. HOME=$(mktemp -d); for cargo keep RUSTUP_HOME/CARGO_HOME pointing at the real toolchain). Never weaken, skip or delete tests to go green, and never weaken security controls. Without a security pass, do not add widened workflow permissions or id-token, new secrets.* refs, pull_request_target or workflow_run triggers, or third-party actions not pinned to a 40-hex commit SHA; other .github/**, CODEOWNERS and release config edits are allowed. Never print secrets or tokens. Do NOT commit, push, tag or publish: leave every change uncommitted in the worktree. When done, write BRIDGE_NOTES.md at the worktree root with a summary, commands run, pass/fail counts and net LOC.
+If the full goal cannot be verified, ship the smallest correct, useful part with honest output (for example, age: unknown) and list the gap in BRIDGE_NOTES.md for the PR body. Use EMPTY only when already done or truly impossible.
+If you finish with no change, end your final message with the line EMPTY_REASON: <code> and put the same line first in BRIDGE_NOTES.md; code is duplicate-landed (name the PR or commit that already covers it), prompt-unclear (name the missing detail), blocked (tool, auth or environment) or no-change-needed.
 F
 [ "$NOWT" = 1 ] && echo "NOTE: this worktree is index-only (no files on disk, by design). Read files with git show HEAD:<path>. Do not change code; this job only decides and closes PRs."
 } | sed "s/REPO_/$REPO/" > $R/$J.prompt
 cd $WT
 case $POOL in codex-local) FAM=codex-local; DM=fast;; codex*) FAM=codex; DM=gpt-6.1-sol;; claude) FAM=claude; DM=opus;; claude-api) FAM=claude-api; DM=sonnet;; gemini) FAM=gemini; DM=gemini-2.5-pro;; zai) FAM=zai; DM=glm-5.3;; agy) FAM=agy; DM=gemini-3.8-flash-high;; grok) FAM=grok; DM=grok-4.7;; cursor) FAM=cursor; DM=auto;; *) FAM=$POOL; DM=swe-2-max;; esac
-M=$(python3 -I -c 'import json,sys;d=json.load(open(sys.argv[1]));p,f,t=sys.argv[2:5];print(next((str(d[k]) for k in (p+"."+t,p,f+"."+t,f) if d.get(k)),""))' "$R/models.json" "$POOL" "$FAM" "$TIER" 2>/dev/null); [[ "$M" =~ ^[A-Za-z0-9._-]+$ ]] || M=$DM; EF=$(python3 -I -c 'import json,sys;d=json.load(open(sys.argv[1]));p,f,t=sys.argv[2:5];print(d.get("effort."+p+"."+t) or d.get("effort."+f+"."+t) or "")' "$R/models.json" "$POOL" "$FAM" "$TIER" 2>/dev/null); [[ -z "$EF" || "$EF" =~ ^[a-z]+$ ]] || EF=; echo "MODEL $POOL $TIER $M ${EF:-default}" >> $R/$J.base.meta   # RQ-TERA-LANE: lane key ($POOL.$TIER, $POOL) before family key; args via argv
+M=$(python3 -I -c 'import json,sys;d=json.load(open(sys.argv[1]));p,f,t=sys.argv[2:5];print(next((str(d[k]) for k in (p+"."+t,p,f+"."+t,f) if d.get(k)),""))' "$R/models.json" "$POOL" "$FAM" "$TIER" 2>/dev/null); [[ "$M" =~ ^[A-Za-z0-9._-]+$ ]] || M=$DM; EF=$(python3 -I -c 'import json,sys;d=json.load(open(sys.argv[1]));p,f,t=sys.argv[2:5];print(d.get("effort."+p+"."+t) or d.get("effort."+f+"."+t) or "")' "$R/models.json" "$POOL" "$FAM" "$TIER" 2>/dev/null); [[ -z "$EF" || "$EF" =~ ^[a-z]+$ ]] || EF=
+# Paid Devin variants must never reach the launcher, even from models.json.
+if [[ "$POOL" == devin && "$M" == *-[lL][iI][gG][hH][tT][nN][iI][nN][gG] ]]; then
+  echo "PAID_MODEL_BLOCKED $J $M -> swe-2-max" >> "$R/$J.base.meta"
+  M=swe-2-max
+fi
+echo "MODEL $POOL $TIER $M ${EF:-default}" >> $R/$J.base.meta   # RQ-TERA-LANE: lane key ($POOL.$TIER, $POOL) before family key; args via argv
 # RQ-SEC-RUNLOG-SCRUB: env allowlist (real HOME kept so codex/devin find auth; CODEX_HOME passed only as the lane uses it) + scrubbed log
 E=(env -i HOME="$HOME" CARGO_BUILD_JOBS=4 CARGO_INCREMENTAL=0 PATH="$PATH" TERM=xterm-256color LANG=en_US.UTF-8 USER="$USER" LOGNAME="$USER" TMPDIR="$TMPDIR" ${PHANTOM_SESSION_KEYS:+PHANTOM_SESSION_KEYS="$PHANTOM_SESSION_KEYS"}); SCRUB="perl $R/bin/scrub.pl"
 # >>> LANE-MCP rev1 (Security 2026-11-03): one shared credential-free MCP set for every lane (context7 remote HTTPS + safe-fetch stdio
@@ -106,7 +129,7 @@ case $POOL in
     /usr/bin/curl -s -m 2 -o /dev/null -I "$CBU/api/hello" || { echo "HELD: claude-broker not running (token not provisioned? see queue/run/claude-broker.log)"; exit 3; }
   fi
   { nohup "${E[@]}" ANTHROPIC_BASE_URL="$CBU" CLAUDE_CODE_OAUTH_TOKEN=ashlr-lane-dummy-not-a-credential CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
-      sandbox-exec -f $R/bin/claude-cli.sb claude -p --dangerously-skip-permissions --strict-mcp-config --mcp-config "$LM/mcp.json" --model $M < $R/$J.prompt 2>&1 | $SCRUB > $R/$J.log; rcw "${PIPESTATUS[0]}"; } & ;;   # <<< CLAUDE-BROKER rev1
+      sandbox-exec -f $R/bin/claude-cli.sb claude -p --dangerously-skip-permissions --strict-mcp-config --mcp-config "$LM/mcp.json" --model $M --output-format stream-json --verbose < $R/$J.prompt 2>&1 | $SCRUB > $R/$J.log; rcw "${PIPESTATUS[0]}"; } & ;;   # <<< CLAUDE-BROKER rev1
  claude-api) # >>> claude-api lane (Mason 10:28 PM Oct 26): gifted + monthly Anthropic API credits, paced by claude-api.py
   # key: Phantom Secrets first (phantom exec injects it; the value never reaches this script), else a mode-600 user-owned
   # non-symlink key file read on fd 3 by the child itself (never on argv, never echoed or logged); neither -> HOLD exit 3

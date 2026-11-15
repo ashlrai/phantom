@@ -15,7 +15,7 @@ const list = async () => ({ state: 'ok' as const, children: [child('small'), chi
 
 describe('staging inventory command', () => {
   it('sorts measured entries and preserves unknown evidence in JSON and human output', async () => {
-    const deps = { list, measure: (path: string) => { if (path.endsWith('unknown')) throw Error('unreadable'); return path.endsWith('big') ? 35_000_000_000 : 10; } };
+    const deps = { list, measure: (path: string, _timeoutMs?: number) => { if (path.endsWith('unknown')) throw Error('unreadable'); return path.endsWith('big') ? 35_000_000_000 : 10; } };
     const json = (await run(['--root', '/fake', '--json'], deps)).json();
     expect(json.entries.map((e: { name: string }) => e.name)).toEqual(['big', 'small', 'unknown']);
     expect(json.entries[2].bytes).toBeNull();
@@ -28,7 +28,7 @@ describe('staging inventory command', () => {
   });
   it('degrades on timeout and output cap failures and passes names literally', async () => {
     const paths: string[] = [];
-    const deps = { list: async () => ({ state: 'ok' as const, children: [child('space ; $(touch nope)'), child('timeout'), child('cap')], skippedSymlinks: 0, truncated: false }), measure: (path: string) => { paths.push(path); if (!path.includes('space')) throw Error('timeout or maxBuffer'); return 1024; } };
+    const deps = { list: async () => ({ state: 'ok' as const, children: [child('space ; $(touch nope)'), child('timeout'), child('cap')], skippedSymlinks: 0, truncated: false }), measure: (path: string, _timeoutMs?: number) => { paths.push(path); if (!path.includes('space')) throw Error('timeout or maxBuffer'); return 1024; } };
     const report = (await run(['--root', '/fake', '--json'], deps)).json();
     expect(paths[0]).toBe('/fake/space ; $(touch nope)');
     expect(report.entries.filter((e: { bytes: number | null }) => e.bytes === null)).toHaveLength(2);
@@ -36,7 +36,7 @@ describe('staging inventory command', () => {
   });
   it('bounds children and reports truncation', async () => {
     let calls = 0;
-    const report = (await run(['--root', '/fake', '--json'], { list: async () => ({ state: 'ok', children: Array.from({ length: MAX_CHILDREN + 1 }, (_, i) => child(String(i))), skippedSymlinks: 0, truncated: false }), measure: () => { calls++; return 1; } })).json();
+    const report = (await run(['--root', '/fake', '--json'], { list: async () => ({ state: 'ok', children: Array.from({ length: MAX_CHILDREN + 1 }, (_, i) => child(String(i))), skippedSymlinks: 0, truncated: false }), measure: (_path: string, _timeoutMs?: number) => { calls++; return 1; } })).json();
     expect(calls).toBe(MAX_CHILDREN);
     expect(report.truncated).toBe(true);
     expect(report.complete).toBe(false);

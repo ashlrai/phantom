@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   buildFleetDisk,
   cmdFleetDisk,
@@ -71,23 +74,29 @@ describe('buildFleetDisk', () => {
   const base = { runsDir: RUNS, nowMs: NOW, source: 'healthy' as const, overridesSource: 'healthy' as const,
     laneLines: { freezeBelowGb: 60, halveBelowGb: 35 }, largestSubdirs: [] };
 
-  it('computes GB per hour lost and hours until 100 GB free', () => {
-    // 140 -> 120 over 4 hours: 5 GB/hour, 20 GB to go, 4 hours left.
-    const report = buildFleetDisk({ ...base, samples: [sample(240, 140), sample(0, 120)] });
+  it('computes GB per hour lost and hours until 150 GB free', () => {
+    // 190 -> 170 over 4 hours: 5 GB/hour, 20 GB to go, 4 hours left.
+    const report = buildFleetDisk({ ...base, samples: [sample(240, 190), sample(0, 170)] });
     expect(report).toMatchObject({
-      schema: 'fleet.disk.v1', samples: 2, freeGbNow: 120, firstFreeGb: 140,
-      observedHours: 4, gbPerHour: 5, hoursUntilTargetFreeGb: 4, targetFreeGb: 100,
+      schema: 'fleet.disk.v1', samples: 2, freeGbNow: 170, firstFreeGb: 190,
+      observedHours: 4, gbPerHour: 5, hoursUntilTargetFreeGb: 4, targetFreeGb: 150,
     });
   });
 
-  it('reports 0 when free space is already at or under 100 GB', () => {
+  it('projects using the unrounded rate for slow consumption', () => {
+    const report = buildFleetDisk({ ...base, samples: [sample(600, 151.4), sample(0, 151)] });
+    expect(report.gbPerHour).toBeCloseTo(0.04);
+    expect(report.hoursUntilTargetFreeGb).toBe(25);
+  });
+
+  it('reports 0 when free space is already at or under 150 GB', () => {
     const report = buildFleetDisk({ ...base, samples: [sample(240, 110), sample(0, 95)] });
     expect(report.hoursUntilTargetFreeGb).toBe(0);
     expect(report.gbPerHour).toBeGreaterThan(0);
   });
 
   it('leaves the hours null when free space is flat or growing', () => {
-    for (const pair of [[120, 120], [115, 125]] as const) {
+    for (const pair of [[170, 170], [165, 175]] as const) {
       const report = buildFleetDisk({ ...base, samples: [sample(240, pair[0]), sample(0, pair[1])] });
       expect(report.hoursUntilTargetFreeGb).toBeNull();
       expect(report.gbPerHour).not.toBeNull();
@@ -97,10 +106,10 @@ describe('buildFleetDisk', () => {
   it('leaves rate and hours unknown with fewer than two provable samples', () => {
     const empty = buildFleetDisk({ ...base, samples: [] });
     expect(empty).toMatchObject({ freeGbNow: null, gbPerHour: null, hoursUntilTargetFreeGb: null });
-    const one = buildFleetDisk({ ...base, samples: [sample(5, 137)] });
-    expect(one).toMatchObject({ freeGbNow: 137, gbPerHour: null, hoursUntilTargetFreeGb: null });
+    const one = buildFleetDisk({ ...base, samples: [sample(5, 170)] });
+    expect(one).toMatchObject({ freeGbNow: 170, gbPerHour: null, hoursUntilTargetFreeGb: null });
     // Two readings at one instant prove no span.
-    const tie = buildFleetDisk({ ...base, samples: [sample(5, 137), sample(5, 136)] });
+    const tie = buildFleetDisk({ ...base, samples: [sample(5, 170), sample(5, 169)] });
     expect(tie.gbPerHour).toBeNull();
     expect(tie.hoursUntilTargetFreeGb).toBeNull();
   });
@@ -171,8 +180,8 @@ describe('formatFleetDisk plain words', () => {
   const report = (over: Partial<Parameters<typeof formatFleetDisk>[0]> = {}) =>
     formatFleetDisk({
       schema: 'fleet.disk.v1', generatedAt: new Date(NOW).toISOString(), runsDir: RUNS,
-      windowHours: 12, targetFreeGb: 100, source: 'healthy', overridesSource: 'healthy', samples: 2,
-      freeGbNow: 120, firstFreeGb: 140, observedHours: 4, gbPerHour: 5,
+      windowHours: 12, targetFreeGb: 150, source: 'healthy', overridesSource: 'healthy', samples: 2,
+      freeGbNow: 170, firstFreeGb: 190, observedHours: 4, gbPerHour: 5,
       hoursUntilTargetFreeGb: 4, laneFreezeBelowGb: 60, laneHalveBelowGb: 35,
       hoursUntilLaneFreeze: 12, hoursUntilLaneHalve: 17,
       largestSubdirs: [{ name: 'wt', gb: 84.2 }],
@@ -181,10 +190,10 @@ describe('formatFleetDisk plain words', () => {
 
   it('prints one line per fact', () => {
     expect(report()).toEqual([
-      'disk free now: 120 GB',
+      'disk free now: 170 GB',
       'readings: 2 in the last 12 hours',
       'use rate: 5 GB per hour',
-      '100 GB free in: 4 hours',
+      '150 GB free in: 4 hours',
       'lane freeze below 60 GB in: 12 hours',
       'lane halve below 35 GB in: 17 hours',
       `largest folders under ${RUNS}:`,
@@ -205,7 +214,7 @@ describe('formatFleetDisk plain words', () => {
       'disk free now: unknown',
       'readings: 0 in the last 12 hours',
       'use rate: unknown',
-      '100 GB free in: unknown',
+      '150 GB free in: unknown',
       'lane freeze below 60 GB in: unknown',
       'lane halve below 35 GB in: unknown',
       `largest folders under ${RUNS}:`,
@@ -214,7 +223,7 @@ describe('formatFleetDisk plain words', () => {
   });
 
   it('says not at this rate when free space is not shrinking', () => {
-    expect(report({ gbPerHour: -1, hoursUntilTargetFreeGb: null })).toContain('100 GB free in: not at this rate');
+    expect(report({ gbPerHour: -1, hoursUntilTargetFreeGb: null })).toContain('150 GB free in: not at this rate');
     expect(report({ gbPerHour: -1, hoursUntilTargetFreeGb: null })).toContain('use rate: not shrinking');
   });
 });
@@ -222,7 +231,7 @@ describe('formatFleetDisk plain words', () => {
 describe('cmdFleetDisk', () => {
   const goodDeps: FleetDiskDeps = {
     now: NOW, runsRoot: RUNS,
-    readEvents: events([leader(240, 140), leader(0, 120)]),
+    readEvents: events([leader(240, 190), leader(0, 170)]),
     du: duText([[900, RUNS], [50_000_000, `${RUNS}/wt`]]),
   };
 
@@ -231,13 +240,28 @@ describe('cmdFleetDisk', () => {
     expect(json.code).toBe(0);
     expect(json.report).toMatchObject({
       schema: 'fleet.disk.v1', windowHours: 12, source: 'healthy',
-      samples: 2, freeGbNow: 120, gbPerHour: 5, hoursUntilTargetFreeGb: 4,
+      samples: 2, freeGbNow: 170, gbPerHour: 5, hoursUntilTargetFreeGb: 4, targetFreeGb: 150,
       largestSubdirs: [{ name: 'wt', gb: 51.2 }],
     });
     const plain = await run([], goodDeps);
     expect(plain.code).toBe(0);
-    expect(plain.logs).toContain('disk free now: 120 GB');
+    expect(plain.logs).toContain('disk free now: 170 GB');
     expect(plain.logs.at(-1)).toBe('  wt: 51.2 GB');
+  });
+
+  it('reads real fixture files without changing or deleting them', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'fleet-disk-'));
+    try {
+      mkdirSync(join(root, 'queue'));
+      const path = join(root, 'queue', 'dispatch-events.log');
+      const contents = `${leader(240, 190)}\n${leader(0, 170)}\n`;
+      writeFileSync(path, contents);
+      const result = await run(['--runs-dir', root, '--json']);
+      expect(result.report).toMatchObject({ targetFreeGb: 150, gbPerHour: 5, hoursUntilTargetFreeGb: 4 });
+      expect(readFileSync(path, 'utf8')).toBe(contents);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('prints unknown and still exits 0 when the log cannot be read', async () => {

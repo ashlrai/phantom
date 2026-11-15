@@ -22,9 +22,10 @@
  * lives in ~/.ashlr/comms/digest-state.json. Never throws.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { readPrivateFileCapped } from '../verse/preferences.js';
 
 // ---------------------------------------------------------------------------
 // Facts
@@ -551,10 +552,15 @@ function statePath(): string {
   return join(homedir(), '.ashlr', 'comms', 'digest-state.json');
 }
 
+/** reported[] holds at most REPORTED_KEEP keys (~100 B each); 256 KiB is generous headroom. */
+const STATE_READ_BYTES = 256 * 1024;
+
 export function readDigestState(): DigestState | null {
   try {
     if (!existsSync(statePath())) return null;
-    const s = JSON.parse(readFileSync(statePath(), 'utf8')) as Partial<DigestState>;
+    const read = readPrivateFileCapped(statePath(), STATE_READ_BYTES);
+    if (read === null || read.truncated) return null;
+    const s = JSON.parse(read.text) as Partial<DigestState>;
     if (s.v !== 1 || typeof s.lastCheckAt !== 'string' || typeof s.lastActivityAt !== 'string') return null;
     return {
       v: 1,

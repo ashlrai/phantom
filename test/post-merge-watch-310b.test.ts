@@ -302,11 +302,12 @@ describe('githubCiStatus (read-only; token from custody)', () => {
     });
     const ci = await githubCiStatus('ashlrai/ashlrcode', sha('a'), fetchImpl);
     expect(ci).toMatchObject({ state: 'red', failing: ['c2-0'] });
-    expect(calls.map((c) => c.url)).toEqual([
+    // The status read overlaps the check-run pages, so call order is not fixed.
+    expect(calls.map((c) => c.url).sort()).toEqual([
       `https://api.github.com/repos/ashlrai/ashlrcode/commits/${sha('a')}/check-runs?per_page=100&page=1`,
       `https://api.github.com/repos/ashlrai/ashlrcode/commits/${sha('a')}/check-runs?per_page=100&page=2`,
       `https://api.github.com/repos/ashlrai/ashlrcode/commits/${sha('a')}/status?per_page=100`,
-    ]);
+    ].sort());
     expect(calls.every((c) => c.auth === 'Bearer ghs_testtoken_not_real')).toBe(true);
     expect(JSON.stringify(ci)).not.toContain('ghs_');
   });
@@ -552,6 +553,38 @@ describe('red → revert + quarantine + repair task', () => {
     expect(r.suiteRuns).toBe(3);
     expect(r.reverted).toEqual([l.id]);
     expect(results(h)[0]).toMatchObject({ verdict: 'red', suite: 'fail' });
+  });
+
+  it('CI red attributable to the landing skips the suite entirely and reverts', async () => {
+    const h = harness();
+    const l = landing();
+    registerLanding(l, { nowMs: T0 });
+    h.ci.set(l.mergeSha, redCi('test'));
+    h.ci.set(sha('b'), GREEN);
+    h.commits.set(l.mergeSha, fleetCommit(l));
+    // No suite fixture on purpose: if the watch ran it the result would say
+    // not-run anyway — suiteRuns: 0 is the assertion that it never ran.
+    const r = await advancePostMergeWatches({ deps: h.deps });
+    expect(r.reverted).toEqual([l.id]);
+    expect(r.suiteRuns).toBe(0);
+    expect(h.landRevert).toHaveBeenCalledTimes(1);
+    expect(results(h)[0]).toMatchObject({ verdict: 'red', ci: 'red', suite: 'not-run' });
+    expect(results(h)[0]!.detail).toMatch(/CI failing on/);
+    expect(results(h)[0]!.detail).not.toMatch(/suite failed/);
+  });
+
+  it('CI red inherited from the parent still pays for the suite before deciding', async () => {
+    const h = harness();
+    const l = landing();
+    registerLanding(l, { nowMs: T0 });
+    h.ci.set(l.mergeSha, redCi('test'));
+    h.ci.set(sha('b'), redCi('test'));
+    h.suite.set(l.mergeSha, [PASS]);
+    h.commits.set(l.mergeSha, fleetCommit(l));
+    const r = await advancePostMergeWatches({ deps: h.deps });
+    expect(r.suiteRuns).toBe(1);
+    expect(h.landRevert).not.toHaveBeenCalled();
+    expect(listPostMergeWatches()[0]).toMatchObject({ outcome: 'inherited-red' });
   });
 
   it('a transient GitHub read of the commit defers the revert (repo stays quarantined) and retries', async () => {

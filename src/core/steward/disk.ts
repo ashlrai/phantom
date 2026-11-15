@@ -15,6 +15,7 @@ import { lstatSync, readdirSync, rmdirSync, unlinkSync, existsSync, mkdirSync, r
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { homedir } from 'node:os';
 import { dirname, join, relative, isAbsolute, resolve } from 'node:path';
+import { isProtectedModelPath } from '../local-runtime/model-roots.js';
 
 /**
  * delete  — Phantom-owned/plain logs: remove expired + oldest-over-quota files.
@@ -165,7 +166,9 @@ export function runSteward(policy: StewardPolicy, opts: { apply?: boolean; now?:
     report.roots.push(rr);
     const admitted = allowed.roots.find((r) => r.id === root.id && r.path === root.path &&
       (r.action === root.action || root.action === 'report'));
-    if (!rr.exists || !admitted || !Number.isFinite(now) ||
+    // Model weight caches are never disk-maint victims by default, even if a
+    // future allowlisted root were configured over one of them.
+    if (!rr.exists || !admitted || isProtectedModelPath(root.path, home) || !Number.isFinite(now) ||
         !Number.isFinite(root.quotaMB) || root.quotaMB < 0 ||
         !Number.isFinite(root.retentionDays) || root.retentionDays < 0 ||
         !Number.isFinite(policy.minAgeMinutes) || policy.minAgeMinutes < 0 ||

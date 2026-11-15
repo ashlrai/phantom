@@ -247,6 +247,10 @@ const ENCODED_WINDOWS_OWNED_BATCH_SCRIPT = Buffer.from(
   'utf16le',
 ).toString('base64');
 
+/** Captured at load. A later `process.platform` assignment can simulate another
+ * OS for product logic; private-path checks must keep using this host. */
+const HOST_PLATFORM: NodeJS.Platform = process.platform;
+
 export type PrivateStorageKind = 'file' | 'directory';
 export type PrivateStorageMode = 'secure-created' | 'inspect-existing' | 'inspect-owned';
 
@@ -612,7 +616,7 @@ export function assurePrivateStoragePath(
     runner?: PrivateStorageRunner;
   } = {},
 ): PrivateStorageAssurance {
-  const platform = options.platform ?? process.platform;
+  const platform = options.platform ?? HOST_PLATFORM;
   if (platform === 'darwin') return assureDarwinPrivateStoragePath(path, kind, options);
   if (platform !== 'win32') return { ok: true, reason: 'posix-checked-by-caller' };
   const privatePath = localWindowsPath(path, 4_096);
@@ -710,7 +714,7 @@ export function assurePrivateStoragePaths(
     runner?: PrivateStorageRunner;
   } = {},
 ): PrivateStorageAssurance {
-  const platform = options.platform ?? process.platform;
+  const platform = options.platform ?? HOST_PLATFORM;
   if (platform !== 'win32') return { ok: true, reason: 'posix-checked-by-caller' };
   if (paths.length === 0) return { ok: true, reason: 'no-paths' };
   if (paths.length > 512) return { ok: false, reason: 'too-many-paths' };

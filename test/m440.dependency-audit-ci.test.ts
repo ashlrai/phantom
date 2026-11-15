@@ -92,8 +92,8 @@ describe('M440 dependency audit CI', () => {
       name: 'Dependency Audit',
       on: {
         push: { branches: ['master'], paths: authorityPaths },
-        pull_request: { branches: ['**'] },
-        schedule: [{ cron: '17 9 * * 1' }],
+        pull_request: { branches: ['**'], paths: authorityPaths },
+        schedule: [{ cron: '17 9 * * *' }],
         workflow_dispatch: null,
       },
       permissions: { contents: 'read' },
@@ -182,12 +182,11 @@ describe('M440 dependency audit CI', () => {
     });
   });
 
-  it('runs on every pull request exact head, dependency pushes, weekly drift, and manual dispatch', () => {
+  it('runs on dependency pull request heads, dependency pushes, daily drift, and manual dispatch', () => {
     expect(events.push).toEqual({ branches: ['master'], paths: authorityPaths });
-    expect(events.pull_request).toEqual({ branches: ['**'] });
-    expect(events.pull_request).not.toHaveProperty('paths');
+    expect(events.pull_request).toEqual({ branches: ['**'], paths: authorityPaths });
     expect(events.pull_request).not.toHaveProperty('paths-ignore');
-    expect(events.schedule).toEqual([{ cron: '17 9 * * 1' }]);
+    expect(events.schedule).toEqual([{ cron: '17 9 * * *' }]);
     expect(events.workflow_dispatch).toBeNull();
   });
 

@@ -33,6 +33,17 @@ describe('fleet MCP protocol', () => {
     }
   });
 
+  it('validates batch job IDs and dispatches one bounded read', async () => {
+    const jobCurrentBatch = vi.fn(async input => ({ ids: input.jobIds }));
+    const client = await connect({ jobCurrentBatch });
+    const result = await client.callTool({ name: 'fleet_job_current_batch', arguments: { jobIds: ['RQ-EXAMPLE-1'] } });
+    expect(result).toMatchObject({ content: [{ text: '{"ids":["RQ-EXAMPLE-1"]}' }] });
+    for (const args of [{ jobIds: [] }, { jobIds: ['RQ-EXAMPLE-1', 'RQ-EXAMPLE-1'] }, { jobIds: ['RQ-EXAMPLE-1'], ref: 'other' }]) {
+      await expect(client.callTool({ name: 'fleet_job_current_batch', arguments: args })).rejects.toMatchObject({ code: -32602 });
+    }
+    expect(jobCurrentBatch).toHaveBeenCalledTimes(1);
+  });
+
   it('round trips status and loop calls with omitted/default and explicit limits', async () => {
     const client = await connect();
     expect(await client.callTool({ name: 'fleet_status' })).toMatchObject({ content: [{ type: 'text', text: '{"pending":2}' }] });

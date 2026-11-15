@@ -6,8 +6,10 @@ import { join } from 'node:path';
 import { mkdir, readFile, writeFile, rename, rmdir, unlink, statfs } from 'node:fs/promises';
 
 const exec = promisify(execFile);
+export { MODEL_TIER_TABLE, modelTiers } from './model-tiers.js';
+export type { ModelTier, ModelTierInput } from './model-tiers.js';
+import { modelTiers, type ModelTier } from './model-tiers.js';
 export type ModelEngine = 'ollama' | 'omlx';
-export type ModelTier = 'fast' | 'work' | 'frontier';
 export interface ModelInventoryRow {
   id: string; engine: ModelEngine; contextLength: number | null; quantization: string | null;
   residentBytes: number | null; prefillTokensPerSecond: number | null;
@@ -20,26 +22,6 @@ export interface ModelInventoryConfig {
 export interface ModelInventory {
   schemaVersion: 1; measuredAt: string; promptTokens: 512; repetitions: 3;
   models: ModelInventoryRow[]; unavailableEngines: ModelEngine[];
-}
-// Capability thresholds, not a claim about model quality.
-export const MODEL_TIER_TABLE: ReadonlyArray<{
-  tier: ModelTier; decode: number; prefill: number; context: number; minimumBits: number;
-}> = Object.freeze([
-  { tier: 'fast', decode: 40, prefill: 100, context: 8192, minimumBits: 4 },
-  { tier: 'work', decode: 15, prefill: 50, context: 32768, minimumBits: 4 },
-  { tier: 'frontier', decode: 8, prefill: 25, context: 65536, minimumBits: 8 },
-]);
-function bits(quant: string | null): number {
-  if (/^MXFP4$/i.test(quant ?? '')) return 4;
-  const match = /(?:^q|^iq|\b)(\d+)(?:[_. -]|bit|$)/i.exec(quant ?? '');
-  if (match) return Number(match[1]);
-  return /^(?:bf16|fp16|f16)$/i.test(quant ?? '') ? 16 : 0;
-}
-export function modelTiers(row: ModelInventoryRow): ModelTier[] {
-  if (row.status !== 'measured') return [];
-  return MODEL_TIER_TABLE.filter(rule => (row.contextLength ?? 0) >= rule.context &&
-    bits(row.quantization) >= rule.minimumBits && (row.decodeTokensPerSecond ?? 0) >= rule.decode &&
-    (row.prefillTokensPerSecond ?? 0) >= rule.prefill).map(rule => rule.tier);
 }
 export function inventoryEndpoint(value: string): string {
   let url: URL;

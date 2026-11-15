@@ -17,6 +17,7 @@ import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../s
 import { groupByLane, isMasonItem, jobFromItem, laneGroupHeadline, masonLane, mergesLane, stuckWorkers, timelineLanes } from './fleet-timeline-model.js';
 import { ciLane, ciRunUrl } from './ci-lane.js';
 import { ciRunsQuery } from './ci-runs-query.js';
+import { ObserveSlice } from '../fleet-observe/ObserveFacts.js';
 import { readGroupByLane, readShowCi, writeGroupByLane, writeShowCi } from './timeline-prefs.js';
 import styles from './fleet-timeline.module.css';
 
@@ -76,6 +77,7 @@ export function FleetTimelinePane({ visible }: Pick<PaneProps, 'visible'>) {
   }
 
   return <div className={styles.pane} aria-label="Worker timeline">
+    <ObserveSlice visible={visible} part="timeline" />
     <header className={styles.header}>
       <p className={styles.headline}>{timeline && data
         ? <>{data.workers.length} workers · longest {timeline.longest ? <><button type="button" className={styles.longest} onClick={() => openLog(timeline.longest!.job)}>{timeline.longest.job}</button> {ageText(timeline.longest.ageSeconds)}</> : '—'} · {timeline.unknownAge} unknown age{mason ? ` · ${mason.items.length} interjections in view` : ''}</>

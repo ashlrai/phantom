@@ -104,7 +104,7 @@ async function fixture(options: { key?: boolean; historical?: boolean } = {}) {
     resourceRuntime: runtimeFile, expectedRuntimeDigest: digest(canonical(runtime)) };
   save(files.engineering, { schemaVersion: 1, enrollments: [{ id: 'inspect-app', projectId: 'app', graphId: 'inspect-graph', graphRoot, host }] });
   const env = { ...process.env, HOME: home, USERPROFILE: home, ASHLR_HOME: join(home, '.ashlr'),
-    TSX_DISABLE_CACHE: '1', NODE_DISABLE_COMPILE_CACHE: '1', GIT_OPTIONAL_LOCKS: '0' };
+    TSX_DISABLE_CACHE: '1', GIT_OPTIONAL_LOCKS: '0' };
   if (options.key !== false) {
     await exec(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval',
       "const {loadOrCreateKey}=await import('./src/core/foundry/provenance.ts');loadOrCreateKey();"], { env, timeout: 20_000 });

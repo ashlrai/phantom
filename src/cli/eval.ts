@@ -245,6 +245,11 @@ async function evalFixture(
 // ---------------------------------------------------------------------------
 
 export async function cmdEval(args: string[]): Promise<number> {
+  if (args[0] === 'checkpoints') {
+    const { cmdEvalCheckpoints } = await import('./eval-checkpoints.js');
+    return cmdEvalCheckpoints(args.slice(1));
+  }
+
   // M346: metadata-only fleet attention evaluation.
   if (args[0] === 'attention') {
     const { cmdEvalAttention } = await import('./eval-attention.js');
@@ -261,6 +266,18 @@ export async function cmdEval(args: string[]): Promise<number> {
   if (args[0] === 'router') {
     const { cmdEvalRouter } = await import('./eval-router.js');
     return cmdEvalRouter(args.slice(1));
+  }
+
+  // RQ-SELFOPT-PROMPT-OPT: prompt-variant A/B eval + promotion dashboard.
+  if (args[0] === 'prompts') {
+    const { cmdEvalPrompts } = await import('./eval-prompts.js');
+    return cmdEvalPrompts(args.slice(1));
+  }
+
+  // RQ-SWE5-PASSK-EVAL: pass^k golden-task eval suite + nightly scheduler.
+  if (args[0] === 'passk') {
+    const { cmdEvalPassK } = await import('./eval-passk.js');
+    return cmdEvalPassK(args.slice(1));
   }
 
   if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
@@ -367,6 +384,9 @@ function printEvalHelp(): void {
   console.log(`    ashlr eval attention [--window 1d|7d|30d] [--limit N] [--json] [--save]`);
   console.log(`    ashlr eval swe-bench [--fixtures] [--dataset <path>] [--engine <id>]`);
   console.log(`    ashlr eval router --dataset <jobs.jsonl> [--policy <name>] [--check <baseline.json>] [--json]`);
+  console.log(`    ashlr eval prompts --dataset <jobs.jsonl> [--spec <experiment.json>] [--promote] [--json]`);
+  console.log(`    ashlr eval passk [--dataset <golden.jsonl>] [--lane <lane:engine>]... [--trials N] [--k K] [--json]`);
+  console.log(`    PHANTOM_CHECKPOINTS=1 ashlr eval checkpoints --file <fixture.json> [--json]`);
   console.log('');
   console.log('  ' + bold('Options:'));
   console.log('');

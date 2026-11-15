@@ -144,9 +144,10 @@ describe('ashlr agents bus contract', () => {
     expect(j).toEqual(JSON.parse(JSON.stringify(busV2ContractSummary())));
     expect(j.bodyKinds).toEqual([...BODY_KINDS]);
   });
-  it('lists and tests channels without a network or adapter', async () => {
+  it('lists registered adapters and refuses channels that have none', async () => {
     const listed = JSON.parse((await run(['bus', 'channels', 'list', '--json'])).out);
     expect(listed.channels.map((c: { id: string }) => c.id)).toEqual(['bus', 'slack', 'imessage', 'email', 'telegram', 'handoff']);
+    expect(listed.channels.filter((c: { adapterRegistered: boolean }) => c.adapterRegistered).map((c: { id: string }) => c.id)).toEqual(['bus', 'handoff']);
     expect(JSON.parse((await run(['bus', 'channels', 'test', 'email', '--json'])).out)).toMatchObject({ dryRun: true, status: 'refused' });
     expect((await run(['bus', 'channels', 'test', 'unknown', '--json'])).code).toBe(2);
   });
@@ -156,5 +157,24 @@ describe('ashlr agents bus contract', () => {
     expect((await run(['bus', 'nope'])).code).toBe(2);
     expect((await run(['bus', 'contract', '--json', '--json'])).code).toBe(2);
     expect(JSON.parse((await run(['x', '--json'])).err)).toEqual({ error: 'invalid-argument' });
+  });
+  it('routes profile output and failures through the CLI callbacks', async () => {
+    const listed = await run(['list', '--json']);
+    expect(listed.code).toBe(0);
+    expect(JSON.parse(listed.out)).toEqual({ profiles: [] });
+    expect(listed.err).toBe('');
+
+    const invalid = await run(['show', '../outside', '--json']);
+    expect(invalid.code).toBe(2);
+    expect(invalid.out).toBe('');
+    expect(JSON.parse(invalid.err)).toMatchObject({ ok: false });
+  });
+  it.each(['list', 'show', 'validate', 'versions'])('shows %s help before reading profile metadata', async (verb) => {
+    for (const flag of ['--help', '-h']) {
+      const result = await run([verb, flag]);
+      expect(result.code).toBe(0);
+      expect(result.out).toContain('phm agents list|show <id>');
+      expect(result.err).toBe('');
+    }
   });
 });

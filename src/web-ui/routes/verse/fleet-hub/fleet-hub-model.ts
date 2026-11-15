@@ -2,13 +2,14 @@ import { relativeText, type FleetRuns } from '../ops/ops-runs-model.js';
 import { mergeSpeedReading } from './hub-merge-speed.js';
 
 const panes = [
+  ['fleet-mission', 'Mission'],
   ['fleet-lanes', 'Lanes'], ['fleet-events', 'Fleet events'],
   ['fleet-inbox', 'Inbox'], ['fleet-bus', 'Bus'],
   ['fleet-merges', 'Merges'], ['fleet-usage', 'Usage'],
   ['fleet-supply', 'Supply'], ['fleet-host', 'Host'], ['fleet-timeline', 'Timeline'],
 ] as const;
 
-export const CURATED_FLEET_WORKSPACE = ['fleet-lanes', 'fleet-inbox', 'fleet-merges', 'fleet-bus', 'fleet-releases', 'fleet-usage'] as const;
+export const CURATED_FLEET_WORKSPACE = ['fleet-mission', 'fleet-lanes', 'fleet-inbox', 'fleet-merges', 'fleet-bus', 'fleet-releases', 'fleet-usage'] as const;
 
 export function hubEmptyState(runs: FleetRuns | null): { kind: 'no-fleet' | 'not-landed' } | null {
   if (runs === null || runs.sources.runsDir === 'not-landed') return { kind: 'not-landed' };
@@ -56,6 +57,8 @@ export function hubTiles(runs: FleetRuns | null, registered: readonly { id: stri
   const mergeSpeed = mergeSpeedReading(runs?.mergesLastHour);
   const tones: Record<string, typeof mergeSpeed.tone | undefined> = { 'fleet-merges': mergeSpeed.tone };
   const counts: Record<string, string> = runs ? {
+    'fleet-mission': runs.sources.runsDir === 'missing' || runs.sources.runsDir === 'not-landed' ? 'Not reported'
+      : runs.paused || runs.lanes.some((lane) => lane.held) || (runs.claudeLane !== null && /^down/i.test(runs.claudeLane)) ? 'Needs a look' : 'Moving',
     'fleet-lanes': lanesTileCount(runs.lanes),
     'fleet-events': String(runs.events.length),
     'fleet-inbox': String(runs.inbox.length),

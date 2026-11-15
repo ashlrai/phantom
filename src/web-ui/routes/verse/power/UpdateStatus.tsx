@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
+import { apiGet } from '../../../data/client.js';
 import { DESKTOP_UPDATE_REASONS } from '../../../app/desktop-update-reasons.js';
 import { setDesktopPreference } from '../../../app/desktop-state.js';
 import { refreshDesktopUpdates, useDesktopUpdates, type DesktopUpdateState } from '../../../app/desktop-updates.js';
 import { formatMetric } from '../../../components/charts/format-metric.js';
+import { ReleaseStages } from './ReleaseStages.js';
+import { newerUninstallable, type ReleaseStagesView } from './release-stages-model.js';
 import { updateStatusText } from './update-status-text.js';
 import styles from './PowerStatus.module.css';
 const notes: Partial<Record<DesktopUpdateState['phase'], string>> = {
@@ -17,9 +20,20 @@ const notes: Partial<Record<DesktopUpdateState['phase'], string>> = {
 /** Native facts only; changing the switch waits for the native acknowledgement. */
 export function UpdateStatus() {
   const state = useDesktopUpdates();
+  const [why, setWhy] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stages, setStages] = useState<ReleaseStagesView | null>(null);
+  const [stagesKey, setStagesKey] = useState(0);
   useEffect(() => { refreshDesktopUpdates(); }, []);
+  useEffect(() => {
+    if (state?.phase !== 'idle' && state?.phase !== 'current') return;
+    const controller = new AbortController();
+    apiGet<unknown>('/api/verse/update/why', controller.signal).then(value => {
+      if (value && typeof value === 'object' && 'message' in value && typeof value.message === 'string') setWhy(value.message);
+    }, () => { if (!controller.signal.aborted) setWhy('Update status is unknown.'); });
+    return () => { controller.abort(); };
+  }, [state?.phase, stagesKey]);
   useEffect(() => { setPending(false); setError(null); }, [state?.enabled]);
   useEffect(() => {
     if (!pending) return;
@@ -27,7 +41,11 @@ export function UpdateStatus() {
     return () => { window.clearTimeout(timer); };
   }, [pending]);
   if (!state) return null;
-  const { badge, detail } = updateStatusText(state);
+  const text = updateStatusText(state);
+  const idleOrCurrent = state.phase === 'idle' || state.phase === 'current';
+  const stuck = idleOrCurrent && stages ? newerUninstallable(stages, state.version) : null;
+  const badge = idleOrCurrent ? (why ?? (stuck ? `v${stuck.tag.replace(/^v/u, '')} published · not installable yet` : 'Checking the update feed…')) : text.badge;
+  const detail = idleOrCurrent ? null : text.detail;
   const downloading = state.phase === 'downloading';
   return <details className={styles.status}>
     <summary aria-label={`Desktop updates: ${badge}`}>{badge}</summary>
@@ -35,6 +53,7 @@ export function UpdateStatus() {
       <strong>Phantom updates</strong>
       <p role="status">{badge}</p>
       {detail && <p>{detail}</p>}
+      <ReleaseStages installedVersion={state.version} refreshKey={stagesKey} onView={setStages} />
       {downloading && <>
         <progress className={styles.progress} aria-label="Update download" value={state.bytesTotal === null ? undefined : state.bytesReceived} max={state.bytesTotal ?? undefined} />
         <p>{formatMetric(state.bytesReceived / 1024 / 1024)} MB{state.bytesTotal !== null ? ` of ${formatMetric(state.bytesTotal / 1024 / 1024)} MB · ${formatMetric(state.bytesReceived / state.bytesTotal * 100)}%` : ' downloaded'}</p>
@@ -47,7 +66,7 @@ export function UpdateStatus() {
       {error && <p role="alert">{error}</p>}
       {state.reason && Object.hasOwn(DESKTOP_UPDATE_REASONS, state.reason) ? <p>{DESKTOP_UPDATE_REASONS[state.reason]}</p> : notes[state.phase] && <p>{notes[state.phase]}</p>}
       <p>Signed app and CLI updates install when local work is idle and you quit normally. Accounts and settings are preserved. Updates that change authority require approval.</p>
-      <button type="button" className={styles.refresh} onClick={() => { if (!refreshDesktopUpdates()) setError('Update status is unavailable.'); }}>Refresh status</button>
+      <button type="button" className={styles.refresh} onClick={() => { setStagesKey(k => k + 1); if (!refreshDesktopUpdates()) setError('Update status is unavailable.'); }}>Refresh status</button>
     </div>
   </details>;
 }

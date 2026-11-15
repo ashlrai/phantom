@@ -3,7 +3,7 @@
  * scripts/generate-docs-llms.mjs: keep docs/llms.txt complete and build the
  * agent-readable docs bundle for the site.
  *
- *   node scripts/generate-docs-llms.mjs              # rewrite the generated block in docs/llms.txt
+ *   node scripts/generate-docs-llms.mjs              # generate docs/llms.txt from docs/llms-source.txt and docs pages
  *   node scripts/generate-docs-llms.mjs --check      # exit 1 if docs/llms.txt is stale
  *   node scripts/generate-docs-llms.mjs --out site   # also write site/docs/<page>.md,
  *                                                    # site/docs/llms.txt and site/docs/llms-full.txt
@@ -35,7 +35,8 @@ if (outIndex >= 0 && !outArg) {
 
 const pages = listDocsPages(docsDir);
 const current = readFileSync(llmsPath, 'utf8');
-const next = renderLlmsTxt(current, pages);
+const source = readFileSync(join(docsDir, 'llms-source.txt'), 'utf8');
+const next = renderLlmsTxt(source, pages);
 
 if (check) {
   if (next !== current) {

@@ -71,6 +71,23 @@ function contentTypeFor(filePath: string): string {
 /** Where the /verse/m service worker is served (see serveStatic's path map). */
 export const VERSE_MOBILE_SW_PATH = '/verse/m/sw.js';
 
+/**
+ * Phantom-side aliases for the Verse URLs (RQ-RENAME-ALIASES-1). Purely
+ * additive: `/app/` is `/verse/`, `/app/m/` is `/verse/m/`, `/next/app-m/*`
+ * is `/next/verse-m/*`. The legacy forms are untouched. There is deliberately
+ * NO `/app/m/sw.js`: the phone service worker's scope stays `/verse/m/`
+ * (existing installs depend on it), so the alias page is simply uncontrolled.
+ */
+const CONSOLE_SHELL_PATHS: ReadonlySet<string> = new Set(['/verse', '/verse/', '/app', '/app/']);
+const PHONE_SHELL_PATHS: ReadonlySet<string> = new Set(['/verse/m', '/verse/m/', '/app/m', '/app/m/']);
+const PHONE_ASSET_ALIAS_PREFIX = '/next/app-m/';
+const PHONE_ASSET_PREFIX = '/next/verse-m/';
+
+/** The phone document, under either its legacy or its Phantom name. */
+export function isPhoneShellPath(pathname: string): boolean {
+  return PHONE_SHELL_PATHS.has(pathname);
+}
+
 export const IMMUTABLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 export const HTML_CACHE_CONTROL = 'no-store';
 export const REVALIDATE_CACHE_CONTROL = 'no-cache';
@@ -225,18 +242,19 @@ export function serveStatic(
     if (pathname === null) return false;
 
     // "/" (or empty) -> index.html (SPA shell).
-    // "/next", "/verse" (Ashlr Verse console, src/web-ui/routes/verse/) and
-    // "/verse/m" (Verse on a phone, routes/verse/mobile/) all resolve to the
-    // new console shell; the SPA picks the app by pathname.
+    // "/next", "/verse" (Phantom console, src/web-ui/routes/verse/) and
+    // "/verse/m" (Phantom on a phone, routes/verse/mobile/), plus their
+    // "/app" and "/app/m" aliases, all resolve to the console shell; the SPA picks the app by pathname.
     let rel = pathname === '/' ? '/index.html'
       : (pathname === '/next' || pathname === '/next/') ? '/next/index.html'
-      : (pathname === '/verse' || pathname === '/verse/') ? '/next/index.html'
-      : (pathname === '/verse/m' || pathname === '/verse/m/') ? '/next/index.html'
+      : (CONSOLE_SHELL_PATHS.has(pathname) || PHONE_SHELL_PATHS.has(pathname)) ? '/next/index.html'
       // The phone surface's service worker is served from INSIDE the scope it
       // controls: a worker's maximum scope is its own script's directory, so
       // this path (not /next/verse-m/sw.js) is what lets it cover /verse/m/
       // without a Service-Worker-Allowed header widening anything.
       : pathname === VERSE_MOBILE_SW_PATH ? '/next/verse-m/sw.js'
+      // `/next/app-m/*` serves the same bytes as `/next/verse-m/*`.
+      : pathname.startsWith(PHONE_ASSET_ALIAS_PREFIX) ? PHONE_ASSET_PREFIX + pathname.slice(PHONE_ASSET_ALIAS_PREFIX.length)
       : pathname;
 
     // Reject null bytes anywhere in the relative path.

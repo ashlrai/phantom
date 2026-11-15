@@ -1025,6 +1025,9 @@ async function cmdDaemonStatus(jsonMode: boolean): Promise<number> {
           pid: stateKnown ? state.pid : null,
           startedAt: stateKnown ? state.startedAt : null,
           lastTickAt: stateKnown ? state.lastTickAt : null,
+          last_tick_age_s: stateKnown && state.lastTickAt && Number.isFinite(Date.parse(state.lastTickAt))
+            ? Math.max(0, Math.floor((Date.now() - Date.parse(state.lastTickAt)) / 1_000))
+            : null,
           // RQ-DAEMONTICK-UNBLOCK: the LAST tick's outcome + per-phase ledger —
           // `phm daemon status --json | jq .tick.phases` shows each phase's
           // status/duration/error, including on a thrown or timed-out tick.

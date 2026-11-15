@@ -1,16 +1,21 @@
 /** Read-only Telegram commands. Never probe providers or start a daemon. */
-import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { formatOperatorGlance, isOperatorStatusAsk } from '../fleet/operator-glance.js';
 import { readOperatorGlance } from '../fleet/operator-glance-read.js';
 import type { AshlrConfig } from '../types.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { readPrivateFileCapped } from '../verse/preferences.js';
+
+/** Local fleet snapshots are KB in practice; 8 MiB is generous headroom, never unbounded. */
+const SNAPSHOT_READ_BYTES = 8 * 1024 * 1024;
 
 function snapshot(names: string[]): Record<string, unknown> | null {
   for (const name of names) {
     try {
-      const raw: unknown = JSON.parse(readFileSync(join(homedir(), '.ashlr', name), 'utf8'));
+      const read = readPrivateFileCapped(join(homedir(), '.ashlr', name), SNAPSHOT_READ_BYTES);
+      if (read === null || read.truncated) continue;
+      const raw: unknown = JSON.parse(read.text);
       if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>;
     } catch { /* try the documented fallback */ }
   }

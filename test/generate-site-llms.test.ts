@@ -77,33 +77,33 @@ describe('renderLlmsTxt', () => {
   });
 
   it('produces a file with an H1 title', () => {
-    const outputs = buildSiteLlms();
+    const outputs = buildSiteLlms(root);
     const llms = outputs['llms.txt'];
     expect(/(^|\n)#\s+\S/.test(llms)).toBe(true);
   });
 
   it('produces a file with section headings', () => {
-    const outputs = buildSiteLlms();
+    const outputs = buildSiteLlms(root);
     const llms = outputs['llms.txt'];
     const sections = (llms.match(/(^|\n)##\s+\S/g) ?? []).length;
     expect(sections).toBeGreaterThanOrEqual(3);
   });
 
   it('produces a file with 3+ markdown links', () => {
-    const outputs = buildSiteLlms();
+    const outputs = buildSiteLlms(root);
     const llms = outputs['llms.txt'];
     const links = (llms.match(/\[[^\]]+\]\([^)]+\)/g) ?? []).length;
     expect(links).toBeGreaterThanOrEqual(3);
   });
 
   it('does not contain a double-dot in the blockquote', () => {
-    const outputs = buildSiteLlms();
+    const outputs = buildSiteLlms(root);
     const llms = outputs['llms.txt'];
     expect(llms).not.toMatch(/\.\.\s/);
   });
 
   it('includes the install block with npm and bin command', () => {
-    const outputs = buildSiteLlms();
+    const outputs = buildSiteLlms(root);
     const llms = outputs['llms.txt'];
     expect(llms).toContain('npm install -g @ashlr/phantom');
     expect(llms).toContain('ashlr --version');
@@ -123,27 +123,27 @@ describe('renderLlmsFull', () => {
   });
 
   it('produces a file with an H1 title', () => {
-    const outputs = buildSiteLlms();
+    const outputs = buildSiteLlms(root);
     const full = outputs['llms-full.txt'];
     expect(/(^|\n)#\s+\S/.test(full)).toBe(true);
   });
 
   it('produces a file with section headings', () => {
-    const outputs = buildSiteLlms();
+    const outputs = buildSiteLlms(root);
     const full = outputs['llms-full.txt'];
     const sections = (full.match(/(^|\n)##\s+\S/g) ?? []).length;
     expect(sections).toBeGreaterThanOrEqual(4);
   });
 
   it('produces a file with 3+ markdown links', () => {
-    const outputs = buildSiteLlms();
+    const outputs = buildSiteLlms(root);
     const full = outputs['llms-full.txt'];
     const links = (full.match(/\[[^\]]+\]\([^)]+\)/g) ?? []).length;
     expect(links).toBeGreaterThanOrEqual(3);
   });
 
   it('includes a Commands section with CLI examples', () => {
-    const outputs = buildSiteLlms();
+    const outputs = buildSiteLlms(root);
     const full = outputs['llms-full.txt'];
     expect(full).toContain('## Commands');
     expect(full).toContain('ashlr --help');
@@ -151,7 +151,7 @@ describe('renderLlmsFull', () => {
   });
 
   it('includes Repository documentation links', () => {
-    const outputs = buildSiteLlms();
+    const outputs = buildSiteLlms(root);
     const full = outputs['llms-full.txt'];
     expect(full).toContain('## Repository documentation');
     expect(full).toContain('README.md');
@@ -159,7 +159,7 @@ describe('renderLlmsFull', () => {
   });
 
   it('is larger than llms.txt', () => {
-    const outputs = buildSiteLlms();
+    const outputs = buildSiteLlms(root);
     expect(outputs['llms-full.txt'].length).toBeGreaterThan(outputs['llms.txt'].length);
   });
 });
@@ -176,14 +176,14 @@ describe('deterministic output', () => {
   });
 
   it('produces identical bytes on repeated calls', () => {
-    const first = buildSiteLlms();
-    const second = buildSiteLlms();
+    const first = buildSiteLlms(root);
+    const second = buildSiteLlms(root);
     expect(first['llms.txt']).toBe(second['llms.txt']);
     expect(first['llms-full.txt']).toBe(second['llms-full.txt']);
   });
 
   it('no double-dot even when description already ends with period', () => {
-    const outputs = buildSiteLlms();
+    const outputs = buildSiteLlms(root);
     expect(outputs['llms.txt']).not.toMatch(/\.\.\s/);
   });
 });

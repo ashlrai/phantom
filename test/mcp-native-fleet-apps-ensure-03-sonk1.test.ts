@@ -1,3 +1,4 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as recovery from '../src/cli/fleet-apps-ensure.js';
 import { callNativeTool, listNativeTools, nativeToolSafety } from '../src/core/mcp-native.js';
@@ -64,3 +65,5 @@ describe('native fleet apps ensure', () => {
     expect(JSON.parse(String(stdout.mock.calls[0]![0]))).toMatchObject({ ok: true, apps: [{ app: 'Cursor', observedRunning: true }] });
   });
 });
+
+registerFleetNativeTools();

@@ -104,4 +104,13 @@ describe('team invite / join / remove', () => {
     expect(await cmdTeam(['remove', 'octocat', '--team', T])).toBe(1);
     expect(String(err.mock.calls.at(-1)?.[0])).toMatch(/Unknown human member human:octocat.*phm team view/);
   });
+
+  it('view labels approval responsibility per role and explains presence and shared context', async () => {
+    const out = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdTeam(['view', '--team', T])).toBe(0);
+    const text = String(out.mock.calls.at(-1)?.[0]);
+    expect(text).toContain(`${owner.id} (human owner; approves consequential actions)`);
+    expect(text).toContain('Presence: ● seen within 5 minutes; ○ inactive (membership is retained).');
+    expect(text).toContain('phm_team_context_add / phm_team_context_get (MCP)');
+  });
 });

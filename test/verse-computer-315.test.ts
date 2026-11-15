@@ -271,9 +271,9 @@ describe('computer.rs mirrors the policy lists', () => {
 // ---------------------------------------------------------------------------
 
 describe('tool registry', () => {
-  it('registers the eleven computer tools under the computer scope', () => {
+  it('registers the twelve computer tools under the computer scope', () => {
     expect(COMPUTER_TOOL_NAMES).toEqual([
-      'computer_list_apps', 'computer_request_access', 'computer_screenshot', 'computer_zoom', 'computer_ax_tree',
+      'computer_permissions', 'computer_list_apps', 'computer_request_access', 'computer_screenshot', 'computer_zoom', 'computer_ax_tree',
       'computer_ax_press', 'computer_click', 'computer_type', 'computer_key', 'computer_scroll', 'computer_drag',
     ]);
     for (const tool of tools) {
@@ -292,7 +292,7 @@ describe('tool registry', () => {
       }
     }
     const readOnly = tools.filter((t) => t.annotations.readOnlyHint).map((t) => t.name);
-    expect(readOnly).toEqual(['computer_list_apps', 'computer_screenshot', 'computer_zoom', 'computer_ax_tree']);
+    expect(readOnly).toEqual(['computer_permissions', 'computer_list_apps', 'computer_screenshot', 'computer_zoom', 'computer_ax_tree']);
   });
 });
 
@@ -376,6 +376,30 @@ describe('computer tools', () => {
     grant(h, 'com.apple.Notes', 'Notes', 'full');
     expect(textOf(await h.call('computer_click', { x: 1, y: 1 }))).toMatch(/Take a screenshot/);
     expect(h.sent).toHaveLength(0);
+  });
+
+  it('permissions: reports each TCC grant and what it unlocks, without a grant or a prompt', async () => {
+    const h = harness();
+    h.answers['permissions'] = () => ({ ok: true, data: { supported: true, macos: '15.1', screen: true, accessibility: false, postEvents: true } });
+    const t = textOf(await h.call('computer_permissions', {}));
+    expect(t).toContain('Screen Recording: granted');
+    expect(t).toContain('Accessibility: missing');
+    expect(t).toMatch(/Input events.*granted/);
+    expect(t).toContain('desktop-permissions: supported=true macos=15.1 screen=granted accessibility=missing postEvents=granted');
+    expect(t).toMatch(/operator/);
+    expect(h.sent).toEqual([{ kind: 'native', op: { op: 'permissions' }, body: { kind: 'native', op: { op: 'permissions' } } }]);
+    expect((await h.call('computer_permissions', { bogus: 1 })).isError).toBe(true);
+  });
+
+  it('permissions: never reports granted on an unreadable or unsupported answer', async () => {
+    const h = harness();
+    h.answers['permissions'] = () => ({ ok: true, data: { nonsense: true } });
+    const t = textOf(await h.call('computer_permissions', {}));
+    expect(t).toContain('screen=unknown accessibility=unknown postEvents=unknown');
+    h.answers['permissions'] = () => ({ ok: true, data: { supported: false } });
+    expect(textOf(await h.call('computer_permissions', {}))).toMatch(/not macOS|does not support/);
+    h.answers['permissions'] = () => ({ ok: false, code: 'window-not-open', message: 'no window' });
+    expect((await h.call('computer_permissions', {})).isError).toBe(true);
   });
 
   it('request_access: resolves names, drops denied apps, offers ceilings, reports grants', async () => {

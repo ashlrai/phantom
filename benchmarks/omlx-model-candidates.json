@@ -1,0 +1,163 @@
+{
+  "schema": "ashlr.omlx-model-candidates.v1",
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-05",
+  "purpose": "Recorded evidence behind the small-Mac oMLX model pick (RQ-OMLX-DISTILL-1). Mirrors OMLX_MODEL_CANDIDATES in src/core/local-runtime/omlx/models.ts; test/omlx-lane-sizing.test.ts pins them identical. Rates are oMLX-measured where a bench block exists; quality scores are vendor-reported with sources; mergeRate is null until the fleet ledger measures the model. null means unmeasured, never a guess.",
+  "candidates": [
+    {
+      "id": "qwen2.5-coder-7b-instruct-4bit",
+      "repo": "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit",
+      "engine": "omlx",
+      "paramsBillion": 7.6,
+      "kind": "coder",
+      "quantization": "4bit",
+      "contextLength": 131072,
+      "servedContext": 32768,
+      "weightsBytes": 4300000000,
+      "kvSlotBytes": 500000000,
+      "evidence": {
+        "decodeTokPerSec": 23.3,
+        "prefillTokPerSec": 257.8,
+        "peakBytes": 5370000000,
+        "bench": {
+          "suite": "omlx community performance",
+          "host": "M4 16GB, oMLX v0.5.8",
+          "date": "2026",
+          "url": "https://omlx.ai/benchmarks/performance/o21qlz68"
+        },
+        "quality": {
+          "humaneval": 88.4,
+          "mbpp": 83.5,
+          "livecodebench": 55.3,
+          "bfcl": null,
+          "source": "qwen2.5-coder technical report (arXiv:2409.12186)"
+        },
+        "mergeRate": null
+      },
+      "notes": "Work-tier pick on 16 GB: measured 23.3 TG/s decode at 5.4 GB peak leaves room for a second slot (batch 4x: 76.7 TG/s aggregate)."
+    },
+    {
+      "id": "qwen3-4b-instruct-2507-4bit",
+      "repo": "mlx-community/Qwen3-4B-Instruct-2507-4bit",
+      "engine": "omlx",
+      "paramsBillion": 4.0,
+      "kind": "instruct",
+      "quantization": "4bit",
+      "contextLength": 262144,
+      "servedContext": 16384,
+      "weightsBytes": 2400000000,
+      "kvSlotBytes": 600000000,
+      "evidence": {
+        "decodeTokPerSec": 10.8,
+        "prefillTokPerSec": null,
+        "peakBytes": 2400000000,
+        "bench": {
+          "suite": "ondevice-bench (MLX)",
+          "host": "M3 16GB MacBook Air",
+          "date": "2026",
+          "url": "https://github.com/robertlangdonn/ondevice-bench"
+        },
+        "quality": {
+          "humaneval": 77.56,
+          "mbpp": null,
+          "livecodebench": 31.74,
+          "bfcl": 53.0,
+          "source": "Qwen3-4B-Instruct-2507 model card / hf-model-benchmarks"
+        },
+        "mergeRate": null
+      },
+      "notes": "The 8 GB pick: ~2.4 GB weights, serves 16k context under the half-RAM envelope. BFCL 53 is the best small-model tool-calling evidence recorded."
+    },
+    {
+      "id": "qwen3-8b-4bit",
+      "repo": "mlx-community/Qwen3-8B-4bit",
+      "engine": "omlx",
+      "paramsBillion": 8.2,
+      "kind": "instruct",
+      "quantization": "4bit",
+      "contextLength": 131072,
+      "servedContext": 32768,
+      "weightsBytes": 4620000000,
+      "kvSlotBytes": 1200000000,
+      "evidence": {
+        "decodeTokPerSec": 16.6,
+        "prefillTokPerSec": 219.0,
+        "peakBytes": null,
+        "bench": {
+          "suite": "llamaperf community reports (2 runs)",
+          "host": "M4 16GB",
+          "date": "2026-11",
+          "url": "https://llamaperf.com/model/qwen3"
+        },
+        "quality": {
+          "humaneval": null,
+          "mbpp": null,
+          "livecodebench": null,
+          "bfcl": null,
+          "source": "no consistent coding-suite record"
+        },
+        "mergeRate": null
+      },
+      "notes": "Reaches work tier on speed, but its coding evidence is unrecorded, so it ranks below the coder pick at equal RAM."
+    },
+    {
+      "id": "deepseek-r1-distill-qwen-7b-4bit",
+      "repo": "mlx-community/DeepSeek-R1-Distill-Qwen-7B-4bit",
+      "engine": "omlx",
+      "paramsBillion": 7.6,
+      "kind": "distill-reasoning",
+      "quantization": "4bit",
+      "contextLength": 131072,
+      "servedContext": 32768,
+      "weightsBytes": 4400000000,
+      "kvSlotBytes": 500000000,
+      "evidence": {
+        "decodeTokPerSec": null,
+        "prefillTokPerSec": null,
+        "peakBytes": null,
+        "bench": null,
+        "quality": {
+          "humaneval": null,
+          "mbpp": null,
+          "livecodebench": 37.6,
+          "bfcl": null,
+          "source": "DeepSeek-R1 paper (distill table)"
+        },
+        "mergeRate": null
+      },
+      "notes": "The evaluated distill path: reasoning traces burn decode budget on tool calls, coding evidence is weaker, and no oMLX-measured rates exist. Rejected by evidence, not by rule."
+    },
+    {
+      "id": "qwen2.5-coder-14b-instruct-4bit",
+      "repo": "mlx-community/Qwen2.5-Coder-14B-Instruct-4bit",
+      "engine": "omlx",
+      "paramsBillion": 14.7,
+      "kind": "coder",
+      "quantization": "4bit",
+      "contextLength": 131072,
+      "servedContext": 32768,
+      "weightsBytes": 8300000000,
+      "kvSlotBytes": 1600000000,
+      "evidence": {
+        "decodeTokPerSec": 10.6,
+        "prefillTokPerSec": 122.6,
+        "peakBytes": 10630000000,
+        "bench": {
+          "suite": "omlx community performance",
+          "host": "M4 16GB, oMLX v0.5.7",
+          "date": "2026-08-15",
+          "url": "https://omlx.ai/benchmarks/wuicyqlf"
+        },
+        "quality": {
+          "humaneval": 89.6,
+          "mbpp": 86.2,
+          "livecodebench": 23.4,
+          "bfcl": null,
+          "source": "qwen2.5-coder technical report (arXiv:2409.12186)"
+        },
+        "mergeRate": null
+      },
+      "notes": "Benchmark-driven exclusion on 16 GB: oMLX measured 10.6 TG/s (below the 15 TG/s work floor) at a 10.6 GB peak that pushed the host to 89% RAM. Bigger is not better once it grazes swap."
+    }
+  ]
+}

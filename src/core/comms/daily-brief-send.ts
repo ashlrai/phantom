@@ -36,7 +36,7 @@
  * address is ever printed or returned.
  */
 
-import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { needsYouItems, refreshAutomationsNeedsYou } from '../automations/needs-you.js';
 import { loadConfigReadOnly } from '../config.js';
@@ -45,7 +45,7 @@ import { readNeedsMason } from '../fleet/needs-mason-resolve.js';
 import { sendTelegramMessage, telegramEnabled } from '../integrations/telegram.js';
 import type { AshlrConfig } from '../types.js';
 import { scrubSecrets } from '../util/scrub.js';
-import { ensurePrivateDirectory, writePrivateFileAtomic } from '../verse/preferences.js';
+import { ensurePrivateDirectory, readPrivateFileCapped, writePrivateFileAtomic } from '../verse/preferences.js';
 import { readEmailDropConfig } from './email-drop-config.js';
 import { leaderDailyBrief } from './leader-daily-brief.js';
 import { emailFleetStatus, type EmailFleetStatusReaders } from './email-fleet-status.js';
@@ -161,11 +161,13 @@ export function dailyBriefText(needs: number | null, status: string, list: reado
   return cut ? `${head}\n${cut}` : head;
 }
 
-/** Malformed or absent stamps dedupe nothing. */
+/** Malformed, oversized or absent stamps dedupe nothing. */
 export function readDailyBriefStamp(runsDir: string): DailyBriefLastSent {
   let raw: unknown;
   try {
-    raw = JSON.parse(readFileSync(join(runsDir, DAILY_BRIEF_STAMP), 'utf8'));
+    const read = readPrivateFileCapped(join(runsDir, DAILY_BRIEF_STAMP), 64 * 1024);
+    if (read === null || read.truncated) return {};
+    raw = JSON.parse(read.text);
   } catch {
     return {};
   }

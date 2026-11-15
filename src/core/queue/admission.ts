@@ -26,16 +26,20 @@ export interface AdmissionInput {
   load1: number; ncpu: number; procs: number; worktrees: number;
   /** Seconds since the ashlr daemon's lastTickAt, or null when unknown. */
   daemonTickAgeS: number | null; daemonWhy?: string | null;
-  slots: Record<string, unknown>; running: number; holder: InstallLockHolder | null; disabled?: boolean;
+  slots: Record<string, unknown>; running: number; holder: InstallLockHolder | null;
   /** dispatchd's adaptive cap from queue/concurrency.json, or null on hosts that have not run the controller. */
   adaptiveCap?: number | null;
 }
 export interface AdmissionReport {
   snapshot?: Record<string, unknown>;
-  admit: boolean; reason: string | null; reasons: string[]; disabled: boolean;
+  admit: boolean; reason: string | null; reasons: string[];
+  /** Only an older dispatchd snapshot can set this (its LOADGATE_OFF marker); live probes never disable the gate. */
+  disabled: boolean;
   load: { load1: number; max: number }; ncpu: number; procs: number; worktrees: number;
   daemon: { tickAgeSeconds: number | null; maxAgeSeconds: number; error: string | null };
   cap: number; hardCap: number | null; adaptiveCap: number | null; running: number; installLock: { holder: InstallLockHolder | null };
+  /** Set when an admission.v2 snapshot exists but is missing its `ts` or older than DAEMON_TICK_MAX_S; the report then comes from live probes. */
+  staleSnapshot?: { ts: string | null; ageSeconds: number | null };
 }
 
 const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
@@ -66,13 +70,11 @@ export function evaluateAdmission(input: AdmissionInput): AdmissionReport {
   else if (input.daemonTickAgeS > DAEMON_TICK_MAX_S) reasons.push(`daemon_tick_stale ${Math.floor(input.daemonTickAgeS)}s > ${DAEMON_TICK_MAX_S}s`);
   const adaptiveCap = input.adaptiveCap ?? null;
   const { cap, hardCap } = globalCap(input.slots, input.ncpu, adaptiveCap);
-  const disabled = input.disabled === true;
-  const tripped = reasons.length > 0 && !disabled;
-  const blockers = tripped ? [...reasons] : [];
+  const blockers = [...reasons];
   if (input.running >= cap) blockers.push(`at_cap running ${input.running} >= cap ${cap}`);
   const blocked = blockers.length > 0;
   return {
-    admit: !blocked, reason: blocked ? blockers.join('; ') : null, reasons, disabled,
+    admit: !blocked, reason: blocked ? blockers.join('; ') : null, reasons, disabled: false,
     load: { load1: input.load1, max: loadMax }, ncpu: input.ncpu, procs: input.procs, worktrees: input.worktrees,
     daemon: { tickAgeSeconds: input.daemonTickAgeS, maxAgeSeconds: DAEMON_TICK_MAX_S, error: input.daemonWhy ?? null },
     cap, hardCap, adaptiveCap, running: input.running, installLock: { holder: input.holder },
@@ -113,9 +115,20 @@ export async function readAdmission(opts: ReadAdmissionOptions = {}): Promise<Ad
   const queue = join(root, 'queue');
   // v2 is the dispatcher verdict, including starvation probes and its rolling swap window.
   // Keep the legacy probe path for hosts that have not installed the pinned dispatcher yet.
+  const now = (opts.now ?? Date.now)();
+  let staleSnapshot: AdmissionReport['staleSnapshot'];
   try {
     const a = JSON.parse(await text(join(queue, 'admission.json')) ?? '{}') as Record<string, unknown>;
-    if (a.schema === 'dispatchd.admission.v2' && typeof a.admit === 'boolean') return {
+    // dispatchd rewrites the snapshot every tick. One it stopped refreshing is a dead dispatcher's last
+    // verdict (with its tick age frozen at write time), so it must not be reported as the current decision.
+    const ts = typeof a.ts === 'string' ? a.ts : null;
+    const writtenAt = ts === null ? NaN : Date.parse(ts);
+    // A timestamp far ahead of this clock proves nothing about freshness either.
+    const rawAgeS = (now - writtenAt) / 1000;
+    const fresh = Number.isFinite(rawAgeS) && Math.abs(rawAgeS) <= DAEMON_TICK_MAX_S;
+    const ageSeconds = Number.isFinite(rawAgeS) ? Math.max(0, rawAgeS) : null;
+    if (a.schema === 'dispatchd.admission.v2' && typeof a.admit === 'boolean' && !fresh) staleSnapshot = { ts, ageSeconds };
+    if (a.schema === 'dispatchd.admission.v2' && typeof a.admit === 'boolean' && fresh) return {
       admit: a.admit, reason: typeof a.reason === 'string' ? a.reason : null,
       reasons: Array.isArray(a.reasons) ? a.reasons as string[] : [], disabled: a.disabled === true,
       load: { load1: Number(a.load1), max: Number(a.load_max) }, ncpu: Number(a.ncpu),
@@ -127,7 +140,6 @@ export async function readAdmission(opts: ReadAdmissionOptions = {}): Promise<Ad
       installLock: { holder: a.install_lock_holder as InstallLockHolder | null }, snapshot: a,
     };
   } catch { /* Older hosts use the legacy probes below. */ }
-  const now = (opts.now ?? Date.now)();
   const alive = opts.pidAlive ?? defaultAlive;
 
   let slots: Record<string, unknown> = {};
@@ -169,8 +181,10 @@ export async function readAdmission(opts: ReadAdmissionOptions = {}): Promise<Ad
     if (h && Number.isInteger(h.pid) && h.pid > 0 && alive(h.pid)) holder = h;
   } catch { /* garbage content is no holder */ }
 
-  return evaluateAdmission({
+  const report = evaluateAdmission({
     load1: (opts.load1 ?? (() => loadavg()[0]!))(), ncpu: (opts.ncpu ?? availableParallelism)(),
-    procs, worktrees, daemonTickAgeS, daemonWhy, slots, running, holder, adaptiveCap, disabled: await exists(join(queue, 'LOADGATE_OFF')),
+    // RQ-BATCH-SESSIONS-2: queue/LOADGATE_OFF no longer disables the gate (dispatchd reports it as off_switch_ignored).
+    procs, worktrees, daemonTickAgeS, daemonWhy, slots, running, holder, adaptiveCap,
   });
+  return staleSnapshot ? { ...report, staleSnapshot } : report;
 }

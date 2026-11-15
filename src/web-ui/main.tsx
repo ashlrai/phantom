@@ -19,8 +19,8 @@ syncConsoleLayout();
 function loadApp(): Promise<ComponentType> {
   if (isResourceConsolePath()) return import('./app/ResourcePoolConsoleApp.js').then((module) => module.ResourcePoolConsoleApp);
   if (isUniverseConsolePath()) return import('./app/UniverseConsoleApp.js').then((module) => module.UniverseConsoleApp);
-  if (isVerseMobilePath() || autoSelectVerseMobile()) return import('./app/VerseMobileApp.js').then((module) => module.VerseMobileApp);
-  if (isVerseConsolePath()) return import('./app/VerseConsoleApp.js').then((module) => module.VerseConsoleApp);
+  if (isVerseMobilePath() || autoSelectVerseMobile()) return import('./app/VerseMobileApp.js').then((module) => module.PhantomMobileApp);
+  if (isVerseConsolePath()) return import('./app/VerseConsoleApp.js').then((module) => module.PhantomConsoleApp);
   return import('./app/App.js').then((module) => module.App);
 }
 
@@ -32,7 +32,11 @@ if (!container) {
 const root = createRoot(container);
 root.render(<p role="status">{`Loading ${PRODUCT_NAME}…`}</p>);
 loadApp().then(
-  (App) => root.render(<StrictMode><App /></StrictMode>),
+  (App) => {
+    root.render(<StrictMode><App /></StrictMode>);
+    // File → UI sync for ~/.ashlr/ui.json; waits for the read session itself.
+    void import('./data/ui-settings-sync.js').then((sync) => sync.startUiSettingsSync());
+  },
   (err: unknown) => {
     root.render(`${PRODUCT_NAME} could not load. Reload to try again.`);
     throw err;

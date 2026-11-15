@@ -16,6 +16,6 @@ it('formats relative use and never', () => {
   expect(lastUsedText(new Date(now + 60000).toISOString(), now)).toBe('last used 0 m ago');
 });
 it('only produces commands for CLI-valid UUIDs', () => {
-  expect(revokeCommand(base.id)).toBe(`phm verse remote revoke ${base.id}`);
+  expect(revokeCommand(base.id)).toBe(`phm console remote revoke ${base.id}`);
   for (const id of ['', '../phone', `${base.id}; echo fake`, base.id.toUpperCase().replace('1', 'A')]) expect(revokeCommand(id)).toBeNull();
 });

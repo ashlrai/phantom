@@ -1,0 +1,97 @@
+[
+  {
+    "url": "https://github.com/ashlrai/phantom/pull/100",
+    "number": 100,
+    "title": "Add eval report",
+    "state": "MERGED",
+    "mergedAt": "2026-11-01T10:00:00Z",
+    "mergeCommit": { "oid": "aa10000000000000000000000000000000000001" },
+    "files": [{ "path": "src/core/fleet/eval-report.ts" }],
+    "statusCheckRollup": [
+      { "__typename": "CheckRun", "name": "typecheck", "status": "COMPLETED", "conclusion": "SUCCESS" },
+      { "__typename": "StatusContext", "context": "merge-gate", "state": "SUCCESS" }
+    ],
+    "commits": [{ "messageHeadline": "Add eval report" }],
+    "body": "build the report"
+  },
+  {
+    "url": "https://github.com/ashlrai/phantom/pull/101",
+    "number": 101,
+    "title": "Router scoring tweak",
+    "state": "MERGED",
+    "mergedAt": "2026-11-02T10:00:00Z",
+    "mergeCommit": { "oid": "bb20000000000000000000000000000000000002" },
+    "files": [{ "path": "src/core/eval/router-eval.ts" }],
+    "statusCheckRollup": [
+      { "name": "typecheck", "status": "COMPLETED", "conclusion": "FAILURE" },
+      { "name": "lint", "status": "COMPLETED", "conclusion": "SUCCESS" }
+    ],
+    "commits": [{ "messageHeadline": "Router scoring tweak" }]
+  },
+  {
+    "url": "https://github.com/ashlrai/phantom/pull/102",
+    "number": 102,
+    "title": "Abandoned experiment",
+    "state": "CLOSED",
+    "closedAt": "2026-11-03T08:00:00Z"
+  },
+  {
+    "url": "https://github.com/ashlrai/phantom/pull/103",
+    "number": 103,
+    "title": "Docs update",
+    "state": "MERGED",
+    "mergedAt": "2026-11-01T12:00:00Z",
+    "mergeCommit": { "oid": "cc30000000000000000000000000000000000003" },
+    "files": [{ "path": "docs/README.md" }],
+    "statusCheckRollup": [
+      { "name": "docs-check", "status": "COMPLETED", "conclusion": "TIMED_OUT" }
+    ]
+  },
+  {
+    "url": "https://github.com/ashlrai/phantom/pull/104",
+    "number": 104,
+    "title": "Revert \"Add eval report\"",
+    "state": "MERGED",
+    "mergedAt": "2026-11-03T10:00:00Z",
+    "mergeCommit": { "oid": "dd40000000000000000000000000000000000004" },
+    "files": [{ "path": "src/core/fleet/eval-report.ts" }],
+    "statusCheckRollup": [
+      { "name": "typecheck", "status": "COMPLETED", "conclusion": "SUCCESS" }
+    ],
+    "commits": [{ "messageHeadline": "Revert \"Add eval report\"" }]
+  },
+  {
+    "url": "https://github.com/ashlrai/phantom/pull/105",
+    "number": 105,
+    "title": "fix: router-eval edge case",
+    "state": "MERGED",
+    "mergedAt": "2026-11-04T10:00:00Z",
+    "mergeCommit": { "oid": "ee50000000000000000000000000000000000005" },
+    "files": [{ "path": "src/core/eval/router-eval.ts" }],
+    "statusCheckRollup": [
+      { "name": "typecheck", "status": "COMPLETED", "conclusion": "SUCCESS" }
+    ]
+  },
+  {
+    "url": "https://github.com/ashlrai/phantom/pull/106",
+    "number": 106,
+    "title": "Manual docs fix",
+    "state": "MERGED",
+    "mergedAt": "2026-11-01T14:00:00Z",
+    "mergeCommit": { "oid": "ff60000000000000000000000000000000000006" },
+    "statusCheckRollup": [
+      { "name": "docs-check", "status": "COMPLETED", "conclusion": "SUCCESS" }
+    ]
+  },
+  {
+    "url": "https://github.com/ashlrai/locus/pull/50",
+    "number": 50,
+    "title": "Locus pin handoff",
+    "state": "MERGED",
+    "mergedAt": "2026-11-06T10:00:00Z",
+    "mergeCommit": { "oid": "11500000000000000000000000000000000000aa" },
+    "statusCheckRollup": [
+      { "name": "typecheck", "status": "COMPLETED", "conclusion": "SUCCESS" }
+    ]
+  }
+]

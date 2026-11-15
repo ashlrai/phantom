@@ -8,7 +8,7 @@ import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { processGroupHasOnlyZombies } from '../util/process-group-liveness.js';
 import { acquireLocalStoreLockWithOutcome, ownsLocalStoreLock, releaseLocalStoreLock,
-  canonicalStartEpochSecond, verifiedProcessStartIdentity, type LocalStoreLock } from '../fleet/local-store-lock.js';
+  canonicalStartEpochSecond, currentProcessStartIdentity, START_IDENTITY_SKEW_SECONDS, verifiedProcessStartIdentity, type LocalStoreLock } from '../fleet/local-store-lock.js';
 import { canonical, digest, inspectPrivateDirectory, privateDirectory } from '../universe/artifacts.js';
 import { fsyncDirectory } from '../util/durability.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
@@ -290,7 +290,10 @@ function observedOwnerStart(pid: number, lockKey: string): number | undefined {
   const now = Date.now();
   const hit = ownerStartCache.get(key);
   if (hit && now - hit.checkedAt < OWNER_START_TTL_MS) return hit.epochSecond;
-  const observed = verifiedProcessStartIdentity(pid);
+  // This process already owns the writer's immutable start identity, so its
+  // self-clock verifies it without a native probe; other owners still require
+  // one (ps-lstart on darwin, /proc on linux) and fail closed when denied.
+  const observed = pid === process.pid ? currentProcessStartIdentity() : verifiedProcessStartIdentity(pid);
   if (!observed) {
     ownerStartCache.delete(key);
     return undefined;
@@ -323,7 +326,7 @@ export function inspectResourceQuotaRefreshOwner(root: string): ResourceQuotaRef
     const recordedStart = canonicalStartEpochSecond(lock.startRef, lock.startRefSource);
     const observedStart = observedOwnerStart(Number(lock.pid),
       `${lock.token}\0${lockBefore.dev}:${lockBefore.ino}:${lockBefore.ctimeNs}\0${lock.startRef}`);
-    if (recordedStart === undefined || observedStart === undefined || Math.abs(recordedStart - observedStart) > 1) throw new Error();
+    if (recordedStart === undefined || observedStart === undefined || Math.abs(recordedStart - observedStart) > START_IDENTITY_SKEW_SECONDS) throw new Error();
     const lockAfter = lstatSync(lockPath, { bigint: true });
     const pendingAfter = lstatSync(pendingPath, { bigint: true });
     for (const [before, after] of [[lockBefore, lockAfter], [pendingBefore, pendingAfter]] as const) {

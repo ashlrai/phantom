@@ -2,12 +2,12 @@
  * Pure fold over the team log + the guarded operations (claims, handoffs,
  * approvals) that need a consistent read-then-append under the team lock.
  */
-import { assertLocalHuman } from './identity.js';
 import {
-  CONSEQUENTIAL_ACTIONS, claimsOverlap, validId,
-  type ClaimTarget, type ConsequentialAction, type TeamActor, type TeamEvent, type TeamRole,
+  CONSEQUENTIAL_ACTIONS, claimsOverlap, parseAccessRequestAction, validId,
+  type AccessRequestAction, type ClaimTarget, type ConsequentialAction, type TeamActor, type TeamEvent, type TeamRole,
 } from './protocol.js';
 import { appendUnlocked, readEvents, withTeamLock } from './store.js';
+import { acquireCoordination, releaseCoordinationBySource, teamClaimKey } from '../agents/claim-store.js';
 
 export const PRESENCE_WINDOW_MS = 5 * 60_000;
 export const DEFAULT_CLAIM_TTL_MS = 2 * 60 * 60_000;
@@ -16,7 +16,7 @@ export interface Member { id: string; kind: TeamActor['kind']; role: TeamRole; p
 export interface Claim { id: string; target: ClaimTarget; holder: string; reason: string; acquiredAt: string; expiresAt: string }
 export type HandoffState = 'awaiting-approval' | 'open' | 'accepted' | 'completed' | 'declined';
 export interface Handoff { id: string; from: string; to: string | null; title: string; detail: string; action: ConsequentialAction | null; contextRefs: string[]; state: HandoffState; approvalId: string | null; assignee: string | null; result: string | null; updatedAt: string }
-export interface Approval { id: string; handoffId: string; action: ConsequentialAction; requestedBy: string; state: 'pending' | 'approved' | 'denied'; decidedBy: string | null }
+export interface Approval { id: string; handoffId: string | null; action: ConsequentialAction | null; access: AccessRequestAction | null; note: string | null; requestedBy: string; state: 'pending' | 'approved' | 'denied'; decidedBy: string | null }
 export interface TeamState { team: string; repos: string[]; members: Member[]; claims: Claim[]; handoffs: Handoff[]; approvals: Approval[]; messages: { id: string; from: string; channel: string; text: string; ts: string }[]; eventCount: number }
 
 const str = (v: unknown, d = ''): string => (typeof v === 'string' ? v : d);
@@ -90,7 +90,14 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
       }
       case 'approval.requested': {
         const h = handoffs.get(str(p.handoffId));
-        if (h?.action) { approvals.set(ev.id, { id: ev.id, handoffId: h.id, action: h.action, requestedBy: ev.actor.id, state: 'pending', decidedBy: null }); h.approvalId = ev.id; }
+        if (h?.action) { approvals.set(ev.id, { id: ev.id, handoffId: h.id, action: h.action, access: null, note: null, requestedBy: ev.actor.id, state: 'pending', decidedBy: null }); h.approvalId = ev.id; }
+        break;
+      }
+      case 'access.requested': {
+        // An agent-filed workspace mutation parked as a pending approval; the
+        // human decision and the mutation it unlocks are separate later events.
+        const access = parseAccessRequestAction(p.request);
+        if (access) approvals.set(ev.id, { id: ev.id, handoffId: null, action: null, access, note: str(p.note) || null, requestedBy: ev.actor.id, state: 'pending', decidedBy: null });
         break;
       }
       case 'approval.decided': {
@@ -98,7 +105,7 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
         // Only humans with owner/admin role can decide; agents never self-approve.
         if (a && a.state === 'pending' && ev.actor.kind === 'human' && m.kind === 'human' && ['owner', 'admin'].includes(m.role)) {
           a.state = p.decision === 'approve' ? 'approved' : 'denied'; a.decidedBy = ev.actor.id;
-          const h = handoffs.get(a.handoffId);
+          const h = a.handoffId ? handoffs.get(a.handoffId) : undefined;
           if (h) { h.state = a.state === 'approved' ? 'open' : 'declined'; h.updatedAt = ev.ts; }
         }
         break;
@@ -123,7 +130,22 @@ export function acquireClaim(team: string, actor: TeamActor, target: ClaimTarget
     const state = teamState(team);
     const conflicts = state.claims.filter((c) => c.holder !== actor.id && claimsOverlap(c.target, target));
     if (conflicts.length) return { ok: false as const, conflicts };
-    const ev = appendUnlocked(team, actor, 'claim.acquired', { target: { repo: target.repo, ...(target.branch ? { branch: target.branch } : {}), ...(target.path ? { path: target.path } : {}) }, reason, expiresAt: new Date(Date.now() + ttl).toISOString() });
+    const now = Date.now();
+    const expiresAt = new Date(now + ttl).toISOString();
+    const narrowed = { repo: target.repo, ...(target.branch ? { branch: target.branch } : {}), ...(target.path ? { path: target.path } : {}) };
+    const ev = appendUnlocked(team, actor, 'claim.acquired', { target: narrowed, reason, expiresAt });
+    const gate = acquireCoordination({
+      origin: 'team', key: teamClaimKey(narrowed), owner: actor.id, leaseMs: ttl, leaseUntil: Date.parse(expiresAt),
+      sourceId: ev.id, teamTarget: narrowed, now,
+    });
+    if (gate.status === 'conflict') {
+      appendUnlocked(team, actor, 'claim.released', { claimId: ev.id });
+      return { ok: false as const, conflicts: [{ id: 'coordination', target: narrowed, holder: gate.holder.owner, reason: 'coordination', acquiredAt: new Date(now).toISOString(), expiresAt: new Date(gate.holder.leaseUntil).toISOString() }] };
+    }
+    if (gate.status !== 'acquired') {
+      appendUnlocked(team, actor, 'claim.released', { claimId: ev.id });
+      throw new Error('Claim store unavailable.');
+    }
     return { ok: true as const, claimId: ev.id, expiresAt: ev.payload.expiresAt };
   });
 }
@@ -133,6 +155,8 @@ export function releaseClaim(team: string, actor: TeamActor, claimId: string) {
     const c = teamState(team).claims.find((x) => x.id === claimId);
     if (!c) throw new Error('No active claim with that id.');
     if (c.holder !== actor.id) throw new Error('Only the holder can release this claim.');
+    const released = releaseCoordinationBySource({ origin: 'team', sourceId: claimId });
+    if (released.status === 'unavailable') throw new Error('Claim store unavailable.');
     appendUnlocked(team, actor, 'claim.released', { claimId });
     return { released: claimId };
   });
@@ -161,16 +185,5 @@ export function transitionHandoff(team: string, actor: TeamActor, handoffId: str
     const after = teamState(team).handoffs.find((h) => h.id === handoffId)!;
     if (after.state === before.state) throw new Error(`Cannot ${op} a handoff in state "${before.state}"${before.state === 'awaiting-approval' ? ' (needs human approval)' : ''}.`);
     return { handoffId, state: after.state };
-  });
-}
-
-export function decideApproval(team: string, actor: TeamActor, approvalId: string, decision: 'approve' | 'deny') {
-  if (actor.kind !== 'human') throw new Error('Only humans can decide approvals.');
-  actor = assertLocalHuman(actor);
-  return withTeamLock(team, () => {
-    appendUnlocked(team, actor, 'approval.decided', { approvalId, decision });
-    const a = teamState(team).approvals.find((x) => x.id === approvalId);
-    if (!a || a.decidedBy !== actor.id) throw new Error('Approval not applied (unknown id, already decided, or you are not an owner/admin).');
-    return { approvalId, state: a.state };
   });
 }

@@ -29,6 +29,25 @@ for (const admitted of [false, true]) {
   } } : { maxSlotsPerBackend: 99 };
 
   describe(`completion drain (admission=${admitted})`, () => {
+    it('claims a job once across lanes and overlapping waves, then releases on failure', async () => {
+      const input = plan(['codex', 'nim', 'codex'], [['codex', 1], ['nim', 1]]);
+      for (const assignment of input.assignments) assignment.item.id = 'same-job';
+      const gate = deferred();
+      const dispatch = vi.fn(() => gate.promise);
+      const first = runConcurrentDispatch(input, dispatch, () => false, cfg());
+      const second = await runConcurrentDispatch(input, dispatch, () => false, cfg());
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(second.every(result => !result.attempted)).toBe(true);
+      gate.reject(new Error('worker failed'));
+      const results = await first;
+      expect(results.filter(result => result.attempted)).toHaveLength(1);
+      expect(results.find(result => result.attempted)?.settled?.status).toBe('rejected');
+      const retry = vi.fn(async () => 'recovered');
+      const recovered = await runConcurrentDispatch(input, retry, () => false, cfg());
+      expect(retry).toHaveBeenCalledTimes(1);
+      expect(recovered.filter(result => result.attempted)).toHaveLength(1);
+    });
+
     it('refills a completed slot while a sibling remains pending and backends progress independently', async () => {
       const gates = Array.from({ length: 6 }, deferred);
       const dispatch = vi.fn((item: WorkItem) => gates[Number(item.id.split('-')[1])]!.promise);

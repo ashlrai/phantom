@@ -215,6 +215,50 @@ export function readPrivateFileCapped(
   }
 }
 
+/**
+ * Same contract as readPrivateFileCapped but reads the LAST `maxBytes` of the
+ * file — for append-only JSONL stores, where the newest records (the live
+ * ones) are at the tail. `truncated` means older records were skipped; callers
+ * parsing lines should discard the first line, which may be torn.
+ */
+export function readPrivateFileTailCapped(
+  path: string,
+  maxBytes: number,
+): { text: string; bytes: number; mtimeMs: number; truncated: boolean } | null {
+  const noFollow = typeof fsConstants.O_NOFOLLOW === 'number' ? fsConstants.O_NOFOLLOW : 0;
+  const nonBlock = typeof fsConstants.O_NONBLOCK === 'number' ? fsConstants.O_NONBLOCK : 0;
+  let fd: number;
+  try {
+    fd = openSync(path, fsConstants.O_RDONLY | noFollow | nonBlock);
+  } catch {
+    return null;
+  }
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) return null;
+    const want = Math.min(stat.size, maxBytes);
+    const start = stat.size - want;
+    const buffer = Buffer.alloc(want);
+    let offset = 0;
+    while (offset < want) {
+      const read = readSync(fd, buffer, offset, want - offset, start + offset);
+      if (read <= 0) break;
+      offset += read;
+    }
+    const slice = buffer.subarray(0, offset);
+    return {
+      text: utf8Prefix(slice),
+      bytes: stat.size,
+      mtimeMs: stat.mtimeMs,
+      truncated: stat.size > maxBytes,
+    };
+  } catch {
+    return null;
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /** Decode bytes, dropping a trailing partial UTF-8 sequence rather than emitting U+FFFD. */
 export function utf8Prefix(bytes: Buffer): string {
   let end = bytes.length;

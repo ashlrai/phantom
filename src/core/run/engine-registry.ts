@@ -151,7 +151,11 @@ export const BUILTIN_ENGINE_REGISTRY: Readonly<Record<string, EngineSpec>> = Obj
     bin: 'ac',
     bins: ['ac', 'ashlrcode'],
     argv: ['--goal', '$GOAL'],
-    autonomousArgv: ['--autonomous', '--dangerously-skip-permissions', '--surgical'],
+    // --surgical is not on the unattended path. It forbids new files and forces
+    // a minimal diff: a capability ceiling, not a secret, sandbox, or authority
+    // control. The external sandbox still confines the process. Opt in with
+    // runViaAshlrcode({ surgical: true }).
+    autonomousArgv: ['--autonomous', '--dangerously-skip-permissions'],
     capabilities: ['agent', 'edit'],
   },
 

@@ -1,0 +1,92 @@
+{
+  "schema": "ashlr.radar-local-bench.v1",
+  "suite": "ci-failure",
+  "labels": ["code", "tool", "timeout", "infra", "cancelled", "invalid-command", "unknown"],
+  "instruction": "You bucket a CI failure by its root cause for a retrospective ledger. Reply with EXACTLY ONE label and nothing else.\n\nLabels:\n- code — the change under test is wrong: failing assertions, type errors, build errors in touched code.\n- tool — the verifier tool itself is unavailable or broken (missing binary, corrupt install); not the task's fault.\n- timeout — the run exceeded its wall-clock budget while still making progress.\n- infra — runner, network, registry or other infrastructure failure; flaky environment, not the change.\n- cancelled — the run was cancelled or superseded before completing.\n- invalid-command — the verify command itself was malformed or does not exist (bad script name, wrong path).\n- unknown — evidence is missing or genuinely ambiguous.",
+  "cases": [
+    {
+      "id": "assertion-fail",
+      "input": "FAIL test/m126.manager-merge-gate.test.ts > [11] self-target escalates\nAssertionError: expected 'pending', got 'merged'\nTests: 1 failed, 214 passed\nExit code 1",
+      "expected": "code",
+      "tokensIn": 215,
+      "tokensOut": 2
+    },
+    {
+      "id": "missing-binary",
+      "input": "$ eslint src/\n/bin/sh: eslint: command not found\nError: Process completed with exit code 127.",
+      "expected": "tool",
+      "tokensIn": 205,
+      "tokensOut": 2
+    },
+    {
+      "id": "step-timeout",
+      "input": "npm test\n...still running after 14m57s\nError: The action 'backend tests' has timed out after 15 minutes.",
+      "expected": "timeout",
+      "tokensIn": 210,
+      "tokensOut": 3
+    },
+    {
+      "id": "registry-refused",
+      "input": "npm ci\nnpm ERR! network connect ECONNREFUSED 104.16.0.35:443\nnpm ERR! Failed to fetch registry tarball\nError: Process completed with exit code 1.",
+      "expected": "infra",
+      "tokensIn": 215,
+      "tokensOut": 3
+    },
+    {
+      "id": "missing-script",
+      "input": "npm run tpyecheck\nnpm ERR! Missing script: \"tpyecheck\"\nnpm ERR! Did you mean \"typecheck\"?\nError: Process completed with exit code 1.",
+      "expected": "invalid-command",
+      "tokensIn": 210,
+      "tokensOut": 4
+    },
+    {
+      "id": "tsc-error",
+      "input": "src/core/radar/local-bench.ts(41,9): error TS2322: Type 'string' is not assignable to type 'number'.\nError: Process completed with exit code 2.",
+      "expected": "code",
+      "tokensIn": 210,
+      "tokensOut": 2
+    },
+    {
+      "id": "runner-offline",
+      "input": "Waiting for a runner to pick up this job...\nError: The self-hosted runner lost communication with the server. Verify the machine is running and has a healthy network connection.",
+      "expected": "infra",
+      "tokensIn": 225,
+      "tokensOut": 3
+    },
+    {
+      "id": "concurrency-cancel",
+      "input": "Canceling since a higher priority waiting request for 'gate-refs/heads/branch' exists\nError: The operation was canceled.",
+      "expected": "cancelled",
+      "tokensIn": 210,
+      "tokensOut": 3
+    },
+    {
+      "id": "bad-verify-path",
+      "input": "$ ./scripts/verfiy.sh\n/bin/sh: ./scripts/verfiy.sh: No such file or directory\nError: Process completed with exit code 127.",
+      "expected": "invalid-command",
+      "tokensIn": 210,
+      "tokensOut": 4
+    },
+    {
+      "id": "oom-killed",
+      "input": "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\nError: Process completed with exit code 134.",
+      "expected": "infra",
+      "tokensIn": 215,
+      "tokensOut": 3
+    },
+    {
+      "id": "lint-violation",
+      "input": "/home/runner/work/src/cli/run.ts\n  88:7  error  'unused' is defined but never used  @typescript-eslint/no-unused-vars\n✖ 1 problem (1 error, 0 warnings)\nError: Process completed with exit code 1.",
+      "expected": "code",
+      "tokensIn": 220,
+      "tokensOut": 2
+    },
+    {
+      "id": "empty-log",
+      "input": "Error: Process completed with exit code 1.\n(no further output was captured)",
+      "expected": "unknown",
+      "tokensIn": 200,
+      "tokensOut": 3
+    }
+  ]
+}

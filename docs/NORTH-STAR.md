@@ -194,3 +194,9 @@ The [chat-first child jobs](https://github.com/ashlrai/phantom/blob/master/docs/
 translate this vision into dependency-ordered assistant work, with acceptance
 criteria and a combined journey gate. This is a planning handoff, not runtime
 activation or evidence that the planned capabilities have shipped.
+
+## Ranked next moves
+
+The [vision-next roadmap](https://github.com/ashlrai/phantom/blob/master/docs/VISION-NEXT.md)
+ranks the ten highest-leverage moves toward this vision, with dependencies and
+implementable specs for the top three. It is also a planning handoff only.

@@ -1,13 +1,18 @@
 import {applyConsumerDesktopInstall, createConsumerInstallDependencies, inspectConsumerDesktopInstall,
   type ConsumerInstallDependencies, type ConsumerInstallResult} from '../core/desktop/consumer-install.js';
+import {cmdDesktopOperator, type DesktopOperatorCliDeps} from './desktop-operator.js';
 
 const USAGE = `usage: phm desktop install [--apply]
+       phm desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]
 
 Inspect this installed CLI's original signed macOS arm64 app and paired CLI.
 Inspection downloads verified artifacts into a fresh private stage. --apply
 installs only when Phantom/Ashlr.app, the managed current pointer and managed
 phm/ashlr links are absent, after explicit authority Stop/drain.
 No builds, signing keys, credentials, PATH edits or authority restart.
+
+Operator verbs read and drive macOS apps through the desktop-operator helper.
+See docs/DESKTOP-OPERATOR.md. phm desktop <verb> --help prints operator usage.
 `;
 export function parseDesktopInstallArgs(args: readonly string[]): {apply: boolean} | null {
   if (!args.length || args.length===1 && ['help','--help','-h'].includes(args[0]!)) return null;
@@ -15,7 +20,10 @@ export function parseDesktopInstallArgs(args: readonly string[]): {apply: boolea
   return {apply:args.length===2};
 }
 export async function cmdDesktop(args: string[], dependencies?: ConsumerInstallDependencies,
-  emit: (result: ConsumerInstallResult)=>void|Promise<void> = value=>{console.log(JSON.stringify(value));}): Promise<number> {
+  emit: (result: ConsumerInstallResult)=>void|Promise<void> = value=>{console.log(JSON.stringify(value));},
+  operatorDeps?: DesktopOperatorCliDeps): Promise<number> {
+  const head = args[0];
+  if (head && !['install', 'help', '--help', '-h'].includes(head)) return cmdDesktopOperator(args, operatorDeps);
   let options: ReturnType<typeof parseDesktopInstallArgs>;
   try {options=parseDesktopInstallArgs(args);} catch {console.error(USAGE);return 2;}
   if (!options) {console.log(USAGE);return 0;}

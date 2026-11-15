@@ -89,7 +89,7 @@ export function UniverseControllerInspector() {
           <div><dt>Original deadline</dt><dd><RecordedTime value={data.deadlineAt} /></dd></div>
         </dl>
         <UniverseControllerChanges previous={observations.previous} current={data} historical={Boolean(error)} loading={loading} />
-        {data.sourceState === 'missing' ? <p className={styles.warning}>No controller registration was found in this store. Check the ID and selected Universe store.</p> : null}
+        {data.sourceState === 'missing' ? <p className={styles.warning}>No controller registration was found in this store. Check the ID and selected experiment store.</p> : null}
         {data.sourceState === 'degraded' ? <p className={styles.warning}>Evidence could not be fully verified. This observation does not repair locks, reconcile work or prove a controller is running.</p> : null}
         {data.control ? <section className={styles.control} aria-label="Recorded admission control">
           <h4>{data.control.mode === 'open' ? 'Admission reopened' : data.control.acknowledgedAt ? 'Drain acknowledged' : 'Drain awaiting acknowledgement'}</h4>

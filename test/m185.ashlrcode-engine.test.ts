@@ -158,6 +158,7 @@ describe('M185 runViaAshlrcode — happy path', () => {
     expect(cmd.args).toContain('--autonomous');
     expect(cmd.args).toContain('--goal');
     expect(cmd.args).toContain('--dangerously-skip-permissions');
+    expect(cmd.args).not.toContain('--surgical');
     // The goal arg immediately follows --goal and carries the title.
     const goalArg = cmd.args[cmd.args.indexOf('--goal') + 1];
     expect(goalArg).toContain(ITEM.title);
@@ -228,6 +229,14 @@ describe('M185 runViaAshlrcode — happy path', () => {
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it('adds --surgical only when the caller opts in', async () => {
+    spawnEngineMock.mockReturnValue({ ok: true, output: '' });
+    await runViaAshlrcode(ITEM, REPO, enabledConfig(), { surgical: true });
+    const cmd = spawnEngineMock.mock.calls[0][0] as { args: string[] };
+    expect(cmd.args).toContain('--surgical');
+    expect(cmd.args).toContain('--dangerously-skip-permissions');
   });
 
   it('respects an explicit opts.timeoutMs / maxIterations', async () => {

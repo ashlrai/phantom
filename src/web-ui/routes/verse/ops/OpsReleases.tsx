@@ -26,6 +26,11 @@ function RepoRow({ repo }: { repo: OpsRepoReleaseV1 }) {
         {repo.latestTag ? <span className={styles.chip}>tag {repo.latestTag}</span> : null}
       </p>
       <p className={styles.rowMeta}>
+        Tag age: {repo.tagCommittedAt && Number.isFinite(Date.parse(repo.tagCommittedAt))
+          ? `${Math.max(0, Math.floor((Date.now() - Date.parse(repo.tagCommittedAt)) / 86_400_000))} days since tagged commit`
+          : 'unknown'} · Merged PRs since tag: unknown · First blocker: unknown
+      </p>
+      <p className={styles.rowMeta}>
         {repo.releaseWorkflow ? `workflow ${repo.releaseWorkflow}` : 'no release workflow found'}
         {repo.gh?.latestRelease ? ` · latest release ${repo.gh.latestRelease.tag}${repo.gh.latestRelease.prerelease ? ' (pre)' : ''}${repo.gh.latestRelease.draft ? ' (draft)' : ''}` : ''}
         {repo.gh?.latestRun ? ` · last run ${runLabel(repo.gh.latestRun)}${repo.gh.latestRun.at ? ` at ${repo.gh.latestRun.at}` : ''}` : ''}

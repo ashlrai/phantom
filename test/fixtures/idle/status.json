@@ -1,0 +1,5 @@
+[
+  {"timestamp":"2026-01-01T00:00:00Z","lanes":[{"lane":"fast","target":3,"running":1,"pausedReason":"quota"},{"lane":"slow","target":1,"running":2}]},
+  {"timestamp":"2026-01-01T00:10:00Z","lanes":[{"lane":"fast","target":3,"running":2},{"lane":"slow","target":1,"running":0}]},
+  {"timestamp":"2026-01-01T00:20:00Z","lanes":[{"lane":"fast","target":3,"running":3}]}
+]

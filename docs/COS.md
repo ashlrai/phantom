@@ -34,10 +34,11 @@ Other ways in:
 ## Worker
 
 ```sh
-phm fleet cos-work [--json]
+phm fleet cos-work [--apply] [--runs-dir <abs>] [--json]
 ```
 
-One bounded pass; call it once per tick, it never loops. It claims the oldest
+Dry run by default: it only counts pending jobs. With `--apply` it makes one
+bounded pass; call it once per tick, it never loops. It claims the oldest
 READY `cos-*` job whose dependencies are done and runs one headless model turn
 on the declared planner slate (10 minute timeout, output capped at 64 KB, draft
 at 16,000 characters, secrets scrubbed). The request is passed as untrusted data.
@@ -57,6 +58,11 @@ Stored memory (doctrine, then preferences, then facts, up to 4000 characters)
 is added to the prompt. See `phm memory`. Memory never authorizes an action.
 The worker sends nothing.
 
+`phm fleet cos-loop --duration-ms 3600000 --json` repeats that one bounded
+pass for a bounded window — a host timer (for example launchd) or an agent
+can start it once and queued tasks get drafted without a person. The loop
+only drafts; sending still needs digest approval.
+
 ## Approve
 
 Read the whole draft, including recipient, thread and text, before approving.
@@ -74,6 +80,16 @@ Approval binds to the draft digest; changed text cannot reuse an earlier approva
   `COS_NO_TRANSPORT`. Email with no outbox configured is the same.
 
 There is no CLI approval command.
+
+To decline a draft instead, pass the digest shown with it:
+
+```sh
+phm fleet cos-decline <id> --digest <64-hex>   # record a decline; nothing is sent
+```
+
+A decline takes the same exclusive claim as a send, so a later approval is
+refused, and a draft that is already sending, sent or uncertain cannot be
+declined. It closes the needs-you item. Exit 1 means the decline was refused.
 
 ## Uncertain delivery
 

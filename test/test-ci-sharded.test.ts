@@ -25,7 +25,7 @@ const isolatedFiles = [
 const markerFile = 'test/universe-hub-marker-campaign.test.ts';
 
 function runFixture(
-  failure: 'none' | 'middle' | 'isolated' | 'successor' | 'supervision' | 'signal' | 'balanced',
+  failure: 'none' | 'middle' | 'isolated' | 'successor' | 'supervision' | 'signal' | 'balanced' | 'two-failures',
   phaseEnvironment: Record<string, string> = {},
   args: string[] = [],
   report?: 'private' | 'stale' | 'permissive' | 'sticky' | 'symlink' | 'relative' | 'missing' | 'empty' | 'file' | 'wrong-owner' | 'no-posix-owner',
@@ -98,12 +98,13 @@ if (process.env.ASHLR_FAKE_FAILURE === 'signal') {
   setInterval(() => {}, 1000);
 } else if (process.env.ASHLR_FAKE_FAILURE === 'balanced' && process.argv.includes('test/g-fail.test.ts')) {
   setTimeout(() => { process.exitCode = 7; }, 100);
-} else if (process.env.ASHLR_FAKE_FAILURE === 'balanced') {
-  setInterval(() => {}, 1000);
+} else if (process.env.ASHLR_FAKE_FAILURE === 'two-failures') {
+  const output = process.argv.find((arg) => arg.startsWith('--outputFile.json=')).slice('--outputFile.json='.length);
+  const files = ['first', 'second'];
+  (await import('node:fs')).writeFileSync(output, JSON.stringify({ testResults: files.map((file) => ({ name: file + '.test.ts', assertionResults: [{ status: 'failed', fullName: file + ' test', failureMessages: ['Error: ' + file + ' failure\\nstack'] }] })) }));
+  process.exitCode = 1;
 } else if (process.env.ASHLR_FAKE_FAILURE === 'middle' && shard === '--shard=3/4') {
   setTimeout(() => { process.exitCode = 7; }, 100);
-} else if (process.env.ASHLR_FAKE_FAILURE === 'middle') {
-  setInterval(() => {}, 1000);
 } else if (process.env.ASHLR_FAKE_FAILURE === 'successor' && process.argv.includes('test/resource-engineering-successor-acceptance.test.ts')) {
   process.exitCode = 11;
 } else if (process.env.ASHLR_FAKE_FAILURE === 'supervision' && process.argv.includes('test/universe-supervision-integration.test.ts')) {
@@ -188,9 +189,9 @@ describe('local exhaustive prepublish shards', () => {
     ]);
     expect(rows.every((row) => row.workers === '--maxWorkers=1')).toBe(true);
     expect(rows.every((row) => row.parallelism.length === 1 && row.parallelism[0] === '--fileParallelism=false')).toBe(true);
-    expect(rows.every((row) => row.bail === '--bail=1')).toBe(true);
-    expect(rows.every(row => row.outputFiles.length === 0 && row.reportDirectory === undefined &&
-      row.reporters.length === 2 && !row.reporters.includes('--reporter=json'))).toBe(true);
+    expect(rows.every((row) => row.bail === '--bail=0')).toBe(true);
+    expect(rows.every(row => row.outputFiles.length === 1 && row.reportDirectory === undefined &&
+      row.reporters.includes('--reporter=json'))).toBe(true);
     expect(new Set(rows.map((row) => row.home)).size).toBe(18);
     expect(rows.every((row) => row.tmp === join(row.home, 'tmp'))).toBe(true);
     expect(result.stderr).toContain('[test-ci:sharded] PASS');
@@ -206,7 +207,7 @@ describe('local exhaustive prepublish shards', () => {
     // Alone on its machine, the shard gets the two workers a full local run
     // spreads over two concurrent single-worker shards.
     expect(rows[0]).toMatchObject({
-      shard: `--shard=${shard}/4`, workers: '--maxWorkers=2', unitWorkers: '1', parallelism: [], bail: '--bail=1',
+      shard: `--shard=${shard}/4`, workers: '--maxWorkers=2', unitWorkers: '1', parallelism: [], bail: '--bail=0',
     });
     expect(rows[0]?.file).toBeUndefined();
     expect(rows[0]?.excludes.sort()).toEqual([...isolatedFiles, markerFile].map(file => `--exclude=${file}`).sort());
@@ -239,7 +240,7 @@ describe('local exhaustive prepublish shards', () => {
     expect(rows.map(row => row.filter)).toEqual([
       ...isolatedFiles.map(() => undefined), 'automatic seed measurement: false', 'automatic seed measurement: true',
     ]);
-    expect(rows.every(row => row.workers === '--maxWorkers=1' && row.bail === '--bail=1' &&
+    expect(rows.every(row => row.workers === '--maxWorkers=1' && row.bail === '--bail=0' &&
       row.parallelism.length === 1 && row.parallelism[0] === '--fileParallelism=false')).toBe(true);
     expect(new Set(rows.map(row => row.home)).size).toBe(14);
     expect(rows.every(row => !existsSync(row.home))).toBe(true);
@@ -319,8 +320,8 @@ describe('local exhaustive prepublish shards', () => {
   });
 
   it.each([
-    { failure: 'successor' as const, code: 11, launched: 11 },
-    { failure: 'supervision' as const, code: 12, launched: 12 },
+    { failure: 'successor' as const, code: 11, launched: 14 },
+    { failure: 'supervision' as const, code: 12, launched: 14 },
     { failure: 'isolated' as const, code: 9, launched: 14 },
   ])('fails closed within the selected isolated lane: $failure', ({ failure, code, launched }) => {
     const result = runFixture(failure, {}, ['--isolated-only']);
@@ -379,38 +380,48 @@ describe('local exhaustive prepublish shards', () => {
     expect(rows.every(row => !existsSync(row.home))).toBe(true);
   });
 
-  it('fails closed and terminates sibling wrappers when one shard fails', () => {
+  it('continues all shards and isolated cases after a shard fails', () => {
     const result = runFixture('middle');
     expect(result.error).toBeUndefined(); expect(result.status).toBe(7);
+    expect(result.stdout.trim().split('\n')).toHaveLength(18);
     expect(result.stderr).toContain('[test-ci:sharded] FAIL');
-    expect(result.stderr.match(/received SIGTERM/g)).toHaveLength(1);
-    expect(result.stdout).not.toContain('"file":"test/universe-hub-marker-campaign.test.ts"');
   });
 
-  it('fails closed before marker cases when the whole isolated successor fixture fails', () => {
-    const result = runFixture('successor');
-    expect(result.error).toBeUndefined(); expect(result.status).toBe(11);
-    const rows = result.stdout.trim().split('\n').map((line) => JSON.parse(line) as { file?: string; filter?: string });
-    expect(rows).toHaveLength(15); // Four shards and eleven whole files; no marker case starts.
-    expect(rows.at(-1)).toMatchObject({ file: 'test/resource-engineering-successor-acceptance.test.ts' });
-    expect(rows.at(-1)?.filter).toBeUndefined();
-    expect(result.stdout).not.toContain('"file":"test/universe-hub-marker-campaign.test.ts"');
-    expect(result.stdout).not.toContain('"file":"test/universe-supervision-integration.test.ts"');
-    expect(result.stderr).toContain('[test-ci:sharded] FAIL (0, 0, 0, 0, isolated 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11)');
-    expect(result.stderr).not.toContain('[test-ci:sharded] PASS');
+  it('summarizes failures from two files in the same shard', () => {
+    const result = runFixture('two-failures', {}, ['--general-shard=1/4']);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('first.test.ts | first test | Error: first failure');
+    expect(result.stderr).toContain('second.test.ts | second test | Error: second failure');
   });
 
-  it('fails closed before marker cases when the whole isolated supervision fixture fails', () => {
-    const result = runFixture('supervision');
-    expect(result.error).toBeUndefined(); expect(result.status).toBe(12);
-    const rows = result.stdout.trim().split('\n').map((line) => JSON.parse(line) as { file?: string; filter?: string });
-    expect(rows).toHaveLength(16); // Four shards and twelve whole files; no marker case starts.
-    expect(rows.at(-1)).toMatchObject({ file: 'test/universe-supervision-integration.test.ts' });
-    expect(rows.at(-1)?.filter).toBeUndefined();
-    expect(result.stdout).not.toContain('"file":"test/universe-hub-marker-campaign.test.ts"');
-    expect(result.stderr).toContain('[test-ci:sharded] FAIL (0, 0, 0, 0, isolated 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12)');
-    expect(result.stderr).not.toContain('[test-ci:sharded] PASS');
-  });
+  it('runs and reports real failing files in a shard', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ashlr-real-shard-')); roots.push(root);
+    mkdirSync(join(root, 'scripts'));
+    mkdirSync(join(root, 'test'));
+    const policy = join(root, 'src', 'core', 'run', 'tool-path.ts');
+    mkdirSync(dirname(policy), { recursive: true });
+    copyFileSync(resolve(sourceScripts, '..', 'src', 'core', 'run', 'tool-path.ts'), policy);
+    for (const file of ['test-ci.mjs', 'test-ci-sharded.mjs', 'test-shard-plan.mjs']) {
+      copyFileSync(join(sourceScripts, file), join(root, 'scripts', file));
+    }
+    copyFileSync(join(sourceScripts, 'vitest-progress-reporter.mjs'), join(root, 'scripts', 'vitest-progress-reporter.mjs'));
+    symlinkSync(resolve(sourceScripts, '..', 'node_modules'), join(root, 'node_modules'), 'dir');
+    writeFileSync(join(root, 'vitest.config.mjs'), "export default { test: { include: ['test/*.test.ts'] } };\n");
+    for (let i = 0; i < 8; i++) {
+      writeFileSync(join(root, 'test', `failure-${i}.test.ts`),
+        `import { it } from 'vitest';\nit('case ${i}', () => { throw new Error('failure ${i}'); });\n`);
+    }
+    const result = spawnSync(process.execPath, [join(root, 'scripts', 'test-ci-sharded.mjs'), '--general-shard=1/4'], {
+      cwd: root, encoding: 'utf8', timeout: 60_000,
+      env: { ...process.env, ASHLR_TEST_CI_REPORT_DIRECTORY: undefined },
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    const summary = result.stderr.split('[test-ci:sharded] Failure summary:')[1] ?? '';
+    const failures = [...summary.matchAll(/failure-(\d)\.test\.ts \| case \1 \| Error: failure \1/g)];
+    expect(failures, result.stderr).toHaveLength(2);
+    expect(new Set(failures.map((match) => match[1])).size).toBe(2);
+  }, 70_000);
 
   it('fails closed when the isolated campaign acceptance fails', () => {
     const result = runFixture('isolated');
@@ -471,21 +482,20 @@ describe('paired isolated acceptance', () => {
     expect(result.stderr).toContain('[test-ci:sharded] PASS (isolated 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)');
   });
 
-  it('stops the running sibling and launches nothing more when a paired case fails', () => {
-    const result = runFixture('successor', { ASHLR_TEST_CI_ISOLATED_CONCURRENCY: '2', ASHLR_FAKE_ISOLATED_DELAY_MS: '3000' }, ['--isolated-only']);
+  it('continues the paired cases when one fails', () => {
+    const result = runFixture('successor', { ASHLR_TEST_CI_ISOLATED_CONCURRENCY: '2', ASHLR_FAKE_ISOLATED_DELAY_MS: '150' }, ['--isolated-only']);
     expect(result.error).toBeUndefined(); expect(result.status).toBe(11);
     const starts = events(result.stderr).filter(event => event.kind === 'start').map(event => event.label);
-    expect(starts).toEqual(longestFirst.slice(0, 2));
-    expect(result.stderr).toMatch(/isolated test\/resource-engineering-setup-acceptance\.test\.ts exited (?!0\b)/);
+    expect(starts).toEqual(longestFirst);
     expect(result.stderr).not.toContain('[test-ci:sharded] PASS');
   });
 
-  it('never launches the exclusive capacity ledger after a later pooled failure', () => {
+  it('still launches the exclusive capacity ledger after a pooled failure', () => {
     const result = runFixture('isolated', { ASHLR_TEST_CI_ISOLATED_CONCURRENCY: '2', ASHLR_FAKE_ISOLATED_DELAY_MS: '150' }, ['--isolated-only']);
     expect(result.error).toBeUndefined(); expect(result.status).toBe(9);
     const starts = events(result.stderr).filter(event => event.kind === 'start').map(event => event.label);
     expect(starts).toContain('campaign true');
-    expect(starts).not.toContain(isolatedFiles[0]);
+    expect(starts).toContain(isolatedFiles[0]);
     expect(result.stderr).not.toContain('[test-ci:sharded] PASS');
   });
 
@@ -533,7 +543,7 @@ describe('duration-balanced local shards', () => {
     expect(shards.map(row => row.files.slice().sort())).toEqual(expect.arrayContaining([['test/g-a.test.ts']]));
     expect(result.stderr).toContain('[test-ci:sharded] balanced 4 shards by measured duration: 1 files ~9s | ');
     expect(result.stderr).not.toContain('unmeasured');
-    expect(shards.every(row => row.workers === '--maxWorkers=1' && row.bail === '--bail=1' &&
+    expect(shards.every(row => row.workers === '--maxWorkers=1' && row.bail === '--bail=0' &&
       row.parallelism.length === 1 && row.parallelism[0] === '--fileParallelism=false' &&
       row.weighted === undefined && row.excludes.length === 13)).toBe(true);
     expect(shards.map(row => basename(row.outputFiles[0]!.slice('--outputFile.json='.length))).sort())
@@ -597,11 +607,10 @@ describe('duration-balanced local shards', () => {
     expect(result.stderr).not.toContain('[test-ci:sharded] started');
   });
 
-  it('stops every sibling shard and starts no isolated case when one balanced shard fails', () => {
+  it('continues balanced shards and isolated cases when one shard fails', () => {
     const result = runFixture('balanced', { ASHLR_FAKE_LIST: inventory }, ['--workers=4'], undefined, durations);
     expect(result.error).toBeUndefined(); expect(result.status).toBe(7);
-    expect(result.stderr.match(/received SIGTERM/g)).toHaveLength(3);
-    expect(result.stderr).not.toContain('started isolated acceptance');
+    expect(result.stderr).toContain('started isolated acceptance');
     expect(result.stderr).toContain('[test-ci:sharded] FAIL');
     expect(parse(result.stdout).every(row => !existsSync(row.home))).toBe(true);
   });

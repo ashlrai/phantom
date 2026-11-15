@@ -8,7 +8,13 @@ const ROOT = '/wt';
 const row = (job: string, hoursAgo: number, extra: Record<string, unknown> = {}) =>
   JSON.stringify({ job, ts: new Date(NOW - hoursAgo * H).toISOString(), event: 'launch', ...extra });
 
-function setup(dirs: Record<string, number>, jobs: string[], git = vi.fn(async (argv: string[]) => (argv.includes('rev-parse') ? '/repo/.git\n' : ''))) {
+function setup(initialDirs: Record<string, number>, jobs: string[], git?: ReturnType<typeof vi.fn<(argv: string[]) => Promise<string>>>) {
+  const dirs = { ...initialDirs };
+  git ??= vi.fn(async (argv: string[]) => {
+    if (argv.includes('rev-parse')) return '/repo/.git\n';
+    if (argv.includes('remove')) delete dirs[argv.at(-1)!.slice(ROOT.length + 1)];
+    return '';
+  });
   const deps: FleetWorktreeStaleDeps = {
     now: () => NOW,
     fs: {
@@ -18,7 +24,7 @@ function setup(dirs: Record<string, number>, jobs: string[], git = vi.fn(async (
     readJobs: async () => jobs.join('\n'),
     git,
   };
-  return { deps, git };
+  return { deps, git, dirs };
 }
 
 async function run(args: string[], deps: FleetWorktreeStaleDeps) {
@@ -84,4 +90,74 @@ describe('fleet worktree-stale', () => {
     expect(await cmdFleetWorktreeStale(['--apply', '--apply'], deps)).toBe(2);
     expect(git).not.toHaveBeenCalled();
   });
+});
+
+it('removes a URL-linked merged job once and does not reuse an earlier attempt', async () => {
+  const { mkdtemp, mkdir, readdir, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { execFileSync } = await import('node:child_process');
+  const root = await mkdtemp(join(tmpdir(), 'stale-convergence-'));
+  try {
+    const repo = join(root, 'repo');
+    const wtRoot = join(root, 'wt');
+    const job = 'RQ-LOCUSMCPLEAKQ7';
+    await mkdir(repo);
+    await mkdir(wtRoot);
+    const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { stdio: 'ignore' });
+    git('init');
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-m', 'initial');
+    git('worktree', 'add', '--detach', join(wtRoot, job));
+    const url = 'https://github.com/ashlrai/locus/pull/101';
+    const ledger = [row(job, 5), JSON.stringify({ event: 'publish', jobId: job, prUrl: url + '/', outcome: 'PUBLISHED' }),
+      JSON.stringify({ event: 'outcome', url, state: 'MERGED' })];
+    const deps: FleetWorktreeStaleDeps = { now: () => NOW, readJobs: async () => ledger.join('\n') };
+    const output = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    expect(await cmdFleetWorktreeStale(['--root', wtRoot, '--apply', '--json'], deps)).toBe(0);
+    expect(JSON.parse(String(output.mock.calls.at(-1)![0])).stale[0]).toMatchObject({ job, reason: 'merged', removed: true });
+    expect(await readdir(wtRoot)).toEqual([]);
+    expect(await cmdFleetWorktreeStale(['--root', wtRoot, '--apply', '--json'], deps)).toBe(0);
+    expect(JSON.parse(String(output.mock.calls.at(-1)![0])).stale).toEqual([]);
+    git('worktree', 'add', '--detach', join(wtRoot, job));
+    ledger.push(row(job, 0));
+    expect(await cmdFleetWorktreeStale(['--root', wtRoot, '--apply', '--json'], deps)).toBe(0);
+    expect(JSON.parse(String(output.mock.calls.at(-1)![0])).stale).toEqual([]);
+    expect(await readdir(wtRoot)).toEqual([job]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it('does not remove a retry when an older PR merges after the new launch', async () => {
+  const oldUrl = 'https://github.com/ashlrai/locus/pull/101';
+  const { deps, git } = setup({ 'RQ-RETRY': 1 }, [
+    row('RQ-RETRY', 5), row('RQ-RETRY', 4, { event: 'publish', url: oldUrl }),
+    row('RQ-RETRY', 2), row('RQ-RETRY', 1, { event: 'publish', url: 'https://github.com/ashlrai/locus/pull/102' }),
+    row('RQ-RETRY', 0, { event: 'outcome', url: oldUrl, state: 'MERGED' }),
+  ]);
+  const { view } = await run(['--apply'], deps);
+  expect(view.stale).toEqual([]);
+  expect(git).not.toHaveBeenCalled();
+});
+
+it('reports an incomplete Git cleanup and converges on a later retry', async () => {
+  const job = 'RQ-LOCUSMCPLEAKQ7';
+  const url = 'https://github.com/ashlrai/locus/pull/101';
+  let removeWorks = false;
+  const git = vi.fn(async (argv: string[]) => {
+    if (argv.includes('rev-parse')) return '/repo/.git\n';
+    if (removeWorks) delete fixture.dirs[job];
+    return '';
+  });
+  const fixture = setup({ [job]: 5 }, [row(job, 5), JSON.stringify({ jobId: job, prUrl: url, outcome: 'PUBLISHED' }),
+    JSON.stringify({ event: 'outcome', url, state: 'MERGED' })], git);
+  const { deps } = fixture;
+  const first = await run(['--apply'], deps);
+  expect(first.code).toBe(1);
+  expect(first.view.stale[0]).toMatchObject({ job, removed: false, error: 'worktree remains after Git removal' });
+  removeWorks = true;
+  const retry = await run(['--apply'], deps);
+  expect(retry.code).toBe(0);
+  expect(retry.view.stale[0]).toMatchObject({ job, removed: true });
+  expect((await run(['--apply'], deps)).view.stale).toEqual([]);
 });

@@ -16,8 +16,12 @@ const importFleet = () => import('./screens/FleetScreen.js');
 const importWorker = () => import('./screens/WorkerScreen.js');
 const importRuns = () => import('./screens/RunsScreen.js');
 const importInbox = () => import('./screens/InboxScreen.js');
+const importFeed = () => import('./screens/FeedScreen.js');
+const importGoals = () => import('./screens/GoalsScreen.js');
+const importIdeas = () => import('./screens/IdeasScreen.js');
 const importDropJob = () => import('./screens/DropJobScreen.js');
 const importMore = () => import('./screens/MoreScreen.js');
+const importWatch = () => import('./screens/WatchScreen.js');
 
 const AgentsScreen = lazy(() => importAgents().then((m) => ({ default: m.AgentsScreen })));
 const AgentDetailScreen = lazy(() => importAgentDetail().then((m) => ({ default: m.AgentDetailScreen })));
@@ -28,11 +32,15 @@ const FleetScreen = lazy(() => importFleet().then((m) => ({ default: m.FleetScre
 const WorkerScreen = lazy(() => importWorker().then((m) => ({ default: m.WorkerScreen })));
 const RunsScreen = lazy(() => importRuns().then((m) => ({ default: m.RunsScreen })));
 const InboxScreen = lazy(() => importInbox().then((m) => ({ default: m.InboxScreen })));
+const FeedScreen = lazy(() => importFeed().then((m) => ({ default: m.FeedScreen })));
+const GoalsScreen = lazy(() => importGoals().then((m) => ({ default: m.GoalsScreen })));
+const IdeasScreen = lazy(() => importIdeas().then((m) => ({ default: m.IdeasScreen })));
 const DropJobScreen = lazy(() => importDropJob().then((m) => ({ default: m.DropJobScreen })));
 const MoreScreen = lazy(() => importMore().then((m) => ({ default: m.MoreScreen })));
+const WatchScreen = lazy(() => importWatch().then((m) => ({ default: m.WatchScreen })));
 
 /** Most-visited first: Needs you and Agents are what a phone is opened for. */
-const SCREEN_IMPORTS = [importNeedsYou, importAgents, importAgentDetail, importLeader, importNewAgent, importFleet, importRuns, importWorker, importInbox, importDropJob, importMore];
+const SCREEN_IMPORTS = [importNeedsYou, importAgents, importAgentDetail, importLeader, importNewAgent, importFleet, importRuns, importWorker, importInbox, importFeed, importGoals, importIdeas, importDropJob, importMore, importWatch];
 
 /** Warm every screen chunk (the shell calls this once the phone is idle); failures are the mount's to report. */
 export function prefetchMobileScreens(): void {
@@ -59,9 +67,21 @@ export function ScreenHost({ route }: { route: Exclude<MobileRoute, { screen: 'h
       return <RunsScreen />;
     case 'inbox':
       return <InboxScreen />;
+    case 'feed':
+      return <FeedScreen />;
+    case 'goals':
+      return <GoalsScreen />;
+    case 'ideas':
+      return <IdeasScreen />;
     case 'drop-job':
       return <DropJobScreen />;
     case 'more':
       return <MoreScreen />;
+    case 'watch':
+      return <WatchScreen />;
+    default: {
+      const unexpected: never = route;
+      throw new Error(`Unhandled mobile route: ${JSON.stringify(unexpected)}`);
+    }
   }
 }

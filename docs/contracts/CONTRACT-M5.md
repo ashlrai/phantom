@@ -129,8 +129,17 @@ import type { UsageEvent } from '../types.js';
  * Stream line-by-line; skip files older than sinceMs via mtime; tolerate
  * malformed lines; NEVER read message content. Returns events filtered to
  * ts >= sinceMs (ms epoch). Never throws.
+ *
+ * Claude transcripts are memoized per file (token counts, model, timestamp
+ * and message key only; never content): an unchanged file is reused and an
+ * append-only grown file is parsed from its last complete line. A rewrite
+ * (new inode, shrink, same-size mtime change, or changed tail bytes) is
+ * re-read from the start. Each call returns fresh event objects.
  */
 export function collectUsageEvents(sinceMs: number): UsageEvent[];
+
+/** Test seam: drop the per-file transcript memo. */
+export function _resetClaudeUsageMemoForTest(): void;
 
 /** Absolute path to ~/.claude/projects (honors $HOME). */
 export function claudeProjectsDir(): string;

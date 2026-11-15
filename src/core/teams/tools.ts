@@ -2,6 +2,7 @@
 import { CONSEQUENTIAL_ACTIONS, validId, type TeamActor } from './protocol.js';
 import { appendEvent } from './store.js';
 import { acquireClaim, releaseClaim, requestHandoff, teamState, transitionHandoff } from './state.js';
+import { requestAccess } from './workspace.js';
 import { addContext, retrieveContext, type ContextScope } from './context.js';
 
 export const DEFAULT_TEAM = 'default';
@@ -46,6 +47,17 @@ export async function teamHandoff(args: Record<string, unknown>) {
   if (op === 'accept' || op === 'complete' || op === 'decline') return transitionHandoff(team(args), actor, s(args.handoffId) ?? '', op, s(args.result));
   throw new Error('op must be request, accept, complete or decline.');
 }
+export async function teamAccessRequest(args: Record<string, unknown>) {
+  const actor = agentActor(args);
+  const op = s(args.op);
+  const request =
+    op === 'invite-member' ? { type: 'member.invited', memberId: s(args.memberId) } :
+    op === 'link-repo' ? { type: 'repo.linked', repo: s(args.repo) } :
+    op === 'change-role' ? { type: 'member.role-changed', memberId: s(args.memberId), role: s(args.role) } :
+    undefined;
+  if (!request) throw new Error('op must be invite-member, link-repo or change-role.');
+  return requestAccess(team(args), actor, request, s(args.note));
+}
 const scopeOf = (args: Record<string, unknown>): ContextScope => ({ owner: (s(args.owner) ?? 'company') as ContextScope['owner'], project: s(args.project), person: s(args.person) });
 export async function teamContextAdd(args: Record<string, unknown>) {
   return addContext(team(args), agentActor(args), { title: s(args.title) ?? '', text: s(args.text) ?? '', source: s(args.source) ?? '', scope: scopeOf(args), tags: Array.isArray(args.tags) ? args.tags.filter((x): x is string => typeof x === 'string') : [], importance: typeof args.importance === 'number' ? args.importance : undefined, supersedes: Array.isArray(args.supersedes) ? args.supersedes.filter((x): x is string => typeof x === 'string') : [], observedAt: s(args.observedAt) });
@@ -66,6 +78,7 @@ export const TEAM_TOOL_SCHEMAS = {
   phm_team_view: { type: 'object', properties: { team: TEAM, since: { type: 'string', description: 'Only messages after this event id.' } }, additionalProperties: false },
   phm_team_claim: { type: 'object', properties: { team: TEAM, agentId: ID, op: { type: 'string', enum: ['acquire', 'release'] }, repo: { type: 'string', description: 'owner/name' }, branch: { type: 'string' }, path: { type: 'string' }, reason: { type: 'string' }, ttlMinutes: { type: 'number', description: 'Lease length in minutes, clamped to 1..1440 (default 120).' }, claimId: { type: 'string' } }, required: ['agentId'], additionalProperties: false },
   phm_team_handoff: { type: 'object', properties: { team: TEAM, agentId: ID, op: { type: 'string', enum: ['request', 'accept', 'complete', 'decline'] }, to: { type: 'string' }, title: { type: 'string' }, detail: { type: 'string' }, action: { type: 'string', enum: [...CONSEQUENTIAL_ACTIONS], description: 'Set for consequential work; a human owner/admin must approve before anyone can accept.' }, contextRefs: { type: 'array', items: { type: 'string' } }, handoffId: { type: 'string' }, result: { type: 'string' } }, required: ['agentId'], additionalProperties: false },
+  phm_team_access_request: { type: 'object', properties: { team: TEAM, agentId: ID, provider: { type: 'string' }, onBehalfOf: { type: 'string' }, op: { type: 'string', enum: ['invite-member', 'link-repo', 'change-role'], description: 'Workspace access change to request.' }, memberId: { type: 'string', description: 'human:<name>. Required for invite-member and change-role.' }, role: { type: 'string', enum: ['admin', 'member'], description: 'Required for change-role.' }, repo: { type: 'string', description: 'owner/name. Required for link-repo.' }, note: { type: 'string', description: 'Short justification for the human approver (task ref, reason); max 500 chars.' } }, required: ['agentId', 'op'], additionalProperties: false },
   phm_team_context_add: { type: 'object', properties: { team: TEAM, agentId: ID, title: { type: 'string' }, text: { type: 'string' }, source: { type: 'string', description: 'Provenance: URL, path@sha, PR, or thread id.' }, tags: { type: 'array', items: { type: 'string' } }, importance: { type: 'number', description: '0..1, default 0.5' }, supersedes: { type: 'array', items: { type: 'string' }, description: 'Context ids this evidence replaces (stale facts are dropped).' }, observedAt: { type: 'string', description: 'When the evidence was observed (ISO); drives recency decay.' }, ...SCOPE }, required: ['agentId', 'title', 'text', 'source', 'owner'], additionalProperties: false },
   phm_team_context_get: { type: 'object', properties: { team: TEAM, query: { type: 'string' }, budgetTokens: { type: 'number' }, limit: { type: 'number' }, ...SCOPE }, required: ['query', 'owner'], additionalProperties: false },
 } as const;

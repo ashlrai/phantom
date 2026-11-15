@@ -139,7 +139,7 @@ async function preparationCli<T>(input: ReturnType<typeof options>, recipeFile: 
     'resources', 'pool', 'engineering', 'prepare', '--recipe', recipeFile, '--output', input.output,
     '--resource-runtime', input.resourceRuntime, '--workspace', input.workspace, '--projects', input.projectsFile, '--json', ...extra], {
     timeout: 30_000, maxBuffer: 256 * 1024, env: { ...process.env, HOME: homedir(), USERPROFILE: homedir(),
-      ASHLR_HOME: process.env.ASHLR_HOME ?? join(homedir(), '.ashlr'), TSX_DISABLE_CACHE: '1', NODE_DISABLE_COMPILE_CACHE: '1', GIT_OPTIONAL_LOCKS: '0' },
+      ASHLR_HOME: process.env.ASHLR_HOME ?? join(homedir(), '.ashlr'), TSX_DISABLE_CACHE: '1', GIT_OPTIONAL_LOCKS: '0' },
   });
   expect(stderr).toBe(''); expect(Buffer.byteLength(stdout)).toBeLessThanOrEqual(256 * 1024);
   return JSON.parse(stdout) as T;

@@ -7,9 +7,17 @@ import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { listDrafts } from '../cos/drafts.js';
 import { diagnoseEmailDrop, type EmailDiagnosisDeps } from '../comms/email-diagnosis.js';
+import { checkIMessagePath } from '../comms/imessage-path-check.js';
+import { readImessageAckEvidence } from '../comms/imessage-ack-evidence.js';
+import { buildCommsCutoverReadiness, type CommsCutoverReport } from '../comms/cutover-readiness.js';
 import { readEmailOutbox } from '../comms/email-outbox.js';
+import { readTeammateLatency, type TeammateLatencySummary } from '../comms/teammate-reply-latency.js';
+import { readLocalSendPolicy } from '../agents/send-gate.js';
+import { readChannelHealth, type ChannelHealthReport } from '../fleet/channel-health.js';
+import { sanitizeIdentityText } from '../fleet/runtime-identity.js';
 
 export const VERSE_FLEET_COMMS_STATUS_PATH = '/api/verse/fleet/comms-status';
+const CHANNEL_HEALTH_TIMEOUT_MS = 5_000;
 
 export interface FleetCommsStatusApiDeps {
   /** Default: ASHLR_RUNS_DIR, then ~/.ashlr-runs. */
@@ -18,6 +26,16 @@ export interface FleetCommsStatusApiDeps {
   outboxDir?: string;
   /** Collector seams for tests. */
   emailDiagnosisDeps?: EmailDiagnosisDeps;
+  imessagePath?: typeof checkIMessagePath;
+  imessageAcks?: typeof readImessageAckEvidence;
+  /** Teammate (Dot) reply-latency seam for tests. Default reads teammates.jsonl under runsDir with the request clock. */
+  teammateLatency?: (now: number) => TeammateLatencySummary | Promise<TeammateLatencySummary>;
+  /** Off-Grok-Bot cutover seam for tests. Default: buildCommsCutoverReadiness over runsDir. */
+  cutover?: (runsDir: string) => Promise<CommsCutoverReport>;
+  /** Send-policy reader (read-only). Default: ~/.ashlr/comms.toml and agent-network.toml. */
+  sendPolicy?: typeof readLocalSendPolicy;
+  /** Slack/iMessage bridge health reader. Default: readChannelHealth() on the request clock. */
+  channelHealth?: () => Promise<ChannelHealthReport>;
   /** Clock seam for tests; stamps generatedAt. */
   now?: () => Date;
 }
@@ -91,13 +109,110 @@ export function createFleetCommsStatusApi(deps: FleetCommsStatusApiDeps = {}): A
         ? { configured: true, ...emailDiagnosis.counts, stuckReasons }
         : null;
 
+    const generatedAt = now();
+    let imessage: { configuration: { state: string; reason: string }; chatDb: { state: string; reason: string }; cursor: { state: string; reason: string }; ackSource: string; lastAckAt: string | null; acks24h: number; nextStep: string | null } | null = null;
+    let imessageSource: 'healthy' | 'degraded' = 'healthy';
+    try {
+      const path = (deps.imessagePath ?? checkIMessagePath)({ runsRoot: runsDir });
+      const acks = await (deps.imessageAcks ?? readImessageAckEvidence)(262144, runsDir);
+      const fields = [path.configuration, path.chatDb, path.cursor];
+      const firstProblem = fields.find((field, index) => field.state !== ['configured', 'readable', 'present'][index]);
+      const timestamps = acks.rows.map(row => row.timestamp).filter(at => Number.isFinite(Date.parse(at)) && Date.parse(at) <= generatedAt.getTime());
+      const project = ({ state, reason }: { state: string; reason: string }) => ({ state, reason });
+      imessage = {
+        configuration: project(path.configuration), chatDb: project(path.chatDb), cursor: project(path.cursor),
+        ackSource: acks.sourceState, lastAckAt: timestamps.sort().at(-1) ?? null,
+        acks24h: timestamps.filter(at => Date.parse(at) >= generatedAt.getTime() - 86_400_000).length,
+        nextStep: firstProblem?.nextStep ?? null,
+      };
+    } catch {
+      imessageSource = 'degraded';
+    }
+
+    // Counts and minutes only: never text, sender, handle or rowid.
+    let teammate: Record<string, unknown> | null = null;
+    let teammateSource: 'healthy' | 'missing' | 'degraded' = 'healthy';
+    try {
+      const t = await (deps.teammateLatency ?? ((at: number) => readTeammateLatency({ runsDir, now: () => at })))(generatedAt.getTime());
+      teammate = {
+        windowHours: t.windowHours, targetMinutes: t.targetMinutes, texts: t.texts, answered: t.answered,
+        unanswered: t.unanswered, ignorable: t.ignorable, medianMinutes: t.medianMinutes, p90Minutes: t.p90Minutes,
+        maxMinutes: t.maxMinutes, withinTarget: t.withinTarget,
+        oldestUnanswered: t.oldestUnanswered === null ? null : { ageMinutes: t.oldestUnanswered.ageMinutes },
+        latestTextAt: t.latestTextAt ?? null,
+        sourceState: t.sourceState,
+      };
+      teammateSource = t.sourceState;
+    } catch {
+      teammateSource = 'degraded';
+    }
+
+    // A projection of the cutover report: states, reason codes and next-step commands only.
+    let cutover: { overall: { state: string; blockers: string[] }; capabilities: Record<string, { state: string; reason: string; nextStep: string }> } | null = null;
+    let cutoverSource: 'healthy' | 'degraded' = 'healthy';
+    try {
+      const report = await (deps.cutover ?? ((dir: string) => buildCommsCutoverReadiness({ runsDir: dir })))(runsDir);
+      cutover = {
+        overall: { state: report.overall.state, blockers: [...report.overall.blockers] },
+        capabilities: Object.fromEntries(Object.entries(report.capabilities)
+          .map(([id, c]) => [id, { state: c.state, reason: c.reason, nextStep: c.nextStep }])),
+      };
+    } catch {
+      cutoverSource = 'degraded';
+    }
+
+    // Counts and channel names only: never identity ids, addresses or the home path.
+    let sendPolicy: { confirmed: boolean; teamIdentities: number; channels: string[] } | null = null;
+    let sendPolicySource: 'healthy' | 'degraded' = 'healthy';
+    try {
+      const policy = (deps.sendPolicy ?? readLocalSendPolicy)();
+      sendPolicy = {
+        confirmed: policy.confirmedByMason === true,
+        teamIdentities: policy.teamIdentities.length,
+        channels: [...new Set(policy.teamIdentities.map(identity => String(identity.channel)))].sort(),
+      };
+    } catch {
+      sendPolicySource = 'degraded';
+    }
+
+    // The bridge health report as returned, except runtimeHost redacted like
+    // runtime-identity output. A throw or a read past the timeout degrades the
+    // field to 'unavailable'; it never fails the route.
+    let channelHealth: ChannelHealthReport | { schemaVersion: 1; asOf: string; channels: never[]; error: 'unavailable' };
+    let healthTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const report = await Promise.race([
+        (deps.channelHealth ?? (() => readChannelHealth({ now: () => generatedAt })))(),
+        new Promise<never>((_resolve, reject) => {
+          healthTimer = setTimeout(() => reject(new Error('channel-health-timeout')), CHANNEL_HEALTH_TIMEOUT_MS);
+        }),
+      ]);
+      const home = homedir();
+      channelHealth = {
+        ...report,
+        channels: report.channels.map((channel) => ({
+          ...channel,
+          runtimeHost: channel.runtimeHost === null ? null : sanitizeIdentityText(channel.runtimeHost, home),
+        })),
+      };
+    } catch {
+      channelHealth = { schemaVersion: 1, asOf: generatedAt.toISOString(), channels: [], error: 'unavailable' };
+    } finally {
+      if (healthTimer !== undefined) clearTimeout(healthTimer);
+    }
+
     sendJson(res, 200, {
       version: 1,
-      generatedAt: now().toISOString(),
+      generatedAt: generatedAt.toISOString(),
       drafts,
       emailOutbox,
       emailDiagnosis,
-      sources: { drafts: draftsSource, emailOutbox: emailOutboxSource },
+      imessage,
+      teammate,
+      cutover,
+      sendPolicy,
+      sources: { drafts: draftsSource, emailOutbox: emailOutboxSource, imessage: imessageSource, teammate: teammateSource, cutover: cutoverSource, sendPolicy: sendPolicySource },
+      channelHealth,
     });
   }
 

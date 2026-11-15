@@ -129,6 +129,8 @@ const KEYS = {
     'surface.chat': 'mod+5',
     'surface.agents': 'mod+6',
     'section.settings': 'mod+,',
+    'home.leader': 'mod+shift+h',
+    'home.feed': 'mod+shift+g',
     // Navigation
     'palette.open': 'mod+k',
     'needs-you.open': 'mod+j',
@@ -147,6 +149,7 @@ const KEYS = {
     'fleet.start': 'mod+alt+s',
     'fleet.pause': 'mod+alt+p',
     'fleet.interject': 'mod+alt+m',
+    'fleet.focus-steer': 'mod+shift+j',
     'fleet.resume': 'mod+alt+r',
     // Not `fleet.stop` (the shell's guarded palette row, which stays keyless):
     // this key opens the Fleet tab's own Stop confirmation.

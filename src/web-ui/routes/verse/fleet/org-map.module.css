@@ -1,0 +1,9 @@
+.map { margin: 1rem 0; padding: 1rem; border: 1px solid var(--border, #555); border-radius: 8px; }
+.leader { margin: 0 auto 1.5rem; padding: .7rem; border: 1px solid currentColor; border-radius: 8px; text-align: center; width: fit-content; }
+.leader small { display: block; }
+.lanes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 1rem; }
+.lane { border: 1px solid var(--border, #555); border-radius: 8px; padding: .75rem; min-width: 0; overflow-wrap: anywhere; }
+.lane h3 { margin: 0 0 .75rem; }
+.logo { display: inline-grid; place-items: center; width: 2rem; height: 2rem; border: 1px solid currentColor; border-radius: 50%; }
+.lane ul { list-style: none; margin: 0; padding: 0; }
+.lane li { border-top: 1px solid var(--border, #555); padding: .6rem 0; }

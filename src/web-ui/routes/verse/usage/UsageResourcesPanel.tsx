@@ -13,6 +13,9 @@ import sectionStyles from './usage.module.css';
 import styles from './usage-resources.module.css';
 import { narrowUsageResources, resourceRows, type ResourceRowView } from './usage-resources-model.js';
 import { usageResourcesQuery } from './usage-queries.js';
+import { fleetUsageRunsQuery } from '../fleet-usage/fleet-usage-queries.js';
+import { isFleetRuns } from '../ops/ops-runs-model.js';
+import { LOCAL_LANES, SLOTS_UNKNOWN_TEXT, localSlotsView, type LocalLaneRow } from './local-slots-row.js';
 
 function meterTone(percent: number | null): string | undefined {
   if (percent === null) return undefined;
@@ -21,15 +24,28 @@ function meterTone(percent: number | null): string | undefined {
   return undefined;
 }
 
-function ResourceCell({ view }: { view: ResourceRowView }): ReactNode {
+/** The local row has no quota to meter: say so, then show live slot use. */
+function LocalSlots({ lanes, generatedAt }: { lanes: LocalLaneRow[] | null; generatedAt: string | null }): ReactNode {
+  const slots = localSlotsView(lanes, Date.now(), generatedAt);
   return (
-    <li className={styles.cell} data-state={view.state} data-resource={view.id}>
+    <>
+      <p className={styles.amount}>{slots.quotaText}</p>
+      <p className={sectionStyles.panelNote}>{slots.slotsText ?? SLOTS_UNKNOWN_TEXT}{slots.stale && slots.slotsText ? ' · stale' : ''}</p>
+      {slots.heldText ? <p className={sectionStyles.panelNote}>{slots.heldText}</p> : null}
+    </>
+  );
+}
+
+function ResourceCell({ view, localLanes, generatedAt = null }: { view: ResourceRowView; localLanes?: LocalLaneRow[] | null; generatedAt?: string | null }): ReactNode {
+  const localSlots = view.id === 'local' && view.state === 'no-reader' && localLanes !== undefined;
+  return (
+    <li className={styles.cell} data-state={localSlots ? 'local-slots' : view.state} data-resource={view.id}>
       <div className={styles.cellHead}>
         <span className={styles.cellName}>{view.label}</span>
         {view.stateText ? <span className={styles.cellState}>{view.stateText}</span> : null}
       </div>
 
-      {view.state === 'ok' ? (
+      {localSlots ? <LocalSlots lanes={localLanes ?? null} generatedAt={generatedAt} /> : view.state === 'ok' ? (
         <>
           <p className={styles.amount}>{view.amountText ?? '—'}</p>
           {view.percent !== null ? (
@@ -86,6 +102,11 @@ export function UsageResourcesPanel(): ReactNode {
   const read = useQuery(usageResourcesQuery);
   const wire = narrowUsageResources(read.data?.available ? read.data.raw : null);
   const rows = resourceRows(wire);
+  // Same query (and key) the fleet panes use: no extra polling.
+  const runs = useQuery(fleetUsageRunsQuery);
+  const localLanes: LocalLaneRow[] | null = isFleetRuns(runs.data)
+    ? runs.data.lanes.filter((l) => (LOCAL_LANES as readonly string[]).includes(l.lane))
+    : null;
 
   const unavailableReason =
     read.data && !read.data.available
@@ -111,7 +132,7 @@ export function UsageResourcesPanel(): ReactNode {
         <p className={sectionStyles.panelNote}>{unavailableReason}</p>
       ) : (
         <ul className={styles.grid}>
-          {rows.map((view) => <ResourceCell key={view.id} view={view} />)}
+          {rows.map((view) => <ResourceCell key={view.id} view={view} localLanes={localLanes} generatedAt={isFleetRuns(runs.data) ? runs.data.generatedAt : null} />)}
         </ul>
       )}
     </section>

@@ -2,9 +2,10 @@
 /**
  * scripts/perf-budget.mjs — CLI latency regression budget.
  *
- * Times a small set of cold-path commands — `phm --version`, `phm status`,
- * `phm doctor` and a warm `phantom` wrapper call — and fails when the median
- * exceeds the committed budget. Budgets live in perf/budgets.json as baseline
+ * Times a small set of cold-path commands — `phm --version`, `phm --help`,
+ * `phm status`, `phm doctor`, the MCP `tools/list` handshake through
+ * scripts/perf-mcp-tools-list.mjs, and a warm `phantom` wrapper call — and
+ * fails when the median exceeds the committed budget. Budgets live in perf/budgets.json as baseline
  * medians plus a headroom factor (default +20%), so the file records what the
  * tool measured and the check stays honest about machine-to-machine spread.
  *

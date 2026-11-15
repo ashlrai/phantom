@@ -118,8 +118,10 @@ export async function inspectDirtyLanded(dir: string, row: DirtyRow, remote: str
   const head = (await git(dir, ['rev-parse', 'refs/dirty/head'])).stdout.trim();
   const base = (await git(dir, ['rev-parse', 'refs/dirty/base'])).stdout.trim();
   if (head !== row.headSha || !SHA.test(base)) return unknownDirtyLanded(row, 'head-moved');
-  const mergeBase = (await git(dir, ['merge-base', base, head])).stdout.trim();
-  if (!SHA.test(mergeBase)) return unknownDirtyLanded(row, 'no-merge-base');
+  const forks = await git(dir, ['merge-base', '--all', base, head]);
+  if (forks.code !== 0 || forks.timedOut || forks.truncated) return unknownDirtyLanded(row, 'no-merge-base');
+  const mergeBase = forks.stdout.trim();
+  if (!SHA.test(mergeBase)) return unknownDirtyLanded(row, 'ambiguous-merge-base');
   const changedPaths = await diffPaths(dir, mergeBase, head);
   if (changedPaths === null) return unknownDirtyLanded(row, 'diff-failed');
   const differing = await diffPaths(dir, base, head);

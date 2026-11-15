@@ -176,6 +176,8 @@ export const WORKBENCH_COMMANDS = [
   { id: 'mode.with-me', title: 'Work with me', scope: 'global', keys: [], group: 'go-to', section: 'Surfaces', keywords: ['interactive', 'guide', 'ask', 'chat'] },
   { id: 'mode.for-me', title: 'Work for me', scope: 'global', keys: [], group: 'go-to', section: 'Surfaces', keywords: ['autonomous', 'fleet', 'delegate', 'background'] },
   // ── Surfaces (⌘1 Command … ⌘5 Chat) and the gear tray ────────────────────
+  { ...bind('home.leader'), title: 'Open Leader thread', group: 'actions', section: 'Surfaces', keywords: ['leader', 'chat', 'home', 'reply'] },
+  { ...bind('home.feed'), title: 'Open Feed', group: 'actions', section: 'Surfaces', keywords: ['feed', 'news', 'updates'] },
   surface('surface.command', 'Command'),
   surface('surface.fleet', 'Fleet'),
   surface('surface.growth', 'Growth'),
@@ -359,6 +361,7 @@ export const WORKBENCH_COMMANDS = [
   // Mind and the conversation panel takes the ask once its chunk mounts.
   { id: 'leader.message', title: 'Message the Leader…', scope: 'global', keys: [], group: 'actions', section: 'App', surface: 'mind', keywords: ['leader', 'ask', 'chat', 'strategy', 'memo', 'talk', 'telegram'] },
   { id: 'fleet.digest', title: 'Fleet: copy live digest', scope: 'global', keys: [], group: 'actions', section: 'App', keywords: ['status', 'digest', 'copy', 'telegram', 'paste', 'fleet'] },
+  { ...bind('fleet.focus-steer'), title: 'Tell the Leader', group: 'actions', section: 'App', keywords: ['steer', 'fleet', 'inbox'] },
   { ...bind('fleet.interject'), title: 'Tell the fleet leaders…', group: 'actions', section: 'App', keywords: ['interject', 'inbox', 'leaders', 'fleet', 'prompt', 'steer', 'say'] },
   { id: 'leader.directive', title: 'Add Leader directive…', scope: 'global', keys: [], group: 'actions', section: 'App', surface: 'mind', keywords: ['leader', 'directive', 'instruction', 'rule', 'standing order'] },
   // ── The repo wiki (3.15) ────────────────────────────────────────────────

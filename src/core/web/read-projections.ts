@@ -146,7 +146,9 @@ function workerEntrypoint(): URL {
 /**
  * One lazily-created thread per HTTP server moves existing synchronous reads
  * off its event loop. Read algorithms and their CLI callers remain unchanged.
- * Results are coalesced only while pending; freshness caches belong to callers.
+ * Results are coalesced only while pending; freshness caches belong to callers
+ * (server.ts wraps this reader in `governReadProjections`, which bounds how
+ * often a polled projection may rebuild).
  */
 export function createReadProjectionWorker(cfg: AshlrConfig, options: ReadProjectionWorkerOptions = {}): ReadProjectionReader {
   return createBoundedReadWorker({ ...options, workerEntrypoint, workerData: { cfg },

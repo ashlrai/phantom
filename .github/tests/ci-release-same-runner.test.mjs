@@ -31,3 +31,49 @@ test('one real macOS build job preserves the canonical fast-v1 role and all thre
   assert.equal(reused.with['digest-mismatch'], 'error');
   assert.equal(reused.with.name, undefined);
 });
+
+test('build, pack, custody and smoke run only in the isolated pinned tree with a strict drift check', () => {
+  const job = workflow().jobs['release-build'];
+  const names = job.steps.map(step => step.name);
+  const one = name => { const rows = job.steps.filter(step => step.name === name); assert.equal(rows.length, 1); return rows[0]; };
+  const tree = one('Create isolated release tree');
+  assert.equal(tree.id, 'tree');
+  assert.equal(tree.if, "steps.eligible.outputs.ready == 'true'");
+  assert.equal(tree.run, 'node scripts/release-isolated-tree.mjs create "$RUNNER_TEMP/phantom-release-tree"');
+  for (const later of ['Cache native compiler inputs', 'Build unsigned desktop and original package once',
+    'Capture original immutable input custody', 'Smoke desktop release artifact']) {
+    assert.ok(names.indexOf('Create isolated release tree') < names.indexOf(later), `${later} must follow tree creation`);
+  }
+  // Any step that builds, packs, captures or smokes must run in the tree.
+  const isolated = job.steps.filter(step => /build:desktop:nightly|release-fast-smoke\.mjs prepare|release-local-input\.mjs|release-smoke-phase\.mjs smoke/.test(step.run ?? ''));
+  assert.deepEqual(isolated.map(step => step.name), ['Build unsigned desktop and original package once',
+    'Capture original immutable input custody', 'Smoke desktop release artifact']);
+  for (const step of isolated) assert.equal(step['working-directory'], '${{ steps.tree.outputs.root }}');
+  const build = one('Build unsigned desktop and original package once').run.trim().split('\n');
+  assert.deepEqual(build, ['npm run build:desktop:nightly -- --existing-icons', 'node scripts/release-isolated-tree.mjs verify .',
+    'node .github/scripts/release-fast-smoke.mjs prepare', 'node scripts/release-isolated-tree.mjs verify .']);
+  assert.ok(one('Build unsigned desktop and original package once')['timeout-minutes'] <= 45);
+  assert.ok(one('Smoke desktop release artifact')['timeout-minutes'] <= 6);
+});
+
+test('native cache is keyed by the lockfile, never the commit, at the stable isolated target path', () => {
+  const cache = workflow().jobs['release-build'].steps.find(step => step.name === 'Cache native compiler inputs');
+  assert.ok(!/github\.sha/.test(cache.with.key) && !/github\.sha/.test(cache.with['restore-keys']));
+  assert.ok(cache.with.key.endsWith("${{ hashFiles('desktop/src-tauri/Cargo.lock') }}"));
+  assert.ok(cache.with.key.startsWith(cache.with['restore-keys']));
+  assert.deepEqual(cache.with.path.trim().split('\n'), ['~/.cargo/registry/', '~/.cargo/git/db/',
+    '${{ steps.tree.outputs.root }}/desktop/src-tauri/target/']);
+});
+
+test('pinned tool install overlaps setup and its exit status gates the build', () => {
+  const job = workflow().jobs['release-build'];
+  const names = job.steps.map(step => step.name);
+  const start = job.steps.find(step => step.name === 'Start pinned build tool install');
+  const gate = job.steps.find(step => step.name === 'Install pinned build tools');
+  assert.match(start.run, /\( set \+e; npm install --global npm@10\.9\.8 @tauri-apps\/cli@2\.11\.4 .*\n\s*echo "\$\?" > "\$RUNNER_TEMP\/build-tools\.status" \) &/);
+  assert.match(gate.run, /build-tools\.status/);
+  assert.match(gate.run, /exit 1/);
+  assert.ok(gate['timeout-minutes'] <= 5);
+  assert.ok(names.indexOf('Start pinned build tool install') < names.indexOf('Set up Rust'));
+  assert.ok(names.indexOf('Install pinned build tools') < names.indexOf('Build unsigned desktop and original package once'));
+});

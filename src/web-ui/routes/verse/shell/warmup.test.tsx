@@ -1,14 +1,14 @@
 /**
  * warmup — what the shell warms after first paint (unit C1; review 3.10.1):
  * the order, the idle gating against the operator's own reads, the one-read
- * concurrency, and — end to end through VerseApp — that a first visit to a
+ * concurrency, and — end to end through PhantomApp — that a first visit to a
  * warmed surface really paints without a skeleton.
  *
  * The end-to-end half lives in THIS file, not VerseApp.test.tsx, on purpose:
- * VerseApp keeps its section loads for the life of the module, and that file
+ * PhantomApp keeps its section loads for the life of the module, and that file
  * visits Growth, Fleet and Mind long before any warm-up test could run, which
  * made "no skeleton" pass whether or not the warm-up loaded a single chunk.
- * Here nothing else mounts VerseApp, and the test first proves it (the
+ * Here nothing else mounts PhantomApp, and the test first proves it (the
  * PRECONDITION and CONTROL below) before it believes a missing skeleton.
  */
 import { act, render, screen, waitFor } from '@testing-library/react';
@@ -20,14 +20,14 @@ import { stubSurfaceFetch } from '../command/fetch-stub.test-support.js';
 import { MockEventSource } from '../fixtures.test-support.js';
 import { resetVerseStore } from '../verse-store.js';
 import { getVerseUiState, landedModule, resetVerseUi, setVerseSection, type VerseSectionId } from '../verse-ui-store.js';
-import { prefetchAfterFirstPaint, SECTION_MODULES, VerseApp } from '../VerseApp.js';
+import { prefetchAfterFirstPaint, SECTION_MODULES, PhantomApp } from '../VerseApp.js';
 import { resetCommandBus } from './command-bus.js';
 import { resetGuard } from './guarded-action.js';
 import { activity, shellFetch, type ShellFetch } from './shell-fixtures.test-support.js';
 import { resetActivityForTest } from './useActivity.js';
 import { warmUpAfterFirstPaint, type WarmupOptions } from './warmup.js';
 
-/** What VerseApp passes: any read running or queued in the cache's gate. */
+/** What PhantomApp passes: any read running or queued in the cache's gate. */
 const readsInFlight = () => {
   const gate = queryGateStats();
   return gate.active + gate.queued > 0;
@@ -171,9 +171,9 @@ describe('warmUpAfterFirstPaint', () => {
   });
 });
 
-describe('the warm-up, end to end through VerseApp', () => {
+describe('the warm-up, end to end through PhantomApp', () => {
   const surface = (id: string) => document.querySelector<HTMLElement>(`[data-surface="${id}"]`);
-  /** Section modules the SHELL asked for, in order (VerseApp's loadSection is the only caller). */
+  /** Section modules the SHELL asked for, in order (PhantomApp's loadSection is the only caller). */
   const requested: string[] = [];
   let net: ShellFetch;
 
@@ -181,7 +181,7 @@ describe('the warm-up, end to end through VerseApp', () => {
     // Transform every section once up front (a cold one can outlast findBy's
     // window), THEN start recording: the preload itself is not the shell's.
     await Promise.all(Object.values(SECTION_MODULES).map((load) => load()));
-    // VerseApp also starts this import on mount. Resolve its real module before
+    // PhantomApp also starts this import on mount. Resolve its real module before
     // mounting so its asynchronous transform cannot outlive the test worker.
     await import('./ConsoleNotifications.js');
     // Match ChatSection's first-paint fixture: importing the section alone leaves
@@ -219,7 +219,7 @@ describe('the warm-up, end to end through VerseApp', () => {
   });
 
   it('a first visit to each warmed surface mounts it directly — no skeleton frame', async () => {
-    render(<ToastProvider><VerseApp /></ToastProvider>);
+    render(<ToastProvider><PhantomApp /></ToastProvider>);
     // Wait for the shell's mount-time import and React update before teardown.
     await screen.findByRole('button', { name: /Notifications/ });
     act(() => setVerseSection('chat'));

@@ -23,14 +23,13 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
-const siteDir = resolve(root, 'site');
+const defaultRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 // ---------------------------------------------------------------------------
 // Read helpers
 // ---------------------------------------------------------------------------
 
-function read(name) {
+function read(root, name) {
   return readFileSync(resolve(root, name), 'utf8');
 }
 
@@ -53,7 +52,7 @@ function extractMeta(html) {
   return {
     canonical: canonical ? canonical[1] : null,
     og: og ? og[1] : null,
-    url: canonical ? canonical[1] ?? og ? og[1] : null : null,
+    url: canonical ? canonical[1] : og ? og[1] : null,
     title: title ? title[1] : null,
     description: desc ? desc[1] : null,
   };
@@ -63,9 +62,9 @@ function extractMeta(html) {
 // Data gathering
 // ---------------------------------------------------------------------------
 
-function gather() {
-  const pkg = JSON.parse(read('package.json'));
-  const pages = [...htmlFiles(siteDir)].map((path) => ({
+function gather(root) {
+  const pkg = JSON.parse(read(root, 'package.json'));
+  const pages = [...htmlFiles(resolve(root, 'site'))].map((path) => ({
     path,
     ...extractMeta(readFileSync(path, 'utf8')),
   })).filter((p) => p.url);
@@ -278,16 +277,8 @@ function renderLlmsFull(data) {
 // Write / check
 // ---------------------------------------------------------------------------
 
-function generate() {
-  const data = gather();
-  return {
-    'llms.txt': renderLlmsTxt(data),
-    'llms-full.txt': renderLlmsFull(data),
-  };
-}
-
-export function buildSiteLlms() {
-  const data = gather();
+export function buildSiteLlms(root = defaultRoot) {
+  const data = gather(root);
   return {
     'llms.txt': renderLlmsTxt(data),
     'llms-full.txt': renderLlmsFull(data),
@@ -296,7 +287,10 @@ export function buildSiteLlms() {
 
 function main(args) {
   const check = args.includes('--check');
-  const outputs = generate();
+  const rootIndex = args.indexOf('--root');
+  const root = rootIndex >= 0 && args[rootIndex + 1] ? resolve(args[rootIndex + 1]) : defaultRoot;
+  const siteDir = resolve(root, 'site');
+  const outputs = buildSiteLlms(root);
 
   if (check) {
     let stale = false;

@@ -24,6 +24,36 @@ def ts(t):
 
 
 class LedgerTests(unittest.TestCase):
+    def test_parse_rows_decodes_only_and_skips_bad_lines(self):
+        reconciler = {"source": "metrics-outcomes-reconciler", "jobId": "RQ-B",
+                      "prUrl": "https://example.invalid/9", "outcome": "MERGED"}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "jobs.jsonl"
+            path.write_text('{"event": "finish", "job": "RQ-A"}\nnot-json\n'
+                            + json.dumps(reconciler) + "\n")
+            parsed = b.parse_rows(path)
+            self.assertEqual(len(parsed), 2)
+            self.assertIsNone(parsed[1].get("event"))   # parse does not project
+            self.assertEqual(parsed[1]["jobId"], "RQ-B")
+            projected = b.project_rows(parsed)
+            self.assertEqual(projected[1]["event"], "outcome")
+            self.assertEqual((projected[1]["job"], projected[1]["url"]),
+                             ("RQ-B", "https://example.invalid/9"))
+            self.assertEqual(b.read_rows(path), projected)
+            self.assertEqual(b.parse_rows(path.parent / "absent.jsonl"), [])
+            self.assertEqual(b.project_rows([]), [])
+
+    def test_project_row_leaves_dispatcher_rows_unchanged(self):
+        row = {"event": "finish", "job": "RQ-X", "lane": "devin"}
+        self.assertIs(b.project_row(row), row)
+        for source in ("metrics-outcomes-reconciler",):
+            missing_job = {"source": source, "outcome": "MERGED", "prUrl": "https://x/1"}
+            missing_url = {"source": source, "outcome": "MERGED", "jobId": "RQ-Y"}
+            pending = {"source": source, "jobId": "RQ-Z", "prUrl": "https://x/2", "outcome": "OPEN"}
+            self.assertIs(b.project_row(missing_job), missing_job)
+            self.assertIs(b.project_row(missing_url), missing_url)
+            self.assertIs(b.project_row(pending), pending)
+
     def test_reconciled_legacy_outcomes_are_projected_without_changing_other_rows(self):
         terminal = {"source": "metrics-outcomes-reconciler", "job": "RQ-A",
                     "pr": "https://github.com/ashlrai/phantom/pull/1/", "status": "CLOSED"}
@@ -73,9 +103,11 @@ class PickTests(unittest.TestCase):
         # 20 same-area tasks over ceil(20 / 8) = 3 batches: 7, so the backlog does not end in a runt batch.
         self.assertEqual([t["job"] for t in picked], [f"RQ-{i}" for i in range(7)])
 
-    def test_below_min_batch_launches_alone(self):
-        self.assertEqual(b.pick_members(task("RQ-0"), [task("RQ-1")], 8), [])
-        self.assertEqual(b.pick_members(task("RQ-0"), [task("RQ-1", repo="locus"), task("RQ-2", tier="mid")], 8), [])
+    def test_below_min_batch_launches_alone_and_tiers_mix(self):
+        self.assertEqual(b.pick_members(task("RQ-0"), [], 8), [])
+        self.assertEqual(b.pick_members(task("RQ-0"), [task("RQ-1", repo="locus")], 8), [])
+        # RQ-BATCH-SESSIONS-2: each line gets its own subagent model, so a pair of mixed tiers bundles.
+        self.assertEqual([t["job"] for t in b.pick_members(task("RQ-0"), [task("RQ-2", tier="mid")], 8)], ["RQ-0", "RQ-2"])
 
     def test_small_areas_merge_but_never_raid_a_batchable_area(self):
         pool = [task("RQ-A1", area="docs"), task("RQ-B1", area="src/cli"),
@@ -93,15 +125,6 @@ class PickTests(unittest.TestCase):
 
 
 class PromptAndOutcomeTests(unittest.TestCase):
-    def test_render_carries_a_checklist_and_every_prompt(self):
-        text = b.render("RQ-BATCH-P-Q-1", "phantom", "src/core/queue", [("RQ-A", "do A\n"), ("RQ-B", "do B")])
-        self.assertIn("<!-- batch-checklist:RQ-BATCH-P-Q-1 -->\n- [ ] RQ-A — pending\n- [ ] RQ-B — pending\n", text)
-        self.assertIn("## Task 1 of 2: RQ-A\n\ndo A\n", text)
-        self.assertIn("## Task 2 of 2: RQ-B\n\ndo B\n", text)
-        self.assertIn("subagents", text)
-        # an untouched checklist parses as unreported for every task
-        self.assertEqual(b.parse_outcomes(text, ["RQ-A", "RQ-B"]), {"RQ-A": "unreported", "RQ-B": "unreported"})
-
     def test_parse_outcomes(self):
         notes = ("- [x] RQ-A — done: fixed\n"
                  "* [ ] RQ-B - failed: flaky upstream\n"
@@ -129,8 +152,10 @@ class MetricsTests(unittest.TestCase):
             {"event": "finish", "job": "B1", "lane": "devin", "wall_s": 7200, "tokens_total": 4_000_000, "ts": t, "batch_size": 10},
             {"event": "finish", "job": "OLD", "lane": "devin", "wall_s": 60, "ts": ts(self.NOW - 30 * 86400)},
             {"event": "publish", "job": "S1", "url": "u1"}, {"event": "publish", "job": "S2", "url": "u2"},
-            {"event": "publish", "job": "B1", "url": "u3"},
-        ] + [{"event": "task_outcome", "batch": "B1", "job": f"T{i}", "outcome": "done" if i < 8 else "failed"} for i in range(10)]
+            # Per-line PRs: each done member publishes under its own job id; its own reap row is not a session.
+            {"event": "finish", "job": "T0", "lane": "devin", "wall_s": 60, "ts": t, "bundle": "B1"},
+        ] + [{"event": "task_outcome", "batch": "B1", "job": f"T{i}", "outcome": "done" if i < 9 else "failed"} for i in range(10)] \
+          + [{"event": "publish", "job": f"T{i}", "url": f"m{i}"} for i in range(8)]   # T8 reported done, no PR yet
 
     def test_tasks_per_session_hour_and_per_mtok_by_mode(self):
         got = b.throughput(self.rows(), self.NOW)
@@ -157,14 +182,14 @@ class TuningTests(unittest.TestCase):
     def test_grow_shrink_hold_and_clamp(self):
         t = {"schema": b.TUNING_SCHEMA, "lanes": {}}
         done = {f"T{i}": "done" for i in range(10)}
-        self.assertEqual(b.tune(t, "devin", done, 3600, False, {}, 1)[:2], (16, 20))
-        self.assertEqual(b.size_for(t, "devin"), 20)
+        self.assertEqual(b.tune(t, "devin", done, 3600, False, {}, 1)[:2], (8, 10))
+        self.assertEqual(b.size_for(t, "devin"), 10)
         half = {f"T{i}": "done" if i < 5 else "failed" for i in range(10)}
-        self.assertEqual(b.tune(t, "devin", half, 3600, False, {}, 2)[:2], (20, 14))
+        self.assertEqual(b.tune(t, "devin", half, 3600, False, {}, 2)[:2], (10, 7))
         mid = {f"T{i}": "done" if i < 7 else "deferred" for i in range(10)}
-        self.assertEqual(b.tune(t, "devin", mid, 3600, False, {}, 3)[:2], (14, 14))
+        self.assertEqual(b.tune(t, "devin", mid, 3600, False, {}, 3)[:2], (7, 7))
         self.assertEqual(b.tune(t, "devin", done, 3600, True, {}, 4)[2], "timeout")
-        self.assertEqual(b.tune(t, "devin", done, b.WALL_BUDGET_S + 1, False, {}, 5)[:2], (9, 9))   # slow: no growth
+        self.assertEqual(b.tune(t, "devin", done, b.WALL_BUDGET_S + 1, False, {}, 5)[:2], (4, 4))   # slow: no growth
         t["lanes"]["claude"] = {"size": 999}
         self.assertEqual(b.size_for(t, "claude"), b.DEFAULT_SIZE)
         for _ in range(20):
@@ -177,7 +202,7 @@ class TuningTests(unittest.TestCase):
         stats = {"devin": {"batch": {"sessions": 3, "tasks_per_session_hour": 0.5},
                            "single": {"sessions": 3, "tasks_per_session_hour": 0.9}}}
         old, new, why = b.tune(t, "devin", {"T": "done"}, 60, False, stats, 1)
-        self.assertEqual((old, new, why), (16, 11, "batch slower than single"))
+        self.assertEqual((old, new, why), (8, 5, "batch slower than single"))
 
     def test_tuning_file_round_trip_and_report(self):
         with tempfile.TemporaryDirectory() as d:
@@ -195,7 +220,7 @@ class TuningTests(unittest.TestCase):
             with redirect_stdout(out):
                 self.assertEqual(b.main(["report", "--runs", d, "--json"]), 0)
             got = json.loads(out.getvalue())
-            self.assertEqual(got["batch_sizes"]["devin"], 20)
+            self.assertEqual(got["batch_sizes"]["devin"], 10)
             self.assertEqual(got["lanes"]["devin"]["batch"]["tasks_per_session_hour"], 4.0)
             out = io.StringIO()
             with redirect_stdout(out):

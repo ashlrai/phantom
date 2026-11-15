@@ -42,6 +42,7 @@ def build(md, repos=('phantom',), running=0, queued=0, slots=None, lanes_status=
     (q / 'slots.json').write_text(json.dumps(slots))
     (q / 'claimed.tsv').write_text('')
     (q / 'ready.tsv').write_text('')
+    (q / 'admission.json').write_text(json.dumps({'cap': 1000}))
     return tmp
 
 
@@ -90,9 +91,9 @@ def line(job, text='routine fix', **attrs):
 
 
 class BoldFloorTests(unittest.TestCase):
-    def test_under_floor_prefers_bold_and_reports_share(self):
+    def test_under_floor_reports_bold_share_but_preserves_higher_priority_work(self):
         # 2 of 8 READY lines are bet=bold (25% < 30% floor): preference lifts the
-        # picked share to >=30% even though both bolds sit at P3 behind P1 safes.
+        # bold preference only breaks ties; it cannot move P3 ahead of P1.
         rows = ['# fixture queue', '']
         rows += [line(f'RQ-T1-SAFE-{k}', P=1, pool='devin', tier='mid', repo='phantom',
                       text=f'routine safe fix {k}') for k in range(1, 7)]
@@ -106,10 +107,17 @@ class BoldFloorTests(unittest.TestCase):
         self.assertEqual((s['ready_bold'], s['ready_n']), (2, 8))
         self.assertAlmostEqual(s['ready_frac'], 0.25)
         self.assertIn('prefer=bold', r.stdout)
-        self.assertGreaterEqual(s['pick_frac'], 0.30, r.stdout)
+        self.assertEqual(s['pick_frac'], 0.0, r.stdout)
         picks = dry_ids(r.stdout)
-        self.assertIn('RQ-T1-BOLD-1', picks)
-        self.assertIn('RQ-T1-BOLD-2', picks)
+        self.assertEqual(picks, [f'RQ-T1-SAFE-{k}' for k in range(1, 5)])
+
+    def test_impact_precedes_file_order_within_priority(self):
+        rows = [line('RQ-LOW-IMPACT', P=0, pool='devin', tier='mid', repo='phantom', impact=1),
+                line('RQ-HIGH-IMPACT', P=0, pool='devin', tier='mid', repo='phantom', impact=90)]
+        tmp = build('\n'.join(rows) + '\n'); self.addCleanup(tmp.cleanup)
+        result = restock(Path(tmp.name), '--dry-run', '--per-lane', '1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(dry_ids(result.stdout), ['RQ-HIGH-IMPACT'])
 
     def test_at_floor_no_preference(self):
         # 4 of 9 READY lines bold (~44% >= 30%): normal priority order, no prefer flag.
@@ -444,6 +452,15 @@ class AutoUnparkTests(unittest.TestCase):
         self.assertIn('PARKED-DEP.devin\tRQ-NEED\t', ready)
         prompt = (home / '.ashlr-runs' / 'queue' / 'prompts' / 'RQ-NEED.md').read_text()
         self.assertIn('DEPENDENCY GATE: RQ-UPSTREAM', prompt)
+        rule = ('If the full goal cannot be verified, ship the smallest correct, useful part with honest output '
+                '(for example, age: unknown) and list the gap in BRIDGE_NOTES.md for the PR body. '
+                'Use EMPTY only when already done or truly impossible.')
+        self.assertIn(rule, prompt)
+        self.assertIn(rule, (SCRIPT.parent / 'host-integration' / 'launch.candidate.sh').read_text())
+        manifest = json.loads((SCRIPT.parents[2] / 'fleet' / 'manifest.json').read_text())
+        self.assertIn({'src': 'contrib/mac/host-integration/launch.candidate.sh', 'name': 'launch.sh',
+                       'root': 'runs-bin', 'class': 'pinned',
+                       'note': 'host-managed launcher candidate; Security pin required before adoption'}, manifest['files'])
         md = (home / '.ashlr-runs' / 'queue' / 'router-queue.md').read_text()
         self.assertIn('CLAIMED', md)
         self.assertIn('RQ-NEED', md)
@@ -451,7 +468,7 @@ class AutoUnparkTests(unittest.TestCase):
 
 class ReplenishmentDiagnosticsTests(unittest.TestCase):
     def test_local_and_personal_parked_rows_do_not_fill_lanes_or_loop(self):
-        rows = [line('RQ-LOCAL-NEW', pool='codex-local', repo='phantom'),
+        rows = [line('RQ-LOCAL-NEW', text='Offline: fix src/example.ts', pool='codex-local', repo='phantom', **{'size<': 60}),
                 line('RQ-PERSONAL-NEW', pool='codex-personal', repo='phantom')]
         slots = {l: {'held': True} for l in LANES}
         slots.update({'codex-local': {'target': 1}, 'codex-personal': {'target': 1}})
@@ -480,6 +497,47 @@ class ReplenishmentDiagnosticsTests(unittest.TestCase):
         again = json.loads(restock(home, '--per-lane', '1', '--json').stdout)
         self.assertEqual(again['queued'], 0)
         self.assertEqual((q / 'ready.tsv').read_text(), ready)
+
+    def test_local_requires_bounded_size_and_file_scope(self):
+        rows = [line('RQ-LOCAL-' + suffix, text='Offline: fix src/example.ts', pool='codex-local', repo='phantom', **attrs)
+                for suffix, attrs in [('SMALL', {'size<': 59}), ('EDGE', {'size<': 80}),
+                                      ('LARGE', {'size<': 81}), ('MISSING', {}), ('BAD', {'size<': 'oops'})]]
+        slots = {lane: {'held': True} for lane in LANES}
+        slots['codex-local'] = {'target': 10}
+        tmp = build('\n'.join(rows) + '\n', slots=slots)
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        result = restock(home, '--per-lane', '10', '--json')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        ready = (home / '.ashlr-runs/queue/ready.tsv').read_text()
+        for suffix in ('SMALL', 'EDGE'):
+            self.assertIn('RQ-LOCAL-' + suffix, ready)
+        for suffix in ('LARGE', 'MISSING', 'BAD'):
+            self.assertNotIn('RQ-LOCAL-' + suffix, ready)
+
+    def test_local_fit_routes_eight_queue_lines(self):
+        cases = [
+            ('ONE', 80, 'Offline: fix src/a.ts', 'codex-local'),
+            ('TWO', 40, 'Offline: fix src/a.ts and test/a.test.ts', 'codex-local'),
+            ('LARGE', 81, 'Offline: fix src/a.ts', 'codex-personal'),
+            ('NONE', 20, 'Offline: fix the parser', 'codex-personal'),
+            ('THREE', 20, 'Offline: fix src/a.ts src/b.ts src/c.ts', 'codex-personal'),
+            ('NETWORK', 20, 'Offline: fetch network data in src/a.ts', 'codex-personal'),
+            ('BROWSER', 20, 'Offline: use browser to test src/a.ts', 'codex-personal'),
+            ('MISSING', None, 'Offline: fix src/a.ts', 'codex-personal'),
+        ]
+        slots = {lane: {'held': True} for lane in LANES}
+        slots.update({'codex-local': {'target': 10}, 'codex-personal': {'target': 10}})
+        for name, size, task, expected in cases:
+            with self.subTest(name=name):
+                attrs = {'size<': size} if size is not None else {}
+                tmp = build(line('RQ-FIT-' + name, text=task, pool='codex-local', repo='phantom', **attrs) + '\n', slots=slots)
+                try:
+                    result = restock(Path(tmp.name), '--dry-run', '--per-lane', '10')
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(dry_lanes(result.stdout)['RQ-FIT-' + name][0], expected)
+                finally:
+                    tmp.cleanup()
 
     def test_duplicate_parked_rows_unpark_once(self):
         tmp = build('')
@@ -520,7 +578,7 @@ class NoopCutTests(unittest.TestCase):
     def state(self, home):
         return json.loads((home / '.ashlr-runs' / 'queue' / 'noop-streak.json').read_text())
 
-    def test_same_pr_and_same_file_collapse_to_one_pick(self):
+    def test_same_pr_collapses_but_distinct_prs_on_same_file_are_kept(self):
         home = self.make([
             line('RQ-A', P=1, pool='devin', repo='phantom', text='FIXUP phantom#7 file=src/a.ts fix'),
             line('RQ-B', P=1, pool='devin', repo='phantom', text='REBASE phantom#7 file=src/b.ts fix'),
@@ -528,9 +586,8 @@ class NoopCutTests(unittest.TestCase):
             line('RQ-D', P=1, pool='devin', repo='phantom', text='FIXUP phantom#9 file=src/d.ts fix'),
         ])
         r = restock(home, '--dry-run')
-        self.assertEqual(sorted(dry_ids(r.stdout)), ['RQ-A', 'RQ-D'], r.stdout)
+        self.assertEqual(sorted(dry_ids(r.stdout)), ['RQ-A', 'RQ-C', 'RQ-D'], r.stdout)
         self.assertEqual(skips(r.stdout).get('dup-pr'), 1)
-        self.assertEqual(skips(r.stdout).get('dup-file'), 1)
 
     def test_two_noops_park_the_line_for_24h(self):
         row = line('RQ-N', P=1, pool='devin', repo='phantom', text='stale work')
@@ -667,3 +724,329 @@ class PrecheckAuthoringTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class MergeRateRecoveryTests(unittest.TestCase):
+    def test_oldest_observed_job_wins_after_queue_reordering(self):
+        import time
+        tmp = build('# empty\n')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs/queue'
+        rows = []
+        for job in ('RQ-OLDER', 'RQ-NEWER'):
+            pf = q / 'prompts' / f'{job}.md'
+            pf.write_text('Keep the merge checks.\n')
+            rows.append(f'PARKED-MERGERATE.devin\t{job}\tdevin\twork\tphantom\t{pf}')
+        (q / 'ready.tsv').write_text('\n'.join(reversed(rows)) + '\n')
+        (q / 'mergerate-observed.json').write_text(json.dumps(
+            {'first': {'RQ-OLDER': time.time() - 100, 'RQ-NEWER': time.time() - 10}}))
+        (home / '.ashlr-runs/phantom-open-prs').write_text(f'{time.time()} 149\n')
+        result = restock(home, '--per-lane', '0')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        ready = (q / 'ready.tsv').read_text()
+        self.assertIn('RQ-OLDER\tphantom\tdevin\twork', ready)
+        self.assertIn(rows[1], ready)
+
+    def test_reparked_reserved_job_does_not_spend_capacity_twice(self):
+        import time
+        tmp = build('# empty\n')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs/queue'
+        rows = []
+        for job in ('RQ-RESERVED', 'RQ-OTHER'):
+            pf = q / 'prompts' / f'{job}.md'
+            pf.write_text('Keep the merge checks.\n')
+            rows.append(f'PARKED-MERGERATE.devin\t{job}\tdevin\twork\tphantom\t{pf}')
+        (q / 'ready.tsv').write_text('\n'.join(rows) + '\n')
+        (q / 'mergerate-observed.json').write_text(json.dumps(
+            {'count': 148, 'reservations': {'RQ-RESERVED': time.time()}}))
+        (home / '.ashlr-runs/phantom-open-prs').write_text(f'{time.time()} 148\n')
+        result = restock(home, '--per-lane', '0')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        ready = (q / 'ready.tsv').read_text()
+        self.assertIn(rows[0], ready)
+        self.assertIn('RQ-OTHER\tphantom\tdevin\twork', ready)
+        self.assertEqual(len(json.loads((q / 'mergerate-observed.json').read_text())['reservations']), 2)
+        state_path = q / 'mergerate-observed.json'
+        state = json.loads(state_path.read_text())
+        state['reservations']['RQ-RESERVED'] = time.time() - 3601
+        state_path.write_text(json.dumps(state))
+        result = restock(home, '--per-lane', '0')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('RQ-RESERVED\tphantom\tdevin\twork', (q / 'ready.tsv').read_text())
+
+    def test_capacity_drop_wakes_once_and_records_observed_wait(self):
+        import time
+        tmp = build('# empty\n')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs/queue'
+        rows = []
+        for n in range(3):
+            pf = q / 'prompts' / f'RQ-CAP-{n}.md'
+            pf.write_text('Required checks and merge queue rules apply.\n')
+            rows.append(f'PARKED-MERGERATE.devin\tRQ-CAP-{n}\tdevin\twork\tphantom\t{pf}')
+        (q / 'ready.tsv').write_text('\n'.join(rows) + '\n')
+        cache = home / '.ashlr-runs/phantom-open-prs'
+        cache.write_text(f'{time.time()} 150\n')
+        (q / 'mergerate-recovery-at').write_text(str(time.time()))
+        self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
+        state = q / 'mergerate-observed.json'
+        observed = json.loads(state.read_text())
+        observed['first'] = dict.fromkeys(observed['first'], time.time() - 12)
+        state.write_text(json.dumps(observed))
+        (q / 'mergerate-recovery-at').write_text(str(time.time()))
+        cache.write_text(f'{time.time()} 149\n')
+        self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
+        self.assertIn('RQ-CAP-0\tphantom\tdevin\twork', (q / 'ready.tsv').read_text())
+        self.assertRegex((home / '.ashlr-runs/dispatch-events.log').read_text(),
+                         r'UNPARK RQ-CAP-0 reason=MERGERATE observed_wait_seconds=1[2-9]')
+        before = (q / 'ready.tsv').read_text()
+        self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
+        self.assertEqual((q / 'ready.tsv').read_text(), before)
+        cache.write_text(f'{time.time()} 148\n')
+        env = {'HOME': str(home), 'PATH': os.environ.get('PATH', '/usr/bin:/bin')}
+        processes = [subprocess.Popen([sys.executable, '-B', str(SCRIPT), '--per-lane', '0'],
+                                      env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                     for _ in range(4)]
+        for process in processes:
+            _, err = process.communicate(timeout=60)
+            self.assertEqual(process.returncode, 0, err)
+        result = (q / 'ready.tsv').read_text()
+        self.assertIn('RQ-CAP-1\tphantom\tdevin\twork', result)
+        self.assertIn(rows[2], result)
+        self.assertEqual(result.count('RQ-CAP-1\tphantom\tdevin\twork'), 1)
+
+    def test_available_capacity_drains_backlog_once_across_ticks(self):
+        import time
+        tmp = build('# empty\n')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs/queue'
+        rows = []
+        for n in range(22):
+            pf = q / 'prompts' / f'RQ-BUDGET-{n}.md'
+            pf.write_text('Required merge queue checks apply.\n')
+            rows.append(f'PARKED-MERGERATE.devin\tRQ-BUDGET-{n}\tdevin\twork\tphantom\t{pf}')
+        (q / 'ready.tsv').write_text('\n'.join(rows) + '\n')
+        cache = home / '.ashlr-runs/phantom-open-prs'
+        cache.write_text(f'{time.time()} 145\n')
+        for remaining in (17, 17):
+            result = restock(home, '--per-lane', '0')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((q / 'ready.tsv').read_text().count('PARKED-MERGERATE.'), remaining)
+        cache.write_text(f'{time.time()} 143\n')
+        self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
+        self.assertEqual((q / 'ready.tsv').read_text().count('PARKED-MERGERATE.'), 15)
+        self.assertEqual((q / 'prompts/RQ-BUDGET-0.md').read_text(), 'Required merge queue checks apply.\n')
+
+    def test_abandoned_reservation_releases_capacity_but_active_job_keeps_it(self):
+        import time
+        tmp = build('# empty\n')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs/queue'
+        rows = []
+        for n in range(22):
+            pf = q / 'prompts' / f'RQ-STALE-{n}.md'
+            pf.write_text('Required merge queue checks apply; no merge without Security pin\n')
+            rows.append(f'PARKED-MERGERATE.devin\tRQ-STALE-{n}\tdevin\twork\tphantom\t{pf}')
+        (q / 'ready.tsv').write_text('\n'.join(rows) + '\n')
+        (home / '.ashlr-runs/phantom-open-prs').write_text(f'{time.time()} 148\n')
+        self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
+        self.assertEqual((q / 'ready.tsv').read_text().count('PARKED-MERGERATE.'), 20)
+        state_path = q / 'mergerate-observed.json'
+        state = json.loads(state_path.read_text())
+        state['reservations'] = {j: time.time() - 3601 for j in state['reservations']}
+        state_path.write_text(json.dumps(state))
+        # The first vanished; the second is still queued. Only one place reopens.
+        ready = (q / 'ready.tsv').read_text().splitlines()
+        (q / 'ready.tsv').write_text('\n'.join(row for row in ready if not row.startswith('RQ-STALE-0\t')) + '\n')
+        self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
+        ready = (q / 'ready.tsv').read_text()
+        self.assertIn('RQ-STALE-2\tphantom\tdevin\twork', ready)
+        self.assertEqual(ready.count('PARKED-MERGERATE.'), 19)
+        self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
+        self.assertEqual((q / 'ready.tsv').read_text(), ready)
+        self.assertIn('no merge without Security pin', (q / 'prompts/RQ-STALE-2.md').read_text())
+
+    def test_concurrent_recovery_obeys_shared_cooldown(self):
+        import time
+        tmp = build('# empty\n')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs/queue'
+        rows = []
+        for n in range(22):
+            pf = q / 'prompts' / f'RQ-RACE-{n}.md'
+            pf.write_text('Required checks and merge queue rules apply.\n')
+            rows.append(f'PARKED-MERGERATE.devin\tRQ-RACE-{n}\tdevin\twork\tphantom\t{pf}')
+        (q / 'ready.tsv').write_text('\n'.join(rows) + '\n')
+        (home / '.ashlr-runs/phantom-open-prs').write_text(f'{time.time()} 149\n')
+        env = {'HOME': str(home), 'PATH': os.environ.get('PATH', '/usr/bin:/bin')}
+        processes = [subprocess.Popen([sys.executable, '-B', str(SCRIPT), '--per-lane', '0'],
+                                      env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                     for _ in range(4)]
+        for process in processes:
+            _, err = process.communicate(timeout=60)
+            self.assertEqual(process.returncode, 0, err)
+        result = (q / 'ready.tsv').read_text()
+        self.assertEqual(result.count('PARKED-MERGERATE.'), 21)
+        self.assertEqual(result.count('\tphantom\tdevin\twork\t'), 1)
+
+    def test_duplicate_and_active_jobs_do_not_block_fair_recovery(self):
+        import time
+        tmp = build('# empty\n')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs/queue'
+        rows = []
+        for job in ('RQ-DUP', 'RQ-ACTIVE', 'RQ-NEXT'):
+            pf = q / 'prompts' / f'{job}.md'
+            pf.write_text('Required checks must pass; no merge without Security pin\n')
+            rows.append(f'PARKED-MERGERATE.devin\t{job}\tdevin\twork\tphantom\t{pf}')
+        (q / 'ready.tsv').write_text('\n'.join([rows[0], rows[0], *rows[1:]]) + '\n')
+        (q / 'run/RQ-ACTIVE.dispatched').write_text('1')
+        (home / '.ashlr-runs/phantom-open-prs').write_text(f'{time.time()} 149\n')
+        self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
+        result = (q / 'ready.tsv').read_text()
+        self.assertEqual(result.count(rows[0]), 2)
+        self.assertIn(rows[1], result)
+        self.assertIn('RQ-NEXT\tphantom\tdevin\twork', result)
+        self.assertEqual((q / 'prompts/RQ-NEXT.md').read_text(),
+                         'Required checks must pass; no merge without Security pin\n')
+        (q / 'mergerate-recovery-at').write_text(str(time.time() - 3601))
+        self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
+        self.assertEqual((q / 'ready.tsv').read_text(), result)
+
+    def test_saturation_recovery_and_repeated_runs(self):
+        import time
+        tmp = build('# empty\n')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs' / 'queue'
+        rows = []
+        for n in range(2):
+            pf = q / 'prompts' / f'RQ-RATE-{n}.md'
+            pf.write_text('no merge without Security pin\n')
+            rows.append(f'PARKED-MERGERATE.devin\tRQ-RATE-{n}\tdevin\twork\tphantom\t{pf}')
+        (q / 'ready.tsv').write_text('\n'.join(rows) + '\n')
+        cache = home / '.ashlr-runs' / 'phantom-open-prs'
+        cache.write_text(f'{time.time()} 150\n')
+        for evidence in [f'{time.time() - 601} 0\n', 'invalid\n']:
+            cache.write_text(evidence)
+            r = restock(home, '--per-lane', '0')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual((q / 'ready.tsv').read_text(), '\n'.join(rows) + '\n')
+        cache.write_text(f'{time.time()} 150\n')
+        r = restock(home, '--per-lane', '0')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('RQ-RATE-0\tphantom\tdevin\twork', (q / 'ready.tsv').read_text())
+        self.assertIn(rows[1], (q / 'ready.tsv').read_text())
+        before = (q / 'ready.tsv').read_text()
+        self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
+        self.assertEqual((q / 'ready.tsv').read_text(), before)
+        self.assertIn('no merge without Security pin', (q / 'prompts' / 'RQ-RATE-0.md').read_text())
+        (q / 'mergerate-recovery-at').write_text(str(time.time() - 3601))
+        self.assertEqual(restock(home, '--per-lane', '0').returncode, 0)
+        self.assertNotIn('PARKED-MERGERATE', (q / 'ready.tsv').read_text())
+
+class QueueDepthGateTests(unittest.TestCase):
+    def test_full_and_partial_queue(self):
+        candidates = '\n'.join(line(f'RQ-GATE-{n}', pool='devin', tier='mid', repo='phantom') for n in range(60))
+        for depth in (10, 100):
+            with self.subTest(depth=depth):
+                tmp = build(candidates)
+                try:
+                    home = Path(tmp.name)
+                    q = home / '.ashlr-runs' / 'queue'
+                    (q / 'admission.json').write_text(json.dumps({'cap': 18}))
+                    before = ''.join(f'RQ-OLD-{n}\tphantom\tdevin\tmid\t/prompt\n' for n in range(depth))
+                    (q / 'ready.tsv').write_text(before)
+                    result = restock(home, '--per-lane', '100')
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    after = (q / 'ready.tsv').read_text().splitlines()
+                    self.assertTrue(set(before.splitlines()).issubset(after))
+                    self.assertLessEqual(len(after) - depth, max(0, 45 - depth))
+                finally:
+                    tmp.cleanup()
+
+class QueueQualityTests(unittest.TestCase):
+    def test_identical_filler_grouped_at_any_rate_and_distinct_work_kept(self):
+        rows = [
+            line('RQ-TEST1A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add one test case in test/example.test.ts'),
+            line('RQ-TEST2A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add one test case in test/example.test.ts'),
+            line('RQ-TEST3A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add one test case in test/other.test.ts'),
+            line('RQ-SUBSTANTIVE', pool='codex-personal', tier='work', repo='phantom', text='Fix behavior and add tests in test/example.test.ts'),
+            line('RQ-GUARDIAN1A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Guardian: add one test case in test/example.test.ts'),
+        ]
+        for rate, expected in [(0.26, False), (0.25, False), (None, False)]:
+            with self.subTest(rate=rate):
+                tmp = build('\n'.join(rows) + '\n', slots={**{l: {'held': True} for l in LANES}, 'codex-personal': {'target': 6}})
+                self.addCleanup(tmp.cleanup)
+                q = Path(tmp.name) / '.ashlr-runs' / 'queue'
+                (q / 'status.json').write_text(json.dumps({'lanes': {}, 'rollup_24h': {'by_lane': {'codex-personal': {'empty_rate': rate}}}}))
+                r = restock(Path(tmp.name), '--dry-run', '--per-lane', '10')
+                self.assertEqual(r.returncode, 0, r.stderr)
+                ids = dry_ids(r.stdout)
+                self.assertEqual('RQ-TEST2A123456Q8' in ids, expected, r.stdout)
+                self.assertTrue({'RQ-TEST1A123456Q8', 'RQ-TEST3A123456Q8', 'RQ-SUBSTANTIVE', 'RQ-GUARDIAN1A123456Q8'} <= set(ids), r.stdout)
+                if not expected: self.assertEqual(skips(r.stdout).get('duplicate-single-case-test-file'), 1)
+
+    def test_recent_empty_streak_is_scoped_and_recovers(self):
+        from datetime import datetime, timezone, timedelta
+        task = 'Add one test case in test/example.test.ts'
+        rows = [line(f'RQ-TEST{n}A123456Q8', pool='codex-personal', tier='work', repo='phantom', text=task) for n in range(1, 4)]
+        rows.append(line('RQ-DISTINCT', pool='codex-personal', tier='work', repo='phantom', text='Fix behavior in test/example.test.ts'))
+        tmp = build('\n'.join(rows) + '\n', slots={**{l: {'held': True} for l in LANES}, 'codex-personal': {'target': 6}})
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        metrics = home / '.ashlr-runs/metrics/jobs.jsonl'
+        metrics.parent.mkdir(parents=True, exist_ok=True)
+        now = datetime.now(timezone.utc)
+        def evidence(job, minutes, **fields):
+            return json.dumps({'job': job, 'ts': (now - timedelta(minutes=minutes)).isoformat(), **fields})
+        empty = [evidence('RQ-TEST1A123456Q8', 20, empty=True), evidence('RQ-TEST2A123456Q8', 10, outcome='empty')]
+        metrics.write_text('\n'.join(empty) + '\n')
+        result = restock(home, '--dry-run', '--per-lane', '10')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(skips(result.stdout).get('recent-empty-streak'), 3)
+        self.assertIn('RQ-DISTINCT', dry_ids(result.stdout))
+        metrics.write_text('\n'.join(empty + [evidence('RQ-TEST2A123456Q8', 1, empty=False)]) + '\n')
+        result = restock(home, '--dry-run', '--per-lane', '10')
+        self.assertIn('RQ-TEST1A123456Q8', dry_ids(result.stdout))
+        metrics.write_text('\n'.join([evidence('RQ-TEST1A123456Q8', 1500, empty=True), empty[1]]) + '\n')
+        result = restock(home, '--dry-run', '--per-lane', '10')
+        self.assertIn('RQ-TEST1A123456Q8', dry_ids(result.stdout))
+
+    def test_existing_queued_group_survives_next_pass(self):
+        rows = [line('RQ-TEST1A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add one test case in test/example.test.ts'),
+                line('RQ-TEST2A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add one test case in test/example.test.ts')]
+        tmp = build('\n'.join(rows) + '\n', slots={**{l: {'held': True} for l in LANES}, 'codex-personal': {'target': 6}})
+        self.addCleanup(tmp.cleanup)
+        q = Path(tmp.name) / '.ashlr-runs' / 'queue'
+        (q / 'status.json').write_text(json.dumps({'lanes': {}, 'rollup_24h': {'by_lane': {'codex-personal': {'empty_rate': 0.5}}}}))
+        prompt = q / 'prompts' / 'existing.md'
+        prompt.write_text('existing work')
+        (q / 'ready.tsv').write_text(f'RQ-TEST1A123456Q8\tphantom\tcodex-personal\twork\t{prompt}\n')
+        r = restock(Path(tmp.name), '--dry-run', '--per-lane', '10')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn('RQ-TEST2A123456Q8', dry_ids(r.stdout))
+        self.assertEqual(skips(r.stdout).get('duplicate-single-case-test-file'), 1)
+
+    def test_merged_identical_filler_suppresses_stale_copy(self):
+        task = 'Add one test case in test/example.test.ts'
+        rows = [line('RQ-OLD1A123456Q8', pool='codex-personal', tier='work', repo='phantom', text=task),
+                line('RQ-NEW1A123456Q8', pool='codex-personal', tier='work', repo='phantom', text=task),
+                line('RQ-NEW2A123456Q8', pool='codex-personal', tier='work', repo='phantom', text=task + ' for invalid input')]
+        tmp = build('\n'.join(rows) + '\n', slots={**{l: {'held': True} for l in LANES}, 'codex-personal': {'target': 6}})
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        metrics = home / '.ashlr-runs/metrics/jobs.jsonl'
+        metrics.parent.mkdir(parents=True, exist_ok=True)
+        metrics.write_text(json.dumps({'event': 'outcome', 'state': 'MERGED', 'job': 'RQ-OLD1A123456Q8', 'repo': 'phantom'}) + '\n')
+        result = restock(home, '--dry-run', '--per-lane', '10')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(skips(result.stdout).get('acceptance-already-merged'), 1)
+        self.assertIn('RQ-NEW2A123456Q8', dry_ids(result.stdout))

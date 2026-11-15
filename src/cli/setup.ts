@@ -22,7 +22,6 @@
  */
 
 import { loadConfig } from '../core/config.js';
-import { setupWizard } from '../core/onboard.js';
 import {
   assertResidentServiceInstallAuthorized,
   RESIDENT_SERVICE_DORMANT_RUNTIME_GUIDANCE,
@@ -186,6 +185,7 @@ export async function cmdSetup(args: string[]): Promise<number> {
 
   let result: OnboardResult;
   try {
+    const { setupWizard } = await import('../core/onboard.js');
     result = await setupWizard(cfg, { wire: wireMode, yes: yesMode, userName, userId });
   } catch (err) {
     // setupWizard is guaranteed never-throw, but be defensive.

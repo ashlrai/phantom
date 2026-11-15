@@ -32,7 +32,7 @@ const text = (v: unknown): string => typeof v === 'string' && v ? v : '-';
 /** Jobs with a launch in the last 6 hours and no finish at or after it, from the last 3000 ledger lines. */
 export function runningJobs(ledger: string, now: number): RunningReport {
   const lines = ledger.split(/\r?\n/).filter(l => l.trim()).slice(-MAX_LINES);
-  const seen = new Map<string, { launch: number; finished: boolean; info: Record<string, string> }>();
+  const seen = new Map<string, { launch: number; finish: number; info: Record<string, string> }>();
   for (const line of lines) {
     let row: Record<string, unknown>;
     try {
@@ -44,18 +44,18 @@ export function runningJobs(ledger: string, now: number): RunningReport {
     const at = parseTs(row.ts ?? row.timestamp ?? row.at);
     const event = row.event ?? row.type;
     if (typeof id !== 'string' || !id || !Number.isFinite(at)) continue;
-    const entry = seen.get(id) ?? { launch: NaN, finished: false, info: {} };
+    if (at > now || (event !== 'launch' && event !== 'finish')) continue;
+    const entry = seen.get(id) ?? { launch: -Infinity, finish: -Infinity, info: {} };
     seen.set(id, entry);
-    for (const key of ['lane', 'model', 'repo', 'tier']) if (typeof row[key] === 'string' && row[key]) entry.info[key] = row[key] as string;
-    if (event === 'launch' && !(at < entry.launch)) {
-      if (at > entry.launch || Number.isNaN(entry.launch)) entry.finished = false;
+    if (event === 'launch' && at > entry.launch) {
       entry.launch = at;
-    } else if (event === 'finish' && !(at < entry.launch)) entry.finished = true;
-    else if (event === 'finish' && Number.isNaN(entry.launch)) entry.finished = true;
+      entry.info = {};
+      for (const key of ['lane', 'model', 'repo', 'tier']) if (typeof row[key] === 'string' && row[key]) entry.info[key] = row[key] as string;
+    } else if (event === 'finish') entry.finish = Math.max(entry.finish, at);
   }
   const jobs: RunningJob[] = [];
   for (const [job, e] of seen) {
-    if (e.finished || !Number.isFinite(e.launch) || e.launch > now || now - e.launch > WINDOW_MS) continue;
+    if (e.finish >= e.launch || !Number.isFinite(e.launch) || e.launch > now || now - e.launch > WINDOW_MS) continue;
     jobs.push({ job, lane: text(e.info.lane), model: text(e.info.model), repo: text(e.info.repo), tier: text(e.info.tier),
       minutes: Math.floor((now - e.launch) / 60_000) });
   }

@@ -362,10 +362,18 @@ export async function buildDailyStandup(
   // ── 5. Self-improvement lessons (M235 anti-playbooks + M243 skills) ────────
   try {
     const { hubStorePath } = await import('../genome/store.js');
-    const { existsSync, readFileSync } = await import('node:fs');
+    const { existsSync } = await import('node:fs');
+    const { readPrivateFileTailCapped } = await import('../verse/preferences.js');
     const hubPath = hubStorePath();
     if (existsSync(hubPath)) {
-      const raw = readFileSync(hubPath, 'utf8');
+      // Tail read: the recent-lesson scan wants the newest entries, at the end.
+      const read = readPrivateFileTailCapped(hubPath, 8 * 1024 * 1024);
+      if (read === null) throw new Error('hub store unreadable');
+      let raw = read.text;
+      if (read.truncated) {
+        const firstBreak = raw.indexOf('\n');
+        raw = firstBreak < 0 ? '' : raw.slice(firstBreak + 1);
+      }
       let antiPlaybookCount = 0;
       let skillCount = 0;
       let recentLesson: string | undefined;

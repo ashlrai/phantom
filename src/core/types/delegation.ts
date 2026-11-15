@@ -5,6 +5,14 @@ import type { RunBudget } from './run.js';
 
 export type DelegationOrigin = 'run' | 'swarm' | 'daemon' | 'best-of-n' | 'manager' | string;
 
+/**
+ * The pipeline stage a delegated run owns (bottleneck-only delegation, digest
+ * item 6). `plan` and `verify` are judgment stages that stay on frontier lanes;
+ * `implement` runs on cheap lanes. The lane-class policy lives in
+ * routing/stage-delegation.ts; this is only the shared vocabulary.
+ */
+export type DelegationStage = 'plan' | 'implement' | 'verify';
+
 export type DelegationMemoryMode = 'inherit' | 'none' | 'bounded' | 'repo-only' | 'full';
 
 export type DelegationResultKind =
@@ -64,6 +72,8 @@ export interface DelegationScope {
   swarmId?: string;
   taskId?: string;
   objective?: string;
+  /** Which pipeline stage this delegation owns; absent = the whole task. */
+  stage?: DelegationStage;
   allowedFiles?: DelegationAllowedFiles;
   budget?: Partial<RunBudget>;
   contextBudget?: DelegationContextBudget;
@@ -84,6 +94,8 @@ export interface DelegationScopeSummary {
   swarmId?: string;
   taskId?: string;
   objective?: string;
+  /** Which pipeline stage this delegation owns; absent = the whole task. */
+  stage?: DelegationStage;
   allowedFiles?: {
     includeCount: number;
     excludeCount: number;

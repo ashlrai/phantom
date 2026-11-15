@@ -364,9 +364,9 @@ export class SharedWorkQueueCoordinator implements WorkQueueCoordinator {
       this.claims.set(ref.itemId, ref);
       this.claimWorkedItemIds.set(ref.itemId, ref.itemId);
     }
-    const claimedIds = claimedRefs.map((ref) => ref.itemId);
-    const claimedSet = new Set(claimedIds);
-    return candidates.filter((item) => claimedSet.has(item.id));
+    const claimedSet = new Set(claimedRefs.map((ref) => ref.itemId));
+    // Consume each id: one durable lease must yield at most one launch.
+    return candidates.filter((item) => claimedSet.delete(item.id));
   }
 
   claimItemsWithGenerations(

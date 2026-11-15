@@ -40,6 +40,7 @@ import {
   type UsageRow,
   type UsageWindowRow,
 } from './usage-pane-model.js';
+import { ObserveSlice } from '../fleet-observe/ObserveFacts.js';
 import { spendDown, type SpendDownItem } from './spend-down-model.js';
 import styles from './fleet-usage.module.css';
 
@@ -251,6 +252,7 @@ export function FleetUsagePane({ visible }: PaneProps) {
         <p className={styles.notice} role="status">Provider accounts answered in a shape this build cannot read.</p>
       )}
 
+      <ObserveSlice visible={visible} part="usage" />
       <SpendDownStrip items={spend} nowMs={nowMs} />
 
       {(rows.length > 0 || personal !== null) && (

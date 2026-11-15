@@ -39,6 +39,38 @@ export interface AgentCommandDoc {
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
   {
+    usage: 'phm onboard --ecosystem [--json] | phm onboard --ecosystem --grant --plan <planId> --select <id,id> [--json]',
+    description: 'Detect existing capabilities, then grant one reviewed integration bundle. Names/state only; imports and locked-vault access stay in a trusted terminal. --yes never grants. Exit 0 preview/complete, 1 incomplete wiring, 2 refusal.',
+    safety: 'append',
+    jsonShape: 'EcosystemPlan {schemaVersion:1,phase:"preview",planId,capabilities[]} | EcosystemReceipt {schemaVersion:1,phase,grantId,planId,results[]} | {ok:false,error}',
+  },
+  {
+    usage: 'phm bus send --from <label> --to <label> --body <json> [--id <id>] [--priority P0|P1|P2|P3] [--ttl <ms>] --json',
+    description: 'Append one local durable mailbox message. Same ID and identical envelope deduplicate without renewing TTL. Labels grant no identity or authority; no remote dispatch or engine execution. Exit 0 accepted/replayed, 1 operational refusal, 2 usage.',
+    safety: 'append',
+    jsonShape: '{ok:true,id,replayed} or {ok:false,error:{code,message}}',
+  },
+  {
+    usage: 'phm bus inbox --to <label> [--limit <1..1000>] --json',
+    description: 'Read pending, unexpired local mailbox messages in priority/acceptance order; does not acknowledge. hasMore reports truncation. Unreadable/incomplete storage refuses; missing storage is empty. Exit 0 read, 1 operational refusal, 2 usage.',
+    safety: 'read',
+    jsonShape: '{ok:true,messages:BusEnvelope[],hasMore} or {ok:false,error:{code,message}}',
+  },
+  {
+    usage: 'phm bus ack <id> --to <label> --json',
+    description: 'Append an idempotent local mailbox acknowledgment after checking the stored recipient. Same-user routing labels are not authenticated identities. Exit 0 acknowledged/replayed, 1 operational refusal or missing message, 2 usage.',
+    safety: 'append',
+    jsonShape: '{ok:true,id,acknowledged:true,replayed} or {ok:false,error:{code,message}}',
+  },
+  {
+    usage: 'phm constitution check [--root <repo>] [--json] [prompt-or-template-path ...]',
+    description: 'Validate constitution rule IDs and prompt/template references. Read-only; exit 0 valid, 1 invalid or unreadable input, 2 bad usage.',
+    safety: 'read',
+    jsonShape: '{ ok, ruleCount, referenceCount, filesChecked, diagnostics: [{ path, line, id, kind }] }',
+  },
+  { usage: 'phm check [--base <ref>] [--json]', description: 'In the Phantom repository, run incremental typechecks, cached lint and affected tests concurrently. Development feedback only; run the gate for release checks.', safety: 'append', jsonShape: '{ok, mode, base, durationMs, steps}' },
+  { usage: 'phm tune prepare <reviewed-samples.jsonl> <new-output-directory> <scrub.pl> | evaluate <paired-report.json>', description: 'Prepare scrub-gated local-model datasets or assess paired evaluation evidence; never train or activate a lane.', safety: 'append', jsonShape: 'Dataset counts/hashed task IDs or paired evaluation decision' },
+  {
     usage: 'phm connectors list|show <id> [--json]',
     description: 'Read validated connector metadata from ~/.phantom/connectors/profile.toml. Credential names only; never resolves secrets. Exit 0 success, 2 invalid profile/usage.',
     safety: 'read',
@@ -62,9 +94,75 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     safety: 'read',
     jsonShape: '{schemaVersion:1, command, status:"ready", nodes|edges|counts} | {schemaVersion:1, command, status:"unavailable"|"error", error:{code,message}}',
   },
+  { usage: 'phm chain verify [--json]', description: 'Exercise synthetic in-memory chain paths; never sends or checks live transport. Exit 0 pass, 1 failure, 2 usage.', safety: 'read', jsonShape: 'phantom.chain.verify.v1; per-link status and latency' },
+  { usage: 'phm fleet deploy-plan --since <sha> [--repo <path>] [--bin <path>] [--json]', description: 'Find committed fleet scripts without matching live copies. Read-only; pinned or unknown files need Security review. Exit 0 compared, 1 unreadable live file, 2 invalid input or unavailable evidence.', safety: 'read', jsonShape: 'FleetDeployPlan {schema:fleet.deploy-plan.v1,since,head,checked,inSync,files:[{repoPath,livePath,repoSha256,liveSha256,shaPinned,status,action}]} | {schema,error}' },
+  { usage: 'phm fleet restock plan [--json]', description: 'Check READY candidates before grouping 6–10 items per repo. Read-only; exclusions and small groups remain visible.', safety: 'read', jsonShape: 'RestockPlan {schema:fleet.restock-plan.v1,jobs,excluded,held,invalid}' },
+  { usage: 'phm fleet drive [--once] [--root <directory>] [--json]', description: 'Refresh the local Masbot relay status from driver snapshots and the fleet digest. No model calls or message delivery. Exit 1 if inputs cannot be read.', safety: 'append', jsonShape: 'DriveReport plus fleet digest; schemaVersion 1' },
+  { usage: 'phm fleet drive jobs --bin <absolute-phm-path> [--root <absolute-directory>]', description: 'Print restockable Mac launchd job definitions. Does not install or activate them.', safety: 'read', jsonShape: '[{label,plist}]' },
   { usage: 'phm route explain [--json]', description: 'Read persisted dispatcher pools and accepted route moves in the trailing hour.', safety: 'read', jsonShape: '{available, route-moves-per-hour: number|null, lines}' },
-  { usage: 'ashlr router rank --tier <local|mid|frontier> [--routes FILE] [--slots pool=count ...] [--json]', description: 'Rank eligible lanes by nearest reset; missing slots or budgets exclude a lane. No dispatch or state writes.', safety: 'read', jsonShape: '{ schema: fleet.lane-rank.v1, tier, lanes: RankedLane[] }' },
+  { usage: 'phm route decide --input <file|-> [--root <directory>] --json', description: 'Advisory typed route from local snapshots; bounded local model first, existing Jev on invalid output, deterministic fallback. No launch changes.', safety: 'read', jsonShape: 'RouteReport {schema:route.decision.v1,advisory:true,lane,model,effort,speed_tier,reason_codes,path,duration_ms,attempts,candidate_count}' },
+  { usage: 'ashlr router rank --tier <local|mid|frontier> [--routes FILE] [--slots pool=count ...] [--json]', description: 'Rank eligible lanes by forecast exhaustion, then nearest reset; missing slots or budgets exclude a lane. No dispatch or state writes.', safety: 'read', jsonShape: '{ schema: fleet.lane-rank.v1, tier, lanes: RankedLane[] }' },
   { usage: 'phm router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]', description: 'Compare recorded router predictions with matched outcomes and usage offline.', safety: 'read', jsonShape: 'CalibrationReport (schemaVersion 1)' },
+  {
+    usage: 'phm context --for-agent <lane> --json',
+    description: 'Compact under-4KB brief for one lane from the world model, roster claims, open pulls, bottlenecks, blind spots, and that lane pacing. Read-only. Exit 0 brief, 2 bad usage.',
+    safety: 'read',
+    jsonShape: 'ashlr.context-brief/v1',
+  },
+  {
+    usage: 'phm claim acquire <work-key> --lane <lane> [--repo owner/name] [--pr N] [--branch NAME] [--pulls <file>] --json | phm claim release <work-key> --lane <lane> --reason open|merge|abandon --json',
+    description: 'Claim a work key before starting. Refuses a live claim or an open pull on that key and returns the holder. Release on pull open, merge, or abandon. Grants no execution authority.',
+    safety: 'append',
+    jsonShape: 'ashlr.work-claim/v1',
+  },
+  {
+    usage: 'phm growth [--json] [--range 1H|1D|1W|1M] [--prs <file>]',
+    description: 'Read the Growth chart series. Each series comes from a local ledger. A missing source is no-data-source and a world-model blind spot. Exit 0 report, 1 unreadable pull file, 2 bad usage.',
+    safety: 'read',
+    jsonShape: 'growth.series.v1',
+  },
+  {
+    usage: 'phm world [--json] [--refresh] | phm world get <path> [--json]',
+    description: 'Read the cached ashlr.world-model/v1 snapshot. blindSpots lists each unknown field by path with a stable id. Unknown is never zero. Exit 0 snapshot, 2 bad usage.',
+    safety: 'read',
+    jsonShape: 'ashlr.world-model/v1 | one dotted path node',
+  },
+  {
+    usage: 'phm observe [--json] | phm observe session <id> [--json]',
+    description: 'Read-only human observe snapshot. Sensor headroom null, stale readings, and unreachable resources stay unknown and are never counted as idle. Exit 0 snapshot, 1 unreadable pull file, 2 bad usage.',
+    safety: 'read',
+    jsonShape: 'observe.human.v1 | session detail',
+  },
+  {
+    usage: 'phm wb locus [--json]',
+    description: 'Read Locus custody health through its credential-free fleet feed.',
+    safety: 'read',
+    jsonShape: '{v:1, state, reason, custody, sessionOk}',
+  },
+  {
+    usage: 'phm wb secrets [--json]',
+    description: 'Read Phantom Secrets custody metadata only: names, scope, age and last rotation. Exit 1 when unavailable; never reveals values.',
+    safety: 'read',
+    jsonShape: '{ v: 1, state: ok|unknown, secrets: SecretCustody[] }',
+  },
+  {
+    usage: 'phm wb steer --text <note> [--apply] [--json]',
+    description: 'Append a steer note to the leaders\' inbox — the same steer.note the workbench action API runs. Dry run unless --apply. Exit 0 accepted, 1 operational, 2 usage/invalid.',
+    safety: 'append',
+    jsonShape: '{ v: 1, dryRun, action, outcome, at, id, bytes } | { v: 1, dryRun, error }',
+  },
+  {
+    usage: 'phm wb reprioritize <job-id> --priority P0|P1|P2|P3 [--apply] [--json]',
+    description: 'Re-priority one unclaimed queue.v1 line (READY or HOLD) — the same queue.reprioritize the workbench action API runs. Dry run unless --apply. Exit 0 changed, 1 operational, 2 usage/invalid.',
+    safety: 'append',
+    jsonShape: '{ v: 1, dryRun, action, outcome, job, from, to } | { v: 1, dryRun, error }',
+  },
+  {
+    usage: 'phm wb stop <job-id> [--apply] [--json]',
+    description: 'SIGTERM then SIGKILL every process carrying the job id on token boundaries — the same job.stop the workbench action API runs, audited to queue/job-stops.jsonl before the first signal. Dry run lists the matched pids only. Exit 0, 1 operational, 2 usage/invalid.',
+    safety: 'append',
+    jsonShape: '{ v: 1, dryRun, action, outcome, job, pids } | { v: 1, dryRun, error }',
+  },
   {
     usage: 'phm budget show [--json]',
     description: 'Read per-pool budget buckets, burn rates, resets and provenance. Unknown is never zero.',
@@ -89,6 +187,8 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     safety: 'append',
     jsonShape: 'Merge: {status,jobId}; read: {v:1,jobs:[{jobId,repo,prompt}]}; complete: {status,jobId}; errors exit 1, usage exit 2',
   },
+  { usage: 'phm jobs retry-empty --dry-run|--apply [--file <router-queue.md>] [--json]', description: 'Preview or queue one scoped retry per eligible empty job.', safety: 'append', jsonShape: 'jobs.retry-empty.v1 {applied,lines}' },
+  { usage: 'phm jobs empty [--since 24h] [--json]', description: 'Explain empty jobs from local notes and logs.', safety: 'read', jsonShape: 'jobs.empty.v1 {hours,total,counts,jobs}' },
   {
     usage: 'phm metrics ingest --jobs <jobs.jsonl> --status <status.json> [--json]',
     description: 'Read local job snapshots into deterministic lane and tier metrics and advisory priors. No network, writes or operational steering.',
@@ -126,6 +226,18 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{pass,checks:[{name,ok,secs,first_error}],changed_files}',
   },
   {
+    usage: 'phm verify done --worktree <path> [--contract <path>] [--plan]',
+    description: 'Evaluate a worktree\'s done-contract.v1 (DONE_CONTRACT.json or a BRIDGE_NOTES.md embed): floor checks, verify commands and attested acceptance items. No contract falls back to the notes-file expectation. JSON verdict on stdout, handoff on stderr; child output withheld. Exit 0 pass, 1 failed, 2 usage.',
+    safety: 'append',
+    jsonShape: '{pass,mode,job,source,notes_file,notes_present,checks:[{id,source,required,ok,secs,first_error}],acceptance:[{id,text,status,detail}],error}',
+  },
+  {
+    usage: 'phm engineering-receipt --events <file.jsonl> [--claims <file>] [--task <text>] [--json]',
+    description: 'Engineering receipt from recorded tool events only: Evidence plus model Claims, unsupported claims flagged UNVERIFIED, no-check-after-edit flagged. Requires PHANTOM_RECEIPTS=1; read-only, secrets scrubbed.',
+    safety: 'read',
+    jsonShape: '{task,evidence:{commitSha,typecheck,suites,integration,build,deploy,verificationScope,edits,noCheckAfterEdit},claims:[{text,kind,status,reason}]}',
+  },
+  {
     usage: 'ashlr verify-pr <owner/repo> <PR> --confirm-head <SHA> [--json]',
     description: 'Host-owned maintainer PR intake: authenticates the caller, runs base-derived checks confined on the exact tree and posts the ruleset-bound App check. Does not merge or deploy; saved receipts never authorize a check.',
     safety: 'append',
@@ -151,15 +263,21 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
   },
   {
     usage: 'ashlr agents bus channels list|test <id> [--json]',
-    description: 'List channel types or test one offline; no adapter or network is invoked.',
-    safety: 'read',
-    jsonShape: '{dryRun, channels[]} | {id, dryRun, status, reason}',
+    description: 'List registered channel adapters. bus and handoff probes write one local envelope; other channels stay refused. No network.',
+    safety: 'append',
+    jsonShape: '{dryRun, channels:[{id, adapterRegistered, healthy}]} | {id, dryRun, status, reason}',
   },
   {
     usage: 'ashlr agents bus contract [--json]',
     description: 'Print the Agent Bus v2 contract version, providers, body kinds, work statuses and claim key forms. Read-only; claims coordinate and grant no execution authority.',
     safety: 'read',
     jsonShape: '{schemaVersion, providers[], wakeKinds[], bodyKinds[], workStatuses[], claimKeyForms[], claimLeaseMs:{min,max}, claimsGrantExecutionAuthority:false}',
+  },
+  {
+    usage: 'ashlr agents roster [--json]',
+    description: 'Unified live session roster across Phantom jobs, Devin cloud, Devin Desktop, Codex, Claude, Cursor, Grok, Ollama and oMLX. Each probe times out in about 5s and degrades to unknown. Read-only; no secrets.',
+    safety: 'read',
+    jsonShape: 'agent-roster.v1 {schema, observedAt, latencyMs, sources[{source, ok, availability, sessions, error, observedAt, truncated}], sessions[], claims}',
   },
   {
     usage: 'ashlr runtime status --store <absolute> --json',
@@ -336,6 +454,18 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'OrientResult',
   },
   {
+    usage: 'phm context read [--section NAME] [--max-tokens N] [--json]',
+    description: 'Read a bounded digest of current company context; default budget 1024, maximum 16000.',
+    safety: 'read',
+    jsonShape: '{schema:company.context.v1, digest, maxTokens, truncated}',
+  },
+  {
+    usage: 'phm context write --section NAME --text TEXT --source SOURCE [--id ID] [--expires ISO] [--json]',
+    description: 'Locked append of plain company context. Duplicate IDs are unchanged; keys and credentials are refused.',
+    safety: 'append',
+    jsonShape: '{id, appended}',
+  },
+  {
     usage: 'phm channels status [--json]',
     description: 'Per-channel rollup: configured, credential custody, pairing, received, pendingOutbound, lastSeenAt. Counts are measured or "unknown", never fabricated. Exit 0 success/help, 2 bad usage.',
     safety: 'read',
@@ -495,9 +625,10 @@ export function agentDocsText(): string {
   lines.push('planning preferences, not provider connections or verified dispatch capability.');
   lines.push('phm_task_context reads current and historical task evidence for exact outcomeId and');
   lines.push('taskId; inspect coverage, omitted counts and observation time before treating it as complete.');
+  lines.push('phm_agent_roster reads the unified live session roster. Unknown sources stay unknown.');
   lines.push('Team tools (docs/architecture/teams.md): phm_team_register, phm_team_publish,');
-  lines.push('phm_team_view, phm_team_claim, phm_team_handoff, phm_team_context_add and');
-  lines.push('phm_team_context_get. Claims are leases; consequential handoffs wait for human approval.');
+  lines.push('phm_team_view, phm_team_claim, phm_team_handoff, phm_team_access_request,');
+  lines.push('phm_team_context_add and phm_team_context_get. Claims are leases; consequential handoffs and access requests wait for human approval.');
   lines.push('Equivalent MCP tools (when wired via `ashlr wire`): ashlr_orient,');
   lines.push('ashlr_ask, ashlr_recall, ashlr_learn, ashlr_backlog, ashlr_health,');
   lines.push('ashlr_status, ashlr_impact, ashlr_pulse, ashlr_inbox_list,');
@@ -505,12 +636,26 @@ export function agentDocsText(): string {
   lines.push('ashlr_scorecard, ashlr_oversight, ashlr_routing.');
   lines.push('Elite fleet-state read tools (M169): ashlr_north_star (north-star metric,');
   lines.push('7d window), ashlr_self_heal (self-heal queue summary), ashlr_racing');
-  lines.push('(model-racing distillation stats), ashlr_comms (comms channel status).');
+  lines.push('(model-racing distillation stats), ashlr_comms (comms channel status),');
+  lines.push('ashlr_comms_thread (owner thread) and ashlr_comms_send_owner (owner replies only).');
   lines.push('Fleet command tools: phantom_agent_bus_read, phantom_agent_bus_status,');
   lines.push('phantom_agent_bus_post, phantom_fleet_drop_job, phantom_fleet_job_reassign,');
   lines.push('phantom_fleet_planner_run, phantom_fleet_apps_ensure, phantom_fleet_apps_changes,');
-  lines.push('phantom_fleet_apps_status, phantom_fleet_apps_await, phantom_fleet_orders,');
-  lines.push('phantom_fleet_graph, phantom_fleet_session. Tool discovery is not authorization.');
+  lines.push('phantom_fleet_apps_status, phantom_fleet_apps_await, phantom_fleet_needs,');
+  lines.push('phantom_fleet_needs_resolve, phantom_fleet_needs_wait, phantom_fleet_orders,');
+  lines.push('phantom_fleet_graph,');
+  lines.push('phantom_fleet_session, phantom_fleet_doctor, phantom_fleet_verbs.');
+  lines.push('Tool discovery is not authorization. phantom_fleet_doctor only reads fleet health;');
+  lines.push('phantom_fleet_verbs lists fleet verbs and never runs one.');
+  lines.push('Read-only observation tools: world_model, phantom_observe, phantom_observe_session,');
+  lines.push('phantom_spend_budget, phm_context_brief, phm_claim_acquire, phm_claim_release,');
+  lines.push('phantom_leader_status, phantom_leader_org, phantom_leader_inbox, phantom_leader_ask,');
+  lines.push('phantom_leader_assign, ashlr_comms_agent_status, ashlr_comms_agent_drafts,');
+  lines.push('ashlr_comms_agent_run. Unknown evidence stays unknown and grants no send or spend.');
+  lines.push('Desktop operator tools: desktop_list_apps, desktop_windows, desktop_read,');
+  lines.push('desktop_screenshot, desktop_doctor, desktop_focus, desktop_scroll, desktop_type,');
+  lines.push('desktop_click. Reads do not post to the bus. Focus, scroll, type and click post');
+  lines.push('a bus intent first. KILL and comms pause block those writes.');
   lines.push('App recovery observation tools: phantom_fleet_apps_history,');
   lines.push('phantom_fleet_apps_follow, phantom_fleet_apps_recovery_wait,');
   lines.push('phantom_fleet_apps_recovery_check, phantom_fleet_apps_recovery_batch.');
@@ -632,8 +777,22 @@ const TOPIC_LABELS: Record<HelpTopic, string> = {
 
 /** The full command table (the former inline cmdHelp list), topic-tagged. */
 export const HELP_ENTRIES: HelpEntry[] = [
+  { cmd: 'caps list|validate|generate [--registry <path>] [--out <dir>] [--pin-stage] [--check] [--json]', desc: 'Capability registry: surfaces, models, hosting edges, account references and capabilities; validate it and generate pinned per-agent adapters to staging (never into live agent config dirs). See docs/CAPABILITY-REGISTRY.md.', topic: 'core' },
+  { cmd: 'constitution check [--root <repo>] [--json] [paths...]', desc: 'Check constitution rule definitions and references in prompts and templates (read-only).', topic: 'core' },
+  { cmd: 'tune <prepare|evaluate>', desc: 'Prepare scrub-gated local model datasets or evaluate paired evidence.', topic: 'core' },
+  { cmd: 'jobs empty [--since 24h] [--json]', desc: 'Explain empty jobs from local notes and logs.', topic: 'observability' },
+  { cmd: 'metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]', desc: 'Estimate idle slot-minutes and flag long-running jobs from local snapshots.', topic: 'autonomy' },
   { cmd: 'graph nodes|edges|status [--json]', desc: 'Read-only GRAPH-1 nodes, edges, and availability; unavailable data exits 1. See phm graph --help.', topic: 'knowledge' },
   { cmd: 'radar list|run|diff [--json]', desc: 'Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.', topic: 'observability' },
+  { cmd: 'observe [--json]', desc: 'Human observe snapshot: roster, sensor headroom, pull headlines, bottlenecks, and human steps. Unknown stays unknown. See docs/OBSERVE.md.', topic: 'observability' },
+  { cmd: 'context --for-agent <lane> [--json]', desc: 'Compact under-4KB brief for one lane: claims, open pulls, bottlenecks, blind spots, and pacing. See docs/WORLD.md.', topic: 'observability' },
+  { cmd: 'claim acquire <work-key> --lane <lane> [--json]', desc: 'Claim a work key before starting. Refuses a live claim or open pull on that key and returns the holder.', topic: 'observability' },
+  { cmd: 'claim release <work-key> --lane <lane> --reason open|merge|abandon [--json]', desc: 'Release this lane claim when a pull opens, merges, or is abandoned.', topic: 'observability' },
+  { cmd: 'growth [--json] [--range 1H|1D|1W|1M] [--prs <file>]', desc: 'Growth chart series from local ledgers. A missing source is no-data-source and a world-model blind spot. See docs/GROWTH.md.', topic: 'observability' },
+  { cmd: 'world [--json] [--refresh]', desc: 'Cached ashlr.world-model/v1 for the scheduler and leaders. blindSpots lists each unknown field by path with a stable id. See docs/WORLD.md.', topic: 'observability' },
+  { cmd: 'world get <path> [--json]', desc: 'Read one node from the cached world model. A missing path is unknown, not zero.', topic: 'observability' },
+  { cmd: 'chain verify [--json]', desc: 'Synthetic in-memory chain checks. Does not verify live transports.', topic: 'observability' },
+  { cmd: 'incident report|receipts [--json]', desc: 'Turn a production signal into one bounded fix job, or send receipts for finished incidents.', topic: 'observability' },
   { cmd: 'router rank --tier <local|mid|frontier> [--routes FILE] [--slots pool=count ...] [--json]', desc: 'Rank supplied router decisions by pool budget reset; advisory, no writes.', topic: 'observability' },
   { cmd: 'router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]', desc: 'Compare recorded router predictions with outcomes and usage.', topic: 'observability' },
   { cmd: 'index [--refresh]',            desc: 'Build or refresh the desktop index; show counts by category.', topic: 'core' },
@@ -649,7 +808,9 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'doctor',                       desc: 'One-glance health check: config, phantom, providers, ecosystem.', topic: 'core' },
   { cmd: 'init [--yes]',                 desc: 'Idempotent onboarding: ensure config, detect phantom + models, set editor.', topic: 'core' },
   { cmd: 'desktop install [--apply]', desc: 'Inspect original signed app/CLI artifacts; explicitly install only on an empty macOS arm64 installation after Stop/drain. Does not resume authority.', topic: 'core' },
-  { cmd: 'apps list|open|quit|focus|status [<app>] [--json]', desc: 'Manage desktop apps named in ~/.ashlr/apps-allow.json (empty by default). Logged to the feed; quit with unsaved work goes to needs-you.', topic: 'core' },
+  { cmd: 'desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]', desc: 'Operate macOS desktop apps through the desktop-operator helper. Reads are free. focus, scroll, type and click post a bus intent first. KILL and comms pause block writes.', topic: 'core' },
+  { cmd: 'apps list|open|quit|focus|status [<app>] [--json] | apps request open|quit|focus <app> [--json]', desc: 'Manage desktop apps named in ~/.ashlr/apps-allow.json (empty by default). Per-app action policy; logged to the feed. Requests and unsafe quits go to needs-you.', topic: 'core' },
+  { cmd: 'desktopctl capabilities|status|run <resource> [--json]', desc: 'Drive Claude, Codex, Devin and a browser as interchangeable desktop resources. Flag-gated by ~/.ashlr/desktopctl.json; reports missing TCC grants, never prompts. Logged to the feed.', topic: 'core' },
   { cmd: 'desktop-update inspect|apply --stage <32hex> --json', desc: 'Verify signed paired updates; apply after native exit, Stop/drain and unchanged active grant. Never resumes the resident.', topic: 'core' },
   { cmd: 'app update status [--json]', desc: 'Inspect local desktop update status without downloading or installing. Read-only: reports current stage, available version, deferred reason, running job counts. Exit 0 success, 2 bad usage.', topic: 'core' },
   { cmd: 'update [--check] [--json]',    desc: 'Self-update; mutation requires service registration proven absent and not running. --check remains read-only.', topic: 'core' },
@@ -660,8 +821,9 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'runtime run --store <absolute> -- universe <args>', desc: 'Run Universe in the foreground using the verified installed candidate; operational commands require explicit absolute --root.', topic: 'core' },
   { cmd: 'orient [--repo <r>] [--json]', desc: 'Session-start context: genome hits, health, backlog, pending proposals, attention (read-only).', topic: 'core' },
   { cmd: 'docs --agent [--json]',        desc: 'Agent cheat sheet: the CLI-first contract (commands, safety classes, JSON shapes).', topic: 'core' },
+  { cmd: 'check [--base <ref>] [--json]', desc: 'Run incremental typechecks, cached lint and affected tests from a Phantom checkout; development feedback only.', topic: 'core' },
   { cmd: 'completions zsh|bash',         desc: 'Print a shell completion script to stdout.', topic: 'core' },
-  { cmd: 'plugins init|list|info|enable|disable', desc: 'Scaffold + manage plugins (~/.ashlr/plugins/) — default-off, integrity-pinned, audited (see docs/PLUGINS.md).', topic: 'core' },
+  { cmd: 'plugins init|list|info|enable|disable', desc: 'Plugins under ~/.ashlr/plugins/ (default-off). --json on every verb. init, enable and disable take --dry-run (writes nothing). enable prompts only on a terminal; otherwise use --yes.', topic: 'core' },
   { cmd: 'x <name> [args...]',           desc: "Run an enabled plugin's command.", topic: 'core' },
   { cmd: 'help [<topic>|--all|--search <term>]', desc: 'Topic-grouped help; --all prints every command; --search <term> filters.', topic: 'core' },
   { cmd: 'version',                      desc: 'Print the installed ashlr version (aliases: --version, -v).', topic: 'core' },
@@ -670,6 +832,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'run show <id>',                desc: 'Print a past run in detail.', topic: 'run' },
   { cmd: 'runs [--json]',                desc: 'List past runs (newest first).', topic: 'run' },
   { cmd: 'models [--json]',              desc: 'List local models (Ollama/LM Studio); marks the active one.', topic: 'run' },
+  { cmd: 'models verify [--json]',       desc: 'Check registry model IDs against official provider documentation.', topic: 'run' },
   { cmd: 'models pull <name> [--yes]',   desc: 'Explicitly pull an Ollama model (large download; confirm first).', topic: 'run' },
   { cmd: 'models start',                 desc: 'Best-effort start a locally-installed Ollama (never downloads).', topic: 'run' },
   { cmd: 'local-runtime <status|start|stop|restart|reshape|logs|resolve-model>', desc: 'Supervise the loopback llama-server serving runtime (parallel local fleet engine); manual and attended.', topic: 'run' },
@@ -688,6 +851,8 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'recall "<query>"',             desc: 'Search shared genome memory; return top relevant entries with scores.', topic: 'memory' },
   { cmd: 'learn "<text>" [opts]',        desc: 'Append a note to shared genome memory (local-first, append-only).', topic: 'memory' },
   { cmd: 'genome',                       desc: 'Genome status/health: entry count, projects covered, store size.', topic: 'memory' },
+  { cmd: 'memory <add|list|search|forget>', desc: 'Manage local durable preferences, doctrine and facts.', topic: 'memory' },
+  { cmd: 'radar <list|run|diff>', desc: 'Observe public documentation and compare bounded local snapshots.', topic: 'knowledge' },
 
   { cmd: 'knowledge build',              desc: 'Index enrolled repos locally (read-only, secret-scrubbed) for portfolio RAG.', topic: 'knowledge' },
   { cmd: 'ask "<question>"',             desc: 'Local RAG across the indexed portfolio; cites repo/file:line. --allow-cloud opt-in. `ask status` prints the ask.status.v1 stream from the metrics jobs ledger.', topic: 'knowledge' },
@@ -705,12 +870,14 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'select [--json] [--dry-run] [--top <n>]', desc: 'Rank candidates by value x leverage / (time + usage), fund the top 5 as READY lines, record picks with predicted value.', topic: 'autonomy' },
   { cmd: 'backlog refresh',              desc: 'Re-scan all enrolled repos and rebuild the backlog.', topic: 'autonomy' },
   { cmd: 'release-articles status|enable|disable|import|sync [--json]', desc: 'Configure release-backed article task handoffs; sync verifies public GitHub/npm evidence and never publishes directly.', topic: 'autonomy' },
+  { cmd: 'release status [--json] [--file <release-state.json>]', desc: 'Show release tags, assets, unreleased commits and updater status for Ashlr repositories. Use --file to read release train state.', topic: 'autonomy' },
   { cmd: 'backlog --source <src>',       desc: `Filter backlog by source: ${BACKLOG_SOURCE_FILTER_HELP}.`, topic: 'autonomy' },
   { cmd: 'backlog --repo <path>',        desc: 'Filter backlog to a specific enrolled repo.', topic: 'autonomy' },
   { cmd: 'backlog --limit <n>',          desc: 'Show only the top N items.', topic: 'autonomy' },
   { cmd: 'backlog --json',               desc: 'Emit raw JSON backlog.', topic: 'autonomy' },
   { cmd: 'inbox',                        desc: 'Approval inbox: list pending proposals (the outward-action gate).', topic: 'autonomy' },
   { cmd: 'drafts list|show|approve|reject [--json]', desc: 'Outbound drafts waiting for owner approval; approve records, never sends. See docs/DRAFTS.md.', topic: 'autonomy' },
+  { cmd: 'comms-agent status|run|drafts [--json]', desc: 'Comms role under the Leader. Triage archives bulk and bot mail and drafts replies. Sends need an owner standing approval. No lane is hard-coded. See docs/COMMS-AGENT.md.', topic: 'autonomy' },
   { cmd: 'inbox show <id>',              desc: 'Full detail of a proposal incl. diff (read-only).', topic: 'autonomy' },
   { cmd: 'inbox approve <id>',           desc: 'Confirm + apply an approved proposal to its dedicated local branch.', topic: 'autonomy' },
   { cmd: 'inbox approve <id> --yes',     desc: 'Approve without interactive prompt (non-TTY safe).', topic: 'autonomy' },
@@ -732,6 +899,9 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'daemon recover-state --dry-run|--execute', desc: 'Preview or explicitly execute one exact quarantine of a malformed daemon state (the fix when `daemon status` shows a state issue).', topic: 'autonomy' },
   { cmd: 'daemon resolve-state --dry-run|--execute', desc: 'Preview or explicitly resolve one exact quarantine, restoring daemon state after `daemon recover-state`.', topic: 'autonomy' },
   { cmd: 'worker setup',                 desc: 'Temporarily unavailable and fail-closed before config, enrollment, queue, wizard, or service mutation.', topic: 'autonomy' },
+  { cmd: 'prs triage [--repo ashlrai/<name>] [--limit N] --json', desc: 'Read-only classification of open pull requests.', topic: 'autonomy' },
+  { cmd: 'worklog [--since 24h] [--repo <repo>] [--lane <lane>] [--json]', desc: 'Show merged pull requests from the jobs ledger.', topic: 'observability' },
+  { cmd: 'library list [--json]', desc: 'List leader files. Read-only.', topic: 'observability' },
   { cmd: 'fleet status [--json]',        desc: 'Read-only fleet snapshot: daemon, per-backend dispatches+quota, queue, proposals, merges, paused state.', topic: 'autonomy' },
   { cmd: 'fleet evidence doctor <source>', desc: 'Bounded read-only diagnosis for one decisions, judge, action, dispatch, manifest, or candidate ledger.', topic: 'autonomy' },
   { cmd: 'fleet direction [--json]',     desc: 'Read-only autonomous direction report: mode, resource posture, guard blocks, and next actions.', topic: 'autonomy' },
@@ -764,21 +934,27 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'authority ledger verify|tail',  desc: 'Verify or read the hash-chained authority ledger (~/.ashlr/authority/ledger.jsonl).', topic: 'autonomy' },
   { cmd: 'authority protect --print|--apply', desc: 'Print (or apply after confirmation) the GitHub rulesets for the grant\'s server-enforced repos.', topic: 'autonomy' },
   { cmd: 'authority setup [--dry-run [--json]]', desc: 'Guided Phase 0: custody key, trust-root PR, GitHub App, Claude token, canary, rulesets, first grant, switch, daemon service — asks before every step; --dry-run --json prints the checklist as JSON.', topic: 'autonomy' },
+  { cmd: 'feed [--json] [--limit N]', desc: 'Read recent fleet events, newest first; unavailable sources remain unknown.', topic: 'autonomy' },
   { cmd: 'leader show|run|tick|veto',     desc: 'The Leader (Visionary): show the latest memo and actions, run it now, apply due class-B actions (tick), veto an action or a whole memo (--memo).', topic: 'autonomy' },
+  { cmd: 'org show|join|plan [--file <org.toml>] [--json]', desc: 'Declarative co-founder org model: show members and lanes, opt your own machine into lanes with join, or propose queue assignments with plan. Nothing is sent on join.', topic: 'autonomy' },
+  { cmd: 'leader status|ask|org|assign [--json]', desc: 'Digital co-founder: world-backed status, owner ask, declarative org chart, and RQ assignment. Escalates only for secrets, money, outside sends, and owner-data destruction. KILL stops it. No new model spend.', topic: 'autonomy' },
   { cmd: 'leader seat|inbox [--json]', desc: 'Inspect admitted model tiers and failover seats, or the durable CEO inbox/outbox; inbox --text records a policy-checked message.', topic: 'autonomy' },
   { cmd: 'leader say|thread|answer|approve|directives', desc: 'Talk to the Leader in the one thread Phantom and Telegram share: say something, read the thread, answer a memo question, approve a pending action (applied only if the grant allows), add or retire standing directives.', topic: 'autonomy' },
   { cmd: 'leader oversight-plist --print', desc: 'Print (never install) the nightly ai.ashlr.oversight LaunchAgent that runs `ashlr leader tick --wait` instead of the legacy Strategist; install by hand per docs/AUTHORITY.md.', topic: 'autonomy' },
   { cmd: 'cloud launch "<task>" [--repo o/n] [--base b]', desc: 'Start a Claude Code cloud session that delivers a draft PR (spends Claude credits; never merges). Repo defaults to this folder\'s GitHub origin.', topic: 'autonomy' },
   { cmd: 'playbook list|show|new|edit|run <id>', desc: 'Versioned task templates every lane runs under (`!fix-bug` in any task text): list them, show one with per-version outcomes, write a new version in $EDITOR, or run one in the cloud / Devin lane (`--repo o/n --lane cloud|devin`).', topic: 'autonomy' },
   { cmd: 'openai-agents sessions|inspect|turns [session-id] [--json]', desc: 'Read bounded managed OpenAI Agents API metadata. API access is separate from subscriptions; no execution qualification or mutations.', topic: 'autonomy' },
-  { cmd: 'agents bus channels list|test <id> [--json]', desc: 'List or test channel types offline without sending.', topic: 'autonomy' },
+  { cmd: 'agents bus channels list|test <id> [--json]', desc: 'List registered channel adapters and probe the local bus or handoff store.', topic: 'autonomy' },
   { cmd: 'agents bus contract [--json]', desc: 'Print the Agent Bus v2 contract: schema version, providers, body kinds, work statuses, claim key forms. Read-only.', topic: 'autonomy' },
+  { cmd: 'agents roster [--json]', desc: 'Unified live session roster. One probe per source, about 5s each, unknown on timeout or an unverified command. Read-only.', topic: 'autonomy' },
   { cmd: 'bus thread|task <verb> [--peer <id>] [--json]', desc: 'Shared task board: local threads plus task claim, handoff, renew and release tied to fenced fleet queue claims. Cooperative labels only; no execution authority.', topic: 'autonomy' },
+  { cmd: 'bus send|inbox|ack [--json]', desc: 'Durable local message mailbox: send JSON, read a recipient inbox and acknowledge messages; separate from the task board. `phm bus send --help` for options.', topic: 'autonomy' },
   { cmd: 'metrics ingest --jobs <file> --status <file>', desc: 'Read local lane and tier merge metrics and advisory routing priors; always JSON.', topic: 'autonomy' },
   { cmd: 'metrics levers [--window <7d|30d>] [--json]', desc: 'Rank three opportunity proxies from local activity and fleet rollups.', topic: 'autonomy' },
   { cmd: 'benchmark run|--compare-reports', desc: 'Explicit local-agent benchmark trials, or offline matched-receipt comparison; real checkers and private traces.', topic: 'autonomy' },
   { cmd: 'devin connect [--org org-…]',   desc: 'Connect Devin (Cognition): paste the API key at a hidden prompt; it is verified and stored in the macOS Keychain, never in a file.', topic: 'autonomy' },
   { cmd: 'devin launch "<task>" [--repo o/n] [--base b]', desc: 'Start a Devin session that delivers a PR on ashlr-devin/<id> through the standing gates (spends ACUs, hard-capped per session; never merges).', topic: 'autonomy' },
+  { cmd: 'routines list|status|run <id>|tick|migrate|launchd|run <file.json>|explain <id>|export|import|rebalance', desc: 'Routines: UTC-cron YAML schedules with executor failover; learned local-first placement runs; portable provider placement registry. See docs/ROUTINES.md.', topic: 'autonomy' },
   { cmd: 'automations list|templates|add|enable|disable|remove', desc: 'Automations: labelled issues, a red default branch, RRULE schedules, a local webhook or Telegram /task become tasks for the fleet, cloud, Devin or review — with queue, per-day, concurrency and spend limits.', topic: 'autonomy' },
   { cmd: 'automations fire <id> [--dry-run]', desc: 'Check one automation\'s trigger now and dispatch what it finds through the lane\'s own gates (grant, KILL, budgets); --dry-run shows what would happen and writes nothing.', topic: 'autonomy' },
   { cmd: 'jev status [--json]',          desc: 'Jev (TypeSafe) typed decisions today: on/keyed, decisions by kind, avg confidence, fallback rate, est. cost, latency. Reads the local ledger only.', topic: 'autonomy' },
@@ -789,7 +965,8 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'vision <show|review|preview|shadow|approve|reconcile|set>', desc: 'Mission OS: inspect strategy, preview a bounded DAG, record observation-only shadow evidence, or explicitly adopt planning state.', topic: 'autonomy' },
   { cmd: 'manager [--apply-rejects]',    desc: 'Frontier judge scorecard over pending proposals (shadow mode by default; never merges).', topic: 'autonomy' },
   { cmd: 'best-of-n [--repo --title -n]', desc: 'Generate N candidate diffs (multi-model), critic-select, file the winner as a proposal (M142/M333).', topic: 'autonomy' },
-  { cmd: 'comms <status|cycle|digest>',  desc: 'Operator comms channel (Telegram/iMessage): digests, approve-by-text.', topic: 'autonomy' },
+  { cmd: 'context read | write [--json]', desc: 'Read current company context or save a sourced note.', topic: 'run' },
+  { cmd: 'comms <status|thread|send-owner|cycle|digest>',  desc: 'Operator comms. status --json, thread and send-owner are the one owner thread; replies go only to the configured owner. KILL halts adapters.', topic: 'autonomy' },
   { cmd: 'connectors add|list|remove|show|import [--json]', desc: 'Manage credential-free connector profiles and import safe client metadata; vault references only.', topic: 'autonomy' },
   { cmd: 'channels add <kind> | status [--json] | slack status|map [--json]', desc: 'Bring a channel up (config only, credentials stay in custody), read the per-channel rollup, or inspect the Slack bridge mapping offline.', topic: 'autonomy' },
   { cmd: 'imessage doctor|poll [--apply] [--json]', desc: 'iMessage intake: doctor checks permissions and config; poll counts waiting messages (dry run), --apply receipts them. Never prints message text.', topic: 'autonomy' },
@@ -819,7 +996,9 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'universe deliveries <id> [--root <path>] [--json]', desc: 'Read local delivery receipts; pending/degraded evidence is not completed or verified delivery.', topic: 'autonomy' },
   { cmd: 'eval [--limit N]',             desc: 'Local-agent eval harness: adaptive prompts OFF vs ON, steps/done/tokens (M44).', topic: 'run' },
   { cmd: 'eval attention [--window 1d|7d|30d]', desc: 'Metadata-only fleet attention report: context pressure, retrieval, yield, routing, and traces.', topic: 'run' },
+  { cmd: 'eval checkpoints --file <fixture.json> [--json]', desc: 'Compare scripted context retention and input-token estimates; requires PHANTOM_CHECKPOINTS=1.', topic: 'run' },
   { cmd: 'skills list [--status <s>] [--limit N] [--json]', desc: 'List skills learned from merged PRs (newest revision each; counts are real or "unknown").', topic: 'run' },
+  { cmd: 'eval prompts --dataset <jobs.jsonl>', desc: 'Per-class prompt-variant A/B replay; promotes a variant only on a significant lift.', topic: 'run' },
   { cmd: 'skills audit <pack-path> [--json]', desc: 'Read-only quarantine audit for external skill structure, trigger routing, collisions, and behavioral fixtures.', topic: 'run' },
   { cmd: 'reflect [--since <Nd>]',       desc: 'Score your OWN past runs/swarms locally; report effectiveness/cost deltas (read-only).', topic: 'autonomy' },
   { cmd: 'reflect playbooks [--persist]', desc: 'Distill repeatable playbooks from past swarms (report-only; --persist writes them to the genome).', topic: 'autonomy' },
@@ -836,6 +1015,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'issues [--retry] [--dir <queue-directory>] [--json]', desc: 'Group failed queue jobs by error; --retry queues one READY retry per failed job without duplicates.', topic: 'autonomy' },
   { cmd: 'signals [--json]', desc: 'Read real repository adoption signals.', topic: 'observability' },
   { cmd: 'radar list|run|diff [--json]', desc: 'Observe public docs and package metadata; GET only, six-hour per-source floor.', topic: 'observability' },
+  { cmd: 'observe session <id> [--json]', desc: 'Read one roster session. Transcript stays unknown until desktop-operator registers a reader.', topic: 'observability' },
   { cmd: 'friction [--json]', desc: 'Mine the runs dir for recurring dispatch→merge friction; ledger keeps before/after metrics.', topic: 'observability' },
   { cmd: 'memory add|list|search|forget [--json]', desc: 'Durable markdown memory under ~/.phantom/memory; secret-shaped text refused.', topic: 'memory' },
   { cmd: 'app update status [--json]', desc: 'Read the local signed desktop-update stage and deferral counts; never downloads or installs.', topic: 'core' },
@@ -848,29 +1028,46 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'resources [--json] [--watch]', desc: 'Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).', topic: 'observability' },
   { cmd: 'capacity publish [--json]', desc: 'Refresh local subscription usage metadata once with this node’s local authentication.', topic: 'observability' },
   { cmd: 'estates [--json] [--repo <repo-id>]', desc: 'Per-repo estate cards: health, CI, security. Read-only portfolio view.', topic: 'observability' },
+  { cmd: 'main blame --good <sha> --check "<cmd>" [--bad <sha>] [--repo <path>] [--json]', desc: 'Name the first merge that turned the default branch red. Bisects in a temp worktree; read-only.', topic: 'observability' },
   { cmd: 'ci-metrics [--json]', desc: 'Per-repo daily turn-time (red to green) metrics; writes ~/.ashlr/ci-metrics.json.', topic: 'observability' },
   { cmd: 'daily-fix validate|filter|dispatch|parse-fixup [--json]', desc: 'Daily CI re-run helper: validate dispatch inputs against the allowlist, preview the job/test filter, emit the gh workflow command, or aggregate fixup-queue lines.', topic: 'observability' },
+  { cmd: 'wb <secrets|steer|reprioritize|stop> [--apply] [--json]', desc: 'Workbench actions from the terminal: read secret custody, append a steer note, re-prioritize an unclaimed queue line, or stop a job. Mutating verbs are a dry run unless --apply.', topic: 'observability' },
   { cmd: 'budget <show|add> [--json]', desc: 'Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.', topic: 'observability' },
+  { cmd: 'budget get [--json]', desc: 'Read the owner spend budget in USD. A missing provider is 0 for the month. This does not change the budget.', topic: 'observability' },
+  { cmd: 'budget set --provider <id> --period day|week|month --usd <n> [--json]', desc: 'Owner-only spend budget change from an interactive terminal, with one audit line. An amount above 0 stays ineffective until a Security pin-chain or owner signature root exists. Agents and non-TTY calls are refused. The committed default stays 0.', topic: 'observability' },
   { cmd: 'usage',                        desc: 'Frontier usage table: per-engine calls/tokens/cost + window state.', topic: 'observability' },
+  { cmd: 'usage live [--json] [--watch] [--browser [--headed]] [--interval <seconds>]', desc: 'Live usage, resets and alerts. Official readouts first; --browser reads each provider usage page in a dedicated profile. Alerts at 80 and 95 percent and for allowance projected to expire unspent.', topic: 'observability' },
+  { cmd: 'usage sensors [--json] [--refresh] [--file <snapshot>]', desc: 'Per-lane usage readings with age and stale status. A reading at or after staleAfter is unknown and is not headroom. Refresh uses official APIs and CLIs only.', topic: 'observability' },
   { cmd: 'route explain [--json]', desc: 'Read dispatcher pools and route-moves-per-hour.', topic: 'autonomy' },
+  { cmd: 'route decide --input <file|-> [--root <directory>] --json', desc: 'Suggest a schema-validated route without changing launch behavior.', topic: 'autonomy' },
   { cmd: 'pool admission [--json]', desc: 'Read-only load gate: loadavg, ncpu, running cap, install-lock holder and admit true/false with the reason.', topic: 'autonomy' },
+  { cmd: 'queue dedupe [--file <router-queue.md>] [--apply] [--json]', desc: 'Find repeated READY jobs; preview by default, or mark repeats superseded with --apply.', topic: 'autonomy' },
   { cmd: 'queue stats [--json] [--window <seconds>]', desc: 'Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.', topic: 'observability' },
+  { cmd: 'repos rank [proposals] [--json] [--recompute]', desc: 'Repository scheduling rank from seed priority, local merged-PR recency and autonomy leverage (daily ceiling); proposals are read-only.', topic: 'observability' },
   { cmd: 'telemetry [status]',           desc: 'M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.', topic: 'observability' },
   { cmd: 'telemetry test',               desc: 'Emit a synthetic metadata-only test span; report sink+ok.', topic: 'observability' },
   { cmd: 'audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]', desc: 'Tail the append-only audit trail; --team lists workspace actions (read-only).', topic: 'observability' },
   { cmd: 'receipt list|status|show <run>|verify <run>|timeline <run> [--json]', desc: 'Read and verify signed run receipts (same as fleet receipt); timeline lists custody spawns in the run window, value-free (read-only).', topic: 'observability' },
 
   { cmd: 'mcp',                          desc: 'Run the MCP aggregation gateway on stdio (point any agent here; includes the native ashlr_* tools; list them with tools/list).', topic: 'integrations' },
+  { cmd: 'checkpoint save <source> <destination> <worktree> [--json]', desc: 'Save a handoff with a Git worktree inventory. See docs/AGENT-CHECKPOINT.md.', topic: 'integrations' },
   { cmd: 'checkpoint resume <file> [--json]', desc: 'Validate and print a structured agent checkpoint for a fresh session. See docs/AGENT-CHECKPOINT.md.', topic: 'integrations' },
+  { cmd: 'trail claim|beat|release <claim-key> [--json]', desc: 'Stigmergic work-item markers: claim a key, heartbeat progress, release. File-based coordination; no execution authority. See docs/STIGMERGY.md.', topic: 'autonomy' },
+  { cmd: 'trail list|show|resume|sweep|save [--json]', desc: 'Read claim markers, pick up a stalled claim with its saved checkpoint, or evaporate expired markers. See docs/STIGMERGY.md.', topic: 'autonomy' },
   { cmd: 'sessions list|revoke <id> [--json]', desc: 'See running MCP gateway sessions and block one; every gateway call is logged (caller, tool, verdict) with arguments redacted, kept 14 days.', topic: 'integrations' },
+  { cmd: 'sessions create|show|resume|terminate [sesn_id] [--json]', desc: 'Resumable agent sessions: agent profile id and version, environment id and an append-only event log; each turn is one phm queue job. Statuses idle, running, rescheduling, terminated.', topic: 'autonomy' },
   { cmd: 'mcp list',                     desc: 'List native ashlr tools + discovered MCP servers with per-server tool counts.', topic: 'integrations' },
   { cmd: 'mcp doctor',                   desc: 'Per-server MCP health: does it start? how many tools?', topic: 'integrations' },
   { cmd: 'autopilot <pr> [--apply] [--watch]', desc: 'Drive one of Phantom\'s own PRs to green: fix red CI and review feedback with an agent, merge a conflicting or behind base, re-run infra failures once, re-verify; stops and says why when a failure is not the PR\'s. Plan only unless --apply; never force-pushes or merges the PR.', topic: 'integrations' },
+  { cmd: 'land auto [--repo <o/n>] [--apply] [--json]', desc: 'Merge autopilot over the fleet\'s open PRs: classifies each as green-ready/behind/conflicting/red-required; --apply (needs PHANTOM_MERGE_AUTOPILOT=1) updates behind branches (merge only), enqueues DRAIN for conflicts and FIXUP for a failing required check. Holds honored, 3 actions/PR/24h.', topic: 'integrations' },
   { cmd: 'metrics <summary|dashboard|record|recommend|ingest|levers>', desc: 'Local telemetry: value-weighted PRs shipped per token/second/$, leaderboards, UCB1 allocation, HTML dashboard, router-metrics ingest and opportunity proxies.', topic: 'integrations' },
   { cmd: 'improve propose [--open-pr --repo <dir>]', desc: 'Self-improvement loop: evidence-backed proposals ranked by realized leverage; --open-pr opens DRAFT PRs from an isolated worktree.', topic: 'integrations' },
   { cmd: 'improve register|measure|outcomes|promote|sync-backlog|discover|observe|lessons', desc: 'Record a proposal\'s deterministic metric, measure it at the PR\'s exact merge base and head, record merges and the reverts that cancel their credit, compare proposers against the deterministic baseline, register cloud backlog PRs that declare a metric, add backlog items from member issues, a red default branch and proposals, compare cloud runs served lessons against the holdout run without them, and queue auto-merge only when checks are green and the metric improved.', topic: 'integrations' },
   { cmd: 'steward disk [--apply] [--json]', desc: 'Measure Codex/Claude/Phantom log roots against retention + quota; dry run unless --apply (deletes oldest eligible files only).', topic: 'integrations' },
+  { cmd: 'lanes fit --lane <lane> [--json]', desc: 'Show job kinds to send or avoid from measured PR rates.', topic: 'observability' },
+  { cmd: 'lanes --json', desc: 'Read dispatcher pools, slot caps and local endpoint health.', topic: 'observability' },
   { cmd: 'lanes health [--json]', desc: 'Per-lane calls, error rate, p50 latency and deployed commit over 12 h; flags runs stuck past their phase timeout.', topic: 'observability' },
+  { cmd: 'approvals [--team <id>] [--json]', desc: 'What needs a human: pending team approvals, the Security pin queue (read-only) and explicit holds; same projection as the desktop Approvals panel.', topic: 'integrations' },
   { cmd: 'team <view|join|invite|role|link|approve|claim|release|say>', desc: 'Local-first team bus: presence, repo/branch/path claims, handoffs and human approval of consequential agent actions.', topic: 'integrations' },
   { cmd: 'companions [--json] [--root <dir>] [--bin-dir <dir>]', desc: 'Read-only Secrets/Locus/Lexicon executable identity and version inventory; no runtime readiness or activation.', topic: 'integrations' },
   { cmd: 'mcp install <claude|ashlrcode>', desc: 'Add the ashlr gateway to a target mcpServers config (backs up first).', topic: 'integrations' },
@@ -884,6 +1081,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'stack [status|list|providers|recommend|scan|doctor|add|apply]', desc: 'Ecosystem `stack` tool surface: read-only status/list/recommend, confirm-gated add/apply (real provisioning).', topic: 'integrations' },
   { cmd: 'ecosystem doctor [--json] [--deep]', desc: 'Read-only sibling-repository health scan across the ecosystem.', topic: 'integrations' },
 
+  { cmd: 'worktrees prune [--dry-run | --apply] [--json]', desc: 'Preview or remove clean, inactive worktrees for finished jobs.', topic: 'safety' },
   { cmd: 'worktrees report [--dir <path>] [--json]', desc: 'Report worktree age, size, last log time and job state.', topic: 'safety' },
   { cmd: 'disk [--wt-dir <abs>] [--json]', desc: 'Read-only disk report for agent worktrees: sizes, lifecycle state, and the bytes safe to reclaim.', topic: 'safety' },
   { cmd: 'disk-maint [--apply] [--json] [--only <class>] [--allow <class>]', desc: 'Standing disk maintenance: rotate/compress quiet logs, prune dead session leftovers, stale staging and recovery dirs, and remove merged worktrees. Dry run unless --apply; protect-list never touches ~/.codex*, model weights, Docker, client trees or secrets.', topic: 'safety' },
@@ -895,14 +1093,19 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'sandbox gc',                   desc: 'Reclaim STALE orphan sandboxes (crash leftovers); H5 explicit human repair surface for the orphan sweep.', topic: 'safety' },
   { cmd: 'seams',                        desc: 'Cloud-ready seam diagnostic: every v2 store, active=local, cloud=gated (read-only).', topic: 'safety' },
   { cmd: 'seams status',                 desc: 'Same as `seams`: list seams + active impl; proves local-first + cloud gated on Mason.', topic: 'safety' },
+  { cmd: 'test --changed [--base <ref>] [--json]', desc: 'Run tests related to changed files, or the full suite when unknown.', topic: 'safety' },
   { cmd: 'verify change --worktree <path> [--checks typecheck,unit,lint,secrets]', desc: 'Run trusted worktree checks; JSON verdict and ten-line handoff.', topic: 'safety' },
+  { cmd: 'verify done --worktree <path> [--contract <path>] [--plan]', desc: 'Evaluate a worktree\'s done-contract (floor + verify commands + attested acceptance); notes-file expectation when no contract exists.', topic: 'safety' },
+  { cmd: 'engineering-receipt --events <file.jsonl> [--claims <file>] [--task <text>] [--json]', desc: 'Engineering receipt from tool events (Evidence) vs model statements (Claims); needs PHANTOM_RECEIPTS=1.', topic: 'safety' },
   { cmd: 'verify-safety',                desc: 'Read-only self-check of the hard safety invariants (enrollment/kill-switch/daemon/scrub/cloud-gate); mutates nothing.', topic: 'safety' },
   { cmd: 'verify-pr',                    desc: 'Verify an explicitly reviewed maintainer PR through the host-owned App check; no merge or deploy.', topic: 'safety' },
   { cmd: 'preflight [--json]',           desc: 'Read-only first-activation readiness check: ready=true|false + blockers/warnings (model/enrollment/kill/daemon/writeable/sandbox/git/phantom/locus); mutates nothing.', topic: 'safety' },
   { cmd: 'onboard [--locus-firm]',       desc: 'Guided first safe activation: preflight → enroll ONE repo → optional Locus firm soft-offer → dry-run PLAN → point at `ashlr inbox`. TTY-aware; --yes/non-TTY prints steps (firm only with --locus-firm or ASHLR_LOCUS_FIRM=1). NEVER auto-applies.', topic: 'safety' },
   { cmd: 'onboard --rollback <repo>',    desc: 'One-command undo of a first activation: unenroll + sweep orphan sandboxes + optional --kill. Inward cleanup only; H6-audited.', topic: 'safety' },
+  { cmd: 'onboard --ecosystem [--json]', desc: 'Detect existing tools, key binding names and loopback endpoints; select toggles and grant one integration bundle. See docs/ECOSYSTEM-ONBOARDING.md.', topic: 'core' },
   { cmd: 'demo [--no-cleanup] [--json]', desc: 'Watch the FULL autonomous chain run on a DISPOSABLE tmp repo (isolated tmp ~/.ashlr; proposal-only; auto-cleans). NEVER touches your portfolio or applies anything.', topic: 'safety' },
 
+  { cmd: 'goals [--json]', desc: 'Show dispatcher throughput, empty rates and resource resets.', topic: 'observability' },
   { cmd: 'top [--once] [--json]', desc: 'Read-only per-pool capacity and reset pressure snapshot.', topic: 'web' },
   { cmd: 'tui [--once]',                 desc: 'Interactive terminal dashboard (alias: dash). --once renders one frame and exits.', topic: 'web' },
   { cmd: 'dash [--once]',                desc: 'Alias of `tui` — interactive terminal dashboard.', topic: 'web' },
@@ -910,7 +1113,8 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'serve [--port N]',             desc: 'Start local web dashboard + JSON API on 127.0.0.1 (default port 7777).', topic: 'web' },
   { cmd: 'serve --open',                 desc: 'Start dashboard and open browser automatically.', topic: 'web' },
   { cmd: 'serve --allow-dispatch',       desc: 'Enable guarded POST /api/run + web inbox approve/reject (prints session token).', topic: 'web' },
-  { cmd: 'verse [--port N] [--no-open]', desc: 'Open the Phantom console at /verse/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.', topic: 'web' },
+  { cmd: 'console [--port N] [--no-open]', desc: 'Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.', topic: 'web' },
+  { cmd: 'verse [--port N] [--no-open]', desc: 'Alias of `console` (the original name; same flags). Opens /verse/, the same page.', topic: 'web' },
 
   { cmd: 'new <name> [opts]',            desc: 'Scaffold a project from a template (next-app, node-cli, mcp-server, minimal).', topic: 'scaffold' },
   { cmd: 'ship [path] [opts]',           desc: 'Pre-ship gate (lint/test/build) + optional confirm-gated deploy.', topic: 'scaffold' },

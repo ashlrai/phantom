@@ -134,6 +134,23 @@ test('verified receipt hashes and nested official proof cannot be mutated to adm
   fs.rmSync(join(f.root, 'dist'), { recursive: true }); assert.throws(() => adoptArtifact(receipt));
   assert.equal(fs.existsSync(join(f.root, 'dist')), false);
 });
+test('attestation source ref accepts master or the exact release tag and refuses anything else', (t) => {
+  const f = fixture(t); const path = f.packageTarball; const candidate = 'b'.repeat(40); const master = 'c'.repeat(40);
+  const statement = () => JSON.stringify([{ verificationResult: { statement: { _type: 'https://in-toto.io/Statement/v1', predicateType: 'https://slsa.dev/provenance/v1',
+    subject: [{ digest: { sha256: digest(fs.readFileSync(path)) } }], predicate: { runDetails: { metadata: { invocationId: 'https://github.com/ashlrai/phantom/actions/runs/300/attempts/1' } } } } } }]);
+  const seen = [];
+  const run = (bin, args) => { seen.push(args[args.indexOf('--source-ref') + 1]); return statement(); };
+  const base = { path, repository: 'ashlrai/phantom', attestorSha: candidate, attestorRun: 300, attestorAttempt: 1, run };
+  verifyAttestation({ ...base, sourceRef: 'refs/heads/master', candidateSha: candidate, masterSha: candidate });
+  verifyAttestation({ ...base, sourceRef: 'refs/tags/v3.30.29', candidateSha: candidate, masterSha: master, tagSha: candidate, compareStatus: 'ahead', ci: 'green' });
+  assert.deepEqual(seen, ['refs/heads/master', 'refs/tags/v3.30.29']);
+  assert.throws(() => verifyAttestation({ ...base, sourceRef: 'refs/tags/nightly', candidateSha: candidate, masterSha: master, tagSha: candidate, compareStatus: 'ahead', ci: 'green' }), /stable tag/);
+  assert.throws(() => verifyAttestation({ ...base, sourceRef: 'refs/heads/v3.30.29', candidateSha: candidate, masterSha: master, tagSha: candidate, compareStatus: 'ahead', ci: 'green' }), /stable tag/);
+  assert.throws(() => verifyAttestation({ ...base, sourceRef: 'refs/tags/v3.30.29', candidateSha: candidate, masterSha: master, tagSha: master, compareStatus: 'ahead', ci: 'green' }), /tag sha mismatches/);
+  assert.throws(() => verifyAttestation({ ...base, sourceRef: 'refs/tags/v3.30.29', candidateSha: candidate, masterSha: master, tagSha: candidate, compareStatus: 'diverged', ci: 'green' }), /not an ancestor/);
+  assert.throws(() => verifyAttestation({ ...base, sourceRef: 'refs/tags/v3.30.29', candidateSha: candidate, masterSha: master, tagSha: candidate, compareStatus: 'ahead', ci: 'red' }), /required CI/);
+  assert.equal(seen.length, 2);
+});
 test('attestation proof binds exact signed invocation, not another successful run', (t) => {
   const f = fixture(t); const path = f.packageTarball;
   assert.throws(() => verifyAttestation({ path, repository: 'ashlrai/ashlr-hub', attestorSha: 'a'.repeat(40), attestorRun: 300, attestorAttempt: 1,
@@ -198,9 +215,9 @@ test('legacy exhaustive qualification still requires all fifteen source-owned ga
   // Lane selection and the stable merge result are ancillary to release
   // authority. The fast profile combines its build and smoke job; all fifteen
   // source-owned qualification jobs remain required by the legacy profile.
-  const laneNames = ['Secret-shape scan', 'Quick typecheck', 'Classify PR site lane', 'Site PR (ecosystem)', 'Docs PR (docs-only)', 'Merge Gate', 'Daily fixup queue', 'Desktop release smoke'];
-  assert.equal(names.length, 23);
-  assert.equal(new Set(names).size, 23);
+  const laneNames = ['Secret-shape scan', 'Secret scan (diff)', 'Quick typecheck', 'Classify PR site lane', 'Site PR (ecosystem)', 'Docs PR (docs-only)', 'Merge Gate', 'Daily fixup queue', 'Desktop release smoke'];
+  assert.equal(names.length, 24);
+  assert.equal(new Set(names).size, 24);
   assert.deepEqual([...required.map((job) => job.name), ...laneNames].sort(), names.sort());
   const f = official();
   const completed = required.map((job, index) => ({ ...f.job, id: index + 10, name: job.name, labels: job.labels,

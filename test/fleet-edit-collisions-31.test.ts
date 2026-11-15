@@ -1,6 +1,6 @@
 import { Readable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { cmdFleetEditCollisions } from '../src/cli/fleet-edit-collisions.js';
 
 interface RunResult { code: number; out: string; err: string }

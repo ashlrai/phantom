@@ -108,7 +108,7 @@ function tree(file: string): unknown {
     content: stat.isFile() ? digest(readFileSync(file)) : Object.fromEntries(readdirSync(file).sort().map(name => [name, tree(join(file, name))])) };
 }
 const childEnv = () => ({ ...process.env, HOME: homedir(), USERPROFILE: homedir(), ASHLR_HOME: process.env.ASHLR_HOME ?? join(homedir(), '.ashlr'),
-  TSX_DISABLE_CACHE: '1', NODE_DISABLE_COMPILE_CACHE: '1', GIT_OPTIONAL_LOCKS: '0' });
+  TSX_DISABLE_CACHE: '1', GIT_OPTIONAL_LOCKS: '0' });
 type SetupReport = { status: 'planned' | 'prepared'; disposition?: 'created' | 'replayed'; planDigest: string; output: string;
   projectId: string; seedRevision: string; initialEnrollmentDigest: string | null; consoleArguments?: string[];
   paths: { registration: string }; executionStarted: false; providerContacted: false };

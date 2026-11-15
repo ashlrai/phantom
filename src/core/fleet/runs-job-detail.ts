@@ -38,6 +38,9 @@ import { isAbsolute, join } from 'node:path';
 import { TextDecoder } from 'node:util';
 import { createGunzip } from 'node:zlib';
 import { redactHomePaths, scrubSecrets } from '../util/scrub.js';
+import { parseReadyRows } from './ready-row-edit.js';
+import { parseClaimedTsv, parseDispatchEvents } from './runs-dir-state.js';
+import { readSource } from './runs-parked-queue.js';
 
 // ---------------------------------------------------------------------------
 // Public types — the fleet.job.v1 wire shape.
@@ -52,6 +55,9 @@ export interface FleetJobDetailV1 {
   job: string;
   state: FleetJobState;
   lane: string | null;
+  requestedLane?: string | null;
+  launchedLane?: string | null;
+  laneReason?: string | null;
   tier: string | null;
   model: string | null;
   pid: number | null;
@@ -257,6 +263,18 @@ export async function getFleetJobDetail(job: string, options: FleetJobDetailOpti
     ['launch', 'base', 'base.meta', 'prompt', 'log', 'log.gz', 'publish', 'notes.md', 'body.md'].map(s => probe(file(s))),
   );
 
+  const [ready, claimed, events] = await Promise.all([
+    readSource(join(runsDir, 'queue/ready.tsv'), 2 * 1024 * 1024, false),
+    readSource(join(runsDir, 'queue/claimed.tsv'), 2 * 1024 * 1024, false),
+    readSource(join(runsDir, 'dispatch-events.log'), 1024 * 1024, true),
+  ]);
+  const requested = parseClaimedTsv(claimed.text).find(row => row.job === job)?.lane
+    ?? parseReadyRows(ready.text).find(row => row.id === job)?.lane ?? null;
+  const event = parseDispatchEvents(events.text.split('\n').filter(line => line.split(/\s+/)[3] === job).join('\n')).find(row => row.kind === 'LAUNCH');
+  const parts = event?.text.split(/\s+/) ?? [];
+  const eventLane = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/.test(parts[2] ?? '') ? parts[2]! : null;
+  const reason = event?.text.match(/(?:^|\s)reason=(.+)$/)?.[1] ?? null;
+
   const sources: FleetJobDetailV1['sources'] = {
     launch: 'missing', base: 'missing', meta: 'missing', publish: 'missing', log: 'missing',
   };
@@ -380,6 +398,9 @@ export async function getFleetJobDetail(job: string, options: FleetJobDetailOpti
     job: scrubLogLine(job),
     state,
     lane: launchLane ?? metaLane,
+    requestedLane: requested ? scrubLogLine(requested) : null,
+    launchedLane: eventLane ?? launchLane,
+    laneReason: reason ? scrubLogLine(reason) : null,
     tier,
     model,
     pid,
@@ -396,4 +417,86 @@ export async function getFleetJobDetail(job: string, options: FleetJobDetailOpti
     log,
     sources,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Wider log scan — the activity stream's command source (RQ-RADAR-DESKTOP-ACTIVITY)
+// ---------------------------------------------------------------------------
+
+export type JobLogScanSource = 'live' | 'archived' | 'missing' | 'degraded';
+
+export interface JobLogScan {
+  source: JobLogScanSource;
+  /** Scrubbed lines inside the scan window, oldest first; a clipped head is dropped. */
+  lines: string[];
+  /** The window clipped the log: earlier lines exist but were never read. */
+  truncated: boolean;
+  bytes: number | null;
+}
+
+export interface JobLogScanOptions {
+  runsDir?: string;
+  /** Read window from the end of a live log, or the decompressed window of an archive. Default 384 KiB. */
+  maxBytes?: number;
+  /** Lines kept (the NEWEST ones). Default 4000. */
+  maxLines?: number;
+}
+
+const DEFAULT_SCAN_BYTES = 384 * 1024;
+const DEFAULT_SCAN_LINES = 4000;
+const MAX_SCAN_GZ_CHARS = 4 * 1024 * 1024;
+
+function scanLines(text: string, dropFirst: boolean, maxLines: number): { lines: string[]; truncated: boolean } {
+  let lines = text.split('\n');
+  if (dropFirst && lines.length > 0) lines = lines.slice(1);
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines = lines.slice(0, -1);
+  const truncated = dropFirst || lines.length > maxLines;
+  if (lines.length > maxLines) lines = lines.slice(-maxLines);
+  return { lines: lines.map(scrubLogLine), truncated };
+}
+
+/**
+ * A wider, still bounded read of J.log / J.log.gz for surfaces that need more
+ * than the detail tail (the per-job activity stream's command list). Same
+ * guardrails as getFleetJobDetail: lstat first, symlinks never followed, the
+ * .log.gz path only when ≤ MAX_GZ_FILE_BYTES, output capped by maxLines.
+ * Never throws on fs input; 'degraded' marks a source that exists but could
+ * not be read as a regular file.
+ */
+export async function scanJobLog(job: string, options: JobLogScanOptions = {}): Promise<JobLogScan> {
+  if (!isFleetJobId(job)) throw new Error('invalid fleet job id');
+  const runsDir = options.runsDir ?? join(homedir(), '.ashlr-runs');
+  if (!isAbsolute(runsDir)) throw new Error('runsDir must be an absolute path');
+  const maxBytes = options.maxBytes ?? DEFAULT_SCAN_BYTES;
+  const maxLines = options.maxLines ?? DEFAULT_SCAN_LINES;
+  const file = (suffix: string) => join(runsDir, `${job}.${suffix}`);
+
+  const [pLog, pLogGz] = await Promise.all([probe(file('log')), probe(file('log.gz'))]);
+  if (readable(pLog)) {
+    try {
+      const start = Math.max(0, pLog.size - maxBytes);
+      const out = scanLines(await readSlice(file('log'), pLog.size, start, maxBytes), start > 0, maxLines);
+      return { source: 'live', lines: out.lines, truncated: out.truncated, bytes: pLog.size };
+    } catch {
+      return { source: 'degraded', lines: [], truncated: false, bytes: pLog.size };
+    }
+  }
+  if (readable(pLogGz)) {
+    if (pLogGz.size > MAX_GZ_FILE_BYTES) {
+      return { source: 'archived', lines: [], truncated: true, bytes: pLogGz.size };
+    }
+    try {
+      const gz = await readGzipTail(file('log.gz'));
+      const clipped = gz.text.length > MAX_SCAN_GZ_CHARS;
+      const text = clipped ? gz.text.slice(-MAX_SCAN_GZ_CHARS) : gz.text;
+      const out = scanLines(text, gz.headDropped || gz.overCap || clipped, maxLines);
+      return { source: 'archived', lines: out.lines, truncated: out.truncated || gz.overCap || clipped, bytes: pLogGz.size };
+    } catch {
+      return { source: 'degraded', lines: [], truncated: false, bytes: pLogGz.size };
+    }
+  }
+  if (exists(pLog) || exists(pLogGz)) {
+    return { source: 'degraded', lines: [], truncated: false, bytes: null };
+  }
+  return { source: 'missing', lines: [], truncated: false, bytes: null };
 }

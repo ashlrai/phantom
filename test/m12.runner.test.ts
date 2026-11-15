@@ -1509,7 +1509,9 @@ describe('runSwarm — structural no-outward guard (engine forced to builtin)', 
         } as RunState;
       },
     );
-    mockPlanSwarm.mockResolvedValueOnce(minimalPlan('scoped swarm'));
+    const plan = minimalPlan('scoped swarm');
+    plan.tasks.push({ id: 'verify-1', phase: 'verify', goal: 'Verify', deps: ['build-1'] });
+    mockPlanSwarm.mockResolvedValueOnce(plan);
 
     await runSwarm(
       { goal: 'scoped swarm' },
@@ -1540,10 +1542,14 @@ describe('runSwarm — structural no-outward guard (engine forced to builtin)', 
       workSource: 'manual',
       taskId: 'scaffold-1',
       objective: 'Init',
+      stage: 'implement',
       memoryMode: 'bounded',
       allowedFiles: { include: ['src/focus.ts'] },
       resultContract: { kind: 'text' },
     });
+    // Bottleneck-only stage delegation: the phase pins the stage's lane class.
+    expect(capturedOpts[1]?.delegationScope).toMatchObject({ taskId: 'build-1', stage: 'implement' });
+    expect(capturedOpts[2]?.delegationScope).toMatchObject({ taskId: 'verify-1', stage: 'verify' });
     expect(capturedOpts[0]?.delegationScope?.['swarmId']).toEqual(expect.any(String));
     expect(capturedOpts[0]?.delegationScope?.['budget']).toMatchObject({
       maxTokens: expect.any(Number),

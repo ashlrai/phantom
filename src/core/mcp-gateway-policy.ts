@@ -1,7 +1,13 @@
 /** Host-owned gateway policy. Request arguments never supply identity or approval. */
 import { readFileSync } from 'node:fs';
-import { parse } from 'yaml';
+import { createRequire } from 'node:module';
 import { z } from 'zod';
+
+// yaml is needed only when an explicit policy file is parsed; deferring its
+// module graph keeps `phm mcp` startup cheap in the common no-policy case
+// (zod is already loaded by the MCP SDK). A yaml load failure is still
+// fail-closed: parseGatewayPolicy throws, which refuses startup.
+const require = createRequire(import.meta.url);
 
 const verdict = z.enum(['deny', 'approval_required', 'allow']);
 const schema = z.object({
@@ -18,7 +24,10 @@ export type GatewayPolicy = z.infer<typeof schema>;
 export type GatewayIdentity = { agent?: string; groups: string[] };
 
 export function parseGatewayPolicy(source: string): GatewayPolicy {
-  try { return schema.parse(parse(source, { maxAliasCount: 0 })); }
+  try {
+    const { parse } = require('yaml') as typeof import('yaml');
+    return schema.parse(parse(source, { maxAliasCount: 0 }));
+  }
   catch { throw new Error('Invalid MCP gateway policy'); }
 }
 

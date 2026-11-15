@@ -8,17 +8,22 @@ import { EventEmitter } from 'node:events';
  * as "zero". The darwin block runs the real `log stream` + sandbox-exec (no
  * model, no seat, HOME is the per-worker temp home).
  */
-import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { fileURLToPath } from 'node:url';
 import {
+  LOG_STREAM_SUPERVISOR_SH,
+  attachLifetimeStop,
   isViolationTag,
+  logStreamArgv,
   newViolationTag,
   parseKernelDenials,
   startSandboxDenialWatch,
+  stopLogStream,
   type KernelEvidenceDeps,
 } from '../src/core/sandbox/kernel-evidence.js';
 import {
@@ -68,6 +73,91 @@ describe('parseKernelDenials (d0)', () => {
     expect(isViolationTag(a)).toBe(true);
     expect(a).not.toBe(newViolationTag());
     expect(isViolationTag('ashlr-sbx-"; (allow default)')).toBe(false);
+  });
+});
+
+
+describe('log-stream supervisor packaging (WEYV-SANDBOX-LOGSTREAM-sec)', () => {
+  const supervisorPath = fileURLToPath(new URL('../src/core/sandbox/log-stream-supervisor.sh', import.meta.url));
+
+  it('embeds the canonical supervisor script verbatim (trailing newline aside)', () => {
+    const fromFile = readFileSync(supervisorPath, 'utf8').replace(/(?:\r?\n)$/, '');
+    expect(fromFile).toBe(LOG_STREAM_SUPERVISOR_SH);
+  });
+
+  it('ships the supervisor script as an executable file', () => {
+    const mode = statSync(supervisorPath).mode;
+    expect(mode & 0o111).toBeTruthy();
+  });
+
+  it('preserves the historical log stream argv', () => {
+    const predicate = 'sender == "Sandbox" AND eventMessage CONTAINS "ashlr-sbx-0123456789abcdef0123456789abcdef"';
+    expect(logStreamArgv(predicate)).toEqual(['stream', '--style', 'ndjson', '--predicate', predicate]);
+  });
+
+  it('attachLifetimeStop installs SIGTERM/SIGINT/SIGHUP/exit hooks and detach removes them', () => {
+    const before = {
+      SIGTERM: process.listenerCount('SIGTERM'),
+      SIGINT: process.listenerCount('SIGINT'),
+      SIGHUP: process.listenerCount('SIGHUP'),
+      exit: process.listenerCount('exit'),
+    };
+    let calls = 0;
+    const detach = attachLifetimeStop(() => { calls += 1; });
+    expect(process.listenerCount('SIGTERM')).toBe(before.SIGTERM + 1);
+    expect(process.listenerCount('SIGINT')).toBe(before.SIGINT + 1);
+    expect(process.listenerCount('SIGHUP')).toBe(before.SIGHUP + 1);
+    expect(process.listenerCount('exit')).toBe(before.exit + 1);
+    detach();
+    expect(process.listenerCount('SIGTERM')).toBe(before.SIGTERM);
+    expect(process.listenerCount('SIGINT')).toBe(before.SIGINT);
+    expect(process.listenerCount('SIGHUP')).toBe(before.SIGHUP);
+    expect(process.listenerCount('exit')).toBe(before.exit);
+    expect(calls).toBe(0);
+  });
+
+  it('stopLogStream sends SIGTERM then SIGKILL after grace if the process is still alive', async () => {
+    // Ignore TERM from the first instruction (no race with a shell trap), then
+    // announce readiness so we do not signal before SIG_IGN is installed.
+    const child = spawn('/usr/bin/python3', ['-c',
+      'import signal,sys,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); sys.stdout.write("r"); sys.stdout.flush(); time.sleep(30)',
+    ], { detached: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    const pid = child.pid;
+    expect(pid).toBeGreaterThan(1);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error('child never became ready')), 2000);
+        const onExit = (code: number | null, sig: NodeJS.Signals | null) => {
+          clearTimeout(t);
+          reject(new Error(`child exited before ready: ${sig ?? code}`));
+        };
+        child.stdout!.once('data', () => {
+          clearTimeout(t);
+          child.off('exit', onExit);
+          resolve();
+        });
+        child.once('exit', onExit);
+      });
+      const stream = {
+        pid,
+        kill(signal?: NodeJS.Signals) {
+          try { process.kill(pid!, signal); return true; } catch { return false; }
+        },
+      };
+      stopLogStream(stream, 200);
+      // kill(pid, 0) still succeeds on a zombie; wait for the handle to reap it.
+      const signal = await new Promise<NodeJS.Signals | number | null>((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error(`child ${pid} still running after stopLogStream`)), 2000);
+        child.once('exit', (code, sig) => {
+          clearTimeout(t);
+          resolve(sig ?? code);
+        });
+      });
+      expect(signal).toBe('SIGKILL');
+    } finally {
+      try { process.kill(-pid!, 'SIGKILL'); } catch { /* already gone */ }
+      try { process.kill(pid!, 'SIGKILL'); } catch { /* already gone */ }
+    }
   });
 });
 

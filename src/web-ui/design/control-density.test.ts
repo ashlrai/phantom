@@ -139,7 +139,7 @@ const ALLOWED: Record<string, Record<string, string>> = {
   'routes/verse/shell/CommandPalette.module.css': {
     '20px': 'engine monogram tile and <kbd> keycap — square glyphs sized to their letter/chord, not controls',
     // `@media` phone block: `.item { min-height: 48px }`. Same rule as the
-    // VerseApp bottom bar — the DESKTOP density switch must not shrink a
+    // PhantomApp bottom bar — the DESKTOP density switch must not shrink a
     // finger target.
     '48px': 'phone palette row — a touch target, independent of desktop density',
   },

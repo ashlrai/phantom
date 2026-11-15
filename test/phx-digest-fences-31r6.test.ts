@@ -115,6 +115,8 @@ describe('harness digest fenced examples', () => {
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const fetch = vi.fn();
     vi.stubGlobal('fetch', fetch);
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
     try {
       const path = join(dir, 'digest.md');
       writeFileSync(path, [realSource('S1', '2026-10-23'), '```', realSource('S9', '2026-10-01'), '```', realSource('S2', '2026-10-31')].join('\n'));
@@ -126,6 +128,7 @@ describe('harness digest fenced examples', () => {
       expect(fetch).not.toHaveBeenCalled();
     } finally {
       stdout.mockRestore();
+      vi.useRealTimers();
       vi.unstubAllGlobals();
       rmSync(dir, { recursive: true, force: true });
     }

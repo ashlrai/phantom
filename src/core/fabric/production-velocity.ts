@@ -7,7 +7,7 @@
  * local/API caps, and queue selection sized to real slot capacity.
  */
 
-import { countForInventory, resolveDaemonCountPreferences } from '../daemon/count-preferences.js';
+import { countForInventory, currentThroughputLevel, resolveDaemonCountPreferences } from '../daemon/count-preferences.js';
 import type { AshlrConfig } from '../types.js';
 import type { ResourceSnapshot } from './resource-monitor.js';
 import { slotsForBackendState } from './concurrent-dispatch.js';
@@ -82,20 +82,27 @@ export function resolveProductionVelocityProfile(cfg: AshlrConfig): EffectivePro
   const pendingPolicy = resolveProductionVelocityPendingPolicy(cfg);
   const enabled = pendingPolicy.enabled;
 
+  const adaptive = currentThroughputLevel().level;
+  // An explicit daemon parallel width is the operator slot ceiling. The
+  // adaptive ramp applies only when that width was not set.
+  const rawParallel = cfg.daemon?.parallel;
+  const slotFallback = typeof rawParallel === 'number' && Number.isSafeInteger(rawParallel) && rawParallel > 0
+    ? rawParallel
+    : adaptive;
   const maxSlotsPerBackend = positiveInt(
     rawObj['maxSlotsPerBackend'],
-    positiveInt(fabric['maxSlotsPerBackend'], 3),
+    positiveInt(fabric['maxSlotsPerBackend'], slotFallback),
   );
 
   const localMaxConcurrent = positiveIntOrNull(rawObj['localMaxConcurrent'])
     ?? positiveIntOrNull(local['maxConcurrent'])
-    ?? (enabled ? 1 : null);
+    ?? (enabled ? adaptive : null);
   const nimMaxConcurrent = positiveIntOrNull(rawObj['nimMaxConcurrent'])
     ?? positiveIntOrNull(nim['maxConcurrent'])
-    ?? (enabled ? 2 : null);
+    ?? (enabled ? adaptive : null);
   const kimiMaxConcurrent = positiveIntOrNull(rawObj['kimiMaxConcurrent'])
     ?? positiveIntOrNull(kimi['maxConcurrent'])
-    ?? (enabled ? 2 : null);
+    ?? (enabled ? adaptive : null);
 
   return {
     enabled,

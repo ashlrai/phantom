@@ -39,6 +39,7 @@ import {
 import {
   anthropicProxyHandle,
   ensureAnthropicProxy,
+  isLocalClientRequest,
   isMessagesPost,
   normaliseMessagesBody,
   startAnthropicProxy,
@@ -773,5 +774,24 @@ describe('anthropic proxy — shutdown', () => {
     });
     expect('error' in result).toBe(true);
     expect(anthropicProxyHandle()).toBeNull();
+  });
+
+  it('refuses rebound Host and cross-site Origin, serves local clients', async () => {
+    const { upstream, proxy } = await fixture();
+    const rebound = await call(proxy, '/v1/messages', {
+      method: 'POST', body: '{}', headers: { host: `evil.example:${proxy.port}` },
+    });
+    expect(rebound.status).toBe(403);
+    const cross = await call(proxy, '/props', { headers: { origin: 'https://evil.example' } });
+    expect(cross.status).toBe(403);
+    expect(upstream.seen).toHaveLength(0);
+
+    const local = await call(proxy, '/props', {
+      headers: { host: `localhost:${proxy.port}`, origin: `http://127.0.0.1:${proxy.port}` },
+    });
+    expect(local.status).toBe(200);
+    expect(isLocalClientRequest({ host: `[::1]:${proxy.port}` })).toBe(true);
+    expect(isLocalClientRequest({ host: '127.0.0.1.evil.example' })).toBe(false);
+    expect(isLocalClientRequest({ origin: 'null' })).toBe(false);
   });
 });

@@ -40,6 +40,7 @@
  * State: ~/.ashlr/comms/leader-line.json (0600). Never throws.
  */
 
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -357,6 +358,10 @@ export interface LeaderLineDeps {
   markDriveReportPosted(day: string, nowMs: number): void;
   events(sinceMs: number): Promise<Array<{ key: string; kind: string; text: string; url?: string }>>;
   leaderHealth(): { status: string; summary: string } | null;
+  /** Test seam for the Telegram send. Production uses `sendTelegramMessage`. */
+  sendTelegram?(text: string, opts: TelegramSendOpts, cfg: AshlrConfig): Promise<TelegramSendResult>;
+  /** Records a sent post as an outbound desktop line in the owner thread. Production uses `postOwnerNotice`. */
+  ownerNotice?(text: string, key: string): Promise<unknown>;
 }
 
 let depsOverride: Partial<LeaderLineDeps> | null = null;
@@ -468,9 +473,28 @@ function sentIds(res: TelegramSendResult): number[] {
 }
 
 async function send(text: string, cfg: AshlrConfig, opts: TelegramSendOpts, record: Omit<TelegramThreadEntry, 'tg' | 'at'>): Promise<boolean> {
-  const res = await sendTelegramMessage(leaderDisplayText(scrubSecrets(text), Date.now(), cfg.comms?.timeZone), opts, cfg);
-  if (res.ok) recordTelegramMessages(sentIds(res), record);
+  const d = lineDeps();
+  const display = leaderDisplayText(scrubSecrets(text), Date.now(), cfg.comms?.timeZone);
+  const res = await (d.sendTelegram ?? sendTelegramMessage)(display, opts, cfg);
+  if (res.ok) {
+    recordTelegramMessages(sentIds(res), record);
+    await noteOwnerThread(d, display, record.kind);
+  }
   return res.ok;
+}
+
+/** Best-effort: show the post in the owner thread the desktop app reads. Never throws. */
+async function noteOwnerThread(d: LeaderLineDeps, display: string, kind: string): Promise<void> {
+  try {
+    const minute = Math.floor(d.now() / 60_000);
+    const key = `line-${createHash('sha256').update(`${kind}\n${display}\n${minute}`).digest('hex').slice(0, 16)}`;
+    if (d.ownerNotice) { await d.ownerNotice(display, key); return; }
+    const [thread, channel] = await Promise.all([import('./owner-thread.js'), import('./owner-channel.js')]);
+    await thread.postOwnerNotice({ text: display, idempotencyKey: key }, {
+      runsDir: channel.fixedOwnerRunsDir(),
+      settings: channel.loadOwnerThreadSettings(channel.fixedOwnerConfigDir()),
+    });
+  } catch { /* the Telegram result stands */ }
 }
 
 function notePing(state: LineStateV1, nowMs: number, key: string, urgent: boolean): void {

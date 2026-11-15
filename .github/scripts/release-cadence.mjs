@@ -8,6 +8,22 @@ import { requireRepositoryMetadata, requireRepositoryReference } from './github-
 
 const SHA = /^[a-f0-9]{40}$/;
 const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+
+/** Follow an annotated tag to its commit. A lightweight tag is already a commit. */
+export async function peeledCommit(read, base, object) {
+  let current = object;
+  const seen = new Set();
+  for (let depth = 0; current?.type === 'tag'; depth += 1) {
+    assert.ok(depth < 4 && SHA.test(current.sha) && !seen.has(current.sha), 'invalid tag annotation');
+    seen.add(current.sha);
+    const tag = await read(`${base}/git/tags/${current.sha}`);
+    assert.equal(tag?.sha, current.sha, 'tag annotation sha mismatches');
+    current = tag.object;
+  }
+  assert.equal(current?.type, 'commit', 'release tag does not peel to a commit');
+  assert.match(current.sha ?? '', SHA);
+  return current.sha;
+}
 export function nextPatch(version) {
   assert.match(version ?? '', VERSION, 'invalid source version');
   const parts = version.split('.').map(Number);
@@ -44,13 +60,12 @@ export async function planReleaseCadence({ repository, revision, minutes = 30, n
   const tag = await read(`${base}/git/ref/tags/v${pkg.version}`);
   if (tag === null) return { due: false, reason: 'current-version-awaits-tag' };
   assert.equal(tag.ref, `refs/tags/v${pkg.version}`);
-  assert.equal(tag.object?.type, 'commit');
-  assert.match(tag.object.sha ?? '', SHA);
-  if (tag.object.sha === revision) return { due: false, reason: 'no-new-commits' };
-  const compare = await read(`${base}/compare/${tag.object.sha}...${revision}`);
+  const tagSha = await peeledCommit(read, base, tag.object);
+  if (tagSha === revision) return { due: false, reason: 'no-new-commits' };
+  const compare = await read(`${base}/compare/${tagSha}...${revision}`);
   assert.equal(compare.status, 'ahead', 'current version tag is not an ancestor of master');
   assert.ok(Number.isSafeInteger(compare.ahead_by) && compare.ahead_by > 0);
-  const tagged = await read(`${base}/commits/${tag.object.sha}`);
+  const tagged = await read(`${base}/commits/${tagSha}`);
   const taggedAt = Date.parse(tagged.commit?.committer?.date);
   assert.ok(Number.isFinite(taggedAt) && taggedAt <= now, 'invalid tagged commit timestamp');
   if (now - taggedAt < minutes * 60_000) return { due: false, reason: 'cadence-not-due' };
@@ -72,6 +87,19 @@ export async function planReleaseCadence({ repository, revision, minutes = 30, n
   // Re-read before opening a PR: this SHA must still be the default-branch tip.
   if ((await read(`${base}/branches/master`)).commit?.sha !== revision) return { due: false, reason: 'master-moved' };
   return { due: true, reason: 'green-master-cadence-due', version, revision, ciRunId: latest.id, ciRunAttempt: latest.run_attempt };
+}
+
+class MetadataRateLimitError extends Error {}
+class MetadataTransientError extends Error {}
+
+export async function planReleaseCadenceWhenAvailable(input) {
+  try {
+    return await planReleaseCadence(input);
+  } catch (error) {
+    if (error instanceof MetadataRateLimitError) return { due: false, reason: 'metadata-rate-limited' };
+    if (error instanceof MetadataTransientError) return { due: false, reason: 'metadata-unavailable' };
+    throw error;
+  }
 }
 
 // Public reads deliberately carry no credential. The existing release-please
@@ -114,14 +142,22 @@ export function createPublicMetadataReader({ fetchImpl = fetch, now = () => perf
           firstTransient = `${transient} at ${endpoint}`;
           report(`release metadata transient read failure: ${firstTransient}`);
         }
-        assert.ok(attempt < 3, `release metadata unavailable (${transient}) after ${attempt} read attempts; first transient ${firstTransient}`);
+        if (attempt === 3) {
+          const message = `release metadata unavailable (${transient}) after ${attempt} read attempts; first transient ${firstTransient}`;
+          report(`${message}; deferring until the next run`);
+          throw new MetadataTransientError(message);
+        }
         const delay = attempt * 250;
         assert.ok(remaining() > delay, `release metadata read deadline exhausted; first transient ${firstTransient}`);
         await sleep(delay);
         continue;
       }
       if (response.status === 404 && endpoint.includes('/git/ref/tags/')) return null;
-      assert.equal(response.status, 200, `release metadata unavailable (${response.status})`);
+      if ([403, 429].includes(response.status) && response.headers?.get('x-ratelimit-remaining') === '0') {
+        report(`release metadata rate limited at ${endpoint}; deferring until the next run`);
+        throw new MetadataRateLimitError('release metadata rate limited');
+      }
+      assert.equal(response.status, 200, `release metadata unavailable (${response.status}) at ${endpoint}`);
       assert.ok(text.length <= 4 * 1024 * 1024, 'release metadata too large');
       return JSON.parse(text);
     }
@@ -131,8 +167,8 @@ export function createPublicMetadataReader({ fetchImpl = fetch, now = () => perf
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     assert.equal(process.env.GITHUB_REF, 'refs/heads/master');
-    const plan = await planReleaseCadence({ repository: process.env.GITHUB_REPOSITORY, revision: process.env.GITHUB_SHA,
-      minutes: cadenceMinutes(process.env.RELEASE_CADENCE_MINUTES || '30'), read: createPublicMetadataReader() });
+    const plan = await planReleaseCadenceWhenAvailable({ repository: process.env.GITHUB_REPOSITORY, revision: process.env.GITHUB_SHA,
+      minutes: cadenceMinutes(process.env.RELEASE_CADENCE_MINUTES || '5'), read: createPublicMetadataReader() });
     assert.ok(process.env.GITHUB_OUTPUT);
     appendFileSync(process.env.GITHUB_OUTPUT, `due=${plan.due}\nversion=${plan.version ?? ''}\n`);
     console.log(JSON.stringify(plan));

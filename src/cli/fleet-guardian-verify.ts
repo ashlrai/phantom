@@ -1,6 +1,7 @@
 import { isAbsolute } from 'node:path';
 import { GUARDIAN_VERIFY_DEADLINE, GUARDIAN_VERIFY_MAX_TIMEOUT_MS, runGuardianVerifyLoop, type GuardianOptions, type GuardianSummary } from '../core/fleet/guardian-verify-loop.js';
-import { runGuardianVerifyExclusive } from '../core/fleet/guardian-verify-exclusive.js';
+import { runGuardianVerifyExclusive, type GuardianVerifyRefusal } from '../core/fleet/guardian-verify-exclusive.js';
+import { runGuardianHeadVerification } from '../core/fleet/guardian-head-manifest.js';
 import { GUARDIAN_DRAIN_MAX_RETRIES, type GuardianDrainSummary } from '../core/fleet/guardian-retry-drain.js';
 import { runGuardianVerifyRecover, type GuardianVerifyRecoverDeps, type GuardianVerifyRecoverReport } from '../core/fleet/guardian-verify-recover.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
@@ -15,7 +16,15 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 // states under the output directory without touching the source. --json reports
 // {verify, retry, retrySkipped, latestState, recovered, final}; recovered counts
 // verified attempts, never merely a drain that ran.
-export const usage = 'Usage: ashlr fleet guardian-verify --manifest <file> --state <file> [--max-passes <n>] [--interval-ms <ms>] [--timeout-ms <ms>] [--retry-infra <1..20> --retry-output-dir <abs>] [--json]';
+// --head-of <absolute repo path> (optional --branch <name>, exclusive with
+// --manifest and the retry flags) synthesizes a one-entry manifest from the
+// repository's observed refs/remotes/origin head and feeds the same loop.
+export const usage = 'Usage: ashlr fleet guardian-verify (--manifest <file> | --head-of <repo> [--branch <name>]) --state <file> [--max-passes <n>] [--interval-ms <ms>] [--timeout-ms <ms>] [--retry-infra <1..20> --retry-output-dir <abs>] [--json]';
+
+/** Signals an exclusive-lock refusal from inside the --head-of loop seam. */
+class GuardianVerifyRefused extends Error {
+  constructor(readonly reason: GuardianVerifyRefusal) { super(reason); }
+}
 
 export async function cmdFleetGuardianVerify(
   args: string[],
@@ -26,11 +35,20 @@ export async function cmdFleetGuardianVerify(
   let json = false;
   for (let i = 0; i < args.length; i++) {
     const flag = args[i]!;
+    if (flag === '--help' || flag === '-h') { console.log(usage); return 0; }
     if (flag === '--json' && !json) { json = true; continue; }
-    if (!['--manifest', '--state', '--max-passes', '--interval-ms', '--timeout-ms', '--retry-infra', '--retry-output-dir'].includes(flag) || values[flag] !== undefined || !args[i + 1] || args[i + 1]!.startsWith('--')) {
+    if (!['--manifest', '--state', '--max-passes', '--interval-ms', '--timeout-ms', '--retry-infra', '--retry-output-dir', '--head-of', '--branch'].includes(flag) || values[flag] !== undefined || !args[i + 1] || args[i + 1]!.startsWith('--')) {
       process.stderr.write('error: invalid guardian-verify arguments\n'); return 2;
     }
     values[flag] = args[++i]!;
+  }
+  const headOf = values['--head-of'];
+  const branch = values['--branch'];
+  if (headOf !== undefined && values['--manifest'] !== undefined) {
+    process.stderr.write('error: --head-of and --manifest are mutually exclusive\n'); return 2;
+  }
+  if (branch !== undefined && headOf === undefined) {
+    process.stderr.write('error: --branch requires --head-of\n'); return 2;
   }
   const integer = (value: string | undefined, fallback: number): number => value === undefined ? fallback : /^[1-9]\d*$/.test(value) ? Number(value) : NaN;
   const timeoutMs = values['--timeout-ms'] === undefined ? undefined : integer(values['--timeout-ms'], NaN);
@@ -44,6 +62,9 @@ export async function cmdFleetGuardianVerify(
     || !Number.isSafeInteger(retryInfra) || retryInfra < 1 || retryInfra > GUARDIAN_DRAIN_MAX_RETRIES
     || !isAbsolute(retryOutputDir) || retryOutputDir.length > 4096)) {
     process.stderr.write(`error: recovery requires --retry-infra 1..${GUARDIAN_DRAIN_MAX_RETRIES} and an absolute --retry-output-dir together with an explicit --timeout-ms\n`); return 2;
+  }
+  if (retry && headOf !== undefined) {
+    process.stderr.write('error: --retry-infra/--retry-output-dir require --manifest\n'); return 2;
   }
   const options: GuardianOptions = { manifest: values['--manifest'] ?? '', state: values['--state'] ?? '', maxPasses: integer(values['--max-passes'], 1), intervalMs: integer(values['--interval-ms'], 1000), timeoutMs };
   const controller = new AbortController();
@@ -63,6 +84,19 @@ export async function cmdFleetGuardianVerify(
       );
       return printRecover(report, json);
     }
+    if (headOf !== undefined) {
+      const summary = await runGuardianHeadVerification({
+        repo: headOf, branch, state: options.state, maxPasses: options.maxPasses,
+        intervalMs: options.intervalMs, timeoutMs, signal: controller.signal,
+        loop: async (loopOptions) => {
+          const inner = await runGuardianVerifyExclusive(loopOptions, { run });
+          if (inner.state === 'refused') throw new GuardianVerifyRefused(inner.reason);
+          return inner.summary;
+        },
+      });
+      console.log(json ? JSON.stringify(summary) : `guardian-verify: pass=${summary.pass} fail=${summary.fail} unknown=${summary.unknown} cancelled=${summary.cancelled}${summary.deadlineExceeded ? ' deadline-exceeded' : ''}`);
+      return summary.deadlineExceeded ? 4 : summary.cancelled || summary.unknown ? 3 : summary.fail ? 1 : 0;
+    }
     const outcome = await runGuardianVerifyExclusive({ ...options, signal: controller.signal }, { run });
     if (outcome.state === 'refused') {
       console.log(json ? JSON.stringify({ state: 'refused', reason: outcome.reason, ran: false }) : `guardian-verify: refused reason=${outcome.reason} ran=false`);
@@ -71,8 +105,13 @@ export async function cmdFleetGuardianVerify(
     const summary = outcome.summary;
     console.log(json ? JSON.stringify(summary) : `guardian-verify: pass=${summary.pass} fail=${summary.fail} unknown=${summary.unknown} cancelled=${summary.cancelled}${summary.deadlineExceeded ? ' deadline-exceeded' : ''}`);
     return summary.deadlineExceeded ? 4 : summary.cancelled || summary.unknown ? 3 : summary.fail ? 1 : 0;
-  } catch {
-    process.stderr.write('error: guardian-verify could not validate or process manifest/state\n');
+  } catch (error) {
+    if (error instanceof GuardianVerifyRefused) {
+      console.log(json ? JSON.stringify({ state: 'refused', reason: error.reason, ran: false }) : `guardian-verify: refused reason=${error.reason} ran=false`);
+      return 5;
+    }
+    const detail = headOf !== undefined && error instanceof Error && error.message !== '' ? ` (${error.message})` : '';
+    process.stderr.write(`error: guardian-verify could not validate or process manifest/state${detail}\n`);
     return 3;
   } finally {
     if (deadline !== undefined) clearTimeout(deadline);

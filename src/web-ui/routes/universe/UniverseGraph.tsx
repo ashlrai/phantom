@@ -10,7 +10,7 @@ const DISPLAY_LIMIT = 60;
 const DISPLAY_EDGE_LIMIT = 240;
 type InspectTrial = (runId: string, trialId: string) => boolean;
 const KIND_LABELS: Record<UniverseGraphNode['kind'], string> = {
-  universe: 'Universe', seed: 'Seed', comparator: 'Evaluator', campaign: 'Campaign',
+  universe: 'Experiment workspace', seed: 'Seed', comparator: 'Evaluator', campaign: 'Campaign',
   reservation: 'Reservation', run: 'Run', trial: 'Trial', artifact: 'Artifact', delivery: 'Delivery',
 };
 const EDGE_LABELS: Record<UniverseGraphEdge['kind'], string> = {
@@ -86,7 +86,7 @@ function NodeInspector({ node, graph, byId, select, onInspectTrial }: {
     </dl>
     <p className={styles.note}>The graph observes saved evidence. It does not rerun evaluation or establish accepted production value.</p>
     {node.runId && node.trialId ? <button type="button" className={styles.link} onClick={() => setUnavailableTrial(onInspectTrial(node.runId!, node.trialId!) ? null : node.id)}>Inspect exact trial evidence</button> : null}
-    {unavailableTrial === node.id ? <p className={styles.notice} role="status">This exact trial is not present in the current overview. Refresh Universe before inspecting it; no other trial was selected.</p> : null}
+    {unavailableTrial === node.id ? <p className={styles.notice} role="status">This exact trial is not present in the current overview. Refresh Experiments before inspecting it; no other trial was selected.</p> : null}
     <h4>Direct relationships</h4>
     {relationships.length ? <ul className={styles.relations}>{relationships.slice(0, DISPLAY_LIMIT).map((edge) => {
       const incoming = edge.to === node.id;
@@ -159,7 +159,7 @@ function GraphExplorer({ graph, onInspectTrial }: { graph: GraphReport; onInspec
         <div className={styles.nodeList} role="group" aria-label="Graph nodes">{nodes.map((node) => <button type="button" key={node.id} data-kind={node.kind} className={styles.nodeButton} aria-label={`Inspect ${KIND_LABELS[node.kind].toLowerCase()}: ${node.label}`} aria-pressed={node.id === selected?.id} onClick={() => setSelectedId(node.id)}><span>{node.label}</span><small>{KIND_LABELS[node.kind]} · {node.state}{node.generation !== undefined ? ` · generation ${node.generation}` : ''}</small></button>)}</div>
         {selected ? <NodeInspector node={selected} graph={graph} byId={byId} select={select} onInspectTrial={onInspectTrial} /> : null}
       </div>
-    </> : <p>{graph.sourceState === 'missing' ? 'No recorded graph source is available for this universe.' : graph.complete ? 'This observation contains no graph nodes.' : 'Graph nodes could not be established from incomplete evidence.'}</p>}
+    </> : <p>{graph.sourceState === 'missing' ? 'No recorded graph source is available for this experiment workspace.' : graph.complete ? 'This observation contains no graph nodes.' : 'Graph nodes could not be established from incomplete evidence.'}</p>}
   </>;
 }
 

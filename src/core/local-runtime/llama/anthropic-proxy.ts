@@ -60,6 +60,7 @@ import {
   NO_LOCAL_AGENT_DEFAULTS,
   allowsNonLoopback,
   gateBindHost,
+  isLoopbackHost,
   originFor,
   resolveLlamaRuntimeConfig,
   resolveLocalAgentDefaults,
@@ -154,6 +155,43 @@ export interface AnthropicProxyOptions {
   maxNormalisedBodyBytes?: number;
   /** Optional diagnostics only. Errors are contained; no request objects escape. */
   onRequestAttribution?: (metadata: AnthropicRequestAttribution) => void | Promise<void>;
+}
+
+/** Hostname of a `Host` header value (`host:port`, `[::1]:port`), or null if unparseable. */
+function hostnameOfHostHeader(value: string): string | null {
+  try {
+    return new URL(`http://${value}`).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Is this request one a LOCAL client could have sent, rather than a web page
+ * driving the user's browser at the loopback port?
+ *
+ * The listener has no authentication, so on a loopback bind the only thing
+ * standing between it and a malicious web page is the browser's own
+ * origin rules — which do not cover (a) DNS rebinding, where the attacker's
+ * name resolves to 127.0.0.1 and the page is then same-origin with us, nor
+ * (b) a cross-site `text/plain` POST, which needs no preflight. A rebound
+ * request carries the attacker's name in `Host`; a cross-site one carries a
+ * non-loopback `Origin`. CLI clients (Claude Code, curl) send neither
+ * unusual value, so refusing both costs them nothing.
+ */
+export function isLocalClientRequest(headers: NodeJS.Dict<string | string[]>): boolean {
+  const host = headers['host'];
+  if (typeof host === 'string' && host !== '') {
+    const name = hostnameOfHostHeader(host);
+    if (name === null || !isLoopbackHost(name)) return false;
+  }
+  const origin = headers['origin'];
+  if (origin !== undefined) {
+    const value = Array.isArray(origin) ? origin.join(',') : origin;
+    const name = hostnameOfHostHeader(value.replace(/^[a-z][a-z0-9+.-]*:\/\//i, ''));
+    if (name === null || !isLoopbackHost(name)) return false;
+  }
+  return true;
 }
 
 /** Copy headers minus this hop's own, so framing is re-decided downstream. */
@@ -290,6 +328,9 @@ export async function startAnthropicProxy(
   // the rule would reopen exactly the hole that rule closes.
   const requestedHost = options.host ?? runtime.host;
   const { host, downgradedFrom } = gateBindHost(requestedHost, allowsNonLoopback(options.cfg));
+  // Only a bind that stayed on loopback can lean on the Host/Origin check; an
+  // operator who persisted allowNonLoopback has chosen to be reached by name.
+  const enforceLocalClients = isLoopbackHost(host);
   const requestedPort = options.port ?? runtime.anthropicPort;
   if (!Number.isSafeInteger(requestedPort) || requestedPort < 0 || requestedPort > 65_535) {
     throw new Error(`invalid anthropic-proxy port: ${String(requestedPort)}`);
@@ -395,6 +436,24 @@ export async function startAnthropicProxy(
   }
 
   function handle(req: IncomingMessage, res: ServerResponse): void {
+    if (enforceLocalClients && !isLocalClientRequest(req.headers)) {
+      try {
+        const body = JSON.stringify({
+          type: 'error',
+          error: { type: 'permission_error', message: 'anthropic-proxy: non-local Host or Origin refused' },
+        });
+        res.writeHead(403, {
+          'content-type': 'application/json',
+          'content-length': String(Buffer.byteLength(body)),
+          connection: 'close',
+        });
+        res.end(body);
+      } catch {
+        // Socket already gone.
+      }
+      req.resume();
+      return;
+    }
     const headers = forwardableHeaders(req.headers);
 
     if (!isMessagesPost(req.method, req.url)) {
@@ -416,7 +475,13 @@ export async function startAnthropicProxy(
     req.on('data', (chunk: Buffer) => {
       size += chunk.length;
       if (passthrough !== null) {
-        passthrough.write(chunk);
+        // Honour backpressure: the over-cap body is by definition the large
+        // one, and an unpaced write queues all of it in memory.
+        const target = passthrough;
+        if (!target.write(chunk)) {
+          req.pause();
+          target.once('drain', () => req.resume());
+        }
         return;
       }
       chunks.push(chunk);
@@ -427,8 +492,14 @@ export async function startAnthropicProxy(
       // rewritten, so the bytes already buffered can simply be flushed ahead
       // of the rest of the stream.
       passthrough = openUpstream(req, res, headers);
-      for (const buffered of chunks) passthrough.write(buffered);
+      const target = passthrough;
+      let drained = true;
+      for (const buffered of chunks) drained = target.write(buffered);
       chunks.length = 0;
+      if (!drained) {
+        req.pause();
+        target.once('drain', () => req.resume());
+      }
     });
 
     req.on('end', () => {

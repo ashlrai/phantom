@@ -55,6 +55,7 @@ export const BACKOFF_START_MS = 2_000;
 export const BACKOFF_MAX_MS = 30_000;
 /** How often to re-check for a mutation token while none is held. */
 export const TOKEN_RECHECK_MS = 3_000;
+export const POLL_MIN_INTERVAL_MS = 250;
 const SEEN_LIMIT = 500;
 const RESULT_ATTEMPTS = 3;
 
@@ -268,6 +269,8 @@ export function startComputerRunner(hooks: ComputerRunnerHooks): ComputerRunner 
         const commands = isRecord(response) && Array.isArray(response.commands) ? response.commands : [];
         for (const command of commands) handle(command);
         if (commands.length > 0) hooks.onActivity?.();
+        // Bound retries even if the long-poll endpoint answers immediately.
+        await sleep(POLL_MIN_INTERVAL_MS, signal);
       } catch (err) {
         if (signal.aborted) break;
         if (err instanceof VerseMutationLockedError) {

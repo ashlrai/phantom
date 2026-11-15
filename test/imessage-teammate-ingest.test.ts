@@ -24,6 +24,8 @@ vi.mock('node:child_process', async (importOriginal) => {
 });
 
 import { ingestIMessages, senderIdFor } from '../src/core/comms/imessage-inbox-bridge.js';
+import { TEAMMATE_FINDINGS_TOPIC } from '../src/core/comms/imessage-findings-bridge.js';
+import { listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 import { readCursor, writeCursor, type IntakeMsg } from '../src/core/integrations/imessage.js';
 import type { AshlrConfig } from '../src/core/types.js';
 
@@ -38,9 +40,14 @@ let home = '';
 let runsDir = '';
 let previousHome: string | undefined;
 
+const busRoot = () => join(runsDir, 'bus');
 const ingest = (messages: IntakeMsg[]) =>
-  ingestIMessages(cfg(), { runsDir, now, platform: 'darwin', poll: async () => ({ ok: true, messages }) });
+  ingestIMessages(cfg(), { runsDir, busRoot: busRoot(), now, platform: 'darwin', poll: async () => ({ ok: true, messages }) });
 const inboxPath = () => join(runsDir, 'leader', 'MASON-INBOX.md');
+const busEnvelopes = () => {
+  const page = listBusInboxAfter(0, 100, { root: busRoot() });
+  return page.status === 'ok' ? page.messages.map((m) => m.envelope) : [];
+};
 const teammateRows = () =>
   readFileSync(join(runsDir, 'imessage', 'teammates.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as Record<string, unknown>);
 
@@ -68,6 +75,8 @@ describe('teammate intake', () => {
     const result = await ingest([row(11, TEAMMATE, 'Please preserve this artifact')]);
     expect(result).toMatchObject({ ok: false, deferred: true, cursor: 10, teammate: 0 });
     expect(readCursor(runsDir)).toBe(10);
+    // The mirror cannot read a directory-as-file either, but it never blocks intake.
+    expect(result.findings).toMatchObject({ posted: 0 });
   });
   it('keeps a teammate text in the local inbox, never in MASON-INBOX.md or the queue', async () => {
     const result = await ingest([row(11, TEAMMATE, 'hey ashlr, the gate is red')]);
@@ -77,6 +86,13 @@ describe('teammate intake', () => {
     const rows = teammateRows();
     expect(rows).toEqual([{ v: 1, at: now().toISOString(), rowid: 11, senderId: senderIdFor(TEAMMATE), text: 'hey ashlr, the gate is red' }]);
     expect(JSON.stringify(rows)).not.toContain(TEAMMATE);
+
+    // RQ-SWE3-DOTFEED-1: the durable row also mirrors onto the findings topic.
+    expect(result.findings).toMatchObject({ state: 'healthy', posted: 1, lastRowid: 11 });
+    const envelopes = busEnvelopes();
+    expect(envelopes.map((e) => e.id)).toEqual(['imessage-teammate-11']);
+    expect(envelopes[0]).toMatchObject({ to: TEAMMATE_FINDINGS_TOPIC, from: senderIdFor(TEAMMATE), channel: 'imessage', body: { kind: 'note', text: 'hey ashlr, the gate is red' } });
+    expect(JSON.stringify(envelopes)).not.toContain(TEAMMATE);
 
     expect(existsSync(inboxPath())).toBe(false);
     expect(existsSync(join(runsDir, 'queue'))).toBe(false);
@@ -94,6 +110,10 @@ describe('teammate intake', () => {
     expect(inbox).not.toContain('teammate ping');
     expect(inbox).not.toContain('teammate followup');
     expect(teammateRows().map((r) => r.rowid)).toEqual([11, 13]);
+
+    // Only teammate rows mirror to the findings topic; Mason's text never does.
+    expect(result.findings).toMatchObject({ posted: 2, lastRowid: 13 });
+    expect(busEnvelopes().map((e) => e.id)).toEqual(['imessage-teammate-11', 'imessage-teammate-13']);
   });
 
   it('refuses unsupported intake without polling or writing owner state', async () => {

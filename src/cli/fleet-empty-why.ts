@@ -1,13 +1,13 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { parseAbortTs } from './fleet-aborts.js';
+import { emptyJobs, type EmptyJob } from '../core/fleet/empty-job-ledger.js';
+import { classifyEmptyLog, FLEET_EMPTY_WHY_LOG_LINES, FLEET_EMPTY_WHY_REASONS, type FleetEmptyWhyReason } from '../core/fleet/empty-why-classify.js';
+export { classifyEmptyLog, FLEET_EMPTY_WHY_LOG_LINES, FLEET_EMPTY_WHY_REASONS, type FleetEmptyWhyReason } from '../core/fleet/empty-why-classify.js';
+export { emptyJobs, type EmptyJob } from '../core/fleet/empty-job-ledger.js';
 
 export const FLEET_EMPTY_WHY_SCHEMA = 'fleet.empty-why.v1';
-export const FLEET_EMPTY_WHY_LOG_LINES = 60;
 export const FLEET_EMPTY_WHY_DEFAULT_HOURS = 24;
-export const FLEET_EMPTY_WHY_REASONS = ['lint-env', 'interrupted', 'blocked', 'limit', 'other'] as const;
-export type FleetEmptyWhyReason = (typeof FLEET_EMPTY_WHY_REASONS)[number];
 
 export interface FleetEmptyWhyReport {
   schema: typeof FLEET_EMPTY_WHY_SCHEMA;
@@ -20,54 +20,10 @@ export interface FleetEmptyWhyReport {
   ids: Record<FleetEmptyWhyReason, string[]>;
 }
 
-export interface EmptyJob { id: string; lane: string }
 
 const USAGE = `Usage: ashlr fleet empty-why [--hours N] [--json]
 Tag each job that finished empty in the last N hours (default ${FLEET_EMPTY_WHY_DEFAULT_HOURS}) with one reason from the last ${FLEET_EMPTY_WHY_LOG_LINES} lines of its log: lint-env, interrupted, blocked, limit or other.
 Prints counts per reason and lane, plus the job ids. Reads jobs.jsonl and <id>.log under ~/.ashlr-runs (ASHLR_RUNS_DIR overrides). Read-only.`;
-
-// Checked in order; the first match wins.
-const RULES: ReadonlyArray<readonly [FleetEmptyWhyReason, RegExp]> = [
-  ['lint-env', /eslint|lib\/cli/i],
-  ['interrupted', /\bexit(?:ed|\s+code|\s+status)?\b\D{0,12}130\b/i],
-  ['blocked', /\bblocked\b|not implemented|\bincomplete\b/i],
-  ['limit', /usage limit|rate[ -]?limit/i],
-];
-
-/** Pure: tag one log by its last lines. */
-export function classifyEmptyLog(log: string | null): FleetEmptyWhyReason {
-  if (log === null) return 'other';
-  const tail = log.split('\n').slice(-FLEET_EMPTY_WHY_LOG_LINES).join('\n');
-  return RULES.find(([, re]) => re.test(tail))?.[0] ?? 'other';
-}
-
-const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-
-function plainLane(value: unknown): string {
-  const text = typeof value === 'string' ? value.replace(/[^\x20-\x7e]/g, ' ').trim() : '';
-  return text || 'unknown';
-}
-
-/** Pure: distinct jobs whose outcome row says empty, inside the window ending at `now`. */
-export function emptyJobs(text: string, now: number, hours: number): EmptyJob[] {
-  const seen = new Set<string>();
-  const jobs: EmptyJob[] = [];
-  for (const line of text.split('\n')) {
-    let row: unknown;
-    try { row = JSON.parse(line); } catch { continue; }
-    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
-    const f = row as Record<string, unknown>;
-    if (f.event !== 'outcome' || f.empty !== true) continue;
-    const id = typeof f.job === 'string' ? f.job : f.id;
-    const ts = parseAbortTs(f.ts);
-    // The id names a log file, so refuse anything that could leave the runs dir.
-    if (typeof id !== 'string' || !SAFE_ID.test(id) || seen.has(id)) continue;
-    if (ts === null || ts > now || ts < now - hours * 3600_000) continue;
-    seen.add(id);
-    jobs.push({ id, lane: plainLane(f.lane) });
-  }
-  return jobs;
-}
 
 const zero = (): Record<FleetEmptyWhyReason, number> => ({ 'lint-env': 0, interrupted: 0, blocked: 0, limit: 0, other: 0 });
 

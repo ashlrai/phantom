@@ -20,7 +20,16 @@ afterEach(() => { for (const h of homes.splice(0)) rmSync(h, { recursive: true, 
 function runStatus(args: string[], writeConfig: (home: string) => void = () => {}, inventory = false) {
   const home = mkdtempSync(join(tmpdir(), 'phantom-status-json-')); homes.push(home);
   writeConfig(home);
-  const env: NodeJS.ProcessEnv = { HOME: home, USERPROFILE: home, PATH: dirname(process.execPath), TMPDIR: process.env.TMPDIR };
+  const env: NodeJS.ProcessEnv = {
+    HOME: home,
+    USERPROFILE: home,
+    PATH: dirname(process.execPath),
+    TMPDIR: process.env.TMPDIR,
+    // The narrowed PATH drops gh and vercel. Keep the Vitest child preload so
+    // KILL and enrollment follow this HOME instead of the account home.
+    VITEST: process.env.VITEST,
+    NODE_OPTIONS: process.env.NODE_OPTIONS,
+  };
   delete env.ASHLR_HOME;
   delete env.NO_COLOR;
   delete env.FORCE_COLOR;
@@ -59,7 +68,7 @@ describe('CLI: phm status --json', () => {
     expect(result.stdout).not.toContain('\u001b');
     const data = JSON.parse(result.stdout);
     expect(result.stdout).toBe(JSON.stringify(data, null, 2) + '\n');
-    expect(Object.keys(data).sort()).toEqual(['v', 'generatedAt', 'state', 'reason', 'running', 'merged', 'blocked', 'spent'].sort());
+    expect(Object.keys(data).sort()).toEqual(['v', 'generatedAt', 'state', 'reason', 'running', 'merged', 'blocked', 'spent', 'lanes', 'repos', 'summary'].sort());
     expect(data.v).toBe(1);
     expect(Number.isFinite(Date.parse(data.generatedAt))).toBe(true);
     expect(data.state).toBe('dark');

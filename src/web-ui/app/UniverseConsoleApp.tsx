@@ -28,7 +28,7 @@ const scopeQuery = {
       typeof scope.root !== 'string' || !/^(?:\/|[a-zA-Z]:[\\/]|\\\\)/.test(scope.root) ||
       [...scope.root].some((character) => character.charCodeAt(0) < 32 ||
         character.charCodeAt(0) >= 127 && character.charCodeAt(0) <= 159)) {
-      throw new Error('The server did not establish an explicit read-only Universe scope.');
+      throw new Error('The server did not establish an explicit read-only experiment scope.');
     }
     return scope;
   },
@@ -47,8 +47,8 @@ function ScopedWorkspace() {
             <VerseMark size={24} /><strong>{PRODUCT_NAME}</strong><span className={styles.workspace}>Experiments</span>
           </div>
           <span className={styles.badge}>Read-only observation</span>
-          {scope.data ? <details className={styles.store}><summary>Universe store</summary>
-            <code aria-label="Universe store" className={styles.root}>{scope.data.root}</code></details> : null}
+          {scope.data ? <details className={styles.store}><summary>Experiment store</summary>
+            <code aria-label="Experiment store" className={styles.root}>{scope.data.root}</code></details> : null}
         </div>
         <div className={styles.actions}>
           <button type="button" onClick={theme.cycle}>Theme: {theme.theme}</button>
@@ -61,10 +61,10 @@ function ScopedWorkspace() {
           <p>{scope.error?.message} No project data is shown until the scope can be checked.</p>
           <button type="button" onClick={retry}>Retry scope check</button>
         </section> : scope.data ? <UniverseRootContext.Provider value={scope.data.root}>
-          <p className={styles.explanation}>This console observes the selected Universe store. Run campaigns from your terminal; opening this page does not start work.</p>
+          <p className={styles.explanation}>This console observes the selected experiment store. Run campaigns from your terminal; opening this page does not start work.</p>
           <UniverseControllerInspector key={scope.data.root} />
           <UniverseView />
-        </UniverseRootContext.Provider> : <p role="status">Checking the selected Universe store…</p>}
+        </UniverseRootContext.Provider> : <p role="status">Checking the selected experiment store…</p>}
       </main>
     </div>
   </>;

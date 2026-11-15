@@ -28,7 +28,13 @@
  *     carrying formatChannelAck() plus an `Inbox:` preview line. Message-IDs
  *     of accepted mails persist in <runsDir>/queue/email-drop-seen.jsonl and
  *     are skipped as duplicates on sight — the receiver's body-hash window is
- *     the other dedupe layer.
+ *     the other dedupe layer. When the parsed subject or body is an exact,
+ *     short owner status ask (isOwnerStatusRequest — the two fields are
+ *     checked separately because the channel message body joins them as
+ *     "subject\n\nbody", so the ask can sit in either), the mail is journaled
+ *     like any other order and a non-duplicate ack carries the
+ *     composeOwnerStatusReply() digest as its whole reply body instead of the
+ *     generic ack text; a duplicate keeps the generic receipt.
  *   runEmailDropOnce(opts)            — one pass over `*.eml` in inboxDir in
  *     name order; every handled file is renamed into processedDir (never
  *     deleted) and one bad file never throws or stops the pass.
@@ -38,13 +44,14 @@
  */
 
 import { createHash } from 'node:crypto';
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, constants, copyFileSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createChannelReceiver, OPERATOR_SENDER_ID, type ChannelAck, type ChannelEnvelope, type ChannelMessage, type ChannelReceiveResult } from '../fleet/channel-envelope.js';
 import { formatChannelAck } from '../fleet/channel-ack-text.js';
-import { allowOperatorMessage, formatOperatorGlance, isOperatorStatusAsk } from '../fleet/operator-glance.js';
-import { emailPaired, readOperatorGlance, rememberEmailPair } from '../fleet/operator-glance-read.js';
+import { allowOperatorMessage } from '../fleet/operator-glance.js';
+import { emailPaired, rememberEmailPair } from '../fleet/operator-glance-read.js';
+import { composeOwnerStatusReply, isOwnerStatusRequest, OWNER_STATUS_FALLBACK } from '../agents/owner-status-reply.js';
 import { dkimPasses, readOperatorSecret, stripPairingSecret } from '../fleet/operator-proof.js';
 import { emailFleetStatus, type EmailFleetStatusReaders } from './email-fleet-status.js';
 import { isEmailNeedsCommand, runEmailNeedsCommand } from './email-needs-command.js';
@@ -91,6 +98,9 @@ export interface EmailDropRecordOptions {
   busRoot?: string;
   /** Trusted test seams for the local status readers. */
   statusReaders?: EmailFleetStatusReaders;
+  /** Composer seam for the "Phantom status" digest reply; a throw degrades to
+   * the fixed OWNER_STATUS_FALLBACK (test seam). */
+  ownerStatusComposer?: (runsDir: string, now: Date) => Promise<string>;
 }
 
 // `ok` retains its meaning as inbox-receiver success. Status replies are not
@@ -125,6 +135,27 @@ function isOtherWritable(path: string): boolean {
 const BODY_CAP_BYTES = 8 * 1024;
 const SEEN_LIMIT = 5_000;
 const SEEN_MAX_BYTES = 2 * 1024 * 1024;
+export const EMAIL_DROP_MAX_BYTES = 2 * 1024 * 1024;
+
+/** Read only a bounded regular file, without following a final-component symlink. */
+function readDropMessage(path: string): string {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > EMAIL_DROP_MAX_BYTES) throw new Error('invalid drop file');
+    const buffer = Buffer.alloc(EMAIL_DROP_MAX_BYTES + 1);
+    let size = 0;
+    while (size < buffer.length) {
+      const read = readSync(fd, buffer, size, buffer.length - size, null);
+      if (read === 0) break;
+      size += read;
+    }
+    if (size > EMAIL_DROP_MAX_BYTES) throw new Error('oversized drop file');
+    return buffer.subarray(0, size).toString('utf8');
+  } finally {
+    closeSync(fd);
+  }
+}
 const ADDRESS = /[A-Za-z0-9._%+'-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*/;
 
 /** A header value that can never inject extra headers into a reply. */
@@ -336,11 +367,10 @@ function sanitizeFileStem(id: string): string {
 
 /**
  * The same-channel acknowledgement: a reply `.eml` any mail path can send.
- * Header values are sanitized against injection; the body carries the shared
- * ack text and the first 60 chars of the normalized inbox body. Best effort —
- * callers catch, and a transport failure never unwrites a receipt.
+ * Header values are sanitized against injection. Best effort — callers catch,
+ * and a transport failure never unwrites a receipt.
  */
-function writeReplyEml(outboxDir: string, parsed: ParsedEml, ack: ChannelAck, preview: string, stem: string): void {
+function writeReplyEml(outboxDir: string, parsed: ParsedEml, text: string, stem: string): void {
   const headers = [
     `To: ${parsed.from}`,
     `Subject: Re: ${safeHeaderValue(parsed.subject) || '(no subject)'}`,
@@ -351,7 +381,14 @@ function writeReplyEml(outboxDir: string, parsed: ParsedEml, ack: ChannelAck, pr
   }
   headers.push('Content-Type: text/plain; charset=utf-8');
   mkdirSync(outboxDir, { recursive: true });
-  writeFileSync(join(outboxDir, `${stem}.reply.eml`), `${headers.join('\r\n')}\r\n\r\n${formatChannelAck(ack)}\nInbox: ${preview}\r\n`, 'utf8');
+  writeFileSync(join(outboxDir, `${stem}.reply.eml`), `${headers.join('\r\n')}\r\n\r\n${text}\r\n`, 'utf8');
+}
+
+/** The "Phantom status" answer: the owner digest, or the fixed fallback when a composer fails. */
+async function ownerStatusAckText(opts: EmailDropRecordOptions): Promise<string> {
+  const compose = opts.ownerStatusComposer ?? composeOwnerStatusReply;
+  try { return await compose(runsRoot(opts.runsDir), (opts.now ?? (() => new Date()))()); }
+  catch { return OWNER_STATUS_FALLBACK; }
 }
 
 /**
@@ -403,12 +440,17 @@ export async function recordEmailToInbox(
   }
   const message = emailChannelMessage(parsed, opts.allowedSenders);
   if (!message) return { ok: false, reason: 'sender-not-allowed' };
+  // An exact, short owner status ask is journaled like any other order below
+  // and its ack carries the status digest — the /fleet-status command arm
+  // must not claim it first. The parsed subject and body are each tested (the
+  // channel message body joins them as "subject\n\nbody"), so an ask works
+  // from a subject-only mail as well as a body-only one.
+  const ownerStatusAsk = isOwnerStatusRequest(parsed.body) || isOwnerStatusRequest(parsed.subject);
   // Allowlist, exact-domain DKIM and prior pairing are mandatory. A configured
   // secret can establish the pairing on the first authenticated mail. The secret
   // line is removed before the order is logged. Inbound text is never a command.
   try {
-    const ask = isOperatorStatusAsk(parsed.body.trim() || parsed.subject.trim());
-    const status = isFleetStatusRequest(raw) || ask;
+    const status = isFleetStatusRequest(raw);
     const claim = parsed.messageId ? statusClaimPath(opts.runsDir, parsed.messageId) : null;
     if (claim && statusWasClaimed(claim)) return { ok: false, kind: 'status', reason: 'status-duplicate' };
     const commandText = parsed.body.trim() || parsed.subject.trim();
@@ -446,11 +488,9 @@ export async function recordEmailToInbox(
         if ((error as NodeJS.ErrnoException).code === 'EEXIST') return { ok: false, kind: 'status', reason: 'status-duplicate' };
         throw error;
       }
-      const body = ask
-        ? formatOperatorGlance(await readOperatorGlance({ runsDir: opts.runsDir, now: opts.now }))
-        : await emailFleetStatus(opts.runsDir, opts.now ?? (() => new Date()), opts.statusReaders);
+      const body = await emailFleetStatus(opts.runsDir, opts.now ?? (() => new Date()), opts.statusReaders);
       mkdirSync(opts.outboxDir, { recursive: true });
-      const headers = [`To: ${parsed.from}`, `Subject: Re: ${ask ? 'Phantom' : 'Phantom fleet status'}`,
+      const headers = [`To: ${parsed.from}`, 'Subject: Re: Phantom fleet status',
         `In-Reply-To: <${parsed.messageId}>`, `References: <${parsed.messageId}>`,
         'Content-Type: text/plain; charset=utf-8'];
       writeFileSync(join(opts.outboxDir, `status-${createHash('sha256').update(parsed.messageId).digest('hex')}.reply.eml`),
@@ -466,7 +506,12 @@ export async function recordEmailToInbox(
     : `no-id-${createHash('sha256').update(normalized).digest('hex').slice(0, 24)}`;
   const reply = async (ack: ChannelAck): Promise<void> => {
     if (!opts.outboxDir) return;
-    try { writeReplyEml(opts.outboxDir, parsed, ack, preview, stem); } catch { /* best-effort transport */ }
+    // A "Phantom status" ask earns the five-line digest on first acceptance;
+    // a duplicate keeps the generic receipt so a replay never re-sends status.
+    const text = ownerStatusAsk && ack.status !== 'duplicate'
+      ? await ownerStatusAckText(opts)
+      : `${formatChannelAck(ack)}\nInbox: ${preview}`;
+    try { writeReplyEml(opts.outboxDir, parsed, text, stem); } catch { /* best-effort transport */ }
   };
   try {
     // The seen journal dedupes whole files across passes — including deliveries
@@ -544,9 +589,12 @@ export async function runEmailDropOnce(opts: EmailDropRunOptions): Promise<Email
   for (const name of names) {
     let result: EmailDropResult = { ok: false, reason: 'invalid' };
     try {
-      const raw = readFileSync(join(opts.inboxDir, name), 'utf8');
+      const raw = readDropMessage(join(opts.inboxDir, name));
       result = await recordEmailToInbox(raw, opts);
-    } catch { /* one bad file stays a single failure */ }
+    } catch {
+      counts.failed += 1;
+      continue; // Leave unsafe or unreadable entries in place; never copy their targets.
+    }
     if (!move(name)) {
       counts.failed += 1;
       continue;

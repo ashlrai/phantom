@@ -6,13 +6,19 @@ import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefresh } from '../../../data/hooks.js';
 import { ordersTraceQuery } from '../fleet-inbox/fleet-inbox-queries.js';
 import { narrowOrderTrace } from '../fleet-inbox/order-trace-model.js';
+import { runsGraphQuery } from './runs-graph-queries.js';
+import { insertMention, matchRunningJobs, mentionQuery, targetsOf } from './interject-target-model.js';
 import { interjectOutcome } from './interject-outcome-model.js';
-import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
+import { subscribeSteerFocus, takeSteerFocus } from '../shell/steer-hotkey.js';
 import { inboxTailQuery, postInterjection, readInboxAck } from './interject-queries.js';
+import { mintInterjectRequestId } from './interject-request.js';
+import { interjectImageChip, interjectImageError, readInterjectImage, type InterjectImage } from './interject-image.js';
 import { ackState, ackText, loadDraft, loadPendingAck, newestLeaderPassMs, parseInboxAt, saveDraft, savePendingAck, sourceChip } from './interject-ack-model.js';
 import { loadHistory, pushHistory, recall } from './interject-history.js';
 import { askCosTask, isCosRouteAbsent } from './cos-task-client.js';
 import { CosTaskCard, lastCosTask } from './CosTaskCard.js';
+import { buildCorrectionText, correctionBodyLimit, correctionClock, CORRECTION_WINDOW_MS, INTERJECT_MAX_CHARS, isCorrectableId, lastCorrectable, saveLastSent, type LastSent } from './interject-correction.js';
 import styles from './InterjectBox.module.css';
 
 const UNAVAILABLE = 'The inbox API is not in this build yet.';
@@ -36,18 +42,64 @@ export function InterjectBox() {
   const [draft, setDraft] = useState(() => {
     try { return loadDraft(window.sessionStorage); } catch { return ''; }
   });
+  const [caret, setCaret] = useState(0);
+  const [mentionClosed, setMentionClosed] = useState(false);
+  const [selected, setSelected] = useState(0);
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  const visible = useSectionVisible();
+  useEffect(() => {
+    if (!visible) return;
+    const focus = () => { if (takeSteerFocus()) textarea.current?.focus(); };
+    const unsubscribe = subscribeSteerFocus(focus);
+    focus();
+    return unsubscribe;
+  }, [visible]);
+  const query = mentionClosed ? null : mentionQuery(draft, caret);
+  const running = useQuery(runsGraphQuery, { enabled: query !== null, freshMs: 15_000 });
+  const matches = query === null ? [] : matchRunningJobs(query, running.data?.workers ?? []);
+  const targets = targetsOf(draft);
+  function chooseMention(job: string) {
+    const next = insertMention(draft, caret, job);
+    updateDraft(next.text);
+    setCaret(next.caret);
+    setMentionClosed(true);
+    requestAnimationFrame(() => { textarea.current?.focus(); textarea.current?.setSelectionRange(next.caret, next.caret); });
+  }
   const [sending, setSending] = useState(false);
   const busy = useRef(false);
   const cursor = useRef<number | null>(null);
   const liveDraft = useRef('');
+  // One request id per composed message: a retry (double Enter, a slow
+  // response, a reconnect) reposts it and the Hub replays the first write.
+  const requestKey = useRef<{ text: string; id: string } | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [message, setMessage] = useState('');
   const [sent, setSent] = useState<string | null>(null);
   const [asTask, setAsTask] = useState(false);
   const [taskId, setTaskId] = useState<string | null>(lastCosTask);
   const [taskAck, setTaskAck] = useState('');
+  const [image, setImage] = useState<InterjectImage | null>(null);
+  function attachImage(file: File | null | undefined) {
+    if (!file) return;
+    const error = interjectImageError(file);
+    if (error !== null) { setMessage(error); return; }
+    setMessage('');
+    void readInterjectImage(file).then(attached => {
+      // A changed attachment is a different composed message: it earns its own
+      // request id so a retry never collapses two sends into one.
+      requestKey.current = null;
+      setImage(attached);
+    }, () => setMessage('The screenshot could not be read.'));
+  }
+  function removeImage() {
+    requestKey.current = null;
+    setImage(null);
+  }
   function updateDraft(text: string) {
     setDraft(text);
+    // An emptied box ends the composition: a retype — even of the same words —
+    // is a new message and mints a new request id.
+    if (!text.trim()) requestKey.current = null;
     try { saveDraft(window.sessionStorage, text); } catch { /* Storage can be unavailable. */ }
   }
   useEffect(() => {
@@ -88,8 +140,32 @@ export function InterjectBox() {
     const giveUp = setTimeout(() => finish('expired'), Math.max(0, remaining));
     return () => { controller.abort(); clearInterval(interval); clearTimeout(giveUp); };
   }, [waitingId]);
+  // The last message sent from this device stays correctable for 30 minutes.
+  const [lastSent, setLastSent] = useState<LastSent | null>(() => {
+    try { return lastCorrectable(window.localStorage, Date.now()); } catch { return null; }
+  });
+  const [correcting, setCorrecting] = useState<LastSent & { priorDraft: string } | null>(null);
+  useEffect(() => {
+    if (lastSent === null) return;
+    const timer = setTimeout(() => setLastSent(null), Math.max(0, lastSent.sentAtMs + CORRECTION_WINDOW_MS - Date.now()));
+    return () => clearTimeout(timer);
+  }, [lastSent]);
+  function startCorrection() {
+    if (!lastSent) return;
+    setCorrecting({ ...lastSent, priorDraft: draft });
+    cursor.current = null;
+    updateDraft(lastSent.text);
+    setMentionClosed(true);
+    requestAnimationFrame(() => textarea.current?.focus());
+  }
+  function cancelCorrection() {
+    if (!correcting) return;
+    updateDraft(correcting.priorDraft);
+    setCorrecting(null);
+  }
+  const outgoing = (correcting && buildCorrectionText(correcting.id, draft)) || draft.trim();
   const missing = unavailable || absent(read.error);
-  const canSend = !missing && !sending && draft.trim().length > 0 && draft.length <= 6_000;
+  const canSend = !missing && !sending && draft.trim().length > 0 && outgoing.length <= INTERJECT_MAX_CHARS;
 
   async function send() {
     if (!canSend || busy.current) return;
@@ -110,10 +186,18 @@ export function InterjectBox() {
         return;
       }
       setTaskAck('');
-      const result = await postInterjection(draft.trim());
+      const text = outgoing;
+      if (requestKey.current?.text !== text) requestKey.current = { text, id: mintInterjectRequestId() };
+      const result = await postInterjection(text, requestKey.current.id, image?.data);
+      // History and the correctable record keep the plain words, not the prefix.
       try { pushHistory(window.localStorage, draft.trim()); } catch { /* Storage can be unavailable. */ }
+      const last = result.id ? { id: result.id, text: draft.trim(), sentAtMs: Date.now() } : null;
+      try { saveLastSent(window.localStorage, last); } catch { /* Storage can be unavailable. */ }
+      setLastSent(last && isCorrectableId(last.id) ? last : null);
       cursor.current = null;
-      updateDraft('');
+      setImage(null);
+      updateDraft(correcting?.priorDraft ?? '');
+      setCorrecting(null);
       setSent(result.at);
       if (result.id) {
         sentAt.current = Date.now();
@@ -140,17 +224,38 @@ export function InterjectBox() {
     (entryTime(b.at) ?? Date.parse(b.at)) - (entryTime(a.at) ?? Date.parse(a.at))).slice(0, 5);
   return <section className={styles.panel} aria-labelledby={`${id}-title`}>
     <h2 id={`${id}-title`}>Tell the leaders</h2>
-    <form onSubmit={event => { event.preventDefault(); void send(); }}>
+    <form onSubmit={event => { event.preventDefault(); void send(); }}
+      onDragOver={event => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }}
+      onDrop={event => {
+        const file = event.dataTransfer.files?.[0];
+        if (file) { event.preventDefault(); attachImage(file); }
+      }}>
       <label htmlFor={id}>Prompt, thought or interjection</label>
-      <textarea id={id} rows={3} maxLength={6_000} value={draft} disabled={sending}
+      {correcting ? <p role="note">Correcting your {correctionClock(correcting.sentAtMs)} message · <a href="#" onClick={event => { event.preventDefault(); cancelCorrection(); }}>Cancel correction</a></p> : null}
+      <textarea data-steer-box ref={textarea} id={id} rows={3} maxLength={correcting ? correctionBodyLimit(correcting.id) : INTERJECT_MAX_CHARS} value={draft} disabled={sending}
         placeholder="Tell the leaders. Lands in MASON-INBOX.md; the next leader pass reads it."
-        onChange={event => updateDraft(event.target.value)}
+        onChange={event => { updateDraft(event.target.value); setCaret(event.target.selectionStart); setMentionClosed(false); setSelected(0); }}
+        onSelect={event => setCaret(event.currentTarget.selectionStart)}
+        onPaste={event => {
+          const file = Array.from(event.clipboardData?.items ?? []).find(item => item.kind === 'file')?.getAsFile();
+          if (file) { event.preventDefault(); attachImage(file); }
+        }}
+        aria-controls={query !== null && matches.length ? `${id}-mentions` : undefined}
+        aria-activedescendant={query !== null && matches.length ? `${id}-mention-${Math.min(selected, matches.length - 1)}` : undefined}
         onKeyDown={event => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+          if (query !== null && matches.length && ['ArrowUp', 'ArrowDown', 'Enter', 'Tab'].includes(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+            event.preventDefault();
+            if (event.key === 'ArrowUp' || event.key === 'ArrowDown') setSelected(index => (index + (event.key === 'ArrowUp' ? -1 : 1) + matches.length) % matches.length);
+            else chooseMention(matches[Math.min(selected, matches.length - 1)]!.job);
+            return;
+          }
+          if (event.key === 'Escape' && query !== null) { event.preventDefault(); event.stopPropagation(); setMentionClosed(true); return; }
           if (event.key === 'Escape' || (event.key === 'Enter' && (event.metaKey || event.ctrlKey))) {
             event.preventDefault();
             event.stopPropagation();
-            if (event.key === 'Escape') { cursor.current = null; updateDraft(''); }
+            if (event.key === 'Escape' && correcting) cancelCorrection();
+            else if (event.key === 'Escape') { cursor.current = null; setImage(null); updateDraft(''); }
             else void send();
           } else if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') &&
             !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
@@ -169,10 +274,14 @@ export function InterjectBox() {
             } catch { /* Storage can be unavailable. */ }
           }
         }} />
-      <label><input type="checkbox" checked={asTask} disabled={sending} onChange={event => setAsTask(event.target.checked)} /> Run as task</label>
+      {query !== null && matches.length ? <div id={`${id}-mentions`} role="listbox" aria-label="Running jobs">{matches.map((job, index) => <div id={`${id}-mention-${index}`} role="option" aria-selected={index === Math.min(selected, matches.length - 1)} key={`${job.job}-${index}`} onMouseDown={event => event.preventDefault()} onClick={() => chooseMention(job.job)}>{job.job} · {job.lane ?? 'Unknown lane'}</div>)}</div> : null}
+      {targets.length ? <div>{targets.map(target => <Tag key={target} size="sm">Aimed at {target}</Tag>)}</div> : null}
+      {image ? <div><Button type="button" variant="subtle" size="sm" onClick={removeImage}>{interjectImageChip(image)} ×</Button></div> : null}
+      {lastSent && !correcting && !asTask ? <div><Button type="button" variant="subtle" size="sm" disabled={sending} onClick={startCorrection}>Correct last message</Button></div> : null}
+      <label><input type="checkbox" checked={asTask} disabled={sending || correcting !== null} onChange={event => setAsTask(event.target.checked)} /> Run as task</label>
       <div className={styles.row}>
         <span>⌘↵ or Ctrl↵ send · ↑ history · Esc clear</span>
-        <span aria-live="polite">{draft.length > 5_000 ? `${draft.length.toLocaleString('en-US')} / 6,000` : ''}</span>
+        <span aria-live="polite">{outgoing.length > 5_000 ? `${outgoing.length.toLocaleString('en-US')} / 6,000` : ''}</span>
         <Button type="submit" variant="primary" size="sm" disabled={!canSend}>{sending ? 'Sending…' : 'Send'}</Button>
       </div>
     </form>
@@ -190,8 +299,9 @@ export function InterjectBox() {
       <div className={styles.ack}><span className={styles.dot} data-state={ackState(entryTime(entry.at), newestPass)} aria-hidden="true" />{ackText(ackState(entryTime(entry.at), newestPass))}</div>
       {(() => {
         const outcome = interjectOutcome(entry.at, ackState(entryTime(entry.at), newestPass) === 'seen', trace);
-        return <div className={styles.ack} data-outcome={outcome.stage}>
-          {outcome.href ? <a href={outcome.href} target="_blank" rel="noopener noreferrer">{outcome.text}</a> : outcome.text}
+        const { state, missing } = outcome.contract;
+        return <div className={styles.ack} data-outcome={outcome.stage} data-contract={state} title={missing.length ? `missing: ${missing.join(', ')}` : undefined}>
+          {`${state} · `}{outcome.href ? <a href={outcome.href} target="_blank" rel="noopener noreferrer">{outcome.text}</a> : outcome.text}
         </div>;
       })()}
     </li>)}</ol> : <p>{read.status === 'error' ? 'The inbox tail is unavailable.' : read.data ? 'Nothing in the inbox yet.' : 'Reading the inbox…'}</p>}

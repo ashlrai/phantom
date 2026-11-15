@@ -62,7 +62,7 @@ describe('perf-budget budgets schema', () => {
     const spec = loadBudgets(join(REPO, 'perf/budgets.json'));
     expect(spec.tolerance).toBeCloseTo(0.2);
     const ids = spec.targets.map((t) => t.id);
-    expect(ids).toEqual(['phm-version', 'phm-status', 'phm-doctor', 'phantom-wrapper-warm']);
+    expect(ids).toEqual(['phm-version', 'phm-help', 'phm-status', 'phm-doctor', 'phm-mcp-tools-list', 'phantom-wrapper-warm']);
     for (const t of spec.targets) {
       expect(t.baselineMs).toBeGreaterThan(0);
       expect(t.command.length).toBeGreaterThan(0);
@@ -73,11 +73,17 @@ describe('perf-budget budgets schema', () => {
     expect(phantom.requiresBin).toBe('phantom');
     // The phm targets time the built wrapper, so a missing dist/ must error,
     // never fast-pass on an immediate non-zero exit.
-    for (const id of ['phm-version', 'phm-status', 'phm-doctor']) {
+    for (const id of ['phm-version', 'phm-help', 'phm-status', 'phm-doctor']) {
       const t = spec.targets.find((x) => x.id === id)!;
       expect(t.requiresFiles).toContain('dist/cli/index.js');
       expect(t.command).toContain('bin/ashlr');
     }
+    // The MCP target times the gateway handshake through its harness script.
+    const mcp = spec.targets.find((x) => x.id === 'phm-mcp-tools-list')!;
+    expect(mcp.requiresFiles).toEqual(
+      expect.arrayContaining(['dist/cli/index.js', 'scripts/perf-mcp-tools-list.mjs']),
+    );
+    expect(mcp.command).toContain('perf-mcp-tools-list.mjs');
   });
 
   it('rejects a malformed budgets file', () => {

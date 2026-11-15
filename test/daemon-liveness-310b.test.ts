@@ -85,6 +85,7 @@ describe('probeDaemonLiveness', () => {
     expect(verdict.state).toBe('alive');
     expect(verdict.alive).toBe(true);
     expect(verdict.pid).toBe(process.pid);
+    expect(verdict.lock).toMatchObject({ heartbeatStatus: 'fresh', heartbeatAgeMs: 20_000 });
   });
 
   it('a live pid with a stale heartbeat and no identity proof → unknown, never running', () => {
@@ -93,6 +94,24 @@ describe('probeDaemonLiveness', () => {
     const verdict = probeDaemonLiveness({ nowMs: NOW, pidProbe: () => 'alive' });
     expect(verdict.state).toBe('unknown');
     expect(verdict.alive).toBeNull();
+    expect(verdict.lock).toMatchObject({ heartbeatStatus: 'stale', heartbeatAgeMs: 30 * 60_000 });
+    expect(verdict.reason).toMatch(/heartbeat is stale/);
+  });
+
+  it.each([
+    ['missing', undefined, 'unavailable'],
+    ['empty', '', 'unavailable'],
+    ['malformed', 'not a timestamp', 'invalid'],
+    ['wrong type', 123, 'invalid'],
+    ['future', '2026-09-24T12:00:01.000Z', 'invalid'],
+  ] as const)('reports a %s heartbeat without declaring the lock absent', (_name, heartbeatAt, status) => {
+    writeState({ running: true, pid: 850 });
+    writeLock(850, '2026-09-24T12:00:00.000Z');
+    const path = daemonLockPath();
+    writeFileSync(path, JSON.stringify({ pid: 850, token: 't'.repeat(32), hostname: 'test', acquiredAt: '2026-09-24T12:00:00.000Z', heartbeatAt }));
+    const verdict = probeDaemonLiveness({ nowMs: NOW, pidProbe: () => 'alive' });
+    expect(verdict).toMatchObject({ state: 'unknown', alive: null, lock: { pid: 850, heartbeatStatus: status, heartbeatAgeMs: null } });
+    expect(verdict.reason).toContain(`heartbeat is ${status}`);
   });
 
   it('nothing claims to run and nothing does → stopped', () => {

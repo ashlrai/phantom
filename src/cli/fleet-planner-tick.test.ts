@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cmdFleet } from './fleet.js';
+import { cmdFleet } from './fleet-entry.js';
 import { cmdFleetPlannerTick } from './fleet-planner-tick.js';
 import { resolveFleetSubcommand } from './fleet-subcommand-resolve.js';
 import type { PlannerAutorunInput } from '../core/fleet/planner-autorun.js';

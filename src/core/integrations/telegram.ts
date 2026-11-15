@@ -35,10 +35,11 @@
  */
 
 import { readEnvironmentCredential } from './secrets.js';
-import { mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { readPrivateFileCapped } from '../verse/preferences.js';
 import { scrubSecrets } from '../util/scrub.js';
 import type { AshlrConfig } from '../types.js';
 import { splitTelegramText, telegramHtmlToPlain } from './telegram-format.js';
@@ -130,19 +131,26 @@ interface TelegramPollHealth {
   lastSuccess: string | null;
   error: string | null;
 }
+/** Small self-written state JSON files; 256 KiB is a hard ceiling. */
+const STATE_READ_BYTES = 256 * 1024;
+
+function readStateJson(path: string): unknown | null {
+  const read = readPrivateFileCapped(path, STATE_READ_BYTES);
+  if (read === null || read.truncated) return null;
+  try { return JSON.parse(read.text) as unknown; } catch { return null; }
+}
+
 function healthPath(): string { return join(homedir(), '.ashlr', 'comms', 'telegram-health.json'); }
 export function readTelegramHealth(cfg: AshlrConfig): TelegramPollHealth & { pollerAlive: boolean; lastUpdateId: number | null; tokenPresent: boolean; leaderTick: 'never' | 'started' | 'completed' | 'failed' | 'spawn-failed' } {
   let state: TelegramPollHealth = { lastPoll: null, lastSuccess: null, error: null };
   try {
-    const raw = JSON.parse(readFileSync(healthPath(), 'utf8')) as TelegramPollHealth;
+    const raw = readStateJson(healthPath()) as TelegramPollHealth | null;
     const date = (value: unknown): string | null => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
-    state = { lastPoll: date(raw.lastPoll), lastSuccess: date(raw.lastSuccess), error: raw.error ? 'poll failed; inspect value-free poll log' : null };
+    if (raw) state = { lastPoll: date(raw.lastPoll), lastSuccess: date(raw.lastSuccess), error: raw.error ? 'poll failed; inspect value-free poll log' : null };
   } catch { /* never polled */ }
   let leaderTick: 'never' | 'started' | 'completed' | 'failed' | 'spawn-failed' = 'never';
-  try {
-    const tick = JSON.parse(readFileSync(join(homedir(), '.ashlr', 'vision', 'leader', '.wake-result.json'), 'utf8')) as { status?: unknown };
-    if (tick.status === 'started' || tick.status === 'completed' || tick.status === 'failed' || tick.status === 'spawn-failed') leaderTick = tick.status;
-  } catch { /* no tick result */ }
+  const tick = readStateJson(join(homedir(), '.ashlr', 'vision', 'leader', '.wake-result.json')) as { status?: unknown } | null;
+  if (tick?.status === 'started' || tick?.status === 'completed' || tick?.status === 'failed' || tick?.status === 'spawn-failed') leaderTick = tick.status;
   const age = Date.now() - Date.parse(state.lastPoll ?? '');
   if (!trustedPrivateId(cfg)) state.error = 'operator input disabled: configure a positive private chat ID; no group operator allowlist is supported';
   return { ...state, leaderTick, pollerAlive: age >= 0 && age < 7 * 60_000, lastUpdateId: loadOffset() > 0 ? loadOffset() - 1 : null,
@@ -170,9 +178,16 @@ function writeInbox(updates: InboundEvent[], newOffset: number, namespace: strin
   writeFileSync(inboxPath() + '.tmp', JSON.stringify({ namespace, updates: updates.map(event => ({ ...event, ...(event.text ? { text: scrubSecrets(event.text) } : {}) })), newOffset }), { mode: 0o600 });
   renameSync(inboxPath() + '.tmp', inboxPath());
 }
+/** A poll batch holds at most 100 updates; 4 MiB covers the largest legal batch. */
+const INBOX_READ_BYTES = 4 * 1024 * 1024;
+
 function readInbox(namespace: string, cfg: AshlrConfig): PollResult | null {
   try {
-    const raw = JSON.parse(readFileSync(inboxPath(), 'utf8')) as PollResult & { namespace: string };
+    const read = readPrivateFileCapped(inboxPath(), INBOX_READ_BYTES);
+    // Absent → fresh poll; present but unreadable/refused → unreadable, as before.
+    if (read === null) { if (existsSync(inboxPath())) throw new Error('unreadable'); return null; }
+    if (read.truncated) throw new Error('Telegram inbound state mismatch');
+    const raw = JSON.parse(read.text) as PollResult & { namespace: string };
     if (raw.namespace !== namespace || !Array.isArray(raw.updates) || !Number.isSafeInteger(raw.newOffset) || raw.newOffset < 0 ||
         raw.updates.some(event => !Number.isSafeInteger(event.updateId) || event.updateId! < 0 || !['text', 'callback'].includes(event.kind))) {
       throw new Error('Telegram inbound state mismatch');
@@ -202,13 +217,11 @@ function offsetPath(): string {
 }
 
 function loadOffset(): number {
-  try {
-    const raw = readFileSync(offsetPath(), 'utf8').trim();
-    const n = Number(raw);
-    return /^\d+$/.test(raw) && Number.isSafeInteger(n) && n >= 0 ? n : 0;
-  } catch {
-    return 0;
-  }
+  const read = readPrivateFileCapped(offsetPath(), 4 * 1024);
+  if (read === null || read.truncated) return 0;
+  const raw = read.text.trim();
+  const n = Number(raw);
+  return /^\d+$/.test(raw) && Number.isSafeInteger(n) && n >= 0 ? n : 0;
 }
 
 function saveOffset(offset: number): void {

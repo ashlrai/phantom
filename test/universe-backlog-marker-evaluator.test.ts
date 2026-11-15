@@ -24,7 +24,7 @@ afterEach(() => { rmSync(base, { recursive: true, force: true }); });
 function save(source: string | Buffer) { writeFileSync(join(candidate, TARGET), source); }
 async function evaluate(root: string | null = candidate) {
   const result = await exec(process.execPath, ['--experimental-vm-modules', '--no-warnings', SCRIPT], {
-    env: { PATH: process.env.PATH, HOME: base, TMPDIR: base, NODE_DISABLE_COMPILE_CACHE: '1',
+    env: { PATH: process.env.PATH, HOME: base, TMPDIR: base, NODE_COMPILE_CACHE: join(base, 'node-compile-cache'),
       ...(root === null ? {} : { ASHLR_UNIVERSE_CANDIDATE: root }) },
     cwd: base, timeout: 5000, maxBuffer: 24 * 1024,
   });

@@ -6,15 +6,17 @@ import { join } from 'node:path';
 const effects = vi.hoisted(() => ({
   loadConfig: vi.fn(),
   setupWizard: vi.fn(),
+  loadWizardModule: vi.fn(),
 }));
 
 vi.mock('../src/core/config.js', () => ({
   loadConfig: effects.loadConfig,
 }));
 
-vi.mock('../src/core/onboard.js', () => ({
-  setupWizard: effects.setupWizard,
-}));
+vi.mock('../src/core/onboard.js', () => {
+  effects.loadWizardModule();
+  return { setupWizard: effects.setupWizard };
+});
 
 let home: string;
 
@@ -50,6 +52,7 @@ describe('cmdSetup resident authority boundary', () => {
       expect(code).toBe(1);
       expect(effects.loadConfig).not.toHaveBeenCalled();
       expect(effects.setupWizard).not.toHaveBeenCalled();
+      expect(effects.loadWizardModule).not.toHaveBeenCalled();
       expect(stderr.join('\n')).toContain('setup refused before config or wizard work');
       expect(stdout.join('\n')).toContain('ashlr run "<goal>"');
       expect(stdout.join('\n')).toContain('ashlr swarm "<goal>"');
@@ -84,6 +87,7 @@ describe('cmdSetup resident authority boundary', () => {
     ]);
     expect(effects.loadConfig).not.toHaveBeenCalled();
     expect(effects.setupWizard).not.toHaveBeenCalled();
+    expect(effects.loadWizardModule).not.toHaveBeenCalled();
     expect(readdirSync(home)).toEqual([]);
   });
 });

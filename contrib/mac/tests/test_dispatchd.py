@@ -14,6 +14,7 @@ import importlib.machinery
 import importlib.util
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -81,14 +82,16 @@ def set_daemon_tick(home, value):
         f.write_text(value)
 
 
-def tick(home, env_extra=None):
+def tick(home, env_extra=None, script=None):
     env = {'HOME': str(home),
            'PATH': str(Path(home) / 'stubbin') + ':' + os.environ.get('PATH', '/usr/bin:/bin'),
            'LANG': 'C', 'LOADGATE_LOADAVG': '1.0', 'LOADGATE_NCPU': '18', 'LOADGATE_PRESSURE': '1', 'LOADGATE_SWAP_GB': '0',
            'DISKGUARD_FREE_GB': '500'}
     if env_extra:
         env.update(env_extra)
-    return subprocess.run([sys.executable, '-B', str(SCRIPT)], env=env,
+    env.setdefault('PYTHONPATH', str(Path(home) / 'stubbin') + ':' + str(SCRIPT.parent))
+    script = script or SCRIPT
+    return subprocess.run([sys.executable, '-B', str(script)], env=env,
                           capture_output=True, text=True, timeout=120)
 
 
@@ -171,6 +174,59 @@ def dispatched(home, job):
 def auth_mark(home, job):
     f = home / '.ashlr-runs' / 'queue' / 'run' / f'{job}.authfail.seen'
     return f.read_text().strip() if f.exists() else None
+
+
+class DispatchClaimTests(unittest.TestCase):
+    def test_tick_claim_recovers_after_owner_exit(self):
+        tmp = build(); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+        env = launch_stubs(home); queue_job(home, 'RQ-CLAIM', lane='devin')
+        lock = home / '.ashlr-runs/queue/dispatchd.tick.lock'
+        owner = subprocess.Popen([sys.executable, '-c',
+            'import fcntl,sys,time; f=open(sys.argv[1], "a"); fcntl.flock(f, fcntl.LOCK_EX); print("locked", flush=True); time.sleep(60)',
+            str(lock)], stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(owner.stdout.readline().strip(), 'locked')
+            self.assertEqual(tick(home, env).returncode, 0)
+            self.assertFalse(dispatched(home, 'RQ-CLAIM'))
+        finally:
+            owner.kill(); owner.wait(); owner.stdout.close()
+        self.assertEqual(tick(home, env).returncode, 0)
+        self.assertTrue(dispatched(home, 'RQ-CLAIM'))
+        self.assertEqual(tick(home, env).returncode, 0)
+        rows = [json.loads(x) for x in (home / '.ashlr-runs/metrics/jobs.jsonl').read_text().splitlines()]
+        self.assertEqual(sum(x.get('event') == 'launch' and x.get('job') == 'RQ-CLAIM' for x in rows), 1)
+
+    def test_interrupted_claim_is_retried(self):
+        tmp = build(); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+        env = launch_stubs(home); queue_job(home, 'RQ-CRASH', lane='devin')
+        q = home / '.ashlr-runs/queue'; line = (q / 'ready.tsv').read_text()
+        (q / 'ready.tsv').write_text('')
+        (q / 'run/RQ-CRASH.line').write_text(line)
+        receipt = q / 'run/RQ-CRASH.dispatched'; receipt.write_text('0')
+        os.utime(receipt, (time.time() - 300, time.time() - 300))
+        self.assertEqual(tick(home, env).returncode, 0)
+        self.assertTrue(dispatched(home, 'RQ-CRASH'))
+        self.assertIn('LAUNCH_INTERRUPTED RQ-CRASH', events(home))
+
+    def test_candidate_worker_cwd_prevents_duplicate_after_grace(self):
+        candidate = SCRIPT.parent / 'host-integration/dispatchd.candidate.py'
+        for lane in ('grok', 'cursor'):
+            with self.subTest(lane=lane):
+                tmp = build(); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+                env = launch_stubs(home); queue_job(home, 'RQ-LIVE', lane=lane)
+                (home / 'stubbin/router_queue.py').write_text('def load(path): return ({}, set())\ndef read_metadata(path): return open(path).read()\n')
+                (home / '.ashlr-runs/bin/router.py').write_text('def load(path): return ({}, {})\n')
+                (home / '.ashlr-runs/queue/ROUTER_OFF').touch()
+                r = home / '.ashlr-runs'; wt = home / 'Projects/ashlrai/wt/RQ-LIVE'; wt.mkdir()
+                (r / 'RQ-LIVE.base').write_text(f'phantom branch {wt} {lane}\n')
+                receipt = r / 'queue/run/RQ-LIVE.dispatched'; receipt.write_text('0')
+                os.utime(receipt, (time.time() - 300, time.time() - 300))
+                (home / 'stubbin/lsof').write_text(f'#!/bin/sh\necho n{wt}\n')
+                result = tick(home, env, script=candidate)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(receipt.exists())
+                rows = [json.loads(x) for x in (r / 'metrics/jobs.jsonl').read_text().splitlines()]
+                self.assertFalse(any(x.get('event') == 'launch' and x.get('job') == 'RQ-LIVE' for x in rows))
 
 
 class SlotDefaultTests(unittest.TestCase):
@@ -319,6 +375,99 @@ class RestockTriggerTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue(called.exists(), 'restock.sh was not invoked for a starved devin lane')
 
+    def test_parked_backlog_refreshes_evidence_and_wakes_restock(self):
+        slots = held_lanes()
+        slots['devin'] = devin_slot(last_change=int(1e15))
+        rows = [f'PARKED-MERGERATE.devin\tRQ-PARK-{n}\tdevin\twork\tphantom\tunused' for n in range(22)]
+        tmp = build(slots=slots, ready=rows, queue_md='# queue\n')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        called = self._stub(home)
+        gh = home / 'stubbin/gh'
+        gh.write_text('#!/bin/sh\necho 20\n')
+        gh.chmod(0o755)
+        r = tick(home)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(called.exists())
+        self.assertEqual((home / '.ashlr-runs/phantom-open-prs').read_text().split()[1], '20')
+        self.assertEqual(ready_lines(home), rows)
+        status = json.loads((home / '.ashlr-runs/queue/status.json').read_text())
+        self.assertEqual(status['lanes']['devin']['queued'], 0)
+        self.assertEqual(status['invalid_queue_lines'], 0)
+        metrics = (home / '.ashlr-runs/metrics/jobs.jsonl').read_text()
+        self.assertNotIn('"event": "enqueue"', metrics)
+        route_state = json.loads((home / '.ashlr-runs/queue/route-state.json').read_text())
+        self.assertEqual(route_state, {})
+
+    def test_saturated_backlog_eventually_dispatches_through_precheck(self):
+        slots = held_lanes()
+        slots['devin'] = devin_slot(last_change=int(1e15))
+        tmp = build(slots=slots, queue_md='# queue\n')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name).resolve()
+        q = home / '.ashlr-runs/queue'
+        rows = []
+        for n in range(22):
+            prompt = q / 'prompts' / f'RQ-PROBE-{n}.md'
+            prompt.write_text(f'RQ-PROBE-{n} (repo=phantom): Required checks apply; no merge without Security pin\n')
+            rows.append(f'PARKED-MERGERATE.devin\tRQ-PROBE-{n}\tdevin\twork\tphantom\t{prompt}')
+        (q / 'ready.tsv').write_text('\n'.join(rows) + '\n')
+        # Restock records every enqueue in this durable history before the
+        # supervisor can park it; those records are not active dispatches.
+        (q / 'claimed.tsv').write_text(''.join(f'RQ-PROBE-{n}\tdevin\twork\t12:00\t1\n' for n in range(22)))
+        (q / 'admission.json').write_text(json.dumps({'cap': 1000}))
+        (home / '.ashlr-runs/phantom-open-prs').write_text(f'{time.time()} 150\n')
+        precheck = home / '.ashlr-runs/bin/precheck.sh'
+        precheck.write_text('#!/bin/sh\necho checked >> "$HOME/prechecked"\nexit 13\n')
+        precheck.chmod(0o755)
+        restock_script = SCRIPT.parent / 'restock.py'
+        def recover():
+            return subprocess.run([sys.executable, '-B', str(restock_script), '--per-lane', '0'],
+                                  env={'HOME': str(home), 'PATH': str(home / 'stubbin') + ':' + os.environ.get('PATH', '/usr/bin:/bin')},
+                                  capture_output=True, text=True, timeout=60)
+        r = recover()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((q / 'ready.tsv').read_text().count('PARKED-MERGERATE.'), 21, (r.stdout, r.stderr))
+        r = tick(home)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((home / 'prechecked').exists(), (r.stdout, r.stderr, events(home), ready_lines(home)))
+        self.assertIn('RQ-PROBE-0', json.loads((q / 'precheck-parked.json').read_text()))
+        self.assertFalse((q / 'run/RQ-PROBE-0.dispatched').exists())
+        self.assertIn('no merge without Security pin', (q / 'prompts/RQ-PROBE-0.md').read_text())
+        self.assertEqual(recover().returncode, 0)
+        self.assertEqual((q / 'ready.tsv').read_text().count('PARKED-MERGERATE.'), 21)
+        # Once the precheck becomes due and succeeds, the ordinary dispatcher claims it.
+        state = json.loads((q / 'precheck-parked.json').read_text())
+        state['RQ-PROBE-0']['retry_at'] = 0
+        (q / 'precheck-parked.json').write_text(json.dumps(state))
+        precheck.write_text('#!/bin/sh\necho passed >> "$HOME/prechecked"\nexit 0\n')
+        r = tick(home)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((q / 'run/RQ-PROBE-0.dispatched').exists())
+        self.assertIn('passed', (home / 'prechecked').read_text())
+        self.assertEqual(tick(home).returncode, 0)
+        metrics = [json.loads(row) for row in (home / '.ashlr-runs/metrics/jobs.jsonl').read_text().splitlines()]
+        self.assertEqual(sum(m.get('event') == 'launch' and m.get('job') == 'RQ-PROBE-0' for m in metrics), 1)
+
+    def test_concurrent_unpark_survives_dispatcher_rewrite(self):
+        from unittest.mock import patch
+        for status_first in (True, False):
+            with self.subTest(status_first=status_first):
+                old = ('PARKED-MERGERATE.devin\tRQ-RACE\tdevin\twork\tphantom\tprompt' if status_first
+                       else 'RQ-RACE\tphantom\tPARKED-MERGERATE.devin\twork\tprompt')
+                new = 'RQ-RACE\tphantom\tdevin\twork\tprompt'
+                tmp = build(slots=held_lanes(), ready=[old], queue_md='# queue\n')
+                self.addCleanup(tmp.cleanup)
+                home = Path(tmp.name)
+                script = home / 'dispatchd-test.py'
+                injection = f'open(Q + "/ready.tsv", "w").write({(new + chr(10))!r})\n'
+                script.write_text(SCRIPT.read_text().replace('# Reconcile concurrent parked-row rewrites', injection + '# Reconcile concurrent parked-row rewrites'))
+                module_path = str(SCRIPT.parent)
+                with patch(__name__ + '.SCRIPT', script):
+                    result = tick(home, {'PYTHONPATH': module_path})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(ready_lines(home), [new])
+
     def test_held_devin_never_triggers(self):
         slots = held_lanes()
         slots['devin'] = devin_slot(held=True, last_change=int(1e15))
@@ -435,7 +584,7 @@ class AuthBackoffTests(unittest.TestCase):
         self.assertEqual(slots_of(home)['devin']['held_by'], 'operator')
         self.assertNotIn('LANE_HOLD devin autobackoff', events(home))
 
-    def test_held_lane_waits_while_healthy_lanes_dispatch(self):
+    def test_held_lane_stays_held_while_its_preferred_work_uses_a_healthy_lane(self):
         home, env = self._home({'devin': lane_slot(), 'codex-cmp': lane_slot()})
         dead(home, 'RQ-A1', 'devin', [AUTH_401])
         dead(home, 'RQ-A2', 'devin', [AUTH_401])
@@ -444,10 +593,13 @@ class AuthBackoffTests(unittest.TestCase):
         r = tick(home, env)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue(slots_of(home)['devin'].get('held'))
-        # Eligible work still reaches the healthy lane; the held lane's job stays queued.
+        # Both jobs use the healthy executor, and the auth-held executor stays held.
         self.assertTrue(dispatched(home, 'RQ-C-RUN'))
-        self.assertFalse(dispatched(home, 'RQ-D-WAIT'))
-        self.assertEqual([l.split('\t')[0] for l in ready_lines(home)], ['RQ-D-WAIT'])
+        self.assertTrue(dispatched(home, 'RQ-D-WAIT'))
+        self.assertEqual(ready_lines(home), [])
+        claim = json.loads((home / '.ashlr-runs/queue/run/RQ-D-WAIT.line').read_text().split('\t')[5])
+        self.assertEqual(claim['preferred_lane'], 'devin')
+        self.assertEqual((home / '.ashlr-runs/queue/run/RQ-D-WAIT.line').read_text().split('\t')[2], 'codex-cmp')
         self.assertIn('LAUNCH RQ-C-RUN', events(home))
 
     def test_expired_auth_hold_recovers_and_launches(self):
@@ -539,9 +691,8 @@ class QueueWaitTests(unittest.TestCase):
     def test_claim_limit_preserves_priority_across_ticks_and_skips_blocked_head(self):
         lanes = ['codex-cmp', 'codex-personal', 'claude', 'devin']
         home, env = self.fixture(lanes)
-        # Soft load limits claims to two. Priority persists across ticks even
-        # when several lanes remain backlogged; the blocked first path waits.
-        env['LOADGATE_LOADAVG'] = '60'
+        # MAX_LAUNCH_PER_TICK limits claims to eight. Priority holds even when
+        # several lanes remain backlogged; the blocked first path waits.
         queue_job(home, 'RQ-BLOCKED', 'codex-cmp')
         (home / 'Projects/ashlrai/wt/RQ-BLOCKED').mkdir()
         jobs = []
@@ -550,13 +701,11 @@ class QueueWaitTests(unittest.TestCase):
                 job = 'RQ-%s-%d' % (lane, n)
                 jobs.append(job)
                 queue_job(home, job, lane)
-        claimed = []
-        for _ in range(2):
-            r = tick(home, env)
-            self.assertEqual(r.returncode, 0, r.stderr)
-            claimed = [r for r in self.metrics(home) if r['event'] == 'claim']
-        self.assertEqual([r['job'] for r in claimed], sorted(jobs)[:4])
-        self.assertEqual(len(claimed), 4)
+        r = tick(home, env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        claimed = [r for r in self.metrics(home) if r['event'] == 'claim']
+        self.assertEqual([r['job'] for r in claimed], sorted(jobs)[:8])
+        self.assertEqual(len(claimed), 8)
         self.assertNotIn('RQ-BLOCKED', [r['job'] for r in claimed])
         self.assertIn('RQ-BLOCKED', [line.split('\t')[0] for line in ready_lines(home)])
 
@@ -580,6 +729,17 @@ class DispatchPriorityTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return result
 
+    def test_local_oversized_and_unknown_jobs_remain_queued(self):
+        home, env = self.fixture(('codex-local', 'codex-cmp'))
+        for job, size in [('RQ-LOCAL-LARGE', 61), ('RQ-LOCAL-UNKNOWN', None), ('RQ-LOCAL-BAD', 'oops')]:
+            queue_job(home, job, 'codex-local', size=size)
+        queue_job(home, 'RQ-OTHER', 'codex-cmp', size=200)
+        self.run_tick(home, env)
+        self.assertEqual(self.claims(home), ['RQ-OTHER'])
+        remaining = '\n'.join(ready_lines(home))
+        for job in ('RQ-LOCAL-LARGE', 'RQ-LOCAL-UNKNOWN', 'RQ-LOCAL-BAD'):
+            self.assertIn(job, remaining)
+
     def test_launch_buckets_override_queue_order_and_lane_cursor(self):
         home, env = self.fixture(('codex-cmp', 'codex-personal', 'devin'))
         jobs = [('RQ-OTHER', 'codex-cmp'), ('LAND-A', 'codex-cmp'),
@@ -587,9 +747,13 @@ class DispatchPriorityTests(unittest.TestCase):
                 ('RQ-FIX-MAIN-A', 'devin')]
         for job, lane in jobs:
             queue_job(home, job, lane)
+        # MAX_LAUNCH_PER_TICK is 8; pad the lowest bucket so the cap still binds.
+        for n in range(4):
+            queue_job(home, 'RQ-TAIL-%d' % n, 'codex-cmp')
         self.run_tick(home, env)
-        self.assertEqual(self.claims(home), ['RQ-FIX-MAIN-A', 'RQ-REL-A', 'RQ-DESK-A', 'LAND-A'])
-        self.assertEqual([line.split('\t')[0] for line in ready_lines(home)], ['RQ-OTHER'])
+        self.assertEqual(self.claims(home), ['RQ-FIX-MAIN-A', 'RQ-REL-A', 'RQ-DESK-A', 'LAND-A',
+                                              'RQ-OTHER', 'RQ-TAIL-0', 'RQ-TAIL-1', 'RQ-TAIL-2'])
+        self.assertEqual([line.split('\t')[0] for line in ready_lines(home)], ['RQ-TAIL-3'])
 
     def test_land_fixup_and_recut_share_a_bucket_before_other_jobs(self):
         home, env = self.fixture()
@@ -945,6 +1109,41 @@ class DispatchPriorityTests(unittest.TestCase):
         self.assertIn('REAP ' + job, self.run_tick(home, env).stdout)
         self.assertEqual(self.published(home, 1), [job])
 
+    def test_reconciled_published_event_matches_pr_across_restarts(self):
+        home, env = self.fixture(())
+        self.publish_stubs(home)
+        job = 'RQ-LOCUSMCPLEAKQ7'
+        self.finished_worktree(home, job)
+        ledger = home / '.ashlr-runs/metrics/jobs.jsonl'
+        url = 'https://github.com/ashlrai/phantom/pull/101'
+        published = {'event': 'publish', 'jobId': job, 'prUrl': url + '/', 'outcome': 'PUBLISHED'}
+        ledger.write_text(json.dumps(published) + '\n')
+        loader = importlib.machinery.SourceFileLoader('reconcile_event_fixture', str(SCRIPT.parent / 'metrics-outcomes'))
+        module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+        loader.exec_module(module)
+        self.assertEqual(module.reconcile(ledger, lambda _: {'state': 'MERGED', 'mergedAt': '2026-10-25T19:00:00Z'}), (1, 0))
+        for _ in range(3):
+            self.assertNotIn('REAP ' + job, self.run_tick(home, env).stdout)
+        self.assertFalse((home / '.ashlr-runs/publish-order').exists())
+
+    def test_late_old_pr_completion_does_not_complete_new_attempt(self):
+        home, env = self.fixture(())
+        self.publish_stubs(home)
+        job = 'RQ-RETRY-LATE'
+        self.finished_worktree(home, job)
+        ledger = home / '.ashlr-runs/metrics/jobs.jsonl'
+        old = 'https://github.com/ashlrai/phantom/pull/101'
+        rows = [
+            {'event': 'launch', 'job': job},
+            {'event': 'publish', 'jobId': job, 'prUrl': old, 'outcome': 'PUBLISHED'},
+            {'event': 'launch', 'job': job},
+            {'event': 'publish', 'job': job, 'url': 'https://github.com/ashlrai/phantom/pull/102'},
+            {'event': 'publish', 'jobId': job, 'prUrl': old, 'outcome': 'MERGED', 'source': 'metrics-outcomes-reconciler'},
+        ]
+        ledger.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+        self.assertIn('REAP ' + job, self.run_tick(home, env).stdout)
+        self.assertEqual(self.published(home, 1), [job])
+
     def test_retry_records_finish_once_and_new_launch_resets_attempt(self):
         home, env = self.fixture(())
         self.publish_stubs(home)
@@ -1002,12 +1201,37 @@ class DispatchPriorityTests(unittest.TestCase):
         self.assertNotIn('REAP ', result.stdout)
 
 
+class EmptyGateIntegrationTests(unittest.TestCase):
+    fixture = QueueWaitTests.fixture
+    metrics = QueueWaitTests.metrics
+    def test_same_base_empty_is_dropped_without_model_launch(self):
+        home, env = self.fixture(['codex-cmp'])
+        repo = home / 'Projects/ashlrai/phantom'
+        for args in (['init'], ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                                'commit', '--allow-empty', '-m', 'base'],
+                     ['update-ref', 'refs/remotes/origin/main', 'HEAD'],
+                     ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']):
+            subprocess.run(['git', '-C', str(repo)] + args, check=True, capture_output=True)
+        job = 'RQ-UPKEEP-REL-TEST'
+        queue_job(home, job, 'codex-cmp')
+        sha = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
+        ledger = home / '.ashlr-runs/metrics/jobs.jsonl'
+        ledger.write_text(json.dumps(dict(event='claim', job=job, repo='phantom', base_sha=sha)) + '\n' +
+                          json.dumps(dict(event='finish', job=job, empty=True, exit_code=0)) + '\n')
+        result = tick(home, env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(ready_lines(home), [])
+        rows = self.metrics(home)
+        self.assertEqual(sum(r['event'] == 'skipped_empty' for r in rows), 1)
+        self.assertFalse(any(r['event'] == 'launch' for r in rows))
+
+
 if __name__ == '__main__':
     unittest.main()
 
 
 class DiffMetricsTests(unittest.TestCase):
-    def measure(self, scenario, base_override=None):
+    def measure(self, scenario, base_override=None, lane='codex-cmp', log='finished\n', rc=None):
         tmp = build(slots=held_lanes())
         self.addCleanup(tmp.cleanup)
         home = Path(tmp.name)
@@ -1030,16 +1254,127 @@ class DiffMetricsTests(unittest.TestCase):
         base = base_override or git('rev-parse', 'HEAD')
         scenario(wt, git)
         r = home / '.ashlr-runs'
-        for path, content in [(r / f'{job}.base', f'{base} phantom {wt} codex-cmp\n'),
-                              (r / f'{job}.log', 'finished\n')]:
+        for path, content in [(r / f'{job}.base', f'{base} phantom {wt} {lane}\n'),
+                              (r / f'{job}.log', log)]:
             path.write_text(content)
             os.utime(path, (time.time() - 600, time.time() - 600))
+        if rc is not None: (r / 'queue/run' / f'{job}.rc').write_text(str(rc))
         (r / 'bin/reap-one.sh').write_text('#!/bin/sh\nexit 0\n')
         (r / 'phantom-open-prs').write_text(f'{int(time.time())} 0\n')
         result = tick(home)
         self.assertEqual(result.returncode, 0, result.stderr)
         rows = [json.loads(line) for line in (r / 'metrics/jobs.jsonl').read_text().splitlines()]
         return next(row for row in rows if row.get('event') == 'finish' and row.get('job') == job)
+
+    def write_sessions_db(self, home, sessions):
+        """A minimal devin-cli sessions.db: the columns dispatchd reads, nothing more."""
+        d = home / '.local/share/devin/cli'; d.mkdir(parents=True, exist_ok=True)
+        con = sqlite3.connect(str(d / 'sessions.db'))
+        con.execute('CREATE TABLE sessions (id TEXT PRIMARY KEY, working_directory TEXT NOT NULL, metadata TEXT)')
+        con.execute('CREATE TABLE message_nodes (node_id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, chat_message TEXT NOT NULL)')
+        for s in sessions:
+            con.execute('INSERT INTO sessions (id, working_directory, metadata) VALUES (?,?,?)',
+                        (s['id'], s['wd'], json.dumps(s.get('meta', {}))))
+            for msg in s['messages']:
+                con.execute('INSERT INTO message_nodes (session_id, chat_message) VALUES (?,?)',
+                            (s['id'], json.dumps(msg)))
+        con.commit(); con.close()
+
+    def test_claude_result_usage_is_recorded_once(self):
+        transcript = '\n'.join(json.dumps(row) for row in [
+            {'type': 'assistant', 'message': {'usage': {'input_tokens': 999}}},
+            {'type': 'result', 'usage': {'input_tokens': 10, 'output_tokens': 5,
+             'cache_read_input_tokens': 20, 'cache_creation_input_tokens': 3}},
+        ])
+        row = self.measure(lambda wt, git: None, lane='claude', log=transcript)
+        self.assertEqual([row[k] for k in ('tokens_in', 'tokens_out', 'tokens_cache_read', 'tokens_cache_write', 'tokens_total')],
+                         [33, 5, 20, 3, 38])
+        self.assertEqual(row['usage_source'], 'claude-result-json')
+        self.assertIsNone(row['usage_missing'])
+        self.assertIsNone(row['acus'])
+
+    def test_claude_missing_and_invalid_usage_remains_unknown(self):
+        row = self.measure(lambda wt, git: None, lane='claude', log='plain output')
+        self.assertIsNone(row['tokens_total'])
+        self.assertEqual(row['usage_missing'], 'claude-result-not-in-log')
+        row = self.measure(lambda wt, git: None, lane='claude', log=json.dumps({'type': 'result', 'usage': {
+                'input_tokens': 0, 'output_tokens': 0, 'cache_read_input_tokens': -1}}))
+        self.assertIsNone(row['tokens_total'])
+        self.assertIsNone(row['tokens_in'])
+        self.assertIsNone(row['tokens_cache_read'])
+        self.assertEqual(row['tokens_out'], 0)
+        self.assertEqual(row['usage_missing'], 'claude-usage-incomplete')
+
+    def test_devin_session_usage_records_tokens_and_acus(self):
+        def scenario(wt, git):
+            wd = os.path.realpath(str(wt))   # the CLI stores the resolved worktree path
+            self.write_sessions_db(wt.parents[3], [
+                {'id': 'devin-s1', 'wd': wd, 'meta': {'total_acu_cost': 0.75, 'total_credit_cost': 0}, 'messages': [
+                    {'role': 'user', 'metadata': {'is_user_input': True}},
+                    # the CLI stores every response twice; request_id dedupes
+                    {'role': 'assistant', 'metadata': {'request_id': 'req-1', 'metrics': {
+                        'input_tokens': 12910, 'output_tokens': 27, 'cache_read_tokens': 2368, 'cache_creation_tokens': None}}},
+                    {'role': 'assistant', 'metadata': {'request_id': 'req-1', 'metrics': {
+                        'input_tokens': 12910, 'output_tokens': 27, 'cache_read_tokens': 2368, 'cache_creation_tokens': None}}},
+                ]},
+                {'id': 'devin-s2', 'wd': wd, 'meta': {'total_acu_cost': 1.5}, 'messages': [
+                    {'role': 'assistant', 'metadata': {'request_id': 'req-2', 'metrics': {
+                        'input_tokens': 50, 'output_tokens': 5, 'cache_read_tokens': 10}}},
+                ]},
+                {'id': 'devin-foreign', 'wd': '/elsewhere', 'meta': {'total_acu_cost': 99}, 'messages': [
+                    {'role': 'assistant', 'metadata': {'request_id': 'req-9', 'metrics': {'input_tokens': 1, 'output_tokens': 1}}},
+                ]},
+            ])
+        row = self.measure(scenario, lane='devin')
+        self.assertEqual([row[k] for k in ('tokens_in', 'tokens_out', 'tokens_cache_read', 'tokens_cache_write', 'tokens_total')],
+                         [15338, 32, 2378, 0, 15370])
+        self.assertEqual(row['acus'], 2.25)
+        self.assertEqual(row['usage_source'], 'devin-sessions-db')
+        self.assertIsNone(row['usage_missing'])
+
+    def test_devin_missing_usage_stays_null_with_reason(self):
+        # No sessions.db on the host at all.
+        row = self.measure(lambda wt, git: None, lane='devin')
+        self.assertIsNone(row['tokens_total']); self.assertIsNone(row['acus'])
+        self.assertEqual(row['usage_missing'], 'devin-session-db-missing')
+
+        # A database that knows other worktrees but not this job's.
+        row = self.measure(lambda wt, git: self.write_sessions_db(wt.parents[3], [
+            {'id': 'devin-foreign', 'wd': '/elsewhere', 'meta': {'total_acu_cost': 1}, 'messages': []}]), lane='devin')
+        self.assertIsNone(row['tokens_total']); self.assertIsNone(row['acus'])
+        self.assertEqual(row['usage_missing'], 'devin-no-session-for-worktree')
+
+        # A session that ended before any served response: ACUs still settle.
+        def no_response(wt, git):
+            self.write_sessions_db(wt.parents[3], [
+                {'id': 'devin-s1', 'wd': os.path.realpath(str(wt)), 'meta': {'total_acu_cost': 0.5}, 'messages': [
+                    {'role': 'user', 'metadata': {'is_user_input': True}}]}])
+        row = self.measure(no_response, lane='devin')
+        self.assertIsNone(row['tokens_total'])
+        self.assertEqual(row['acus'], 0.5)
+        self.assertEqual(row['usage_missing'], 'devin-usage-not-reported')
+
+        # A served response without metrics: the token total is unknowable, not zero.
+        def unmeasured(wt, git):
+            self.write_sessions_db(wt.parents[3], [
+                {'id': 'devin-s1', 'wd': os.path.realpath(str(wt)), 'meta': {'total_acu_cost': 0.5}, 'messages': [
+                    {'role': 'assistant', 'metadata': {'request_id': 'req-1', 'metrics': None}}]}])
+        row = self.measure(unmeasured, lane='devin')
+        self.assertIsNone(row['tokens_total']); self.assertIsNone(row['tokens_in'])
+        self.assertEqual(row['acus'], 0.5)
+        self.assertEqual(row['usage_missing'], 'devin-usage-incomplete')
+
+        # Other lanes keep the 'tokens used' line; its absence is named too.
+        row = self.measure(lambda wt, git: None, lane='codex-cmp')
+        self.assertIsNone(row['tokens_total'])
+        self.assertEqual(row['usage_missing'], 'tokens-line-not-in-log')
+
+    def test_devin_tokens_line_fallback(self):
+        # sessions.db absent but the log still carries a 'tokens used' line.
+        row = self.measure(lambda wt, git: None, lane='devin', log='output\ntokens used\n 12,345\n')
+        self.assertEqual(row['tokens_total'], 12345)
+        self.assertEqual(row['usage_source'], 'tokens-line')
+        self.assertIsNone(row['usage_missing'])
 
     def test_committed_job_diff_excludes_prior_repository_work(self):
         def scenario(wt, git):
@@ -1064,6 +1399,17 @@ class DiffMetricsTests(unittest.TestCase):
     def test_missing_base_records_unknown_instead_of_zero(self):
         row = self.measure(lambda wt, git: None, base_override='0' * 40)
         self.assertEqual((row['diff_files'], row['diff_lines'], row['empty']), (None, None, None))
+
+    def test_devin_failure_labels_do_not_copy_log_contents(self):
+        for log, expected in [('ERROR: 401 Unauthorized private-value\n', 'authentication'),
+                              ('ERROR: ACU limit reached private-value\n', 'quota'),
+                              ('private-value\n', 'failed_empty_unknown')]:
+            with self.subTest(expected=expected):
+                row = self.measure(lambda wt, git: None, lane='devin', log=log, rc=1)
+                self.assertEqual(row['failure_class'], expected)
+                self.assertNotIn('private-value', json.dumps(row))
+        row = self.measure(lambda wt, git: (wt / 'job-file').write_text('work'), lane='devin', rc=1)
+        self.assertEqual(row['failure_class'], 'failed_with_work')
 
 
 class SnapshotSafetyTests(unittest.TestCase):
@@ -1104,3 +1450,122 @@ class SnapshotSafetyTests(unittest.TestCase):
         home, root, wt = self.preserved_fixture('claude')
         (home / 'stubbin/lsof').write_text('#!/bin/bash\nexit 124\n')
         self.assert_preserved(home, root, wt, (root / 'queue/ready.tsv').read_text())
+
+
+class VerifiedCompletionTests(unittest.TestCase):
+    """RQ-SWE5-VERIFY-METRIC: status.json verified_completion block — independently
+    reconciled PR outcomes vs completion claims, plus coordination failures."""
+
+    @staticmethod
+    def ts(offset_s=0):
+        return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() + offset_s))
+
+    @staticmethod
+    def pr(n, repo='ashlrai/phantom'):
+        return f'https://github.com/{repo}/pull/{n}'
+
+    def vc(self, home):
+        status = json.loads((home / '.ashlr-runs' / 'queue' / 'status.json').read_text())
+        return status['verified_completion']
+
+    def run_tick(self, rows):
+        tmp = build(slots=held_lanes(), finishes=[], publishes=[])
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name).resolve()
+        ledger = home / '.ashlr-runs' / 'metrics' / 'jobs.jsonl'
+        ledger.write_text(''.join(json.dumps(r) + '\n' for r in rows))
+        result = tick(home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return self.vc(home)
+
+    def test_empty_ledger_reports_healthy_zero_claims(self):
+        vc = self.run_tick([])
+        self.assertEqual(vc['schema'], 'dispatchd.verified-completion.v1')
+        self.assertEqual(vc['window_hours'], 24)
+        self.assertEqual(vc['source_state'], 'healthy')
+        self.assertEqual(vc['eligible'], 0)
+        self.assertIsNone(vc['rate'])
+        self.assertEqual(vc['claims'], {'published': 0, 'batch_members': 0, 'outcomes': 0})
+
+    def test_eventless_producer_and_reconciler_rows_verify_a_merge(self):
+        pr = self.pr(501)
+        rows = [
+            {'event': 'launch', 'job': 'RQ-VC-1', 'lane': 'devin', 'repo': 'phantom', 'ts': self.ts(-60)},
+            {'event': 'finish', 'job': 'RQ-VC-1', 'exit_code': 0, 'empty': False, 'ts': self.ts(-50)},
+            {'jobId': 'RQ-VC-1', 'prUrl': pr, 'outcome': 'PUBLISHED', 'ts': self.ts(-40), 'lane': 'devin'},
+            {'jobId': 'RQ-VC-1', 'prUrl': pr, 'outcome': 'MERGED', 'ts': self.ts(-30),
+             'mergedAt': self.ts(-30), 'source': 'metrics-outcomes-reconciler'},
+        ]
+        vc = self.run_tick(rows)
+        self.assertEqual(vc['eligible'], 1)
+        self.assertEqual(vc['verified'], 1)
+        self.assertEqual(vc['failed'], 0)
+        self.assertEqual(vc['pending'], 0)
+        self.assertEqual(vc['rate'], 1.0)
+        self.assertEqual(vc['claims']['published'], 1)
+        self.assertEqual(vc['by_lane']['devin'], {'eligible': 1, 'verified': 1, 'failed': 0, 'pending': 0})
+
+    def test_closed_pr_is_a_false_completion(self):
+        pr = self.pr(502)
+        rows = [
+            {'event': 'publish', 'job': 'RQ-VC-2', 'url': pr, 'lane': 'devin', 'ts': self.ts(-60)},
+            {'event': 'outcome', 'job': 'RQ-VC-2', 'url': pr, 'state': 'CLOSED', 'ts': self.ts(-30)},
+        ]
+        vc = self.run_tick(rows)
+        self.assertEqual(vc['eligible'], 1)
+        self.assertEqual(vc['failed'], 1)
+        self.assertEqual(vc['false_completions'], 1)
+        self.assertEqual(vc['rate'], 0.0)
+        self.assertEqual(vc['detail']['false_completion_jobs'], ['RQ-VC-2'])
+
+    def test_publish_without_reconciled_outcome_stays_pending(self):
+        rows = [{'event': 'publish', 'job': 'RQ-VC-3', 'url': self.pr(503), 'lane': 'devin', 'ts': self.ts(-60)}]
+        vc = self.run_tick(rows)
+        self.assertEqual(vc['eligible'], 1)
+        self.assertEqual(vc['pending'], 1)
+        self.assertIsNone(vc['rate'])
+
+    def test_unpublished_nonempty_finish_is_not_a_claim(self):
+        rows = [{'event': 'finish', 'job': 'RQ-VC-4', 'lane': 'devin', 'exit_code': 0, 'empty': False, 'ts': self.ts(-60)}]
+        vc = self.run_tick(rows)
+        self.assertEqual(vc['eligible'], 0)
+        self.assertEqual(vc['completed_unpublished'], 1)
+
+    def test_duplicates_and_unauthorized_actions_are_counted(self):
+        shared = self.pr(510)
+        rows = [
+            {'event': 'claim', 'job': 'RQ-DUP-1', 'repo': 'phantom', 'lane': 'devin', 'ts': self.ts(-300)},
+            {'event': 'publish', 'job': 'RQ-DUP-1', 'url': self.pr(511), 'ts': self.ts(-200)},
+            {'event': 'publish', 'job': 'RQ-DUP-1', 'url': self.pr(512), 'ts': self.ts(-190)},
+            {'event': 'claim', 'job': 'RQ-SHR-1', 'lane': 'devin', 'ts': self.ts(-300)},
+            {'event': 'publish', 'job': 'RQ-SHR-1', 'url': shared, 'ts': self.ts(-200)},
+            {'event': 'claim', 'job': 'RQ-SHR-2', 'lane': 'devin', 'ts': self.ts(-300)},
+            {'event': 'publish', 'job': 'RQ-SHR-2', 'url': shared, 'ts': self.ts(-200)},
+            {'event': 'claim', 'job': 'RQ-BAD-1', 'repo': 'phantom', 'lane': 'devin', 'ts': self.ts(-300)},
+            {'event': 'publish', 'job': 'RQ-BAD-1', 'url': self.pr(513, 'ashlrai/lexicon'), 'ts': self.ts(-200)},
+        ]
+        vc = self.run_tick(rows)
+        self.assertEqual(vc['eligible'], 4)
+        self.assertEqual(vc['pending'], 4)
+        self.assertEqual(vc['duplicates'], {'multi_pr_jobs': 1, 'shared_pr_urls': 1})
+        self.assertEqual(vc['detail']['multi_pr_jobs'], ['RQ-DUP-1'])
+        self.assertEqual(vc['unauthorized_actions'], 1)
+        self.assertEqual(vc['detail']['unauthorized_jobs'], ['RQ-BAD-1'])
+
+    def test_batch_member_done_verifies_through_batch_pr(self):
+        pr = self.pr(520)
+        rows = [
+            {'event': 'batch_claim', 'job': 'RQ-MEM-1', 'batch': 'RQ-BATCH-phantom-t-1', 'repo': 'phantom',
+             'lane': 'devin', 'ts': self.ts(-300)},
+            {'event': 'task_outcome', 'job': 'RQ-MEM-1', 'batch': 'RQ-BATCH-phantom-t-1', 'lane': 'devin',
+             'repo': 'phantom', 'outcome': 'done', 'ts': self.ts(-200)},
+            {'event': 'launch', 'job': 'RQ-BATCH-phantom-t-1', 'lane': 'devin', 'repo': 'phantom', 'ts': self.ts(-290)},
+            {'event': 'publish', 'job': 'RQ-BATCH-phantom-t-1', 'url': pr, 'ts': self.ts(-100)},
+            {'jobId': 'RQ-BATCH-phantom-t-1', 'prUrl': pr, 'outcome': 'MERGED', 'ts': self.ts(-50),
+             'source': 'metrics-outcomes-reconciler'},
+        ]
+        vc = self.run_tick(rows)
+        self.assertEqual(vc['claims']['batch_members'], 1)
+        self.assertEqual(vc['claims']['published'], 0)   # the batch session itself is infrastructure
+        self.assertEqual(vc['eligible'], 1)
+        self.assertEqual(vc['verified'], 1)

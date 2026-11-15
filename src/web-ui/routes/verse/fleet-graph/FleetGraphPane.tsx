@@ -13,6 +13,7 @@ import { graphLiveMissing, graphLiveQuery, type GraphLiveState } from './graph-l
 import { liveNodeSteerPrefill, liveNodeSteerVisible } from './live-node-steer-prefill.js';
 import { agentChoices, routeRows, routesHeadline } from './agent-routes-model.js';
 import { agentRoutesQuery, validAgentId } from './agent-routes-query.js';
+import { ObserveSlice } from '../fleet-observe/ObserveFacts.js';
 import { workerAgeSummary } from './graph-summary.js';
 import styles from './fleet-graph.module.css';
 
@@ -44,6 +45,7 @@ export function FleetGraphPane({ visible }: Pick<PaneProps, 'visible'>) {
         : runs === null ? 'Fleet runs are not available in this build.' : read.error ? 'Fleet runs could not be read.' : 'Reading fleet runs…'}
       {summary && <span>{` · ${summary}`}</span>}
     </header>
+    <ObserveSlice visible={visible} part="graph" />
     <SectionVisibilityProvider visible={visible}><RunsGraph /></SectionVisibilityProvider>
     <section className={styles.live} aria-label="Agent routes">
       <h2>Routes</h2>

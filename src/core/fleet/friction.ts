@@ -63,6 +63,7 @@ export interface FrictionReport {
 interface Knobs { owner: string; unlock: number; blast: number; cost: number; primary: string }
 const CATALOG: Record<string, { title: string } & Knobs> = {
   'empty-finishes': { title: 'Worker runs that finish with no diff, a refusal or a nonzero exit', owner: 'fleet', unlock: 3, blast: 3, cost: 2, primary: 'bad' },
+  'anomalous-diffs': { title: 'Finish metrics with unusually large or inconsistent diffs', owner: 'fleet', unlock: 2, blast: 2, cost: 2, primary: 'finishes' },
   'requeues': { title: 'Launches deferred and jobs requeued instead of running', owner: 'dispatchd', unlock: 3, blast: 2, cost: 2, primary: 'requeued' },
   'lane-auth': { title: 'Lane auth expiries, autobackoff holds and re-logins', owner: 'security', unlock: 3, blast: 2, cost: 3, primary: 'auth_failures' },
   'quota-exhaustion': { title: 'Usage limits, credit exhaustion and model-capacity stalls', owner: 'fleet', unlock: 2, blast: 3, cost: 3, primary: 'usage_limits' },
@@ -183,6 +184,7 @@ export function mineFriction(input: FrictionInput): FrictionReport {
   // ── jobs.jsonl: finishes, backoff holds, enqueues, launches ──────────────
   const zero = z(input.jobs);
   let empty = zero, refused = zero, failed = zero, authHolds = zero, quotaSkips = zero, authSkips = zero;
+  let anomalousDiffs = zero;
   let badTierEnqueue = zero, precheckParks = zero, quotaHoldJobs = zero, quotaFinish = zero;
   const enqueued = new Map<string, number>(); const launched = new Map<string, number>();
   const laneAuthHold = new Map<string, number>(); const laneFinish = new Map<string, number>();
@@ -195,6 +197,14 @@ export function mineFriction(input: FrictionInput): FrictionReport {
       badTierEnqueue = (badTierEnqueue ?? 0) + 1; if (r.job) ev('invalid-tier', `jobs.jsonl enqueue job=${r.job} tier=${r.raw.tier}`);
     }
     if (r.event === 'finish') {
+      const lines = r.raw.diff_lines;
+      const files = r.raw.diff_files;
+      const validCount = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+      if ((validCount(lines) && lines > 200) ||
+          (validCount(lines) && validCount(files) && ((files === 0 && lines > 0) || (r.raw.empty === true && (files > 0 || lines > 0))))) {
+        anomalousDiffs = (anomalousDiffs ?? 0) + 1;
+        ev('anomalous-diffs', `jobs.jsonl finish job=${r.job ?? 'unknown'} diff_files=${String(files)} diff_lines=${String(lines)}`);
+      }
       const isEmpty = r.raw.empty === true;
       const refusedFinish = typeof r.raw.pool_error === 'string' && r.raw.pool_error;
       const exitFailed = typeof r.raw.exit_code === 'number' && r.raw.exit_code !== 0;
@@ -338,6 +348,7 @@ export function mineFriction(input: FrictionInput): FrictionReport {
   const bad = sum([empty, refused, failed]);
   const signals: Record<string, Record<string, number | null>> = {
     'empty-finishes': { bad, empty, refused, failed },
+    'anomalous-diffs': { finishes: anomalousDiffs },
     'requeues': { requeued: events === null ? null : counts.requeued ?? 0 },
     'lane-auth': { auth_failures: authFailures, auth_holds: authHolds, relogins },
     'quota-exhaustion': { usage_limits: usageLimits, finish_errors: quotaFinish, credit_holds: counts.credit, model_capacity: counts.capacity, backoff_holds: quotaHoldJobs },

@@ -1,12 +1,15 @@
-import { DOCK_PANE_GROUPS, type DockPaneCatalogEntry } from '../shell/dock-pane-catalog.js';
+import { PANE_SECTIONS, sectionForPane } from '../shell/pane-sections.js';
 
-export function matchesPaneQuery(pane: DockPaneCatalogEntry, query: string): boolean {
+interface PaneEntry { readonly id: string; readonly label: string }
+
+export function matchesPaneQuery(pane: PaneEntry, query: string): boolean {
   const needle = query.trim().toLowerCase();
   return needle === '' || pane.label.toLowerCase().includes(needle) || pane.id.toLowerCase().includes(needle);
 }
 
-export function groupDockPanes<T extends DockPaneCatalogEntry>(panes: readonly T[], query: string) {
-  return DOCK_PANE_GROUPS.map(({ id, label }) => ({
-    id, label, panes: panes.filter((pane) => (pane.group ?? 'agent') === id && matchesPaneQuery(pane, query)),
+/** Panes grouped under the MetaMuse sections, in section order; empty sections are dropped. */
+export function groupDockPanes<T extends PaneEntry>(panes: readonly T[], query: string) {
+  return PANE_SECTIONS.map(({ id, label }) => ({
+    id, label, panes: panes.filter((pane) => sectionForPane(pane.id) === id && matchesPaneQuery(pane, query)),
   })).filter((group) => group.panes.length > 0);
 }

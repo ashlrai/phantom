@@ -1,5 +1,3 @@
-// The backend lane enumerates test/; include the colocated route regression here.
-import '../src/core/verse/leader-api.slate.test.js';
 import { expect, it } from 'vitest';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

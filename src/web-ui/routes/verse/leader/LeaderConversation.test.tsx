@@ -11,6 +11,7 @@ import type { LeaderStateV1 } from '../../../../core/vision/leader-types.js';
 import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
 import { evictAll } from '../../../data/cache.js';
 import { useQuery } from '../../../data/hooks.js';
+import { clearComposerMemory } from '../chat/composer-memory.js';
 import { loadMarkdownRenderer } from '../MessageMarkdown.js';
 import { ActionStatus, useSurfaceActions } from '../command/actions.js';
 import { leaderState } from '../command/fixtures.test-support.js';
@@ -106,6 +107,9 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  // Leader drafts persist; keep one test's typing out of the next.
+  localStorage.clear();
+  clearComposerMemory();
   evictAll();
   clearMutationToken();
   resetLeaderFocus();

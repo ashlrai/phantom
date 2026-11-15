@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { cmdFleetJobRead } from '../src/cli/fleet-job-read.js';
 import { getFleetJobDetail } from '../src/core/fleet/runs-job-detail.js';
 import { getFleetJobChanges } from '../src/core/fleet/runs-job-changes.js';

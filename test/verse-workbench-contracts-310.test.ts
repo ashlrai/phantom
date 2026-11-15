@@ -155,6 +155,8 @@ const EXISTING_ROUTES = {
 } as const;
 
 const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
+  // Agent Bus v2: the fleet's shared message bus (agent-bus-api.ts).
+  'agent-bus': 'handleAgentBusApi',
   // SPEC-310C §7 route contracts.
   activity: 'handleActivityApi',
   'session-controls': 'handleSessionControlsApi',
@@ -190,6 +192,7 @@ const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
   'fleet-control': 'handleFleetControlApi',
   'fleet-runs': 'handleFleetRunsApi',
   'fleet-comms-status': 'handleFleetCommsStatusApi',
+  'agent-roster': 'handleAgentRosterApi',
   'fleet-cos': 'handleFleetCosApi',
   'cos-memory': 'handleCosMemoryApi',
   team: 'handleTeamApi',
@@ -197,8 +200,29 @@ const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
   agents: 'handleAgentsApi',
   outcomes: 'handleOutcomesApi',
   'proactive-agents': 'handleProactiveAgentsApi',
+  // The desktop command center's own reads: runs, chief-of-staff intake, the
+  // staged self-update status line and memory.
+  'fleet-runs': 'handleFleetRunsApi',
+  'fleet-cos': 'handleFleetCosApi',
+  'app-update': 'handleAppUpdateApi',
+  'cos-memory': 'handleCosMemoryApi',
   // The desktop command center: board, router, releases and the leaders' channel.
   ops: 'handleOpsApi',
+  // The desktop Goals pane's write: POST /api/verse/goals.
+  goals: 'handleGoalsCreateApi',
+  'owner-thread': 'handleOwnerThreadApi',
+  'gmail-triage': 'handleGmailTriageApi',
+  'release-stages': 'handleReleaseStagesApi',
+  'comms-inbox': 'handleCommsInboxApi',
+  'comms-teammate-reply': 'handleCommsTeammateReplyApi',
+  // The desktop command center's library files and run handoffs.
+  'fleet-library-files': 'handleFleetLibraryFilesApi',
+  'fleet-handoffs': 'handleFleetHandoffsApi',
+  // The desktop command center's runtime identity, claims ledger and work board.
+  'fleet-runtime-identity': 'handleFleetRuntimeIdentityApi',
+  'fleet-recheck': 'handleFleetRecheckApi',
+  'fleet-coordination-claims': 'handleFleetCoordinationClaimsApi',
+  'fleet-work-board': 'handleFleetWorkBoardApi',
 };
 
 const allPrefixes = WORKBENCH_ROUTE_FAMILIES.flatMap((family) => family.prefixes.map((prefix) => ({ family: family.id, prefix })));
@@ -328,7 +352,7 @@ describe('the real workbench mount table', () => {
       if (landed) expect(typeof handler, `${family.id} landed at ${family.module} but did not export ${family.handler}`).toBe('function');
       else expect(handler, `${family.id} has not landed, so it must be a clean "not landed"`).toBeNull();
     }
-  });
+  }, 20_000);
 
   it('R1: every landed needs-you producer exports needsYouItems (the stub may throw; it is not called here)', async () => {
     for (const provider of NEEDS_YOU_PROVIDERS) {

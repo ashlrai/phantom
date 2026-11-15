@@ -4,7 +4,14 @@ import { validMergeAgeInput } from './fleet-merge-age.js';
 
 export { mergeQueueAge };
 export type { MergeQueueAgeInput };
-const usage = 'Usage: phm fleet merge-queue-age --input <snapshot.json> [--json]\nRead queued PR age, oldest first. Snapshot: {prs:[{number,state?,mergeable?,reviewDecision?}],queue:[{number,enteredAt?,requiredChecks?:[{name,status}]}]}. State: OPEN, MERGED or CLOSED. Check status: success, pending, failure or missing. Merged and closed PRs are excluded; missing evidence stays unknown. Read-only; required checks stay in place.';
+const usage = 'Usage: phm fleet merge-queue-age --input <snapshot.json> [--json]\nRead queued PR age and blockers, oldest first. Snapshot: {repo?,prs:[{number,state?,mergeable?,reviewDecision?,mergeStateStatus?,updatedAt?,headSha?,repo?,recutRequests?,lastRecutHead?}],queue:[{number,enteredAt?,requiredChecks?:[{name,status,at?}]}]}. State: OPEN, MERGED or CLOSED. Check status: success, pending, failure or missing. Each blocker carries the earliest evidence time; a stale branch is mergeStateStatus BEHIND. A conflicting entry enqueues one recut through the existing merge-queue recut path, keyed on its head so a repeat observation never enqueues twice. Merged and closed PRs are excluded; missing evidence stays unknown. Read-only; required checks stay in place.';
+
+export function validMergeQueueAgeInput(input: unknown): input is MergeQueueAgeInput {
+  return validMergeAgeInput(input) && input.prs.every(pr => {
+    const state = (pr as MergeQueueAgeInput['prs'][number]).state;
+    return state === undefined || ['OPEN', 'MERGED', 'CLOSED'].includes(state);
+  });
+}
 
 export async function cmdFleetMergeQueueAge(args: string[]): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(usage); return 0; }
@@ -17,16 +24,19 @@ export async function cmdFleetMergeQueueAge(args: string[]): Promise<number> {
   if (!path) { console.error(usage); return 2; }
   try {
     const input: unknown = JSON.parse(await readFile(path, 'utf8'));
-    if (!validMergeAgeInput(input) || !input.prs.every(pr => {
-      const state = (pr as MergeQueueAgeInput['prs'][number]).state;
-      return state === undefined || ['OPEN', 'MERGED', 'CLOSED'].includes(state);
-    })) throw new Error('Invalid snapshot');
+    if (!validMergeQueueAgeInput(input)) throw new Error('Invalid snapshot');
     const report = mergeQueueAge(input);
     if (json) console.log(JSON.stringify(report));
     else if (!report.entries.length) console.log('No queued PRs.');
-    else for (const row of report.entries) {
-      const reason = [...row.causes.map(cause => cause.action), ...row.missingData.map(field => `Unknown ${field}.`)];
-      console.log(`#${row.number}\t${row.ageSeconds === null ? 'unknown age' : `${row.ageSeconds}s queued`}\t${reason.join(' ') || 'Waiting in merge queue.'}`);
+    else {
+      for (const row of report.entries) {
+        const reason = [...row.causes.map(cause => cause.action), ...row.missingData.map(field => `Unknown ${field}.`)];
+        console.log(`#${row.number}\t${row.ageSeconds === null ? 'unknown age' : `${row.ageSeconds}s queued`}\t${reason.join(' ') || 'Waiting in merge queue.'}`);
+      }
+      if (report.retryable_conflicts.length) {
+        console.log(`Conflicts the recut loop can retry: ${report.retryable_conflicts.map(row => `#${row.number} (${row.recut.key})`).join(', ')}`);
+      }
+      for (const row of report.blocked_conflicts) console.log(`Needs a person: #${row.number} (${row.reason})`);
     }
     return 0;
   } catch { console.error('error: unable to read valid merge queue snapshot; use --help for its shape'); return 1; }

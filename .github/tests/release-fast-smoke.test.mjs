@@ -7,7 +7,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { join } from 'node:path';
 import { URL } from 'node:url';
 import { preparedArchiveFixture } from './fixtures/release-prepared.mjs';
-import { checkFeed, checkLaunch, readUpdaterFeed, restorePreparedDist, selectRun, stockedFeedTag } from '../scripts/release-fast-smoke.mjs';
+import { acceptReleaseRef, checkFeed, checkLaunch, readUpdaterFeed, restorePreparedDist, selectRun, stockedFeedTag } from '../scripts/release-fast-smoke.mjs';
 
 const repository = 'ashlrai/phantom', revision = 'a'.repeat(40);
 const repo = { full_name: repository, id: 1263526319, node_id: 'R_kgDOS0_hrw', owner: { id: 258113726, login: 'ashlrai' }, default_branch: 'master', private: false, visibility: 'public' };
@@ -21,7 +21,7 @@ function setup(kind = 'build') {
   const job = (name, steps, labels = ['macos-15']) => ({ id: 200, run_id: 30, head_sha: revision, name, labels, status: 'completed', conclusion: 'success', steps: steps.map(name => step(name)) });
   const jobs = kind === 'build' ? [job('Prepare unsigned desktop release', ['Reuse successful push CI and existing prepared artifact', 'Upload immutable release input', 'Build unsigned desktop and original package once'])]
     : kind === 'attest' ? [job('Desktop release smoke', ['Verify green master push CI', 'Smoke desktop release artifact', 'Upload qualified build handoff'])]
-      : [job('Secret-shape scan', ['Scan candidate diff (fail closed)'], ['ubuntu-latest']), job('Quick typecheck', ['Core no-emit type check', 'Check authority drift (hermetic)'], ['ubuntu-latest']), job('Classify PR site lane', ['Bind candidate source'], ['ubuntu-latest']), job('Merge Gate', ['Require selected CI lane'], ['ubuntu-latest'])];
+      : [job('Secret-shape scan', ['Scan candidate diff (fail closed)'], ['ubuntu-latest']), job('Secret scan (diff)', ['Scan the commits this event adds'], ['ubuntu-latest']), job('Quick typecheck', ['Core no-emit type check', 'Check authority drift (hermetic)'], ['ubuntu-latest']), job('Classify PR site lane', ['Bind candidate source'], ['ubuntu-latest']), job('Merge Gate', ['Require selected CI lane'], ['ubuntu-latest'])];
   if (kind === 'build') jobs[0].steps.push(step('Download existing immutable build', 'skipped'));
   const jobResponse = { total_count: jobs.length, jobs };
   let freshRun = run;
@@ -301,7 +301,7 @@ for (const mutation of ['new latest', 'feed appeared', 'unpublished latest', 'li
   });
 }
 
-for (const mutation of ['duplicate release', 'null release', 'missing latest', 'changed latest', 'ambiguous timestamp', 'newer stocked', 'incomplete page',
+for (const mutation of ['duplicate release', 'null release', 'missing latest', 'changed latest', 'newer stocked', 'incomplete page',
   'bad asset state', 'duplicate feed', 'wrong asset URL', 'wrong download URL', 'changed stocked metadata', 'changed asset inventory']) {
   test(`${mutation} cannot select fallback evidence`, async () => {
     const f = feedFixture();
@@ -309,7 +309,6 @@ for (const mutation of ['duplicate release', 'null release', 'missing latest', '
     if (mutation === 'null release') f.inventory.push(null);
     if (mutation === 'missing latest') f.inventory = [f.stocked];
     if (mutation === 'changed latest') f.inventory = [{ ...f.latest, published_at: '2026-11-08T02:00:00Z' }, f.stocked];
-    if (mutation === 'ambiguous timestamp') f.inventory.push(stockedRow(6, { created_at: f.stocked.created_at }));
     if (mutation === 'newer stocked') f.stocked.created_at = '2026-11-09T00:00:00Z';
     if (mutation === 'incomplete page') f.inventory = Array.from({ length: 100 }, () => structuredClone(f.stocked));
     if (mutation === 'bad asset state') f.stocked.assets[0].state = 'starter';
@@ -328,6 +327,53 @@ test('fallback feed errors, oversized bytes, malformed JSON and version drift ar
   }
   const f = feedFixture(); const fetch = f.fetchImpl; f.fetchImpl = async url => url === FEED_ENDPOINT ? fetch(url) : feedResponse(404);
   await assert.rejects(f.run, /stocked updater feed unavailable/);
+});
+
+test('a tag ref is accepted only when its peeled commit is this sha and an ancestor of master', () => {
+  const sha = 'a'.repeat(40);
+  const annotation = 'b'.repeat(40);
+  const read = (path) => {
+    if (path.endsWith('/git/ref/tags/v3.30.28')) return { ref: 'refs/tags/v3.30.28', object: { type: 'commit', sha } };
+    if (path.endsWith('/compare/' + sha + '...master')) return { status: 'ahead' };
+    throw new Error(path);
+  };
+  acceptReleaseRef({ ref: 'refs/heads/master', sha, repository, read: () => { throw new Error('master does not compare'); } });
+  acceptReleaseRef({ ref: 'refs/tags/v3.30.28', sha, repository, read });
+  const annotated = (path) => {
+    if (path.endsWith('/git/ref/tags/v3.30.28')) return { ref: 'refs/tags/v3.30.28', object: { type: 'tag', sha: annotation } };
+    if (path.endsWith('/git/tags/' + annotation)) return { sha: annotation, object: { type: 'commit', sha } };
+    if (path.endsWith('/compare/' + sha + '...master')) return { status: 'ahead' };
+    throw new Error(path);
+  };
+  acceptReleaseRef({ ref: 'refs/tags/v3.30.28', sha, repository, read: annotated });
+  assert.throws(() => acceptReleaseRef({ ref: 'refs/tags/v3.30.28', sha, repository, read: (path) => path.includes('/git/ref/') ? { ref: 'refs/tags/v3.30.28', object: { type: 'commit', sha: annotation } } : { status: 'ahead' } }), /tag sha mismatches/);
+  assert.throws(() => acceptReleaseRef({ ref: 'refs/tags/v3.30.28', sha, repository, read: (path) => path.includes('/git/ref/') ? { ref: 'refs/tags/v3.30.28', object: { type: 'commit', sha } } : { status: 'diverged' } }), /ancestor/);
+  assert.throws(() => acceptReleaseRef({ ref: 'refs/tags/nightly', sha, repository, read }), /stable tag/);
+  assert.throws(() => acceptReleaseRef({ ref: 'refs/heads/v3.30.28', sha, repository, read }), /stable tag/);
+});
+
+test('stocked feed selection uses the highest semver, not list order or a newer timestamp on an older release', () => {
+  const row = (id, version, created) => {
+    const tag = `v${version}`;
+    const bytes = Buffer.from(JSON.stringify({ version }));
+    return {
+      id, tag_name: tag, draft: false, prerelease: false,
+      url: `https://api.github.com/repos/${repository}/releases/${id}`,
+      html_url: `https://github.com/${repository}/releases/tag/${tag}`,
+      assets_url: `https://api.github.com/repos/${repository}/releases/${id}/assets`,
+      created_at: created, published_at: created,
+      assets: [{ id: id * 10, name: 'latest.json', state: 'uploaded', size: bytes.length, digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+        url: `https://api.github.com/repos/${repository}/releases/assets/${id * 10}`,
+        browser_download_url: `https://github.com/${repository}/releases/download/${tag}/latest.json` }],
+    };
+  };
+  const entries = [
+    row(1, '3.29.3', '2026-11-09T00:00:00Z'),
+    row(2, '3.30.24', '2026-11-01T00:00:00Z'),
+    row(3, '3.30.28', '2026-11-02T00:00:00Z'),
+  ];
+  assert.equal(stockedFeedTag(entries), 'v3.30.28');
+  assert.equal(stockedFeedTag([...entries].reverse()), 'v3.30.28');
 });
 
 test('empty inventories, absent stocked feeds and changed endpoints fail closed', async () => {
@@ -398,6 +444,11 @@ test('legitimate untagged draft URLs do not block a complete published fallback'
   const f = feedFixture();
   f.inventory.push(stockedRow(9, {draft: true, published_at: null, html_url: `https://github.com/${repository}/releases/tag/untagged-fixture`, assets: []}));
   assert.equal((await f.run()).served, 'v3.30.7');
+});
+
+test('historical feed rejects a size mismatch even when its digest matches', async () => {
+  const f = feedFixture(); f.stocked.assets[0].size = 1;
+  await assert.rejects(f.run, /stocked feed bytes differ from asset/);
 });
 
 for (const change of [{size: 128 * 1024 + 1}, {digest: null}, {digest: `sha256:${'f'.repeat(64)}`}]) {

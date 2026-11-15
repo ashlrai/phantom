@@ -24,12 +24,12 @@ if (typeof version !== 'string' || version.length > 64 || !canonicalVersionRe.te
 }
 
 // Match the already-validated version as literal text. A release heading may
-// be bare or use the repository's exact em-dash metadata separator; no argv
+// be bare or use a recognized metadata separator; no argv
 // bytes are ever compiled as a regular expression.
 const heading = `## [${version}]`;
 const lines = changelog.split('\n');
 const matchingHeadings = lines.flatMap((line, index) =>
-  line === heading || line.startsWith(`${heading} — `) ? [index] : []
+  line === heading || line.startsWith(`${heading} — `) || line.startsWith(`${heading} - `) ? [index] : []
 );
 if (matchingHeadings.length !== 1) {
   console.error(`extract-changelog: no "## [${version}]" section in CHANGELOG.md`);

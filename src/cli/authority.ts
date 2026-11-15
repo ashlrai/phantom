@@ -15,6 +15,7 @@
  *   protect --print|--apply [--repo owner/name …]        GitHub rulesets (addendum §4)
  *   github-app [--org <login>] [--yes]    GitHub App manifest flow; the key goes straight to custody
  *   rotate-provenance [--yes]             replace the provenance HMAC key agents could read
+ *   claude-signin [--force]               renew Claude auth: masked prompt, token straight to custody
  *   setup [--dry-run [--json]] [--yes]   the guided Phase-0 command
  *   resident start|stop|status [--json]   the resident daemon service under the grant (docs/RESIDENT-RUNTIME.md)
  *
@@ -26,15 +27,17 @@
  */
 import { execFile, spawnSync } from 'node:child_process';
 import { createHash, createPublicKey, randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 
 import { CUSTODY_HELPER_PATH } from '../core/authority/custody-client.js';
 import { HUB_REPOSITORY_IDENTITY } from '../core/authority/repository-binding.js';
 import { STANDING_GRANT_PATTERNS } from '../core/authority/types.js';
+import { checkClaudeAuth, renewClaudeToken } from '../core/resources/claude-resignin.js';
+import { resolveBinAbsolute } from '../core/run/engines.js';
 import type { ResidentAdmission, ResidentPlistState } from '../core/authority/resident.js';
 import type { RepoEnforcement } from '../core/fleet/fleet-types.js';
 import type {
@@ -396,6 +399,7 @@ Compatible alias: ashlr authority <command>
   protect --print|--apply [--repo o/n]   GitHub rulesets for the grant's server-enforced repos
   github-app [--org <login>] [--yes]     Create the ashlr-fleet GitHub App (key stored in custody)
   rotate-provenance [--yes]              Replace the provenance HMAC key
+  claude-signin [--force]                Renew Claude auth: one masked prompt for the \`claude setup-token\` output, stored in custody
   setup [--dry-run [--json]] [--yes]
                                          Guided Phase 0: custody, trust root, App, token, canary, rulesets, first grant, daemon
   resident start                         Install / restart the resident daemon under the active grant (you confirm here)
@@ -454,6 +458,8 @@ export async function runAuthorityCli(args: string[], injected?: Partial<Authori
         return await cmdGithubApp(parsed, deps);
       case 'rotate-provenance':
         return await cmdRotateProvenance(parsed, deps);
+      case 'claude-signin':
+        return await cmdClaudeSignin(parsed, deps);
       case 'setup':
         return await cmdSetup(parsed, deps);
       case 'resident':
@@ -567,6 +573,18 @@ function drainSummary(r: { quiesced: boolean; liveExecutionLeases: number; drain
  * Mason wants to know the fleet is actually quiet. `--no-wait` arms and
  * returns at once, like the Verse button.
  */
+function pauseHostedReleaseTrain(): void {
+  if (process.env.VITEST) return;
+  try {
+    const dir = join(homedir(), '.ashlr-runs');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const off = join(dir, 'RELEASE_AUTORUN_OFF');
+    if (!existsSync(off)) writeFileSync(off, 'release train off\n', { mode: 0o600 });
+  } catch { /* the local kill switch is already the stop */ }
+  const result = spawnSync('gh', ['variable', 'set', 'PHANTOM_RELEASE_TRAIN', '-R', 'ashlrai/phantom', '--body', 'off'], { stdio: 'ignore', timeout: 15_000 });
+  if (result.status !== 0) console.error('PHANTOM_RELEASE_TRAIN was not set off');
+}
+
 async function cmdStop(parsed: Parsed, deps: AuthorityCliDeps): Promise<number> {
   const { stopAutonomy, stopAutonomyAndDrain } = await import('../core/authority/clamp.js');
   const result = parsed.flags.has('--no-wait')
@@ -579,6 +597,7 @@ async function cmdStop(parsed: Parsed, deps: AuthorityCliDeps): Promise<number> 
   // With --json, stdout carries only the JSON; the prose goes to stderr.
   const json = parsed.flags.has('--json');
   const say = json ? deps.err : deps.out;
+  pauseHostedReleaseTrain();
   say(`Stopped.${result.ledgered ? '' : ' (the ledger could not record it)'}`);
   for (const line of drainSummary(result)) say(line);
   if (json) deps.out(JSON.stringify(result, null, 2));
@@ -1736,6 +1755,27 @@ export async function rotateProvenanceKey(): Promise<{ retiredAs: string | null;
   writeFileSync(tmp, `${JSON.stringify(record)}\n`, { mode: 0o600 });
   renameSync(tmp, target);
   return { retiredAs, rotatedAt };
+}
+
+/** Status via the CLI's own exit code, then one masked prompt straight to custody. */
+async function cmdClaudeSignin(parsed: Parsed, deps: AuthorityCliDeps): Promise<number> {
+  const scratch = mkdtempSync(join(realpathSync(tmpdir()), 'ashlr-claude-signin-'));
+  try {
+    const check = await checkClaudeAuth({ command: [resolveBinAbsolute('claude')], cwd: scratch });
+    deps.out(check.message);
+    if (check.state === 'valid' && !parsed.flags.has('--force')) return 0;
+  } finally {
+    try { rmdirSync(scratch); } catch { /* the probe left something behind; keep it private */ }
+  }
+  deps.out('Run `claude setup-token` in another terminal (browser sign-in); it prints a token. Enter it below, never in a chat.');
+  try {
+    await renewClaudeToken({ readSecret: deps.readSecret, storeClaudeToken: deps.custody.storeClaudeToken });
+  } catch (error) {
+    deps.err(`Claude token not stored: ${(error as Error).message}`);
+    return 1;
+  }
+  deps.out('Claude token stored in custody (never written to disk here).');
+  return 0;
 }
 
 async function cmdRotateProvenance(parsed: Parsed, deps: AuthorityCliDeps): Promise<number> {

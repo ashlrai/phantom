@@ -68,6 +68,9 @@ import type { ApiModule } from './api-modules.js';
 import type { VerseApiContext } from './verse-api.js';
 import type { NeedsYouItem } from './workbench-types.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
+import { handleLeaderAttachment, VERSE_LEADER_ATTACHMENT_PATH } from './leader-attachment-api.js';
+import { handleLeaderAttachmentList } from './leader-attachment-list-api.js';
+import { handleLeaderAttachmentRead } from './leader-attachment-read-api.js';
 import { VERSE_LEADER_PATH, type LeaderAction, type LeaderMemo } from '../vision/leader-types.js';
 import { leaderRoot, listMemoIds, readLeaderMemo } from '../vision/leader-memo.js';
 import {
@@ -84,12 +87,13 @@ import {
   answerLeaderQuestion,
   appendMasonMessage,
   approveLeaderAction,
-  listThread,
+  listLeaderThread,
+  postLeaderMessage,
   readLeaderQuestion,
   submitLeaderQuestion,
   syncLeaderMemosToThread,
 } from '../vision/leader-thread.js';
-import { parseLeaderQuestionSubmission } from '../vision/leader-thread-types.js';
+import { LEADER_THREAD_CHANNELS, parseLeaderQuestionSubmission, type LeaderThreadChannel } from '../vision/leader-thread-types.js';
 import { runPlannerPass, type RunPlannerPassOpts, type PlannerRunResult } from '../fleet/planner-run.js';
 import { readPlannerCandidates } from '../fleet/planner-candidates.js';
 import { readPlannerPromptPath } from '../fleet/planner-prompt.js';
@@ -523,11 +527,11 @@ function sendThreadError(res: ServerResponse, err: unknown): boolean {
   return true;
 }
 
-function parseThreadQuery(req: IncomingMessage): { limit?: number; before?: string } | string {
+function parseThreadQuery(req: IncomingMessage): import('../vision/leader-thread.js').LeaderThreadQuery | string {
   const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
-  const out: { limit?: number; before?: string } = {};
+  const out: import('../vision/leader-thread.js').LeaderThreadQuery = {};
   for (const key of new Set(params.keys())) {
-    if (key !== 'limit' && key !== 'before') return `unknown query parameter: ${key}`;
+    if (!['limit', 'before', 'q', 'channel', 'from'].includes(key)) return `unknown query parameter: ${key}`;
     if (params.getAll(key).length > 1) return `${key} may appear once`;
   }
   const limit = params.get('limit');
@@ -539,6 +543,18 @@ function parseThreadQuery(req: IncomingMessage): { limit?: number; before?: stri
   if (before !== null) {
     if (before.length === 0 || before.length > 64) return 'before must be a message id or an ISO time';
     out.before = before;
+  }
+  const q = params.get('q');
+  if (q !== null) out.q = q;
+  const channel = params.get('channel');
+  if (channel !== null) {
+    if (!(LEADER_THREAD_CHANNELS as readonly string[]).includes(channel)) return 'invalid channel';
+    out.channel = channel as LeaderThreadChannel;
+  }
+  const from = params.get('from');
+  if (from !== null) {
+    if (from !== 'mason' && from !== 'leader') return 'from must be mason or leader';
+    out.from = from;
   }
   return out;
 }
@@ -574,7 +590,7 @@ async function handleThreadRoutes(ctx: VerseApiContext, req: IncomingMessage, re
         return true;
       }
       try {
-        sendJson(res, 200, { messages: listThread(query) });
+        sendJson(res, 200, { messages: await listLeaderThread(query) });
       } catch (err) {
         if (!sendThreadError(res, err)) throw err;
       }
@@ -621,6 +637,18 @@ async function handleThreadRoutes(ctx: VerseApiContext, req: IncomingMessage, re
       const replyTo = body['replyTo'];
       if (replyTo !== undefined && typeof replyTo !== 'string') {
         sendInvalid(res, 'replyTo must be a message id');
+        return true;
+      }
+      // Exact short status and recheck asks are answered in the same thread
+      // with the read-only digest or fleet recheck verdict; anything else
+      // stays with the Leader.
+      const { ownerStatusReply } = await import('../agents/owner-status-reply.js');
+      const statusReply = ownerStatusReply();
+      if (statusReply.ask(body['text'] as string)) {
+        const { message } = await appendMasonMessage(body['text'] as string, { channel: 'verse', cfg: ctx.cfg, recordOnly: true, ...(replyTo ? { replyTo } : {}) });
+        const text = await statusReply.compose(hooks.plannerRunsRoot?.() ?? join(homedir(), '.ashlr-runs'), new Date(), body['text'] as string);
+        const reply = postLeaderMessage({ channel: 'verse', kind: 'message', text, replyTo: message.id, delivery: {} });
+        sendJson(res, 200, { message, reply });
         return true;
       }
       const result = await appendMasonMessage(body['text'] as string, { channel: 'verse', cfg: ctx.cfg, ...(replyTo ? { replyTo } : {}) });
@@ -793,6 +821,22 @@ export async function buildPlannerPlan(deps: PlannerPlanDeps = {}): Promise<Plan
 
 export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) => {
   if (path !== VERSE_LEADER_PATH && !path.startsWith(`${VERSE_LEADER_PATH}/`)) return false;
+  if (path === `${VERSE_LEADER_PATH}/office`) {
+    if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+    if (!ctx.readSession || !Number.isFinite(ctx.readSession.expiresAt) || ctx.readSession.expiresAt <= Date.now()) { sendJson(res, 401, { error: 'A current read session is required.' }); return true; }
+    try {
+      const { leaderStatus } = await import('../agents/leader-office.js');
+      sendJson(res, 200, await leaderStatus());
+    } catch {
+      sendJson(res, 503, { error: 'leader-office-unavailable' });
+    }
+    return true;
+  }
+  if (path === '/api/verse/leader/attachments') return handleLeaderAttachmentList(ctx, req, res, method);
+  if (path === VERSE_LEADER_ATTACHMENT_PATH) return handleLeaderAttachment(ctx, req, res, method);
+  if (path.startsWith(`${VERSE_LEADER_ATTACHMENT_PATH}/`)) {
+    return handleLeaderAttachmentRead(ctx, req, res, method, path.slice(VERSE_LEADER_ATTACHMENT_PATH.length + 1));
+  }
   if (path === `${VERSE_LEADER_PATH}/inbox`) {
     if (method === 'GET') {
       if (!ctx.readSession || !Number.isFinite(ctx.readSession.expiresAt) || ctx.readSession.expiresAt <= Date.now()) { sendJson(res, 401, { error: 'A current read session is required.' }); return true; }

@@ -29,7 +29,7 @@
  * Never throws.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { hasLeaderNetworkConfig } from '../agents/leader-network-config.js';
@@ -72,6 +72,7 @@ import {
 import { recordTelegramToInbox, TELEGRAM_FLEET_STATUS_RE } from './telegram-inbox-bridge.js';
 import { TELEGRAM_SHIP_RE } from './telegram-ship-command.js';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
+import { readPrivateFileCapped } from '../verse/preferences.js';
 import { scrubSecrets } from '../util/scrub.js';
 import type { AshlrConfig } from '../types.js';
 
@@ -110,11 +111,15 @@ function statePath(): string {
   return join(homedir(), '.ashlr', 'comms', 'state.json');
 }
 
+/** Two timestamps; a state file past 64 KiB is corrupt and reset. */
+const STATE_MAX_BYTES = 64 * 1024;
+
 function loadState(): CommsState {
   try {
     if (!existsSync(statePath())) return { watermarkMs: Date.now(), lastSentMs: 0 };
-    const raw = readFileSync(statePath(), 'utf8');
-    const parsed = JSON.parse(raw) as Partial<CommsState>;
+    const read = readPrivateFileCapped(statePath(), STATE_MAX_BYTES);
+    if (read === null || read.truncated) return { watermarkMs: Date.now(), lastSentMs: 0 };
+    const parsed = JSON.parse(read.text) as Partial<CommsState>;
     return {
       watermarkMs: typeof parsed.watermarkMs === 'number' ? parsed.watermarkMs : Date.now(),
       lastSentMs: typeof parsed.lastSentMs === 'number' ? parsed.lastSentMs : 0,

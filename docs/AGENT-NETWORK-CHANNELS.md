@@ -52,18 +52,30 @@ team-bound, non-guest, non-deleted, allowlisted or the bridge itself) and the
 shared send policy. See [the Slack bridge section](AGENT-NETWORK.md#slack-bridge)
 for scopes, host credential injection, authenticated `probe`/`run` commands and uncertain-send reconciliation. Configuration readiness is not live health.
 
-The following commands inspect the channel contract offline. No adapters are
-registered by this change, and testing reports a refusal without sending or
-using the network.
+The following commands inspect the channel contract. `bus` and `handoff` have
+registered local adapters. `channels test bus` and `channels test handoff`
+record one probe envelope in the private bus store and return `sent` when the
+store accepts it. They stop when the kill switch is on or communications are
+paused. Every other channel stays refused until an adapter is registered. No
+command contacts the network.
 
 ```sh
 phm agents bus channels list --json
+phm agents bus channels test bus --json
 phm agents bus channels test email --json
 ```
 
 Adapters implement `ChannelAdapter` and must enforce the loop guard and shared
-send policy before any delivery. Credentials must be resolved at request time
-through Phantom Secrets references; do not put them in configuration or logs.
+send policy before any delivery. A local probe is not an outbound send. Real
+delivery still refuses unknown recipients and drafts when communication
+approval is missing. Credentials must be resolved at request time through
+Phantom Secrets references; do not put them in configuration or logs.
+
+Codex and Devin bridges send through `codex queue --thread <id> --message` and
+the Devin sessions messages API, or `ashlr devin message` for a tracked task.
+Grok and Claude have no official send surface and refuse. Every bridge fails
+closed under the kill switch, a communications pause, and the shared send
+policy. Tests inject executors and do not perform live sends.
 
 The Slack owner path also implements `LeaderChannelAdapter`: the authenticated
 socket normalizes an event, the adapter verifies the configured human owner and

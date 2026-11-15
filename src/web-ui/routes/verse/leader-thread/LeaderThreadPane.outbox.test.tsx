@@ -50,6 +50,18 @@ describe('Leader thread pane with MASON-OUTBOX answers', () => {
     expect(within(outboxLine).getByText('Leader outbox')).toBeInTheDocument();
   });
 
+  it('shows four journal replies once when both typed reads include them', async () => {
+    const outbox = [1, 2, 3, 4].map(i => ({ at: `2026-11-09T0${i}:00:00Z`, text: `Journal reply ${i}` }));
+    serve({
+      '/api/verse/leader/thread': { messages: outbox.map((entry, i) => msg({ ...entry, id: `file-${i}`, channel: 'system' })) },
+      '/api/verse/fleet/runs': { inbox: [], outbox },
+    });
+    render(<LeaderThreadPane visible />);
+    const log = screen.getByRole('log', { name: 'Conversation with the Leader' });
+    for (const entry of outbox) expect(await within(log).findByText(entry.text)).toBeInTheDocument();
+    expect([...log.querySelectorAll('section[data-from="leader"]')]).toHaveLength(4);
+  });
+
   it('keeps the conversation unchanged when the runs read has no outbox', async () => {
     const now = Date.now();
     serve({

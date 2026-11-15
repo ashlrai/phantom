@@ -18,6 +18,22 @@ export function releaseLabel(kind: 'autobackoff' | 'manual', heldUntil: string |
   return `Release hold (expires ${hours}:${minutes})`;
 }
 
+export async function postLaneHold(lane: string, minutes: number, reason?: string): Promise<unknown> {
+  const token = getMutationToken();
+  if (!token) throw new VerseControlLockedError();
+  try {
+    const result = await apiPost<unknown>(LANE_HOLDS_PATH, { lane, action: 'hold', minutes, ...(reason === undefined ? {} : { reason }) }, token);
+    touchMutationHold();
+    return result;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      const message = 'This Phantom server cannot hold lanes yet; update the app.';
+      throw new ApiError(message, 404, LANE_HOLDS_PATH, message);
+    }
+    throw error;
+  }
+}
+
 export async function postReleaseHold(lane: string, reason: string): Promise<unknown> {
   const token = getMutationToken();
   if (!token) throw new VerseControlLockedError();

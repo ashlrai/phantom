@@ -5,7 +5,7 @@
  *
  *   Trend — LEADER rows in ~/.ashlr-runs/queue/dispatch-events.log carry
  *   `free_gb=N`. The readings inside the last 12 hours give free GB lost per
- *   hour and the hours until only 100 GB remain. The reader is injected
+ *   hour and the hours until only 150 GB remain. The reader is injected
  *   (`readEvents`); the default is the bounded, symlink-refusing tail read
  *   shared with `fleet brains`. An unread log prints `unknown` for every
  *   trend fact — never a guessed zero.
@@ -32,7 +32,7 @@ import { localTimestamp, readSource, type Source } from '../core/fleet/runs-park
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 export const FLEET_DISK_WINDOW_HOURS = 12;
-export const FLEET_DISK_TARGET_FREE_GB = 100;
+export const FLEET_DISK_TARGET_FREE_GB = 150;
 export const FLEET_DISK_TOP_DIRS = 10;
 export const FLEET_DISK_MAX_TAIL_BYTES = 5 * 1024 * 1024;
 export const FLEET_DISK_MAX_OVERRIDES_BYTES = 1024 * 1024;
@@ -188,7 +188,7 @@ export function buildFleetDisk(opts: {
   const last = opts.samples.at(-1) ?? null;
   const observedHours = first && last ? (last.ms - first.ms) / 3_600_000 : null;
   const gbPerHour = first && last && observedHours !== null && observedHours > 0
-    ? round1((first.freeGb - last.freeGb) / observedHours)
+    ? (first.freeGb - last.freeGb) / observedHours
     : null;
   const hoursUntil = (lineGb: number): number | null =>
     last === null ? null
@@ -313,7 +313,7 @@ export async function cmdFleetDisk(args: string[], deps: FleetDiskDeps = {}): Pr
     if (arg === '--help' || arg === '-h') {
       output.log('ashlr fleet disk [--runs-dir <abs>] [--json]\n' +
         'Read-only disk-pressure view: free-GB trend from LEADER rows in the last\n' +
-        '12 hours, projected against the lane freeze and halve lines from\n' +
+        '12 hours, projected to 150 GB and the lane freeze and halve lines from\n' +
         'queue/budget-overrides.json, plus the ten largest folders under\n' +
         '~/.ashlr-runs. Unread sources print unknown, never zero.');
       return 0;

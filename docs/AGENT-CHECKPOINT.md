@@ -38,3 +38,44 @@ The public core contract is `parseAgentCheckpoint(raw: string): AgentCheckpoint`
 and `readAgentCheckpoint(path: string): Promise<AgentCheckpoint>`; both reject
 invalid input with `AgentCheckpointError`. The returned object has exactly the
 fields shown above and preserves the authored strings and list order.
+
+## Fleet worktree handoff
+
+Keep the authored JSON outside the checkout, and refresh the durable copy while
+work is in progress (not only at shutdown). The destination directory must
+already exist and be accessible to the next lane:
+
+```sh
+phm checkpoint save /private/handoff.json /private/checkpoint.json /path/to/worktree --json
+phm checkpoint resume /private/checkpoint.json --json
+```
+
+Save validates the handoff and appends the current Git HEAD and NUL-delimited
+porcelain status, including untracked paths. It writes a private temporary file
+and atomically replaces the destination. The handoff should describe decisions,
+test commands and results, and next steps; Git cannot infer them. Save rejects
+secret-shaped metadata, including paths, and never stages or publishes files.
+Use a private shared destination for cross-lane access. The checkpoint records
+paths, not file contents: retain the original worktree and inspect its state
+before resuming. A different machine needs a separately secured transfer of the
+worktree changes. Do not recreate or reset a registered fleet worktree; the
+existing worktree and publisher safeguards still apply. Finish with the usual
+BRIDGE_NOTES.md for publish.sh; a checkpoint grants no publish authority.
+
+## Freshness and invalidation
+
+`save` also records a `freshness` object (`savedAt`, `worktreeHead`,
+`worktreeStatusDigest`, a SHA-256 of the porcelain status that ignores the
+checkpoint file itself). It is optional in version 1, so hand-authored files
+still parse and report `unverifiable`. Pass the worktree to resume to check it:
+
+```sh
+phm checkpoint resume /private/checkpoint.json /path/to/worktree
+```
+
+The output is `{ "checkpoint": ..., "freshness": { "state", "reasons" } }`.
+`state` is `stale` (exit 3) when HEAD moved, the working-tree changes differ from
+those saved, the checkpoint is over 24 hours old, or it is dated in the future;
+`unverifiable` (exit 0) when it has no metadata; otherwise `fresh`. A stale
+checkpoint is still printed, but treat its `done`, `next` and `evidence` as
+unverified and re-inspect the worktree before acting on them.

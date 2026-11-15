@@ -12,6 +12,21 @@ scope and standing authority. The Mac's **Scheduled planning passes** and
 **Leader planning loop** switches control supplementary historical schedules;
 they do not select the model used by the Leader.
 
+## Role slots and the leadership lease
+
+Leader, planner and reviewer are capability slots. `resolveRole`
+(`src/core/routing/role-slots.ts`) maps a slot to its requirements (task shape,
+context floor, declared capabilities), runs the shared seat router over every
+admitted lane, and returns ranked candidates, so any engine or local model can
+hold any slot. Per-role preferences are hints: they reorder lanes the router
+already admitted and never admit an ineligible one. `failoverRole` re-resolves
+with an exhausted lane set aside.
+
+`src/core/routing/role-lease.ts` holds the pure heartbeat lease. A live lease
+blocks rivals; once heartbeats lapse past the TTL any eligible agent may claim
+it. The epoch is a fencing token, so a late former holder fails its next
+heartbeat. Callers persist the lease and supply the clock.
+
 ## Release-backed articles (successor candidate)
 
 The opt-in `release-articles` maintenance lane follows Phantom's latest stable
@@ -119,6 +134,37 @@ What the Leader may *do* is bounded by your standing grant, never by the
 conversation. Directives steer its judgement; they never widen the grant. See
 [STANDING-AUTHORITY.md](STANDING-AUTHORITY.md) and
 [Autonomy with custody](VERSE.md#autonomy-with-custody-310).
+
+## One co-founder
+
+Mason talks to one leader. The leader talks to every other agent on the bus.
+`phm leader status`, `ask`, `org` and `assign` are that office. Each decision
+reads `phm world` and the shared-visibility brief (`phm context`). Assignments
+are claimed with `phm claim` and carry an RQ key, owner, due date, status and
+outcome. The org chart is `config/leader-org.json`; a private `org.json` in
+the leader directory replaces it. Work is addressed to a role's lane so the
+existing router can admit it. The office does not call a model and does not
+spend.
+
+A request is routed only when its words are ordinary work and a role keyword,
+or an explicit owner, picks the lane. The hard-limit regex only labels a match.
+It does not decide escalation. A paraphrase, or any wording that is not clearly
+ordinary work, escalates to the owner. Stored and posted text goes through
+`scrubSecrets`. With no standing grant the work is recorded as a proposal and
+is not put on the bus. KILL is checked at entry and again immediately before
+the office file is written and before each bus post.
+
+Channel adapters do not live here. After they authenticate the owner they call
+`acceptOwnerMessage` and drain `readLeaderOutbox`. A raw channel payload is not
+a caller. The desktop Leader pane
+shows the conversation, the open assignments and the org.
+
+```sh
+phm leader status --json
+phm leader ask "fix the flaky test" --json
+phm leader org --json
+phm leader assign --rq RQ-EXAMPLE-1 --owner engineering --summary "fix the flaky test" --due 2026-11-10 --json
+```
 
 ---
 
@@ -409,6 +455,14 @@ reads it.
 
 ## From the CLI
 
+`phm leader thread --json` shows the ordered conversation, including replies in
+`leader/MASON-OUTBOX.md` and the latest “Reply for Mason” block in each `leader/PLAN-LOG.md` entry
+under your runs directory. Reply blocks use their heading time; identical text
+appears once. These journals are read only. The desktop Leader pane and phone
+view show the same replies, including when the outbox cannot be written.
+For dated PLAN-LOG replies alone, newest first, use `phm leader replies --json --limit 20`.
+The reader checks the last 256 KiB of the journal; older replies may be omitted.
+
 ```sh
 ashlr leader say "focus: the flaky retry test in binshield"
 ashlr leader thread [--limit 20] [--json]
@@ -475,3 +529,9 @@ older exact model tags remain readable and do not authorize newer versions.
 and [Claude model details](https://platform.claude.com/docs/en/models/overview)
 provide public API price estimates. Those prices do not replace subscription
 allowance, native context allocation or verified funding observations.
+
+### Leader facts snapshot
+
+Run `ashlr fleet leader-facts --json` to refresh `~/.ashlr-runs/leader/facts.json` before a leader pass. The `leader.facts.v1` snapshot joins leader-tagged router queue lines to jobs with a dated ledger event in the last 48 hours, then reads PR state, 24-hour merge counts, and latest release tags from GitHub. Repositories are those represented by the selected jobs. `null` means unknown; source status reports missing or damaged local evidence. Jobs with no dated ledger evidence have unknown age and are retained. Recent Q8 PRs can also be discovered from GitHub when queue history is absent. The file is replaced atomically; this command does not merge or publish anything.
+
+The resident daemon refreshes this snapshot at startup and every 15 minutes. GitHub search also discovers recent Q8 PRs independently of local history; `sources.github` is `partial` when search or a PR lookup fails or the search reaches its page limit. The schedule requires the resident daemon to be running.

@@ -251,7 +251,8 @@ export async function rerunJob(repo: string, jobId: number, gh: Gh = defaultGh):
 export async function readPrByBranch(repo: string, branch: string, gh: Gh = defaultGh): Promise<{ number: number; state: 'open' | 'closed'; merged: boolean } | null> {
   const owner = repo.split('/')[0]!;
   const raw = await api(gh, `repos/${assertRepo(repo)}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}&per_page=10`);
-  const hit = (Array.isArray(raw) ? raw : []).map(obj).find((p) => str(obj(p['head'])['ref']) === branch);
+  if (!Array.isArray(raw)) throw new Error('Invalid PR branch lookup');
+  const hit = raw.map(obj).find((p) => str(obj(p['head'])['ref']) === branch);
   if (!hit || !Number.isSafeInteger(Number(hit['number']))) return null;
   return { number: Number(hit['number']), state: hit['state'] === 'open' ? 'open' : 'closed', merged: hit['merged_at'] != null };
 }
@@ -276,6 +277,14 @@ export async function queuePrMerge(repo: string, number: number, headSha: string
   if (!Number.isSafeInteger(number) || number < 1) throw new Error('Invalid PR number.');
   if (!/^[0-9a-f]{40}$/i.test(headSha)) throw new Error('Invalid head commit.');
   await gh(['pr', 'merge', String(number), '--repo', assertRepo(repo), '--squash', '--auto', '--match-head-commit', headSha]);
+}
+
+/** Read explicit auto-merge state before retrying an uncertain submission. */
+export async function readMergeRequest(repo: string, number: number, gh: Gh = defaultGh): Promise<boolean> {
+  const raw = obj(await api(gh, `repos/${assertRepo(repo)}/pulls/${number}`));
+  if (raw['auto_merge'] === null) return false;
+  if (raw['auto_merge'] && typeof raw['auto_merge'] === 'object' && !Array.isArray(raw['auto_merge'])) return true;
+  throw new Error('Auto-merge state unavailable');
 }
 
 /** Leave one comment on a PR's conversation (the issues endpoint covers PRs). */

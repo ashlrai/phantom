@@ -5,7 +5,7 @@
  * the email/iMessage cutover are ready?" from local evidence alone. This
  * module folds the two established readers — diagnoseEmailDrop and
  * checkIMessagePath — into one versioned per-capability report, and marks the
- * capabilities no local reader can evidence (Gmail inbox triage, LinkedIn)
+ * capabilities no local reader can evidence (LinkedIn)
  * explicitly unverified. Saved config is never proof of delivery, so overall
  * cutover stays incomplete while any capability is not ready and this report
  * can never claim Commsbot is retirable.
@@ -18,6 +18,8 @@
  */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { readGmailTriageLatest } from './gmail-triage-latest.js';
+import { readGmailArchivePlanLatest } from './gmail-archive-plan-latest.js';
 import { diagnoseEmailDrop, type EmailDiagnosis } from './email-diagnosis.js';
 import { checkIMessagePath, type IMessagePathDeps } from './imessage-path-check.js';
 
@@ -65,6 +67,9 @@ export interface CommsCutoverReadinessDeps {
   diagnoseEmail?: (runsDir: string) => Promise<EmailDiagnosis>;
   /** iMessage path reader; default checkIMessagePath (test seam). */
   checkIMessage?: (deps: IMessagePathDeps) => IMessagePathReport;
+  readGmailTriage?: typeof readGmailTriageLatest;
+  readGmailPlans?: typeof readGmailArchivePlanLatest;
+  now?: () => number;
   /** Extra deps forwarded to the iMessage path reader (test seam). */
   imessage?: IMessagePathDeps;
 }
@@ -151,6 +156,46 @@ function teammate(finding: Finding | undefined, readerDown: boolean): CutoverCap
     : { state: 'unverified', reason: imsgReason(finding), nextStep: NEXT_IMSG_DOCTOR };
 }
 
+const GMAIL_EVIDENCE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+// An observation is current only on its own timestamp: a valid, non-future
+// instant inside the evidence window. A fresh sibling inbox never freshens a
+// stale, invalid or future-dated one.
+function gmailObservationCurrent(at: string, nowMs: number): boolean {
+  const t = Date.parse(at);
+  return Number.isFinite(t) && t <= nowMs && nowMs - t <= GMAIL_EVIDENCE_WINDOW_MS;
+}
+
+function gmailInboxTriage(
+  triage: ReturnType<typeof readGmailTriageLatest>, plans: ReturnType<typeof readGmailArchivePlanLatest>, nowMs: number,
+): CutoverCapability {
+  const entries = plans?.plans ?? [];
+  if (!triage && entries.length === 0)
+    return { state: 'unverified', reason: 'gmail-triage-evidence-missing', nextStep: 'phm fleet gmail-triage' };
+  // An over-target sample stays a conservative blocker even though export
+  // counts are not live totals and may not cover every inbox.
+  if (entries.some(p => p.unread > p.target))
+    return { state: 'blocked', reason: 'gmail-inbox-over-target', nextStep: 'phm fleet gmail-archive-plan' };
+
+  const stamps = [...(triage ? [triage.at] : []), ...entries.map(p => p.at)];
+  const current = stamps.filter(at => gmailObservationCurrent(at, nowMs)).length;
+  if (current === 0)
+    return { state: 'unverified', reason: 'gmail-triage-evidence-stale', nextStep: 'phm fleet gmail-triage' };
+  if (current !== stamps.length)
+    return { state: 'unverified', reason: 'gmail-triage-evidence-partial', nextStep: 'phm fleet gmail-triage' };
+  if (entries.length === 0)
+    return { state: 'unverified', reason: 'gmail-unread-not-evidenced', nextStep: 'phm fleet gmail-archive-plan' };
+  // Every saved count is a local .eml export sample: plan scope is fixed to
+  // source 'local-eml-export' with unreadRepresentsLiveTotal false, and a
+  // missing or truncated scope is weaker still. No observation can evidence
+  // a live inbox total, so this capability can never read 'ready'.
+  if (entries.some(p => p.scope === undefined))
+    return { state: 'unverified', reason: 'gmail-inbox-scope-unknown', nextStep: 'phm fleet gmail-archive-plan' };
+  if (entries.some(p => p.scope?.truncated))
+    return { state: 'unverified', reason: 'gmail-inbox-export-truncated', nextStep: 'phm fleet gmail-archive-plan' };
+  return { state: 'unverified', reason: 'gmail-inbox-live-total-unverified', nextStep: 'phm fleet gmail-archive-plan' };
+}
+
 /**
  * Read-only comms cutover readiness for `ashlr fleet comms-readiness`.
  * Never throws; never sends, mutates config or touches Messages itself.
@@ -166,6 +211,14 @@ export async function buildCommsCutoverReadiness(deps: CommsCutoverReadinessDeps
     imessage = (deps.checkIMessage ?? checkIMessagePath)({ runsRoot: runsDir, ...deps.imessage });
   } catch { /* A reader failure degrades to 'unverified', never to 'ready'. */ }
 
+  let gmail: CutoverCapability;
+  try {
+    gmail = gmailInboxTriage((deps.readGmailTriage ?? readGmailTriageLatest)(runsDir),
+      (deps.readGmailPlans ?? readGmailArchivePlanLatest)(runsDir), (deps.now ?? Date.now)());
+  } catch {
+    gmail = { state: 'unverified', reason: 'gmail-triage-evidence-missing', nextStep: 'phm fleet gmail-triage' };
+  }
+
   const capabilities: CommsCutoverCapabilities = {
     emailPolling: emailPolling(email),
     emailOutbox: emailOutbox(email),
@@ -173,9 +226,7 @@ export async function buildCommsCutoverReadiness(deps: CommsCutoverReadinessDeps
     ownerImessageDelivery: ownerImessageDelivery(imessage),
     teammateImessageIntake: teammate(imessage?.collaboratorIntake, !imessage),
     teammateImessageDelivery: teammate(imessage?.collaboratorDelivery, !imessage),
-    // No local reader evidences these surfaces; absence of evidence is
-    // 'unverified', never inferred healthy.
-    gmailInboxTriage: { state: 'unverified', reason: 'no-local-evidence-for-gmail-triage', nextStep: NEXT_DIAGNOSE },
+    gmailInboxTriage: gmail,
     linkedin: { state: 'unverified', reason: 'no-local-evidence-for-linkedin', nextStep: NEXT_DIAGNOSE },
   };
   const blockers = (Object.keys(capabilities) as (keyof CommsCutoverCapabilities)[])

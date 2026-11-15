@@ -2,7 +2,7 @@
  * routes/verse/shell/open-terminal.ts — open a terminal tab where it lives
  * (3.15): its chat, the Terminal pane, the tab focused and — with a block id —
  * that command block shown. The one handler behind every terminal pointer
- * (shell/open-terminal-request.ts lists them); VerseApp loads it on demand.
+ * (shell/open-terminal-request.ts lists them); PhantomApp loads it on demand.
  *
  *   1. Ask the server which chat the tab belongs to (GET /api/verse/terminal).
  *      A tab that is gone says so (a toast) instead of opening an empty pane.
@@ -70,7 +70,7 @@ export function showTerminalTab(sessionId: string | null, tabId: string, blockId
 /**
  * Open a terminal tab. Resolves true when it was opened, false when the
  * request was malformed or the tab no longer exists (the operator is told).
- * `target` is an OpenTerminalRequest or a raw event detail (VerseApp passes it unread): it is
+ * `target` is an OpenTerminalRequest or a raw event detail (PhantomApp passes it unread): it is
  * validated here, so the first-paint shell carries no validator.
  */
 export async function openTerminalTarget(target: unknown, deps: OpenTerminalDeps): Promise<boolean> {

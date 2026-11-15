@@ -8,7 +8,7 @@ import {execFileSync} from 'node:child_process';
 import * as fs from 'node:fs';
 import {join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {verifyArtifact, assertEffectiveManualProtection} from './hosted-build-artifact.mjs';
+import {verifyArtifact, assertEffectiveManualProtection, resolveReleaseSourceRef} from './hosted-build-artifact.mjs';
 import {requireProducerEnvironment, requireRepositoryMetadata, requireRepositoryReference} from '../.github/scripts/github-repository-binding.mjs';
 import {readBoundedJson, verifyNpmReleaseProvenance} from './verify-npm-release-provenance.mjs';
 import {verifyUpdateAudit} from './finalize-desktop-update.mjs';
@@ -29,7 +29,7 @@ export function publisherInput(env) {
   assert.match(env.VERSION ?? '', /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/);
   return {revision: env.CANDIDATE_SHA, version: env.VERSION,
     runId: integer(env.CI_RUN_ID), runAttempt: integer(env.CI_RUN_ATTEMPT),
-    attestorSha: env.GITHUB_SHA, attestorRun: integer(env.ATTESTOR_RUN_ID),
+    attestorSha: env.CANDIDATE_SHA, attestorRun: integer(env.ATTESTOR_RUN_ID),
     attestorAttempt: integer(env.ATTESTOR_RUN_ATTEMPT), artifactId: integer(env.ATTESTED_ARTIFACT_ID),
     auditRun: integer(env.AUDIT_RUN_ID), auditAttempt: integer(env.AUDIT_RUN_ATTEMPT)};
 }
@@ -42,6 +42,9 @@ export function bindAttestedArtifact(input, run, artifact) {
   // which permits schedule exclusively for the exact-source fast profile.
   assert.ok(['workflow_dispatch', 'schedule'].includes(run.event), 'unexpected attestor event');
   if (run.event === 'schedule') assert.equal(run.head_branch, 'master');
+  if (run.head_branch != null && run.head_branch !== 'master') {
+    assert.match(run.head_branch, /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/, 'attestor branch is not a stable release tag');
+  }
   assert.equal(run.path, '.github/workflows/attest-ci-build.yml');
   assert.equal(run.status, 'completed'); assert.equal(run.conclusion, 'success');
   assert.equal(artifact.id, input.artifactId); assert.equal(artifact.expired, false);
@@ -54,10 +57,12 @@ export function bindAttestedArtifact(input, run, artifact) {
 
 export function prepare(env = process.env, read = api) {
   const input = publisherInput(env);
-  assert.equal(git('rev-parse', 'HEAD'), input.attestorSha);
+  assert.equal(git('rev-parse', 'HEAD'), env.GITHUB_SHA);
   assert.equal(git('status', '--porcelain', '--untracked-files=normal'), '');
   requireRepositoryMetadata(REPO, read(`repos/${REPO}`));
-  assert.equal(assertEffectiveManualProtection(REPO, read(`repos/${REPO}/branches/master`), read(`repos/${REPO}/rules/branches/master`)), input.attestorSha);
+  const masterSha = assertEffectiveManualProtection(REPO, read(`repos/${REPO}/branches/master`), read(`repos/${REPO}/rules/branches/master`));
+  assert.equal(masterSha, env.GITHUB_SHA, 'npm workflow is not current master');
+  resolveReleaseSourceRef({ read, repository: REPO, masterSha, attestorSha: input.attestorSha, candidateSha: input.revision, version: input.version });
   bindAttestedArtifact(input, read(`repos/${REPO}/actions/runs/${input.attestorRun}/attempts/${input.attestorAttempt}`), read(`repos/${REPO}/actions/artifacts/${input.artifactId}`));
   const directory = fs.mkdtempSync(join(fs.realpathSync(env.RUNNER_TEMP), 'phantom-npm-')); fs.chmodSync(directory, 0o700);
   git('fetch', '--no-tags', 'origin', input.revision);
@@ -268,6 +273,85 @@ export async function reconcileLatest(record) {
   }
 }
 
+// npm resolution (ETARGET) can lag the reconciled install catalog: the
+// version endpoint and npm's own packument read can sit on different
+// registry replicas. The no-scripts install retries a small bounded number
+// of times with backoff — ETARGET only. Integrity, provenance, auth and
+// every other failure hold immediately; this never republishes.
+export const INSTALL_ETARGET_ATTEMPTS = 4;
+export const INSTALL_ETARGET_DELAY_MS = 5_000;
+const INSTALL_TIMEOUT_MS = 120_000;
+const INSTALL_OUTPUT_TAIL = 4_000;
+const INSTALL_NEVER_RETRY = /\b(?:EINTEGRITY|EPROVENANCE|E401|E403|ENEEDAUTH)\b/;
+
+/** True only for a transient ETARGET resolution miss; never for a mixed or hard failure. */
+export function installFailureIsTransient(output) {
+  return /\bETARGET\b/.test(output) && !INSTALL_NEVER_RETRY.test(output);
+}
+
+/** The exact-version no-scripts consumer install. --prefer-online forces each
+ * attempt to revalidate the packument over the network, so a retry reads the
+ * install catalog freshly instead of replaying a locally cached response. */
+export function installPublishedArgs(version) {
+  return ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--save-exact', '--prefer-online',
+    '--registry=https://registry.npmjs.org', `${PACKAGE}@${version}`];
+}
+
+function runInstall(argv, cwd, timeoutMs) {
+  try {
+    const stdout = execFileSync('npm', argv, {cwd, env: process.env, encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 8 * 1024 * 1024, timeout: timeoutMs});
+    return {ok: true, output: stdout ?? ''};
+  } catch (error) {
+    return {ok: false, code: error.status ?? null, signal: error.signal ?? null,
+      output: `${error.stdout ?? ''}\n${error.stderr ?? ''}`.trim()};
+  }
+}
+
+/**
+ * The no-scripts consumer install of the admitted version, bounded-retried on
+ * ETARGET only, then proven to be the admitted package: the installed
+ * package.json identity and the hidden lockfile's resolved archive integrity
+ * must equal the record exactly. A substituted or downgraded tree holds.
+ */
+export async function installPublishedPackage(record, directory, deps = {}) {
+  assert.equal(typeof directory, 'string'); assert.ok(directory.length > 0);
+  const exec = deps.exec ?? runInstall;
+  const sleep = deps.sleep ?? (ms => new Promise(done => setTimeout(done, ms)));
+  const timeoutMs = deps.timeoutMs ?? INSTALL_TIMEOUT_MS;
+  fs.mkdirSync(directory, {recursive: true, mode: 0o700});
+  const manifest = join(directory, 'package.json');
+  if (!fs.existsSync(manifest)) {
+    fs.writeFileSync(manifest, `${JSON.stringify({name: 'phantom-install-check', version: '0.0.0', private: true})}\n`, {mode: 0o600, flag: 'wx'});
+  }
+  const argv = installPublishedArgs(record.version);
+  let delay = INSTALL_ETARGET_DELAY_MS;
+  for (let attempt = 1; ; attempt++) {
+    const run = await exec(argv, directory, timeoutMs);
+    if (run.ok) {
+      console.log(`npm install attempt ${attempt} accepted ${PACKAGE}@${record.version}`);
+      break;
+    }
+    const output = String(run.output ?? '');
+    const status = run.code !== null && run.code !== undefined ? `exited with code ${run.code}`
+      : run.signal ? `was killed on ${run.signal}` : 'failed';
+    const tail = output ? `; last output: ${output.slice(-INSTALL_OUTPUT_TAIL)}` : '';
+    if (attempt >= INSTALL_ETARGET_ATTEMPTS || !installFailureIsTransient(output)) {
+      throw new Error(`npm install ${status} while reading ${PACKAGE}@${record.version}${tail}`);
+    }
+    console.log(`npm install attempt ${attempt} could not resolve ${PACKAGE}@${record.version} (ETARGET); retrying in ${delay}ms`);
+    await sleep(delay);
+    delay = Math.min(delay * 2, 30_000);
+  }
+  const installed = readBoundedJson(join(directory, 'node_modules', '@ashlr', 'phantom', 'package.json'));
+  assert.equal(installed.name, PACKAGE);
+  assert.equal(installed.version, record.version);
+  const lock = readBoundedJson(join(directory, 'node_modules', '.package-lock.json'));
+  assert.equal(lock.packages?.[`node_modules/${PACKAGE}`]?.integrity, record.integrity,
+    'installed package resolved a different archive than the admitted record');
+  return argv;
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [command, directory] = process.argv.slice(2);
   if (command === 'prepare') prepare();
@@ -278,6 +362,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   } else if (command === 'registry') {
     const record = verifyHandoff(directory, process.env.ADMISSION_SHA256, process.env.PACKAGE_SHA256);
     await reconcileRegistry(record, process.env.RUNNER_TEMP);
+  } else if (command === 'install') {
+    const record = verifyHandoff(directory, process.env.ADMISSION_SHA256, process.env.PACKAGE_SHA256);
+    await installPublishedPackage(record, process.argv[4]);
   } else if (command === 'provenance') {
     const record = verifyHandoff(directory, process.env.ADMISSION_SHA256, process.env.PACKAGE_SHA256);
     console.log(JSON.stringify(verifyCanonicalProvenance(record, readBoundedJson(join(process.env.RUNNER_TEMP, 'phantom-signatures.json')), process.env.GITHUB_SHA, process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT)));

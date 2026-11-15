@@ -6,6 +6,7 @@
 import { NEEDS_YOU_SOURCES, type NeedsYouSource, type VerseActivityResponse } from '../verse/workbench-types.js';
 import { diffFleetForPush, validPushFleet, type PushFleetSnapshot } from './remote-push-fleet.js';
 import { diffNeedsMasonForPush, validNeedsMasonItems } from './remote-push-needs-mason.js';
+import { diffLeaderRepliesForPush, validLeaderReplies } from './remote-push-leader.js';
 import type { RemotePushDetail, RemotePushKind } from './remote-push.js';
 
 type Activity = Pick<VerseActivityResponse, 'cursor' | 'needsYou' | 'completions' | 'sources'>;
@@ -14,6 +15,7 @@ export interface RemotePushWatcherOptions {
   readFleet?: () => Promise<unknown>;
   /** Open NEEDS-MASON items as `{id, text}[]`; the first valid read is a baseline. */
   readNeedsMason?: () => Promise<unknown>;
+  readLeaderReplies?: () => Promise<unknown>;
   send: (kind: RemotePushKind, detail?: RemotePushDetail) => Promise<unknown>;
   intervalMs?: number;
   /** Deadline for each callback, in milliseconds. Defaults to 10 seconds. */
@@ -52,6 +54,7 @@ export function createRemotePushWatcher(options: RemotePushWatcherOptions) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2_147_483_647) {
     throw new Error('Invalid remote push operation timeout');
   }
+  let leaderNewestAt: number | null = null;
   let fleet: PushFleetSnapshot | null = null;
   let needsMason: ReadonlySet<string> | null = null;
   // Set by pollActivity when it sends needs-you this tick, so NEEDS-MASON does not send a second.
@@ -99,6 +102,7 @@ export function createRemotePushWatcher(options: RemotePushWatcherOptions) {
   const read = bounded(options.read);
   const readFleet = options.readFleet ? bounded(options.readFleet) : null;
   const readNeedsMason = options.readNeedsMason ? bounded(options.readNeedsMason) : null;
+  const readLeaderReplies = options.readLeaderReplies ? bounded(options.readLeaderReplies) : null;
   const send = bounded(options.send);
   let sendTail: Promise<unknown> = Promise.resolve();
   function sendBestEffort(requested: number, kind: RemotePushKind, detail?: RemotePushDetail): Promise<unknown> {
@@ -161,6 +165,15 @@ export function createRemotePushWatcher(options: RemotePushWatcherOptions) {
     } catch { /* Preserve the last successful baseline. */ }
   }
 
+  async function pollLeader(requested: number): Promise<void> {
+    if (!readLeaderReplies) return;
+    const current = await readLeaderReplies();
+    if (requested !== generation || !validLeaderReplies(current)) return;
+    const { intent, newestAt } = diffLeaderRepliesForPush(leaderNewestAt, current);
+    leaderNewestAt = newestAt;
+    if (intent) await sendBestEffort(requested, intent.kind, { count: intent.count });
+  }
+
   async function pollOnce(): Promise<boolean> {
     if (polling) return false;
     polling = true;
@@ -168,7 +181,7 @@ export function createRemotePushWatcher(options: RemotePushWatcherOptions) {
       activitySentNeed = false;
       const activityPoll = pollActivity(generation);
       const [activity] = await Promise.all([
-        activityPoll, pollFleet(generation), pollNeedsMason(generation, activityPoll),
+        activityPoll, pollFleet(generation), pollNeedsMason(generation, activityPoll), pollLeader(generation),
       ]);
       return activity;
     } finally { polling = false; }

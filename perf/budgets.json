@@ -18,6 +18,13 @@
       "requires_files": ["dist/cli/index.js"]
     },
     {
+      "id": "phm-help",
+      "description": "phm --help — usage text plus the help module's import graph",
+      "command": "node bin/ashlr --help",
+      "baseline_ms": 600,
+      "requires_files": ["dist/cli/index.js"]
+    },
+    {
       "id": "phm-status",
       "description": "phm status — attention board on a fresh HOME",
       "command": "node bin/ashlr status",
@@ -30,6 +37,13 @@
       "command": "node bin/ashlr doctor",
       "baseline_ms": 10000,
       "requires_files": ["dist/cli/index.js"]
+    },
+    {
+      "id": "phm-mcp-tools-list",
+      "description": "MCP tools/list — gateway spawn + initialize + tools/list on a fresh HOME, what an MCP client feels",
+      "command": "node scripts/perf-mcp-tools-list.mjs",
+      "baseline_ms": 3000,
+      "requires_files": ["dist/cli/index.js", "scripts/perf-mcp-tools-list.mjs"]
     },
     {
       "id": "phantom-wrapper-warm",

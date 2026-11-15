@@ -91,11 +91,11 @@ describe('production velocity profile', () => {
       profile: 'resource-control',
       fillQueueToSlots: true,
       stalePendingTtlHours: 24,
-      maxSlotsPerBackend: 3,
+      maxSlotsPerBackend: 1,
       caps: {
         localMaxConcurrent: 1,
-        nimMaxConcurrent: 2,
-        kimiMaxConcurrent: 2,
+        nimMaxConcurrent: 1,
+        kimiMaxConcurrent: 1,
       },
       flags: {
         gateway: true,
@@ -109,11 +109,11 @@ describe('production velocity profile', () => {
       resourceAware: true,
       concurrentDispatch: true,
       workhorseDispatch: true,
-      maxSlotsPerBackend: 3,
+      maxSlotsPerBackend: 1,
     });
     expect(effective.foundry?.local?.maxConcurrent).toBe(1);
-    expect(effective.foundry?.nim?.maxConcurrent).toBe(2);
-    expect(effective.foundry?.kimi?.maxConcurrent).toBe(2);
+    expect(effective.foundry?.nim?.maxConcurrent).toBe(1);
+    expect(effective.foundry?.kimi?.maxConcurrent).toBe(1);
   });
 
   it('does not materialize a default fabric3 ceiling for adaptive counts, but keeps explicit resource choices', () => {
@@ -253,7 +253,7 @@ describe('production velocity profile', () => {
 
 describe('daemon nullable count preferences', () => {
   it('preserves legacy defaults and explicit null maximum precedence', () => {
-    expect(resolveDaemonCountPreferences()).toEqual({ perTickItems: 3, parallel: 2, maxConcurrent: 8, concurrency: { local: 2, cloud: 6, total: 8 } });
+    expect(resolveDaemonCountPreferences()).toEqual({ perTickItems: 1, parallel: 1, maxConcurrent: 1, concurrency: { local: 1, cloud: 1, total: 1 } });
     expect(resolveDaemonCountPreferences({ maxConcurrent: null, concurrency: { total: 1 } }).maxConcurrent).toBeNull();
     expect(resolveDaemonCountPreferences({ concurrency: { total: null } }).maxConcurrent).toBeNull();
     expect(resolveDaemonCountPreferences({ maxConcurrent: 4, concurrency: { total: null } }).maxConcurrent).toBe(4);

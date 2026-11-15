@@ -8,6 +8,7 @@ import {
   parseReleasePathPolicyBytes,
   validateReleasePathPolicy,
   verifyPublishedRelease,
+  verifyReleaseTag,
   verifyRequiredChecks,
   verifyCandidateOnProtectedBranch,
 } from '../scripts/verify-release-policy.mjs';
@@ -85,6 +86,13 @@ describe('release-path policy v2', () => {
     payload.predicate.buildDefinition.externalParameters.workflow.path = '.github/workflows/other.yml';
     e.attestations.attestations[1]!.bundle.dsseEnvelope!.payload = Buffer.from(JSON.stringify(payload)).toString('base64');
     expect(() => verifyPublishedRelease(policy(), e)).toThrow(/publisher/u);
+  });
+
+  it('checks direct tag identity before registry evidence exists', () => {
+    expect(() => verifyReleaseTag(evidence().tagRef, '3.29.15', candidate)).not.toThrow();
+    expect(() => verifyReleaseTag(evidence().tagRef, '3.29.15', '4'.repeat(40))).toThrow(/candidate/u);
+    expect(() => verifyReleaseTag({ ref: 'refs/tags/v3.29.15', object: { type: 'tag', sha: candidate } }, '3.29.15', candidate)).toThrow(/candidate/u);
+    expect(() => verifyReleaseTag(evidence().tagRef, '3.29.16', candidate)).toThrow(/tag/u);
   });
 
   it('rejects a tag that is not v<version> on the candidate', () => {

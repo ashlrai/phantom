@@ -9,11 +9,12 @@ import { scrubSecrets } from '../util/scrub.js';
 
 export class ConnectorError extends Error {}
 const fail = (message: string): never => { throw new ConnectorError(message); };
-const name = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_.-]{0,79}$/);
+export const name = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_.-]{0,79}$/);
 const words = z.array(name).max(128).default([]);
 const entry = z.object({
   id: name,
   kind: z.enum(['mcp-stdio', 'mcp-http', 'cli', 'plugin']),
+  description: z.string().min(1).max(500).optional(),
   command: z.string().min(1).max(1024).optional(),
   args: z.array(z.string().max(2048)).max(128).default([]),
   url: z.string().max(2048).optional(),
@@ -56,7 +57,7 @@ export function validateProfile(value: unknown): ConnectorProfile {
   }
   return profile;
 }
-async function safePath(path: string, home: string): Promise<void> {
+export async function safePath(path: string, home: string): Promise<void> {
   const absolute = resolve(path);
   const root = resolve(home);
   const forbidden = (p: string): boolean => p.split(sep).some(part => part.toLowerCase() === '.codex');

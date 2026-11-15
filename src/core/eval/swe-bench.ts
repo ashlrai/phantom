@@ -505,7 +505,7 @@ export function loadSweBenchDataset(jsonlPath: string, repoBasePath?: string): B
  * Build the default engine runner that wraps runApiModelSandboxed.
  * Dynamically imported so the harness can be tested without a real engine.
  */
-function buildDefaultRunner(engine: string): EngineRunner {
+export function buildDefaultRunner(engine: string): EngineRunner {
   return async (problemStatement, repoPath, _engine) => {
     const { runApiModelSandboxed } = await import('../run/sandboxed-engine.js');
     const { loadConfig } = await import('../config.js');
@@ -529,7 +529,7 @@ function buildDefaultRunner(engine: string): EngineRunner {
 // ---------------------------------------------------------------------------
 
 /** Create an isolated copy of repoPath in a temp dir. */
-function isolateRepo(repoPath: string): string {
+export function isolateRepo(repoPath: string): string {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ashlr-bench-'));
   if (fs.existsSync(repoPath)) {
     copyDirSync(repoPath, tmp);
@@ -551,7 +551,7 @@ function copyDirSync(src: string, dest: string): void {
   }
 }
 
-function cleanupDir(dir: string): void {
+export function cleanupDir(dir: string): void {
   try {
     fs.rmSync(dir, { recursive: true, force: true });
   } catch {

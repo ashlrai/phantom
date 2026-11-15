@@ -16,17 +16,24 @@
  *     (this is the guard against recutting the same PR twice);
  *   - the recut ledger <runsDir>/queue/recut-loop.jsonl — a PR written within
  *     the last 24 h is skipped;
- *   - an in-flight recut — any RQ-PHX-*.prompt at the runs root or any
- *     RQ-PHX-*.md in a drop/queue folder whose body names `pull/<N>/head`
- *     (bounded: newest 300 files, 8000 bytes each);
+ *   - an in-flight recut — root and queue prompts or pending drop files whose
+ *     body names `pull/<N>/head` (at most 10000 files, 8000 bytes each; overflow fails closed). A
+ *     completed prompt is ignored unless a later enqueue, claim or launch
+ *     appears in the bounded metrics tail; unknown prompt state stays active;
  *   - caps — at most 2 writes per tick and 6 per rolling hour counted from
  *     the ledger; the overflow is skipped 'capped', outcome 'capped';
- *   - landed — `ashlr fleet dirty-landed`'s read says every path the PR changes
- *     already matches master, so a recut would change nothing (not counted
- *     against the caps; any other class or a failed read proceeds);
  *   - the head SHA — the merge-state record proves the tracked head (a moved
  *     head would classify 'pending', not 'conflicted'), and a bounded
- *     `gh pr view --json headRefOid` covers untracked PRs; no sha, no write.
+ *     `gh pr view --json headRefOid` covers untracked PRs; no sha, no write;
+ *   - empty-yield — the last EMPTY_YIELD_STREAK ledger attempts the loop
+ *     wrote for this PR on the *same head* all finished empty in jobs.jsonl:
+ *     minting another recut for identical evidence just repeats work that
+ *     already yielded nothing. A moved head, a missing ledger entry, an
+ *     unmeasured or a productive outcome, or outcome evidence older than
+ *     EMPTY_YIELD_WINDOW_MS each fail open — suppression is advisory;
+ *   - landed — `ashlr fleet dirty-landed`'s read says every path the PR changes
+ *     already matches master, so a recut would change nothing (not counted
+ *     against the caps; any other class or a failed read proceeds).
  *
  * OFF: <runsDir>/queue/recut-loop.off, the fleet's <runsDir>/ORCH_OFF switch,
  * or the ORCH_OFF env var — the tick returns 'off' and writes nothing.
@@ -41,6 +48,8 @@
  * Every other structural check (id shape, lane, tier, non-empty body,
  * control characters, the 8 KB file cap) still runs before publish.
  *
+ * Ticks share a recoverable local-store lock across processes.
+ *
  * THE LOOP is opt-in per process: GET /api/verse/health arms it once when
  * dispatch is allowed (the desktop polls that route while the app is open)
  * and it never arms under Vitest. Every tick's outcome is kept in module
@@ -53,6 +62,8 @@ import { lstat, mkdir, mkdtemp, open, readdir, link, rm, unlink, writeFile } fro
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
+import { readSource } from './runs-parked-queue.js';
+import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from './local-store-lock.js';
 import type { CloudGh } from '../cloud/pr-actions.js';
 import { defaultGitRunner } from '../verse/git-ops.js';
 import { renderBacklogRecutJob } from './backlog-recut-job.js';
@@ -77,6 +88,7 @@ import {
   readMergeBacklogStates,
   type MergeBacklogReadV1,
 } from './merge-backlog-read.js';
+import { collapseJobOutcomes, parseJobOutcomeRows, type JobOutcome } from '../queue/job-outcomes.js';
 import { findSupersededPrs, type MergedFleetPr } from './superseded-prs.js';
 
 export const RECUT_LOOP_LANE = 'codex-personal';
@@ -88,7 +100,11 @@ const HOUR_WRITE_CAP = 6;
 const HOUR_MS = 60 * 60 * 1000;
 const RECENT_WINDOW_MS = 24 * HOUR_MS;
 const LEDGER_TAIL_BYTES = 64 * 1024;
-const SCAN_FILE_LIMIT = 300;
+/** Same-head loop attempts that all came back empty before a recut is suppressed. */
+const EMPTY_YIELD_STREAK = 2;
+/** Outcome rows older than this never suppress — stale evidence proves nothing. */
+const EMPTY_YIELD_WINDOW_MS = 7 * RECENT_WINDOW_MS;
+const SCAN_FILE_LIMIT = 10_000;
 const SCAN_BYTES_PER_FILE = 8000;
 const PROMPT_FILE_LIMIT = 1000;
 const PROMPT_BYTES_PER_FILE = 128 * 1024;
@@ -103,7 +119,7 @@ const PULL_HEAD_RE = /pull\/(\d+)\/head/g;
 const PROMPT_FILE_RE = /^(RQ-[A-Za-z0-9_-]+)\.(?:md|prompt)$/;
 const ROOT_PROMPT_RE = /^RQ-PHX-[A-Z0-9]+\.prompt$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
-const DROP_JOB_DIRS = ['claude', 'codex-personal', 'devin', 'codex-local', 'done'] as const;
+const DROP_JOB_DIRS = ['claude', 'codex-personal', 'devin', 'codex-local'] as const;
 
 const enoent = (error: unknown): boolean =>
   typeof error === 'object' && error !== null && (error as NodeJS.ErrnoException).code === 'ENOENT';
@@ -146,7 +162,7 @@ export interface RecutLoopWritten {
 
 export interface RecutLoopSkipped {
   pr: number;
-  /** superseded | recent | in-flight | capped | no-head | landed | no-id | exists | write-failed */
+  /** superseded | recent | in-flight | capped | no-head | empty-yield | landed | no-id | exists | write-failed */
   reason: string;
 }
 
@@ -366,7 +382,7 @@ interface ScanDir {
 }
 
 /** Files matching `pattern` under `dir`, newest first, with their job stems. */
-async function collectMatching(spec: ScanDir[], limit: number): Promise<{ path: string; stem: string; mtimeMs: number }[]> {
+async function collectMatching(spec: ScanDir[], limit: number, failOnOverflow = false): Promise<{ path: string; stem: string; mtimeMs: number }[]> {
   const files: { path: string; stem: string; mtimeMs: number }[] = [];
   const seen = new Set<string>();
   for (const { dir, pattern, strip } of spec) {
@@ -392,6 +408,7 @@ async function collectMatching(spec: ScanDir[], limit: number): Promise<{ path: 
       files.push({ path, stem: entry.name.replace(strip, ''), mtimeMs: stat.mtimeMs });
     }
   }
+  if (failOnOverflow && files.length > limit) throw new Error('in-flight scan limit exceeded');
   return files.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, limit);
 }
 
@@ -413,7 +430,7 @@ async function readPromptTexts(runsDir: string): Promise<ReadonlyMap<string, str
 }
 
 /** PR numbers named `pull/<N>/head` by any in-flight prompt or drop body. */
-async function readInflightPrs(runsDir: string, dropDir: string): Promise<Set<number>> {
+async function readInflightPrs(runsDir: string, dropDir: string): Promise<{ prs: Set<number>; metricsText: string }> {
   const spec: ScanDir[] = [
     { dir: runsDir, pattern: ROOT_PROMPT_RE, strip: /\.prompt$/ },
     { dir: join(runsDir, 'queue', 'prompts'), pattern: DROP_JOB_FILE, strip: /\.md$/ },
@@ -422,21 +439,55 @@ async function readInflightPrs(runsDir: string, dropDir: string): Promise<Set<nu
     })),
   ];
   if (!spec.some(({ dir }) => dir === dropDir)) spec.push({ dir: dropDir, pattern: DROP_JOB_FILE, strip: /\.md$/ });
-  const files = await collectMatching(spec, SCAN_FILE_LIMIT);
+  const files = await collectMatching(spec, SCAN_FILE_LIMIT, true);
+  // Append order distinguishes a retry from an earlier finish of the same job.
+  const states = new Map<string, boolean>();
+  const metrics = await readSource(join(runsDir, 'metrics', 'jobs.jsonl'), 16 * 1024 * 1024, true);
+  if (metrics.state === 'degraded') throw new Error('invalid metrics source');
+  for (const line of metrics.text.split('\n')) {
+    try {
+      const row: unknown = JSON.parse(line);
+      if (!object(row) || typeof row['job'] !== 'string') continue;
+      if (row['event'] === 'finish') states.set(row['job'], false);
+      else if (row['event'] === 'enqueue' || row['event'] === 'launch' || row['event'] === 'claim') states.set(row['job'], true);
+    } catch { /* incomplete or malformed metric */ }
+  }
   const prs = new Set<number>();
   for (const file of files) {
+    const archived = dirname(file.path) === runsDir || dirname(file.path) === join(runsDir, 'queue', 'prompts');
+    if (archived && states.get(file.stem) === false) continue;
     let body: string;
     try {
       body = await readBounded(file.path, SCAN_BYTES_PER_FILE);
     } catch {
-      continue;
+      throw new Error('in-flight prompt unreadable');
     }
     for (const match of body.matchAll(PULL_HEAD_RE)) {
       const pr = Number(match[1]);
       if (Number.isSafeInteger(pr) && pr > 0) prs.add(pr);
     }
   }
-  return prs;
+  return { prs, metricsText: metrics.text };
+}
+
+/**
+ * Consecutive newest-first loop attempts for `pr` minted on `headSha` whose
+ * collapsed outcome came back empty. A different-head entry is different work
+ * and skipped; a missing, unmeasured, productive or merged outcome ends the
+ * run — only proven empty repeats count.
+ */
+function emptyYieldStreak(
+  ledger: readonly RecutLoopLedgerEntry[], pr: number, headSha: string,
+  outcomes: ReadonlyMap<string, JobOutcome>,
+): number {
+  let streak = 0;
+  for (const entry of ledger) {
+    if (entry.pr !== pr || entry.headSha !== headSha) continue;
+    const outcome = outcomes.get(`${DROP_JOB_FILE_PREFIX}${entry.id}`);
+    if (outcome === undefined || outcome.empty !== true || outcome.merged === true) break;
+    streak += 1;
+  }
+  return streak;
 }
 
 /** First free RECUT<N>L<k> id: taken anywhere the ingest tracks it, or in the drop dir. */
@@ -499,6 +550,15 @@ async function defaultWriteJob(file: string, body: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export async function recutLoopTick(deps: RecutLoopDeps): Promise<RecutLoopTickResult> {
+  const runsDir = resolveDropJobRoot(deps.runsDir);
+  await mkdir(join(runsDir, 'queue'), { recursive: true });
+  const held = acquireLocalStoreLockWithOutcome(join(runsDir, 'queue', 'recut-loop.lock'), 0, { anchorPath: runsDir, exactPrivateStorage: true });
+  if (held.state !== 'acquired') return { at: new Date((deps.now ?? Date.now)()).toISOString(), outcome: 'read-failed', written: [], skipped: [], hourCount: 0 };
+  try { return await recutLoopTickLocked(deps); }
+  finally { releaseLocalStoreLock(held.lock); }
+}
+
+async function recutLoopTickLocked(deps: RecutLoopDeps): Promise<RecutLoopTickResult> {
   const now = deps.now ?? Date.now;
   const nowMs = now();
   const at = new Date(nowMs).toISOString();
@@ -548,7 +608,9 @@ export async function recutLoopTick(deps: RecutLoopDeps): Promise<RecutLoopTickR
     result.outcome = 'read-failed';
     return result;
   }
-  const [prompts, ledger, inflight] = guardReads;
+  const [prompts, ledger, inflightRead] = guardReads;
+  const inflight = inflightRead.prs;
+  const outcomes = collapseJobOutcomes(parseJobOutcomeRows(inflightRead.metricsText, nowMs, EMPTY_YIELD_WINDOW_MS));
 
   const superseded = new Set(findSupersededPrs(backlog.items, merged, prompts).map((row) => row.pr.number));
   const recent = new Set(ledger.filter((entry) => Date.parse(entry.at) >= nowMs - RECENT_WINDOW_MS).map((entry) => entry.pr));
@@ -574,6 +636,7 @@ export async function recutLoopTick(deps: RecutLoopDeps): Promise<RecutLoopTickR
     if (allowance <= 0) { skip('capped'); capped = true; continue; }
     const headSha = await readHeadSha(pr);
     if (headSha === null) { skip('no-head'); continue; }
+    if (emptyYieldStreak(ledger, pr, headSha, outcomes) >= EMPTY_YIELD_STREAK) { skip('empty-yield'); continue; }
     // Fail open: a degraded landed read must never block a real recut.
     const landed = await readLanded({ number: pr, headSha, title: item.title }).catch(() => null);
     if (landed === 'landed' || landed === 'diff-anomaly') { skip(landed); continue; }
@@ -589,6 +652,8 @@ export async function recutLoopTick(deps: RecutLoopDeps): Promise<RecutLoopTickR
       continue;
     }
     allowance -= 1;
+    recent.add(pr);
+    inflight.add(pr);
     result.written.push({ pr, id, file });
     try {
       await mkdir(join(runsDir, 'queue'), { recursive: true });

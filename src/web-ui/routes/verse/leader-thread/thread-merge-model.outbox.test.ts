@@ -25,6 +25,14 @@ describe('mergeThread with MASON-OUTBOX answers', () => {
     expect(lines[2]).toMatchObject({ who: 'leader', source: 'outbox', text: 'outbox answer', ack: null });
   });
 
+  it('retains matching leader text from another date', () => {
+    const { lines } = mergeThread(
+      [post({ id: 'later', at: '2026-11-09T01:00:00Z', text: 'Same answer' })],
+      [], NOW, undefined, [answer('2026-11-08T01:00:00Z', 'Same answer')],
+    );
+    expect(lines.map(line => line.id)).toEqual(['outbox-0', 'later']);
+  });
+
   it('sorts the Mason inbox entry first on a tied timestamp', () => {
     const at = iso(NOW - 5 * MIN);
     const { lines } = mergeThread(

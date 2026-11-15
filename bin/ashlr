@@ -3,6 +3,14 @@
 // Resolve relative to this file so the symlink in ~/.local/bin works.
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { enableCompileCache } from 'node:module';
+
+// Warm-start speedup: cache compiled bytecode for the dist/ module graph so
+// V8 skips recompilation on the next run. enableCompileCache exists on every
+// supported Node (>=22.15); the default dir honors NODE_COMPILE_CACHE and the
+// cache is content-addressed, so a stale or unwritable cache can never break
+// startup — it must never be allowed to, whatever the runtime returns.
+try { enableCompileCache?.(); } catch { /* cache unavailable — run uncached */ }
 
 const here = dirname(fileURLToPath(import.meta.url));
 // Use a file:// URL, not a raw path: on Windows `import('C:\\...')` throws

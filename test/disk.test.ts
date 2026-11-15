@@ -88,6 +88,15 @@ describe('parseJobLedger', () => {
     expect(ledger.has('RQ-2')).toBe(false); // publish rows are not lifecycle rows
     expect(ledger.get('RQ-3')?.state).toBe('closed');
   });
+  it('does not reuse an earlier attempt after a launch', () => {
+    const ledger = parseJobLedger([
+      { event: 'finish', job: 'RQ-1', empty: true, ts: '2026-10-01T00:00:00Z' },
+      { event: 'outcome', job: 'RQ-1', state: 'MERGED' },
+      { event: 'launch', job: 'RQ-1' },
+      { event: 'finish', job: 'RQ-1', empty: false, ts: '2026-10-02T00:00:00Z' },
+    ].map(row => JSON.stringify(row)).join('\n'));
+    expect(classifyWorktree(ledger.get('RQ-1'))).toBe('none');
+  });
 });
 
 describe('classifyWorktree', () => {

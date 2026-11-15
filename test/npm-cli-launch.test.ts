@@ -20,6 +20,7 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  describeNpmCliFailure,
   resolveNpmCliLaunch,
   removeExactEmptySnapshotContainer,
   runTrustedNpmCli,
@@ -700,7 +701,19 @@ describe('shell-free npm CLI launch', () => {
 
   it('rejects unbounded npm child timeouts before spawning', () => {
     expect(() => runTrustedNpmCli([], { timeout: 0 })).toThrow('npm CLI timeout is invalid');
-    expect(() => runTrustedNpmCli([], { timeout: 180_001 })).toThrow('npm CLI timeout is invalid');
+    expect(() => runTrustedNpmCli([], { timeout: 600_001 })).toThrow('npm CLI timeout is invalid');
+  });
+
+  it('names the cause when an npm child fails with empty stderr', () => {
+    const timedOut = Object.assign(new Error('spawnSync node ETIMEDOUT'), { code: 'ETIMEDOUT' });
+    expect(describeNpmCliFailure({ status: null, signal: 'SIGTERM', stderr: '', error: timedOut }))
+      .toBe('timed out after 600000 ms');
+    const overflow = Object.assign(new Error('stdout maxBuffer exceeded'), { code: 'ENOBUFS' });
+    expect(describeNpmCliFailure({ status: null, signal: 'SIGTERM', stderr: '', error: overflow }))
+      .toBe('spawn failed: ENOBUFS');
+    expect(describeNpmCliFailure({ status: null, signal: 'SIGKILL', stderr: '' })).toBe('killed by SIGKILL');
+    expect(describeNpmCliFailure({ status: 1, signal: null, stderr: ' npm error E404 \n' }))
+      .toBe('exited 1: npm error E404');
   });
 });
 

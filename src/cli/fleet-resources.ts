@@ -7,9 +7,9 @@
  * (a `lanes` wrapper is accepted for either file, like slots.json itself).
  *
  * One plain line per slots.json lane: target, used_frac — or
- * "unset, router assumes 0.5" when the lane has no reading — and the reset
+ * "unknown" when the lane has no valid reading — and the reset
  * time. Marks `skipped` when used_frac is 1 or more (window exhausted) and
- * `unseen` when a lane with a target above 0 has no resources.json entry.
+ * `unseen` when a lane with a target above 0 has no valid usage reading.
  * Exits 1 when any lane is unseen, 2 on bad usage; never writes.
  */
 import { readFile } from 'node:fs/promises';
@@ -21,8 +21,6 @@ import { rejectUnknownOptions } from './args.js';
 
 const USAGE = 'Usage: ashlr fleet resources [--runs-dir <abs>] [--json]';
 export const FLEET_RESOURCES_SCHEMA = 'fleet.resources.v1';
-/** Window fraction the router assumes for a lane resources.json has not seen. */
-export const ROUTER_ASSUMED_USED_FRAC = 0.5;
 
 export type FleetResourceStatus = 'ok' | 'skipped' | 'unseen';
 export type FleetResourceSourceState = 'healthy' | 'missing' | 'unreadable';
@@ -31,7 +29,7 @@ export interface FleetResourceLane {
   lane: string;
   /** slots.json target; null when the row carries no non-negative integer. */
   target: number | null;
-  /** Reported window fraction, or null — the router assumes ROUTER_ASSUMED_USED_FRAC. */
+  /** Reported window fraction, or null when unavailable or invalid. */
   usedFrac: number | null;
   /** ISO reset time from resources.json, or null. */
   resetAt: string | null;
@@ -46,7 +44,7 @@ export interface FleetResourcesView {
   slots: FleetResourceSourceState;
   /** resources.json read state; anything but healthy means no lane has a reading. */
   resources: FleetResourceSourceState;
-  /** Lane names marked unseen (target above 0, no resources.json entry). */
+  /** Lane names marked unseen (target above 0, no valid usage reading). */
   unseenLanes: string[];
   lanes: FleetResourceLane[];
 }
@@ -124,7 +122,7 @@ export function buildFleetResourcesView(
     const entry = resources.rows[name];
     const { usedFrac, resetAt } = entry ? reading(entry) : { usedFrac: null, resetAt: null };
     const status: FleetResourceStatus = usedFrac !== null && usedFrac >= 1 ? 'skipped'
-      : entry === undefined && target !== null && target > 0 ? 'unseen'
+      : usedFrac === null && target !== null && target > 0 ? 'unseen'
       : 'ok';
     return { lane: plain(name), target, usedFrac, resetAt, status };
   });
@@ -142,7 +140,7 @@ export function buildFleetResourcesView(
 function formatFleetResources(view: FleetResourcesView): string {
   const lines = view.lanes.map(lane =>
     `${lane.lane}: ${lane.status}; target=${lane.target ?? 'unknown'}; ` +
-    `used_frac=${lane.usedFrac ?? `unset, router assumes ${ROUTER_ASSUMED_USED_FRAC}`}; reset=${lane.resetAt ?? 'unknown'}`);
+    `used_frac=${lane.usedFrac ?? 'unknown'}; reset=${lane.resetAt ?? 'unknown'}`);
   if (view.slots !== 'healthy') lines.push(`no lanes (slots.json ${view.slots})`);
   else if (view.lanes.length === 0) lines.push('no lanes');
   if (view.slots === 'healthy' && view.resources === 'unreadable') lines.push('resources.json unreadable; every lane reads as unseen');
@@ -152,8 +150,8 @@ function formatFleetResources(view: FleetResourcesView): string {
 export async function cmdFleetResources(args: string[], deps: FleetResourcesDeps = {}): Promise<number> {
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
     console.log(`${USAGE}\n` +
-      'One line per slots.json lane: target, used_frac (or "unset, router assumes 0.5" without a\n' +
-      'resources.json entry) and reset time. "skipped" marks a lane at used_frac 1 or more; "unseen"\n' +
+      'One line per slots.json lane: target, used_frac (or "unknown") and reset time.\n' +
+      '"skipped" marks a lane at used_frac 1 or more; "unseen"\n' +
       'marks a lane with target above 0 the router has not reported. Exits 1 on any unseen lane.');
     return 0;
   }

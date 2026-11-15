@@ -24,6 +24,7 @@ describe('mobile-router', () => {
       { screen: 'fleet' },
       { screen: 'runs' },
       { screen: 'inbox' },
+      { screen: 'watch' },
     ];
     for (const route of routes) expect(parseMobileHash(formatMobileHash(route))).toEqual(route);
     expect(formatMobileHash({ screen: 'agent', id: 'a b/c', pane: 'changes' })).toBe('#/agents/a%20b%2Fc/changes');
@@ -43,6 +44,7 @@ describe('mobile-router', () => {
     expect(tabOf({ screen: 'fleet' })).toBe('more');
     expect(tabOf({ screen: 'runs' })).toBe('more');
     expect(tabOf({ screen: 'inbox' })).toBe('more');
+    expect(tabOf({ screen: 'watch' })).toBe('home');
     expect(tabRoot('needs')).toEqual({ screen: 'needs' });
   });
 });

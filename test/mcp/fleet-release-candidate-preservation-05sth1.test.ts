@@ -96,8 +96,10 @@ describe('fleet_release_candidate preservation on current master', () => {
     const { tools } = await client.listTools();
     const names = tools.map(t => t.name);
     const tool = tools.find(t => t.name === 'fleet_release_candidate');
-    // Appended after the ci-receipt registrations: no current tool displaced.
-    expect(names.indexOf('fleet_release_candidate')).toBe(names.length - 1);
+    // Present with the tools that were already registered when it landed.
+    // Later read-only tools may be appended around it.
+    expect(names).toContain('fleet_release_candidate');
+    expect(names.indexOf('fleet_ci_receipt_await_batch')).toBeGreaterThan(-1);
     for (const kept of ['fleet_status', 'fleet_loop', 'fleet_bus_inbox', 'fleet_lanes',
       'fleet_job_history', 'fleet_main_health', 'fleet_email_diagnosis',
       'fleet_imessage_acks', 'fleet_ci_resume_inputs', 'fleet_ci_receipt_await',

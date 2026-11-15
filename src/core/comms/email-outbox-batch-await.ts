@@ -60,7 +60,10 @@ export async function awaitEmailOutboxBatch(options: BatchOptions): Promise<Batc
         const entry = matches[0];
         return entry ? { name: row.name, state: entry.state, reason: entry.reason } : { name: row.name, state: 'missing' };
       });
-    } catch { return result({ sourceFailure: true }); }
+    } catch {
+      rows = options.names.map((name) => ({ name, state: 'missing' }));
+      return result({ sourceFailure: true });
+    }
     if (rows.every((row) => row.state === 'sent' || row.state === 'drafted' || row.state === 'stuck')) return result();
     const remaining = deadline - now();
     if (remaining <= 0) return result({ timedOut: true });

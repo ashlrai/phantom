@@ -566,10 +566,7 @@ export function verifyPublishedRelease(policy, evidence) {
   if (workflow.path !== policy.publisherWorkflowPath) fail('provenance workflow is not the policy publisher');
   if (workflow.ref !== `refs/heads/${policy.protectedBranch}`) fail('provenance workflow ref is not the protected branch');
 
-  const tagRef = record(evidence.tagRef, 'tag ref');
-  if (tagRef.ref !== `refs/tags/v${publishedVersion}`) fail('release tag must be v<published version>');
-  const tagObject = record(tagRef.object, 'tag ref object');
-  if (tagObject.type !== 'commit' || tagObject.sha !== candidate) fail('release tag must point directly at the candidate revision');
+  verifyReleaseTag(evidence.tagRef, publishedVersion, candidate);
 
   verifyCandidateOnProtectedBranch(evidence.compare);
   const ci = verifyRequiredChecks(policy, evidence.requiredChecks, evidence.checkRuns);
@@ -586,6 +583,16 @@ export function verifyPublishedRelease(policy, evidence) {
     requiredChecks: ci,
     authority: RELEASE_SUCCESSOR_POLICY_AUTHORITY,
   });
+}
+
+// This check also runs before publication, when registry evidence cannot exist yet.
+export function verifyReleaseTag(value, packageVersion, candidateRevision) {
+  const publishedVersion = version(packageVersion, 'release version');
+  const candidate = revision(candidateRevision, 'candidate revision');
+  const tagRef = record(value, 'tag ref');
+  if (tagRef.ref !== `refs/tags/v${publishedVersion}`) fail('release tag must be v<published version>');
+  const tagObject = record(tagRef.object, 'tag ref object');
+  if (tagObject.type !== 'commit' || tagObject.sha !== candidate) fail('release tag must point directly at the candidate revision');
 }
 
 // The publisher releases only a merged commit of the protected branch, never a
@@ -656,6 +663,11 @@ function releasePathMain(argv) {
 }
 
 function main() {
+  if (process.argv[2] === '--prepublish-tag') {
+    if (process.argv.length !== 6) fail('usage: verify-release-policy.mjs --prepublish-tag <tag-json> <version> <candidate>');
+    verifyReleaseTag(JSON.parse(readFileSync(process.argv[3], 'utf8')), process.argv[4], process.argv[5]);
+    return;
+  }
   if (process.argv[2] === '--release-path') {
     releasePathMain(process.argv.slice(2));
     return;

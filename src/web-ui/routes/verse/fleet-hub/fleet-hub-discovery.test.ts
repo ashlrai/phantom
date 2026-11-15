@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import type { FleetRuns } from '../ops/ops-runs-model.js';
 import { curatedWorkspace, hubTiles } from './fleet-hub-model.js';
 
-const legacy = ['fleet-lanes', 'fleet-events', 'fleet-inbox', 'fleet-bus', 'fleet-merges', 'fleet-usage', 'fleet-supply', 'fleet-host', 'fleet-timeline'];
+const legacy = ['fleet-mission', 'fleet-lanes', 'fleet-events', 'fleet-inbox', 'fleet-bus', 'fleet-merges', 'fleet-usage', 'fleet-supply', 'fleet-host', 'fleet-timeline'];
 const runs: FleetRuns = {
   v: 1, generatedAt: '2026-10-31T12:00:00Z', sources: { runsDir: 'degraded', workers: 'healthy', inbox: 'healthy', codex: 'healthy', merges: 'healthy' },
   lastTick: null, paused: null, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null,
@@ -24,10 +24,11 @@ it('discovers registered fleet and leader panes after the stable legacy tiles', 
     { id: 'leader-thread', title: 'Leaders' },
     { id: 'fleet-releases', title: 'Releases' },
   ]);
-  expect(tiles.slice(0, 9).map(({ id }) => id)).toEqual(legacy);
-  expect(tiles[0]).toMatchObject({ title: 'Latest lanes', present: true });
-  expect(tiles[1]?.present).toBe(false);
-  expect(tiles.slice(9, 11).map(({ id }) => id)).toEqual(['leader-journal', 'fleet-new']);
+  expect(tiles.slice(0, 10).map(({ id }) => id)).toEqual(legacy);
+  expect(tiles[0]).toMatchObject({ id: 'fleet-mission', title: 'Mission', present: false });
+  expect(tiles[1]).toMatchObject({ title: 'Latest lanes', present: true });
+  expect(tiles[2]?.present).toBe(false);
+  expect(tiles.slice(10, 12).map(({ id }) => id)).toEqual(['leader-journal', 'fleet-new']);
   expect(tiles.find(({ id }) => id === 'fleet-new')?.count).toBe('—');
   expect(tiles.find(({ id }) => id === 'fleet-channels')?.count).toBe('2');
   expect(tiles.find(({ id }) => id === 'worker-log')?.count).toBe('1');

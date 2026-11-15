@@ -48,7 +48,7 @@ This map identifies entry points and representative modules and tests. Consult C
 
 **Purpose:** Accepts and processes chief-of-staff intake and drafts.
 
-**Entry points:** CLI: `ashlr cos`; desktop: fleet chief-of-staff view.
+**Entry points:** CLI: `phm fleet cos`; desktop: fleet chief-of-staff view.
 
 **Core modules:** `src/core/cos/intake.ts`, `src/core/cos/worker.ts`, `src/core/cos/drafts.ts`.
 

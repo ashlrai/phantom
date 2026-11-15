@@ -3,6 +3,11 @@
 import os, re, json, time, fcntl, subprocess, glob
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
 WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
+# A kernel-held claim serializes the complete tick, including liveness sampling and
+# queue reconciliation. It is released automatically if the dispatcher crashes.
+_tick_claim = open(Q + "/dispatchd.tick.lock", "a")
+try: fcntl.flock(_tick_claim, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError: raise SystemExit(0)
 NOW = time.time(); TS = time.strftime("%F %T")
 # One operator-requested standard profile; private timing/call metadata only.
 if os.path.exists(Q + "/PROFILE_CONTROL_ONCE"):
@@ -412,8 +417,8 @@ for line in ps.splitlines():
     for p in (pat_wt, pat_pr, pat_ln):
         m = p.search(line)
         if m: alive.add(m.group(1))
-claude_live = any(rd(x).split()[3:4] in (["claude"], ["claude-api"]) and os.path.isdir(rd(x).split()[2]) for x in glob.glob(R + "/*.base"))
-if claude_live:
+worker_worktrees = any(len(rd(x).split()) >= 4 and os.path.isdir(rd(x).split()[2]) for x in glob.glob(R + "/*.base"))
+if worker_worktrees:
     lo_result = _run(["lsof", "-nP", "-w", "-d", "cwd", "-Fn"], 20)
     if lo_result.returncode or not lo_result.stdout.strip():
         jsave(Q + "/process-snapshot.json", {"observed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -426,7 +431,7 @@ if claude_live:
             if m: cwdjobs.add(m.group(1))
 for j in cwdjobs:
     b = rd("%s/%s.base" % (R, j)).split()
-    if len(b) >= 4 and b[3] in ("claude", "claude-api"): alive.add(j)
+    if len(b) >= 4: alive.add(j)
 reaping = {os.path.basename(p)[:-8] for p in glob.glob(RUN + "/*.reaping")}
 publishing = {j for j in publishing if os.path.exists("%s/%s.base" % (R, j))}
 alive -= (reaping | publishing)   # publish.sh children run inside the worktree
@@ -463,6 +468,10 @@ for p in glob.glob(RUN + "/*.dispatched"):
         ev("LAUNCH_DEFERRED %s %s (requeued)" % (j, out.split(":")[0].strip()))
     elif re.search(r"^SKIPPED: BRANCH_IN_WORKTREE", out, re.M):
         ev("LAUNCH_SKIPPED %s BRANCH_IN_WORKTREE (not a failure, not requeued; see %s.launch)" % (j, j))
+    elif not out.strip() and not base(j):
+        ln = rd(RUN + "/" + j + ".line").strip()
+        if ln: requeue.append(ln)
+        ev("LAUNCH_INTERRUPTED %s (requeued)" % j)
     else:
         ev("LAUNCH_FAILED %s (see %s.launch)" % (j, j))
     os.remove(p)
@@ -748,8 +757,34 @@ try:
         UIA = {l: {k: u[k] for k in UIA_KEYS if k in u and isinstance(u[k], (bool, int, float, str)) and len(str(u[k])) <= 40}
                for l, u in _p["lanes"].items() if l in UIA_OK and l in LANES and isinstance(u, dict)}
 except Exception: UIA = {}
-for _l, _u in UIA.items():
-    if _u.get("stale") is True: ev("STALE_BUDGET %s reset passed; ask Mason for a fresh reading" % _l)
+def refresh_stale_budget(lane, reading):
+    """Re-read stale evidence; never use an expired projection to accelerate a lane."""
+    if reading.get("stale") is not True: return reading
+    unknown = {"known": False, "stale": True, "behind": False, "reason": "Usage refresh unavailable"}
+    try:
+        if lane != "codex-personal":
+            result = _run(["/usr/bin/python3", "-I", R + "/bin/use-it-all.py"], timeout=20)
+            projection = json.loads(result.stdout)
+            fresh = projection["lanes"][lane]
+            if (result.returncode != 0 or projection.get("schema") != "use-it-all.v1" or
+                    not isinstance(projection.get("ts"), int) or abs(time.time() - projection["ts"]) > 120 or
+                    not isinstance(fresh, dict) or fresh.get("known") is not True or fresh.get("stale") is not False): return unknown
+            return {k: v for k, v in fresh.items() if k in UIA_KEYS and isinstance(v, (bool, int, float, str)) and len(str(v)) <= 40}
+        result = _run(["phm", "resources", "personal", "--refresh", "--json"], timeout=12)
+        if result.returncode != 0: return unknown
+        report = json.loads(result.stdout)
+        resource = report["resources"][0]
+        window = resource.get("weekly") or resource.get("session")
+        used = window["usedPct"]
+        if (resource.get("state") != "current" or isinstance(used, bool) or
+                not isinstance(used, (int, float)) or not 0 <= used <= 100): return unknown
+        return {"known": True, "stale": False, "behind": False, "used_pct": used,
+                "reset_at": window.get("resetsAt"), "reason": "Refreshed from Codex app-server"}
+    except (OSError, ValueError, KeyError, IndexError, TypeError, subprocess.TimeoutExpired): return unknown
+for _l, _u in list(UIA.items()):
+    if _u.get("stale") is True:
+        UIA[_l] = refresh_stale_budget(_l, _u)
+        ev("STALE_BUDGET %s %s" % (_l, "refreshed" if UIA[_l]["known"] else "usage unknown; refresh unavailable"))
 for lane in LANES:
     try: ab_scan(lane, alive)
     except Exception as e: log("autobackoff err %s %s" % (lane, type(e).__name__))
@@ -948,6 +983,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             try: os.remove(RUN + "/" + j + x)
             except FileNotFoundError: pass
         open(RUN + "/" + j + ".line", "w").write(line + "\n")
+        open("%s/%s.launch" % (R, j), "w").close()  # discard the previous attempt before claiming
         open(RUN + "/" + j + ".dispatched", "w").write(str(int(NOW)))
         env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG") if k in os.environ}
         subprocess.Popen(["/bin/bash", R + "/bin/launch.sh", j, repo, lane, tier], stdin=open(pf),

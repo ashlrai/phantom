@@ -16,7 +16,8 @@ function fixture() {
     recent_events: ['FIXTURE_PRIVATE_BODY'], budget: { secret: 'FIXTURE_PRIVATE_CREDENTIAL' } };
   const path = join(queue, 'status.json');
   const save = (value: unknown = status) => { writeFileSync(path, JSON.stringify(value), { mode: 0o600 }); chmodSync(path, 0o600); utimesSync(path, (now - 100) / 1000, (now - 100) / 1000); };
-  return { root, fleet, runs, queue, now, status, path, save, read: () => readResourceView(fleet, now, runs) };
+  const readDevin = async () => ({ status: 'unknown' as const, reason: 'missing-key' });
+  return { root, fleet, runs, queue, now, status, path, save, read: () => readResourceView(fleet, now, runs, readDevin) };
 }
 describe('bounded controller memory advisory', () => {
   it('projects a current producer sample without exposing unrelated fields or changing pool and admission facts', async () => {
