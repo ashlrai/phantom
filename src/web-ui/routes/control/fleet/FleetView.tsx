@@ -1,3 +1,4 @@
+import { OperationsDeck } from './OperationsDeck.js';
 import { MachineCard } from './MachineCard.js';
 import { LiveFleetBoard } from './LiveFleetBoard.js';
 /**
@@ -132,7 +133,7 @@ export function FleetView({ now = Date.now }: { now?: () => number } = {}) {
         </p>
       ) : (
         <>
-          <section className={styles.section}>
+          <section className={styles.section} title="GET /api/fleet · killSwitch / killed">
             <h2 className={styles.sectionTitle}>Kill switch</h2>
             <div className={styles.killSwitchRow}>
               <Epistemic
@@ -161,7 +162,7 @@ export function FleetView({ now = Date.now }: { now?: () => number } = {}) {
             ) : null}
           </section>
 
-          <section className={styles.section}>
+          <section className={styles.section} title="GET /api/fleet · queue">
             <h2 className={styles.sectionTitle}>Queue depth</h2>
             <dl className={styles.metaGrid}>
               <div>
@@ -207,7 +208,7 @@ export function FleetView({ now = Date.now }: { now?: () => number } = {}) {
             </dl>
           </section>
 
-          <section className={styles.section} aria-labelledby="fleet-queue-holds">
+          <section className={styles.section} aria-labelledby="fleet-queue-holds" title="GET /api/fleet · queue cooldown / pending / repair hold counts">
             <h2 id="fleet-queue-holds" className={styles.sectionTitle}>Queue holds</h2>
             <p>Read-only observations. Counts can overlap; unknown counts do not mean zero.</p>
             <dl className={styles.metaGrid}>
@@ -233,7 +234,7 @@ export function FleetView({ now = Date.now }: { now?: () => number } = {}) {
             </dl>
           </section>
 
-          <section className={styles.section}>
+          <section className={styles.section} title="GET /api/fleet · queue.shared">
             <h2 className={styles.sectionTitle}>Lease health</h2>
             {!fleet.queue.shared ? (
               <p className={styles.empty}>Shared fleet queue is not in use on this deployment.</p>
@@ -312,13 +313,15 @@ export function FleetView({ now = Date.now }: { now?: () => number } = {}) {
         </>
       )}
 
+      <OperationsDeck />
+
       <MachineCard />
 
       <LiveFleetBoard />
 
       <LanesPanel />
 
-      <section className={styles.section}>
+      <section className={styles.section} title="GET /api/fleet-activity · cooldownCount / engineReadiness; /api/fleet · merges.recent">
         <h2 className={styles.sectionTitle}>Recent activity</h2>
         {activityQuery.status === 'loading' ? (
           <SkeletonLine width="70%" />
