@@ -482,3 +482,17 @@ publisher captures actual staged Git and runner artifacts before publication;
 executing commands. Agent assertions alone never establish proof. See
 [the fleet proof contract](docs/contracts/CONTRACT-FLEET-PROOF-V1.md) for schema,
 trust boundary, bounds, redaction and Security-pinned deployment requirements.
+## Fleet outcome measurement and advisory policy v1
+
+`buildOutcomeMetrics` in `src/core/fleet/outcome-metrics.ts` folds injected job
+events into attempt-cohort lane/model-tier rates, measured USD estimates,
+repo merge velocity, seven-day revert rates and merge-time percentiles.
+Missing evidence stays null; sample counts and event references accompany
+measurements. `suggestOutcomePolicy` returns bounded, evidence-backed
+`PolicySuggestion` advice with `suggestOnly: true`; it never applies changes.
+`generateWeeklySelfReport` produces Markdown for chief-of-staff attachment.
+
+`phm fleet metrics report --hours 24 --json`, `suggest --json` and `weekly`
+read the jobs ledger only. Weekly defaults to 168 hours. The
+[full contract](docs/contracts/CONTRACT-FLEET-OUTCOME-METRICS.md) defines
+cohorts, observation coverage, unknowns, thresholds and exit codes.
