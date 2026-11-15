@@ -1011,6 +1011,7 @@
 /test/merge-gate-latency.test.ts @masonwyatt23
 /test/merge-gates-310b.test.ts @masonwyatt23
 /test/merge-graph-original-246s.test.ts @masonwyatt23
+/test/merge-graph.test.ts @masonwyatt23
 /test/merge-identity-owner-preservation-297s.test.ts @masonwyatt23
 /test/merge-identity-recut.test.ts @masonwyatt23
 /test/merge-identity-registry.test.ts @masonwyatt23
