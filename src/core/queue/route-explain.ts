@@ -4,6 +4,12 @@ import { join } from 'node:path';
 
 /** Counts accepted pool changes, excluding initial assignment and held proposals. */
 export async function explainRoutes(root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), now = Date.now() / 1000) {
+  // Quality receipts are independent of per-job route residency and its move count.
+  let laneQuality: unknown[] | null = null;
+  try {
+    const controller = JSON.parse(await readFile(join(root, 'queue', 'fleet-controller.json'), 'utf8'));
+    if (Array.isArray(controller?.quality_receipts)) laneQuality = controller.quality_receipts;
+  } catch { /* Missing evidence stays unknown. */ }
   try {
     const state: Record<string, { pool: string; decided_at: number; moves: number[]; waste_reason?: string }> = JSON.parse(
       await readFile(join(root, 'queue', 'route-state.json'), 'utf8'),
@@ -16,8 +22,8 @@ export async function explainRoutes(root = process.env.ASHLR_RUNS_DIR ?? join(ho
       return { job, pool: receipt.pool, decidedAt: receipt.decided_at, wasteReason: typeof receipt.waste_reason === 'string' ? receipt.waste_reason : null,
         'route-moves-per-hour': receipt.moves.filter(t => t > now - 3600 && t <= now).length };
     });
-    return { available: true, 'route-moves-per-hour': lines.reduce((sum, line) => sum + line['route-moves-per-hour'], 0), lines };
+    return { available: true, 'route-moves-per-hour': lines.reduce((sum, line) => sum + line['route-moves-per-hour'], 0), lines, laneQuality };
   } catch {
-    return { available: false, 'route-moves-per-hour': null, lines: [] };
+    return { available: false, 'route-moves-per-hour': null, lines: [], laneQuality };
   }
 }
