@@ -343,6 +343,9 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   if (path === '/api/verse/fleet/control/sessions') {
     return (await import('./fleet-sessions-map-api.js')).handleFleetSessionsMapApi(ctx, req, res, path, method);
   }
+  if (path === '/api/verse/fleet/control/claim-notices') {
+    return (await import('./fleet-claim-notices-api.js')).handleFleetClaimNoticesApi(ctx, req, res, path, method);
+  }
   if (path === '/api/verse/fleet/control/compute') {
     return (await import('./fleet-compute-api.js')).handleFleetComputeApi(ctx, req, res, path, method);
   }
