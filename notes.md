@@ -94,3 +94,15 @@ RQ-FLEET-VIZ-1 verification findings:
 - Final duplicate-name guard: 208 existing cross-file collisions, no map test files.
 
 - Full gate exit 1: build/typechecks pass, existing lint/name/real-I/O/budget failures, broad UI 2847 pass / 64 fail / 1 todo / 17 errors. Map still 7/7. Backend discovery stopped after eight minutes without results.
+---
+
+# Orchestration findings
+
+- Chief-of-staff reads bounded dispatcher snapshots in src/cli/fleet-chief-of-staff.ts and produces recommendations only.
+- Roster assign establishes identity/domain; setSpecialistCurrentJob records job metadata, not a claim or dispatch. Memory rendering marks history as untrusted context.
+- sendPeerMessage authenticates host-enrolled sessions, checks audience/approval/kill/pause and has hop/rate limits. Reuse it without alternative transports.
+- buildOutcomeMetrics and suggestOutcomePolicy are pure; weekly feedback must retain suggestOnly and missing evidence.
+- postOwnerNotice records proactive brief text in the existing desktop owner thread, with kill/pause and idempotency checks, without requiring an inbound reply.
+- No supplied live claim or open PR covers RQ-ORCH-LOOP-1.
+
+Final evidence: 84 focused tests pass; gate orchestration 9/9 pass. Full gate fails on unchanged files and denied loopback connections. See BRIDGE_NOTES.md for exact counts and commands.

@@ -513,6 +513,37 @@ The live session roster stays separate. Storage, exported functions, failure
 behavior and verification are pinned in
 [the specialist roster contract](docs/contracts/CONTRACT-SPECIALIST-ROSTER.md).
 
+## Fleet orchestration cycle (`fleet.orchestration.v1`)
+
+`phm fleet orchestrate [--snapshot <path|auto>] [--top <1..8>] [--apply] [--json]`
+composes chief-of-staff, roster/memory, authenticated peer bus, weekly outcome
+metrics and the owner thread. Default top is three. Preview performs reads only.
+Apply requires fresh (at most 60 seconds old), available fleet evidence and the
+existing host peer session; it never dispatches, merges, edits the queue or applies
+policy. Run the command again to observe subsequent dispatch outcomes and plan
+the next cycle. This command does not install a daemon or change lane execution.
+
+PLAN retains chief-of-staff ordering and attaches weekly metrics suggestions with
+`suggestOnly: true`. DELEGATE chooses idle roster identities with an explicit
+matching lane allowlist, in stable identity order, and includes bounded historical
+memory and relevant outcome advice. Existing peer authentication, audience,
+approval, rate and KILL/pause gates remain binding. EXECUTE belongs to existing
+dispatch; a handoff is no claim or proof of execution. MEASURE reads the jobs
+ledger afresh each cycle; unknown evidence remains unknown. REPORT records one
+bounded leader verdict/brief through `postOwnerNotice` in the desktop owner thread;
+it does not add a transport or send an unsolicited external reply.
+
+`orchestrateFleet` in `src/core/fleet/orchestrate.ts` accepts fixture snapshot/events
+and host options. Apply serializes using the existing roster lock and reserves
+`orchestration.json` receipts before peer sends. Job/lane/queue-time receipts dedup
+retries, including drafts and uncertain delivery; a crash reservation stays visible.
+A later matching finish releases only this loop's current-job metadata, without
+claiming merge/proof acceptance. Undated reused job IDs remain deduplicated. The
+private journal is capped at 2,000 receipts and fails closed at capacity; state
+repair/archival is an operator task. Exit 0 means the cycle completed without
+attention items, 1 means incomplete/refused evidence or delivery, 2 means usage.
+Hermetic end-to-end coverage lives in `test/fleet-orchestrate.test.ts`.
+
 ## Fleet compute observation (`fleet.compute.v1`)
 
 `GET /api/verse/fleet/control/compute` serves the read-only projection in
@@ -553,3 +584,18 @@ activity time; it is not a semantic completion claim. Remote claims never read
 local artifacts with matching job names. Missing sources and telemetry remain
 explicit; the map renders unknown placement and empty inventories without
 seeded sessions. All reads use the existing bounded regular-file readers.
+## Runtime-dynamic fleet config (RQ-DYNCONFIG-1)
+
+`src/core/fleet/dynconfig.ts` exports `createConfigReader`, `sharedConfigReader`,
+`liveOverride`, `setLiveOverride`, `clearLiveOverride`, `readConfigAudit`,
+`classifyKey`, `validateOverride`, `RESTART_REQUIRED`, `MUTABLE_KEY_PATTERNS`,
+`PINNED_DEFAULTS`, `DynConfigError` and the types `ResolvedConfig`, `LiveEntry`,
+`LiveConfigFile`, `AuditEntry`, `ConfigAuditReport`. `src/cli/fleet-config.ts`
+exports `cmdFleetConfig(args: string[]): Promise<number>`.
+
+Precedence (low to high): pinned defaults < slots.json < budget-overrides.json <
+`queue/live-config.json` < one-shot CLI. Writes are lock + temp + rename; the audit
+line in `queue/live-config-audit.jsonl` (`fleet.config.audit.v1`) records
+who/when/why. Restart-required keys (security pins, paid-model blocks, credential
+paths, GATES files) are refused by the writer and ignored by the resolver. See
+[docs/FLEET-CONFIG.md](docs/FLEET-CONFIG.md).
