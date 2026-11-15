@@ -12,7 +12,8 @@
  * inbox orders over the last 24h classified by order-trace; see
  * recheck-orders-line.ts) sits directly after the Task line when the verdict
  * carries orders evidence the trace could prove. It is the first line
- * dropped when the reply would exceed the cap, then Pool, then Computers,
+ * dropped after optional per-channel reply coverage when the reply would
+ * exceed the cap, then Pool, then Computers,
  * then Running job, then Last verified, so the verdict line is never clipped.
  * One optional "Last verified:" evidence line sits
  * after the Orders line when the task section carries lastVerified (the newest
@@ -52,6 +53,31 @@ function scrub(value: string): string {
   return sanitizeIdentityText(value.replace(HOME_PATH, '~'), '').replace(FORBIDDEN_WORDS, '[verb]');
 }
 
+/**
+ * Bounded per-channel request-coverage evidence lines (at most one per
+ * required channel, fixed length for any count): 'unproven' with a positive
+ * pending count names the exact gap, 'verified' says recent requests answered
+ * in thread, and 'idle' or 'unknown' (the no-bridge-evidence placeholder)
+ * prints nothing. Evidence only: the lines never change a state, the verdict
+ * line or the cap handling, and they are the first lines dropped when the
+ * reply would exceed the cap.
+ */
+function coverageLines(
+  channels: FleetRecheck['sections']['bridge']['channels'],
+): string[] {
+  return channels
+    .filter(c => c.channel === 'slack' || c.channel === 'imessage')
+    .map(c => {
+      const label = c.channel === 'slack' ? 'Slack' : 'IMessage';
+      if (c.requestCoverage === 'unproven' && typeof c.unansweredCount === 'number' && c.unansweredCount > 0) {
+        return `${label}: ${c.unansweredCount} ${c.unansweredCount === 1 ? 'request' : 'requests'} without a bound reply`;
+      }
+      if (c.requestCoverage === 'verified') return `${label}: recent requests answered in thread`;
+      return null;
+    })
+    .filter((line): line is string => line !== null);
+}
+
 /** Format a fleet recheck verdict as one paste-ready thread reply. */
 export function formatRecheckReply(r: FleetRecheck): string {
   const { runtime, claims, bridge, task } = r.sections;
@@ -73,7 +99,8 @@ export function formatRecheckReply(r: FleetRecheck): string {
   const computers = formatComputersLine(r.tailnet, scrub);
   const pool = formatPoolLine(r.pool, scrub);
   const orders = formatOrdersLine(r.orders, scrub);
-  const build = (withOrders: boolean, withLast: boolean, withRunning: boolean, withComputers: boolean, withPool = false): string => [
+  const coverage = coverageLines(bridge.channels);
+  const build = (withOrders: boolean, withLast: boolean, withRunning: boolean, withComputers: boolean, withPool = false, withCoverage = false): string => [
     `Phantom recheck ${r.overall.state} · as of ${scrub(r.asOf)} · source fleet-recheck`,
     `Runtime: ${scrub(runtime.host)} · ${scrub(runtime.installedVersion)} · fleet state ${age}`
       + `${runtime.fleetState.stale === true ? ' · stale' : ''} (${runtime.state})`,
@@ -82,6 +109,7 @@ export function formatRecheckReply(r: FleetRecheck): string {
     `Claims: ${claims.active === null ? 'unknown' : claims.active} live, top: ${top} (${claims.state})`,
     `Bridge: slack ${channel('slack')}, imessage ${channel('imessage')}`
       + `${bridge.missingBridge === null ? '' : ` · missing: ${scrub(bridge.missingBridge)}`} (${bridge.state})`,
+    ...(withCoverage ? coverage : []),
     task.task === null
       ? `Task: none, ${scrub(task.missing[0] ?? 'no task evidence')} (${task.state})`
       : `Task: ${scrub(task.task.id)} ${task.task.state} · owner ${scrub(task.task.owner)} · claim ${scrub(task.task.claimReceipt)} (${task.state})`,
@@ -94,7 +122,8 @@ export function formatRecheckReply(r: FleetRecheck): string {
         ? `BLOCKED on: ${missing}`
         : `UNKNOWN: ${missing}`,
   ].join('\n');
-  let text = build(true, true, true, true, true);
+  let text = build(true, true, true, true, true, true);
+  if (text.length > REPLY_MAX) text = build(true, true, true, true, true);
   if (text.length > REPLY_MAX) text = build(false, true, true, true, true);
   if (text.length > REPLY_MAX) text = build(false, true, true, true);
   if (text.length > REPLY_MAX) text = build(false, true, true, false);
