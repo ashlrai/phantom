@@ -18,3 +18,14 @@ it('returns unknown and usage failures honestly', async () => {
   expect(await cmdWb(['secrets', '--json'])).toBe(1);
   expect(await cmdWb(['secrets', '--reveal'])).toBe(2);
 });
+it('prints usage and exits 0 for --help and -h on the read verbs without reading custody', async () => {
+  vi.mocked(readWorkbenchSecrets).mockClear();
+  const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  for (const args of [['secrets', '--help'], ['secrets', '-h'], ['secrets', '--json', '--help'], ['locus', '--help'], ['locus', '-h']]) {
+    expect(await cmdWb(args), args.join(' ')).toBe(0);
+  }
+  expect(readWorkbenchSecrets).not.toHaveBeenCalled();
+  expect(error).not.toHaveBeenCalled();
+  expect(output.mock.calls.flat().join('\n')).toContain('Usage: phm wb secrets [--json]');
+});

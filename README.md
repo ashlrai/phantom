@@ -256,6 +256,9 @@ Every top-level `phm` command, grouped by what it is for. `ashlr` runs the same 
 | Preview cleanup of finished worktrees. | `phm worktrees prune --dry-run --json` |
 | Explain dispatcher routes. | `phm route explain --json` |
 | Show usage by engine. | `phm usage` |
+| List ready jobs that never launched. | `phm queue stuck --json` |
+| Read the Leader's status brief. | `phm fleet brief --json` |
+| Preview a steer note to the leaders (dry run). | `phm wb steer --text "<note>" --json` |
 
 See the [CLI reference](https://github.com/ashlrai/phantom/blob/master/docs/cli.md) for all commands.
 

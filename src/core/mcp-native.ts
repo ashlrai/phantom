@@ -256,17 +256,10 @@ const TOOLS: NativeToolImpl[] = [
     handler: async args => (await import('./intent/mcp-evidence.js' as string) as typeof import('./intent/mcp-evidence.js')).recordEvidence('intent_ship', args),
   },
   {
-    name: 'intent_stale',
-    description: 'Preview stale intents or refresh local tracking without closing or dispatching work.',
+    name: 'intent_stale', description: 'List stale directives in the local intent ledger. apply true refreshes local tracking only (live directives re-queue, others keep their status with a sweep evidence row); recommendations never close work, dispatch jobs, verify remotely or claim completion.',
     inputSchema: { type: 'object', properties: { apply: { type: 'boolean' } }, additionalProperties: false },
     safety: 'append',
-    handler: async args => {
-      if (Object.keys(args).some(key => key !== 'apply') || ('apply' in args && typeof args.apply !== 'boolean')) {
-        return { error: 'Invalid intent stale arguments' };
-      }
-      const { sweepStale } = await import('./intent/sweep.js');
-      return { ok: true, ...(await sweepStale({ apply: args.apply === true })) };
-    },
+    handler: async args => (await import('./intent/native-stale.js' as string) as typeof import('./intent/native-stale.js')).nativeIntentStale(args),
   },
   {
     name: 'intent_import',
@@ -1743,6 +1736,8 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
     invalid = ((await import('./intent/native-edit.js' as string)) as typeof import('./intent/native-edit.js')).validNativeEdit(name, rawArgs) ? null : 'invalid intent arguments';
   } else if (name === 'intent_link' || name === 'intent_ship') {
     invalid = ((await import('./intent/mcp-evidence.js' as string)) as typeof import('./intent/mcp-evidence.js')).validEvidenceArgs(name, rawArgs) ? null : 'invalid intent evidence arguments';
+  } else if (name === 'intent_stale') {
+    invalid = (await import('./intent/native-stale.js' as string) as typeof import('./intent/native-stale.js')).validStaleArgs(rawArgs) ? null : 'invalid intent stale arguments';
   } else if (name === 'intent_list' || name === 'intent_get') {
     const { isIntentStatus, validIntentId } = await import('./intent/schema.js');
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
@@ -1938,7 +1933,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
     cfg = loadConfig();
   } catch (err) {
     auditNativeCall(`${tool.name} keys=${argKeys} — config load failed`, 'error');
-    if (fleetObservation || ['intent_add', 'intent_update', 'intent_link', 'intent_ship', 'phantom_fleet_apps_ensure', 'phantom_fleet_apps_await', 'phantom_fleet_apps_watch', 'phantom_fleet_apps_follow', 'phantom_fleet_apps_recovery_check', 'phantom_fleet_apps_recovery_batch'].includes(name)) return textResult({ error: 'Fleet configuration unavailable' }, true);
+    if (fleetObservation || ['intent_stale', 'intent_add', 'intent_update', 'intent_link', 'intent_ship', 'phantom_fleet_apps_ensure', 'phantom_fleet_apps_await', 'phantom_fleet_apps_watch', 'phantom_fleet_apps_follow', 'phantom_fleet_apps_recovery_check', 'phantom_fleet_apps_recovery_batch'].includes(name)) return textResult({ error: 'Fleet configuration unavailable' }, true);
     return textResult(
       `${tool.name} failed: could not load ~/.ashlr/config.json (${err instanceof Error ? err.message : String(err)})`,
       true,

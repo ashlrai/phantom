@@ -39,6 +39,8 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Keep Comms owner files under the account home ([#4269](https://github.com/ashlrai/phantom/pull/4269)) and count the three Comms MCP tools in the output budget ([#4252](https://github.com/ashlrai/phantom/pull/4252)).
 - Regenerate the fleet subcommand registry so `fleet done-plan` and `fleet done-evaluate` dispatch.
 
+- Make `phm wb secrets --help` and `phm wb locus --help` print usage and exit 0 instead of exiting 2, and complete `app steer`, `queue stuck` and the new fleet verbs in shell completions.
+
 ## [3.30.33] - 2026-11-13
 
 
@@ -452,6 +454,37 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 * make Quick typecheck advisory on fast merge events ([#5387](https://github.com/ashlrai/phantom/issues/5387)) ([746c064](https://github.com/ashlrai/phantom/commit/746c0647e10a226466a9aac761a843d68dfc1d23))
 
 ## [3.30.32] - 2026-11-10
+
+### Added
+
+- Add `phm wb`, the desktop workbench verbs from the terminal: `wb secrets` and `wb locus` read custody, and `wb steer`, `wb reprioritize` and `wb stop` run the same actions as `POST /api/wb/v1/action`, as dry runs unless `--apply` ([#4617](https://github.com/ashlrai/phantom/pull/4617), [#4618](https://github.com/ashlrai/phantom/pull/4618), [#4623](https://github.com/ashlrai/phantom/pull/4623), [#4659](https://github.com/ashlrai/phantom/pull/4659)). See `docs/FLEET-API.md`.
+- Add the desktop Steer pane (roster, steer note, reprioritize and two-click job stop) and a Secrets custody view in Settings that shows names and ages, never values ([#4623](https://github.com/ashlrai/phantom/pull/4623), [#4618](https://github.com/ashlrai/phantom/pull/4618)).
+- Add `GET /api/wb/v1/events`, a Server-Sent Events stream of workbench invalidation signals for the desktop shell ([#4662](https://github.com/ashlrai/phantom/pull/4662)).
+- Add `phm bus send|inbox|ack`, durable local mailboxes separate from the shared task board ([#4704](https://github.com/ashlrai/phantom/pull/4704)). See `docs/AGENT-OPERATIONS.md`.
+- Add `phm app steer --text <message>` to post one steer message to the owner inbox from the CLI ([#4695](https://github.com/ashlrai/phantom/pull/4695)).
+- Add `phm queue stuck` to list READY jobs with no recorded launch ([#4684](https://github.com/ashlrai/phantom/pull/4684)). See `docs/QUEUE.md`.
+- Add `phm jobs retry-empty --dry-run|--apply` to queue one scoped retry per eligible empty job, with a permanent receipt so a job is never retried twice ([#4732](https://github.com/ashlrai/phantom/pull/4732)). See `docs/QUEUE.md`.
+- Add read-only fleet verbs `fleet brief` (the Leader's status brief, also shown as a card at the top of the Leader conversation), `fleet write-budget`, `fleet dispatch-events`, `fleet launch-wait`, `fleet queue-lint` and `fleet conflict-risk` ([#4642](https://github.com/ashlrai/phantom/pull/4642), [#4668](https://github.com/ashlrai/phantom/pull/4668), [#4621](https://github.com/ashlrai/phantom/pull/4621), [#4648](https://github.com/ashlrai/phantom/pull/4648), [#4712](https://github.com/ashlrai/phantom/pull/4712), [#4657](https://github.com/ashlrai/phantom/pull/4657), [#4628](https://github.com/ashlrai/phantom/pull/4628)). See `docs/FLEET-VERBS.md`.
+- Add `fleet coordination` (advisory claims, handoffs, board and inbox; never spawns an agent), `fleet library-pins` (owner Library pins, carried in the fleet context pack) and `fleet output-eval` (lane, model and outcome snapshot from the jobs ledger) ([#4640](https://github.com/ashlrai/phantom/pull/4640), [#4680](https://github.com/ashlrai/phantom/pull/4680), [#4691](https://github.com/ashlrai/phantom/pull/4691), [#4687](https://github.com/ashlrai/phantom/pull/4687)).
+- Add `phm fleet drive` to refresh the local relay status from driver snapshots, and `fleet drive jobs` to print launchd job definitions without installing them ([#4699](https://github.com/ashlrai/phantom/pull/4699)).
+- Add `fleet guardian-verify --head-of <repo> [--branch <name>]` to verify an observed remote head without a hand-written manifest ([#4703](https://github.com/ashlrai/phantom/pull/4703)), and `fleet self-tick-check --record-only [--require-apply]` to judge the last recorded self-tick run ([#4693](https://github.com/ashlrai/phantom/pull/4693)).
+- Add the waste-incident and landed-sweep stages to the self-tick ([#4631](https://github.com/ashlrai/phantom/pull/4631)).
+- Add `fleet apps-changes --bus` to publish app inventory changes to the fleet bus, and `GET /api/verse/fleet/doctor` with a doctor row in Live status ([#4700](https://github.com/ashlrai/phantom/pull/4700)).
+- Add a Fleet forum board pane and a host disk runway card to the desktop ([#4645](https://github.com/ashlrai/phantom/pull/4645), [#4643](https://github.com/ashlrai/phantom/pull/4643)).
+- Add Feed items for release stages, for inboxes over their unread target, and an "Ask Leader" button that fills the Leader composer without sending ([#4721](https://github.com/ashlrai/phantom/pull/4721), [#4658](https://github.com/ashlrai/phantom/pull/4658), [#4689](https://github.com/ashlrai/phantom/pull/4689)).
+- Add a read-only Comms limits row in Settings and goal links on Ideas ([#4729](https://github.com/ashlrai/phantom/pull/4729), [#4694](https://github.com/ashlrai/phantom/pull/4694)).
+- Let a paired phone ask the chief of staff and read the answer; approval stays on the desktop ([#4711](https://github.com/ashlrai/phantom/pull/4711)).
+- Rank company context by authored summaries with a seven-day recency half-life ([#4655](https://github.com/ashlrai/phantom/pull/4655)).
+
+### Fixed
+
+- Cap how often the desktop rebuilds its dashboard read projection, so a large operator home no longer pins a CPU with builds that time out ([#4611](https://github.com/ashlrai/phantom/pull/4611)).
+- Probe `phm doctor` tools in parallel with a tool version cache ([#4707](https://github.com/ashlrai/phantom/pull/4707)).
+- Keep needs-you replies in a durable delivery file until the planner inbox append is confirmed, so a restart retries instead of dropping them ([#4710](https://github.com/ashlrai/phantom/pull/4710)).
+- Serialize intent ledger edits and imports inside one transaction so concurrent writers cannot drop each other ([#4731](https://github.com/ashlrai/phantom/pull/4731)).
+- Say why a Codex credit balance is unknown (no reading yet, not reported by the plan, or the age of the last reading) ([#4727](https://github.com/ashlrai/phantom/pull/4727)).
+- Note on the Update button that fleet jobs keep running through a self-update ([#4728](https://github.com/ashlrai/phantom/pull/4728)), and say when the update feed is unavailable or the newest release has no desktop update files yet ([#4713](https://github.com/ashlrai/phantom/pull/4713)).
+- Retire a job whose recent finishes all came back empty instead of launching it again ([#4615](https://github.com/ashlrai/phantom/pull/4615)).
 
 
 ### Fixes
