@@ -129,6 +129,19 @@ evidence never suppresses — suppression is advisory and fails open. The
 ledger read is tail-bounded via `--metrics` (default
 `~/.ashlr-runs/metrics/jobs.jsonl`).
 
+The recut loop ([`recut-loop.ts`](../src/core/fleet/recut-loop.ts)) applies
+the same rule to the drop jobs it mints for conflicting fleet PRs: when the
+last two attempts it wrote for one PR on the *same head* all finished empty
+in `jobs.jsonl`, the candidate is skipped with reason `empty-yield` and the
+tick reports it in `skipped` rather than launching a third identical
+attempt. A moved head is different work and recovers; a missing ledger
+entry, an unmeasured, productive or merged outcome, or outcome evidence
+older than seven days each fail open.
+
+The same empty-streak rule guards relaunch at the dispatcher: see
+[`contrib/mac/README.md`](../contrib/mac/README.md) for launch-precheck
+code 14.
+
 ### Stage delegation (bottleneck-only)
 
 Router/leader policy: frontier lanes plan and verify; cheap lanes implement;
@@ -311,3 +324,21 @@ is the sum of recorded job tokens divided by merged PRs; it is unknown if any
 job in the group lacks a token total or no PR merged. Missing measurements are
 unknown, and malformed lines are skipped and counted. The report describes
 recorded evidence, not necessarily every job or PR.
+
+## Waiting to launch
+
+Run `phm queue stuck --json` to list READY router jobs without a recorded launch. `age_s` uses the enqueue epoch, or the first timestamped dispatch event for the job; `age: "unknown"` means neither is available. If dispatch events are unavailable, `eventsAvailable` is false and the list may include jobs that have launched. The desktop Queue view shows the same reading.
+
+### Retry empty jobs
+
+Run `phm jobs retry-empty --dry-run` to preview READY lines for empty jobs from
+ the last 24 hours whose notes or logs identify an overly broad task or slow or
+ timed-out tests. Run `phm jobs retry-empty --apply` to append the same kind of
+ lines to the router queue. `--json` returns the planned lines for agents;
+ `--file <path>` selects a queue file. Each retry keeps the original repo and
+ route and asks for one independently shippable part. Jobs without one
+ unambiguous original queue line are skipped, as are duplicates and work
+ already done. The queue directory's `empty-retry-receipts` records each retry
+ permanently, including if the queue line is later removed. Keep that directory
+ when moving the queue. A crash between recording a receipt and writing the
+ queue can leave a job unqueued; inspect the queue before manual recovery.

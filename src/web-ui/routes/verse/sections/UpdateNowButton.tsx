@@ -3,9 +3,25 @@ import styles from './UpdateNowButton.module.css';
 import spinner from '../../../components/primitives/RefreshIndicator.module.css';
 import { Button } from '../../../components/primitives/Button.js';
 import { useToast } from '../../../components/primitives/Toast.js';
+import { useQuery } from '../../../data/hooks.js';
+import { fleetLiveQuery } from '../command/surface-data.js';
 import { applySelfUpdate, type ApplyOutcome } from './update-apply-client.js';
 import { applyOutcomeCopy, applyStepsCopy } from './update-apply-copy.js';
 import type { ServerObservation } from './update-status-queries.js';
+
+/**
+ * What Mason reads before he clicks: fleet runs are host processes launched
+ * by dispatchd in separate sessions, so the self-update (git fast-forward +
+ * rebuild + sidecar restart) never stops, pauses or drains them. The count is
+ * `summary.building` from the Fleet section's own live read — "runs producing
+ * / verifying / judging / landing right now" — shared through the query cache,
+ * not a new endpoint. Unknown count still gets the claim, without a number.
+ */
+function fleetKeepNote(building: number | null): string {
+  if (building === null) return 'Fleet jobs keep running';
+  if (building === 0) return 'No fleet jobs running';
+  return `${building} fleet job${building === 1 ? '' : 's'} keep${building === 1 ? 's' : ''} running during the update`;
+}
 
 export function UpdateNowButton({ status, onDone }: { status: ServerObservation | undefined; onDone: () => void }) {
   const toast = useToast();
@@ -14,6 +30,9 @@ export function UpdateNowButton({ status, onDone }: { status: ServerObservation 
   const [outcome, setOutcome] = useState<ApplyOutcome | null>(null);
   const copy = outcome && applyOutcomeCopy(outcome);
   const steps = outcome && 'steps' in outcome ? outcome.steps : undefined;
+  const fleet = useQuery(fleetLiveQuery, { freshMs: 60_000 });
+  const building = fleet.data?.value?.summary.building;
+  const runningJobs = typeof building === 'number' && Number.isFinite(building) && building >= 0 ? Math.floor(building) : null;
   const enabled = !!status && !('kind' in status) && status.canFastForward
     && status.behind !== null && status.behind > 0 && status.dirty !== true;
 
@@ -35,11 +54,14 @@ export function UpdateNowButton({ status, onDone }: { status: ServerObservation 
   }
 
   return <div className={styles.root}>
-    <Button size="sm" disabled={!enabled} busy={pending}
-      icon={pending ? <span className={spinner.spinner} aria-hidden="true" /> : undefined}
-      onClick={() => void update()}>
-      {pending ? 'Updating…' : 'Update now'}
-    </Button>
+    <div className={styles.actionRow}>
+      <Button size="sm" disabled={!enabled} busy={pending}
+        icon={pending ? <span className={spinner.spinner} aria-hidden="true" /> : undefined}
+        onClick={() => void update()}>
+        {pending ? 'Updating…' : 'Update now'}
+      </Button>
+      <span className={styles.keepNote} aria-live="polite">{fleetKeepNote(runningJobs)}</span>
+    </div>
     <div className={styles.result} aria-live="polite" data-tone={copy?.tone}>{copy?.text}</div>
     {!!steps?.length && <ol className={styles.steps} aria-label="Update steps">
       {applyStepsCopy(steps).map((step, index) => <li key={index}>

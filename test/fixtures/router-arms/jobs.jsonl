@@ -1,0 +1,7 @@
+{"id":"armed-steer","snapshotId":"armed","request":{"task":"code","difficulty":"high","autonomous":true},"actualLane":"claude","outcome":"merged","tokens":40000}
+{"id":"paced-out","snapshotId":"paced","request":{"task":"code","difficulty":"high","autonomous":true},"actualLane":"local:fixture","outcome":"merged","tokens":30000}
+{"id":"flag-off","snapshotId":"off","request":{"task":"code","difficulty":"high","autonomous":true},"actualLane":"local:fixture","outcome":"closed","tokens":12000}
+{"id":"review-baseline","snapshotId":"armed","request":{"task":"review","difficulty":"low","autonomous":true},"actualLane":"local:fixture","outcome":"merged","tokens":5000}
+{"id":"bogus-arm","snapshotId":"bogus","request":{"task":"code","difficulty":"high","autonomous":true},"actualLane":"local:fixture","outcome":"failed","tokens":9000}
+{"id":"no-arm-seat","snapshotId":"held","request":{"task":"code","difficulty":"high","autonomous":true},"actualLane":null,"outcome":"held","tokens":0}
+{"id":"interactive","snapshotId":"armed","request":{"task":"code","difficulty":"high","autonomous":false},"actualLane":"local:fixture","outcome":"pending","tokens":null}

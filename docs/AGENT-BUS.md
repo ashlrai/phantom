@@ -50,6 +50,14 @@ data: coordinate on one by claiming its envelope id (`ashlr fleet bus-claim`),
 never by reading authority into its labels; they are never `kind: 'work'` and
 the work loop cannot execute them.  Owner iMessage texts stay off the bus.
 
+Verified chunked patch transfers (PATCH-BEGIN/PART/END frames reassembled and
+sha256-verified on disk; PATCH frames themselves are protocol traffic, never
+findings) are announced on the same `teammate.findings` topic as id
+`imessage-patch-<transfer id>` with a `note` body carrying only metadata —
+artifact name, sha256 prefix, part and byte counts — never the patch body.
+The artifact lives at `~/.ashlr-runs/imessage/patches/<id>.patch`; the
+announcement is evidence, not apply authority.
+
 ## Examples
 
 Read the latest page (cursor 0, limit 10):
@@ -171,8 +179,8 @@ are the v2 layer above it.
 ### 4. Work feed
 
 Every job is `{id, owner, provider, repo, claimKeys[], status, updatedAt}`
-and every participant can read the feed (`{v:2, jobs:[...]}`). Jobs derive
-from `work.post` and `work.status` messages.
+and the planned feed is `{v:2, jobs:[...]}`. Jobs would derive from
+`work.post` and `work.status` messages; no feed projection is implemented yet.
 
 ### 5. Ownership table
 

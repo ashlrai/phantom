@@ -51,7 +51,7 @@ export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
   usePollWhileVisible(() => { refreshDevices(); refreshPending(); }, 15_000, { enabled: visible });
   const missingBus = agentBusMissing() || [status.error, page.error].some(error => error instanceof ApiError && error.status === 404);
   const bus = missingBus
-    ? { title: 'Bus', reading: 'Update the hub for the durable bus', caption: 'Store status unknown', tone: 'unknown' as const }
+    ? { title: 'Bus', reading: 'Update Phantom for the durable bus', caption: 'Store status unknown', tone: 'unknown' as const }
     : status.status === 'error' && !status.data
       ? { title: 'Bus', reading: 'Durable bus unavailable', caption: 'Store status unknown', tone: 'unknown' as const }
       : busTile(status.data ?? null, page.status === 'error' ? null : page.data?.messages ?? null, Date.now());

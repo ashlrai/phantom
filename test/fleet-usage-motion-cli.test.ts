@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { auditUsageMotion, type UsageMotionAuditView } from '../src/core/fleet/usage-motion-audit.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 
 let queueDir: string;
 let scratch: string;

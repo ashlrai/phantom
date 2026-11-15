@@ -21,6 +21,15 @@
  * receipt: a store-side failure only leaves `findings.pending` for the next
  * pass. Mason's own texts are never mirrored.
  *
+ * Chunked patch transfers (RQ-SWE3-IMSGDEEP-1, imessage-patch-transfer.ts):
+ * PATCH-BEGIN/PART/END frames from an allowlisted teammate are consumed by the
+ * durable transfer state under <imessage>/patches/ as each row is receipted —
+ * the raw frame text is used, not the scrubbed inbox copy — and a completed
+ * transfer is sha256-verified before <id>.patch is written. Frames are
+ * protocol traffic: the findings mirror skips them and announces each
+ * verified artifact instead. A transfer-ledger failure defers the batch just
+ * like a teammate-ledger failure; the frame is retried next poll.
+ *
  * What the receiver does for us: dedupe inside CHANNEL_DEDUPE_WINDOW_MS,
  * attribution (source `imessage`), the MASON-INBOX.md entry, and the
  * chief-of-staff queue job for commands (createChannelReceiver queues every
@@ -31,6 +40,10 @@
  * Acknowledgement: the shared ack text (channel-ack-text.ts) is RECORDED to
  * <runs>/imessage/acks.jsonl. Nonduplicate acknowledgements pass through the
  * self-only outbox; third-party delivery remains denied pending Security review.
+ * A nonduplicate ack for a verified-Mason short status ask ("status", "phantom
+ * status", ...) instead carries the fixed owner digest from
+ * agents/owner-status-reply.ts through the same outbox to the same handle; the
+ * receipt, dedupe, cursor and acks.jsonl record are unchanged.
  *
  * Cursor rules: first run baselines to the current max ROWID (history is never
  * replayed). A message advances the cursor once it is receipted or permanently
@@ -42,7 +55,9 @@
 import { sendIMessageOutbox } from './imessage-outbox.js';
 import { recordTeammateText, senderIdFor } from './imessage-teammate-inbox.js';
 import { bridgeTeammateFindings, type FindingsBridgeOptions, type FindingsBridgeReport } from './imessage-findings-bridge.js';
+import { recordPatchFrame, sweepPatchTransfers, type PatchFrameOutcome, type PatchSweepReport } from './imessage-patch-transfer.js';
 import { appendFileSync, chmodSync, mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
   imessageAllowlist, isVerifiedMasonHandle, imessageStateDir, pollInboundSince, readCursor, readMaxRowId, writeCursor,
@@ -51,6 +66,17 @@ import {
 import { createChannelReceiver, OPERATOR_SENDER_ID, type ChannelAck, type ChannelMessage } from '../fleet/channel-envelope.js';
 import { formatChannelAck } from '../fleet/channel-ack-text.js';
 import type { AshlrConfig } from '../types.js';
+
+/** Fixed owner "status" auto-answer for a verified-Mason short ask; the same
+ * contract the Slack adapter injects (agents/slack-leader.ts SlackStatusReply). */
+export interface IMessageStatusReply {
+  /** Exact short owner asks only; anything else keeps the generic ack. */
+  ask(text: string): boolean;
+  /** Compose the digest answer for a gated ask. */
+  compose(runsDir: string, now: Date): Promise<string>;
+  /** Sent when compose throws. */
+  readonly fallback: string;
+}
 
 export interface IMessageIngestDeps {
   /** Shared runs context (inbox, receipts, queue, cursor). Default ~/.ashlr-runs. */
@@ -65,6 +91,13 @@ export interface IMessageIngestDeps {
   busRoot?: string;
   /** Findings bridge seam for tests; default the real pass. */
   bridgeFindings?: (options: FindingsBridgeOptions) => FindingsBridgeReport;
+  /** Owner "status" auto-answer seam for tests; the default lazily resolves
+   * agents/owner-status-reply.js, whose digest readers stay outside this
+   * module's Tier-1 import closure. */
+  statusReply?: IMessageStatusReply;
+  /** Patch transfer seams for tests; defaults write the real ledger. */
+  patchFrame?: (msg: { rowid: number; handle: string; text: string }, opts: { runsDir?: string; now?: () => Date }) => { handled: boolean; outcome: PatchFrameOutcome; id?: string };
+  patchSweep?: (opts: { runsDir?: string; now?: () => Date }) => PatchSweepReport;
 }
 
 export type IMessageIngestState =
@@ -85,9 +118,36 @@ export interface IMessageIngestResult {
   cursor: number | null;
   /** Findings mirror outcome; null only when the pass ended before the bus stage. */
   findings: FindingsBridgeReport | null;
+  /** Patch transfer outcome: this batch's frame tallies merged with the expiry sweep. */
+  patches: PatchIngestReport | null;
+}
+
+/** Per-batch frame tallies on top of the sweep report. */
+export interface PatchIngestReport extends PatchSweepReport {
+  /** Frame rows consumed this batch (all terminal outcomes). */
+  frames: number;
+  /** Transfers sha256-verified and written to patches/ this batch. */
+  completed: number;
+  /** Transfers rejected this batch (conflict, hash-mismatch, oversize). */
+  rejected: number;
+  /** Frame rows refused this batch (malformed, secret-shaped, spent id, cap). */
+  refused: number;
+  /** Frame rows already in the dedup ring this batch. */
+  duplicate: number;
 }
 
 export { senderIdFor };
+
+// The status composer's digest readers must not join the Tier-1 import
+// closure, so the default seam is resolved at ack time through a lazy,
+// non-literal import; a load failure degrades to the generic ack rather than
+// failing a durable receipt.
+type OwnerStatusReplyModule = typeof import('../agents/owner-status-reply.js');
+const STATUS_REPLY_SPEC = '../agents/owner-status-reply.js';
+const loadStatusReply = async (): Promise<IMessageStatusReply | null> => {
+  try { return (await import(STATUS_REPLY_SPEC) as OwnerStatusReplyModule).ownerStatusReply(); }
+  catch { return null; }
+};
 
 /** Map one allowlisted chat.db row to a canonical channel message. */
 export function imessageChannelMessage(msg: IntakeMsg): ChannelMessage | null {
@@ -109,7 +169,7 @@ function recordAck(ack: ChannelAck, rowid: number, runsDir: string | undefined, 
 }
 
 export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps = {}): Promise<IMessageIngestResult> {
-  const result: IMessageIngestResult = { ok: false, state: 'error', scanned: 0, accepted: 0, notMason: 0, teammate: 0, duplicate: 0, refused: 0, deferred: false, cursor: null, findings: null };
+  const result: IMessageIngestResult = { ok: false, state: 'error', scanned: 0, accepted: 0, notMason: 0, teammate: 0, duplicate: 0, refused: 0, deferred: false, cursor: null, findings: null, patches: null };
   try {
     if (cfg.comms?.enabled !== true || imessageAllowlist(cfg).length === 0) return { ...result, state: 'disabled' };
     if ((deps.platform ?? process.platform) !== 'darwin') return { ...result, state: 'unsupported' };
@@ -121,21 +181,44 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
       try { return (deps.bridgeFindings ?? bridgeTeammateFindings)({ runsDir: deps.runsDir, busRoot: deps.busRoot, now }); }
       catch { return null; }
     };
+    // Frame rows consumed during the batch merge with the post-batch expiry
+    // sweep; the sweep is best effort and runs on every exit path.
+    const frames = { frames: 0, completed: 0, rejected: 0, refused: 0, duplicate: 0 };
+    const patches = (): PatchIngestReport | null => {
+      try {
+        const sweep = (deps.patchSweep ?? sweepPatchTransfers)({ runsDir: deps.runsDir, now });
+        return { ...sweep, ...frames };
+      } catch { return null; }
+    };
 
     const start = readCursor(deps.runsDir);
     let cursor = start;
     if (cursor === null) {
       const base = await (deps.maxRowId ?? readMaxRowId)();
-      if (!base.ok) return { ...result, state: base.state, findings: findings() };
+      if (!base.ok) return { ...result, state: base.state, findings: findings(), patches: patches() };
       writeCursor(base.rowid, deps.runsDir, now);
-      return { ...result, ok: true, state: 'baselined', cursor: base.rowid, findings: findings() };
+      return { ...result, ok: true, state: 'baselined', cursor: base.rowid, findings: findings(), patches: patches() };
     }
 
     const polled = await (deps.poll ?? pollInboundSince)(cursor, cfg);
-    if (!polled.ok) return { ...result, state: polled.state, cursor, findings: findings() };
+    if (!polled.ok) return { ...result, state: polled.state, cursor, findings: findings(), patches: patches() };
 
+    const runsDir = deps.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
     let current = 0;
     let currentHandle = '';
+    let currentBody = '';
+    // Only the verified-Mason branch below calls receive, so the ack path never
+    // resolves a status reply for any other handle.
+    const ackText = async (ack: ChannelAck): Promise<string> => {
+      const generic = formatChannelAck(ack);
+      const reply = deps.statusReply ?? await loadStatusReply();
+      if (!reply) return generic;
+      let isAsk = false;
+      try { isAsk = reply.ask(currentBody); } catch { return generic; }
+      if (!isAsk) return generic;
+      try { return await reply.compose(runsDir, now()); }
+      catch { return reply.fallback; }
+    };
     const receive = createChannelReceiver({
       allowedSenderIds: new Set(imessageAllowlist(cfg).map(senderIdFor)),
       runsDir: deps.runsDir,
@@ -145,7 +228,7 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
       publish: null,
       acknowledge: async (ack) => {
         recordAck(ack, current, deps.runsDir, now());
-        if (ack.status !== 'duplicate') await sendIMessageOutbox(formatChannelAck(ack), cfg, currentHandle);
+        if (ack.status !== 'duplicate') await sendIMessageOutbox(await ackText(ack), cfg, currentHandle);
       },
     });
     for (const msg of polled.messages) {
@@ -153,8 +236,18 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
       const message = imessageChannelMessage(msg);
       if (!isVerifiedMasonHandle(msg.handle, cfg)) {
         result.notMason++;
-        if (recordTeammateText(msg, deps.runsDir, now())) result.teammate++;
-        else {
+        // Keep protocol frames out of the teammate findings mirror.
+        const frame = (deps.patchFrame ?? recordPatchFrame)(msg, { runsDir: deps.runsDir, now });
+        if (frame.handled) {
+          frames.frames++;
+          if (frame.outcome === 'completed') frames.completed++;
+          else if (frame.outcome === 'rejected') frames.rejected++;
+          else if (frame.outcome === 'refused') frames.refused++;
+          else if (frame.outcome === 'duplicate') frames.duplicate++;
+          else if (frame.outcome === 'unavailable') { result.deferred = true; break; }
+        } else if (recordTeammateText(msg, deps.runsDir, now())) {
+          result.teammate++;
+        } else {
           // A teammate's artifact is not receipted until its local record is durable.
           result.deferred = true;
           break;
@@ -162,6 +255,7 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
       } else if (message) {
         current = msg.rowid;
         currentHandle = msg.handle;
+        currentBody = message.body;
         const got = await receive({ ...message, canonicalSenderId: OPERATOR_SENDER_ID });
         if (got.ok) {
           if (got.ack.status === 'duplicate') result.duplicate++; else result.accepted++;
@@ -177,7 +271,7 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
       cursor = msg.rowid;
     }
     if (cursor !== start) writeCursor(cursor, deps.runsDir, now);
-    return { ...result, ok: !result.deferred, state: 'ingested', cursor, findings: findings() };
+    return { ...result, ok: !result.deferred, state: 'ingested', cursor, findings: findings(), patches: patches() };
   } catch {
     return result;
   }

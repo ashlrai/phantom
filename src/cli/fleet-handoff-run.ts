@@ -24,45 +24,58 @@ export async function cmdFleetHandoffRun(args: string[], io: ContextWorkerIO = {
       + '--timeout-ms bounds the worker wall-clock lifetime in milliseconds.\n');
     return 0;
   }
-  const invalid = (): number => { (io.stderr ?? process.stderr).write(`${usage}\n`); return 2; };
-  const split = args.indexOf('--');
-  if (split < 0 || split === args.length - 1) return invalid();
-  const flags = new Map<string, string>();
-  const upstream: string[] = [];
-  for (let i = 0; i < split; i++) {
-    const key = args[i]!;
-    const value = i + 1 < split ? args[i + 1] : undefined;
-    if (key === '--upstream') {
-      if (value === undefined || !isFleetJobId(value)) return invalid();
-      upstream.push(value);
+  // Cooperative cancellation: SIGINT/SIGTERM abort the signal handed to the
+  // runner, which refuses launch once aborted and escalates SIGTERM→SIGKILL
+  // on a live child. Listeners come off on every return or throw.
+  const controller = new AbortController();
+  const stop = (): void => { controller.abort(); };
+  process.once('SIGINT', stop);
+  process.once('SIGTERM', stop);
+  try {
+    const invalid = (): number => { (io.stderr ?? process.stderr).write(`${usage}\n`); return 2; };
+    const split = args.indexOf('--');
+    if (split < 0 || split === args.length - 1) return invalid();
+    const flags = new Map<string, string>();
+    const upstream: string[] = [];
+    for (let i = 0; i < split; i++) {
+      const key = args[i]!;
+      const value = i + 1 < split ? args[i + 1] : undefined;
+      if (key === '--upstream') {
+        if (value === undefined || !isFleetJobId(value)) return invalid();
+        upstream.push(value);
+        i++;
+        continue;
+      }
+      if (!SINGLETON.has(key) || flags.has(key) || value === undefined || value.includes('\0')) return invalid();
+      flags.set(key, value);
       i++;
-      continue;
     }
-    if (!SINGLETON.has(key) || flags.has(key) || value === undefined || value.includes('\0')) return invalid();
-    flags.set(key, value);
-    i++;
+    const file = flags.get('--file'), busAddress = flags.get('--bus-address');
+    const after = flags.get('--bus-after'), budget = flags.get('--byte-budget');
+    const timeout = flags.get('--timeout-ms'), cwd = flags.get('--cwd');
+    const upstreamJobIds = [...new Set(upstream)];
+    if (!file || !isAbsolute(file) || file.includes('\0') ||
+        (cwd !== undefined && !isAbsolute(cwd)) ||
+        (busAddress !== undefined && !address(busAddress)) ||
+        (after !== undefined && (!digits(after) || !Number.isSafeInteger(Number(after)))) ||
+        (after !== undefined && busAddress === undefined) ||
+        (budget !== undefined && (!digits(budget) || Number(budget) < 1 || Number(budget) > HANDOFF_RUN_MAX_BYTE_BUDGET)) ||
+        (timeout !== undefined && (!digits(timeout) || !Number.isSafeInteger(Number(timeout)) ||
+          Number(timeout) < 1 || Number(timeout) > HANDOFF_RUN_MAX_TIMEOUT_MS)) ||
+        upstreamJobIds.length > HANDOFF_RUN_MAX_UPSTREAM) return invalid();
+    return await runHandoffWorker({
+      file,
+      upstreamJobIds,
+      busAddress,
+      busAfter: after === undefined ? undefined : Number(after),
+      byteBudget: budget === undefined ? undefined : Number(budget),
+      cwd,
+      timeoutMs: timeout === undefined ? undefined : Number(timeout),
+      argv: args.slice(split + 1),
+      signal: controller.signal,
+    }, io);
+  } finally {
+    process.removeListener('SIGINT', stop);
+    process.removeListener('SIGTERM', stop);
   }
-  const file = flags.get('--file'), busAddress = flags.get('--bus-address');
-  const after = flags.get('--bus-after'), budget = flags.get('--byte-budget');
-  const timeout = flags.get('--timeout-ms'), cwd = flags.get('--cwd');
-  const upstreamJobIds = [...new Set(upstream)];
-  if (!file || !isAbsolute(file) || file.includes('\0') ||
-      (cwd !== undefined && !isAbsolute(cwd)) ||
-      (busAddress !== undefined && !address(busAddress)) ||
-      (after !== undefined && (!digits(after) || !Number.isSafeInteger(Number(after)))) ||
-      (after !== undefined && busAddress === undefined) ||
-      (budget !== undefined && (!digits(budget) || Number(budget) < 1 || Number(budget) > HANDOFF_RUN_MAX_BYTE_BUDGET)) ||
-      (timeout !== undefined && (!digits(timeout) || !Number.isSafeInteger(Number(timeout)) ||
-        Number(timeout) < 1 || Number(timeout) > HANDOFF_RUN_MAX_TIMEOUT_MS)) ||
-      upstreamJobIds.length > HANDOFF_RUN_MAX_UPSTREAM) return invalid();
-  return runHandoffWorker({
-    file,
-    upstreamJobIds,
-    busAddress,
-    busAfter: after === undefined ? undefined : Number(after),
-    byteBudget: budget === undefined ? undefined : Number(budget),
-    cwd,
-    timeoutMs: timeout === undefined ? undefined : Number(timeout),
-    argv: args.slice(split + 1),
-  }, io);
 }

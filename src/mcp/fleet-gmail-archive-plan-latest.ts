@@ -1,11 +1,15 @@
 /**
  * fleet_gmail_archive_plan_latest — the latest saved Gmail archive plan per
- * inbox (unread vs target, how many to archive, top sender addresses) through
- * the isolated fleet MCP server, so the Comms agent can see which inbox is
- * over target. Reads the same saved file the desktop app shows, at the
- * server-owned runs dir (never a caller-supplied directory, root or cwd).
- * Counts and sender addresses only. The plan proposes; this tool is read-only
- * and never moves, archives, sends or deletes mail. Never throws.
+ * inbox (sampled unread vs target, how many to archive, top sender addresses)
+ * through the isolated fleet MCP server, so the Comms agent can see which
+ * inbox's saved sample is over target. Reads the same saved file the desktop
+ * app shows, at the server-owned runs dir (never a caller-supplied directory,
+ * root or cwd). Counts describe the scanned sample only: overTargetScope is
+ * 'sample' and liveInboxTargetState stays 'unknown' — a saved plan never
+ * proves live inbox health or that archiving happened, even when the sample
+ * is under target. Counts and sender addresses only. The plan proposes; this
+ * tool is read-only and never moves, archives, sends or deletes mail. Never
+ * throws.
  */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -21,11 +25,18 @@ export interface FleetGmailArchivePlanLatestReport {
   plans: {
     inbox: string;
     at: string;
+    /** Unread count inside the saved sample scan; not the live inbox total. */
     unread: number;
     target: number;
     archiveCount: number;
-    /** unread > target. */
+    /** Compatibility comparison of saved-sample unread > target, not inbox health. */
     overTarget: boolean;
+    /** The comparison covers only the saved sample scan. */
+    overTargetScope: 'sample';
+    /** A saved sample cannot establish whether the live inbox meets its target. */
+    liveInboxTargetState: 'unknown';
+    /** Seconds since this plan was saved; null when its timestamp is unparseable. */
+    ageSeconds: number | null;
     topSenders: { sender: string; count: number }[];
   }[];
 }
@@ -42,11 +53,22 @@ export function parseFleetGmailArchivePlanLatestArgs(args: Record<string, unknow
 export function readFleetGmailArchivePlanLatest(
   args: FleetGmailArchivePlanLatestArgs = {},
   runsDir: string = join(homedir(), '.ashlr-runs'),
+  now: () => Date = () => new Date(),
 ): FleetGmailArchivePlanLatestReport {
   const latest = readGmailArchivePlanLatest(runsDir);
   if (!latest) return { schema: 'fleet.mcp.gmail-archive-plan-latest.v1', state: 'missing', plans: [] };
+  const nowMs = now().getTime();
   const plans = latest.plans
     .filter(p => args.inbox === undefined || p.inbox === args.inbox)
-    .map(p => ({ ...p, overTarget: p.unread > p.target }));
+    .map(p => {
+      const at = Date.parse(p.at);
+      return {
+        ...p,
+        overTarget: p.unread > p.target,
+        overTargetScope: 'sample' as const,
+        liveInboxTargetState: 'unknown' as const,
+        ageSeconds: Number.isFinite(at) ? Math.max(0, Math.floor((nowMs - at) / 1000)) : null,
+      };
+    });
   return { schema: 'fleet.mcp.gmail-archive-plan-latest.v1', state: 'present', plans };
 }

@@ -8,7 +8,7 @@ this says which can land in any order and which must serialize.
 
 ## Input
 
-The snapshot is one `gh pr list --json number,title,url,headRefName,isDraft,mergeable,mergeStateStatus,createdAt,updatedAt,files` page in any of three wire shapes, resolved in this order:
+The snapshot is one `gh pr list --json number,title,url,headRefName,headRefOid,isDraft,mergeable,mergeStateStatus,createdAt,updatedAt,files` page in any of three wire shapes, resolved in this order:
 
 1. `--input <file>` (`--input -` forces stdin)
 2. piped standard input (a non-TTY stdin with no `--input`)
@@ -71,3 +71,28 @@ proven-disjoint. When the snapshot envelope's own read failed
 (`input.upstream`, e.g. a `gh-failed` merge-backlog read) the command exits 1
 — a plan built on a failed read is never a clean-looking answer. Exit codes:
 0 plan produced, 1 no usable snapshot, 2 bad usage.
+
+## Local lookahead preparation
+
+JSON output includes `preparations`, the next three eligible PRs in the
+cluster order, with exact head SHAs and `after` dependencies on earlier
+overlapping PRs. Missing full head SHAs, missing or capped file lists, drafts
+and blocked PRs are excluded. Include `headRefOid` in the snapshot.
+
+Schedulers can call `planMergeQueuePreparation(prs, limit)` (0–16) and
+`prepareMergeQueue({cwd, baseSha, preparations})` from
+`src/core/fleet/merge-queue-prep.ts`. The executor fetches each PR head from
+origin and verifies its snapshot identity. It rehearses rebases against the
+explicit base SHA in disposable detached worktrees, with hooks, signing,
+autostash and ref updates disabled. Shared-file successors are prefetched
+and reported `deferred`; regenerate their plan after predecessors land.
+The CLI remains read-only; it does not invoke the executor automatically.
+
+Results distinguish `ready`, `deferred`, `stale`, `conflict` and `failed`.
+A ready SHA is a local rehearsal, not permission to merge or bypass checks.
+The scheduler must serialize repository fetches, refresh failed/incomplete
+snapshots, and revalidate both base and head before reuse. Rebase diagnostics
+are withheld because remote output can contain credentials. Worktrees are
+removed after each attempt; cleanup errors propagate rather than hiding a
+leaked registration. File overlap is a conflict prediction, not a measured
+Git conflict.

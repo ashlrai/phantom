@@ -121,6 +121,7 @@ function parsedMutation(decision: RemoteRouteDecision, body: string): unknown | 
   } catch { return null; }
 }
 const REMOTE_INBOX_PATH = '/api/verse/fleet/runs/inbox';
+const REMOTE_COS_ASK_PATH = '/api/verse/fleet/cos/ask';
 // The `source` label is presentation metadata the client picks; the channel is
 // a gateway-asserted fact. Every write this listener forwards arrived from a
 // paired phone, so the inbox body is re-serialized with the pinned source.
@@ -129,11 +130,12 @@ export function pinRemoteInboxBody(path: string, parsed: unknown, raw: string): 
   return JSON.stringify({ text: parsed.text, source: 'Phantom mobile' });
 }
 // The paired-phone assertion itself rides an internal header this listener
-// stamps on every forwarded inbox POST. Client headers are never forwarded —
-// forwardMutation builds the upstream header set — so a remote client cannot
-// mint the mobile channel through the gateway.
-function remoteChannelHeaders(target: string): Record<string, string> {
-  return target === REMOTE_INBOX_PATH ? { 'x-ashlr-channel': 'mobile' } : {};
+// stamps on every forwarded inbox or chief-of-staff ask POST. Client headers
+// are never forwarded — forwardMutation builds the upstream header set — so a
+// remote client cannot mint the mobile channel through the gateway.
+export function remoteChannelHeaders(target: string): Record<string, string> {
+  return target === REMOTE_INBOX_PATH || target === REMOTE_COS_ASK_PATH
+    ? { 'x-ashlr-channel': 'mobile' } : {};
 }
 function staticPath(path: string): boolean {
   return path === '/verse/m' || path === '/verse/m/' || path === '/verse/m/sw.js'

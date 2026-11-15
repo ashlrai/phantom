@@ -12,6 +12,7 @@ import { DropQueueCard } from './DropQueueCard.js';
 import { StandbyCard } from './StandbyCard.js';
 import { AppsCard } from './AppsCard.js';
 import { MemoryGuardCard } from './MemoryGuardCard.js';
+import { DiskRunwayCard } from './DiskRunwayCard.js';
 import { hostView } from './fleet-host-model.js';
 import { plannerRows, plannerTell } from './planners-model.js';
 import { releaseRows, resetLoopLine, unreleasedResets } from './reset-loop-model.js';
@@ -99,6 +100,7 @@ export function FleetHostPane({ visible }: Pick<PaneProps, 'visible'>) {
         <ResetReleasesSection visible={visible} />
         <DropQueueCard visible={visible} />
         <MemoryGuardCard visible={visible} />
+        <DiskRunwayCard visible={visible} />
         <AppsCard visible={visible} />
         <StandbyCard visible={visible} />
         <p className={styles.muted}>Orchestrator agents: {host.orchestratorAgents ?? '—'}</p>

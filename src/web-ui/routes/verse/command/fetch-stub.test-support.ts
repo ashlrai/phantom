@@ -29,7 +29,7 @@ export interface StubOptions {
   kind?: FixtureKind;
   /** Keyed by path prefix; `null` answers 404 (not landed). */
   routes?: Record<string, RouteAnswer | null>;
-  post?: (url: string, body: Record<string, unknown>) => Response | undefined;
+  post?: (url: string, body: Record<string, unknown>) => Response | Promise<Response> | undefined;
   now?: number;
 }
 

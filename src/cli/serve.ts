@@ -294,6 +294,7 @@ function printUsage(): void {
   console.log('  ' + bold('API routes (X-Ashlr-Token or browser read session):'));
   console.log(`    ${cyan('GET  /api/snapshot')}        Aggregated config + run/swarm/genome snapshot`);
   console.log(`    ${cyan('GET  /api/config/effective')} Read-only effective operator config`);
+  console.log(`    ${cyan('GET  /api/ui-settings')}     UI appearance/layout from ~/.ashlr/ui.json (PUT needs --allow-dispatch)`);
   console.log(`    ${cyan('GET  /api/runs')}            List past runs`);
   console.log(`    ${cyan('GET  /api/run/:id')}         Single run detail`);
   console.log(`    ${cyan('GET  /api/swarms')}          List past swarms`);
@@ -303,7 +304,9 @@ function printUsage(): void {
   console.log(`    ${cyan('GET  /api/events')}          Server-Sent Events live feed`);
   console.log(`    ${cyan('GET  /api/wb/v1/snapshot')}  Desktop shell: fleet capacity snapshot (stale/invalid → unknown)`);
   console.log(`    ${cyan('GET  /api/wb/v1/gh')}        Desktop shell: GitHub read over enrolled repos (cached + backoff)`);
+  console.log(`    ${cyan('GET  /api/wb/v1/locus')}     Desktop shell: Locus custody health`);
   console.log(`    ${cyan('GET  /api/wb/v1/budget')}    Desktop shell: budget policy + per-seat usage`);
+  console.log(`    ${cyan('GET  /api/wb/v1/events')}    Desktop shell: SSE workbench events (read session)`);
   console.log('');
   console.log('  ' + bold('Dispatch route (--allow-dispatch only):'));
   console.log(`    ${cyan('POST /api/run')}             Launch phm run (requires X-Ashlr-Token header)`);

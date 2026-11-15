@@ -16,9 +16,18 @@ function isStall(value: unknown): boolean {
   return text(value.startTime) && minutes(value.minutes) && count(value.lastQ) && count(value.lastReap);
 }
 
+const WHY_CODES = new Set(['disk-hard-stop', 'disk-reuse-only', 'load-gate', 'at-cap', 'dispatcher-stale', 'unknown', 'none']);
+
+/** `why` is additive: absent (older server) and null (unreadable) are both valid. */
+function isWhy(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  return record(value) && typeof value.code === 'string' && WHY_CODES.has(value.code) && text(value.line)
+    && Array.isArray(value.detail) && value.detail.every(text);
+}
+
 export function isLaunchStallViewV1(value: unknown): value is LaunchStallViewV1 {
   if (!record(value) || value.v !== 1 || typeof value.generatedAt !== 'string' || !Number.isFinite(Date.parse(value.generatedAt))
-    || (value.source !== 'ok' && value.source !== 'unavailable') || !isStall(value.stall) || !Array.isArray(value.lanes)) return false;
+    || (value.source !== 'ok' && value.source !== 'unavailable') || !isStall(value.stall) || !Array.isArray(value.lanes) || !isWhy(value.why)) return false;
   return value.lanes.every((lane: unknown) => record(lane) && text(lane.lane) && Array.isArray(lane.jobs) && lane.jobs.length > 0
     && lane.jobs.every((job: unknown) => record(job) && text(job.job) && minutes(job.ageMinutes)));
 }

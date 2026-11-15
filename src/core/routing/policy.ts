@@ -33,12 +33,18 @@
  * server.
  */
 import {
+  ARM_EFFORTS,
   BUDGET_MODES,
+  ROUTING_TASKS,
   type BudgetMode,
   type BudgetPolicy,
   type BudgetResponse,
   type BudgetUpdateRequest,
+  type RoutingTask,
   type SeatBudgetPolicy,
+  type TaskArm,
+  type TaskArmPace,
+  type TaskArmsPolicy,
 } from './types.js';
 
 /**
@@ -199,6 +205,105 @@ export function effectiveSeatPolicy(policy: BudgetPolicy, seatId: string, engine
   return defaultSeatPolicy(policy.mode, seatId, engine ?? engineOfSeatId(seatId));
 }
 
+// ---------------------------------------------------------------------------
+// Task-aware arms (flagged; sanitize + shared validators)
+// ---------------------------------------------------------------------------
+
+/** Bounds an arm's pacing window may span (1 ms .. 30 days). */
+export const TASK_ARM_PACE_MAX_WINDOW_MS = 30 * 24 * 60 * 60_000;
+/** Bound on an arm's per-window token budget. */
+export const TASK_ARM_PACE_MAX_TOKENS = 1e15;
+
+/** The key arm outcome evidence (`RouteOptions.armStats`) is joined on. */
+export function taskArmKey(arm: Pick<TaskArm, 'id' | 'engine' | 'model' | 'effort'>): string {
+  return arm.id ?? `${arm.engine}|${arm.model ?? ''}|${arm.effort}`;
+}
+
+/** The ids arm keys and models may use: the seat-id alphabet, so `|` can never collide with a derived key. */
+const TASK_ARM_NAME_RE = BUDGET_SEAT_ID_RE;
+
+/** Validity of an arm's optional pacing spec. A malformed pace drops the whole arm, never just the spec. */
+export function isTaskArmPace(raw: unknown): raw is TaskArmPace {
+  if (!isObject(raw)) return false;
+  if (!Number.isSafeInteger(raw['windowMs']) || (raw['windowMs'] as number) < 1
+      || (raw['windowMs'] as number) > TASK_ARM_PACE_MAX_WINDOW_MS) return false;
+  if (!Number.isSafeInteger(raw['budgetTokens']) || (raw['budgetTokens'] as number) < 1
+      || (raw['budgetTokens'] as number) > TASK_ARM_PACE_MAX_TOKENS) return false;
+  const lead = raw['leadFraction'];
+  return lead === undefined || (typeof lead === 'number' && Number.isFinite(lead) && lead >= 0 && lead <= 1);
+}
+
+/**
+ * Runtime validity of one arm: known engine (an unknown engine can never be
+ * selected), a model spelling the join grammar can carry, a known effort and
+ * a sound pacing spec. Shared by the sanitizer (drops the arm) and the router
+ * (skips it), so a hand-built policy and a stored file behave identically.
+ */
+export function isTaskArm(raw: unknown): raw is TaskArm {
+  if (!isObject(raw)) return false;
+  if (typeof raw['engine'] !== 'string' || !(BUDGET_ENGINES as readonly string[]).includes(raw['engine'])) return false;
+  const model = raw['model'];
+  if (model !== null && model !== undefined && (typeof model !== 'string' || !TASK_ARM_NAME_RE.test(model))) return false;
+  if (typeof raw['effort'] !== 'string' || !(ARM_EFFORTS as readonly string[]).includes(raw['effort'])) return false;
+  const id = raw['id'];
+  if (id !== undefined && (typeof id !== 'string' || !TASK_ARM_NAME_RE.test(id) || id.includes('|'))) return false;
+  if (raw['pace'] !== undefined && !isTaskArmPace(raw['pace'])) return false;
+  return true;
+}
+
+/** The valid arms for one class, normalized and deduplicated by key (first spelling wins). */
+export function taskArmsFor(taskArms: TaskArmsPolicy | undefined, task: RoutingTask): TaskArm[] {
+  const list = taskArms?.classes?.[task];
+  if (!Array.isArray(list)) return [];
+  const seen = new Set<string>();
+  const arms: TaskArm[] = [];
+  for (const raw of list) {
+    if (!isTaskArm(raw)) continue;
+    const arm: TaskArm = { engine: raw.engine, model: raw.model ?? null, effort: raw.effort };
+    if (raw.id !== undefined) arm.id = raw.id;
+    if (raw.pace !== undefined) {
+      const pace: TaskArmPace = { windowMs: raw.pace.windowMs, budgetTokens: raw.pace.budgetTokens };
+      if (raw.pace.leadFraction !== undefined) pace.leadFraction = raw.pace.leadFraction;
+      arm.pace = pace;
+    }
+    const key = taskArmKey(arm);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    arms.push(arm);
+  }
+  return arms;
+}
+
+/** A structural copy of the flag, so no caller mutates another's policy view. */
+export function cloneTaskArmsPolicy(taskArms: TaskArmsPolicy): TaskArmsPolicy {
+  const classes: TaskArmsPolicy['classes'] = {};
+  for (const task of Object.keys(taskArms.classes) as RoutingTask[]) {
+    classes[task] = (taskArms.classes[task] ?? []).map((arm) => ({
+      ...arm,
+      ...(arm.pace ? { pace: { ...arm.pace } } : {}),
+    }));
+  }
+  return { enabled: taskArms.enabled, classes };
+}
+
+/**
+ * Salvage the stored `taskArms` flag. `enabled` must be present and boolean;
+ * unknown class keys, malformed arms and duplicate arm keys are dropped, so
+ * what survives is exactly what the router can act on.
+ */
+export function sanitizeTaskArmsPolicy(raw: unknown): TaskArmsPolicy | null {
+  if (!isObject(raw) || typeof raw['enabled'] !== 'boolean') return null;
+  const classes: TaskArmsPolicy['classes'] = {};
+  const rawClasses = raw['classes'];
+  if (isObject(rawClasses)) {
+    for (const task of ROUTING_TASKS) {
+      const arms = taskArmsFor({ enabled: true, classes: { [task]: rawClasses[task] } }, task);
+      if (arms.length > 0) classes[task] = arms;
+    }
+  }
+  return { enabled: raw['enabled'], classes };
+}
+
 /** The policy a fresh install starts with: balanced, no per-seat deviations. */
 export function defaultBudgetPolicy(): BudgetPolicy {
   // Epoch, not "now": nothing was ever decided here, and a timestamp that
@@ -265,6 +370,10 @@ export function sanitizeBudgetPolicy(raw: unknown): BudgetPolicy {
   const updatedAt = raw['updatedAt'];
   if (typeof updatedAt === 'string' && Number.isFinite(Date.parse(updatedAt))) {
     out.updatedAt = new Date(Date.parse(updatedAt)).toISOString();
+  }
+  if ('taskArms' in raw) {
+    const taskArms = sanitizeTaskArmsPolicy(raw['taskArms']);
+    if (taskArms) out.taskArms = taskArms;
   }
   const seats = raw['seats'];
   if (isObject(seats)) {
@@ -411,7 +520,16 @@ export function applyModeSwitch(
     if (stored.dailyUsdCap !== undefined) next.dailyUsdCap = stored.dailyUsdCap;
     seats[seatId] = next;
   }
-  return { mode, seats, updatedAt: nowIso, ...(policy.resetSpending ? { resetSpending: { ...policy.resetSpending } } : {}) };
+  // Task arms are mode-independent: like `enabled` they are "whether", not
+  // "how much", so a mode switch carries them verbatim.
+  const taskArms = policy.taskArms === undefined ? {} : { taskArms: cloneTaskArmsPolicy(policy.taskArms) };
+  return {
+    mode,
+    seats,
+    updatedAt: nowIso,
+    ...(policy.resetSpending ? { resetSpending: { ...policy.resetSpending } } : {}),
+    ...taskArms,
+  };
 }
 
 /** Apply one validated per-seat patch on top of the seat's effective policy. */

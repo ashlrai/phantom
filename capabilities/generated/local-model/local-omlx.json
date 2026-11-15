@@ -1,0 +1,12 @@
+{
+  "bind": "127.0.0.1",
+  "egress": {
+    "allowlistRef": "local-no-egress",
+    "hosts": []
+  },
+  "keyForwarding": false,
+  "mcpServers": {},
+  "models": [
+    "qwen3.8:27b-ctx64k"
+  ]
+}

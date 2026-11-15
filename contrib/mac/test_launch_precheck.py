@@ -76,5 +76,109 @@ class RestockPrecheck(unittest.TestCase):
                                           '/fixture', '/fixture/runs', runner), (13, expected))
 
 
+class EmptyStreakPrecheck(unittest.TestCase):
+    """A job id whose last finishes all came back empty is retired, not relaunched."""
+
+    def runs(self, root, rows):
+        runs = Path(root) / '.ashlr-runs'
+        (runs / 'metrics').mkdir(parents=True)
+        text = ''.join(json.dumps(row) + '\n' for row in rows)
+        (runs / 'metrics' / 'jobs.jsonl').write_text(text)
+        return str(runs)
+
+    def test_two_trailing_empty_finishes_suppress_without_a_subprocess(self):
+        from launch_precheck import EMPTY_CODE, precheck
+        with tempfile.TemporaryDirectory() as home:
+            runs = self.runs(home, [
+                {'event': 'finish', 'job': 'RQ-TEST', 'empty': True},
+                {'event': 'finish', 'job': 'RQ-OTHER', 'empty': True},
+                {'event': 'finish', 'job': 'RQ-TEST', 'empty': True},
+            ])
+            calls = []
+            def runner(*args, **kwargs):
+                calls.append(args)
+                return subprocess.CompletedProcess([], 0, 'GO RQ-TEST\n', '')
+            self.assertEqual(precheck('RQ-TEST', 'phantom', 'RQ-TEST (P0): repair',
+                                      '/fixture', runs, runner), (EMPTY_CODE, 'empty_streak_2x'))
+            self.assertEqual(calls, [])
+
+    def test_single_empty_and_newer_evidence_fail_open(self):
+        from launch_precheck import precheck
+        cases = (
+            # One empty finish is a flake, not proof.
+            [{'event': 'finish', 'job': 'RQ-TEST', 'empty': True}],
+            # A productive finish breaks the streak.
+            [{'event': 'finish', 'job': 'RQ-TEST', 'empty': True},
+             {'event': 'finish', 'job': 'RQ-TEST', 'empty': True},
+             {'event': 'finish', 'job': 'RQ-TEST', 'empty': False}],
+            # An unmeasured finish is not empty evidence.
+            [{'event': 'finish', 'job': 'RQ-TEST', 'empty': True},
+             {'event': 'finish', 'job': 'RQ-TEST'}],
+            # A merge after the empties is newer terminal evidence.
+            [{'event': 'finish', 'job': 'RQ-TEST', 'empty': True},
+             {'event': 'finish', 'job': 'RQ-TEST', 'empty': True},
+             {'event': 'outcome', 'job': 'RQ-TEST', 'state': 'MERGED'}],
+        )
+        for rows in cases:
+            with self.subTest(rows=rows), tempfile.TemporaryDirectory() as home:
+                runs = self.runs(home, rows)
+                def runner(*args, **kwargs):
+                    return subprocess.CompletedProcess([], 0, 'GO RQ-TEST\n', '')
+                self.assertIsNone(precheck('RQ-TEST', 'phantom', 'RQ-TEST (P0): repair',
+                                           '/fixture', runs, runner))
+
+    def test_terminal_empty_outcome_rows_count_as_empty_evidence(self):
+        from launch_precheck import EMPTY_CODE, precheck
+        with tempfile.TemporaryDirectory() as home:
+            runs = self.runs(home, [
+                {'event': 'outcome', 'job': 'RQ-TEST', 'outcome': 'DONE-NOOP'},
+                {'event': 'outcome', 'job': 'RQ-TEST', 'state': 'EMPTY'},
+            ])
+            self.assertEqual(precheck('RQ-TEST', 'phantom', 'RQ-TEST (P0): repair',
+                                      '/fixture', runs, lambda *a, **k: None), (EMPTY_CODE, 'empty_streak_2x'))
+
+    def test_missing_malformed_and_empty_ledgers_never_suppress(self):
+        from launch_precheck import precheck
+        with tempfile.TemporaryDirectory() as home:
+            runs = str(Path(home) / '.ashlr-runs')
+            def runner(*args, **kwargs):
+                return subprocess.CompletedProcess([], 0, 'GO RQ-TEST\n', '')
+            self.assertIsNone(precheck('RQ-TEST', 'phantom', 'RQ-TEST (P0): repair',
+                                       '/fixture', runs, runner))
+            self.runs(home, [])
+            (Path(runs) / 'metrics' / 'jobs.jsonl').write_text('not json\n{"event":"finish"}\n')
+            self.assertIsNone(precheck('RQ-TEST', 'phantom', 'RQ-TEST (P0): repair',
+                                       '/fixture', runs, runner))
+
+    def test_upkeep_empty_same_base_never_reenqueues(self):
+        script = Path(__file__).with_name('restock.py').resolve()
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home)
+            queue = root / '.ashlr-runs/queue'
+            (queue / 'prompts').mkdir(parents=True)
+            metrics = root / '.ashlr-runs/metrics'
+            metrics.mkdir()
+            (queue / 'admission.json').write_text('{"cap": 10}')
+            (queue / 'ready.tsv').write_text('')
+            repo = root / 'Projects/ashlrai/phantom'
+            repo.mkdir(parents=True)
+            for args in (['init'], ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                                    'commit', '--allow-empty', '-m', 'base'],
+                         ['update-ref', 'refs/remotes/origin/main', 'HEAD'],
+                         ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']):
+                subprocess.run(['git', '-C', str(repo)] + args, check=True, capture_output=True)
+            sha = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
+            job = 'RQ-UPKEEP-REL-1'
+            (queue / 'router-queue.md').write_text(f'- READY {job} (repo=phantom): maintenance\n')
+            (metrics / 'jobs.jsonl').write_text(json.dumps(dict(event='claim', job=job, repo='phantom', base_sha=sha)) + '\n' +
+                                              json.dumps(dict(event='finish', job=job, empty=True, exit_code=0)) + '\n')
+            env = dict(os.environ, HOME=home, PYTHONDONTWRITEBYTECODE='1')
+            for _ in range(2):
+                result = json.loads(subprocess.check_output(['python3', str(script), '--json'], env=env, text=True))
+                self.assertEqual(result['queued'], 0)
+                self.assertEqual(result['skips']['upkeep_empty_same_base'], 1)
+            self.assertEqual((queue / 'ready.tsv').read_text(), '')
+
+
 if __name__ == '__main__':
     unittest.main()

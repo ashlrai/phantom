@@ -22,7 +22,7 @@ afterEach(() => { vi.unstubAllGlobals(); });
 describe('Dot row in the Resources sidebar', () => {
   it('shows label, model, last reply and waiting count, with median and source on hover', async () => {
     const lastAckAt = new Date(Date.now() - 12 * 60_000).toISOString();
-    const teammate = { windowHours: 24, targetMinutes: 5, texts: 4, answered: 3, unanswered: 2, ignorable: 0, medianMinutes: 7.5, p90Minutes: 9, maxMinutes: 9, withinTarget: 2, oldestUnanswered: { ageMinutes: 20 }, sourceState: 'healthy' };
+    const teammate = { windowHours: 24, targetMinutes: 5, texts: 4, answered: 3, unanswered: 2, ignorable: 0, medianMinutes: 7.5, p90Minutes: 9, maxMinutes: 9, withinTarget: 2, oldestUnanswered: { ageMinutes: 20 }, latestTextAt: new Date(Date.now() - 4 * 60_000).toISOString(), sourceState: 'healthy' };
     installFetch(({ path }) => path === COMMS_STATUS_PATH ? json(commsStatus({ lastAckAt, teammate })) : json({}, 404));
     render(<SidebarResources />);
     const last = await screen.findByText(/Last reply 12m ago · 2 waiting/);

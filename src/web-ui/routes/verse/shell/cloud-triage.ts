@@ -17,7 +17,7 @@
  * builds a route: a batch POSTs each item's own request, pinned by the server
  * to the head SHA its preview judged.
  *
- * Loads with the drawer (VerseApp imports the drawer with import()), never
+ * Loads with the drawer (PhantomApp imports the drawer with import()), never
  * at first paint; pr-preview.ts is imported for its TYPES only — its value
  * graph is the server's merge gates.
  */

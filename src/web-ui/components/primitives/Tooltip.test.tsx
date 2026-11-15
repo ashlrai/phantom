@@ -195,4 +195,78 @@ describe('Tooltip', () => {
     screen.getByRole('button', { name: 'Context' }).focus();
     expect(await screen.findByRole('tooltip')).toHaveTextContent('18k of 66k used');
   });
+
+  it('opens no tooltip for the mouse/focus events a touch tap replays', () => {
+    vi.useFakeTimers();
+    render(
+      <Tooltip label="Usage">
+        <button type="button" aria-label="Usage" />
+      </Tooltip>,
+    );
+    const trigger = screen.getByRole('button', { name: 'Usage' });
+    fireEvent.touchStart(trigger);
+    fireEvent.mouseOver(trigger);
+    act(() => { trigger.focus(); vi.advanceTimersByTime(400); });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    // Once the compat window passes, a real mouse works again.
+    act(() => { vi.advanceTimersByTime(1500); });
+    fireEvent.mouseOver(trigger);
+    act(() => { vi.advanceTimersByTime(400); });
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+  });
+
+  it('never blocks clicks: the bubble ignores pointer events and the trigger still clicks', async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    render(
+      <Tooltip label="Go">
+        <button type="button" aria-label="Go" onClick={onClick} />
+      </Tooltip>,
+    );
+    const trigger = screen.getByRole('button', { name: 'Go' });
+    await user.hover(trigger);
+    const tip = await screen.findByRole('tooltip');
+    expect(tip.className).toContain('bubble');
+    await user.click(trigger);
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  describe('viewport placement', () => {
+    const rect = (left: number, top: number, w = 20, h = 20) =>
+      ({ left, top, right: left + w, bottom: top + h, width: w, height: h, x: left, y: top, toJSON() {} }) as DOMRect;
+
+    function stub(triggerRect: DOMRect, bubble = { w: 100, h: 30 }) {
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(triggerRect);
+      vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(bubble.w);
+      vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(bubble.h);
+    }
+
+    afterEach(() => { vi.restoreAllMocks(); });
+
+    async function openAt(triggerRect: DOMRect, placement: 'top' | 'bottom' | 'left' | 'right') {
+      stub(triggerRect);
+      render(
+        <Tooltip label="Tip" placement={placement}>
+          <button type="button" aria-label="T" />
+        </Tooltip>,
+      );
+      screen.getByRole('button', { name: 'T' }).focus();
+      return screen.findByRole('tooltip');
+    }
+
+    it('flips to the opposite side when the preferred one overflows', async () => {
+      // jsdom viewport is 1024x768; trigger at the very top leaves no room above.
+      const tip = await openAt(rect(500, 2), 'top');
+      expect(tip).toHaveAttribute('data-placement', 'bottom');
+      expect(Number.parseFloat(tip.style.top)).toBeGreaterThanOrEqual(8);
+    });
+
+    it('clamps inside the viewport when no side fits horizontally', async () => {
+      const tip = await openAt(rect(1010, 400), 'top');
+      const left = Number.parseFloat(tip.style.left);
+      expect(left).toBeGreaterThanOrEqual(8);
+      expect(left + 100).toBeLessThanOrEqual(window.innerWidth - 8);
+    });
+  });
 });

@@ -1,17 +1,19 @@
 /* global process, console, fetch, AbortSignal */
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { Buffer } from 'node:buffer';
 import { performance } from 'node:perf_hooks';
 import { appendFileSync, chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 import { requireProducerEnvironment, requireRepositoryMetadata, requireRepositoryReference } from './github-repository-binding.mjs';
 import { captureBuild, packBuild } from './ci-pack-smoke.mjs';
 import { captureArtifact, inspectTar, sourceBinding, verifyPushCi } from '../../scripts/hosted-build-artifact.mjs';
 import { retainFreshDist, verifyLocalInput } from './release-local-input.mjs';
 
+const execFileAsync = promisify(execFile);
 const api = endpoint => JSON.parse(execFileSync('gh', ['api', endpoint], { encoding: 'utf8', timeout: 15000, maxBuffer: 16 * 1024 * 1024 }));
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8', timeout: 15000 }).trim();
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -296,14 +298,19 @@ async function smoke() {
   const binary = join(prepared, 'desktop-smoke-bin'); const stat = lstatSync(binary);
   assert.ok(stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && stat.size > 0 && stat.size <= 512 * 1024 * 1024);
   const binaryBytes = readFileSync(binary); chmodSync(binary, 0o700);
-  const isolatedHome = mkdtempSync(join(realpathSync(process.env.RUNNER_TEMP), 'release-smoke-home-'));
-  try {
-    checkLaunch(execFileSync(binary, ['--release-smoke'], { encoding: 'utf8', timeout: 5000,
-      maxBuffer: 4096, env: { HOME: isolatedHome, PATH: '/usr/bin:/bin' } }), version, revision);
-  } finally { rmSync(isolatedHome, { recursive: true, force: true }); }
-  assert.deepEqual(readFileSync(binary), binaryBytes, 'launched binary changed');
   const endpoint = JSON.parse(readFileSync(join(root, 'desktop/src-tauri/tauri.conf.json'))).plugins.updater.endpoints[0];
-  const { feed, served, liveStatus, latestRelease } = await readUpdaterFeed({ endpoint, repository });
+  // The native launch and the network-bound updater feed read are independent:
+  // run them concurrently. Both must pass; either refusal fails the smoke.
+  const launch = async () => {
+    const isolatedHome = mkdtempSync(join(realpathSync(process.env.RUNNER_TEMP), 'release-smoke-home-'));
+    try {
+      const { stdout } = await execFileAsync(binary, ['--release-smoke'], { encoding: 'utf8', timeout: 5000,
+        maxBuffer: 4096, env: { HOME: isolatedHome, PATH: '/usr/bin:/bin' } });
+      checkLaunch(stdout, version, revision);
+    } finally { rmSync(isolatedHome, { recursive: true, force: true }); }
+  };
+  const [{ feed, served, liveStatus, latestRelease }] = await Promise.all([readUpdaterFeed({ endpoint, repository }), launch()]);
+  assert.deepEqual(readFileSync(binary), binaryBytes, 'launched binary changed');
   const { parseCompatibleUpdateManifest } = await import(pathToFileURL(join(root, 'dist/core/desktop/update-manifest.js')));
   const { getDesktopUpdateTrustForProfile } = await import(pathToFileURL(join(root, 'dist/core/desktop/update-trust.js')));
   checkFeed(feed, parseCompatibleUpdateManifest, getDesktopUpdateTrustForProfile('canonical-v2'));

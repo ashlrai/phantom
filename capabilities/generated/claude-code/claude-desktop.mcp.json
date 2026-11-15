@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "lexicon": {
+      "args": [
+        "-y",
+        "-p",
+        "@ashlr/lexicon@0.5.9",
+        "lexicon-mcp"
+      ],
+      "command": "npx"
+    },
+    "locus": {
+      "args": [
+        "-y",
+        "@ashlrai/locus-mcp@0.7.0"
+      ],
+      "command": "npx"
+    },
+    "phantom-gateway": {
+      "args": [
+        "mcp"
+      ],
+      "command": "phm"
+    }
+  }
+}

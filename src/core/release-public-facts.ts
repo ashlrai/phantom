@@ -145,8 +145,9 @@ async function jobsFor(reader: ReleasePublicReader, base: string, id: number, at
 }
 /** The exact candidate workflow distinguishes historical full matrices from the
  * later site lane and merge gate. Neither replaces the 15 authority gates. */
-type CiAncillaryTopology = 'historical' | 'site' | 'gate' | 'gate-docs' | 'gate-fast' | 'gate-complete' | 'gate-complete-combined' | 'documentation-gate' | 'frontend-gate';
-const isCompleteTopology = (topology: CiAncillaryTopology): boolean => topology === 'gate-complete' || topology === 'gate-complete-combined';
+type CiAncillaryTopology = 'historical' | 'site' | 'gate' | 'gate-docs' | 'gate-fast' | 'gate-complete' | 'gate-complete-combined' | 'gate-complete-combined-scan' | 'documentation-gate' | 'frontend-gate';
+const isCompleteTopology = (topology: CiAncillaryTopology): boolean => topology === 'gate-complete' || topology === 'gate-complete-combined' || topology === 'gate-complete-combined-scan';
+const isCombinedTopology = (topology: CiAncillaryTopology): boolean => topology === 'gate-complete-combined' || topology === 'gate-complete-combined-scan';
 // Reviewed complete decision bodies, not executable lookalikes containing guard strings.
 // Legacy body: protected b5a6 CI. Documentation body/job: reviewed da4db0 CI patch.
 // These bind parsed original-CI bytes fetched at sourceSha, never the local checkout.
@@ -180,7 +181,9 @@ async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: Re
   // admission. Runtime verification below still requires all fifteen complete
   // roles and their successful steps, never the fast producer's green summary.
   if (COMPLETE_CI_WORKFLOW_SHA256.has(createHash('sha256').update(bytes).digest('hex'))) return 'gate-complete';
-  if (COMBINED_COMPLETE_CI_WORKFLOW_SHA256.has(createHash('sha256').update(bytes).digest('hex'))) return 'gate-complete-combined';
+  const workflowSha = createHash('sha256').update(bytes).digest('hex');
+  if (COMBINED_COMPLETE_CI_WORKFLOW_SCAN_SHA256.has(workflowSha)) return 'gate-complete-combined-scan';
+  if (COMBINED_COMPLETE_CI_WORKFLOW_SHA256.has(workflowSha)) return 'gate-complete-combined';
   const hasClassifier = Object.hasOwn(jobs, 'classify'); const hasSite = Object.hasOwn(jobs, 'site');
   const hasGate = Object.hasOwn(jobs, 'merge-gate');
   const hasDocumentation = Object.hasOwn(jobs, 'documentation');
@@ -278,8 +281,19 @@ const COMBINED_COMPLETE_CI_WORKFLOW_SHA256 = new Set([
   // release_gate, and the merge gate needs release-build. Exact bytes only:
   // the structural fast suffix still refuses every other revision.
   'c7f63536c65c2edf637a96e4ffc2d8594397d50346c96502a7e390eb6f064b08',
+  // Same reviewed topology after #4592 keyed release-gate dispatch concurrency
+  // on the tag (the source of v3.30.31), then after #4677 moved the release
+  // build into an isolated tree. Earlier releases above still verify.
+  'c2a41bf98e08fcdadba1dd4eb54547214cefc3555ceaec04def355a37989d02c',
+  'a0aaa485a663c5ef4ed3d713e8adb8368fcd366ed01b35f8bcbb3d9fa8b23b2f',
 ]);
-const completeSkippedJobs = (topology: CiAncillaryTopology): readonly string[] => topology === 'gate-complete-combined'
+// The same combined topology after the diff secret scan joined Merge Gate
+// (#1128): the scan runs on every event, so a skipped or failed scan can
+// never qualify a release. Exact bytes only.
+const COMBINED_COMPLETE_CI_WORKFLOW_SCAN_SHA256 = new Set([
+  '071527b2a95fc6845d93dd2088e22e83e977eb006b99ccf8650a65e9a379f4cc',
+]);
+const completeSkippedJobs = (topology: CiAncillaryTopology): readonly string[] => isCombinedTopology(topology)
   ? COMPLETE_SKIPPED_JOBS.filter(name => name !== 'Prepare unsigned desktop release') : COMPLETE_SKIPPED_JOBS;
 const FAST_SUFFIX = " && github.event_name != 'pull_request' && github.event_name != 'merge_group'";
 const FAST_JOBS = Object.freeze(['Secret-shape scan', 'Quick typecheck', 'Daily fixup queue']);
@@ -300,6 +314,17 @@ function verifyCiAncillaryJobs(jobs: Record<string, unknown>[], id: number, sour
     if (!Array.isArray(scan['steps']) || scan['steps'].some(step => object(step)['status'] !== 'completed' || !['success', 'skipped'].includes(String(object(step)['conclusion'])))) throw new Error('Secret-shape steps incomplete');
     const steps = scan['steps'].map(object).filter(step => step['name'] === 'Scan candidate diff (fail closed)');
     if (steps.length !== 1 || steps[0]!['conclusion'] !== 'success') throw new Error('Required secret-shape step missing or skipped');
+    if (topology === 'gate-complete-combined-scan') {
+      const diffScans = jobs.filter(job => job['name'] === 'Secret scan (diff)');
+      if (diffScans.length !== 1) throw new Error('Secret scan job missing or ambiguous');
+      const diffScan = diffScans[0]!;
+      equal(diffScan['run_id'], id, 'secret scan run'); equal(diffScan['head_sha'], sourceSha, 'secret scan candidate');
+      equal(diffScan['status'], 'completed', 'secret scan status'); equal(diffScan['conclusion'], 'success', 'secret scan outcome');
+      if (!Array.isArray(diffScan['labels']) || diffScan['labels'].includes('self-hosted') || !diffScan['labels'].includes('ubuntu-latest')) throw new Error('Unexpected secret scan runner');
+      if (!Array.isArray(diffScan['steps']) || diffScan['steps'].some(step => object(step)['status'] !== 'completed' || !['success', 'skipped'].includes(String(object(step)['conclusion'])))) throw new Error('Secret scan steps incomplete');
+      const scanSteps = diffScan['steps'].map(object).filter(step => step['name'] === 'Scan the commits this event adds');
+      if (scanSteps.length !== 1 || scanSteps[0]!['status'] !== 'completed' || scanSteps[0]!['conclusion'] !== 'success') throw new Error('Required secret scan step missing or skipped');
+    }
     for (const name of ['Quick typecheck', ...completeSkippedJobs(topology)]) {
       const matches = jobs.filter(job => job['name'] === name);
       if (matches.length !== 1) throw new Error('Excluded complete qualification job missing or ambiguous');
@@ -374,6 +399,7 @@ async function successfulRun(reader: ReleasePublicReader, base: string, reposito
       ...(ancillary === 'gate-docs' || ancillary === 'gate-fast' || isCompleteTopology(ancillary) ? ['Docs PR (docs-only)'] : []),
       ...(hasDocumentationTopology(ancillary) ? ['Documentation PR (reviewed prose)'] : []),
       ...(ancillary === 'frontend-gate' ? ['Frontend PR (reviewed presentation)'] : []),
+      ...(ancillary === 'gate-complete-combined-scan' ? ['Secret scan (diff)'] : []),
       ...(ancillary === 'site' ? [] : ['Merge Gate']), ...(ancillary === 'gate-fast' || isCompleteTopology(ancillary) ? FAST_JOBS : []),
       ...(isCompleteTopology(ancillary) ? completeSkippedJobs(ancillary).filter(name => name !== 'Daily fixup queue') : [])];
   if (jobs.length !== allNames.length || new Set(jobs.map((job) => job['id'])).size !== jobs.length ||

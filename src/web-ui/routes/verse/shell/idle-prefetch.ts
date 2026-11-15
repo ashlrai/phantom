@@ -30,7 +30,7 @@
  * when the last step is done, so a finished warm-up listens to nothing.
  *
  * LAZY ONLY. Framework- and dependency-free, and never imported statically by
- * VerseApp: shell/warmup.ts (itself loaded with import()) is its only user,
+ * PhantomApp: shell/warmup.ts (itself loaded with import()) is its only user,
  * so none of this costs chat first-paint bytes (VerseApp.first-paint.test.ts).
  */
 

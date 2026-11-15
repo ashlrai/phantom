@@ -424,6 +424,37 @@ test('workflows carry the merged-PR -> tag -> release wiring with no widened per
   assert.equal(allRuns.includes('pr merge'), false, 'workflows must not merge the release PR directly');
 });
 
+// The ashlr-release App installation grants only contents and pull-requests.
+// create-github-app-token 422s ("The permissions requested are not granted to
+// this installation") when a mint asks for anything else, which is how #4607
+// broke Auto-tag and the train. Every App mint in every workflow must stay
+// inside the granted set; work that needs another permission (for example
+// actions: write to dispatch CI) uses the job GITHUB_TOKEN instead. Widening
+// this list requires granting the permission on the App installation first.
+test('every ashlr-release App mint requests only permissions the installation grants', () => {
+  const GRANTED = new Set(['permission-contents', 'permission-pull-requests']);
+  const dir = new URL('../workflows/', import.meta.url);
+  const mints = [];
+  for (const file of fs.readdirSync(dir).filter(f => /\.ya?ml$/.test(f)).sort()) {
+    const workflow = parse(fs.readFileSync(new URL(file, dir), 'utf8'));
+    for (const [jobName, job] of Object.entries(workflow?.jobs ?? {})) {
+      for (const step of job.steps ?? []) {
+        if (!String(step.uses ?? '').startsWith('actions/create-github-app-token@')) continue;
+        if (!String(step.with?.['app-id'] ?? '').includes('ASHLR_RELEASE_APP_ID')) continue;
+        const requested = Object.keys(step.with ?? {}).filter(k => k.startsWith('permission-'));
+        mints.push(`${file}:${jobName}`);
+        assert.ok(requested.length > 0, `${file}:${jobName} must scope its App mint; an unscoped mint inherits every installation permission`);
+        for (const key of requested) {
+          assert.ok(GRANTED.has(key), `${file}:${jobName} requests ${key}, which the ashlr-release installation does not grant (token mint would 422)`);
+        }
+      }
+    }
+  }
+  for (const expected of ['auto-tag.yml', 'release-please.yml', 'release-train.yml']) {
+    assert.ok(mints.some(m => m.startsWith(`${expected}:`)), `expected an ashlr-release App mint in ${expected}`);
+  }
+});
+
 test('argument and plan contracts are fail-closed', () => {
   assert.throws(() => parseReleasePublishArguments([]));
   assert.throws(() => parseReleasePublishArguments(['--artifacts', '/tmp/x']));

@@ -106,7 +106,7 @@ async function appendQueueLines(queuePath: string, lines: readonly string[]): Pr
     const temp = `${queuePath}.${randomUUID()}.tmp`;
     const out = await open(temp, 'wx', 0o600);
     try {
-      const text = (current && !current.endsWith('\n') ? `${current}\n` : current) + lines.map(l => `${l}\n`).join('');
+      const text = (current && !current.endsWith('\n') ? `${current}\n` : current) + lines.map(l => `${l.replace('):', `, enq=${Math.floor(Date.now() / 1000)}):`)}\n`).join('');
       await out.writeFile(text, 'utf8');
       await out.sync();
       await out.close();

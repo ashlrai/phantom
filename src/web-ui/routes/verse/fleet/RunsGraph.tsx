@@ -52,7 +52,25 @@ export function RunsGraph() {
         for (const button of element.querySelectorAll<HTMLButtonElement>('button[aria-label]')) {
           const id = button.getAttribute('aria-label')?.replace('Inspect workspace node ', '');
           const node = graph.nodes.find(n => n.id === id);
-          if (node) { button.setAttribute('title', node.title); button.classList.toggle(styles.dimmed, !filtered.matched.has(node.id)); }
+          if (!node) continue;
+          button.setAttribute('title', node.title); button.classList.toggle(styles.dimmed, !filtered.matched.has(node.id));
+          // Overrun chip on a run row whose elapsed passed its lane median:
+          // appended inside the node button like the title enrichment above,
+          // corner-positioned so the fixed node layout does not change.
+          const overrun = node.data?.overrun;
+          let chip = button.querySelector<HTMLElement>('span[data-overrun]');
+          if (overrun && chip === null) {
+            chip = document.createElement('span');
+            chip.dataset.overrun = '';
+            chip.className = styles.overrun;
+            button.appendChild(chip);
+          }
+          if (chip !== null) {
+            if (overrun) {
+              chip.textContent = `Overrun ${overrun.ratio.toFixed(1)}x`;
+              chip.setAttribute('title', `Lane median ${Math.round(overrun.medianMs / 60_000)} min`);
+            } else chip.remove();
+          }
         }
         for (const path of element.querySelectorAll('path[role="img"]')) {
           const edge = graph.edges.find(e => path.getAttribute('aria-label') === `${e.kind}: ${e.from} → ${e.to}` || path.getAttribute('aria-label') === e.title);

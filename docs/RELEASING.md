@@ -86,6 +86,21 @@ The existing [CI workflow](../.github/workflows/ci.yml) has two explicit modes:
   No current per-PR desktop producer exists; cold preparation,
   hosted queueing, attestation and signing are outside the smoke budget.
 
+The release job never builds in its own checkout. It runs
+`node scripts/release-isolated-tree.mjs create "$RUNNER_TEMP/phantom-release-tree"`,
+a `git worktree add --detach` of the pinned commit, then builds, packs, captures
+custody and smokes in that tree. `verify` runs after the build and again after
+pack. It refuses any drift from the pinned commit: tracked bytes or modes in the
+worktree or index (`git diff --exit-code <sha>`), an unignored file, a hidden
+assume-unchanged or skip-worktree flag, or an ignored file outside the build
+output inventory in [`scripts/build-outputs.mjs`](../scripts/build-outputs.mjs).
+The build writes only gitignored, untracked paths. `test/build-outputs.test.ts`
+ties that inventory to `npm run build` and the desktop step plan. A local
+release build uses the same pattern: run
+`ASHLR_RELEASE_SHA=<sha> node scripts/release-isolated-tree.mjs create "$(mktemp -d)"`,
+then build there. Durations and pass rates are tracked in
+[the smoke timing record](release/SMOKE-TIMING.md).
+
 The fast handoff uses profile `fast-release-v1`. A successful hosted smoke job
 and its required steps select this profile; an artifact's own claim cannot.
 Qualification rechecks exact repository/run/attempt/SHA identities, artifact

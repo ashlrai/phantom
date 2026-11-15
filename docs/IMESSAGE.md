@@ -67,6 +67,47 @@ imessage-teammate-<rowid> --owner <agent> --lease-ms <ms>`); a claim is local
 coordination only and grants no execution authority. Owner texts stay off the
 bus; the mirror is best effort and never changes a receipt or the cursor.
 
+## Chunked patch transfers
+
+The personal Codex dot can text a patch as a sequence of protocol frames, one
+iMessage per frame (message bodies are size-limited, so a diff is chunked).
+`src/core/comms/imessage-patch-transfer.ts` reassembles them:
+
+```
+PATCH-BEGIN <id> <parts> <sha256>
+PATCH-PART <id> <i>/<parts>
+<chunk text — the remainder of the message after the first newline>
+PATCH-END <id> <sha256>
+```
+
+`<id>` is a sender-chosen slug (`[A-Za-z0-9][A-Za-z0-9._-]{0,63}`); `<sha256>`
+is the lowercase hex digest of the UTF-8 payload — every part's chunk bytes
+concatenated in index order. BEGIN declares it and END repeats it; both must
+agree before any bytes are trusted.
+
+- Intake consumes each frame from the raw chat.db row (not the scrubbed inbox
+  copy) into durable per-transfer state under
+  `~/.ashlr-runs/imessage/patches/open/`; `patches/state.json` keeps a bounded
+  dedup ring of handled frame rowids and the high-water rowid, so a re-polled
+  frame is a `duplicate` and a replay can never apply twice.
+- A transfer completes only when END is seen and every part is present; the
+  reassembled payload is sha256-verified before `patches/<id>.patch` is
+  written (dir 0700, files 0600) next to a `<id>.receipt.json` evidence file
+  (outcome, declared sha256/parts/bytes, source rowids, hashed sender — never
+  the handle or the patch body).
+- Conflicting parts or re-begins, a hash mismatch, oversize payloads, a spent
+  transfer id, secret-shaped chunks and malformed frames are terminal:
+  `rejected` receipts, no artifact, and the id can never be reused. An open
+  transfer unfinished after six hours is expired by the sweep (an `expired`
+  receipt), so stale frames are never resurrected and the watermark advances
+  past them.
+- Frames are protocol traffic, not conversation: the findings mirror counts
+  them `protocol` and never posts them as findings. Instead, each verified
+  artifact is announced once on `teammate.findings` as
+  `imessage-patch-<id>` — a `note` with the artifact name, sha256 prefix and
+  part/byte counts, deduped by the `announcedPatchIds` ring in
+  `findings-bridge.json`. Nothing applies, stages or executes a patch.
+
 ## Local teammate replies
 
 `phm imessage respond --apply --json` polls intake and processes at most three

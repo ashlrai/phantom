@@ -49,7 +49,11 @@ ungated outward-mutation primitive (`applyProposal` stays unexported).
   routes plugin clients **behind the same allowCloud + key gates**.
 - `cli/index.ts`: `ashlr plugins …` + `ashlr x <name>` dispatch.
 - `cli/plugins.ts`: list / info / enable (capabilities + trust warning,
-  confirm-gated, records integrity) / disable. Doctor warns on broken pins.
+  confirm-gated, records integrity) / disable. Enable reads stdin only when
+  it is a terminal; otherwise it exits 2 and prints `phm plugins enable <name> --yes`.
+  `init`, `enable` and `disable` accept `--dry-run` and write nothing.
+  Enable of an unchanged pin, and disable of a name that is not enabled,
+  report already done and do not rewrite config. Doctor warns on broken pins.
 
 ### Trust model (documented verbatim in docs/PLUGINS.md)
 In-process ESM = same OS privileges; the posture is gating + least-privilege

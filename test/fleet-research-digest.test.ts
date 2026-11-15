@@ -76,6 +76,7 @@ describe('phm fleet research-digest', () => {
     expect(applied.applied).toBe(true);
     expect(applied.queued).toEqual(['RQ-CLI-ONE', 'RQ-CLI-TWO']);
     const queueText = readFileSync(queuePath, 'utf8');
+    expect(queueText).toMatch(/enq=\d+/);
     expect(queueText).toContain('- READY RQ-CLI-ONE');
     expect(queueText).toContain('- READY RQ-CLI-TWO');
     const second = await run(['--file', digestPath, '--queue', queuePath, '--repos-root', reposRoot, '--apply', '--json']);

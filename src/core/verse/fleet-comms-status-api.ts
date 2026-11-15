@@ -12,6 +12,7 @@ import { readImessageAckEvidence } from '../comms/imessage-ack-evidence.js';
 import { buildCommsCutoverReadiness, type CommsCutoverReport } from '../comms/cutover-readiness.js';
 import { readEmailOutbox } from '../comms/email-outbox.js';
 import { readTeammateLatency, type TeammateLatencySummary } from '../comms/teammate-reply-latency.js';
+import { readLocalSendPolicy } from '../agents/send-gate.js';
 
 export const VERSE_FLEET_COMMS_STATUS_PATH = '/api/verse/fleet/comms-status';
 
@@ -28,6 +29,8 @@ export interface FleetCommsStatusApiDeps {
   teammateLatency?: (now: number) => TeammateLatencySummary | Promise<TeammateLatencySummary>;
   /** Off-Grok-Bot cutover seam for tests. Default: buildCommsCutoverReadiness over runsDir. */
   cutover?: (runsDir: string) => Promise<CommsCutoverReport>;
+  /** Send-policy reader (read-only). Default: ~/.ashlr/comms.toml and agent-network.toml. */
+  sendPolicy?: typeof readLocalSendPolicy;
   /** Clock seam for tests; stamps generatedAt. */
   now?: () => Date;
 }
@@ -131,6 +134,7 @@ export function createFleetCommsStatusApi(deps: FleetCommsStatusApiDeps = {}): A
         unanswered: t.unanswered, ignorable: t.ignorable, medianMinutes: t.medianMinutes, p90Minutes: t.p90Minutes,
         maxMinutes: t.maxMinutes, withinTarget: t.withinTarget,
         oldestUnanswered: t.oldestUnanswered === null ? null : { ageMinutes: t.oldestUnanswered.ageMinutes },
+        latestTextAt: t.latestTextAt ?? null,
         sourceState: t.sourceState,
       };
       teammateSource = t.sourceState;
@@ -152,6 +156,20 @@ export function createFleetCommsStatusApi(deps: FleetCommsStatusApiDeps = {}): A
       cutoverSource = 'degraded';
     }
 
+    // Counts and channel names only: never identity ids, addresses or the home path.
+    let sendPolicy: { confirmed: boolean; teamIdentities: number; channels: string[] } | null = null;
+    let sendPolicySource: 'healthy' | 'degraded' = 'healthy';
+    try {
+      const policy = (deps.sendPolicy ?? readLocalSendPolicy)();
+      sendPolicy = {
+        confirmed: policy.confirmedByMason === true,
+        teamIdentities: policy.teamIdentities.length,
+        channels: [...new Set(policy.teamIdentities.map(identity => String(identity.channel)))].sort(),
+      };
+    } catch {
+      sendPolicySource = 'degraded';
+    }
+
     sendJson(res, 200, {
       version: 1,
       generatedAt: generatedAt.toISOString(),
@@ -161,7 +179,8 @@ export function createFleetCommsStatusApi(deps: FleetCommsStatusApiDeps = {}): A
       imessage,
       teammate,
       cutover,
-      sources: { drafts: draftsSource, emailOutbox: emailOutboxSource, imessage: imessageSource, teammate: teammateSource, cutover: cutoverSource },
+      sendPolicy,
+      sources: { drafts: draftsSource, emailOutbox: emailOutboxSource, imessage: imessageSource, teammate: teammateSource, cutover: cutoverSource, sendPolicy: sendPolicySource },
     });
   }
 

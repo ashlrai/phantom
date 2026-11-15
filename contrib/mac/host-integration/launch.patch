@@ -1,6 +1,14 @@
 --- a/launch.sh
 +++ b/launch.sh
-@@ -64,6 +64,13 @@
+@@ -50,6 +50,7 @@
+ 
+ RULES: You are working in a fresh git worktree of ashlrai/REPO_ at its default branch. Work autonomously to a complete, tested, shippable change; be ambitious and high-leverage, and delete dead code you find in the area you touch. Add or update tests and run the repo's typecheck, lint and the touched tests (use a temporary HOME for any test run, e.g. HOME=$(mktemp -d); for cargo keep RUSTUP_HOME/CARGO_HOME pointing at the real toolchain). Never weaken, skip or delete tests to go green, and never weaken security controls. Without a security pass, do not add widened workflow permissions or id-token, new secrets.* refs, pull_request_target or workflow_run triggers, or third-party actions not pinned to a 40-hex commit SHA; other .github/**, CODEOWNERS and release config edits are allowed. Never print secrets or tokens. Do NOT commit, push, tag or publish: leave every change uncommitted in the worktree. When done, write BRIDGE_NOTES.md at the worktree root with a summary, commands run, pass/fail counts and net LOC.
+ If the full goal cannot be verified, ship the smallest correct, useful part with honest output (for example, age: unknown) and list the gap in BRIDGE_NOTES.md for the PR body. Use EMPTY only when already done or truly impossible.
++If you finish with no change, end your final message with the line EMPTY_REASON: <code> and put the same line first in BRIDGE_NOTES.md; code is duplicate-landed (name the PR or commit that already covers it), prompt-unclear (name the missing detail), blocked (tool, auth or environment) or no-change-needed.
+ F
+ [ "$NOWT" = 1 ] && echo "NOTE: this worktree is index-only (no files on disk, by design). Read files with git show HEAD:<path>. Do not change code; this job only decides and closes PRs."
+ } | sed "s/REPO_/$REPO/" > $R/$J.prompt
+@@ -64,6 +65,13 @@
    && [ -f "$f" ] && [ ! -L "$f" ] && [ "$(stat -f %Lp "$f")" = 444 ] && [ "$(shasum -a 256 "$f" | cut -d' ' -f1)" = "${want#a}" ] || { echo "REFUSED: lane MCP file $f missing, not 444 or sha mismatch"; exit 5; }; }
  LMC=(-c 'mcp_servers.context7.url="https://mcp.context7.com/mcp"' -c 'mcp_servers.fetch.command="/usr/bin/python3"' -c "mcp_servers.fetch.args=[\"-I\",\"$LM/safe-fetch.py\"]")
  # <<< LANE-MCP rev1
@@ -14,7 +22,7 @@
  # >>> LOCALBUILD rev1 (Security 2026-11-03; Mason 9:22 and 9:24 PM ET): RQ-APP-LOCALBUILD job ids run the repo's own unsigned nightly
  # desktop build (scripts/build-desktop-nightly.mjs) deterministically, with no agent and whatever pool was picked, under localbuild.sb.
  # Network ON (Mason 9:24 PM). Toolchain is the provisioned, sha-verified ~/.localbuild-lane/tool/v1 (provision-localbuild.sh, run by Masbot
-@@ -85,9 +92,9 @@
+@@ -85,9 +93,9 @@
  fi
  # <<< LOCALBUILD rev1
  case $POOL in
@@ -26,7 +34,7 @@
   claude) lm_ok "$LM/mcp.json" "$LM_MJ"   # >>> CLAUDE-BROKER rev1 (Security 2026-11-04)
    # The lane never holds a Claude credential: claude talks to the loopback broker with a dummy bearer; the broker (outside every
    # sandbox) injects the one fleet setup-token. claude-cli.sb now denies the keychain, /usr/bin/security and ~/.claude-fleet-broker.
-@@ -275,6 +282,11 @@
+@@ -275,6 +283,11 @@
      python3 -I -c 'import json,sys;d=json.load(open(sys.argv[1]));print(str(d.get("result","") if isinstance(d,dict) else "")[:20000])' "$R/$J.cursor.json" 2>/dev/null | $SCRUB >> "$R/$J.log"
      rm -f "$R/$J.cursor.json" ) </dev/null >/dev/null 2>&1 &
    ;; # <<< cursor lane

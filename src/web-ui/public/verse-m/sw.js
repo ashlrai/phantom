@@ -190,7 +190,7 @@ self.addEventListener('push', function (event) {
   var kind = '';
   try {
     var payload = event.data && event.data.json();
-    if (payload && (payload.kind === 'needs-you' || payload.kind === 'completed' || payload.kind === 'fleet-merged' || payload.kind === 'fleet-lane-held')) kind = payload.kind;
+    if (payload && (payload.kind === 'needs-you' || payload.kind === 'completed' || payload.kind === 'fleet-merged' || payload.kind === 'fleet-lane-held' || payload.kind === 'leader-reply')) kind = payload.kind;
   } catch { /* malformed payload gets a generic alert */ }
   var completed = kind === 'completed';
   var fleet = kind === 'fleet-merged' || kind === 'fleet-lane-held';
@@ -203,18 +203,18 @@ self.addEventListener('push', function (event) {
     fleetBody = 'Lane ' + detail.replace(': ', ' is held: ');
   }
   event.waitUntil(self.registration.showNotification(fleet ? 'Phantom fleet' : 'Phantom', {
-    body: fleet ? fleetBody : completed ? 'A run completed. Open Phantom for details.' : kind === 'needs-you'
+    body: kind === 'leader-reply' ? (Number.isSafeInteger(payload.count) && payload.count > 1 ? 'The Leader replied ' + payload.count + ' times.' : 'The Leader replied. Open Phantom to read it.') : fleet ? fleetBody : completed ? 'A run completed. Open Phantom for details.' : kind === 'needs-you'
       ? 'Something needs you. Open Phantom for details.' : 'Phantom has an update. Open the app to see it.',
-    tag: fleet ? 'ashlr-' + kind : 'ashlr-verse-update',
+    tag: kind === 'leader-reply' ? 'ashlr-leader-reply' : fleet ? 'ashlr-' + kind : 'ashlr-verse-update',
     icon: '/next/verse-m/icon-192.png',
-    data: { path: fleet ? '/verse/m/#/runs' : completed ? '/verse/m/#/' : '/verse/m/#/needs' },
+    data: { path: kind === 'leader-reply' ? '/verse/m/#/leader' : fleet ? '/verse/m/#/runs' : completed ? '/verse/m/#/' : '/verse/m/#/needs' },
   }));
 });
 
 self.addEventListener('notificationclick', function (event) {
   event.notification.close();
   var suggested = event.notification.data && event.notification.data.path;
-  var target = (suggested === '/verse/m/#/' || suggested === '/verse/m/#/runs') ? suggested : '/verse/m/#/needs';
+  var target = (suggested === '/verse/m/#/' || suggested === '/verse/m/#/runs' || suggested === '/verse/m/#/leader') ? suggested : '/verse/m/#/needs';
   event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (clients) {
     for (var i = 0; i < clients.length; i += 1) {
       var url = new URL(clients[i].url);

@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { ToastProvider } from '../../../components/primitives/Toast.js';
 import { MockEventSource } from '../fixtures.test-support.js';
-import { VerseApp } from '../VerseApp.js';
+import { PhantomApp } from '../VerseApp.js';
 import { resetVerseUi, setVerseSection } from '../verse-ui-store.js';
 import './ShellUpdates.js';
 import { activity, shellFetch } from './shell-fixtures.test-support.js';
@@ -42,13 +42,13 @@ describe('GearUpdateDot', () => {
     vi.stubGlobal('fetch', shellFetch(activity()).fetch);
     resetVerseUi();
     setVerseSection('chat');
-    const app = <ToastProvider><VerseApp /></ToastProvider>;
+    const app = <ToastProvider><PhantomApp /></ToastProvider>;
     const view = render(app);
     try {
       const gear = await screen.findByRole('button', { name: `Settings and more, update: ${label}` });
       expect(await screen.findByTestId('gear-update-dot')).toHaveAttribute('title', label);
       vi.mocked(useSelfUpdateBadge).mockReturnValue(null);
-      view.rerender(<ToastProvider><VerseApp /></ToastProvider>);
+      view.rerender(<ToastProvider><PhantomApp /></ToastProvider>);
       await screen.findByRole('button', { name: 'Settings and more' });
       expect(gear).toHaveAccessibleName('Settings and more');
       expect(screen.queryByTestId('gear-update-dot')).not.toBeInTheDocument();

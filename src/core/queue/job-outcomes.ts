@@ -25,7 +25,9 @@ export interface JobOutcome {
   merged: boolean;
 }
 
-const TERMINAL_EMPTY = new Set(['EMPTY', 'DONE-NOOP']);
+// The fleet's canonical empty finish kinds (lane-empty-streak.ts EMPTY_KINDS):
+// an outcome row naming any of these is a proven empty attempt.
+const TERMINAL_EMPTY = new Set(['EMPTY', 'DONE-NOOP', 'EMPTY_DONE', 'SKIPPED-EMPTY']);
 const record = (x: unknown): x is Record<string, unknown> =>
   typeof x === 'object' && x !== null && !Array.isArray(x);
 
@@ -72,7 +74,7 @@ export function parseJobOutcomeRows(raw: string, now: number, windowMs: number):
     const at = typeof stamp === 'string' ? Date.parse(stamp) : NaN;
     if (typeof job !== 'string' || !job || !Number.isFinite(at)) continue;
     if (at < now - windowMs || at > now) continue;
-    const outcome = String(value['state'] ?? value['outcome'] ?? '').toUpperCase();
+    const outcome = String(value['state'] ?? value['outcome'] ?? value['event'] ?? '').toUpperCase();
     const merged = outcome === 'MERGED' || value['event'] === 'merged';
     const rawEmpty = value['empty'];
     const empty = merged ? false

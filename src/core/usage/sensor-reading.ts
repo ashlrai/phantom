@@ -51,6 +51,7 @@ export const USAGE_SENSOR_SOURCES = [
   'claude-rate-limit-event',
   'claude-api-balance',
   'cursor-status',
+  'browser-visible',
   'grok-status',
   'local-throughput',
   'unmeasured',

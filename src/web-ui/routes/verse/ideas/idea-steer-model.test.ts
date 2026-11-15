@@ -18,6 +18,7 @@ describe('ideaSteerText', () => {
     expect(ideaSteerText({ ...idea, title: 'a\u0000b\r\nc\u0085d\td' }, 'do-next')).toBe('[idea:phantom] Do next: a b c d d');
     const line = ideaSteerText({ ...idea, title: 'x'.repeat(400) }, 'not-now')!;
     expect(line).toBe(`[idea:phantom] Not now: ${'x'.repeat(160)}`);
+    // eslint-disable-next-line no-control-regex -- asserts no control bytes survive.
     expect(line).not.toMatch(/[\u0000-\u001f]/);
   });
   it('returns null for an empty title', () => {

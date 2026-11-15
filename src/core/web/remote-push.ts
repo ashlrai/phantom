@@ -14,9 +14,9 @@ const MAX_FILE_BYTES = 262_144;
 const COALESCE_MS = 60_000;
 const MAX_SUBSCRIPTIONS = 32;
 const ENCODED = /^[A-Za-z0-9_-]+$/;
-export type RemotePushKind = 'needs-you' | 'completed' | 'fleet-merged' | 'fleet-lane-held';
+export type RemotePushKind = 'needs-you' | 'completed' | 'fleet-merged' | 'fleet-lane-held' | 'leader-reply';
 export interface RemotePushDetail { detail?: string; count?: number }
-const PUSH_KINDS: RemotePushKind[] = ['needs-you', 'completed', 'fleet-merged', 'fleet-lane-held'];
+const PUSH_KINDS: RemotePushKind[] = ['needs-you', 'completed', 'fleet-merged', 'fleet-lane-held', 'leader-reply'];
 
 
 interface Entry { deviceId: string; subject: string; subscription: PushSubscription; createdAt: number }
@@ -163,6 +163,7 @@ export function createRemotePush(config: RemotePushConfig, devices: RemoteDevice
         if (typeof detail.detail === 'string') payload.detail = sanitizePushDetail(detail.detail);
         if (typeof detail.count === 'number' && Number.isSafeInteger(detail.count) && detail.count > 0) payload.count = detail.count;
       }
+      if (kind === 'leader-reply' && Number.isSafeInteger(detail.count) && (detail.count ?? 0) > 0) payload.count = detail.count;
       let attempted = 0;
       let delivered = 0;
       let retired = 0;

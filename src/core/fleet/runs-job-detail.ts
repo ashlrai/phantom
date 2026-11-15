@@ -38,6 +38,9 @@ import { isAbsolute, join } from 'node:path';
 import { TextDecoder } from 'node:util';
 import { createGunzip } from 'node:zlib';
 import { redactHomePaths, scrubSecrets } from '../util/scrub.js';
+import { parseReadyRows } from './ready-row-edit.js';
+import { parseClaimedTsv, parseDispatchEvents } from './runs-dir-state.js';
+import { readSource } from './runs-parked-queue.js';
 
 // ---------------------------------------------------------------------------
 // Public types — the fleet.job.v1 wire shape.
@@ -52,6 +55,9 @@ export interface FleetJobDetailV1 {
   job: string;
   state: FleetJobState;
   lane: string | null;
+  requestedLane?: string | null;
+  launchedLane?: string | null;
+  laneReason?: string | null;
   tier: string | null;
   model: string | null;
   pid: number | null;
@@ -257,6 +263,18 @@ export async function getFleetJobDetail(job: string, options: FleetJobDetailOpti
     ['launch', 'base', 'base.meta', 'prompt', 'log', 'log.gz', 'publish', 'notes.md', 'body.md'].map(s => probe(file(s))),
   );
 
+  const [ready, claimed, events] = await Promise.all([
+    readSource(join(runsDir, 'queue/ready.tsv'), 2 * 1024 * 1024, false),
+    readSource(join(runsDir, 'queue/claimed.tsv'), 2 * 1024 * 1024, false),
+    readSource(join(runsDir, 'dispatch-events.log'), 1024 * 1024, true),
+  ]);
+  const requested = parseClaimedTsv(claimed.text).find(row => row.job === job)?.lane
+    ?? parseReadyRows(ready.text).find(row => row.id === job)?.lane ?? null;
+  const event = parseDispatchEvents(events.text.split('\n').filter(line => line.split(/\s+/)[3] === job).join('\n')).find(row => row.kind === 'LAUNCH');
+  const parts = event?.text.split(/\s+/) ?? [];
+  const eventLane = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/.test(parts[2] ?? '') ? parts[2]! : null;
+  const reason = event?.text.match(/(?:^|\s)reason=(.+)$/)?.[1] ?? null;
+
   const sources: FleetJobDetailV1['sources'] = {
     launch: 'missing', base: 'missing', meta: 'missing', publish: 'missing', log: 'missing',
   };
@@ -380,6 +398,9 @@ export async function getFleetJobDetail(job: string, options: FleetJobDetailOpti
     job: scrubLogLine(job),
     state,
     lane: launchLane ?? metaLane,
+    requestedLane: requested ? scrubLogLine(requested) : null,
+    launchedLane: eventLane ?? launchLane,
+    laneReason: reason ? scrubLogLine(reason) : null,
     tier,
     model,
     pid,

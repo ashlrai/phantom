@@ -3,7 +3,8 @@ import { queueReportFromText } from '../core/queue-metrics.js';
 import { readQueueVisits } from '../core/queue/journal.js';
 import { estimateQueueStats } from '../core/queue/stats.js';
 
-const HELP = `Usage: phm queue stats [--json] [--window <seconds>]
+const HELP = `Usage: phm queue stuck [--json]
+       phm queue stats [--json] [--window <seconds>]
        phm queue yield [--since 24h] [--json]
        phm queue report --events <file> [--json]
        phm queue dedupe [--file <router-queue.md>] [--apply] [--json]
@@ -94,6 +95,19 @@ export async function cmdQueue(args: string[]): Promise<number> {
     return (await import('./job-queue.js')).cmdJobQueue(args);
   }
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) { console.log(HELP); return 0; }
+  if (args[0] === 'stuck') {
+    if (args.slice(1).some(arg => arg !== '--json')) { console.error(HELP); return 2; }
+    try {
+      const report = await (await import('../core/queue/stuck.js')).readStuckQueue();
+      if (args.includes('--json')) console.log(JSON.stringify(report));
+      else {
+        if (!report.eventsAvailable) console.log('Dispatch events unavailable; launches may be missing.');
+        if (!report.jobs.length) console.log('No waiting jobs found.');
+        for (const job of report.jobs) console.log(`${job.id} · ${job.age_s === undefined ? 'age unknown' : `${job.age_s} seconds`}`);
+      }
+      return 0;
+    } catch { console.error('Queue unavailable.'); return 1; }
+  }
   if (args[0] === 'stats') return cmdQueueStats(args);
   if (args[0] === 'report') return cmdQueueReport(args);
   console.error(HELP);

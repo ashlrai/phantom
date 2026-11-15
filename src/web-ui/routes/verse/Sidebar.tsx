@@ -235,7 +235,7 @@ export function Sidebar(props: SidebarProps) {
         {/* clearReadSession (data/auth-store.ts): ends this window's read
             session — the cookie, the remembered token, the mutation hold,
             cached data and the composer's drafts — and shows the token screen
-            again. The chats themselves stay on the hub. Said in the label and
+            again. The chats themselves stay on Phantom. Said in the label and
             the tooltip, because "Disconnect" alone reads like a network blip.
             It throws away unsent drafts, so — like Settings ▸ Connection — it
             asks first; onDisconnect runs only from the dialog's red button. */}

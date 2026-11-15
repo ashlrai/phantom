@@ -9,7 +9,7 @@ surface changes shape at the same widths.
 | Layout | Window width | What you see |
 |--------|--------------|--------------|
 | compact | under 720px | The phone view. Navigation folds into a top strip, the topbar drops its keycap hint, and every panel stacks in one column. |
-| regular | 720px to 1919px | The laptop view. Sidebar on the left, the panel column beside it. |
+| regular | 720px to 1919px | The laptop view. Sidebar on the left (drag its right edge to resize, 200 to 480px, default 240px, saved per browser), the panel column beside it. |
 | wide | 1920px and up | The external-monitor view. The board centers and widens so panels spread across the screen instead of hugging one side. |
 
 There is nothing to configure. Open the console on any screen and it picks

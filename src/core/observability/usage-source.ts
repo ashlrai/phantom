@@ -80,49 +80,69 @@ const MAX_BYTES_PER_FILE = 256 * 1024 * 1024;
  * Read a file line-by-line with BOUNDED memory, calling cb for each non-empty
  * line. Instead of readFileSync + split (which loads the whole file as a string
  * AND a full line array — pathological for 100+ MB transcripts), we pull fixed
- * 64 KiB chunks via fs.readSync and split on newlines incrementally, carrying a
- * partial-line buffer across chunk boundaries. Peak memory is ~one chunk plus
- * one line, not the whole file. Never throws.
+ * 64 KiB chunks via fs.readSync and split on newline BYTES incrementally,
+ * carrying a partial line across chunk boundaries. Splitting bytes (not decoded
+ * chunks) keeps a multi-byte character that straddles two chunks intact, and
+ * yields the exact byte offset of every line end. Peak memory is ~one chunk
+ * plus one line.
+ *
+ * Starts at byte `start` (incremental re-reads of an append-only transcript).
+ * `complete` is false only for a trailing line with no newline yet. Returns
+ * the byte offset just past the last complete line, or null when the file
+ * could not be opened. Never throws.
  */
-function eachLine(filePath: string, cb: (line: string) => void): void {
+function eachLine(
+  filePath: string,
+  start: number,
+  cb: (line: string, complete: boolean) => void,
+): number | null {
   let fd: number;
   try {
     fd = fs.openSync(filePath, "r");
   } catch {
-    return; // unreadable — skip silently
+    return null; // unreadable — skip silently
   }
 
+  let consumed = start;
+  // Pieces of the line still waiting for its newline. Kept as a list so a
+  // multi-megabyte line costs one concat when it ends, not one per chunk.
+  let carry: Buffer[] = [];
   try {
     const chunk = Buffer.allocUnsafe(READ_CHUNK);
-    let pending = ""; // partial line carried across chunk boundaries
-    let bytesRead = 0;
+    let position = start;
 
     for (;;) {
       let n: number;
       try {
-        n = fs.readSync(fd, chunk, 0, READ_CHUNK, null);
+        n = fs.readSync(fd, chunk, 0, READ_CHUNK, position);
       } catch {
         break; // read error — stop, keep whatever we collected
       }
       if (n <= 0) break; // EOF
-      bytesRead += n;
+      position += n;
 
-      pending += chunk.toString("utf8", 0, n);
-
+      const view = chunk.subarray(0, n);
+      let from = 0;
       let nl: number;
-      while ((nl = pending.indexOf("\n")) !== -1) {
-        const line = pending.slice(0, nl).trim();
-        pending = pending.slice(nl + 1);
-        if (line.length > 0) cb(line);
+      while ((nl = view.indexOf(0x0a, from)) !== -1) {
+        const piece = view.subarray(from, nl);
+        const bytes = carry.length > 0 ? Buffer.concat([...carry, piece]) : piece;
+        carry = [];
+        const line = bytes.toString("utf8").trim();
+        from = nl + 1;
+        consumed = position - n + from;
+        if (line.length > 0) cb(line, true);
       }
+      // Copy: `chunk` is reused by the next read.
+      if (from < n) carry.push(Buffer.from(view.subarray(from)));
 
       // Bound total work per file.
-      if (bytesRead >= MAX_BYTES_PER_FILE) break;
+      if (position >= MAX_BYTES_PER_FILE) break;
     }
 
     // Flush any trailing line without a newline.
-    const last = pending.trim();
-    if (last.length > 0) cb(last);
+    const last = Buffer.concat(carry).toString("utf8").trim();
+    if (last.length > 0) cb(last, false);
   } finally {
     try {
       fs.closeSync(fd);
@@ -130,6 +150,7 @@ function eachLine(filePath: string, cb: (line: string) => void): void {
       // ignore
     }
   }
+  return consumed;
 }
 
 /** Extract a UsageEvent from a parsed JSONL line, or null if not applicable. */
@@ -231,6 +252,150 @@ function mergeRepeatedUsage(into: UsageEvent, repeat: UsageEvent): void {
 // Claude Code transcript ingestion
 // ---------------------------------------------------------------------------
 
+/** One usage-bearing transcript line, extracted with no time window. */
+interface ClaudeLineEvent {
+  /** `Date.parse(ts)`; NaN is kept and, like before, passes every window. */
+  tsMs: number;
+  key: string | null;
+  event: UsageEvent;
+}
+
+interface ClaudeFileMemo {
+  dev: number;
+  ino: number;
+  size: number;
+  mtimeMs: number;
+  /** Byte offset just past the last complete line already parsed. */
+  offset: number;
+  /** The bytes just before `offset`: an in-place rewrite will not match them. */
+  tail: Buffer;
+  lines: ClaudeLineEvent[];
+}
+
+const TAIL_FINGERPRINT_BYTES = 256;
+
+function readRange(filePath: string, start: number, length: number): Buffer | null {
+  if (length <= 0) return Buffer.alloc(0);
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(filePath, "r");
+    const out = Buffer.alloc(length);
+    const n = fs.readSync(fd, out, 0, length, start);
+    return n === length ? out : null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch { /* ignore */ }
+    }
+  }
+}
+
+/** Only an append to the bytes already parsed may be read incrementally. */
+function appendOnly(filePath: string, memo: ClaudeFileMemo, stat: fs.Stats): boolean {
+  if (memo.dev !== stat.dev || memo.ino !== stat.ino || stat.size < memo.size) return false;
+  // Same size, new mtime: rewritten in place, not appended.
+  if (stat.size === memo.size && stat.mtimeMs !== memo.mtimeMs) return false;
+  const tail = readRange(filePath, memo.offset - memo.tail.length, memo.tail.length);
+  return tail !== null && tail.equals(memo.tail);
+}
+
+/**
+ * Per-file memo of extracted usage. Every rollup/snapshot used to re-read
+ * every transcript touched in the window (3+ GB on a busy machine; 12 s of a
+ * 69 s dashboard snapshot, on every poll). Transcripts are append-only, so an
+ * unchanged file is reused as-is and a grown one is parsed from its last
+ * complete line; anything else (shrunk, replaced, different inode) is re-read
+ * from the start. Only the four token counts, model, timestamp and message key
+ * are retained — never content. Bounded by total retained lines.
+ */
+const CLAUDE_MEMO_MAX_LINES = 400_000;
+const claudeFileMemo = new Map<string, ClaudeFileMemo>();
+let claudeMemoLines = 0;
+/** One string per model name instead of one per line. */
+const modelNames = new Map<string, string>();
+
+function internModel(model: string): string {
+  const known = modelNames.get(model);
+  if (known !== undefined) return known;
+  if (modelNames.size < 1_024) modelNames.set(model, model);
+  return model;
+}
+
+function lineEvent(line: string, project: string): ClaudeLineEvent | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null; // malformed line — skip silently
+  }
+  const event = extractClaudeEvent(parsed, project, Number.NEGATIVE_INFINITY);
+  if (!event) return null;
+  event.model = internModel(event.model);
+  return { tsMs: new Date(event.ts).getTime(), key: claudeMessageKey(parsed), event };
+}
+
+/**
+ * Usage lines of one transcript, oldest first. `transient` holds a trailing
+ * line that has no newline yet: it counts now but is re-read next time.
+ */
+function claudeFileLines(
+  filePath: string,
+  stat: fs.Stats,
+  project: string,
+): { lines: ClaudeLineEvent[]; transient: ClaudeLineEvent[] } {
+  let memo = claudeFileMemo.get(filePath);
+  if (memo && memo.dev === stat.dev && memo.ino === stat.ino && memo.size === stat.size &&
+      memo.mtimeMs === stat.mtimeMs && memo.offset === stat.size) {
+    claudeFileMemo.delete(filePath);
+    claudeFileMemo.set(filePath, memo); // recency for eviction
+    return { lines: memo.lines, transient: [] };
+  }
+  if (!memo || !appendOnly(filePath, memo, stat)) {
+    if (memo) claudeMemoLines -= memo.lines.length;
+    memo = { dev: stat.dev, ino: stat.ino, size: 0, mtimeMs: 0, offset: 0, tail: Buffer.alloc(0), lines: [] };
+  }
+  const transient: ClaudeLineEvent[] = [];
+  const before = memo.lines.length;
+  const target = memo;
+  const consumed = eachLine(filePath, memo.offset, (line, complete) => {
+    const item = lineEvent(line, project);
+    if (!item) return;
+    (complete ? target.lines : transient).push(item);
+  });
+  claudeFileMemo.delete(filePath);
+  if (consumed === null) {
+    claudeMemoLines -= before;
+    return { lines: [], transient: [] };
+  }
+  const tailLength = Math.min(TAIL_FINGERPRINT_BYTES, consumed);
+  const tail = readRange(filePath, consumed - tailLength, tailLength);
+  if (tail === null) {
+    // Cannot fingerprint what was parsed: count it now, never resume from it.
+    claudeMemoLines -= before;
+    return { lines: memo.lines, transient };
+  }
+  memo.tail = tail;
+  memo.offset = consumed;
+  memo.size = stat.size;
+  memo.mtimeMs = stat.mtimeMs;
+  claudeMemoLines += memo.lines.length - before;
+  claudeFileMemo.set(filePath, memo);
+  while (claudeMemoLines > CLAUDE_MEMO_MAX_LINES && claudeFileMemo.size > 1) {
+    const [oldestPath, oldest] = claudeFileMemo.entries().next().value as [string, ClaudeFileMemo];
+    if (oldestPath === filePath) break;
+    claudeFileMemo.delete(oldestPath);
+    claudeMemoLines -= oldest.lines.length;
+  }
+  return { lines: memo.lines, transient };
+}
+
+/** Test seam: drop the transcript memo (keeps suites independent). */
+export function _resetClaudeUsageMemoForTest(): void {
+  claudeFileMemo.clear();
+  claudeMemoLines = 0;
+}
+
 function collectClaudeEvents(sinceMs: number): UsageEvent[] {
   const events: UsageEvent[] = [];
   // One response → one event, across every file: a resumed session can
@@ -246,6 +411,23 @@ function collectClaudeEvents(sinceMs: number): UsageEvent[] {
   } catch {
     return events; // ~/.claude/projects doesn't exist or isn't readable
   }
+
+  const take = (item: ClaudeLineEvent): void => {
+    if (item.tsMs < sinceMs) return; // outside the window
+    // Copy: memoized events are shared across calls and merged into below.
+    const event = { ...item.event };
+    if (item.key === null) {
+      events.push(event);
+      return;
+    }
+    const first = byMessage.get(item.key);
+    if (first) {
+      mergeRepeatedUsage(first, event);
+      return;
+    }
+    byMessage.set(item.key, event);
+    events.push(event);
+  };
 
   for (const dirName of projectDirs) {
     const dirPath = path.join(projectsRoot, dirName);
@@ -263,36 +445,18 @@ function collectClaudeEvents(sinceMs: number): UsageEvent[] {
       const filePath = path.join(dirPath, entry.name);
 
       // Performance: skip files that haven't been modified since our window
+      let stat: fs.Stats;
       try {
-        const stat = fs.statSync(filePath);
+        stat = fs.statSync(filePath);
         if (stat.mtimeMs < sinceMs) continue;
       } catch {
         continue;
       }
 
-      // Stream line-by-line; PRIVACY: parse only; never retain content
-      eachLine(filePath, (line) => {
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(line);
-        } catch {
-          return; // malformed line — skip silently
-        }
-        const event = extractClaudeEvent(parsed, project, sinceMs);
-        if (!event) return;
-        const key = claudeMessageKey(parsed);
-        if (key === null) {
-          events.push(event);
-          return;
-        }
-        const first = byMessage.get(key);
-        if (first) {
-          mergeRepeatedUsage(first, event);
-          return;
-        }
-        byMessage.set(key, event);
-        events.push(event);
-      });
+      // PRIVACY: parse only; never retain content
+      const { lines, transient } = claudeFileLines(filePath, stat, project);
+      for (const item of lines) take(item);
+      for (const item of transient) take(item);
     }
   }
 

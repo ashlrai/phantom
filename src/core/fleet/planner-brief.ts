@@ -11,8 +11,10 @@ import { inflightBriefLines } from './planner-inflight.js';
 import { orderCoverageBriefLines } from './planner-order-coverage.js';
 import type { WasteRiskProjection } from '../resources/waste-risk.js';
 import { wasteRiskBriefLines } from './planner-waste.js';
+import { planWriteBudget, writeBudgetBriefLines, writeBudgetLanesFromStatus, type WriteBudgetLaneInput } from './planner-write-budget.js';
 import { realSupplyBriefLines, type RealSupplyV1 } from './planner-real-supply.js';
 import { readSource, type Source } from './runs-parked-queue.js';
+import { isStatusAsk } from './status-ask.js';
 
 const MAX_BYTES = 8 * 1024 * 1024;
 /** Rendered byte budget for the MASON INBOX section; newest complete orders win. */
@@ -51,7 +53,6 @@ export interface PlannerBriefOptions {
   wasteRisk?: () => Promise<WasteRiskProjection[]>;
 }
 const lines = (text: string): string[] => text === '' ? [] : text.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n');
-const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /** Build a fresh, scrubbed brief; unavailable sources are recorded instead of throwing. */
 export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
@@ -80,18 +81,23 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
     overReadWindow(MASON_INBOX, MAX_BYTES),
   ]);
   const laneLines: string[] = [];
+  const writeBudgetLanes: WriteBudgetLaneInput[] = [];
+  let statusReadable = false;
   try {
     const parsed: unknown = JSON.parse(status);
-    if (!record(parsed) || !record(parsed.lanes)) throw new Error('invalid lanes');
-    for (const [lane, row] of Object.entries(parsed.lanes)) {
-      if (!record(row)) throw new Error('invalid lane');
-      const count = (key: string): number => typeof row[key] === 'number' && Number.isFinite(row[key]) ? row[key] : 0;
-      laneLines.push(`${lane} running ${count('running')} target ${count('target')} queued ${count('queued')} held ${row.held ? 'True' : 'False'}`);
+    for (const input of writeBudgetLanesFromStatus(parsed)) {
+      laneLines.push(`${input.lane} running ${input.running} target ${input.target} queued ${input.queued} held ${input.held ? 'True' : 'False'}`);
+      writeBudgetLanes.push(input);
     }
+    statusReadable = true;
   } catch {
     laneLines.length = 0;
+    writeBudgetLanes.length = 0;
     if (!missing.includes('queue/status.json')) missing.push('queue/status.json');
   }
+  // Free slots minus queued, computed once so passes stop re-deriving it.
+  const writeBudgetPlan = statusReadable ? planWriteBudget(writeBudgetLanes, { claudeLane: claude.trim() }) : null;
+  const writeBudgetLines = writeBudgetPlan === null ? ['(unavailable: queue/status.json)'] : writeBudgetBriefLines(writeBudgetPlan);
   // Every distinct valid id in the bounded ledger tail is used so the planner
   // never reissues work; malformed rows are counted and their cells ignored.
   const ledgerState = states.get(INGESTED) ?? 'missing';
@@ -139,8 +145,22 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
     const picked: string[] = [];
     let used = 0;
     let omitted = 0;
+    let statusCount = 0;
+    let newestStatus = '';
+    const easternTime = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
     for (let i = entries.length - 1; i >= 0; i--) {
       const entry = entries[i]!;
+      const channel = INBOX_CHANNEL_LINE.test(entry.heading);
+      const body = [channel ? entry.heading.replace(/^\S+\s+\[src:[^\]]+\]\s+/, '') : '', ...entry.body].join('\n');
+      if (isStatusAsk(body)) {
+        statusCount++;
+        const time = channel
+          ? easternTime.format(new Date(entry.heading.split(/\s/, 1)[0]!))
+          : entry.heading.slice(3, 19);
+        if (time > newestStatus) newestStatus = time;
+        ackEntries.unshift([entry.heading, ...entry.body].join('\n'));
+        continue;
+      }
       let complete = true;
       let rendered = [entry.heading, ...entry.body].join('\n');
       let bytes = Buffer.byteLength(rendered) + 1;
@@ -156,8 +176,9 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
       if (complete) ackEntries.unshift([entry.heading, ...entry.body].join('\n'));
     }
     if (omitted) inboxBody.push(`(${omitted} older entr${omitted === 1 ? 'y' : 'ies'} omitted — over the ${INBOX_BUDGET_LABEL} inbox budget)`);
+    if (statusCount) inboxBody.push(`(${statusCount} status ask(s) omitted; the channel auto-answers them: ${newestStatus} ET)`);
     inboxBody.push(...picked);
-    if (!picked.length && !fragment && !inboxCut && !omitted) inboxBody.push('(no entries)');
+    if (!picked.length && !fragment && !inboxCut && !omitted && !statusCount) inboxBody.push('(no entries)');
   }
   const inboxLineCount = inboxBody.reduce((total, part) => total + part.split('\n').length, 0);
   let merges: string[] = [];
@@ -226,6 +247,7 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
     ...(opts.note !== undefined ? [`NOTE FROM TICK: ${note}`] : []),
     `## CLAUDE LANE: ${claude.trim() || 'unknown'}`,
     '## LANES', ...laneLines,
+    '## WRITE BUDGET (jobs to write now per lane: free slots minus queued; devin and codex-local ignore queued)', ...writeBudgetLines,
     ...(wasteRisk === null ? [] : ['## WASTE RISK (lanes projected to leave capacity unused at reset; prefer them)', ...wasteRisk]),
     ...(realSupply === null ? [] : ['## REAL SUPPLY', ...realSupply]),
     '## USED IDS', ...usedIdLines,
@@ -237,7 +259,7 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
     '', 'Now write the job files in your current directory, then stop. Output a one-line summary.',
   ].join('\n'));
   await acknowledgeInboxEntries(ackEntries, root, new Date(opts.now ?? Date.now()).toISOString(), opts.inboxAckSenders);
-  return { v: 1 as const, text, bytes: Buffer.byteLength(text), sections: { usedIds: ids.length, usedTitles: recentTitles.length, lanes: laneLines.length, inboxLines: inboxLineCount, merges: merges.length, inFlight: inFlight.length, ...(realSupply === null ? {} : { realSupply: realSupply.length }), ...(wasteRisk === null ? {} : { wasteRisk: wasteRisk.length }), ...(orderCoverage === null ? {} : { orderCoverage: orderCoverage.length }) }, missing };
+  return { v: 1 as const, text, bytes: Buffer.byteLength(text), sections: { usedIds: ids.length, usedTitles: recentTitles.length, lanes: laneLines.length, writeBudget: writeBudgetPlan?.total ?? null, inboxLines: inboxLineCount, merges: merges.length, inFlight: inFlight.length, ...(realSupply === null ? {} : { realSupply: realSupply.length }), ...(wasteRisk === null ? {} : { wasteRisk: wasteRisk.length }), ...(orderCoverage === null ? {} : { orderCoverage: orderCoverage.length }) }, missing };
 }
 
 /** Publish only a prompt the planner's bounded input reader can consume. */

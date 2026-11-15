@@ -172,7 +172,7 @@ describe('renderFrame — pure and deterministic', () => {
 
 describe('renderFrame — respects cols width', () => {
   const COLS_CASES = [40, 80, 120, 200] as const;
-  const TABS: TuiTab[] = ['overview', 'runs', 'swarms', 'pulse', 'mcp'];
+  const TABS: TuiTab[] = ['overview', 'runs', 'swarms', 'pulse', 'mcp', 'sessions'];
 
   for (const cols of COLS_CASES) {
     for (const tab of TABS) {
@@ -199,7 +199,7 @@ describe('renderFrame — respects cols width', () => {
 // ---------------------------------------------------------------------------
 
 describe('renderFrame — never throws at any width', () => {
-  const TABS: TuiTab[] = ['overview', 'runs', 'swarms', 'pulse', 'mcp'];
+  const TABS: TuiTab[] = ['overview', 'runs', 'swarms', 'pulse', 'mcp', 'sessions'];
   // tokens > 0 is required to exercise the Pulse token bar (the throw site).
   const snap = makeSnapshot({
     activity: { sessions: 8, tokens: 42000, estCostUsd: 1.23, commits: 15 },
@@ -736,5 +736,137 @@ describe('renderFrame — empty data edge cases', () => {
     for (const line of lines) {
       expect(line.length).toBeLessThanOrEqual(20);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sessions tab — dispatcher agent sessions (read-only, value-blind)
+// ---------------------------------------------------------------------------
+
+type SessionsView = NonNullable<DashboardSnapshot['sessions']>;
+type SessionRow = SessionsView['sessions'][number];
+
+function makeSession(overrides: Partial<SessionRow> = {}): SessionRow {
+  return {
+    job: 'RQ-ALPHA-1',
+    repo: 'phantom',
+    lane: 'codex-personal',
+    tier: 'work',
+    status: 'running',
+    model: null,
+    batchId: null,
+    pid: null,
+    live: 'unknown',
+    exitCode: null,
+    timedOut: false,
+    enqueuedAt: '2026-06-08T09:40:00.000Z',
+    claimedAt: '2026-06-08T09:45:00.000Z',
+    launchedAt: '2026-06-08T09:48:00.000Z',
+    startedAt: '2026-06-08T09:48:00.000Z',
+    finishedAt: null,
+    elapsedSeconds: 720,
+    durationSeconds: null,
+    queueWaitSeconds: 300,
+    tokensTotal: null,
+    wallSeconds: null,
+    diffLines: null,
+    outcome: null,
+    prUrl: null,
+    ...overrides,
+  };
+}
+
+function makeSessionsView(overrides: Partial<SessionsView> = {}): SessionsView {
+  return {
+    schema: 'fleet.sessions.v1',
+    generatedAt: '2026-06-08T10:00:00.000Z',
+    runsDirPresent: true,
+    sourceState: 'healthy',
+    sources: { runDir: 'healthy', ready: 'healthy', claimed: 'missing', precheck: 'missing', status: 'healthy', metrics: 'missing', live: 'healthy' },
+    dispatcher: { lastTick: '2026-06-08T09:59:58.000Z', paused: false, tickAgeSeconds: 12 },
+    sessions: [makeSession()],
+    recent: [],
+    counts: { queued: 3, parked: 0, launching: 0, running: 1, publishing: 0, exited: 0, stale: 0 },
+    malformed: 0,
+    truncated: false,
+    ...overrides,
+  };
+}
+
+const sessionsState = { ...DEFAULT_STATE, tab: 'sessions' as TuiTab };
+
+describe('renderFrame — sessions tab', () => {
+  it('renders job, repo, lane, status and elapsed columns', () => {
+    const snap = makeSnapshot({ sessions: makeSessionsView() });
+    const frame = stripAnsi(renderFrame(snap, sessionsState));
+    expect(frame).toContain('Sessions — dispatcher');
+    expect(frame).toContain('RQ-ALPHA-1');
+    expect(frame).toContain('phantom');
+    expect(frame).toContain('codex-personal');
+    expect(frame).toContain('running');
+    expect(frame).toContain('12m'); // elapsedSeconds 720
+    expect(frame).toContain('queued 3');
+    expect(frame).toContain('tick 12s ago');
+  });
+
+  it('shows PAUSED from status.json and warns on degraded sources', () => {
+    const view = makeSessionsView({
+      sourceState: 'degraded',
+      dispatcher: { lastTick: '2026-06-08T09:59:58.000Z', paused: true, tickAgeSeconds: 12 },
+    });
+    const frame = stripAnsi(renderFrame(makeSnapshot({ sessions: view }), sessionsState));
+    expect(frame).toContain('PAUSED');
+    expect(frame).toContain('Partial session data');
+    expect(frame).toContain('RQ-ALPHA-1');
+  });
+
+  it('renders a graceful fallback when the snapshot has no sessions section', () => {
+    const frame = stripAnsi(renderFrame(makeSnapshot(), sessionsState));
+    expect(frame).toContain('No session data in this snapshot.');
+  });
+
+  it('renders empty-state text for missing and present-but-empty runs dirs', () => {
+    const missing = stripAnsi(renderFrame(
+      makeSnapshot({ sessions: makeSessionsView({ sourceState: 'missing', runsDirPresent: false, sessions: [] }) }),
+      sessionsState,
+    ));
+    expect(missing).toContain('No dispatcher session state found.');
+    expect(missing).toContain('runs dir absent');
+
+    const empty = stripAnsi(renderFrame(
+      makeSnapshot({ sessions: makeSessionsView({ sessions: [] }) }),
+      sessionsState,
+    ));
+    expect(empty).toContain('(no agent sessions)');
+  });
+
+  it('highlights the selected row with reverse video', () => {
+    const view = makeSessionsView({
+      sessions: [
+        makeSession({ job: 'RQ-ONE' }),
+        makeSession({ job: 'RQ-TWO', status: 'queued', elapsedSeconds: 60 }),
+      ],
+    });
+    const frame = renderFrame(makeSnapshot({ sessions: view }), { ...sessionsState, selected: 1 });
+    const idx = frame.indexOf('RQ-TWO');
+    expect(idx).toBeGreaterThan(-1);
+    expect(frame.lastIndexOf('\x1b[7m', idx)).toBeGreaterThan(-1);
+    expect(frame.indexOf('\x1b[7m', idx)).toBeLessThan(idx);
+  });
+
+  it('renders null repo/lane as a dash, a finished recent tail and truncated/malformed markers', () => {
+    const view = makeSessionsView({
+      sessions: [makeSession({ job: 'RQ-NULLS', repo: null, lane: null, tier: null })],
+      recent: [makeSession({ job: 'RQ-DONE-1', status: 'finished', elapsedSeconds: null, durationSeconds: 600, finishedAt: '2026-06-08T09:58:00.000Z' })],
+      malformed: 2,
+      truncated: true,
+    });
+    const frame = stripAnsi(renderFrame(makeSnapshot({ sessions: view }), sessionsState));
+    expect(frame).toContain('RQ-NULLS');
+    expect(frame).toContain('RQ-DONE-1');
+    expect(frame).toContain('finished');
+    expect(frame).toContain('10m'); // durationSeconds 600
+    expect(frame).toContain('list truncated');
+    expect(frame).toContain('2 malformed rows skipped');
   });
 });

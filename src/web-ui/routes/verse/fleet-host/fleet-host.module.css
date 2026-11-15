@@ -18,3 +18,4 @@
 .line[data-tone='warn'] { color: var(--status-warning-fg); }
 .line[data-tone='bad'] { color: var(--status-danger-fg); }
 .muted { margin: 0; color: var(--text-tertiary); }
+.metric[data-severe='true'] { border-width: 2px; font-weight: 600; }

@@ -957,6 +957,8 @@ export interface LeaderRunDeps {
    * the answer labels the memo and never reaches a gate. Absent = no advice.
    */
   adviseActionClass?: LeaderActionAdvisor;
+  /** Release-live announcement (release-live-announce.ts); absent in injected tests. */
+  announceRelease?: () => Promise<unknown>;
 }
 
 export async function loadDefaultLeaderRunDeps(cfg: AshlrConfig): Promise<LeaderRunDeps> {
@@ -987,6 +989,7 @@ export async function loadDefaultLeaderRunDeps(cfg: AshlrConfig): Promise<Leader
     seat,
     cloudBacklog: { append: (items) => cloudBacklog.appendUserBacklogItems(items) },
     adviseActionClass: defaultLeaderActionAdvisor(cfg),
+    announceRelease: () => import('../fleet/release-live-announce.js').then(m => m.runDefaultReleaseAnnouncement()),
     sources: {
       outcomes: () => apply.outcomes!.evidence(),
       executionFeedback: (nowMs) => {
@@ -1496,6 +1499,12 @@ export async function leaderTick(deps: LeaderRunDeps, opts: { awaitRun?: boolean
     void import('./leader-drive.js')
       .then((drive) => drive.runLeaderDriveIfDue(deps))
       .catch(() => undefined);
+  }
+  // One post per new live release; an error is logged and never fails the tick.
+  if (deps.announceRelease) {
+    void Promise.resolve().then(deps.announceRelease).catch((error: unknown) => {
+      console.error(`leader tick: release announcement failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    });
   }
   let graded: LeaderOutcomeRecord[] = [];
   try {

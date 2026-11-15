@@ -63,6 +63,7 @@ interface TeamEvent { v: 1; id: string /* <ms36>-<rand> */; ts: string; team: st
 | `message.posted` | `{channel, text}` | last 50 kept in view |
 | `claim.acquired` / `claim.released` | `{target:{repo,branch?,path?}, reason, expiresAt}` / `{claimId}` | lease, TTL 1 min–24 h (default 2 h); conflicts refused at write time under the lock |
 | `handoff.requested` | `{to?, title, detail, action?, contextRefs[]}` | `open`, or `awaiting-approval` if `action` is consequential |
+| `access.requested` | `{request: {type, ...}, note?}` | pending approval for an agent-filed workspace mutation (`member.invited`, `member.role-changed`, `repo.linked`) |
 | `approval.requested` / `approval.decided` | `{handoffId}` / `{approvalId, decision}` | only **human owner/admin** decisions apply |
 | `handoff.accepted` / `completed` / `declined` | `{handoffId, result?}` | addressee (or anyone if unaddressed) accepts; only assignee completes |
 | `context.added` | `{title, text, source, scope, tags}` | shared context entry with provenance |
@@ -86,6 +87,20 @@ phm team link ashlrai/phantom --team acme
 phm audit --team acme --json
 phm audit --team acme --action member.role-changed --limit 20
 ```
+
+Agents cannot run these mutations directly. Instead an agent files a
+structured request with the `phm_team_access_request` MCP tool (`invite-member`,
+`link-repo` or `change-role`), which appends `access.requested` and parks as a
+pending approval. A human owner/admin decides it with the same
+`phm team approve|deny` used for handoffs; an approval applies the requested
+mutation through the identical `updateWorkspace` path, so the resulting
+`member.invited` / `member.role-changed` / `repo.linked` event carries the
+approver as its actor and the approval id as provenance. Requests are
+validated up front (a mutation that can never apply is rejected, not queued),
+identical pending requests dedupe, and a request that went stale by decision
+time stays pending for a deny rather than half-applying. Member removal stays
+human-initiated; there is no request op for it. Agents may request, never
+decide.
 
 Invites add local workspace membership; they send no email or external message.
 Workspace mutations derive the caller from the local human identity, ignore
@@ -114,6 +129,7 @@ the same OS user can edit the file; this is not tamper-proof remote storage.
 | `phm_team_view` | read | members/presence, claims, handoffs, approvals, messages (`since` cursor = subscription by polling) |
 | `phm_team_claim` | append | acquire/release repo/branch/path lease |
 | `phm_team_handoff` | append | request/accept/complete/decline |
+| `phm_team_access_request` | append | file a workspace access request (invite member, link repo, change role); a human owner/admin decides |
 | `phm_team_context_add` | append | scoped context with provenance |
 | `phm_team_context_get` | read | compact cited context pack under `budgetTokens` |
 
@@ -123,6 +139,7 @@ capped at 32 KB.
 
 Human CLI: `phm team view | join | approve | deny | claim | release | say`.
 Use `--team <id>` consistently, including when deciding an approval.
+`approve|deny` decides both consequential handoffs and agent access requests.
 
 `phm team view` labels each member's role and approval responsibility, explains
 presence, points to scoped shared-context tools, and suggests a next action:
@@ -179,7 +196,7 @@ context pack alone cannot establish readiness.
 |---|---|
 | secrets in shared context or messages | every event is scrubbed with the shared secret detector and **refused** if anything credential-shaped is present; use `phm_` references from Phantom Secrets |
 | client data crossing clients | owner-scope filter on retrieval; client ≠ client, personal never shared |
-| agent self-approving deploys/rotations | approvals apply only from `kind: human` owner/admin; no approve tool over MCP |
+| agent self-approving deploys/rotations/access grants | approvals apply only from `kind: human` owner/admin; no approve tool over MCP |
 | role escalation | members cannot promote themselves; only owner/admin grant roles |
 | collisions between fleets | write-time claim conflict check under an exclusive lock |
 | torn/forged lines | parser skips unknown/invalid lines; file mode 0600 |
@@ -189,7 +206,8 @@ context pack alone cannot establish readiness.
 ## 7. Roadmap
 
 * **Phase 1 (shipped):** protocol, local bus, claims, handoffs + approvals,
-  roles, scoped context with compression, 7 MCP tools, `phm team` CLI, tests.
+  agent-filed workspace access requests, roles, scoped context with
+  compression, 8 MCP tools, `phm team` CLI, tests.
 * **Phase 2:** self-hosted sync service (signed events, per-team ACL, SSE
   subscription stream + outbound webhooks), Phantom console team panel (one primary
   action: "Review approvals"), Pulse bridge emits team events as OTLP, claim
@@ -213,7 +231,9 @@ A **leader agent** is a team member with role `leader` (an agent role that can
   multiple Telegram chats map to multiple teams/departments;
 * grants and revokes agent access via `access.requested` → human
   `approval.decided` → `access.granted` / `access.revoked` events (grant =
-  member + channel + capability set + expiry);
+  member + channel + capability set + expiry). `access.requested` is shipped
+  today for workspace mutations (§3); channel grants would extend it with
+  `access.granted` / `access.revoked`, not replace it;
 * maintains the org chart: `department.created {id, name, mission, leadId}` and
   `role.assigned {memberId, departmentId, title}`, so a largely agent-run
   company has explicit departments (Engineering, Growth, Ops, Context &
@@ -332,3 +352,26 @@ narrow or widen it. Everything else runs without ceremony.
 3. Whether `merge` should stay consequential for green, reviewed PRs.
 4. Which Telegram chats map to which teams/departments, and who approves leader-agent access grants.
 5. Steward default quotas, and whether to schedule `--apply` automatically.
+
+## Local workspace invitations
+
+With `phm serve --allow-dispatch`, POST `/api/teams/<team>/invites` with
+`{}` (or `{"ttlMs":3600000}`) to create an invitation. The caller must be the
+locally derived human owner/admin of an existing team. Both invitation routes
+require the normal `X-Ashlr-Token` mutation authority and JSON content type;
+a read session or invitation alone does not grant mutation authority.
+
+The response contains `link`, a fragment route relative to the console root:
+`#/teams/<team>/accept?invite=<capability>`, plus `team` and `expiresAt` (epoch
+milliseconds). The default and maximum lifetime is seven days. Treat this link
+as a capability; it is returned once, never stored in the log, and kept out of
+HTTP request URLs by hash routing. Only its SHA-256 digest is persisted.
+
+The accept screen requires explicit confirmation and an unlocked mutation
+session. POST `/api/teams/<team>/invites/accept` with `{"token":"<capability>"}`
+joins the locally derived human as a member. Expired, previously redeemed,
+unknown and other-team capabilities are rejected without membership changes.
+Redemption and membership use one append under the team lock, so a restart
+cannot reopen an already consumed invitation. Existing members cannot redeem
+a link. Invitations do not grant admin/owner roles or introduce remote account
+authentication: the existing same-OS-user trust boundary still applies.

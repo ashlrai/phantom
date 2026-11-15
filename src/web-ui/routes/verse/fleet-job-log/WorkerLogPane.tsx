@@ -20,7 +20,8 @@ import { jobChangesQuery } from './worker-changes-queries.js';
 import { changesHeadline, sortFiles } from './worker-changes-model.js';
 import { findMatches, matchLabel, nextMatch } from './log-find-model.js';
 import { jobTextQuery } from './job-text-queries.js';
-import { jobStopEligible, postJobStop, STOP_CONFIRM_MS, stopConfirmLabel, stopFailureText, stopOutcomeText } from './job-stop-action.js';
+import { jobStopEligible, STOP_CONFIRM_MS, stopConfirmLabel } from './job-stop-action.js';
+import { useJobStop } from './use-job-stop.js';
 import { livenessText, livenessTone, newLinesLabel, trackGrowth, type TrackedLog } from './log-liveness-model.js';
 import styles from './worker-log.module.css';
 
@@ -88,21 +89,15 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
     tracked.current.value = { ...tracked.current.value, unseenLines: 0 };
     setLiveness(tracked.current.value);
   };
-  const [stop, setStop] = useState<{ armedAt: number | null; busy: boolean; text: string }>({ armedAt: null, busy: false, text: '' });
-  useEffect(() => { setStop({ armedAt: null, busy: false, text: '' }); }, [job]);
-  const stopArmed = stop.armedAt !== null && now - stop.armedAt < STOP_CONFIRM_MS;
+  const [armedAt, setArmedAt] = useState<number | null>(null);
+  useEffect(() => { setArmedAt(null); }, [job]);
+  const stop = useJobStop(job);
+  const stopArmed = armedAt !== null && now - armedAt < STOP_CONFIRM_MS;
   const pressStop = async () => {
     if (stop.busy) return;
-    if (!stopArmed) { setStop((prev) => ({ ...prev, armedAt: Date.now(), text: '' })); return; }
-    setStop((prev) => ({ ...prev, armedAt: null, busy: true }));
-    try {
-      const result = await postJobStop(job);
-      setStop((prev) => ({ ...prev, busy: false, text: stopOutcomeText(result) }));
-      refreshRuns();
-      if (valid) refreshDetail();
-    } catch (error) {
-      setStop((prev) => ({ ...prev, busy: false, text: stopFailureText(error) }));
-    }
+    if (!stopArmed) { setArmedAt(Date.now()); stop.clear(); return; }
+    setArmedAt(null);
+    if (await stop.run()) { refreshRuns(); if (valid) refreshDetail(); }
   };
   const [search, setSearch] = useState('');
   const [selectedMatch, setSelectedMatch] = useState<number | null>(null);

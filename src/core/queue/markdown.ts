@@ -151,6 +151,10 @@ function parseJob(line: string, parsed: ParsedLine & { id: string }): { job: Que
   if (prUrl && /^https:\/\/[^\s]+$/.test(prUrl)) job.prUrl = prUrl;
   const reason = field('reason') ?? field('blocked[-_]?reason') ?? field('blocked');
   if ((parsed.statusWord === 'BLOCKED' || parsed.statusWord === 'HOLD') && (reason || parsed.preamble)) job.blockedReason = reason ?? parsed.preamble;
+  const parent = routing('parent');
+  if (parent !== undefined && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(parent) && parent !== job.id) job.parent = parent;
+  const depth = routing('depth');
+  if (depth !== undefined && /^\d{1,2}$/.test(depth)) job.depth = Number(depth);
   return { job, selfDep };
 }
 
@@ -190,7 +194,7 @@ export function importMarkdown(text: string): QueueDocument {
 
 const metadataFor = (job: QueueJob): string => job.claims.length || job.prUrl || job.blockedReason
   ? ` <!-- queue.v1 ${JSON.stringify({ claims: job.claims, prUrl: job.prUrl, blockedReason: job.blockedReason }).replace(/--/g, '\\u002d\\u002d')} -->` : '';
-const lineFor = (job: QueueJob): string => `- ${job.status} ${job.id} (priority=${job.priority}, pool=${job.pool}, tier=${job.tier}, repo=${job.repo}${job.deps.length ? `, deps=${job.deps.join('|')}` : ''}): ${job.scope.replace(/\r?\n/g, ' ')} Acceptance: ${job.acceptance.replace(/\r?\n/g, ' ')}${metadataFor(job)}`;
+const lineFor = (job: QueueJob): string => `- ${job.status} ${job.id} (priority=${job.priority}, pool=${job.pool}, tier=${job.tier}, repo=${job.repo}${job.deps.length ? `, deps=${job.deps.join('|')}` : ''}${job.parent !== undefined ? `, parent=${job.parent}` : ''}${job.depth !== undefined ? `, depth=${job.depth}` : ''}): ${job.scope.replace(/\r?\n/g, ' ')} Acceptance: ${job.acceptance.replace(/\r?\n/g, ' ')}${metadataFor(job)}`;
 /** Byte-exact for unchanged imports. Edits retain all original prose and fields. */
 export function exportMarkdown(doc: QueueDocument): string {
   validateQueue(doc);

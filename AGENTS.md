@@ -32,7 +32,7 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 - This repo's `.mcp.json` declares five companion MCP servers: `phantom-secrets`, `locus`, `lexicon`, `stack`, `ashlr` (Ashlr.AI Plugin). What each is for, its limits, and how to approve it: [docs/AGENT-TOOLCHAIN.md](docs/AGENT-TOOLCHAIN.md).
 - In a Phantom cloud task, list the companion tools you actually called in the report's `toolsUsed` field (an empty list if none); `phm cloud list` shows it as the session's claim.
 - Team org: `phm org show --json`, `phm org join --member <id> --machine <id> --lane <lane>[=<share>] --json` (each co-founder on their own machine; opt-in per lane, no auth read, nothing sent) and `phm org plan --json` (proposes queue assignments and roles within each member's contributed limits from the router's usage and reset data; the leader reads it each planning pass). Private data is never pooled; spending stays with each member. See [docs/AGENT-NETWORK.md](docs/AGENT-NETWORK.md#team-org).
-- Team membership: `phm team invite <gh-user>`, `phm team join <invite>` and `phm team remove <gh-user>` are human-terminal commands for owners/admins and invitees (agent processes are refused); an invite grants membership only and never credentials. See [docs/TEAM.md](docs/TEAM.md#invite-join-and-remove-a-teammate).
+- Team membership: `phm team invite <gh-user>`, `phm team join <invite>` and `phm team remove <gh-user>` are human-terminal commands for owners/admins and invitees (agent processes are refused); an invite grants membership only and never credentials. Agents needing access changes file them with the `phm_team_access_request` MCP tool (invite-member, link-repo or change-role); a human owner/admin decides with `phm team approve|deny`. See [docs/TEAM.md](docs/TEAM.md#invite-join-and-remove-a-teammate).
 
 ## Agents may
 - Create branches, commit, and open pull requests.
@@ -355,3 +355,18 @@ enrollment remains a manual config change. See [repo ranking](docs/REPO-RANK.md)
 ## Import scheduled routines
 
 Preview a local routines JSON array with `ashlr automations import --from routines.json --dry-run --json`, then import with `ashlr automations import --from routines.json --json`. Imports start disabled and skip existing names. See [Automations](docs/VERSE.md#automations-315) for the format and schedule restrictions.
+
+Tier-1 import diagnosis: `npx tsx scripts/tier1-why.ts <file> [--json]` prints a shortest runtime chain or unreachable. See [Tier-1 why](docs/TIER1-WHY.md). Keep fleet apps outside Tier-1; run `test/tier1-apps-boundary.test.ts`. Snapshot regeneration remains Mason-only.
+
+## Portable agent profiles
+
+See [agent profiles](docs/AGENT-PROFILES.md) for strict TOML metadata, version pins and restrictive send policy. Read profiles with `phm agents list|show|validate|versions --json`. Profiles grant no transport or spending authority; the email outbox runs outside sends through `checkSend`, which can only ever draft or deny.
+
+- [oMLX dispatcher lane](contrib/mac/README.md): memory-capped `omlx` pool, `127.0.0.1` health only, `phm lanes --json`; Security combined RETUNE pin required before installation.
+
+## App drive
+
+`phm drive <devin|claude|codex|phantom> <start|status|send-prompt|read-result> --json`
+uses enrolled CLI/API seats through authenticated numeric loopback. See
+[App drive](docs/APP-DRIVE.md) for examples and DESK integration limits.
+Security 606e84d2 must pin new loopback-client changes before merge.

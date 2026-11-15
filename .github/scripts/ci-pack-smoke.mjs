@@ -10,6 +10,7 @@ import { closeSync, constants, fstatSync, lstatSync, mkdtempSync, openSync, read
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createBuildIdentity } from '../../scripts/build-identity.mjs';
+import { sourceDrift } from '../../scripts/release-isolated-tree.mjs';
 
 // Bootstrap capture cannot execute compiled helpers before source admission.
 // Keep this closed descriptor identical to the qualified core profile API.
@@ -42,11 +43,10 @@ function source(root, eventSha) {
   const identity = createBuildIdentity({ repoRoot: root });
   assert.equal(identity.provenance, 'git');
   assert.equal(identity.revision, eventSha, 'checkout differs from event SHA');
-  if (identity.dirty) {
-    const status = execFileSync('git', ['status', '--porcelain', '--untracked-files=normal'],
-      { cwd: root, encoding: 'utf8', timeout: 15000 });
-    assert.fail(`source changed after build:\n${status}`);
-  }
+  // Strict pinned-commit drift: tracked bytes/modes (worktree and index),
+  // unignored files and hidden index flags. git status alone misses the last.
+  const drift = sourceDrift(root, eventSha);
+  if (drift.length || identity.dirty) assert.fail(`source changed after build:\n${drift.join('\n')}`);
   assert.equal(identity.dirty, false, 'source cleanliness unavailable');
   regular(join(root, 'package.json'), 1024 * 1024);
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));

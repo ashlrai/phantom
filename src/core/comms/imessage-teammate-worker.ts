@@ -10,9 +10,10 @@ import { ingestIMessages } from './imessage-inbox-bridge.js';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { ensurePrivateDirectory } from '../verse/preferences.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
+import { buildTeammateOperationalContext } from './teammate-context-evidence.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { scrubSecrets } from '../util/scrub.js';
-import { classifyTeammateIntent, markTeammateTextsAnswered, readTeammateTexts } from './imessage-teammate-inbox.js';
+import { classifyTeammateIntent, markTeammateTextsAnswered, readRows, readTeammateTexts } from './imessage-teammate-inbox.js';
 import { approvedTeammateHandle, reconcileTeammateMessage, sendApprovedTeammateMessage, type TeamMessageReceipt, type TeamTransportOptions } from './imessage-teammate-transport.js';
 
 interface Reply { rowid: number; senderId: string; state: 'claimed' | 'drafted' | 'sending' | 'sent' | 'suppressed'; at: number; claimUntil: number; text?: string; attemptedAt?: number; receipt?: TeamMessageReceipt }
@@ -41,15 +42,8 @@ function read(file: string, anchor: string, maxBytes: number): string | null {
 }
 
 /** Bounded projections of the existing leader/fleet records, not another context store. */
-export function teammateOperationalContext(runsDir: string): string {
-  const parts: string[] = [];
-  for (const relative of ['leader/VISION.md', 'supervisor/status-main-guardian.md', 'queue/status.json']) {
-    try { const text = read(join(runsDir, relative), runsDir, 128 * 1024); if (text) parts.push(`${relative}:\n${text.slice(0, 1200)}`); }
-    catch { parts.push(`${relative}: unavailable`); }
-  }
-  const source = process.env.PHANTOM_COMMS_SOURCE_SHA ?? 'unknown';
-  const desktop = process.env.PHANTOM_COMMS_DESKTOP_VERSION ?? 'unknown';
-  return scrubSecrets(`Observation time: ${new Date().toISOString()}\nResponder source: ${source}\nInstalled desktop version: ${desktop}\n${parts.join('\n')}`).slice(0, 4000);
+export function teammateOperationalContext(runsDir: string, now: () => number = Date.now): string {
+  return buildTeammateOperationalContext(runsDir, now());
 }
 
 /** Audited text-only transport: private bodies have no cloud route or tool authority. */
@@ -90,6 +84,35 @@ export async function runTeammateResponder(cfg: AshlrConfig, options: TeammateWo
     const inbox = readTeammateTexts({ runsDir: runs, now });
     if (inbox.sourceState === 'degraded') return report;
     store.replies = store.replies.filter(row => !(['sent', 'suppressed'].includes(row.state) && now() - row.at > 7 * 86400000));
+    // A full store of conclusively settled work must not block the next reply.
+    // Only sent/suppressed rows whose rowid carries a durable answered marker
+    // in teammates.jsonl are evictable, oldest first and only as many as needed;
+    // claimed/drafted/sending rows keep their text and attempt evidence so an
+    // ambiguous send is reconciled later, never evicted or resent.
+    let answeredRowids: Set<number> | undefined;
+    const answeredSet = (): Set<number> => {
+      if (answeredRowids === undefined) {
+        answeredRowids = new Set<number>();
+        try {
+          for (const r of readRows(runs).rows) {
+            if (typeof r.answered === 'number' && Number.isSafeInteger(r.answered) && r.answered > 0) answeredRowids.add(r.answered);
+          }
+        } catch { answeredRowids = new Set<number>(); }
+      }
+      return answeredRowids;
+    };
+    const reclaimSettled = (): boolean => {
+      if (store.replies.length < 256) return true;
+      const answered = answeredSet();
+      const evictable = store.replies
+        .filter(row => (row.state === 'sent' || row.state === 'suppressed') && answered.has(row.rowid))
+        .sort((a, b) => a.at - b.at);
+      for (const victim of evictable) {
+        if (store.replies.length < 256) break;
+        store.replies.splice(store.replies.indexOf(victim), 1);
+      }
+      return store.replies.length < 256;
+    };
     // Fair scan rounds: each round sweeps every unanswered text at or below the
     // rowid ceiling frozen when the round opened, oldest rowid first, across as
     // many passes as the per-pass bounds take. Fresh arrivals rank after the
@@ -126,7 +149,7 @@ export async function runTeammateResponder(cfg: AshlrConfig, options: TeammateWo
       if (processed++ >= 3) { report.examined--; scanned = checkpoint; break; }
       if (row?.state === 'claimed' && row.claimUntil > now()) { report.pending++; continue; }
       if (!row) {
-        if (store.replies.length >= 256) { report.pending++; continue; }
+        if (!reclaimSettled()) { report.pending++; continue; }
         row = { rowid: message.rowid, senderId: message.senderId, state: 'claimed', at: now(), claimUntil: now() + CLAIM_MS };
         store.replies.push(row);
       }
@@ -134,7 +157,7 @@ export async function runTeammateResponder(cfg: AshlrConfig, options: TeammateWo
       if (!row.text) {
         row.state = 'claimed'; row.claimUntil = now() + CLAIM_MS; save();
         try {
-          const text = await (options.generate ?? ((input, context) => generateLocalTeammateReply(input, context, options.signal, cfg)))(message.text, teammateOperationalContext(runs));
+          const text = await (options.generate ?? ((input, context) => generateLocalTeammateReply(input, context, options.signal, cfg)))(message.text, teammateOperationalContext(runs, now));
           if (!text.trim() || text.length > 3500 || scrubSecrets(text) !== text) throw new Error('Unsafe reply');
           row.text = `Phantom teammate reply [${row.rowid}]: ${text}\nNo acknowledgement needed.`;
           row.state = 'drafted'; save();

@@ -6,7 +6,7 @@ const count = (value: unknown): value is number => Number.isSafeInteger(value) &
 /**
  * The validated PR/push run counts behind the once-a-day CI Needs-you item, or
  * null when the facts are absent, stale, malformed or show no runs. Its own
- * module so the rail's badge count (VerseApp, first paint) can ask without the
+ * module so the rail's badge count (PhantomApp, first paint) can ask without the
  * item's copy and builder (ci-needs-you.ts) riding along.
  */
 export function ciRunsToday(facts: CiRunFactsV1 | undefined, nowMs: number): { runs: number; failures: CiRunFactsV1['failures'] } | null {

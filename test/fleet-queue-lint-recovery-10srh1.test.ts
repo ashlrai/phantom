@@ -1,0 +1,66 @@
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { cmdFleetQueueLint } from '../src/cli/fleet-queue-lint.js';
+
+const dirs: string[] = [];
+afterEach(async () => { await Promise.all(dirs.splice(0).map(d => rm(d, { recursive: true, force: true }))); });
+describe('recovered queue lint', () => {
+  it('reports persisted findings and preserves the input files', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'queue-lint-')); dirs.push(home);
+    const runsDir = join(home, 'runs');
+    await mkdir(join(runsDir, 'queue/prompts'), { recursive: true });
+    await mkdir(join(home, 'Projects/ashlrai/repo'), { recursive: true });
+    const prompt = join(runsDir, 'queue/prompts/job.md');
+    const outside = join(home, 'outside.md');
+    await writeFile(prompt, 'prompt'); await writeFile(outside, 'outside');
+    const router = '- CLAIMED RQ-ONE\n- READY RQ-ONE queued=2026-01-01T00:00:00Z\n- DONE RQ-TWO\n- READY RQ-TWO\n- READY RQ-THREE queued=2028-01-01T00:00:00Z\n- READY RQ-FOUR queued=2026-01-01T03:00:00Z\n';
+    const ready = `good\trepo\tcodex-personal\twork\t${prompt}\nshort\nmissing\trepo\tunknown\tbad\t${home}/missing\noutside\trepo\tclaude\tfast\t${outside}\n`;
+    const routerPath = join(runsDir, 'queue/router-queue.md'), readyPath = join(runsDir, 'queue/ready.tsv');
+    await writeFile(routerPath, router); await writeFile(readyPath, ready);
+    await writeFile(join(runsDir, 'queue', 'status.json'), JSON.stringify({ invalid_queue_lines: 2 }));
+    const output: string[] = [];
+    expect(await cmdFleetQueueLint(['--json'], { home, runsDir, now: Date.parse('2026-01-01T04:00:00Z'), out: s => output.push(s) })).toBe(0);
+    const report = JSON.parse(output[0]!);
+    expect(report.invalid_queue_lines).toBe(2);
+    expect(report.errors).toEqual([]);
+    expect(report.missingFields.map((f: { line: number; reason: string }) => [f.line, f.reason])).toEqual([[2, 'Missing priority'], [4, 'Missing priority'], [5, 'Missing priority'], [6, 'Missing priority']]);
+    expect(report.duplicates.map((f: { line: number }) => f.line)).toEqual([2, 4]);
+    expect(report.old.map((f: { line: number }) => f.line)).toEqual([2]);
+    expect(report.unknownAge.map((f: { line: number }) => f.line)).toEqual([4, 5]);
+    expect(report.invalid.map((f: { line: number }) => f.line)).toEqual([2, 3, 4]);
+    expect(report.invalid[1].reason).toContain('Unknown lane');
+    expect(report.invalid[2].reason).toContain('Prompt file not found');
+    expect(await readFile(routerPath, 'utf8')).toBe(router);
+    expect(await readFile(readyPath, 'utf8')).toBe(ready);
+    expect(await readFile(prompt, 'utf8')).toBe('prompt');
+  });
+  it('preserves findings and exits 1 when the dispatcher count is unavailable', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'queue-lint-')); dirs.push(home);
+    const runsDir = join(home, 'runs');
+    await mkdir(join(runsDir, 'queue'), { recursive: true });
+    await writeFile(join(runsDir, 'queue', 'router-queue.md'), '- READY RQ-OK (P0, pool=devin, tier=fast, repo=phantom): Do it.\n');
+    await writeFile(join(runsDir, 'queue', 'ready.tsv'), '');
+    const output: string[] = [];
+    expect(await cmdFleetQueueLint(['--json'], { home, runsDir, now: Date.parse('2026-01-01T04:00:00Z'), out: s => output.push(s) })).toBe(1);
+    const report = JSON.parse(output[0]!);
+    expect(report.invalid_queue_lines).toBeNull();
+    expect(report.errors).toEqual(['Dispatcher count unavailable']);
+    expect(report.missingFields).toEqual([]);
+    await writeFile(join(runsDir, 'queue', 'status.json'), 'not json');
+    output.length = 0;
+    expect(await cmdFleetQueueLint(['--json'], { home, runsDir, now: Date.parse('2026-01-01T04:00:00Z'), out: s => output.push(s) })).toBe(1);
+    expect(JSON.parse(output[0]!).invalid_queue_lines).toBeNull();
+  });
+  it('prints help and bounded errors', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'queue-lint-')); dirs.push(home);
+    const output: string[] = [], errors: string[] = [];
+    const deps = { home, runsDir: home, out: (s: string) => output.push(s), error: (s: string) => errors.push(s) };
+    expect(await cmdFleetQueueLint(['--help'], deps)).toBe(0);
+    expect(output[0]).toContain('fleet queue-lint');
+    expect(await cmdFleetQueueLint(['--bad'], deps)).toBe(2);
+    expect(await cmdFleetQueueLint(['--json'], deps)).toBe(1);
+    expect(JSON.parse(errors[1]!)).toEqual({ schema: 'queue.lint.error.v1', error: 'Unable to read queue files' });
+  });
+});

@@ -375,6 +375,23 @@ export const VERSE_DEVIN_REFRESH_PATH = '/api/verse/devin/refresh' as const;
 /** POST `${VERSE_DEVIN_TASKS_PATH}/<id>/dismiss` */
 export const VERSE_DEVIN_TASKS_PATH = '/api/verse/devin/tasks' as const;
 
+/**
+ * Which model the fleet's Devin lane resolves to (cli-engine.ts
+ * `resolveDevinCliFleetModel` over `devin.fleetModel`), where it came from,
+ * honest pricing evidence ('not-free' or 'unknown' — never 'free'; reporting
+ * only, it authorizes nothing) and every `devin*` key models.json resolves.
+ */
+export interface DevinFleetModelInfo {
+  /** The model a fleet run launches with. */
+  configured: string;
+  /** 'config' when `devin.fleetModel` named it, else the compiled default. */
+  source: 'config' | 'default';
+  /** 'not-free' on a `-lightning` id or past the evidence boundary; else 'unknown'. */
+  pricing: 'not-free' | 'unknown';
+  /** `devin*` keys of models.json, sorted; empty when the file is absent or unreadable. */
+  laneModels: Array<{ key: string; model: string; paid: boolean }>;
+}
+
 /** GET /api/verse/devin */
 export interface DevinOverviewResponse {
   taskDiagnostics?: DevinTaskDiagnostics;
@@ -405,6 +422,8 @@ export interface DevinOverviewResponse {
     paidFamilyCount: number;
     defaultModel: { id: string; label: string; free: boolean; price: string | null };
   };
+  /** The fleet lane's resolved model and pricing evidence. Optional: older servers omit it. */
+  fleetModel?: DevinFleetModelInfo | null;
 }
 
 /** POST /api/verse/devin/launch (write token + read session) */
