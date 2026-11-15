@@ -94,3 +94,19 @@ describe('app update status', () => {
     } finally {rmSync(staged.home, {recursive: true, force: true});}
   });
 });
+
+
+test('app state reads Mission while existing update commands remain available', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'app-state-'));
+  const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+  try {
+    expect(await cmdApp(['state', '--json', '--root', home])).toBe(0);
+    expect(JSON.parse(output.mock.calls[0]![0] as string)).toMatchObject({
+      schema: 'fleet.mission.v1', costPerMergedPrUsd: null, mergeQueue: 'unknown',
+    });
+    expect(await cmdApp(['state', '--apply'])).toBe(2);
+  } finally {
+    output.mockRestore();
+    rmSync(home, { recursive: true, force: true });
+  }
+});

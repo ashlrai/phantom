@@ -37,7 +37,8 @@ const SSE_VERSE_EVENTS_PATH_RE = /^\/api\/verse\/sessions\/[^/]+\/events$/;
 const SSE_WB_EVENTS_PATH = '/api/wb/v1/events';
 
 function isSseQueryProofPath(pathname: string): boolean {
-  return pathname === '/api/events'
+  return pathname === '/api/verse/fleet/runs/mission/events'
+    || pathname === '/api/events'
     || pathname === SSE_WB_EVENTS_PATH
     || SSE_RUN_EVENTS_PATH_RE.test(pathname)
     || SSE_VERSE_EVENTS_PATH_RE.test(pathname);

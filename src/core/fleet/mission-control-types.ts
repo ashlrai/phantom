@@ -119,6 +119,12 @@ export interface MissionControlV1 {
   incidents: MissionIncident[];
   memory: MissionMemory;
   plan: MissionPlan;
+  planLog: MissionPlan;
+  activity: { job: string; lane: string; at: string }[];
+  timeline: { pr: string; at: string }[];
+  costPerMergedPrUsd: number | null;
+  mergeQueue: 'unknown';
+  forum: import('./forum/view.js').ForumView | null;
 }
 
 export const VERSE_FLEET_MISSION_PATH = '/api/verse/fleet/runs/mission';

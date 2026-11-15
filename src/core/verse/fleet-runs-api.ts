@@ -1,3 +1,4 @@
+import { handleMissionStream } from './verse-stream.js';
 import { readGoals } from '../fleet/goals.js';
 import { readMetricsPanel } from '../fleet/metrics-panel.js';
 import { applyOrderStatus, OrderStatusError } from './fleet-order-status.js';
@@ -451,7 +452,6 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   let generation = 0;
   let flight: { generation: number; promise: Promise<FleetRunsV1> } | undefined;
   const readMission = deps.readMission ?? (() => readMissionControl({ runsDir: deps.runsDir ?? defaultRunsDir(), now }));
-  let missionCache: { at: number; value: MissionControlV1 } | undefined;
   let missionFlight: Promise<MissionControlV1> | undefined;
   async function mission(): Promise<MissionControlV1> {
     try { return await readMission(); }
@@ -519,15 +519,17 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       }
       return true;
     }
+    if (path === `${VERSE_FLEET_MISSION_PATH}/events`) {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      if (!ctx.readSession) { sendJson(res, 401, { error: 'Read session required.' }); return true; }
+      const { forumRoot } = await import('../fleet/forum/view.js');
+      await handleMissionStream(req, res, ctx.readSession, [deps.runsDir ?? defaultRunsDir(), forumRoot()]);
+      return true;
+    }
     if (path === VERSE_FLEET_MISSION_PATH) {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
-      if (!missionFlight && (!missionCache || now() - missionCache.at >= 2000)) {
-        missionFlight = mission().then((value) => {
-          missionCache = { at: now(), value };
-          return value;
-        }).finally(() => { missionFlight = undefined; });
-      }
-      sendJson(res, 200, missionFlight ? await missionFlight : missionCache!.value);
+      missionFlight ??= mission().finally(() => { missionFlight = undefined; });
+      sendJson(res, 200, await missionFlight);
       return true;
     }
     if (path === VERSE_FLEET_LANE_MODELS_PATH) {

@@ -24,6 +24,12 @@ export interface MissionControl {
   incidents: MissionIncident[];
   memory: MissionMemory;
   plan: MissionPlan;
+  planLog?: MissionPlan;
+  activity?: { job: string; lane: string; at: string }[];
+  timeline?: { pr: string; at: string }[];
+  costPerMergedPrUsd?: number | null;
+  mergeQueue?: 'unknown';
+  forum?: unknown;
 }
 
 const str = (value: unknown): value is string => typeof value === 'string';
@@ -34,6 +40,9 @@ const obj = (value: unknown): value is Record<string, unknown> => value !== null
 
 function isMissionControl(value: unknown): value is MissionControl {
   if (!obj(value) || value.schema !== 'fleet.mission.v1' || !obj(value.overview)) return false;
+  if (value.timeline !== undefined && !list((row) => obj(row) && str(row.pr) && str(row.at))(value.timeline)) return false;
+  if (value.activity !== undefined && !list((row) => obj(row) && str(row.job) && str(row.lane) && str(row.at))(value.activity)) return false;
+  if (value.costPerMergedPrUsd !== undefined && !nil(num)(value.costPerMergedPrUsd)) return false;
   const overview = value.overview;
   const health = overview.health;
   if (health !== 'clear' && health !== 'watch' && health !== 'attention' && health !== 'unknown') return false;

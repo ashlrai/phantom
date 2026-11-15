@@ -5,8 +5,12 @@ import {steerLeaders} from '../core/fleet/app-steer.js';
 export {readAppUpdateStatus, defaultAppUpdateStatusDeps} from '../core/app-update-status.js';
 export type {AppUpdateStatus, AppUpdateStatusDependencies} from '../core/app-update-status.js';
 
-const USAGE = 'usage: phm app update status [--json]\n       phm app steer --text <message> [--json]';
+const USAGE = 'usage: phm app state [--json]\n       phm app update status [--json]\n       phm app steer --text <message> [--json]';
 export async function cmdApp(args: string[], dependencies?: AppUpdateStatusDependencies | {runsDir?: string}): Promise<number> {
+  if (args[0] === 'state') {
+    const { cmdFleetMission } = await import('./fleet-mission.js');
+    return cmdFleetMission(args.slice(1));
+  }
   if (args[0] === 'steer') {
     if (args.includes('--help') || args.includes('-h')) {console.log(USAGE); return 0;}
     let text: string | undefined;
