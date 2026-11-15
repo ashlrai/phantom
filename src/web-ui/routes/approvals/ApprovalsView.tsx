@@ -6,16 +6,29 @@
  *   1. Team approvals — Approve/Deny post to the server, which decides with the
  *      identity derived from the local OS user (decideApproval). The click IS
  *      the approval; the app never supplies or fakes an actor.
- *   2. Security pin queue — read-only. Pins stay Security's.
- *   3. Holds — persistent until resolved in $ASHLR_HOME/holds.json.
+ *   2. Inbox proposals — a row with a `revision` can be decided through the
+ *      same revision-bound POST /api/inbox/:id/decision the approval card uses:
+ *      ConfirmDialog → MutationTokenDialog → consent only, NEVER execution.
+ *      A row without one is review-only and links back to its inbox surface.
+ *      (RQ-SWE-APPROVALS-1 recut.)
+ *   3. Outbound drafts — terminal-only; the exact `phm drafts …` commands are
+ *      shown, never the draft body.
+ *   4. Security pin queue — read-only. Pins stay Security's.
+ *   5. Holds — persistent until resolved in $ASHLR_HOME/holds.json.
  *
  * A section whose source failed says so (state 'unavailable'); it never
  * renders as the honest-empty "nothing pending".
  */
 import { useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import type { ProposalApprovalItem } from '../../data/api-types.js';
 import { approvalsQuery } from '../../data/queries.js';
 import { useQuery } from '../../data/hooks.js';
-import { decideTeamApproval } from '../../data/mutations.js';
+import { hasMutationHold } from '../../data/auth-store.js';
+import { decideApprovalRequest, decideTeamApproval } from '../../data/mutations.js';
+import { DispatchDisabledError } from '../../data/client.js';
+import { MutationTokenDialog } from '../../components/auth/MutationTokenDialog.js';
+import { ConfirmDialog } from '../inbox/ConfirmDialog.js';
 import { useScrollRestore } from '../../hooks/useScrollRestore.js';
 import { RefreshIndicator } from '../../components/primitives/RefreshIndicator.js';
 import { SkeletonLine } from '../../components/primitives/Skeleton.js';
@@ -45,6 +58,17 @@ export function ApprovalsView() {
   const [busy, setBusy] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
 
+  // Inbox-proposal consent flow: the same ConfirmDialog → MutationTokenDialog
+  // → revision-bound POST sequence as ApprovalCard. Consent is recorded, never
+  // applied; a 404 from the dispatch gate flips the surface to read-only.
+  const [pendingConsent, setPendingConsent] = useState<{ item: ProposalApprovalItem; decision: 'approve' | 'deny' } | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [tokenOpen, setTokenOpen] = useState(false);
+  const [consentBusy, setConsentBusy] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
+  const [dispatchBlocked, setDispatchBlocked] = useState(false);
+  const consentInFlight = useRef(false);
+
   async function decide(id: string, decision: 'approve' | 'deny') {
     setBusy(id);
     setFailure(null);
@@ -54,6 +78,55 @@ export function ApprovalsView() {
       setFailure(e instanceof Error ? e.message : 'Decision failed.');
     } finally {
       setBusy(null);
+    }
+  }
+
+  function requestConsent(item: ProposalApprovalItem, decision: 'approve' | 'deny') {
+    setConsentError(null);
+    setPendingConsent({ item, decision });
+    setConfirmOpen(true);
+  }
+
+  async function confirmConsent() {
+    const pending = pendingConsent;
+    if (!pending || pending.item.revision === null || consentInFlight.current) return;
+    // Confirmation first, token second — an accidental click can be cancelled
+    // before the operator is asked for a mutation token (same ordering as
+    // ApprovalCard).
+    if (!hasMutationHold()) {
+      setConfirmOpen(false);
+      setTokenOpen(true);
+      return;
+    }
+    consentInFlight.current = true;
+    setConsentBusy(true);
+    setConsentError(null);
+    try {
+      await decideApprovalRequest(pending.item.id, pending.item.revision, pending.decision);
+      setConfirmOpen(false);
+      setPendingConsent(null);
+    } catch (err) {
+      if (err instanceof DispatchDisabledError) {
+        setConfirmOpen(false);
+        setPendingConsent(null);
+        setDispatchBlocked(true);
+      } else {
+        setConsentError(err instanceof Error ? err.message : 'Could not save this decision.');
+      }
+    } finally {
+      consentInFlight.current = false;
+      setConsentBusy(false);
+    }
+  }
+
+  function onTokenDialogClose() {
+    setTokenOpen(false);
+    // Live read, not a render snapshot — onClose can fire before re-render.
+    if (hasMutationHold()) {
+      setConfirmOpen(true);
+      void confirmConsent();
+    } else {
+      setPendingConsent(null);
     }
   }
 
@@ -104,6 +177,80 @@ export function ApprovalsView() {
             )}
           </section>
 
+          <section className={styles.section} aria-labelledby="appr-proposals">
+            <h2 id="appr-proposals" className={styles.sectionTitle}>Inbox proposals ({data.proposals.items.length})</h2>
+            {dispatchBlocked ? (
+              <p className={styles.error} role="alert">
+                This server was started without --allow-dispatch, so approve/deny are unavailable. Review links still work.
+              </p>
+            ) : null}
+            {data.proposals.state !== 'ok' ? (
+              <Unavailable reason={data.proposals.reason} />
+            ) : data.proposals.items.length === 0 ? (
+              <p className={styles.empty}>No pending proposals.</p>
+            ) : (
+              <ul className={styles.list}>
+                {data.proposals.items.map((p) => (
+                  <li key={p.id} className={styles.item}>
+                    <div className={styles.itemBody}>
+                      <span className={styles.itemTitle}>{p.title}</span>
+                      <span className={styles.meta}>
+                        {p.kind}{p.partial ? ' · partial capture — deny only' : ''}{p.detail ? ` — ${p.detail}` : ''}
+                      </span>
+                      {p.revision === null ? (
+                        <span className={styles.meta}>
+                          No reviewable approval request — open it to inspect and decide.{' '}
+                          <Link to={p.reviewPath} className={styles.reviewLink}>Review</Link>
+                        </span>
+                      ) : (
+                        <Link to={p.reviewPath} className={styles.reviewLink}>Review</Link>
+                      )}
+                    </div>
+                    {p.revision !== null ? (
+                      <div className={styles.actions}>
+                        <button type="button" className={styles.approve} disabled={dispatchBlocked || consentBusy || p.partial}
+                          title={p.partial ? 'Partial captures can be denied, but cannot be approved.' : undefined}
+                          onClick={() => requestConsent(p, 'approve')}>
+                          Approve…
+                        </button>
+                        <button type="button" className={styles.deny} disabled={dispatchBlocked || consentBusy}
+                          onClick={() => requestConsent(p, 'deny')}>
+                          Deny…
+                        </button>
+                      </div>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {data.proposals.truncated ? <p className={styles.meta}>List capped — the oldest {data.proposals.items.length} shown.</p> : null}
+          </section>
+
+          <section className={styles.section} aria-labelledby="appr-drafts">
+            <h2 id="appr-drafts" className={styles.sectionTitle}>Outbound drafts ({data.drafts.items.length})</h2>
+            <p className={styles.meta}>Decided in the terminal only; the draft body is never listed.</p>
+            {data.drafts.state !== 'ok' ? (
+              <Unavailable reason={data.drafts.reason} />
+            ) : data.drafts.items.length === 0 ? (
+              <p className={styles.empty}>No pending drafts.</p>
+            ) : (
+              <ul className={styles.list}>
+                {data.drafts.items.map((d) => (
+                  <li key={d.id} className={styles.item}>
+                    <div className={styles.itemBody}>
+                      <span className={styles.itemTitle}>{d.subject}</span>
+                      <span className={styles.meta}>to {d.to} · digest {d.digestPrefix}</span>
+                      <code className={styles.mono}>{d.approveCommand}</code>
+                      <code className={styles.mono}>{d.rejectCommand}</code>
+                      <code className={styles.mono}>{d.showCommand}</code>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {data.drafts.truncated ? <p className={styles.meta}>List capped — the oldest {data.drafts.items.length} shown.</p> : null}
+          </section>
+
           <section className={styles.section} aria-labelledby="appr-pins">
             <h2 id="appr-pins" className={styles.sectionTitle}>Security pin queue ({data.pins.items.length})</h2>
             <p className={styles.meta}>Read-only. Pins are decided by Security.</p>
@@ -151,6 +298,31 @@ export function ApprovalsView() {
             )}
             <p className={styles.meta}>Listed until marked resolved in {data.holds.path}; <code>phm approvals</code> reads the same file.</p>
           </section>
+
+          <MutationTokenDialog open={tokenOpen} reason="Recording an approval decision requires the mutation token."
+            onClose={onTokenDialogClose} />
+          <ConfirmDialog
+            open={confirmOpen}
+            title={pendingConsent?.decision === 'approve' ? 'Approve this request?' : 'Deny this request?'}
+            body={<>
+              {pendingConsent?.item.title} · <code>{pendingConsent?.item.kind}</code><br />
+              {pendingConsent?.decision === 'approve'
+                ? 'This records approval only. It does not execute the action.'
+                : 'This records a denial and keeps the request in inbox history.'}
+            </>}
+            confirmLabel={pendingConsent?.decision === 'approve' ? 'Record approval' : 'Record denial'}
+            destructive={pendingConsent?.decision === 'approve'}
+            busy={consentBusy}
+            error={consentError}
+            onConfirm={() => void confirmConsent()}
+            onClose={() => {
+              if (!consentInFlight.current) {
+                setConfirmOpen(false);
+                setPendingConsent(null);
+                setConsentError(null);
+              }
+            }}
+          />
         </>
       )}
     </div>
