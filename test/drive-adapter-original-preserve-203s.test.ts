@@ -19,7 +19,7 @@ const ORIGIN = 'http://127.0.0.1:7777';
 // Fake fixtures only: a 43-char url-safe bearer and a GitHub-token-shaped
 // string the shared scrubber must redact.
 const BEARER = `FakeDeskBearer${'0'.repeat(29)}`;
-const FAKE_TOKEN = 'ghp_Fake0123456789abcdefghijklmnopqrstuv';
+const FAKE_TOKEN = ['ghp', 'AbCdEf0123456789GhIjKlMnOpQr'].join('_');
 const DESK_HANDLE = 'desk-claude:test.claude';
 
 const tree = (...lines: string[]): string =>
@@ -28,7 +28,7 @@ const IDLE_TREE = tree(
   'e1 AXTextArea "Write your message" value="" (focused)',
   'e2 AXButton "Send"',
 );
-const SECRET_TREE = tree('e1 AXStaticText "answer ghp_Fake0123456789abcdefghijklmnopqrstuv done"');
+const SECRET_TREE = tree(`e1 AXStaticText "answer ${FAKE_TOKEN} done"`);
 
 interface FetchCall {
   path: string;
