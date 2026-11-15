@@ -45,7 +45,7 @@ ashlr release-articles disable
 ```
 
 Enablement permits this maintenance lane, not a new grant. A current autonomous
-standing grant with exact `ashlrai/ashlar-landing` merge scope, an enrolled
+standing grant with exact `ashlrai/ashlr-landing` merge scope, an enrolled
 checkout and Stop off is required before it queues an article in the existing
 fleet task store. The resident standing tick calls the same maintenance path;
 dry runs and disabled/missing configuration do not probe providers or create

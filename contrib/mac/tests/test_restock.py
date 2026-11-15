@@ -147,15 +147,15 @@ class BoldFloorTests(unittest.TestCase):
 
 class ExclusionTests(unittest.TestCase):
     def test_non_fleet_repos_never_selected(self):
-        # measurably and ashlar-landing exist as local dirs but sit outside GS_REPOS.
+        # measurably and ashlr-landing exist as local dirs but sit outside GS_REPOS.
         rows = [
             line('RQ-NF-MEAS', P=1, pool='devin', tier='mid', repo='measurably', text='measurably fix'),
-            line('RQ-NF-LAND', P=1, pool='devin', tier='mid', repo='ashlar-landing', text='landing fix'),
+            line('RQ-NF-LAND', P=1, pool='devin', tier='mid', repo='ashlr-landing', text='landing fix'),
             line('RQ-NF-GHOST', P=1, pool='devin', tier='mid', repo='ghost-repo', text='missing dir'),
             line('RQ-NF-NONE', P=1, pool='devin', tier='mid', text='no repo attr'),
             line('RQ-NF-FLEET', P=2, pool='devin', tier='mid', repo='phantom', text='fleet fix'),
         ]
-        tmp = build('\n'.join(rows) + '\n', repos=('phantom', 'measurably', 'ashlar-landing'))
+        tmp = build('\n'.join(rows) + '\n', repos=('phantom', 'measurably', 'ashlr-landing'))
         self.addCleanup(tmp.cleanup)
         r = restock(Path(tmp.name), '--dry-run', '--per-lane', '4')
         self.assertEqual(r.returncode, 0, r.stderr)
