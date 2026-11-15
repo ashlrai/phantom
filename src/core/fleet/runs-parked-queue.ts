@@ -9,6 +9,8 @@ import { scrubSecrets } from '../util/scrub.js';
 export const VERSE_FLEET_LIVE_QUEUE_PATH = '/api/verse/fleet/live/queue';
 /** PARKED-DEP / PARKED-DEPENDENCY row whose DEPENDENCY GATE ids are not all MERGED. */
 export interface ParkedUnmetDep { job: string; lane: string | null; unmet: string[] }
+/** PARKED-DEP / PARKED-DEPENDENCY row whose DEPENDENCY GATE ids all show MERGED — the auto-unpark pass should have freed it already. */
+export interface ParkedMetDep { job: string; lane: string | null; gates: string[] }
 export interface ParkedGroup { reason: string; lane: string | null; count: number; jobs: string[] }
 export interface PrecheckSkip { at: string; job: string; code: string; reason: string }
 export type Source = 'healthy' | 'missing' | 'degraded';
@@ -23,6 +25,8 @@ export interface FleetQueueV1 {
   unmetDeps?: ParkedUnmetDep[];
   /** READY router jobs without a recorded LAUNCH; null when unreadable (RQ-QUEUEAGE2N9JQ8). */
   stuck?: import('../queue/stuck.js').StuckQueue | null;
+  /** Opt-in via `depDetail`: parked dependency rows whose gate ids are all MERGED but were never unparked — a stale-park signal. */
+  metDeps?: ParkedMetDep[];
   skips: PrecheckSkip[];
   skipsLast24h: number | null;
 }
@@ -160,7 +164,7 @@ export async function readSource(path: string, max: number, tail: boolean): Prom
   } finally { await file?.close().catch(() => undefined); }
 }
 
-export async function readFleetQueue(opts: { runsDir?: string; now?: () => number; limit?: number; onWaitingJob?: (lane: string, id: string) => void } = {}): Promise<FleetQueueV1> {
+export async function readFleetQueue(opts: { runsDir?: string; now?: () => number; limit?: number; depDetail?: boolean; onWaitingJob?: (lane: string, id: string) => void } = {}): Promise<FleetQueueV1> {
   const now = (opts.now ?? Date.now)();
   const root = opts.runsDir ?? join(homedir(), '.ashlr-runs');
   const [readySource, skipsSource] = await Promise.all([
@@ -263,7 +267,7 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
   if (malformed) readySource.state = 'degraded';
   const skips = parseSkips(skipsSource.text, now, opts.limit);
   if (skips.dropped) skipsSource.state = 'degraded';
-  const unmetDeps = await readUnmetDeps(root, depPromptByJob);
+  const { unmetDeps, metDeps } = await readUnmetDeps(root, depPromptByJob, opts.depDetail === true);
   return {
     v: 1, generatedAt: new Date(now).toISOString(), sources: { ready: readySource.state, skips: skipsSource.state },
     total: ready + parked, ready, parked, malformed,
@@ -272,6 +276,7 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     groups: [...groups.values()].map((group) => ({ ...group, jobs: group.jobs.sort().slice(0, 8) }))
       .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason) || (a.lane ?? '').localeCompare(b.lane ?? '')),
     unmetDeps,
+    ...(metDeps === undefined ? {} : { metDeps }),
     skips: skips.skips, skipsLast24h: skipsSource.state === 'degraded' && !skipsSource.text ? null : skips.last24h,
   };
 }
@@ -279,8 +284,9 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
 async function readUnmetDeps(
   root: string,
   depPromptByJob: Map<string, { lane: string | null; promptPath: string | null }>,
-): Promise<ParkedUnmetDep[]> {
-  if (depPromptByJob.size === 0) return [];
+  includeMet: boolean,
+): Promise<{ unmetDeps: ParkedUnmetDep[]; metDeps?: ParkedMetDep[] }> {
+  if (depPromptByJob.size === 0) return { unmetDeps: [], metDeps: includeMet ? [] : undefined };
   const mergedSource = await readSource(join(root, 'metrics', 'jobs.jsonl'), MAX_JOBS_JSONL, true);
   const merged = mergedJobsFromJsonl(mergedSource.text);
   const realRoot = await realpath(root).then(
@@ -288,6 +294,7 @@ async function readUnmetDeps(
     () => null,
   );
   const rows: ParkedUnmetDep[] = [];
+  const met: ParkedMetDep[] = [];
   for (const [job, meta] of [...depPromptByJob.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
     let ids: string[] = [];
     if (meta.promptPath && realRoot) {
@@ -295,11 +302,11 @@ async function readUnmetDeps(
       if (text !== null) ids = parseDependencyGateIds(text);
     }
     const unmet = ids.filter((id) => !merged.has(id));
-    if (unmet.length === 0) continue;
-    rows.push({ job, lane: meta.lane, unmet });
-    if (rows.length >= 50) break;
+    if (unmet.length > 0 && rows.length < 50) rows.push({ job, lane: meta.lane, unmet });
+    else if (includeMet && unmet.length === 0 && ids.length > 0 && met.length < 50) met.push({ job, lane: meta.lane, gates: ids });
+    if (rows.length >= 50 && (!includeMet || met.length >= 50)) break;
   }
-  return rows;
+  return { unmetDeps: rows, metDeps: includeMet ? met : undefined };
 }
 
 /**

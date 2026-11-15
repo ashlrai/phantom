@@ -25,6 +25,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'apps-watch': () => import('./fleet-apps-watch.js'),
   'assign': () => import('./fleet-assign.js'),
   'attachments': () => import('./fleet-attachments.js'),
+  'autopilot': () => import('./fleet-autopilot.js'),
   'backlog': () => import('./fleet-backlog.js'),
   'batch-plan': () => import('./fleet-batch-plan.js'),
   'behind-sweep': () => import('./fleet-behind-sweep.js'),
