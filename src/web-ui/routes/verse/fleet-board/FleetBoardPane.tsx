@@ -18,6 +18,12 @@ import { CHART_NEUTRAL, seriesColor } from '../../../components/charts/colors.js
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import type { FleetBoardV1 } from '../../../data/api-types.js';
+import { CoordAnswerStrip } from './CoordAnswerStrip.js';
+import { OrderStateStrip } from './OrderStateStrip.js';
+import { RecheckHistoryStrip } from './RecheckHistoryStrip.js';
+import { ReviewPickStrip } from './ReviewPickStrip.js';
+import { ReturnsStrip } from './ReturnsStrip.js';
+import { WorkBoardSection } from './work-board-section.js';
 import styles from './fleet-board.module.css';
 
 function num(value: number | null): string {
@@ -186,6 +192,12 @@ export function FleetBoardPane({ visible }: PaneProps) {
         ) : null}
       </header>
 
+      <OrderStateStrip visible={visible} />
+      <ReviewPickStrip visible={visible} />
+      <ReturnsStrip visible={visible} />
+      <CoordAnswerStrip visible={visible} />
+      <RecheckHistoryStrip visible={visible} />
+
       {query.status === 'loading' || query.status === 'idle' ? (
         <>
           <SkeletonLine width="55%" />
@@ -209,6 +221,8 @@ export function FleetBoardPane({ visible }: PaneProps) {
       ) : (
         <BoardBody board={board} />
       )}
+
+      <WorkBoardSection visible={visible} />
     </div>
   );
 }

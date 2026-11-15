@@ -92,10 +92,10 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
       return 0;
     }
     if (verb === 'worker') {
-      const f = flags(args, ['--runner']);
+      const f = flags(args, ['--runner'], ['--light']);
       const runner = f.get('--runner');
       if (!runner) throw new Error('Worker requires --runner /absolute/host-owned-runner');
-      emit({ schemaVersion: 1, ...await runNodeWorker(config, runner) });
+      emit({ schemaVersion: 1, ...await runNodeWorker(config, runner, f.has('--light')) });
       return 0;
     }
     const result = callPool(config, verb, args);

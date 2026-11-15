@@ -215,9 +215,17 @@ const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
   'release-stages': 'handleReleaseStagesApi',
   'comms-inbox': 'handleCommsInboxApi',
   'comms-teammate-reply': 'handleCommsTeammateReplyApi',
+  'fleet-merge-latency': 'handleMergeLatencyApi',
   // The desktop command center's library files and run handoffs.
   'fleet-library-files': 'handleFleetLibraryFilesApi',
   'fleet-handoffs': 'handleFleetHandoffsApi',
+  // The desktop command center's runtime identity, claims ledger and work board.
+  'fleet-runtime-identity': 'handleFleetRuntimeIdentityApi',
+  'fleet-recheck': 'handleFleetRecheckApi',
+  'fleet-coordination-claims': 'handleFleetCoordinationClaimsApi',
+  'fleet-work-board': 'handleFleetWorkBoardApi',
+  // Merges pane: where PRs wait (read-only merge-latency report).
+  'fleet-merge-latency': 'handleMergeLatencyApi',
 };
 
 const allPrefixes = WORKBENCH_ROUTE_FAMILIES.flatMap((family) => family.prefixes.map((prefix) => ({ family: family.id, prefix })));

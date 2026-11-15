@@ -19,3 +19,14 @@
 .line[data-tone='bad'] { color: var(--status-danger-fg); }
 .muted { margin: 0; color: var(--text-tertiary); }
 .metric[data-severe='true'] { border-width: 2px; font-weight: 600; }
+.identity { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-1) var(--space-3); margin: 0; }
+.identity dt { color: var(--text-tertiary); }
+.identity dd { margin: 0; overflow-wrap: anywhere; }
+.badge[data-tone='warn'] { background: var(--status-warning-bg); color: var(--status-warning-fg); }
+.peerList { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+.peerRow { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); min-width: 0; overflow-wrap: anywhere; }
+.peerName { font-weight: 600; }
+.peerState { color: var(--text-tertiary); }
+.peerDot { display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--status-unknown-fg); }
+.peerDot[data-state='online'] { background: var(--status-success-solid); }
+.peerDot[data-state='offline'] { background: var(--status-danger-solid); }

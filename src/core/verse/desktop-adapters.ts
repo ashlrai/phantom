@@ -174,12 +174,12 @@ export interface DesktopAppAdapterOptions {
   maxDepth?: number;
 }
 
-export type TreeRead = { ok: true; entries: AxEntry[] } | { ok: false; error: string };
+export type TreeRead = { ok: true; entries: AxEntry[]; truncated?: boolean } | { ok: false; error: string };
 
 async function readTree(call: ToolCall, bundle: string, maxDepth: number): Promise<TreeRead> {
   const res = await call('computer_ax_tree', { app: bundle, max_depth: maxDepth });
   if (res.isError) return { ok: false, error: toText(res).slice(0, 300) };
-  return { ok: true, entries: parseAxTree(toText(res)) };
+  return { ok: true, entries: parseAxTree(toText(res)), truncated: /\btruncated\b/.test(toText(res)) };
 }
 
 /** Read the tree, asking the operator for access once if the chat holds none. */
@@ -425,6 +425,7 @@ export function createAppControl(call: ToolCall, opts: AppControlOptions = {}): 
       const read = await readTreeWithAccess(call, bundle, maxDepth, `Quit the ${found.app.name} app`);
       // Unreadable means unsaved state cannot be ruled out, so it is treated as unsaved.
       if (!read.ok) return fail('quit', 'unreadable', `cannot confirm ${found.app.name} has nothing unsaved: ${read.error}`);
+      if (read.truncated || read.entries.length === 0) return fail('quit', 'unreadable', 'cannot confirm unsaved state from an incomplete accessibility tree.');
       const unsaved = detectUnsavedState(read.entries);
       if (unsaved.length > 0) return fail('quit', 'unsaved-state', `${found.app.name} may have unsaved work (${unsaved.join(', ')}).`);
       const quitItem = read.entries.find((e) => e.role === 'AXMenuItem' && e.enabled && /^quit\b/i.test(label(e).trim()));

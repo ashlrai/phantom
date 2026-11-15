@@ -135,3 +135,7 @@ local-first: cloud is sync, not dependency.
 Open a GitHub issue with the problem (not the feature). Anything that touches
 an invariant in the design principles above starts as a contract draft in
 docs/contracts/.
+
+## Historical product context
+
+The [original four-pillar vision](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) is preserved as a dated artifact. Current product direction remains the [North Star](NORTH-STAR.md).

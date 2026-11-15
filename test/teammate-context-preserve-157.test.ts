@@ -5,6 +5,7 @@ import { expect, it, vi } from 'vitest';
 import type { AshlrConfig } from '../src/core/types.js';
 import { recordTeammateText } from '../src/core/comms/imessage-teammate-inbox.js';
 import { runTeammateResponder } from '../src/core/comms/imessage-teammate-worker.js';
+import { CONTEXT_MAX_CHARS } from '../src/core/comms/teammate-context-evidence.js';
 
 it('supplies attributed and scrubbed evidence to the actual responder generator', async () => {
   const runsDir = mkdtempSync(join(tmpdir(), 'context-preserve-'));
@@ -33,7 +34,7 @@ it('supplies attributed and scrubbed evidence to the actual responder generator'
     expect(context).toContain('[REDACTED]');
     expect(context).toContain(`state: stale; file observed ${new Date(now - 7200000).toISOString()}`);
     expect(context).toContain('queue/status.json: state: unavailable');
-    expect(context.length).toBeLessThanOrEqual(4000);
+    expect(context.length).toBeLessThanOrEqual(CONTEXT_MAX_CHARS);
     expect(send).toHaveBeenCalledOnce();
   } finally {
     rmSync(runsDir, { recursive: true, force: true });

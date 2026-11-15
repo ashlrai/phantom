@@ -50,6 +50,18 @@ export function isPatchFrameText(text: string): boolean {
 
 export type TeammateSourceState = 'healthy' | 'missing' | 'degraded';
 
+/** Only direct requests naming a work product qualify for fleet dispatch. */
+function isActionableRequest(text: string): boolean {
+  const request = text.trim().replace(/^(?:(?:can|could|would) you\s+(?:please\s+)?|please\s+|(?:i )?need you to\s+)/i, '');
+  const match = /^(?:review\s+|draft\s+(?:(?:a|the)\s+)?(?:spec(?:ification)?|report|test analysis)\s+(?:for|on|about)\s+|run\s+(?:(?:an?|the)\s+)?analysis\s+(?:on|of|for)\s+|queue\s+(?:(?:a|the)\s+)?job\s+(?:for|to)\s+|research\s+)(.+)/i.exec(request);
+  if (!match) return false;
+  const target = match[1].replace(/[?.!]+$/, '').trim();
+  return /[\p{L}\p{N}]/u.test(target)
+    && !/^(?:it|this|that|something|anything|things|status|the status)(?:\s+please)?$/i.test(target)
+    && !/^(?:can|could|would|should|whether|if|what|how|why|when|is|was|are|were|complete|completed|ready|done)\b/i.test(target)
+    && !/\b(?:is|was|looks?)\s+(?:ready|done|complete|good)\b/i.test(target);
+}
+
 /** Pure acknowledgements cannot cause agent-to-agent acknowledgement loops. */
 export function teammateNeedsReply(text: string): boolean {
   // Code chunks often contain question marks/requests as source literals. They are
@@ -58,14 +70,21 @@ export function teammateNeedsReply(text: string): boolean {
   if (isPatchFrameText(text)) return false;
   if (/^.{0,80}\b(?:patch|artifact|chunk)\s+\d+\/\d+\b/i.test(text) || /^(?:diff --git |--- [ab/] |```)/.test(text)) return false;
   return !/^\s*(ack(?:nowledged)?|thanks|thank you|received|noted|got it|ok(?:ay)?|👍)[.!\s]*$/i.test(text)
-    && /\?|\b(?:please|can you|could you|request(?:ing)?|need you|probe)\b/i.test(text);
+    && (/\?|\b(?:please|can you|could you|request(?:ing)?|need you|probe)\b/i.test(text) || isActionableRequest(text));
 }
 
-/** Keep requests for a decision or action in the local inbox for leader review. */
-export function classifyTeammateIntent(text: string): 'ignore' | 'reply' | 'leader' {
+/** Dispatch explicit artifact work; keep privileged requests for leader review. */
+export function classifyTeammateIntent(text: string, dispatchWork: true): 'ignore' | 'reply' | 'leader' | 'actionable';
+export function classifyTeammateIntent(text: string, dispatchWork?: false): 'ignore' | 'reply' | 'leader';
+export function classifyTeammateIntent(text: string, dispatchWork = false): 'ignore' | 'reply' | 'leader' | 'actionable' {
   if (!teammateNeedsReply(text)) return 'ignore';
   if (/\b(?:approve|approval|authorize|authorise|permission|decision|decide|escalat\w*|leader|mason)\b/i.test(text)
-      || /\b(?:please|can you|could you|need you to)\s+(?:deploy|release|ship|merge|delete|remove|change|create|pay|buy|run|execute)\b/i.test(text)) return 'leader';
+      || /\b(?:deploy|ship|merge|delete|pay|buy|execute)\b/i.test(text)
+      || /\b(?:to|then|and)\s+(?:release|remove|change)\b/i.test(text)) return 'leader';
+  // Read-only observers retain their existing intent projection. Only the
+  // approved worker opts into dispatch, without widening those API schemas.
+  if (dispatchWork && isActionableRequest(text)) return 'actionable';
+  if (/\b(?:please|can you|could you|need you to)\s+(?:release|remove|change|create|run)\b/i.test(text)) return 'leader';
   return 'reply';
 }
 

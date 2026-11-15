@@ -15,7 +15,7 @@ import {
   readDispatchEvents,
 } from '../src/core/fabric/dispatch-events.js';
 import { cmdFleetDispatchEvents } from '../src/cli/fleet-dispatch-events.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 
 const fixture = fileURLToPath(new URL('./fixtures/dispatch-events/events.txt', import.meta.url));
 afterEach(() => vi.restoreAllMocks());

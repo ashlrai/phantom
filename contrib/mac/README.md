@@ -8,8 +8,14 @@ its exact input hash before adoption. Current-host changes under
 permission to overwrite the whole controller with an older copy. Changes land
 by PR review and the adoption owner verifies immutable source hashes before any
 live install. The queue scripts are deterministic and do not create tokens.
-The candidate launcher denies Devin model IDs ending in `-lightning`, logs
-`PAID_MODEL_BLOCKED`, and uses `swe-2-max` instead; host adoption needs a Security pin.
+The candidate model selector denies Devin model IDs ending in `-lightning`, logs
+`PAID_MODEL_BLOCKED`, and falls back to `swe-2-max` for `devin` or
+`swe-2-flash-max` for `devin-flash`. All flash jobs select `swe-2-flash-max`
+regardless of tier or model hints: it is the plan-free upgrade from flash-medium.
+Devin retains tier-specific hints and defaults to `swe-2-max` at every tier.
+Adopt this selector surgically into the current host launcher, preserving its
+flash lane dispatch and paid/overage guards; this older candidate has no flash
+dispatch branch. Host adoption needs a Security pin.
 
 `restock.py` claims eligible `READY` lines from `router-queue.md` into lane
 prompts (`ready.tsv`/`claimed.tsv`) for the fleet allowlist repos only, keeping
@@ -1026,3 +1032,9 @@ per worker, capped at six; unknown memory disables admission. Stored slot
 settings cannot exceed this memory cap. Claims use the bounded local supervisor
 and completions use the shared reaper. Security must review the combined RETUNE
 and omlx dispatcher pin before installation; never edit the live dispatcher.
+
+# Remote branch hygiene
+
+See [Branch gardener](../../docs/BRANCH-GARDENER.md) for org/fork classification,
+protected and active branch guards, dry-run configuration and the six-hour launchd
+template. This is independent of worktree/disk pruning and does not install itself.

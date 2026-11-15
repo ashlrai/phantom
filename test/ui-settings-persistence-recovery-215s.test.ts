@@ -11,9 +11,10 @@
  * and symlinked / oversized / corrupt ui.json never corrupts a link target.
  *
  * Current contract notes: GET is served with dispatch disabled (read-only
- * observers); only PUT is gated. Production applies no size cap or symlink
- * refusal on the file read, so those cases pin only the invariants that hold
- * today (no path leak, target bytes untouched), not a refusal.
+ * observers); only PUT is gated. Since the #5034 carry, the file read is
+ * bounded (64 KiB cap) and symlink-refusing, so the oversized case pins the
+ * refusal problem string; the symlink PUT case still accepts either 200 or a
+ * refusal 500 and only pins that the target bytes are untouched.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EventEmitter } from 'node:events';
@@ -175,7 +176,7 @@ describe('corrupt, oversized and symlinked ui.json', () => {
     const body = parse(res);
     expect(body.settings).toEqual(defaultUiSettings());
     expect(JSON.stringify(body.problems)).not.toContain(home);
-    expect(body.problems).toEqual(['unknown group "pad"']);
+    expect(body.problems).toEqual(['file exceeds the size limit']);
   });
 
   it('PUT over a symlinked ui.json never modifies the link target', async () => {

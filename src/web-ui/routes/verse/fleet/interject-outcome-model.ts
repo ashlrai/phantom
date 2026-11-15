@@ -1,9 +1,13 @@
+import { classifyWorkItem, type WorkItemEvidence, type WorkItemState } from '../../../../core/comms/work-item-state.js';
+import { parseInboxAt } from './interject-ack-model.js';
 import { githubUrl, jobsForEntry, stateWord, type OrderTraceJob, type OrderTraceV1 } from '../fleet-inbox/order-trace-model.js';
 
 export interface InterjectOutcome {
   stage: 'sent' | 'acked' | 'job' | 'merged' | 'unknown';
   text: string;
   href?: string;
+  /** Reporting-contract state (RECEIVED/ASSIGNED/RUNNING/BLOCKED/VERIFIED) from `classifyWorkItem`. */
+  contract: { state: WorkItemState; missing: string[]; asOf: string };
 }
 
 const PR_PATH = /^\/ashlrai\/phantom\/pull\/(\d+)\/?$/;
@@ -14,23 +18,43 @@ function prNumber(job: OrderTraceJob): string | null {
   return url ? PR_PATH.exec(new URL(url).pathname)?.[1] ?? null : null;
 }
 
+function contractOf(entryAt: string, job: OrderTraceJob | undefined, trace: OrderTraceV1 | null, nowIso: string): InterjectOutcome['contract'] {
+  const evidence: WorkItemEvidence = { id: job?.id ?? entryAt };
+  if (!job) {
+    const ms = Date.parse(entryAt);
+    const at = Number.isNaN(ms) ? parseInboxAt(entryAt, Date.parse(nowIso)) : ms;
+    if (at !== null && !Number.isNaN(at)) evidence.receivedAt = new Date(at).toISOString();
+  } else {
+    if (job.lane) evidence.owner = job.lane;
+    // A queued line is not a claim; launched/published/merged jobs carry the job id as receipt.
+    if (job.state !== 'queued') evidence.claimReceipt = job.id;
+    const pr = job.state === 'merged' ? prNumber(job) : null;
+    if (pr && trace) evidence.verified = { pr: Number(pr), artifact: githubUrl(job)!, source: 'order-trace', at: trace.generatedAt };
+  }
+  const { state, missing, asOf } = classifyWorkItem(evidence, nowIso);
+  return { state, missing, asOf };
+}
+
 /**
  * Outcome of one inbox entry. Matching is `jobsForEntry` (entry heading or
  * timestamp key), the same rule the Inbox pane uses; the most advanced stage wins.
+ * `nowIso` is injected so the contract state is deterministic in tests.
  */
-export function interjectOutcome(entryAt: string, acked: boolean, trace: OrderTraceV1 | null): InterjectOutcome {
+export function interjectOutcome(entryAt: string, acked: boolean, trace: OrderTraceV1 | null, nowIso: string = new Date().toISOString()): InterjectOutcome {
   const jobs = jobsForEntry(trace, entryAt);
   const merged = jobs.filter(job => job.state === 'merged');
   if (merged.length) {
     const job = merged.find(candidate => prNumber(candidate)) ?? merged[0]!;
     const number = prNumber(job);
-    return number ? { stage: 'merged', text: `merged #${number}`, href: `https://github.com/ashlrai/phantom/pull/${number}` }
-      : { stage: 'merged', text: 'merged' };
+    const contract = contractOf(entryAt, job, trace, nowIso);
+    return number ? { stage: 'merged', text: `merged #${number}`, href: `https://github.com/ashlrai/phantom/pull/${number}`, contract }
+      : { stage: 'merged', text: 'merged', contract };
   }
   if (jobs.length) {
     const job = jobs.reduce((best, next) => JOB_RANK[next.state] > JOB_RANK[best.state] ? next : best);
-    return { stage: 'job', text: `job ${job.id} ${stateWord(job)}` };
+    return { stage: 'job', text: `job ${job.id} ${stateWord(job)}`, contract: contractOf(entryAt, job, trace, nowIso) };
   }
-  if (entryAt === '—') return { stage: 'unknown', text: 'outcome unknown' };
-  return acked ? { stage: 'acked', text: 'acked' } : { stage: 'sent', text: 'sent' };
+  const contract = contractOf(entryAt, undefined, trace, nowIso);
+  if (entryAt === '—') return { stage: 'unknown', text: 'outcome unknown', contract };
+  return acked ? { stage: 'acked', text: 'acked', contract } : { stage: 'sent', text: 'sent', contract };
 }

@@ -43,6 +43,11 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/owner-assist.test.ts', // private state, real runtime fixture and queue integration
+  'test/fleet-proof-envelope.test.ts', // Real Git trees, artifact files and the publisher capture CLI hook.
+  'test/agentnet-peer-bus.test.ts', // Real private ledgers and OS lock/ACL probes across 8 hops; measured 21s under fleet load.
+  'test/queue.test.ts', // Real Python dispatcher ticks in disposable homes for the shared work market.
+  'test/delegation-scope-prompts.test.ts', // real Python and shell prompt builders plus isolated restock fixture subprocesses
   'test/routines.test.ts', // Real CLI adapter subprocesses and private ledger files.
   'test/episodic-memory.test.ts', // Real Git revisions and persistent JSONL acceptance fixtures.
   'test/agent-checkpoints.test.ts', // Restarts a real Node process and observes fresh Git state.
@@ -105,6 +110,23 @@ export const REAL_IO_TEST_FILES = [
   'test/verify-change.test.ts',
   'test/remote-reassign-e2e.test.ts', // Binds a real loopback HTTP server for remote reassignment.
   'test/connector-profile.test.ts', // Runs the pinned Perl secret-shape gate against generated profile TOML.
+  'test/connector-exec.test.ts', // Spawns connector children, a fake phantom and the CLI entry; runs the Perl secret-shape gate.
+  'test/channel-health-ingress-failure-322s.test.ts', // Spawns real child processes.
+  'test/comms-confirm-http-original-264s.test.ts', // Spawns real child processes.
+  'test/email-outbox-crash-batch-103.test.ts', // Spawns real child processes.
+  'test/fleet-channel-health-proof-320s.test.ts', // Spawns real child processes.
+  'test/gmail-archive-plan-concurrent-104.test.ts', // Spawns real child processes.
+  'test/handoff-api-response-contract-10ssl2.test.ts', // Binds a real local network server.
+  'test/imessage-teammate-dispatch.test.ts', // Spawns real child processes.
+  'test/recut-desk-s0-c205.test.ts', // Binds a real local network server.
+  'test/recut-n1r4200s92.test.ts', // Spawns real child processes.
+  'test/recut-top-a59.test.ts', // Binds a real local network server.
+  'test/repo-tracked-artifacts.test.ts', // Spawns real child processes.
+  'test/ui-settings-recut-c196.test.ts', // Binds a real local network server.
+  'test/ui-settings-recut-c206.test.ts', // Binds a real local network server.
+  'test/ui-settings.test.ts', // Binds a real local network server.
+  'test/web-ui-redfix-5262.test.ts', // Binds a real local network server.
+  'test/work-trace-restart-proof-319s.test.ts', // Spawns real child processes.
   'test/docs-fleet-health.test.ts', // Executes documented health commands through the real CLI.
   'test/changelog-current-version-01.test.ts', // Runs the changelog extractor in a real child process.
   'test/docs-agent-parity.test.ts', // Runs docs build and link checks in real child processes.
@@ -270,6 +292,7 @@ export const REAL_IO_TEST_FILES = [
   'test/verse-local-dispatch.test.ts', // real loopback HTTP server standing in for Ollama's discovery endpoints
   'test/local-inference-probe.test.ts', // real loopback HTTP server standing in for a local /models endpoint (P3 probe)
   'test/radar-local-bench-redirect.test.ts', // two real loopback HTTP servers: a redirector and a second listener the body must never reach
+  'test/local-tool-calls.test.ts', // real loopback HTTP servers standing in for OMLX/Ollama-style tool-call endpoints
   'test/verse-accounts.test.ts', // real collector lease acquisition and private evidence files in a tmp root
   'test/verse-api.test.ts', // real web server bind + SSE tails against an in-memory fake engine
   'test/verse-api-context.test.ts', // real web server bind + real memory/preference files in a tmp HOME (V3.9 routes)

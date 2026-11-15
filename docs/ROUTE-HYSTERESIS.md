@@ -1,6 +1,9 @@
 # Dispatcher route hysteresis
 
-A ready.tsv pool change is a route proposal. The dispatcher keeps the first observed
+A ready.tsv pool change is a route proposal. In the shared work market, an
+enqueue-time lane is only a hint (`assigned:false`); first runnable assignment
+starts residency. Existing receipts without `assigned` remain binding. See
+[the work market](QUEUE.md). The dispatcher keeps the first observed
 pool for 60 minutes after each accepted decision. Only explicit `auth_failed: true`
 (including the dispatcher's repeated-auth-failure hold) or numeric `quota: 0` in the
 current lane's slots.json entry permits an early move. Congestion, rate limits,
@@ -43,8 +46,10 @@ production events.
 The tracked dispatcher is the candidate, not an installed live change. Review
 `security-route-hysteresis.diff` against the base revision and re-pin the reviewed
 candidate through the sanctioned Security process before installing it. The live
-auto-router is absent from this checkout: here, pool proposals are external
-ready.tsv changes and are reconciled before admission. Security must confirm the
+auto-router is absent from this checkout: here, external
+ready.tsv proposals are reconciled before admission and market assignments
+pass through the same hysteresis at claim time. Every evaluated market decision
+is recorded with reason codes in `metrics/work-market.jsonl`. Security must confirm the
 live routing writer uses this reconciliation boundary; raw live history is still
 needed for production replay. No live file, sandbox, wrapper or pin is changed.
 

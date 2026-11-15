@@ -1,3 +1,4 @@
+import { planMergeQueuePreparation } from '../core/fleet/merge-queue-prep.js';
 /**
  * `phm fleet merge-batch` — READ-ONLY merge-batch planner for the merge
  * treadmill (RQ-SWE3-MERGEBATCH-1).
@@ -151,7 +152,8 @@ export async function cmdFleetMergeBatch(args: string[], deps: FleetMergeBatchDe
     duplicates: parsed.duplicates,
     now: now(),
   });
-  const report = { ...plan, input: { kind: parsed.kind, source: read.source, path: read.path, state: 'ok', upstream: parsed.upstream } };
+  const report = { ...plan, preparations: (parsed.upstream === 'ok' || parsed.upstream === 'healthy') && parsed.unreadable === 0
+    ? planMergeQueuePreparation(parsed.prs) : [], input: { kind: parsed.kind, source: read.source, path: read.path, state: 'ok', upstream: parsed.upstream } };
   if (json) {
     out(JSON.stringify(report) + '\n');
     return parsed.upstream === 'ok' || parsed.upstream === 'healthy' ? 0 : 1;

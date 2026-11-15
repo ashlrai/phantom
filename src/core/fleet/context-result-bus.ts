@@ -88,6 +88,8 @@ function stageRequestPrompt(text: string): { directory: string; prompt: string }
 /** Explicit argv alone authorizes launch. Routing labels and process outcomes
  * authenticate nobody and grant no task-completion or merge authority.
  * workerExit is exactly the existing runner's return (including runner failures).
+ * A passing opt-in local gate after a zero exit is the only thing that stamps
+ * the reply body's `verified` evidence; an exit code alone never does.
  */
 export async function runContextReply(opts: ContextReplyOptions, io: ContextReplyIO = {}, bus: BusInboxOptions = {}): Promise<ContextReplyResult> {
   const started = performance.now();
@@ -135,14 +137,18 @@ export async function runContextReply(opts: ContextReplyOptions, io: ContextRepl
       } catch { verification = 'error'; }
     }
   }
-  const verified = verification === undefined ? {} : { verification };
+  const checkedFields = verification === undefined ? {} : { verification };
+  // Only a gate that ran after a zero exit and passed is verification evidence
+  // under the reporting contract (work-item-bus-evidence reads `verified`).
+  const evidence = opts.check !== undefined && exitCode === 0 && verification === 'pass'
+    ? { verified: { tests: 'local-gate pass' } } : {};
   const resultCode = exitCode || (verification === undefined || verification === 'pass' ? 0 : 1);
   const ttl = request.ttl - Math.ceil(performance.now() - started);
-  if (ttl <= 0) return { workerExit, ...verified, replyReceipt: { status: 'expired' }, exitCode: resultCode || 1, reply: null };
+  if (ttl <= 0) return { workerExit, ...checkedFields, replyReceipt: { status: 'expired' }, exitCode: resultCode || 1, reply: null };
   const checked = validateBusEnvelope({ id: opts.replyId, from: request.to, to: request.from, priority: request.priority, ttl,
-    body: { inReplyTo: request.id, kind: 'worker-exit', exitCode, succeeded: resultCode === 0, ...verified } });
-  if (!checked.ok) return { workerExit, ...verified, replyReceipt: { status: 'invalid' }, exitCode: resultCode || 1, reply: null };
+    body: { inReplyTo: request.id, kind: 'worker-exit', exitCode, succeeded: resultCode === 0, ...checkedFields, ...evidence } });
+  if (!checked.ok) return { workerExit, ...checkedFields, replyReceipt: { status: 'invalid' }, exitCode: resultCode || 1, reply: null };
   const replyReceipt = publishContextReply(checked.value, 0, bus);
   const posted = replyReceipt.status === 'posted' || replyReceipt.status === 'duplicate';
-  return { workerExit, ...verified, replyReceipt, exitCode: resultCode || (posted ? 0 : 1), reply: checked.value };
+  return { workerExit, ...checkedFields, replyReceipt, exitCode: resultCode || (posted ? 0 : 1), reply: checked.value };
 }

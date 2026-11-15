@@ -155,6 +155,21 @@ function parseJob(line: string, parsed: ParsedLine & { id: string }): { job: Que
   if (parent !== undefined && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(parent) && parent !== job.id) job.parent = parent;
   const depth = routing('depth');
   if (depth !== undefined && /^\d{1,2}$/.test(depth)) job.depth = Number(depth);
+  const preferred = routing('preferred_lane') ?? routing('lane');
+  if (preferred !== undefined) job.preferred_lane = preferred;
+  const needs = routing('needs');
+  if (needs !== undefined) job.needs = needs.replace(/^\[|\]$/g, '').split('|');
+  const minTier = routing('min_tier');
+  if (minTier !== undefined) job.min_tier = minTier as QueueJob['min_tier'];
+  const maxCost = routing('max_cost_class');
+  if (maxCost !== undefined) job.max_cost_class = maxCost as QueueJob['max_cost_class'];
+  const exclusive = routing('exclusive');
+  if (exclusive !== undefined) {
+    if (!['true', 'false'].includes(exclusive)) throw new Error('Invalid exclusive');
+    job.exclusive = exclusive === 'true';
+  }
+  const impact = routing('impact');
+  if (impact !== undefined) job.impact = Number(impact);
   return { job, selfDep };
 }
 
@@ -177,7 +192,15 @@ export function importMarkdown(text: string): QueueDocument {
     if (!parsed.id) { keep(index, 'job id not found (expected RQ-*)'); continue; }
     if (seen.has(parsed.id)) { keep(index, `duplicate job id "${parsed.id}"`); continue; }
     seen.add(parsed.id);
-    const { job, selfDep } = parseJob(line, parsed as ParsedLine & { id: string });
+    let result: ReturnType<typeof parseJob>;
+    try {
+      result = parseJob(line, parsed as ParsedLine & { id: string });
+      validateQueue({ schema: 'queue.v1', jobs: [result.job] });
+    } catch {
+      keep(index, 'invalid job requirements');
+      continue;
+    }
+    const { job, selfDep } = result;
     jobs.push(job);
     if (selfDep) warnings.push(`line ${index + 1}: ${job.id} dropped self-dependency`);
     if (parsed.unbalanced) warnings.push(`line ${index + 1}: unbalanced parenthesis`);
@@ -194,7 +217,15 @@ export function importMarkdown(text: string): QueueDocument {
 
 const metadataFor = (job: QueueJob): string => job.claims.length || job.prUrl || job.blockedReason
   ? ` <!-- queue.v1 ${JSON.stringify({ claims: job.claims, prUrl: job.prUrl, blockedReason: job.blockedReason }).replace(/--/g, '\\u002d\\u002d')} -->` : '';
-const lineFor = (job: QueueJob): string => `- ${job.status} ${job.id} (priority=${job.priority}, pool=${job.pool}, tier=${job.tier}, repo=${job.repo}${job.deps.length ? `, deps=${job.deps.join('|')}` : ''}${job.parent !== undefined ? `, parent=${job.parent}` : ''}${job.depth !== undefined ? `, depth=${job.depth}` : ''}): ${job.scope.replace(/\r?\n/g, ' ')} Acceptance: ${job.acceptance.replace(/\r?\n/g, ' ')}${metadataFor(job)}`;
+const marketFields = (job: QueueJob): string => [
+  job.preferred_lane !== undefined ? `preferred_lane=${job.preferred_lane}` : '',
+  job.needs !== undefined ? `needs=${job.needs.join('|')}` : '',
+  job.min_tier !== undefined ? `min_tier=${job.min_tier}` : '',
+  job.max_cost_class !== undefined ? `max_cost_class=${job.max_cost_class}` : '',
+  job.exclusive !== undefined ? `exclusive=${job.exclusive}` : '',
+  job.impact !== undefined ? `impact=${job.impact}` : '',
+].filter(Boolean).map(field => `, ${field}`).join('');
+const lineFor = (job: QueueJob): string => `- ${job.status} ${job.id} (priority=${job.priority}, pool=${job.pool ?? 'any'}, tier=${job.tier}, repo=${job.repo}${marketFields(job)}${job.deps.length ? `, deps=${job.deps.join('|')}` : ''}${job.parent !== undefined ? `, parent=${job.parent}` : ''}${job.depth !== undefined ? `, depth=${job.depth}` : ''}): ${job.scope.replace(/\r?\n/g, ' ')} Acceptance: ${job.acceptance.replace(/\r?\n/g, ' ')}${metadataFor(job)}`;
 /** Byte-exact for unchanged imports. Edits retain all original prose and fields. */
 export function exportMarkdown(doc: QueueDocument): string {
   validateQueue(doc);
