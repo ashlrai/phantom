@@ -56,10 +56,8 @@
  * unreadable reader — with missing[] gathered across sections.
  */
 import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { ashlrHome } from '../cloud/store.js';
 import { listWorkBoard, type WorkBoardResult } from '../comms/work-board.js';
-import { readChannelHealth, type ChannelHealth, type ChannelHealthReport, type ChannelName } from './channel-health.js';
+import { readChannelHealth, type ChannelHealthReport } from './channel-health.js';
 import { readFleetBoard, type FleetBoard, type FleetClaim } from './coordination.js';
 import { listCoordination } from '../agents/claim-store.js';
 import { listLiveWorkers, type LiveWorkersSnapshot } from './runs-live-workers.js';
@@ -69,11 +67,9 @@ import {
   type RecheckCoordinationListing,
 } from './recheck-coordination-bind.js';
 import {
-  defaultRuntimeIdentityDeps,
   readRuntimeIdentity,
   sanitizeIdentityText,
   UNKNOWN,
-  type RuntimeIdentity,
 } from './runtime-identity.js';
 
 export const FLEET_RECHECK_SCHEMA = 'fleet.recheck.v1';
@@ -82,9 +78,8 @@ export const SECTION_TIMEOUT_MS = 5_000;
 /** A runtime identity observation verifies only when captured within the same
  * reader bound of the verdict clock, in either direction. */
 const RUNTIME_OBSERVATION_BOUND_MS = SECTION_TIMEOUT_MS;
-/** Claims listing cap and per-claim task text cap. */
+/** Claims listing cap. */
 const TOP_CLAIMS = 5;
-const TASK_TEXT_MAX = 80;
 
 export type FleetRecheckState = 'VERIFIED' | 'UNKNOWN' | 'BLOCKED';
 
@@ -222,7 +217,7 @@ export type FleetRecheckDeps = {
 };
 
 function attempt<T>(fn: () => T): Promise<T | null> {
-  return fn().catch(err => {
+  return fn().catch(() => {
     return null;
   });
 }
@@ -269,7 +264,6 @@ function runtimeSection(
 function claimsSection(
   read: { ok: true; value: FleetBoard } | { ok: false },
   asOf: string,
-  nowMs: number,
 ): FleetRecheckClaims {
   const section = {
     state: 'UNKNOWN' as FleetRecheckState,
@@ -352,7 +346,6 @@ function bridgeSection(
 
 function pickLiveWorker(
   read: { ok: true; value: LiveWorkersSnapshot } | { ok: false },
-  home: string,
 ): FleetRecheckTask['liveWorker'] {
   if (!read.ok) return null;
   const result = read.value;
@@ -366,7 +359,7 @@ function pickLiveWorker(
   };
 }
 
-function liveClaimFor(ledger: FleetBoard, owner: string, nowMs: number): FleetClaim | undefined {
+function liveClaimFor(ledger: FleetBoard, owner: string): FleetClaim | undefined {
   return ledger.claims.find(claim => claim.owner === owner && claim.state === 'RUNNING');
 }
 
@@ -417,7 +410,7 @@ function taskSection(
   // failed or the board reported state 'unknown' — never re-read the ledger.
   const ledgerBoard = ledger.ok && ledger.value.state === 'known' ? ledger.value : undefined;
   const liveFor = (owner: string): FleetClaim | undefined =>
-    ledgerBoard === undefined ? undefined : liveClaimFor(ledgerBoard, owner, nowMs);
+    ledgerBoard === undefined ? undefined : liveClaimFor(ledgerBoard, owner);
   // A reader that threw or stalled binds nothing: the section behaves as if
   // the claim store were never consulted.
   const bindOf = (item: (typeof qualified)[number]) => coordination.ok
@@ -511,9 +504,9 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
 
   const sections = {
     runtime: runtimeSection(runtime, asOf, nowMs),
-    claims: claimsSection(claims, asOf, nowMs),
+    claims: claimsSection(claims, asOf),
     bridge: bridgeSection(bridge, asOf, nowMs),
-    task: taskSection(board, asOf, claims, nowMs, coordination, pickLiveWorker(live, home)),
+    task: taskSection(board, asOf, claims, nowMs, coordination, pickLiveWorker(live)),
   };
   const states = Object.values(sections).map(section => section.state);
   const verified = states.every(state => state === 'VERIFIED');

@@ -810,4 +810,24 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-guardian-head-manifest-01.test.ts', // execFileSync builds real git repo fixtures; the module execFiles real git reads
   'test/recut-n4r2000s79.test.ts', // execFileSync builds a real temp git repo for the recovered guardian-head module
   'test/leader-relay-process-preservation-10srt1.test.ts', // spawnSync runs the real `leader replies sync` CLI child
+  // Real channel-health fixture processes and private receipt journals.
+  'test/channel-health-ingress-failure-322s.test.ts',
+  'test/channel-health-slack-binding-338.test.ts',
+  'test/fleet-channel-health-proof-320s.test.ts',
+  // Real Node children exercise crash recovery, concurrent writes and restart proofs.
+  'test/email-outbox-crash-batch-103.test.ts',
+  'test/gmail-archive-plan-concurrent-104.test.ts',
+  'test/work-trace-restart-proof-319s.test.ts',
+  'test/imessage-teammate-dispatch.test.ts', // Real Python child holds the dispatcher flock.
+  'test/comms-confirm-http-original-264s.test.ts', // Real git grep verifies the owner-gated writer boundary.
+  'test/repo-tracked-artifacts.test.ts', // Real Git inventory and filesystem metadata checks.
+  'test/recut-n1r4200s92.test.ts', // Real Node child extracts release notes.
+  // Real loopback HTTP servers exercise API routing, settings persistence and access gates.
+  'test/handoff-api-response-contract-10ssl2.test.ts',
+  'test/recut-desk-s0-c205.test.ts',
+  'test/recut-top-a59.test.ts',
+  'test/ui-settings-recut-c196.test.ts',
+  'test/ui-settings-recut-c206.test.ts',
+  'test/ui-settings.test.ts',
+  'test/web-ui-redfix-5262.test.ts',
 ];

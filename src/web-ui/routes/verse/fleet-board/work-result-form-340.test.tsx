@@ -51,7 +51,7 @@ it('submits a tests result per contract and refetches', async () => {
   const before = boardFetches;
   fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Recorded (posted)'));
-  const [path, body, token] = apiPost.mock.calls[0] as [string, any, string];
+  const [path, body, token] = apiPost.mock.calls[0] as [string, unknown, string];
   expect(path).toBe('/api/verse/fleet/work-board/result');
   expect(token).toBe('fake-token');
   expect(body).toEqual({ requestId: 'req-fake-1', replyId: expect.stringMatching(/^desk-/), result: { tests: '3 passed' } });
