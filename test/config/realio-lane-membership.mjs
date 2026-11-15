@@ -43,6 +43,11 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  // Teammate task round trips exercise real private locks, fsync and queue/metrics files.
+  'test/imessage-teammate-tasks.test.ts',
+  'test/channel-health-slack-binding-338.test.ts', // Spawns a real Bash/sleep process for the Slack liveness probe.
+  'test/mcp/fleet-job-current-snapshot-04-sqc1.test.ts', // Creates temporary Git repositories and invokes Git for MCP snapshot evidence.
+  'test/no-stray-source-artifacts-373.test.ts', // Invokes git ls-files to inspect tracked source artifacts.
   'test/owner-assist.test.ts', // private state, real runtime fixture and queue integration
   'test/fleet-proof-envelope.test.ts', // Real Git trees, artifact files and the publisher capture CLI hook.
   'test/agentnet-peer-bus.test.ts', // Real private ledgers and OS lock/ACL probes across 8 hops; measured 21s under fleet load.

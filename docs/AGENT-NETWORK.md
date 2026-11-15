@@ -378,3 +378,58 @@ not work-launch authority; replies must carry the preceding message's `replyTo`.
 The ninth hop and repeated origin/pair escalate to the human queue. See the
 [peer mesh contract](contracts/CONTRACT-AGENTNET-PEERBUS.md) for enrollment,
 limits, CoS opt-in, delivery results and the separate Security handoff.
+
+## iMessage teammate tasks
+
+The fleet can reserve bounded research, triage, report and rebase tasks for
+`dot` or `instinct`. Inspect profiles and preview assignment metadata before
+applying it. This example sets a deadline one hour from now:
+
+```sh
+phm imessage tasks peers --json
+IMSG_TASK_DEADLINE="$(node -p 'new Date(Date.now() + 3600000).toISOString()')"
+phm imessage tasks enqueue --peer dot --job RQ-PEER-REVIEW-1 --kind triage --scope "Identify failing checks and propose next steps" --repo ashlrai/phantom --pr 123 --format "One paragraph and evidence links" --deadline "$IMSG_TASK_DEADLINE" --dry-run --json
+phm imessage tasks list --json
+phm imessage tasks dispatch --dry-run --json
+```
+
+Enqueue defaults to a read-only preview. Add `--apply` to reserve the assignment
+in `queue/queue.v1.json` as CLAIMED with owner `imsg:dot` or `imsg:instinct`.
+Enqueue does not send. `dispatch --apply` processes pending assignments through
+`sendApprovedTeammateMessage`; the teammate cycle also processes this queue.
+Existing allowlisting, team identity, send policy, comms pause and KILL gates
+still apply. No dispatcher or host installation changes are required. A lane
+label alone is never routing authority; the local task record owns dispatch.
+
+The envelope names the job, scope, repository, optional PR numbers, deliverable
+format and deadline. Its first line is `TASK <job> <correlation-token>`. The peer
+returns one line, shorter than 1800 characters:
+
+```text
+RESULT <job> <correlation-token> DONE|BLOCKED|FAILED <summary>
+```
+
+Replies must match an outstanding assignment and its enrolled sender. Recorded
+inbound rowids and outbound receipts preserve correlation and restart deduplication.
+Task protocol messages never trigger conversational auto-replies or new local
+work. Free-form Dot/Instinct messages remain in the teammate inbox for review;
+they never invoke the conversational responder or enqueue local jobs. Dispatch
+permits one in-flight task per peer, at least 120 seconds between
+attempts, and at most 24 attempts per peer per rolling day. Expired assignments
+cannot dispatch. An uncertain native send is reconciled rather than blindly
+resent.
+
+`tasks list` exposes task and reply state without message bodies or handles.
+Private task state lives under `imessage/` in the runs directory. Metadata-only
+`launch` and `finish` rows in `metrics/jobs.jsonl` attribute work to `imsg-dot`
+or `imsg-instinct`; a peer's DONE is reported work, never proof of a PR merge,
+deployment or verified acceptance. Profiles distinguish the declared Codex-backed
+Dot and independent Instinct roles from task kinds observed in correlated
+successful replies. A profile does not establish current GitHub access or grant
+additional authority.
+
+The private ledger fails closed at 1,024 tasks or 4 MiB; retain it as the
+deduplication record and plan an explicit archival migration before that limit.
+Expired tasks become BLOCKED in the shared queue. Expiry does not cancel remote
+work; its outcome remains unknown. Only receipted sends count as fleet launches,
+and only those attempts produce finish metrics. No task result is a MERGED event.

@@ -38,6 +38,9 @@ export interface AgentCommandDoc {
  * actual effects and command-specific result/exit semantics.
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
+  { usage: 'phm imessage tasks enqueue --peer dot|instinct --job <id> --kind research|triage|report|rebase --scope <text> --repo <owner/name> [--pr <number> ...] --format <text> --deadline <ISO> [--apply|--dry-run] [--json]', description: 'Preview a scoped teammate task; --apply reserves a queue claim for the peer. No send during enqueue. Existing teammate send policy remains required. Exit 0 report, 1 unavailable/refused, 2 usage.', safety: 'append', jsonShape: 'Teammate task metadata; no message body or handle' },
+  { usage: 'phm imessage tasks dispatch [--apply|--dry-run] [--json]', description: 'Preview pending teammate work; --apply dispatches through the approved transport and correlates structured replies. Peer results are observations, never merge verification. Exit 0 report, 1 unavailable/refused, 2 usage.', safety: 'append', jsonShape: 'Teammate task dispatch counts and state' },
+  { usage: 'phm imessage tasks list|peers [--json]', description: 'Read pending/replied tasks or declared and observed peer capabilities without loading comms config or sending. Exit 0 report, 1 unavailable, 2 usage.', safety: 'read', jsonShape: 'Teammate task or capability metadata; no message body or handle' },
   { usage: 'phm fleet feedback scan [--apply] [--days 1..30] [--runs-dir <absolute>] [--json]', description: 'Collect and triage feedback; preview by default. Apply stages at most five deduplicated jobs through existing drop admission. Never merges. Exit 1 for incomplete evidence or failure, 2 for usage.', safety: 'append', jsonShape: 'fleet.feedback.v1 {sources,candidates,queued,deferred,errors}' },
   { usage: 'phm fleet feedback digest [--json]', description: 'Read the trailing twelve hours of merged PRs, jobs needing review, failures and last recorded launches. No sends or writes.', safety: 'read', jsonShape: 'fleet.feedback.v1 {sources,digest}' },
   { usage: 'phm amplify status|goal [--json] [--limit 1..100 (goal only)]', description: 'Offline objective snapshot and recent leader decisions. Missing or stale measurements are unknown. Exit 0 report, 1 IO failure, 2 usage.', safety: 'read', jsonShape: 'amplify.status.v1 | amplify.goal.v1' },
@@ -641,6 +644,9 @@ export function agentDocsText(): string {
   lines.push('phm_task_context reads current and historical task evidence for exact outcomeId and');
   lines.push('taskId; inspect coverage, omitted counts and observation time before treating it as complete.');
   lines.push('phm_agent_roster reads the unified live session roster. Unknown sources stay unknown.');
+  lines.push('Intent ledger tools: intent_add, intent_update, intent_list, intent_get,');
+  lines.push('intent_link, intent_ship, intent_stale and intent_import. Writes record local');
+  lines.push('tracking and caller-reported evidence; they do not verify remote outcomes or authorize work.');
   lines.push('Team tools (docs/architecture/teams.md): phm_team_register, phm_team_publish,');
   lines.push('phm_team_view, phm_team_claim, phm_team_handoff, phm_team_access_request,');
   lines.push('phm_team_context_add and phm_team_context_get. Claims are leases; consequential handoffs and access requests wait for human approval.');
@@ -988,7 +994,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'connectors add|list|remove|show|import|exec|config [--json]', desc: 'Manage credential-free connector profiles, launch connectors with phantom-injected credentials, and print client configs that hold no token.', topic: 'autonomy' },
   { cmd: 'agentnet peers list|read|send | channels propose | identity register [--json]', desc: 'Session-bound team peer messages, verified inbox and Slack provisioning drafts.', topic: 'autonomy' },
   { cmd: 'channels add <kind> | status [--json] | slack status|map [--json]', desc: 'Bring a channel up (config only, credentials stay in custody), read the per-channel rollup, or inspect the Slack bridge mapping offline.', topic: 'autonomy' },
-  { cmd: 'imessage doctor|poll [--apply] [--json]', desc: 'iMessage intake: doctor checks permissions and config; poll counts waiting messages (dry run), --apply receipts them. Never prints message text.', topic: 'autonomy' },
+  { cmd: 'imessage doctor|poll|respond|replies | tasks enqueue|dispatch|list|peers [--apply|--dry-run] [--json]', desc: 'iMessage intake and scoped teammate tasks. Tasks preview by default; apply reserves work or dispatches through the approved transport. Task reports omit message bodies and handles.', topic: 'autonomy' },
   { cmd: 'director',                     desc: 'Retired — the Leader handles this (see `ashlr leader`). Still prints the read-only fleet god-view; sends nothing.', topic: 'autonomy' },
   { cmd: 'invent',                       desc: 'Generative backlog invention — propose novel high-value work items.', topic: 'autonomy' },
   { cmd: 'ideas [--json]', desc: 'List recorded fleet ideas; read-only, no execution or dispatch.', topic: 'autonomy' },
@@ -1136,7 +1142,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'serve --open',                 desc: 'Start dashboard and open browser automatically.', topic: 'web' },
   { cmd: 'serve --allow-dispatch',       desc: 'Enable guarded POST /api/run + web inbox approve/reject (prints session token).', topic: 'web' },
   { cmd: 'console [--port N] [--no-open]', desc: 'Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.', topic: 'web' },
-  { cmd: 'verse [--port N] [--no-open]', desc: 'Alias of `console` (the original name; same flags). Opens /verse/, the same page.', topic: 'web' },
+  { cmd: 'verse [--port N] [--no-open]', desc: 'Open the Phantom console at /verse/ (alias of `console`; same flags).', topic: 'web' },
 
   { cmd: 'new <name> [opts]',            desc: 'Scaffold a project from a template (next-app, node-cli, mcp-server, minimal).', topic: 'scaffold' },
   { cmd: 'ship [path] [opts]',           desc: 'Pre-ship gate (lint/test/build) + optional confirm-gated deploy.', topic: 'scaffold' },

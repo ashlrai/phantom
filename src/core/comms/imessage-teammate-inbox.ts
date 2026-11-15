@@ -64,6 +64,9 @@ function isActionableRequest(text: string): boolean {
 
 /** Pure acknowledgements cannot cause agent-to-agent acknowledgement loops. */
 export function teammateNeedsReply(text: string): boolean {
+  // Task protocol is consumed only by the fleet task ledger. Even malformed,
+  // unmatched or quoted results must never turn into model replies or new jobs.
+  if (/^\s*(?:RESULT|TASK)(?:\b|:)/im.test(text)) return false;
   // Code chunks often contain question marks/requests as source literals. They are
   // artifacts to retain, never conversation requests to answer once per chunk.
   // PATCH-BEGIN/PART/END frames are transfer protocol, never conversation.

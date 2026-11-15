@@ -502,3 +502,36 @@ cohorts, observation coverage, unknowns, thresholds and exit codes.
 [CONTRACT-AGENTNET-PEERBUS](docs/contracts/CONTRACT-AGENTNET-PEERBUS.md) pins
 session-bound callsigns, team-only peer messages, Slack provisioning drafts,
 the approval-gated broker and bounded chief-of-staff delegation.
+
+## iMessage teammate task dispatch — RQ-IMSG-AGENTLANE-1
+
+`src/core/comms/imessage-teammate-tasks.ts` exports `enqueueTeammateTask`,
+`listTeammateTasks`, `runTeammateTasks` and `teammateTaskPeers`.
+`src/cli/imessage-tasks.ts` exposes them through `phm imessage tasks
+enqueue|dispatch|list|peers`. Enqueue requires a job id, peer (`dot` or
+`instinct`), task kind (`research`, `triage`, `report` or `rebase`), scope,
+repository slug, deliverable format and ISO deadline; optional `--pr` numbers
+may repeat as separate flags. Enqueue and dispatch default to dry run;
+`--apply` and `--dry-run` are mutually exclusive. List and peers are read-only.
+Exit 0 returns a report, 1 denotes unavailable/refused operation, and 2 denotes
+invalid CLI syntax. Output contains safe metadata, never bodies or handles.
+
+Applied enqueue reserves a CLAIMED queue record owned by `imsg:<peer>` and a
+durable local task. Only dispatch can send, through the existing approved
+teammate transport. An envelope starts `TASK <job> <correlation-token>` and
+includes scope, repo/PR refs, format and deadline. A reply is one bounded line:
+`RESULT <job> <correlation-token> DONE|BLOCKED|FAILED <summary>`. Correlation
+requires the assigned sender and an outstanding task; rowids and transport
+receipts bind the local evidence. Duplicate, unmatched and malformed replies
+cannot complete work. All task protocol messages suppress conversational
+responses, including when the body asks a question.
+
+The peer limit is one in-flight task, a 120-second attempt interval and 24
+attempts per rolling day. Deadlines prevent late dispatch. Uncertain sends
+retain their attempt state for reconciliation. Canonical `launch`/`finish`
+metadata in `metrics/jobs.jsonl` counts activity under `imsg-dot` or
+`imsg-instinct`; result text is retained only in private task state. Declared
+peer capabilities and observed successful task kinds remain distinct. Neither
+profile metadata nor a RESULT line establishes verified PR/merge evidence or
+expands transport, execution, publishing or spending authority. See
+[iMessage teammate tasks](docs/AGENT-NETWORK.md#imessage-teammate-tasks).
