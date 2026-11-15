@@ -50,7 +50,8 @@ it('shows offline/unknown telemetry, lane holds and queued placement', async () 
   expect(getPane('fleet-compute')?.needsSession).toBe(false);
 });
 it('keeps the selected agent and its recorded detail through orbit and zoom', async () => {
-  serve(); render(<ComputeMap visible />);
+  serve(); vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null); // jsdom has no canvas
+  render(<ComputeMap visible />);
   const token = (await screen.findByText('RQ-A')).closest('button')!;
   fireEvent.click(token);
   const detail = screen.getByText('Claims & handoffs').closest('section')!;

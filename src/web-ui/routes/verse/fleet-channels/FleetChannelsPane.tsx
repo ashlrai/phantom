@@ -20,6 +20,8 @@ import { channelHealthQuery } from './channel-health-query.js';
 import { narrowChannelHealth } from './channel-health-model.js';
 import { ChannelReplyLag } from './ChannelReplyLag.js';
 import { ClaimNoticesCard } from './ClaimNoticesCard.js';
+import { OrchestrationCard } from './OrchestrationCard.js';
+import { SlackTraceCard } from './SlackTraceCard.js';
 import { ackByChannel, channelSetupHint, KNOWN_CHANNELS, rollupChannels } from './fleet-channels-model.js';
 import { fleetChannelsQuery } from './fleet-channels-queries.js';
 import styles from './fleet-channels.module.css';
@@ -73,6 +75,8 @@ export function FleetChannelsPane({ visible, host }: PaneProps) {
   return <section className={styles.root} aria-label="Channels overview">
     <ChannelHealthStrip health={narrowChannelHealth(healthRead.data)} nowMs={nowMs} />
     <ClaimNoticesCard visible={visible} nowMs={nowMs} />
+    <SlackTraceCard visible={visible} nowMs={nowMs} />
+    <OrchestrationCard visible={visible} nowMs={nowMs} />
     <p className={styles.header}>{heard} of {KNOWN_CHANNELS.length} channels heard from · {last24hTotal} messages in 24 h</p>
     {waitingCount > 0 && <p className={styles.notice} role="status">{waitingCount} channel{waitingCount === 1 ? '' : 's'} waiting on the Leader</p>}
     {data.sourceState !== 'healthy' && <p className={styles.notice} role="status">Inbox data may be incomplete.</p>}

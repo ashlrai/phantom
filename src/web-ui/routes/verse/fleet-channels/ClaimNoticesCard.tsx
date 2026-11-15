@@ -24,10 +24,12 @@ export function ClaimNoticesBody({ view, nowMs }: { view: ClaimNoticesView; nowM
     {view.source === 'unreadable' && <p className={styles.notice} role="status">Claim-notice state is unreadable; counts are unknown.</p>}
     {view.source === 'ok' && <>
       <p className={styles.header}>{view.bindings} bound threads · {view.sentTotal} posted · {view.pending.length} waiting</p>
+      <p className={styles.header}>{view.delivery.slackSent} slack-sent · {view.delivery.noReceipt} no-slack-receipt · {view.delivery.unknown} unknown</p>
       {view.slackConfigured === false && <p className={styles.notice} role="status">Slack is not configured; notices stay pending.</p>}
       <ul className={styles.list} aria-label="Slack thread notice rows">
         {view.recent.map((row, i) => <li className={styles.row} key={`sent-${i}`}>
           <div className={styles.meta}><span className={styles.healthBadge}>{row.state}</span><strong>{row.claimId}</strong>
+            <span>{row.delivery}</span>
             <time dateTime={new Date(row.at).toISOString()}>{formatRelative(new Date(row.at).toISOString(), nowMs)}</time></div>
         </li>)}
         {view.pending.map((row, i) => <li className={styles.row} key={`pending-${i}`}>
