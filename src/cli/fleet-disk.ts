@@ -28,6 +28,7 @@
 import { execFileSync, type ExecFileSyncOptionsWithStringEncoding } from 'node:child_process';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { liveOverride } from '../core/fleet/dynconfig.js';
 import { localTimestamp, readSource, type Source } from '../core/fleet/runs-parked-queue.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
@@ -252,7 +253,12 @@ export async function readFleetDisk(deps: FleetDiskDeps = {}): Promise<FleetDisk
     overrides = { state: 'degraded', text: '' };
   }
   const samples = parseLeaderFreeGb(events.text, nowMs);
-  const laneLines = parseLaneDiskLines(overrides.text);
+  const baseLines = parseLaneDiskLines(overrides.text);
+  // Live overrides (RQ-DYNCONFIG-1) sit above budget-overrides.json; none present = unchanged.
+  const laneLines: LaneDiskLines = {
+    freezeBelowGb: await liveOverride('compact.lanes.raise_freeze_below_gb', { runsDir }) ?? baseLines.freezeBelowGb,
+    halveBelowGb: await liveOverride('compact.lanes.halve_below_gb', { runsDir }) ?? baseLines.halveBelowGb,
+  };
   let largestSubdirs: FleetDiskDir[] | null = null;
   try {
     largestSubdirs = parseDuSubdirs(await (deps.du ?? defaultDu)(runsDir), runsDir);
