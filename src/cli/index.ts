@@ -9,6 +9,8 @@
  *   ls [category]              List all indexed items, optionally filtered.
  *   open [query]               Open best match in editor; no query → picker.
  *   tidy [--apply] [--json]    Plan (dry-run) or apply tidy moves; --json emits machine output.
+ *   mem reclaim [--apply]      Reclaim memory: unload idle local models, kill orphaned dev
+ *                              processes and finished-job leftovers. Dry-run JSON by default.
  *   config [get|set|path]      Read/write config values.
  *   doctor                     One-glance health check (config, phantom, providers).
  *   init [--yes]               Idempotent onboarding; NON-TTY safe with --yes.
@@ -143,6 +145,12 @@ const loadCompanionsCmd = lazyCmd(
   () => import('./companions.js'),
   (m) => m.cmdCompanions as Cmd,
   'companions command requires src/cli/companions.ts.',
+);
+
+const loadMemCmd = lazyCmd(
+  () => import('./mem.js'),
+  (m) => m.cmdMem as Cmd,
+  'mem command requires src/cli/mem.ts.',
 );
 
 // Cache slots — undefined = not yet attempted; null = attempted & failed
@@ -2177,6 +2185,12 @@ async function main(): Promise<void> {
         cmdTidy(rest);
         break;
 
+      case 'mem': {
+        const cmdMem = await loadMemCmd();
+        process.exitCode = await cmdMem(rest);
+        break;
+      }
+
       case 'config':
         await cmdConfig(rest);
         break;
@@ -2487,6 +2501,11 @@ async function main(): Promise<void> {
       case 'swarms': {
         const cmdSwarms = await loadSwarmsCmd();
         process.exitCode = await cmdSwarms(rest);
+        break;
+      }
+
+      case 'replay': {
+        process.exitCode = await (await import('./replay.js')).cmdReplay(rest);
         break;
       }
 

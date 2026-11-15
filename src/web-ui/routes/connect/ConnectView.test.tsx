@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RESOURCE_CATALOG } from '../../../core/onboard/catalog.js';
+import { apiKeyCatalogResources, RESOURCE_CATALOG } from '../../../core/onboard/catalog.js';
 import type {
   OnboardResourceStatus,
   OnboardScheduledAgent,
@@ -8,6 +9,19 @@ import type {
 } from '../../data/api-types.js';
 import { clearMutationToken, setMutationToken } from '../../data/auth-store.js';
 import { ConnectView } from './ConnectView.js';
+import { evictAll } from '../../data/cache.js';
+
+const KEYS = apiKeyCatalogResources().map((r) => ({
+  resource: r.id,
+  envName: r.keyEnvName,
+  displayName: r.displayName,
+  stored: false,
+}));
+
+// Deliberately not secret-shaped: if this value ever rendered, it was echoed raw.
+const KEY_VALUE = 'fakekey_probe_NOTASECRET_13579';
+const KEY_LAST4 = KEY_VALUE.slice(-4);
+const TOKEN = 'a'.repeat(64);
 
 function resourceStatus(overrides: Partial<OnboardResourceStatus> = {}): OnboardResourceStatus {
   return {
@@ -37,16 +51,31 @@ function report(overrides: Partial<OnboardStatusReport> = {}): OnboardStatusRepo
 function stubApi(status = 200, body: unknown = report(), posts: unknown[] = []) {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
+    const respond = (value: unknown, status = 200) =>
+      new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
     if (init?.method === 'POST') {
+      if (path === '/api/connect/key') {
+        posts.push({ path, body: JSON.parse(String(init.body)) });
+        return respond({
+          ok: true, resource: 'openai', envName: 'OPENAI_API_KEY',
+          masked: `****${KEY_LAST4}`, stored: true, validated: true,
+        });
+      }
       posts.push({ path, body: init.body });
-      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      return respond({ ok: true });
     }
-    return new Response(JSON.stringify(body), { status });
+    if (path === '/api/connect/keys') return respond({ keys: KEYS });
+    return respond(body, status);
   }));
 }
 
-beforeEach(() => setMutationToken('a'.repeat(64)));
-afterEach(() => { clearMutationToken(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+beforeEach(() => { evictAll(); setMutationToken(TOKEN); });
+afterEach(() => {
+  clearMutationToken();
+  document.head.querySelectorAll('meta[name="ashlr-remote-gateway"]').forEach((m) => m.remove());
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe('Connect Resources', () => {
   // First render in the file pays the jsdom + role-query warm-up cost.
@@ -62,7 +91,12 @@ describe('Connect Resources', () => {
       }
     });
     expect(await screen.findAllByRole('combobox')).not.toHaveLength(0);
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    // Action buttons exist only inside the API-key custody forms.
+    const apiKeys = screen.getByRole('region', { name: 'API keys' });
+    expect(within(apiKeys).getAllByRole('button')).toHaveLength(apiKeyCatalogResources().length);
+    for (const title of ['Subscriptions', 'Local models', 'This computer', 'Cloud computer']) {
+      expect(within(screen.getByRole('region', { name: title })).queryByRole('button')).not.toBeInTheDocument();
+    }
   });
 
   it('has unique ids and safe descriptive metadata', () => {
@@ -133,5 +167,79 @@ describe('Connect Resources', () => {
     expect(within(codexRow as HTMLElement).getByText(/41% of window used/)).toBeInTheDocument();
     expect(within(codexRow as HTMLElement).getByText(/3 dispatches today/)).toBeInTheDocument();
     expect(within(section).queryByText('OpenAI')).not.toBeInTheDocument();
+  });
+
+  it('renders a key entry form only for apikey resources', () => {
+    stubApi();
+    render(<ConnectView />);
+    const apiKeys = screen.getByRole('region', { name: 'API keys' });
+    const forms = within(apiKeys).getAllByRole('form');
+    expect(forms).toHaveLength(apiKeyCatalogResources().length);
+    for (const resource of apiKeyCatalogResources()) {
+      expect(within(apiKeys).getByLabelText(`${resource.displayName} API key`)).toHaveAttribute('type', 'password');
+    }
+    expect(within(screen.getByRole('region', { name: 'Subscriptions' })).queryByRole('form')).not.toBeInTheDocument();
+  });
+
+  it('stores a key through the loopback API and shows only the masked form + verdict', async () => {
+    const posts: unknown[] = [];
+    stubApi(200, report(), posts);
+    const user = userEvent.setup();
+    render(<ConnectView />);
+
+    const apiKeys = screen.getByRole('region', { name: 'API keys' });
+    const form = within(apiKeys).getByRole('form', { name: 'Store OpenAI API key' });
+    const input = within(form).getByLabelText('OpenAI API key');
+    await user.type(input, KEY_VALUE);
+    await user.click(within(form).getByRole('button', { name: 'Store' }));
+
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]).toEqual({ path: '/api/connect/key', body: { resource: 'openai', value: KEY_VALUE } });
+    // The only echo is the masked last-4 + the validated verdict.
+    expect(await within(apiKeys).findByText(`****${KEY_LAST4}`)).toBeInTheDocument();
+    expect(within(apiKeys).getByText('validated')).toBeInTheDocument();
+    expect(document.body.innerHTML).not.toContain(KEY_VALUE);
+    await waitFor(() => expect(input).toHaveValue(''));
+  });
+
+  it('asks for the mutation token before posting when no hold exists', async () => {
+    clearMutationToken();
+    const posts: unknown[] = [];
+    stubApi(200, report(), posts);
+    const user = userEvent.setup();
+    render(<ConnectView />);
+
+    const apiKeys = screen.getByRole('region', { name: 'API keys' });
+    const form = within(apiKeys).getByRole('form', { name: 'Store OpenAI API key' });
+    const input = within(form).getByLabelText('OpenAI API key');
+    await user.type(input, KEY_VALUE);
+    await user.click(within(form).getByRole('button', { name: 'Store' }));
+
+    // No POST yet -- the token dialog gates the write.
+    expect(posts).toHaveLength(0);
+    const dialog = await screen.findByRole('dialog');
+    const tokenInput = within(dialog).getByPlaceholderText('64 hex characters');
+    await user.type(tokenInput, TOKEN);
+    await user.click(within(dialog).getByRole('button', { name: 'Unlock' }));
+
+    // Once unlocked, the pending key entry completes.
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]).toEqual({ path: '/api/connect/key', body: { resource: 'openai', value: KEY_VALUE } });
+    await waitFor(() => expect(input).toHaveValue(''));
+    expect(document.body.innerHTML).not.toContain(KEY_VALUE);
+  });
+
+  it('never renders key entry under the remote gateway marker', () => {
+    document.head.insertAdjacentHTML('beforeend', '<meta name="ashlr-remote-gateway" content="v1">');
+    const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('not found', { status: 404 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    render(<ConnectView />);
+    const apiKeys = screen.getByRole('region', { name: 'API keys' });
+    expect(within(apiKeys).queryByRole('form')).not.toBeInTheDocument();
+    expect(within(apiKeys).queryAllByLabelText(/API key$/)).toHaveLength(0);
+    expect(within(apiKeys).getAllByText(/local console on this computer/).length).toBeGreaterThan(0);
+    // The custody endpoints are never requested remotely.
+    const connectCalls = fetchSpy.mock.calls.filter((call) => String(call[0]).includes('/api/connect'));
+    expect(connectCalls).toHaveLength(0);
   });
 });

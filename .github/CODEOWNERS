@@ -316,6 +316,7 @@
 /test/completeness-gate-stash-hardening-310b.test.ts @masonwyatt23
 /test/confine-autonomous-310b.test.ts @masonwyatt23
 /test/confine-autonomous-darwin-310b.test.ts @masonwyatt23
+/test/connect-key-custody.test.ts @masonwyatt23
 /test/connector-manager.test.ts @masonwyatt23
 /test/context-checked-gate-worktree-01.test.ts @masonwyatt23
 /test/context-compiler-improve.test.ts @masonwyatt23
@@ -948,6 +949,7 @@
 /test/mcp-gateway-recovery-probe.test.ts @masonwyatt23
 /test/mcp-native-fleet-apps-changes-03-sonn1.test.ts @masonwyatt23
 /test/mcp-native-fleet-drop-job.test.ts @masonwyatt23
+/test/mem-reclaim.test.ts @masonwyatt23
 /test/memory-benchmark.test.ts @masonwyatt23
 /test/memory-embeddings.test.ts @masonwyatt23
 /test/memory-evaluation-cli.test.ts @masonwyatt23
@@ -958,6 +960,7 @@
 /test/merge-age-routing.test.ts @masonwyatt23
 /test/merge-backlog-hot-files.test.ts @masonwyatt23
 /test/merge-backlog-read.test.ts @masonwyatt23
+/test/merge-drain-q9.test.ts @masonwyatt23
 /test/merge-gate-latency.test.ts @masonwyatt23
 /test/merge-gates-310b.test.ts @masonwyatt23
 /test/merge-temp-worktree-reaper.test.ts @masonwyatt23
@@ -971,6 +974,7 @@
 /test/native-locus-metadata-scope.test.ts @masonwyatt23
 /test/node-router.test.ts @masonwyatt23
 /test/north-star-measured-leverage.test.ts @masonwyatt23
+/test/onb-connect-e2e.test.ts @masonwyatt23
 /test/one-ask-best-of-n-winner.test.ts @masonwyatt23
 /test/ops-release-pr-merge-api.test.ts @masonwyatt23
 /test/ops-release-pr-merge.test.ts @masonwyatt23
@@ -1135,6 +1139,7 @@
 /test/support/pool-commissioning-independent-fixture.ts @masonwyatt23
 /test/support/pool-commissioning-transaction-fixture.ts @masonwyatt23
 /test/swarm-fence-inference-release.test.ts @masonwyatt23
+/test/task-bandit.test.ts @masonwyatt23
 /test/task-source-310b.test.ts @masonwyatt23
 /test/task-temporal-context.test.ts @masonwyatt23
 /test/telegram-readable-dates.test.ts @masonwyatt23

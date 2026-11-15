@@ -87,6 +87,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Measure lane/model reliability across N clean-worktree trials and feed routing | [pass^k offline eval suite](https://github.com/ashlrai/phantom/blob/master/docs/EVAL-PASSK.md) |
 | Navigate source entry points, subsystems and contracts | [Code map (source guide)](https://github.com/ashlrai/phantom/blob/master/docs/CODEMAP.md) |
 | A/B test prompt variants per job class and promote only significant winners | [Prompt-variant A/B eval](https://github.com/ashlrai/phantom/blob/master/docs/router/prompt-ab.md) |
+| Learn task-aware (engine, model, effort) arms inside the seat router behind a flag | [Task-aware bandit lane](https://github.com/ashlrai/phantom/blob/master/docs/router/task-bandit.md) |
 | Understand the current components and their boundaries | [Architecture](ARCHITECTURE.md#current-runtime-map) |
 | Follow source responsibilities, flows and extension points | [Architecture knowledge map](https://github.com/ashlrai/phantom/blob/master/docs/ARCHITECTURE-KNOWLEDGE.md) |
 | Review documentation inventory and audit coverage | [Documentation audit](https://github.com/ashlrai/phantom/blob/master/docs/DOCUMENTATION-AUDIT.md) |
@@ -121,6 +122,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Diagnose daemon liveness and prepare the protected Mac revival handoff | [Daemon revival source guide](https://github.com/ashlrai/phantom/blob/master/docs/DAEMON-REVIVE.md) |
 | Read the resident tick's bounded phases, outcomes and per-stage errors | [Daemon tick phases](https://github.com/ashlrai/phantom/blob/master/docs/daemon-tick-phases.md) |
 | Run agents in Phantom against your accounts and a local model | [Local fleet](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-FLEET.md) |
+| Reclaim memory from idle local models, orphaned dev processes and finished-job leftovers | [Memory reclaim](https://github.com/ashlrai/phantom/blob/master/docs/MEM-RECLAIM.md) |
 | Inspect managed OpenAI Agents sessions through the read-only CLI | [OpenAI Agents integration](OPENAI-AGENTS-INTEGRATION.md) |
 | Understand supported Dots companion workflows and the plugin-event integration path | [Dots companion](DOTS-COMPANION.md) |
 | Compose scoped, dated evidence with the pure source memory kernel | [Memory foundation](MEMORY-FOUNDATION.md) |
