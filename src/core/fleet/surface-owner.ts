@@ -7,6 +7,7 @@
  */
 import { readFleetBoard, type FleetBoard, type FleetCoordinationOptions } from './coordination.js';
 import { pathJobHistory } from './path-job-history.js';
+import { isHubRepositoryLabel } from '../authority/repository-binding.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 const UNKNOWN = 'UNKNOWN';
@@ -89,7 +90,11 @@ const label = (value: string | null): string =>
 /**
  * One bounded snapshot for a named surface. A claim names a surface when its
  * task contains the surface id or one of its paths as an exact substring.
- * Claim task text and ledger paths never leave this function.
+ * The catalog describes this repository's tree, so only claims on the Hub
+ * repository identity (ashlrai/phantom or its pre-rename label, matched
+ * case-insensitively like the rest of coordination) can name an owner;
+ * live claims on other repositories are ignored, never ambiguous. Claim task
+ * text and ledger paths never leave this function.
  */
 export async function readSurfaceOwner(surface: string, deps: SurfaceOwnerDeps = {}): Promise<SurfaceOwnerReport | null> {
   if (!Object.hasOwn(SURFACES, surface)) return null;
@@ -108,8 +113,13 @@ export async function readSurfaceOwner(surface: string, deps: SurfaceOwnerDeps =
   if (board.state !== 'known') {
     reasons.push('coordination ledger: missing or unreadable');
   } else {
-    const matches = board.claims.filter(claim => claim.expiresAt > now && typeof claim.task === 'string'
-      && (claim.task.includes(surface) || paths.some(path => claim.task.includes(path))));
+    const namesSurface = (claim: FleetBoard['claims'][number]): boolean =>
+      typeof claim.task === 'string'
+        && (claim.task.includes(surface) || paths.some(path => claim.task.includes(path)));
+    const matches = board.claims.filter(claim => claim.expiresAt > now
+      && typeof claim.repo === 'string' && isHubRepositoryLabel(claim.repo) && namesSurface(claim));
+    const foreign = board.claims.filter(claim => claim.expiresAt > now
+      && !(typeof claim.repo === 'string' && isHubRepositoryLabel(claim.repo)) && namesSurface(claim)).length;
     for (const claim of matches) {
       liveClaims.push({ id: label(claim.id), agent: label(claim.agent),
         expiresInSeconds: Math.floor((claim.expiresAt - now) / 1000) });
@@ -119,6 +129,7 @@ export async function readSurfaceOwner(surface: string, deps: SurfaceOwnerDeps =
       ownerSource = 'advisory-claim';
     } else if (matches.length === 0) {
       reasons.push('no live claim names this surface; lastLanded is history, not ownership');
+      if (foreign > 0) reasons.push(`${foreign} live claim(s) naming this surface belong to other repositories and were ignored`);
     } else {
       reasons.push(`${matches.length} live claims name this surface`);
     }

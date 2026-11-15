@@ -56,6 +56,8 @@ describe('fleet runtime', () => {
       pid: 123, uptimeSeconds: 120.5, platform: 'fakeos', arch: 'fakearch', stateRoot: '~/.ashlr-runs',
       lastFleetStateRead: { mtime: '2026-11-13T13:59:30.000Z', ageSeconds: 30 },
       coordination: { state: 'known', activeClaims: 1, newestReturnAgeSeconds: 45 },
+      execution: { state: 'UNKNOWN', running: 0, claimedNoWorker: 0, unknown: 0,
+        reason: 'execution: ledger unavailable' },
       asOf: '2026-11-13T14:00:00.000Z', reasons: [],
     });
     expect(output[0]).not.toContain(home);

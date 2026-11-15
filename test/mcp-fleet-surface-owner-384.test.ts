@@ -11,7 +11,7 @@ const deps: SurfaceOwnerDeps = {
   now: () => NOW,
   board: () => ({
     schema: 'fleet.coordination.v1', state: 'known', messages: [], proposals: [], expiredClaims: 0,
-    claims: [{ id: 'fake-claim', agent: 'fake-agent', repo: 'fake/repo', task: 'watch dot-handoff fake work',
+    claims: [{ id: 'fake-claim', agent: 'fake-agent', repo: 'ashlrai/phantom', task: 'watch dot-handoff fake work',
       claimedAt: NOW - 60_000, expiresAt: NOW + 60_000 }],
   }),
   log: async () => [{ sha: 'abc1234', date: '2026-11-13T12:00:00.000Z',
