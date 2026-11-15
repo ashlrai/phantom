@@ -11,9 +11,9 @@
  * recheck-pool-line.ts). An optional "Orders 24h:" evidence line (Mason's
  * inbox orders over the last 24h classified by order-trace; see
  * recheck-orders-line.ts) sits directly after the Task line when the verdict
- * carries orders evidence the trace could prove. It is the first line
- * dropped after optional per-channel reply coverage when the reply would
- * exceed the cap, then Pool, then Computers,
+ * carries orders evidence the trace could prove. An optional "Owners:" line
+ * follows Bridge and names advisory bridge claimants. When the reply would
+ * exceed the cap, drop per-channel coverage, then Owners, Orders, Pool, Computers,
  * then Running job, then Last verified, so the verdict line is never clipped.
  * One optional "Last verified:" evidence line sits
  * after the Orders line when the task section carries lastVerified (the newest
@@ -32,6 +32,7 @@
 import type { FleetRecheck } from './fleet-recheck.js';
 import { formatComputersLine } from './recheck-computers-line.js';
 import { formatOrdersLine } from './recheck-orders-line.js';
+import { formatOwnersLine } from './recheck-owners-line.js';
 import { formatPoolLine } from './recheck-pool-line.js';
 import { sanitizeIdentityText } from './runtime-identity.js';
 
@@ -100,7 +101,8 @@ export function formatRecheckReply(r: FleetRecheck): string {
   const pool = formatPoolLine(r.pool, scrub);
   const orders = formatOrdersLine(r.orders, scrub);
   const coverage = coverageLines(bridge.channels);
-  const build = (withOrders: boolean, withLast: boolean, withRunning: boolean, withComputers: boolean, withPool = false, withCoverage = false): string => [
+  const owners = formatOwnersLine(r.owners, scrub);
+  const build = (withOrders: boolean, withLast: boolean, withRunning: boolean, withComputers: boolean, withPool = false, withOwners = false, withCoverage = false): string => [
     `Phantom recheck ${r.overall.state} · as of ${scrub(r.asOf)} · source fleet-recheck`,
     `Runtime: ${scrub(runtime.host)} · ${scrub(runtime.installedVersion)} · fleet state ${age}`
       + `${runtime.fleetState.stale === true ? ' · stale' : ''} (${runtime.state})`,
@@ -109,6 +111,7 @@ export function formatRecheckReply(r: FleetRecheck): string {
     `Claims: ${claims.active === null ? 'unknown' : claims.active} live, top: ${top} (${claims.state})`,
     `Bridge: slack ${channel('slack')}, imessage ${channel('imessage')}`
       + `${bridge.missingBridge === null ? '' : ` · missing: ${scrub(bridge.missingBridge)}`} (${bridge.state})`,
+    ...(withOwners && owners !== null ? [owners] : []),
     ...(withCoverage ? coverage : []),
     task.task === null
       ? `Task: none, ${scrub(task.missing[0] ?? 'no task evidence')} (${task.state})`
@@ -122,12 +125,21 @@ export function formatRecheckReply(r: FleetRecheck): string {
         ? `BLOCKED on: ${missing}`
         : `UNKNOWN: ${missing}`,
   ].join('\n');
-  let text = build(true, true, true, true, true, true);
+  let text = build(true, true, true, true, true, true, true);
+  if (text.length > REPLY_MAX) text = build(true, true, true, true, true, true);
   if (text.length > REPLY_MAX) text = build(true, true, true, true, true);
   if (text.length > REPLY_MAX) text = build(false, true, true, true, true);
   if (text.length > REPLY_MAX) text = build(false, true, true, true);
   if (text.length > REPLY_MAX) text = build(false, true, true, false);
   if (text.length > REPLY_MAX) text = build(false, true, false, false);
   if (text.length > REPLY_MAX) text = build(false, false, false, false);
+  // Oversized core evidence must not crowd out a complete verdict line.
+  // An oversized verdict reason itself retains the existing ellipsis cap.
+  if (text.length > REPLY_MAX) {
+    const verdict = text.slice(text.lastIndexOf('\n') + 1);
+    if (verdict.length < REPLY_MAX - 1) {
+      return `${text.slice(0, REPLY_MAX - verdict.length - 2)}…\n${verdict}`;
+    }
+  }
   return text.length <= REPLY_MAX ? text : `${text.slice(0, REPLY_MAX - 1)}…`;
 }

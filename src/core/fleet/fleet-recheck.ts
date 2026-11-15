@@ -63,6 +63,10 @@
  * ['orders: reader failed']. It is evidence only: it never changes a state,
  * overall, missing[], the pick or any claim field, and grants nothing.
  *
+ * Top-level owners joins the three bridge surfaces' advisory claims under
+ * one reader bound. It shares the claims snapshot and verdict clock; a failed
+ * or stalled read yields null and never changes any state or missing reason.
+ *
  * Output is sanitized through sanitizeIdentityText (home → ~, IPs dropped);
  * no message bodies, leases or env values ever reach the result.
  *
@@ -84,6 +88,7 @@ import { defaultPoolReachDeps, readPoolReach, type PoolReach } from './pool-reac
 import { readLaneTargets, type LaneTargetsV1 } from './runs-lane-targets.js';
 import type { LiveJobIds } from './order-work-state.js';
 import { summarizeOrders, type RecheckOrders } from './recheck-orders-line.js';
+import { readSurfaceOwner, type SurfaceOwnerDeps } from './surface-owner.js';
 import { defaultTailnetPeersDeps, readTailnetPeers, type TailnetPeers } from './tailnet-peers.js';
 import {
   bindPickToCoordination,
@@ -223,6 +228,8 @@ export interface FleetRecheck {
   pool?: PoolReach | null;
   /** Mason's last-24h inbox orders by work state; evidence only, never changes a state or the pick. */
   orders?: RecheckOrders | null;
+  /** Advisory ownership evidence only; landed history never establishes an owner. */
+  owners?: FleetRecheckOwners | null;
   sections: {
     runtime: {
       state: FleetRecheckState;
@@ -262,6 +269,35 @@ export interface FleetRecheck {
   };
 }
 
+export interface FleetRecheckOwners {
+  asOf: string;
+  surfaces: Array<{
+    surface: 'slack-bridge' | 'imessage-bridge' | 'dot-handoff';
+    owner: string;
+    ownerSource: 'advisory-claim' | 'none';
+    liveClaims: number;
+    lastLandedJob: string | null;
+    reason: string | null;
+  }>;
+}
+
+async function readOwnersSnapshot(deps: SurfaceOwnerDeps): Promise<FleetRecheckOwners | null> {
+  const surfaces = ['slack-bridge', 'imessage-bridge', 'dot-handoff'] as const;
+  const reports = await Promise.all(surfaces.map(surface => readSurfaceOwner(surface, deps)));
+  if (reports.some(report => report === null)) return null;
+  return {
+    asOf: reports[0]!.asOf,
+    surfaces: reports.map((report, i) => ({
+      surface: surfaces[i]!,
+      owner: report!.owner,
+      ownerSource: report!.ownerSource,
+      liveClaims: report!.liveClaims.length,
+      lastLandedJob: report!.lastLanded?.jobId ?? null,
+      reason: report!.ownerSource === 'advisory-claim' ? null : report!.reasons[0] ?? 'owner unknown',
+    })),
+  };
+}
+
 /** Read a single task that claims a host can verify a runtime, the channels
  * and work board. No FleetClaim field in the claims ledger identifies a
  * work-board item: claim.id is a ledger uuid and claim.task is free text, so
@@ -291,6 +327,7 @@ export function defaultFleetRecheckDeps(now: () => Date): Required<FleetRecheckD
     readTailnetPeers: () => readTailnetPeers(defaultTailnetPeersDeps()),
     readPool: () => readPoolReach(defaultPoolReachDeps()),
     readOrders: () => readOrderTrace(),
+    readOwners: () => readOwnersSnapshot({ now: () => now().getTime() }),
     readLaneTargets: () => readLaneTargets(),
   };
 }
@@ -308,6 +345,7 @@ export type FleetRecheckDeps = {
   readTailnetPeers?: () => Promise<TailnetPeers> | TailnetPeers;
   readPool?: () => Promise<PoolReach> | PoolReach;
   readOrders?: () => Promise<OrderTraceV1> | OrderTraceV1;
+  readOwners?: () => Promise<FleetRecheckOwners | null> | FleetRecheckOwners | null;
   readLaneTargets?: () => Promise<LaneTargetsV1> | LaneTargetsV1;
 };
 
@@ -845,10 +883,23 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
     d.readOrders = () => readOrderTrace({ now: () => nowMs });
   }
 
-  // All ten readers run concurrently, each inside its own 5 s bound.
-  const [runtime, claims, bridge, board, coordination, live, tailnet, pool, orders, laneTargets] = await Promise.all([
+  const claimsRead = attempt(d.readFleetBoard);
+  if (deps.readOwners === undefined) {
+    d.readOwners = async () => {
+      const claims = await claimsRead;
+      return readOwnersSnapshot({
+        now: () => nowMs,
+        board: () => claims.ok ? claims.value : {
+          schema: 'fleet.coordination.v1', state: 'unknown', claims: [], messages: [], proposals: [], expiredClaims: null,
+        },
+      });
+    };
+  }
+
+  // All readers share the same 5 s bound; ownership reuses the claims read.
+  const [runtime, claims, bridge, board, coordination, live, tailnet, pool, orders, laneTargets, owners] = await Promise.all([
     attempt(d.readRuntimeIdentity),
-    attempt(d.readFleetBoard),
+    claimsRead,
     attempt(d.readChannelHealth),
     attempt(d.listWorkBoard),
     attempt(d.listCoordination),
@@ -857,6 +908,7 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
     attempt(d.readPool),
     attempt(d.readOrders),
     attempt(d.readLaneTargets),
+    attempt(d.readOwners),
   ]);
 
   // Orders evidence uses healthy snapshots only; anything else is "no evidence".
@@ -888,6 +940,7 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
     tailnet: tailnetEvidence(tailnet, asOf, home),
     pool: poolEvidence(pool, asOf),
     orders: ordersEvidence(orders, asOf, asOf, liveJobs, lanes),
+    owners: owners.ok ? owners.value : null,
     sections,
     overall: { state: verified ? 'VERIFIED' : worst, missing },
   };
