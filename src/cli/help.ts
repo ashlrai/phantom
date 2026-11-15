@@ -647,6 +647,10 @@ export function agentDocsText(): string {
   lines.push('phantom_fleet_session, phantom_fleet_doctor, phantom_fleet_verbs.');
   lines.push('Tool discovery is not authorization. phantom_fleet_doctor only reads fleet health;');
   lines.push('phantom_fleet_verbs lists fleet verbs and never runs one.');
+  lines.push('Local directive tools: intent_list and intent_get read tracking; intent_add,');
+  lines.push('intent_update, intent_link and intent_ship record caller-supplied directives');
+  lines.push('and evidence. intent_stale previews or refreshes tracking. These records do');
+  lines.push('not verify supplied claims or authorize dispatch, releases or other actions.');
   lines.push('Read-only observation tools: world_model, phantom_observe, phantom_observe_session,');
   lines.push('phantom_spend_budget, phm_context_brief, phm_claim_acquire, phm_claim_release,');
   lines.push('phantom_leader_status, phantom_leader_org, phantom_leader_inbox, phantom_leader_ask,');
@@ -867,6 +871,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'enroll remove <repo>',         desc: 'Remove a repo from the enrollment registry.', topic: 'autonomy' },
   { cmd: 'enroll kill on|off',           desc: 'Toggle the global autonomous kill switch.', topic: 'autonomy' },
   { cmd: 'backlog',                      desc: 'Scored work queue across enrolled repos (issues, TODOs, tests, deps, docs, security, plugins, goals, hygiene, invention).', topic: 'autonomy' },
+  { cmd: 'ideas [--json]',               desc: 'Read recorded fleet ideas and their repository, lane and goal.', topic: 'autonomy' },
   { cmd: 'select [--json] [--dry-run] [--top <n>]', desc: 'Rank candidates by value x leverage / (time + usage), fund the top 5 as READY lines, record picks with predicted value.', topic: 'autonomy' },
   { cmd: 'backlog refresh',              desc: 'Re-scan all enrolled repos and rebuild the backlog.', topic: 'autonomy' },
   { cmd: 'release-articles status|enable|disable|import|sync [--json]', desc: 'Configure release-backed article task handoffs; sync verifies public GitHub/npm evidence and never publishes directly.', topic: 'autonomy' },
@@ -1113,7 +1118,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'serve [--port N]',             desc: 'Start local web dashboard + JSON API on 127.0.0.1 (default port 7777).', topic: 'web' },
   { cmd: 'serve --open',                 desc: 'Start dashboard and open browser automatically.', topic: 'web' },
   { cmd: 'serve --allow-dispatch',       desc: 'Enable guarded POST /api/run + web inbox approve/reject (prints session token).', topic: 'web' },
-  { cmd: 'console [--port N] [--no-open]', desc: 'Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.', topic: 'web' },
+  { cmd: 'console [--port N] [--no-open]', desc: 'Open the Phantom console at /verse/ through its /app/ alias for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.', topic: 'web' },
   { cmd: 'verse [--port N] [--no-open]', desc: 'Alias of `console` (the original name; same flags). Opens /verse/, the same page.', topic: 'web' },
 
   { cmd: 'new <name> [opts]',            desc: 'Scaffold a project from a template (next-app, node-cli, mcp-server, minimal).', topic: 'scaffold' },

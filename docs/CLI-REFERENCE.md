@@ -60,7 +60,7 @@ Phantom - every command (phm or ashlr)
     init [--yes]                                                                                                   Idempotent onboarding: ensure config, detect phantom + models, set editor.
     desktop install [--apply]                                                                                      Inspect original signed app/CLI artifacts; explicitly install only on an empty macOS arm64 installation after Stop/drain. Does not resume authority.
     desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]                              Operate macOS desktop apps through the desktop-operator helper. Reads are free. focus, scroll, type and click post a bus intent first. KILL and comms pause block writes.
-    apps list|open|quit|focus|status [<app>] [--json]                                                              Manage desktop apps named in ~/.ashlr/apps-allow.json (empty by default). Logged to the feed; quit with unsaved work goes to needs-you.
+    apps list|open|quit|focus|status [<app>] [--json] | apps request open|quit|focus <app> [--json]                Manage desktop apps named in ~/.ashlr/apps-allow.json (empty by default). Per-app action policy; logged to the feed. Requests and unsafe quits go to needs-you.
     desktopctl capabilities|status|run <resource> [--json]                                                         Drive Claude, Codex, Devin and a browser as interchangeable desktop resources. Flag-gated by ~/.ashlr/desktopctl.json; reports missing TCC grants, never prompts. Logged to the feed.
     desktop-update inspect|apply --stage <32hex> --json                                                            Verify signed paired updates; apply after native exit, Stop/drain and unchanged active grant. Never resumes the resident.
     app update status [--json]                                                                                     Inspect local desktop update status without downloading or installing. Read-only: reports current stage, available version, deferred reason, running job counts. Exit 0 success, 2 bad usage.
@@ -80,6 +80,7 @@ Phantom - every command (phm or ashlr)
     version                                                                                                        Print the installed ashlr version (aliases: --version, -v).
     setup                                                                                                          Temporarily unavailable: refuses before config or wizard effects; use owner-invoked run/swarm or daemon dry-run while compiled runtime roots are empty.
     app update status [--json]                                                                                     Read the local signed desktop-update stage and deferral counts; never downloads or installs.
+    onboard --ecosystem [--json]                                                                                   Detect existing tools, key binding names and loopback endpoints; select toggles and grant one integration bundle. See docs/ECOSYSTEM-ONBOARDING.md.
 
   Run - local-first agent runs
     run "<goal>" [opts]                                                   Decompose goal into tasks; execute via local model (Ollama/LM Studio).
@@ -135,6 +136,7 @@ Phantom - every command (phm or ashlr)
     enroll remove <repo>                                                                                                                                          Remove a repo from the enrollment registry.
     enroll kill on|off                                                                                                                                            Toggle the global autonomous kill switch.
     backlog                                                                                                                                                       Scored work queue across enrolled repos (issues, TODOs, tests, deps, docs, security, plugins, goals, hygiene, invention).
+    ideas [--json]                                                                                                                                                Read recorded fleet ideas and their repository, lane and goal.
     select [--json] [--dry-run] [--top <n>]                                                                                                                       Rank candidates by value x leverage / (time + usage), fund the top 5 as READY lines, record picks with predicted value.
     backlog refresh                                                                                                                                               Re-scan all enrolled repos and rebuild the backlog.
     release-articles status|enable|disable|import|sync [--json]                                                                                                   Configure release-backed article task handoffs; sync verifies public GitHub/npm evidence and never publishes directly.
@@ -268,6 +270,7 @@ Phantom - every command (phm or ashlr)
     queue add|claim|done|block|replay|list|import|export                                                                                                          Local job queue with atomic claims, JSON snapshots and a read-only Markdown mirror.
     issues [--retry] [--dir <queue-directory>] [--json]                                                                                                           Group failed queue jobs by error; --retry queues one READY retry per failed job without duplicates.
     route explain [--json]                                                                                                                                        Read dispatcher pools and route-moves-per-hour.
+    route decide --input <file|-> [--root <directory>] --json                                                                                                     Suggest a schema-validated route without changing launch behavior.
     pool admission [--json]                                                                                                                                       Read-only load gate: loadavg, ncpu, running cap, install-lock holder and admit true/false with the reason.
     queue dedupe [--file <router-queue.md>] [--apply] [--json]                                                                                                    Find repeated READY jobs; preview by default, or mark repeats superseded with --apply.
     trail claim|beat|release <claim-key> [--json]                                                                                                                 Stigmergic work-item markers: claim a key, heartbeat progress, release. File-based coordination; no execution authority. See docs/STIGMERGY.md.
@@ -333,6 +336,7 @@ Phantom - every command (phm or ashlr)
     mcp list                                                                         List native ashlr tools + discovered MCP servers with per-server tool counts.
     mcp doctor                                                                       Per-server MCP health: does it start? how many tools?
     autopilot <pr> [--apply] [--watch]                                               Drive one of Phantom's own PRs to green: fix red CI and review feedback with an agent, merge a conflicting or behind base, re-run infra failures once, re-verify; stops and says why when a failure is not the PR's. Plan only unless --apply; never force-pushes or merges the PR.
+    land auto [--repo <o/n>] [--apply] [--json]                                      Merge autopilot over the fleet's open PRs: classifies each as green-ready/behind/conflicting/red-required; --apply (needs PHANTOM_MERGE_AUTOPILOT=1) updates behind branches (merge only), enqueues DRAIN for conflicts and FIXUP for a failing required check. Holds honored, 3 actions/PR/24h.
     metrics <summary|dashboard|record|recommend|ingest|levers>                       Local telemetry: value-weighted PRs shipped per token/second/$, leaderboards, UCB1 allocation, HTML dashboard, router-metrics ingest and opportunity proxies.
     improve propose [--open-pr --repo <dir>]                                         Self-improvement loop: evidence-backed proposals ranked by realized leverage; --open-pr opens DRAFT PRs from an isolated worktree.
     improve register|measure|outcomes|promote|sync-backlog|discover|observe|lessons  Record a proposal's deterministic metric, measure it at the PR's exact merge base and head, record merges and the reverts that cancel their credit, compare proposers against the deterministic baseline, register cloud backlog PRs that declare a metric, add backlog items from member issues, a red default branch and proposals, compare cloud runs served lessons against the holdout run without them, and queue auto-merge only when checks are green and the metric improved.
@@ -385,7 +389,7 @@ Phantom - every command (phm or ashlr)
     serve [--port N]                Start local web dashboard + JSON API on 127.0.0.1 (default port 7777).
     serve --open                    Start dashboard and open browser automatically.
     serve --allow-dispatch          Enable guarded POST /api/run + web inbox approve/reject (prints session token).
-    console [--port N] [--no-open]  Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.
+    console [--port N] [--no-open]  Open the Phantom console at /verse/ through its /app/ alias for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.
     verse [--port N] [--no-open]    Alias of `console` (the original name; same flags). Opens /verse/, the same page.
 
   Scaffold - new projects + shipping

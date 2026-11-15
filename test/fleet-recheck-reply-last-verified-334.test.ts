@@ -42,6 +42,7 @@ function deps(items: WorkBoardItem[]): FleetRecheckDeps {
     readRuntimeIdentity: () => runtime, readFleetBoard: () => ledger, readChannelHealth: () => channels,
     listWorkBoard: (): WorkBoardResult => ({ items, inbox: 'ok', truncated: false }),
     listCoordination: () => ({ source: 'unavailable', claims: [] }),
+    listLiveWorkers: () => { throw new Error('absent'); },
   };
 }
 
