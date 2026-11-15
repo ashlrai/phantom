@@ -8,6 +8,9 @@ import { probeLocalModelCaps, type LocalLaneProbeDeps } from './local-model-caps
 import { callPool, type PoolConfig } from './pool-host.js';
 import { validId } from './state.js';
 import { readNodeCapacity } from './capacity.js';
+import { lightRecipe, restockLight } from './light.js';
+import { probeLocalAuth } from './auth-probe.js';
+import type { JobView } from './index.js';
 
 /** Native sign-in checks plus the local oMLX lane plan. No auth-file reads, API tokens or output retention. */
 export function probeNodeLanes(run: typeof spawnSync = spawnSync, localDeps: LocalLaneProbeDeps = {}): string[] {
@@ -34,31 +37,37 @@ export function nodeStopped(): boolean {
  * Runner must sandbox provider work and fence any effects; it cannot publish. Diagnostics are
  * discarded. Only a bounded result reference is returned to primary custody.
  */
-export async function runNodeWorker(config: PoolConfig, runner: string): Promise<Record<string, unknown>> {
+export async function runNodeWorker(config: PoolConfig, runner: string, light = false): Promise<Record<string, unknown>> {
   await checkDriveExecutable(runner);
   if (nodeStopped()) return { held: 'host-paused' };
-  const capacity = readNodeCapacity();
+  if (light && (config.node !== 'muse' || config.owner !== 'ashlr')) return { held: 'light-owner-node-mismatch' };
+  const capacityNow = () => readNodeCapacity(light);
+  const capacity = capacityNow();
   if (capacity.held) return { held: capacity.held, capacity };
-  const lanes = probeNodeLanes();
+  const auth = light ? probeLocalAuth() : undefined;
+  const lanes = light ? ['light', 'comms', ...(auth === 'ok' ? ['gh'] : [])] : probeNodeLanes();
   if (!lanes.length) return { held: 'no-local-provider-login' };
   const joined = callPool(config, 'join', ['--node', config.node, '--caps', lanes.join(','), '--slots', String(capacity.slots)]);
   const session = joined.result['session'];
   if (!Number.isSafeInteger(session)) return { held: 'node-already-live' };
   const identity = ['--node', config.node, '--session', String(session)];
+  let active = 0;
+  const usage = () => String(Math.min(1000, Math.round(active / capacity.slots * 1000)));
   const attempt = async (): Promise<Record<string, unknown>> => {
-    const admission = readNodeCapacity();
+    const admission = capacityNow();
     if (admission.held) return { held: admission.held };
-    callPool(config, 'beat', [...identity, '--usage', '0', '--slots', String(admission.slots)]);
+    callPool(config, 'beat', [...identity, '--usage', usage(), '--slots', String(admission.slots), ...(auth ? ['--auth', auth] : [])]);
     const pulled = callPool(config, 'pull', identity);
     if (pulled.demoted || !pulled.result['pulled']) return { pulled: false };
     const claim = pulled.result['claim'] as JobClaim;
-    const job = pulled.result['job'] as { id: string; requires: string[]; secrets: string[] };
+    const job = pulled.result['job'] as JobView;
     if (!validId(job?.id) || !Array.isArray(job.requires) || !job.requires.some(c => lanes.includes(c)) ||
-        job.requires.some(c => !lanes.includes(c)) || job.secrets.length || nodeStopped() || readNodeCapacity().held) return { held: 'unsupported-job' };
+        job.requires.some(c => !lanes.includes(c)) || job.secrets.length || (light && !lightRecipe(job)) || nodeStopped() || capacityNow().held) return { held: 'unsupported-job' };
     const lease = [...identity, '--job', claim.jobId, '--token', String(claim.token), '--leader-token', String(claim.leaderToken)];
     // Check immediately before spawn as well as throughout execution.
     const renewed = callPool(config, 'renew', lease);
-    if (!renewed.result['expiresAt'] || renewed.demoted || readNodeCapacity().held) return { held: 'lease-lost' };
+    if (!renewed.result['expiresAt'] || renewed.demoted || capacityNow().held) return { held: 'lease-lost' };
+    active++;
     const resultRef = await new Promise<string | null>(resolve => {
       const child = spawn(runner, ['run'], { shell: false, detached: true,
         env: { PATH: process.env['PATH'], HOME: homedir() }, stdio: ['pipe', 'pipe', 'ignore'] });
@@ -81,8 +90,8 @@ export async function runNodeWorker(config: PoolConfig, runner: string): Promise
       process.once('SIGTERM', stop);
       const timer = setInterval(() => {
         try {
-          if (nodeStopped() || readNodeCapacity().held) return stop();
-          callPool(config, 'beat', [...identity, '--usage', '1000']);
+          if (nodeStopped() || capacityNow().held) return stop();
+          callPool(config, 'beat', [...identity, '--usage', usage(), '--slots', String(capacityNow().slots)]);
           const current = callPool(config, 'renew', lease);
           if (current.demoted || !current.result['expiresAt']) stop();
         } catch { stop(); }
@@ -100,11 +109,19 @@ export async function runNodeWorker(config: PoolConfig, runner: string): Promise
       });
       child.stdin.end(JSON.stringify({ protocol: 'phm-node-worker/v1', job: pulled.result['job'], claim }));
     });
+    active--;
     if (!resultRef) return { completed: false, held: 'runner-stopped' };
     const completed = callPool(config, 'complete', [...lease, '--result', resultRef]);
     return { jobId: claim.jobId, completed: completed.result['completed'] === true };
   };
   try {
+    // A short light batch may finish between restock ticks. Fill its isolated slice
+    // after joining too, so recurring workers do not depend on that race.
+    if (light) restockLight((verb, args) => {
+      const reply = callPool(config, verb, args);
+      if (reply.demoted) throw new Error('Node admission demoted');
+      return reply.result;
+    }, true);
     // Keep one fenced node session until every slot settles; never leave while a sibling runs.
     const settled = await Promise.allSettled(Array.from({ length: capacity.slots }, () => attempt()));
     const attempts = settled.map(result => result.status === 'fulfilled' ? result.value : { held: 'attempt-unavailable' });

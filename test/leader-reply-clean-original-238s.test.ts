@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { generateLeaderReply, type LeaderReplySeatModule } from '../src/core/agents/leader-network-runtime.js';
-import { cleanLeaderReplyText, renderLeaderStatus } from '../src/core/comms/leader-status-snapshot.js';
+import { cleanLeaderReplyText } from '../src/core/comms/leader-status-snapshot.js';
 
 const NOW_MS = Date.parse('2026-11-12T12:00:00Z');
 const seats = { prompts: [] as string[], raw: '' as string | null, planOk: true };
@@ -71,7 +71,8 @@ describe('original #4268 reply cleanup', () => {
       + 'Done.\n';
     const clean = cleanLeaderReplyText(raw);
     expect(clean).toBe('12 PRs merged. Mains: 1 of 2 green.\nProgress 100%\nDone.');
-    expect(clean).not.toMatch(/\x1b|╭|╰|Welcome to Claude|\/help|Progress 10%/);
+    expect(clean).not.toContain('\x1b');
+    expect(clean).not.toMatch(/╭|╰|Welcome to Claude|\/help|Progress 10%/);
   });
 
   it('keeps meaningful multi-line answer content and collapses only excess blank runs', () => {
@@ -96,7 +97,8 @@ describe('original #4268 status reply through the current seat seam', () => {
       ceo: ['Release train is steady.'],
     });
     expect(text).toBe('Codex lanes lead; lexicon main is red.\nSpinner done');
-    expect(text).not.toMatch(/\x1b|╭|Welcome to Devin|Spinner \|/);
+    expect(text).not.toContain('\x1b');
+    expect(text).not.toMatch(/╭|Welcome to Devin|Spinner \|/);
   });
 
   it('falls back to the grounded snapshot render when no seat can answer a status ask', async () => {

@@ -15,6 +15,7 @@
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { closeFrictionItems } from './friction-ledger.js';
 
 export type GradeWindow = '24h' | '7d';
 export const GRADE_WINDOWS: Record<GradeWindow, number> = {
@@ -28,6 +29,7 @@ export interface PickRecord {
   pickedAt: number;
   /** Ranker features, each in [0, 1]. */
   features: Record<string, number>;
+  frictionId?: string;
 }
 export interface PickSignals {
   merged: boolean;
@@ -143,6 +145,8 @@ export interface PickGraderRun {
   newGrades: PickGrade[];
   weights: Weights;
   line: string;
+  /** Ledger ids this run closed (empty unless opts.frictionPath set). */
+  frictionClosed: string[];
 }
 
 /** Grade due picks, persist grades + updated weights, return the daily-line text. */
@@ -153,6 +157,9 @@ export function runPickGrader(opts: {
   now: number;
   /** Starting weights when none are saved yet. */
   defaultWeights?: Weights;
+  /** Friction-ledger close rule (RQ-FRICTION-3): only a linked pick's 7d grade
+   *  with realized >= 0.5 closes its item — never the 24h grade or a miss. */
+  frictionPath?: string;
 }): PickGraderRun {
   const paths = pickGraderPaths(opts.home);
   const prior = readGrades(paths.grades);
@@ -166,7 +173,16 @@ export function runPickGrader(opts: {
     writeFileSync(tmp, JSON.stringify(updated), { mode: 0o600 });
     renameSync(tmp, paths.weights);
   }
+  let frictionClosed: string[] = [];
+  if (opts.frictionPath !== undefined && newGrades.length > 0) {
+    const byId = new Map(opts.picks.map((p) => [p.id, p]));
+    const closable = newGrades.filter((g) => g.window === '7d' && g.realized >= 0.5)
+      .map((g) => byId.get(g.pickId)?.frictionId).filter((id): id is string => typeof id === 'string');
+    try {
+      frictionClosed = closeFrictionItems(opts.frictionPath, closable, new Date(opts.now).toISOString(), 'grader-7d');
+    } catch { /* a ledger write failure never undoes the grade */ }
+  }
   const cutoff = opts.now - GRADE_WINDOWS['7d'];
   const recent = [...prior, ...newGrades].filter((g) => g.gradedAt >= cutoff);
-  return { newGrades, weights: updated, line: formatPickAccuracyLine(recent) };
+  return { newGrades, weights: updated, line: formatPickAccuracyLine(recent), frictionClosed };
 }

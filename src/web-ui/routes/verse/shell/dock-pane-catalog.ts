@@ -27,6 +27,7 @@ export interface DockPaneCatalogEntry {
 
 /** Groups for panes registered outside the built-in catalog. */
 export const REGISTERED_DOCK_PANE_GROUPS: Readonly<Record<string, DockPaneGroup>> = {
+  company: 'fleet',
   'fleet-hub': 'fleet', 'fleet-lanes': 'fleet', 'fleet-queue': 'fleet',
   'fleet-dispatch': 'fleet', 'fleet-capacity': 'fleet', 'fleet-supply': 'fleet',
   'worker-log': 'fleet',

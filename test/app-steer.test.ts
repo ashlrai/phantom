@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -33,6 +33,12 @@ it('cmdApp steer --json prints one object and exits 0', async () => {
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   expect(await cmdApp(['steer', '--text', 'Hello fake leaders', '--json'], { runsDir: dir })).toBe(0);
   expect(JSON.parse(log.mock.calls[0]![0] as string)).toMatchObject({ ok: true, status: 'accepted', channel: 'cli' });
+});
+
+it.each([['steer', '--text', '--json'], ['steer', '--json', '--text', '--text']])('rejects a missing text value without writing (%j)', async (...args) => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  expect(await cmdApp(args, { runsDir: dir })).toBe(2);
+  expect(readdirSync(dir)).toEqual([]);
 });
 
 it('cmdApp rejects bad arguments with exit 2 and help exits 0', async () => {
