@@ -567,6 +567,7 @@
 /test/improve-reverted.test.ts @masonwyatt23
 /test/int4-confine-engines-310b.test.ts @masonwyatt23
 /test/intent-fleet-merge-observe-preservation-231s.test.ts @masonwyatt23
+/test/intent-import-closure.test.ts @masonwyatt23
 /test/intent-import-native-preservation-09spz1.test.ts @masonwyatt23
 /test/intent-merge-batch-owner-qualification-292s.test.ts @masonwyatt23
 /test/intent-merge-batch-preservation-09spu2.test.ts @masonwyatt23
@@ -1051,6 +1052,7 @@
 /test/outcome-task-context.test.ts @masonwyatt23
 /test/outcomes-api.test.ts @masonwyatt23
 /test/overnight-api-310b.test.ts @masonwyatt23
+/test/peer-channel-revocation-inflight-407s.test.ts @masonwyatt23
 /test/perf-budget-workflow.test.ts @masonwyatt23
 /test/perf-budget.test.ts @masonwyatt23
 /test/phantom-custody.test.ts @masonwyatt23
