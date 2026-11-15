@@ -11,6 +11,20 @@ outcome does not activate a dormant fleet or sign a standing grant. Check the
 installed release and [resident setup](AUTONOMY-SETUP.md) before relying on
 unattended execution.
 
+## Your fleet at a glance
+
+Open **Fleet** to inspect workers, lane capacity and recorded results. Open the **Bus** pane for coordination messages and threads. A saved outcome, an active worker, a merged PR and a published release are separate records.
+
+| Next step | Guide |
+| --- | --- |
+| Start with one interactive task | [Quickstart](QUICKSTART.md#make-your-first-useful-turn) |
+| Commission resident work on macOS | [Autonomy setup](AUTONOMY-SETUP.md) |
+| Add another computer with local provider sign-in | [Node onboarding](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md) |
+| Understand messages and overlapping work claims | [Agent bus](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-BUS.md) |
+| Connect participants and configured channels | [Agent network](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-NETWORK.md) |
+
+Nodes coordinate through owner scopes, heartbeats and fenced leases. They do not share provider credentials. Bus claims coordinate work; they do not grant execution or send authority.
+
 ## Resources and routing
 
 Bring supported signed-in CLI accounts, configured API resources and tool-capable

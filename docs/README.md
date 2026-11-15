@@ -4,21 +4,17 @@
 
 # Phantom documentation
 
-Mac queue supervisor: [Drive and host bridge integration](https://github.com/ashlrai/phantom/blob/master/docs/DRIVE.md).
-Prepare queue driver operation, recovery and cutover (planned): [Driver runbook](https://github.com/ashlrai/phantom/blob/master/docs/DRIVER.md).
-Pick a second always-on machine for failover and the Safari agent browser (pending Mason's yes): [Second computer options](https://github.com/ashlrai/phantom/blob/master/docs/SECOND-COMPUTER-OPTIONS.md).
+Phantom is an open-source workbench for running coding agents, coordinating a fleet, and reviewing their work. Start with one local session, then add fleet operation and more computers as needed.
 
-Phantom by AshlrAI is the engineering workbench, formerly Ashlr Verse. Its local
-kernel includes the Universe experiment runtime and compatible command interfaces.
-The published canonical package is `@ashlr/phantom`; existing `@ashlr/hub` SDK
-imports belong to the compatibility releases. `phm`, compatible `ashlr` commands,
-`/verse/` routes and stored identities retain their supported meanings; see
-[the product naming guide](PHANTOM-BRAND.md).
-Historical Ashlrverse research and build contracts keep their original names.
-Use one canonical guide for each task. The North Star is a target, not a claim
-that every integration, provider or autonomous effect is active.
+| Start here | What you will do |
+| --- | --- |
+| [Quickstart](QUICKSTART.md#open-verse) | Install the CLI, open the console and check one resource. |
+| [First useful turn](QUICKSTART.md#make-your-first-useful-turn) | Ask an agent for a small change and review the diff. |
+| [Fleet guide](AUTOMATIC-OUTCOMES.md#work-for-me) | Save an outcome and understand resident setup. |
+| [Add a computer](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md) | Join a node with its own sign-in and owner scope. |
+| [Agent network](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-NETWORK.md) | Understand participants, coordination and channel boundaries. |
 
-Company notes: [Company context](https://github.com/ashlrai/phantom/blob/master/docs/COMPANY-CONTEXT.md).
+The canonical package is `@ashlr/phantom`; `phm` and compatible `ashlr` commands use the same runtime. Historical Ashlr Verse and Universe names remain in research and compatibility guides. See [product naming](PHANTOM-BRAND.md). The [North Star](NORTH-STAR.md) describes a target, not deployed capability.
 
 ## Agents, start here
 
@@ -47,6 +43,8 @@ A zero exit code is not a merge and not permission to spend. `phm docs --agent -
 Synthetic integration checks: [Chain verification](https://github.com/ashlrai/phantom/blob/master/docs/CHAIN-VERIFY.md).
 
 ## All tasks
+
+Host operation: [Drive and host bridge](https://github.com/ashlrai/phantom/blob/master/docs/DRIVE.md), [driver recovery and planned cutover](https://github.com/ashlrai/phantom/blob/master/docs/DRIVER.md), [second computer options](https://github.com/ashlrai/phantom/blob/master/docs/SECOND-COMPUTER-OPTIONS.md). Company notes: [Company context](https://github.com/ashlrai/phantom/blob/master/docs/COMPANY-CONTEXT.md).
 
 Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlrai/phantom/blob/master/docs/grokbot-lane.md).
 
