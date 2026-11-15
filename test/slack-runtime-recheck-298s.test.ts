@@ -73,7 +73,7 @@ describe('slack runtime recheck 298s', () => {
     expect(s.mappings).toEqual([{ topic: 'leaders', channel: 'C0RECHECKNET' }]);
     expect(s.teamIdentities).toEqual({ slack: 2, total: 2 });
     expect(s.comms.confirmedByMason).toBe(true);
-    expect(s.journal).toEqual({ state: 'ok', ingested: 3, ignored: 1, lastAt: '2026-11-13T18:28:00.000Z' });
+    expect(s.journal).toEqual({ state: 'ok', ingested: 3, ignored: 1, lastAt: '2026-11-13T18:28:00.000Z', ignoredReasons: [{ reason: 'untrusted-sender', count: 1, lastAt: '2026-11-13T18:28:00.000Z' }], ignoredReasonsOmitted: 0 });
     expect(s.ready).toBe(true);
 
     // `at` is when this offline report was generated; transport.observedAt is
@@ -103,7 +103,7 @@ describe('slack runtime recheck 298s', () => {
     expect(s.mappings).toEqual([]);
     expect(s.teamIdentities).toEqual({ slack: 0, total: 0 });
     expect(s.comms.confirmedByMason).toBe(false);
-    expect(s.journal).toEqual({ state: 'missing', ingested: 0, ignored: 0, lastAt: null });
+    expect(s.journal).toEqual({ state: 'missing', ingested: 0, ignored: 0, lastAt: null, ignoredReasons: [], ignoredReasonsOmitted: 0 });
     expect(s.ready).toBe(false);
     expect(s.transport).toEqual({ health: 'unknown', observedAt: null, probeCommand: 'phm channels slack probe --json' });
     expect(s.next).toContain('agent-network.toml');
@@ -130,7 +130,7 @@ describe('slack runtime recheck 298s', () => {
       'this is not json\n{"at":"2026-11-13T18:10:00.000Z","decision":"ingested","bus":"posted"}\n',
       { mode: 0o600 });
     const s = report();
-    expect(s.journal).toEqual({ state: 'degraded', ingested: 1, ignored: 0, lastAt: '2026-11-13T18:10:00.000Z' });
+    expect(s.journal).toEqual({ state: 'degraded', ingested: 1, ignored: 0, lastAt: '2026-11-13T18:10:00.000Z', ignoredReasons: [], ignoredReasonsOmitted: 0 });
     expect(s.ready).toBe(true);
     expect(s.transport).toEqual({ health: 'unknown', observedAt: null, probeCommand: 'phm channels slack probe --json' });
   });

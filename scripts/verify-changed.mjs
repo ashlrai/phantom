@@ -17,6 +17,19 @@ export function selectChangedFiles(changedPaths, existingPaths) {
   };
 }
 
+/** Identify changed test files without a test declaration; unreadable files are left to other checks. */
+export function emptyChangedTests(existingChangedPaths, read = (p) => readFileSync(p, 'utf8')) {
+  return existingChangedPaths.filter((path) => {
+    if (!/\.test\.(?:[cm]?ts|tsx|[cm]?js|jsx)$/.test(path)) return false;
+    try {
+      const text = read(resolve(path)).replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n]*/g, '');
+      return !/\b(?:it|test|describe|bench)(?:\s*\(|\s*\.\s*(?:each\b|skip\s*\())/.test(text);
+    } catch {
+      return false;
+    }
+  });
+}
+
 /** Include committed changes, index/worktree edits, deletions and untracked files. */
 export function collectChangedPaths(root) {
   const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' });
@@ -444,6 +457,14 @@ function main() {
     });
     selection = selectChangedFiles(changed, existing);
     console.log('PASS file selection');
+    const emptyTests = emptyChangedTests(existing.map((path) => resolve(root, path)));
+    if (emptyTests.length) {
+      console.error(`FAIL empty test files: ${emptyTests.join(', ')}`);
+      console.error('A new test file must contain at least one test.');
+      process.exitCode = 1;
+      return;
+    }
+    console.log('PASS empty test check');
   } catch (error) {
     console.error(`FAIL file selection: ${error.message}`);
     process.exitCode = 1;

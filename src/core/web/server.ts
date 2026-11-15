@@ -303,6 +303,7 @@ export async function startServer(
       // disk. Dropping the singleton also means a server created later in
       // this process never reuses a closed engine.
       resetVerseEngine(null);
+      (await import('../owner-assist/service.js')).closeOwnerAssist();
       // Terminal-pane shells (V3.10) die with the server that owns their PTYs.
       // A no-op when no terminal was ever opened (it never creates a manager).
       closeVerseTerminals();
