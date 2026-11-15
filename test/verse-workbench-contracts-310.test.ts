@@ -215,6 +215,7 @@ const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
   'release-stages': 'handleReleaseStagesApi',
   'comms-inbox': 'handleCommsInboxApi',
   'comms-teammate-reply': 'handleCommsTeammateReplyApi',
+  'fleet-merge-latency': 'handleMergeLatencyApi',
   // The desktop command center's library files and run handoffs.
   'fleet-library-files': 'handleFleetLibraryFilesApi',
   'fleet-handoffs': 'handleFleetHandoffsApi',
