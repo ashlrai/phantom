@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 import unittest
 
-from test_dispatchd import AP_GREEN, build, devin_slot, events, held_lanes, set_daemon_tick, slots_of, tick
+from test_dispatchd import AP_GREEN, SCRIPT, build, devin_slot, events, held_lanes, set_daemon_tick, slots_of, tick
 
 
 def admission(home):
@@ -90,13 +90,23 @@ class GateTests(unittest.TestCase):
 
     def test_swap_growth_window_and_boundary(self):
         import time
-        def prep(home, age):
+        now = time.time()
+        for used, age, expected in [('3.1', 299, 0), ('3', 299, 1), ('3.1', 300, 0), ('3', 300, 1), ('9', 301, 1)]:
+            tmp, home = ready_fixture()
+            self.addCleanup(tmp.cleanup)
             (home / '.ashlr-runs' / 'queue' / 'admission.json').write_text(
-                json.dumps({'swap_samples': [[time.time() - age, 1]]}))
-        for used, age, expected in [('3.1', 299, 0), ('3', 299, 1), ('9', 301, 1)]:
-            home = self._case({'LOADGATE_SWAP_GB': used}, prep=lambda h: prep(h, age))
+                json.dumps({'swap_samples': [[now - age, 1]]}))
+            # Pin the subprocess clock too: startup under load must not expire
+            # a 299-second sample before the real 300-second gate evaluates it.
+            runner = home / 'clocked-dispatch.py'
+            runner.write_text('import runpy\nfrom unittest.mock import patch\n'
+                              f'with patch("time.time", return_value={now!r}):\n'
+                              f'    runpy.run_path({str(SCRIPT)!r}, run_name="__main__")\n')
+            result = tick(home, {'LOADGATE_SWAP_GB': used}, script=runner)
+            self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(len(launched(home)), expected)
             self.assertEqual(admission(home)['admit'], bool(expected))
+            self.assertEqual(len(admission(home)['swap_samples']), 2 if age <= 300 else 1)
 
     def test_more_than_2500_processes_warns(self):
         for count in (2500, 2501):
