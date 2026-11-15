@@ -1151,6 +1151,7 @@
 /test/resource-volume-polling.test.ts @masonwyatt23
 /test/resource-worker-kill.test.ts @masonwyatt23
 /test/review-pick-api-live-ownership-recovery-375s.test.ts @masonwyatt23
+/test/review-take-head-recheck-377s.test.ts @masonwyatt23
 /test/reward-signal.test.ts @masonwyatt23
 /test/role-completion.test.ts @masonwyatt23
 /test/role-slots-leader-agnostic.test.ts @masonwyatt23
