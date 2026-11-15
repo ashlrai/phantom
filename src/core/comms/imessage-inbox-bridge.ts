@@ -139,15 +139,14 @@ export interface PatchIngestReport extends PatchSweepReport {
 export { senderIdFor };
 
 // The status composer's digest readers must not join the Tier-1 import
-// closure, so the default seam is resolved at ack time through a lazy,
-// non-literal import; a load failure degrades to the generic ack rather than
-// failing a durable receipt.
-type OwnerStatusReplyModule = typeof import('../agents/owner-status-reply.js');
-const STATUS_REPLY_SPEC = '../agents/owner-status-reply.js';
-const loadStatusReply = async (): Promise<IMessageStatusReply | null> => {
-  try { return (await import(STATUS_REPLY_SPEC) as OwnerStatusReplyModule).ownerStatusReply(); }
-  catch { return null; }
-};
+// closure, so this module never imports them. A non-literal import() is not an
+// option either: the compiled sidecar resolves a computed specifier against its
+// virtual FS and always misses (test/sidecar-literal-imports-315.test.ts).
+// Entry points outside the closure (src/cli/imessage.ts, src/cli/verse.ts) load
+// the composer with a literal import and register it here. With nothing
+// registered, the ack degrades to the generic receipt text, as before.
+let registeredStatusReply: IMessageStatusReply | null = null;
+export function setIMessageStatusReply(reply: IMessageStatusReply | null): void { registeredStatusReply = reply; }
 
 /** Map one allowlisted chat.db row to a canonical channel message. */
 export function imessageChannelMessage(msg: IntakeMsg): ChannelMessage | null {
@@ -211,7 +210,7 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
     // resolves a status reply for any other handle.
     const ackText = async (ack: ChannelAck): Promise<string> => {
       const generic = formatChannelAck(ack);
-      const reply = deps.statusReply ?? await loadStatusReply();
+      const reply = deps.statusReply ?? registeredStatusReply;
       if (!reply) return generic;
       let isAsk = false;
       try { isAsk = reply.ask(currentBody); } catch { return generic; }
