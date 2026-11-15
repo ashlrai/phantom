@@ -17,8 +17,11 @@ import { readOrderTrace } from '../fleet/order-trace.js';
 import { isReviewAsk } from '../fleet/review-ask.js';
 import { readReviewPick } from '../fleet/review-pick.js';
 import { formatReviewPickReply } from '../fleet/review-pick-reply.js';
+import { isBridgeAsk } from '../fleet/bridge-ask.js';
+import { formatBridgeCheckReply } from '../fleet/bridge-check-reply.js';
+import { readFleetBridgeCheck } from '../../mcp/fleet-bridge-check.js';
 import { isOwnersAsk } from '../fleet/owners-ask.js';
-import { isPeersAsk } from '../fleet/peers-ask.js';
+import { isPeersAsk, parsePeersAsk } from '../fleet/peers-ask.js';
 import { readPeerLedger } from '../agentnet/peer-ledger.js';
 import { formatPeerLedgerReply } from '../fleet/peer-ledger-reply.js';
 import { formatSurfaceOwnersReply } from '../fleet/surface-owners-reply.js';
@@ -38,6 +41,7 @@ export const OWNER_STATUS_FALLBACK = "Phantom status: the status read failed; yo
 export const OWNER_RECHECK_FALLBACK = "Phantom recheck: the recheck read failed; your message is in the Leader's inbox.";
 export const OWNER_ORDERS_FALLBACK = "Phantom orders: the orders read failed; your message is in the Leader's inbox.";
 export const OWNER_REVIEW_FALLBACK = "Phantom review pick: the read failed; your message is in the Leader's inbox.";
+export const OWNER_BRIDGE_FALLBACK = "Phantom bridge: the bridge check failed; your message is in the Leader's inbox.";
 export const OWNER_OWNERS_FALLBACK = "Phantom owners: the ownership read failed; your message is in the Leader's inbox.";
 
 /** Exact short asks only; "status of the release pr #12" is a request for the Leader. */
@@ -76,6 +80,8 @@ export interface OwnerStatusDeps {
   /** The surface-ownership answer for a short "owners" ask; the default reads
    * every SURFACES key (ledger + git history) and formats it. */
   owners?: (now: Date) => Promise<string>;
+  /** Live runtime, claims and peer-ledger reachability for a short bridge ask. */
+  bridge?: (now: Date) => Promise<string>;
 }
 
 const defaultRecordRecheck = (recheck: FleetRecheck): void => { appendRecheckRecord(ashlrHome(), recheck, homedir()); };
@@ -198,6 +204,25 @@ export async function composeOwnerOwnersReply(now: Date, deps: OwnerStatusDeps =
   } catch { return OWNER_OWNERS_FALLBACK; }
 }
 
+/** Never throws: a bridge ask gets reachability evidence or its fixed fallback. */
+export async function composeOwnerBridgeReply(now: Date, deps: OwnerStatusDeps = {}): Promise<string> {
+  try {
+    if (deps.bridge !== undefined) return await deps.bridge(now);
+    return formatBridgeCheckReply(await readFleetBridgeCheck(), now);
+  } catch { return OWNER_BRIDGE_FALLBACK; }
+}
+
+/** The peers answer: the aggregate ledger, or one exact pair when the ask named
+ * both callsigns. The selector comes only from the validated ask text — never
+ * from the sender or thread — and a reader failure stays "unknown", never a
+ * quota claim. */
+function peersLedgerReply(text: string): Promise<string> {
+  return Promise.resolve().then(() => {
+    const ask = parsePeersAsk(text);
+    return formatPeerLedgerReply(ask?.kind === 'pair' ? readPeerLedger({ pair: ask.pair }) : readPeerLedger());
+  }).catch(() => 'Peers unknown: peer ledger reader failed');
+}
+
 const defaultBoard = (now: Date): WorkBoardResult => listWorkBoard({ root: join(ashlrHome(), 'fleet'), now: now.getTime(), limit: 20 });
 
 /** A failed board read never touches the digest: it only becomes the "unknown" line. */
@@ -257,7 +282,7 @@ async function composeSlackStatusReply(runsDir: string, now: Date, deps: OwnerSt
  * every other gated ask with the status digest. */
 export function ownerStatusReply(deps: OwnerStatusDeps = {}): { ask: (text: string) => boolean; compose: (runsDir: string, now: Date, text?: string) => Promise<string>; readonly fallback: string } {
   return {
-    ask: text => isOwnerStatusRequest(text) || isRecheckAsk(text) || isOrdersAsk(text) || isReviewAsk(text) || isOwnersAsk(text) || isPeersAsk(text),
+    ask: text => isOwnerStatusRequest(text) || isRecheckAsk(text) || isOrdersAsk(text) || isReviewAsk(text) || isOwnersAsk(text) || isBridgeAsk(text) || isPeersAsk(text),
     compose: (runsDir, now, text) => text !== undefined && isRecheckAsk(text)
       ? composeOwnerRecheckReply(now, deps)
       : text !== undefined && isOrdersAsk(text)
@@ -266,10 +291,11 @@ export function ownerStatusReply(deps: OwnerStatusDeps = {}): { ask: (text: stri
           ? composeOwnerReviewReply(now, deps)
           : text !== undefined && isOwnersAsk(text)
             ? composeOwnerOwnersReply(now, deps)
-            : text !== undefined && isPeersAsk(text)
-              ? Promise.resolve().then(() => formatPeerLedgerReply(readPeerLedger()))
-                .catch(() => 'Peers unknown: peer ledger reader failed')
-              : composeSlackStatusReply(runsDir, now, deps),
+            : text !== undefined && isBridgeAsk(text)
+              ? composeOwnerBridgeReply(now, deps)
+              : text !== undefined && isPeersAsk(text)
+                ? peersLedgerReply(text)
+                : composeSlackStatusReply(runsDir, now, deps),
     fallback: OWNER_STATUS_FALLBACK,
   };
 }
