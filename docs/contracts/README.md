@@ -17,6 +17,7 @@ number.
 - [`CONTRACT-M570.md`](./CONTRACT-M570.md) — strict, authority-free release-successor policy evidence schema and verifier.
 - [`CONTRACT-M571.md`](./CONTRACT-M571.md) — exact-source local production gate and canonical no-authority receipt.
 - [`CONTRACT-XREVIEW.md`](./CONTRACT-XREVIEW.md) — cross-model review on another pool and the SHA-bound auto-merge decision.
+- [`CONTRACT-SPECIALIST-ROSTER.md`](./CONTRACT-SPECIALIST-ROSTER.md) — persistent specialist identities, feature ownership, and per-specialist job memory.
 - [`CONTRACT-OUTCOME-LEARNING.md`](./CONTRACT-OUTCOME-LEARNING.md) — log-driven routing posteriors, plain-language assignment, and generated improvement jobs.
 - [`CONTRACT-SELECTOR.md`](./CONTRACT-SELECTOR.md) — hourly ranker that funds the top candidates as READY lines and records picks with predicted value.
 - [`CONTRACT-OPERATOR-GLANCE.md`](./CONTRACT-OPERATOR-GLANCE.md) — one glance and plain-language orders for phone, Telegram, and email.
