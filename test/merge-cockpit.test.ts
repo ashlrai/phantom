@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { cmdFleet } from '../src/cli/fleet.js';
+import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 import { fetchRepo, readCache, summarize, writeCache } from '../src/core/merge-cockpit.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -6,6 +8,13 @@ import { join } from 'node:path';
 
 const pr = (number: number, body = '') => ({ number, title: 'work', body, mergeable: 'CONFLICTING', autoMergeRequest: {}, commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] } });
 describe('merge cockpit', () => {
+  it('dispatches through the fleet command registry', async () => {
+    const output = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      expect(await cmdFleet(['merge-cockpit', '--help'], FLEET_SUBCOMMAND_LOADERS)).toBe(0);
+      expect(output).toHaveBeenCalledWith(expect.stringContaining('phm fleet merge-cockpit'));
+    } finally { output.mockRestore(); }
+  });
   it('paginates, counts observations and maps held originals once', async () => {
     const calls: string[][] = [];
     const result = await fetchRepo('ashlrai/phantom', async args => {
