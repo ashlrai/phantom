@@ -1,0 +1,77 @@
+import { describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { projectBusWorkFeed } from '../src/core/agents/bus-work-feed.js';
+import { workFeedSchema, type Participant, WORK_STATUSES } from '../src/core/agents/bus-v2-schema.js';
+import { isClaimableWork } from '../src/core/fleet/bus-envelope.js';
+import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
+
+const post = { kind: 'work.post', jobId: 'job', title: 'Review', repo: 'a/b', claimKeys: ['repo:a/b'], provider: 'devin' };
+const receipt = (body: unknown, cursor = 1, from = 'agent') => ({ cursor, receivedAt: cursor * 100,
+  envelope: { id: `m-${cursor}`, from, to: 'leaders', priority: 'P2', ttl: 1000, body } });
+const participant: Participant = { participantId: 'agent', provider: 'claude', displayName: 'Agent',
+  capabilities: [], wake: { kind: 'poll', target: 'agent' }, status: 'active' };
+
+describe('retained v2 work projection', () => {
+  it('reads a v1 journal and preserves legacy records across a versioned append', () => {
+    const root = mkdtempSync(join(tmpdir(), 'bus-v2-legacy-'));
+    try {
+      mkdirSync(join(root, 'bus-inbox'), { mode: 0o700 });
+      const file = join(root, 'bus-inbox', 'messages.json');
+      const legacy = receipt({ note: 'legacy' });
+      writeFileSync(file, JSON.stringify([legacy]), { mode: 0o600 });
+      expect(listBusInboxAfter(0, 100, { root, now: () => 100 })).toMatchObject({ status: 'ok', messages: [legacy] });
+      expect(appendBusInbox(receipt(post, 2).envelope, { root, now: () => 200 }).status).toBe('posted');
+      const page = listBusInboxAfter(0, 100, { root, now: () => 200 });
+      if (page.status !== 'ok') throw new Error('fixture unavailable');
+      expect(page.messages[0]?.envelope.body).toEqual(legacy.envelope.body);
+      expect(projectBusWorkFeed(page.messages)).toMatchObject({ status: 'ok', feed: { v: 2, jobs: [{ id: 'job' }] } });
+      expect(JSON.parse(readFileSync(file, 'utf8')).version).toBe(2);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+  it('writes a versioned feed and applies every status in cursor order', () => {
+    const rows = [receipt(post), ...WORK_STATUSES.map((status, n) => receipt({ kind: 'work.status', jobId: 'job', status }, n + 2))];
+    const result = projectBusWorkFeed(rows);
+    expect(result).toEqual({ status: 'ok', feed: { v: 2, jobs: [{ id: 'job', owner: 'agent', provider: 'devin',
+      repo: 'a/b', claimKeys: ['repo:a/b'], status: 'terminated', updatedAt: 900 }] } });
+    if (result.status !== 'ok') throw new Error('fixture refused');
+    expect(workFeedSchema.parse(JSON.parse(JSON.stringify(result.feed)))).toEqual(result.feed);
+    expect(rows[0]!.envelope.body).toEqual(post);
+    expect(isClaimableWork(post)).toBe(false);
+  });
+  it('preserves v1 and peer bodies as opaque data and ignores orphan statuses', () => {
+    expect(projectBusWorkFeed([
+      receipt({ arbitrary: 'legacy' }), receipt('legacy string', 2), receipt({ kind: 'peer.message', peer: {} }, 3),
+      receipt({ kind: 'work.status', jobId: 'evicted', status: 'done' }, 4), receipt({ kind: 'note', legacy: true }, 5),
+    ])).toEqual({ status: 'ok', feed: { v: 2, jobs: [] } });
+  });
+  it('resolves omitted providers only through explicit participant metadata', () => {
+    const { provider: _provider, ...withoutProvider } = post;
+    expect(projectBusWorkFeed([receipt(withoutProvider)])).toEqual({ status: 'refused', reason: 'missing-provider' });
+    const result = projectBusWorkFeed([receipt(withoutProvider)], [participant]);
+    expect(result.status === 'ok' && result.feed.jobs[0]?.provider).toBe('claude');
+    expect(projectBusWorkFeed([], [participant, participant])).toEqual({ status: 'refused', reason: 'invalid-participants' });
+  });
+  it.each([
+    { ...post, claimKeys: ['path:a/b:../x'] }, { ...post, provider: 'unknown' }, { ...post, extra: true },
+    { kind: 'work.status', jobId: 'job', status: 'unknown' },
+  ])('refuses malformed v2 work data: %j', body => {
+    expect(projectBusWorkFeed([receipt(body)])).toEqual({ status: 'refused', reason: 'invalid-body' });
+  });
+  it('refuses duplicate posts and status updates from a different routing owner', () => {
+    expect(projectBusWorkFeed([receipt(post), receipt(post, 2)])).toEqual({ status: 'refused', reason: 'duplicate-job' });
+    expect(projectBusWorkFeed([receipt(post), receipt({ kind: 'work.status', jobId: 'job', status: 'done' }, 2, 'other')]))
+      .toEqual({ status: 'refused', reason: 'owner-mismatch' });
+  });
+  it.each([
+    [null], [receipt(post), receipt(post)], [{ ...receipt(post), receivedAt: -1 }],
+    [{ ...receipt(post), cursor: 1.5 }], [receipt({ bad: Number.NaN })], Array(1025).fill(null),
+  ])('refuses invalid receipt snapshots', (...rows) => {
+    expect(projectBusWorkFeed(rows)).toEqual({ status: 'refused', reason: 'invalid-receipts' });
+  });
+  it('uses cursor order for sparse retained rows even with reversed receipt clocks', () => {
+    expect(projectBusWorkFeed([receipt(post), { ...receipt({ kind: 'work.status', jobId: 'job', status: 'done' }, 10), receivedAt: 1 }]))
+      .toMatchObject({ status: 'ok', feed: { jobs: [{ status: 'done', updatedAt: 1 }] } });
+  });
+});

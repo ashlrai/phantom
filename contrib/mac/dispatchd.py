@@ -42,6 +42,7 @@ DEFAULT = {"omlx": {"target": OMLX_CAP, "floor": 0, "ceiling": OMLX_CAP, "hard_c
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
 import concurrency, batcher, batch_sessions, work_market
 from session_handoff import handoff_advice
+from launch_precheck import classify_empty
 import fleet_controller as fc
 # ---- fleet controller (RQ-FLEET-LOADBALANCER-1). Phase A (one readings bus, one writer for lane targets and holds, one
 # ledger line per tick) always runs and decides nothing new. FLEET_CTL_MODE=enforce applies phase B (graduated shed) and
@@ -1173,12 +1174,14 @@ def reap_worktrees():
             nf, diff_lines, empty = job_diff_metrics(wt, b[0])
             wall_s = int(os.path.getmtime(lp) - os.path.getmtime(bp)) if os.path.exists(lp) else None
             if not attempt.get("finished") and not os.path.exists(RUN + "/" + j + ".timeout"):
+                perr = next((c for c, rx in CLS if any(rx.search(t) for t in errlines(tl.splitlines()[-30:]))), None)
                 metric({"event": "finish", "job": j, "lane": pool, "wall_s": wall_s,
                     "bundle": rd(RUN + "/" + j + ".bundled-in").strip() or None,
                     "exit_code": _rc(j), **usage, "cost": None,
                     "diff_files": nf, "diff_lines": diff_lines, "empty": empty,
+                    "empty_class": classify_empty(empty, _rc(j), perr),
                     "failure_class": devin_failure(_rc(j), empty, tl) if pool == "devin" else None,
-                    "pool_error": next((c for c, rx in CLS if any(rx.search(t) for t in errlines(tl.splitlines()[-30:]))), None)})
+                    "pool_error": perr})
         except Exception as e: log("metric finish err %s %s" % (j, type(e).__name__))
         os.mkdir(RUN + "/" + j + ".reaping"); nreap += 1; publish_busy = True
         spawn(["/bin/bash", R + "/bin/reap-one.sh", j], stdin=subprocess.DEVNULL,
@@ -2329,9 +2332,14 @@ fin = {m["job"]: m for m in mets if m.get("event") == "finish"}
 def roll(key):
     g = {}
     for m in L24:
-        k = m.get(key); r = g.setdefault(k, {"jobs": 0, "finished": 0, "empty": 0, "merged": 0, "tokens_merged": 0, "ttm": []})
+        k = m.get(key); r = g.setdefault(k, {"jobs": 0, "finished": 0, "empty": 0, "empty_no_diff": 0, "empty_error": 0, "empty_unknown": 0,
+                                           "merged": 0, "tokens_merged": 0, "ttm": []})
         r["jobs"] += 1; f = fin.get(m["job"])
-        if f: r["finished"] += 1; r["empty"] += 1 if f.get("empty") else 0
+        if f:
+            r["finished"] += 1; r["empty"] += 1 if f.get("empty") else 0
+            # rows written before empty_class existed are classified from their own exit_code/pool_error
+            ec = f.get("empty_class") or classify_empty(f.get("empty") is True or None, f.get("exit_code"), f.get("pool_error"))
+            if ec: r["empty_" + ec] += 1
         o = out.get(pubj.get(m["job"]))
         if o and o.get("state") == "MERGED":
             r["merged"] += 1; r["tokens_merged"] += (f or {}).get("tokens_total") or 0
@@ -2341,6 +2349,8 @@ def roll(key):
         r["merge_rate"] = round(r["merged"] / r["finished"], 3) if r["finished"] else None
         tm = r.pop("tokens_merged"); r["tokens_per_merged_pr"] = int(tm / r["merged"]) if r["merged"] else None
         r["empty_rate"] = round(r["empty"] / r["finished"], 3) if r["finished"] else None
+        # the lane-penalizing share: only empties that carry an infra failure; no_diff empties are healthy runs
+        r["empty_error_rate"] = round(r["empty_error"] / r["finished"], 3) if r["finished"] else None
     return g
 st["rollup_24h"] = {"by_lane": roll("lane"), "by_tier": roll("tier")}
 st["verified_completion"] = verified_completion(mets, NOW, missing=not os.path.exists(MD + "/jobs.jsonl"))
