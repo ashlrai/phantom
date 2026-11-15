@@ -1,7 +1,6 @@
 import type { HostStats } from '../../../../core/drive/nodes/state.js';
-import type { FleetSessionV1 } from '../../../data/api-types.js';
-import type { ComputeNode } from '../../../../core/fleet/compute-view.js';
 import type { FleetCompute } from '../../../../core/fleet/compute-view.js';
+import type { FleetSessionMap } from '../../../../core/fleet/sessions-view.js';
 import { isHostStats } from '../../../../core/drive/nodes/state.js';
 
 export function isFleetCompute(value: unknown): value is FleetCompute {
@@ -27,15 +26,19 @@ export function advanceCores(old: CoreHistory | undefined, next: HostStats, now:
   });
   return { previous: next, samples: [...(valid ? old.samples : []), values].slice(-32) };
 }
-export const family = (job: string) => job.match(/^RQ-(?:REBASE-[^-]+|PHX|GROK)/)?.[0] ?? 'Other jobs';
-export function sessionNode(job: string, nodes: ComputeNode[], localId: string, status: string): string | null {
-  const owners = nodes.filter(n => n.jobs.some(j => j.job === job));
-  if (owners.length === 1) return owners[0]!.id;
-  if (owners.length > 1 || ['queued', 'parked', 'launching', 'stale'].includes(status)) return null;
-  // A local process is established separately by callers; local queue membership alone is no placement evidence.
-  return localId;
-}
-export type MapSession = Pick<FleetSessionV1, 'job' | 'lane' | 'model' | 'status' | 'elapsedSeconds' | 'prUrl' | 'outcome' | 'live'>;
-export function placeSession(s: MapSession, nodes: ComputeNode[], localId: string): string | null {
-  return sessionNode(s.job, nodes, localId, s.live === 'yes' ? s.status : 'stale');
+export type { MapSession } from '../../../../core/fleet/sessions-view.js';
+
+export function isFleetSessionMap(value: unknown): value is FleetSessionMap {
+  if (!value || typeof value !== 'object') return false;
+  const v = value as FleetSessionMap;
+  const nullable = (s: unknown) => s === null || typeof s === 'string';
+  const rows = (input: unknown) => Array.isArray(input) && input.every(s => s && typeof s.job === 'string' &&
+    nullable(s.nodeId) && nullable(s.lane) && nullable(s.model) && nullable(s.activity) && nullable(s.branch) && nullable(s.prUrl) &&
+    (s.worktree === null || s.worktree === 'recorded') &&
+    ['claim', 'process', 'conflict', 'unknown'].includes(s.placement) &&
+    ['running', 'idle', 'held', 'queued', 'unknown'].includes(s.mapState) &&
+    ['queued', 'parked', 'launching', 'running', 'publishing', 'exited', 'stale', 'finished', 'unknown'].includes(s.status) &&
+    (s.elapsedSeconds === null || (typeof s.elapsedSeconds === 'number' && Number.isFinite(s.elapsedSeconds) && s.elapsedSeconds >= 0)));
+  return v.schema === 'fleet.sessions.v1' && typeof v.generatedAt === 'string' && typeof v.computeAt === 'string' &&
+    ['healthy', 'missing', 'degraded'].includes(v.sourceState) && rows(v.mapSessions) && rows(v.mapRecent);
 }
