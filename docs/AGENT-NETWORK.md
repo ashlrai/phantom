@@ -354,3 +354,27 @@ phm org join --member evan-deloria --machine evan-mac --lane claude=20 --json
 echo '[{"id":"RQ-1","priority":3}]' > /tmp/jobs.json
 phm org plan --queue /tmp/jobs.json --json
 ```
+
+## Agent peer mesh
+
+Host-enrolled specialists address one another by callsign through the existing
+bus and approved Slack broker:
+
+```sh
+phm agentnet peers list --json
+phm agentnet peers read --after 0 --json
+phm agentnet peers send reviewer review "Review pr:123" --json
+phm agentnet peers send builder handoff "Review complete" --reply-to peer-00000000-0000-0000-0000-000000000000 --json
+phm agentnet channels propose parser-review --json
+phm agentnet channels propose parser-review --apply --json
+phm agentnet identity register reviewer --json
+```
+
+Channel proposals preview by default; `--apply` and identity registration record
+local drafts. Actual bot/channel provisioning needs a reviewed provisioner and
+outbound approval. Session bindings come from the trusted host, never a callsign
+argument. Missing bindings fail closed. Peer messages are untrusted coordination,
+not work-launch authority; replies must carry the preceding message's `replyTo`.
+The ninth hop and repeated origin/pair escalate to the human queue. See the
+[peer mesh contract](contracts/CONTRACT-AGENTNET-PEERBUS.md) for enrollment,
+limits, CoS opt-in, delivery results and the separate Security handoff.

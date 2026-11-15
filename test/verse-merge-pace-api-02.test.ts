@@ -31,3 +31,19 @@ it('serves known:false with status 200 when the reader throws', async () => {
   expect(r.json).toMatchObject({ known: false, rows: null });
   expect(r.body).not.toContain('secret');
 });
+
+it('serves hourly merge metrics through the legacy alias', async () => {
+  const r = await call(async () => text, '/api/verse/metrics/merges', 'GET');
+  expect(r).toMatchObject({ handled: true, status: 200 });
+  expect(r.json).toMatchObject({ schema: 'metrics.merges.v1', known: true, windowHours: 24 });
+  expect(r.json.lanes[0].buckets[22]).toMatchObject({ merges: 1, medianSeconds: 360 });
+});
+
+it('keeps the merge metrics alias read-only and hides reader errors', async () => {
+  const path = '/api/verse/metrics/merges';
+  expect(await call(async () => { throw new Error('must not read'); }, path, 'POST'))
+    .toMatchObject({ handled: true, status: 405 });
+  const r = await call(async () => { throw new Error('/secret/path'); }, path, 'GET');
+  expect(r.json).toMatchObject({ known: false, lanes: null });
+  expect(r.body).not.toContain('secret');
+});
