@@ -1,11 +1,12 @@
 /**
  * routes/verse/fleet-board/RecheckHistoryStrip.tsx — compact history under the
  * "Server recheck" line: how long the current overall state has held and the
- * latest section transitions. Read-only; renders nothing on older servers.
+ * latest section transitions. Carries the Recheck now button; renders nothing on older servers.
  */
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { SkeletonLine } from '../../../components/primitives/Skeleton.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { RecheckNowButton } from './RecheckNowButton.js';
 import { deriveRecheckHistory, recheckHistoryQuery } from './recheck-history-model.js';
 import styles from './fleet-board.module.css';
 
@@ -28,6 +29,7 @@ export function RecheckHistoryStrip({ visible = true }: { visible?: boolean }) {
         </ul>
       ) : null}
       {view.note ? <p className={styles.recheckNote}>{view.note}</p> : null}
+      <RecheckNowButton />
     </section>
   );
 }

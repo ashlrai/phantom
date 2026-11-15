@@ -271,6 +271,8 @@ export const REAL_IO_TEST_FILES = [
   'test/verse-seats.test.ts', // real loopback HTTP server standing in for Ollama
   'test/verse-local-dispatch.test.ts', // real loopback HTTP server standing in for Ollama's discovery endpoints
   'test/local-inference-probe.test.ts', // real loopback HTTP server standing in for a local /models endpoint (P3 probe)
+  'test/local-inference-redirect-952.test.ts', // real loopback HTTP server proving local inference never follows 3xx off the service (Security #952)
+  'test/local-routing-dispatch.test.ts', // real loopback OpenAI-compat server for local-first routing dispatch checks
   'test/radar-local-bench-redirect.test.ts', // two real loopback HTTP servers: a redirector and a second listener the body must never reach
   'test/local-tool-calls.test.ts', // real loopback HTTP servers standing in for OMLX/Ollama-style tool-call endpoints
   'test/verse-accounts.test.ts', // real collector lease acquisition and private evidence files in a tmp root

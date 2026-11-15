@@ -300,6 +300,7 @@
 /test/claude-api-grant.test.ts @masonwyatt23
 /test/claude-json-control-characters.test.ts @masonwyatt23
 /test/cleanup-lock-identity.test.ts @masonwyatt23
+/test/cli-connect.test.ts @masonwyatt23
 /test/cli-json-first-run.test.ts @masonwyatt23
 /test/cli-mirror-args.test.ts @masonwyatt23
 /test/cloud-api-scheduler.test.ts @masonwyatt23
@@ -330,6 +331,7 @@
 /test/custody-ledger.test.ts @masonwyatt23
 /test/custody-no-phantom-toml-copy.test.ts @masonwyatt23
 /test/custody-unwrapped-fleet.test.ts @masonwyatt23
+/test/custody-wrap-receipt.test.ts @masonwyatt23
 /test/daemon-capacity-publisher-310.test.ts @masonwyatt23
 /test/daemon-cli-310b.test.ts @masonwyatt23
 /test/daemon-cli-help-safety.test.ts @masonwyatt23
@@ -363,6 +365,7 @@
 /test/devin-usage-reader.test.ts @masonwyatt23
 /test/dispatch-router-310b.test.ts @masonwyatt23
 /test/doctor-dedupe.test.ts @masonwyatt23
+/test/doctor-merge-path-cli.test.ts @masonwyatt23
 /test/drive-pool-routing.test.ts @masonwyatt23
 /test/drive-sim/policy.ts @masonwyatt23
 /test/elite-self-land-315.test.ts @masonwyatt23
@@ -616,13 +619,17 @@
 /test/legacy-red-team-routing-310.test.ts @masonwyatt23
 /test/live-fleet-display-policy-315.test.ts @masonwyatt23
 /test/live-fleet-leader-315.test.ts @masonwyatt23
+/test/local-escalation.test.ts @masonwyatt23
 /test/local-eval-comparison.test.ts @masonwyatt23
 /test/local-eval-heldout.test.ts @masonwyatt23
+/test/local-first-bandit.test.ts @masonwyatt23
 /test/local-gate-native-compiler-01.test.ts @masonwyatt23
 /test/local-leader-binding.test.ts @masonwyatt23
 /test/local-only-consumer-parity.test.ts @masonwyatt23
 /test/local-only-dispatch-paths.test.ts @masonwyatt23
 /test/local-only-policy.test.ts @masonwyatt23
+/test/local-route.test.ts @masonwyatt23
+/test/local-routing-dispatch.test.ts @masonwyatt23
 /test/local-work-observation.test.ts @masonwyatt23
 /test/locus-firm-onboard.test.ts @masonwyatt23
 /test/locus-job-env.test.ts @masonwyatt23
@@ -1002,6 +1009,8 @@
 /test/merge-identity-owner-preservation-297s.test.ts @masonwyatt23
 /test/merge-identity-recut.test.ts @masonwyatt23
 /test/merge-identity-registry.test.ts @masonwyatt23
+/test/merge-path-readonly.test.ts @masonwyatt23
+/test/merge-path.test.ts @masonwyatt23
 /test/merge-plan-original-preservation-202s.test.ts @masonwyatt23
 /test/merge-plan-owner-preservation-304s.test.ts @masonwyatt23
 /test/merge-plan-preservation-167.test.ts @masonwyatt23
@@ -1189,6 +1198,7 @@
 /test/spend-budget.test.ts @masonwyatt23
 /test/stale-git-locks.test.ts @masonwyatt23
 /test/standing-merge-pass-310b.test.ts @masonwyatt23
+/test/standing-merge-pass-unclassified-952.test.ts @masonwyatt23
 /test/standing-wiring-310b.test.ts @masonwyatt23
 /test/standing-wiring-loop-310b.test.ts @masonwyatt23
 /test/status-custody.test.ts @masonwyatt23

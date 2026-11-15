@@ -10,6 +10,24 @@ exports[`CLI: phm status --json > prints one parseable JSON object with no ANSI 
     "tokensIn": "<value>",
     "tokensOut": "<value>",
   },
+  "bandit": {
+    "enabled": "<value>",
+    "reason": "<value>",
+    "stats": {
+      "frontier": {
+        "costUsd": "<value>",
+        "hours": "<value>",
+        "merges": "<value>",
+        "pulls": "<value>",
+      },
+      "local": {
+        "costUsd": "<value>",
+        "hours": "<value>",
+        "merges": "<value>",
+        "pulls": "<value>",
+      },
+    },
+  },
   "custody": "<value>",
   "dirty": [],
   "github": "<value>",
@@ -58,6 +76,7 @@ exports[`CLI: phm status --json > prints one parseable JSON object with no ANSI 
     },
   ],
   "roots": [],
+  "routing": "<value>",
   "schemaVersion": "<value>",
   "stale": [],
   "summary": {

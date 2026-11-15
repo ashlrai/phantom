@@ -101,6 +101,9 @@ turning one Bot's recollection into authority.
 
 ## A possible future Phantom connector
 
+The one-page design for a Bot joining the fleet's work dispatch through these
+sanctioned surfaces alone is in [Grok Bot on the bus](GROK-BOT-BUS.md).
+
 The webhook above is a supported **one-way dispatch** path, not a Bot
 conversation, completion, or usage API. Grok Bot also supports plugins and the
 user's Cursor MCP policy can admit a custom MCP server. That is an **incoming

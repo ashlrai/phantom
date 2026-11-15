@@ -125,6 +125,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Run agents in Phantom against your accounts and a local model | [Local fleet](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-FLEET.md) |
 | Inspect managed OpenAI Agents sessions through the read-only CLI | [OpenAI Agents integration](OPENAI-AGENTS-INTEGRATION.md) |
 | Understand supported Dots companion workflows and the plugin-event integration path | [Dots companion](DOTS-COMPANION.md) |
+| Set up a Grok Bot companion and see the sanctioned design for it joining the work bus | [Grok Bot beside Phantom](https://github.com/ashlrai/phantom/blob/master/docs/GROK-BOT-COMPANION.md) · [Grok Bot on the bus](https://github.com/ashlrai/phantom/blob/master/docs/GROK-BOT-BUS.md) |
 | Compose scoped, dated evidence with the pure source memory kernel | [Memory foundation](MEMORY-FOUNDATION.md) |
 | Run bounded synthetic memory evaluations without model credentials | [Offline memory evaluation](MEMORY-EVALUATION.md) |
 | Save evidence-linked agent checkpoints and compare context retention offline | [Agent checkpoints (source)](https://github.com/ashlrai/phantom/blob/master/docs/CHECKPOINTS.md) |
@@ -134,6 +135,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Choose goal and Leader preferences, inspect review evidence, and run or compare local benchmarks | [Operator preferences and evidence](AGENT-HARNESS-EVOLUTION.md#operator-goal-and-leader-preferences) |
 | Estimate lane idle capacity and identify long-running jobs | [Idle allowance](https://github.com/ashlrai/phantom/blob/master/docs/IDLE-ALLOWANCE.md) |
 | Inspect recorded producer outcomes and their deterministic learning path | [Execution feedback](EXECUTION-FEEDBACK.md) |
+| Generate compact ecosystem changes and read recent planner evidence | [Ecosystem changelog](ECOSYSTEM-CHANGELOG.md) |
 | Review the fleet queueing-network model and its proposed child-job backlog | [Queueing-network plan](https://github.com/ashlrai/phantom/blob/master/workplans/2026-10-26-queue-network/README.md) |
 | Ingest local queue snapshots into lane and tier merge metrics and advisory priors | [Local router metrics feed — source guide](https://github.com/ashlrai/phantom/blob/master/docs/METRICS-ROUTER-FEED.md) |
 | Read current and historical account usage, credit units, captured dollar balances and cloud estimates | [Resource evidence](RESOURCE-EVIDENCE.md) |

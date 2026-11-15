@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { claimFleetWork, handoffFleetClaim, postFleetMessage, proposeFleetAssignment, readFleetBoard, releaseFleetClaim } from '../src/core/fleet/coordination.js';
 import { cmdFleetCoordination } from '../src/cli/fleet-coordination.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 
 const dirs: string[] = [];
 function fixture() {

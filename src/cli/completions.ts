@@ -24,7 +24,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'new', 'ship', 'recall', 'learn', 'genome',
   'self-swap', 'update', 'upgrade', 'desktop', 'desktop-update', 'desktopctl', 'apps', 'app', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
   'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'router', 'router-calibration', 'node', 'sandbox', 'audit',
-  'enroll', 'backlog', 'inbox', 'claim', 'daemon', 'worker', 'ask', 'knowledge', 'reflect',
+  'enroll', 'backlog', 'inbox', 'ideas', 'claim', 'daemon', 'worker', 'ask', 'knowledge', 'reflect',
   'health', 'goals', 'prs', 'fleet', 'recovery', 'manager', 'vision', 'goal', 'loop',
   'roadmap', 'stack', 'ecosystem', 'digest', 'sweep', 'seams', 'verify', 'engineering-receipt', 'verify-safety', 'verify-pr', 'release-articles', 'release', 'preflight',
   'conductor-permit', 'signals', 'friction',
@@ -41,6 +41,8 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'cloud',
   // 3.15 Devin lane.
   'devin',
+  // Connect wizard: agent/node sign-in approvals.
+  'connect',
   'openai-agents',
   'agents',
   'benchmark', 'queue', 'issues', 'incident', 'chain', 'select', 'pool',
@@ -193,6 +195,8 @@ const SUBCOMMANDS: Record<string, string[]> = {
   jev: ['status', 'test', 'help'],
   // Mirror the verb switch in src/cli/devin.ts (runDevinCli).
   devin: ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'refresh', 'message', 'budget', 'bus', 'help'],
+  // Mirror the verb switch in src/cli/connect.ts (runConnectCli).
+  connect: ['wizard', 'discover', 'status', 'requests', 'request', 'approve', 'deny', 'revoke', 'help'],
   // Mirror the verb switch in src/cli/playbook.ts (runPlaybookCli).
   playbook: ['list', 'show', 'new', 'edit', 'run', 'help'],
   // Mirror the verb switch in src/cli/automations.ts (runAutomationsCli).

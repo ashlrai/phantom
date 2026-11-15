@@ -227,8 +227,9 @@ describe('daemon activity — observational private state', () => {
     const raw = readFileSync(daemonActivityPath(), 'utf8');
     expect(raw).not.toMatch(/SECRET_PROMPT|private\/repo|rm|raw output|TOKEN|frontier|private-model/);
 
-    const statusSource = readFileSync(join(process.cwd(), 'src/core/fleet/status.ts'), 'utf8');
-    const readinessBlock = statusSource.match(/function shipReadinessSources[\s\S]*?const guardHealth/)?.[0] ?? '';
+    const statusSource = readFileSync(join(process.cwd(), 'src/core/fleet/status-readiness.ts'), 'utf8');
+    const readinessBlock = statusSource.match(/function shipReadinessSources[\s\S]*?const guardHealth/)?.[0];
+    expect(readinessBlock).toBeDefined();
     expect(readinessBlock).not.toMatch(/daemon\.activity|tickInProgress|childActivity/);
   });
 
