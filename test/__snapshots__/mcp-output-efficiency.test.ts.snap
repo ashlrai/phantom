@@ -9,10 +9,6 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
   ],
   "native": [
     {
-      "name": "intent_import",
-      "safety": "append",
-    },
-    {
       "name": "intent_add",
       "safety": "append",
     },
@@ -38,6 +34,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
     },
     {
       "name": "intent_stale",
+      "safety": "append",
+    },
+    {
+      "name": "intent_import",
       "safety": "append",
     },
     {
@@ -409,25 +409,6 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
-        "paths": {
-          "items": {
-            "type": "string",
-          },
-          "minItems": 1,
-          "type": "array",
-        },
-      },
-      "required": [
-        "paths",
-      ],
-      "type": "object",
-    },
-    "name": "intent_import",
-  },
-  {
-    "inputSchema": {
-      "additionalProperties": false,
-      "properties": {
         "owner": {
           "type": "string",
         },
@@ -636,6 +617,25 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "intent_stale",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "paths": {
+          "items": {
+            "type": "string",
+          },
+          "minItems": 1,
+          "type": "array",
+        },
+      },
+      "required": [
+        "paths",
+      ],
+      "type": "object",
+    },
+    "name": "intent_import",
   },
   {
     "inputSchema": {

@@ -503,7 +503,6 @@ function rootPackageIsPortable(
     'docs/PHANTOM-BRAND.md',
     'docs/COMPANIONS.md',
     'docs/CONNECTORS.md',
-    'docs/CLI-AGENT-READINESS.md',
     'docs/lanes/zai.md',
     'docs/MEMORY-FOUNDATION.md',
     'docs/MEMORY-EVALUATION.md',

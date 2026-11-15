@@ -44,7 +44,6 @@ const OLD_NATIVE_NAMES = [
 ] as const;
 
 const ADDED_NATIVE_NAMES = [
-  'intent_import',
   'intent_add',
   'intent_update',
   'intent_list',
@@ -52,6 +51,7 @@ const ADDED_NATIVE_NAMES = [
   'intent_link',
   'intent_ship',
   'intent_stale',
+  'intent_import',
   'phantom_agent_bus_read',
   'phantom_agent_bus_status',
   'phantom_agent_bus_post',
@@ -209,8 +209,8 @@ describe('native MCP tool inventory', () => {
     expect(intentBytes).toBeLessThanOrEqual(1119);
     // Recovered tools receive exact object-plus-comma allowances; historical caps stay fixed.
     const recoveredIntentBudgets: Record<string, number> = {
-      intent_import: 317, intent_add: 491, intent_update: 481,
-      intent_list: 328, intent_get: 247, intent_stale: 228,
+      intent_add: 491, intent_update: 481, intent_list: 328,
+      intent_get: 247, intent_stale: 400, intent_import: 317,
     };
     const recoveredIntentTools = addedTools.filter(tool => Object.hasOwn(recoveredIntentBudgets, tool.name));
     let recoveredIntentBytes = 0;

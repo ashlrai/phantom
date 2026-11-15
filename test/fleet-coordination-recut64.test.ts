@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cmdFleet } from '../src/cli/fleet-entry.js';
+import { cmdFleet } from '../src/cli/fleet.js';
 
 const dirs: string[] = [];
 function ledger() {
