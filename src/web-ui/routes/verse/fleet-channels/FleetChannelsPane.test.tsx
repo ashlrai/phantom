@@ -72,11 +72,11 @@ it('polls only while visible', async () => {
   await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
   expect(fetcher).not.toHaveBeenCalled();
   await act(async () => { view.rerender(<FleetChannelsPane {...props} />); });
-  // The fleet-runs snapshot, owner thread and channel health and claim notices each read once per poll.
-  expect(fetcher).toHaveBeenCalledTimes(4);
+  // The fleet-runs snapshot, owner thread and channel health, claim notices and Slack trace each read once per poll.
+  expect(fetcher).toHaveBeenCalledTimes(5);
   await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
-  expect(fetcher).toHaveBeenCalledTimes(8);
+  expect(fetcher).toHaveBeenCalledTimes(10);
   view.rerender(<FleetChannelsPane {...props} visible={false} />);
   await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
-  expect(fetcher).toHaveBeenCalledTimes(8);
+  expect(fetcher).toHaveBeenCalledTimes(10);
 });
