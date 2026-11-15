@@ -75,7 +75,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
 import { listWorkBoard, type WorkBoardResult } from '../comms/work-board.js';
-import { readChannelHealth, type ChannelHealthReport } from './channel-health.js';
+import { readChannelHealth, type ChannelHealth, type ChannelHealthReport } from './channel-health.js';
 import { readFleetBoard, type FleetBoard, type FleetClaim } from './coordination.js';
 import { listCoordination } from '../agents/claim-store.js';
 import { listLiveWorkers, type LiveWorkersSnapshot } from './runs-live-workers.js';
@@ -120,6 +120,22 @@ export interface FleetRecheckBridge {
   processAlive: boolean | 'unknown';
   /** First missing reason for this channel, or null when nothing is missing. */
   missingBridge: string | null;
+  /**
+   * Evidence only: the channel's recent-request reply coverage, copied from
+   * ChannelHealth.proof.requestCoverage when the observation carries a
+   * meaningful per-request proof. Present for 'unproven' and 'verified';
+   * absent for an 'idle' observation (absent means idle or no per-request
+   * proof metadata — never that a request was answered); 'unknown' on the
+   * no-bridge-evidence placeholder row. Never changes a channel state,
+   * missingBridge, the section verdict or the overall verdict.
+   */
+  requestCoverage?: 'idle' | 'unproven' | 'verified' | 'unknown';
+  /**
+   * Evidence only: recent in-window requests without a bound reply, copied
+   * from ChannelHealth.unansweredCount alongside requestCoverage; null on the
+   * no-bridge-evidence placeholder row. Never changes any state or verdict.
+   */
+  unansweredCount?: number | null;
 }
 
 export interface FleetRecheckClaim {
@@ -455,6 +471,44 @@ function observationFreshness(label: string, asOf: string, nowMs: number): strin
   return null;
 }
 
+/** Build one observed channel's evidence row. requestCoverage and
+ * unansweredCount are copied only when the observation carries a meaningful
+ * per-request proof ('unproven' or 'verified'): an 'idle' observation omits
+ * both, absent meaning idle or no per-request proof metadata, never that a
+ * request was answered. Neither field can change the state, missingBridge,
+ * the section verdict or the overall verdict. */
+function bridgeChannelView(channel: ChannelHealth, missingBridge: string | null): FleetRecheckBridge {
+  const row: FleetRecheckBridge = {
+    channel: channel.channel,
+    state: channel.state as FleetRecheckBridge['state'],
+    runtimeHost: channel.runtimeHost ?? null,
+    processAlive: channel.processAlive,
+    missingBridge,
+  };
+  const coverage = channel.proof?.requestCoverage;
+  if (coverage === 'unproven' || coverage === 'verified') {
+    row.requestCoverage = coverage;
+    row.unansweredCount = channel.unansweredCount ?? null;
+  }
+  return row;
+}
+
+/** The no-bridge-evidence placeholder for a required channel absent from the
+ * report: the identified gap is the channel's missing reason, the state is
+ * UNKNOWN, and the coverage fields carry 'unknown' and null. Pure evidence —
+ * the section verdict is driven by the content gap, never by this row. */
+function absentChannelView(name: 'slack' | 'imessage'): FleetRecheckBridge {
+  return {
+    channel: name,
+    state: 'UNKNOWN',
+    runtimeHost: null,
+    processAlive: 'unknown',
+    missingBridge: `${name} bridge evidence absent`,
+    requestCoverage: 'unknown',
+    unansweredCount: null,
+  };
+}
+
 type BridgeSection = FleetRecheck['sections']['bridge'];
 
 const REQUIRED_CHANNELS = ['slack', 'imessage'] as const;
@@ -492,6 +546,7 @@ function bridgeSection(
       contentMissing.push(`${name} bridge evidence absent`);
       blocked = true;
       allLive = false;
+      rows.push(absentChannelView(name));
       continue;
     }
     const content: string[] = [...(channel.missing ?? [])];
@@ -506,24 +561,12 @@ function bridgeSection(
       ? observationFreshness(`${name} channel`, channel.asOf, nowMs)
       : VERDICT_CLOCK_REASON;
     if (fresh !== null) channelFreshness.push(fresh);
-    rows.push({
-      channel: name,
-      state: channel.state as FleetRecheckBridge['state'],
-      runtimeHost: channel.runtimeHost ?? null,
-      processAlive: channel.processAlive,
-      missingBridge: content[0] ?? fresh,
-    });
+    rows.push(bridgeChannelView(channel, content[0] ?? fresh));
   }
   // Extra observed channels ride along as evidence without affecting the verdict.
   for (const channel of report.channels ?? []) {
     if ((REQUIRED_CHANNELS as readonly string[]).includes(channel.channel)) continue;
-    rows.push({
-      channel: channel.channel as FleetRecheckBridge['channel'],
-      state: channel.state as FleetRecheckBridge['state'],
-      runtimeHost: channel.runtimeHost ?? null,
-      processAlive: channel.processAlive,
-      missingBridge: (channel.missing ?? [])[0] ?? null,
-    });
+    rows.push(bridgeChannelView(channel, (channel.missing ?? [])[0] ?? null));
   }
   section.channels = rows;
   const reportReason = nowOk
