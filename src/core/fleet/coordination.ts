@@ -27,9 +27,14 @@ type Event =
   | { version: 1; kind: 'claim' | 'handoff'; at: number; claim: OwnedClaim }
   | { version: 1; kind: 'release' | 'reap'; at: number; id: string }
   | { version: 1; kind: 'reap'; at: number; id: string; owner: string; state: 'RELEASED'; reason: 'lease-expired' }
+  | { version: 1; kind: 'return'; at: number; id: string; agent: string; leaseHash: string; message: FleetMessage }
   | { version: 1; kind: 'post'; at: number; message: FleetMessage }
   | { version: 1; kind: 'assign'; at: number; proposal: FleetAssignment };
-interface State { claims: Map<string, OwnedClaim>; messages: FleetMessage[]; proposals: FleetAssignment[] }
+interface State {
+  claims: Map<string, OwnedClaim>; messages: FleetMessage[]; proposals: FleetAssignment[];
+  /** Released-for-return claims whose receipt is not yet posted; keyed by claim id. */
+  pendingReturns: Map<string, Event & { kind: 'return' }>;
+}
 export type FleetCoordinationResult<T> = { ok: true; value: T } | { ok: false; error: 'invalid-input' | 'unavailable' | 'duplicate' | 'not-owner' | 'not-found' };
 export function fleetCoordinationPath(): string {
   return resolve(process.env['PHANTOM_FLEET_LEDGER_PATH'] ?? join(process.env['ASHLR_HOME'] ?? join(homedir(), '.ashlr'), 'fleet', 'coordination.jsonl'));
@@ -63,6 +68,9 @@ function parseEvent(value: unknown): Event {
   if ((value.kind === 'release' || value.kind === 'reap') && exact(value, ['version', 'kind', 'at', 'id']) && ident(value.id)) return value as unknown as Event;
   if (value.kind === 'reap' && exact(value, ['version', 'kind', 'at', 'id', 'owner', 'state', 'reason'])
     && ident(value.id) && ident(value.owner) && value.state === 'RELEASED' && value.reason === 'lease-expired') return value as unknown as Event;
+  if (value.kind === 'return' && exact(value, ['version', 'kind', 'at', 'id', 'agent', 'leaseHash', 'message'])
+    && ident(value.id) && ident(value.agent) && typeof value.leaseHash === 'string' && /^[a-f0-9]{64}$/.test(value.leaseHash)
+    && messageShape(value.message)) return value as unknown as Event;
   if (value.kind === 'post' && exact(value, ['version', 'kind', 'at', 'message']) && messageShape(value.message)) return value as unknown as Event;
   if (value.kind === 'assign' && exact(value, ['version', 'kind', 'at', 'proposal']) && assignmentShape(value.proposal)) return value as unknown as Event;
   throw new Error('Invalid ledger');
@@ -94,10 +102,11 @@ function readEvents(path: string, allowMissing = false): { events: Event[]; stat
   } finally { if (fd !== undefined) closeSync(fd); }
 }
 function replay(events: Event[]): State {
-  const state: State = { claims: new Map(), messages: [], proposals: [] };
+  const state: State = { claims: new Map(), messages: [], proposals: [], pendingReturns: new Map() };
   for (const event of events) {
     if (event.kind === 'claim' || event.kind === 'handoff') state.claims.set(event.claim.id, event.claim);
     else if (event.kind === 'release' || event.kind === 'reap') state.claims.delete(event.id);
+    else if (event.kind === 'return') { state.claims.delete(event.id); state.pendingReturns.set(event.id, event); }
     else if (event.kind === 'post') state.messages.push(event.message);
     else if (event.kind === 'assign') state.proposals.push(event.proposal);
   }
@@ -106,6 +115,7 @@ function replay(events: Event[]): State {
 function stateEvents(state: State): Event[] {
   return [
     ...[...state.claims.values()].map((claim): Event => ({ version: 1, kind: 'claim', at: claim.claimedAt, claim })),
+    ...[...state.pendingReturns.values()].filter(pending => !state.messages.some(m => m.id === pending.message.id)),
     ...state.messages.map((message): Event => ({ version: 1, kind: 'post', at: message.at, message })),
     ...state.proposals.map((proposal): Event => ({ version: 1, kind: 'assign', at: proposal.at, proposal })),
   ];
@@ -190,6 +200,7 @@ function mutate<T>(options: FleetCoordinationOptions, operation: (state: State, 
       owner: claim.owner, state: claim.state, reason: claim.reason });
     state.messages = state.messages.filter(message => message.expiresAt > now);
     state.proposals = state.proposals.filter(proposal => proposal.expiresAt > now);
+    for (const pending of state.pendingReturns.values()) if (pending.message.expiresAt <= now) state.pendingReturns.delete(pending.id);
     const result = operation(state, now);
     if (!result.ok) return result;
     const pending = [...reaped, ...(result.value.event ? [result.value.event] : [])];
@@ -238,6 +249,38 @@ export function releaseFleetClaim(input: { id: string; agent: string; lease: str
     if (!claim) return { ok: false, error: 'not-found' };
     if (claim.agent !== input.agent || claim.leaseHash !== hash(input.lease)) return { ok: false, error: 'not-owner' };
     return { ok: true, value: { event: { version: 1, kind: 'release', at: now, id: claim.id }, value: { released: claim.id } } };
+  });
+}
+/** Owner-validated release plus result intent as one durable 'return'
+ * record. 'intended' callers then publish the receipt (retriable). A retry
+ * without the live claim resolves the stored intent — the recorded
+ * agent+leaseHash proves ownership — and reposts the exact receipt once.
+ * The intent never lands in `messages`, so a failed publish leaves no
+ * half-visible result. */
+export function concludeFleetClaim(input: {
+  id: string; agent: string; lease: string;
+  message?: { id: string; from: string; to: string; body: string; ttlMs?: number };
+}, options: FleetCoordinationOptions = {}): FleetCoordinationResult<{ outcome: 'intended' | 'resolved' | 'existing'; message: FleetMessage }> {
+  const intent = input.message;
+  const ttl = intent?.ttlMs ?? FLEET_CLAIM_TTL_MS;
+  if (!ident(input.id) || !ident(input.agent) || !text(input.lease, 128)
+    || (intent !== undefined && (!ident(intent.id) || !ident(intent.from) || !ident(intent.to) || !text(intent.body, 4000) || !ttlValid(ttl))))
+    return { ok: false, error: 'invalid-input' };
+  return mutate<{ outcome: 'intended' | 'resolved' | 'existing'; message: FleetMessage }>(options, (state, now) => {
+    const claim = state.claims.get(input.id);
+    if (!claim) {
+      const pending = state.pendingReturns.get(input.id);
+      if (!pending) return { ok: false, error: 'not-found' };
+      if (pending.agent !== input.agent || pending.leaseHash !== hash(input.lease)) return { ok: false, error: 'not-owner' };
+      const posted = state.messages.find(message => message.id === pending.message.id);
+      if (posted) return { ok: true, value: { event: null, value: { outcome: 'existing', message: posted } } };
+      return { ok: true, value: { event: { version: 1, kind: 'post', at: now, message: pending.message }, value: { outcome: 'resolved', message: pending.message } } };
+    }
+    if (claim.agent !== input.agent || claim.leaseHash !== hash(input.lease)) return { ok: false, error: 'not-owner' };
+    if (!intent) return { ok: false, error: 'invalid-input' };
+    if (state.messages.some(message => message.id === intent.id)) return { ok: false, error: 'duplicate' };
+    const message: FleetMessage = { id: intent.id, from: intent.from, to: intent.to, body: intent.body, at: now, expiresAt: now + ttl };
+    return { ok: true, value: { event: { version: 1, kind: 'return', at: now, id: claim.id, agent: claim.agent, leaseHash: claim.leaseHash, message }, value: { outcome: 'intended', message } } };
   });
 }
 export function handoffFleetClaim(input: { id: string; agent: string; lease: string; to: string; ttlMs?: number }, options: FleetCoordinationOptions = {}): FleetCoordinationResult<{ claim: FleetClaim; lease: string }> {
