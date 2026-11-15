@@ -12,7 +12,8 @@ function fixture(overrides: FleetBridgeCheckDeps = {}): FleetBridgeCheckDeps {
   return {
     runtime: async () => ({ host: 'fake-rt-415s', stateRoot: '~/.ashlr-runs', asOf: PRODUCER_AS_OF,
       lastFleetStateRead: { ageSeconds: 5 } }),
-    claims: () => ({ state: 'known', claims: [{ claimedAt: '2026-11-15T11:59:00.000Z' }] }),
+    claims: () => ({ state: 'known', claims: [{ id: 'claim-415s', repo: 'fake/repo', task: 'fake-task', agent: 'fake-agent',
+      claimedAt: '2026-11-15T11:59:00.000Z', expiresAt: '2026-11-15T12:05:00.000Z', expiresInSeconds: 300 }] }),
     peers: () => ({ status: 'ok', asOf: PRODUCER_AS_OF }), now: () => NOW, ...overrides,
   };
 }
