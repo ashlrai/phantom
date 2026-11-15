@@ -134,9 +134,14 @@ export function readPeerInbox(session: PeerSession, after = 0, options: PeerBusO
   const peer = authenticatePeer(readPeerBindings(paths.bindings), session, now);
   const file = join(paths.busRoot, 'agentnet', 'coordination.json');
   const rows = existsSync(file) ? z.array(rowSchema).max(1024).parse(readPeerJson(file, paths.busRoot)) : [];
-  const page = listBusInboxAfter(after, 100, { root: paths.busRoot, now: () => now });
+  const page = listBusInboxAfter(after, 100, { root: paths.busRoot, now: () => now, includeOriginalEnvelope: true });
   if (page.status !== 'ok') return page;
-  return { ...page, messages: page.messages.filter(receipt => rows.some(row => row.id === receipt.envelope.id &&
-    row.target === peer.callsign && row.at <= now && now - row.at < 86_400_000 &&
-    row.digest === createHash('sha256').update(JSON.stringify(receipt.envelope)).digest('hex'))) };
+  const messages = page.messages.filter(receipt => {
+    const original = receipt.originalEnvelope;
+    return original !== undefined && rows.some(row => row.id === original.id &&
+      row.target === peer.callsign && row.at <= now && now - row.at < 86_400_000 &&
+      receipt.receivedAt === row.at &&
+      row.digest === createHash('sha256').update(JSON.stringify(original)).digest('hex'));
+  }).map(({ cursor, receivedAt, envelope }) => ({ cursor, receivedAt, envelope }));
+  return { ...page, messages };
 }
