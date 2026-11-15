@@ -56,7 +56,8 @@ function answerFields(body: unknown, itemId: string): Omit<NeedsMasonAnswer, 'it
 
 /**
  * Scan every retained live receipt (bounded by the store's own 1024-message
- * window) for the envelope `needs-mason-resolved-<id>` routed mason -> leaders.
+ * window) for the envelope `needs-mason-resolved-<id>` routed to leaders.
+ * The sender is 'mason' for Mason's own surfaces and 'leader' for agent relays.
  * The deterministic id is claimed by resolveNeedsMason, so a malformed body
  * under it — or a well-formed body under any other id — is ignored rather
  * than reported; no retained live match is always 'unknown', never a guess.
@@ -83,7 +84,7 @@ export function readNeedsMasonAnswer(itemId: unknown, options: BusInboxOptions =
     }
     for (const receipt of result.messages) {
       const { envelope } = receipt;
-      if (envelope.id !== wanted || envelope.from !== 'mason' || envelope.to !== 'leaders') continue;
+      if (envelope.id !== wanted || (envelope.from !== 'mason' && envelope.from !== 'leader') || envelope.to !== 'leaders') continue;
       const answer = answerFields(envelope.body, itemId);
       if (answer) return { status: 'found', id: envelope.id, cursor: receipt.cursor, receivedAt: receipt.receivedAt, answer: { itemId, ...answer } };
     }
