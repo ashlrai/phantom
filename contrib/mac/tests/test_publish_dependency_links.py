@@ -74,8 +74,9 @@ class DependencyLinkTests(unittest.TestCase):
         self.assertNotEqual(self.verify(broken_git=True), 0)
 
     def test_actual_publication_checks_after_staging_before_commit_or_push(self):
-        call = SOURCE.index("verify_dependency_links ||", SOURCE.index("git add -A"))
-        self.assertGreater(call, SOURCE.index("git add -A"))
+        stage = SOURCE.index("scoped_stage || {")
+        call = SOURCE.index("verify_dependency_links ||", stage)
+        self.assertGreater(call, stage)
         self.assertLess(call, SOURCE.index("commit -q --no-verify"))
         self.assertLess(call, SOURCE.index("push -q --no-verify"))
         self.assertLess(call, SOURCE.index("gh pr create"))

@@ -482,6 +482,19 @@ publisher captures actual staged Git and runner artifacts before publication;
 executing commands. Agent assertions alone never establish proof. See
 [the fleet proof contract](docs/contracts/CONTRACT-FLEET-PROOF-V1.md) for schema,
 trust boundary, bounds, redaction and Security-pinned deployment requirements.
+## Bridge publisher diff scope (`contrib/mac/publish.sh`)
+
+The publisher stages only the job's change set, never ambient worktree state.
+Change set = paths whose worktree content differs from the job's fork point
+(`git merge-base BASE HEAD`) plus untracked, non-ignored files that are not
+scratch-shaped (`*.backup *.bak *.orig *.rej *.patch *.diff *.swp *~ .DS_Store`).
+An optional manifest `~/.ashlr-runs/<job>.files` (one repo-relative path per
+line, written ops-side from the work claim) is authoritative: only listed paths
+are staged; a malformed manifest aborts (`scope-manifest-invalid`). The index is
+reset to BASE before staging, so a stale fork point cannot re-revert main.
+Excluded paths are reported as `NOTE SCOPE_EXCLUDED`. The integrated-merge
+profile is unchanged. Secret-shape, G1 and protected-path gates are unchanged.
+Live install needs a Security re-pin.
 ## Fleet outcome measurement and advisory policy v1
 
 `buildOutcomeMetrics` in `src/core/fleet/outcome-metrics.ts` folds injected job
