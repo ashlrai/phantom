@@ -11,6 +11,12 @@ import { readFleetRecheck, type FleetRecheck } from '../fleet/fleet-recheck.js';
 import { appendRecheckRecord } from '../fleet/recheck-record.js';
 import { homedir } from 'node:os';
 import { formatRecheckReply } from '../fleet/fleet-recheck-reply.js';
+import { isOrdersAsk } from '../fleet/orders-ask.js';
+import { formatOrdersReply } from '../fleet/orders-reply.js';
+import { readOrderTrace } from '../fleet/order-trace.js';
+import { listLiveWorkers, type LiveWorkersSnapshot } from '../fleet/runs-live-workers.js';
+import { readLaneTargets, type LaneTargetsV1 } from '../fleet/runs-lane-targets.js';
+import type { LiveJobIds } from '../fleet/order-work-state.js';
 
 /** The five-line digest from real state; the heading is swapped for the clock below. */
 const digestBrief = async (runsDir: string, now: Date): Promise<string> =>
@@ -18,6 +24,7 @@ const digestBrief = async (runsDir: string, now: Date): Promise<string> =>
 const MAX_REPLY_CHARS = 1500;
 export const OWNER_STATUS_FALLBACK = "Phantom status: the status read failed; your message is in the Leader's inbox and it will answer there.";
 export const OWNER_RECHECK_FALLBACK = "Phantom recheck: the recheck read failed; your message is in the Leader's inbox.";
+export const OWNER_ORDERS_FALLBACK = "Phantom orders: the orders read failed; your message is in the Leader's inbox.";
 
 /** Exact short asks only; "status of the release pr #12" is a request for the Leader. */
 export function isOwnerStatusRequest(text: string): boolean {
@@ -44,6 +51,9 @@ export interface OwnerStatusDeps {
   /** Retains one sanitized row per default recheck answer. Only the default
    * recheck path calls it; a supplied `recheck` bypasses it. A throw is ignored. */
   recordRecheck?: (recheck: FleetRecheck) => void;
+  /** The per-order answer for a short "orders" ask; the default reads the
+   * order trace plus one live-worker snapshot and formats the per-order reply. */
+  orders?: (now: Date) => Promise<string>;
 }
 
 const defaultRecordRecheck = (recheck: FleetRecheck): void => { appendRecheckRecord(ashlrHome(), recheck, homedir()); };
@@ -65,6 +75,64 @@ export async function composeOwnerRecheckReply(now: Date, deps: OwnerStatusDeps 
     if (deps.recheck !== undefined) return await deps.recheck(now);
     return await recheckReplyWithRecord(now, n => readFleetRecheck({ now: () => n }), deps.recordRecheck ?? defaultRecordRecheck);
   } catch { return OWNER_RECHECK_FALLBACK; }
+}
+
+/** Reader seams for the default orders answer; tests inject each reader so
+ * the real trace, process table and slots.json never load. */
+export interface DefaultOrdersReaders {
+  /** Order-trace reader; the default is readOrderTrace. A throw reaches the
+   * caller's fixed orders fallback. */
+  read?: typeof readOrderTrace;
+  /** Live-worker reader; the default is listLiveWorkers. A throw or an
+   * 'unavailable' sourceState names RUNNING unchecked in the reply. */
+  live?: () => Promise<LiveWorkersSnapshot>;
+  /** Lane-targets reader; the default is readLaneTargets. A throw or a
+   * non-'healthy' sourceState names BLOCKED unchecked in the reply. */
+  lanes?: () => Promise<LaneTargetsV1>;
+}
+
+/** The default orders answer: the order trace plus one live-worker snapshot
+ * and one lane-targets read. A failed live read degrades to live
+ * 'unavailable' — RUNNING is reported unproven, never silently asserted; a
+ * failed or non-healthy lanes read degrades to lanes 'unavailable' — BLOCKED
+ * is reported unchecked, never silently claimed; a failed trace read throws
+ * to the caller's fallback. */
+export async function defaultOrdersReply(now: Date, readers: DefaultOrdersReaders = {}): Promise<string> {
+  const nowMs = now.getTime();
+  const trace = await (readers.read ?? readOrderTrace)({ now: () => nowMs });
+  let live: LiveJobIds | undefined;
+  let liveState: 'healthy' | 'unavailable';
+  try {
+    const snapshot = await (readers.live ?? listLiveWorkers)();
+    liveState = snapshot.sourceState;
+    if (liveState === 'healthy') live = { jobIds: new Set(snapshot.workers.map(w => w.job)), at: snapshot.generatedAt };
+  } catch {
+    liveState = 'unavailable';
+  }
+  // Lane holds are read once per reply, the same evidence the order-state API
+  // and `fleet order-state` use. A throw or a non-healthy slots.json yields no
+  // blocker evidence, so BLOCKED is not claimed — and the reply names the
+  // read 'unavailable' rather than dropping the check silently. Hold reasons
+  // and changedBy are stripped before the snapshot leaves this function: the
+  // reply may name lanes and held-until timestamps only.
+  let lanes: LaneTargetsV1 | undefined;
+  try {
+    const targets = await (readers.lanes ?? readLaneTargets)();
+    if (targets.sourceState === 'healthy') {
+      lanes = { ...targets, lanes: targets.lanes.map(row => ({ ...row, heldReason: null, changedBy: null })) };
+    }
+  } catch { /* lanes stays undefined: no blocker evidence */ }
+  const lanesState: 'healthy' | 'unavailable' = lanes === undefined ? 'unavailable' : 'healthy';
+  return formatOrdersReply({ trace, nowIso: new Date(nowMs).toISOString(), live, liveState, lanes, lanesState });
+}
+
+/** Never throws, and never falls through to the status digest or the recheck
+ * verdict: an orders ask gets the per-order reply or the fixed orders
+ * fallback. The reply is evidence only — it grants nothing. */
+export async function composeOwnerOrdersReply(now: Date, deps: OwnerStatusDeps = {}): Promise<string> {
+  try {
+    return await (deps.orders ?? defaultOrdersReply)(now);
+  } catch { return OWNER_ORDERS_FALLBACK; }
 }
 
 const defaultBoard = (now: Date): WorkBoardResult => listWorkBoard({ root: join(ashlrHome(), 'fleet'), now: now.getTime(), limit: 20 });
@@ -105,14 +173,17 @@ export async function composeOwnerStatusReply(runsDir: string, now: Date, deps: 
 /** The fixed auto-answer the Slack socket wiring injects into the Leader adapter.
  * Imported only by non-closure modules (cli + tests), so the digest readers stay
  * outside the Tier-1 import closure that slack-leader.ts belongs to. The same
- * holds for the fleet recheck readers: an exact "recheck" ask is answered with
- * the recheck verdict, every other gated ask with the status digest. */
+ * holds for the fleet recheck and orders readers: an exact "recheck" ask is
+ * answered with the recheck verdict, an exact "orders" ask with the per-order
+ * reply, and every other gated ask with the status digest. */
 export function ownerStatusReply(deps: OwnerStatusDeps = {}): { ask: (text: string) => boolean; compose: (runsDir: string, now: Date, text?: string) => Promise<string>; readonly fallback: string } {
   return {
-    ask: text => isOwnerStatusRequest(text) || isRecheckAsk(text),
+    ask: text => isOwnerStatusRequest(text) || isRecheckAsk(text) || isOrdersAsk(text),
     compose: (runsDir, now, text) => text !== undefined && isRecheckAsk(text)
       ? composeOwnerRecheckReply(now, deps)
-      : composeOwnerStatusReply(runsDir, now, deps),
+      : text !== undefined && isOrdersAsk(text)
+        ? composeOwnerOrdersReply(now, deps)
+        : composeOwnerStatusReply(runsDir, now, deps),
     fallback: OWNER_STATUS_FALLBACK,
   };
 }

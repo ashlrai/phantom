@@ -3,11 +3,15 @@
  * real order trace (readOrderTrace): RECEIVED / ASSIGNED / RUNNING / BLOCKED /
  * VERIFIED with as-of, evidence source and missing evidence. RUNNING comes
  * from the live process table (listLiveWorkers): a launched or published job
- * with a live worker proves it. Read-only: reads local files and the host
+ * with a live worker proves it. BLOCKED comes from lane holds (readLaneTargets,
+ * queue/slots.json): an order whose every job is queued on a held lane names
+ * the held lane as its dependency, never the hold reason. Read-only: reads local files and the host
  * process table, no network, no writes; never prints order text bodies,
  * command lines or pids. */
-import { classifyOrder, mostAdvancedJob, type LiveJobIds } from '../core/fleet/order-work-state.js';
+import { heldLaneBlocker } from '../core/fleet/order-lane-blocker.js';
+import { classifyOrder, mostAdvancedJob, type LiveJobIds, type TraceOrder } from '../core/fleet/order-work-state.js';
 import { readOrderTrace, type OrderTraceV1 } from '../core/fleet/order-trace.js';
+import { readLaneTargets, type LaneTargetsV1 } from '../core/fleet/runs-lane-targets.js';
 import { listLiveWorkers, type LiveWorkersSnapshot } from '../core/fleet/runs-live-workers.js';
 import { parseOrderAt } from './fleet-orders.js';
 
@@ -16,7 +20,10 @@ const LIMIT = 20;
 
 export async function cmdFleetOrderState(
   args: string[],
-  deps: { read?: typeof readOrderTrace; now?: () => number; live?: () => Promise<LiveWorkersSnapshot> } = {},
+  deps: {
+    read?: typeof readOrderTrace; now?: () => number;
+    live?: () => Promise<LiveWorkersSnapshot>; lanes?: () => Promise<LaneTargetsV1>;
+  } = {},
 ): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(usage); return 0; }
   let json = false;
@@ -49,6 +56,18 @@ export async function cmdFleetOrderState(
   } catch {
     liveState = 'unavailable';
   }
+  // Lane holds are read once per run. A throw or a non-healthy slots.json
+  // yields no blocker evidence, so BLOCKED is simply not claimed.
+  let lanes: LaneTargetsV1 | undefined;
+  try {
+    const targets = await (deps.lanes ?? readLaneTargets)();
+    if (targets.sourceState === 'healthy') lanes = targets;
+  } catch { /* lanes stays undefined: no blocker evidence */ }
+  const lanesState: 'healthy' | 'unavailable' = lanes === undefined ? 'unavailable' : 'healthy';
+  const classify = (o: TraceOrder) => {
+    const c = classifyOrder(o, trace.generatedAt, nowIso, live, lanes);
+    return { c, blocker: c.state === 'BLOCKED' ? heldLaneBlocker(o, lanes)?.dependency ?? null : null };
+  };
   let orders = [...trace.orders].sort((a, b) => b.at.localeCompare(a.at));
   if (since !== undefined) {
     orders = orders.filter((o) => { const t = parseOrderAt(o.at); return t !== null && t >= nowMs - since! * 3600_000; });
@@ -56,13 +75,13 @@ export async function cmdFleetOrderState(
   orders = orders.slice(0, LIMIT);
   if (json) {
     console.log(JSON.stringify({
-      v: 1, generatedAt: trace.generatedAt, sources: trace.sources, live: liveState,
+      v: 1, generatedAt: trace.generatedAt, sources: trace.sources, live: liveState, lanes: lanesState,
       orders: orders.map((o) => {
-        const c = classifyOrder(o, trace.generatedAt, nowIso, live);
+        const { c, blocker } = classify(o);
         return {
           at: o.at, source: o.source, key: o.key,
           state: c.state, asOf: c.asOf, evidenceSource: c.source,
-          missing: c.missing, pr: mostAdvancedJob(o)?.url ?? null,
+          missing: c.missing, blocker, pr: mostAdvancedJob(o)?.url ?? null,
         };
       }),
     }));
@@ -71,10 +90,13 @@ export async function cmdFleetOrderState(
   const bad = Object.entries(trace.sources).filter(([, s]) => s !== 'healthy');
   if (bad.length) console.log(`warning: order sources not healthy: ${bad.map(([k, s]) => `${k}=${s}`).join(' ')}`);
   if (liveState === 'unavailable') console.log('warning: live workers unavailable; RUNNING not checked');
+  // stderr, not stdout: hosts without a dispatcher have no slots.json, and the
+  // contract lines on stdout stay one-per-order for scripts reading them.
+  if (lanesState === 'unavailable') console.error('warning: lane holds unavailable; BLOCKED not checked');
   for (const o of orders) {
-    const c = classifyOrder(o, trace.generatedAt, nowIso, live);
+    const { c, blocker } = classify(o);
     const url = mostAdvancedJob(o)?.url;
-    console.log(`${o.at} ${o.source} ${c.state} as-of=${c.asOf} source=${c.source} missing=${c.missing.length ? c.missing.join(',') : 'none'}${url ? ` pr=${url}` : ''}`);
+    console.log(`${o.at} ${o.source} ${c.state} as-of=${c.asOf} source=${c.source} missing=${c.missing.length ? c.missing.join(',') : 'none'}${blocker ? ` blocked-on=${blocker}` : ''}${url ? ` pr=${url}` : ''}`);
   }
   return 0;
 }

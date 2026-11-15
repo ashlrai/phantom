@@ -2,18 +2,22 @@ import { open, readFile, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readInboxEntries } from './mason-inbox.js';
+import { readQueuedLanes } from './order-queued-lanes.js';
 
 export interface OrderTraceJob {
   id: string;
   lane: string | null;
   state: 'queued' | 'launched' | 'published' | 'merged';
   url: string | null;
+  /** ISO time of the newest `outcome` row with `empty: true` for this job;
+   * set only on jobs that are neither merged nor published. */
+  endedEmptyAt?: string;
 }
 export interface OrderTraceV1 {
   v: 1;
   generatedAt: string;
-  sources: Record<'inbox' | 'prompts' | 'publishes', 'healthy' | 'missing' | 'degraded'>;
-  orders: Array<{ at: string; source: string; alsoChannels?: string[]; key: string; jobs: OrderTraceJob[] }>;
+  sources: Record<'inbox' | 'prompts' | 'publishes' | 'queue', 'healthy' | 'missing' | 'degraded'>;
+  orders: Array<{ at: string; source: string; alsoChannels?: string[]; requestId?: string; key: string; jobs: OrderTraceJob[] }>;
 }
 const months = 'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split(' ');
 export function parseOrderCitations(body: string): string[] {
@@ -67,13 +71,16 @@ async function boundedText(path: string, bytes: number): Promise<string> {
 }
 export async function readOrderTrace(opts: { runsDir?: string; now?: () => number; maxBodies?: number } = {}): Promise<OrderTraceV1> {
   const root = opts.runsDir ?? join(homedir(), '.ashlr-runs');
-  const inbox = await readInboxEntries({ runsDir: root, limit: Number.MAX_SAFE_INTEGER });
+  const [inbox, queued] = await Promise.all([
+    readInboxEntries({ runsDir: root, limit: Number.MAX_SAFE_INTEGER }),
+    readQueuedLanes(root),
+  ]);
   const result: OrderTraceV1 = {
     v: 1, generatedAt: new Date((opts.now ?? Date.now)()).toISOString(),
-    sources: { inbox: inbox.sourceState, prompts: 'healthy', publishes: 'healthy' },
+    sources: { inbox: inbox.sourceState, prompts: 'healthy', publishes: 'healthy', queue: queued.state },
     orders: inbox.entries.flatMap(entry => {
       const key = orderKey(entry.at);
-      return key ? [{ at: entry.at, source: entry.source, ...(entry.alsoChannels ? { alsoChannels: entry.alsoChannels } : {}), key, jobs: [] }] : [];
+      return key ? [{ at: entry.at, source: entry.source, ...(entry.alsoChannels ? { alsoChannels: entry.alsoChannels } : {}), ...(entry.requestId !== undefined ? { requestId: entry.requestId } : {}), key, jobs: [] }] : [];
     }),
   };
   const files: Array<{ path: string; id: string; mtime: number }> = [];
@@ -98,6 +105,7 @@ export async function readOrderTrace(opts: { runsDir?: string; now?: () => numbe
   if ((!directories || !files.length) && result.sources.prompts === 'healthy') result.sources.prompts = 'missing';
   const publishes = new Map<string, { url: string; ts: number }>();
   const merges = new Map<string, string | null>();
+  const empties = new Map<string, number>();
   try {
     const text = await readFile(join(root, 'metrics', 'jobs.jsonl'), 'utf8');
     for (const line of text.split(/\r?\n/).filter(Boolean)) {
@@ -111,6 +119,11 @@ export async function readOrderTrace(opts: { runsDir?: string; now?: () => numbe
             : typeof row.prUrl === 'string' ? row.prUrl
             : typeof row.pr === 'string' ? row.pr : null;
           merges.set(id, url ?? merges.get(id) ?? null);
+        }
+        if (row.event === 'outcome' && row.empty === true && typeof id === 'string' && id.startsWith('RQ-') && typeof row.ts === 'string') {
+          // Same `+hhmm` offset tolerance as empty-job-ledger.ts.
+          const emptyTs = Date.parse(row.ts.trim().replace(/([+-]\d{2})(\d{2})$/, '$1:$2'));
+          if (Number.isFinite(emptyTs) && emptyTs >= (empties.get(id) ?? -Infinity)) empties.set(id, emptyTs);
         }
         if (row.event !== 'publish' || typeof row.job !== 'string' || typeof row.url !== 'string' ||
             typeof row.ts !== 'string' || !Number.isFinite(Date.parse(row.ts))) {
@@ -142,9 +155,16 @@ export async function readOrderTrace(opts: { runsDir?: string; now?: () => numbe
         lane = /^launched\s+RQ-[\w-]+\s+(\S+)/m.exec(marker)?.[1] ?? null;
       } catch (error) { if (sourceError(error) === 'degraded') result.sources.prompts = 'degraded'; }
       const publish = publishes.get(file.id);
+      const state: OrderTraceJob['state'] = merges.has(file.id) ? 'merged' : publish ? 'published' : launched ? 'launched' : 'queued';
+      // A still-queued job has no launch marker; queue/ready.tsv is the only
+      // artifact naming its routed lane. The marker stays authoritative for
+      // launched, published and merged jobs.
+      const emptyMs = state === 'merged' || state === 'published' ? undefined : empties.get(file.id);
+      const endedEmpty = emptyMs === undefined ? undefined : new Date(emptyMs).toISOString();
+      if (state === 'queued' && lane === null) lane = queued.lanes.get(file.id) ?? null;
       for (const order of result.orders) {
         if (!cached.keys.includes(order.key) || order.jobs.some(job => job.id === file.id)) continue;
-        order.jobs.push({ id: file.id, lane, state: merges.has(file.id) ? 'merged' : publish ? 'published' : launched ? 'launched' : 'queued', url: publish?.url ?? merges.get(file.id) ?? null });
+        order.jobs.push({ id: file.id, lane, state, url: publish?.url ?? merges.get(file.id) ?? null, ...(endedEmpty !== undefined ? { endedEmptyAt: endedEmpty } : {}) });
       }
     } catch { result.sources.prompts = 'degraded'; }
   }

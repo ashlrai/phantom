@@ -48,7 +48,7 @@ describe('fleet order state api', () => {
     expect(r.body.orders.map((o: { key: string }) => o.key)).toEqual(['11-13 22:29', '11-13 13:13']);
     expect(r.body.orders[0]).toMatchObject({ state: 'VERIFIED', pr: PR, missing: [] });
     expect(r.body.orders[1]).toMatchObject({ state: 'RECEIVED', pr: null });
-    expect(Object.keys(r.body.orders[0]).sort()).toEqual(['asOf', 'at', 'evidenceSource', 'key', 'missing', 'pr', 'source', 'state']);
+    expect(Object.keys(r.body.orders[0]).sort()).toEqual(['asOf', 'at', 'evidenceSource', 'key', 'missing', 'owner', 'pr', 'source', 'state']);
   });
 
   it('caps at 20 orders and honours since', async () => {
