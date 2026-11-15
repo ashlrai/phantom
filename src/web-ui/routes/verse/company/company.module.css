@@ -22,3 +22,8 @@
 .panel .verdict { font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); }
 .verdict[data-health='attention'], .company [role='alert'] { color: var(--status-danger-fg); }
 .presence { font-weight: var(--font-weight-medium); }
+.overview { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)); gap: var(--space-3); }
+.overviewTile { min-width: 0; padding: var(--space-2); border-left: 2px solid var(--border-subtle); overflow-wrap: anywhere; }
+.overviewTile dd { margin: var(--space-1) 0; font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; }
+:global([data-console-layout='compact']) .overview { grid-template-columns: minmax(0, 1fr); }
+:global([data-console-layout='wide']) .overview { grid-template-columns: repeat(5, minmax(0, 1fr)); }

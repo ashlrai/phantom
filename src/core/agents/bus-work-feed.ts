@@ -1,0 +1,65 @@
+/** Read-only projection of retained bus receipts; routing labels grant no authority. */
+import { validateBusEnvelope } from '../fleet/bus-envelope.js';
+import {
+  participantSchema, workFeedSchema, workPostBodySchema, workStatusBodySchema,
+  type Participant, type WorkJob,
+} from './bus-v2-schema.js';
+
+export type WorkFeedResult =
+  | { status: 'ok'; feed: { v: 2; jobs: WorkJob[] } }
+  | { status: 'refused'; reason: 'invalid-receipts' | 'invalid-participants' | 'invalid-body'
+    | 'missing-provider' | 'duplicate-job' | 'owner-mismatch' };
+
+/**
+ * Project one retained snapshot in cursor order (at most 1024 receipts).
+ * This is not a historical ledger: orphan statuses are ignored. A provider must
+ * come from the post or supplied participant metadata, never a guessed label.
+ * No journal writes, claims, dispatch, authentication or external calls occur.
+ */
+export function projectBusWorkFeed(receipts: readonly unknown[], participants: readonly Participant[] = []): WorkFeedResult {
+  if (receipts.length > 1024) return { status: 'refused', reason: 'invalid-receipts' };
+  const providers = new Map<string, Participant['provider']>();
+  for (const input of participants) {
+    const participant = participantSchema.safeParse(input);
+    if (!participant.success || providers.has(participant.data.participantId)) {
+      return { status: 'refused', reason: 'invalid-participants' };
+    }
+    providers.set(participant.data.participantId, participant.data.provider);
+  }
+  const jobs = new Map<string, WorkJob>();
+  let cursor = 0;
+  for (const input of receipts) {
+    if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+      return { status: 'refused', reason: 'invalid-receipts' };
+    }
+    const row = input as Record<string, unknown>;
+    if (typeof row.cursor !== 'number' || !Number.isSafeInteger(row.cursor) || row.cursor <= cursor ||
+        typeof row.receivedAt !== 'number' || !Number.isSafeInteger(row.receivedAt) || row.receivedAt < 0) {
+      return { status: 'refused', reason: 'invalid-receipts' };
+    }
+    const checked = validateBusEnvelope(row.envelope);
+    if (!checked.ok) return { status: 'refused', reason: 'invalid-receipts' };
+    cursor = row.cursor;
+    const { body, from } = checked.value;
+    // Legacy and unrelated bodies remain opaque, including authenticated peer messages.
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) continue;
+    if (body.kind === 'work.post') {
+      const post = workPostBodySchema.safeParse(body);
+      if (!post.success) return { status: 'refused', reason: 'invalid-body' };
+      if (jobs.has(post.data.jobId)) return { status: 'refused', reason: 'duplicate-job' };
+      const provider = post.data.provider ?? providers.get(from);
+      if (!provider) return { status: 'refused', reason: 'missing-provider' };
+      jobs.set(post.data.jobId, { id: post.data.jobId, owner: from, provider,
+        repo: post.data.repo, claimKeys: post.data.claimKeys, status: 'queued', updatedAt: row.receivedAt });
+    } else if (body.kind === 'work.status') {
+      const status = workStatusBodySchema.safeParse(body);
+      if (!status.success) return { status: 'refused', reason: 'invalid-body' };
+      const job = jobs.get(status.data.jobId);
+      if (!job) continue;
+      if (job.owner !== from) return { status: 'refused', reason: 'owner-mismatch' };
+      // Cursor order wins even when receipt clocks move backwards.
+      jobs.set(job.id, { ...job, status: status.data.status, updatedAt: row.receivedAt });
+    }
+  }
+  return { status: 'ok', feed: workFeedSchema.parse({ v: 2, jobs: [...jobs.values()] }) };
+}

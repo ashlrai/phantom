@@ -1,3 +1,4 @@
+import { OperationsDeck } from '../../control/fleet/OperationsDeck.js';
 /**
  * routes/verse/sections/FleetSection.tsx — ⌘2 Fleet (SPEC-310B §6,
  * SPEC-310C §5; unit C7). THE place to operate the fleet (3.15): what it is
@@ -146,6 +147,7 @@ export function FleetSection() {
           </div>
           <InterjectBox />
           <CosTaskList />
+          <OperationsDeck />
           <WorkersCard />
           <RunsLanesCard />
           {/* The one-time setup checklist (the only step list left); every other

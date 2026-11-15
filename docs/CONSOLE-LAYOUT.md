@@ -60,6 +60,22 @@ read and shows unknown or unavailable data as such.
 
 ## Fleet telemetry and Show Mode
 
+The Fleet screen's read-only **Fleet map** places agent sessions inside their
+observed machine zones. Select a machine or session to open its detail sheet;
+session details include a job permalink and a PR link when recorded. Unplaced
+or conflicting sessions remain visible in a separate zone. Recently finished
+sessions are available below the map.
+
+Compute and session observations refresh every four seconds while visible.
+Each source shows its update age; failed refreshes retain a labeled last reading.
+CPU percentages require two advancing samples. Machine readings older than
+90 seconds become unknown. Heat uses claimed slots divided by the fresh
+advertised slot ceiling; the RAM-derived ceiling is labeled separately and
+never substituted. Unknown capacity uses a dashed zone without a gauge.
+The current session projection has no callsigns, owned-file lists or peer
+interaction evidence: these remain unknown and no collaboration edges are drawn.
+The map uses the console's compact, regular and wide layouts.
+
 The Fleet screen includes a Resource & activity board. It refreshes lane and
 activity projections every four seconds while visible. Lane rows show quota
 remaining when observed, live jobs, queue depth and the source observation
@@ -72,6 +88,14 @@ recent activity and a merge ticker. Pause the story or advance it manually.
 The underlying sources refresh every 15 seconds while visible; unavailable
 sources are reported and activity may be incomplete or stale. Neither view
 starts work or establishes that an outcome was shipped.
+
+Company opens with org member counts, members with recorded lane opt-ins, distinct
+contributed lanes, fleet jobs running and merges today (Eastern Time). The org
+summary reads the same declaration and join records as `phm org show`, and exposes
+counts only. Declared capacity without a positive opt-in contributes no lanes;
+unreadable records leave contributions unknown. Fleet totals remain shared
+aggregates, separate from member activity and private account usage. Sources
+refresh every 15 seconds while visible; missing org metadata stays unknown.
 
 ## Unified engineering surface audit (RQ-DESKTOP-UNIFIED-1)
 
