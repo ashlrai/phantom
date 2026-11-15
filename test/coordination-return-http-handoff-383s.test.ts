@@ -170,9 +170,9 @@ describe('HTTP claim/return across a real handoff (383s)', () => {
     expect(returns().returns).toHaveLength(1);
 
     // The ledger itself never holds lease material; event history is exactly
-    // claim → handoff → release → post.
+    // claim → handoff → return → post.
     const events = readFileSync(path, 'utf8').trim().split('\n').map(line => JSON.parse(line) as Record<string, any>);
-    expect(events.map(event => event['kind'])).toEqual(['claim', 'handoff', 'release', 'post']);
+    expect(events.map(event => event['kind'])).toEqual(['claim', 'handoff', 'return', 'post']);
     expect(events[1]).toMatchObject({ kind: 'handoff', claim: { id: claimId, agent: AGENT_B } });
     const raw = readFileSync(path, 'utf8');
     expect(raw).not.toContain(leaseA);
