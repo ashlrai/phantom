@@ -26,6 +26,9 @@ beforeAll(() => {
   mkdirSync(join(root, 'scripts'), { recursive: true });
   mkdirSync(join(root, 'node_modules/typescript/bin'), { recursive: true });
   writeFileSync(join(root, 'scripts/verify-changed.mjs'), readFileSync(resolve('scripts/verify-changed.mjs')));
+  cpSync(resolve('scripts/fleet-heavy.mjs'), join(root, 'scripts/fleet-heavy.mjs'));
+  mkdirSync(join(root, 'contrib/mac'), { recursive: true });
+  cpSync(resolve('contrib/mac/fleet-heavy'), join(root, 'contrib/mac/fleet-heavy'));
   for (const name of ['check-realio-lane-membership.mjs', 'check-verse-sync-io.mjs']) {
     writeFileSync(join(root, 'scripts', name), '');
   }

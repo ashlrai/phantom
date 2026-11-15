@@ -1026,3 +1026,29 @@ per worker, capped at six; unknown memory disables admission. Stored slot
 settings cannot exceed this memory cap. Claims use the bounded local supervisor
 and completions use the shared reaper. Security must review the combined RETUNE
 and omlx dispatcher pin before installation; never edit the live dispatcher.
+
+## Share the CPU budget
+
+Run `contrib/mac/fleet-heavy -- cargo test` (or any heavy command). The default
+limit is half the machine's CPU count, rounded down, with at least one slot.
+Use `--slots N` consistently across workers to choose a different host limit.
+`--job ID` labels the timing row; the default is the working directory name.
+The CLI preserves command arguments, output and exit status. It waits for a slot
+under `~/.ashlr-runs/queue/heavy/` and appends a JSON `HEAVY` row with `job`,
+`wait_s` and `run_s` to `events.jsonl`, also printed on stderr. No command
+arguments enter that log.
+
+Local `verify-changed`, `typecheck-fast` and `test-ci` helpers enter this same
+gate automatically; `test-fast` uses `test-ci`. Hosted CI keeps its existing
+limits. Nested helpers share their parent's slot. Slot files are persistent:
+never delete them while workers are running. Kernel file locks release after
+both wrapper and command exit, including crashes; a dead holder's PID metadata
+is replaced on the next acquisition. A child keeps the slot if its wrapper is
+killed. Normal interrupts forward to the command and wait for it to exit.
+
+The dispatcher's `status.json` includes `machine_sample.cpu_by_class`, summed
+process CPU percentages for `tsc` (including `tsgo`), `bun`, `cargo`, `node`,
+`codex`, `omlx/ollama` and `other`. 100 percent means one CPU core. It uses the
+existing scoped process snapshot to distinguish Node's TypeScript compiler;
+failed CPU sampling reports `null`. These repo changes do not install live
+machinery or change Security pins.

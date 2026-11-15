@@ -1,3 +1,4 @@
+import { enterHeavy } from './fleet-heavy.mjs';
 import { setTimeout, clearTimeout } from 'node:timers';
 import { execFileSync, spawn } from 'node:child_process';
 import { copyFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -122,6 +123,7 @@ function killGroup(child) {
 }
 
 async function main() {
+  enterHeavy();
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
     console.log('Usage: node scripts/typecheck-fast.mjs [--project backend|web|all] [--slots N] [--wait-seconds N] [--timeout-seconds N] [--no-seed] [--json] [--help]');

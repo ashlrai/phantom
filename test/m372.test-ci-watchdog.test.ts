@@ -42,6 +42,9 @@ function runFixture(
     'boundedVitestJob(process.env, process.argv.slice(2))',
     `boundedVitestJob(process.env, process.argv.slice(2), ${(options.freeMiB ?? 65536) * 1048576}, 8)`,
   ));
+  copyFileSync(resolve(here, '..', 'scripts', 'fleet-heavy.mjs'), join(root, 'scripts', 'fleet-heavy.mjs'));
+  mkdirSync(join(root, 'contrib', 'mac'), { recursive: true });
+  copyFileSync(resolve(here, '..', 'contrib', 'mac', 'fleet-heavy'), join(root, 'contrib', 'mac', 'fleet-heavy'));
   const policy = join(root, 'src', 'core', 'run', 'tool-path.ts');
   mkdirSync(dirname(policy), { recursive: true });
   copyFileSync(resolve(here, '..', 'src', 'core', 'run', 'tool-path.ts'), policy);
