@@ -10,6 +10,9 @@
  * project back to the bus message id. Fencing tokens never leave the store.
  */
 import { execFile } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { DevinSession, DevinSessionPage } from '../devin/client.js';
 import { connectedClient } from '../devin/service.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -49,6 +52,10 @@ export interface RosterSession {
   claims: RosterClaimRef[];
   lastActivity: string | null;
   blockers: string[];
+  sourceKind?: 'local' | 'cloud';
+  url?: string;
+  org?: string;
+  created?: string;
 }
 
 export interface RosterSource {
@@ -88,6 +95,8 @@ export interface AgentRosterDeps {
   exec?: (argv: readonly string[], timeoutMs: number) => Promise<RosterExecResult>;
   fetchLoopback?: (url: string, timeoutMs: number) => Promise<{ status: number; body: string } | { unavailable: true }>;
   readClaims?: () => RosterClaimsInspection;
+  /** Phantom-owned ~/.ashlr-runs/queue/devin-session-roster.json, or null if absent. Tests must inject this so they never read the live Mac file. */
+  readDevinCliRoster?: () => Promise<string | null>;
 }
 
 const OLLAMA_PS_URL = 'http://127.0.0.1:11434/api/ps';
@@ -95,8 +104,10 @@ const OMLX_MODELS_URL = 'http://127.0.0.1:8123/v1/models';
 const MAX_SESSIONS = 100;
 const MAX_TEXT = 200;
 
-const DEVIN_DESKTOP_UNKNOWN =
-  'No official command lists Devin Desktop sessions. devin list is documented as the current directory only (docs.devin.ai/cli/reference/commands) and devin desktop opens the app. The cloud sessions API does not include desktop orchestration sessions.';
+const DEVIN_DESKTOP_MISSING =
+  'Phantom Devin session roster is not present yet. Run bin/devin-session-roster.py emit after a Devin job, or see DEVIN-UNIFY-1.';
+const DEVIN_DESKTOP_UNREADABLE =
+  'Phantom Devin session roster is unreadable.';
 const CODEX_UNKNOWN =
   'codex agents opens an interactive command center and does not document a machine-readable session list (learn.chatgpt.com/docs/developer-commands).';
 const CURSOR_UNKNOWN =
@@ -161,7 +172,7 @@ function session(input: RosterSession): RosterSession | null {
   const sessionId = text(input.sessionId, 128);
   const state = text(input.state, 80);
   if (!sessionId || !state) return null;
-  return {
+  const next: RosterSession = {
     provider: input.provider,
     sessionId,
     title: text(input.title),
@@ -171,6 +182,14 @@ function session(input: RosterSession): RosterSession | null {
     lastActivity: text(input.lastActivity, 40),
     blockers: input.blockers.map((item) => text(item)).filter((item): item is string => item !== null).slice(0, 5),
   };
+  if (input.sourceKind === 'local' || input.sourceKind === 'cloud') next.sourceKind = input.sourceKind;
+  const url = text(input.url);
+  if (url) next.url = url;
+  const org = text(input.org, 128);
+  if (org) next.org = org;
+  const created = text(input.created, 40);
+  if (created) next.created = created;
+  return next;
 }
 
 function known(sourceId: RosterSourceId, observedAt: string, sessions: RosterSession[], truncated = false): RosterSource {
@@ -375,10 +394,58 @@ export function parseOmlxModels(raw: unknown): RosterSession[] | null {
   return sessions;
 }
 
+
+export const DEVIN_CLI_ROSTER_SCHEMA = 'ashlr.devin-session-roster.v1' as const;
+
+/** Parse the Phantom-owned Devin CLI roster. Never calls the Devin API or `devin list`. */
+export function parseDevinCliRoster(raw: string): RosterSession[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const bag = parsed as Record<string, unknown>;
+  if (bag['schema'] !== DEVIN_CLI_ROSTER_SCHEMA) return null;
+  if (!Array.isArray(bag['sessions'])) return null;
+  const sessions: RosterSession[] = [];
+  for (const item of bag['sessions']) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const row = item as Record<string, unknown>;
+    const sourceKind = row['sourceKind'] === 'cloud' || row['sourceKind'] === 'local' ? row['sourceKind'] : null;
+    if (!sourceKind) continue;
+    const next = session({
+      provider: 'devin-desktop',
+      sessionId: typeof row['id'] === 'string' ? row['id'] : '',
+      title: typeof row['title'] === 'string' ? row['title'] : null,
+      state: typeof row['status'] === 'string' ? row['status'] : '',
+      ownership: typeof row['org'] === 'string' ? row['org'] : null,
+      claims: [],
+      lastActivity: typeof row['created'] === 'string' ? row['created'] : null,
+      blockers: [],
+      sourceKind,
+      url: typeof row['url'] === 'string' ? row['url'] : undefined,
+      org: typeof row['org'] === 'string' ? row['org'] : undefined,
+      created: typeof row['created'] === 'string' ? row['created'] : undefined,
+    });
+    if (next) sessions.push(next);
+  }
+  return sessions;
+}
+
+async function defaultReadDevinCliRoster(): Promise<string | null> {
+  try {
+    return await readFile(join(homedir(), '.ashlr-runs', 'queue', 'devin-session-roster.json'), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
 interface ProbeCtx {
   observedAt: string;
   timeoutMs: number;
-  deps: Required<Pick<AgentRosterDeps, 'exec' | 'fetchLoopback' | 'listPhantom' | 'listDevinCloud'>>;
+  deps: Required<Pick<AgentRosterDeps, 'exec' | 'fetchLoopback' | 'listPhantom' | 'listDevinCloud' | 'readDevinCliRoster'>>;
 }
 
 async function probePhantom(ctx: ProbeCtx): Promise<RosterSource> {
@@ -414,16 +481,11 @@ async function probeDevinCloud(ctx: ProbeCtx): Promise<RosterSource> {
 }
 
 async function probeDevinDesktop(ctx: ProbeCtx): Promise<RosterSource> {
-  const help = await ctx.deps.exec(['devin', 'list', '--help'], ctx.timeoutMs);
-  if (help.missing) return unknown('devin-desktop', ctx.observedAt, 'devin is not on PATH');
-  if (help.timedOut) return unknown('devin-desktop', ctx.observedAt, 'timed out');
-  if (help.code !== 0) return unknown('devin-desktop', ctx.observedAt, 'devin list --help failed');
-  const body = helpOf(help);
-  if (!/list/i.test(body)) return unknown('devin-desktop', ctx.observedAt, 'devin list is not advertised by --help');
-  if (/desktop/i.test(body) && /session/i.test(body) && /--format(?:=|\s+)json/.test(body)) {
-    return unknown('devin-desktop', ctx.observedAt, 'devin list advertises JSON, but no documented field list distinguishes Devin Desktop sessions from current-directory CLI sessions, so none are reported.');
-  }
-  return unknown('devin-desktop', ctx.observedAt, DEVIN_DESKTOP_UNKNOWN);
+  const raw = await ctx.deps.readDevinCliRoster();
+  if (raw === null) return unknown('devin-desktop', ctx.observedAt, DEVIN_DESKTOP_MISSING);
+  const sessions = parseDevinCliRoster(raw);
+  if (!sessions) return unknown('devin-desktop', ctx.observedAt, DEVIN_DESKTOP_UNREADABLE);
+  return known('devin-desktop', ctx.observedAt, sessions, sessions.length > MAX_SESSIONS);
 }
 
 async function probeCodex(ctx: ProbeCtx): Promise<RosterSource> {
@@ -530,6 +592,7 @@ export async function collectAgentRoster(deps: AgentRosterDeps = {}): Promise<Ag
       fetchLoopback: deps.fetchLoopback ?? defaultFetchLoopback,
       listPhantom: deps.listPhantom ?? (() => listLiveWorkers()),
       listDevinCloud: deps.listDevinCloud ?? defaultListDevinCloud,
+      readDevinCliRoster: deps.readDevinCliRoster ?? defaultReadDevinCliRoster,
     },
   };
   const sources = await Promise.all(ROSTER_SOURCES.map((sourceId) => runBounded(
@@ -612,6 +675,10 @@ function isSession(value: unknown): boolean {
   if (!(row['ownership'] === null || typeof row['ownership'] === 'string')) return false;
   if (!(row['lastActivity'] === null || typeof row['lastActivity'] === 'string')) return false;
   if (!Array.isArray(row['blockers']) || row['blockers'].some((item) => typeof item !== 'string')) return false;
+  if (row['sourceKind'] !== undefined && row['sourceKind'] !== 'local' && row['sourceKind'] !== 'cloud') return false;
+  if (row['url'] !== undefined && typeof row['url'] !== 'string') return false;
+  if (row['org'] !== undefined && typeof row['org'] !== 'string') return false;
+  if (row['created'] !== undefined && typeof row['created'] !== 'string') return false;
   if (!Array.isArray(row['claims'])) return false;
   return row['claims'].every((claim) => {
     if (!claim || typeof claim !== 'object' || Array.isArray(claim)) return false;

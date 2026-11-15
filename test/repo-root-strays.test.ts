@@ -16,9 +16,9 @@ const STRAYS = [
   // Kept: scripts/ci-queue-report.mjs --help sends readers to RQ-QUEUE.md
   // for the capture envelope format.
   { name: 'RQ-QUEUE.md', expect: 'kept' },
-  // Kept: .gitignore re-includes it (!/usage-readings.log) as sanitized
-  // operator usage readings for bridge handoff, per gitignore-routing-eval.
-  { name: 'usage-readings.log', expect: 'kept' },
+  // RQ-ROOT-ARTIFACTS-1 removed the checked-in journal. .gitignore still
+  // re-includes !/usage-readings.log so a local operator log is not swept.
+  { name: 'usage-readings.log', expect: 'absent' },
 ] as const;
 
 describe('repo root strays', () => {

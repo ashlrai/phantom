@@ -50,9 +50,29 @@ import { derivePlannerNotifications } from './derivePlannerNotifications.js';
 import { ordersTraceQuery } from '../../routes/verse/fleet-inbox/fleet-inbox-queries.js';
 import { narrowOrderTrace } from '../../routes/verse/fleet-inbox/order-trace-model.js';
 import { deriveOrderMergedNotifications } from './deriveOrderMergedNotifications.js';
+import { leaderThreadQuery } from '../../routes/verse/leader/thread-data.js';
+import { ownerThreadQuery, NO_OWNER_THREAD } from '../../routes/verse/leader-thread/owner-thread-queries.js';
+import { fleetInbox, fleetOutbox, mergeThread } from '../../routes/verse/leader-thread/thread-merge-model.js';
+import { mergeOwnerLines, ownerThreadLines } from '../../routes/verse/leader-thread/owner-thread-lines.js';
+import { useHomeView } from '../../routes/verse/shell/home-view-store.js';
+import { deriveLeaderReplyNotifications, newestLeaderLineAt } from './deriveLeaderReplyNotifications.js';
+import { loadLeaderReplyMark, saveLeaderReplyMark } from './leader-reply-mark-store.js';
 
 /** Match the Updates and Releases surfaces; never poll faster. */
 const NOTIFY_POLL_MS = 60_000;
+
+/** True while this window is on screen and has focus. */
+function subscribeWindowFocus(onChange: () => void): () => void {
+  window.addEventListener('focus', onChange);
+  window.addEventListener('blur', onChange);
+  document.addEventListener('visibilitychange', onChange);
+  return () => {
+    window.removeEventListener('focus', onChange);
+    window.removeEventListener('blur', onChange);
+    document.removeEventListener('visibilitychange', onChange);
+  };
+}
+const windowFocused = (): boolean => document.visibilityState !== 'hidden' && document.hasFocus();
 
 export function useNotificationEngine(): void {
   const control = useQuery(controlSnapshotQuery);
@@ -71,6 +91,13 @@ export function useNotificationEngine(): void {
   const plannerPlan = useQuery(plannerPlanQuery);
   const orderTrace = useQuery(ordersTraceQuery);
   const busPage = useSyncExternalStore(subscribeAgentBusPage, getLatestAgentBusPage, () => null);
+  // The Leader pane's own reads (shared cache keys); the fleet-runs read above is its outbox source.
+  const leaderThread = useQuery(leaderThreadQuery);
+  const ownerThread = useQuery(ownerThreadQuery);
+  const leaderMark = useRef<number | null | undefined>(undefined);
+  const homeView = useHomeView().view;
+  const focused = useSyncExternalStore(subscribeWindowFocus, windowFocused, () => false);
+  const viewingLeader = homeView === 'leader' && focused;
   usePollWhileVisible(() => {
     void refetchQuery(laneTargetsQuery.key, () => laneTargetsQuery.fetch()).then(() =>
       refetchQuery(fleetRunsNotifyQuery.key, () => fleetRunsNotifyQuery.fetch()));
@@ -81,6 +108,8 @@ export function useNotificationEngine(): void {
   usePollWhileVisible(useRefetch(phonePendingQuery), 30_000);
   usePollWhileVisible(useRefetch(plannerPlanQuery), NOTIFY_POLL_MS);
   usePollWhileVisible(useRefetch(ordersTraceQuery), NOTIFY_POLL_MS);
+  usePollWhileVisible(useRefetch(leaderThreadQuery), 30_000);
+  usePollWhileVisible(useRefetch(ownerThreadQuery), 30_000);
 
   const controlData = control.data;
   const fleetData = fleet.data;
@@ -94,6 +123,9 @@ export function useNotificationEngine(): void {
   const phonePendingData = phonePending.data;
   const plannerPlanData = plannerPlan.data;
   const orderTraceData = orderTrace.data;
+  const leaderThreadData = leaderThread.data;
+  const ownerThreadData = ownerThread.data;
+  const leaderReady = [leaderThread, fleetRuns, ownerThread].every(q => q.data !== undefined || q.error !== undefined);
 
   useEffect(() => {
     const now = Date.now();
@@ -113,6 +145,18 @@ export function useNotificationEngine(): void {
       meterLog = recordMeterSample(loadMeterWatchLog(), ledgerData, now);
       saveMeterWatchLog(meterLog);
     }
+    // The Leader pane's merge, so a "reply" here is exactly a Leader line there.
+    const ownerRead = ownerThreadData ?? NO_OWNER_THREAD;
+    const merged = mergeThread(leaderThreadData?.value?.messages ?? [], fleetInbox(fleetRunsData), now, fleetRunsData, fleetOutbox(fleetRunsData));
+    const leaderLines = mergeOwnerLines(merged.lines, ownerRead.paused ? [] : ownerThreadLines(ownerRead.lines, merged.lines));
+    if (leaderMark.current === undefined) leaderMark.current = loadLeaderReplyMark();
+    if (leaderReady) {
+      // First load seeds without notifying; reading the Leader view acknowledges what it shows.
+      const newest = newestLeaderLineAt(leaderLines);
+      const next = leaderMark.current === null ? newest ?? now
+        : viewingLeader && newest !== null && newest > leaderMark.current ? newest : leaderMark.current;
+      if (next !== leaderMark.current) { leaderMark.current = next; saveLeaderReplyMark(next); }
+    }
     reconcileNotifications(
       deriveNotifications({
         control: controlData,
@@ -131,7 +175,8 @@ export function useNotificationEngine(): void {
         deriveBusReplyNotifications(busPage, now),
         derivePlannerNotifications(plannerPlanData, now),
         deriveOrderMergedNotifications(narrowOrderTrace(orderTraceData), now),
+        deriveLeaderReplyNotifications({ lines: leaderLines, mark: leaderReady ? leaderMark.current : null, viewing: viewingLeader }, now),
       ),
     );
-  }, [controlData, fleetData, runsData, inboxData, fleetRunsData, laneTargetsData, updateData, releasePrData, ledgerData, nativeUpdates, phonePendingData, busPage, plannerPlanData, orderTraceData]);
+  }, [controlData, fleetData, runsData, inboxData, fleetRunsData, laneTargetsData, updateData, releasePrData, ledgerData, nativeUpdates, phonePendingData, busPage, plannerPlanData, orderTraceData, leaderThreadData, ownerThreadData, leaderReady, viewingLeader]);
 }

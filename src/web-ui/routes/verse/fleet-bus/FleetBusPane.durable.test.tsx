@@ -55,7 +55,7 @@ it('does not refetch either route when switching back within its cadence', async
 });
 
 it.each([[401, 'Read session expired. Reopen the console.'], [503, 'Durable bus storage unavailable.'],
-  [404, 'This hub has no durable bus route yet (update the hub).']])('shows the HTTP %i error', async (code, text) => {
+  [404, 'This Phantom has no durable bus route yet (update Phantom).']])('shows the HTTP %i error', async (code, text) => {
   vi.mocked(fetch).mockImplementation((path) => String(path).includes('/fleet/live/bus') ? reply(dispatch) : reply({ error: 'fake' }, code));
   await open();
   await waitFor(() => expect(screen.getByText(text)).toBeInTheDocument());

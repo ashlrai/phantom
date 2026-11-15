@@ -29,8 +29,8 @@ import type { AshlrConfig, DashboardSnapshot, TuiTab } from '../core/types.js';
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Ordered tab list — used for tab/shift-tab cycling and 1-5 selection. */
-const TAB_ORDER: TuiTab[] = ['overview', 'runs', 'swarms', 'pulse', 'mcp', 'inbox', 'portfolio'];
+/** Ordered tab list — used for tab/shift-tab cycling and 1-9 selection. */
+const TAB_ORDER: TuiTab[] = ['overview', 'runs', 'swarms', 'pulse', 'mcp', 'inbox', 'portfolio', 'sessions'];
 
 /** Auto-refresh cadence (ms). */
 const REFRESH_MS = 2000;
@@ -89,10 +89,11 @@ function terminalSize(): { cols: number; rows: number } {
 /** Number of selectable rows on the given tab (for j/k bounds). */
 function selectableCount(snap: DashboardSnapshot, tab: TuiTab): number {
   switch (tab) {
-    case 'runs':   return snap.runs.length;
-    case 'swarms': return snap.swarms.length;
-    case 'mcp':    return snap.mcp.length;
-    default:       return 0; // overview / pulse have no row selection
+    case 'runs':     return snap.runs.length;
+    case 'swarms':   return snap.swarms.length;
+    case 'mcp':      return snap.mcp.length;
+    case 'sessions': return snap.sessions?.sessions.length ?? 0;
+    default:         return 0; // overview / pulse / inbox / portfolio have no row selection
   }
 }
 

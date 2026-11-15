@@ -8,6 +8,7 @@
  * is selected — the action boundary is exactly the caller's argv.
  */
 import { statSync } from 'node:fs';
+import { constants } from 'node:os';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -97,6 +98,10 @@ export interface HandoffBusReceiveOptions {
   snapshot: string;
   /** Absolute working directory for the worker; omitted inherits process.cwd(). */
   cwd?: string;
+  /** Optional bounded worker runtime in milliseconds, forwarded to the runner unchanged. */
+  timeoutMs?: number;
+  /** Cancel this receive and its worker without signalling the host process. */
+  signal?: AbortSignal;
   /** Explicit worker argv; nothing is ever derived from message content. */
   argv: readonly string[];
 }
@@ -111,12 +116,17 @@ export async function receiveHandoffBus(opts: HandoffBusReceiveOptions,
   options: BusInboxOptions = {}, io: ContextWorkerIO = {}): Promise<number> {
   const stderr = io.stderr ?? process.stderr;
   const diagnostic = (text: string): void => { stderr.write(`handoff-receive: ${text}\n`); };
+  const aborted = (): number => { diagnostic('worker launch aborted'); return 128 + (constants.signals.SIGTERM ?? 15); };
   if (!token(opts.id) || !token(opts.to) ||
       !isAbsolute(opts.snapshot) || opts.snapshot.includes('\0') ||
+      (opts.signal !== undefined && !(opts.signal instanceof AbortSignal)) ||
+      (opts.timeoutMs !== undefined &&
+        (!Number.isSafeInteger(opts.timeoutMs) || opts.timeoutMs < 1 || opts.timeoutMs > 3600000)) ||
       !opts.argv[0] || opts.argv.some(arg => typeof arg !== 'string' || arg.includes('\0'))) {
     diagnostic('invalid input');
     return 2;
   }
+  if (opts.signal?.aborted) return aborted();
   if (opts.cwd !== undefined) {
     try {
       if (typeof opts.cwd !== 'string' || !opts.cwd || opts.cwd.includes('\0') ||
@@ -149,17 +159,21 @@ export async function receiveHandoffBus(opts: HandoffBusReceiveOptions,
   const dir = await mkdtemp(join(resolve(tmpdir()), 'phm-handoff-recv-')).catch(() => '');
   if (!dir) { diagnostic('temporary workspace unavailable'); return 1; }
   try {
+    if (opts.signal?.aborted) return aborted();
     const promptPath = join(dir, 'prompt.txt');
     const snapshotPath = join(dir, 'snapshot.json');
     const payload = HANDOFF_RECEIVE_BEGIN + scrubPrivateText(prompt, { emails: true }) + HANDOFF_RECEIVE_END;
     try {
       await writeFile(promptPath, payload, { mode: 0o600 });
+      if (opts.signal?.aborted) return aborted();
       await writeFile(snapshotPath, snapshot, { mode: 0o600 });
     } catch {
       diagnostic('temporary workspace unavailable');
       return 1;
     }
-    return await runContextWorker({ snapshot: snapshotPath, prompt: promptPath, cwd: opts.cwd, argv: [...opts.argv] }, io);
+    if (opts.signal?.aborted) return aborted();
+    return await runContextWorker({ snapshot: snapshotPath, prompt: promptPath, cwd: opts.cwd,
+      timeoutMs: opts.timeoutMs, signal: opts.signal, argv: [...opts.argv] }, io);
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }

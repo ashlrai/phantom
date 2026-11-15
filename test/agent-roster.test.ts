@@ -8,6 +8,7 @@ import {
   collectAgentRoster,
   readRosterClaims,
   validateAgentRoster,
+  parseDevinCliRoster,
   type AgentRosterDeps,
   type RosterExecResult,
 } from '../src/core/fleet/agent-roster.js';
@@ -77,6 +78,7 @@ function harness(over: AgentRosterDeps = {}, calls: string[] = []): AgentRosterD
     timeoutMs: 200,
     listPhantom: async () => phantomSnap,
     listDevinCloud: async () => devinPage,
+    readDevinCliRoster: async () => null,
     readClaims: () => ({
       source: 'bus-work-fallback',
       claims: [
@@ -143,7 +145,7 @@ describe('agent roster probes', () => {
     expect(JSON.stringify(roster)).not.toContain(SECRET);
     expect(JSON.stringify(roster)).not.toContain('/tmp/roster-cwd-marker');
 
-    expect(roster.sources.find((source) => source.source === 'devin-desktop')?.error).toContain('current directory');
+    expect(roster.sources.find((source) => source.source === 'devin-desktop')?.error).toContain('not present yet');
     expect(roster.sources.find((source) => source.source === 'codex')?.error).toContain('interactive command center');
     expect(roster.sources.find((source) => source.source === 'cursor')?.error).toContain('interactive chat picker');
     expect(roster.sources.find((source) => source.source === 'grok')?.error).toContain('human table');
@@ -202,22 +204,57 @@ describe('agent roster probes', () => {
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
-  it('does not treat a desktop-shaped help text as a session list', async () => {
+  it('lists local and cloud Devin sessions from the Phantom-owned CLI roster', async () => {
+    const raw = JSON.stringify({
+      schema: 'ashlr.devin-session-roster.v1',
+      generatedAt: OBSERVED,
+      sessions: [
+        { id: 'devin-cli-local-1', sourceKind: 'local', status: 'running', title: 'Local fixer', created: '2026-11-09T21:00:00.000Z' },
+        { id: 'devin-cli-cloud-1', sourceKind: 'cloud', status: 'running', title: 'Cloud feature', url: 'https://app.devin.ai/sessions/devin-cli-cloud-1', org: 'org-local-user', created: '2026-11-09T21:01:00.000Z' },
+        { id: '', sourceKind: 'local', status: 'running' },
+        { id: 'skipped-kind', sourceKind: 'desktop', status: 'running' },
+      ],
+    });
     const calls: string[] = [];
     const roster = await collectAgentRoster(harness({
-      exec: (argv) => {
-        const key = argv.join(' ');
-        calls.push(key);
-        if (key === 'devin list --help') {
-          return Promise.resolve(result('List Devin Desktop sessions\ndevin list --format json\n'));
-        }
-        return harness().exec!(argv, 200);
-      },
+      readDevinCliRoster: async () => raw,
     }, calls));
+    expect(validateAgentRoster(roster)).toBeNull();
+    const desktop = roster.sources.find((source) => source.source === 'devin-desktop');
+    expect(desktop).toMatchObject({ availability: 'known', ok: true, error: null });
+    expect(desktop?.sessions.map((item) => [item.sessionId, item.sourceKind, item.state])).toEqual([
+      ['devin-cli-local-1', 'local', 'running'],
+      ['devin-cli-cloud-1', 'cloud', 'running'],
+    ]);
+    expect(desktop?.sessions[1]?.url).toBe('https://app.devin.ai/sessions/devin-cli-cloud-1');
+    expect(desktop?.sessions[1]?.org).toBe('org-local-user');
+    expect(calls.filter((call) => call.startsWith('devin '))).toEqual([]);
+    expect(calls).not.toContain('devin list --format json');
+  });
+
+  it('marks the Devin desktop source unknown when the Phantom roster is unreadable', async () => {
+    const roster = await collectAgentRoster(harness({
+      readDevinCliRoster: async () => '{"schema":"nope","sessions":[]}',
+    }));
     const desktop = roster.sources.find((source) => source.source === 'devin-desktop');
     expect(desktop).toMatchObject({ availability: 'unknown', sessions: [] });
-    expect(desktop?.error).toContain('no documented field list');
-    expect(calls.filter((call) => call.startsWith('devin '))).toEqual(['devin list --help']);
+    expect(desktop?.error).toContain('unreadable');
+  });
+
+  it('parses the Phantom Devin CLI roster and rejects a wrong schema', () => {
+    const rows = parseDevinCliRoster(JSON.stringify({
+      schema: 'ashlr.devin-session-roster.v1',
+      sessions: [
+        { id: 'devin-cli-local-2', sourceKind: 'local', status: 'idle' },
+        { id: 'devin-cli-cloud-2', sourceKind: 'cloud', status: 'running', url: 'https://app.devin.ai/sessions/devin-cli-cloud-2' },
+      ],
+    }));
+    expect(rows?.map((item) => [item.sessionId, item.sourceKind])).toEqual([
+      ['devin-cli-local-2', 'local'],
+      ['devin-cli-cloud-2', 'cloud'],
+    ]);
+    expect(parseDevinCliRoster('{"schema":"other","sessions":[]}')).toBeNull();
+    expect(parseDevinCliRoster('{')).toBeNull();
   });
 
   it('keeps the rest of the roster when one probe is unknown', async () => {

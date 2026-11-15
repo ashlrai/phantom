@@ -1,0 +1,22 @@
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, expect, it } from 'vitest';
+import { cmdFleetOwnerHistory } from '../src/cli/fleet-owner-history.js';
+const roots: string[] = [];
+afterEach(() => roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })));
+it('prints paged JSON and text, and validates arguments', async () => {
+  const runsDir = mkdtempSync(join(tmpdir(), 'fleet-history-')); roots.push(runsDir);
+  const dir = join(runsDir, 'leader'); mkdirSync(dir, { mode: 0o700 });
+  const messages = [1, 2].map(seq => ({ seq, id: `m${seq}`, idempotencyKey: `message-${seq}`, channel: 'desktop', senderId: 'owner', direction: 'inbound', at: 'today', text: `fake message ${seq}` }));
+  writeFileSync(join(dir, 'owner-thread-archive-1-2.json'), JSON.stringify({ v: 1, threadId: 'owner', messages }), { mode: 0o600 });
+  const lines: string[] = []; const errors: string[] = [];
+  const deps = { options: { runsDir }, output: (s: string) => lines.push(s), error: (s: string) => errors.push(s) };
+  expect(await cmdFleetOwnerHistory(['--json', '--before', '2', '--limit', '1'], deps)).toBe(0);
+  expect(JSON.parse(lines.pop()!)).toMatchObject({ schema: 'comms.owner-thread-history.v1', messages: [{ seq: 1 }] });
+  expect(await cmdFleetOwnerHistory([], deps)).toBe(0);
+  expect(lines).toEqual(['#1 today desktop inbound fake message 1', '#2 today desktop inbound fake message 2', 'archives: 1, skipped: 0']);
+  for (const args of [['--limit', '0'], ['--before', 'no'], ['--json', '--json'], ['extra'], ['--limit']]) expect(await cmdFleetOwnerHistory(args, deps)).toBe(2);
+  expect(errors).toHaveLength(5);
+  expect(await cmdFleetOwnerHistory(['--help'], deps)).toBe(0);
+});

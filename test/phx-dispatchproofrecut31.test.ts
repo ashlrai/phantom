@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { readDispatchProof } from '../src/cli/fleet-dispatch-proof.js';
 import { dispatchManifestDir, type DispatchManifestAssignment, type DispatchManifestEvent } from '../src/core/fleet/dispatch-manifest.js';
 

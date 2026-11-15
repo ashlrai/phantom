@@ -68,3 +68,26 @@ ops-side machinery moves into this pipeline.
 ```sh
 HOME=$(mktemp -d) python3 -B -m unittest discover -s fleet/tests -v
 ```
+
+## Find scripts awaiting deployment
+
+Run `phm fleet deploy-plan --since <sha> --json` from the Phantom checkout.
+It compares committed `HEAD` fleet scripts changed since that ancestor commit
+against `~/.ashlr-runs/bin`. Use `--repo <path>` or `--bin <path>` to inspect
+another checkout or a scratch bin. It never copies files or changes pins.
+The checkout must contain the merged work you want to inspect; uncommitted
+edits are ignored. Deleted scripts are excluded. Manifest sources and direct
+`contrib/mac/*.{py,sh,pl}` scripts are covered; unknown scripts use their basename.
+
+The typed `FleetDeployPlan` API in `src/core/fleet/deploy-plan.ts` returns
+`schema: fleet.deploy-plan.v1`, resolved `since` and `head` SHAs, `checked`,
+`inSync`, and `files` (only mismatches). Each file has `repoPath`, `livePath`,
+`repoSha256`, nullable `liveSha256`, `status` (`missing`, `drifted`, `unreadable`),
+`shaPinned` (boolean, or null when uninventoried), and `action` (`review` or
+`security-review`). Pins are identified from manifest class/digest/re-pin notes
+and the Security-pinned installer file list, not by reading host security files.
+Unknown pin status also requires Security review. No action is an install grant.
+Symlinks and nonregular files are unreadable; absent files have a null live hash.
+Exit 0 means the comparison completed (drift is expected), 1 means a live file
+could not be read safely, and 2 means invalid arguments or unavailable Git or
+manifest evidence. JSON errors contain `schema` and `error`.

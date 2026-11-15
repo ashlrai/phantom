@@ -218,7 +218,7 @@ describe('recordEmailToInbox + runEmailDropOnce', () => {
     const busRoot = dir('email-drop-bus-');
     const result = await recordEmailToInbox(eml(), { allowedSenders: ALLOWED, runsDir, now, outboxDir, busRoot });
     expect(result).toMatchObject({ ok: true, ack: { status: 'accepted' }, publishState: 'published' });
-    const page = listBusInboxAfter(0, 50, { root: busRoot });
+    const page = listBusInboxAfter(0, 50, { root: busRoot, now: () => FIXED.getTime() });
     if (page.status !== 'ok') throw new Error(`bus read failed: ${page.status}`);
     expect(page.messages).toHaveLength(1);
     const envelope = page.messages[0]!.envelope;

@@ -64,6 +64,7 @@ imports, individual files, semantics or contract coverage.
 - `src/api/`
 - `src/cli/`
 - `src/core/`
+- `src/doctor/`
 - `src/fleet/`
 - `src/mcp/`
 - `src/planning/`
@@ -81,9 +82,11 @@ imports, individual files, semantics or contract coverage.
 - `src/core/autonomy/`
 - `src/core/autopilot/`
 - `src/core/bridge/`
+- `src/core/caps/`
 - `src/core/classify/`
 - `src/core/cloud/`
 - `src/core/comms/`
+- `src/core/comms-agent/`
 - `src/core/connectors/`
 - `src/core/context/`
 - `src/core/cos/`
@@ -99,6 +102,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/driver/`
 - `src/core/ecosystem/`
 - `src/core/eval/`
+- `src/core/events/`
 - `src/core/fabric/`
 - `src/core/fleet/`
 - `src/core/foundry/`
@@ -108,11 +112,15 @@ imports, individual files, semantics or contract coverage.
 - `src/core/goal-loop/`
 - `src/core/goals/`
 - `src/core/graph/`
+- `src/core/growth/`
+- `src/core/ideas/`
 - `src/core/improve/`
 - `src/core/inbox/`
 - `src/core/incident/`
 - `src/core/integrations/`
+- `src/core/intent/`
 - `src/core/knowledge/`
+- `src/core/leader/`
 - `src/core/learn/`
 - `src/core/learning/`
 - `src/core/lifecycle/`
@@ -121,10 +129,12 @@ imports, individual files, semantics or contract coverage.
 - `src/core/mcp/`
 - `src/core/memory/`
 - `src/core/metrics/`
+- `src/core/nodes/`
 - `src/core/observability/`
 - `src/core/observe/`
 - `src/core/onboard/`
 - `src/core/openai-agents/`
+- `src/core/org/`
 - `src/core/playbooks/`
 - `src/core/plugins/`
 - `src/core/policy/`
@@ -144,6 +154,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/seams/`
 - `src/core/security/`
 - `src/core/spec/`
+- `src/core/spend/`
 - `src/core/steward/`
 - `src/core/strategy/`
 - `src/core/swarm/`

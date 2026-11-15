@@ -1,5 +1,5 @@
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -446,13 +446,13 @@ describe('desktop operator fails closed on an unknown pause state', () => {
   });
 
   it('refuses a write when the real pause.json is a symlink, using the default probe', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'desktop-op-pause-'));
+    const home = userInfo().homedir;
+    const pause = join(home, '.ashlr', 'comms', 'pause.json');
+    const target = join(home, 'desktop-op-pause-target');
+    mkdirSync(join(home, '.ashlr', 'comms'), { recursive: true });
     try {
-      process.env.HOME = home;
-      mkdirSync(join(home, '.ashlr', 'comms'), { recursive: true });
-      const target = join(home, 'target');
       writeFileSync(target, '{"paused":false}');
-      symlinkSync(target, join(home, '.ashlr', 'comms', 'pause.json'));
+      symlinkSync(target, pause);
       vi.spyOn(console, 'error').mockImplementation(() => {});
       const order: string[] = [];
       const { commsPaused: _omit, ...rest } = deps(mockSurface({ order }));
@@ -460,7 +460,8 @@ describe('desktop operator fails closed on an unknown pause state', () => {
       expect(result).toMatchObject({ ok: false, code: 'comms_paused' });
       expect(order).toEqual([]);
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      rmSync(pause, { force: true });
+      rmSync(target, { force: true });
     }
   });
 });

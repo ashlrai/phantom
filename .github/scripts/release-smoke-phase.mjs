@@ -5,16 +5,11 @@ import { constants, closeSync, fstatSync, lstatSync, openSync, readFileSync, rea
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL, URL } from 'node:url';
 import { runBoundedCommand } from '../../scripts/run-bounded-command.mjs';
-import { requireProducerEnvironment } from './github-repository-binding.mjs';
+import { producerRef } from './release-local-input.mjs';
 
 export const SMOKE_PHASE_MS = 300_000;
-const integer = value => typeof value === 'string' && /^[1-9][0-9]*$/.test(value) && Number.isSafeInteger(Number(value));
 function identity(env) {
-  const { repository } = requireProducerEnvironment(env);
-  assert.ok(integer(env.GITHUB_RUN_ID) && integer(env.GITHUB_RUN_ATTEMPT));
-  assert.match(env.GITHUB_SHA ?? '', /^[a-f0-9]{40}$/);
-  assert.equal(env.GITHUB_REF, 'refs/heads/master');
-  return { repository, run: env.GITHUB_RUN_ID, attempt: env.GITHUB_RUN_ATTEMPT, revision: env.GITHUB_SHA };
+  return producerRef(env);
 }
 const location = env => join(realpathSync(env.RUNNER_TEMP), 'release-smoke-phase.json');
 const same = (a, b) => ['dev', 'ino', 'size', 'mode', 'uid', 'nlink', 'mtimeNs', 'ctimeNs'].every(key => a[key] === b[key]);

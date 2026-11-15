@@ -80,6 +80,7 @@ import {
   splitCoverage,
   until,
 } from './needs-you-model.js';
+import { hardLimitLabel, splitByHardLimit, type HardLimitLabel } from './needs-you-hard-limit.js';
 import { NeedsYouList, NeedsYouRunFacts, TriageChipView } from './NeedsYouList.js';
 import { refreshActivity, useActivity } from './useActivity.js';
 import { useViewport } from './viewport.js';
@@ -134,7 +135,20 @@ export function NeedsYouDrawer() {
 
   const all = useMemo(() => (liveItems ?? []).filter((i) => !resolved.has(i.id)), [liveItems, resolved]);
   const split = ui.needsYouSplit;
-  const items = useMemo(() => itemsForSplit(all, split), [all, split]);
+  const splitItems = useMemo(() => itemsForSplit(all, split), [all, split]);
+  // "Only my asks": just the rows that hit a hard limit (t1637u). Plain
+  // state — it resets when the drawer closes, nothing is persisted.
+  const [onlyMine, setOnlyMine] = useState(false);
+  const mine = useMemo(() => splitByHardLimit(splitItems).onlyYou, [splitItems]);
+  // With no hard-limit rows left the filter lapses: an empty filtered list
+  // must never render the split's "All clear" while other rows still wait.
+  const filtering = onlyMine && mine.length > 0;
+  const items = filtering ? mine : splitItems;
+  const limits = useMemo(() => {
+    const out = new Map<string, HardLimitLabel>();
+    for (const item of all) out.set(item.id, hardLimitLabel(item.title));
+    return out;
+  }, [all]);
 
   // The fleet running on this Mac answers a different route, so the drawer
   // derives its items in the browser (FleetNeedsYouRows reports them up).
@@ -452,6 +466,15 @@ export function NeedsYouDrawer() {
           ))}
         </div>
 
+        {!detailItem && splitItems.length > 0 ? (
+          <div className={styles.batch} role="toolbar" aria-label="Asks">
+            <span className={styles.batchCount}>{mine.length} of {splitItems.length} need only you</span>
+            <Button size="sm" variant={filtering ? 'primary' : 'subtle'} aria-pressed={filtering} disabled={mine.length === 0} onClick={() => setOnlyMine(!filtering)}>
+              Only my asks ({mine.length})
+            </Button>
+          </div>
+        ) : null}
+
         {!detailItem && (picked.size > 0 || landAll.length > 0) ? (
           <BatchBar
             pickedItems={items.filter((i) => picked.has(i.id))}
@@ -534,6 +557,7 @@ export function NeedsYouDrawer() {
                   picked={picked}
                   onTogglePick={togglePick}
                   chips={chips}
+                  limits={limits}
                 />
               )}
             </>

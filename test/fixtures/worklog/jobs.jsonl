@@ -1,0 +1,4 @@
+{"event":"launch","job":"J1","lane":"work","model":"model-a","repo":"phantom"}
+{"event":"outcome","job":"J1","state":"MERGED","ts":"2026-11-09T10:00:00Z","url":"https://github.com/ashlrai/phantom/pull/1","ttm_s":42}
+{bad
+{"event":"outcome","job":"J2","state":"MERGED","ts":"2026-11-09T11:00:00Z","repo":"locus","lane":"fast"}

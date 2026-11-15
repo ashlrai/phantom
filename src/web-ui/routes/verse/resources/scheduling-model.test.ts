@@ -35,7 +35,7 @@ describe('read-only scheduling evidence', () => {
   });
   it('uses actual provider period, reserve-adjusted percentage and provider age without inventing tokens', () => {
     const view = schedulingEvidence(budget(), seat, NOW);
-    expect(view).toMatchObject({ state: 'ready', availability: '24% available after your reserve.', timing: 'Allowance resets in 1h 00m.', freshness: 'Reading 1m 00s ago.' });
+    expect(view).toMatchObject({ state: 'ready', availability: '24% available to the fleet.', timing: 'Allowance resets in 1h 00m.', freshness: 'Reading 1m 00s ago.' });
     expect(view.opportunity).toMatch(/before this reset/);
     expect(view.forecast).toEqual(['Task completion estimate unavailable.']);
   });

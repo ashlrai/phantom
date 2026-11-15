@@ -57,14 +57,14 @@
  */
 import { createHash, randomBytes } from 'node:crypto';
 import { lstatSync, readdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { join } from 'node:path';
 import {
   acquireLocalStoreLockWithOutcome,
   ownsLocalStoreLock,
   releaseLocalStoreLock,
   type LocalStoreLock,
 } from '../fleet/local-store-lock.js';
+import { realHome } from '../real-home.js';
 import { ownsOutwardMutationFence, type OutwardMutationFence } from './mutation-fence.js';
 
 // ---------------------------------------------------------------------------
@@ -113,19 +113,9 @@ const POLL_FLOOR_MS = 10;
 // Paths and keys
 // ---------------------------------------------------------------------------
 
-function canonicalHome(): string | null {
-  try {
-    const home = homedir();
-    if (typeof home !== 'string' || home.length === 0 || !isAbsolute(home)) return null;
-    return resolve(home);
-  } catch {
-    return null;
-  }
-}
-
 /** ~/.ashlr/authority/leases — next to the outward fence it extends. */
 export function authorityLeaseDirectory(): string {
-  const home = canonicalHome();
+  const home = realHome();
   if (!home) throw new Error('invalid home directory for execution leases');
   return join(home, '.ashlr', 'authority', 'leases');
 }

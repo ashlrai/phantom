@@ -43,8 +43,10 @@ import { COMPOSER_COMMAND_IDS, WORKBENCH_COMMAND_EVENT } from '../composer/compo
 import { PARKED_COMMAND_TTL_MS, registerCommandHandler, runCommand, runCommandWhenReady, type CommandInvocation } from './command-bus.js';
 import { commandCatalogLoaded, keyBinding, loadedCommand } from './command-keys.js';
 import { requestGuarded } from './guard-store.js';
+import { setHomeChoice } from './home-view-store.js';
+import { requestSteerFocus } from './steer-hotkey.js';
 
-export type ShellNotify = (message: string, tone?: 'neutral' | 'success' | 'danger') => void;
+export type ShellNotify = (message: string, tone?: 'neutral' | 'success' | 'danger', durationMs?: number) => void;
 
 let notify: ShellNotify = () => {};
 
@@ -234,6 +236,11 @@ export function registerShellCommandHandlers(): () => void {
   ];
   const offs = [
     ...surfaces.map(([id, section]) => registerCommandHandler(id, () => setVerseSection(section))),
+    ...(['leader', 'feed'] as const).map((view) => registerCommandHandler(`home.${view}`, () => {
+      setHomeChoice(view);
+      setVerseSection('live');
+      closeVerseOverlay();
+    })),
     registerCommandHandler('palette.open', () => toggleVerseOverlay('palette')),
     registerCommandHandler('needs-you.open', (inv) => {
       // The menu / a notification OPENS it; the key toggles.
@@ -265,6 +272,7 @@ export function registerShellCommandHandlers(): () => void {
     // Mind's Leader panel takes these once it mounts (leader-focus.ts waits for it).
     registerCommandHandler('leader.message', () => { void import('../leader/leader-focus.js').then((m) => m.requestLeaderFocus({ kind: 'composer' })); }),
     registerCommandHandler('fleet.digest', () => { void copyFleetDigest(); }),
+    registerCommandHandler('fleet.focus-steer', (inv) => requestSteerFocus(inv.via === 'palette', () => notify('Finish or clear this message first', 'neutral', 2000))),
     registerCommandHandler('fleet.interject', () => { void import('../fleet/interject-dialog-store.js').then((m) => m.openInterjectDialog()); }),
     registerCommandHandler('leader.directive', () => { void import('../leader/leader-focus.js').then((m) => m.requestLeaderFocus({ kind: 'directive' })); }),
     registerCommandHandler('autonomy.copy-setup', () => { void import('./copy-setup.js').then((m) => m.copyAutonomySetupCommand()); }),
@@ -298,10 +306,10 @@ export function registerShellCommandHandlers(): () => void {
 
 /** Mounted once by the shell: the global handlers, and toasts for run-command. */
 export function useShellCommands(): void {
-  const toast = useToast();
+  const { show } = useToast();
   useEffect(() => {
-    setShellNotifier(toast.show);
+    setShellNotifier((message, tone, durationMs) => show(message, tone, undefined, durationMs));
     return () => setShellNotifier(null);
-  }, [toast.show]);
+  }, [show]);
   useEffect(() => registerShellCommandHandlers(), []);
 }

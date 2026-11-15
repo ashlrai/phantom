@@ -7,10 +7,12 @@ blocks; the host must connect them explicitly.
 ```ts
 import { runCodexBusAdapter, type CodexBusPorts, type CodexBusOptions,
   type CodexInboxMessage, type CodexBusReply, type CodexBusUsage } from './codex.js';
-import { runDevinBusAdapter, devinBusPrompt, DevinBusAdapterError,
-  type DevinBusRequest, type DevinBusAdapterDeps, type DevinBusErrorCode } from './devin.js';
+import { runDevinBusAdapter, devinBusAdapter, devinBusPrompt, DevinBusAdapterError,
+  type DevinBusRequest, type DevinBusAdapterDeps, type DevinBusLocusPeers,
+  type DevinBusPeerOutcome, type DevinBusRouterUsage, type DevinBusErrorCode } from './devin.js';
 import { runGrokBusAdapter, grokBusAdapter, grokBusPrompt, GrokBusAdapterError,
-  type GrokBusRequest, type GrokBusAdapterDeps, type GrokBusErrorCode } from './grok.js';
+  type GrokBusRequest, type GrokBusAdapterDeps, type GrokBusLocusPeers,
+  type GrokBusPeerOutcome, type GrokBusRouterUsage, type GrokBusErrorCode } from './grok.js';
 import { validateBusEnvelope, parseBusEnvelope, type BusEnvelope } from '../bus-envelope.js';
 import { appendBusInbox, listBusInboxAfter, type BusInboxOptions,
   type BusInboxReceipt, type BusInboxPost, type BusInboxPage } from '../bus-inbox.js';
@@ -34,20 +36,31 @@ import { createBusWakeHook, sendWithBusWake, type BusWakeOptions,
   is `codex`. The child uses a read-only sandbox and an isolated temporary home.
 - `runDevinBusAdapter(request, deps?)` handles one host-selected text inbox file
   and atomically installs a scrubbed text reply at a host-selected outbox file;
-  it returns `{ bytes }`. `runGrokBusAdapter` has the same file-level shape.
+  it returns `{ bytes, peers }`. `runGrokBusAdapter` has the same file-level shape.
   Paths, working directory, model and admission are host choices, never inbox
   instructions. Use a separate outbox for each concurrent turn. Failure leaves
   the prior outbox intact; neither adapter supplies router accounting or durable
   inbox acknowledgement. Default admission preserves the existing native identity
   and Locus dispatch checks. Injected `authorize` is a host capability, not an
   inbox-provided override. Grok's headless turn uses a private temporary working
-  directory, and `grokBusAdapter.lastResort` is only a routing hint. **Grok is
+  directory, and `grokBusAdapter.lastResort` is only a routing hint — the
+  `devinBusAdapter` hint is the same shape. **Grok is
   unavailable for this deployment**; do not invoke it.
+  When the host passes both `request.threadId` (a printable bus thread label,
+  never parsed from inbox content) and `deps.locus`, the adapter wires the same
+  Locus peers plane the Codex ports use: it registers its transport peer and
+  joins the thread after admission but before the child runs, then feeds the
+  router usage feed once the reply is durably installed — Devin print mode
+  reports no tokens (null, never an invented zero); Grok forwards the stream's
+  own totals. Every plane call is bounded and best-effort; the `peers` outcome
+  reports what the plane actually did and a degraded plane can never delay,
+  replace or withhold a reply.
 
 The file adapters' outbox rename is their publication point. If accounting must
 precede delivery to peers, the host must treat that outbox as private staging,
 record usage (including unknown usage on failure) and only then publish through
-its delivery transport. Neither file adapter reports token usage. For every
+its delivery transport. Apart from the optional injected peers feed above,
+neither file adapter reports token usage on its own. For every
 adapter, the host owns durable acknowledgement, retry and idempotent accounting
 and delivery keyed by message identity. Do not advance a durable acknowledgement
 merely because a message was read. A crash may cause engine work to repeat;

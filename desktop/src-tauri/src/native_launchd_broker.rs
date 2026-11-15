@@ -949,7 +949,7 @@ mod macos {
     }
 
     fn run_launchctl(arguments: &[&str]) -> Result<CommandOutput, BrokerError> {
-        let mut child = Command::new("/bin/launchctl")
+        let child = Command::new("/bin/launchctl")
             .args(arguments)
             .env_clear()
             .env("LC_ALL", "C")
@@ -958,6 +958,7 @@ mod macos {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
+        let mut child = crate::child_reaper::ReapOnDrop::new(child);
         let stdout = child
             .stdout
             .take()

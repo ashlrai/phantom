@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { LiveStatusSection } from './LiveStatusSection.js';
 vi.mock('../../../data/hooks.js', () => ({
-  useQuery: () => ({ status: 'success', data: { state: 'idle', generatedAt: '2026-11-02T00:00:00Z', summary: { building: 1, queued: 2, parked: null }, lanes: [{ lane: 'local', busy: 1, slots: 2, capReason: null }], repos: [{ repo: 'ashlrai/phantom', openFleetPrs: 3, greenPct7d: null }], running: [], merged: null, blocked: [], spent: [{ pool: 'claude-max', pctUsed: null, resetAt: null }] } }),
+  useQuery: () => ({ status: 'success', data: { state: 'idle', generatedAt: '2026-11-02T00:00:00Z', summary: { building: 1, queued: 2, parked: null }, lanes: [{ lane: 'local', busy: 1, slots: 2, capReason: null }], repos: [{ repo: 'ashlrai/phantom', openFleetPrs: 3, greenPct7d: null }], running: [], merged: null, blocked: [], spent: [{ pool: 'claude-max', pctUsed: null, resetAt: null }], doctor: { v: 1, generatedAt: '2026-11-02T00:00:00Z', level: 'ok', checks: [] } } }),
   useRefetch: () => vi.fn(),
 }));
 it('shows the four lists without inventing usage or merge counts', () => {

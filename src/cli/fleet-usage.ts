@@ -3,6 +3,7 @@ import { addFleetUsage, fleetUsageReport, readFleetUsage } from '../core/fleet/u
 const usage = 'Usage: phm fleet usage [--json] | usage add <pool> <pct> --at <timestamp>';
 
 export async function cmdFleetUsage(args: string[]): Promise<number> {
+  if (args.includes('--help') || args.includes('-h')) { console.log(usage); return 0; }
   try {
     if (args.length === 0 || (args.length === 1 && args[0] === '--json')) {
       const report = fleetUsageReport(readFleetUsage());

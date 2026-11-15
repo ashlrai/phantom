@@ -74,9 +74,9 @@ describe('parseGhPullRequests', () => {
     expect(rows).toHaveLength(8);
     const p100 = rows.find((r) => r.number === 100)!;
     expect(p100.mergeCommit).toBe('aa10000000000000000000000000000000000001');
-    expect(p100.checks).toMatchObject({ total: 2, failed: 0 });
+    expect(p100.checks).toBeNull();
     const p103 = rows.find((r) => r.number === 103)!;
-    expect(p103.checks).toMatchObject({ total: 1, failed: 1, failedNames: ['docs-check'] });
+    expect(p103.checks).toBeNull();
     // JSONL plus repository.nameWithOwner fallback.
     const jsonl = [
       JSON.stringify({ number: 7, title: 'x', state: 'MERGED', mergedAt: '2026-11-01T00:00:00Z', repository: { nameWithOwner: 'ashlrai/phantom' } }),
@@ -96,12 +96,12 @@ describe('buildFleetEvalReport', () => {
     expect(pr(report, '/pull/100')).toMatchObject({
       jobId: 'RQ-A', lane: 'devin', tier: 'work', model: 'swe-2',
       durability: 'reverted', durabilityBasis: 'gh-revert', durabilityConfidence: 'deterministic',
-      ttm_s: 36000, ttmSource: 'ledger', checkState: 'clean',
+      ttm_s: 36000, ttmSource: 'ledger', checkState: 'unknown',
     });
     expect(pr(report, '/pull/101')).toMatchObject({
       jobId: 'RQ-B', lane: 'codex', tier: 'fast',
       durability: 'followed-up', durabilityBasis: 'gh-follow-up', durabilityConfidence: 'heuristic',
-      checkState: 'failed-checks', failedChecks: 1, jobFinishFailed: true,
+      checkState: 'unknown', failedChecks: null, jobFinishFailed: true,
     });
     expect(pr(report, '/pull/103')).toMatchObject({
       jobId: 'RQ-E', lane: 'claude-api', durability: 'regressed',
@@ -147,14 +147,31 @@ describe('buildFleetEvalReport', () => {
     expect(report.mergeLead.measured).toBe(5);
     expect(report.mergeLead.median_s).toBe(36000);
     expect(report.ci).toMatchObject({
-      measured: 7,
-      clean: { merged: 5, adverse: 2 },
-      failedChecks: { merged: 2, adverse: 2 },
-      jobFinishFailed: { merged: 1, adverse: 1 },
-      direction: 'failed-checks-more-adverse',
+      measured: 0, unknown: 8, clean: { merged: 0 }, failedChecks: { merged: 0 },
+      jobFinishFailed: { merged: 1, adverse: 1 }, direction: 'insufficient-data',
     });
-    expect(report.ci.clean.adverseRate).toBeCloseTo(0.4);
-    expect(report.ci.failedChecks.adverseRate).toBe(1);
+  });
+
+  it('counts only required head-bound checks observed by merge time', () => {
+    const head = 'a'.repeat(40);
+    const check = (name: string, conclusion: string, extra = {}) => ({
+      name, conclusion, status: 'COMPLETED', headSha: head,
+      completedAt: '2026-11-01T09:00:00Z', ...extra,
+    });
+    const base = { url: 'https://github.com/ashlrai/phantom/pull/300', state: 'MERGED',
+      mergedAt: '2026-11-01T10:00:00Z', headRefOid: head, requiredChecks: ['gate'] };
+    const parse = (row: object) => parseGhPullRequests(JSON.stringify(row)).rows[0]!.checks;
+    expect(parse({ ...base, statusCheckRollup: [check('gate', 'SUCCESS'), check('optional', 'FAILURE')] }))
+      .toMatchObject({ total: 1, failed: 0 });
+    expect(parse({ ...base, statusCheckRollup: [check('gate', 'FAILURE')] })).toMatchObject({ failed: 1 });
+    expect(parse({ ...base, statusCheckRollup: [check('gate', 'STALE')] })).toMatchObject({ pending: 1, failed: 0 });
+    expect(parse({ ...base, statusCheckRollup: [check('gate', 'FAILURE', { headSha: 'b'.repeat(40) })] })).toBeNull();
+    expect(parse({ ...base, statusCheckRollup: [check('gate', 'FAILURE', { completedAt: '2026-11-01T11:00:00Z' })] })).toBeNull();
+    expect(parse({ ...base, statusCheckRollup: [check('gate', 'FAILURE'), check('gate', 'SUCCESS')] })).toBeNull();
+    expect(parse({ ...base, requiredChecks: undefined, statusCheckRollup: [check('gate', 'FAILURE')] })).toBeNull();
+    expect(parse({ ...base, state: 'OPEN', mergedAt: null, statusCheckRollup: [check('gate', 'FAILURE')] }))
+      .toMatchObject({ failed: 1 });
+    expect(parse({ ...base, state: 'OPEN', mergedAt: null, statusCheckRollup: [check('optional', 'FAILURE')] })).toBeNull();
   });
 
   it('keeps merges unobserved without a covering evidence channel', async () => {

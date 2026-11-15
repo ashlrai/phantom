@@ -1,6 +1,6 @@
 /**
  * app/verse-first-paint.ts — how long the signed-in Phantom shell waits before
- * it mounts (VerseConsoleApp). Its own chunk, loaded alongside first paint.
+ * it mounts (PhantomConsoleApp). Its own chunk, loaded alongside first paint.
  *
  * WHY: React holds every Suspense reveal for 300 ms after a fallback
  * commits. Mounting the shell while its section or the chat's columns were
@@ -31,4 +31,21 @@ export async function firstPaintSurface(waitMs: number = FIRST_PAINT_WAIT_MS): P
   let timer: ReturnType<typeof setTimeout> | undefined;
   await Promise.race([work, new Promise<void>((resolve) => { timer = setTimeout(resolve, waitMs); })]);
   clearTimeout(timer);
+}
+
+/**
+ * Start the opening section's reads as soon as the session exists. The shell's
+ * mount (after the first-paint chunks land and React commits) used to be what
+ * issued them, so the data round trip ran after the slowest part of the cold
+ * load instead of beside it (3.30.28 measurements, scripts/measure-desktop-perf.mjs).
+ * The section's own mount joins these reads through the shared query cache.
+ * Never rejects.
+ */
+export async function warmOpeningSection(): Promise<void> {
+  const section = VERSE_SECTIONS.find((s) => s.id === getVerseUiState().section);
+  const importer = section && SECTION_MODULES[`./sections/${section.module}.tsx`];
+  if (!importer) return;
+  try {
+    (await importer() as { warmOpeningData?: () => void }).warmOpeningData?.();
+  } catch { /* the section's mount repeats the reads and owns the error */ }
 }

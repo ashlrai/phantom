@@ -5,19 +5,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isPaused, loadPauseState, setPause } from '../src/core/comms/pause.js';
 
 describe('comms pause fails closed', () => {
-  const originalHome = process.env.HOME;
   let home: string;
   let path: string;
+  let previousHome: string | undefined;
 
   beforeEach(() => {
+    previousHome = process.env.HOME;
     home = mkdtempSync(join(tmpdir(), 'comms-pause-'));
     process.env.HOME = home;
     path = join(home, '.ashlr', 'comms', 'pause.json');
     mkdirSync(join(home, '.ashlr', 'comms'), { recursive: true });
   });
   afterEach(() => {
-    if (originalHome === undefined) delete process.env.HOME;
-    else process.env.HOME = originalHome;
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
     rmSync(home, { recursive: true, force: true });
   });
 

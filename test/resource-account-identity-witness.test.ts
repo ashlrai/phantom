@@ -60,7 +60,10 @@ describe('same-profile last-checked local identity epoch', () => {
     const a = account(provider); const first = readResourceAccountLocalEpoch(root, a);
     expect(first?.profileDigest).toBe(resourceAccountProfileDigest(a)); expect(first?.epochDigest).toMatch(/^[a-f0-9]{64}$/);
     expect(first).not.toHaveProperty('accountDigest'); expect(readResourceAccountLocalEpoch(root, a)).toEqual(first);
-    writeFileSync(file, 'changed credential file epoch', { mode: 0o600 });
+    // The epoch pins size and timestamps, never credential bytes. A same-length
+    // overwrite can keep mtime on a coarse filesystem, so the replacement
+    // changes the measured size.
+    writeFileSync(file, 'changed credential file epoch\n', { mode: 0o600 });
     expect(readResourceAccountLocalEpoch(root, a)?.epochDigest).not.toBe(first?.epochDigest);
   });
   it('matches only Claude exact profile OAuth metadata with native auth-status account-hint formula', () => {

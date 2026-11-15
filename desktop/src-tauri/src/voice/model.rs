@@ -202,7 +202,11 @@ impl Fetcher for CurlFetcher {
                     ))
                 }
                 Ok(None) => std::thread::sleep(Duration::from_millis(250)),
-                Err(e) => return Err(format!("download interrupted: {e}")),
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("download interrupted: {e}"));
+                }
             }
         }
     }

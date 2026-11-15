@@ -1,5 +1,5 @@
 import type { JobClaim, LeaderLease, NodeSession, QueueV1 } from './queue-v1.js';
-import { planRoutes, routable, type RouteAssignment } from './router.js';
+import { nodeCanAcceptWork, planRoutes, routable, type RouteAssignment } from './router.js';
 import { validCap, validId, validSecretName, type NodeAuth, type NodesState, type NodesStore } from './state.js';
 import { isLocalModelCap } from '../../local-runtime/omlx/models.js';
 export { planRoutes } from './router.js';
@@ -263,6 +263,7 @@ export class DriveNodes implements QueueV1 {
       if (!current || current.token !== leader.token || !sameSession(current, leader) ||
           !this.liveNode(state, worker, now)) return null;
       const node = state.nodes.find(n => sameSession(n, worker))!;
+      if (!nodeCanAcceptWork(node, now)) return null;
       const active = state.jobs.filter(j => j.state === 'running' && j.claim &&
         j.claim.expiresAt > now && j.claim.nodeId === worker.nodeId).length;
       if (node.slots !== undefined && active >= node.slots) return null;

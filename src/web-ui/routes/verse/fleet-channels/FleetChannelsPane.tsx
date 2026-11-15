@@ -10,8 +10,15 @@ import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { agentBusPageQuery, agentBusStatusQuery } from '../fleet-bus/agent-bus-queries.js';
 import { CopyPill } from '../apps/CopyPill.js';
+import { channelName } from '../leader-thread/owner-thread-lines.js';
+import { ownerThreadQuery } from '../leader-thread/owner-thread-queries.js';
 import { mirrorByChannel, mirrorHint } from './channel-bus-mirror.js';
 import { channelPresenceLine, deriveChannelPresence, leaderPassMs, presenceForChannel } from './channel-last-seen.js';
+import { channelsWaiting, deriveChannelReplyLag, replyLagForRow } from './channel-reply-lag.js';
+import { ChannelHealthStrip } from './ChannelHealthStrip.js';
+import { channelHealthQuery } from './channel-health-query.js';
+import { narrowChannelHealth } from './channel-health-model.js';
+import { ChannelReplyLag } from './ChannelReplyLag.js';
 import { ackByChannel, channelSetupHint, KNOWN_CHANNELS, rollupChannels } from './fleet-channels-model.js';
 import { fleetChannelsQuery } from './fleet-channels-queries.js';
 import styles from './fleet-channels.module.css';
@@ -30,7 +37,9 @@ function snapshotInboxEntries(inbox: unknown): InboxEntry[] {
 export function FleetChannelsPane({ visible, host }: PaneProps) {
   const read = useQuery(fleetChannelsQuery, { enabled: visible, freshMs: 0 });
   const refetch = useRefetch(fleetChannelsQuery);
-  usePollWhileVisible(refetch, 15_000, { enabled: visible });
+  const ownerThread = useQuery(ownerThreadQuery, { enabled: visible, freshMs: 0 });
+  const refetchOwnerThread = useRefetch(ownerThreadQuery);
+  usePollWhileVisible(() => { refetch(); refetchOwnerThread(); }, 15_000, { enabled: visible });
   const busStatus = useQuery(agentBusStatusQuery, { enabled: visible, freshMs: 0 });
   const after = Math.max(0, (busStatus.data?.retainedCount ?? 0) - 100);
   const busPageQuery = useMemo(() => agentBusPageQuery(after, 100), [after]);
@@ -38,6 +47,9 @@ export function FleetChannelsPane({ visible, host }: PaneProps) {
   const refreshBusStatus = useRefetch(agentBusStatusQuery);
   const refreshBusPage = useRefetch(busPageQuery);
   usePollWhileVisible(() => { refreshBusStatus(); if (busStatus.data?.source === 'available' && busStatus.data.retainedCount !== null) refreshBusPage(); }, 15_000, { enabled: visible });
+  const healthRead = useQuery(channelHealthQuery, { enabled: visible, freshMs: 0 });
+  const refetchHealth = useRefetch(channelHealthQuery);
+  usePollWhileVisible(() => { refetchHealth(); }, 15_000, { enabled: visible });
   const nowMs = Date.now();
   const data = rollupChannels(read.data, nowMs);
 
@@ -54,8 +66,13 @@ export function FleetChannelsPane({ visible, host }: PaneProps) {
   const busState = busUnavailable ? 'unavailable' : busPage.data ? 'available' : 'loading';
   const mirrors = mirrorByChannel(Array.isArray(snapshot?.inbox) ? snapshot.inbox : [], busPage.data?.messages ?? [], nowMs);
   const ack = ackByChannel(annotateAck(snapshotInboxEntries(snapshot?.inbox), read.data, nowMs));
+  const ownerLines = ownerThread.data === undefined || ownerThread.data.paused ? [] : ownerThread.data.lines;
+  const replyLags = deriveChannelReplyLag(ownerLines, nowMs);
+  const waitingCount = channelsWaiting(replyLags);
   return <section className={styles.root} aria-label="Channels overview">
+    <ChannelHealthStrip health={narrowChannelHealth(healthRead.data)} nowMs={nowMs} />
     <p className={styles.header}>{heard} of {KNOWN_CHANNELS.length} channels heard from · {last24hTotal} messages in 24 h</p>
+    {waitingCount > 0 && <p className={styles.notice} role="status">{waitingCount} channel{waitingCount === 1 ? '' : 's'} waiting on the Leader</p>}
     {data.sourceState !== 'healthy' && <p className={styles.notice} role="status">Inbox data may be incomplete.</p>}
     {read.status === 'error' && <p className={styles.notice} role="status">Live runs could not refresh. Showing the last reading.</p>}
     {busUnavailable && <p className={styles.notice} role="status">{mirrorHint('none', busState)}</p>}
@@ -64,6 +81,7 @@ export function FleetChannelsPane({ visible, host }: PaneProps) {
       const mirror = mirrors.get(row.key)!;
       const mirrorWarning = mirrorHint(mirror.tone, busState);
       const hint = channelSetupHint(row.key, row);
+      const lag = replyLagForRow(replyLags, row.key);
       const ackLine = !counts || (counts.waiting === 0 && counts.seen === 0) ? null
         : counts.waiting > 0 ? `${counts.waiting} waiting for a leader pass${counts.overdue ? ' · overdue' : ''}`
         : `All ${counts.seen} seen by a leader`;
@@ -73,6 +91,7 @@ export function FleetChannelsPane({ visible, host }: PaneProps) {
       <p className={styles.presence} role={busState === 'available' && mirror.tone === 'warn' ? 'status' : undefined}>{busState === 'available' ? mirror.text : busState === 'loading' ? 'Checking bus mirror…' : 'Bus mirror unavailable'}{busState === 'available' && mirrorWarning && <> · {mirrorWarning}</>}</p>
       <p className={styles.presence}>{channelPresenceLine(presenceForChannel(presence, row.key, KNOWN_CHANNELS), passMs)}</p>
       {ackLine !== null && <p className={styles.presence} data-testid="channel-ack">{ackLine}</p>}
+      {lag !== undefined && <ChannelReplyLag lag={lag} nowMs={nowMs} channelName={lag.channel === row.key ? undefined : channelName(lag.channel)} />}
       {row.preview !== null && <p className={styles.preview}>{row.preview}</p>}
       {hint !== null && <p className={styles.presence} data-testid="channel-setup-hint">{hint.detail} <CopyPill text={hint.runCommand} label={hint.command} what={hint.copyWhat} /></p>}
       <Button size="sm" onClick={() => { requestInboxChannel(row.key); host.openPane('fleet-inbox'); }}>Open inbox</Button>

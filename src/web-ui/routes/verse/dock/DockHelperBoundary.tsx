@@ -1,4 +1,5 @@
-import { Component, type ReactNode } from 'react';
+import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { reportDesktopError } from '../../../lib/report-desktop-error.js';
 import styles from './panes.module.css';
 
 export class DockHelperBoundary extends Component<{ name: string; children: ReactNode }, { failed: boolean }> {
@@ -8,8 +9,9 @@ export class DockHelperBoundary extends Component<{ name: string; children: Reac
     return { failed: true };
   }
 
-  override componentDidCatch(): void {
+  override componentDidCatch(error: Error, info: ErrorInfo): void {
     console.warn(`[verse] dock helper failed: ${this.props.name}`);
+    reportDesktopError(`dock-helper:${this.props.name}`, error, info.componentStack);
   }
 
   override render(): ReactNode {

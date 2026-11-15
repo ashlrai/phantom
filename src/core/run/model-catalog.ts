@@ -202,6 +202,8 @@ export const DEFAULT_CODEX_MODEL_ID = 'gpt-6.1-sol';
 export const CODEX_TERRA_MODEL_ID = 'gpt-6.1-terra';
 export const CODEX_ASTRA_MODEL_ID = 'gpt-6-astra';
 export const DEFAULT_FABLE_MODEL_ID = 'claude-fable-5-1';
+/** Registered for lookup only until its subscription admission safeguards are wired. */
+export const FABLE_52_MODEL_ID = 'claude-fable-5-2';
 
 export const KNOWN_MODELS: readonly ModelEntry[] = [
   // Concrete current IDs stay distinct from the old aliases used by signed grants.
@@ -212,6 +214,13 @@ export const KNOWN_MODELS: readonly ModelEntry[] = [
     costPerMTokIn: 4, costPerMTokOut: 20,
     capabilities: ['general', 'coder', 'reasoning', 'long-context'],
     minEffort: 3, apiModelId: DEFAULT_CLAUDE_MODEL_ID, qualityRank: 4,
+  },
+  {
+    id: `claude:${FABLE_52_MODEL_ID}`, engine: 'claude', tier: 'large',
+    explicitOnly: true, seatRouted: true,
+    costPerMTokIn: 0, costPerMTokOut: 0,
+    capabilities: ['general', 'coder', 'reasoning', 'long-context'],
+    minEffort: 3, apiModelId: FABLE_52_MODEL_ID, qualityRank: 4,
   },
   {
     id: `claude:${DEFAULT_FABLE_MODEL_ID}`, engine: 'claude', tier: 'large',

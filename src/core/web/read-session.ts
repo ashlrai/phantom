@@ -33,8 +33,12 @@ const SSE_RUN_EVENTS_PATH_RE = /^\/api\/run\/[^/]+\/events$/;
 /** Same shape for the Verse session tail (src/core/verse/verse-stream.ts). */
 const SSE_VERSE_EVENTS_PATH_RE = /^\/api\/verse\/sessions\/[^/]+\/events$/;
 
+/** The workbench event stream (src/core/web/wb-events.ts) — exact path, no params. */
+const SSE_WB_EVENTS_PATH = '/api/wb/v1/events';
+
 function isSseQueryProofPath(pathname: string): boolean {
   return pathname === '/api/events'
+    || pathname === SSE_WB_EVENTS_PATH
     || SSE_RUN_EVENTS_PATH_RE.test(pathname)
     || SSE_VERSE_EVENTS_PATH_RE.test(pathname);
 }

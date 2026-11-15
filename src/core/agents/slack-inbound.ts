@@ -16,7 +16,9 @@
  *     (humans by U…/W… id, team agents by B… bot id),
  *   - anything the bridge itself authored is dropped before the allowlist --
  *     the loop guard (`own_user_id` / `own_bot_id`),
- *   - everything ignored is recorded by reason code and ids only, never text.
+ *   - everything ignored is recorded by reason code, ids and the `messageTs`/
+ *     `threadTs` pair only (once the event reached channel validation), never
+ *     text.
  *
  * Accepted events become channel-aware envelopes (`channel: 'slack'`, the full
  * metadata group) addressed to the mapped topic with `body.kind: 'note'`; the
@@ -196,7 +198,8 @@ export interface SlackIngestResult {
 
 /**
  * One delivery, end to end, offline except for the local bus append the caller
- * owns. Never throws; every outcome is journaled by ids and reason code only.
+ * owns. Never throws; every outcome is journaled by ids, the `messageTs`/
+ * `threadTs` pair and reason code only -- never text.
  */
 export function ingestSlackSocketMessage(raw: unknown, ctx: SlackIngestContext): SlackIngestResult {
   const now = ctx.now ?? (() => new Date());
@@ -209,11 +212,27 @@ export function ingestSlackSocketMessage(raw: unknown, ctx: SlackIngestContext):
   const event = record(unwrapped.event) ? unwrapped.event : {};
   const channelId = isSlackChannelId(event['channel']) ? event['channel'] : undefined;
   const author = authorOf(event);
+  // The same ts pair slackEventToBus builds its thread ref from: the event's
+  // own `ts`, and the thread root (`thread_ts` when valid, else that `ts`).
+  // Journaled only when `ts` is a real Slack ts -- ids, never text.
+  const messageTs = isSlackTs(event['ts']) ? event['ts'] : undefined;
+  const threadTs = messageTs !== undefined && isSlackTs(event['thread_ts']) ? event['thread_ts'] : messageTs;
+  const tsMeta = messageTs === undefined ? {} : { messageTs, threadTs: threadTs ?? messageTs };
   const decided = slackEventToBus(event, ctx);
   if (decided.status === 'ignore') {
+    // slackEventToBus drops for envelope, hidden, subtype, type and team
+    // before the channel check; only rows that reached channel validation
+    // journal the ts pair.
+    const reachedChannelValidation =
+      decided.reason !== 'unsupported-envelope-type' &&
+      decided.reason !== 'hidden-event' &&
+      decided.reason !== 'unsupported-subtype' &&
+      decided.reason !== 'unsupported-event-type' &&
+      decided.reason !== 'foreign-team';
     recordSlackObservation({
       at: now().toISOString(), ...base,
       ...(channelId ? { channelId } : {}),
+      ...(reachedChannelValidation ? tsMeta : {}),
       ...(author && isSlackAuthorId(author.id) ? { authorId: author.id } : {}),
       decision: 'ignored', reason: decided.reason,
     }, { runsDir: ctx.runsDir });
@@ -231,6 +250,7 @@ export function ingestSlackSocketMessage(raw: unknown, ctx: SlackIngestContext):
   recordSlackObservation({
     at: now().toISOString(), ...base,
     ...(channelId ? { channelId } : {}),
+    ...tsMeta,
     authorId: author!.id,
     decision: 'ingested',
     ...(bus ? { bus } : {}),

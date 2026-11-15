@@ -10,6 +10,14 @@
 export const QUEUE_TIERS = ['frontier', 'work', 'mid', 'fast'] as const;
 export type QueueTier = (typeof QUEUE_TIERS)[number];
 
+/** Planning budgets, not authority to expand a task's explicit named-file scope. */
+export const QUEUE_TIER_SCOPE = Object.freeze({
+  frontier: Object.freeze({ maxFiles: 40, maxLines: 600, maxAreas: 8 }),
+  work: Object.freeze({ maxFiles: 15, maxLines: 200, maxAreas: 1 }),
+  mid: Object.freeze({ maxFiles: 8, maxLines: 120, maxAreas: 1 }),
+  fast: Object.freeze({ maxFiles: 2, maxLines: 80, maxAreas: 1 }),
+} satisfies Record<QueueTier, { maxFiles: number; maxLines: number; maxAreas: number }>);
+
 /**
  * Names operators reach for that map to a real tier. Used only to phrase the
  * rejection; an alias is never accepted as a tier.

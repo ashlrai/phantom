@@ -21,6 +21,8 @@
 import { estimatedCreditValue, formatNativeCreditUnits, nativeCreditBalanceTitle, CODEX_CREDIT_VALUE_SOURCE, CODEX_CREDIT_VALUE_CHECKED } from './codex-credit-value.js';
 import type { BudgetMode } from '../../../../core/routing/types.js';
 import { Button } from '../../../components/primitives/Button.js';
+import { codexFreeResetsLine, codexResetLine } from './codex-reset-line.js';
+import { readingAge } from './reading-age.js';
 import { relativePhrase } from '../context/context-model.js';
 import { accountActions, type AccountAction } from '../apps/apps-model.js';
 import { MonogramTile } from '../apps/MonogramTile.js';
@@ -30,8 +32,10 @@ import { windowSentence, type AccountStatus, type CapacityRow, type CapacityWind
 import type { ResourceReadinessRow } from '../../../../core/routing/readiness-types.js';
 import { ReadinessLines } from './ReadinessLines.js';
 import { ResourceFacts } from './ResourceFacts.js';
+import { UsagePaceChip } from './UsagePaceChip.js';
 import type { ResourceDisplayView } from './resource-display-model.js';
 import type { ResourceFactsView } from './resources-model.js';
+import { useWorldReading } from './world-card-reading.js';
 import { SchedulingEvidence } from './SchedulingEvidence.js';
 import type { SchedulingEvidenceView } from './scheduling-model.js';
 import styles from './ResourcesDrawer.module.css';
@@ -101,9 +105,17 @@ function WindowMeter({ row, w, reservePercent, current = true }: { row: Capacity
         {ceiling !== null ? <span className={styles.meterTick} style={{ left: `${ceiling}%` }} /> : null}
       </span>
       <span className={styles.meterValue} aria-hidden="true">{value}</span>
+      {row.kind === 'subscription' && /week|seven_day/i.test(`${w.id} ${w.label}`) ? <UsagePaceChip usedFrac={current && w.usedPercent !== null ? w.usedPercent / 100 : null} ratePerHour={null} resetAt={w.resetsAt} now={Date.now()} /> : null}
       {resetText !== null ? <span className={styles.meterReset} title={resetText} aria-hidden="true">{resetText}</span> : null}
     </div>
   );
+}
+
+/** Rendered only for a missing reading, so other cards never subscribe to the world model. */
+export function WorldReadingLine({ seatId, engine }: { seatId: string; engine: string }) {
+  const world = useWorldReading(seatId, engine);
+  if (world === null) return null;
+  return <p className={styles.subtle} data-resource-world-reading>World model: {world.usage} · {world.remaining} · from {world.source} · {world.age}</p>;
 }
 
 export interface ResourceCardProps {
@@ -140,6 +152,8 @@ export function ResourceCard({ row, status, display, settled, mode, busy, onActi
   const otherWindows = row.windows.filter((w) => w !== primaryWindow);
   const reserveText = reserve === null ? null : reserve.percent !== null && mode !== null ? `${reserve.label} · ${MODE_WORD[mode]}` : reserve.label;
   const connectionPhrase = display?.connection.checkedAt ? relativePhrase(display.connection.checkedAt, resetNowMs) : null;
+  const resetLine = display?.usage.current === false || row.quotaCurrent === false ? null : codexResetLine(row, resetNowMs);
+  const freeResetsLine = codexFreeResetsLine(row);
   const quotaDiagnostic = row.windows.length === 0 ? claudeQuotaDiagnostic(row.quotaReadReason) : null;
   return (
     <li className={styles.card} data-status={status.kind} data-seat={row.seatId} data-usage-state={display?.usage.state} data-usage-observed-at={display?.usage.observedAt ?? undefined} data-verse-anchor={`resources:${row.seatId}`}>
@@ -153,7 +167,8 @@ export function ResourceCard({ row, status, display, settled, mode, busy, onActi
       {row.engine === 'grok' ? <p className={styles.subtle}>Grok Build · native CLI</p> : null}
       <StatusLine status={status} />
       {display ? <p className={styles.subtle} data-resource-usage-label>{display.usage.label}</p> : null}
-      {display?.usage.observedAt && display.usage.state !== 'historical' ? <p className={styles.stamp}>Usage observed <time dateTime={display.usage.observedAt} title={display.usage.observedAt}>{new Date(display.usage.observedAt).toLocaleString()}</time></p> : null}
+      {display?.usage.state === 'missing' ? <WorldReadingLine seatId={row.seatId} engine={row.engine} /> : null}
+      {display ? <p className={styles.stamp}>{display.usage.observedAt ? <time dateTime={display.usage.observedAt} title={display.usage.observedAt}>{readingAge(display.usage.observedAt)}</time> : 'Reading age unknown'}</p> : null}
       {creditText !== null ? <p className={styles.subtle}>{creditText}</p> : null}
       {!creditCurrent && row.engine === 'codex' && row.creditState !== undefined && row.creditState !== 'unknown' ? <p className={styles.subtle}>Credits unconfirmed · current balance and availability are unknown.</p> : null}
       {display?.connection.checkedAt ? <p className={styles.stamp}><span>Connection </span><time dateTime={display.connection.checkedAt} title={display.connection.checkedAt}>{connectionPhrase ? `checked ${connectionPhrase}` : 'check time unconfirmed'}</time></p>
@@ -163,6 +178,8 @@ export function ResourceCard({ row, status, display, settled, mode, busy, onActi
           {primaryWindow !== null ? <WindowMeter row={row} w={primaryWindow} current={display?.usage.current ?? true} reservePercent={reserve?.percent ?? null} /> : null}
         </div>
       ) : <p className={styles.subtle}>Usage not reported by this resource.</p>}
+      {resetLine !== null ? <p className={styles.subtle} data-resource-codex-reset>{resetLine}</p> : null}
+      {freeResetsLine !== null ? <p className={styles.subtle} data-resource-codex-free-resets>{freeResetsLine}</p> : null}
       {quotaDiagnostic ? <p className={styles.subtle}>Claude quota check: {quotaDiagnostic.sentence} <code>{quotaDiagnostic.code}</code></p> : null}
       {row.lastReading ? <p className={styles.subtle}>Last known usage · latest check failed.</p> : null}
       {row.windows.length === 0 && row.historicalUsage && !row.signedOut ? <div className={styles.fine}>

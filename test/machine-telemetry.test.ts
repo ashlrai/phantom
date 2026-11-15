@@ -407,7 +407,7 @@ describe('verified process-snapshot attribution', () => {
   it('makes overlapping root trees unknown instead of double-counting descendants', () => {
     expect(sumJobTrees([100, 101], parsePs(PS)).map(x => x.rssBytes)).toEqual([null, null]);
   });
-  it.each([null, { roots: [null] }, { observedAt: '2099-01-01T00:00:00.000Z' }, { state: ['known'] }])('does not promote malformed/future roots or suppress host facts', async mutation => {
+  it.each([null, { roots: [null] }, { observedAt: '2099-01-01T00:00:00.000Z' }, { state: ['known'] }])('does not promote malformed/future roots or suppress host facts (#%#)', async mutation => {
     const f = fixtureHost(), original = await fixtureRoots(f.host, '/TEST/status.json')();
     const result = await sampleActual({ host: f.host, statusPath: '/TEST/status.json', readRoots: async () => mutation === null ? null as never : ({ ...original, ...mutation }) as never });
     expect(result.rootsState).toBe('unknown'); expect(result.ram.totalBytes).toBe(1024 * MiB); expect(result.headroom).toBeNull(); expect(result.advisoryHeadroom).toBe(0);

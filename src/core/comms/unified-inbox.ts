@@ -2,7 +2,7 @@
  * RQ-SWE3-COMMS-DEPTH-1: the unified comms inbox — one prioritized view over
  * every pending comms item, each carrying the deep-link command that acts on it.
  *
- *   readUnifiedInbox(opts) — aggregates four local, read-only sources:
+ *   readUnifiedInbox(opts) — aggregates six local, read-only sources:
  *
  *   needs-you   NEEDS-MASON.md ledger lines still unresolved
  *               (`phm fleet needs`), act: `phm fleet needs-resolve`.
@@ -17,6 +17,13 @@
  *               table itself cannot be read the section reports 'degraded' and
  *               still lists candidates rather than hiding possibly unclaimed
  *               work.
+ *   gmail       one item per inbox in the saved Gmail archive plan whose unread
+ *               count is over its target (`phm fleet gmail-archive-plan`). A
+ *               read of the saved plan only: no mail is read, moved or deleted.
+ *   linkedin    unanswered LinkedIn messages saved as JSON files in the local
+ *               drop folder `<runsDir>/comms/linkedin/inbox/` (see
+ *               linkedin-drop.ts). Replies stay drafts (`phm drafts list
+ *               --status pending`); nothing is sent from here.
  *
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
@@ -27,11 +34,16 @@
  * claiming coordinates work and grants no execution authority.
  */
 
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { listDrafts, type Draft } from '../cos/drafts.js';
 import { compareRanked, needsYouPriorityHeuristic, type AttentionItem, type NeedsYouPriority, type RankedAttentionItem } from '../decide/needs-you.js';
 import { BUS_INBOX_MAX_BYTES, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxInspection, type BusInboxOptions, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import { readNeedsMason, type NeedsMasonItem, type NeedsMasonReadResult } from '../fleet/needs-mason-resolve.js';
+import { gmailArchivePlanLatestPath, readGmailArchivePlanLatest } from './gmail-archive-plan-latest.js';
+import { readLinkedInDrop, type LinkedInMessage } from './linkedin-drop.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { classifyTeammateIntent, readTeammateTexts, type TeammateText } from './imessage-teammate-inbox.js';
 
@@ -40,9 +52,9 @@ const TITLE_MAX = 160;
 const DETAIL_MAX = 300;
 const SUGGESTED_LEASE_MS = 600_000;
 
-export type UnifiedInboxSource = 'needs-you' | 'imessage' | 'drafts' | 'bus';
+export type UnifiedInboxSource = 'needs-you' | 'imessage' | 'drafts' | 'bus' | 'gmail' | 'linkedin';
 export type UnifiedInboxSourceState = 'healthy' | 'missing' | 'degraded' | 'unavailable';
-export type UnifiedInboxKind = 'needs-you' | 'teammate-text' | 'draft-approval' | 'bus-work';
+export type UnifiedInboxKind = 'needs-you' | 'teammate-text' | 'draft-approval' | 'bus-work' | 'gmail-over-target' | 'linkedin-message';
 
 export interface UnifiedInboxItem extends AttentionItem {
   /** Stable, namespaced: `<source>:<ref>` (e.g. `drafts:d-0123…`). */
@@ -92,6 +104,8 @@ export interface UnifiedInboxOptions {
   listBus?: typeof listBusInboxAfter;
   inspectBus?: typeof inspectBusInbox;
   readClaims?: (root?: string) => BusWorkClaimsInspection;
+  readGmailPlans?: typeof readGmailArchivePlanLatest;
+  readLinkedIn?: typeof readLinkedInDrop;
 }
 
 const cap = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
@@ -213,6 +227,51 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
   return { report: { state, pending: items.length }, items };
 }
 
+function gmailItems(read: typeof readGmailArchivePlanLatest, runsDir: string | undefined): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  const dir = runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let latest: ReturnType<typeof readGmailArchivePlanLatest> = null;
+  try { latest = read(dir); } catch { latest = null; }
+  if (latest === null) {
+    // A reader that returns null for a file that exists means unreadable or invalid, not absent.
+    return { report: { state: existsSync(gmailArchivePlanLatestPath(dir)) ? 'degraded' : 'missing', pending: 0 }, items: [] };
+  }
+  const items = latest.plans.filter(plan => plan.unread > plan.target).map((plan): Omit<UnifiedInboxItem, 'priority'> => {
+    const senders = plan.topSenders.map(s => `${s.sender} (${s.count})`).join(', ');
+    return {
+      id: `gmail:${plan.inbox}`,
+      source: 'gmail',
+      kind: 'gmail-over-target',
+      severity: plan.target > 0 && plan.unread >= 2 * plan.target ? 'high' : 'warn',
+      blocking: false,
+      title: oneLine(`${plan.inbox}: ${plan.unread} unread, target ${plan.target}`, TITLE_MAX),
+      detail: oneLine(`archive plan proposes ${plan.archiveCount}; top senders: ${senders || 'none'}`, DETAIL_MAX),
+      since: plan.at,
+      expiresAt: null,
+      act: ['phm fleet gmail-archive-plan'],
+    };
+  });
+  return { report: { state: 'healthy', pending: items.length }, items };
+}
+
+function linkedInItems(read: typeof readLinkedInDrop, runsDir: string | undefined, now: () => number): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let result: ReturnType<typeof readLinkedInDrop>;
+  try { result = read({ runsDir, now }); } catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
+  const items = result.messages.map((m: LinkedInMessage): Omit<UnifiedInboxItem, 'priority'> => ({
+    id: `linkedin:${m.id}`,
+    source: 'linkedin',
+    kind: 'linkedin-message',
+    severity: 'info',
+    blocking: false,
+    title: oneLine(`LinkedIn from ${m.from}: ${m.text}`, TITLE_MAX),
+    detail: m.threadUrl ? cap(m.threadUrl, DETAIL_MAX) : null,
+    since: m.at,
+    expiresAt: null,
+    // Replies stay drafts until Mason confirms; nothing is sent from here.
+    act: ['phm drafts list --status pending'],
+  }));
+  return { report: { state: result.sourceState, pending: items.length }, items };
+}
+
 /**
  * One read-only pass over every pending comms source. Never throws; a failed
  * source reports its state and the rest still list.
@@ -223,14 +282,18 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const teammates = teammateItems(options.readTexts ?? readTeammateTexts, options.runsDir, now);
   const drafts = await draftItems(options.listPendingDrafts ?? listDrafts, options.runsDir);
   const bus = busItems(options);
+  const gmail = gmailItems(options.readGmailPlans ?? readGmailArchivePlanLatest, options.runsDir);
+  const linkedin = linkedInItems(options.readLinkedIn ?? readLinkedInDrop, options.runsDir, now);
 
   const sources: UnifiedInbox['sources'] = {
     'needs-you': needs.report,
     imessage: teammates.report,
     drafts: drafts.report,
     bus: bus.report,
+    gmail: gmail.report,
+    linkedin: linkedin.report,
   };
-  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...teammates.items, ...drafts.items, ...bus.items];
+  const pending: Omit<UnifiedInboxItem, 'priority'>[] = [...needs.items, ...teammates.items, ...drafts.items, ...bus.items, ...gmail.items, ...linkedin.items];
   const nowMs = now();
   const ranked: RankedAttentionItem<UnifiedInboxItem>[] = pending.map((partial) => {
     const item: UnifiedInboxItem = { ...partial, priority: needsYouPriorityHeuristic(partial, nowMs) };

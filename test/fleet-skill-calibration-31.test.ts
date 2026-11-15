@@ -9,7 +9,7 @@ import {
   type FleetSkillCalibrationReport,
   type SkillCalibrationFileReader,
 } from '../src/cli/fleet-skill-calibration.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { SKILL_ROUTING_CALIBRATION_POLICY_VERSION } from '../src/core/fleet/skill-routing-calibration.js';
 import { skillRecordsDir } from '../src/core/fleet/skill-records.js';
 

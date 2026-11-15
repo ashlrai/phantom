@@ -9,6 +9,7 @@ import styles from './fleet-world.module.css';
 import { WorkspaceGraph } from './WorkspaceGraph.js';
 import { workspaceGraph } from './workspace-graph.js';
 import { Segmented } from '../../../components/primitives/Segmented.js';
+import { AgentEdges } from './AgentEdges.js';
 import { RunsGraph } from './RunsGraph.js';
 
 export default function FleetWorld({ read, refreshing = false, readFailed = false, agentWorkspace = false }: {
@@ -53,6 +54,7 @@ export default function FleetWorld({ read, refreshing = false, readFailed = fals
     {readFailed ? <p role="status" className={styles.note}>Last recorded snapshot · refresh failed.</p> : null}
     {live.stateReason ? <p className={styles.note}>{live.stateReason}</p> : null}
     {agentWorkspace ? <WorkspaceGraph graph={workspaceGraph(live)} /> : null}
+    <AgentEdges />
     <div className={styles.layout}>
       <div className={styles.yard}>
         {repositories.map(repo => <section className={styles.island} key={repo} aria-label={repo}>
@@ -86,6 +88,6 @@ export default function FleetWorld({ read, refreshing = false, readFailed = fals
         </> : <p>{selectedId ? 'This task is no longer in the current snapshot. Select another recorded run.' : 'Select a ghost to inspect its task, resource and result.'}</p>}
       </aside>
     </div>
-    <p className={styles.note}>Snapshot: {Number.isFinite(stamp) ? <time dateTime={live.generatedAt}>{new Date(stamp).toLocaleString()}</time> : 'time not reported'}. Repository groups show membership; collaboration links are not recorded here.</p>
+    <p className={styles.note}>Snapshot: {Number.isFinite(stamp) ? <time dateTime={live.generatedAt}>{new Date(stamp).toLocaleString()}</time> : 'time not reported'}. Repository groups show membership; message links use the local bus.</p>
   </section>;
 }

@@ -21,7 +21,7 @@ function setup(kind = 'build') {
   const job = (name, steps, labels = ['macos-15']) => ({ id: 200, run_id: 30, head_sha: revision, name, labels, status: 'completed', conclusion: 'success', steps: steps.map(name => step(name)) });
   const jobs = kind === 'build' ? [job('Prepare unsigned desktop release', ['Reuse successful push CI and existing prepared artifact', 'Upload immutable release input', 'Build unsigned desktop and original package once'])]
     : kind === 'attest' ? [job('Desktop release smoke', ['Verify green master push CI', 'Smoke desktop release artifact', 'Upload qualified build handoff'])]
-      : [job('Secret-shape scan', ['Scan candidate diff (fail closed)'], ['ubuntu-latest']), job('Quick typecheck', ['Core no-emit type check', 'Check authority drift (hermetic)'], ['ubuntu-latest']), job('Classify PR site lane', ['Bind candidate source'], ['ubuntu-latest']), job('Merge Gate', ['Require selected CI lane'], ['ubuntu-latest'])];
+      : [job('Secret-shape scan', ['Scan candidate diff (fail closed)'], ['ubuntu-latest']), job('Secret scan (diff)', ['Scan the commits this event adds'], ['ubuntu-latest']), job('Quick typecheck', ['Core no-emit type check', 'Check authority drift (hermetic)'], ['ubuntu-latest']), job('Classify PR site lane', ['Bind candidate source'], ['ubuntu-latest']), job('Merge Gate', ['Require selected CI lane'], ['ubuntu-latest'])];
   if (kind === 'build') jobs[0].steps.push(step('Download existing immutable build', 'skipped'));
   const jobResponse = { total_count: jobs.length, jobs };
   let freshRun = run;
@@ -329,12 +329,27 @@ test('fallback feed errors, oversized bytes, malformed JSON and version drift ar
   await assert.rejects(f.run, /stocked updater feed unavailable/);
 });
 
-test('a tag ref is accepted only when its commit is an ancestor of master', () => {
+test('a tag ref is accepted only when its peeled commit is this sha and an ancestor of master', () => {
   const sha = 'a'.repeat(40);
+  const annotation = 'b'.repeat(40);
+  const read = (path) => {
+    if (path.endsWith('/git/ref/tags/v3.30.28')) return { ref: 'refs/tags/v3.30.28', object: { type: 'commit', sha } };
+    if (path.endsWith('/compare/' + sha + '...master')) return { status: 'ahead' };
+    throw new Error(path);
+  };
   acceptReleaseRef({ ref: 'refs/heads/master', sha, repository, read: () => { throw new Error('master does not compare'); } });
-  acceptReleaseRef({ ref: 'refs/tags/v3.30.28', sha, repository, read: () => ({ status: 'ahead' }) });
-  assert.throws(() => acceptReleaseRef({ ref: 'refs/tags/v3.30.28', sha, repository, read: () => ({ status: 'diverged' }) }), /ancestor/);
-  assert.throws(() => acceptReleaseRef({ ref: 'refs/heads/feature', sha, repository, read: () => ({ status: 'ahead' }) }), /stable tag/);
+  acceptReleaseRef({ ref: 'refs/tags/v3.30.28', sha, repository, read });
+  const annotated = (path) => {
+    if (path.endsWith('/git/ref/tags/v3.30.28')) return { ref: 'refs/tags/v3.30.28', object: { type: 'tag', sha: annotation } };
+    if (path.endsWith('/git/tags/' + annotation)) return { sha: annotation, object: { type: 'commit', sha } };
+    if (path.endsWith('/compare/' + sha + '...master')) return { status: 'ahead' };
+    throw new Error(path);
+  };
+  acceptReleaseRef({ ref: 'refs/tags/v3.30.28', sha, repository, read: annotated });
+  assert.throws(() => acceptReleaseRef({ ref: 'refs/tags/v3.30.28', sha, repository, read: (path) => path.includes('/git/ref/') ? { ref: 'refs/tags/v3.30.28', object: { type: 'commit', sha: annotation } } : { status: 'ahead' } }), /tag sha mismatches/);
+  assert.throws(() => acceptReleaseRef({ ref: 'refs/tags/v3.30.28', sha, repository, read: (path) => path.includes('/git/ref/') ? { ref: 'refs/tags/v3.30.28', object: { type: 'commit', sha } } : { status: 'diverged' } }), /ancestor/);
+  assert.throws(() => acceptReleaseRef({ ref: 'refs/tags/nightly', sha, repository, read }), /stable tag/);
+  assert.throws(() => acceptReleaseRef({ ref: 'refs/heads/v3.30.28', sha, repository, read }), /stable tag/);
 });
 
 test('stocked feed selection uses the highest semver, not list order or a newer timestamp on an older release', () => {

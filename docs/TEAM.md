@@ -55,8 +55,9 @@ joining an empty team. Pulse identity does not grant team or repository access.
 
 Roles in the view are protocol permissions: the first joining human becomes
 `owner`, subsequent humans are `member`, and agents have role `agent`.
-Human owners/admins decide consequential handoff approvals. `join --role admin`
-does not promote a member, and `--as` does not change join or approval identity.
+Human owners/admins decide consequential handoff approvals and agent access
+requests. `join --role admin` does not promote a member, and `--as` does not
+change join or approval identity.
 Confirm your actual work responsibility with the owner; a role or online dot
 alone does not establish readiness or authorize a release, spend or secret change.
 Do not create a replacement team or disable a control to work around refusal.
@@ -109,6 +110,28 @@ If `join` says the identity does not match, run it from the invited person's
 account or pin their name in `owner.json` as the message shows. If it says there
 is no live invite, the log has not reached this node (or the invite was revoked):
 get the latest log through your sync service or ask for a fresh `invite`.
+
+### Agent access requests
+
+Agents cannot invite, link or re-role directly: those commands stay
+human-terminal. What an agent can do is file a request with the
+`phm_team_access_request` MCP tool (`op` = `invite-member`, `link-repo` or
+`change-role`, plus `memberId`/`repo`/`role` and an optional `note` for the
+approver). The request parks as a pending approval in `phm team view`; an
+owner/admin then runs `phm team approve <id>` or `phm team deny <id>`. An
+approval applies the requested change as if the approver had run it, with the
+human as the audit actor. A denial changes nothing, and a request that became
+stale (for example, the member was invited already) refuses the approval so it
+can be denied instead.
+
+The desktop app's **Approvals** page and `phm approvals [--json]` show the same
+projection: pending approvals, the Security pin queue (staged packages under
+`~/.ashlr-runs/staged/`, read-only; pins stay with Security) and explicit holds
+from `$ASHLR_HOME/holds.json` (`{"holds":[{"id","title","detail?","since?","resolvedAt?"}]}`;
+a hold stays listed until it has `resolvedAt` or is removed). The page's
+Approve/Deny buttons make the same decision as `phm team approve|deny`: the
+server derives the human identity from the local OS user, refuses agent
+processes, and never accepts an identity from the request.
 
 ### Onboarding walkthrough checks
 

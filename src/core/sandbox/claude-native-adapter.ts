@@ -1,3 +1,6 @@
+import { readFableAdmission } from '../routing/fable-admission.js';
+import { FABLE_ORCHESTRATOR_MODEL, type FableWork } from '../routing/fable-orchestrator.js';
+import { fableBillingStopped, observeFableBillingLine } from '../routing/fable-billing-stop.js';
 /** The official native CLI owns its credentials. Only model-directed tools enter
  * the separate empty-auth worker jail; this is not a credential proxy. */
 import { constants, accessSync, lstatSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -66,12 +69,14 @@ export interface ClaudeNativeAdapterOptions {
   effort?: string;
   /** Selected allowance principal, when the role is routed across accounts. */
   expectedAccountHint?: string;
+  fableWork?: FableWork;
 }
 export async function runClaudeNativeAdapter(options: ClaudeNativeAdapterOptions): Promise<ClaudeNativeAdapterResult> {
   let providerContacted = false;
   const held = (reason: string): ClaudeNativeAdapterResult => ({ providerContacted,ok:false, output:'', error:reason, terminationReason:'error-exit',captureDenied:true });
   try { assertHostNativeAccountContext(); }
   catch (error) { return held(error instanceof Error ? error.message : 'Locus native-account context unavailable'); }
+  if (options.model === FABLE_ORCHESTRATOR_MODEL && (fableBillingStopped() || !readFableAdmission(options.fableWork ?? { role: 'coding' }).allowed)) return held('fable-billing-stop');
   if (options.signal === undefined) return held('Native Claude producer cancellation ownership unavailable');
   if (options.signal.aborted) return { ...held('run cancelled'), terminationReason:'cancelled' };
   if (!enginePermitted('claude', options.cfg).permitted || !options.admission()) return held('Selected Claude account authority unavailable');
@@ -98,7 +103,7 @@ export async function runClaudeNativeAdapter(options: ClaudeNativeAdapterOptions
   const current = (): boolean => {
     try {
       const fresh = readClaudeNativeBinding(options.cfg, options.seatId);
-      return !signal.aborted && options.admission() && observation !== null && observation.expiresAtMs > Date.now() && proof !== null && fresh !== null &&
+      return !(options.model === FABLE_ORCHESTRATOR_MODEL && (fableBillingStopped() || !readFableAdmission(options.fableWork ?? { role: 'coding' }).allowed)) && !signal.aborted && options.admission() && observation !== null && observation.expiresAtMs > Date.now() && proof !== null && fresh !== null &&
         (fresh.localAccountDigest === null || fresh.localAccountDigest === observation.accountDigest) &&
         (owned === null || owned.evidence?.ready === true) &&
         sameClaudeNativeBinding(proof.binding,fresh) && trustedNativeHelperEpoch() === authHelperEpoch;
@@ -142,9 +147,18 @@ export async function runClaudeNativeAdapter(options: ClaudeNativeAdapterOptions
       command.args.push('--effort',options.effort);
     }
     const launcher = claudeNativeOuterLauncher(owned,proof.binding,Number(new URL(broker.url).port),scratch);
+    let lastBillingFrame: string | undefined;
     const spawnOptions: SpawnEngineOptions = { env:{...owned.env,...claudeBrokerNativeEnvironment(),TMPDIR:owned.env.TMPDIR},
       launcher,signal,stdin:options.prompt,nativeEngine:'claude',timeoutMs:options.timeoutMs,
-      selectedOutcomeAdmission:current,onEvent:options.onEvent,onSpawn:() => {providerContacted=true;} };
+      selectedOutcomeAdmission:current,onEvent:event => {
+        // Raw native protocol frames are the upstream signal, not cost estimates.
+        if (event.rawLine && event.rawLine !== lastBillingFrame) {
+          lastBillingFrame = event.rawLine;
+          try { if (observeFableBillingLine(event.rawLine)) stop.abort(); }
+          catch { stop.abort(); }
+        }
+        options.onEvent?.(event);
+      },onSpawn:() => {providerContacted=true;} };
     result = {...await spawnEngine({...command,cwd:scratch},options.cfg,spawnOptions),providerContacted};
     if (cleanupUnknown(result)) { retain(); return {...result,captureDenied:true}; }
     refreshEnabled=false;

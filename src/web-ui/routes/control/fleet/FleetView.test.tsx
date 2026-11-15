@@ -223,7 +223,7 @@ describe('FleetView', () => {
       </MemoryRouter>,
     );
 
-    await waitFor(() => expect(screen.getByText('unknown')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTitle('Unavailable: uninspectable')).toHaveTextContent('unknown'));
     expect(screen.queryByText('Pause fleet')).not.toBeInTheDocument();
     expect(screen.queryByText('Resume fleet')).not.toBeInTheDocument();
   });

@@ -30,5 +30,5 @@ export function lastUsedText(at: string | null, now: number): string {
 }
 
 export function revokeCommand(id: string): string | null {
-  return /^[0-9a-f-]{36}$/.test(id) ? `phm verse remote revoke ${id}` : null;
+  return /^[0-9a-f-]{36}$/.test(id) ? `phm console remote revoke ${id}` : null;
 }

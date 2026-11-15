@@ -5,6 +5,7 @@
  * leader's own MASON-OUTBOX.md answers, so an answer sits under the words it
  * answered. Pure; the tests feed the shapes.
  */
+import { isFlagOnlyText, isStatusAskText } from './thread-noise-model.js';
 import { classifyOutboxText, type OutboxKind } from '../../../../core/fleet/outbox-kind.js';
 import type { FleetRunsV1 } from '../../../../core/verse/fleet-runs-types.js';
 import { annotateAck } from '../fleet-inbox/inbox-ack-model.js';
@@ -20,6 +21,7 @@ export interface MergedLine {
   at: number;
   who: 'mason' | 'leader';
   kind?: OutboxKind;
+  quiet?: 'status-ask';
   /** The post's channel, or the inbox entry's declared source. */
   source: string;
   text: string;
@@ -32,6 +34,7 @@ export interface MergedThread {
   lines: MergedLine[];
   /** Entries whose timestamps could not be read (`at` is NaN); the pane renders them after `lines`. */
   undated: MergedLine[];
+  hiddenNoise: number;
 }
 
 /** MASON-INBOX.md writes "YYYY-MM-DD HH:MM" ET wall times (parseInboxAt); anything else, e.g. ISO, falls back to Date.parse. */
@@ -39,7 +42,7 @@ function inboxMs(at: string, nowMs: number): number {
   return parseInboxAt(at, nowMs) ?? Date.parse(at);
 }
 
-export function mergeThread(thread: readonly ThreadPostShape[], inbox: FleetRunsV1['inbox'], nowMs: number, runs?: unknown, outbox: readonly { at: string; text: string }[] = []): MergedThread {
+export function mergeThread(thread: readonly ThreadPostShape[], inbox: FleetRunsV1['inbox'], nowMs: number, runs?: unknown, outbox: readonly { at: string; text: string }[] = [], laneLines: readonly MergedLine[] = []): MergedThread {
   // An interjection relayed into the thread lands there verbatim; the inbox
   // copy is dropped so the message shows once, still attributed to Mason.
   const relayed = new Set(thread.filter(m => m.from === 'mason').map(m => m.text.trim()));
@@ -53,28 +56,34 @@ export function mergeThread(thread: readonly ThreadPostShape[], inbox: FleetRuns
   const dated: { line: MergedLine; order: number }[] = [];
   const undated: MergedLine[] = [];
   let order = 0;
+  let hiddenNoise = 0;
   const push = (line: MergedLine) => {
     if (Number.isFinite(line.at)) dated.push({ line, order: order++ });
     else undated.push(line);
   };
   inbox.forEach((entry, index) => {
+    if (isFlagOnlyText(entry.text)) { hiddenNoise++; return; }
     if (relayed.has(entry.text.trim())) return;
-    push({ at: inboxMs(entry.at, nowMs), who: 'mason', source: entry.source, text: entry.text, id: `inbox-${index}`, ack: entry.source === 'system' ? null : ackFor(index) });
+    push({ at: inboxMs(entry.at, nowMs), who: 'mason', source: entry.source, text: entry.text, id: `inbox-${index}`, quiet: isStatusAskText(entry.text) ? 'status-ask' : undefined, ack: entry.source === 'system' ? null : ackFor(index) });
   });
   // The leader's file answers read like its posts: same clock parsing, and on
   // a shared timestamp they still land after Mason's own words.
   outbox.forEach((entry, index) => {
     push({ at: inboxMs(entry.at, nowMs), who: 'leader', source: 'outbox', text: entry.text, id: `outbox-${index}`, ack: null, kind: classifyOutboxText(entry.text) });
   });
+  const fileTexts = new Set(outbox.map(entry => `${entry.at.slice(0, 10)}:${entry.text.trim()}`));
   for (const message of thread) {
+    if (message.from === 'leader' && fileTexts.has(`${message.at.slice(0, 10)}:${message.text.trim()}`)) continue;
     // Only attribute a relayed entry when its text identifies exactly one inbox row.
     const matches = message.from === 'mason' && message.channel !== 'system'
       ? inbox.flatMap((entry, index) => entry.text.trim() === message.text.trim() ? [index] : []) : [];
-    push({ at: Date.parse(message.at), who: message.from, source: message.channel, text: displayThreadText(message), id: message.id,
+    push({ at: Date.parse(message.at), who: message.from, source: message.id.startsWith('leader-file-') ? 'outbox' : message.channel, text: displayThreadText(message), id: message.id,
       ack: matches.length === 1 ? ackFor(matches[0]!) : null });
   }
+  // Lane held/resumed system lines land last on an exact tie.
+  for (const line of laneLines) push(line);
   dated.sort((a, b) => a.line.at - b.line.at || a.order - b.order);
-  return { lines: dated.map(d => d.line), undated };
+  return { lines: dated.map(d => d.line), undated, hiddenNoise };
 }
 
 /** The thread channel this source names, or null for a free-form inbox source. */

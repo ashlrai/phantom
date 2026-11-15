@@ -172,10 +172,15 @@ export function buildJumpCommands(query: string): Command[] {
   const runs = getQuerySnapshot<RunState[]>(runsQuery.key).data ?? [];
   for (const run of runs) {
     if (results.length >= JUMP_LIMIT) break;
-    if (matchesJump(run.id, q) || matchesJump(run.goal, q)) {
+    // Running runs also answer to "watch"/"live" — the run detail view
+    // embeds the live stream for an in-flight run, so the jump IS the
+    // watch-live entry point (no separate surface to invent).
+    const live = run.status === 'running';
+    const haystack = live ? `${run.id} ${run.goal} watch live stream now` : `${run.id} ${run.goal}`;
+    if (matchesJump(haystack, q)) {
       results.push({
         id: `jump:run:${run.id}`,
-        title: run.goal,
+        title: live ? `Watch live — ${run.goal}` : run.goal,
         subtitle: `Run ${run.id} · ${run.status}`,
         group: 'Jump to',
         run: (nav) => nav(`/work/runs/${run.id}`),

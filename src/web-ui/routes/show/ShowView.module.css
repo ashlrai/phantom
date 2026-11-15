@@ -30,15 +30,26 @@
 .blockers { color: var(--text-secondary); padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
 .blockers strong { color: var(--text-primary); }
 
-.ambient { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
+.ambient { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: var(--space-3); }
 .panel { border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--bg-surface); padding: var(--space-4); min-width: 0; }
 .panel p { color: var(--text-secondary); margin: var(--space-2) 0; }
 .panel time { color: var(--text-tertiary); font-size: var(--text-xs-size); }
 .feed, .gauges { list-style: none; padding: 0; margin: var(--space-3) 0 0; max-height: 380px; overflow: auto; }
 .feed li { display: flex; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--border-subtle); overflow-wrap: anywhere; animation: showEnter .5s ease-out; }
 .dot { flex: none; width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--text-tertiary); }
-.dot[data-status='started'], .dot[data-status='running'] { background: var(--status-success-fg); animation: showPulse 1.6s ease-in-out infinite; }
+.dot[data-status='started'], .dot[data-status='running'] { background: var(--status-success-fg); animation: showPulse var(--duration-pulse) ease-in-out infinite; }
 .dot[data-status='failed'], .dot[data-status='blocked'] { background: var(--status-danger-fg); }
+li.thread { display: block; border-bottom: 1px solid var(--border-subtle); padding-bottom: var(--space-2); }
+.threadHead { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.threadHead strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jump { flex: none; font-size: var(--text-xs-size); color: var(--text-secondary); }
+.threadMsgs { list-style: none; margin: var(--space-2) 0 0; padding: 0 0 0 var(--space-3); border-left: 2px solid var(--border-subtle); }
+.threadMsgs li { display: flex; gap: var(--space-2); padding: var(--space-2) 0; border-bottom: none; }
+.msgDot { flex: none; width: 7px; height: 7px; margin: 5px 0 0 -11px; border-radius: 50%; background: var(--text-tertiary); border: 1px solid var(--bg-surface); }
+.msgDot[data-tone='good'] { background: var(--status-success-fg); }
+.msgDot[data-tone='bad'] { background: var(--status-danger-fg); }
+.msgDot[data-tone='live'] { background: var(--status-running-solid); animation: showPulse var(--duration-pulse) ease-in-out infinite; }
+.more { margin: var(--space-1) 0 0; padding-left: var(--space-3); color: var(--text-tertiary); font-size: var(--text-xs-size); }
 .gauges li { padding: var(--space-3) 0; border-bottom: 1px solid var(--border-subtle); }
 .gaugeHead { display: flex; justify-content: space-between; gap: var(--space-3); color: var(--text-secondary); overflow-wrap: anywhere; }
 .track { height: 8px; margin-top: var(--space-2); border-radius: 999px; background: var(--bg-sunken, var(--border-subtle)); overflow: hidden; }

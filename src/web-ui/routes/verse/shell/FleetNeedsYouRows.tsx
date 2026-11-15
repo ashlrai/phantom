@@ -70,6 +70,7 @@ import {
 import { fleetRunsNeedsYouQuery } from './fleet-needs-you-query.js';
 import { tellLeadersPrefill } from './needs-you-tell.js';
 import { needsMasonResolvedText } from './needs-mason-resolve-text.js';
+import { AUTO_RESOLVE_REPLY, batchResolveSummary, groupNeedsMasonRows, hardLimitChip } from './needs-mason-triage-model.js';
 import { usePollWhileVisible } from './section-visibility.js';
 import styles from './NeedsYouDrawer.module.css';
 
@@ -159,7 +160,7 @@ function ResetReleaseButton({ lane, onReleased }: { lane: string; onReleased: (l
 interface NeedsMasonRow { id: string; text: string }
 
 /** NEEDS-MASON.md lines: Resolve (with an optional one-line reply) puts needs_mason.resolved on the bus. Text only, never HTML. */
-function NeedsMasonRows() {
+export function NeedsMasonRows() {
   const { hasHold, token, touch } = useMutationHold();
   const [items, setItems] = useState<NeedsMasonRow[]>([]);
   const [replies, setReplies] = useState<Record<string, string>>({});
@@ -200,25 +201,63 @@ function NeedsMasonRows() {
       else setError(reason instanceof ApiError ? reason.detail ?? reason.message : 'The resolve failed.');
     } finally { setBusy(''); }
   }
+  async function resolveAll(ids: string[]) {
+    if (!hasHold || !token || busy) { setError('Unlock to resolve.'); return; }
+    setBusy('batch');
+    setError('');
+    setConfirmation(null);
+    const counts = { ok: 0, duplicate: 0, failed: 0 };
+    readAbort.current?.abort();
+    try {
+      for (const id of ids) {
+        try {
+          await apiPost<unknown>('/api/verse/agent-bus/needs-mason/resolve', { itemId: id, reply: AUTO_RESOLVE_REPLY }, token);
+          counts.ok += 1;
+          setItems(previous => previous.filter(row => row.id !== id));
+        } catch (reason) {
+          if (reason instanceof ApiError && (reason.status === 404 || reason.status === 409)) {
+            counts.duplicate += 1;
+            setItems(previous => previous.filter(row => row.id !== id));
+          } else counts.failed += 1;
+        }
+      }
+      touch();
+      setConfirmation({ text: batchResolveSummary(counts) });
+    } finally { setBusy(''); }
+  }
   if (items.length === 0 && !confirmation) return null;
+  const { hardLimit, auto } = groupNeedsMasonRows(items);
+  const reasonById = new Map(hardLimit.map(row => [row.id, row.reason]));
+  const rowView = (row: NeedsMasonRow) => (
+    <div key={row.id} className={styles.row}>
+      <span className={styles.rule} aria-hidden="true" />
+      <span className={styles.rowMain}>
+        <span className={styles.rowTitle}>{row.text}</span>
+        {reasonById.has(row.id) && <span className={styles.rowKind}>{hardLimitChip(reasonById.get(row.id)!)}</span>}
+        <input type="text" maxLength={500} aria-label={`Reply for ${row.text}`} placeholder="Optional one-line reply"
+          value={replies[row.id] ?? ''} onChange={event => setReplies(previous => ({ ...previous, [row.id]: event.target.value }))} />
+      </span>
+      <Button size="sm" disabled={!hasHold || busy !== ''} title={!hasHold ? 'Unlock to resolve' : undefined}
+        aria-label={`Resolve ${row.text}`} onClick={() => void resolve(row.id)}>{busy === row.id ? 'Resolving…' : 'Resolve'}</Button>
+    </div>
+  );
   return (
     <section aria-label="Needs Mason">
       <div className={styles.batch}><p className={styles.rowKind}>Needs Mason</p></div>
       {error && <p role="status">{error}</p>}
       {confirmation && <p role="status">{confirmation.text} {confirmation.prefill &&
         <Button size="sm" variant="ghost" onClick={() => openInterjectDialog({ prefill: confirmation.prefill })}>Tell the leaders</Button>}</p>}
-      {items.map(row => (
-        <div key={row.id} className={styles.row}>
-          <span className={styles.rule} aria-hidden="true" />
-          <span className={styles.rowMain}>
-            <span className={styles.rowTitle}>{row.text}</span>
-            <input type="text" maxLength={500} aria-label={`Reply for ${row.text}`} placeholder="Optional one-line reply"
-              value={replies[row.id] ?? ''} onChange={event => setReplies(previous => ({ ...previous, [row.id]: event.target.value }))} />
-          </span>
+      {hardLimit.length === 0 && items.length > 0 && <p role="status">Nothing here needs you: every line is outside the four hard limits.</p>}
+      {hardLimit.map(rowView)}
+      {auto.length > 0 && <>
+        <div className={styles.batch}>
+          <p className={styles.rowKind}>Outside the hard limits ({auto.length})</p>
           <Button size="sm" disabled={!hasHold || busy !== ''} title={!hasHold ? 'Unlock to resolve' : undefined}
-            aria-label={`Resolve ${row.text}`} onClick={() => void resolve(row.id)}>{busy === row.id ? 'Resolving…' : 'Resolve'}</Button>
+            aria-label={`Resolve all ${auto.length}`} onClick={() => void resolveAll(auto.map(row => row.id))}>
+            {busy === 'batch' ? 'Resolving…' : `Resolve all ${auto.length}`}</Button>
         </div>
-      ))}
+        {auto.map(rowView)}
+      </>}
     </section>
   );
 }

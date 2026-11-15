@@ -43,6 +43,25 @@ it('distinguishes unreadable metrics from readable empty data', async () => {
   }
   expect(await fleetPrecheckWaste(read(), now)).toMatchObject({ known: true, totals: { skips: 0, launches: 0, skip_share: 0 } });
 });
+it('groups numeric and string codes by repository with safe, actionable advice', async () => {
+  const input = read(row('precheck_skip', 1, { code: 13 }), row('precheck_skip', 1, { code: '13' }),
+    row('precheck_skip', 1, { code: 42 }), row('precheck_skip', 1, { code: null, repo: null }),
+    row('precheck_skip', 1, { code: 13, repo: 'other' }), row('launch', 1, { code: 13 }),
+    row('precheck_parked', 1, { code: 13 }));
+  const r = await fleetPrecheckWaste(input, now);
+  expect(r.by_code.find(g => g.name === '13')?.skips).toBe(3);
+  expect(r.by_repo_code).toEqual([
+    { repo: 'other', codes: [{ code: '13', skips: 1, reason: expect.stringContaining('unproven'), next_step: expect.stringContaining('Inspect') }] },
+    { repo: 'phantom', codes: [
+      { code: '13', skips: 2, reason: expect.stringContaining('unproven'), next_step: expect.stringContaining('Inspect') },
+      { code: '42', skips: 1, reason: expect.stringContaining('not recognized'), next_step: expect.stringContaining('precheck record') },
+    ] },
+    { repo: 'unknown', codes: [{ code: 'unknown', skips: 1, reason: expect.stringContaining('missing'), next_step: expect.any(String) }] },
+  ]);
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  expect(await cmdFleetPrecheckWaste(['--json'], input, now)).toBe(0);
+  expect(JSON.parse(log.mock.calls[0]![0]).by_repo_code).toEqual(r.by_repo_code);
+});
 it('registers the verb and exposes JSON, plain text, help and usage without reading on invalid args', async () => {
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});

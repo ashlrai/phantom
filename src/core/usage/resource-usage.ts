@@ -36,6 +36,7 @@ import { readDevinUsage, type DevinUsageResult } from '../fabric/readers/devin-u
 import { readGrokUltraRunway } from '../fleet/grok-ultra-store.js';
 import type { GrokUltraRunway } from '../fleet/grok-ultra-types.js';
 import { fetchClaudeUsageApi, type ClaudeApiUsageResult } from '../fabric/usage-api.js';
+import { readZaiUsage } from './zai-usage.js';
 import { readClaudeApiGrantViews } from '../resources/claude-api-grant.js';
 import type { ClaudeApiGrantReadView } from '../resources/claude-api-grant-types.js';
 import {
@@ -116,6 +117,7 @@ export interface UsageResourceReaderDeps {
   readUltra?: () => Promise<GrokUltraRunway>;
   readClaude?: () => Promise<ClaudeApiUsageResult | null>;
   readGrants?: (root: string) => Promise<ClaudeApiGrantReadView>;
+  readZai?: () => Promise<UsageResourceReading | null>;
 }
 
 // ---------------------------------------------------------------------------
@@ -284,7 +286,7 @@ export function usageResourceReaders(
     'codex-cmp': codexReader('codex-cmp', deps, codex),
     'codex-personal': codexReader('codex-personal', deps, codex),
     devin: devinReader(deps),
-    zai: null,
+    zai: () => (deps.readZai ?? (() => readZaiUsage({ env: deps.env, homeDir: deps.homeDir })))(),
     agy: null,
     'gemini-workspace': null,
     local: null,

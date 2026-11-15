@@ -62,7 +62,8 @@ const mockSpawn = vi.fn(() => {
   });
   // Match a missing executable: asynchronous error followed by close.
   queueMicrotask(() => {
-    child.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }));
+    const error = Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' });
+    if (child.listenerCount('error') > 0) child.emit('error', error);
     child.emit('close', -1, null);
   });
   return child;

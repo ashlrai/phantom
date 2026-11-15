@@ -112,8 +112,11 @@ function claudeModels(src) {
   const rows = [...src.slice(start, end).matchAll(/label: '([^']+)'/g)].map((m) => m[1]);
   if (rows.length === 0) throw new Error('model-windows.ts: no claude model labels');
   return rows.map((label) => {
-    if (!label.startsWith('Claude ')) throw new Error(`unexpected claude label: ${label}`);
-    return label.slice('Claude '.length);
+    // Most catalog rows are "Claude <name>". Subscription seats such as
+    // Fable 5.2 are listed without that prefix and must still be admitted.
+    if (label.startsWith('Claude ')) return label.slice('Claude '.length);
+    if (/^[A-Z][A-Za-z0-9].*/.test(label) && !label.includes('\n')) return label;
+    throw new Error(`unexpected claude label: ${label}`);
   });
 }
 

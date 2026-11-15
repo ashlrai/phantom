@@ -41,7 +41,7 @@ it('requires two clicks, posts once with the mutation token and refetches', asyn
     body: JSON.stringify({ app: 'Codex', action: 'restart' }),
     headers: expect.objectContaining({ 'x-ashlr-token': 'a'.repeat(64) }),
   })]);
-  await waitFor(() => expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'GET')).toHaveLength(2));
+  await waitFor(() => expect(fetcher.mock.calls.filter(([url, init]) => init?.method === 'GET' && String(url) === '/api/verse/fleet/apps')).toHaveLength(2));
 });
 it('expires confirmation after five seconds', async () => {
   const fetcher = serve(); render(<AppsCard visible />);

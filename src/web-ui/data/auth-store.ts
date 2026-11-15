@@ -126,7 +126,7 @@ export function getReadClientProof(): string {
  * message safe to show the operator. The raw token never leaves this call.
  */
 export async function establishReadSession(rawReadToken: string): Promise<void> {
-  if (isRemoteMobileMode()) throw new Error('Hub read tokens are unavailable on the phone gateway.');
+  if (isRemoteMobileMode()) throw new Error('Phantom read tokens are unavailable on the phone gateway.');
   const trimmed = rawReadToken.trim();
   if (!/^[a-f0-9]{64}$/.test(trimmed)) {
     throw new Error('That does not look like a read token — expected 64 hex characters.');
@@ -335,7 +335,7 @@ function armIdleClear(): void {
  * `host` marks a token injected by the desktop wrapper (see adoptInjectedTokens).
  */
 export function setMutationToken(token: string, opts: { host?: boolean } = {}): void {
-  if (isRemoteMobileMode()) throw new Error('Hub mutation tokens are unavailable on the phone gateway.');
+  if (isRemoteMobileMode()) throw new Error('Phantom mutation tokens are unavailable on the phone gateway.');
   mutationToken = token;
   mutationHeldByHost = opts.host === true;
   const heldUntil = Date.now() + MUTATION_HOLD_MS;

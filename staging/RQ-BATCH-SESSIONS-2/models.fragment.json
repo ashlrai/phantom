@@ -1,0 +1,6 @@
+{
+ "claude": "claude-sonnet-5-5",
+ "claude.frontier": "claude-opus-5-5",
+ "codex": "gpt-6.1-terra",
+ "devin": "swe-2-flash"
+}

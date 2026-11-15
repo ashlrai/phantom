@@ -49,6 +49,7 @@ describe('static ecosystem page', () => {
     expect(entries.map((entry) => entry.querySelector('loc')?.textContent)).toEqual([
       'https://verse.ashlr.ai/',
       'https://verse.ashlr.ai/compare/agent-clis',
+      'https://verse.ashlr.ai/connect',
       'https://verse.ashlr.ai/ecosystem',
       'https://verse.ashlr.ai/use-cases/local-models',
       'https://verse.ashlr.ai/use-cases/own-accounts',

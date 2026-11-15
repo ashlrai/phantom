@@ -2,10 +2,9 @@
  * Pure fold over the team log + the guarded operations (claims, handoffs,
  * approvals) that need a consistent read-then-append under the team lock.
  */
-import { assertLocalHuman } from './identity.js';
 import {
-  CONSEQUENTIAL_ACTIONS, claimsOverlap, validId,
-  type ClaimTarget, type ConsequentialAction, type TeamActor, type TeamEvent, type TeamRole,
+  CONSEQUENTIAL_ACTIONS, claimsOverlap, parseAccessRequestAction, validId,
+  type AccessRequestAction, type ClaimTarget, type ConsequentialAction, type TeamActor, type TeamEvent, type TeamRole,
 } from './protocol.js';
 import { appendUnlocked, readEvents, withTeamLock } from './store.js';
 import { acquireCoordination, releaseCoordinationBySource, teamClaimKey } from '../agents/claim-store.js';
@@ -17,7 +16,7 @@ export interface Member { id: string; kind: TeamActor['kind']; role: TeamRole; p
 export interface Claim { id: string; target: ClaimTarget; holder: string; reason: string; acquiredAt: string; expiresAt: string }
 export type HandoffState = 'awaiting-approval' | 'open' | 'accepted' | 'completed' | 'declined';
 export interface Handoff { id: string; from: string; to: string | null; title: string; detail: string; action: ConsequentialAction | null; contextRefs: string[]; state: HandoffState; approvalId: string | null; assignee: string | null; result: string | null; updatedAt: string }
-export interface Approval { id: string; handoffId: string; action: ConsequentialAction; requestedBy: string; state: 'pending' | 'approved' | 'denied'; decidedBy: string | null }
+export interface Approval { id: string; handoffId: string | null; action: ConsequentialAction | null; access: AccessRequestAction | null; note: string | null; requestedBy: string; state: 'pending' | 'approved' | 'denied'; decidedBy: string | null }
 export interface TeamState { team: string; repos: string[]; members: Member[]; claims: Claim[]; handoffs: Handoff[]; approvals: Approval[]; messages: { id: string; from: string; channel: string; text: string; ts: string }[]; eventCount: number }
 
 const str = (v: unknown, d = ''): string => (typeof v === 'string' ? v : d);
@@ -91,7 +90,14 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
       }
       case 'approval.requested': {
         const h = handoffs.get(str(p.handoffId));
-        if (h?.action) { approvals.set(ev.id, { id: ev.id, handoffId: h.id, action: h.action, requestedBy: ev.actor.id, state: 'pending', decidedBy: null }); h.approvalId = ev.id; }
+        if (h?.action) { approvals.set(ev.id, { id: ev.id, handoffId: h.id, action: h.action, access: null, note: null, requestedBy: ev.actor.id, state: 'pending', decidedBy: null }); h.approvalId = ev.id; }
+        break;
+      }
+      case 'access.requested': {
+        // An agent-filed workspace mutation parked as a pending approval; the
+        // human decision and the mutation it unlocks are separate later events.
+        const access = parseAccessRequestAction(p.request);
+        if (access) approvals.set(ev.id, { id: ev.id, handoffId: null, action: null, access, note: str(p.note) || null, requestedBy: ev.actor.id, state: 'pending', decidedBy: null });
         break;
       }
       case 'approval.decided': {
@@ -99,7 +105,7 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
         // Only humans with owner/admin role can decide; agents never self-approve.
         if (a && a.state === 'pending' && ev.actor.kind === 'human' && m.kind === 'human' && ['owner', 'admin'].includes(m.role)) {
           a.state = p.decision === 'approve' ? 'approved' : 'denied'; a.decidedBy = ev.actor.id;
-          const h = handoffs.get(a.handoffId);
+          const h = a.handoffId ? handoffs.get(a.handoffId) : undefined;
           if (h) { h.state = a.state === 'approved' ? 'open' : 'declined'; h.updatedAt = ev.ts; }
         }
         break;
@@ -179,16 +185,5 @@ export function transitionHandoff(team: string, actor: TeamActor, handoffId: str
     const after = teamState(team).handoffs.find((h) => h.id === handoffId)!;
     if (after.state === before.state) throw new Error(`Cannot ${op} a handoff in state "${before.state}"${before.state === 'awaiting-approval' ? ' (needs human approval)' : ''}.`);
     return { handoffId, state: after.state };
-  });
-}
-
-export function decideApproval(team: string, actor: TeamActor, approvalId: string, decision: 'approve' | 'deny') {
-  if (actor.kind !== 'human') throw new Error('Only humans can decide approvals.');
-  actor = assertLocalHuman(actor);
-  return withTeamLock(team, () => {
-    appendUnlocked(team, actor, 'approval.decided', { approvalId, decision });
-    const a = teamState(team).approvals.find((x) => x.id === approvalId);
-    if (!a || a.decidedBy !== actor.id) throw new Error('Approval not applied (unknown id, already decided, or you are not an owner/admin).');
-    return { approvalId, state: a.state };
   });
 }

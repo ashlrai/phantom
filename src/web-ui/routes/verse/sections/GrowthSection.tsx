@@ -41,6 +41,10 @@ import { Cell, Surface, lazyPanel } from '../command/Surface.js';
 import { fleetHistoryQuery, learningQuery } from '../command/surface-data.js';
 import { quietSinceStatus } from '../fleet/dark-since.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { MergeGraph } from '../growth/MergeGraph.js';
+import { GrowthCharts } from '../growth/GrowthCharts.js';
+import { HarnessActions } from '../growth/HarnessActions.js';
+import { CapabilityGapsPanel } from '../growth/CapabilityGapsPanel.js';
 import { OUTCOME_SEGMENTS, costPerMerge, forestRows, harnessSteps, modelOutcomes, weeklyBins } from '../growth/growth-model.js';
 import { HARNESS_ADOPTION_GATE } from '../../../../core/learn/harness-types.js';
 
@@ -122,6 +126,9 @@ export function GrowthSection() {
 
   return (
     <Surface title="Growth" actions={[history, learning].some((q) => q.status === 'refreshing') ? <RefreshIndicator /> : null}>
+      <Cell span={12}><GrowthCharts /></Cell>
+      <Cell span={12}><MergeGraph /></Cell>
+      <Cell span={12}><CapabilityGapsPanel /></Cell>
       {off ? (
         <Cell span={12}>
           <AutonomyOffState state={off} here="growth" title={onlyState ? 'Growth starts with the first fleet run.' : undefined} />
@@ -194,6 +201,7 @@ export function GrowthSection() {
           />
         </Cell>
       )}
+      {learn ? <Cell span={12}><HarnessActions state={learn} onChanged={refetchLearning} /></Cell> : null}
       {keepHarness ? (
         <Cell span={8}>
           {/* The rules live in the tooltip; the card says what it plots. */}

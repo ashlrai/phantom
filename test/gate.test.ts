@@ -26,12 +26,15 @@ const smoke = { backend: ['test/smoke-a.test.ts'], web: ['src/web-ui/smoke-b.tes
 
 describe('parseArgs', () => {
   it('defaults to related mode against the default base', () => {
-    expect(parseArgs([])).toEqual({ full: false, base: null, json: false, failFast: false, help: false });
+    expect(parseArgs([])).toEqual({ full: false, check: false, base: null, json: false, failFast: false, help: false });
   });
 
   it('accepts --base in both spellings, --json, --fail-fast, --full', () => {
     expect(parseArgs(['--base', 'v3.11.0', '--json']).base).toBe('v3.11.0');
     expect(parseArgs(['--base=HEAD~3']).base).toBe('HEAD~3');
+    expect(parseArgs(['--check']).check).toBe(true);
+    expect(() => parseArgs(['--check', '--full'])).toThrow(/cannot be combined/);
+    expect(() => parseArgs(['--check', '--fail-fast'])).toThrow(/no effect/);
     expect(parseArgs(['--full', '--fail-fast'])).toMatchObject({ full: true, failFast: true });
   });
 

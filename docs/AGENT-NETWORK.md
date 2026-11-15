@@ -247,3 +247,82 @@ For direct messages add `im:read`, `im:history` and `message.im`; group DMs add 
 `chat:write.public`, admin scopes, file upload, channel creation or automatic
 joins. Tokens go into Phantom Secrets under the names above; the bridge reads
 `phm_` references only.
+
+## Team org
+
+`phm org` models co-founders joining with their own agents and pooled usage. The
+declarative file is `~/.ashlr/org.toml` (example: `docs/examples/org.toml`): members,
+their machines, agents, the lanes and the percent share of each lane they contribute,
+roles (`leader`, `implementer`, `reviewer`, `researcher`) and `reports_to` lines. It
+holds ids and numbers only, never tokens, mail or messages, and secret-shaped values
+are refused. Spending stays with each member; nothing here changes billing.
+
+- `phm org show --json` prints the org and which lanes each member has opted into.
+- `phm org join --member <id> --machine <id> --lane <lane>[=<share>] --json` is run by
+  each co-founder on their own machine. They sign in to their own provider CLIs there;
+  join reads no auth and sends nothing. Contribution is opt-in per lane: a lane not
+  named stays at zero, and a share can be lowered but never raised above the declared
+  value. If the machine declares a `host`, join refuses to run anywhere else. The
+  record lands in `~/.ashlr/org/joins/`; copy another machine's record there to count it.
+- `phm org plan [--queue jobs.json] --json` proposes assignments of queue work
+  (`[{"id": "RQ-1", "priority": 3, "costPct": 2, "lane": "claude"}]`) and agent roles to
+  maximize merged output per unit of pooled usage. Jobs are ordered by priority per
+  cost; each goes to the opted-in lane with the most urgent remaining budget, using the
+  router's usage and reset data for the contribution's `pool`. A lane's budget is its
+  headroom times the contributed share; a red pool gets none, and a lane with no
+  telemetry is planned with a conservative 25 points of headroom. Leftover work is
+  returned in `unassigned` with a reason.
+
+The leader reads `phm org plan --json` each planning pass and applies it within each
+member's contributed limits. Private data, mail and messages are never pooled.
+
+### Assign responsibilities without expanding authority
+
+The leader starts with `phm org show --json` to identify declared members,
+machines, lane contributions, agent roles and reporting lines. Each co-founder
+uses `phm org join` on their own machine to opt in only the lane share they
+intend to contribute. Join records do not transfer provider sign-in or permit
+another agent to enroll someone else's capacity.
+
+The leader then reads `phm org plan --json`, or supplies an explicit queue
+snapshot with `--queue`, and uses the returned assignments, roles and
+`unassigned` reasons to allocate responsibility within existing contributions.
+Planning is a proposal, not a queue write, reservation, credential grant or
+permission to spend. Check model capability and [lane tool parity](AGENT-TOOLCHAIN.md#lane-tool-parity-audit-rq-delegate-scope-1)
+before turning an assignment into a brief. Use a [tier-scaled scope](QUEUE.md#tier-scaled-session-scope)
+and one mergeable PR per job; account for live claims and open PRs.
+
+Agents may propose owners, role changes, related feature work, queue priorities,
+lane choices and narrower contribution use. The leader can execute already
+authorized work within the member's opted-in limits without a per-job Mason
+approval. New member contributions require that member's own declaration and
+opt-in; a planner cannot raise shares or borrow another member's auth. Team
+access changes use the existing human owner/admin process described in
+[Team](TEAM.md#invite-join-and-remove-a-teammate).
+
+Mason is needed for passwords, 2FA, device approvals and payments, including
+new spending. Security-pinned changes and hold-list work retain their existing
+review requirements; private data cannot be made public. Org membership, a
+plan or a larger session brief grants none of those exceptions. Do not add a
+new approval step for routine responsibility assignment.
+
+Read-only planning example using synthetic ids:
+
+```sh
+phm org show --json
+printf '%s\n' '[{"id":"RQ-FEATURE","priority":1,"costPct":2,"lane":"devin"}]' > /tmp/org-scope-jobs.json
+phm org plan --queue /tmp/org-scope-jobs.json --json
+```
+
+For opt-in on a member's own declared machine, substitute its declared ids:
+
+```sh
+phm org join --member <member-id> --machine <machine-id> --lane devin=20 --json
+```
+
+```bash
+cp docs/examples/org.toml ~/.ashlr/org.toml
+phm org join --member evan-deloria --machine evan-mac --lane claude=20 --json
+echo '[{"id":"RQ-1","priority":3}]' > /tmp/jobs.json
+phm org plan --queue /tmp/jobs.json --json
+```

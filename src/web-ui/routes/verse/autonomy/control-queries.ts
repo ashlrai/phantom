@@ -111,6 +111,8 @@ export interface VerseBacklogItem {
   repo?: string;
   score?: number;
   source?: string;
+  /** Server-annotated latest idea verdict, when one is on file (additive). */
+  verdict?: { verdict?: unknown; reason?: unknown; at?: unknown };
 }
 
 export interface VerseBacklogSummary {

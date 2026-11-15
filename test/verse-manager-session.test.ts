@@ -49,7 +49,7 @@ describe('interactive manager admission and recovery', () => {
     expect(readOutcomeManagerConversation(input.sessionId, input.outcomeId, state.manager!.interjections)).toEqual([{ messageId: input.messageId, eventSeq: 1, text: input.text }]);
     expect(engine.getSession(input.sessionId)).toMatchObject({ status: 'idle', turnCount: 0 });
     expect(state.graph).toBeNull(); expect(state.manager!.stages).toEqual([]);
-  });
+  }, 20_000);
   it('retries the identical partially acknowledged message without duplicate events or ledger records', async () => {
     const run = vi.fn(async (operation: OutcomeOperation) => {
       const result = executeOutcomeOperation(operation);

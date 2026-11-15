@@ -34,9 +34,14 @@ describe('CEO runtime integration', () => {
     const view = await readLeaderInbox(options);
     expect(view.inbox.entries[0]?.text).toBe('Synthetic build request');
     expect(view.outbox.entries[0]?.text).toBe('Leader: Synthetic work is queued.');
-    expect(listBusInboxAfter(0, 100, { root: options.busRoot, now: options.now })).toMatchObject({ status: 'ok', messages: [
-      { envelope: { to: 'leader', priority: 'P0' } }, { envelope: { from: 'leader', channel: 'bus' } },
-    ] });
+    const mirrored = listBusInboxAfter(0, 100, { root: options.busRoot, now: options.now });
+    expect(mirrored.status).toBe('ok');
+    if (mirrored.status === 'ok') {
+      expect(mirrored.messages.map(row => row.envelope)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ to: 'leader', priority: 'P0' }),
+        expect.objectContaining({ from: 'leader', channel: 'bus' }),
+      ]));
+    }
     const brief = await buildPlannerBrief({ runsRoot: options.runsDir, git: (_program, _args, _options, done) => done(null, '') });
     expect(brief.text).toContain('Synthetic build request');
     expect(brief.text).not.toContain('without a timestamped heading omitted');

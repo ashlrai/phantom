@@ -280,3 +280,60 @@ A structured persistence adapter, live authorization, actual source integrity,
 concurrent append protocol, session integration and bounded active recall remain
 future work. See the offline evaluation guide for what is and is not measured
 before increasing automation.
+
+## Verifiable episodic memory (opt-in)
+
+`PHANTOM_EPISODIC_MEMORY=1` enables the standalone
+`EpisodicMemoryStore` in `src/core/memory/episodic.ts`. It defaults off;
+`write` returns `null` and retrieval returns empty entries/rejections without
+reading storage or invoking Git while disabled. Existing context assembly is
+unchanged. EVAL-1 condition C can call the exported
+`retrieveEpisodicMemory(query, store?)` hook.
+
+The store appends private JSONL to `~/.ashlr/memory/episodic.jsonl` (or an
+explicit constructor path). `write` takes `repo`, `repo_dir`, `task_class`,
+repository-relative `files`, `claim`, `approach`, `outcome` and `evidence`.
+It captures HEAD's commit SHA and each committed file's Git blob hash;
+uncommitted working-tree contents are not recorded. Entries contain generated
+`id` and `created_at` fields. Evidence events have `kind`
+(`test`, `typecheck`, `command`, `pr`), `result`, and optional `command`,
+`exit_code` and `pr`. Evidence is caller-supplied tool history, not independently
+executed or an authorization receipt. Failed and partial outcomes are retained
+and retrieved alongside successes. Free-form strings pass through the existing
+secret scrubber before persistence and retrieval; callers must never supply
+credentials or raw environment dumps.
+
+Retrieval requires exact `repo` and `task_class` matches plus at least one exact
+file path overlap. It checks **all** referenced files against a single current
+HEAD revision, even references outside the overlap. Changed or deleted blobs
+exclude the entire entry and produce a `rejected` record with `reason: stale`
+and per-file `blob-changed` or `file-deleted` reasons. A different commit alone
+does not invalidate unchanged blobs. Git/storage errors propagate rather than
+silently treating unverifiable entries as applicable. Accepted entries include
+all recorded evidence. This hook does not automatically inject memory into
+agent prompts; evaluation callers must opt in explicitly.
+
+## Dynamic active memory
+
+`src/core/memory/active.ts` persists screened, caller-reviewed snapshots as
+immutable private files. `saveRepositoryMemory(repo, snapshot)` stores a nonempty,
+single-project snapshot under `~/.phantom/active-memory/<canonical-root-hash>/<project>/`.
+`repositoryMemoryContext(repo, snapshotId, revision, query)` selects that repository
+and project before loading evidence. Worktrees have separate identities; moving a
+repository requires saving a new snapshot. Owner and audience filtering still
+applies inside each snapshot. Scope labels are caller claims, not authorization.
+
+Every retrieval rechecks in-scope `file:` citations against SHA-256 of the entire
+current file. Edits (including uncommitted changes), deletion, missing files,
+escaping symlinks, unsupported locators and files above 1 MiB exclude the affected
+facts and their dependent facts through the existing pack builder. Invalidated
+facts remain on disk for audit; an explicitly authored new revision refreshes them.
+These checks describe the worktree at retrieval time and do not lock later edits.
+
+Active retrieval opts into `preferFresh` ranking: relevance and evidence quality
+come first, then more recent observations break ties. Default pack ranking stays
+stable for existing consumers. Snapshot records never grant execution
+permission. `resumeAgentCheckpointWithMemory` also supports explicit snapshot
+paths with live citation checks; callers using that lower-level API must bind the
+path to the intended repository themselves. Snapshot creation and revision choice
+are explicit; this version does not extract or approve facts automatically.

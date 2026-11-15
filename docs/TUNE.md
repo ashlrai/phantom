@@ -65,3 +65,15 @@ held-out runs, oMLX adapter loading, durable promotion ledger and rollback,
 a weekly routine, and a loopback text-only ideation resource. Live lane changes
 must use the existing owner-reviewed router and registry interfaces. Mock or
 synthetic measurements cannot satisfy the real fleet training acceptance.
+
+## Tool drill foundation
+
+`src/core/tune/tool-drill.ts` generates deterministic tasks from explicitly
+supplied tool fixtures, preferring a CLI when both interfaces are listed. It
+compares answers with fixture expectations; it does not execute tool commands.
+The caller must supply synthetic fixtures, not credentials or live data.
+
+This is a foundation, not a nightly pipeline: portable-profile ingestion, local
+model execution, independently verified teacher corrections and `ft-scrub`
+output are not connected. RQ-FT-EVAL-1 and Security pinning remain prerequisites
+for operating the requested pipeline. No scheduler or training is installed.

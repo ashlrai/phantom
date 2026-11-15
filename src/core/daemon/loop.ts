@@ -375,7 +375,7 @@ import {
   workItemCoverageKey,
 } from '../fleet/proposal-matching.js';
 import { loadConfig, resolveSubscriptionMaxPercent } from '../config.js';
-import { hostname as osHostname } from 'node:os';
+import { homedir, hostname as osHostname } from 'node:os';
 import {
   buildResourceStrategyReport,
   fleetStatusForDirection,
@@ -10428,6 +10428,19 @@ async function runDaemonInEnrollmentScope(
   const residentPublisherRun = { dryRun: opts.dryRun, once: opts.once, standing: standing !== null };
   await startResidentCapacityPublisher(activationCfg, residentPublisherRun);
 
+  // Refresh independently of dispatch ticks; a slow GitHub call cannot overlap itself.
+  let factsBusy = false;
+  const refreshFacts = () => {
+    if (factsBusy) return;
+    factsBusy = true;
+    void import('../fleet/leader-facts.js').then(({ writeLeaderFacts }) =>
+      writeLeaderFacts(process.env.ASHLR_RUNS_DIR || join(homedir(), '.ashlr-runs')),
+    ).catch(() => { console.warn('[ashlr] daemon: leader facts refresh failed'); }).finally(() => { factsBusy = false; });
+  };
+  const factsTimer = !opts.dryRun && !opts.once ? setInterval(refreshFacts, 15 * 60_000) : null;
+  factsTimer?.unref();
+  if (factsTimer) refreshFacts();
+
   if (!opts.dryRun && !activation.capability) {
     reconcilePreparedGeneratedRepairReservations();
   }
@@ -11206,6 +11219,7 @@ async function runDaemonInEnrollmentScope(
   closeLocalWorkObservation();
   transitionToStopping();
   clearInterval(killSwitchPoll);
+  if (factsTimer) clearInterval(factsTimer);
   // Also stops a publisher the standing pass started in a one-shot run:
   // nothing publishes for a daemon that is no longer running.
   if (!opts.dryRun) await stopResidentCapacityPublisher();

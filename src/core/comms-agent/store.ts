@@ -7,7 +7,8 @@ import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { chmod, lstat, mkdir, open, rename, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { join } from 'node:path';
+import { realHome } from '../real-home.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { isCommsTransport, type CommsTransport, type StandingApproval } from './policy.js';
 import { parseInboxDocument, type InboxMessage } from './triage.js';
@@ -72,9 +73,11 @@ export function commsDir(runsDir: string): string {
   return join(runsDir, 'comms-agent');
 }
 
-/** Owner-only. Callers cannot point this at another directory. */
-export function ownerApprovalsPath(home: string = homedir()): string {
-  return join(home, '.ashlr', 'comms-agent', 'standing-approvals.json');
+/** Owner-only. Callers cannot point this at another directory, and `$HOME` is ignored. */
+export function ownerApprovalsPath(home?: string): string {
+  const root = home ?? realHome();
+  if (!root) throw new Error('Account home is unavailable.');
+  return join(root, '.ashlr', 'comms-agent', 'standing-approvals.json');
 }
 
 /** A private regular file owned by this user. Mode 0600 is required where the platform records it. */
@@ -105,30 +108,11 @@ async function assertNoSymlink(path: string): Promise<void> {
   }
 }
 
-async function walkNoSymlink(anchor: string, path: string): Promise<'missing' | 'ok'> {
-  const rest = relative(anchor, path);
-  if (!rest || rest.startsWith('..') || isAbsolute(rest)) throw new Error('Refusing a symlink.');
-  let current = anchor;
-  for (const part of rest.split(sep)) {
-    if (!part || part === '.') continue;
-    current = join(current, part);
-    try {
-      const info = await lstat(current);
-      if (info.isSymbolicLink()) throw new Error('Refusing a symlink.');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'missing';
-      throw error;
-    }
-  }
-  return 'ok';
-}
-
 async function readRegular(path: string): Promise<string> {
-  const info = await lstat(path);
-  if (info.isSymbolicLink()) throw new Error('Refusing a symlink.');
-  if (!info.isFile()) throw new Error('Comms record must be a regular file.');
   const handle = await open(path, constants.O_RDONLY | noFollow);
   try {
+    const info = await handle.stat();
+    if (!info.isFile() || info.isSymbolicLink()) throw new Error('Comms record must be a regular file.');
     return await handle.readFile({ encoding: 'utf8' });
   } finally {
     await handle.close();
@@ -299,33 +283,42 @@ function parseApprovals(text: string): OwnerApprovals {
   }
 }
 
+const emptyApprovals = (reason: ApprovalsReason, accepted: boolean): OwnerApprovals =>
+  ({ approvals: [], owners: [], accepted, reason });
+
+/**
+ * Open `path` with O_NOFOLLOW and judge that handle. A separate lstat is not
+ * the trust decision: the inode that was opened is.
+ */
+export async function readApprovalsFile(path: string): Promise<OwnerApprovals> {
+  let handle;
+  try {
+    handle = await open(path, constants.O_RDONLY | noFollow);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return emptyApprovals('missing', true);
+    if (code === 'ELOOP') return emptyApprovals('symlink', false);
+    throw error;
+  }
+  try {
+    const info = await handle.stat();
+    const trust = privateOwnerFile({
+      isFile: info.isFile(),
+      isSymbolicLink: info.isSymbolicLink(),
+      uid: info.uid,
+      mode: info.mode,
+      nlink: info.nlink,
+    });
+    if (trust !== 'ok') return emptyApprovals(trust, false);
+    const text = await handle.readFile({ encoding: 'utf8' });
+    if (!text.trim()) return emptyApprovals('missing', true);
+    return parseApprovals(text);
+  } finally {
+    await handle.close();
+  }
+}
+
 /** Read the fixed owner file. A missing file grants nothing. An unsafe file is refused. */
 export async function readOwnerApprovals(): Promise<OwnerApprovals> {
-  const file = ownerApprovalsPath();
-  let walked: 'missing' | 'ok';
-  try { walked = await walkNoSymlink(homedir(), file); }
-  catch (error) {
-    if (error instanceof Error && error.message === 'Refusing a symlink.') {
-      return { approvals: [], owners: [], accepted: false, reason: 'symlink' };
-    }
-    throw error;
-  }
-  if (walked === 'missing') return { approvals: [], owners: [], accepted: true, reason: 'missing' };
-  let info;
-  try { info = await lstat(file); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { approvals: [], owners: [], accepted: true, reason: 'missing' };
-    throw error;
-  }
-  const trust = privateOwnerFile({
-    isFile: info.isFile(),
-    isSymbolicLink: info.isSymbolicLink(),
-    uid: info.uid,
-    mode: info.mode,
-    nlink: info.nlink,
-  });
-  if (trust !== 'ok') return { approvals: [], owners: [], accepted: false, reason: trust };
-  const text = await readRegular(file);
-  if (!text.trim()) return { approvals: [], owners: [], accepted: true, reason: 'missing' };
-  return parseApprovals(text);
+  return readApprovalsFile(ownerApprovalsPath());
 }

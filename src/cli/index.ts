@@ -15,6 +15,7 @@
  *   mcp [list|doctor|install]  MCP aggregation gateway and registry management.
  *   radar [list|run|diff]      Observe public documentation and package changes.
  *   observe [--json]           Human observe snapshot: roster, sensors, pulls, bottlenecks.
+ *   growth [--json]            Growth chart series. Missing sources stay no-data-source.
  *   world [--json]             Versioned world model for the scheduler and leaders.
  *   drafts [list|show|approve|reject]  Outbound drafts waiting for your approval.
  *   run "<goal>" [opts]        Local-first agent orchestrator; decompose & execute a goal.
@@ -22,6 +23,7 @@
  *   runs [--json]              List past runs.
  *   signals [--json]          Real repository adoption signals; missing sources stay explicit.
  *   ci-metrics [--json]          Per-repo daily turn-time (red→green) metrics; writes ~/.ashlr/ci-metrics.json.
+ *   main blame --good <sha> --check "<cmd>"  First merge that turned the default branch red (read-only bisect).
  *   friction [--json]         Dispatch→merge friction ledger: 7d counts, evidence, scores, before/after.
  *   pulse [--json] [--window]  Local observability dashboard: tokens, cost, activity.
  *   skills list [--json]       List skills learned from merged PRs (read-only).
@@ -51,7 +53,8 @@
  *   swarms [--json]            List past swarm runs.
  *   tui [--once]               Interactive terminal dashboard (alias: dash).
  *   serve [--port N] [--open]  Local web dashboard + JSON API on 127.0.0.1 (default port 7777).
- *   verse [--port N] [--no-open]  Ashlr Verse console (serve with dispatch on) at /verse/.
+ *   console [--port N] [--no-open]  Phantom console (serve with dispatch on) at /app/. `verse` is the same command.
+ *   verse [--port N] [--no-open]  Alias of `console`; opens /verse/.
  *   issues [--retry] [--json]  Group failed queue jobs by error; --retry queues READY retries.
  *   gh <pr|issue|ci>           Read GitHub PRs / issues / CI status (read-only via gh CLI).
  *   gh pr create               Create a PR (explicit + confirm-gated mutation).
@@ -65,6 +68,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { loadConfig, saveConfig, CONFIG_PATH } from '../core/config.js';
@@ -77,7 +82,7 @@ import { DEVIN_CHAT_TURN_FLAG } from '../core/devin/chat-turn-invocation.js';
 import { VERSE_MCP_STDIO_COMMAND } from '../core/verse/verse-mcp-stdio-invocation.js';
 import { planTidy, applyTidy } from '../core/tidy.js';
 import { openInEditor } from './open.js';
-import { pick } from './picker.js';
+import { pick, selectionFailure } from './picker.js';
 import { classifyRepos } from './status.js';
 import { pad, makeColors } from './ui.js';
 import { authoritySetupPlatformRefusal } from './first-run-guidance.js';
@@ -223,7 +228,7 @@ const loadSkillsAuditWorkerCmd = lazyCmd(
 // ─── M49 fleet control plane + observability ──────────────────────────────────
 
 const loadFleetCmd = lazyCmd(
-  () => import('./fleet.js' as unknown as string),
+  () => import('./fleet-entry.js'),
   (m) => m.cmdFleet as Cmd,
   'fleet command requires src/cli/fleet.ts (M49 module not yet built).',
 );
@@ -457,6 +462,12 @@ const loadVerseCmd = lazyCmd(
   () => import('./verse.js' as unknown as string),
   (m) => m.cmdVerse as Cmd,
   'verse command requires src/cli/verse.ts (Verse module not yet built).',
+);
+
+const loadConsoleCmd = lazyCmd(
+  () => import('./verse.js' as unknown as string),
+  (m) => m.cmdConsole as Cmd,
+  'console command requires src/cli/verse.ts (Verse module not yet built).',
 );
 
 const loadModelsCmd = lazyCmd(
@@ -1185,7 +1196,13 @@ async function cmdGo(args: string[]): Promise<void> {
   }
 
   if (!chosen) {
-    die('Nothing selected.', 1);
+    const pool = candidates.length > 0 ? candidates : idx.items;
+    const failure = selectionFailure('go', {
+      headless: process.stdin.isTTY !== true || process.stdout.isTTY !== true,
+      query,
+      itemCount: pool.length,
+    });
+    die(failure.message, failure.code);
   }
 
   if (openFlag) {
@@ -1656,15 +1673,16 @@ async function cmdOpen(args: string[]): Promise<void> {
   }
 
   if (!chosen) {
-    die('Nothing selected.', 1);
+    const failure = selectionFailure('open', {
+      headless: process.stdin.isTTY !== true || process.stdout.isTTY !== true,
+      query,
+      itemCount: idx.items.length,
+    });
+    die(failure.message, failure.code);
   }
 
   openInEditor(chosen.path, cfg);
   console.log(green('opened: ') + chosen.path);
-  const { planMarkdownOpen, ashlrMdInstallHint } = await import('./open.js');
-  const md = planMarkdownOpen(chosen.path, cfg);
-  if (md.kind === 'ashlr-md') console.log(dim('  via Ashlr MD'));
-  else if (md.reason === 'not-installed') console.log(dim(`  ${ashlrMdInstallHint()}`));
 }
 
 // ─── Command: tidy ────────────────────────────────────────────────────────────
@@ -2071,7 +2089,33 @@ async function main(): Promise<void> {
 
   try {
     switch (cmd) {
+      case 'check': {
+        if (wantsHelp(rest)) {
+          printCoreUsage('check', 'Run development checks in a Phantom checkout.', [
+            ['phm check [--base <ref>] [--json]', 'Run incremental typechecks, cached lint and affected tests'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
+        const script = resolve(process.cwd(), 'scripts/gate.mjs');
+        if (!existsSync(script)) {
+          console.error('phm check: run from the Phantom repository root (scripts/gate.mjs missing)');
+          process.exitCode = 2;
+          break;
+        }
+        const result = spawnSync(process.execPath, [script, '--check', ...rest], { stdio: 'inherit' });
+        if (result.error) console.error(`phm check: ${result.error.message}`);
+        process.exitCode = result.status ?? 1;
+        break;
+      }
       case 'chain': {
+        if (wantsHelp(rest)) {
+          printCoreUsage('chain', 'Synthetic chain checks.', [
+            ['phm chain verify [--json]', 'Run the in-memory chain checks'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
         const { cmdChain } = await import('./chain.js');
         process.exitCode = await cmdChain(rest);
         break;
@@ -2146,7 +2190,26 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'jobs': {
+        const { cmdJobs } = await import('./jobs-empty.js');
+        process.exitCode = await cmdJobs(rest);
+        break;
+      }
+
+      case 'land': {
+        const { cmdLand } = await import('./land.js');
+        process.exitCode = await cmdLand(rest);
+        break;
+      }
+
       case 'metrics': {
+        if (wantsHelp(rest)) {
+          printCoreUsage('metrics', 'Local metrics reports.', [
+            ['phm metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]', 'Estimate idle slot-minutes'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
         const { cmdMetrics } = await import('./metrics.js');
         process.exitCode = await cmdMetrics(rest);
         break;
@@ -2172,6 +2235,16 @@ async function main(): Promise<void> {
 
       case 'tune': {
         process.exitCode = await (await import('./tune.js')).cmdTune(rest);
+        break;
+      }
+      case 'org': {
+        const { cmdOrg } = await import('./org.js');
+        process.exitCode = await cmdOrg(rest);
+        break;
+      }
+      case 'approvals': {
+        const { cmdApprovals } = await import('./approvals.js');
+        process.exitCode = await cmdApprovals(rest);
         break;
       }
       case 'team': {
@@ -2211,11 +2284,25 @@ async function main(): Promise<void> {
       }
 
       case 'checkpoint': {
+        if (wantsHelp(rest)) {
+          printCoreUsage('checkpoint', 'Resume a saved checkpoint.', [
+            ['phm checkpoint resume', 'Resume the saved checkpoint'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
         const { cmdCheckpoint } = await import('./checkpoint.js');
         process.exitCode = await cmdCheckpoint(rest);
         break;
       }
       case 'trail': {
+        if (wantsHelp(rest)) {
+          printCoreUsage('trail', 'Stigmergic file markers.', [
+            ['phm trail claim|beat|release|save|list|show|resume|sweep', 'File markers for stalled work'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
         const { cmdTrail } = await import('./trail.js');
         process.exitCode = await cmdTrail(rest);
         break;
@@ -2378,6 +2465,17 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'caps': {
+        const { cmdCaps } = await import('./caps.js');
+        process.exitCode = await cmdCaps(rest);
+        break;
+      }
+
+      case 'constitution': {
+        const { cmdConstitution } = await import('./constitution.js');
+        process.exitCode = await cmdConstitution(rest);
+        break;
+      }
       case 'spec': {
         const cmdSpec = await loadSpecCmd();
         process.exitCode = await cmdSpec(rest);
@@ -2434,6 +2532,13 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'console': {
+        // The Phantom name for `verse`: same flags, opens /app/.
+        const cmdConsole = await loadConsoleCmd();
+        process.exitCode = await cmdConsole(rest);
+        break;
+      }
+
       case 'models': {
         const cmdModels = await loadModelsCmd();
         process.exitCode = await cmdModels(rest);
@@ -2471,8 +2576,13 @@ async function main(): Promise<void> {
       }
 
       case 'worktrees': {
-        const { cmdWorktrees } = await import('./worktrees.js');
-        process.exitCode = cmdWorktrees(rest);
+        if (rest[0] === 'prune') {
+          const { cmdWorktreesPrune } = await import('./worktrees-prune.js');
+          process.exitCode = await cmdWorktreesPrune(rest.slice(1));
+        } else {
+          const { cmdWorktrees } = await import('./worktrees.js');
+          process.exitCode = cmdWorktrees(rest);
+        }
         break;
       }
 
@@ -2509,6 +2619,12 @@ async function main(): Promise<void> {
       case 'enroll': {
         const cmdEnroll = await loadEnrollCmd();
         process.exitCode = await cmdEnroll(rest);
+        break;
+      }
+
+      case 'ideas': {
+        const { cmdIdeas } = await import('./ideas.js');
+        process.exitCode = await cmdIdeas(rest);
         break;
       }
 
@@ -2549,12 +2665,33 @@ async function main(): Promise<void> {
       }
 
       case 'repos': {
+        if (wantsHelp(rest)) {
+          printCoreUsage('repos', 'Repository ranking.', [
+            ['phm repos rank [--json]', 'Rank enrolled repositories'],
+            ['phm repos proposals [--json]', 'Read ranking proposals'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
         const { cmdReposRank } = await import('./repos-rank.js');
         process.exitCode = cmdReposRank(rest);
         break;
       }
 
+      case 'worklog': {
+        const { cmdWorklog } = await import('./worklog.js');
+        process.exitCode = await cmdWorklog(rest);
+        break;
+      }
+
       case 'fleet': {
+        if (rest[0] === 'usage' && wantsHelp(rest)) {
+          printCoreUsage('fleet usage', 'Read fleet usage.', [
+            ['phm fleet usage [--json]', 'Read fleet usage'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
         // M49: fleet control plane + observability — read-only `status`,
         // plus `pause`/`resume` (kill-switch only).
         const cmdFleet = await loadFleetCmd();
@@ -2570,9 +2707,17 @@ async function main(): Promise<void> {
       }
 
       case 'bus': {
-        // `phm bus ...` is the same shared task board as `phm fleet bus ...`.
-        const cmdFleet = await loadFleetCmd();
-        process.exitCode = await cmdFleet(['bus', ...rest]);
+        // `phm bus send|inbox|ack` is the durable mailbox; `phm bus thread|task`
+        // and `phm fleet bus ...` are the shared task board.
+        const mailboxVerb = rest[0] === 'send' || rest[0] === 'inbox' || rest[0] === 'ack' ||
+          (rest[0] === '--json' && (rest[1] === 'send' || rest[1] === 'inbox' || rest[1] === 'ack'));
+        if (mailboxVerb) {
+          const { cmdBus } = await import('./bus.js');
+          process.exitCode = await cmdBus(rest);
+        } else {
+          const cmdFleet = await loadFleetCmd();
+          process.exitCode = await cmdFleet(['bus', ...rest]);
+        }
         break;
       }
 
@@ -2671,6 +2816,11 @@ async function main(): Promise<void> {
       }
 
       case 'goals': {
+        if (rest.length === 0 || (rest.length === 1 && rest[0] === '--json')) {
+          const { cmdGoals } = await import('./goals-view.js');
+          process.exitCode = await cmdGoals(rest);
+          break;
+        }
         const cmdGoals = await loadGoalsCmd();
         process.exitCode = await cmdGoals(rest);
         break;
@@ -2694,7 +2844,20 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'test': {
+        const { cmdTest } = await import('./test-changed.js');
+        process.exitCode = cmdTest(rest);
+        break;
+      }
+
       case 'verify': {
+        if (wantsHelp(rest)) {
+          printCoreUsage('verify', 'Verify a change.', [
+            ['phm verify', 'Run the verification flow'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
         const { cmdVerify } = await import('./verify.js');
         process.exitCode = await cmdVerify(rest);
         break;
@@ -2770,7 +2933,20 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'growth': {
+        process.exitCode = await (await import('./growth.js')).cmdGrowth(rest);
+        break;
+      }
+
       case 'world': {
+        if (wantsHelp(rest)) {
+          printCoreUsage('world', 'Cached world model.', [
+            ['phm world [--json]', 'Read the cached world model'],
+            ['phm world get <path> [--json]', 'Read one world-model node'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
         process.exitCode = await (await import('./world.js')).cmdWorld(rest);
         break;
       }
@@ -2800,6 +2976,14 @@ async function main(): Promise<void> {
       }
 
       case 'comms': {
+        if ((rest[0] === 'thread' || rest[0] === 'send-owner') && wantsHelp(rest)) {
+          printCoreUsage('comms', 'Owner thread.', [
+            ['phm comms thread [--json]', 'Read the owner thread'],
+            ['phm comms send-owner --text <reply> [--json]', 'Reply to the owner'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
         const cmdComms = await loadCommsCmd();
         process.exitCode = await cmdComms(rest);
         break;
@@ -2893,6 +3077,18 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'library': {
+        const { cmdLibrary } = await import('./library.js');
+        process.exitCode = await cmdLibrary(rest);
+        break;
+      }
+
+      case 'feed': {
+        const { cmdFeed } = await import('./feed.js');
+        process.exitCode = await cmdFeed(rest);
+        break;
+      }
+
       case 'leader': {
         // V3.10: the Leader (Visionary) — show / run / tick / veto (src/cli/leader.ts).
         const cmdLeader = await loadLeaderCmd();
@@ -2969,6 +3165,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'routines': {
+        const { runRoutinesCli } = await import('./routines.js');
+        process.exitCode = await runRoutinesCli(rest);
+        break;
+      }
+
       case 'resource': {
         const { cmdResource } = await import('./resource.js');
         process.exitCode = await cmdResource(rest);
@@ -3006,6 +3208,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'wb': {
+        const { cmdWb } = await import('./wb.js');
+        process.exitCode = await cmdWb(rest);
+        break;
+      }
+
       case 'budget': {
         const { cmdBudget } = await import('./budget.js');
         process.exitCode = await cmdBudget(rest);
@@ -3018,7 +3226,21 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'main': {
+        const { cmdMain } = await import('./main-blame.js');
+        process.exitCode = await cmdMain(rest);
+        break;
+      }
+
       case 'usage': {
+        if (wantsHelp(rest)) {
+          printCoreUsage('usage', 'Usage readings.', [
+            ['phm usage spend [--json]', 'See measured usage and projected unused capacity'],
+            ['phm usage validate', 'Validate a usage reading'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
         // M194: frontier usage table — per-engine calls/tokens/cost + window state.
         const cmdUsage = await loadUsageCmd();
         process.exitCode = await cmdUsage(rest);

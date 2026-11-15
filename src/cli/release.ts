@@ -1,3 +1,4 @@
+import { getReleaseStatus, formatReleaseStatus } from '../core/release/status.js';
 import { releaseStatus, readReleaseState, TRAIN_SCHEMA, type TrainState } from '../core/release/train.js';
 
 export const RELEASE_USAGE = 'phm release status [--json] [--file <release-state.json>]';
@@ -24,7 +25,9 @@ export async function cmdRelease(args: string[]): Promise<number> {
     return 2;
   }
   if (!file) {
-    emit({ schema: TRAIN_SCHEMA, ok: false, reason: 'release-state-unavailable' }, json);
+    const report = await getReleaseStatus();
+    if (json) emit(report, true);
+    else process.stdout.write(`${formatReleaseStatus(report)}\n`);
     return 0;
   }
   try {

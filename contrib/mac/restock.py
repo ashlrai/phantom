@@ -1,11 +1,13 @@
 #!/usr/bin/python3
+import work_market
 # restock.py — Mac-side deterministic restocker for the router queue (no LLM, no network of its own).
 # Installed to ~/.ashlr-runs/bin/restock.py via swap.sh and sha-pinned by selfrun.sh (G1-CODE-PIN); run as
 # `restock.py [--dry-run] [--per-lane N]`. RQ-QUEUEGEN-BOLD-30 + SPEC-AMEND Security #5 + RQ-DEVINROUTEDEFAULTQ7
 # + RQ-QUEUE-AUTOUNPARK-1 (PARKED-DEP / DEPENDENCY GATE / UNPARK). Security must re-pin before live bin/ install.
 import os, re, sys, json, time, fcntl, subprocess, math
-from datetime import datetime
-from launch_precheck import precheck, park, parked as precheck_parked, park_key
+from datetime import datetime, timezone
+from launch_precheck import (precheck, park, parked as precheck_parked, park_key,
+                             attempt_identity, empty_reason, read_attempts, with_prompt)
 import queue_gate
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; EV = R + "/dispatch-events.log"
 gate = queue_gate.read_gate(Q)
@@ -14,9 +16,10 @@ if not gate["allow"]: sys.exit(0)
 DRY = "--dry-run" in sys.argv
 PER = int(sys.argv[sys.argv.index("--per-lane") + 1]) if "--per-lane" in sys.argv else None
 TS = time.strftime("%F %T"); HM = time.strftime("%H:%M")
-CODEX = ["codex-cmp", "codex-personal", "devin", "codex-local"]  # restockable lanes (devin unheld 2:25 PM per Mason; codex-local RQ-LOCAL-LANE)
+CODEX = ["codex-cmp", "codex-personal", "devin", "codex-local", "omlx"]  # restockable lanes (devin unheld 2:25 PM per Mason; codex-local RQ-LOCAL-LANE)
 CODEX.append("claude-api")  # paced by claude-api.py via slots.json target (0 when no credit pool is open)
-GENERAL = [l for l in CODEX if l != "codex-local"]  # rev1.1: local models are not a general fallback; only pool=codex-local goes there
+CODEX.append("claude")  # shared work can be restocked when only the Claude executor has headroom
+GENERAL = [l for l in CODEX if l not in ("codex-local", "omlx")]  # rev1.1: local models are not a general fallback; only explicitly local pools go there
 # RQ-QUEUEGEN-BOLD-30 (SPEC-AMEND Security #5): GS_REPOS is the fleet allowlist — the core-fleet spine that is
 # checked out under ~/Projects/ashlrai (docs/ECOSYSTEM-MAP.md). measurably and ashlar-landing live there too but
 # are not fleet: a directory existing is never enough to make a line selectable, and restock never creates for them.
@@ -38,6 +41,17 @@ DEVIN_T = 10; DEVIN_C = 16
 DVLH = re.compile(r"(?i)\b(?:horizon=long(?:-horizon)?|long[-_]horizon)\b")
 def devin_default(tm, attrs):   # open pool + frontier tier or a long-horizon marker -> devin by default
     return bool(tm and tm.group(1) == "frontier") or bool(DVLH.search(attrs))
+
+def local_fit(attrs, text):
+    """Conservatively admit only bounded, file-specific offline work."""
+    sizes = re.findall(r"(?:^|[,;\s])size<=([0-9]+)(?=[,;\s]|$)", attrs)
+    if len(sizes) != 1 or int(sizes[0]) > 80: return False, "size must be at most 80"
+    files = set(re.findall(r"(?<![\w./-])((?:[\w.-]+/)*[\w.-]+\.[A-Za-z][A-Za-z0-9]{0,9})(?![\w./-])", text))
+    if not 1 <= len(files) <= 2: return False, "name one or two files"
+    if not re.search(r"\boffline\b", text, re.I): return False, "offline work is not explicit"
+    if re.search(r"\b(?:network|browser|internet|https?://|fetch|download|upload|deploy|publish)\b", text, re.I):
+        return False, "network or browser may be needed"
+    return True, "bounded file-specific work"
 def rd(p, d=""):
     try: return open(p).read()
     except Exception: return d
@@ -59,12 +73,15 @@ park_state = {j: e for j, e in park_state.items() if isinstance(e, dict)
 st = json.loads(rd(Q + "/status.json", "{}") or "{}"); lanes = st.get("lanes", {})
 slots = json.loads(rd(Q + "/slots.json", "{}") or "{}")
 hold = set(rd(R + "/HOLD").split())
+for lane, entry in slots.items():
+    if lane not in CODEX and isinstance(entry, dict) and entry.get("executor_ready") is True and isinstance(entry.get("capabilities"), list):
+        CODEX.append(lane); GENERAL.append(lane)
 need = {}
 for l in CODEX:
-    s = lanes.get(l, {}); t = slots.get(l, {}).get("target", DEVIN_T if l == "devin" else 10)
+    s = lanes.get(l, {}); t = slots.get(l, {}).get("target", DEVIN_T if l == "devin" else 0 if l == "claude" else 10)
     if l == "devin" and isinstance(t, int): t = min(t, DEVIN_C)   # leverage ceiling 16 caps restock need
     if slots.get(l, {}).get("held") or l in hold: need[l] = 0; continue
-    if l == "claude-api" and not slots.get(l, {}).get("target"): need[l] = 0; continue   # paced to 0: no credit pool open
+    if l in ("claude-api", "claude", "omlx") and not slots.get(l, {}).get("target"): need[l] = 0; continue   # disabled executor or no credit pool open
     free = max(t - s.get("running", 0), 0)
     want = PER if PER is not None else 3 * max(free, 4)
     need[l] = want
@@ -83,6 +100,15 @@ for i, l in enumerate(lines):
         for n in re.findall(r"(?:pull/|PR=|#)(\d+)", l): held_pr.add((hr.group(1) if hr else "*", n))
         for rr, n in re.findall(r"github\.com/[A-Za-z0-9._-]+/([A-Za-z0-9._-]+)/pull/(\d+)", l): held_pr.add((rr, n))
     if m2: recs.append((i, m2.group(1), m2.group(2), m2.group(3), l))
+# Match only identical author requests for one explicit test file. File identity
+# alone is not evidence that two requests have the same acceptance criteria.
+def single_case_group(job, attrs, text):
+    if not re.search(r"A\d{6,}Q8$", job) or re.search(r"guardian", job + " " + attrs + " " + text, re.I): return None
+    if not re.search(r"\b(?:single|one|1)[ -](?:test[ -])?case\b", text, re.I): return None
+    repo = re.search(r"\brepo=(?:ashlrai/)?([a-z0-9-]+)", attrs)
+    files = set(re.findall(r"(?<![\w./-])((?:[\w.-]+/)+[\w.-]+(?:\.test|\.spec)\.[A-Za-z0-9]+)\b", text))
+    return (repo.group(1), next(iter(files)), " ".join(attrs.split()), " ".join(text.split())) if repo and len(files) == 1 else None
+
 claimed = {x.split("\t")[0] for x in rd(Q + "/claimed.tsv").splitlines() if x}
 ready_raw = [x for x in rd(Q + "/ready.tsv").splitlines() if x.strip() and not x.strip().startswith("#")]
 # RQ-QUEUE-AUTOUNPARK-1: PARKED-DEP[.lane] may lead the row (fleet parked status-first) or sit in the lane column.
@@ -97,6 +123,13 @@ def ready_job_id(line):
     if PARK_DEP.match(f[0]) or PARK_RATE.match(f[0]): return f[1] if len(f) > 1 else None
     return f[0]
 inq = {j for j in (ready_job_id(x) for x in ready_raw) if j}
+# Include active rows from earlier passes so the group survives restock cycles.
+quality_groups = set()
+for raw in lines:
+    m = re.match(r"^- (?:READY|CLAIMED) (?:\S+ \S+ )?([A-Za-z0-9._-]+)(?: r\d+)? \((.*?)\):\s*(.*)$", raw)
+    if m and m.group(1) in (inq | claimed):
+        group = single_case_group(*m.groups())
+        if group: quality_groups.add(group)
 # Count only distinct launchable rows. Dispatcher status can count parked or malformed
 # rows and is a previous-tick snapshot, so it cannot measure replenishment demand.
 queue_diagnostics = {"parked": 0, "invalid": 0, "empty_prompt": 0, "duplicate": 0}
@@ -117,17 +150,44 @@ for row in ready_raw:
     if f[0] in queue_seen:
         queue_diagnostics["duplicate"] += 1; continue
     queue_seen.add(f[0]); need[f[2]] = max(need[f[2]] - 1, 0)
-merged = set(); completed = set()
+merged = set(); completed = set(); recent_outcomes = {}
 for x in rd(R + "/metrics/jobs.jsonl").splitlines():
     try: d = json.loads(x)
     except Exception: continue
     if not isinstance(d, dict): continue
+    job = d.get("job")
+    stamp = d.get("ts", d.get("timestamp", d.get("at")))
+    try:
+        at = datetime.fromisoformat(stamp.replace("Z", "+00:00")) if isinstance(stamp, str) else None
+        epoch = at.timestamp() if at and at.tzinfo else None
+    except (ValueError, OverflowError): epoch = None
+    outcome = str(d.get("state", d.get("outcome", ""))).upper()
+    empty = d.get("empty") is True or outcome in ("EMPTY", "DONE-NOOP")
+    success = d.get("empty") is False or outcome == "MERGED"
+    if isinstance(job, str) and epoch is not None and 0 <= time.time() - epoch < 24 * 3600 and (empty or success):
+        previous = recent_outcomes.get(job)
+        if previous is None or epoch > previous[0]: recent_outcomes[job] = (epoch, empty and not success)
     if d.get("event") == "outcome" and d.get("state") == "MERGED" and isinstance(d.get("job"), str):
         merged.add(d["job"])
         repo = d.get("repo")
         if repo is None or isinstance(repo, str):
             # Legacy outcomes omit repo; job IDs are fleet-wide identities.
             completed.add((repo.removeprefix("ashlrai/") if repo is not None else None, d["job"]))
+# A merged outcome plus the original identical task is evidence for suppressing
+# a later copy. Missing or ambiguous history never proves completion.
+completed_groups = set(); group_outcomes = {}
+for raw in lines:
+    m = re.match(r"^- (?:READY|CLAIMED|DONE|MERGED|LANDED) ([A-Za-z0-9._-]+)(?: r\d+)? \((.*?)\):\s*(.*)$", raw)
+    if m:
+        group = single_case_group(*m.groups())
+        if group and m.group(1) in recent_outcomes:
+            group_outcomes.setdefault(group, {})[m.group(1)] = recent_outcomes[m.group(1)]
+        if group and ((group[0], m.group(1)) in completed or (None, m.group(1)) in completed):
+            completed_groups.add(group)
+# Two latest distinct attempts were empty: cool down only this exact request.
+# A later success or expiry of the evidence permits a fresh attempt.
+empty_groups = {group for group, outcomes in group_outcomes.items()
+                if len(outcomes) >= 2 and all(empty for _, empty in sorted(outcomes.values(), reverse=True)[:2])}
 try: ps = subprocess.run(["ps", "-axo", "command="], capture_output=True, text=True).stdout
 except Exception: ps = ""   # sandboxed callers may refuse ps; the worktree-dir check in busy() still applies
 def landed(dep): return dep in merged or status.get(dep, "") in ("DONE", "MERGED", "LANDED")
@@ -160,20 +220,40 @@ def parse_parked_dep(line):
         return f[0], f[1], lane, f[3], f[4], line
     return None
 def prio(a): m = re.search(r"\bP(\d)\b", a); return int(m.group(1)) if m else 3
+SCOPE_BUDGETS = {
+    "frontier": {"maxFiles": 40, "maxLines": 600, "maxAreas": 8},
+    "work": {"maxFiles": 15, "maxLines": 200, "maxAreas": 1},
+    "mid": {"maxFiles": 8, "maxLines": 120, "maxAreas": 1},
+    "fast": {"maxFiles": 2, "maxLines": 80, "maxAreas": 1},
+}
 def prompt_body(j, repo, l, tier, attrs, text, gate=None):
+    scope = SCOPE_BUDGETS["fast" if l == "codex-local" else tier]
+    ambition = ("Combine related concerns needed for the complete feature in one PR. "
+                if tier == "frontier" and l != "codex-local" else "Keep the brief focused within this tier's budget. ")
     gate_line = ("DEPENDENCY GATE: %s\n\n" % ", ".join(gate)) if gate else ""
     pin_line = ("\n%s\n" % PIN_MERGE) if PIN_MERGE in (attrs + " " + text) else ""
     return (f"Job {j} (pool {l}, tier {tier}, repo {repo}). Task from the Ashlr router queue, verbatim:\n\n"
             f"{gate_line}{j} ({attrs}): {text}\n\n"
-            "Treat the task as the minimum: be ambitious and high-leverage, and finish one complete, self-contained, mergeable change "
-            "that meets every acceptance item above, with new or updated tests that you run. Never print environment variables, secrets or tokens; "
+            f"SCOPE: up to {scope['maxFiles']} files, size<={scope['maxLines']} changed lines. "
+            "Explicit narrower task limits and named-file restrictions take precedence. "
+            f"{ambition}Finish the complete feature, not the minimum demo; add tests, run them, and update docs. "
+            "Deliver one complete, self-contained, mergeable PR per job. "
+            "If the full goal cannot be verified, ship the smallest correct, useful part with honest output "
+            "(for example, age: unknown) and list the gap in BRIDGE_NOTES.md for the PR body. Use EMPTY only when already done or truly impossible. "
+            "Never print environment variables, secrets or tokens; "
             "solve any secrets need through Phantom Secrets and any MCP/CLI access need through Locus. Do not commit or push, and do not edit .github/."
             f"{pin_line}")
-noops = load_noops(); seen_pr = set(); seen_file = set()   # seen_*: PRs / target files already picked this pass
+noops = load_noops(); seen_pr = set()   # target PRs already picked this pass
 skips = {}; picks = {l: [] for l in CODEX}; dep_parks = []; done = []; checked = set(); task_keys = {}; ts = int(time.time())   # after-unlanded -> PARKED-DEP rows this pass
 # Bound network prechecks while allowing skipped rows to backfill lane demand.
 pc_left = max(20, sum(need.values()))
 def skip(j, why): skips[why] = skips.get(why, 0) + 1
+empty_attempts = read_attempts(R); empty_bases = {}
+def empty_gate(j, repo, prompt):
+    if repo not in empty_bases: empty_bases[repo] = attempt_identity(repo, "", H)
+    base = empty_bases[repo]
+    if not base: return None
+    return empty_reason(j, with_prompt(base, j, prompt), empty_attempts, ts)
 # RQ-QUEUE-AUTOUNPARK-1: each tick, unpark PARKED-DEP rows whose DEPENDENCY GATE ids are all MERGED in jobs.jsonl.
 # Unpark rewrites the ready.tsv row only — the prompt body (including "no merge without Security pin") is untouched.
 unparks = []   # (job, deps, ready_line, launch_line)
@@ -236,8 +316,13 @@ seclist = []
 for i, j, a2, t2, raw2 in recs:
     if SEC.search(NEGS.sub("", raw2)): seclist.append((i, j)); skip(j, "hold-security")
 parked = {i for i, j in seclist}
-# under the bold floor bold lines pick first, then P-level, then line order; at/above it the order is unchanged
-ordk = (lambda r: (not ISBOLD.search(r[2]), prio(r[2]), r[0])) if prefer_bold else (lambda r: (prio(r[2]), r[0]))
+# Impact and priority precede bold/repository preferences at both admission boundaries.
+def market_rank(record):
+    try: rank = work_market.priority(work_market.from_envelope(record[2]))
+    except (ValueError, TypeError): rank = (1000001, 0)
+    return (*rank, not bool(ISBOLD.search(record[2])) if prefer_bold else False,
+            bool(re.search(r"A\d{6,}Q8$", record[1])))
+ordk = lambda r: (*market_rank(r), r[0])
 def ranked_records(records):
     ordered = sorted(records, key=ordk)
     try:
@@ -281,9 +366,12 @@ def ranked_records(records):
     except (ValueError, KeyError, TypeError, AttributeError, ZeroDivisionError, OverflowError):
         return ordered
 
-for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re.search(r"A\d{6,}Q8$", r[1]))):
+picked_specs = {}
+for i, j, attrs, text, raw in sorted(ranked_records(recs), key=market_rank):
     if all(len(picks[l]) >= need[l] for l in CODEX): break
     if i in parked: continue
+    try: spec = work_market.from_envelope(attrs)
+    except (ValueError, TypeError): skip(j, "invalid-requirements"); continue
     if re.search(r"(?i)not bridge|owner-authored|\bowners?\b|RETIRED|folds into|reuse the kept worktree|repos=|standing|tier=local", attrs + " " + text[:200]): skip(j, "not-bridge/fold/kept-reuse"); continue
     if not re.match(r"^[A-Z]", j): skip(j, "bad-id"); continue
     if re.search(r"sub of " + re.escape(j) + r"\b", RQ_TXT): skip(j, "split-into-subs"); continue
@@ -295,17 +383,21 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re
     if not rm:
         for tok in [t.strip() for t in attrs.split(",")]:
             if tok in GS_REPOS: rm = re.match(r"(.*)", tok); break
-    pm = re.search(r"pool=([a-z-]+)", attrs); tm = re.search(r"tier=([a-z]+)", attrs)
+    pm = re.search(r"pool=([a-z-]+)", attrs); tm = re.search(r"(?:^|[,;\s])tier=([^,;\s]*)", attrs)
+    tiers = re.findall(r"(?:^|[,;\s])tier=([^,;\s]*)", attrs)
+    if any(t not in SCOPE_BUDGETS for t in tiers) or len(set(tiers)) > 1: skip(j, "unknown-tier"); continue
     if rm and rm.group(1) not in GS_REPOS: skip(j, "non-fleet-repo"); continue
     if not rm or not os.path.isdir(H + "/Projects/ashlrai/" + rm.group(1)): skip(j, "no-repo"); continue
     pool = pm.group(1) if pm and pm.group(1) != "any" else "any"
+    if pool not in CODEX: pool = "any"   # unknown enqueue hints never strand shared work
     if pool == "any" and devin_default(tm, attrs): pool = "devin"   # frontier/long-horizon -> devin by default
     if pool == "any": pool = max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
     if pool not in CODEX: skip(j, "lane-" + pool); continue
     if pool == "codex-local":
-        size = re.search(r"(?:^|[,;\s])size<=([0-9]+)(?=[,;\s]|$)", attrs)
-        if not size or int(size.group(1)) > 60:
-            skip(j, "local-size"); continue
+        fits, reason = local_fit(attrs, text)
+        if not fits:
+            pool = max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
+            print("LOCAL_FIT %s: %s; fallback=%s" % (j, reason, pool), file=sys.stderr)
     prp = set(re.findall(r"github\.com/[A-Za-z0-9._-]+/([A-Za-z0-9._-]+)/pull/(\d+)", raw))
     prp |= {(rm.group(1), n) for n in re.findall(r"(?:pull/|PR=|#)(\d+)", attrs + " " + text)}
     if prp & held_pr or any(("*", n) in held_pr for _, n in prp): skip(j, "hold-list-pr"); continue
@@ -321,7 +413,7 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re
                 if d is None or d == j: deps.append(None); continue
             deps.append(d)
     if None in deps: skip(j, "bad-dep"); continue
-    tier = tm.group(1) if tm and tm.group(1) in ("frontier", "work", "mid", "fast") else "work"
+    tier = tm.group(1) if tm else "work"
     # RQ-QUEUE-AUTOUNPARK-1: unmet after= deps park as PARKED-DEP (status-first) with a DEPENDENCY GATE prompt
     # instead of silently skipping; restock unparks them once jobs.jsonl shows every id MERGED.
     if any(not re.match(r"^[A-Za-z0-9._-]+$", d) or not landed(d) for d in deps):
@@ -334,34 +426,50 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re
     key = park_key(raw, ""); task_keys[j] = key
     if noop_parked(noops, j, key, ts): skip(j, "noop-streak"); continue
     if precheck_parked(park_state, j, key, ts): skip(j, "precheck-parked"); continue
-    # dedupe by target PR and target file: sibling lines for the same PR or file would retire as NOOP together
-    fm = re.search(r"\bfile=(\S+)", attrs + " " + text); fkey = (rm.group(1), fm.group(1)) if fm else None
+    # A target PR identifies the same repair; a file alone does not.
     if prp & seen_pr: skip(j, "dup-pr"); continue
-    if fkey and fkey in seen_file: skip(j, "dup-file"); continue
     if j in checked: skip(j, "dup-line"); continue
+    quality_group = single_case_group(j, attrs, text)
+    if quality_group and quality_group in completed_groups:
+        skip(j, "acceptance-already-merged"); continue
+    if quality_group and quality_group in empty_groups:
+        skip(j, "recent-empty-streak"); continue
+    if quality_group and quality_group in quality_groups:
+        skip(j, "duplicate-single-case-test-file"); continue
     # balance codex lanes: line pool first, else the lane with more unmet need (cmp wins ties)
-    lane = pool if len(picks[pool]) < need[pool] or pool == "codex-local" else max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
+    lane = pool if len(picks[pool]) < need[pool] or pool in ("codex-local", "omlx") else max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
     if len(picks[lane]) >= need[lane]: continue
+    prompt = prompt_body(j, rm.group(1), lane, tier, attrs, text)
+    reason = empty_gate(j, rm.group(1), prompt)
+    if reason:
+        skip(j, reason)
+        if not DRY:
+            with open(R + '/metrics/jobs.jsonl', 'a') as stream:
+                stream.write(json.dumps(dict(event='skipped_empty', job=j, repo=rm.group(1),
+                                             lane=lane, reason=reason,
+                                             ts=time.strftime('%Y-%m-%dT%H:%M:%S%z'))) + '\n')
+        continue
     if pc_left <= 0: break
     checked.add(j); pc_left -= 1
-    pc = precheck(j, rm.group(1), prompt_body(j, rm.group(1), lane, tier, attrs, text), H, R)
+    pc = precheck(j, rm.group(1), prompt, H, R)
     if pc and pc[0] in (11, 12, 13):
         # Open PRs and legacy existence heuristics are not acceptance evidence.
         # Keep the author row READY; unchanged retries share dispatch's backoff.
-        park(park_state, j, key, ts); skip(j, "precheck-parked"); continue
+        park(park_state, j, key, ts, pc[0], pc[1]); skip(j, "precheck-parked"); continue
     park_state.pop(j, None)
     if pc:
         done.append((i, j, pc)); skip(j, "done-noop"); continue
     picks[lane].append((j, rm.group(1), lane, tier, attrs, text, i))
+    picked_specs[j] = spec
+    if quality_group: quality_groups.add(quality_group)
     seen_pr |= prp
-    if fkey: seen_file.add(fkey)
 out = []
 for lane in CODEX:
     for j, repo, l, tier, attrs, text, i in picks[lane]:
         p = prompt_body(j, repo, l, tier, attrs, text)
         pf = f"{Q}/prompts/{j}.md"
         out.append((j, repo, l, tier, pf, p, i))
-out.sort(key=lambda row: bool(re.search(r"A\d{6,}Q8$", row[0])))
+out.sort(key=lambda row: (*work_market.priority(picked_specs[row[0]]), bool(re.search(r"A\d{6,}Q8$", row[0]))))
 out = out[:gate["allow"]]
 dep_out = []   # PARKED-DEP rows to append (job, repo, lane, tier, pf, prompt, i, deps)
 for j, repo, l, tier, attrs, text, i, deps in dep_parks:
@@ -380,6 +488,8 @@ for j, ids, _old, _new in ([] if "--json" in sys.argv else unparks): print(("DRY
 for j, repo, l, tier, pf, p, i, deps in ([] if "--json" in sys.argv else dep_out): print(("DRY " if DRY else "") + "PARKED-DEP\t%s\tdeps=%s" % (j, ",".join(deps)))
 if "--json" in sys.argv:
     print(json.dumps({"dry_run": DRY, "queued": len(out), "done_noop": [j for _, j, _ in done], "skips": skips,
+                      "jobs": [{"job": j, "repo": repo, "tier": tier, "requirements": picked_specs[j]} for j, repo, _l, tier, *_tail in out],
+                      "scope_budgets": SCOPE_BUDGETS,
                       "queue_diagnostics": queue_diagnostics, "parked_diagnostics": parked_diagnostics,
                       "unpark": [{"job": j, "deps": ids} for j, ids, _, _ in unparks],
                       "parked_dep": [{"job": j, "deps": deps} for j, *_r, deps in dep_out]}))
@@ -494,7 +604,8 @@ if out or unparks or dep_out or rate_candidates:
             for x in snap:
                 x = repl.pop(x, x)
                 if x.strip(): f.write(x + "\n")
-            for j, repo, l, tier, pf, p, i in out: f.write("\t".join([j, repo, l, tier, pf]) + "\n")
+            for j, repo, l, tier, pf, p, i in out:
+                f.write("\t".join([j, repo, l, tier, pf, json.dumps(picked_specs[j], separators=(",", ":"))]) + "\n")
             for j, repo, l, tier, pf, p, i, deps in dep_out:
                 f.write("\t".join(["PARKED-DEP.%s" % l, j, l, tier, repo, pf]) + "\n")
         os.replace(Q + "/ready.tsv.tmp", Q + "/ready.tsv")

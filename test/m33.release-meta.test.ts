@@ -288,6 +288,7 @@ describe('release workflow', () => {
     expect(releaseScripts['check:pack-contracts']).toBe([
       'node --test',
       '.github/tests/ci-pack-smoke.test.mjs',
+      '.github/tests/release-isolated-tree.test.mjs',
       '.github/tests/desktop-update-finalizer.test.mjs',
       '.github/tests/first-paint-built.test.mjs',
       '.github/tests/ci-qualification-lane.test.mjs',

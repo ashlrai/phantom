@@ -45,6 +45,7 @@ function expectedExportName(filename: string): string {
 
 const ALLOW_LIST: Record<string, string> = {
   'fleet-subcommand-resolve.ts': 'helper — resolves verb names, not a CLI verb',
+  'fleet-pr-snapshot.ts': 'helper — shared open-PR snapshot reader; not a pr-snapshot verb',
   'fleet-subcommand-registry.ts': 'generated registry — populated by gen-fleet-registry.mjs',
   'fleet-planner-tick.test.ts': 'test stub — exported functions are test fixtures',
   'fleet-ready-supply.test.ts': 'test stub — exported functions are test fixtures',

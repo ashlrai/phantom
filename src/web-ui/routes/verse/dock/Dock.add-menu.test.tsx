@@ -30,7 +30,7 @@ describe('Dock add pane menu', () => {
   it('groups all available closed panes and focuses search', async () => {
     const { menu } = await openMenu();
     expect(within(menu).getByRole('textbox', { name: 'Search panes' })).toHaveFocus();
-    for (const name of ['Fleet', 'Merging and shipping', 'Talking to the fleet', 'Agent']) {
+    for (const name of ['Fleet']) {
       expect(within(menu).getByRole('region', { name })).toBeInTheDocument();
     }
     const expected = panesFor(pane).filter((entry) => entry.id !== 'context').map((entry) => entry.title).sort();

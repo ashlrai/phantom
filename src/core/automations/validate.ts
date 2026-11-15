@@ -5,7 +5,7 @@
  * valid or ignored. Unknown keys are refused, never dropped silently.
  */
 import { parsePlaybookRefText } from '../playbooks/types.js';
-import { parseRrule } from './rrule.js';
+import { nextOccurrence, parseRrule } from './rrule.js';
 import {
   AUTOMATION_DEFAULTS,
   AUTOMATION_ID_PATTERN,
@@ -294,4 +294,33 @@ export function normaliseAutomation(
     createdAt,
     updatedAt,
   };
+}
+
+/** Radar checks public changelogs at most this often (minutes); tighter schedules are refused. */
+export const RADAR_MIN_INTERVAL_MINUTES = 6 * 60;
+/** Occurrences sampled from `now` when measuring the gap between runs. */
+const RADAR_SAMPLE_WINDOW_MS = 14 * 24 * 60 * 60_000;
+
+/**
+ * Refuse a radar schedule that fires less than six hours apart. The gap is
+ * measured over two weeks of occurrences from `now`, so `FREQ=HOURLY;INTERVAL=5`
+ * and `FREQ=HOURLY;BYMINUTE=0,30` both fail, while `FREQ=HOURLY;BYHOUR=0,6,12,18`
+ * passes. A rule with fewer than two occurrences in the window is sparser than
+ * any floor and passes.
+ */
+export function assertRadarSchedule(rrule: unknown, now: Date = new Date()): void {
+  const parsed = parseRrule(rrule);
+  if (!parsed.ok) return fail(parsed.error);
+  const end = now.getTime() + RADAR_SAMPLE_WINDOW_MS;
+  let previous: Date | null = null;
+  let minGapMinutes = Infinity;
+  let at = nextOccurrence(parsed.rule, now);
+  while (at && at.getTime() <= end) {
+    if (previous) minGapMinutes = Math.min(minGapMinutes, (at.getTime() - previous.getTime()) / 60_000);
+    previous = at;
+    at = nextOccurrence(parsed.rule, at);
+  }
+  if (minGapMinutes < RADAR_MIN_INTERVAL_MINUTES) {
+    fail(`Radar runs at most every 6 hours; this schedule fires ${Math.round(minGapMinutes)} minutes apart at its tightest.`);
+  }
 }

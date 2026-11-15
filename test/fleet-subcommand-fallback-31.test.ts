@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveFleetSubcommand, isModuleNotFound } from '../src/cli/fleet-subcommand-resolve.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 
 // This module has no explicit dispatch line: exercise the real fallback import.
 vi.mock('../src/cli/fleet-job-read.js', () => ({

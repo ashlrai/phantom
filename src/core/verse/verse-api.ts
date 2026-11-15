@@ -160,6 +160,7 @@ import {
   VERSE_MEMORY_BODY_MAX_BYTES,
 } from './types.js';
 import { handleVerseEventsSse, VERSE_EVENTS_PATH_RE, VERSE_SESSION_ID_RE } from './verse-stream.js';
+import { handleUiAppearance, VERSE_UI_APPEARANCE_PATH } from './ui-appearance-api.js';
 import type { ApiModule } from './api-modules.js';
 import { REASONING_API_PREFIX } from '../reasoning/types.js';
 import { VERSE_FLEET_CONTROL_HOLDS_PATH } from '../fleet/runs-lane-hold.js';
@@ -252,8 +253,10 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   { id: 'fleet-memory', load: async () => (await import('./fleet-memory-api.js')).handleFleetMemoryApi },
   // Local desktop app status and bounded launch, focus and restart actions.
   { id: 'fleet-inbox-acks', load: async () => (await import('./fleet-inbox-acks-api.js')).handleFleetInboxAcksApi },
-  { id: 'fleet-apps', load: async () => (await import('./fleet-apps-api.js')).handleFleetAppsApi },
+  { id: 'fleet-apps', load: async () => (await import('./fleet-apps-recovery-api.js')).handleFleetAppsRecoveryApi },
   { id: 'fleet-standby' as MountedApiModuleId, load: async () => (await import('./fleet-standby-api.js')).handleFleetStandbyApi },
+  // Teammate iMessage reply age: GET /api/verse/comms/teammate-reply-age (core/verse/comms-teammate-reply-age-api.ts); read-only, times and flags only.
+  { id: 'comms-teammate-reply-age' as MountedApiModuleId, load: async () => (await import('./comms-teammate-reply-age-api.js')).handleCommsTeammateReplyAgeApi },
   // Self-tick last-run record: GET /api/verse/fleet/self-tick (core/verse/fleet-self-tick-api.ts); read-only, never takes the tick lock.
   { id: 'fleet-self-tick', load: async () => (await import('./fleet-self-tick-api.js')).handleFleetSelfTickApi },
   // Fleet graph registry: GET /api/verse/fleet/graph (core/verse/fleet-graph-api.ts); read-only.
@@ -263,6 +266,7 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   // (core/verse/fleet-main-red-age-api.ts); read-only.
   { id: 'fleet-main-red-age', load: async () => (await import('./fleet-main-red-age-api.js')).handleFleetMainRedAgeApi },
   { id: 'fleet-merge-pace' as MountedApiModuleId, load: async () => (await import('./merge-pace-api.js')).handleMergePaceApi },
+  { id: 'fleet-doctor' as MountedApiModuleId, load: async () => (await import('./fleet-doctor-api.js')).handleFleetDoctorApi },
   { id: 'fleet-landed-closes' as MountedApiModuleId, load: async () => (await import('./landed-closes-api.js')).handleLandedClosesApi },
   { id: 'fleet-slow-prs' as MountedApiModuleId, load: async () => (await import('./slow-prs-api.js')).handleSlowPrsApi },
 ];
@@ -478,6 +482,39 @@ const WORKBENCH_IMPORTS: Readonly<Record<WorkbenchRouteFamilyId, () => Promise<W
   'fleet-comms-status': async () => {
     try { return (await import('./fleet-comms-status-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-comms-status-api.js'); }
   },
+  'fleet-runtime-identity': async () => {
+    try { return (await import('./fleet-runtime-identity-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-runtime-identity-api.js'); }
+  },
+  'fleet-recheck': async () => {
+    try { return (await import('./fleet-recheck-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-recheck-api.js'); }
+  },
+  'fleet-coordination-claims': async () => {
+    try { return (await import('./fleet-coordination-claims-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-coordination-claims-api.js'); }
+  },
+  'fleet-work-board': async () => {
+    try { return (await import('./fleet-work-board-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-work-board-api.js'); }
+  },
+  'fleet-library-files': async () => {
+    try { return (await import('./fleet-library-files-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-library-files-api.js'); }
+  },
+  'fleet-handoffs': async () => {
+    try { return (await import('./fleet-handoffs-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-handoffs-api.js'); }
+  },
+  'owner-thread': async () => {
+    try { return (await import('./owner-thread-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'owner-thread-api.js'); }
+  },
+  'gmail-triage': async () => {
+    try { return (await import('./gmail-triage-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'gmail-triage-api.js'); }
+  },
+  'release-stages': async () => {
+    try { return (await import('./release-stages-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'release-stages-api.js'); }
+  },
+  'comms-inbox': async () => {
+    try { return (await import('./comms-inbox-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'comms-inbox-api.js'); }
+  },
+  'comms-teammate-reply': async () => {
+    try { return (await import('./comms-teammate-reply-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'comms-teammate-reply-api.js'); }
+  },
   'agent-roster': async () => {
     try { return (await import('./agent-roster-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'agent-roster-api.js'); }
   },
@@ -525,6 +562,9 @@ const WORKBENCH_IMPORTS: Readonly<Record<WorkbenchRouteFamilyId, () => Promise<W
   },
   ops: async () => {
     try { return (await import('./ops-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'ops-api.js'); }
+  },
+  goals: async () => {
+    try { return (await import('./goals-create-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'goals-create-api.js'); }
   },
 };
 
@@ -2076,6 +2116,11 @@ export async function handleVerseApi(
       sendJson(res, 503, { error: 'Usage resources are unavailable.' });
       return true;
     }
+    if (path === `${VERSE_API_PREFIX}/whats-new` || path.startsWith(`${VERSE_API_PREFIX}/whats-new/`)) {
+      // Read-only release notes; unknown children 404 here rather than evaluating the mounted modules.
+      if (path !== `${VERSE_API_PREFIX}/whats-new`) { sendJson(res, 404, { error: 'Whats-new route not found.' }); return true; }
+      return (await import('./whats-new-api.js')).handleWhatsNewApi(req, res, path, method);
+    }
     // ── GET /api/verse/bootstrap ─────────────────────────────────────────
     if (path === `${VERSE_API_PREFIX}/bootstrap` && method === 'GET') {
       const engine = await getVerseEngine();
@@ -2518,6 +2563,8 @@ export async function handleVerseApi(
       sendJson(res, 200, engine.renameSession(id, title.trim()));
       return true;
     }
+
+    if (path === VERSE_UI_APPEARANCE_PATH) return handleUiAppearance(ctx, req, res, method);
 
     // ── workbench families (V3.10 Tracks B + C) ─────────────────────────
     // After every V1 route, like the modules below. Prefix-routed: a path a

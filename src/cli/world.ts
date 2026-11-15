@@ -15,11 +15,11 @@ export async function cmdWorld(args: string[]): Promise<number> {
   const json = args.includes('--json');
   const force = args.includes('--refresh');
   const rest = args.filter((arg) => arg !== '--json' && arg !== '--refresh');
-  if (rest.length === 0 && (args.includes('--help') || args.includes('-h'))) {
+  if (args.includes('--help') || args.includes('-h')) {
     console.log(json ? JSON.stringify({ usage: USAGE }) : USAGE);
     return 0;
   }
-  if (args.includes('--help') || args.includes('-h') || rest.some((arg) => arg.startsWith('-'))) {
+  if (rest.some((arg) => arg.startsWith('-'))) {
     console.error(USAGE);
     return 2;
   }

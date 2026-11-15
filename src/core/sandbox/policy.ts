@@ -34,14 +34,14 @@ import {
   type Stats,
 } from 'node:fs';
 import { lstat as lstatAsync, readdir as readdirAsync, realpath as realpathAsync } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { basename, dirname, isAbsolute, join, resolve, win32 } from 'node:path';
+import { basename, dirname, join, resolve, win32 } from 'node:path';
 import {
   currentProcessStartIdentity,
   type ProcessStartIdentitySource,
 } from '../fleet/local-store-lock.js';
 import type { Enrollment } from '../types.js';
 import { fsyncDirectory } from '../util/durability.js';
+import { realHome } from '../real-home.js';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
 import {
   acquireOutwardMutationFence,
@@ -64,25 +64,17 @@ import {
 // H6 (PART A — audit completeness): emit an audit() record inside
 // enroll/unenroll/setKill so EVERY path (CLI cmdEnroll OR any programmatic
 // caller — fixture, daemon, onboard) is captured — see
-// docs/contracts/CONTRACT-H6.md §A.2. audit.ts imports only node builtins + a
-// `type` from ../types.js and does NOT import policy.ts, so this static import
+// docs/contracts/CONTRACT-H6.md §A.2. audit.ts imports real-home.js and does
+// NOT import policy.ts, so this static import
 // creates NO import cycle (re-verified by an H6 [STATIC] test). Metadata only:
 // action verb + repo abs path (a path is NOT a secret) + 'ok'.
 import { audit } from './audit.js';
 
 // ---------------------------------------------------------------------------
-// Path helpers (re-resolved at call time so tests can relocate HOME)
+// Path helpers. KILL, enrollment and audit share realHome() so none of them
+// can fall back to os.homedir() / $HOME. Vitest fixtures opt into process
+// home; production always uses the passwd entry.
 // ---------------------------------------------------------------------------
-
-function canonicalHome(): string | null {
-  try {
-    const home = homedir();
-    if (typeof home !== 'string' || home.length === 0 || !isAbsolute(home)) return null;
-    return resolve(home);
-  } catch {
-    return null;
-  }
-}
 
 function canonicalWindowsPath(value: string, foldCase: boolean): string | null {
   let normalized = win32.normalize(value);
@@ -269,7 +261,7 @@ export function canonicalEnrollmentPathAsync(value: string): Promise<string | nu
 }
 
 function ashlrDir(): string {
-  const home = canonicalHome();
+  const home = realHome();
   if (!home) throw new Error('invalid home directory for policy authority');
   return join(home, '.ashlr');
 }
@@ -433,7 +425,7 @@ function readAshlrDirectorySnapshot(): AuthorityDirectorySnapshot {
   if (!safeAuthorityDirectory(identity)) return { state: 'unsafe' };
   if (process.platform !== 'win32') return { state: 'safe', identity };
 
-  const home = canonicalHome();
+  const home = realHome();
   if (!home || !assurePrivateStoragePath(
     ashlrDir(),
     'directory',
@@ -558,7 +550,7 @@ function assureAshlrDir(): boolean {
       chmodSync(dir, 0o700);
       return true;
     }
-    const home = canonicalHome();
+    const home = realHome();
     if (!home || !assurePrivateStoragePath(
       dir,
       'directory',
@@ -1778,7 +1770,7 @@ function auditKill(on: boolean, result: PolicyMutationResult): void {
   // we audit the requested intent). repo is null (not repo-scoped); summary is
   // metadata only. audit() swallows its own errors, so the "never throws"
   // contract of setKill is preserved.
-  if (canonicalHome()) {
+  if (realHome()) {
     audit({
       action: on ? 'kill:on' : 'kill:off',
       repo: null,
@@ -2033,7 +2025,7 @@ export function enroll(
   // H6 (§A.2): audit AFTER the (idempotent) write so a no-op re-enroll STILL
   // records the requested intent. The repo abs path is metadata, never a secret;
   // audit() swallows its own errors so enroll's "never throws" contract holds.
-  if (canonicalHome()) {
+  if (realHome()) {
     audit({
       action: 'enroll:add',
       repo: abs ?? lexical,
@@ -2128,7 +2120,7 @@ function auditUnenroll(abs: string | null, lexical: string, result: PolicyMutati
   // H6 (§A.2): audit AFTER the (idempotent) write so a no-op unenroll STILL
   // records the requested intent. Metadata only (abs path is not a secret);
   // audit() swallows its own errors so unenroll's "never throws" contract holds.
-  if (canonicalHome()) {
+  if (realHome()) {
     audit({
       action: 'enroll:remove',
       repo: abs ?? lexical,

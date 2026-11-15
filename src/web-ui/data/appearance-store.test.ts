@@ -130,6 +130,20 @@ describe('appearance-store', () => {
     expect(root().getAttribute('data-ui-scale')).toBe('xlarge');
   });
 
+  it('restores theme, accent, density and display size together on reload', async () => {
+    setAppearance({ theme: 'dark', accentH: 190, accentS: 80, accentL: 40, density: 'compact', uiScale: 'large' });
+
+    vi.resetModules();
+    const fresh = await import('./appearance-store.js');
+    expect(fresh.getAppearance()).toMatchObject({
+      theme: 'dark', accentH: 190, accentS: 80, accentL: 40, density: 'compact', uiScale: 'large',
+    });
+    expect(root().getAttribute('data-theme')).toBe('dark');
+    expect(root().getAttribute('data-density')).toBe('compact');
+    expect(root().getAttribute('data-ui-scale')).toBe('large');
+    expect(root().style.getPropertyValue('--accent-h')).toBe('190');
+  });
+
   it('coerces an unknown display size back to default', async () => {
     localStorage.setItem(APPEARANCE_STORAGE_KEY, '{"uiScale":"gigantic"}');
     vi.resetModules();

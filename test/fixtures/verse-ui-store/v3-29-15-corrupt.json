@@ -1,0 +1,44 @@
+{
+  "ashlr.verse.ui.v3": {
+    "version": 3,
+    "section": "autonomy",
+    "railExpanded": "yes",
+    "sidebarWidth": 9999,
+    "sidebarCollapsed": 1,
+    "resourcesOpen": "no",
+    "resourcesWidth": -50,
+    "recentActions": ["pane.preview", "pane.GONE PANE", "", 42, null, "pane.context", "pane.context"],
+    "recentChats": ["chat-1", "a b", 42, "chat-1", "chat-9"],
+    "lastLaunchDay": 12345,
+    "chatMovedAnnounced": "yes",
+    "dock": {
+      "open": "yes",
+      "width": 10,
+      "tabs": ["preview", "NO WAY", 42, "", "preview"],
+      "active": "ghost",
+      "splitWith": "preview",
+      "splitRatio": 7,
+      "placement": "left",
+      "height": 5,
+      "byChat": {
+        "bad id!!": { "open": true, "tabs": ["terminal"], "active": "terminal" },
+        "chat-9": { "open": true, "tabs": "nope", "active": 1, "splitWith": 2 },
+        "chat-8": { "open": true, "tabs": ["terminal"], "active": "terminal", "splitWith": null }
+      }
+    }
+  },
+  "ashlr.verse.appearance.v1": {
+    "accentH": 9999,
+    "accentS": "loud",
+    "accentL": -20,
+    "density": "airy",
+    "uiScale": 12,
+    "displayFont": "wingdings",
+    "radius": -1,
+    "layout": "banana",
+    "motion": "ludicrous",
+    "reduceMotion": true
+  },
+  "ashlr.theme.v1": "rainbow",
+  "ashlr.verse.onboarding.v1": "{not json"
+}
