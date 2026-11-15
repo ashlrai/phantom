@@ -47,6 +47,26 @@
  * newest one with an owner and claim receipt rides along as task.lastVerified
  * evidence only and never changes a state, the pick or missing[].
  *
+ * Top-level tailnet is tailscale peer evidence (which fleet computers this
+ * host can see on the tailnet): counts of online/offline/unknown peers, up to
+ * TAILNET_CAP peers (online first) and reasons[]. It sits beside sections, not
+ * inside one, so the four-section overall logic is untouched. It is read through
+ * its own injectable reader under the same SECTION_TIMEOUT_MS bound; a reader
+ * that throws or stalls yields zero counts and ['tailnet: reader failed']. It is
+ * evidence only: it never changes a state, overall, missing[], the pick or any
+ * claim field, and grants no routing or dispatch.
+ *
+ * Top-level orders is Mason-inbox order evidence (how many of his last-24h
+ * orders sit in each work state under the order-trace classification). It is
+ * read through its own injectable reader under the same SECTION_TIMEOUT_MS
+ * bound; a reader that throws or stalls yields empty counts and
+ * ['orders: reader failed']. It is evidence only: it never changes a state,
+ * overall, missing[], the pick or any claim field, and grants nothing.
+ *
+ * Top-level owners joins the three bridge surfaces' advisory claims under
+ * one reader bound. It shares the claims snapshot and verdict clock; a failed
+ * or stalled read yields null and never changes any state or missing reason.
+ *
  * Output is sanitized through sanitizeIdentityText (home → ~, IPs dropped);
  * no message bodies, leases or env values ever reach the result.
  *
@@ -59,10 +79,17 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
 import { listWorkBoard, type WorkBoardResult } from '../comms/work-board.js';
-import { readChannelHealth, type ChannelHealthReport } from './channel-health.js';
+import { readChannelHealth, type ChannelHealth, type ChannelHealthReport } from './channel-health.js';
 import { readFleetBoard, type FleetBoard, type FleetClaim } from './coordination.js';
 import { listCoordination } from '../agents/claim-store.js';
 import { listLiveWorkers, type LiveWorkersSnapshot } from './runs-live-workers.js';
+import { readOrderTrace, type OrderTraceV1 } from './order-trace.js';
+import { defaultPoolReachDeps, readPoolReach, type PoolReach } from './pool-reach.js';
+import { readLaneTargets, type LaneTargetsV1 } from './runs-lane-targets.js';
+import type { LiveJobIds } from './order-work-state.js';
+import { summarizeOrders, type RecheckOrders } from './recheck-orders-line.js';
+import { readSurfaceOwner, type SurfaceOwnerDeps } from './surface-owner.js';
+import { defaultTailnetPeersDeps, readTailnetPeers, type TailnetPeers } from './tailnet-peers.js';
 import {
   bindPickToCoordination,
   type RecheckCoordinationClaim,
@@ -84,6 +111,8 @@ export const SECTION_TIMEOUT_MS = 5_000;
 const RUNTIME_OBSERVATION_BOUND_MS = SECTION_TIMEOUT_MS;
 /** Claims listing cap and per-claim task text cap. */
 const TOP_CLAIMS = 5;
+/** Tailnet peers listed in the verdict; counts still cover every peer read. */
+const TAILNET_CAP = 8;
 
 export type FleetRecheckState = 'VERIFIED' | 'UNKNOWN' | 'BLOCKED';
 
@@ -96,6 +125,22 @@ export interface FleetRecheckBridge {
   processAlive: boolean | 'unknown';
   /** First missing reason for this channel, or null when nothing is missing. */
   missingBridge: string | null;
+  /**
+   * Evidence only: the channel's recent-request reply coverage, copied from
+   * ChannelHealth.proof.requestCoverage when the observation carries a
+   * meaningful per-request proof. Present for 'unproven' and 'verified';
+   * absent for an 'idle' observation (absent means idle or no per-request
+   * proof metadata — never that a request was answered); 'unknown' on the
+   * no-bridge-evidence placeholder row. Never changes a channel state,
+   * missingBridge, the section verdict or the overall verdict.
+   */
+  requestCoverage?: 'idle' | 'unproven' | 'verified' | 'unknown';
+  /**
+   * Evidence only: recent in-window requests without a bound reply, copied
+   * from ChannelHealth.unansweredCount alongside requestCoverage; null on the
+   * no-bridge-evidence placeholder row. Never changes any state or verdict.
+   */
+  unansweredCount?: number | null;
 }
 
 export interface FleetRecheckClaim {
@@ -162,9 +207,29 @@ export interface FleetRecheckClaims {
   missing: string[];
 }
 
+export interface FleetRecheckTailnet {
+  source: 'tailscale-status';
+  asOf: string;
+  self: string;
+  online: number;
+  offline: number;
+  unknown: number;
+  /** Online first, capped at TAILNET_CAP. */
+  peers: { name: string; online: boolean | 'unknown'; ageSeconds: number | 'unknown' }[];
+  reasons: string[];
+}
+
 export interface FleetRecheck {
   schema: typeof FLEET_RECHECK_SCHEMA;
   asOf: string;
+  /** Evidence only; see the header. Always present from readFleetRecheck. */
+  tailnet?: FleetRecheckTailnet | null;
+  /** Node pool failover reachability; evidence only, never changes a state or the pick. */
+  pool?: PoolReach | null;
+  /** Mason's last-24h inbox orders by work state; evidence only, never changes a state or the pick. */
+  orders?: RecheckOrders | null;
+  /** Advisory ownership evidence only; landed history never establishes an owner. */
+  owners?: FleetRecheckOwners | null;
   sections: {
     runtime: {
       state: FleetRecheckState;
@@ -204,6 +269,35 @@ export interface FleetRecheck {
   };
 }
 
+export interface FleetRecheckOwners {
+  asOf: string;
+  surfaces: Array<{
+    surface: 'slack-bridge' | 'imessage-bridge' | 'dot-handoff';
+    owner: string;
+    ownerSource: 'advisory-claim' | 'none';
+    liveClaims: number;
+    lastLandedJob: string | null;
+    reason: string | null;
+  }>;
+}
+
+async function readOwnersSnapshot(deps: SurfaceOwnerDeps): Promise<FleetRecheckOwners | null> {
+  const surfaces = ['slack-bridge', 'imessage-bridge', 'dot-handoff'] as const;
+  const reports = await Promise.all(surfaces.map(surface => readSurfaceOwner(surface, deps)));
+  if (reports.some(report => report === null)) return null;
+  return {
+    asOf: reports[0]!.asOf,
+    surfaces: reports.map((report, i) => ({
+      surface: surfaces[i]!,
+      owner: report!.owner,
+      ownerSource: report!.ownerSource,
+      liveClaims: report!.liveClaims.length,
+      lastLandedJob: report!.lastLanded?.jobId ?? null,
+      reason: report!.ownerSource === 'advisory-claim' ? null : report!.reasons[0] ?? 'owner unknown',
+    })),
+  };
+}
+
 /** Read a single task that claims a host can verify a runtime, the channels
  * and work board. No FleetClaim field in the claims ledger identifies a
  * work-board item: claim.id is a ledger uuid and claim.task is free text, so
@@ -230,18 +324,29 @@ export function defaultFleetRecheckDeps(now: () => Date): Required<FleetRecheckD
       } catch { return { source: 'unavailable' as const, claims: [] }; }
     },
     listLiveWorkers: () => listLiveWorkers(),
+    readTailnetPeers: () => readTailnetPeers(defaultTailnetPeersDeps()),
+    readPool: () => readPoolReach(defaultPoolReachDeps()),
+    readOrders: () => readOrderTrace(),
+    readOwners: () => readOwnersSnapshot({ now: () => now().getTime() }),
+    readLaneTargets: () => readLaneTargets(),
   };
 }
 
 export type FleetRecheckDeps = {
   now?: () => Date;
   homeDir?: () => string;
-  readRuntimeIdentity?: () => Promise<FleetRecheckRuntime | null>;
-  readFleetBoard?: () => Promise<FleetBoard>;
-  readChannelHealth?: () => Promise<ChannelHealthReport>;
-  listWorkBoard?: () => Promise<WorkBoardResult>;
-  listCoordination?: () => Promise<RecheckCoordinationListing>;
-  listLiveWorkers?: () => Promise<LiveWorkersSnapshot>;
+  // attempt() bounds both synchronous readers and promise-returning adapters.
+  readRuntimeIdentity?: () => Promise<FleetRecheckRuntime | null> | FleetRecheckRuntime | null;
+  readFleetBoard?: () => Promise<FleetBoard> | FleetBoard;
+  readChannelHealth?: () => Promise<ChannelHealthReport> | ChannelHealthReport;
+  listWorkBoard?: () => Promise<WorkBoardResult> | WorkBoardResult;
+  listCoordination?: () => Promise<RecheckCoordinationListing> | RecheckCoordinationListing;
+  listLiveWorkers?: () => Promise<LiveWorkersSnapshot> | LiveWorkersSnapshot;
+  readTailnetPeers?: () => Promise<TailnetPeers> | TailnetPeers;
+  readPool?: () => Promise<PoolReach> | PoolReach;
+  readOrders?: () => Promise<OrderTraceV1> | OrderTraceV1;
+  readOwners?: () => Promise<FleetRecheckOwners | null> | FleetRecheckOwners | null;
+  readLaneTargets?: () => Promise<LaneTargetsV1> | LaneTargetsV1;
 };
 
 type ReaderResult<T> = { ok: true; value: T } | { ok: false };
@@ -404,6 +509,44 @@ function observationFreshness(label: string, asOf: string, nowMs: number): strin
   return null;
 }
 
+/** Build one observed channel's evidence row. requestCoverage and
+ * unansweredCount are copied only when the observation carries a meaningful
+ * per-request proof ('unproven' or 'verified'): an 'idle' observation omits
+ * both, absent meaning idle or no per-request proof metadata, never that a
+ * request was answered. Neither field can change the state, missingBridge,
+ * the section verdict or the overall verdict. */
+function bridgeChannelView(channel: ChannelHealth, missingBridge: string | null): FleetRecheckBridge {
+  const row: FleetRecheckBridge = {
+    channel: channel.channel,
+    state: channel.state as FleetRecheckBridge['state'],
+    runtimeHost: channel.runtimeHost ?? null,
+    processAlive: channel.processAlive,
+    missingBridge,
+  };
+  const coverage = channel.proof?.requestCoverage;
+  if (coverage === 'unproven' || coverage === 'verified') {
+    row.requestCoverage = coverage;
+    row.unansweredCount = channel.unansweredCount ?? null;
+  }
+  return row;
+}
+
+/** The no-bridge-evidence placeholder for a required channel absent from the
+ * report: the identified gap is the channel's missing reason, the state is
+ * UNKNOWN, and the coverage fields carry 'unknown' and null. Pure evidence —
+ * the section verdict is driven by the content gap, never by this row. */
+function absentChannelView(name: 'slack' | 'imessage'): FleetRecheckBridge {
+  return {
+    channel: name,
+    state: 'UNKNOWN',
+    runtimeHost: null,
+    processAlive: 'unknown',
+    missingBridge: `${name} bridge evidence absent`,
+    requestCoverage: 'unknown',
+    unansweredCount: null,
+  };
+}
+
 type BridgeSection = FleetRecheck['sections']['bridge'];
 
 const REQUIRED_CHANNELS = ['slack', 'imessage'] as const;
@@ -441,6 +584,7 @@ function bridgeSection(
       contentMissing.push(`${name} bridge evidence absent`);
       blocked = true;
       allLive = false;
+      rows.push(absentChannelView(name));
       continue;
     }
     const content: string[] = [...(channel.missing ?? [])];
@@ -455,24 +599,12 @@ function bridgeSection(
       ? observationFreshness(`${name} channel`, channel.asOf, nowMs)
       : VERDICT_CLOCK_REASON;
     if (fresh !== null) channelFreshness.push(fresh);
-    rows.push({
-      channel: name,
-      state: channel.state as FleetRecheckBridge['state'],
-      runtimeHost: channel.runtimeHost ?? null,
-      processAlive: channel.processAlive,
-      missingBridge: content[0] ?? fresh,
-    });
+    rows.push(bridgeChannelView(channel, content[0] ?? fresh));
   }
   // Extra observed channels ride along as evidence without affecting the verdict.
   for (const channel of report.channels ?? []) {
     if ((REQUIRED_CHANNELS as readonly string[]).includes(channel.channel)) continue;
-    rows.push({
-      channel: channel.channel as FleetRecheckBridge['channel'],
-      state: channel.state as FleetRecheckBridge['state'],
-      runtimeHost: channel.runtimeHost ?? null,
-      processAlive: channel.processAlive,
-      missingBridge: (channel.missing ?? [])[0] ?? null,
-    });
+    rows.push(bridgeChannelView(channel, (channel.missing ?? [])[0] ?? null));
   }
   section.channels = rows;
   const reportReason = nowOk
@@ -667,6 +799,63 @@ function taskSection(
   return section;
 }
 
+function tailnetEvidence(
+  r: ReaderResult<TailnetPeers>, asOf: string, home: string,
+): FleetRecheckTailnet {
+  const empty: FleetRecheckTailnet = {
+    source: 'tailscale-status', asOf, self: UNKNOWN, online: 0, offline: 0, unknown: 0,
+    peers: [], reasons: ['tailnet: reader failed'],
+  };
+  if (!r.ok) return empty;
+  try {
+    const v = r.value;
+    const clean = (x: unknown): string => sanitizeIdentityText(String(x ?? ''), home).slice(0, 120) || UNKNOWN;
+    const peers = v.peers.map(p => ({
+      name: clean(p.name),
+      online: p.online === true ? true : p.online === false ? false : ('unknown' as const),
+      ageSeconds: typeof p.ageSeconds === 'number' && Number.isFinite(p.ageSeconds) ? p.ageSeconds : ('unknown' as const),
+    }));
+    const order = (o: boolean | 'unknown') => (o === true ? 0 : o === false ? 1 : 2);
+    return {
+      source: 'tailscale-status',
+      asOf: typeof v.asOf === 'string' ? v.asOf : asOf,
+      self: clean(v.self),
+      online: peers.filter(p => p.online === true).length,
+      offline: peers.filter(p => p.online === false).length,
+      unknown: peers.filter(p => p.online === 'unknown').length,
+      peers: peers.sort((a, b) => order(a.online) - order(b.online)).slice(0, TAILNET_CAP),
+      reasons: v.reasons.map(clean),
+    };
+  } catch {
+    return empty;
+  }
+}
+
+function poolEvidence(r: ReaderResult<PoolReach>, asOf: string): PoolReach {
+  const failed: PoolReach = { asOf, self: UNKNOWN, role: UNKNOWN, hosts: [], reasons: ['pool: reader failed'] };
+  if (!r.ok) return failed;
+  const v = r.value;
+  return v !== null && typeof v === 'object' && Array.isArray(v.hosts) && Array.isArray(v.reasons) ? v : failed;
+}
+
+function ordersEvidence(
+  r: ReaderResult<OrderTraceV1>,
+  asOf: string,
+  nowIso: string,
+  live?: LiveJobIds,
+  lanes?: LaneTargetsV1,
+): RecheckOrders {
+  const failed: RecheckOrders = { asOf, windowHours: 24, counts: {}, total: 0, reasons: ['orders: reader failed'] };
+  if (!r.ok) return failed;
+  const v = r.value;
+  if (v === null || typeof v !== 'object' || !Array.isArray(v.orders)) return failed;
+  try {
+    return summarizeOrders(v, nowIso, live, lanes);
+  } catch {
+    return failed;
+  }
+}
+
 const RANK: Record<FleetRecheckState, number> = { VERIFIED: 0, UNKNOWN: 1, BLOCKED: 2 };
 
 export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<FleetRecheck> {
@@ -682,16 +871,57 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
   const nowMs = now.getTime();
   const home = (() => { try { return d.homeDir(); } catch { return ''; } })();
   const asOf = Number.isFinite(nowMs) ? now.toISOString() : UNKNOWN;
+  // The default tailnet reader shares the captured verdict clock (one now()).
+  if (deps.readTailnetPeers === undefined) {
+    d.readTailnetPeers = () => readTailnetPeers({ ...defaultTailnetPeersDeps(), now: () => now });
+  }
+  if (deps.readPool === undefined) {
+    const poolDeps = defaultPoolReachDeps();
+    d.readPool = () => readPoolReach({ ...poolDeps, peers: { ...poolDeps.peers, now: () => now } });
+  }
+  if (deps.readOrders === undefined) {
+    d.readOrders = () => readOrderTrace({ now: () => nowMs });
+  }
 
-  // All six readers run concurrently, each inside its own 5 s bound.
-  const [runtime, claims, bridge, board, coordination, live] = await Promise.all([
+  const claimsRead = attempt(d.readFleetBoard);
+  if (deps.readOwners === undefined) {
+    d.readOwners = async () => {
+      const claims = await claimsRead;
+      return readOwnersSnapshot({
+        now: () => nowMs,
+        board: () => claims.ok ? claims.value : {
+          schema: 'fleet.coordination.v1', state: 'unknown', claims: [], messages: [], proposals: [], expiredClaims: null,
+        },
+      });
+    };
+  }
+
+  // All readers share the same 5 s bound; ownership reuses the claims read.
+  const [runtime, claims, bridge, board, coordination, live, tailnet, pool, orders, laneTargets, owners] = await Promise.all([
     attempt(d.readRuntimeIdentity),
-    attempt(d.readFleetBoard),
+    claimsRead,
     attempt(d.readChannelHealth),
     attempt(d.listWorkBoard),
     attempt(d.listCoordination),
     attempt(d.listLiveWorkers),
+    attempt(d.readTailnetPeers),
+    attempt(d.readPool),
+    attempt(d.readOrders),
+    attempt(d.readLaneTargets),
+    attempt(d.readOwners),
   ]);
+
+  // Orders evidence uses healthy snapshots only; anything else is "no evidence".
+  const liveJobs: LiveJobIds | undefined =
+    live.ok && live.value !== null && typeof live.value === 'object'
+      && live.value.sourceState === 'healthy' && Array.isArray(live.value.workers)
+      ? { jobIds: new Set(live.value.workers.map(w => w.job)), at: typeof live.value.generatedAt === 'string' ? live.value.generatedAt : asOf }
+      : undefined;
+  const lanes: LaneTargetsV1 | undefined =
+    laneTargets.ok && laneTargets.value !== null && typeof laneTargets.value === 'object'
+      && laneTargets.value.sourceState === 'healthy' && Array.isArray(laneTargets.value.lanes)
+      ? laneTargets.value
+      : undefined;
 
   const sections = {
     runtime: runtimeSection(runtime, asOf, nowMs),
@@ -707,6 +937,10 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
   const result: FleetRecheck = {
     schema: FLEET_RECHECK_SCHEMA,
     asOf,
+    tailnet: tailnetEvidence(tailnet, asOf, home),
+    pool: poolEvidence(pool, asOf),
+    orders: ordersEvidence(orders, asOf, asOf, liveJobs, lanes),
+    owners: owners.ok ? owners.value : null,
     sections,
     overall: { state: verified ? 'VERIFIED' : worst, missing },
   };

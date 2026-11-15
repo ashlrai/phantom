@@ -35,6 +35,7 @@
  * (the same one steward and disk-maint use).
  */
 
+import { asRecord, fail, optString, parseDatasetLine } from './dataset-jsonl.js';
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -89,26 +90,9 @@ export interface PassKDataset {
   sha256: string;
 }
 
-function fail(file: string, line: number, why: string): never {
-  throw new Error(`${file}:${line}: ${why}`);
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
 function reqString(file: string, line: number, rec: Record<string, unknown>, key: string): string {
   const v = rec[key];
   if (typeof v !== 'string' || v === '') fail(file, line, `${key} must be a non-empty string`);
-  return v;
-}
-
-function optString(file: string, line: number, rec: Record<string, unknown>, key: string): string | undefined {
-  const v = rec[key];
-  if (v === undefined || v === null) return undefined;
-  if (typeof v !== 'string') fail(file, line, `bad ${key}`);
   return v;
 }
 
@@ -169,12 +153,7 @@ export function parsePassKDataset(text: string, file = 'golden-tasks.jsonl'): Pa
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i]!.trim();
     if (raw === '' || raw.startsWith('#')) continue;
-    let rec: Record<string, unknown>;
-    try {
-      rec = JSON.parse(raw);
-    } catch {
-      fail(file, i + 1, 'not JSON');
-    }
+    const rec = parseDatasetLine(raw, file, i + 1);
     if (rec!.v !== 1) fail(file, i + 1, `unsupported v ${JSON.stringify(rec!.v)}`);
     if (rec!.kind === 'meta') {
       if (tasks.length > 0) fail(file, i + 1, 'meta must precede task lines');

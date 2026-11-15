@@ -41,6 +41,11 @@ import {
 } from '../fleet/fleet-control.js';
 import { readDropJobFates } from '../fleet/drop-job-fate.js';
 export type { DropJobFatesV1 } from '../fleet/drop-job-fate.js';
+import type {
+  appendSessionGuidance,
+  listSessionGuidance,
+  readSessionGuidance,
+} from '../fleet/session-guidance-io.js';
 
 import { isRunId } from '../fleet/run-cancel.js';
 import {
@@ -53,10 +58,19 @@ import {
   type StrayReaders,
 } from '../fleet/stray-slots.js';
 
+/** Literal paths: a static import chain into core/fleet for two strings would load it on every request. */
+const VERSE_FLEET_CONTROL_GUIDANCE_PATH = '/api/verse/fleet/control/guidance';
+const VERSE_FLEET_CONTROL_GUIDANCE_PREFIX = `${VERSE_FLEET_CONTROL_GUIDANCE_PATH}/`;
+
 type ControlDeps = FleetControlDeps & {
   remoteAdmin?: (input: unknown) => Promise<unknown>;
   remoteDevices?: () => Pick<RemoteDeviceStore, 'list'>;
   strayReaders?: StrayReaders;
+  guidance?: Partial<{
+    list: typeof listSessionGuidance;
+    read: typeof readSessionGuidance;
+    append: typeof appendSessionGuidance;
+  }>;
 };
 let deps: ControlDeps | null = null;
 
@@ -70,6 +84,21 @@ async function currentDeps(): Promise<FleetControlDeps> {
   await preloadFleetControlModules();
   deps = defaultFleetControlDeps();
   return deps;
+}
+
+/** Guidance io seam for tests; production loads the real module lazily. */
+async function guidanceIo(): Promise<{
+  list: typeof listSessionGuidance;
+  read: typeof readSessionGuidance;
+  append: typeof appendSessionGuidance;
+}> {
+  const seam = deps?.guidance ?? {};
+  const mod = await import('../fleet/session-guidance-io.js');
+  return {
+    list: seam.list ?? mod.listSessionGuidance,
+    read: seam.read ?? mod.readSessionGuidance,
+    append: seam.append ?? mod.appendSessionGuidance,
+  };
 }
 
 function sendInvalid(res: ServerResponse, message: string): void {
@@ -310,6 +339,71 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   }
   if (path === '/api/verse/fleet/control/merge-graph') {
     return (await import('./fleet-merge-graph-api.js')).handleFleetMergeGraphApi(ctx, req, res, path, method);
+  }
+  // Per-session operator guidance (RQ-PHX-RECUTDESKOLDC203, recut of #5253).
+  //   GET  /api/verse/fleet/control/guidance        → aggregate ack state
+  //   GET  /api/verse/fleet/control/guidance/<job>  → one session's file
+  //   POST /api/verse/fleet/control/guidance/<job>  → append one {text} message
+  // The file contract and lane strategy table live in core/fleet/session-guidance.ts;
+  // a POST passes the same dispatch + mutation-token + JSON gate as every control write.
+  if (path === VERSE_FLEET_CONTROL_GUIDANCE_PATH || path.startsWith(VERSE_FLEET_CONTROL_GUIDANCE_PREFIX)) {
+    const [{ isGuidanceJobId, GUIDANCE_SOURCE_PATTERN }, io] = await Promise.all([
+      import('../fleet/session-guidance.js'),
+      guidanceIo(),
+    ]);
+    if (path === VERSE_FLEET_CONTROL_GUIDANCE_PATH) {
+      if (method !== 'GET') {
+        sendJson(res, 405, { error: 'method not allowed' });
+        return true;
+      }
+      if (!noQuery(req, res)) return true;
+      sendJson(res, 200, await io.list());
+      return true;
+    }
+    let job: string;
+    try {
+      job = decodeURIComponent(path.slice(VERSE_FLEET_CONTROL_GUIDANCE_PREFIX.length));
+    } catch {
+      sendInvalid(res, 'valid job id required');
+      return true;
+    }
+    if (!isGuidanceJobId(job)) {
+      sendInvalid(res, 'valid job id required');
+      return true;
+    }
+    if (method === 'GET') {
+      sendJson(res, 200, await io.read(job));
+      return true;
+    }
+    if (method !== 'POST') {
+      res.setHeader('Allow', 'GET, POST');
+      sendJson(res, 405, { error: 'method not allowed' });
+      return true;
+    }
+    const body = await readMutationBody(ctx, req, res);
+    if (!body) return true;
+    if (
+      Object.keys(body).some((key) => key !== 'text' && key !== 'source')
+      || typeof body.text !== 'string'
+      || (body.source !== undefined
+        && (typeof body.source !== 'string' || !GUIDANCE_SOURCE_PATTERN.test(body.source)))
+    ) {
+      sendInvalid(res, 'invalid guidance body');
+      return true;
+    }
+    const result = await io.append(job, body.text, {
+      ...(typeof body.source === 'string' ? { source: body.source } : {}),
+    });
+    if (!result.ok) {
+      if (result.code === 'empty' || result.code === 'invalid-job') {
+        sendInvalid(res, result.code === 'empty' ? 'guidance text is empty' : 'valid job id required');
+      } else {
+        sendJson(res, 503, { code: 'GUIDANCE_UNAVAILABLE', error: 'the guidance file could not be written' });
+      }
+      return true;
+    }
+    sendJson(res, 201, { v: 1, ...result });
+    return true;
   }
   const isRoot = path === VERSE_FLEET_CONTROL_PATH;
   const isQueue = path === VERSE_FLEET_CONTROL_QUEUE_PATH;

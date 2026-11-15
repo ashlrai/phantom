@@ -8,6 +8,7 @@
  */
 import { statSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
+import { abortableSleep, isAwaitMs } from '../util/await-support.js';
 import type { BusInboxOptions } from './bus-inbox.js';
 import { readNeedsMasonAnswer, type NeedsMasonAnswerResult } from './needs-mason-answer.js';
 
@@ -38,18 +39,9 @@ export interface NeedsMasonAwaitDeps {
   stat?: (path: string) => unknown;
 }
 
-/** True for a positive safe integer no larger than max. */
-export const isAwaitMs = (value: unknown, max: number): value is number =>
-  typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= max;
-
-export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise(resolve => {
-    if (signal?.aborted) { resolve(); return; }
-    const done = (): void => { clearTimeout(timer); signal?.removeEventListener('abort', done); resolve(); };
-    const timer = setTimeout(done, ms);
-    signal?.addEventListener('abort', done, { once: true });
-  });
-}
+// The canonical wait primitives live in util/await-support; re-exported so the
+// many await/follow modules that grew up importing them here keep working.
+export { abortableSleep, isAwaitMs };
 
 export async function awaitNeedsMasonAnswer(itemId: unknown, options: NeedsMasonAwaitOptions,
     deps: NeedsMasonAwaitDeps = {}): Promise<NeedsMasonAwaitResult> {

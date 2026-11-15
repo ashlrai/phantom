@@ -3,7 +3,7 @@
  * (RQ-PHX-DESKTOPCRASHREPORT100). Empty ledger message, grouped text and
  * --json output, arg validation, and the generated registry's loader.
  */
-import { mkdtemp } from 'node:fs/promises';
+import { mkdir, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -36,6 +36,13 @@ describe('fleet desktop-errors', () => {
     const result = await capture(() => cmdFleetDesktopErrors([], { runsDir: join(tmpdir(), 'no-such-runs-dir') }));
     expect(result.code).toBe(0);
     expect(result.out).toBe('No desktop errors recorded.');
+  });
+
+  it.each([[[]], [['--json']]])('reports an unreadable ledger as an error %j', async (args) => {
+    const runsDir = await dir();
+    await mkdir(join(runsDir, 'desktop', 'errors.jsonl'), { recursive: true });
+    const result = await capture(() => cmdFleetDesktopErrors(args, { runsDir }));
+    expect(result).toEqual({ code: 1, out: '', err: 'error: unable to read desktop errors\n' });
   });
 
   it('groups two crashes in text output', async () => {

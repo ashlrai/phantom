@@ -1,7 +1,8 @@
 /** Board → source-thread notifier for Mason/Dot's Nov12 22:29 + 22:30 ET
  * orders: only meaningful work-state changes go back to the thread the
  * request came from — ASSIGNED (named owner + durable claim receipt),
- * BLOCKED (named dependency) and VERIFIED (a PR, head or test artifact).
+ * BLOCKED (named dependency) and VERIFIED (every supplied PR, head,
+ * tests or artifact field).
  * RUNNING and RECEIVED stay silent; conversational acknowledgments are
  * never posted.
  *
@@ -11,15 +12,11 @@
  * Once-only is durable, not incidental: a JSONL ledger under
  * `~/.ashlr-runs/work-board-notify/` dedupes across passes, and a row is
  * appended only after a send returns a durable receipt. A failed send
- * writes nothing and retries on the next pass. Dedupe has two keys: the
- * `(itemId, to-state)` entry key keeps the original once-per-state rule
- * for state changes (every row, legacy or new, still yields it), and a
- * delta key — sha256 of the normalized meaningful evidence plus the
- * channel/thread binding — dedupes same-state changes so a blocker,
- * owner/claim or verified-artifact change posts once while an
- * asOf-only or irrelevant-field change never does. Legacy rows carry
- * no delta and therefore only fence state entries; a same-state delta
- * is provably new against the snapshot and may post. Labels and claim
+ * writes nothing and retries on the next pass. Delta-backed rows dedupe
+ * exact normalized evidence and thread bindings, including on reentry.
+ * Legacy state-only rows conservatively fence state entries because their
+ * delivered evidence is unknown; same-state changes remain eligible. The
+ * state key stays exposed for Set-based callers. Labels and claim
  * owners are untrusted data and grant no authority. */
 import { createHash } from 'node:crypto';
 import { appendFileSync, chmodSync } from 'node:fs';
@@ -145,7 +142,8 @@ export interface BoardNotice {
   /** sha256 prefix of the meaningful-delta material; the durable dedupe
    * identity and the sender idempotency input. */
   delta: string;
-  /** The one fact the thread needs: owner, dependency or artifact. */
+  /** The bounded evidence line the thread needs: owner + claim receipt,
+   * the dependency, or the labeled verification fields. */
   detail: string;
   /** Evidence source label, e.g. `claim:<receipt>` or `bus-reply:<id>`. */
   source: string;
@@ -173,6 +171,11 @@ const field = (value: string, max: number): string =>
 export function boardNotifyLedgerKey(itemId: string, state: string, delta?: string): string {
   return delta === undefined ? `${itemId} ${state}` : `${itemId} ${state} ${delta}`;
 }
+
+// Internal provenance keys preserve the public state key without conflating
+// legacy state-only proof with modern delta-backed receipts.
+const provenanceKey = (itemId: string, state: string, kind: 'legacy' | 'modern'): string =>
+  JSON.stringify(['board-notify-provenance', itemId, state, kind]);
 
 const normDeltaField = (v: string | null | undefined): string => (v ?? '').replace(/\s+/g, ' ').trim();
 
@@ -246,15 +249,25 @@ export function boardNoticeText(state: BoardNotifyState, itemId: string, asOf: s
   return scrubSecrets(`${state} ${field(itemId, 80)} as of ${field(asOf, 40)} — ${detail} (source: ${field(source, 120)})`);
 }
 
+/** The bounded evidence a postable state cites: ASSIGNED names the owner
+ * with its durable claim receipt labeled alongside, BLOCKED names the
+ * dependency, and VERIFIED joins every supplied field with its label so
+ * combined evidence stays parseable. A lone artifact already cites
+ * itself, so it keeps the unlabeled single-field form. Every untrusted
+ * value goes through `field`, keeping the line single and bounded. */
 function detail(t: BoardTransition, state: BoardNotifyState): string | null {
   const e = t.evidence;
-  if (state === 'ASSIGNED') return e.owner ? field(e.owner, 120) : null;
+  if (state === 'ASSIGNED') {
+    if (!e.owner || !e.claimReceipt) return null;
+    return `${field(e.owner, 120)} (claim ${field(e.claimReceipt, 160)})`;
+  }
   if (state === 'BLOCKED') return e.dependency ? field(e.dependency, 160) : null;
-  if (e.pr !== undefined) return `PR #${e.pr}`;
-  if (e.head) return `head ${field(e.head, 40)}`;
-  if (e.artifact) return field(e.artifact, 160);
-  if (e.tests) return `tests ${field(e.tests, 120)}`;
-  return null;
+  const parts: string[] = [];
+  if (e.pr !== undefined) parts.push(`PR #${e.pr}`);
+  if (e.head) parts.push(`head ${field(e.head, 40)}`);
+  if (e.tests) parts.push(`tests ${field(e.tests, 120)}`);
+  if (e.artifact) parts.push(parts.length === 0 ? field(e.artifact, 160) : `artifact ${field(e.artifact, 160)}`);
+  return parts.length === 0 ? null : parts.join(' ');
 }
 
 /** The evidence each postable state must cite; null means it may post. */
@@ -297,19 +310,16 @@ export function planNotifications(
     const delta = boardNotifyDeltaDigest(material);
     const deltaKey = boardNotifyLedgerKey(t.itemId, state, delta);
     const entryKey = boardNotifyLedgerKey(t.itemId, state);
-    // A state entry keeps the original once-per-(itemId,state) rule: any
-    // prior row — legacy or delta-carrying — fences it. A same-state
-    // delta dedupes only on its exact delta identity; a legacy row
-    // cannot prove which delta it delivered, but the snapshot proves
-    // this one is new, so it does not block.
+    // A bare state key supplied by an older Set caller is legacy proof.
+    // Mixed ledgers retain the legacy fence even after modern deliveries.
+    const legacy = sentLedger.has(provenanceKey(t.itemId, state, 'legacy'))
+      || (sentLedger.has(entryKey) && !sentLedger.has(provenanceKey(t.itemId, state, 'modern')));
     const entered = t.from !== t.to;
-    if (sentLedger.has(deltaKey) || planned.has(deltaKey)
-      || (entered && (sentLedger.has(entryKey) || planned.has(entryKey)))) {
+    if (sentLedger.has(deltaKey) || planned.has(deltaKey) || (entered && legacy)) {
       dropped.push({ itemId: t.itemId, state, reason: `${state} dropped: already notified` });
       continue;
     }
     planned.add(deltaKey);
-    if (entered) planned.add(entryKey);
     const text = detail(t, state);
     if (text === null) continue; // unreachable: missingNoticeEvidence already proved a detail
     notices.push({
@@ -374,14 +384,11 @@ export function boardNotifySnapshotPath(stateDir: string): string {
   return join(stateDir, SNAPSHOT_FILE);
 }
 
-/** Dedupe keys of everything ever sent: every row yields the
- * `(itemId, state)` entry key (the original once-per-state rule), and a
- * row carrying `delta` also yields the `(itemId, state, delta)` key.
- * Legacy rows without `delta` therefore fence state entries exactly as
- * before but cannot fence a same-state delta they never recorded.
- * Returns null when the ledger cannot be read or is truncated — the
- * caller must fail closed rather than risk a second post. A missing
- * ledger is an empty set. */
+/** Public state keys and exact delta keys, plus internal provenance markers.
+ * State-only legacy rows fence reentry; modern rows fence only their exact
+ * delta. Mixed history retains the legacy fence. Same-state changes can
+ * still send because the snapshot proves a change since the last pass.
+ * Unreadable or truncated ledgers fail closed; a missing ledger is empty. */
 export function readBoardNotifySent(ledgerPath: string): Set<string> | null {
   const read = readPrivateFileCapped(ledgerPath, LEDGER_MAX_BYTES);
   if (read === null) return new Set();
@@ -395,7 +402,12 @@ export function readBoardNotifySent(ledgerPath: string): Set<string> | null {
         && (BOARD_NOTIFY_STATES as readonly string[]).includes(String(row.state))) {
         const itemId = row.itemId, state = String(row.state);
         sent.add(boardNotifyLedgerKey(itemId, state));
-        if (boundedString(row.delta, 64)) sent.add(boardNotifyLedgerKey(itemId, state, row.delta));
+        if (boundedString(row.delta, 64) && row.delta.length > 0) {
+          sent.add(boardNotifyLedgerKey(itemId, state, row.delta));
+          sent.add(provenanceKey(itemId, state, 'modern'));
+        } else {
+          sent.add(provenanceKey(itemId, state, 'legacy'));
+        }
       }
     } catch { /* skip a torn line */ }
   }
@@ -455,18 +467,33 @@ export function writeBoardNotifySnapshot(stateDir: string, items: readonly Board
 
 /** What the next pass diffs against: delivered items advance; items whose
  * planned notice could not be sent keep their previous row (or stay
- * absent when new), so the transition re-fires and the send retries. */
+ * absent when new), so the transition re-fires and the send retries.
+ * `preserveUnseen` marks `next` as a bounded projection of the board
+ * (listWorkBoard `truncated`): absence from the page is not proof an
+ * item vanished, so prior rows for unseen ids are carried forward
+ * unchanged — pending baselines survive bounded reads and a later full
+ * page still diffs against the real prior state. Carried rows are kept
+ * within SNAPSHOT_MAX_ITEMS so the file stays readable; overflow drops
+ * the tail, degrading only those items to first-appearance diffs. */
 export function snapshotAfterSend(
   prev: readonly BoardSnapshotItem[],
   next: readonly BoardSnapshotItem[],
   pendingItemIds: ReadonlySet<string>,
+  opts?: { preserveUnseen?: boolean },
 ): BoardSnapshotItem[] {
   const before = new Map(prev.map(item => [item.id, item]));
+  const seen = new Set(next.map(item => item.id));
   const kept: BoardSnapshotItem[] = [];
   for (const item of next) {
     if (!pendingItemIds.has(item.id)) { kept.push(item); continue; }
     const prior = before.get(item.id);
     if (prior) kept.push(prior);
+  }
+  if (opts?.preserveUnseen === true) {
+    for (const item of prev) {
+      if (kept.length >= SNAPSHOT_MAX_ITEMS) break;
+      if (!seen.has(item.id)) kept.push(item);
+    }
   }
   return kept;
 }
