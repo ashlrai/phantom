@@ -5,7 +5,7 @@ import { STALE_AFTER_SECONDS } from '../core/fleet/runtime-identity.js';
 import { readFleetPeerLedger } from './fleet-peer-ledger.js';
 import { readFleetRuntime } from './fleet-runtime.js';
 
-export const NOTE = 'One-call verdict on whether a cloud agent can reach the live Phantom runtime on this computer: READY only when the runtime snapshot, the coordination claims ledger and the peer ledger all read cleanly — the same evidence as fleet_runtime, fleet_coordination_claims and fleet_peer_ledger joined into one answer. BLOCKED names each missing part in missing[]; each reader has a finite deadline and a reader that fails or stalls marks only its own section unavailable, so the call itself never throws, and explicitly unknown, malformed or negative-age producer evidence is treated the same way — an age alone never makes unknown runtime or peer state healthy. runtime carries the snapshot fields with fleet-state freshness checked against the same 15-minute staleness bound as runtime-identity; claims carries the live count and the newest claim age; peers carries the sanitized peer-bus budget. Evidence only; it grants no dispatch, claim, send or merge authority and a READY is reachability, not work. Takes no arguments: no caller root, path or cwd is accepted, and the tool never writes anything.';
+export const NOTE = 'One-call verdict on whether a cloud agent can reach the live Phantom runtime on this computer: READY only when the runtime snapshot, the coordination claims ledger and the peer ledger all read cleanly — the same evidence as fleet_runtime, fleet_coordination_claims and fleet_peer_ledger joined into one answer. BLOCKED names each missing part in missing[]; each reader has a finite deadline and a reader that fails or stalls marks only its own section unavailable, so the call itself never throws, and explicitly unknown, malformed or negative-age producer evidence is treated the same way — an age alone never makes unknown runtime or peer state healthy. Freshness and live-claim expiry are judged at the answer\'s completion instant, so evidence crossing a boundary while a peer reader waits cannot ride an earlier clock into READY. runtime carries the snapshot fields with fleet-state freshness checked against the same 15-minute staleness bound as runtime-identity; claims carries the live count and the newest claim age; peers carries the sanitized peer-bus budget. Evidence only; it grants no dispatch, claim, send or merge authority and a READY is reachability, not work. Takes no arguments: no caller root, path or cwd is accepted, and the tool never writes anything.';
 
 // Shared per-reader deadline, comfortably inside the 8 s HTTP envelope
 // (BRIDGE_CHECK_TIMEOUT_MS in core/verse/fleet-bridge-check-api.ts) so direct
@@ -115,17 +115,31 @@ async function attempt<T>(read: () => T | Promise<T>, deadlineMs: number): Promi
 /** Compose the same READY | BLOCKED answer the bridge check CLI prints: READY
  * only when every section read cleanly and the fleet state is fresh. Each
  * reader keeps its own deadline; a failed or stale part lands in missing[]
- * and only that section reports unavailable — the verdict never throws. */
+ * and only that section reports unavailable. A broken (non-finite) verdict
+ * clock rejects so every caller fails closed — the one case that throws. */
 export async function readFleetBridgeCheck(deps: FleetBridgeCheckDeps = {}): Promise<FleetBridgeCheck> {
-  let nowMs: number;
-  try {
-    nowMs = (deps.now ?? Date.now)();
-  } catch {
-    nowMs = Date.now();
-  }
-  const asOf = new Date(nowMs).toISOString();
+  const clock = deps.now ?? Date.now;
+  // One guarded clock sample: a throwing verdict clock degrades to the real
+  // clock, matching the historical entry sample. A non-finite sample is a
+  // broken clock — it fails closed through the callers' catch (BLOCKED,
+  // missing bridge-check) rather than producing an observation instant that
+  // could promote evidence.
+  const sampleClock = (): number => {
+    try {
+      return clock();
+    } catch {
+      return Date.now();
+    }
+  };
+  const entryMs = sampleClock();
+  if (!Number.isFinite(entryMs)) throw new RangeError('bridge-check clock unreadable');
   const missing: string[] = [];
 
+  // The default claims reader is this check's own adapter, not independent
+  // producer evidence: its projection is stamped at entry, so the section
+  // reports the answer instant instead. An injected claims reader keeps its
+  // own producer asOf.
+  const defaultClaims = deps.claims === undefined;
   const readClaims = deps.claims ?? (() => {
     let board: FleetBoard | null;
     try {
@@ -133,7 +147,7 @@ export async function readFleetBridgeCheck(deps: FleetBridgeCheckDeps = {}): Pro
     } catch {
       board = null;
     }
-    return projectCoordinationClaims(board, nowMs);
+    return projectCoordinationClaims(board, entryMs);
   });
 
   const deadlineMs = deps.deadlineMs ?? BRIDGE_CHECK_READER_DEADLINE_MS;
@@ -142,6 +156,16 @@ export async function readFleetBridgeCheck(deps: FleetBridgeCheckDeps = {}): Pro
     attempt(readClaims, deadlineMs),
     attempt(deps.peers ?? (() => readFleetPeerLedger({})), deadlineMs),
   ]);
+
+  // The answer's observation instant is sampled after the readers settle:
+  // freshness and claim expiry are judged at this completion clock, so a slow
+  // peer reader cannot let evidence cross its boundary after the verdict was
+  // already decided. A backward clock never rewinds evidence — advances are
+  // clamped at zero and the runtime age is never evaluated earlier than the
+  // instant the producer reported.
+  const doneMs = sampleClock();
+  if (!Number.isFinite(doneMs)) throw new RangeError('bridge-check clock unreadable');
+  const asOf = new Date(doneMs).toISOString();
 
   let runtimeSection: FleetBridgeCheck['runtime'];
   if (runtime.ok && isRecord(runtime.value)) {
@@ -162,13 +186,41 @@ export async function readFleetBridgeCheck(deps: FleetBridgeCheckDeps = {}): Pro
     };
     // Age must be a finite, nonnegative number: 'UNKNOWN', NaN, Infinity and
     // negative values are all unreadable evidence, and a negative age can never
-    // be fresh no matter how small its magnitude.
-    if (typeof ageSeconds !== 'number' || !Number.isFinite(ageSeconds) || ageSeconds < 0) {
+    // be fresh no matter how small its magnitude. The producer's ageSeconds
+    // was measured inside this read's window, so freshness is re-evaluated at
+    // the answer instant: a parseable state mtime gives the exact floored age
+    // there, and without one the floored age advances by the elapsed read
+    // time — never earlier than the window's entry, so a slow peer reader
+    // cannot carry borderline-stale evidence into READY and a backward clock
+    // cannot rewind it. Without a mtime the true floored age can sit up to one
+    // second higher from the producer's own rounding, so the advance uses the
+    // pessimistic ceil bound. A mtime ahead of the evaluation instant is
+    // contradictory evidence, unreadable like a negative age.
+    const producerAsOfMs = typeof snapshot['asOf'] === 'string' ? Date.parse(snapshot['asOf']) : Number.NaN;
+    const evalMs = Number.isFinite(producerAsOfMs)
+      ? Math.max(doneMs, entryMs, producerAsOfMs)
+      : Math.max(doneMs, entryMs);
+    let answerAgeSeconds: number | null = null;
+    if (typeof ageSeconds === 'number' && Number.isFinite(ageSeconds) && ageSeconds >= 0) {
+      const mtimeMs = typeof fleetState?.['mtime'] === 'string' ? Date.parse(fleetState['mtime']) : Number.NaN;
+      if (Number.isFinite(mtimeMs)) {
+        const ageMs = evalMs - mtimeMs;
+        answerAgeSeconds = ageMs < 0 ? null : Math.floor(ageMs / 1000);
+      } else {
+        answerAgeSeconds = ageSeconds + Math.ceil(Math.max(0, doneMs - entryMs) / 1000);
+      }
+    }
+    if (answerAgeSeconds === null) {
       missing.push('runtime.fleet-state');
       runtimeSection['reason'] = 'fleet-state-unreadable';
-    } else if (ageSeconds > STALE_AFTER_SECONDS) {
-      missing.push('runtime.fleet-state-stale');
-      runtimeSection['reason'] = 'fleet-state-stale';
+    } else {
+      if (isRecord(runtimeSection['lastFleetStateRead'])) {
+        runtimeSection['lastFleetStateRead'] = { ...runtimeSection['lastFleetStateRead'], ageSeconds: answerAgeSeconds };
+      }
+      if (answerAgeSeconds > STALE_AFTER_SECONDS) {
+        missing.push('runtime.fleet-state-stale');
+        runtimeSection['reason'] = 'fleet-state-stale';
+      }
     }
     // Sub-evidence the snapshot carries explicitly: a present-but-unknown
     // coordination or execution state is unknown runtime evidence. Absent
@@ -203,12 +255,12 @@ export async function readFleetBridgeCheck(deps: FleetBridgeCheckDeps = {}): Pro
     // producer-shaped rows; a missing, non-array or partly malformed list is
     // unreadable evidence — never an empty ledger or a filtered live count.
     const rawClaims = projection['claims'];
-    const list = Array.isArray(rawClaims) && rawClaims.every(row => isProducerClaimRow(row, nowMs))
+    const list = Array.isArray(rawClaims) && rawClaims.every(row => isProducerClaimRow(row, doneMs))
       ? (rawClaims as Record<string, unknown>[])
       : null;
     const base = {
       source: typeof projection['source'] === 'string' ? projection['source'] : 'coordination-ledger',
-      asOf: typeof projection['asOf'] === 'string' ? projection['asOf'] : asOf,
+      asOf: !defaultClaims && typeof projection['asOf'] === 'string' ? projection['asOf'] : asOf,
     };
     if (state !== 'known' || list === null) {
       claimsSection = {
@@ -219,12 +271,17 @@ export async function readFleetBridgeCheck(deps: FleetBridgeCheckDeps = {}): Pro
       };
       missing.push('claims');
     } else {
-      const newest = list.length === 0 ? Number.NEGATIVE_INFINITY
-        : Math.max(...list.map(claim => Date.parse(claim['claimedAt'] as string)));
+      // Liveness is re-evaluated at the answer instant: a claim whose expiresAt
+      // passed while a peer reader waited is expired evidence, never counted
+      // live, and the live count and newest age describe only rows still live
+      // at doneMs — the same instant the verdict's asOf names.
+      const liveRows = list.filter(row => Date.parse(row['expiresAt'] as string) > doneMs);
+      const newest = liveRows.length === 0 ? Number.NEGATIVE_INFINITY
+        : Math.max(...liveRows.map(claim => Date.parse(claim['claimedAt'] as string)));
       claimsSection = {
-        ...base, status: 'ok', state, live: list.length,
+        ...base, status: 'ok', state, live: liveRows.length,
         newestAgeSec: Number.isFinite(newest)
-          ? Math.max(0, Math.floor((nowMs - newest) / 1000))
+          ? Math.max(0, Math.floor((doneMs - newest) / 1000))
           : null,
         ...(typeof projection['reason'] === 'string' ? { reason: projection['reason'] } : {}),
       };

@@ -53,7 +53,7 @@ export function CompanyPane({ visible, host }: PaneProps) {
 
   return <div className={styles.company}>
     <header className={styles.heading}><div><span className={styles.eyebrow}>Phantom · Company</span><h2>One company. Shared progress.</h2></div>
-      <nav aria-label="Company details">{[['fleet-mission', 'Mission'], ['fleet-queue', 'Queue'], ['fleet-observe', 'Sessions'], ['fleet-merges', 'PRs'], ['fleet-bus', 'Agent bus']].map(([pane, label]) =>
+      <nav aria-label="Company details">{[['fleet-compute', 'Fleet map'], ['fleet-mission', 'Mission'], ['fleet-queue', 'Queue'], ['fleet-observe', 'Sessions'], ['fleet-merges', 'PRs'], ['fleet-bus', 'Agent bus']].map(([pane, label]) =>
         <button type="button" key={pane} onClick={() => open(pane!)}>{label}</button>)}</nav>
     </header>
 
