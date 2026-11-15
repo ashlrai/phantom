@@ -10,10 +10,13 @@
  * "ignored and logged without content" rule auditable.
  *
  * The file is capped (256 KiB): when an append would exceed the cap the tail
- * is kept and older observations drop -- a journal is evidence, not a ledger.
+ * of whole rows (at most 192 KiB) is kept and older observations drop.
+ * This journal is evidence, not a ledger.
  */
+import { lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { acquireLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { ensurePrivateDirectory, readPrivateFileCapped, writePrivateFileAtomic } from '../verse/preferences.js';
 import { isSlackTs } from './slack-network.js';
 
@@ -83,36 +86,62 @@ function sanitize(obs: SlackObservation): Record<string, string> | null {
   return out;
 }
 
+/** Distinguish absence from unreadable, oversized or short-read evidence. */
+function journalContents(path: string): string | null {
+  try {
+    lstatSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+  const read = readPrivateFileCapped(path, SLACK_JOURNAL_MAX_BYTES);
+  if (read === null || read.truncated || Buffer.byteLength(read.text, 'utf8') !== read.bytes) {
+    throw new Error('unreadable Slack journal');
+  }
+  return read.text;
+}
+
 /**
- * Append one observation. Read-modify-write keeps the cap simple: the file
- * stays well under 256 KiB, so a full rewrite on overflow is cheap. Never
- * throws -- journaling must not take the ingest path down.
+ * Serialize read/append/whole-row retention with the repository's process-owner
+ * lock. Contention has a 250 ms retry budget; OS calls/probes add latency.
+ * Damaged predecessors are left untouched for inspection; no implicit repair.
+ * Never throws -- journaling must not take the ingest path down.
  */
 export function recordSlackObservation(
   obs: SlackObservation,
   options: { runsDir?: string } = {},
 ): 'recorded' | 'failed' {
+  let lock: ReturnType<typeof acquireLocalStoreLock> = null;
   try {
     const clean = sanitize(obs);
     if (clean === null) return 'failed';
     const dir = slackBridgeDir(options.runsDir);
     const path = slackJournalPath(options.runsDir);
     ensurePrivateDirectory(dir);
-    const existing = readPrivateFileCapped(path, SLACK_JOURNAL_MAX_BYTES * 2);
-    let body = existing === null || existing.truncated ? '' : existing.text;
-    body += `${JSON.stringify(clean)}\n`;
+    lock = acquireLocalStoreLock(`${path}.lock`, 250);
+    if (lock === null) return 'failed';
+    const existing = journalContents(path) ?? '';
+    if (parseJournal(existing, 0).state === 'degraded') return 'failed';
+    let body = `${existing}${JSON.stringify(clean)}\n`;
     if (Buffer.byteLength(body, 'utf8') > SLACK_JOURNAL_MAX_BYTES) {
       const lines = body.split('\n').filter((line) => line.length > 0);
-      let kept = '';
-      for (let i = lines.length - 1; i >= 0 && Buffer.byteLength(kept, 'utf8') <= SLACK_JOURNAL_KEEP_BYTES; i--) {
-        kept = `${lines[i]!}\n${kept}`;
+      const kept: string[] = [];
+      let bytes = 0;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = `${lines[i]!}\n`;
+        const size = Buffer.byteLength(line, 'utf8');
+        if (bytes + size > SLACK_JOURNAL_KEEP_BYTES) break;
+        kept.push(line);
+        bytes += size;
       }
-      body = kept;
+      body = kept.reverse().join('');
     }
     writePrivateFileAtomic(path, body);
     return 'recorded';
   } catch {
     return 'failed';
+  } finally {
+    if (lock !== null) releaseLocalStoreLock(lock);
   }
 }
 
@@ -153,18 +182,25 @@ function projectObservation(row: Record<string, unknown>): SlackObservation | nu
   return out;
 }
 
-/** Newest-first bounded read for status surfaces. `degraded` on unreadable or malformed lines. */
+/** Newest-first bounded read. Never takes a lock, repairs or creates files. */
 export function readSlackJournal(
   options: { runsDir?: string; limit?: number } = {},
 ): SlackJournalRead {
   const limit = Math.max(1, Math.min(options.limit ?? 500, 4096));
-  const read = readPrivateFileCapped(slackJournalPath(options.runsDir), SLACK_JOURNAL_MAX_BYTES);
-  if (read === null) return { state: 'missing', entries: [] };
-  if (read.truncated) return { state: 'degraded', entries: [] };
+  try {
+    const text = journalContents(slackJournalPath(options.runsDir));
+    return text === null ? { state: 'missing', entries: [] } : parseJournal(text, limit);
+  } catch {
+    return { state: 'degraded', entries: [] };
+  }
+}
+
+function parseJournal(text: string, limit: number): SlackJournalRead {
   const entries: SlackObservation[] = [];
-  let degraded = false;
-  const lines = read.text.split('\n').filter((line) => line.length > 0);
-  for (let i = lines.length - 1; i >= 0 && entries.length < limit; i--) {
+  let degraded = text.length > 0 && !text.endsWith('\n');
+  const lines = text.split('\n').filter((line) => line.length > 0);
+  // Validate all bounded evidence even when the projection limit is reached.
+  for (let i = lines.length - 1; i >= 0; i--) {
     try {
       const parsed: unknown = JSON.parse(lines[i]!);
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
@@ -176,7 +212,7 @@ export function readSlackJournal(
         degraded = true;
         continue;
       }
-      entries.push(obs);
+      if (entries.length < limit) entries.push(obs);
     } catch {
       degraded = true;
     }

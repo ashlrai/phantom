@@ -17,6 +17,23 @@ METRICS_TAIL_BYTES = 8 * 1024 * 1024
 _TERMINAL_EMPTY = {"EMPTY", "DONE-NOOP", "EMPTY_DONE", "SKIPPED-EMPTY"}
 _streak_cache = {}
 
+# RQ-EMPTY-SIGNAL-1: a finish row's boolean `empty` only says "no diff vs the launch
+# base". It cannot tell an agent that ran cleanly and legitimately changed nothing
+# (research, already done) from one that died, hit a pool error, or never wrote its
+# exit status. Penalizing a lane for the first kind burns quota-routing signal on
+# healthy work, so classify. Returns None when the row is not a measured empty.
+EMPTY_NO_DIFF = "no_diff"    # exit 0, no pool error: ran fine, produced nothing publishable
+EMPTY_ERROR = "error"        # nonzero exit or a classified pool error: infrastructure
+EMPTY_UNKNOWN = "unknown"    # no exit status recorded: possible capture gap, not blamed on prompt
+
+
+def classify_empty(empty, exit_code, pool_error=None):
+    if empty is not True:
+        return None
+    if pool_error or (type(exit_code) is int and exit_code != 0):
+        return EMPTY_ERROR
+    return EMPTY_NO_DIFF if exit_code == 0 and type(exit_code) is int else EMPTY_UNKNOWN
+
 
 def empty_streaks(jobs_path):
     """job id -> count of consecutive trailing empty finishes; {} on any read problem."""
