@@ -384,3 +384,7 @@ communication require their own explicit authorization and qualification.
 Client management versus ownership remains unconfirmed; account labels cannot
 resolve it. Routine releases may be unattended inside a previously commissioned,
 current, bounded policy; creating or widening that policy is a separate action.
+
+## Historical product context
+
+The [original four-pillar vision](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) is preserved as a dated artifact. Current product direction remains the [North Star](NORTH-STAR.md).
