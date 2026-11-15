@@ -1,7 +1,7 @@
 import { Button } from '../../../components/primitives/index.js';
 import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
-import { bridgeCheckAsOf, bridgeCheckHeadline, parseBridgeCheck, sectionFailing, type BridgeCheckView } from './bridge-check-model.js';
+import { bridgeCheckAsOf, bridgeCheckHeadline, bridgeClaimsLine, bridgeRuntimeLine, parseBridgeCheck, sectionFailing, type BridgeCheckView } from './bridge-check-model.js';
 import { bridgeCheckQuery } from './bridge-check-query.js';
 import styles from './fleet-host.module.css';
 
@@ -13,6 +13,8 @@ export function BridgeCheckBody({ view }: { view: BridgeCheckView }) {
       <span className={styles.badge}>{s.name}</span>
       <span>{s.status}{sectionFailing(s) && s.reason ? `: ${s.reason}` : ''}</span>
       <span className={styles.muted}>{s.source} · as of {s.asOf}</span>
+      {s.name === 'runtime' ? <span className={styles.muted}>{bridgeRuntimeLine(view)}</span> : null}
+      {s.name === 'claims' ? <span className={styles.muted}>{bridgeClaimsLine(view)}</span> : null}
     </li>)}</ul>
   </>;
 }
