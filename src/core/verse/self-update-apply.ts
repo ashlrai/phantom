@@ -277,9 +277,9 @@ async function runApply(deps: SelfUpdateApplyDeps): Promise<SelfUpdateApplyResul
   // + `upToDate:true` for its already-current shapes). Absent, malformed,
   // wrong-typed or negative payloads are failed applies and never restart.
   const report = updateReport(update.stdout);
+  if (typeof report?.commitAfter === 'string' && report.commitAfter) toCommit = report.commitAfter;
+  if (report?.smokeOk === false) return step('update', t0, false, 'smoke test failed', 'failed', 'smoke test failed')!;
   if (report?.updated === true) {
-    if (typeof report.commitAfter === 'string' && report.commitAfter) toCommit = report.commitAfter;
-    if (report.smokeOk === false) return step('update', t0, false, 'smoke test failed', 'failed', 'smoke test failed')!;
     const version = [report.versionAfter, report.versionLatest].find((v): v is string => typeof v === 'string' && v !== '') ?? null;
     return step('update', t0, true, version ? `updated to ${version}` : null, 'updated')!;
   }
