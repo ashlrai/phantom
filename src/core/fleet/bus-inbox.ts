@@ -13,7 +13,13 @@ export const BUS_INBOX_MAX_BYTES = 1024 * 1024;
 export const BUS_INBOX_MAX_MESSAGES = 1024;
 export const BUS_INBOX_MAX_READ = 100;
 export interface BusInboxOptions { root?: string; now?: () => number }
-export interface BusInboxReceipt { cursor: number; receivedAt: number; envelope: BusEnvelope }
+export interface BusInboxReadOptions extends BusInboxOptions { includeOriginalEnvelope?: boolean }
+export interface BusInboxReceipt {
+  cursor: number;
+  receivedAt: number;
+  envelope: BusEnvelope;
+  originalEnvelope?: BusEnvelope;
+}
 export interface BusInboxInspection {
   source: 'missing' | 'available' | 'unavailable';
   retainedCount: number | null;
@@ -175,7 +181,7 @@ export function appendBusInbox(input: unknown, options: BusInboxOptions = {}): B
  * safe; avoid adding TTL to receivedAt, which could exceed MAX_SAFE_INTEGER.
  * A clock before receipt counts as zero elapsed and cannot inflate the wire TTL.
  */
-export function listBusInboxAfter(after = 0, limit = 50, options: BusInboxOptions = {}): BusInboxPage {
+export function listBusInboxAfter(after = 0, limit = 50, options: BusInboxReadOptions = {}): BusInboxPage {
   if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > BUS_INBOX_MAX_READ) return { status: 'invalid' };
   try {
     const now = (options.now ?? Date.now)();
@@ -188,7 +194,10 @@ export function listBusInboxAfter(after = 0, limit = 50, options: BusInboxOption
       nextCursor = row.cursor;
       const elapsed = Math.max(0, now - row.receivedAt);
       if (elapsed < row.envelope.ttl) {
-        messages.push({ ...row, envelope: { ...row.envelope, ttl: row.envelope.ttl - elapsed } });
+        const receipt: BusInboxReceipt = { cursor: row.cursor, receivedAt: row.receivedAt,
+          envelope: { ...row.envelope, ttl: row.envelope.ttl - elapsed } };
+        if (options.includeOriginalEnvelope) receipt.originalEnvelope = row.envelope;
+        messages.push(receipt);
       }
       if (messages.length === limit) break;
     }
