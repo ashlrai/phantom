@@ -1,19 +1,9 @@
 /** Read-only orchestration receipts; directory selection belongs to the server. */
-import { join } from 'node:path';
-import { z } from 'zod';
+import { journalSchema, orchestrationJournalPath } from '../core/fleet/orchestration-journal.js';
 import { readSpecialistFile, specialistRosterDirectory } from '../core/fleet/roster.js';
 
 export const DEFAULT_FLEET_ORCHESTRATION_LIMIT = 25;
 export const MAX_FLEET_ORCHESTRATION_LIMIT = 100;
-
-// Identical to orchestrate.ts; kept here to stay within this job's six-file scope.
-const receiptSchema = z.object({
-  key: z.string().regex(/^[a-f0-9]{64}$/), job: z.string().max(64), lane: z.string().max(64),
-  specialist: z.string().max(64), assignedAt: z.string().datetime(),
-  status: z.enum(['reserved', 'admitted', 'complete']),
-  delivery: z.string().max(64).optional(), slack: z.string().max(64).optional(),
-}).strict();
-const journalSchema = z.object({ version: z.literal(1), receipts: z.array(receiptSchema).max(2000) }).strict();
 
 export interface FleetOrchestrationReadArgs {
   status?: 'reserved' | 'admitted' | 'complete';
@@ -35,7 +25,7 @@ export function parseFleetOrchestrationReadArgs(args: Record<string, unknown>): 
 
 /** One bounded read; parse and filesystem failures propagate to the server's sanitized error handler. */
 export async function readFleetOrchestration(input: FleetOrchestrationReadArgs) {
-  const raw = await readSpecialistFile(join(specialistRosterDirectory(), 'orchestration.json'));
+  const raw = await readSpecialistFile(orchestrationJournalPath(specialistRosterDirectory()));
   const journal = journalSchema.parse(raw === null ? { version: 1, receipts: [] } : JSON.parse(raw));
   const receipts = journal.receipts.sort((a, b) => Date.parse(b.assignedAt) - Date.parse(a.assignedAt));
   // Counts and unresolved reservations describe the entire journal, even when rows are filtered or capped.

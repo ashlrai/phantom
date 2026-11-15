@@ -110,11 +110,11 @@ describe('fleet_orchestration_read over MCP', () => {
     expect(read).not.toHaveBeenCalled();
   });
 
-  it('keeps validation identical to the writer schema', () => {
-    const schemas = (file: string) => readFileSync(new URL(file, import.meta.url), 'utf8')
-      .match(/const receiptSchema = [\s\S]*?const journalSchema = [^\n]+/)?.[0];
-    const writer = schemas('../../src/core/fleet/orchestrate.ts');
-    expect(writer).toBeTruthy();
-    expect(schemas('../../src/mcp/fleet-orchestration-read.ts')).toBe(writer);
+  it('keeps validation identical to the writer schema by sharing one definition', () => {
+    const source = (file: string) => readFileSync(new URL(file, import.meta.url), 'utf8');
+    for (const file of ['../../src/core/fleet/orchestrate.ts', '../../src/mcp/fleet-orchestration-read.ts', '../../src/core/cos/peer-plan.ts']) {
+      expect(source(file)).toContain('orchestration-journal.js');
+      expect(source(file)).not.toMatch(/const (receiptSchema|journalSchema) = /);
+    }
   });
 });
