@@ -459,3 +459,9 @@ apply uses existing drop admission, and digest reports twelve-hour observations.
 No merge, publish, send or scheduler authority is added. The full limits,
 dedupe, protected-scope and failure contract is in the
 [feedback pipeline contract](docs/contracts/CONTRACT-RQ-GROK-FEEDBACKLOOP-1.md).
+
+## Agent peer mesh
+
+[CONTRACT-AGENTNET-PEERBUS](docs/contracts/CONTRACT-AGENTNET-PEERBUS.md) pins
+session-bound callsigns, team-only peer messages, Slack provisioning drafts,
+the approval-gated broker and bounded chief-of-staff delegation.

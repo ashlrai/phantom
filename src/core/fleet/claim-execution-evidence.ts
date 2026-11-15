@@ -9,15 +9,22 @@
  * an `RQ-…` token. A worker matches a named job when `worker.job` equals the
  * token exactly (case-sensitive) and, when both repos are non-empty, the
  * worker repo's last path segment equals the claim repo's last segment —
- * launch.sh passes a bare repo name while claims carry `owner/repo`. Among
- * several matching workers the youngest ageSeconds wins; a first match is
- * kept on ties.
+ * launch.sh passes a bare repo name while claims carry `owner/repo`. Only a
+ * record satisfying the process reader's contract — a positive safe-integer
+ * pid, string job/repo/lane/tier and a null-or-non-negative-safe-integer
+ * ageSeconds — is usable live-worker evidence: malformed matching records
+ * never win selection and, when nothing usable matches, turn the row
+ * UNKNOWN rather than a dishonest CLAIMED_NO_WORKER. Among several usable
+ * matching workers the youngest ageSeconds wins; a first match is kept on
+ * ties.
  *
  * Rows cover only live claims (`expiresAt > now`), newest `claimedAt` first,
  * capped at 50. A row is RUNNING only when the process table read healthy
- * AND a worker matches; CLAIMED_NO_WORKER when none does; UNKNOWN when the
- * process table is unavailable or the claim names no job id. When the board
- * is missing or unreadable the report carries no rows at all.
+ * AND a usable worker matches; CLAIMED_NO_WORKER when none does; UNKNOWN
+ * when the process table is unavailable or malformed, the claim names no
+ * job id, or every matching worker record is malformed. A RUNNING row
+ * always carries the worker's real pid — a malformed pid is never emitted.
+ * When the board is missing or unreadable the report carries no rows at all.
  *
  * Identity labels (claimId, agent, repo, jobId, lane, tier) pass the
  * surface-owner safe-token rule plus a scrubSecrets equality check; a label
@@ -99,19 +106,48 @@ function jobIdOf(claim: { id: unknown; task: unknown }): string | null {
 const ageOf = (worker: LiveWorker): number =>
   finite(worker.ageSeconds) ? worker.ageSeconds : Number.POSITIVE_INFINITY;
 
-/** First matching worker, ties broken by youngest ageSeconds. */
-function workerFor(jobId: string, claimRepo: string, workers: unknown[]): LiveWorker | null {
+/**
+ * The process reader's contract, applied to one matching record:
+ * `listLiveWorkers` only ever emits a positive safe-integer pid, string
+ * job/repo/lane/tier and a null-or-non-negative-safe-integer ageSeconds, so
+ * a record failing this could not have come from a healthy process table
+ * and is not usable live-worker evidence.
+ */
+const usableWorkerEvidence = (worker: LiveWorker): boolean =>
+  Number.isSafeInteger(worker.pid) && worker.pid > 0 &&
+  typeof worker.job === 'string' &&
+  typeof worker.repo === 'string' && typeof worker.lane === 'string' && typeof worker.tier === 'string' &&
+  (worker.ageSeconds === null || (Number.isSafeInteger(worker.ageSeconds) && worker.ageSeconds >= 0));
+
+interface WorkerMatch {
+  /** Youngest usable matching worker; null when none is usable. */
+  best: LiveWorker | null;
+  /** True when at least one nominally matching record was malformed. */
+  malformedMatch: boolean;
+}
+
+/**
+ * First usable matching worker, ties broken by youngest ageSeconds.
+ * Malformed matching records never win but are still reported so the caller
+ * can answer UNKNOWN instead of claiming a healthy absence.
+ */
+function workerFor(jobId: string, claimRepo: string, workers: unknown[]): WorkerMatch {
   const claimSegment = lastSegment(claimRepo);
   let best: LiveWorker | null = null;
+  let malformedMatch = false;
   for (const candidate of workers) {
     if (candidate === null || typeof candidate !== 'object') continue;
     const worker = candidate as LiveWorker;
     if (worker.job !== jobId) continue;
     const workerSegment = lastSegment(text(worker.repo));
     if (claimSegment !== '' && workerSegment !== '' && workerSegment !== claimSegment) continue;
+    if (!usableWorkerEvidence(worker)) {
+      malformedMatch = true;
+      continue;
+    }
     if (best === null || ageOf(worker) < ageOf(best)) best = worker;
   }
-  return best;
+  return { best, malformedMatch };
 }
 
 /**
@@ -128,7 +164,8 @@ export function joinClaimExecution(board: FleetBoard | null, workers: LiveWorker
   const ledgerKnown = board !== null && board.state === 'known';
   if (!ledgerKnown) reasons.add('coordination ledger: missing or unreadable');
   if (ledgerKnown) {
-    const workerList: unknown[] = processes === 'healthy' && Array.isArray(workers!.workers) ? workers!.workers : [];
+    const workerList: unknown[] | null =
+      processes === 'healthy' ? (Array.isArray(workers!.workers) ? workers!.workers : null) : null;
     const live = ((Array.isArray(board!.claims) ? board!.claims : []) as unknown[])
       .filter(claimLike)
       .filter(claim => finite(claim.expiresAt) && claim.expiresAt > nowMs)
@@ -144,19 +181,23 @@ export function joinClaimExecution(board: FleetBoard | null, workers: LiveWorker
       };
       if (processes !== 'healthy') {
         reasons.add('process table: unavailable');
+      } else if (workerList === null) {
+        reasons.add('process table: malformed worker list');
       } else if (jobId === null) {
         reasons.add('claim names no job id');
       } else {
-        const match = workerFor(jobId, text(claim.repo), workerList);
-        if (match === null) {
-          row.state = 'CLAIMED_NO_WORKER';
-        } else {
+        const { best: match, malformedMatch } = workerFor(jobId, text(claim.repo), workerList);
+        if (match !== null) {
           row.state = 'RUNNING';
           row.worker = {
-            pid: Number.isSafeInteger(match.pid) && match.pid > 0 ? match.pid : 0,
+            pid: match.pid,
             lane: label(match.lane), tier: label(match.tier),
             ageSeconds: finite(match.ageSeconds) ? match.ageSeconds : null,
           };
+        } else if (malformedMatch) {
+          reasons.add('matching worker evidence malformed');
+        } else {
+          row.state = 'CLAIMED_NO_WORKER';
         }
       }
       counts[row.state === 'RUNNING' ? 'running' : row.state === 'CLAIMED_NO_WORKER' ? 'claimedNoWorker' : 'unknown']++;
