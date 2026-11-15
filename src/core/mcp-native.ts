@@ -47,6 +47,7 @@ import { DROP_JOB_LANES, DROP_JOB_TIERS, DropJobExistsError, DropJobValidationEr
 import { STRAY_ID_PATTERN } from './fleet/stray-slots.js';
 import { listProposals } from './inbox/store.js';
 import { FLEET_APPS } from './fleet/app-await.js';
+import { EVIDENCE_SCHEMAS, recordEvidence, validEvidenceArgs } from './intent/mcp-evidence.js';
 import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
 import { desktopOperatorTools } from './desktop/operator-mcp.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, type OwnerThreadSettings } from './comms/owner-channel.js';
@@ -189,28 +190,82 @@ let plannerRunStartedAt: string | null = null;
 
 const TOOLS: NativeToolImpl[] = [
   {
-    name: 'intent_link', description: 'Record caller-supplied merged pull evidence on matching directives. Supplied claims are not verified.',
+    name: 'intent_add',
+    description: 'Record a local directive. Tracking does not authorize action.',
     inputSchema: { type: 'object', properties: {
-      repo: { type: 'string', minLength: 1, maxLength: 200 },
-      number: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
-      title: { type: 'string', minLength: 1, maxLength: 300 },
-      branch: { type: 'string', minLength: 1, maxLength: 300 },
-      url: { type: 'string', minLength: 1, maxLength: 2048 },
-      at: { type: 'string', maxLength: 35, format: 'date-time' },
-    }, required: ['repo', 'number', 'title'], additionalProperties: false },
-    safety: 'append',
-    handler: async args => (await import('./intent/mcp-evidence.js' as string) as typeof import('./intent/mcp-evidence.js')).recordEvidence('intent_link', args),
+      title: { type: 'string' }, source: { type: 'string' }, owner: { type: 'string' },
+      rq: { type: 'array', items: { type: 'string' } }, status: { type: 'string' },
+      verbatim: { type: 'boolean' }, partial: { type: 'boolean' }, staleAfterMs: { type: 'integer', minimum: 60000, maximum: 31536000000 },
+    }, required: ['title', 'source'], additionalProperties: false },
+    safety: 'append', handler: async args => (await import('./intent/native-edit.js' as string) as typeof import('./intent/native-edit.js')).nativeEdit('intent_add', args),
   },
   {
-    name: 'intent_ship', description: 'Record caller-supplied release evidence on matching directives. Supplied claims are not verified.',
+    name: 'intent_update',
+    description: 'Revise a local directive and record caller-reported verification evidence. Tracking does not authorize action.',
     inputSchema: { type: 'object', properties: {
-      release: { type: 'string', minLength: 1, maxLength: 200 },
-      notes: { type: 'string', minLength: 1, maxLength: 10000 },
-      rq: { type: 'array', minItems: 1, maxItems: 16, items: { type: 'string', minLength: 1, maxLength: 200 } },
-      at: { type: 'string', maxLength: 35, format: 'date-time' },
-    }, required: ['release'], additionalProperties: false },
+      id: { type: 'string' }, title: { type: 'string' }, source: { type: 'string' }, owner: { type: 'string' },
+      rq: { type: 'array', items: { type: 'string' } }, status: { type: 'string' }, evidence: { type: 'string' }, partial: { type: 'boolean' },
+    }, required: ['id'], additionalProperties: false },
+    safety: 'append', handler: async args => (await import('./intent/native-edit.js' as string) as typeof import('./intent/native-edit.js')).nativeEdit('intent_update', args),
+  },
+  {
+    name: 'intent_list',
+    description: 'List local owner directives and their provenance, optionally filtered by status.',
+    inputSchema: { type: 'object', properties: { status: { type: 'string', enum: ['proposed', 'queued', 'in-progress', 'merged', 'shipped', 'verified', 'superseded', 'closed', 'unknown'] } }, additionalProperties: false },
+    safety: 'read',
+    handler: async (args) => {
+      const { listIntents } = await import('./intent/ledger.js');
+      const { isIntentStatus } = await import('./intent/schema.js');
+      const status = typeof args['status'] === 'string' && isIntentStatus(args['status']) ? args['status'] : undefined;
+      const listed = await listIntents({ status });
+      return { ok: true, ...listed.summary, records: listed.items };
+    },
+  },
+  {
+    name: 'intent_get',
+    description: 'Read one intent by id from the local ledger.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,80}$' } }, required: ['id'], additionalProperties: false },
+    safety: 'read',
+    handler: async (args) => {
+      const { getIntent } = await import('./intent/ledger.js');
+      const item = await getIntent(args['id'] as string);
+      return item ? { ok: true, item } : { ok: false, error: 'Intent not found.' };
+    },
+  },
+  {
+    // Evidence only: a merged pull never verifies a directive or closes it.
+    name: 'intent_link',
+    description: 'Record caller-supplied merged pull evidence. Moves open directives to merged; never verifies or closes.',
+    inputSchema: EVIDENCE_SCHEMAS.intent_link, safety: 'append',
+    handler: async args => recordEvidence('intent_link', args),
+  },
+  {
+    // Evidence only: a release note never proves publication or verification.
+    name: 'intent_ship',
+    description: 'Record caller-supplied release evidence. Moves named directives to shipped; never verifies.',
+    inputSchema: EVIDENCE_SCHEMAS.intent_ship, safety: 'append',
+    handler: async args => recordEvidence('intent_ship', args),
+  },
+  {
+    name: 'intent_stale', description: 'List stale directives in the local intent ledger. apply true refreshes local tracking only (live directives re-queue, others keep their status with a sweep evidence row); recommendations never close work, dispatch jobs, verify remotely or claim completion.',
+    inputSchema: { type: 'object', properties: { apply: { type: 'boolean' } }, additionalProperties: false },
     safety: 'append',
-    handler: async args => (await import('./intent/mcp-evidence.js' as string) as typeof import('./intent/mcp-evidence.js')).recordEvidence('intent_ship', args),
+    handler: async args => (await import('./intent/native-stale.js' as string) as typeof import('./intent/native-stale.js')).nativeIntentStale(args),
+  },
+  {
+    name: 'intent_import',
+    description: 'Import local JSONL files or an ashlr.intent-ledger/v1 document, deduplicating directives and retaining provenance.',
+    inputSchema: { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' }, minItems: 1 } }, required: ['paths'], additionalProperties: false },
+    safety: 'append',
+    handler: async (args) => {
+      const paths = args['paths'];
+      if (Object.keys(args).some((key) => key !== 'paths') || !Array.isArray(paths) || paths.length === 0 ||
+        !paths.every((path): path is string => typeof path === 'string' && path.trim().length > 0)) {
+        throw new Error('Expected a nonempty paths array of nonblank strings, with no other arguments.');
+      }
+      const { importIntentFiles } = await import('./intent/import.js');
+      return { ok: true, schema: 'ashlr.intent-ledger/v1', ...(await importIntentFiles(paths)) };
+    },
   },
   {
     name: 'phantom_agent_bus_read',
@@ -1668,8 +1723,20 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
   // The general validator intentionally tolerates unknown fields and only checks
   // primitive types. Bus calls need the exact wire contract before any append.
   let invalid: string | null;
-  if (name === 'intent_link' || name === 'intent_ship') {
-    invalid = ((await import('./intent/mcp-evidence.js' as string)) as typeof import('./intent/mcp-evidence.js')).validEvidenceArgs(name, rawArgs) ? null : 'invalid intent evidence arguments';
+  if (name === 'intent_add' || name === 'intent_update') {
+    invalid = ((await import('./intent/native-edit.js' as string)) as typeof import('./intent/native-edit.js')).validNativeEdit(name, rawArgs) ? null : 'invalid intent arguments';
+  } else if (name === 'intent_link' || name === 'intent_ship') {
+    invalid = validEvidenceArgs(name, rawArgs) ? null : 'invalid intent evidence arguments';
+  } else if (name === 'intent_stale') {
+    invalid = (await import('./intent/native-stale.js' as string) as typeof import('./intent/native-stale.js')).validStaleArgs(rawArgs) ? null : 'invalid intent stale arguments';
+  } else if (name === 'intent_list' || name === 'intent_get') {
+    const { isIntentStatus, validIntentId } = await import('./intent/schema.js');
+    const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
+    const key = name === 'intent_list' ? 'status' : 'id';
+    const value = args[key];
+    invalid = !object || Object.keys(args).some(k => k !== key) ||
+      (name === 'intent_list' ? value !== undefined && (typeof value !== 'string' || !isIntentStatus(value)) :
+        typeof value !== 'string' || !validIntentId(value)) ? 'invalid intent arguments' : null;
   } else if (name === 'phantom_agent_bus_post') {
     try {
       invalid = (await import('./fleet/bus-envelope.js')).validateBusEnvelope(rawArgs).ok ? null : 'invalid bus envelope';
@@ -1857,7 +1924,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
     cfg = loadConfig();
   } catch (err) {
     auditNativeCall(`${tool.name} keys=${argKeys} — config load failed`, 'error');
-    if (fleetObservation || ['intent_link', 'intent_ship', 'phantom_fleet_apps_ensure', 'phantom_fleet_apps_await', 'phantom_fleet_apps_watch', 'phantom_fleet_apps_follow', 'phantom_fleet_apps_recovery_check', 'phantom_fleet_apps_recovery_batch'].includes(name)) return textResult({ error: 'Fleet configuration unavailable' }, true);
+    if (fleetObservation || ['intent_stale', 'intent_add', 'intent_update', 'intent_link', 'intent_ship', 'phantom_fleet_apps_ensure', 'phantom_fleet_apps_await', 'phantom_fleet_apps_watch', 'phantom_fleet_apps_follow', 'phantom_fleet_apps_recovery_check', 'phantom_fleet_apps_recovery_batch'].includes(name)) return textResult({ error: 'Fleet configuration unavailable' }, true);
     return textResult(
       `${tool.name} failed: could not load ~/.ashlr/config.json (${err instanceof Error ? err.message : String(err)})`,
       true,

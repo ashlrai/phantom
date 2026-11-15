@@ -123,27 +123,24 @@ export function devinCliFleetModelSource(section: AshlrConfig['devin'] | undefin
   return typeof candidate === 'string' && MODEL_ID_RE.test(candidate.trim()) ? 'config' : 'default';
 }
 
-export type DevinCliFleetPromo = 'free' | 'not-free' | 'unknown';
+/** Reporting-only pricing evidence: never 'free' (a model id alone is not proof of a free route). */
+export type DevinCliFleetPricing = 'not-free' | 'unknown';
 
 /**
- * The overview's promotional reading of the resolved fleet model: 'free' ONLY
- * on isDevinCliFreeModel's answer at `nowMs` (a model id alone never proves a
- * free route); 'not-free' on a `-lightning` id or once the conservative
- * evidence boundary has passed; else 'unknown' — a pre-boundary id the free
- * list does not name is never claimed free. Pure.
+ * The overview's honest pricing reading of the resolved fleet model: 'not-free'
+ * on a `-lightning` id or once the conservative evidence boundary has passed,
+ * else 'unknown' (usage and price stay unknown without current native
+ * evidence). It NEVER authorizes execution; launch/admission checks are
+ * separate and unchanged. Pure.
  */
-export function devinCliFleetModelPromo(model: string, nowMs = Date.now()): DevinCliFleetPromo {
-  if (isDevinCliFreeModel(model, nowMs)) return 'free';
-  if (model.endsWith('-lightning') || (Number.isFinite(nowMs) && nowMs >= DEVIN_CLI_PROMOTION_EVIDENCE_BOUNDARY)) return 'not-free';
-  return 'unknown';
+export function devinCliFleetModelPricing(model: string, nowMs = Date.now()): DevinCliFleetPricing {
+  if (model.endsWith('-lightning')) return 'not-free';
+  return Number.isFinite(nowMs) && nowMs >= DEVIN_CLI_PROMOTION_EVIDENCE_BOUNDARY ? 'not-free' : 'unknown';
 }
 
 /**
- * Every `devin*` key the lane-model map resolves to (the lane-models.ts
- * snapshot's `via`s, so a `devin.fast` models.json key is named exactly),
- * each flagged `paid` on a `-lightning` id — those are the ids a fleet run
- * redirects to swe-2-flash-max. Sorted by key; an empty lane set in, an empty
- * list out. Pure.
+ * Every `devin*` key the lane-model map resolves to (lane-models.ts `via`s),
+ * each flagged `paid` on a `-lightning` id. Sorted by key; empty in, empty out. Pure.
  */
 export function devinCliLaneModelEntries(
   lanes: readonly { lane: string; tiers: readonly { via: string | null; model: string | null }[] }[],

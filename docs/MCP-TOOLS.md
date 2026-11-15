@@ -148,8 +148,14 @@ or control apps.
 
 | Tool | Description |
 | --- | --- |
-| `intent_link` | Record caller-supplied merged pull evidence on matching directives. Supplied claims are not verified. |
-| `intent_ship` | Record caller-supplied release evidence on matching directives. Supplied claims are not verified. |
+| `intent_add` | Record a local directive. Tracking does not authorize action. |
+| `intent_get` | Read one intent by id from the local ledger. |
+| `intent_import` | Import local JSONL files or an ashlr.intent-ledger/v1 document, deduplicating directives and retaining provenance. |
+| `intent_link` | Record caller-supplied merged pull evidence. Moves open directives to merged; never verifies or closes. |
+| `intent_list` | List local owner directives and their provenance, optionally filtered by status. |
+| `intent_ship` | Record caller-supplied release evidence. Moves named directives to shipped; never verifies. |
+| `intent_stale` | List stale directives in the local intent ledger. apply true refreshes local tracking only (live directives re-queue, others keep their status with a sweep evidence row); recommendations never close work, dispatch jobs, verify remotely or claim completion. |
+| `intent_update` | Revise a local directive and record caller-reported verification evidence. Tracking does not authorize action. |
 
 ## `phantom-fleet` — Isolated Fleet Server (`phm mcp fleet`)
 
@@ -160,6 +166,12 @@ observation; no tool changes the fleet.
 | Server | Tool | Description |
 | --- | --- | --- |
 | phantom-fleet | `fleet_lanes` | Read a persisted per-lane posture: running/target counts, hold state with holder attribution, reason and expiry, plus resource-ledger usage (used percent, credits remaining, reset time, burn rate, window). A persisted observation only — no tool starts, holds, releases, or otherwise changes a lane. |
+| phantom-fleet | `fleet_work_board` | Read the shared work board: the recent durable bus requests newest first, each classified RECEIVED / ASSIGNED / RUNNING / BLOCKED / VERIFIED with state, asOf, source and missing evidence plus channel and channelRef — the same listWorkBoard listing as `ashlr fleet work-board`, never a second classifier. States are evidence only and grant no dispatch, claim or merge authority; routing labels are untrusted data, never authenticated identity, and the board never includes message bodies. An unreadable inbox reports inbox "unavailable", never an invented empty board. `limit` caps returned items (1–100, default 20) and `thread` keeps one exact channel_ref. Reads the server-owned default fleet root only — no caller root, path or cwd is accepted — and the tool never writes, renews TTL, claims, dispatches or merges anything. |
+| phantom-fleet | `fleet_runtime_identity` | Read sanitized runtime identity: host, platform, asOf, installedVersion versus sourceVersion with versionDrift, fleetState freshness (mtime, age, stale), tailnet name and reasons — the same readRuntimeIdentity evidence as `ashlr fleet runtime-identity`. Evidence only, granting no dispatch, claim or merge authority; paths, addresses and token-shaped text are redacted by the reader. Takes no arguments (any argument is refused) and accepts no caller root, path or cwd; the tool never writes anything. |
+| phantom-fleet | `fleet_channel_health` | Read Slack and iMessage bridge channel health (LIVE / DEGRADED / BLOCKED / UNKNOWN per channel with proof and asOf) — the same readChannelHealth report as `ashlr fleet channel-health`. Evidence only, granting no send, dispatch or merge authority. The read is bounded to 5 seconds: a throw or timeout returns `{ status: "unknown", reason }`, never an invented healthy report. Takes no arguments (any argument is refused) and accepts no caller root, path or cwd; the tool never writes anything. |
+| phantom-fleet | `fleet_slack_replies` | Read the Slack reply binding: which ingested Slack requests have a same-thread `sent` receipt (answered) and which do not (unanswered), with `state`, `oldestUnansweredAt`, `uncertainSends`, `rejected`, `futureDated`, a capped `unansweredSample` and `asOf` — the replies section of the Slack bridge status. Evidence only, granting no send, dispatch or merge authority; an `attempted` send is never counted as an answer. The read is bounded to 5 seconds: a throw or timeout returns `{ status: "unknown", reason }`, never an invented answered or unanswered count. Takes no arguments (any argument is refused) and accepts no caller root, path or cwd; the tool never writes anything. |
+| phantom-fleet | `fleet_recheck` | Run the read-only fleet recheck verdict: runtime identity, the claims ledger, Slack/iMessage bridge channel health and the work board joined into per-section VERIFIED / UNKNOWN / BLOCKED states with missing reasons — the same readFleetRecheck() evidence as `ashlr fleet recheck`. Evidence only, granting no dispatch, claim, send or merge authority. Takes no arguments (any argument is refused) and accepts no caller root, path or cwd; the tool never appends to the recheck log or writes anything. |
+| phantom-fleet | `fleet_recheck_history` | Read the retained recheck verdict rows from the local recheck log (fleet/recheck-log.jsonl): newest-first rows with per-section states and recorded missing reasons, plus skipped (malformed-line) and missing (no log yet) flags — the same readRecheckRecords() evidence as `ashlr fleet recheck-record --last`. Evidence only, granting no dispatch, claim, send or merge authority. `last` caps returned rows (1–50, default 5); no caller root, path or cwd is accepted, and the tool never records a row or writes anything. |
 
 ## `phantom-docs`: Isolated Docs Server (`phm mcp docs`)
 

@@ -133,6 +133,25 @@ export type {
 } from '../../core/fleet/runs-sessions.js';
 
 /**
+ * RQ-SWE3-BOARDUI-1: the Leader-as-CEO board behind GET /api/fleet/board.
+ * `FleetBoardResponse` is the exact envelope `phm fleet board --json` prints;
+ * `FleetBoardV1` is the `fleet.leader-board.v1` state-file contract — both
+ * declared once in core/fleet/leader-journal.ts and re-exported type-only.
+ */
+export type {
+  FleetBoardConflictSample,
+  FleetBoardConflictTrend,
+  FleetBoardLane,
+  FleetBoardNeedsMasonItem,
+  FleetBoardNeedsMasonStatus,
+  FleetBoardRead,
+  FleetBoardResponse,
+  FleetBoardSourceState,
+  FleetBoardStatus,
+  FleetBoardV1,
+} from '../../core/fleet/leader-journal.js';
+
+/**
  * Structural shape shared by every "we might not actually know this"
  * field across the backend (daemon observation, control sections, goal
  * progress, …). Every real occurrence in src/core matches this shape —

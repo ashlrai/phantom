@@ -140,7 +140,11 @@ fallbacks and no tool execution from agent messages.
 The private `imessage/teammate-replies.json` journal records bounded work claims,
 drafts and send attempts before native delivery. Restarted workers reconcile
 exact outgoing text, including attributed-body-only macOS records; an uncertain
-send is never automatically repeated. Pure acknowledgements and artifact-only
+send is never repeated while its attempt could still have landed. A send attempt
+that still has no chat.db record after thirty minutes returns the durable draft
+to the normal send path for a bounded retry — at most three send attempts in
+all — after which the row is suppressed and marked answered, so wedged sends
+cannot starve newer replies. Pure acknowledgements and artifact-only
 updates produce no reply. Requests for approval, decisions, or certain actions stay
 pending for leader review; they do not prevent later replyable messages in the
 same pass from being examined. Pending and uncertain records are preserved when

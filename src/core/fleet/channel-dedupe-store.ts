@@ -1,6 +1,6 @@
 /** Successful receipts only. The sink append and receipt commit are separate:
  * a crash between them can append again on retry; this is not exactly-once. */
-import type { InboundChannel } from './channel-envelope.js';
+import type { ReceiverChannel } from './channel-envelope.js';
 import { randomUUID } from 'node:crypto';
 import { lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -19,7 +19,7 @@ export interface ChannelReceipt {
    * body, channel, verified sender and thread; a retry may rebuild the mirrored
    * envelope only when its own tuple hashes to it. Absent on legacy receipts,
    * which therefore never recover (source and body must never be guessed). */
-  mirror?: { channel: InboundChannel; pending: boolean; envelopeDigest?: string };
+  mirror?: { channel: ReceiverChannel; pending: boolean; envelopeDigest?: string };
 }
 export interface ChannelDedupeStore {
   /** Serialize lookup, awaited sink persistence, and commit across all users.
@@ -59,7 +59,7 @@ export function createLocalChannelDedupeStore(runsDir = process.env.ASHLR_RUNS_D
                 receipts.has(row[0])) throw new Error('Invalid channel receipt');
             const mirror = row[3];
             if (row.length === 4 && (!mirror || typeof mirror !== 'object' ||
-                !['email', 'telegram', 'imessage', 'mobile', 'desktop', 'page', 'cli'].includes(mirror.channel) ||
+                !['email', 'telegram', 'imessage', 'mobile', 'desktop', 'page', 'cli', 'slack'].includes(mirror.channel) ||
                 typeof mirror.pending !== 'boolean' ||
                 !(Object.keys(mirror).sort().join() === 'channel,pending' ||
                   (Object.keys(mirror).sort().join() === 'channel,envelopeDigest,pending' &&

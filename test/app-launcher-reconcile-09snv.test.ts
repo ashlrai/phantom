@@ -69,7 +69,7 @@ describe('macOS launcher', () => {
 });
 
 describe('phm apps open through cmdApps', () => {
-  const file = () => allow([{ name: 'Tool', bundleId: 'com.example.Tool' }, 'Plain', { name: 'com.example.NameOnly' }, 'ai.ashlr.desktop']);
+  const file = () => allow([{ name: 'Tool', bundleId: 'com.example.Tool' }, 'Plain', { name: 'com.example.NameOnly' }, 'ai.ashlr.desktop', 'com.apple.keychainaccess']);
 
   it('opens an allowlisted bundle with no desktop connection via the injected launcher', async () => {
     const launcher = fakeLauncher();
@@ -113,7 +113,7 @@ describe('phm apps open through cmdApps', () => {
   it('launches nothing for a denylisted target, a missing allowlist entry, a name-only entry or a failed feed', async () => {
     const launcher = fakeLauncher();
     const f = file();
-    expect(await cmdApps(['open', 'ai.ashlr.desktop', '--json'], baseDeps(f, { launcher }))).toBe(1);
+    expect(await cmdApps(['open', 'com.apple.keychainaccess', '--json'], baseDeps(f, { launcher }))).toBe(1);
     expect(report()).toMatchObject({ outcome: 'refused', code: 'denied' });
     expect(await cmdApps(['open', 'com.example.Other', '--json'], baseDeps(f, { launcher }))).toBe(1);
     expect(report()).toMatchObject({ code: 'not-allowlisted' });

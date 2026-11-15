@@ -39,7 +39,7 @@ import { DevinApiError, DevinClient, devinFailureSentence, type DevinFetch, type
 import { buildDevinPrompt, DEVIN_REPORT_SCHEMA } from './delivery-contract.js';
 import { playbookForLaunch } from '../playbooks/lanes.js';
 import { probeDevinCli, type DevinCliProbe } from './cli-probe.js';
-import { devinCliFleetModelPromo, devinCliFleetModelSource, devinCliLaneModelEntries, resolveDevinCliFleetModel } from './cli-engine.js';
+import { devinCliFleetModelPricing, devinCliFleetModelSource, devinCliLaneModelEntries, resolveDevinCliFleetModel } from './cli-engine.js';
 import { getLaneModelSnapshot, type LaneModelSnapshot } from '../fleet/lane-models.js';
 import { buildDevinChatPrompt } from './chat-contract.js';
 import { getDevinModelCatalog, summarizeDevinModels, type DevinModelCatalog } from './models.js';
@@ -778,19 +778,18 @@ export async function launchDevinTask(req: DevinLaunchRequest | DevinInternalLau
 // ---------------------------------------------------------------------------
 
 /**
- * The fleet lane's resolved model and its promotional reading plus every
- * `devin*` key models.json carries — the card's "Fleet model" row. models.json
- * absent, unreadable or a failing snapshot read yields an empty lane list,
- * never a failure; which model runs does not change.
+ * The fleet lane's resolved model, its origin and honest pricing evidence, plus
+ * every `devin*` key models.json carries. Reporting only. Absent, unreadable or
+ * failing models.json yields an empty lane list, never a failure.
  */
 async function devinFleetModelInfo(deps: DevinServiceDeps, section: AshlrConfig['devin'] | undefined, now: Date): Promise<DevinFleetModelInfo> {
   let laneModels: DevinFleetModelInfo['laneModels'] = [];
   try {
     const snapshot = await (deps.laneModels ?? (() => getLaneModelSnapshot({})))();
     laneModels = devinCliLaneModelEntries(snapshot?.lanes ?? []);
-  } catch { /* models.json evidence is optional — an empty list, not an error. */ }
+  } catch { /* models.json evidence is optional. */ }
   const configured = resolveDevinCliFleetModel(section);
-  return { configured, source: devinCliFleetModelSource(section), promo: devinCliFleetModelPromo(configured, now.getTime()), laneModels };
+  return { configured, source: devinCliFleetModelSource(section), pricing: devinCliFleetModelPricing(configured, now.getTime()), laneModels };
 }
 
 /** Cheap: reads disk (+ a cached Keychain presence check). No Devin API call. */

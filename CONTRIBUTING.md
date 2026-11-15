@@ -56,6 +56,7 @@ To install the CLI while developing:
 | `npm run test:ci:balanced` | Run the complete backend suite as four concurrent shards balanced by measured file durations |
 | `npm run test:web` | Run the separate jsdom/Testing Library console suite |
 | `npm run test:engineering-responsiveness` | Run the explicit macOS real-CLI two-second control-room latency gate; not implied by default test success |
+| `npm run eval:routing` | Score the offline routing corpus: local share, escalation reasons, accuracy, and a labeled frontier dollar estimate. Not part of CI. |
 | `npm run dev:web` | Run the Vite development server; it does not commission providers or enable dispatch |
 | `npm run lint` | ESLint plus real-I/O membership and Phantom console synchronous-I/O guards |
 | `node scripts/verify-changed.mjs` | Lint only the files changed against origin/master and run one type check; the fast local gate before pushing. Repeats on an unchanged tree are skipped (`--force` reruns). Merge Gate still runs the full check. |

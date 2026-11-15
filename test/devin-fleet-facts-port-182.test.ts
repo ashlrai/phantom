@@ -3,8 +3,8 @@
  * fleet-model reporting (itself preserving #4768): the overview's
  * `fleetModel` field names the model the fleet's Devin lane resolves to
  * (resolveDevinCliFleetModel over `devin.fleetModel`), whether it came from
- * config or the compiled default, the promotional reading taken only from
- * isDevinCliFreeModel at a fixed clock, and models.json's `devin*` keys with
+ * config or the compiled default, honest pricing evidence at a fixed clock
+ * (never inferred free eligibility), and models.json's `devin*` keys with
  * `-lightning` flagged paid. The lane-model read is the real
  * fleet/lane-models.ts snapshot over a temp dir; a missing or unreadable
  * models.json is an empty list, never an error.
@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { DEVIN_CLI_FLEET_DEFAULT_MODEL, DEVIN_CLI_PROMOTION_EVIDENCE_BOUNDARY, devinCliFleetModelPromo } from '../src/core/devin/cli-engine.js';
+import { DEVIN_CLI_FLEET_DEFAULT_MODEL, DEVIN_CLI_PROMOTION_EVIDENCE_BOUNDARY, devinCliFleetModelPricing } from '../src/core/devin/cli-engine.js';
 import { devinOverview, type DevinServiceDeps } from '../src/core/devin/service.js';
 import { getLaneModelSnapshot } from '../src/core/fleet/lane-models.js';
 
@@ -62,21 +62,23 @@ describe('devinOverview fleetModel (port of #4786/#4768 backend)', () => {
       config: () => ({ enabled: true, fleet: true, fleetModel: 'swe-2-max-lightning' }),
       now: () => AFTER,
     }));
-    expect(lightning.fleetModel).toMatchObject({ configured: 'swe-2-flash-max', source: 'config', promo: 'not-free' });
+    expect(lightning.fleetModel).toMatchObject({ configured: 'swe-2-flash-max', source: 'config', pricing: 'not-free' });
   });
 
-  it('promo is free only on isDevinCliFreeModel’s answer, and never after the boundary', async () => {
+  it('reports unknown pricing before the boundary and not-free after it, never free eligibility', async () => {
     const config = () => ({ enabled: true, fleet: true, fleetModel: 'swe-2-medium' });
-    expect((await devinOverview(deps({ config, now: () => BEFORE }))).fleetModel?.promo).toBe('free');
-    expect((await devinOverview(deps({ config, now: () => AFTER }))).fleetModel?.promo).toBe('not-free');
+    const before = (await devinOverview(deps({ config, now: () => BEFORE }))).fleetModel;
+    expect(before?.pricing).toBe('unknown');
+    expect(before).not.toHaveProperty('promo');
+    expect((await devinOverview(deps({ config, now: () => AFTER }))).fleetModel?.pricing).toBe('not-free');
 
-    // A listed name is free only before the boundary; missing evidence never becomes free.
+    // Model names and historical dates do not establish free eligibility.
     const unlisted = await devinOverview(deps({
       config: () => ({ enabled: true, fleet: true, fleetModel: 'swe-2-custom' }),
       now: () => BEFORE,
     }));
-    expect(unlisted.fleetModel).toMatchObject({ configured: 'swe-2-custom', source: 'config', promo: 'unknown' });
-    expect(devinCliFleetModelPromo('swe-2-high', Number.NaN)).toBe('unknown');
+    expect(unlisted.fleetModel).toMatchObject({ configured: 'swe-2-custom', source: 'config', pricing: 'unknown' });
+    expect(devinCliFleetModelPricing('swe-2-high', Number.NaN)).toBe('unknown');
   });
 
   it('reads devin* keys from a temp models.json and flags the paid one; non-devin keys do not leak', async () => {

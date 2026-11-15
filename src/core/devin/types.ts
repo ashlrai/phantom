@@ -376,20 +376,18 @@ export const VERSE_DEVIN_REFRESH_PATH = '/api/verse/devin/refresh' as const;
 export const VERSE_DEVIN_TASKS_PATH = '/api/verse/devin/tasks' as const;
 
 /**
- * Which model the fleet's Devin lane resolves to (devin/cli-engine.ts
- * `resolveDevinCliFleetModel` over `devin.fleetModel`), whether that id is a
- * free promotional model on `isDevinCliFreeModel`'s own answer — never
- * inferred — and every `devin*` key `~/.ashlr-runs/models.json` resolves
- * (fleet/lane-models.ts; `paid` names a `-lightning` id). Read-only: it
- * changes nothing about which model runs. Older servers omit it.
+ * Which model the fleet's Devin lane resolves to (cli-engine.ts
+ * `resolveDevinCliFleetModel` over `devin.fleetModel`), where it came from,
+ * honest pricing evidence ('not-free' or 'unknown' — never 'free'; reporting
+ * only, it authorizes nothing) and every `devin*` key models.json resolves.
  */
 export interface DevinFleetModelInfo {
   /** The model a fleet run launches with. */
   configured: string;
   /** 'config' when `devin.fleetModel` named it, else the compiled default. */
   source: 'config' | 'default';
-  /** 'free' only per isDevinCliFreeModel now; 'not-free' on a `-lightning` id or a passed evidence boundary; else 'unknown'. */
-  promo: 'free' | 'not-free' | 'unknown';
+  /** 'not-free' on a `-lightning` id or past the evidence boundary; else 'unknown'. */
+  pricing: 'not-free' | 'unknown';
   /** `devin*` keys of models.json, sorted; empty when the file is absent or unreadable. */
   laneModels: Array<{ key: string; model: string; paid: boolean }>;
 }
@@ -424,7 +422,7 @@ export interface DevinOverviewResponse {
     paidFamilyCount: number;
     defaultModel: { id: string; label: string; free: boolean; price: string | null };
   };
-  /** The fleet lane's resolved model and its promotional reading. Optional: older servers omit it. */
+  /** The fleet lane's resolved model and pricing evidence. Optional: older servers omit it. */
   fleetModel?: DevinFleetModelInfo | null;
 }
 

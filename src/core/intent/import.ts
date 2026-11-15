@@ -167,7 +167,11 @@ async function nativeLedgerItems(path: string): Promise<IntentItem[] | null> {
 }
 
 function addProvenance(item: IntentItem, row: IntentProvenance): void {
-  if (item.provenance.some((p) => p.source === row.source && p.date === row.date && p.verbatim === row.verbatim)) return;
+  const existing = item.provenance.find((p) => p.source === row.source && p.date === row.date && p.verbatim === row.verbatim);
+  if (existing) {
+    if (existing.partial && !row.partial) existing.partial = false;
+    return;
+  }
   item.provenance = [...item.provenance, row].slice(-MAX_PROVENANCE);
 }
 
@@ -210,6 +214,9 @@ function place(ledger: IntentLedger, incoming: IntentItem, at: string): boolean 
   if (matches.length === 0) {
     if (ledger.items.some((item) => item.id === incoming.id)) incoming.id = newId();
     if (ledger.items.length >= MAX_INTENT_ITEMS) throw new IntentError(`The intent ledger holds at most ${MAX_INTENT_ITEMS} items.`);
+    const provenance = incoming.provenance;
+    incoming.provenance = [];
+    for (const row of provenance) addProvenance(incoming, row);
     ledger.items.push(incoming);
     return false;
   }

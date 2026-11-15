@@ -32,7 +32,11 @@ if (!container) {
 const root = createRoot(container);
 root.render(<p role="status">{`Loading ${PRODUCT_NAME}…`}</p>);
 loadApp().then(
-  (App) => root.render(<StrictMode><App /></StrictMode>),
+  (App) => {
+    root.render(<StrictMode><App /></StrictMode>);
+    // File → UI sync for ~/.ashlr/ui.json; waits for the read session itself.
+    void import('./data/ui-settings-sync.js').then((sync) => sync.startUiSettingsSync());
+  },
   (err: unknown) => {
     root.render(`${PRODUCT_NAME} could not load. Reload to try again.`);
     throw err;
