@@ -14,6 +14,9 @@ export const CLAIM_NOTICE_TICK_INTERVAL_MS = 30_000;
 export type ClaimNoticeTickOutcome =
   /** `deduped` is the pass result's `skipped` (notices already fenced by the sent ledger). */
   | { ran: true; sent: number; deduped: number; failed: number }
+  | { ran: true; sent: number; deduped: number; failed: number;
+      status: 'board-unavailable' | 'ledger-unavailable'; reason: string }
+  | { ran: true; sent: number; deduped: number; failed: number; status: 'dry-run' }
   | { ran: false; reason: 'interval' | 'kill-switch' | 'pass-error' | 'aborted' };
 
 export interface ClaimNoticeTick {
@@ -50,7 +53,16 @@ export function createClaimNoticeTick(opts: {
           running.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
         });
         if (result === null) return { ran: false, reason: 'aborted' };
-        return { ran: true, sent: result.sent, deduped: result.skipped, failed: result.failed };
+        const counts = { ran: true as const, sent: result.sent, deduped: result.skipped, failed: result.failed };
+        // These fixed codes keep arbitrary dependency errors out of the outcome.
+        if (result.status === 'board-unavailable') {
+          return { ...counts, status: result.status, reason: 'board-state-unknown' };
+        }
+        if (result.status === 'ledger-unavailable') {
+          return { ...counts, status: result.status, reason: 'sent-ledger-unreadable' };
+        }
+        if (result.status === 'dry-run') return { ...counts, status: result.status };
+        return counts;
       } catch {
         return { ran: false, reason: 'pass-error' };
       }
