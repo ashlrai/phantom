@@ -4,7 +4,7 @@ import type { CloudGh } from '../cloud/pr-actions.js';
 import { defaultGitRunner } from '../verse/git-ops.js';
 import {
   claimFleetWork, releaseFleetClaim, readFleetBoard,
-  type FleetClaim,
+  type FleetBoard, type FleetClaim,
 } from './coordination.js';
 import {
   readReviewPick, parseReviewPickPrs, REVIEW_PICK_GH_FIELDS,
@@ -158,11 +158,11 @@ export async function takeReview(options: ReviewTakeOptions): Promise<ReviewTake
   };
   let conflict: FleetClaim | undefined;
   let unavailable = false;
+  const prRe = new RegExp(`#${picked.pr}(?![0-9])`);
   try {
     const boardOptions = ledgerOptions();
     const board = (options.readBoardAfter ?? readFleetBoard)(boardOptions);
     unavailable = board.state !== 'known';
-    const prRe = new RegExp(`#${picked.pr}(?![0-9])`);
     conflict = board.claims.find(other => other.id !== claim.id
       && other.repo.toLowerCase() === picked.repo.toLowerCase()
       && other.expiresAt > boardOptions.now && prRe.test(other.task));
@@ -176,6 +176,46 @@ export async function takeReview(options: ReviewTakeOptions): Promise<ReviewTake
   if (recheck.kind !== 'same') {
     return refuse(recheck.kind === 'unreadable' ? 'unavailable' : 'none',
       recheck.kind === 'unreadable' ? 'picked PR recheck unavailable' : recheck.reason, null);
+  }
+  // The head re-read can outlive the lease it followed: prove on one last
+  // fresh ledger read, under the current clock, that the exact claim record
+  // is still live before reporting it. A stale receipt never leaves as
+  // 'claimed', and a replacement owner's claim is never released by us.
+  let finalBoard: FleetBoard | null = null;
+  try {
+    const board = (options.readBoardAfter ?? readFleetBoard)(ledgerOptions());
+    if (board.state === 'known') finalBoard = board;
+  } catch { /* unreadable */ }
+  if (finalBoard === null) {
+    return refuse('unavailable', 'claim ownership recheck unavailable', null);
+  }
+  const checkNow = now();
+  const current = finalBoard.claims.find(row => row.id === claim.id);
+  const currentLive = current !== undefined && current.expiresAt > checkNow;
+  const held = currentLive && current.agent === claim.agent && current.repo === claim.repo
+    && current.task === claim.task && current.claimedAt === claim.claimedAt
+    && current.expiresAt === claim.expiresAt;
+  const lateConflict = finalBoard.claims.find(other => other.id !== claim.id
+    && other.repo.toLowerCase() === picked.repo.toLowerCase()
+    && other.expiresAt > checkNow && prRe.test(other.task));
+  if (!held) {
+    // Our lease is dead: report what the ledger shows and never release —
+    // the claim id may already belong to a replacement owner.
+    if (currentLive && current.agent !== claim.agent) {
+      return { ...report, outcome: 'conflict', owner: current.agent,
+        reason: 'claim reassigned during head recheck' };
+    }
+    if (lateConflict !== undefined) {
+      return { ...report, outcome: 'conflict', owner: lateConflict.agent,
+        reason: 'another live claim owns this PR' };
+    }
+    return { ...report, outcome: 'none',
+      reason: current === undefined || !currentLive
+        ? 'claim lease ended during head recheck'
+        : 'claim record changed during head recheck' };
+  }
+  if (lateConflict !== undefined) {
+    return refuse('conflict', 'another live claim owns this PR', lateConflict.agent);
   }
   return {
     ...report, outcome: 'claimed', owner: options.agent,
