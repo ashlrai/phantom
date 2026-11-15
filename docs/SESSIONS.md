@@ -19,7 +19,7 @@ in its log.
 
 ```sh
 # 1. Add the first job to the queue as usual.
-phm queue add J1 --priority P1 --pool claude --tier T2 --repo phantom \
+phm queue add J1 --priority P1 --pool claude --tier work --repo phantom \
   --scope "Write the session doc" --acceptance "Doc exists" --json
 
 # 2. Wrap that job in a session. It becomes turn 1.

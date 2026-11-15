@@ -39,6 +39,39 @@ async function start() {
   return { result };
 }
 describe('multi-Mac worker lifecycle', () => {
+  it('runs the fixed muse light slice in two slots without a provider lane', async () => {
+    ports.capacity.mockReturnValue({ slots: 2, held: null });
+    const route = ports.call.getMockImplementation()!;
+    let pulls = 0;
+    ports.call.mockImplementation((...args) => {
+      if (args[1] === 'status') return { result: { jobs: [], nodes: [{ nodeId: 'muse', owners: ['ashlr'],
+        caps: ['light', 'comms'], slots: 2, usage: 0, live: true, heartbeatAt: Date.now(), expiresAt: Date.now() + 30_000 }] } };
+      const response = route(...args);
+      if (args[1] === 'pull') {
+        const id = `muse-light-channels-status-${++pulls}`;
+        response.result.job = { id, owner: 'ashlr', requires: ['light', 'comms'], secrets: [], pack: 'muse-light:channels-status:v1' };
+        response.result.claim.jobId = id;
+      }
+      return response;
+    });
+    const second = new Child();
+    ports.spawn.mockReturnValueOnce(child).mockReturnValueOnce(second);
+    const result = runNodeWorker({ ...config, node: 'muse', owner: 'ashlr' }, '/reviewed/runner', true);
+    await Promise.resolve();
+    expect(ports.capacity).toHaveBeenCalledWith(true);
+    expect(ports.spawn).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(3000);
+    const beats = ports.call.mock.calls.filter(c => c[1] === 'beat');
+    expect(beats.at(-1)?.[2]).toEqual(expect.arrayContaining(['--usage', '1000', '--slots', '2']));
+    child.stdout.write('{"resultRef":"light:first"}'); child.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(3000);
+    const later = ports.call.mock.calls.filter(c => c[1] === 'beat');
+    expect(later.at(-1)?.[2]).toEqual(expect.arrayContaining(['--usage', '500']));
+    expect(ports.call.mock.calls.some(c => c[1] === 'leave')).toBe(false);
+    second.stdout.write('{"resultRef":"light:second"}'); second.emit('close', 0);
+    expect(await result).toMatchObject({ slots: 2, attempts: [{ completed: true }, { completed: true }] });
+  });
+
   it('runs a claimed pack and returns only its bounded artifact reference', async () => {
     const { result } = await start();
     expect(ports.spawn).toHaveBeenCalledWith('/reviewed/runner', ['run'], expect.objectContaining({ detached: true, shell: false }));

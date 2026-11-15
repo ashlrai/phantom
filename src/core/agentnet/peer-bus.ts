@@ -1,0 +1,141 @@
+/** Authenticated peer coordination on the existing bus; messages grant no execution authority. */
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { z } from 'zod';
+import { localWriteGate } from '../agents/send-gate.js';
+import { configuredSlackCall, readSlackDeliveryPolicy } from '../agents/slack-leader.js';
+import { evaluateSlackAudience } from '../agents/slack-audience.js';
+import { deliverSlackEnvelope, observeSlackAudience, type SlackCall } from '../agents/slack-transport.js';
+import { parseSlackThreadRef } from '../agents/slack-network.js';
+import { appendBusInbox, listBusInboxAfter } from '../fleet/bus-inbox.js';
+import { appendNeedsMasonLine } from '../fleet/needs-mason-append.js';
+import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
+import { ensurePrivateDirectory, writePrivateFileAtomic } from '../verse/preferences.js';
+import { scrubSecrets } from '../util/scrub.js';
+import { agentnetPaths, authenticatePeer, callsignSchema, readPeerBindings, readPeerJson, type PeerSession } from './slack-identities.js';
+
+export const PEER_MAX_HOPS = 8, PEER_PAIR_LIMIT = 6, PEER_WINDOW_MS = 60_000;
+const idSchema = z.string().regex(/^peer-[a-f0-9-]{36}(?![\s\S])/);
+const reference = z.string().min(1).max(128).regex(/^[a-zA-Z0-9_.:/#-]+(?![\s\S])/).refine(v => scrubSecrets(v) === v);
+export const peerRequestSchema = z.object({
+  toAgent: callsignSchema.optional(), channel: z.string().regex(/^[CG][A-Z0-9]{2,32}(?![\s\S])/).optional(),
+  kind: z.enum(['task', 'review', 'handoff', 'query', 'social']), text: z.string().trim().min(1).max(12_000),
+  refs: z.array(reference).max(32).default([]), threadId: reference.optional(), replyTo: idSchema.optional(),
+}).strict().refine(r => Boolean(r.toAgent) !== Boolean(r.channel));
+export type PeerRequest = z.input<typeof peerRequestSchema>;
+const rowSchema = z.object({ id: idSchema, fromAgent: callsignSchema, target: reference, origin: idSchema,
+  digest: z.string().regex(/^[a-f0-9]{64}(?![\s\S])/), hopCount: z.number().int().min(1).max(8), threadId: reference, at: z.number().int().nonnegative() }).strict();
+type Row = z.infer<typeof rowSchema>;
+export interface PeerBusOptions {
+  bindings?: string; busRoot?: string; runsDir?: string; now?: () => number;
+  /** Trusted host broker seams; never selected by a message or a CLI flag. */
+  call?: SlackCall; readPolicy?: typeof readSlackDeliveryPolicy;
+}
+export interface PeerResult { status: string; reason?: string; id?: string; origin?: string; hopCount?: number; slack?: string }
+
+export async function sendPeerMessage(input: unknown, session: PeerSession, options: PeerBusOptions = {}): Promise<PeerResult> {
+  const parsed = peerRequestSchema.safeParse(input);
+  if (!parsed.success) return { status: 'refused', reason: 'invalid-peer-message' };
+  const blocked = localWriteGate();
+  if (blocked) return blocked;
+  let lock: ReturnType<typeof acquireLocalStoreLockWithOutcome>['lock'] = null;
+  try {
+    const paths = { ...agentnetPaths(), ...options }, now = (options.now ?? Date.now)();
+    if (!Number.isSafeInteger(now) || now < 0) return { status: 'refused', reason: 'invalid-clock' };
+    const peers = readPeerBindings(paths.bindings), sender = authenticatePeer(peers, session, now), request = parsed.data;
+    const recipient = request.toAgent ? peers.find(p => p.callsign === request.toAgent && p.expiresAt > now) : undefined;
+    if (request.toAgent && (!recipient || recipient.teamId !== sender.teamId || recipient.callsign === sender.callsign)) return { status: 'refused', reason: 'unknown-peer' };
+    const policyReader = options.readPolicy ?? (() => {
+      const base = readSlackDeliveryPolicy();
+      return base && { ...base, config: { ...base.config, ownUserId: sender.userId, ownBotId: sender.botId } };
+    }), policy = policyReader();
+    if (!policy || policy.config.teamId !== sender.teamId || policy.config.ownUserId !== sender.userId || policy.config.ownBotId !== sender.botId) return { status: 'refused', reason: 'bot-binding-mismatch' };
+    const mapping = policy.config.map.find(m => request.channel ? m.channel === request.channel : m.topic === recipient?.topic);
+    if (!mapping || !/^[CG]/.test(mapping.channel)) return { status: 'refused', reason: 'unmapped-team-channel' };
+    const signal = AbortSignal.timeout(30_000), rawCall = options.call ?? configuredSlackCall(policy.config, signal);
+    // Apply the mesh's stricter channel rule again when the broker refreshes its audience.
+    const call: SlackCall = async (method, args, credential) => {
+      const result = await rawCall(method, args, credential);
+      if (method === 'conversations.info') {
+        const c = result.channel as Record<string, unknown> | undefined;
+        if (!c || (c.is_channel !== true && c.is_group !== true) || c.is_im === true || c.is_mpim === true ||
+            c.is_shared !== false || c.is_ext_shared !== false || c.is_pending_ext_shared !== false) throw new Error('peer-channel-unproved');
+      }
+      return result;
+    };
+    const audience = await observeSlackAudience(call, mapping.channel);
+    if (audience.complete !== true ||
+        evaluateSlackAudience(policy.config, policy.teamIdentities, mapping.channel, audience).status !== 'postable' ||
+        !audience.members.some(m => m.id === sender.userId) || (recipient && !audience.members.some(m => m.id === recipient.userId))) return { status: 'refused', reason: 'team-audience-unproved' };
+    const currentSender = authenticatePeer(readPeerBindings(paths.bindings), session, (options.now ?? Date.now)());
+    if (JSON.stringify(sender) !== JSON.stringify(currentSender) || localWriteGate()) return { status: 'refused', reason: 'peer-policy-changed' };
+    const directory = join(paths.busRoot, 'agentnet'), file = join(directory, 'coordination.json');
+    ensurePrivateDirectory(directory);
+    const acquired = acquireLocalStoreLockWithOutcome(join(directory, 'writer.lock'), 0, { anchorPath: paths.busRoot, exactPrivateStorage: true });
+    if (acquired.state !== 'acquired') return { status: 'refused', reason: 'peer-store-busy' };
+    lock = acquired.lock;
+    const rows = existsSync(file) ? z.array(rowSchema).max(1024).parse(readPeerJson(file, paths.busRoot)) : [];
+    if (rows.some(r => r.at > now)) return { status: 'refused', reason: 'peer-clock-reversed' };
+    const live = rows.filter(r => now - r.at < 86_400_000), target = request.toAgent ?? mapping.channel;
+    const parent = request.replyTo ? live.find(r => r.id === request.replyTo) : undefined;
+    if (!parent && request.threadId && live.some(r => r.threadId === request.threadId)) return { status: 'refused', reason: 'reply-parent-required' };
+    if (request.replyTo && (!parent || (parent.target !== sender.callsign && parent.target !== mapping.channel))) return { status: 'refused', reason: 'invalid-parent' };
+    const id = `peer-${randomUUID()}`, origin = parent?.origin ?? id, hopCount = (parent?.hopCount ?? 0) + 1;
+    if (hopCount > PEER_MAX_HOPS || live.some(r => r.origin === origin && r.fromAgent === sender.callsign && r.target === target)) {
+      const result = appendBusInbox({ id: `peer-escalation-${origin}`, from: 'agentnet', to: 'leaders', priority: 'P1', ttl: 86_400_000,
+        body: { kind: 'peer.escalation', origin, reason: 'loop-or-hop-cap' } }, { root: paths.busRoot });
+      if (result.status !== 'posted' && result.status !== 'duplicate') throw new Error('peer-escalation-unavailable');
+      if (result.status === 'posted') appendNeedsMasonLine(paths.runsDir, `Agentnet loop/hop cap: ${origin}; inspect the agent bus.`);
+      return { status: 'escalated', reason: 'loop-or-hop-cap', origin };
+    }
+    // Channel sends debit every enrolled recipient pair as well as the channel.
+    const targets = recipient ? [recipient.callsign] : [target, ...peers.filter(p => p.callsign !== sender.callsign && audience.members.some(m => m.id === p.userId)).map(p => p.callsign)];
+    if (targets.some(t => live.filter(r => r.fromAgent === sender.callsign && r.target === t && now - r.at < PEER_WINDOW_MS).length >= PEER_PAIR_LIMIT)) return { status: 'refused', reason: 'pair-rate-limit' };
+    if (live.length + targets.length > 1024) return { status: 'refused', reason: 'peer-store-full' };
+    const threadId = parent?.threadId ?? request.threadId ?? origin;
+    if (parent && request.threadId && request.threadId !== parent.threadId) return { status: 'refused', reason: 'thread-mismatch' };
+    const slackThread = parseSlackThreadRef(threadId);
+    if (threadId.startsWith('slack:') && (!slackThread || slackThread.teamId !== sender.teamId || slackThread.channelId !== mapping.channel)) return { status: 'refused', reason: 'foreign-thread' };
+    const message = { fromAgent: sender.callsign, ...(recipient ? { toAgent: recipient.callsign } : { channel: mapping.channel }),
+      kind: request.kind, text: scrubSecrets(request.text), refs: request.refs, threadId, origin, hopCount };
+    const envelope = { id, from: sender.callsign, to: recipient?.callsign ?? mapping.topic, priority: 'P2' as const,
+      ttl: 86_400_000, body: { kind: 'peer.message', peer: message } };
+    const digest = createHash('sha256').update(JSON.stringify(envelope)).digest('hex');
+    const row: Row = { id, fromAgent: sender.callsign, target, origin, hopCount, threadId, at: now, digest };
+    // Reserve before publication. A crash may consume capacity, never allow a duplicate send.
+    writePrivateFileAtomic(file, JSON.stringify([...live, ...targets.map(t => ({ ...row, target: t }))]));
+    const posted = appendBusInbox(envelope, { root: paths.busRoot, now: () => now });
+    if (posted.status !== 'posted') return { status: 'refused', reason: 'peer-bus-unavailable' };
+    releaseLocalStoreLock(lock); lock = null;
+    // The generic Slack drain refuses peer.message. Only this bound broker may adapt it.
+    if (!policy.confirmedByMason) return { status: 'drafted', id, origin, hopCount, slack: 'approval-required' };
+    const delivery = await deliverSlackEnvelope({ ...envelope, to: mapping.topic,
+      body: { kind: 'note', text: JSON.stringify(message), thread: threadId } }, { ...policy, call, signal,
+      stateRoot: join(directory, 'slack'), readPolicy: () => {
+        try {
+          const latestPolicy = policyReader();
+          const bindings = readPeerBindings(paths.bindings), at = (options.now ?? Date.now)();
+          const fresh = authenticatePeer(bindings, session, at);
+          if (recipient && !bindings.some(p => JSON.stringify(p) === JSON.stringify(recipient) && p.expiresAt > at)) return undefined;
+          if (JSON.stringify(fresh) !== JSON.stringify(sender) || localWriteGate()) return undefined;
+          return latestPolicy;
+        } catch { return undefined; }
+      } });
+    return { status: 'posted', id, origin, hopCount, slack: delivery.status };
+  } catch { return { status: 'refused', reason: 'peer-state-or-transport-unavailable' }; }
+  finally { releaseLocalStoreLock(lock); }
+}
+
+/** Raw bus labels are never identities. Only matching private admission receipts are peers. */
+export function readPeerInbox(session: PeerSession, after = 0, options: PeerBusOptions = {}) {
+  const paths = { ...agentnetPaths(), ...options }, now = (options.now ?? Date.now)();
+  const peer = authenticatePeer(readPeerBindings(paths.bindings), session, now);
+  const file = join(paths.busRoot, 'agentnet', 'coordination.json');
+  const rows = existsSync(file) ? z.array(rowSchema).max(1024).parse(readPeerJson(file, paths.busRoot)) : [];
+  const page = listBusInboxAfter(after, 100, { root: paths.busRoot, now: () => now });
+  if (page.status !== 'ok') return page;
+  return { ...page, messages: page.messages.filter(receipt => rows.some(row => row.id === receipt.envelope.id &&
+    row.target === peer.callsign && row.at <= now && now - row.at < 86_400_000 &&
+    row.digest === createHash('sha256').update(JSON.stringify(receipt.envelope)).digest('hex'))) };
+}
