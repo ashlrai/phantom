@@ -7,12 +7,21 @@ import { agentnetPaths, readPeerJson } from './slack-identities.js';
 
 const CAPACITY = 1024, LIVE_MS = 86_400_000, MAX_PAIRS = 64, MAX_ORIGINS = 32;
 
+export interface PeerPairSelector { fromAgent: string; target: string }
+export interface PeerLedgerSelection extends PeerPairSelector { match: 'exact' | 'none' }
+
+/** Exact pair lookup reuses the stored row's own field validators; anything else is refused. */
+export const peerPairSelectorSchema = z.object({
+  fromAgent: rowSchema.shape.fromAgent, target: rowSchema.shape.target }).strict();
+
 export interface PeerLedgerReport {
   v: 1; authority: 'none'; status: 'ok' | 'empty' | 'unavailable'; reason?: string; asOf: string;
   liveRows: number; capacity: number; windowMs: number; pairLimit: number; maxHops: number;
   pairs: Array<{ fromAgent: string; target: string; inWindow: number; remaining: number; lastAt: string; retryAt: string | null }>;
   origins: Array<{ origin: string; maxHop: number; nearCap: boolean }>;
   truncated: { pairs: boolean; origins: boolean };
+  /** Present only when the caller requested an exact pair; match 'none' is not proof of enrollment or quota. */
+  selection?: PeerLedgerSelection;
 }
 
 function base(now: number): PeerLedgerReport {
@@ -21,11 +30,16 @@ function base(now: number): PeerLedgerReport {
     pairs: [], origins: [], truncated: { pairs: false, origins: false } };
 }
 
-export function readPeerLedger(options: { busRoot?: string; now?: () => number } = {}): PeerLedgerReport {
+export function readPeerLedger(options: { busRoot?: string; now?: () => number; pair?: PeerPairSelector } = {}): PeerLedgerReport {
   let now: number;
   try { now = (options.now ?? Date.now)(); } catch { now = Number.NaN; }
   if (!Number.isSafeInteger(now) || now < 0) return { ...base(0), status: 'unavailable', reason: 'invalid-clock' };
   const report = base(now);
+  if (options.pair !== undefined) {
+    const parsed = peerPairSelectorSchema.safeParse(options.pair);
+    if (!parsed.success) return { ...report, status: 'unavailable', reason: 'invalid-pair-selector' };
+    report.selection = { fromAgent: parsed.data.fromAgent, target: parsed.data.target, match: 'none' };
+  }
   try {
     const busRoot = options.busRoot ?? agentnetPaths().busRoot, file = join(busRoot, 'agentnet', 'coordination.json');
     if (!existsSync(file)) return report;
@@ -57,8 +71,15 @@ export function readPeerLedger(options: { busRoot?: string; now?: () => number }
       .sort((a, b) => a.remaining - b.remaining || a.fromAgent.localeCompare(b.fromAgent) || a.target.localeCompare(b.target));
     const originList = [...origins].map(([origin, maxHop]) => ({ origin, maxHop, nearCap: maxHop >= PEER_MAX_HOPS - 1 }))
       .sort((a, b) => b.maxHop - a.maxHop || a.origin.localeCompare(b.origin));
+    // The selector filters aggregated pairs before the display slice, so an exact
+    // match is still found when the unfiltered report would truncate it away.
+    const sel = report.selection;
+    const shown = sel
+      ? pairList.filter(p => p.fromAgent === sel.fromAgent && p.target === sel.target)
+      : pairList;
+    if (sel && shown.length) sel.match = 'exact';
     return { ...report, status: live.length ? 'ok' : 'empty', liveRows: live.length,
-      pairs: pairList.slice(0, MAX_PAIRS), origins: originList.slice(0, MAX_ORIGINS),
+      pairs: shown.slice(0, MAX_PAIRS), origins: originList.slice(0, MAX_ORIGINS),
       truncated: { pairs: pairList.length > MAX_PAIRS, origins: originList.length > MAX_ORIGINS } };
   } catch { return { ...report, status: 'unavailable', reason: 'peer-ledger-unreadable' }; }
 }
