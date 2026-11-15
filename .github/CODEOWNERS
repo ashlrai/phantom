@@ -302,6 +302,7 @@
 /test/cleanup-lock-identity.test.ts @masonwyatt23
 /test/cli-json-first-run.test.ts @masonwyatt23
 /test/cli-mirror-args.test.ts @masonwyatt23
+/test/cli-registry-merge-friendly.test.ts @masonwyatt23
 /test/cloud-api-scheduler.test.ts @masonwyatt23
 /test/cloud-budget.test.ts @masonwyatt23
 /test/cloud-intake-313.test.ts @masonwyatt23
@@ -330,6 +331,7 @@
 /test/custody-ledger.test.ts @masonwyatt23
 /test/custody-no-phantom-toml-copy.test.ts @masonwyatt23
 /test/custody-unwrapped-fleet.test.ts @masonwyatt23
+/test/custody-wrap-receipt.test.ts @masonwyatt23
 /test/daemon-capacity-publisher-310.test.ts @masonwyatt23
 /test/daemon-cli-310b.test.ts @masonwyatt23
 /test/daemon-cli-help-safety.test.ts @masonwyatt23
@@ -363,6 +365,7 @@
 /test/devin-usage-reader.test.ts @masonwyatt23
 /test/dispatch-router-310b.test.ts @masonwyatt23
 /test/doctor-dedupe.test.ts @masonwyatt23
+/test/doctor-merge-path-cli.test.ts @masonwyatt23
 /test/drive-pool-routing.test.ts @masonwyatt23
 /test/drive-sim/policy.ts @masonwyatt23
 /test/elite-self-land-315.test.ts @masonwyatt23
@@ -1002,6 +1005,8 @@
 /test/merge-identity-owner-preservation-297s.test.ts @masonwyatt23
 /test/merge-identity-recut.test.ts @masonwyatt23
 /test/merge-identity-registry.test.ts @masonwyatt23
+/test/merge-path-readonly.test.ts @masonwyatt23
+/test/merge-path.test.ts @masonwyatt23
 /test/merge-plan-original-preservation-202s.test.ts @masonwyatt23
 /test/merge-plan-owner-preservation-304s.test.ts @masonwyatt23
 /test/merge-plan-preservation-167.test.ts @masonwyatt23

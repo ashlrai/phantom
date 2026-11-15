@@ -23,3 +23,19 @@
 # merges (rebase/merge in a local worktree) benefit.
 CHANGELOG.md merge=union
 **/CHANGELOG.md merge=union
+
+# Concurrent-PR hot spots (RQ-MERGE-FRIENDLY-1). Union only where every line
+# stands alone and a bad merge is caught mechanically:
+#   - docs indexes: one link or row per line; `check:docs` and the llms check fail
+#     on a dangling or duplicated entry.
+#   - the generated fleet verb registry: one sorted loader per line; after a
+#     merge run `node scripts/gen-fleet-registry.mjs` (its --check fails until
+#     the order is restored). Never extend this to hand-written logic.
+# Command tables in src/cli/help.ts and completions.ts are NOT unioned: they are
+# kept sorted one entry per line (scripts/sort-cli-registries.mjs) so ordinary
+# merges, including GitHub's, do not collide. GitHub server merges ignore this
+# file; it helps local rebases and lane merges only.
+docs/README.md merge=union
+docs/llms.txt merge=union
+docs/llms-source.txt merge=union
+src/cli/fleet-subcommand-registry.ts merge=union

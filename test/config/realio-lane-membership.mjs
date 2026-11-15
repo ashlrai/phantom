@@ -219,6 +219,7 @@ export const REAL_IO_TEST_FILES = [
   'test/cli-onboarding-lazy-startup.test.ts', // fresh Node/tsx CLI subprocesses with real private loader fixtures; retain each child's 20s bound
   'test/cli-first-run-guidance.test.ts', // spawns the real CLI for `authority setup` off macOS with a fresh HOME
   'test/cli-upgrade-alias.test.ts', // spawns the real CLI for `upgrade --help` / `update --help` with a fresh HOME
+  'test/cli-registry-merge-friendly.test.ts', // merges two real temporary Git branches to verify union attributes
   'test/cli-status-json.test.ts', // fresh Node/tsx `status --json` subprocesses against a temp HOME and real index build; 20s child bound
   'test/mcp-ecosystem-json.test.ts', // fresh Node/tsx `mcp ecosystem [--write] --json` subprocesses against a temp HOME; 30s child bound
   'test/companion-workflow-smoke.test.ts', // binds a real loopback HTTP server standing in for Cortex MCP and runs fake companion scripts
