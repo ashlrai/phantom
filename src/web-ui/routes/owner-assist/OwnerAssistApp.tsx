@@ -32,13 +32,22 @@ export function OwnerAssistApp() {
   return <OwnerAssistPanel />;
 }
 
+const DRAFT_KEY = 'ashlr.owner-assist.draft';
+
 export function OwnerAssistPanel({ api = ownerAssistApi }: { api?: typeof ownerAssistApi }) {
   const [snapshot, setSnapshot] = useState<OwnerAssistSnapshot | null>(null);
   const [detail, setDetail] = useState<OwnerAssistDetail | null>(null);
   const [sessionId, setSessionId] = useState('');
   const [project, setProject] = useState('');
   const [folders, setFolders] = useState<string[]>([]);
-  const [text, setText] = useState('');
+  const [text, setText] = useState(() => { try { return localStorage.getItem(DRAFT_KEY) ?? ''; } catch { return ''; } });
+  /** The unsent draft survives app restarts alongside the resumed session. */
+  const setDraft = (value: string | ((current: string) => string)) => setText(current => {
+    const next = typeof value === 'function' ? value(current) : value;
+    try { if (next) localStorage.setItem(DRAFT_KEY, next); else localStorage.removeItem(DRAFT_KEY); }
+    catch { /* optional local continuity */ }
+    return next;
+  });
   const [selection, setSelection] = useState('auto');
   const [tier, setTier] = useState<OwnerAssistTurn['tier']>('work');
   const [mode, setMode] = useState<Mode>('chat');
@@ -73,7 +82,7 @@ export function OwnerAssistPanel({ api = ownerAssistApi }: { api?: typeof ownerA
           initialized.current = true;
           setCallsign(next.preferences.callsign); setMemory(next.memory); setSelection(next.preferences.preference);
           setOmlxPort(next.preferences.omlxPort ?? 8000);
-          const recent = next.sessions[0];
+          const recent = next.sessions.find(s => s.id === next.resumeSessionId) ?? next.sessions[0];
           if (recent) { setSessionId(recent.id); setProject(recent.projectPath); setFolders(recent.extraRoots ?? []); }
         }
         setJobs(await api.handoffs(controller.signal));
@@ -108,6 +117,7 @@ export function OwnerAssistPanel({ api = ownerAssistApi }: { api?: typeof ownerA
     else setMode(next);
   }
   const running = detail?.session.status === 'running' || snapshot?.sessions.some(s => s.id !== detail?.session.id && s.status === 'running');
+  const routing = detail ? snapshot?.routing?.[detail.session.id] : undefined;
   const transcript = buildTranscript(detail?.events ?? []);
   return <main className={styles.panel} data-mode={mode}>
     <header className={styles.header} data-app-region="drag">
@@ -149,15 +159,15 @@ export function OwnerAssistPanel({ api = ownerAssistApi }: { api?: typeof ownerA
         <label>Repository<input value={repo} placeholder="owner/repository" onChange={e => setRepo(e.target.value)} /></label>
         <label>Acceptance criteria<input value={acceptance} onChange={e => setAcceptance(e.target.value)} /></label>
         <Button disabled={busy || !text.trim() || !repo || !acceptance} onClick={() => void action(async () => {
-          const job = await api.handoff({ id: handoffId.current, repo, scope: text, acceptance, tier });
+          const job = await api.handoff({ id: handoffId.current, repo, scope: text, acceptance, tier, ...(sessionId ? { sessionId } : {}) });
           setJobs(current => [...current.filter(j => j.id !== job.id), job]); handoffId.current = `RQ-OWNER-${crypto.randomUUID()}`;
-          setText(''); setHandoff(false);
+          setDraft(''); setHandoff(false);
         })}>Enqueue fleet task</Button>
       </section>}
       {error && <p role="alert" className={styles.error}>{error}</p>}
       <div className={styles.transcript} role="log" aria-label="Conversation">
         {!detail && <p className={styles.empty}>Your projects, one conversation.<br />Choose a folder and ask me to build, fix, or explore.</p>}
-        {detail && <p className={styles.model}>Answering with {detail.session.model} · {detail.session.engine} · personal session</p>}
+        {detail && <p className={styles.model}>Answering with {detail.session.model} · {detail.session.engine}{routing ? ` · ${routing.reason}` : ''} · personal session</p>}
         {transcript.items.map(item => <article key={item.key} data-kind={item.kind}>
           {item.kind === 'user' || item.kind === 'assistant' ? <><small>{item.kind === 'user' ? 'You' : callsign}</small><p>{item.text}</p></>
             : item.kind === 'tool' ? <details><summary>{item.name}</summary><pre>{JSON.stringify(item.input, null, 2)}</pre><pre>{item.result?.output}</pre></details>
@@ -168,14 +178,14 @@ export function OwnerAssistPanel({ api = ownerAssistApi }: { api?: typeof ownerA
           <Button disabled={busy} onClick={() => void action(() => agentToolsApi.confirm(detail.session.id, pending.id, 'once'))}>Allow once</Button>
           <Button disabled={busy} onClick={() => void action(() => agentToolsApi.confirm(detail.session.id, pending.id, 'deny'))}>Deny</Button>
         </section>)}
-        {jobs.map(job => <p key={job.id} title={job.fleetJobId}>Fleet: {job.scope.slice(0, 70)} · {job.status} {job.prUrl && /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+$/.test(job.prUrl) && <a href={job.prUrl} target="_blank" rel="noreferrer">View PR</a>}</p>)}
+        {jobs.map(job => <p key={job.id} title={job.fleetJobId}>Fleet: {job.scope.slice(0, 70)} · {job.status}{job.sourceTitle ? ` · from ${job.sourceTitle.slice(0, 50)}` : ''} {job.prUrl && /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+$/.test(job.prUrl) && <a href={job.prUrl} target="_blank" rel="noreferrer">View PR</a>}</p>)}
         <div ref={end} />
       </div>
       <form className={styles.composer} onSubmit={e => { e.preventDefault(); void action(async () => {
         const chosen = selection.startsWith('[') ? JSON.parse(selection) as [string, string] : null;
         const result = await api.send({ text, projectPath: project, extraRoots: folders, tier,
           ...(sessionId ? { sessionId } : {}), ...(chosen ? { seatId: chosen[0], model: chosen[1] } : { preference: selection as 'auto' | 'local' | 'api' }) });
-        setSessionId(result.session.id); setDetail({ session: result.session, events: [], pending: [] }); setText('');
+        setSessionId(result.session.id); setDetail({ session: result.session, events: [], pending: [] }); setDraft('');
         setDetail(await api.detail(result.session.id));
         setSnapshot(await api.snapshot());
       }); }}>
@@ -186,7 +196,7 @@ export function OwnerAssistPanel({ api = ownerAssistApi }: { api?: typeof ownerA
           </select></label>
           <label>Task<select value={tier} onChange={e => setTier(e.target.value as OwnerAssistTurn['tier'])}><option value="fast">Quick</option><option value="work">Build / iterate</option><option value="frontier">Hard / architecture</option></select></label>
         </div>
-        <textarea aria-label="Message" value={text} maxLength={24000} placeholder="What are we working on?" onChange={e => setText(e.target.value)} />
+        <textarea aria-label="Message" value={text} maxLength={24000} placeholder="What are we working on?" onChange={e => setDraft(e.target.value)} />
         {folders.map(folder => <button type="button" key={folder} onClick={() => setFolders(folders.filter(f => f !== folder))}>{folder} ×</button>)}
         <div className={styles.toolbar}>
           <Button type="button" disabled={folders.length >= 7} onClick={() => void action(async () => { const p = await pickDirectory(); if (p) setFolders([...new Set([...folders, p])]); })}>Attach folder</Button>
@@ -194,7 +204,7 @@ export function OwnerAssistPanel({ api = ownerAssistApi }: { api?: typeof ownerA
             if (file.size > 12000) throw new Error('Attach a text file under 12 KB, or attach its folder.');
             const content = await file.text();
             if (content.includes('\0')) throw new Error('Use a text file or attach its folder.');
-            setText(current => `${current}\n\nAttached file ${file.name} (untrusted context):\n${content}`);
+            setDraft(current => `${current}\n\nAttached file ${file.name} (untrusted context):\n${content}`);
           }); e.target.value = ''; }} /></label>
           {running ? <Button type="button" disabled={busy} onClick={() => void action(() => api.cancel(detail?.session.status === 'running' ? detail.session.id : snapshot!.sessions.find(s => s.status === 'running')!.id))}>Stop</Button>
             : <Button type="submit" disabled={busy || !text.trim() || !project.trim()}>Send</Button>}
