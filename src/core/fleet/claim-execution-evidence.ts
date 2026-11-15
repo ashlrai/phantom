@@ -18,8 +18,19 @@
  * matching workers the youngest ageSeconds wins; a first match is kept on
  * ties.
  *
- * Rows cover only live claims (`expiresAt > now`), newest `claimedAt` first,
- * capped at 50. A row is RUNNING only when the process table read healthy
+ * Rows cover only temporally qualified live claims, newest `claimedAt`
+ * first, capped at 50. A claim qualifies only when both timestamps are
+ * epoch milliseconds the coordination ledger itself would write (safe
+ * non-negative integers within the Date-representable range), `claimedAt`
+ * sits at or before the observation, and `expiresAt` falls strictly after
+ * both `claimedAt` and the observation — the same liveness policy the
+ * claims section of fleet-recheck applies, minus its presentation fields.
+ * A claim failing this is not live evidence: it is dropped before the row
+ * cap and displaces no valid claim, and it can never produce RUNNING or
+ * CLAIMED_NO_WORKER; when at least one claim is dropped this way the report
+ * carries the fixed sanitized reason 'claim timestamps invalid'. A sane
+ * interval that simply expired still drops silently, as before. A row is
+ * RUNNING only when the process table read healthy
  * AND a usable worker matches; CLAIMED_NO_WORKER when none does; UNKNOWN
  * when the process table is unavailable or malformed, the claim names no
  * job id, or every matching worker record is malformed. A RUNNING row
@@ -97,8 +108,35 @@ export interface ClaimExecutionDeps {
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 
+/** Largest epoch-millisecond instant `Date` can represent (±8.64e15 ms). */
+const MAX_EPOCH_MS = 8_640_000_000_000_000;
+
+/**
+ * An epoch-millisecond timestamp the coordination ledger itself writes:
+ * `timestamp()` in coordination.ts accepts safe non-negative integers, and
+ * the Date-representable bound keeps out-of-range values from qualifying.
+ */
+const epochMs = (n: unknown): n is number =>
+  typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 && n <= MAX_EPOCH_MS;
+
+/**
+ * Bounded temporal qualification before a claim can contribute live
+ * execution evidence. Returns 'live' only when both timestamps are valid
+ * epoch milliseconds, `claimedAt` is at or before the observation, and
+ * `expiresAt` is strictly after both `claimedAt` and the observation.
+ * 'expired' is a sane interval that simply ended (dropped silently, as
+ * before); anything else — missing, nonfinite, out-of-range, reversed or
+ * future-dated times — is 'invalid' and earns the fixed sanitized reason.
+ */
+const temporallyQualified = (claim: ClaimLike, nowMs: number): 'live' | 'expired' | 'invalid' => {
+  if (!epochMs(claim.claimedAt) || !epochMs(claim.expiresAt) || claim.expiresAt <= claim.claimedAt || claim.claimedAt > nowMs) {
+    return 'invalid';
+  }
+  return claim.expiresAt > nowMs ? 'live' : 'expired';
+};
+
 const iso = (n: unknown): string =>
-  new Date(finite(n) && n >= 0 && n <= 8_640_000_000_000_000 ? n : 0).toISOString();
+  new Date(finite(n) && n >= 0 && n <= MAX_EPOCH_MS ? n : 0).toISOString();
 
 const text = (s: unknown): string => (typeof s === 'string' ? s : '');
 
@@ -208,11 +246,17 @@ export function joinClaimExecution(board: FleetBoard | null, workers: LiveWorker
   if (ledgerKnown) {
     const workerList: unknown[] | null =
       processes === 'healthy' ? (Array.isArray(workers!.workers) ? workers!.workers : null) : null;
+    let invalidClaims = 0;
     const live = ((Array.isArray(board!.claims) ? board!.claims : []) as unknown[])
       .filter(claimLike)
-      .filter(claim => finite(claim.expiresAt) && claim.expiresAt > nowMs)
+      .filter(claim => {
+        const verdict = temporallyQualified(claim, nowMs);
+        if (verdict === 'invalid') invalidClaims += 1;
+        return verdict === 'live';
+      })
       .sort((a, b) => (finite(b.claimedAt) ? b.claimedAt : 0) - (finite(a.claimedAt) ? a.claimedAt : 0))
       .slice(0, MAX_ROWS);
+    if (invalidClaims > 0) reasons.add('claim timestamps invalid');
     for (const claim of live) {
       const expiresAt = finite(claim.expiresAt) ? claim.expiresAt : nowMs;
       const jobId = jobIdOf(claim);
